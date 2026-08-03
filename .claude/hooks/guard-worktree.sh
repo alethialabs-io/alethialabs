@@ -3,7 +3,7 @@
 #
 # Two rules, in order:
 #   R-LEASE  don't write inside a worktree another LIVE instance is working in.
-#   R-MAIN   don't `git commit` / `git add -A` in the shared main checkout  (the original rule).
+#   R-MAIN   don't `git commit` / `git add -A` / `git rebase` in the shared main checkout.
 #
 # R-LEASE exists because R-MAIN wasn't enough. On 2026-07-26 a second instance ran
 # `pnpm wt <name>`, was handed the first's live worktree ("already exists … Reusing it"), edited
@@ -188,7 +188,7 @@ EOF
 fi
 
 # ── R-MAIN: the original main-checkout rule ─────────────────────────────────────────────────────
-# Only care about a commit / stage-everything invocation — bail fast on anything else.
+# Only care about a commit / stage-everything / rebase invocation — bail fast on anything else.
 #
 # Scan the COMMAND FIELD, not the raw payload. Scanning the whole JSON meant any
 # Write/Edit whose CONTENT merely mentioned the blocked phrases was rejected as if it
@@ -198,8 +198,52 @@ fi
 # (the same key-probing rationale as payload_field above).
 cmd_text="$(payload_field command)"
 [ -n "$cmd_text" ] || exit 0
-if ! printf '%s' "$cmd_text" | grep -Eq 'git[[:space:]]+commit([[:space:]]|"|\\|$)|git[[:space:]]+add[[:space:]]+(-A|--all|\.)([[:space:]]|"|\\|$)'; then
+
+# `git rebase` belongs to this rule for a reason the commit case does not cover: the main checkout
+# is PINNED TO dev and shared by every live session, so a rebase run there rewrites `dev` itself
+# underneath instances that are reading it. That is worse than a tangled commit — a commit adds a
+# bad object, a rebase moves the branch every other session resolves against. It was allowed until
+# now only because `Bash(git rebase:*)` was not in the permission allow-list, so the prompt was
+# doing the guarding; the moment the allow-list pre-approves rebases, that accident stops holding.
+#
+# The CONTROL forms are carved out first. --abort / --continue / --skip / --quit / --edit-todo do
+# not START a rewrite; they finish or unwind one already in progress. Blocking those would strand
+# a session mid-rebase with no way out, which is strictly worse than the thing this rule prevents.
+#
+# They are STRIPPED rather than early-exited, so a compound command is judged on what it actually
+# does: `git rebase --abort` alone passes, while `git rebase --abort && git rebase origin/dev`
+# still trips the rule on its second half.
+cmd_scan="$(printf '%s' "$cmd_text" |
+	sed -E 's/git[[:space:]]+rebase[[:space:]]+--(abort|continue|skip|quit|edit-todo)/git_rebase_control/g')"
+
+# git's GLOBAL options sit BETWEEN `git` and the subcommand: `git -C <path> commit`,
+# `git --no-pager rebase`, `git -c user.name=x commit`. This trigger used to require `git`
+# IMMEDIATELY followed by the subcommand, so every one of those forms was invisible to R-MAIN —
+# `git -C <main checkout> commit -m x` ran completely unguarded, which is CLAUDE.md's
+# non-negotiable #1 defeated by four characters.
+#
+# It also made the `git -C …` branch of the target resolution below DEAD CODE: the only way to
+# reach it was a form the trigger had already rejected. So this guard's own block message
+# promised that `git -C ../wt-<name> …` is "parsed by this guard and allowed" while it was in
+# fact UNPARSED and allowed — the right answer for a worktree, by accident, and the wrong one for
+# the main checkout. Anything that now matches but cannot be resolved falls through to the block,
+# which is the fail-closed direction.
+git_pre='([[:space:]]+(-C[[:space:]]+[^[:space:];&|]+|-c[[:space:]]+[^[:space:];&|]+|--git-dir=[^[:space:];&|]+|--work-tree=[^[:space:];&|]+|--no-pager|--no-replace-objects|--literal-pathspecs))*'
+# End-of-token: whitespace, a quote, a backslash (JSON escaping), or end of string.
+tok='([[:space:]]|"|\\|$)'
+trigger="git${git_pre}[[:space:]]+commit${tok}"
+trigger="${trigger}|git${git_pre}[[:space:]]+add[[:space:]]+(-A|--all|\.)${tok}"
+trigger="${trigger}|git${git_pre}[[:space:]]+rebase${tok}"
+
+if ! printf '%s' "$cmd_scan" | grep -Eq "$trigger"; then
 	exit 0
+fi
+
+# Which verb tripped it — used only to make the block message name the right thing.
+if printf '%s' "$cmd_scan" | grep -Eq "git${git_pre}[[:space:]]+rebase${tok}"; then
+	verb="rebase in"
+else
+	verb="commit into"
 fi
 
 # Deliberate override. It must be EXPORTED BEFORE `claude` starts. This is a PreToolUse
@@ -209,26 +253,31 @@ fi
 # need different advice, which is why the block message below spells both out.
 [ "${ALETHIA_ALLOW_MAIN_COMMIT:-}" = "1" ] && exit 0
 
-# --- Where will this commit ACTUALLY run? ---------------------------------------------------------
+# --- Where will this commit / rebase ACTUALLY run? ------------------------------------------------
 # This PreToolUse hook runs BEFORE the command, in the session's launch dir, so $CLAUDE_PROJECT_DIR
 # and $PWD both point at the MAIN checkout even when the session (via EnterWorktree) or an explicit
 # `cd` targets a worktree — which is why a legitimate worktree commit used to be blocked here.
 # git's behaviour is fully determined by the command text, so read the effective dir from it:
-#   * `git -C <path> (commit|add)` wins — it's authoritative for that invocation, else
-#   * the LAST `cd <path>` before the commit/add keyword (git's cwd in a normal && / ; chain).
+#   * `git -C <path> (commit|add|rebase)` wins — it's authoritative for that invocation, else
+#   * the LAST `cd <path>` before the keyword (git's cwd in a normal && / ; chain).
 # Then let git ITSELF confirm the dir is a linked worktree. We allow ONLY on that positive
 # confirmation; anything unparsed / unresolved / main-checkout falls through to the block below.
 # Repo paths never contain spaces or quotes, so stripping quotes and taking a bare token is safe.
+#
+# `rebase` is in these patterns for the same reason `commit` is: without it, a perfectly legitimate
+# `cd ../wt-mine && git rebase origin/dev` resolves no target, falls through, and is blocked — the
+# guard would then be unusable and the first thing anyone did would be to disable it.
 scan="$(printf '%s' "$input" | tr -d '\42\47\134')" # drop  "  '  \  (incl. JSON escaping)
 
 target="$(printf '%s' "$scan" |
-	grep -oE 'git[[:space:]]+-C[[:space:]]+[^[:space:];&|]+[[:space:]]+(commit|add)' |
-	tail -1 | sed -E 's/^git[[:space:]]+-C[[:space:]]+//; s/[[:space:]]+(commit|add)$//')"
+	grep -oE 'git[[:space:]]+-C[[:space:]]+[^[:space:];&|]+[[:space:]]+(commit|add|rebase)' |
+	tail -1 | sed -E 's/^git[[:space:]]+-C[[:space:]]+//; s/[[:space:]]+(commit|add|rebase)$//')"
 
 if [ -z "$target" ]; then
-	# The part of the command up to the commit/add keyword — the effective cwd lives here.
+	# The part of the command up to the commit/add/rebase keyword — the effective cwd lives here.
 	prefix="${scan%%git commit*}"
 	[ "$prefix" = "$scan" ] && prefix="${scan%%git add*}"
+	[ "$prefix" = "$scan" ] && prefix="${scan%%git rebase*}"
 	# `cd` as its own word: preceded by start-of-string or any non-word char (a shell delimiter
 	# like ; & <space>, or the surrounding JSON punctuation `:`/`{`/`,` left after quote-stripping) —
 	# NOT the "cd" inside a word like "abcd". tail -1 = the last cd before the commit (git's cwd).
@@ -254,7 +303,7 @@ gcd="$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null || echo _gcd)"
 
 # Main checkout ⇔ git-dir == git-common-dir. Linked worktrees differ, so they pass.
 if [ "$gd" = "$gcd" ]; then
-	echo "BLOCKED: this would commit into the shared main checkout ($dir). Parallel sessions share this tree and it tangles their WIP (this is how the ba0c664 mega-commit happened). Work in your own worktree: \`pnpm wt <name>\` → ../wt-<name>, then commit from there — a \`git -C ../wt-<name> …\` invocation is parsed by this guard and allowed. Deliberate main commit: export ALETHIA_ALLOW_MAIN_COMMIT=1 BEFORE launching claude — an inline VAR=1 prefix cannot work here, because this hook is spawned before the command runs; and --no-verify skips only the git hook, not this one." >&2
+	echo "BLOCKED: this would $verb the shared main checkout ($dir). Parallel sessions share this tree and it tangles their WIP (this is how the ba0c664 mega-commit happened); a rebase is worse still, because this checkout is pinned to \`dev\` and rewriting it moves the branch every other live session resolves against. Work in your own worktree: \`pnpm wt <name>\` → ../wt-<name>, then run it from there — a \`git -C ../wt-<name> …\` invocation is parsed by this guard and allowed. \`git rebase --abort|--continue|--skip|--quit|--edit-todo\` is never blocked, so you can always finish or unwind a rebase already in progress. Deliberate main-checkout override: export ALETHIA_ALLOW_MAIN_COMMIT=1 BEFORE launching claude — an inline VAR=1 prefix cannot work here, because this hook is spawned before the command runs; and --no-verify skips only the git hook, not this one." >&2
 	exit 2
 fi
 exit 0
