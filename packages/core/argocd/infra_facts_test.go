@@ -4,6 +4,7 @@
 package argocd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -133,4 +134,50 @@ func TestBuildFromOutputs_AzureApplicationGatewayFacts(t *testing.T) {
 	if off.AzureSubscriptionID != "00000000-0000-0000-0000-000000000009" {
 		t.Errorf("AzureSubscriptionID must fall back to the config's cloud account id, got %q", off.AzureSubscriptionID)
 	}
+}
+
+// TestBuildFromOutputs_AlibabaWAFInstanceID locks the output→fact wiring for the WAF 3.0
+// instance. It is the mirror image of the AWS fact above and must never be confused with it:
+// the AWS ARN exists so the ingress can be ANNOTATED with it, while this id exists so the deploy
+// can REPORT that nothing is bound to it. The pinned alicloud provider binds a hostname only in
+// CNAME mode, whose origin is created after the cluster is up (see modules/waf/main.tf).
+func TestBuildFromOutputs_AlibabaWAFInstanceID(t *testing.T) {
+	const id = "waf_v3prepaid_public_cn-0xldbqt0007"
+
+	t.Run("alibaba reads waf_instance_id", func(t *testing.T) {
+		f := BuildFromOutputs(map[string]interface{}{"waf_instance_id": id}, &types.ProjectConfig{Provider: "alibaba"})
+		if f.AlibabaWAFInstanceID != id {
+			t.Fatalf("AlibabaWAFInstanceID = %q, want %q", f.AlibabaWAFInstanceID, id)
+		}
+		// The reference must reach the DECISION, not just the struct — that round trip is the
+		// entire reason the output was added.
+		d := decisionFor(t, InfraServiceDecisions(f), "waf")
+		if d.Status != infraStatusSkipped {
+			t.Fatalf("waf decision = %s (%s), want skipped — nothing binds the instance", d.Status, d.Reason)
+		}
+		if !strings.Contains(d.Reason, id) {
+			t.Errorf("waf decision should name the unattached instance, got %q", d.Reason)
+		}
+	})
+
+	// The switch off makes the output null; ExtractOutput yields "". Without this the "you are
+	// paying for a firewall that filters nothing" report would fire on every Alibaba project.
+	t.Run("waf off (null output) leaves the fact empty", func(t *testing.T) {
+		f := BuildFromOutputs(map[string]interface{}{"waf_instance_id": nil}, &types.ProjectConfig{Provider: "alibaba"})
+		if f.AlibabaWAFInstanceID != "" {
+			t.Fatalf("AlibabaWAFInstanceID = %q, want empty", f.AlibabaWAFInstanceID)
+		}
+		if d := decisionFor(t, InfraServiceDecisions(f), "waf"); !strings.Contains(d.Reason, "no WAF instance was built") {
+			t.Fatalf("waf decision reason = %q, want the switch-off reason", d.Reason)
+		}
+	})
+
+	t.Run("no other cloud reads the key", func(t *testing.T) {
+		for _, p := range []string{"aws", "gcp", "azure", "hetzner", "digitalocean"} {
+			f := BuildFromOutputs(map[string]interface{}{"waf_instance_id": id}, &types.ProjectConfig{Provider: types.CloudProvider(p)})
+			if f.AlibabaWAFInstanceID != "" {
+				t.Errorf("%s: AlibabaWAFInstanceID = %q, want empty — the key is Alibaba-only", p, f.AlibabaWAFInstanceID)
+			}
+		}
+	})
 }

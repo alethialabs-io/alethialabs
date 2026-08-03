@@ -484,16 +484,25 @@ func TestInfraServiceDecisions_WAFNeverOutrunsItsAttachmentSite(t *testing.T) {
 	}
 }
 
-// gcp/alibaba each BUILD a construct (Cloud Armor / a WAF instance) but declare no root output
-// and have no ingress; Hetzner sells no managed WAF at all; azure builds a policy and now also
-// builds the gateway it binds to, so its "nothing was built" reason must point at the SWITCH
-// rather than at a missing ingress. Each must say which of those it is, so "we did not wire it
-// yet" is never mistaken for "this cloud cannot", nor for "you left it off".
+// AWS and Alibaba are the two clouds that export a WAF reference, so neither is in this table:
+// their skip is about the BINDING, not the build, and Alibaba has its own pair of tests below.
+//
+// Of the rest, each must say which of three things it is, so "we did not wire it yet" is never
+// mistaken for "this cloud cannot", nor for "you left the switch off":
+//
+//	· gcp     — BUILDS Cloud Armor, declares no root output, has no ingress to attach it to.
+//	· azure   — also builds a policy, but this lane gives it the Application Gateway that policy
+//	            binds to. So its reason must now point at the SWITCH rather than at a missing
+//	            ingress: with the gateway present, "no ingress" would be false.
+//	· hetzner — sells no managed WAF at all.
+//
+// The azure row is the one this merge changed. Both lanes edited it: the Alibaba lane moved
+// alibaba OUT of this table (it exports a reference now), and this lane moved azure's reason from
+// the ingress arm to the switch arm. Both edits are right and they are independent.
 func TestInfraServiceDecisions_WAFPerCloudSkipReasons(t *testing.T) {
 	cases := map[string]string{
 		"gcp":     "no ingress to attach it to yet",
 		"azure":   "no waf policy was built",
-		"alibaba": "no ingress to attach it to yet",
 		"hetzner": "sells no managed waf",
 	}
 	for provider, want := range cases {
@@ -509,6 +518,78 @@ func TestInfraServiceDecisions_WAFPerCloudSkipReasons(t *testing.T) {
 				t.Errorf("%s waf skip reason should contain %q, got %q", provider, want, d.Reason)
 			}
 		})
+	}
+}
+
+// ── alibaba: built, billed, bound to nothing ─────────────────────────────────────
+//
+// The whole point of exporting `waf_instance_id` is that the two states below stop looking
+// identical. Before it, an Alibaba project with the WAF switch ON and one with it OFF produced
+// the same record — and the switch-on case is the one that costs money for zero filtering.
+
+// Switch off: no instance was bought, and the reason must say so WITHOUT promising that turning
+// it on would filter anything, because on this cloud it would not.
+func TestInfraServiceDecisions_WAFOffOnAlibaba(t *testing.T) {
+	d := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: "alibaba"}), "waf")
+	if d.Status != infraStatusSkipped {
+		t.Fatalf("alibaba waf (switch off): want skipped, got %s (%s)", d.Status, d.Reason)
+	}
+	if !strings.Contains(d.Reason, "no WAF instance was built") {
+		t.Errorf("alibaba waf skip reason should say no instance was built, got %q", d.Reason)
+	}
+	if !strings.Contains(strings.ToLower(d.Reason), "filter nothing") {
+		t.Errorf("alibaba waf skip reason must not imply that turning the switch on would filter traffic, got %q", d.Reason)
+	}
+}
+
+// Switch on: the instance id reaches the decision, and the decision reports the money —
+// provisioned, billed, nothing behind it — plus the SPECIFIC provider ceiling, so an operator
+// can tell this apart from a lane that simply has not landed.
+func TestInfraServiceDecisions_WAFBuiltButUnbindableOnAlibaba(t *testing.T) {
+	f := &InfraFacts{Provider: "alibaba", AlibabaWAFInstanceID: "waf_v3prepaid_public_cn-0xldbqt0007"}
+	d := decisionFor(t, InfraServiceDecisions(f), "waf")
+	if d.Status != infraStatusSkipped {
+		t.Fatalf("alibaba waf (instance built): want skipped, got %s (%s)", d.Status, d.Reason)
+	}
+	if !strings.Contains(d.Reason, "waf_v3prepaid_public_cn-0xldbqt0007") {
+		t.Errorf("alibaba waf skip reason should carry the instance id, got %q", d.Reason)
+	}
+	for _, want := range []string{"billed", "alicloud_wafv3_domain", "cloud-native"} {
+		if !strings.Contains(d.Reason, want) {
+			t.Errorf("alibaba waf skip reason should mention %q, got %q", want, d.Reason)
+		}
+	}
+}
+
+// THE FAIL-OPEN GUARD. A managed ArgoCD URL on Alibaba — which the ingress lanes may yet
+// deliver — must NOT flip the WAF to "attached", because nothing in the template binds the
+// instance to that ingress. Alibaba's ABSENCE from wafAttachments is what stops it, and this is
+// the test that notices if someone deletes the check because "argocdURLDecision already covers it".
+func TestInfraServiceDecisions_WAFNeverAttachesOnAlibabaEvenWithAManagedURL(t *testing.T) {
+	f := &InfraFacts{Provider: "alibaba", AlibabaWAFInstanceID: "waf_v3prepaid_public_cn-0xldbqt0007"}
+	// Force the ingress half open the only way the table allows, so the test is about the WAF
+	// gate rather than about alibaba's current absence from argocdURLGates.
+	argocdURLGates["alibaba"] = providerDecision{installedReason: "installed (test fixture)"}
+	t.Cleanup(func() { delete(argocdURLGates, "alibaba") })
+
+	if url := decisionFor(t, InfraServiceDecisions(f), "argocd-url"); url.Status != infraStatusInstalled {
+		t.Fatalf("fixture did not open the ingress half: argocd-url = %s (%s)", url.Status, url.Reason)
+	}
+	d := decisionFor(t, InfraServiceDecisions(f), "waf")
+	if d.Status != infraStatusSkipped {
+		t.Fatalf("alibaba waf must stay skipped even with a managed ArgoCD URL — nothing binds the instance to it; got %s (%s)", d.Status, d.Reason)
+	}
+}
+
+// The clouds that can BIND a WAF must be a subset of the clouds that wire an ingress controller:
+// a cloud claiming an attach mechanism with no controller has nothing to bind to. Holds for both
+// mechanisms in the table — AWS annotates an Ingress the ALB controller reconciles, and Azure sets
+// firewall_policy_id on the Application Gateway that AGIC reconciles onto.
+func TestWAFAttachTableIsASubsetOfTheIngressControllers(t *testing.T) {
+	for provider := range wafAttachments {
+		if _, ok := ingressControllers[provider]; !ok {
+			t.Errorf("provider %q claims it can bind a WAF but wires no ingress controller — there is nothing to bind it to.", provider)
+		}
 	}
 }
 

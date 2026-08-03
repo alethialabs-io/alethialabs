@@ -84,14 +84,16 @@ type InfraFacts struct {
 	AzureResourceGroup string
 	AzureTenantID      string
 	// AzureSubscriptionID is the subscription the project's resource group, DNS zone and gateway
-	// live in. It comes from the config snapshot's CloudAccountID (the same value
-	// azure_provider.go emits as the `subscription_id` tfvar), NOT from a tofu output — the
-	// template has no output for it.
+	// live in. Read output-first with the config snapshot's CloudAccountID as the fallback — this
+	// lane adds the `azure_subscription_id` output, and CloudAccountID is the identical value
+	// azure_provider.go emits as the `subscription_id` tfvar, so the two cannot disagree about
+	// what was applied.
 	//
-	// TWO consumers now, which is why the fallback matters rather than being a nicety:
+	// TWO consumers, which is why the fallback is load-bearing rather than a nicety:
 	// cert-manager's azureDNS solver requires it explicitly (there is no ambient default from the
-	// workload identity), and it is the AGIC chart's `appgw.subscriptionId`. A lane that dropped
-	// the fallback would leave cert-manager permanently skipped on Azure while every test passed.
+	// workload identity), and it is the AGIC chart's `appgw.subscriptionId`. Dropping the fallback
+	// would leave cert-manager permanently skipped on every environment whose state predates the
+	// new output — the exact latent bug the cert-manager lane fixed for Azure.
 	AzureSubscriptionID    string
 	AzureExternalDNSClient string // managed-identity client id for external-dns
 	AzureIngressClient     string // managed-identity client id for the AGIC
@@ -113,6 +115,14 @@ type InfraFacts struct {
 	AlibabaOIDCIssuerURL          string // ACK cluster OIDC issuer
 	AlibabaOIDCProviderArn        string // RAM OIDC provider ARN that RRSA roles trust
 	AlibabaExternalSecretsRoleArn string // RRSA RAM role for the external-secrets operator (gates secretstore-alibaba)
+	// AlibabaWAFInstanceID is the WAF 3.0 instance the template bought for the project's
+	// application WAF switch (root output `waf_instance_id`, null when the switch is off).
+	// A REFERENCE, not a credential — and, unlike AWS's web ACL, one with NOTHING BOUND TO IT:
+	// the pinned alicloud provider can only bind a hostname (alicloud_wafv3_domain, CNAME mode),
+	// which needs the ingress load balancer's address, and that does not exist at plan time.
+	// The fact exists so wafDecision can say "built and billed and filtering nothing" instead of
+	// leaving that indistinguishable from "the switch is off".
+	AlibabaWAFInstanceID string
 
 	// ── Cross-account keyless secret manager (*-xacct) ──────────
 	// The ADDITIONAL foreign-account secret store the project selected (AWS SM / GCP SM / Azure KV /
@@ -380,6 +390,10 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.AlibabaOIDCIssuerURL = ExtractOutput(outputs, "rrsa_oidc_issuer_url")
 		f.AlibabaOIDCProviderArn = ExtractOutput(outputs, "rrsa_oidc_provider_arn")
 		f.AlibabaExternalSecretsRoleArn = ExtractOutput(outputs, "external_secrets_ram_role_arn")
+		// null when application_waf_enabled is off — "" is the "nothing built" signal, the same
+		// shape as AWS's waf_webacl_arn below. Unlike AWS's, a non-empty value here does NOT mean
+		// anything is being filtered; see the field comment and modules/waf/main.tf.
+		f.AlibabaWAFInstanceID = ExtractOutput(outputs, "waf_instance_id")
 		// The RRSA facts feed workload-identity for in-cluster components (the
 		// external-secrets store renders off the role ARN above). external-dns's
 		// alibabacloud provider does NOT
