@@ -14,7 +14,7 @@ import "fmt"
 type InfraServiceDecision struct {
 	// Service is the infra service the decision is about.
 	// One of: "external-dns" | "external-secrets-store" | "external-secrets-store-xacct" | "ingress" |
-	// "storage-class" | "argocd-url" | "apps-repo".
+	// "storage-class" | "argocd-url" | "apps-repo" | "waf".
 	Service string `json:"service"`
 	// Status is "installed" or "skipped".
 	Status string `json:"status"`
@@ -36,10 +36,12 @@ func InfraServiceDecisions(f *InfraFacts) []InfraServiceDecision {
 	decisions := []InfraServiceDecision{
 		externalDNSDecision(f),
 		externalSecretsStoreDecision(f),
+		certManagerDecision(f),
 		ingressDecision(f),
 		storageClassDecision(f),
 		argocdURLDecision(f),
 		appsRepoDecision(f),
+		wafDecision(f),
 	}
 	// The cross-account (*-xacct) secret store is an OPT-IN additional read source — record its decision
 	// only when the project selected one, so the common-case list stays uncluttered.
@@ -109,6 +111,64 @@ func externalDNSSkipReason(f *InfraFacts) string {
 		return "the Cloudflare DNS connector is selected but its api_token did not reach the job — reconnect the Cloudflare DNS connector."
 	}
 	return "no working external-dns backend for this configuration — external-dns is skipped rather than shipped broken."
+}
+
+// certManagerDecision records whether the in-cluster certificate issuer actually shipped — the
+// honest answer to "I ticked managed certificate, is anything going to issue one?".
+//
+// It reads InfraFacts.CertManagerEnabled(), the SAME predicate the render template gates on and
+// EnsureCertManagerIssuer reads, rather than restating the `and` — the ClusterSecretStore gates
+// were restated by hand in four places and drifted twice.
+//
+// The skip reasons are keyed on the FIRST failing condition, because "you left the switch off",
+// "this cloud cannot do it" and "the identity output is missing" are three completely different
+// things for the operator to do next, and a single generic skip would hide which one it is.
+func certManagerDecision(f *InfraFacts) InfraServiceDecision {
+	d := InfraServiceDecision{Service: "cert-manager"}
+	if f.CertManagerEnabled() {
+		d.Status = infraStatusInstalled
+		d.Reason = fmt.Sprintf(
+			"installed (cert-manager) — the %q ClusterIssuer solves ACME DNS01 challenges for %s via the %s solver, reusing external-dns's identity.",
+			CertManagerIssuerName, f.DomainName, f.CertManagerSolver())
+		return d
+	}
+	d.Status = infraStatusSkipped
+	d.Reason = certManagerSkipReason(f)
+	return d
+}
+
+// certManagerSkipReason explains WHICH half of the gate was missing. The cloud-specific arms are
+// the load-bearing ones: on Alibaba and Hetzner this is a permanent product gap, not a setting the
+// operator can turn on, and saying so is the difference between an honest N/A and a bug report.
+func certManagerSkipReason(f *InfraFacts) string {
+	if !f.ManagedCertificate {
+		return "no managed certificate was requested for this project — turn the managed-certificate switch on to have cert-manager issue and renew one in-cluster."
+	}
+	if !f.DNSEnabled {
+		return "DNS is disabled for this project — cert-manager solves ACME challenges over DNS01, so enable DNS (with a domain) to issue a certificate."
+	}
+	if f.DomainName == "" {
+		return "no domain is configured — set a DNS domain to issue a certificate for it."
+	}
+	// A managed certificate was asked for, DNS is on with a domain, but no solver resolved.
+	switch f.Provider {
+	case "alibaba":
+		return "cert-manager ships no AliDNS DNS01 solver — issuing in-cluster on Alibaba needs the third-party cert-manager-webhook-alidns, so no ClusterIssuer is created rather than one whose challenges would hang pending forever."
+	case "hetzner":
+		return "cert-manager ships no Hetzner DNS01 solver — issuing in-cluster on Hetzner needs a third-party webhook (the same gap external-dns covers with its webhook sidecar), so no ClusterIssuer is created rather than one whose challenges would hang pending forever."
+	}
+	if f.DNSConnector != "" && f.DNSConnector != "native" {
+		return fmt.Sprintf("the %s DNS connector manages this domain, so the cloud's own zone is not authoritative for it — a cloud DNS01 solver would write its challenge record into a zone the ACME server never queries. Issuing through the connector is not wired yet.", f.DNSConnector)
+	}
+	switch f.Provider {
+	case "aws":
+		return "the external-dns IRSA role output is not present — cert-manager's route53 solver would have no identity to write the challenge record with, so it is skipped."
+	case "gcp":
+		return "the external-dns workload-identity or Cloud DNS managed-zone output is not present — cert-manager's clouddns solver could not find or write the zone, so it is skipped."
+	case "azure":
+		return "the external-dns managed-identity, resource-group, subscription or tenant fact is not present — cert-manager's azuredns solver would have no identity to write the challenge record with, so it is skipped."
+	}
+	return "no in-cluster certificate issuer for this configuration — cert-manager is skipped rather than shipped unable to issue."
 }
 
 // externalSecretsStoreDecision mirrors CleanupSkippedInfraServices' per-cloud ESO gates:
@@ -215,19 +275,92 @@ func skippedStore(d InfraServiceDecision, reason string) InfraServiceDecision {
 	return d
 }
 
-// ingressDecision records the ingress controller: AWS ships the ALB controller in-template;
-// every other cloud has a cloud load balancer available but no controller wired by default,
-// so the ingress-nginx add-on is the path.
-func ingressDecision(f *InfraFacts) InfraServiceDecision {
-	d := InfraServiceDecision{Service: "ingress"}
-	if f.Provider == "aws" {
-		d.Status = infraStatusInstalled
-		d.Reason = "installed (AWS Load Balancer Controller) — Ingress objects provision ALBs."
+// providerDecision is ONE CLOUD's contribution to a per-cloud decision table: whether the
+// service actually shipped on that cloud, and the reason recorded either way. It exists so a
+// per-cloud service is a table ENTRY rather than another arm of a growing if/else — four
+// ingress-controller lanes (GCP, Azure, Alibaba, plus whatever follows) each land one line in
+// the same map instead of four conflicting edits to the same conditional.
+type providerDecision struct {
+	// installed reports whether the service actually shipped, for the clouds whose install
+	// depends on a provisioned fact (AWS's ArgoCD ingress needs the ACM certificate). nil
+	// means "unconditional on this cloud" — present in the table ⇒ installed.
+	installed func(f *InfraFacts) bool
+	// installedReason is recorded when the service shipped. Required for every entry.
+	installedReason string
+	// skippedReason is recorded when installed returns false. A FUNCTION, not a constant,
+	// because `installed` is usually a conjunction and the operator needs to know WHICH half
+	// was missing: "you left DNS off" and "you left the certificate off" are different
+	// problems with different fixes, and a single sentence covering both tells them neither.
+	// Same shape as wafNoACLReason below. nil — or a "" return — ⇒ the table's shared default
+	// skip reason, which is also what a cloud ABSENT from the table gets.
+	skippedReason func(f *InfraFacts) string
+}
+
+// perProviderDecision resolves a per-cloud table into an InfraServiceDecision. A cloud absent
+// from the table is a SKIP with the shared default reason — the fail-closed direction: a new
+// cloud ships nothing and says so, rather than inheriting another cloud's claim.
+func perProviderDecision(service string, f *InfraFacts, table map[string]providerDecision, defaultSkipReason string) InfraServiceDecision {
+	d := InfraServiceDecision{Service: service, Status: infraStatusSkipped, Reason: defaultSkipReason}
+	entry, ok := table[f.Provider]
+	if !ok {
 		return d
 	}
-	d.Status = infraStatusSkipped
-	d.Reason = "skipped — a cloud load balancer is available; install the ingress-nginx add-on to expose Ingress objects."
+	if entry.installed != nil && !entry.installed(f) {
+		if entry.skippedReason != nil {
+			if reason := entry.skippedReason(f); reason != "" {
+				d.Reason = reason
+			}
+		}
+		return d
+	}
+	d.Status = infraStatusInstalled
+	d.Reason = entry.installedReason
 	return d
+}
+
+// ingressControllers is the per-cloud ingress-controller table: one entry per cloud that
+// actually wires a controller. AWS ships the ALB controller in-template
+// (infra/templates/argocd/aws-load-balancer-controller.yaml); no other cloud has one yet, so
+// every other cloud is ABSENT and records ingressNoControllerReason unchanged.
+//
+// Adding a cloud is ONE ENTRY here — and the e2e assertion's own provider-keyed maps
+// (test/e2e/argocd_assert.go infraServiceArgoApps / infraServiceNoApp) need the matching
+// Application name, or an explicit "this cloud ships none", or the derivation hard-errors rather
+// than waiting out the ArgoCD timeout on an app nobody rendered.
+//
+// ALIBABA IS ABSENT ON PURPOSE, not for lack of a lane. ACK ships its own nginx-ingress-controller
+// component — the alicloud provider documents `disabled = true` as the way to turn it OFF at cluster
+// creation, and it creates a `nginx-ingress-lb` LoadBalancer Service in kube-system with its own
+// CLB/NLB. A platform ingress controller from Alethia would be a SECOND controller fighting the
+// first for the same Ingress objects: exactly the #1722 ownership collision that already keeps
+// alibaba out of test/e2e/argocd_assert.go's metricsServerProviders, because ACK installs its own
+// metrics-server too. The shared skip reason below — install the ingress-nginx add-on — is the
+// honest instruction on this cloud, and it is a marketplace add-on precisely so an operator who
+// turned the ACK component off can choose it.
+var ingressControllers = map[string]providerDecision{
+	"aws": {installedReason: "installed (AWS Load Balancer Controller) — Ingress objects provision ALBs."},
+	// GKE's Ingress controller is NOT something Alethia installs: it runs in the Google-managed
+	// control plane, gated on the cluster's HTTP(S) Load Balancing add-on, which modules/gke enables
+	// unconditionally (`http_load_balancing { disabled = false }`). So the honest decision is
+	// "installed, by the cloud" — the same shape storageClassDecision already records for GCP
+	// ("built-in default (standard-rwo) … no install needed"). It ships no ArgoCD Application, which
+	// is why "ingress" gets a gcp entry in infraServiceNoApp rather than a controller name in
+	// infraServiceArgoApps.
+	//
+	// Installing ingress-nginx instead would have been wrong twice over: it is a second controller
+	// nobody asked for (the #1722 ownership collision, one layer up), and its L4 pass-through load
+	// balancer cannot carry a Cloud Armor policy at all — Cloud Armor binds to a GCLB BACKEND
+	// SERVICE, and only the `gce` ingress class provisions one.
+	"gcp": {installedReason: "built-in (GKE Ingress, the `gce` class) — HTTP(S) Load Balancing is enabled on the cluster, so an Ingress provisions a Google Cloud Load Balancer; there is no controller to install."},
+}
+
+// ingressNoControllerReason is what a cloud with no ingress controller records. Kept
+// byte-identical to the pre-table reason: this refactor changes the SHAPE, not any decision.
+const ingressNoControllerReason = "skipped — a cloud load balancer is available; install the ingress-nginx add-on to expose Ingress objects."
+
+// ingressDecision records the ingress controller for this cloud, from ingressControllers.
+func ingressDecision(f *InfraFacts) InfraServiceDecision {
+	return perProviderDecision("ingress", f, ingressControllers, ingressNoControllerReason)
 }
 
 // storageClassDecision records the default StorageClass: AWS installs gp3 as default;
@@ -258,17 +391,214 @@ func storageClassDecision(f *InfraFacts) InfraServiceDecision {
 	return d
 }
 
-// argocdURLDecision records whether a managed ArgoCD URL is reachable: only AWS wires the
-// ALB ingress (gated on the ACM certificate), giving a stable URL. Every other cloud has no
-// managed ingress yet, so ArgoCD is reached via port-forward + the admin password.
+// argocdURLGates is the per-cloud "what makes a managed ArgoCD URL reachable here" table.
+// A cloud ABSENT from the table has no managed ingress at all and records
+// argocdURLNoIngressReason.
+//
+// Each predicate must mirror installArgoCD's emitter for that cloud EXACTLY — every condition,
+// not just the interesting one. AWS's ingress renders inside `if vc.DNS.Enabled &&
+// vc.DNS.DomainName != ""`, and only then when the ACM certificate output is present; a gate
+// that checked the certificate alone reported "installed — ArgoCD is exposed over the ALB
+// ingress" for a deploy that emitted no ingress at all. That is reachable rather than
+// theoretical: `acm_certificate_enable` comes from DNS.ManagedCertificate, a field independent
+// of DNS.Enabled, and provider_config passthrough can set it directly — so DNS off + a domain
+// + a zone id yields a real certificate ARN and no ingress. wafDecision reads this decision
+// rather than re-deriving the ingress gate, so the same mismatch made the WAF claim "attached"
+// about an annotation that was never emitted.
+//
+// This is the SECOND site a per-cloud ingress lane must touch, and the reason it is a table:
+// the lane's cloud contributes its own predicate (an issued cert-manager Certificate, an
+// Application Gateway id, an SLB address) without rewriting anyone else's.
+var argocdURLGates = map[string]providerDecision{
+	"aws": {
+		installed: func(f *InfraFacts) bool {
+			return f.DNSEnabled && f.DomainName != "" && f.ACMCertificateArn != ""
+		},
+		installedReason: "installed — ArgoCD is exposed over the ALB ingress (ACM certificate present).",
+		skippedReason:   awsArgocdURLSkipReason,
+	},
+	// GCP's predicate is its own certificate: installArgoCD renders the `gce` Ingress only when the
+	// GLOBAL Google-managed SSL certificate exists, because `ingress.gcp.kubernetes.io/pre-shared-cert`
+	// is the only way to put TLS on it without a second cert-manager stack, and a GKE Ingress with no
+	// certificate would serve the ArgoCD API over plain HTTP on the public internet.
+	//
+	// The skip reason is SPECIFIC rather than the shared default: on GCP the missing piece is a
+	// switch the operator can turn on (the canvas certificate switch → `cloud_dns_managed_certificate`),
+	// not an absent capability, and "no managed ingress on this cloud yet" would now be a lie.
+	//
+	// The DNS conjuncts are DEFENCE IN DEPTH here rather than a live fix, and are stated anyway so
+	// the AWS bug cannot be reintroduced on this cloud by a later edit: `cloud_dns_enabled` is
+	// `config.DNS.Enabled` verbatim and the certificate output is `length(module.cloud_dns) > 0 ?
+	// … : null`, so a non-empty certificate name already implies DNS was on — today.
+	"gcp": {
+		installed: func(f *InfraFacts) bool {
+			return f.DNSEnabled && f.DomainName != "" && f.GCPManagedCertName != ""
+		},
+		installedReason: "installed — ArgoCD is exposed over a GKE Ingress (`gce` class) fronted by the Google-managed SSL certificate.",
+		skippedReason:   gcpArgocdURLSkipReason,
+	},
+}
+
+// gcpArgocdURLSkipReason names which half of the GCP gate was missing, same shape as the AWS one.
+func gcpArgocdURLSkipReason(f *InfraFacts) string {
+	switch {
+	case !f.DNSEnabled:
+		return "DNS is disabled for this project — the GKE Ingress is only rendered for a DNS hostname, so no managed ArgoCD URL exists however the certificate switch is set; access ArgoCD via port-forward + the admin password."
+	case f.DomainName == "":
+		return "no domain is configured — the GKE Ingress has no hostname to serve, so no managed ArgoCD URL exists; set a DNS domain, or access ArgoCD via port-forward + the admin password."
+	}
+	return "no Google-managed SSL certificate was provisioned — turn the certificate switch on (with DNS and a domain) to expose ArgoCD over a GKE Ingress; until then use port-forward + the admin password."
+}
+
+// awsArgocdURLSkipReason names which half of the AWS gate was missing. The certificate arm
+// deliberately returns "" so a certificate-less deploy keeps recording the shared default,
+// byte-identical to before this gate learned about DNS.
+func awsArgocdURLSkipReason(f *InfraFacts) string {
+	switch {
+	case !f.DNSEnabled:
+		return "DNS is disabled for this project — the ALB ingress is only rendered for a DNS hostname, so no managed ArgoCD URL exists however the certificate switch is set; access ArgoCD via port-forward + the admin password."
+	case f.DomainName == "":
+		return "no domain is configured — the ALB ingress has no hostname to serve, so no managed ArgoCD URL exists; set a DNS domain, or access ArgoCD via port-forward + the admin password."
+	}
+	return ""
+}
+
+// argocdURLNoIngressReason is what a cloud with no managed ArgoCD ingress records. Kept
+// byte-identical to the pre-table reason.
+const argocdURLNoIngressReason = "no managed ingress on this cloud yet — access ArgoCD via port-forward + the admin password."
+
+// argocdURLDecision records whether a managed ArgoCD URL is reachable, from argocdURLGates.
 func argocdURLDecision(f *InfraFacts) InfraServiceDecision {
-	d := InfraServiceDecision{Service: "argocd-url"}
-	if f.Provider == "aws" && f.ACMCertificateArn != "" {
-		d.Status = infraStatusInstalled
-		d.Reason = "installed — ArgoCD is exposed over the ALB ingress (ACM certificate present)."
+	return perProviderDecision("argocd-url", f, argocdURLGates, argocdURLNoIngressReason)
+}
+
+// wafDecision records whether the project's web ACL is ATTACHED to anything — the honest
+// answer to "I turned the WAF on, is traffic actually being filtered?". Every cloud's template
+// can BUILD a WAF construct behind the canvas switch (#1810), but building one and attaching
+// one are different facts, and until now nothing recorded the difference: a project could carry
+// a web ACL, a bill for it, and zero inspected requests.
+//
+// On AWS the attach is the `alb.ingress.kubernetes.io/wafv2-acl-arn` annotation installArgoCD puts
+// on the ArgoCD server ingress; on GCP it is a BackendConfig whose `spec.securityPolicy.name` names
+// the Cloud Armor policy, bound to the ArgoCD server Service by a `cloud.google.com/backend-config`
+// annotation. Different mechanisms, one shape: the construct must exist AND the ingress that carries
+// it must have been configured, so this decision mirrors BOTH halves. It reads argocdURLDecision
+// rather than re-deriving the ingress gate, so the two cannot drift.
+//
+// This ships NO ArgoCD Application on any cloud (it is an annotation or a small CR on an existing
+// ingress), which is why it belongs in test/e2e/argocd_assert.go's infraServiceNoApp.
+func wafDecision(f *InfraFacts) InfraServiceDecision {
+	d := InfraServiceDecision{Service: "waf", Status: infraStatusSkipped}
+	acl := wafWebACLRef(f)
+	if acl == "" {
+		d.Reason = wafNoACLReason(f.Provider)
 		return d
 	}
-	d.Status = infraStatusSkipped
-	d.Reason = "no managed ingress on this cloud yet — access ArgoCD via port-forward + the admin password."
+	if !wafAttachesToIngress[f.Provider] {
+		d.Reason = wafUnattachableReason(f.Provider, acl)
+		return d
+	}
+	if argocdURLDecision(f).Status != infraStatusInstalled {
+		d.Reason = "a web ACL was built but this deploy configured no managed ingress to attach it to — the ACL exists, is billed, and inspects nothing."
+		return d
+	}
+	d.Status = infraStatusInstalled
+	d.Reason = wafAttachedReason(f.Provider, acl)
 	return d
+}
+
+// wafAttachedReason names the MECHANISM that attached the web ACL on this cloud, because "attached"
+// alone is not actionable: an operator checking whether traffic is really being filtered needs to
+// know which object to look at, and the objects differ per cloud. One arm per cloud that can attach.
+func wafAttachedReason(provider, acl string) string {
+	switch provider {
+	case "gcp":
+		return fmt.Sprintf("attached (%s) — a BackendConfig binds the Cloud Armor policy to the GCLB backend service the GKE Ingress provisions, so the load balancer evaluates it on every request it serves.", acl)
+	default:
+		return fmt.Sprintf("attached (%s) — the ArgoCD ingress carries alb.ingress.kubernetes.io/wafv2-acl-arn, so the ALB inspects every request it serves.", acl)
+	}
+}
+
+// wafWebACLRef returns the web ACL / security-policy reference this cloud EXPORTS for the
+// runner to attach, and "" when it exports none. One arm per cloud, so a lane wiring Cloud
+// Armor to a GCP ingress adds its line here rather than widening a boolean.
+func wafWebACLRef(f *InfraFacts) string {
+	switch f.Provider {
+	case "aws":
+		return f.WAFWebACLArn
+	case "gcp":
+		// The Cloud Armor security policy NAME. Its root output (`cloud_armor_policy_name`) did not
+		// exist until this lane: the module had exported policy_id/policy_self_link since it was
+		// written and the root swallowed both, so the policy was created, billed, and unreachable.
+		return f.GCPArmorPolicy
+	case "alibaba":
+		// EXPORTED, DELIBERATELY UNATTACHED. The template buys a WAF 3.0 postpaid instance
+		// behind the canvas switch and can bind nothing to it (see wafAttachesToIngress). The
+		// reference is read anyway because the alternative is worse: with no output, "the switch
+		// is off" and "you are paying for a firewall that inspects nothing" are the same record.
+		return f.AlibabaWAFInstanceID
+	default:
+		// azure BUILDS a WAF policy behind its own canvas switch but declares no root output the
+		// runner could read and has no managed ingress to bind one to — so there is no reference
+		// here to attach. Hetzner sells no managed WAF at all.
+		return ""
+	}
+}
+
+// wafAttachesToIngress is the per-cloud "can a built WAF actually be BOUND to the ingress this
+// pipeline configures" table. Membership is about the CLOUD's mechanism, not about whether a
+// given deploy happened to configure an ingress — that second question is argocdURLDecision's,
+// and it is asked afterwards.
+//
+// Splitting the two is the point. wafDecision used to reach "installed" whenever a reference
+// existed and the ArgoCD URL was up, which is correct on AWS (the URL implies the ALB ingress
+// that carries the wafv2-acl-arn annotation) and would be FAIL-OPEN anywhere else: the moment an
+// ingress lane gives another cloud a managed ArgoCD URL, that cloud's WAF would start reporting
+// "attached" without a line of code binding it. On Alibaba that is not a hypothetical — the WAF
+// reference is exported today and the pinned provider has no resource that binds it (#1840), so
+// the guard is what keeps the honest answer honest when the ingress arrives.
+//
+// GCP is here because THIS lane is that ingress arriving: the GKE Ingress provisions a GCLB
+// backend service, and a BackendConfig whose `spec.securityPolicy.name` names the Cloud Armor
+// policy binds the two. A different mechanism from AWS's annotation, but the same shape — the
+// cloud CAN bind, so `argocdURLDecision` is then asked whether this deploy actually configured
+// the ingress. `wafAttachedReason` says which object an operator should go and look at.
+//
+// ⚠️ This entry arrived by MERGE, not by either lane writing it. The table was added on dev while
+// this lane was in flight, defaulting every cloud but AWS to false; a textual merge left GCP out
+// and nothing would have failed, because unattachable is the FAIL-CLOSED answer. The result would
+// have been a Cloud Armor policy that is genuinely bound and permanently reported as inspecting
+// nothing — the exact inverse of the fail-open bug the table exists to prevent, and just as wrong.
+var wafAttachesToIngress = map[string]bool{"aws": true, "gcp": true}
+
+// wafUnattachableReason explains a built-but-unbindable WAF, keyed on the cloud so the operator
+// learns whether to wait for a lane or to stop paying for the instance.
+func wafUnattachableReason(provider, ref string) string {
+	switch provider {
+	case "alibaba":
+		return fmt.Sprintf("a WAF 3.0 instance (%s) is provisioned and billed for this project and NOTHING is behind it — the pinned alicloud provider binds a hostname only in CNAME mode (alicloud_wafv3_domain), whose origin is the ingress load balancer's address, which does not exist until after the cluster is up; it exposes no resource at all for WAF 3.0's cloud-native mode, the one that binds a load balancer directly. Turn the WAF switch off, or put the instance in front of your ingress from the WAF console.", ref)
+	default:
+		return fmt.Sprintf("a web ACL (%s) was built and nothing on this cloud can attach it yet — it exists, is billed, and inspects nothing.", ref)
+	}
+}
+
+// wafNoACLReason explains why there was no web ACL reference to attach, keyed on the cloud so
+// "you left the switch off" is never confused with "this cloud cannot do it".
+func wafNoACLReason(provider string) string {
+	switch provider {
+	case "aws":
+		return "no web ACL was built — turn the WAF switch on for this project to create a regional web ACL and attach it to the ingress."
+	case "gcp":
+		// Now that the policy IS reachable, GCP must stop falling into the "this cloud has nowhere to
+		// attach it" default below: on GCP the only remaining reason there is nothing to attach is
+		// that the operator left the switch off, and telling them otherwise would send them to fix a
+		// gap that no longer exists.
+		return "no Cloud Armor policy was built — turn the WAF switch on for this project to create a security policy and bind it to the ingress's backend service."
+	case "alibaba":
+		return "no WAF instance was built — turn the WAF switch on for this project to provision Alibaba's WAF 3.0 instance. Note that nothing binds it to your traffic yet, so it would filter nothing."
+	case "hetzner":
+		return "Hetzner sells no managed WAF — run your own edge (or an in-cluster WAF add-on) if you need request filtering."
+	default:
+		return "the template builds a web ACL but this cloud has no ingress to attach it to yet — it would be created and left inspecting nothing."
+	}
 }

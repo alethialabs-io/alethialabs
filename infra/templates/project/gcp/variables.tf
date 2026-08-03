@@ -5,6 +5,16 @@
 variable "project_id" {
   type        = string
   description = "GCP project ID to deploy resources into"
+
+  # FAIL CLOSED — same shape as aws_account_id in the aws template. This flows from the same
+  # CloudAccountID field (packages/core/cloud/gcp_provider.go emits it as `project_id`) and the
+  # runner resolves it the same way, so the same empty-value hole exists here. An empty project
+  # id fails EVERY google_* resource rather than one, so it must be caught at plan time.
+  # Google's rule: 6-30 chars, lowercase letter first, letters/digits/hyphens, no trailing hyphen.
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.project_id))
+    error_message = "project_id must be a valid GCP project id (6-30 chars, lowercase letter first, letters/digits/hyphens, no trailing hyphen). It is empty or malformed — the runner resolves it from the connector's CloudIdentity, or for an ambient-credential runner from $GOOGLE_PROJECT."
+  }
 }
 
 variable "region" {
@@ -399,6 +409,23 @@ variable "firestore_delete_protection_state" {
   description = "Delete protection state for Firestore (DELETE_PROTECTION_ENABLED or DELETE_PROTECTION_DISABLED)"
 }
 
+variable "firestore_point_in_time_recovery" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Whether to enable point-in-time recovery on the Firestore database.
+
+    Aggregated with ANY across the project's NoSQL tables, because PITR is a property of the
+    DATABASE and GCP allows exactly one Firestore database per project — what the canvas calls a
+    "table" is a collection inside that single database. One table asking for point-in-time
+    recovery therefore turns it on for all of them.
+
+    When true the database keeps 1-minute snapshots for 7 days; when false, reads reach back one
+    hour only. False is also Firestore's own default, so leaving this off leaves an existing
+    database exactly as it is. The argument is not force-new: toggling it is an in-place PATCH.
+  EOT
+}
+
 #########################################################################
 ##                   Cloud DNS Variables                               ##
 #########################################################################
@@ -451,7 +478,16 @@ variable "cloud_armor_rules" {
 variable "cloud_armor_default_action" {
   type        = string
   default     = "allow"
-  description = "Default action for Cloud Armor (allow or deny(403))"
+  description = "Action the Cloud Armor catch-all rule applies to every request none of cloud_armor_rules matched. Reachable through the DNS provider_config passthrough."
+
+  # Validated, not free text. The value is now READ (it reaches modules/cloud-armor.default_action —
+  # until #1826 it reached nothing at all), and the module binds to the platform ingress, so a typo
+  # would either fail mid-apply at the GCP API or, worse, be accepted as a different posture than the
+  # operator asked for. Finite and known ⇒ an enumerated set.
+  validation {
+    condition     = contains(["allow", "deny(403)", "deny(404)", "deny(502)"], var.cloud_armor_default_action)
+    error_message = "cloud_armor_default_action must be one of: allow, deny(403), deny(404), deny(502)."
+  }
 }
 
 #########################################################################
@@ -466,12 +502,18 @@ variable "create_cloud_storage" {
 
 variable "cloud_storage_buckets" {
   type = list(object({
-    name_suffix    = string
-    location       = optional(string)
-    storage_class  = optional(string, "STANDARD")
-    versioning     = optional(bool, false)
-    force_destroy  = optional(bool, false)
-    uniform_access = optional(bool, true)
+    name_suffix   = string
+    location      = optional(string)
+    storage_class = optional(string, "STANDARD")
+    versioning    = optional(bool, false)
+    force_destroy = optional(bool, false)
+    # Uniform bucket-level access is NOT a knob, and this attribute is no longer `uniform_access`.
+    # UBLA only disables per-object ACLs — it says nothing about public reads — and Cloud Storage
+    # REFUSES to turn it back off more than 90 days after it was enabled, so a user-facing switch
+    # routed through it would eventually become an apply that can never succeed. UBLA is on for
+    # every bucket, permanently; `public_access` drives `public_access_prevention` and the allUsers
+    # IAM binding in modules/cloud-storage, which is what actually decides public readability.
+    public_access = optional(bool, false)
     lifecycle_rules = optional(list(object({
       action_type          = string
       action_storage_class = optional(string)

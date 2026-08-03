@@ -15,6 +15,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/git"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
+	"github.com/alethialabs-io/alethialabs/packages/core/selfimage"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -79,8 +80,8 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 		Outputs:          strOutputs,
 		Provider:         string(vc.Provider), // selects the per-cloud tofu endpoint output keys (#711)
 		KeylessDBAuth:    keylessOn,
-		Databases:        vc.Databases,                      // lookup source for a binding target's iam_auth (#722)
-		RunnerImage:      os.Getenv("ALETHIA_RUNNER_IMAGE"), // the db-token / db-bootstrap sidecar image
+		Databases:        vc.Databases,    // lookup source for a binding target's iam_auth (#722)
+		RunnerImage:      selfimage.Ref(), // the db-authproxy / db-bootstrap sidecar image (#1787)
 		ImagePullSecrets: pullSecrets,
 		SecretStores:     secretStores, // secret-kind binding → pluggable SaaS store (runtime-read, #1207)
 	}
@@ -254,7 +255,7 @@ func writeRegistryRefresher(dir string, vc *types.ProjectConfig, outputs map[str
 		SecretName:    tgt.SecretName(),
 		RegistryHost:  tgt.RegistryHost,
 		Region:        tgt.Region,
-		RunnerImage:   os.Getenv("ALETHIA_RUNNER_IMAGE"),
+		RunnerImage:   selfimage.Ref(),
 		SAAnnotations: map[string]string{},
 		SALabels:      map[string]string{},
 		PodLabels:     map[string]string{},
@@ -582,4 +583,27 @@ func hasManifests(dir string) bool {
 		}
 	}
 	return false
+}
+
+// liveCellKeylessFailures names the keyless bindings that failed closed on a cell we claim to
+// support, formatted for the deploy error. Returns nothing for an excluded or pending cell — that
+// refusal is a product boundary, already surfaced as a warning and on the Deploy tab.
+//
+// A decision with an EMPTY cell state is treated as a failure too. That state means the provider ×
+// engine pair is not in the table at all, which is the fail-closed table's own "unknown" — and an
+// unknown must not be quieter than a known-supported one. Reading it as "not live, so only a
+// warning" is precisely the fail-open direction this whole gate exists to prevent.
+func liveCellKeylessFailures(decisions []manifests.KeylessBindingDecision) []string {
+	var failed []string
+	for _, d := range decisions {
+		if d.Status != manifests.KeylessBindingFailedClosed {
+			continue
+		}
+		if d.CellState == manifests.KeylessCellExcluded || d.CellState == manifests.KeylessCellPending {
+			continue
+		}
+		failed = append(failed, fmt.Sprintf("%s→%s/%s (%s): %s",
+			d.Service, d.TargetKind, d.TargetName, d.Engine, d.Reason))
+	}
+	return failed
 }

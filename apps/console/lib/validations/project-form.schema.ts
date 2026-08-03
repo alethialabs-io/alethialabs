@@ -7,6 +7,7 @@ import { toRecord } from "@/lib/coerce";
 import { HELM_REGISTRY_HOST_RULES } from "@/lib/connectors/helm-registry-hosts";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { slugify } from "@/lib/slug";
+import { appsPathSchema } from "@/lib/validations/apps-path";
 import {
 	environmentLifecycle,
 	environmentStage,
@@ -412,10 +413,17 @@ const dnsSchema = dnsInsert.omit(componentAutoFields).superRefine((value, ctx) =
 	}
 });
 
-const repositoriesSchema = repositoriesInsert.omit({
-	...autoFields,
-	project_id: true,
-});
+const repositoriesSchema = repositoriesInsert
+	.omit({
+		...autoFields,
+		project_id: true,
+	})
+	// #1767 — `apps_path` is a bare nullable text() column, so drizzle-zod on its own accepts
+	// "../../etc" and "overlays/'dev'": the value would save cleanly, reach the config snapshot,
+	// and only die at deploy time when argocd.ValidateAppsPath (the authoritative, fail-closed
+	// guard) refuses it. This mirrors that guard so the inspector says so inline instead.
+	// `.extend` LAST, so the mirror wins over the column's inferred `z.string().nullable()`.
+	.extend({ apps_path: appsPathSchema });
 
 // One scanned source repo (or monorepo subtree) attached to the project. Multiple
 // allowed (1:N) — the inference merge collects them; ArgoCD's destination stays the

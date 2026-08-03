@@ -46,7 +46,7 @@ jobs:
           echo "MIRROR_TAG=v$VER" >> "$GITHUB_ENV"
 
       - name: Checkout monorepo @ the release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ env.CLI_TAG }}
@@ -54,7 +54,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version-file: go.work
           cache-dependency-path: apps/cli/go.sum
 
       # Token for the alethia-cli release home (release + tag + source push). Separate from the tap

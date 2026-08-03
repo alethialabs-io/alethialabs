@@ -44,6 +44,7 @@ import {
 	projectCluster,
 	projectEnvironments,
 	projectFabrics,
+	projectRepositories,
 	projects,
 } from "@/lib/db/schema";
 
@@ -110,13 +111,14 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-describe("T2 config_snapshot fidelity fixture (BYOC A0.5)", () => {
-	it("the REAL buildConfigSnapshot freezes the committed Hetzner shape", async () => {
-		// Canonical, CHEAP Hetzner env: one env (name feeds environment_stage), a single-node
-		// cluster (node_desired_size 1 → the runner provisions 1 worker + 1 control plane, the
-		// exact cheap shape the nightly proves), and the `reloader` marketplace add-on (matches
-		// the Go harness's seedAddOns, so the resolved add-on install spec is fidelity-checked).
-		const select = new Map<unknown, Rows>([
+/** The canonical, CHEAP Hetzner env the fixture freezes: one env (name feeds
+ * environment_stage), a single-node cluster (node_desired_size 1 → the runner provisions
+ * 1 worker + 1 control plane, the exact cheap shape the nightly proves), and the
+ * `reloader` marketplace add-on (matches the Go harness's seedAddOns, so the resolved
+ * add-on install spec is fidelity-checked). Returns a FRESH map per call so a test can
+ * layer extra component rows on without leaking into the frozen shape. */
+function canonicalSelect(): Map<unknown, Rows> {
+	return new Map<unknown, Rows>([
 			[
 				projects,
 				[
@@ -181,15 +183,24 @@ describe("T2 config_snapshot fidelity fixture (BYOC A0.5)", () => {
 					},
 				],
 			],
-		]);
-		const insert = new Map<unknown, Rows>([[jobs, [{ id: "job-1" }]]]);
-		const valuesSpy = setupDb(select, insert);
+	]);
+}
 
-		await provisionProject("p1");
+/** Drives the REAL provisionProject → buildConfigSnapshot and returns the frozen snapshot. */
+async function frozenSnapshot(select: Map<unknown, Rows>): Promise<unknown> {
+	const insert = new Map<unknown, Rows>([[jobs, [{ id: "job-1" }]]]);
+	const valuesSpy = setupDb(select, insert);
 
-		const jobCall = valuesSpy.mock.calls.find((c) => c[0] === jobs);
-		if (!jobCall) throw new Error("no DEPLOY job insert recorded");
-		const snapshot = (jobCall[1] as { config_snapshot: unknown }).config_snapshot;
+	await provisionProject("p1");
+
+	const jobCall = valuesSpy.mock.calls.find((c) => c[0] === jobs);
+	if (!jobCall) throw new Error("no DEPLOY job insert recorded");
+	return (jobCall[1] as { config_snapshot: unknown }).config_snapshot;
+}
+
+describe("T2 config_snapshot fidelity fixture (BYOC A0.5)", () => {
+	it("the REAL buildConfigSnapshot freezes the committed Hetzner shape", async () => {
+		const snapshot = await frozenSnapshot(canonicalSelect());
 		// Runtime secret placeholder — never part of the frozen fidelity shape.
 		expect((snapshot as { git_access_token?: string }).git_access_token).toBe("");
 
@@ -205,5 +216,54 @@ describe("T2 config_snapshot fidelity fixture (BYOC A0.5)", () => {
 		// Deep-equal against the committed fixture: any drift between buildConfigSnapshot and the
 		// shared fixture the Go harness trusts reds here (regenerate intentionally).
 		expect(JSON.parse(serialized)).toEqual(JSON.parse(readFileSync(FIXTURE, "utf8")));
+	});
+});
+
+// #1767 — the per-tier overlay path must SURVIVE the DB → snapshot trip. The defect this
+// guards is the one that made the field vacuous in the first place: `apps_path` existed on
+// the runner contract, rendered, and defaulted — and nothing ever SET it, so every placement
+// silently synced the repository root. Presence-only assertions could not see that, so these
+// assert the value round-trips AND that unset stays structurally absent (not null, not "") —
+// absence is what makes `path: '.'` byte-identical to a pre-field deploy.
+describe("repositories.apps_path reaches the config snapshot (#1767)", () => {
+	async function repositoriesOf(row: Record<string, unknown> | null) {
+		const select = canonicalSelect();
+		if (row) select.set(projectRepositories, [row]);
+		const snapshot = await frozenSnapshot(select);
+		return (snapshot as { repositories: Record<string, unknown> }).repositories;
+	}
+
+	it("carries the overlay path when the row sets one", async () => {
+		const repositories = await repositoriesOf({
+			apps_destination_repo: "https://github.com/alethialabs-io/enterprise-demo",
+			apps_path: "overlays/dev",
+		});
+		// EXHAUSTIVE, not `.apps_path`: the emitted block is the whole runner-side
+		// ProjectRepositoriesConfig, so `toEqual` also fails when a future column spills into
+		// the snapshot — the shape the Go struct strict-decodes is pinned, not just this key.
+		expect(repositories).toEqual({
+			apps_destination_repo: "https://github.com/alethialabs-io/enterprise-demo",
+			apps_path: "overlays/dev",
+		});
+	});
+
+	it("leaves the key ABSENT when the row is null — not null, not empty string", async () => {
+		const repositories = await repositoriesOf({
+			apps_destination_repo: "https://github.com/alethialabs-io/enterprise-demo",
+			apps_path: null,
+		});
+		expect("apps_path" in repositories).toBe(false);
+	});
+
+	it("leaves the key ABSENT for an empty string — '' is the unset form, not a value", async () => {
+		const repositories = await repositoriesOf({
+			apps_destination_repo: "https://github.com/alethialabs-io/enterprise-demo",
+			apps_path: "",
+		});
+		expect("apps_path" in repositories).toBe(false);
+	});
+
+	it("leaves the key ABSENT when there is no repositories row at all", async () => {
+		expect("apps_path" in (await repositoriesOf(null))).toBe(false);
 	});
 });

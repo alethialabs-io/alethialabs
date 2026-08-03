@@ -123,6 +123,49 @@ rc=$(printf '{"tool_name":"Bash","cwd":"%s","tool_input":{"command":"git add -A 
 	CLAUDE_PROJECT_DIR="$MAIN" CLAUDE_PID="$$" bash "$HOOK" >/dev/null 2>&1; echo $?)
 expect BLOCK "$([ "$rc" = 2 ] && echo BLOCK || echo ALLOW)" "git add -A + commit in the MAIN checkout"
 
+# R-MAIN in its own right. Drop the lease first: everything below is about the MAIN-checkout rule,
+# and a leased $WT would have R-LEASE answer first and hide what R-MAIN actually decides.
+rm -rf "$LD"
+
+echo "── R-MAIN covers rebase: rewriting the shared checkout moves dev under every session ──"
+expect BLOCK "$(run "$(bash_payload "git rebase origin/dev")")" "bare rebase in the MAIN checkout"
+expect BLOCK "$(run "$(bash_payload "git rebase -i HEAD~3")")" "interactive rebase in the MAIN checkout"
+expect BLOCK "$(run "$(bash_payload "git rebase --onto origin/dev abc123 feat/x")")" "rebase --onto in the MAIN checkout"
+expect BLOCK "$(run "$(bash_payload "cd $MAIN && git rebase origin/dev")")" "cd MAIN, then rebase"
+
+echo "── …but a rebase already in progress must always be finishable ──"
+# Blocking these strands a session mid-rebase with no way out — strictly worse than the thing the
+# rule prevents. They finish or unwind a rewrite; they never start one.
+expect ALLOW "$(run "$(bash_payload "git rebase --abort")")" "rebase --abort"
+expect ALLOW "$(run "$(bash_payload "git rebase --continue")")" "rebase --continue"
+expect ALLOW "$(run "$(bash_payload "git rebase --skip")")" "rebase --skip"
+expect ALLOW "$(run "$(bash_payload "git rebase --quit")")" "rebase --quit"
+# The carve-out is a STRIP, not an early exit, so it cannot be used to smuggle a real rebase past.
+expect BLOCK "$(run "$(bash_payload "git rebase --abort && git rebase origin/dev")")" "a control form does not launder a real rebase"
+
+echo "── git's GLOBAL options used to hide the subcommand entirely ──"
+# The trigger required `git` IMMEDIATELY followed by the subcommand, so every one of these ran
+# unguarded in the shared checkout — CLAUDE.md's non-negotiable #1 defeated by four characters.
+# It also left the `git -C …` branch of the target resolution unreachable, which is why the block
+# message could claim `git -C ../wt-<name> …` was "parsed and allowed" when it was merely unparsed.
+expect BLOCK "$(run "$(bash_payload "git -C $MAIN commit -m x")")" "git -C <MAIN> commit"
+expect BLOCK "$(run "$(bash_payload "git -C $MAIN add -A")")" "git -C <MAIN> add -A"
+expect BLOCK "$(run "$(bash_payload "git -C $MAIN rebase origin/dev")")" "git -C <MAIN> rebase"
+expect BLOCK "$(run "$(bash_payload "git --no-pager commit -m x")")" "git --no-pager commit"
+expect BLOCK "$(run "$(bash_payload "git -c user.name=x commit -m x")")" "git -c <cfg> commit"
+
+echo "── a worktree of my own is still the way to work ──"
+expect ALLOW "$(run "$(bash_payload "git -C $WT rebase origin/dev")")" "git -C <my worktree> rebase"
+expect ALLOW "$(run "$(bash_payload "cd $WT && git rebase origin/dev")")" "cd <my worktree>, then rebase"
+expect ALLOW "$(run "$(bash_payload "git -C $WT commit -m x")")" "git -C <my worktree> commit"
+expect ALLOW "$(run "$(bash_payload "git -C $WT add -A")")" "git -C <my worktree> add -A"
+
+echo "── no over-reach: the rule must not eat ordinary git ──"
+expect ALLOW "$(run "$(bash_payload "git status --short")")" "git status"
+expect ALLOW "$(run "$(bash_payload "git log --oneline -5")")" "git log"
+expect ALLOW "$(run "$(bash_payload "git config --get rebase.autosquash")")" "a config key that merely contains the word"
+expect ALLOW "$(run "$(bash_payload "echo we should rebase later")")" "the word rebase in prose"
+
 echo ""
 if [ "$fails" = 0 ]; then
 	echo "guard-worktree acceptance: all passed"

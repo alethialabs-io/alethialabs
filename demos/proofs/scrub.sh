@@ -26,13 +26,47 @@
 # denylist. Never printed; only ever matched.
 : "${SCRUB_LITERALS:=}"
 
+# scrub_literals_from_env exports SCRUB_LITERALS from every credential the run holds. Both
+# capture-proof.sh and scrub-runner-log.sh need the identical list — when they drifted, one
+# artifact was scrubbed and its sibling was not (#1854). One definition, two callers.
+#
+# The Alibaba trio is listed under BOTH names on purpose. One AssumeRoleWithOIDC exchange is
+# exported six times because the alicloud OpenTofu provider and the aliyun CLI disagree about the
+# variable names (ALICLOUD_* vs ALIBABA_CLOUD_*), and a literal list that covered only one spelling
+# would scrub the provider's copy while publishing the CLI's — the exact half-covered shape of
+# #1854. They are short-lived STS credentials, which limits the exposure but does not remove it.
+scrub_literals_from_env() {
+	local v literals=""
+	for v in "${HCLOUD_TOKEN:-}" "${E2E_GIT_TOKEN:-}" "${ALETHIA_E2E_GIT_TOKEN:-}" \
+		"${AWS_SECRET_ACCESS_KEY:-}" "${AWS_SESSION_TOKEN:-}" \
+		"${ALICLOUD_SECRET_KEY:-}" "${ALICLOUD_SECURITY_TOKEN:-}" "${ALICLOUD_ACCESS_KEY:-}" \
+		"${ALIBABA_CLOUD_ACCESS_KEY_SECRET:-}" "${ALIBABA_CLOUD_SECURITY_TOKEN:-}" \
+		"${ALIBABA_CLOUD_ACCESS_KEY_ID:-}"; do
+		[ -n "$v" ] && literals+="$v"$'\n'
+	done
+	SCRUB_LITERALS="$literals"
+	export SCRUB_LITERALS
+}
+
 # scrub_stream redacts, from stdin → stdout:
 #   1. any exact secret literal in $SCRUB_LITERALS (e.g. the raw HCLOUD_TOKEN value);
 #   2. the body of any PEM `... PRIVATE KEY ...` block (client keys, SSH keys);
 #   3. the VALUE of any `key: value` / `key = value` / `"key": value` line whose key
 #      contains a denylisted token (kubeconfig / talosconfig / *client[_-]key /
 #      *private[_-]key / *password / *_token / *secret_value / *access_key / *manifest …).
+#   4. the same denylisted keys appearing INSIDE a JSON object mid-line, in either of the
+#      two shapes OpenTofu emits: `"key":"value"` and `"key":{"value":"…"}`.
 # The key is kept (so the proof still shows WHICH field existed) — only the value dies.
+#
+# Rule (4) exists because rule (3) is LINE-ANCHORED (`^`), and a tofu `show -json` plan is one
+# enormous single line. #1854: `"hcloud_token":{"value":"<live token>"}` sat mid-line in the
+# runner log and rule (3) could not see it — only the exact-literal rule (1) caught it, and
+# rule (1) only covers the five credentials the caller happens to export. Any sensitive tfvar
+# NOT in SCRUB_LITERALS (hetzner_s3_secret_key, rds password, …) had no cover at all.
+#
+# Note `sensitive = true` on the variable does NOT help here: OpenTofu applies sensitivity to
+# `planned_values`/`resource_changes` via `sensitive_values`, but emits the top-level
+# `variables` map RAW. The scrub is the only control over that surface.
 scrub_stream() {
 	perl -CSDA -ne '
 		BEGIN {
@@ -48,6 +82,11 @@ scrub_stream() {
 		for my $l (@lits) { s/\Q$l\E/[REDACTED-SECRET]/g; }
 		# (3) denylisted key -> redact its value (double-quoted or bare key; : or = sep).
 		s/^(\s*["]?[\w.\-]*$den[\w.\-]*["]?\s*[:=]\s*).+$/$1\[REDACTED\]/;
+		# (4) JSON-embedded, mid-line. Wrapped form FIRST: `"key":{"value":"…"}` is what a tofu
+		#     plan JSON emits for a root variable, and the bare form would otherwise match its
+		#     inner `"value":"…"` only by luck of ordering.
+		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*\{\s*["]value["]\s*:\s*)"(?:[^"\\]|\\.)*"/$1"[REDACTED]"/g;
+		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*)"(?:[^"\\]|\\.)*"/$1"[REDACTED]"/g;
 		print;
 	'
 }
@@ -92,7 +131,24 @@ assert_grep_clean() {
 	hits="$(grep -rIhnE -- '(client[_-]?key|client-key-data|private[_-]?key|talosconfig|kubeconfig|kube_config|password|secret[_-]?value|secret[_-]?key|access[_-]?key|[_-]token)["]?[[:space:]]*[:=][[:space:]]*[^[:space:]]' "$dir" 2>/dev/null | grep -v 'REDACTED' | grep -vF '(sensitive value)' || true)"
 	if [ -n "$hits" ]; then
 		echo "::error::proof-scrub: a denylisted key still carries a plaintext value in the proof bundle ($dir):" >&2
-		printf '%s\n' "$hits" | head -5 >&2
+		# Print the line number and the KEY only. This used to print the whole matching line,
+		# which meant the tripwire pasted the surviving secret into the CI log — republishing
+		# the leak into the very place the scrub exists to keep clean. Found while testing the
+		# #1854 fail-closed path against a deliberately weakened scrub.
+		printf '%s\n' "$hits" | sed -E 's/([:=])[[:space:]]*[^[:space:]].*$/\1 [value withheld]/' | head -5 >&2
+		rc=1
+	fi
+	# 4) The same denylisted keys nested in JSON mid-line — the shape a tofu `show -json` plan
+	#    emits for a root variable. Check (3) matches at most one occurrence per line and reads
+	#    as `key<sep>value`; a plan JSON is ONE line carrying hundreds of pairs, so #1854's
+	#    `"hcloud_token":{"value":"…"}` slipped past it. Match the value being a non-empty
+	#    string that is not our own placeholder.
+	hits="$(grep -rIhoE -- '"[A-Za-z0-9_.-]*(client[_-]?key|private[_-]?key|talosconfig|kubeconfig|kube_config|password|secret[_-]?value|secret[_-]?key|access[_-]?key|token)[A-Za-z0-9_.-]*"[[:space:]]*:[[:space:]]*(\{[[:space:]]*"value"[[:space:]]*:[[:space:]]*)?"[^"]+"' "$dir" 2>/dev/null | grep -v 'REDACTED' || true)"
+	if [ -n "$hits" ]; then
+		echo "::error::proof-scrub: a denylisted key carries a plaintext value inside JSON ($dir):" >&2
+		# Print the KEY only — never the surviving value, or the tripwire republishes the leak
+		# into the workflow log it is meant to protect.
+		printf '%s\n' "$hits" | sed -E 's/"[[:space:]]*:.*$/"/' | sort -u | head -5 >&2
 		rc=1
 	fi
 	return "$rc"
@@ -111,6 +167,11 @@ _scrub_self_test() {
 	# scanner never mistakes them for live credentials while still exercising the scrub.
 	local fake_token="hcloud-FAKE-PLACEHOLDER-9f1c3b2a-DO-NOT-LEAK"
 	local fake_git="git-FAKE-PLACEHOLDER-9f1c3b2a-DO-NOT-LEAK"
+	# #1854's shape: a secret nested in a ONE-LINE tofu plan JSON. Deliberately NOT added to
+	# SCRUB_LITERALS below — a run only exports the credentials scrub_literals_from_env names, so
+	# any other sensitive tfvar has to be caught by the key rule alone. If this survives, the key
+	# rule is not covering the JSON shape and the literal rule is silently carrying the whole scrub.
+	local fake_planjson="planjson-FAKE-PLACEHOLDER-9f1c3b2a-DO-NOT-LEAK"
 	# The PEM marker is ASSEMBLED at runtime (never a literal in this source file) so the
 	# repo secret scanner doesn't flag the test fixture — the generated file below still
 	# carries the real `... PRIVATE KEY ...` marker the scrub must catch.
@@ -124,6 +185,7 @@ password: FAKE-PASSWORD-should-be-redacted-by-key
 -----BEGIN EC $pk-----
 FAKE-KEY-BODY-should-never-survive
 -----END EC $pk-----
+{"format_version":"1.2","variables":{"hcloud_token":{"value":"$fake_planjson"},"region":{"value":"KEEP-ME-PLANJSON-REGION"}},"hetzner_s3_secret_key":"$fake_planjson"}
 KEEP-ME-SENTINEL-non-secret-marker
 EOF
 
@@ -149,12 +211,58 @@ EOF
 		echo "SELF-TEST FAIL: scrub_stream ate a non-secret line (over-broad)" >&2
 		return 1
 	fi
+	# #1854: the JSON-nested secret must die on the KEY rule alone (it is not a literal), in
+	# both the wrapped `{"value":…}` and bare forms.
+	if grep -qF "$fake_planjson" "$scrubbed"; then
+		echo "SELF-TEST FAIL: a JSON-nested secret survived scrub_stream (the #1854 shape)" >&2
+		return 1
+	fi
+	# …and its non-secret siblings on that same line must survive, or the rule is eating the
+	# whole plan JSON instead of the one value.
+	if ! grep -qF "KEEP-ME-PLANJSON-REGION" "$scrubbed"; then
+		echo "SELF-TEST FAIL: the JSON rule ate a non-secret sibling value (over-broad)" >&2
+		return 1
+	fi
 	# The scrubbed bundle must pass the tripwire.
 	if ! assert_grep_clean "$work/out"; then
 		echo "SELF-TEST FAIL: assert_grep_clean flagged a correctly-scrubbed bundle" >&2
 		return 1
 	fi
-	echo "scrub self-test OK: seeded secrets redacted, sentinel kept, tripwire non-vacuous"
+
+	# ── The HARVEST, not just the redaction (#1875). ──
+	# Everything above builds SCRUB_LITERALS by hand, so it proves scrub_stream redacts what it is
+	# GIVEN and says nothing about whether the run's actual credentials get into that list. That is
+	# the #1854 gap exactly: the scrub worked, the list was short. So drive the real harvester and
+	# assert every credential a leg can hold comes out the other side.
+	local saved_literals="${SCRUB_LITERALS:-}" name missed=""
+	local -a cred_vars=(
+		HCLOUD_TOKEN E2E_GIT_TOKEN ALETHIA_E2E_GIT_TOKEN
+		AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+		# Six names, one AssumeRoleWithOIDC exchange: the alicloud OpenTofu provider and the aliyun
+		# CLI disagree about the spelling, and covering one spelling scrubs the provider's copy
+		# while publishing the CLI's.
+		ALICLOUD_ACCESS_KEY ALICLOUD_SECRET_KEY ALICLOUD_SECURITY_TOKEN
+		ALIBABA_CLOUD_ACCESS_KEY_ID ALIBABA_CLOUD_ACCESS_KEY_SECRET ALIBABA_CLOUD_SECURITY_TOKEN
+	)
+	for name in "${cred_vars[@]}"; do
+		export "$name=harvest-FAKE-PLACEHOLDER-${name}-DO-NOT-LEAK"
+	done
+	scrub_literals_from_env
+	for name in "${cred_vars[@]}"; do
+		grep -qF "harvest-FAKE-PLACEHOLDER-${name}-DO-NOT-LEAK" <<<"$SCRUB_LITERALS" || missed+=" $name"
+	done
+	for name in "${cred_vars[@]}"; do
+		unset "$name"
+	done
+	SCRUB_LITERALS="$saved_literals"
+	export SCRUB_LITERALS
+	if [ -n "$missed" ]; then
+		echo "SELF-TEST FAIL: scrub_literals_from_env does not harvest:${missed}" >&2
+		echo "  A credential the run HOLDS but the literal list never sees is the #1854 shape." >&2
+		return 1
+	fi
+
+	echo "scrub self-test OK: seeded secrets redacted, sentinel kept, tripwire non-vacuous, ${#cred_vars[@]} credentials harvested"
 	return 0
 }
 

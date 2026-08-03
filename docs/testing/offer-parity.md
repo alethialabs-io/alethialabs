@@ -13,8 +13,9 @@ single "All kinds (11)" column is the granularity that let Azure MySQL hide: the
 *variant* was not.
 
 Legend: 🟡 implemented, not yet proven on a real apply · ✅ real-apply proof in the e2e ledger ·
-🚫 offered but unbuildable (tracking issue in the cell) · — documented exclusion · · not offered on
-this cloud (the canvas floor already hides it)
+🚫 offered but unbuildable (tracking issue in the cell) · ⚠️ carried only as a branch guard — the
+wiring exists but the code does not show that it wires *this* feature (see the carrier grid) ·
+— documented exclusion · · not offered on this cloud (the canvas floor already hides it)
 
 **A cell never goes ✅ from this generator.** It only knows what the code says; only the main-gated
 nightly can promote a cell, and it does so in the e2e parity board.
@@ -55,6 +56,61 @@ canvas and the plan), or when the template gates it per engine and this engine h
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | `postgres` | — | 🟡 | 🟡 | 🟡 | — | — |
 | `mysql` | — | 🟡 | 🟡 | 🟡 | · | — |
+
+## Carrier coverage — does the switch reach the plan?
+
+Every row is a switch in the inspector on a kind with no engine choice, so it makes a promise
+per-cloud and nothing else. Two hops are checked, and a cell is 🚫 if either one is missing:
+
+1. **L4 · carrier** — something reachable from `(*<cloud>Provider).ProviderTfvars` reads the field
+   and turns it into a tfvars key. Traced through the call graph, not grepped per file: Azure's
+   secrets are built by `buildGCPSecrets` in gcp_provider.go (a grep would score that a gap), and
+   GCP's `buildFirestoreDatabases` is dead code (a grep would score that carriage).
+2. **L5 · template** — that key is declared in the template *and* a resource or module argument
+   reads it. A variable declared and read by nothing is a gap: GCP's `uniform_access` is filled in
+   on every apply and the bucket resource hardcodes the value it would have set.
+
+L4 also grades HOW the switch becomes a key, because the two ways are not equally good evidence. A
+key whose value is the switch (`"fifo_queue": *q.Ordered`) can only be about the switch. A key that
+is merely *written inside* an `if <switch>` branch with a value of its own
+(`if t.PointInTimeRecovery { entry["analytical_storage_enabled"] = true }`) shows the switch decides
+whether the key appears — not that the key is that feature. Those two lines look identical to a text
+reader and are not the same thing: Cosmos DB analytical storage is Synapse Link column storage,
+while point-in-time recovery is continuous backup. So a cell carried only that way is ⚠️, never 🟡,
+and is listed below with the key it writes so it can be confirmed — or rewritten to assign the
+switch's own value, which makes the wiring prove itself.
+
+This proves the WIRING is present. It does not prove the resource BEHAVES — that needs a real apply,
+which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not this generator's.
+
+| Offer | alibaba | aws | azure | gcp | hetzner | local |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| `bucket:encryption_enabled` | 🟡 | — | — | — | · | · |
+| `bucket:public_access` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
+| `bucket:versioning` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
+| `cache:multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · | · |
+| `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
+| `dns:managed_certificate` | — | 🟡 | 🟡 | 🟡 | — | · |
+| `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
+| `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
+| `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
+| `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · | · |
+| `queue:ordered` | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | · | · |
+| `registry:immutable_tags` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
+| `registry:vulnerability_scanning` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
+| `secret:generate` | 🟡 | ⚠️ | 🟡 | 🟡 | · | · |
+| `secret:special_chars` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
+
+### ⚠️ Carried only as a branch guard
+
+Each of these reaches the plan, and the plan does change with the switch. What the code does not show
+is that the key it writes *is* the feature the switch names — that is a question about the cloud's
+product, not about the wiring, so it is confirmed by a person once and by a real apply after that.
+
+| Offer | Cloud | Key the branch writes | Where |
+|---|---|---|---|
+| `cache:multi_az` | gcp | `memorystore_tier` | `ProviderTfvars` |
+| `secret:generate` | aws | `length`, `special`, `manual` | `buildSecrets` |
 
 ## Day-2 posture — would a hazard be caught?
 
@@ -100,6 +156,8 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 |---|---|---|
 | `database:postgres` | hetzner | Provisioned in-cluster by the CloudNativePG chart, not by OpenTofu — no tfvar carries the engine. |
 | `cache:valkey` | hetzner | Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine. |
+| `dns:managed_certificate` | hetzner | Hetzner sells no managed certificate and cert-manager ships no Hetzner DNS01 solver — nothing can issue one, in OpenTofu or in-cluster. |
+| `dns:waf_enabled` | hetzner | Hetzner sells no web application firewall — the product does not exist. |
 | `cache:valkey` | azure | Azure Cache/Managed Redis has no Valkey engine — the product does not exist. |
 | `cache:valkey` | alibaba | ApsaraDB KVStore offers Redis or Memcache only — no Valkey engine. |
 | `database:postgres` | local | A local kind cluster has no managed services — data services run in-cluster. |
@@ -111,6 +169,60 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `database:mysql:iam_auth` | local | A local kind cluster has no cloud identity plane — there is nothing to mint an IAM token against. |
 | `database:postgres:iam_auth` | alibaba | Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password. |
 | `database:mysql:iam_auth` | alibaba | Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password. |
+| `bucket:encryption_enabled` | aws | S3 encrypts every object at rest and the setting cannot be turned off — this switch is informational on AWS. |
+| `bucket:encryption_enabled` | gcp | Cloud Storage encrypts every object at rest and the setting cannot be turned off — this switch is informational on Google Cloud. |
+| `bucket:encryption_enabled` | azure | Azure Storage encrypts every blob at rest and the setting cannot be turned off — this switch is informational on Azure. |
+| `network:single_nat_gateway` | hetzner | Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone. |
+| `dns:managed_certificate` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate. |
+| `nosql:point_in_time_recovery` | alibaba | Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do. |
+
+## Reviewed branch-guard wirings
+
+A ⚠️ cell means the switch decides whether a key appears, but the code cannot show that the key *is*
+the feature the switch names. These are the ones a person has read and confirmed. They are not
+exclusions — the cloud does honor the offer — and not debt. Every other ⚠️ cell is on the baseline
+above with an issue; a ⚠️ cell in neither list fails the build.
+
+| Offer | Cloud | What was checked |
+|---|---|---|
+| `cache:multi_az` | gcp | Choosing multi-AZ puts the cache on Memorystore's replicated STANDARD_HA tier, which is how zone redundancy is bought on Google Cloud. |
+| `secret:generate` | aws | Asking Alethia to generate a secret sends the length and special-character rules to AWS; supplying your own sends it as a manual value instead. |
+
+## Known gaps on the baseline
+
+Not exclusions. Each is an offer a cloud genuinely cannot honor today, already boarded, with the
+issue that tracks it. They do not fail the build; a NEW gap does. The list **ratchets**: when a cell
+is measured and comes out honored the guard fails until its entry is deleted, so it can only shrink.
+
+The **state** column is what this run MEASURED, not what the entry records — the two can disagree,
+and when they do the run is the current fact. Three readings are worth knowing:
+
+- a state on its own — the gap reproduced exactly as boarded;
+- a state with *(boarded as …)* — the gap **changed shape**. It was not fixed. 🚫 → ⚠️ is a change in
+  the wrong direction: the switch still is not shown to do what it says, and now the code does not
+  even show that the key it writes is this feature. The guard reports it and keeps the entry;
+- *not measured this run* — the guard produced no cell here, so it has **nothing to say** about
+  whether the gap is still there. Not a fix. Usually the cloud stopped being offered the switch, or
+  the generated offer surface is stale.
+
+Only a cell that was measured and came out honored is asked for its entry back.
+
+| Offer | Cloud | State (measured) | Issue | What a user gets today |
+|---|---|---|---|---|
+| `registry:immutable_tags` | aws | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to ECR yet — repositories are created with the platform default instead of your choice. |
+| `registry:immutable_tags` | gcp | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:immutable_tags` | azure | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:immutable_tags` | alibaba | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Container Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:vulnerability_scanning` | aws | 🚫 `no-carrier` | #1811 | Image scanning is not sent to ECR yet — repositories are created with the platform default instead of your choice. |
+| `registry:vulnerability_scanning` | gcp | 🚫 `no-carrier` | #1811 | Image scanning is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:vulnerability_scanning` | azure | 🚫 `no-carrier` | #1811 | Image scanning is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:vulnerability_scanning` | alibaba | 🚫 `no-carrier` | #1811 | Image scanning is not sent to Container Registry yet — repositories are created with the platform default instead of your choice. |
+| `queue:ordered` | aws | 🚫 `unwired-template` | #1812 | FIFO delivery is not applied to SQS yet — the queue is created as a standard, unordered queue whichever way the switch is set. |
+| `queue:ordered` | azure | 🚫 `unwired-template` | #1812 | Session-ordered delivery is not applied to Service Bus yet — the queue is created without sessions whichever way the switch is set. |
+| `queue:ordered` | gcp | 🚫 `no-carrier` | #1812 | Ordered delivery is not applied to Pub/Sub yet — message ordering stays off whichever way the switch is set. |
+| `queue:ordered` | alibaba | 🚫 `no-carrier` | #1812 | Ordered delivery is not applied to MNS yet — the queue is created unordered whichever way the switch is set. |
+| `dns:enabled` | hetzner | 🚫 `no-carrier` | #1816 | DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing. |
+| `network:provision_network` | hetzner | 🚫 `no-carrier` | #1816 | A Hetzner project always creates its own network — attaching an existing one is not supported yet. |
 
 ---
 

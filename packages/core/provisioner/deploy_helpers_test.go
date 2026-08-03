@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
 )
 
@@ -23,9 +25,11 @@ func resetDeploySeams(t *testing.T) {
 	t.Helper()
 	origExecuteCommand := executeCommand
 	origExecuteCommandWithOutput := executeCommandWithOutput
+	origNamespacePostMortem := namespacePostMortem
 	t.Cleanup(func() {
 		executeCommand = origExecuteCommand
 		executeCommandWithOutput = origExecuteCommandWithOutput
+		namespacePostMortem = origNamespacePostMortem
 	})
 }
 
@@ -294,7 +298,9 @@ func TestInstallArgoCDBuildsIngressCommandOnlyWhenCertificateExists(t *testing.T
 	for _, want := range []string{
 		"helm upgrade --install argo-cd",
 		"--set redisSecretInit.enabled=false",
-		"--wait --timeout 5m",
+		// Derived from the resolver, not a literal, so the assertion cannot drift from the source
+		// when the default budget is retuned. The env-override case is covered separately below.
+		"--wait --timeout " + utils.ShellQuote(argocd.ResolvedArgoInstallTimeout()),
 		"server.ingress.enabled=true",
 		"server.ingress.hostname=argocd.example.com",
 		"arn:aws:acm:region:acct:certificate/123",
@@ -314,6 +320,81 @@ func TestInstallArgoCDBuildsIngressCommandOnlyWhenCertificateExists(t *testing.T
 	}
 	if strings.Contains(commands[len(commands)-1], "server.ingress.enabled=true") {
 		t.Fatalf("install command enabled ingress without certificate:\n%s", commands[len(commands)-1])
+	}
+}
+
+// TestInstallArgoCDHonoursTimeoutOverride pins that the env knob actually reaches the helm command.
+// The assertion above derives its expectation from the same resolver, so it would pass even if the
+// timeout were never interpolated — this is the case that proves the wiring.
+func TestInstallArgoCDHonoursTimeoutOverride(t *testing.T) {
+	resetDeploySeams(t)
+	t.Setenv(argocd.ArgoInstallTimeoutEnv, "23m")
+
+	executeCommandWithOutput = func(string, string, []string) (string, error) {
+		return "existing-auth", nil
+	}
+	var commands []string
+	executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+		commands = append(commands, command)
+		return nil
+	}
+
+	err := installArgoCD(context.Background(), &types.ProjectConfig{}, nil, &PlanResult{}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("installArgoCD: %v", err)
+	}
+	install := commands[len(commands)-1]
+	if !strings.Contains(install, "--wait --timeout '23m'") {
+		t.Fatalf("install command did not carry the overridden timeout:\n%s", install)
+	}
+}
+
+// TestInstallArgoCDDumpsPostMortemOnHelmFailure pins the #1734 contract: when the helm install
+// fails, the namespace's state is dumped to STDOUT before the error propagates — and the install
+// still FAILS CLOSED (#1718). Three nights of the aws nightly died here with nothing to act on
+// because helm's "context deadline exceeded" names neither the pod nor the reason.
+func TestInstallArgoCDDumpsPostMortemOnHelmFailure(t *testing.T) {
+	resetDeploySeams(t)
+
+	executeCommandWithOutput = func(string, string, []string) (string, error) {
+		return "existing-auth", nil
+	}
+	executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+		if strings.Contains(command, "helm upgrade --install argo-cd") {
+			return errors.New("exit status 1")
+		}
+		return nil
+	}
+	var dumped []string
+	namespacePostMortem = func(ns string) string {
+		dumped = append(dumped, ns)
+		return "POST-MORTEM BODY"
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := installArgoCD(context.Background(), &types.ProjectConfig{}, nil, &PlanResult{}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("installArgoCD returned nil — the install must still FAIL CLOSED (#1718)")
+	}
+	if len(dumped) != 1 || dumped[0] != "argocd" {
+		t.Fatalf("post-mortem calls = %#v, want exactly one for the argocd namespace", dumped)
+	}
+	if !strings.Contains(stdout.String(), "POST-MORTEM BODY") {
+		t.Fatalf("post-mortem did not reach stdout:\n%s", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "POST-MORTEM BODY") {
+		t.Fatal("post-mortem went to stderr; it must be on stdout so the runner log and console job log both carry it")
+	}
+
+	// The success path must not dump: a post-mortem on a healthy install is noise that trains
+	// readers to ignore it.
+	dumped = nil
+	executeCommand = func(string, string, []string, io.Writer, io.Writer) error { return nil }
+	if err := installArgoCD(context.Background(), &types.ProjectConfig{}, nil, &PlanResult{}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("installArgoCD on the success path: %v", err)
+	}
+	if len(dumped) != 0 {
+		t.Fatalf("post-mortem ran on the success path: %#v", dumped)
 	}
 }
 
@@ -367,4 +448,311 @@ func TestGitopsFailureRedactsAllTokens(t *testing.T) {
 	if !strings.Contains(gs.Error, "[REDACTED]") {
 		t.Errorf("want [REDACTED] marker, got %q", gs.Error)
 	}
+}
+
+// TestInstallArgoCDAttachesWAFWebACLOnlyWhenPresent is the proof that the canvas WAF switch
+// reaches something. The template has always BUILT a regional web ACL and associated it with
+// nothing; the ALB ingress annotation is the attach. Two directions matter and they fail
+// differently:
+//
+//   - the ARN present must reach `alb.ingress.kubernetes.io/wafv2-acl-arn` on the helm command
+//     (otherwise the project pays for an ACL that inspects zero requests, silently);
+//   - the ARN ABSENT must emit NO annotation key at all — an empty wafv2-acl-arn value is not
+//     "no WAF", it is a malformed association the ALB controller refuses, which wedges the
+//     whole ingress reconcile and takes ArgoCD's URL down with it.
+func TestInstallArgoCDAttachesWAFWebACLOnlyWhenPresent(t *testing.T) {
+	const wafArn = "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/app-waf/0c4e-1"
+	const certArn = "arn:aws:acm:us-east-1:123456789012:certificate/123"
+
+	installCommandFor := func(t *testing.T, outputs map[string]interface{}) string {
+		t.Helper()
+		resetDeploySeams(t)
+		executeCommandWithOutput = func(string, string, []string) (string, error) { return "existing-auth", nil }
+		var commands []string
+		executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+			commands = append(commands, command)
+			return nil
+		}
+		vc := &types.ProjectConfig{DNS: types.ProjectDNSConfig{Enabled: true, DomainName: "example.com"}}
+		if err := installArgoCD(context.Background(), vc, outputs, &PlanResult{}, io.Discard, io.Discard); err != nil {
+			t.Fatalf("installArgoCD: %v", err)
+		}
+		if len(commands) == 0 {
+			t.Fatal("no commands executed")
+		}
+		return commands[len(commands)-1]
+	}
+
+	t.Run("web ACL present is annotated onto the ingress", func(t *testing.T) {
+		install := installCommandFor(t, map[string]interface{}{
+			"acm_certificate_arn": certArn,
+			"waf_webacl_arn":      wafArn,
+		})
+		for _, want := range []string{`alb\.ingress\.kubernetes\.io/wafv2-acl-arn=` + wafArn, "server.ingress.enabled=true"} {
+			if !strings.Contains(install, want) {
+				t.Fatalf("install command missing %q:\n%s", want, install)
+			}
+		}
+	})
+
+	t.Run("waf off emits no annotation key at all", func(t *testing.T) {
+		install := installCommandFor(t, map[string]interface{}{"acm_certificate_arn": certArn})
+		if strings.Contains(install, "wafv2-acl-arn") {
+			t.Fatalf("install command carries a wafv2-acl-arn annotation with no web ACL:\n%s", install)
+		}
+		// The rest of the ingress must be untouched — this path is the common case.
+		if !strings.Contains(install, "server.ingress.enabled=true") {
+			t.Fatalf("install command lost the ingress:\n%s", install)
+		}
+	})
+
+	// A null output (the shape tofu emits when application_waf_enabled is false) must behave
+	// exactly like an absent one — ExtractOutput yields "", and "" must mean "no annotation".
+	t.Run("a null waf output is not an empty annotation", func(t *testing.T) {
+		install := installCommandFor(t, map[string]interface{}{
+			"acm_certificate_arn": certArn,
+			"waf_webacl_arn":      nil,
+		})
+		if strings.Contains(install, "wafv2-acl-arn") {
+			t.Fatalf("a null waf_webacl_arn produced an annotation:\n%s", install)
+		}
+	})
+
+	// No certificate ⇒ no ingress at all ⇒ nothing to annotate, even with a web ACL built.
+	t.Run("no ingress means no annotation even with a web ACL", func(t *testing.T) {
+		install := installCommandFor(t, map[string]interface{}{"waf_webacl_arn": wafArn})
+		if strings.Contains(install, "wafv2-acl-arn") || strings.Contains(install, "server.ingress.enabled=true") {
+			t.Fatalf("annotated an ingress that was never configured:\n%s", install)
+		}
+	})
+}
+
+// TestArgocdURLAndWAFDecisionsMatchWhatInstallArgoCDEmits is the anti-drift assertion between
+// the two halves of the same claim: installArgoCD DECIDES what to emit, and
+// argocd.InfraServiceDecisions REPORTS what was emitted, from separate packages that had no
+// test forcing them to agree.
+//
+// They disagreed. installArgoCD renders the ingress inside `if vc.DNS.Enabled &&
+// vc.DNS.DomainName != ""` and only then when the ACM certificate output is present;
+// argocdURLGates["aws"] checked the certificate ALONE. A project with DNS off, a domain, a zone
+// id and the certificate switch on therefore got a real certificate ARN, NO ingress, and a
+// console reporting "installed — ArgoCD is exposed over the ALB ingress" plus a WAF "attached"
+// via an annotation that was never emitted. Reachable in practice: acm_certificate_enable comes
+// from DNS.ManagedCertificate, which is independent of DNS.Enabled and settable straight through
+// provider_config.
+//
+// Asserting equivalence over the whole matrix rather than spot-checking the one broken cell is
+// the point — it is what makes the next ingress lane unable to reintroduce the same gap.
+func TestArgocdURLAndWAFDecisionsMatchWhatInstallArgoCDEmits(t *testing.T) {
+	const wafArn = "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/app-waf/0c4e-1"
+	const certArn = "arn:aws:acm:us-east-1:123456789012:certificate/123"
+
+	decisionStatus := func(t *testing.T, f *argocd.InfraFacts, service string) string {
+		t.Helper()
+		for _, d := range argocd.InfraServiceDecisions(f) {
+			if d.Service == service {
+				return d.Status
+			}
+		}
+		t.Fatalf("no %q decision was produced", service)
+		return ""
+	}
+
+	for _, dnsEnabled := range []bool{true, false} {
+		for _, domain := range []string{"example.com", ""} {
+			for _, cert := range []string{certArn, ""} {
+				for _, acl := range []string{wafArn, ""} {
+					name := fmt.Sprintf("dns=%t domain=%q cert=%t acl=%t", dnsEnabled, domain, cert != "", acl != "")
+					t.Run(name, func(t *testing.T) {
+						resetDeploySeams(t)
+						executeCommandWithOutput = func(string, string, []string) (string, error) { return "existing-auth", nil }
+						var commands []string
+						executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+							commands = append(commands, command)
+							return nil
+						}
+						vc := &types.ProjectConfig{DNS: types.ProjectDNSConfig{Enabled: dnsEnabled, DomainName: domain}}
+						outputs := map[string]interface{}{}
+						if cert != "" {
+							outputs["acm_certificate_arn"] = cert
+						}
+						if acl != "" {
+							outputs["waf_webacl_arn"] = acl
+						}
+						if err := installArgoCD(context.Background(), vc, outputs, &PlanResult{}, io.Discard, io.Discard); err != nil {
+							t.Fatalf("installArgoCD: %v", err)
+						}
+						if len(commands) == 0 {
+							t.Fatal("no commands executed")
+						}
+						install := commands[len(commands)-1]
+
+						// The facts the runner would build from the same deploy.
+						f := &argocd.InfraFacts{
+							Provider: "aws", DNSEnabled: dnsEnabled, DomainName: domain,
+							ACMCertificateArn: cert, WAFWebACLArn: acl,
+						}
+
+						emittedIngress := strings.Contains(install, "server.ingress.enabled=true")
+						reportedURL := decisionStatus(t, f, "argocd-url") == "installed"
+						if emittedIngress != reportedURL {
+							t.Errorf("argocd-url decision (%t) disagrees with the emitted ingress (%t)\n%s",
+								reportedURL, emittedIngress, install)
+						}
+
+						emittedWAF := strings.Contains(install, "wafv2-acl-arn")
+						reportedWAF := decisionStatus(t, f, "waf") == "installed"
+						if emittedWAF != reportedWAF {
+							t.Errorf("waf decision (%t) disagrees with the emitted annotation (%t)\n%s",
+								reportedWAF, emittedWAF, install)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+// TestInstallArgoCDGKEIngress is the GCP half of "the canvas switch reaches something".
+//
+// GKE needs no ingress CONTROLLER — Google's runs in the managed control plane — so unlike AWS
+// there is no Application to assert. What must be proven instead is that the two references the
+// template now exports actually leave the runner: the Google-managed certificate onto a `gce`
+// Ingress, and the Cloud Armor policy onto a BackendConfig bound to the ArgoCD server Service.
+//
+// The values reach helm as a FILE rather than `--set` flags, because the backend-config
+// annotation's value is the JSON document {"default":"argocd-server"} and helm's --set parser
+// reads a leading `{` as a list literal. The file is read back here, inside the fake executor,
+// while it still exists — asserting the flag alone would prove only that a path was interpolated.
+func TestInstallArgoCDGKEIngress(t *testing.T) {
+	const cert = "alethia-nl-production-platform-cert"
+	const policy = "alethia-nl-production-armor-policy"
+
+	// run drives installArgoCD with the given outputs and returns every command it issued plus the
+	// contents of the values file the last helm command referenced (empty when it referenced none).
+	run := func(t *testing.T, outputs map[string]interface{}) (cmds []string, values string, url string) {
+		t.Helper()
+		resetDeploySeams(t)
+		executeCommandWithOutput = func(string, string, []string) (string, error) { return "existing-auth", nil }
+		executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+			cmds = append(cmds, command)
+			// Read any -f'd values file NOW: installArgoCD removes its temp dir on return.
+			if i := strings.Index(command, "helm upgrade --install argo-cd"); i == 0 {
+				if j := strings.Index(command, " -f "); j >= 0 {
+					path := strings.Trim(strings.TrimSpace(command[j+4:]), "'\"")
+					b, err := os.ReadFile(path)
+					if err != nil {
+						t.Errorf("values file %s unreadable at helm time: %v", path, err)
+					}
+					values = string(b)
+				}
+			}
+			return nil
+		}
+		result := &PlanResult{}
+		vc := &types.ProjectConfig{
+			Provider: "gcp",
+			DNS:      types.ProjectDNSConfig{Enabled: true, DomainName: "example.com"},
+		}
+		if err := installArgoCD(context.Background(), vc, outputs, result, io.Discard, io.Discard); err != nil {
+			t.Fatalf("installArgoCD: %v", err)
+		}
+		return cmds, values, result.ArgocdURL
+	}
+
+	t.Run("certificate + policy: gce ingress, BackendConfig applied before helm", func(t *testing.T) {
+		cmds, values, url := run(t, map[string]interface{}{
+			"cloud_dns_managed_certificate_name": cert,
+			"cloud_armor_policy_name":            policy,
+		})
+		if url != "https://argocd.example.com" {
+			t.Errorf("ArgocdURL = %q", url)
+		}
+		for _, want := range []string{
+			"ingressClassName: gce",
+			"hostname: argocd.example.com",
+			`ingress.gcp.kubernetes.io/pre-shared-cert: "` + cert + `"`,
+			`cloud.google.com/backend-config: '{"default":"` + argocd.GKEBackendConfigName + `"}'`,
+		} {
+			if !strings.Contains(values, want) {
+				t.Errorf("helm values missing %q:\n%s", want, values)
+			}
+		}
+		// ORDER is the point, not merely presence: the BackendConfig must exist before the chart
+		// creates the Service that names it, or the load balancer is programmed once with no
+		// security policy on it — the exact window this lane closes.
+		applyIdx, helmIdx := -1, -1
+		for i, c := range cmds {
+			if strings.HasPrefix(c, "kubectl apply -f") && strings.Contains(c, "backendconfig.yaml") {
+				applyIdx = i
+			}
+			if strings.HasPrefix(c, "helm upgrade --install argo-cd") {
+				helmIdx = i
+			}
+		}
+		if applyIdx < 0 {
+			t.Fatalf("no BackendConfig apply issued:\n%v", cmds)
+		}
+		if helmIdx < 0 || applyIdx > helmIdx {
+			t.Errorf("BackendConfig applied at %d, helm install at %d — it must come first", applyIdx, helmIdx)
+		}
+	})
+
+	t.Run("WAF off: ingress intact, no BackendConfig anywhere", func(t *testing.T) {
+		cmds, values, url := run(t, map[string]interface{}{
+			"cloud_dns_managed_certificate_name": cert,
+			// null is the shape tofu emits when cloud_armor_enabled is false; it must behave
+			// exactly like an absent key.
+			"cloud_armor_policy_name": nil,
+		})
+		if url != "https://argocd.example.com" {
+			t.Errorf("the ingress must still be configured with the WAF off, ArgocdURL = %q", url)
+		}
+		if !strings.Contains(values, "ingressClassName: gce") {
+			t.Errorf("lost the ingress when the WAF switch was off:\n%s", values)
+		}
+		if strings.Contains(values, "backend-config") {
+			t.Errorf("values name a BackendConfig with no Cloud Armor policy — GKE would stall on it:\n%s", values)
+		}
+		for _, c := range cmds {
+			if strings.Contains(c, "backendconfig.yaml") {
+				t.Errorf("applied a BackendConfig with no policy: %s", c)
+			}
+		}
+	})
+
+	t.Run("no certificate: no ingress, no URL, no BackendConfig", func(t *testing.T) {
+		// A Cloud Armor policy with no certificate must NOT produce a half-configured ingress:
+		// without TLS the ArgoCD API would be served over plain HTTP, so the whole block is off.
+		cmds, values, url := run(t, map[string]interface{}{"cloud_armor_policy_name": policy})
+		if url != "" {
+			t.Errorf("ArgocdURL = %q, want empty with no certificate", url)
+		}
+		if values != "" {
+			t.Errorf("rendered ingress values with no certificate:\n%s", values)
+		}
+		for _, c := range cmds {
+			if strings.Contains(c, "backendconfig.yaml") {
+				t.Errorf("applied a BackendConfig for an ingress that was never certificated: %s", c)
+			}
+			if strings.HasPrefix(c, "helm upgrade --install argo-cd") && strings.Contains(c, " -f ") {
+				t.Errorf("passed ingress values with no certificate: %s", c)
+			}
+		}
+	})
+
+	// The AWS path must be completely unaffected by the new branch: its outputs are disjoint from
+	// GCP's, and a deploy carrying an ACM certificate must still get the ALB `--set` chain.
+	t.Run("aws is untouched by the gcp branch", func(t *testing.T) {
+		cmds, values, _ := run(t, map[string]interface{}{
+			"acm_certificate_arn": "arn:aws:acm:us-east-1:111111111111:certificate/abc",
+		})
+		if values != "" {
+			t.Errorf("aws must not use a values file:\n%s", values)
+		}
+		install := cmds[len(cmds)-1]
+		if !strings.Contains(install, "server.ingress.ingressClassName=alb") {
+			t.Errorf("aws lost its ALB ingress:\n%s", install)
+		}
+	})
 }

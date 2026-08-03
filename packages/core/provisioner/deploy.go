@@ -25,6 +25,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/infracost"
 	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
+	"github.com/alethialabs-io/alethialabs/packages/core/selfimage"
 	"github.com/alethialabs-io/alethialabs/packages/core/telemetry"
 	"github.com/alethialabs-io/alethialabs/packages/core/tofu"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -39,6 +40,9 @@ import (
 var (
 	executeCommand           = utils.ExecuteCommand
 	executeCommandWithOutput = utils.ExecuteCommandWithOutput
+	// namespacePostMortem dumps a namespace's pods + events when a helm --wait expires. A seam so
+	// the failure-path test can assert the dump without shelling kubectl (mirrors k8s/probe.go).
+	namespacePostMortem = k8s.NamespacePostMortem
 )
 
 type DeployParams struct {
@@ -1017,6 +1021,15 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			fmt.Fprintf(stderr, "Warning: external-secrets ClusterSecretStore not applied yet "+
 				"(will reconcile once the operator webhook is ready): %v\n", esErr)
 		}
+		// The cert-manager ACME DNS01 ClusterIssuer, on the same terms and for the same #1208
+		// reason as the store above: it is a CR whose CRD + webhook the cert-manager Application
+		// installs asynchronously, so it is applied on its own with a bounded retry. No-op unless
+		// cert-manager actually renders for this deploy. NON-fatal: the issuer is idempotent and
+		// reconciles on the next deploy, so a slow webhook must not fail a healthy cluster.
+		if cmErr := argocd.EnsureCertManagerIssuer(facts, stdout, stderr); cmErr != nil {
+			fmt.Fprintf(stderr, "Warning: cert-manager ClusterIssuer not applied yet "+
+				"(will reconcile once the controller webhook is ready): %v\n", cmErr)
+		}
 		// Post-apply Karpenter node class (AWS + enable_karpenter only). Karpenter launches EC2
 		// via its OWN AWS API calls, so the OpenTofu provider default_tags never reach them — the
 		// EC2NodeClass spec.tags (from the karpenter_node_tags output) is the ONLY lever that
@@ -1058,6 +1071,31 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// exactly what explains a half-wired app.
 		result.KeylessBindings = keylessBindings
 
+		// A keyless binding that failed closed on a LIVE cell fails the deploy (#1790).
+		//
+		// Fail-closed at render time was always right — the alternative is silently handing the
+		// workload a password the operator asked us not to use. What was wrong is what happened
+		// next: the refusal became a warning on a job reporting success, so "keyless binding
+		// omitted" and "deploy succeeded" were the same event, and the app came up with no database
+		// environment at all. That is how the missing ALETHIA_RUNNER_IMAGE (#1787) stayed invisible
+		// long enough to hold up two programs.
+		//
+		// The severity turns on the CELL, not on the refusal. An excluded or pending cell is a
+		// product boundary doing its job — the canvas disables the toggle there and the server gate
+		// at projects.ts already throws — so it stays a warning. A LIVE cell is one we claim to
+		// support: a refusal there is always a defect on our side, and is exactly the case nobody
+		// was being told about.
+		//
+		// Runs after the apply, so the infrastructure exists and stays. What the failure reports is
+		// the truth — the app wiring did not complete. Deliberately not overridable: unlike
+		// COMPAT-001 there is nothing here for an operator to weigh. A live cell that cannot wire is
+		// our bug to fix, not their risk to accept.
+		if failed := liveCellKeylessFailures(keylessBindings); len(failed) > 0 {
+			return nil, fmt.Errorf(
+				"keyless database binding failed closed on %d supported cell(s), leaving the workload with no database credentials: %s",
+				len(failed), strings.Join(failed, "; "))
+		}
+
 		setStage("addons")
 		// Seed the ArgoCD repository credentials for any connected private Helm/OCI chart repos
 		// (helm_registry connectors) BEFORE the add-on / BYO Applications sync — ArgoCD matches these
@@ -1090,7 +1128,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		var desiredHelmRepoRefreshers []string
 		if os.Getenv("ALETHIA_XACCT_HELM_ECR_ENABLED") == "true" {
 			irsa, _ := result.Outputs["helm_repo_pull_irsa_arn"].(string)
-			res := renderKeylessHelmRefreshers(vc, irsa, os.Getenv("ALETHIA_RUNNER_IMAGE"))
+			res := renderKeylessHelmRefreshers(vc, irsa, selfimage.Ref())
 			if res.SkippedTargets != nil {
 				fmt.Fprintf(stderr, "Warning: some keyless Helm ECR targets were skipped: %v\n", res.SkippedTargets)
 			}
@@ -1342,12 +1380,32 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		return fmt.Errorf("failed to pre-seed the argocd-redis secret: %w", err)
 	}
 
-	installCmd := fmt.Sprintf("helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version %s --set redisSecretInit.enabled=false --wait --timeout 5m", utils.ShellQuote(argocd.ResolvedArgoChartVersion()))
+	installCmd := fmt.Sprintf(
+		"helm upgrade --install argo-cd argo/argo-cd --namespace argocd --create-namespace --version %s"+
+			" --set redisSecretInit.enabled=false --wait --timeout %s",
+		utils.ShellQuote(argocd.ResolvedArgoChartVersion()),
+		utils.ShellQuote(argocd.ResolvedArgoInstallTimeout()))
+
+	// Scratch space for a per-cloud values FILE (GKE's, below). Created unconditionally so the
+	// cleanup is one deferred call rather than one per branch; empty and free when unused.
+	valuesDir, err := os.MkdirTemp("", "alethia-argocd-values-*")
+	if err != nil {
+		return fmt.Errorf("failed to create the ArgoCD values dir: %w", err)
+	}
+	defer os.RemoveAll(valuesDir)
 
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
 		argoHost := fmt.Sprintf("argocd.%s", vc.DNS.DomainName)
+		// Each cloud's ingress is gated on ITS OWN certificate output, and the two keys below are
+		// mutually exclusive by construction — only the aws template exports `acm_certificate_arn`,
+		// only the gcp template exports `cloud_dns_managed_certificate_name`. Keying on the output
+		// rather than on vc.Provider is deliberate: this function runs BEFORE BuildFromOutputs, the
+		// certificate is the gate either way, and a provider string that failed to reach here would
+		// silently drop the AWS ingress that has worked for a year.
 		certArn := argocd.ExtractOutput(outputs, "acm_certificate_arn")
-		if certArn != "" {
+		gkeCert := argocd.ExtractOutput(outputs, "cloud_dns_managed_certificate_name")
+		switch {
+		case certArn != "":
 			installCmd += fmt.Sprintf(
 				" --set configs.params.server\\.insecure=true"+
 					" --set server.ingress.enabled=true"+
@@ -1362,15 +1420,86 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 					// above, so only the host key changes across the 7.x→8.x bump (#1165).
 					" --set 'server.ingress.hostname=%s'",
 				certArn, argoHost)
+			// Attach the project's regional web ACL to the ALB this ingress provisions. The
+			// template has always BUILT one behind the canvas WAF switch and associated it with
+			// nothing; the annotation is what makes the switch mean something. Read straight from
+			// the outputs like certArn above — installArgoCD runs BEFORE BuildFromOutputs, so
+			// there are no InfraFacts to read here yet.
+			//
+			// Emitted ONLY when non-empty: the ALB controller treats a present-but-empty
+			// wafv2-acl-arn as a malformed association and fails the ingress reconcile, so an
+			// empty annotation is strictly worse than none. IAM is already in place —
+			// modules/eks/irsa.tf grants the controller wafv2:AssociateWebACL + Get*.
+			if wafArn := argocd.ExtractOutput(outputs, "waf_webacl_arn"); wafArn != "" {
+				installCmd += fmt.Sprintf(
+					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/wafv2-acl-arn=%s'", wafArn)
+				fmt.Fprintf(stdout, "Attaching WAF web ACL to the ArgoCD Ingress: %s\n", wafArn)
+			}
 			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s\n", argoHost)
 			// The URL is only real when the ingress above is actually configured (AWS
 			// ALB+ACM today). Setting it from DomainName alone reported a URL that
 			// resolves nowhere on every other cloud.
 			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
+
+		case gkeCert != "":
+			// GKE. There is no controller to install — the Ingress controller lives in the
+			// Google-managed control plane and modules/gke leaves HTTP(S) Load Balancing enabled —
+			// so the whole platform ingress is these values plus, when the WAF switch is on, one
+			// BackendConfig. Nothing new is baked into the runner image.
+			//
+			// Cloud Armor binds to a GCLB BACKEND SERVICE, which is why this is the `gce` class and
+			// not ingress-nginx: nginx's L4 pass-through load balancer cannot carry a security
+			// policy at all, so an nginx ingress here would have made the WAF switch permanently
+			// unattachable.
+			armorPolicy := argocd.ExtractOutput(outputs, "cloud_armor_policy_name")
+			backendConfig := ""
+			if armorPolicy != "" {
+				// Applied BEFORE the helm install, deliberately: the Service the chart creates is
+				// then annotated from birth, so the load balancer is never programmed without the
+				// policy on it. Annotating afterwards would leave exactly the window this lane
+				// exists to close.
+				manifest, mErr := argocd.GKEBackendConfigManifest("argocd", armorPolicy)
+				if mErr != nil {
+					return fmt.Errorf("failed to render the Cloud Armor BackendConfig: %w", mErr)
+				}
+				path := filepath.Join(valuesDir, "backendconfig.yaml")
+				if wErr := os.WriteFile(path, []byte(manifest), 0o600); wErr != nil {
+					return fmt.Errorf("failed to write the Cloud Armor BackendConfig: %w", wErr)
+				}
+				// FATAL on failure, like every other step of the ingress. The project asked for a
+				// WAF; shipping a public ArgoCD ingress with the policy silently unattached is the
+				// precise dishonesty this lane removes, and it is worse than not deploying.
+				if aErr := executeCommand("kubectl apply -f "+path, ".", nil, stdout, stderr); aErr != nil {
+					return fmt.Errorf("failed to apply the Cloud Armor BackendConfig (policy %s): %w", armorPolicy, aErr)
+				}
+				backendConfig = argocd.GKEBackendConfigName
+				fmt.Fprintf(stdout, "Attaching Cloud Armor policy to the ArgoCD Ingress backend service: %s\n", armorPolicy)
+			}
+			values, vErr := argocd.GKEArgoServerValues(argoHost, gkeCert, backendConfig)
+			if vErr != nil {
+				return fmt.Errorf("failed to render the GKE ArgoCD ingress values: %w", vErr)
+			}
+			// A values FILE, not `--set` flags. The backend-config annotation's value is the JSON
+			// document {"default":"argocd-server"}, and helm's --set parser reads a value that
+			// starts with `{` and ends with `}` as a list literal — it cannot express this at all.
+			valuesPath := filepath.Join(valuesDir, "argocd-gke-ingress.yaml")
+			if wErr := os.WriteFile(valuesPath, []byte(values), 0o600); wErr != nil {
+				return fmt.Errorf("failed to write the GKE ArgoCD ingress values: %w", wErr)
+			}
+			installCmd += " -f " + utils.ShellQuote(valuesPath)
+			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s (GKE `gce` class, certificate %s)\n", argoHost, gkeCert)
+			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 		}
 	}
 
 	if err := executeCommand(installCmd, ".", nil, stdout, stderr); err != nil {
+		// helm's own "context deadline exceeded" names nothing: not which pod stalled, not why.
+		// Three nights of the aws nightly died here and produced no actionable evidence (#1734),
+		// and the guaranteed teardown destroys the cluster moments from now. Dump the namespace to
+		// STDOUT — so it reaches the runner log artifact, the shipped console job log AND the e2e
+		// failure output — before returning. Fail-closed is unchanged (#1718): the error still
+		// propagates and still fails the job.
+		fmt.Fprint(stdout, namespacePostMortem("argocd"))
 		return fmt.Errorf("failed to install ArgoCD: %w", err)
 	}
 

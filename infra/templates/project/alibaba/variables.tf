@@ -31,6 +31,14 @@ variable "environment" {
   description = "Environment in which the infrastructure is deployed (e.g. dev, staging, production)"
 }
 
+# DOCUMENTED EXCLUSION from the fail-closed account-id guard that aws_account_id (aws),
+# project_id (gcp) and subscription_id (azure) now carry. Those three are interpolated into
+# account-scoped ARNs/resource ids, so an empty value produces a confusing mid-apply failure and
+# has to be rejected at plan time. This one is INFORMATIONAL — it is not interpolated into any
+# resource, it is declared optional with an empty default, and an empty value changes nothing.
+# Adding a validation here would break every existing caller to guard a value nothing reads.
+# hetzner is excluded for a different reason: it is account-less at the tofu layer entirely.
+# If this ever starts feeding a real resource id, it needs the guard.
 variable "alibaba_account" {
   type        = string
   default     = ""
@@ -262,7 +270,20 @@ variable "create_oss" {
 variable "oss_buckets" {
   type        = list(any)
   default     = []
-  description = "List of OSS buckets to create"
+  description = "List of OSS buckets to create. Entry shape is declared by modules/oss's typed `buckets` variable."
+
+  # FAIL CLOSED at plan time. PutBucketEncryption documents exactly AES256 and KMS and answers
+  # anything else with InvalidEncryptionAlgorithmError — but the Terraform provider's own ValidateFunc
+  # also accepts "SM4", so a provider-valid SM4 (reachable through provider_config passthrough) would
+  # plan clean and fail at apply. Refusing it here turns an apply-time 400 into a plan-time error.
+  #
+  # This lives on the root rather than on modules/oss's typed variable so that `tofu test` can prove
+  # it: expect_failures only addresses root-module checkables, and an unprovable guard is how a
+  # non-guard ships. `try` because this variable is list(any) and the key is optional.
+  validation {
+    condition     = alltrue([for b in var.oss_buckets : contains(["None", "AES256", "KMS"], try(b.sse_algorithm, "None"))])
+    error_message = "sse_algorithm must be one of None, AES256 or KMS. OSS PutBucketEncryption rejects every other value, including the SM4 the Terraform provider will let through."
+  }
 }
 
 #########################################################################

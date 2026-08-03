@@ -250,6 +250,21 @@ func assertRepoCredentialSecret(ctx context.Context, kubeconfigPath, name string
 // so without this check A0.6 could green on "credentialed clone + converge" WITHOUT proving GitOps
 // actually deployed a workload. The count is the honest "it really did something" signal.
 func assertArgoAppManagesResources(ctx context.Context, kubeconfigPath, name string) error {
+	n, err := argoAppResourceCount(ctx, kubeconfigPath, name)
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("Application %q is Healthy+Synced but manages ZERO resources — the repo/chart rendered nothing, so the proof is vacuous (seed the apps repo with a manifest, and point the BYO chart at a non-empty chart)", name)
+	}
+	return nil
+}
+
+// argoAppResourceCount reads how many manifests an Application actually manages. Split out from the
+// >0 assertion above so a caller that must RECORD the count in a machine-readable verdict reads it
+// from the same place the floor is enforced, instead of keeping a second near-identical kubectl
+// reader in step with it.
+func argoAppResourceCount(ctx context.Context, kubeconfigPath, name string) (int, error) {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
@@ -258,9 +273,9 @@ func assertArgoAppManagesResources(ctx context.Context, kubeconfigPath, name str
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return fmt.Errorf("read Application %q for resource count: %w: %s", name, err, strings.TrimSpace(string(ee.Stderr)))
+			return 0, fmt.Errorf("read Application %q for resource count: %w: %s", name, err, strings.TrimSpace(string(ee.Stderr)))
 		}
-		return fmt.Errorf("read Application %q for resource count: %w", name, err)
+		return 0, fmt.Errorf("read Application %q for resource count: %w", name, err)
 	}
 	var app struct {
 		Status struct {
@@ -271,12 +286,9 @@ func assertArgoAppManagesResources(ctx context.Context, kubeconfigPath, name str
 		} `json:"status"`
 	}
 	if e := json.Unmarshal(out, &app); e != nil {
-		return fmt.Errorf("parse Application %q status: %w", name, e)
+		return 0, fmt.Errorf("parse Application %q status: %w", name, e)
 	}
-	if len(app.Status.Resources) == 0 {
-		return fmt.Errorf("Application %q is Healthy+Synced but manages ZERO resources — the repo/chart rendered nothing, so the proof is vacuous (seed the apps repo with a manifest, and point the BYO chart at a non-empty chart)", name)
-	}
-	return nil
+	return len(app.Status.Resources), nil
 }
 
 // triggerArgoSync issues a sync operation on an Application over its CR (never the ArgoCD URL),

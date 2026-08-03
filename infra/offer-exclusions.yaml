@@ -14,10 +14,54 @@
 # to do it, and the matrix shows it to anyone reading.
 #
 # Fields:
-#   offer   — "<kind>:<variant>", matching the canvas's own vocabulary (e.g. database:mysql)
+#   offer   — the cell being decided, in the canvas's own vocabulary. THREE shapes, one per grid the
+#             matrix draws, and an entry whose shape does not match its grid matches nothing and
+#             silently does nothing:
+#
+#               <kind>:<variant>            an engine choice          database:mysql
+#                                           ("<kind> engines" grids)  cache:valkey
+#
+#               <kind>:<option>             a switch on a kind with   bucket:versioning
+#                                           NO engine axis            network:single_nat_gateway
+#                                           ("Carrier coverage")      registry:immutable_tags
+#
+#               <kind>:<variant>:<option>   a switch whose answer     database:postgres:iam_auth
+#                                           differs PER ENGINE        database:mysql:iam_auth
+#                                           ("Option-level offers")
+#
+#             Which shape a given switch takes is not a choice made here: the guard adjudicates an
+#             option per engine only when it is in `ADJUDICATED` (apps/console/scripts/
+#             check-offer-parity.mjs), and every other option is measured once per cloud. Copy the
+#             key from the matrix cell you are answering and it will always be right.
 #   cloud   — the template directory name, or "*" for every cloud
-#   reason  — one line, in the product's voice; it is printed verbatim in the matrix
-#   issue   — optional, when the exclusion is tracked or was decided in a thread
+#   reason  — one line, in the product's voice; printed verbatim in the matrix — under "Documented
+#             exclusions" for an `exclusions:` entry, under "Known gaps on the baseline" for a
+#             `baseline:` one, and under "Reviewed branch-guard wirings" for a `wired:` one. All are
+#             read by people deciding whether to pick that cloud, so write it as what a USER gets,
+#             not as what the code does.
+#
+# THREE sections, and the difference between them is the decision each one records:
+#   exclusions: — this cloud will never honor the offer. A product decision.
+#   baseline:   — it should honor it and does not yet. Real debt, carries an `issue:` and a `state:`.
+#   wired:      — it DOES honor it, through a branch guard the code cannot self-evidence, and a person
+#                 has read that branch and confirmed it (#1829/#1830). Neither a limit nor debt.
+#   issue   — the tracking issue. Required in `baseline:` (an entry with no issue is an amnesty
+#             nothing will ever come back to collect); optional in `exclusions:`, where it records
+#             the thread the decision was made in.
+#   state   — `baseline:` ONLY, and required there: the state the guard finds the cell in, verbatim
+#             from its own report — `no-carrier`, `missing-branch`, `unwired-template` or
+#             `gated-carrier`. Copy the value the guard prints; it names it in the failure.
+#
+#             This is what lets the ratchet tell "the gap was FIXED, delete this entry" from "the gap
+#             CHANGED SHAPE, update this entry". Without it the two are the same observation — the
+#             cell no longer reproduces the state we remember — and the guard has to guess. It once
+#             guessed "fixed" for a cell that had drifted from `unwired-template` to `gated-carrier`,
+#             i.e. from a proven gap to a gap wired on WEAKER evidence, and told a reviewer to delete
+#             the board record of something still shipping.
+#
+#             `gated-carrier` (⚠️) is a legitimate value here. It does not fail the build — the guard
+#             cannot decide whether the key a branch writes IS the feature the switch names — but it
+#             is not honoring either, so a cell in that state can be boarded like any other.
 
 exclusions:
   # ── Hetzner — compute-only by architecture ──────────────────────────────────────────
@@ -31,6 +75,33 @@ exclusions:
   - offer: cache:valkey
     cloud: hetzner
     reason: Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine.
+
+  # ── Hetzner TLS and WAF — the same architectural ceiling, settled by #1810 ───────────
+  # These were baselined while #1810 read as "the switch is dropped in the console". Wiring the
+  # carrier settled it: on Hetzner there is nothing on the other side of the wire. Hetzner sells no
+  # managed certificate and no WAF product, and `infra/templates/project/hetzner` declares no DNS
+  # variable of any kind — the whole cloud's TLS story is in-cluster, exactly like its Postgres.
+  #
+  # CORRECTED by the cert-manager platform lane. This entry used to read "managed_certificate is
+  # still HONORED on Hetzner: cert-manager issues the certificate inside the cluster" — which was
+  # never true. cert-manager was installed NOWHERE in this repo, and after the catalog copy was
+  # fixed this exclusion was the last place still asserting it.
+  #
+  # Making cert-manager a platform add-on did not rescue Hetzner either: cert-manager ships no
+  # Hetzner Cloud DNS DNS01 solver in the box (it needs a third-party webhook — the same upstream
+  # gap external-dns fills with its webhook sidecar), and HTTP01 is not an alternative because
+  # Hetzner has no ingress controller. So nothing issues a certificate on Hetzner, by OpenTofu or
+  # in-cluster, and the reason now says that instead.
+  #
+  # It stays an EXCLUSION rather than moving to the baseline because it is not scheduled work: a
+  # cloud that sells no managed certificate plus a solver upstream does not ship is the same "the
+  # product does not exist" shape as the WAF entry below, not debt with a fix pending.
+  - offer: dns:managed_certificate
+    cloud: hetzner
+    reason: Hetzner sells no managed certificate and cert-manager ships no Hetzner DNS01 solver — nothing can issue one, in OpenTofu or in-cluster.
+  - offer: dns:waf_enabled
+    cloud: hetzner
+    reason: Hetzner sells no web application firewall — the product does not exist.
 
   # ── Valkey on the clouds that have no Valkey product ────────────────────────────────
   # Checked against the pinned providers, not assumed: azurerm exposes `azurerm_managed_redis`
@@ -105,17 +176,278 @@ exclusions:
     cloud: alibaba
     reason: Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password.
 
+  # ── Object storage that cannot be UN-encrypted ──────────────────────────────────────
+  # The switch offers both positions and these three clouds only have one. S3 has applied SSE-S3 to
+  # every new object since January 2023 with no way to turn it off; Cloud Storage encrypts every
+  # object server-side and exposes no disable; Azure Storage Service Encryption is permanent on every
+  # account. So the OFF position is the unbuildable one, and it is unbuildable because the platform
+  # refuses it — a ceiling, not unfinished wiring.
+  #
+  # The honest alternative is to stop offering the switch on these clouds (a canvas change, not a
+  # template one). Recorded here rather than assumed, so the matrix says out loud that the toggle
+  # does nothing on three of the four clouds that show it.
+  - offer: bucket:encryption_enabled
+    cloud: aws
+    reason: S3 encrypts every object at rest and the setting cannot be turned off — this switch is informational on AWS.
+  - offer: bucket:encryption_enabled
+    cloud: gcp
+    reason: Cloud Storage encrypts every object at rest and the setting cannot be turned off — this switch is informational on Google Cloud.
+  - offer: bucket:encryption_enabled
+    cloud: azure
+    reason: Azure Storage encrypts every blob at rest and the setting cannot be turned off — this switch is informational on Azure.
+
+  # ── NAT gateways Hetzner does not sell ──────────────────────────────────────────────
+  # `single_nat_gateway` chooses between one shared NAT gateway and one per availability zone. Hetzner
+  # Cloud has neither: private networks route through a server you run yourself, and the hcloud
+  # provider exposes no managed NAT gateway resource to count one of or several of. Same architectural
+  # ceiling as the data-service entries above.
+  - offer: network:single_nat_gateway
+    cloud: hetzner
+    reason: Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone.
+
+  # ── Alibaba managed TLS certificate — settled by #1824 ──────────────────────────────
+  # This was BASELINE on the reading that the build was merely unfinished — the entry said it "needs
+  # a CAS free-DV request plus the AliDNS validation record". That request resource does not exist.
+  # Checked against the PINNED provider, aliyun/alicloud 1.286.0 (the version
+  # infra/templates/project/alibaba/.terraform.lock.hcl resolves), by reading its own schema: every
+  # resource whose name mentions `cert`, `ssl` or `cas`, plus a sweep of all 1169 resource schemas
+  # for a validation or challenge attribute.
+  #
+  #   · `alicloud_ssl_certificates_service_certificate` and its legacy alias `alicloud_cas_certificate`
+  #     are the SAME schema, and it is UPLOAD-only — cert, key, encrypt_cert, encrypt_private_key,
+  #     sign_cert, sign_private_key, i.e. PEM material you already hold. No domain argument, no
+  #     validation method, no issuance status. There is nothing here to request.
+  #   · `alicloud_ssl_certificates_service_pca_cert` and `_pca_certificate` issue from a PRIVATE CA
+  #     you operate (`parent_identifier`, `common_name`, `years`). A private root is not publicly
+  #     trusted, so it is not a certificate a browser will accept for the domain.
+  #   · `alicloud_esa_certificate` requires a `site_id` — an Edge Security Acceleration site, a
+  #     separate CDN product this template does not provision and which has no tie to AliDNS.
+  #   · `alicloud_waf_certificate` requires a WAF `instance_id` and takes certificate + private_key:
+  #     it ATTACHES material you already have.
+  #   · `alicloud_alidns_record` DOES exist, so the validation-record half is expressible — but no
+  #     certificate resource in the provider emits a challenge to put in it. Nothing in the provider
+  #     exposes a validation or challenge attribute at all, which is exactly what the AWS template
+  #     consumes as `aws_acm_certificate.domain_validation_options`. Without one, the shape the other
+  #     clouds use cannot be written here.
+  #
+  # The ceiling is the PROVIDER's declarative surface, not our backlog. Alibaba Cloud does sell free
+  # DV certificates through SSL Certificates Service, but only the console and OpenAPI can order one,
+  # so there is no resource for the template to declare — the same shape as the Hetzner NAT gateway
+  # entry above, a capability the cloud has that its Terraform provider does not expose. That makes
+  # it a ceiling rather than debt. Revisit if aliyun ships a certificate-request resource.
+  #
+  # NOTE the honest consequence, because an exclusion must not read as an excuse: this switch issues
+  # NOTHING on Alibaba, while the canvas still advertises it as "Managed TLS certificate from Alibaba
+  # Cloud SSL Certificates Service" (catalog.json `live.certOptions`). The remaining honest
+  # alternative is to stop offering the switch here, a canvas change rather than a template one,
+  # tracked separately.
+  #
+  # ⚠ The `reason:` below was CORRECTED at merge time and the correction is the point of this note.
+  # It used to end "— install the cert-manager add-on to have the cluster issue and renew TLS
+  # instead", and it was written when cert-manager was a marketplace add-on and Hetzner's entry (two
+  # blocks up) still claimed cert-manager issued there. Both halves of that sentence are now false:
+  # the cert-manager platform lane REMOVED it from `ADDON_CATALOG` (it is installed by the deploy,
+  # not by a user ticking a box), and it ships NO Alibaba Cloud DNS DNS01 solver in the box — the
+  # same upstream gap that keeps Hetzner out, and the reason that entry was corrected in the same
+  # lane. So the old sentence told a user to install something they cannot install, to do a thing it
+  # could not do. A `reason:` prints VERBATIM into the public matrix, which is why a stale one here
+  # ships a false claim about a cloud we support rather than merely reading oddly.
+  - offer: dns:managed_certificate
+    cloud: alibaba
+    reason: Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate.
+    issue: #1824
+
+  # ── Point-in-time recovery on Alibaba Tablestore — not a property of the table ───────
+  # Boarded under #1815 while it read as a missing carrier. It is not: there is nothing on the other
+  # side of the wire to carry it TO. `alicloud_ots_table` exposes instance_name, table_name,
+  # primary_key, defined_column, time_to_live, max_version, allow_update,
+  # deviation_cell_version_in_sec and the four SSE arguments — no backup or recovery argument of any
+  # kind — and the Tablestore API has none either.
+  #
+  # Get the claim right, because "the product does not exist" is falsifiable here and would make the
+  # matrix wrong: Tablestore CAN be restored. It is restored through Cloud Backup (HBR), a separate
+  # service with its own vault, its own billing and its own IAM, driven by a SCHEDULED plan
+  # (`alicloud_hbr_ots_backup_plan`, schedule `I|{startTime}|{interval}`, full with optional
+  # incremental). Its restore points are backup runs, not a continuous log — the console's restore
+  # range is bounded by the plan's schedule, which is not what "point in time" promises. Alethia will
+  # not map a per-table toggle onto a separately-billed backup service, so the honest statement is
+  # that the capability is not expressible as a property of the table.
+  #
+  # Re-derived against the post-#1833 guard: the carrier probe still measures this cell `no-carrier`,
+  # i.e. it reproduces in the SAME shape it was boarded in. Nothing here is a ratchet "fixed —
+  # delete it". The entry leaves `baseline:` because the ceiling claim above reclassifies it, and
+  # because the guard refuses to let one cell be both excluded and boarded as debt.
+  - offer: nosql:point_in_time_recovery
+    cloud: alibaba
+    reason: Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do.
+
 # ── Baseline — real gaps, already boarded ───────────────────────────────────────────────
 #
 # NOT exclusions. These are offers a cloud genuinely cannot honor today and that we intend to fix;
 # each carries the issue tracking it. They do not fail the build, so the guard could land on a
-# codebase that already had the debt — but a NEW gap does fail, and the list RATCHETS: when a gap
-# stops reproducing, the guard fails until its entry is deleted. It can only shrink.
+# codebase that already had the debt — but a NEW gap does fail, and the list RATCHETS: when a cell is
+# MEASURED and comes out honored, the guard fails until its entry is deleted. It can only shrink.
+#
+# "Measured" is doing work in that sentence. An entry whose cell the guard no longer produces at all
+# — the cloud dropped off `offeredOn`, the key was renamed, the kind lost its tofu evidence — is not
+# fixed and is never asked for back; the guard reports it as "did NOT measure" and says what to check.
+# Emptiness is not evidence: it is the absence of it.
 #
 # Delete the entry in the same PR that fixes the gap.
 
 baseline:
-  # Empty, and that is the ratchet working. The two Alibaba `iam_auth` entries that lived here were
-  # settled by #1510 and moved up into `exclusions:` with the evidence — the guard failed until they
-  # were deleted, which is exactly what it is for.
+  # Everything below arrived in one pass, from the CARRIER check the guard gained when it learned to
+  # measure `<kind>:<option>` cells and to walk variables.tf → resource argument. None of it is new
+  # breakage; all of it was already shipping, and none of it was visible before, because a kind with
+  # no engine axis could not be named by the old offer key.
+  #
+  # The shapes, so the list reads as something other than a wall:
+  #   · a switch no provider carries          (registry)
+  #   · a switch carried and then not read    (queue:ordered)
+  #   · a kind the cloud's template omits     (hetzner dns, hetzner network)
+  #
+  # The DNS block that stood here is gone. #1810 wired both canvas DNS switches through the snapshot,
+  # ProjectDNSConfig and all four providers, which cleared nine of its ten cells; the last one —
+  # Alibaba's managed certificate — moved UP into `exclusions:` when #1824 established that the
+  # pinned alicloud provider cannot express the request at all. It was never a build we had not got
+  # to; it was a build the provider has no resource for.
 
+  # ── Container registry: both switches reach no cloud ────────────────────────────────
+  # Neither `ImmutableTags` nor `VulnerabilityScanning` is read by ANY provider, so the value a user
+  # picks is discarded on all four clouds that show the switch. Two templates are already waiting for
+  # it — AWS declares `ecr_repository_image_tag_mutability` and `ecr_repository_image_scan_on_push`
+  # and reads both, and GCP declares `immutable_tags` on `artifact_registry_repos` and reads it — so
+  # on those two clouds the repository silently keeps the template default instead of the choice.
+  - offer: registry:immutable_tags
+    cloud: aws
+    reason: Tag immutability is not sent to ECR yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+    state: no-carrier
+  - offer: registry:immutable_tags
+    cloud: gcp
+    reason: Tag immutability is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+    state: no-carrier
+  - offer: registry:immutable_tags
+    cloud: azure
+    reason: Tag immutability is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+    state: no-carrier
+  - offer: registry:immutable_tags
+    cloud: alibaba
+    reason: Tag immutability is not sent to Container Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+    state: no-carrier
+  - offer: registry:vulnerability_scanning
+    cloud: aws
+    reason: Image scanning is not sent to ECR yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+    state: no-carrier
+  - offer: registry:vulnerability_scanning
+    cloud: gcp
+    reason: Image scanning is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+    state: no-carrier
+  - offer: registry:vulnerability_scanning
+    cloud: azure
+    reason: Image scanning is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+    state: no-carrier
+  - offer: registry:vulnerability_scanning
+    cloud: alibaba
+    reason: Image scanning is not sent to Container Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+    state: no-carrier
+
+  # ── Queues: ordered delivery lands nowhere ──────────────────────────────────────────
+  # AWS and Azure carry the switch all the way into tfvars — `fifo_queue` on `sqs_queues`,
+  # `requires_session` on `service_bus_queues` — and then no resource argument reads either name. GCP
+  # and Alibaba never carry it at all. Four clouds, one user-visible outcome: the queue is unordered.
+  - offer: queue:ordered
+    cloud: aws
+    reason: FIFO delivery is not applied to SQS yet — the queue is created as a standard, unordered queue whichever way the switch is set.
+    issue: #1812
+    state: unwired-template
+  - offer: queue:ordered
+    cloud: azure
+    reason: Session-ordered delivery is not applied to Service Bus yet — the queue is created without sessions whichever way the switch is set.
+    issue: #1812
+    state: unwired-template
+  - offer: queue:ordered
+    cloud: gcp
+    reason: Ordered delivery is not applied to Pub/Sub yet — message ordering stays off whichever way the switch is set.
+    issue: #1812
+    state: no-carrier
+  - offer: queue:ordered
+    cloud: alibaba
+    reason: Ordered delivery is not applied to MNS yet — the queue is created unordered whichever way the switch is set.
+    issue: #1812
+    state: no-carrier
+
+  # ── Bucket encryption on Alibaba — a gap, and an unresolved question ────────────────
+  # Nothing carries the switch — the wiring verdict the other bucket cells had before #1813 retired
+  # them — but NOT the same decision, because the outcome is not the same. AWS/GCP/Azure encrypt
+  # unconditionally, so an inert switch is cosmetic. Whether Alibaba OSS applies a default
+  # server-side encryption method to a new bucket is not established from anything in this repo — and
+  # if it does not, a user who leaves this (default-on) switch alone gets unencrypted objects. That
+  # difference is why this is boarded rather than excluded: the answer decides whether it is cosmetic
+  # or a security defect.
+
+  # ── NoSQL point-in-time recovery ────────────────────────────────────────────────────
+  # Both #1815 cells are gone from this list, for two DIFFERENT reasons — do not read them as one
+  # fix. GCP: the post-#1833 carrier probe measures the cell HONORED and fails the build until this
+  # entry is deleted (`firestore_point_in_time_recovery` is assigned FROM the field, so it grades
+  # `derived`, not `gated-carrier`). Alibaba: the probe still measures it `no-carrier` — it was NOT
+  # fixed — and it moves to `exclusions:` above as a product ceiling, not as a ratchet deletion.
+  #
+  # Still boarded on this offer's row, and NOT this lane's to claim: azure grades `gated-carrier`
+  # under the new guard, because buildCosmosDBCollections writes `analytical_storage_enabled`
+  # (Synapse Link column storage) inside an `if PointInTimeRecovery` branch. The old guard scored
+  # that as honored. It is named in the matrix as ⚠️ and is not counted as carried.
+
+  # ── Hetzner: two kinds the canvas offers and the template does not build ────────────
+  # Unlike the Hetzner entries in `exclusions:` above, neither of these is a platform ceiling.
+  # Hetzner sells DNS and its provider exposes networks; the template simply has no DNS resources at
+  # all, and always creates its own network rather than attaching one you name.
+  - offer: dns:enabled
+    cloud: hetzner
+    reason: DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing.
+    issue: #1816
+    state: no-carrier
+  - offer: network:provision_network
+    cloud: hetzner
+    reason: A Hetzner project always creates its own network — attaching an existing one is not supported yet.
+    issue: #1816
+    state: no-carrier
+
+  # ── nosql: a switch that turned on a DIFFERENT billable feature ─────────────────────
+  # Azure used to carry `point_in_time_recovery` into `analytical_storage_enabled` — Synapse Link
+  # analytical storage, a separate and separately-billed feature — while the Cosmos account was
+  # declared with no `backup {}` block at all. Asking for recoverability bought a bill and no
+  # recoverability. FIXED in #1838: the provider emits `point_in_time_recovery` and the account is
+  # planned with `backup { type = "Continuous" }` on the free Continuous7Days tier.
+
+# Branch-guard wirings a person has READ and found correct.
+#
+# A ⚠️ `gated-carrier` cell means the switch decides whether a key appears, but the code never shows
+# that the key IS the feature the switch names — a question about semantics that a text-reading guard
+# cannot answer (#1829/#1830). Every ⚠️ cell must therefore be declared: `baseline:` above when the
+# wiring is wrong or unreviewed, or here when someone has read the branch and it does what it says.
+#
+# An entry here is NOT an exclusion (the cloud does honor the offer) and NOT debt (there is nothing to
+# fix). It is a review record, and it is ratcheted like the baseline: when the cell stops reading ⚠️,
+# the entry stops answering anything and the guard asks for it back.
+#
+# Fields: offer / cloud as above, plus `reason` — what you checked, in the product's voice.
+wired:
+  # STANDARD_HA is Memorystore's replicated, zone-redundant tier. GCP exposes no separate multi-AZ
+  # flag on Memorystore — the tier IS the mechanism — so this is the correct wiring for the switch.
+  # (It is also set when NumCacheNodes > 1, which is a superset, not a substitution.)
+  - offer: cache:multi_az
+    cloud: gcp
+    reason: Choosing multi-AZ puts the cache on Memorystore's replicated STANDARD_HA tier, which is how zone redundancy is bought on Google Cloud.
+  # `length` + `special` are the generation parameters; the `else` writes `manual = true`. That is
+  # precisely the generate-vs-bring-your-own choice the switch offers.
+  - offer: secret:generate
+    cloud: aws
+    reason: Asking Alethia to generate a secret sends the length and special-character rules to AWS; supplying your own sends it as a manual value instead.

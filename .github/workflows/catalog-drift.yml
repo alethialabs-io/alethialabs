@@ -9,10 +9,19 @@
 #
 # UNLIKE compat-drift, this scout has NO creds-free source: every managed-DB version API is
 # credential-gated, so with no cloud creds wired every cloud SKIPS and the run is green and silent.
-# That is deliberate — a skip is reported as a skip, never as "clean". Wire read-only creds (e.g. the
-# same AWS OIDC role the e2e workflows assume) to make it actually validate. Monthly rather than
-# weekly: major-version lifecycles move on a scale of months, and a scout that cries nothing weekly
-# just trains people to ignore it.
+# That is deliberate — a skip is reported as a skip, never as "clean". Monthly rather than weekly:
+# major-version lifecycles move on a scale of months, and a scout that cries nothing weekly just
+# trains people to ignore it.
+#
+# AWS creds ARE now wired (below) — this file asked for exactly that and went unheeded until the
+# retirement it was built to catch actually landed: AWS withdrew Aurora PostgreSQL 16.6, and every
+# full-bar aws nightly died at the cluster. The scout was running monthly and green the whole time,
+# because a skip it could not distinguish from a pass is what "no creds" produces.
+#
+# gcp / azure / alibaba STILL skip: no repo credentials exist for them (E2E_GCP_WIF_PROVIDER and
+# E2E_AZURE_CLIENT_ID are unset — the same reason their e2e nightly legs are no-ops), and alibaba is
+# excluded by the deriver outright (it needs a signed DescribeAvailableResource call, not wired in
+# v1). Those clouds report as SKIPPED, never as clean. Wiring them is the follow-up.
 
 name: Catalog DB-version drift → issues
 
@@ -26,9 +35,14 @@ on:
   schedule:
     - cron: "41 6 3 * *" # 3rd of the month, 06:41 UTC (off-minute; version lifecycles move slowly)
 
+# `id-token: write` mints the GitHub OIDC token exchanged for the read-only AWS role. SAFE under BYOC
+# program invariant #1: this workflow triggers ONLY on `schedule` / `workflow_dispatch` — never
+# `pull_request` / `pull_request_target` — so no fork or PR can reach the token. Enforced by
+# scripts/check-workflow-oidc-isolation.mjs.
 permissions:
   issues: write
   contents: read
+  id-token: write
 
 concurrency:
   group: catalog-drift
@@ -38,7 +52,7 @@ jobs:
   scout:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -49,6 +63,26 @@ jobs:
       # The scout is dependency-free Node; install only so `pnpm -F console` resolves the script.
       - name: Install console deps
         run: pnpm install --frozen-lockfile --filter console
+      # The SAME role the e2e workflows assume (vars.E2E_AWS_ROLE_ARN). The deriver only ever calls
+      # rds:DescribeDBEngineVersions — a read.
+      #
+      # BOTH conditions are load-bearing:
+      #   • the var check keeps the run green-and-skipping if the variable is ever unset, preserving
+      #     the deriver's "a skip is reported as a skip" contract instead of failing on missing config;
+      #   • the ref check exists because alethia-e2e-nightly's trust policy pins
+      #     `token.actions.githubusercontent.com:sub` to `repo:…:ref:refs/heads/main`. The scheduled
+      #     run always resolves from the default branch, so it matches — but a `workflow_dispatch`
+      #     from any other ref would FAIL the assume outright and red a scout that is supposed to
+      #     degrade to a skip. Without this, "dispatch it from your branch to test" is a broken door.
+      #
+      # Consequence worth knowing: because the schedule resolves from the default branch, this wiring
+      # does nothing until the change reaches `main` via dev → staging → main.
+      - name: Configure AWS credentials (OIDC)
+        if: vars.E2E_AWS_ROLE_ARN != '' && github.ref == 'refs/heads/main'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.E2E_AWS_ROLE_ARN }}
+          aws-region: us-east-1
       - name: Derive catalog versions + file drift issue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

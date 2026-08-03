@@ -19,14 +19,14 @@ import (
 // enough to give the ArgoCD health assertion teeth but is nowhere near the maintainer's
 // FULLY-TESTED bar: "every single add-on we have available" must install and converge.
 //
-// AllCatalogAddOns loads all 19, from the GENERATED fixture `fixtures/addon_catalog.json` — which
+// AllCatalogAddOns loads all 18, from the GENERATED fixture `fixtures/addon_catalog.json` — which
 // is produced from apps/console/lib/addons/catalog.ts (the SSOT) via the real `resolveAddOnInstall`
 // (`pnpm -F console export:addon-catalog`), and kept honest by catalog-export.test.ts, which reds CI
 // if the fixture drifts from the catalog. Re-typing the chart coordinates here in Go would have gone
 // stale the first time someone bumped a chart — and the drift would only have surfaced as a red
 // nightly against a real cloud.
 //
-// Opt-in via ALETHIA_E2E_ALL_ADDONS=1: the full surface pulls ~19 charts (several heavy —
+// Opt-in via ALETHIA_E2E_ALL_ADDONS=1: the full surface pulls ~18 charts (several heavy —
 // kube-prometheus-stack, harbor, minio, vault, loki, tempo, velero) and needs a node sized for them,
 // so the default lean tier stays fast and cheap. The nightly real-apply run turns it on.
 
@@ -75,9 +75,13 @@ func AllCatalogAddOns() ([]types.AddOnInstall, error) {
 	return addons, nil
 }
 
-// expectedCatalogSize mirrors the console's B0.3 SSOT count guard (ADDON_CATALOG.length === 19).
+// expectedCatalogSize mirrors the console's B0.3 SSOT count guard (ADDON_CATALOG.length === 18).
 // A fixture with fewer entries means the export is stale or partial — fail rather than under-test.
-const expectedCatalogSize = 19
+//
+// 19 → 18 when cert-manager moved to the PLATFORM rail (infra/templates/argocd/cert-manager.yaml).
+// It is no longer a marketplace chart this run installs; it ships from the deploy itself, and its
+// ArgoCD Application is asserted through the infra-service decision instead (infraServiceArgoApps).
+const expectedCatalogSize = 18
 
 // SeedAddOnsForSurface returns the add-ons a provisioning tier should seed: the full catalog when
 // ALETHIA_E2E_ALL_ADDONS=1, else the lean single seed (fast default).

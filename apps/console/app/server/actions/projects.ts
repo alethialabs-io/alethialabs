@@ -1205,6 +1205,12 @@ async function buildConfigSnapshot(
 				provider: dns?.provider ?? "",
 				zone_id: dns?.zone_id,
 				domain_name: dns?.domain_name,
+				// The canvas's two DNS switches (#1810). Emitted ONLY when on, like
+				// network.subnet_ids above: the runner reads them `omitempty`, so an absent
+				// key means off and the byte-locked snapshot fixtures stay green. Leaving
+				// them out of this hand-enumeration is what dropped them on every cloud.
+				...(dns?.managed_certificate ? { managed_certificate: true } : {}),
+				...(dns?.waf_enabled ? { waf_enabled: true } : {}),
 				provider_config: dns?.provider_config ?? {},
 			},
 			observability: {
@@ -1215,6 +1221,11 @@ async function buildConfigSnapshot(
 			},
 			repositories: {
 				apps_destination_repo: repos?.apps_destination_repo,
+				// Per-tier Kustomize overlay (#1767) — emit ONLY when set, so the key is
+				// absent (not null/"") when unset. The runner reads `apps_path,omitempty`
+				// and renders `path: '.'` for an absent key, which is byte-identical to
+				// every deploy made before this field existed.
+				...(repos?.apps_path ? { apps_path: repos.apps_path } : {}),
 			},
 			// Scanned source repos + detected services — the runner generates app
 			// manifests from these into an empty GitOps repo at deploy time.
@@ -2023,6 +2034,9 @@ export async function getProjectAsFormData(
 			? {
 					apps_destination_repo:
 						source.components.repositories.apps_destination_repo ?? undefined,
+					// An explicit copy is required, else the overlay path is silently
+					// dropped and the clone quietly syncs the repo root instead.
+					apps_path: source.components.repositories.apps_path ?? undefined,
 				}
 			: {},
 		source_repos: source.components.source_repos.map((r) => ({

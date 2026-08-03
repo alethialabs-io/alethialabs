@@ -23,4 +23,17 @@ WORKDIR /home/runner
 RUN cd /home/runner/project-templates/alibaba && tofu init -backend=false -input=false
 
 ENV ALETHIA_RUNNER_PROVIDERS=alibaba
+
+# The runner's own image ref, baked at build time (#1787). Several renders schedule the runner binary
+# as somebody else's sidecar or Job — the keyless DB auth proxy and its bootstrap Job, the xacct
+# registry-token refresher — and each fails closed without a ref. It used to be read from
+# ALETHIA_RUNNER_IMAGE, which nothing that shipped ever set, so those renders silently refused on
+# every deployed runner. The build knows the answer; the operator should not have to.
+#
+# The default is deliberately EMPTY. A locally built image has no published ref, and baking a guessed
+# one would name a different image than the one running — worse than the explicit refusal. Publishing
+# workflows pass the FINAL multi-arch tag, never a per-arch one: this ref becomes a sidecar on the
+# customer's nodes, so an arm64-only manifest would be unpullable on amd64 nodes.
+ARG SELF_IMAGE=""
+ENV ALETHIA_RUNNER_SELF_IMAGE=${SELF_IMAGE}
 ENTRYPOINT ["runner"]

@@ -121,7 +121,10 @@
       "Bash(docker compose logs:*)",
       "Bash(tofu fmt:*)",
       "Bash(tofu validate:*)",
-      "Bash(tofu output:*)"
+      "Bash(tofu output:*)",
+      "Bash(git rebase:*)",
+      "Bash(git rebase --continue:*)",
+      "Bash(git rebase --abort:*)"
     ]
   }
 }

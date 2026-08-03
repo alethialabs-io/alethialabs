@@ -58,9 +58,22 @@ module "iam_assumable_role_admin_secrets_operator" {
   }
 }
 
-########################
-#IRSA for External DNS #
-########################
+#########################################
+#IRSA for External DNS  +  cert-manager #
+#########################################
+# ONE Route53 role, TWO service accounts. cert-manager's DNS01 solver does exactly what
+# external-dns does — write a TXT record into the project's hosted zone and delete it
+# again — so it needs the same Route53 permission and no more. Minting a second role with
+# the same policy would buy nothing but another identity to keep in step.
+#
+# The SECOND entry below is load-bearing, not cosmetic: an IRSA trust policy names the
+# exact `<namespace>:<serviceaccount>` pairs allowed to assume the role. cert-manager runs
+# as `cert-manager:cert-manager`, so WITHOUT this line the eks.amazonaws.com/role-arn
+# annotation infra/templates/argocd/cert-manager.yaml puts on its ServiceAccount points at
+# a role it may not assume, and every DNS01 challenge fails at AssumeRoleWithWebIdentity —
+# an error that surfaces only on the Challenge resource, inside a certificate that just
+# never issues. See InfraFacts.CertManagerSolver(), which gates the whole install on this
+# role's ARN being present.
 module "iam_assumable_role_external_dns" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
   version = "5.34.0"
@@ -73,7 +86,7 @@ module "iam_assumable_role_external_dns" {
   oidc_providers = {
     main = {
       provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["external-dns:external-dns-sa"]
+      namespace_service_accounts = ["external-dns:external-dns-sa", "cert-manager:cert-manager"]
     }
   }
 }

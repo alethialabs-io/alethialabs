@@ -27,4 +27,44 @@ locals {
 
   ecr_input = var.ecr_create_repository && length(var.ecr_names_map) > 0 ? var.ecr_names_map : {}
 
+  # Default ECR lifecycle policy. Two rules, in the order AWS evaluates them:
+  #   1. untagged images expire 14 days after push — build churn and orphaned layers,
+  #      which are pure storage cost and never pulled by a running workload.
+  #   2. keep only the newest 30 tagged images per repository — enough to roll back
+  #      several releases deep without retaining every tag ever pushed.
+  # A rulePriority must be unique and ascending; the `any` tagStatus rule has to sort
+  # last, because AWS requires the catch-all to be the highest priority in the document.
+  default_lifecycle_policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Expire untagged images 14 days after push"
+        selection = {
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = 14
+        }
+        action = { type = "expire" }
+      },
+      {
+        rulePriority = 2
+        description  = "Keep only the 30 most recent images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = 30
+        }
+        action = { type = "expire" }
+      },
+    ]
+  })
+
+  # coalesce() would treat "" as present; this must fall back on an EMPTY string too,
+  # since "" is exactly what the upstream module defaults to and what AWS rejects.
+  lifecycle_policy = (
+    var.ecr_repository_lifecycle_policy == null || var.ecr_repository_lifecycle_policy == ""
+    ? local.default_lifecycle_policy
+    : var.ecr_repository_lifecycle_policy
+  )
 }

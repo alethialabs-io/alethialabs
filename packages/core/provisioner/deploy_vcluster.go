@@ -75,6 +75,20 @@ const (
 //     identity, so hetzner activates here identically to the namespace tier.
 //
 // Cloud parity is a hard rule: every gap is a documented, fail-closed exclusion, never silent.
+// vclusterAppInput builds the vcluster delivery renderer's input from the config snapshot. Pure, for
+// the same reason as namespaceTenantInput: it makes the AppsPath wiring assertable without a cluster.
+func vclusterAppInput(vc *types.ProjectConfig, vcName, ns string) argocd.VClusterAppInput {
+	return argocd.VClusterAppInput{
+		Project:      vc.ProjectName,
+		VClusterName: vcName,
+		Namespace:    ns,
+		AppsRepoURL:  vc.Repositories.AppsDestinationRepo,
+		// Per-tier Kustomize overlay subpath. EMPTY ⇒ the renderer defaults to "." (the repo root).
+		AppsPath: vc.Repositories.AppsPath,
+		Labels:   cloud.ClassificationLabels(vc),
+	}
+}
+
 var vclusterRemintProviders = map[string]bool{
 	"aws":     true,
 	"gcp":     true,
@@ -206,6 +220,12 @@ func runVClusterDeploy(ctx context.Context, params DeployParams) (_ *PlanResult,
 	if !isValidClusterName(hostCluster) {
 		return nil, fmt.Errorf("vcluster placement: serving cluster name %q contains invalid characters", hostCluster)
 	}
+	// Same trust-boundary argument for the apps-repo subpath: it is project data that ends up in the
+	// vcluster Application's source.path. Reject it HERE — before helm-installing a virtual cluster
+	// on the shared Fabric — rather than at render time. Empty is valid and means the repo root.
+	if err := argocd.ValidateAppsPath(vc.Repositories.AppsPath); err != nil {
+		return nil, fmt.Errorf("vcluster placement: %w", err)
+	}
 
 	spec, err := buildVClusterSpec(vc)
 	if err != nil {
@@ -286,13 +306,7 @@ func runVClusterDeploy(ctx context.Context, params DeployParams) (_ *PlanResult,
 	}
 
 	// Render the AppProject + app Application targeting the registered vcluster (destination.name).
-	manifests, renderErr := argocd.RenderVClusterApp(argocd.VClusterAppInput{
-		Project:      vc.ProjectName,
-		VClusterName: spec.Name,
-		Namespace:    ns,
-		AppsRepoURL:  vc.Repositories.AppsDestinationRepo,
-		Labels:       cloud.ClassificationLabels(vc),
-	})
+	manifests, renderErr := argocd.RenderVClusterApp(vclusterAppInput(vc, spec.Name, ns))
 	if renderErr != nil {
 		result.GitopsStatus = gitopsFailed(argocd.GitopsStepRender, renderErr)
 		return &result, fmt.Errorf("failed to render vcluster app delivery: %w", renderErr)

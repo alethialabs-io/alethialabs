@@ -37,6 +37,23 @@ variable "managed_certificate" {
   default     = false
 }
 
+variable "certificate_domains" {
+  type        = list(string)
+  description = <<-EOT
+    Hostnames the Google-managed SSL certificate covers. Every one of them MUST end up resolving
+    to the load balancer the certificate is attached to: Google validates each name before the
+    certificate leaves PROVISIONING, and a single name that never resolves holds the entire
+    certificate in FAILED_NOT_VISIBLE. Pass only names something actually serves — the caller
+    knows which those are, this module does not.
+  EOT
+  default     = []
+
+  validation {
+    condition     = !var.managed_certificate || length(var.certificate_domains) > 0
+    error_message = "certificate_domains must name at least one hostname when managed_certificate is true — a certificate covering nothing can never go ACTIVE."
+  }
+}
+
 ################################################################################
 # Labels
 ################################################################################

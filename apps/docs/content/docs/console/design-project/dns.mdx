@@ -59,6 +59,29 @@ When enabled, the platform provisions a TLS certificate automatically:
 
 Certificates are renewed automatically before expiration.
 
+### In-cluster certificates
+
+On AWS, GCP and Azure the same toggle also installs `cert-manager` in the cluster and creates a
+`ClusterIssuer` named `letsencrypt-prod`. Reference it from an Ingress to get a Let's Encrypt
+certificate for any hostname in your zone:
+
+```yaml
+metadata:
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+```
+
+The issuer solves ACME **DNS01** challenges, so it works before you have a public ingress, and it
+can issue wildcard certificates. It writes its challenge records with the same cloud identity
+`external-dns` uses, so there is no API key to supply.
+
+<Callout type="warn">
+Not available on Alibaba Cloud or Hetzner. `cert-manager` ships no DNS01 solver for either DNS
+service, so Alethia creates no issuer rather than one whose challenges never complete. Bring your
+own certificate on those clouds. The deploy records the skip and its reason with the environment's
+other infrastructure-service decisions.
+</Callout>
+
 ## Web Application Firewall
 
 WAF protects web applications from common attacks (SQL injection, XSS, bot traffic).

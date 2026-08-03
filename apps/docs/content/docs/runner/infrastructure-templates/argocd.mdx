@@ -15,7 +15,7 @@ After cluster provisioning, Runner installs ArgoCD and deploys a set of supporti
 | `external-dns.yaml` | External DNS | Syncs DNS records from Kubernetes Ingress annotations. Backends: Route53/Cloud DNS/Azure DNS via workload identity, **Hetzner Cloud DNS** via the official webhook sidecar (the connector's Cloud API token; the domain's zone must already exist in Hetzner Cloud DNS), and **Cloudflare** whenever the Cloudflare DNS connector is attached (any cloud). Renders only when DNS is enabled with a domain and the selected backend's identity/token is actually present — otherwise it is skipped rather than deployed broken |
 | `external-secrets-operator.yaml` | External Secrets Operator | Pulls secrets from Secrets Manager/Secret Manager/Key Vault into Kubernetes Secrets. The AWS SecretsManager `ClusterSecretStore` renders on AWS only; the operator itself ships on every cloud |
 | `karpenter.yaml` | Karpenter | Just-in-time node provisioning based on pod resource requests (AWS) |
-| `metrics-server.yaml` | Metrics Server | Provides CPU/memory metrics for Horizontal Pod Autoscaler |
+| `metrics-server.yaml` | Metrics Server | Provides CPU/memory metrics for the Horizontal Pod Autoscaler and `kubectl top`. Renders on **AWS and Hetzner only**. GKE, AKS and ACK each install their own metrics-server into `kube-system`. A second copy contends with the cloud's for the same cluster-scoped objects and can leave the Metrics API broken, so those clouds keep theirs |
 | `storage-class-gp3.yaml` | Storage Class | GP3 EBS / Persistent Disk / Managed Disk storage provisioner |
 | `project-infra.yaml` | ArgoCD Project | Application deployment boundary and RBAC |
 

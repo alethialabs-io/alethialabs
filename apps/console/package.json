@@ -14,6 +14,7 @@
     "check:marketing-routes": "node scripts/check-marketing-routes.mjs",
     "check:offer-parity": "node scripts/check-offer-parity.mjs",
     "gen:offer-parity": "node scripts/check-offer-parity.mjs --matrix",
+		"gen:offer-surface": "tsx scripts/gen-offer-surface.ts lib/cloud-providers/generated/offer-surface.json",
     "check:keyless-cells": "node scripts/check-keyless-cells.mjs",
     "gen:keyless-cells": "node scripts/gen-keyless-cells.mjs",
     "gen:secrets-runtime-read": "node scripts/gen-secrets-runtime-read.mjs",

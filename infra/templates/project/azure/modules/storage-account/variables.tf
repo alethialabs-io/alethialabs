@@ -13,6 +13,11 @@ variable "project_name" {
   type        = string
 }
 
+variable "account_name" {
+  description = "Name of the storage account. Derived by the caller (local.azure_storage_account_name in checks_naming.tf), which lowercases, strips every non-alphanumeric and applies Azure's 3-24 character cap. Derived at the template root, not here, so it stays reachable from `tofu test`."
+  type        = string
+}
+
 variable "resource_group_name" {
   description = "Name of the resource group"
   type        = string
@@ -31,10 +36,17 @@ variable "replication_type" {
 }
 
 variable "containers" {
-  description = "List of blob containers to create"
+  description = <<-EOT
+    List of blob containers to create.
+
+    `versioning_enabled` is stated PER CONTAINER because that is how it is chosen, but Azure blob
+    versioning is a property of the storage ACCOUNT and this module creates exactly one — see the
+    aggregation in main.tf for what that means in practice.
+  EOT
   type = list(object({
-    name        = string
-    access_type = optional(string, "private")
+    name               = string
+    access_type        = optional(string, "private")
+    versioning_enabled = optional(bool, false)
   }))
   default = []
 }

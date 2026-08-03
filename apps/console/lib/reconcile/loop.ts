@@ -84,13 +84,17 @@ export async function tick(now: Date = new Date()): Promise<void> {
 			await runTask("ephemeral-reaper", () => reapExpiredEphemeralEnvs(db, now));
 		}
 		// Periodic drift scheduler ("keep proving it"): enqueue DETECT_DRIFT per due ACTIVE env.
+		// `now` decides whether this tick RUNS — in-memory scheduling, where this replica's clock is
+		// the right one. It is deliberately NOT passed down: the sweep measures its cadence against
+		// DB-stamped `jobs.created_at`, so it reads the database's clock instead. See lib/db/now.ts.
 		if (isDue("drift-schedule", INTERVALS["drift-schedule"], now)) {
-			await runTask("drift-schedule", () => sweepDriftSchedule(now));
+			await runTask("drift-schedule", () => sweepDriftSchedule());
 		}
 		// Periodic liveness prober (BYOC B2 — "is it still up?"): enqueue PROBE_CLUSTER per due
 		// ACTIVE env. Cloned from the drift scheduler; self-gates per-env by its tighter tier cadence.
+		// Same clock contract as drift — the sweep sources its own from the database.
 		if (isDue("probe-schedule", INTERVALS["probe-schedule"], now)) {
-			await runTask("probe-schedule", () => sweepProbeSchedule(now));
+			await runTask("probe-schedule", () => sweepProbeSchedule());
 		}
 		// Retention GC (best-effort, bounded batch): job_logs + fleet_actions ledger + authz activity log.
 		if (isDue("gc-job-logs", INTERVALS["gc-job-logs"], now)) {

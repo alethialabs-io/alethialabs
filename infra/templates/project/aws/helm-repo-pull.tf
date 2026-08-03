@@ -26,7 +26,17 @@ variable "helm_repo_pull_public_enabled" {
 }
 
 locals {
-  enable_helm_repo_pull = length(var.helm_repo_pull_target_role_arns) > 0 || var.helm_repo_pull_public_enabled
+  # Two predicates, deliberately — see the same split in registry-pull.tf. What the OPERATOR ASKED
+  # FOR is cluster-independent and is what checks_helm.tf must keep judging; what gets BUILT
+  # additionally needs a cluster.
+  helm_repo_pull_requested = length(var.helm_repo_pull_target_role_arns) > 0 || var.helm_repo_pull_public_enabled
+
+  # `provision_eks` is part of the build predicate, not just of the role body (#1772): the IRSA role
+  # below federates to module.eks[0].oidc_provider_arn, so a cluster-less shape with a connected ECR
+  # chart repo failed at PLAN ("Invalid index … module.eks is empty tuple"). The refresher is an
+  # in-cluster Deployment — with no cluster there is nothing to annotate. Azure's registry-pull.tf
+  # carries its own `var.provision_aks` term for the same reason; this is the AWS parity.
+  enable_helm_repo_pull = var.provision_eks && local.helm_repo_pull_requested
   # Coupling point with packages/core/manifests (the helm-repo-pull refresher KSA the wiring emits) —
   # the refresher lives in the argocd namespace, where ArgoCD reads repo credentials.
   helm_repo_pull_ksa_namespace = "argocd"

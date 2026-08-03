@@ -8,6 +8,10 @@ import { ForbiddenError } from "@/lib/authz/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
+import {
+	isRunnerDeployProvider,
+	runnerDeployUnsupportedMessage,
+} from "@/lib/runners/deploy-providers";
 import { notifyScaler } from "@/lib/scaler";
 import { createHash, randomBytes } from "crypto";
 import { desc, eq } from "drizzle-orm";
@@ -76,6 +80,23 @@ export async function POST(req: Request) {
 			);
 		}
 
+		// This route re-implements the enqueue rather than calling deployRunner(), so it needs
+		// the template gate of its own — a fix only in the server action leaves the CLI able to
+		// queue a job that dies in the runner with "no templates for provider <cloud>".
+		if (!isRunnerDeployProvider(identity.provider)) {
+			return NextResponse.json(
+				{ error: runnerDeployUnsupportedMessage(identity.provider) },
+				{ status: 400 },
+			);
+		}
+
+		// EVERY reason to refuse now runs before the FIRST insert, so a rejected deploy leaves
+		// nothing behind. The quota assert used to sit between the runners insert and the jobs
+		// insert, which orphaned a `provisioning=deployed` runner row — holding a live
+		// token_hash — with no job to build it. deployRunner() (app/server/actions/runners.ts)
+		// has always ordered it this way; this route is the copy that had drifted.
+		await assertJobQuotaAllowed(actor.orgId);
+
 		const [latestRelease] = await db
 			.select({ version: runnerReleases.version })
 			.from(runnerReleases)
@@ -105,12 +126,10 @@ export async function POST(req: Request) {
 			runner_name: name,
 			image_tag: imageTag,
 			region,
-			cloud_provider: identity.provider ?? "aws",
+			cloud_provider: identity.provider,
 			alethia_url:
 				process.env.NEXT_PUBLIC_APP_URL || "https://alethialabs.io",
 		};
-
-		await assertJobQuotaAllowed(actor.orgId);
 
 		const [job] = await db
 			.insert(jobs)
