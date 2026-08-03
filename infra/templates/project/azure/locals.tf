@@ -55,18 +55,25 @@ locals {
   # Naming conventions
   location_short = local.azure_locations_short[var.location]
 
-  vnet_name            = "vnet-${local.location_short}-${var.environment}-${var.project_name}"
-  aks_name             = "aks-${local.location_short}-${var.environment}-${var.project_name}"
-  azure_db_name        = "db-${local.location_short}-${var.environment}-${var.project_name}"
-  azure_cache_name     = "redis-${local.location_short}-${var.environment}-${var.project_name}"
-  azure_dns_name       = "dns-${local.location_short}-${var.environment}-${var.project_name}"
-  azure_waf_name       = "waf-${local.location_short}-${var.environment}-${var.project_name}"
-  app_gateway_name     = "agw-${local.location_short}-${var.environment}-${var.project_name}"
-  key_vault_name       = "kv-${local.location_short}-${var.environment}-${var.project_name}"
-  acr_name             = "acr${local.location_short}${var.environment}${var.project_name}"
-  service_bus_name     = "sb-${local.location_short}-${var.environment}-${var.project_name}"
-  cosmos_db_name       = "cosmos-${local.location_short}-${var.environment}-${var.project_name}"
-  storage_account_name = "st${local.location_short}${var.environment}${var.project_name}"
+  aks_name = "aks-${local.location_short}-${var.environment}-${var.project_name}"
+
+  # THE REST OF THIS BLOCK WAS DEAD, AND WORSE THAN DEAD (#1886).
+  #
+  # Ten more names lived here — vnet_name, azure_db_name, azure_cache_name, azure_dns_name,
+  # azure_waf_name, key_vault_name, acr_name, service_bus_name, cosmos_db_name and
+  # storage_account_name — and NOTHING read a single one of them. `aks_name` above is the only
+  # entry with consumers.
+  #
+  # They were not merely unused. They stated a convention the template does not use:
+  #
+  #   here (dead)          cosmos-<location_short>-<environment>-<project_name>
+  #   modules/cosmos-db    <project_name>-<environment>-cosmos
+  #
+  # so anyone reading the root to find out what a resource is called got the wrong answer, in the
+  # wrong order, with an extra segment. #1873 created the pattern by moving the Key Vault name to
+  # checks_naming.tf and leaving `key_vault_name` sitting here; #1886 would have added six more
+  # orphans on top. The live derivations are all in checks_naming.tf (NAMING-002), which is also
+  # where their length budgets are, so there is one place to look.
 
   # The external-secrets managed identity this deploy uses: the caller's adopted one, or the one we
   # created. Everything that federates, grants to, or exports the ESO identity reads these — never
@@ -93,17 +100,15 @@ locals {
     : azurerm_user_assigned_identity.external_secrets[0].principal_id
   ) : ""
 
-  # ── Application Gateway / AGIC (see application-gateway.tf) ────────────────────────────────
+  # ── Application Gateway / AGIC: the gateway's four decisions ──
   #
-  # An Application Gateway is a STANDING cost — a v2 gateway bills per hour from the moment it
-  # exists, whether or not a single Ingress object was ever created — so it is not implied by
-  # merely having a cluster the way the (free) AWS Load Balancer Controller is. The default
-  # (`azure_application_gateway_enabled = null`) is instead "follow the WAF switch": on Azure an
-  # azurerm_web_application_firewall_policy binds to an Application Gateway and to NOTHING else,
-  # so a project that turned the canvas WAF on and got no gateway is carrying a policy, a bill,
-  # and zero inspected requests — the exact defect this lane closes. Setting the variable
-  # explicitly overrides in both directions: `true` buys the ingress without a WAF, `false`
-  # keeps the pre-lane shape.
+  # These are LOGIC, not names, which is why they stayed here when #1886 moved the derived names to
+  # checks_naming.tf: nothing about them has a length budget, and they read as a chain — request,
+  # feasibility, WAF coupling, in-cluster half.
+  #
+  # The gateway is opt-in because a v2 gateway is a standing hourly cost, and `null` means "follow
+  # the WAF switch" rather than "off": turning the WAF on and getting a policy attached to nothing
+  # would be the exact defect the WAF decision exists to report.
   request_application_gateway = var.azure_application_gateway_enabled != null ? var.azure_application_gateway_enabled : var.azure_waf_enabled
 
   # A gateway needs a subnet of its own, and only the VNet this template creates can carve one

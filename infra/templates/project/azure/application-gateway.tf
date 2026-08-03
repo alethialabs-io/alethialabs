@@ -31,7 +31,7 @@
 resource "azurerm_public_ip" "application_gateway" {
   count = local.enable_application_gateway ? 1 : 0
 
-  name                = "${local.app_gateway_name}-pip"
+  name                = "${local.azure_app_gateway_name}-pip"
   location            = var.location
   resource_group_name = azurerm_resource_group.main.name
   allocation_method   = "Static"
@@ -47,7 +47,7 @@ resource "azurerm_public_ip" "application_gateway" {
 resource "azurerm_application_gateway" "this" {
   count = local.enable_application_gateway ? 1 : 0
 
-  name                = local.app_gateway_name
+  name                = local.azure_app_gateway_name
   location            = var.location
   resource_group_name = azurerm_resource_group.main.name
 

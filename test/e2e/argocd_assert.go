@@ -97,9 +97,15 @@ var infraServiceArgoApps = map[string]map[string]string{
 	"cert-manager": {anyProvider: "cert-manager"},
 	// ingressDecision is "installed" only where argocd.ingressControllers has an entry.
 	// ONE LINE PER CLOUD: add the cloud's controller Application here in the same PR that
-	// adds its ingressControllers entry, and the two stay in step.
-	// azure's Application name is the AGIC chart name, pinned by `fullnameOverride: ingress-azure`
-	// in the template — the same string the federated identity credential's KSA subject depends on.
+	// adds its ingressControllers entry, and the two stay in step. A cloud whose ingress is
+	// installed but ships NO Application — GKE's controller runs in the Google-managed control
+	// plane, so there is nothing to sync — belongs under its provider key in infraServiceNoApp
+	// instead, never here with an empty string: "" would enter the expected set and make the
+	// poll wait out the full timeout for an Application with no name.
+	//
+	// azure DOES ship one, so it is here rather than there: its Application name is the AGIC chart
+	// name, pinned by `fullnameOverride: ingress-azure` in the template — the same string the
+	// federated identity credential's KSA subject depends on.
 	"ingress": {"aws": "aws-load-balancer-controller", "azure": "ingress-azure"},
 	// appsRepoDecision is "installed" when the project wired an apps-destination repo: the
 	// runner credentials ArgoCD to it (the shared "repo-apps" repository Secret) and renders
@@ -127,15 +133,45 @@ func argoAppForInfraService(provider, service string) (app string, ok bool) {
 	return app, ok
 }
 
-// infraServiceNoApp whitelists the decisions that genuinely ship NO ArgoCD
-// Application of their own: "storage-class" is a StorageClass object, "argocd-url" is an
-// ingress on the ArgoCD install itself, and "waf" is an ANNOTATION on that same ingress
-// (alb.ingress.kubernetes.io/wafv2-acl-arn) — none has app health of its own.
-// Add a service here ONLY when its install truly has no Application to assert.
-var infraServiceNoApp = map[string]struct{}{
-	"storage-class": {},
-	"argocd-url":    {},
-	"waf":           {},
+// infraServiceNoApp whitelists the decisions that genuinely ship NO ArgoCD Application of their
+// own: "storage-class" is a StorageClass object, "argocd-url" is an ingress on the ArgoCD install
+// itself, and "waf" is an annotation or a small CR on that same ingress
+// (alb.ingress.kubernetes.io/wafv2-acl-arn on AWS, a BackendConfig on GCP) — none has app health
+// of its own.
+//
+// PROVIDER-KEYED, exactly like infraServiceArgoApps above and for the same reason one dimension
+// over: whether a service ships an Application can differ per cloud. "ingress" is the case that
+// forced it — the ALB controller is a real Application on AWS, while on GKE the Ingress controller
+// runs in the Google-managed control plane and Alethia installs nothing. A service-level whitelist
+// could not express that without whitelisting "ingress" on EVERY cloud, which would silently
+// forgive the Azure and Alibaba lanes landing beside this one for shipping a controller whose
+// Application the assertion never checks — the fail-closed contract this file is built on.
+//
+// anyProvider ("") means "ships no Application on any cloud" — the common case.
+// Add an entry ONLY when the install truly has no Application to assert.
+var infraServiceNoApp = map[string]map[string]struct{}{
+	"storage-class": {anyProvider: {}},
+	"argocd-url":    {anyProvider: {}},
+	"waf":           {anyProvider: {}},
+	// GKE Ingress: built into the managed control plane (see argocd.ingressControllers["gcp"]).
+	// Deliberately NOT anyProvider — AWS resolves via infraServiceArgoApps first, but a cloud
+	// that later installs a controller must still be forced to name it.
+	"ingress": {"gcp": {}},
+}
+
+// infraServiceShipsNoApp reports whether an installed decision for `service` genuinely renders no
+// ArgoCD Application ON THIS CLOUD — the cloud's own entry if there is one, else the cloud-agnostic
+// anyProvider entry. False means the derivation must have found an Application for it, or fail.
+func infraServiceShipsNoApp(provider, service string) bool {
+	byProvider, known := infraServiceNoApp[service]
+	if !known {
+		return false
+	}
+	if _, ok := byProvider[provider]; ok {
+		return true
+	}
+	_, ok := byProvider[anyProvider]
+	return ok
 }
 
 // alwaysRenderedArgoApps are the Applications infra/templates/argocd renders
@@ -219,10 +255,10 @@ func DeriveExpectedArgoApps(provider string, metaRaw []byte) ([]string, error) {
 			set[app] = struct{}{}
 			continue
 		}
-		if _, ok := infraServiceNoApp[d.Service]; ok {
+		if infraServiceShipsNoApp(provider, d.Service) {
 			continue
 		}
-		return nil, fmt.Errorf("unrecognized installed infra service %q on provider %q in execution_metadata — add it to infraServiceArgoApps (it ships an Application; the entry is per-cloud) or infraServiceNoApp (it genuinely has none) in argocd_assert.go so the assertion widens instead of silently shrinking", d.Service, provider)
+		return nil, fmt.Errorf("unrecognized installed infra service %q on provider %q in execution_metadata — add it to infraServiceArgoApps (it ships an Application) or infraServiceNoApp (it genuinely ships none) in argocd_assert.go — BOTH maps are per-cloud, so the entry may be for this provider alone — and the assertion widens instead of silently shrinking", d.Service, provider)
 	}
 	for name := range meta.AddOnStatus {
 		set[name] = struct{}{}

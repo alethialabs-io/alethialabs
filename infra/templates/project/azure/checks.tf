@@ -10,14 +10,24 @@
 # append-point is what made concurrent feature branches conflict here repeatedly.
 
 locals {
-  # Azure Storage Account names are the tightest limit: 3-24 chars, lowercase alphanumeric only, and
-  # are derived from environment + project_name (with separators stripped). Assert the alphanumeric
-  # stem fits inside 24 chars so the derived account name cannot overflow.
-  azure_storage_name_stem_len = length(replace(lower("${var.environment}${var.project_name}"), "/[^a-z0-9]/", ""))
-
   # Key Vault naming moved to checks_naming.tf (NAMING-002). It is no longer asserted here — it is
   # DERIVED there, because the composition had no length budget and an assertion could only warn
   # while the plan failed anyway (#1873).
+  #
+  # Storage Account naming followed it there (#1886), and its old guard is worth a sentence because
+  # it was wrong in two independent ways. It read:
+  #
+  #   azure_storage_name_stem_len = length(replace(lower("${var.environment}${var.project_name}"), …))
+  #   check "storage_account_name_within_limit" { condition = local.azure_storage_name_stem_len <= 24 }
+  #
+  #   1. `check` only WARNS. Even at 25 the plan proceeded and Azure refused the name — the exact
+  #      failure mode #1873 shipped for months.
+  #   2. It measured the wrong string. The module composes "<project_name><environment>st" — the
+  #      opposite order, plus a two-character suffix the stem did not carry — so the guard passed at
+  #      a stem of 24 while the name Azure saw was 26.
+  #
+  # Both are moot now: the name is derived inside its cap in checks_naming.tf and the assertion
+  # there is over the OUTPUT.
 
   # Kubernetes major/minor parsed from aks_cluster_version ("1.35" -> 1 / 35). -1 when unparseable, so a
   # missing/garbage version fails the COMPAT-001 guard closed rather than passing vacuously. The window
@@ -33,14 +43,6 @@ check "project_name_non_empty" {
   assert {
     condition     = length(trimspace(var.project_name)) > 0
     error_message = "project_name must be non-empty (it seeds every resource name)."
-  }
-}
-
-# The environment+project_name alphanumeric stem must fit the Azure Storage Account 24-char cap.
-check "storage_account_name_within_limit" {
-  assert {
-    condition     = local.azure_storage_name_stem_len <= 24
-    error_message = "environment+project_name alphanumeric stem exceeds the Azure Storage Account 24-character limit; shorten environment/project_name."
   }
 }
 

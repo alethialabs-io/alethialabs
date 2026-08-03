@@ -230,3 +230,128 @@ run "two_environments_get_distinct_names_b" {
     error_message = "Expected the -2 environment's own digest (distinct from -1's 03e65fa5bf37), got ${local.ots_name}."
   }
 }
+
+################################################################################
+# 4. The Container Registry instance (#1886)
+#
+# The second NAMING-003 name, and the one with the least margin: `cr-<project_name>-<environment>`
+# renders 27 against a cap of 30 on the e2e full bar. It has never failed, and three characters is
+# why — a GitHub run id gaining one digit takes it to 28.
+#
+# `instance_name` is ForceNew on alicloud_cr_ee_instance, so a rename DESTROYS AND RECREATES the
+# registry and everything pushed to it. That is what makes "kept verbatim" the load-bearing case
+# here rather than a formality.
+################################################################################
+
+run "cr_a_short_name_is_kept_verbatim" {
+  command = plan
+
+  variables {
+    project_name = "alethia"
+    environment  = "prod"
+  }
+
+  assert {
+    condition     = local.cr_name == "cr-alethia-prod"
+    error_message = "A 15-character registry name must be kept verbatim, got ${local.cr_name}."
+  }
+}
+
+# The exact boundary. 30 is legal, so it must NOT fall back — an off-by-one here recreates every
+# registry sitting exactly on the cap.
+run "cr_a_name_exactly_at_the_cap_is_kept_verbatim" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "production-eu-we"
+  }
+
+  assert {
+    condition     = local.cr_name == "cr-alethia-nl-production-eu-we" && local.cr_name_len == 30
+    error_message = "A name of exactly 30 characters must keep the readable form, got ${local.cr_name} (${local.cr_name_len} chars)."
+  }
+}
+
+run "cr_a_name_one_over_the_cap_falls_back" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "production-eu-wes"
+  }
+
+  assert {
+    condition     = local.cr_name == "cr-alethia-nl-producti-9e26f54"
+    error_message = "A 31-character name must fall back to truncate-plus-digest, got ${local.cr_name}."
+  }
+}
+
+# THE case from #1886 — the e2e full bar's own environment. It fits, and the point of pinning it is
+# that it must KEEP fitting byte-for-byte: this is the name a live registry would carry.
+run "cr_the_e2e_environment_is_kept_verbatim_with_three_chars_to_spare" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "30829641000-1"
+  }
+
+  assert {
+    condition     = local.cr_name == "cr-alethia-nl-30829641000-1" && local.cr_name_len == 27
+    error_message = "The e2e environment must render the readable 27-char registry name, got ${local.cr_name} (${local.cr_name_len} chars)."
+  }
+}
+
+# Alibaba rejects a name ending in a hyphen, and a truncation at 22 can land on one — or on a run of
+# two, which `trimsuffix` would only half-remove. The derivation strips with a regex.
+run "cr_a_truncation_landing_on_a_hyphen_trims_it" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "product-ion-eu-west-1"
+  }
+
+  assert {
+    condition     = local.cr_name == "cr-alethia-nl-product-73418a6"
+    error_message = "A truncation landing on a hyphen must trim it, got ${local.cr_name}."
+  }
+}
+
+################################################################################
+# 5. Truncation must not COLLIDE
+#
+# The reason the digest is over the FULL name and not the truncated stem. These two environments
+# share their first 22 characters exactly; under plain truncation they would resolve to ONE registry
+# and two environments would push images into the same namespace. Two runs of the nightly are
+# precisely this shape.
+################################################################################
+
+run "cr_two_environments_sharing_a_prefix_get_distinct_names_a" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "production-eu-west-1"
+  }
+
+  assert {
+    condition     = local.cr_name == "cr-alethia-nl-producti-98bd64a"
+    error_message = "Expected the west-1 environment's own digest, got ${local.cr_name}."
+  }
+}
+
+run "cr_two_environments_sharing_a_prefix_get_distinct_names_b" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "production-eu-west-2"
+  }
+
+  assert {
+    condition     = local.cr_name == "cr-alethia-nl-producti-863b150"
+    error_message = "Expected the west-2 environment's own digest (distinct from west-1's 98bd64a), got ${local.cr_name}."
+  }
+}
