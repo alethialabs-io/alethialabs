@@ -289,13 +289,29 @@ func buildMNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	return result
 }
 
+// buildOTSTables shapes the canvas's NoSQL tables into `ots_tables`.
+//
+// The key name is load-bearing and was wrong (#1836). This emitted a scalar `primary_key` plus a
+// `primary_key_type`, while `modules/ots/main.tf` reads
+// `try(each.value.primary_keys, [{ name = "id", type = "String" }])` — a LIST under a different
+// name. `try` swallows the miss, so the plan was always clean and every Tablestore table in every
+// Alibaba project was built with the module's fallback key `id`/`String` rather than the partition
+// key the user chose. Nothing failed; the choice was simply discarded.
+//
+// So the emit is a list under the name the module actually reads. Tablestore's primary key is
+// immutable, so correcting this REPLACES any table that was built with the wrong key — which is the
+// cost of the table having been wrong, not a new hazard introduced here.
 func buildOTSTables(tables []types.ProjectNosqlConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(tables))
 	for _, t := range tables {
 		entry := map[string]interface{}{
-			"name":             t.Name,
-			"primary_key":      t.PartitionKey,
-			"primary_key_type": otsKeyType(string(t.PartitionKeyType)),
+			"name": t.Name,
+			"primary_keys": []map[string]interface{}{
+				{
+					"name": t.PartitionKey,
+					"type": otsKeyType(string(t.PartitionKeyType)),
+				},
+			},
 		}
 		result = append(result, entry)
 	}
