@@ -83,7 +83,7 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
-| `nosql:point_in_time_recovery` | 🚫 #1815 | 🟡 | 🟡 | 🚫 #1815 | · | · |
+| `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `queue:ordered` | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | · | · |
 | `registry:immutable_tags` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
 | `registry:vulnerability_scanning` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
@@ -151,6 +151,7 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `bucket:encryption_enabled` | gcp | Cloud Storage encrypts every object at rest and the setting cannot be turned off — this switch is informational on Google Cloud. |
 | `bucket:encryption_enabled` | azure | Azure Storage encrypts every blob at rest and the setting cannot be turned off — this switch is informational on Azure. |
 | `network:single_nat_gateway` | hetzner | Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone. |
+| `nosql:point_in_time_recovery` | alibaba | Tablestore has no point-in-time recovery setting on the table — Alibaba's restore story is Cloud Backup, a separately-billed service whose restore points are scheduled backups rather than any instant you choose. |
 
 ---
 
