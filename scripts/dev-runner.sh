@@ -249,6 +249,10 @@ for i in $(seq 1 "$RUNNERS"); do
     # evidence while native-mode produced signed evidence from the same .env.
     [[ -n "${ALETHIA_RECEIPT_SIGNING_KEY:-}" ]] && args+=( -e ALETHIA_RECEIPT_SIGNING_KEY="$ALETHIA_RECEIPT_SIGNING_KEY" )
     [[ -n "${PROVIDERS:-}" ]] && args+=( -e ALETHIA_RUNNER_PROVIDERS="$PROVIDERS" )
+    # Same allowlist trap as the receipt key above. A locally built runner has no baked
+    # self-image, so every keyless / xacct render fails closed unless this names a published
+    # image — which is what makes those paths testable at all in dev (#1787).
+    [[ -n "${ALETHIA_RUNNER_IMAGE:-}" ]] && args+=( -e ALETHIA_RUNNER_IMAGE="$ALETHIA_RUNNER_IMAGE" )
     if [[ "$CRED" == "bootstrap" ]]; then
       args+=( -e ALETHIA_RUNNER_BOOTSTRAP_TOKEN="$ALETHIA_RUNNER_BOOTSTRAP_TOKEN"
               -e ALETHIA_RUNNER_INSTANCE_ID="dev-runner-${i}" )

@@ -1586,7 +1586,13 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "versioning",
 						type: "switch",
 						label: "Versioning",
-						description: "Keep every version of an object; restore or roll back at any time.",
+						// The Azure clause is a PRODUCT DISCLOSURE, not a footnote. azurerm exposes blob
+						// versioning only on the storage account, and an Azure project has exactly one — so
+						// this per-bucket switch genuinely has project-wide effect there. A switch whose real
+						// scope is wider than its label is the same class of untruth as a switch that does
+						// nothing, and saying so is the condition on which the cell counts as honored.
+						description:
+							"Keep every version of an object; restore or roll back at any time. On Azure this is a storage-account setting, so turning it on for one bucket versions every bucket in the project.",
 					},
 					{
 						key: "encryption_enabled",
@@ -1780,6 +1786,21 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "repository",
 						label: "ArgoCD apps repository",
 						description: "The Git repo ArgoCD syncs application manifests from.",
+					},
+					{
+						key: "apps_path",
+						type: "text",
+						label: "Overlay path",
+						mono: true,
+						placeholder: "repository root",
+						// The second sentence is not padding. The runner ignores apps_path on the
+						// `dedicated` placement — it discovers overlays through the apps-overlays
+						// ApplicationSet — and `dedicated` is the DEFAULT placement_mode. Saying
+						// only "the subdirectory this environment syncs" would be false for most
+						// environments, which is the same defect class (#1767) as a field nothing
+						// could set: a knob whose label does not describe what it does.
+						description:
+							"Subdirectory this environment syncs, e.g. overlays/dev. Leave empty to sync the repository root. Applies to namespace and vcluster placements; a dedicated-cluster environment finds its overlays through the apps-overlays ApplicationSet and ignores this.",
 					},
 				],
 			},

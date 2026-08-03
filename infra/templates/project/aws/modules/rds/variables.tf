@@ -67,9 +67,11 @@ variable "rds_config" {
     db_port        = number
     db_name        = string
   })
+  # COUPLED to cloud.DefaultAuroraPostgresVersion (packages/core/cloud/aws_provider.go), asserted by
+  # TestAuroraVersionCouplings. Was 16.6 until AWS withdrew that minor.
   default = ({
     engine         = "aurora-postgresql"
-    engine_version = "16.6"
+    engine_version = "16.8"
     engine_mode    = "provisioned"
     cluster_family = "aurora-postgresql16"
     cluster_size   = 2

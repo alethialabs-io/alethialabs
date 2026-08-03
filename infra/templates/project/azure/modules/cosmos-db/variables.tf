@@ -13,6 +13,11 @@ variable "project_name" {
   type        = string
 }
 
+variable "account_name" {
+  description = "Name of the Cosmos DB account. Derived by the caller (local.azure_cosmos_account_name in checks_naming.tf), which keeps the readable \"<project_name>-<environment>-cosmos\" form while it fits Azure's 3-44 character cap and truncates-plus-digests it above that. Derived at the template root, not here, so it stays reachable from `tofu test`."
+  type        = string
+}
+
 variable "resource_group_name" {
   description = "Name of the resource group"
   type        = string
@@ -33,12 +38,40 @@ variable "consistency_level" {
 variable "collections" {
   description = "List of Cosmos DB containers (collections) to create"
   type = list(object({
-    name                       = string
-    partition_key              = optional(string, "/id")
-    billing_mode               = optional(string, "PAY_PER_REQUEST")
+    name          = string
+    partition_key = optional(string, "/id")
+    billing_mode  = optional(string, "PAY_PER_REQUEST")
+    # Point-in-time restore is bought per ACCOUNT, so the root module folds this per-container flag
+    # into `backup_type` below rather than the module reading it per container.
+    point_in_time_recovery = optional(bool, false)
+    # Synapse Link analytical (column) storage — a separate, separately-billed feature that is NOT a
+    # backup. Read only by azurerm_cosmosdb_sql_container.analytical_storage_ttl; nothing derives it
+    # from point_in_time_recovery (#1838).
     analytical_storage_enabled = optional(bool, false)
   }))
   default = []
+}
+
+variable "backup_type" {
+  description = "Cosmos DB backup mode: Continuous (point-in-time restore) or Periodic (rolling snapshots)."
+  type        = string
+  default     = "Periodic"
+
+  validation {
+    condition     = contains(["Continuous", "Periodic"], var.backup_type)
+    error_message = "backup_type must be Continuous or Periodic."
+  }
+}
+
+variable "backup_tier" {
+  description = "Continuous-backup retention tier (Continuous7Days / Continuous30Days). Must be null in Periodic mode."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.backup_tier == null || contains(["Continuous7Days", "Continuous30Days"], var.backup_tier)
+    error_message = "backup_tier must be null, Continuous7Days or Continuous30Days."
+  }
 }
 
 variable "tags" {

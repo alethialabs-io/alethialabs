@@ -32,7 +32,7 @@ jobs:
   plan-out-safety:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Project templates must be plan-out-safe (no in-tofu k8s-apply resources)
         run: bash scripts/check-templates-plan-safe.sh
 
@@ -43,7 +43,7 @@ jobs:
       matrix:
         cloud: [aws, gcp, azure, hetzner, alibaba, local]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
@@ -53,6 +53,19 @@ jobs:
         run: |
           tofu init -backend=false
           tofu validate
+
+      # `tofu test` runs the fail-closed guards against MOCKED providers and asserts they actually
+      # refuse what they claim to refuse. `validate` cannot do this: it never evaluates a
+      # precondition, so a guard that can't fail looks identical to one that works. A cloud with no
+      # *.tftest.hcl is skipped rather than failed — the suites land per cloud as each is written.
+      - name: OpenTofu Test (mocked providers, no creds)
+        working-directory: infra/templates/project/${{ matrix.cloud }}
+        run: |
+          if ! ls ./*.tftest.hcl >/dev/null 2>&1; then
+            echo "::notice::no *.tftest.hcl for ${{ matrix.cloud }} — skipping"
+            exit 0
+          fi
+          tofu test
 
       - name: IaC checks (fmt + tflint + Trivy)
         uses: ./.github/actions/iac-checks

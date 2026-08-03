@@ -10,5 +10,7 @@ module "firestore" {
   database_type = var.firestore_database_type
   location_id   = var.firestore_location_id != "" ? var.firestore_location_id : var.region
 
+  point_in_time_recovery = var.firestore_point_in_time_recovery
+
   labels = local.gcp_default_labels
 }

@@ -35,16 +35,24 @@
 #   OUT_DIR       (default `$RUNNER_TEMP` or a temp dir) where the rendered artifacts land.
 #   MATRIX_RESULT the `needs.provision.result` aggregate.
 #   RUN_URL       link used in the issue bodies.
+#   E2E_DIMENSION `full` | `floor` — which dimension this run proved, from resolve-dimension.sh.
+#                 Absent ⇒ `floor`, matching that script's fail-safe default.
 #
 # Writes into OUT_DIR:
 #   summary.md              the step-summary block (table + coverage)
 #   state.env               REDS / SKIPS / JOB_NO_SUMMARY / ENABLED_N / SKIP_N / TOTAL / COV_TITLE
+#                           / DIMENSION / DIMENSION_LABEL
 #   issue-red-<id>.md       one body per red leg, with its title on the first `title:` line
 #   issue-body-coverage.md  the standing coverage-issue body
 #   ledger.tsv              provider<TAB>verdict<TAB>detail<TAB>bundle — one row per PASS/FAIL leg;
 #                           explicit gate-off SKIPs are omitted. The ledger step reuses this
 #                           discovery instead of repeating the join that just lost a whole run.
 set -uo pipefail
+
+# dimension_label lives in resolve-dimension.sh — ONE mapping, so the title this renders (the dedup
+# key) and the row the ledger step appends can never drift apart. Sourced, not executed (#1755).
+# shellcheck source=scripts/e2e/resolve-dimension.sh
+. "$(dirname "${BASH_SOURCE[0]}")/resolve-dimension.sh"
 
 PROVIDERS="hetzner aws gcp azure alibaba"
 TOTAL=5
@@ -203,6 +211,21 @@ derive() {
 	} >>"$out/summary.md"
 
 	# ── issue bodies. Rendered here so their CONTENT is under test; the workflow only posts them. ──
+	#
+	# The DIMENSION belongs in the red title because the title IS the dedup key (#1755). Keyed on the
+	# cloud alone, the floor and full-bar runs collapse onto one issue that silently re-points at
+	# whichever ran last: on 2026-08-02 the full bar's five apply-stage defects were deduped away
+	# against the floor's ArgoCD failure and had to be filed by hand. Dedup stays PER-DIMENSION, not
+	# per-run — three consecutive floor reds still land on one issue, which is the behaviour that
+	# makes this a tracker rather than a firehose.
+	local dim dim_label
+	dim="${E2E_DIMENSION:-floor}"
+	dim_label="$(dimension_label "$dim")"
+
+	# The coverage issue deliberately gets NO dimension suffix. It reports which clouds are unwired,
+	# which is a property of the repo's gate variables and identical on both crons; suffixing it would
+	# orphan the open issue and file a second one every Sunday. Its matcher in e2e-nightly.yml is
+	# anchored (`^e2e nightly: [0-9]+ of [0-9]+ clouds are not enabled$`) and must keep matching.
 	local cov_title="e2e nightly: ${skip_n} of ${TOTAL} clouds are not enabled" s
 	{
 		printf '%s\n\n' "Only **${enabled_n} of ${TOTAL}** nightly legs provision anything. The rest green-skip at the gate, so the run reports success while proving nothing for them."
@@ -225,21 +248,25 @@ derive() {
 	local cloud title
 	for cloud in $reds; do
 		if [ "$cloud" = "matrix" ] && [ -n "$matrix_red" ]; then
-			title="e2e nightly: matrix RED (no per-leg proof)"
+			title="e2e nightly: matrix RED (${dim_label} · no per-leg proof)"
 			printf '%s\n' "$title" >"$out/issue-red-${cloud}.title"
 			{
-				printf '%s\n\n' "The T2 real-cloud nightly matrix went **RED** without producing a per-leg proof bundle for any cloud, so no single cloud can be named."
+				printf '%s\n\n' "The T2 real-cloud **${dim_label}** nightly matrix went **RED** without producing a per-leg proof bundle for any cloud, so no single cloud can be named."
 				printf '%s\n\n' "Run: ${RUN_URL:-}"
 				printf '%s\n' "Start from the run's job list: the leg that died is the one whose job is red. A leg that ran and left no bundle usually died before the \`always()\` proof capture."
 				printf '%s\n' "_Auto-created by the e2e-nightly rollup and deduped by title._"
 			} >"$out/issue-red-${cloud}.md"
 			continue
 		fi
-		title="e2e nightly: ${cloud} RED"
+		title="e2e nightly: ${cloud} RED (${dim_label})"
 		printf '%s\n' "$title" >"$out/issue-red-${cloud}.title"
 		{
-			printf '%s\n\n' "The T2 real-cloud nightly went **RED** for \`${cloud}\`."
+			printf '%s\n\n' "The T2 real-cloud nightly went **RED** for \`${cloud}\` on the **${dim_label}** dimension."
 			printf '%s\n\n' "Run: ${RUN_URL:-}"
+			case "$dim" in
+			full) printf '%s\n\n' "The full bar runs the weekly \`17 5 * * 0\` cron with \`ALETHIA_E2E_MAX_CONFIG=1\` + \`ALETHIA_E2E_ALL_ADDONS=1\` — it provisions the whole 11-kind surface, so it fails at stages the floor never reaches. Do NOT read it as the floor re-running." ;;
+			*) printf '%s\n\n' "The floor is the nightly \`17 3 * * *\` smoke — base provision + ArgoCD Healthy+Synced. It never provisions the max-config surface, so a full-bar failure is a separate issue with a separate title." ;;
+			esac
 			case " $job_no_summary " in
 			*" $cloud "*)
 				printf '%s\n\n' "This cloud's matrix job existed but produced no readable \`provision-summary.json\`, so there is no explicit PASS, FAIL, or SKIP verdict to quote. It is reported as FAIL rather than inferred to be unwired."
@@ -261,9 +288,13 @@ derive() {
 		echo "SKIP_N='${skip_n}'"
 		echo "TOTAL='${TOTAL}'"
 		echo "COV_TITLE='${cov_title}'"
+		# Exported so the ledger step downstream consumes THIS answer instead of re-deriving the
+		# dimension from the trigger a third time (#1755).
+		echo "DIMENSION='${dim}'"
+		echo "DIMENSION_LABEL='${dim_label}'"
 	} >"$out/state.env"
 
-	echo "coverage:${enabled_n}/${TOTAL} reds:${reds:-<none>} skips:${skips:-<none>}"
+	echo "coverage:${enabled_n}/${TOTAL} dimension:${dim} reds:${reds:-<none>} skips:${skips:-<none>}"
 }
 
 # ── self-test ──────────────────────────────────────────────────────────────────────────────────
@@ -302,6 +333,7 @@ run_self_test() {
 		(
 			PROOFS_DIR="$d/proofs" OUT_DIR="$out" JOBS_JSON="$d/jobs.json" \
 				RUN_ID="${CASE_RUN_ID:-777}" MATRIX_RESULT="${CASE_MATRIX:-failure}" RUN_URL="http://x" \
+				E2E_DIMENSION="${CASE_DIMENSION:-floor}" \
 				derive >/dev/null 2>&1
 		)
 		# shellcheck disable=SC1091
@@ -365,8 +397,17 @@ run_self_test() {
 	mkdir -p "$c/proofs"
 	printf '{"jobs":[{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' >"$c/jobs.json"
 	_a "matrix|hetzner aws gcp azure alibaba|0" "$(_derive "$c")" "matrix-wide red is labelled 'matrix', not the cloud-lookalike 'job'"
-	_a "e2e nightly: matrix RED (no per-leg proof)" \
+	_a "e2e nightly: matrix RED (floor · no per-leg proof)" \
 		"$(cat "$c/out/issue-red-matrix.title")" "matrix red title cannot be mistaken for a cloud"
+
+	# 7b. THE SAME MATRIX RED ON THE OTHER DIMENSION IS A DIFFERENT ISSUE. Both fixtures below are
+	# byte-identical apart from the dimension, so a title collision here is a real collision.
+	c="$tmp/matrix-full"
+	mkdir -p "$c/proofs"
+	printf '{"jobs":[{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' >"$c/jobs.json"
+	CASE_DIMENSION=full _derive "$c" >/dev/null
+	_a "e2e nightly: matrix RED (full-bar · no per-leg proof)" \
+		"$(cat "$c/out/issue-red-matrix.title")" "a full-bar matrix red does not collide with the floor's"
 
 	# 8. NON-VACUITY — an all-green fixture must produce NO reds. Without this the guard could pass
 	#    by finding nothing at all, which is exactly the failure it exists to catch.
@@ -399,6 +440,42 @@ run_self_test() {
 	#     reported. Run 30341785056 appended nothing while showing a real aws failure.
 	_a "aws	FAIL	aws: verdict for nightly-777-1	e2e-proof-aws-777" \
 		"$(head -1 "$tmp/flat/out/ledger.tsv")" "ledger row is emitted for the leg the table reports"
+
+	# 12. #1755 — THE DEDUP KEY MUST SEPARATE THE TWO DIMENSIONS. The same cloud red on the floor and
+	#     on the full bar has to produce two DIFFERENT titles, because the filer dedups on an exact
+	#     title match. Both fixtures are identical apart from the dimension: on 2026-08-02 the floor
+	#     (ArgoCD install) and the full bar (five apply-stage defects) collapsed into one issue and
+	#     the full bar's had to be filed by hand.
+	c="$tmp/dim-floor"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
+	write_jobs "$c/jobs.json" aws
+	CASE_DIMENSION=floor _derive "$c" >/dev/null
+	local t_floor t_full
+	t_floor="$(cat "$c/out/issue-red-aws.title")"
+
+	c="$tmp/dim-full"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
+	write_jobs "$c/jobs.json" aws
+	CASE_DIMENSION=full _derive "$c" >/dev/null
+	t_full="$(cat "$c/out/issue-red-aws.title")"
+
+	_a "e2e nightly: aws RED (floor)" "$t_floor" "a floor red is titled (floor)"
+	_a "e2e nightly: aws RED (full-bar)" "$t_full" "a full-bar red is titled (full-bar)"
+	_a "differ" "$([ "$t_floor" != "$t_full" ] && echo differ || echo COLLIDE)" \
+		"the two dimensions cannot dedup onto one issue"
+
+	# The dimension reaches state.env so the ledger step reuses it instead of re-deriving (#1755).
+	# shellcheck disable=SC1091
+	. "$c/out/state.env"
+	# shellcheck disable=SC2153
+	_a "full" "${DIMENSION}" "state.env carries the dimension for the ledger step"
+
+	# The COVERAGE title stays dimension-free — it reports unwired gate vars, which are identical on
+	# both crons, and e2e-nightly.yml matches it with an anchored regex. A suffix here would orphan
+	# the open coverage issue and file a duplicate every Sunday.
+	# shellcheck disable=SC2153
+	_a "e2e nightly: 4 of 5 clouds are not enabled" "${COV_TITLE}" \
+		"the coverage issue title is NOT dimension-suffixed"
 
 	if [ "$fails" -eq 0 ]; then
 		echo "self-test: all passed"

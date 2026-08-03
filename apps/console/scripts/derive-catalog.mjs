@@ -25,6 +25,11 @@
 //               is a decision (it may need template/param work), so it is never auto-written.
 //   • default — the seeded `default_version` is no longer offered. Highest signal: every unversioned
 //               project provisions on it. NEVER auto-written; changing a default is a product call.
+//   • pin     — the TEMPLATE's pinned Aurora minor is no longer offered. Not a forecast: the apply is
+//               already failing. Checked separately from the catalog because the catalog is
+//               major-grained and a major does not rot — which is exactly how this scout reported
+//               "baseline still offered" for months while every full-bar aws nightly died on
+//               "Cannot find version 16.6 for aurora-postgresql".
 //
 // Modes (argv):
 //   (default) / --check   derive + diff + print a report; in CI with GITHUB_TOKEN + GITHUB_REPOSITORY it
@@ -49,6 +54,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const CATALOG_PATH = resolve(repoRoot, "packages/core/catalog/catalog.json");
 const GEN_CATALOG = resolve(here, "gen-catalog.mjs");
+// The SSOT for the Aurora minor every AWS template default is coupled to (TestAuroraVersionCouplings
+// keeps the .tf copies equal to it, so reading the Go constant covers all of them).
+const AWS_PROVIDER_GO = resolve(repoRoot, "packages/core/cloud/aws_provider.go");
 
 const argv = process.argv.slice(2);
 const has = (f) => argv.includes(f);
@@ -276,6 +284,62 @@ function deriveAzure(engines) {
 }
 
 /** Derive every cloud, then diff each engine. Excluded clouds are reported, not omitted. */
+/**
+ * Validate the AWS templates' PINNED AURORA MINOR against what AWS still offers.
+ *
+ * This is a different question from the catalog check above, and the difference cost a nightly. The
+ * catalog is major-grained ("16"), and a major does not rot — so `deriveAws` reported
+ * "baseline still offered" while every full-bar aws apply was dying on
+ * "Cannot find version 16.6 for aurora-postgresql". The rot was in the TEMPLATE's full minor, a value
+ * this scout never looked at.
+ *
+ * The pin has to be a full minor (AWS rejects a bare major with "Engine version is not a valid full
+ * version"), which is exactly why it rots and why it needs watching.
+ *
+ * `-limitless` variants are filtered out deliberately: "16.6-limitless" still exists and is a
+ * DIFFERENT offering (Aurora Limitless). Counting it as a match is how you conclude 16.6 is fine
+ * while the apply fails.
+ */
+function deriveAuroraTemplatePin() {
+	const name = "aws aurora-postgresql template pin";
+	let pinned;
+	try {
+		const src = readFileSync(AWS_PROVIDER_GO, "utf8");
+		const m = src.match(/DefaultAuroraPostgresVersion\s*=\s*"([^"]+)"/);
+		if (!m) {
+			return { kind: "pin", name, status: "skipped", reason: `no DefaultAuroraPostgresVersion in ${rel(AWS_PROVIDER_GO)} (renamed? re-anchor this check)` };
+		}
+		pinned = m[1];
+	} catch (err) {
+		return { kind: "pin", name, status: "skipped", reason: `read ${rel(AWS_PROVIDER_GO)}: ${short(String(err))}` };
+	}
+
+	const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
+	const r = tryCLI("aws", [
+		"rds", "describe-db-engine-versions",
+		"--engine", "aurora-postgresql",
+		"--region", region,
+		"--output", "json",
+	]);
+	if (!r.ok) return { kind: "pin", name, status: "skipped", reason: `aws CLI/auth: ${r.err}` };
+
+	let offered;
+	try {
+		offered = (JSON.parse(r.out).DBEngineVersions || [])
+			.map((v) => v.EngineVersion)
+			.filter((v) => typeof v === "string" && !v.includes("-"));
+	} catch (err) {
+		return { kind: "pin", name, status: "skipped", reason: `parse: ${short(String(err))}` };
+	}
+
+	return {
+		kind: "pin", name, status: "live", pinned, region,
+		ok: offered.includes(pinned),
+		offered: dedupeVersionsDesc(offered.filter((v) => v.split(".")[0] === pinned.split(".")[0])),
+		source: rel(AWS_PROVIDER_GO),
+	};
+}
+
 function deriveAll(catalog) {
 	const results = [];
 	for (const [provider, dp] of Object.entries(catalog.database)) {
@@ -302,6 +366,7 @@ function deriveAll(catalog) {
 		}));
 		results.push({ provider, status: "live", engines });
 	}
+	results.push(deriveAuroraTemplatePin());
 	return results;
 }
 
@@ -314,14 +379,30 @@ function deriveAll(catalog) {
  * ignore the scout.
  */
 function hasFindings(rep) {
-	return rep.some(
-		(r) => r.status === "live" && r.engines.some((e) => e.stale.length > 0 || e.defaultGone),
-	);
+	return rep.some((r) => {
+		// A withdrawn template pin is the highest-signal finding this scout can make: it is not a
+		// forecast, it is an apply that is already failing.
+		if (r.kind === "pin") return r.status === "live" && !r.ok;
+		return r.status === "live" && r.engines.some((e) => e.stale.length > 0 || e.defaultGone);
+	});
 }
 
 function printReport(rep) {
 	console.log("\nManaged-database engine versions (curated baseline validated against what the cloud offers):");
 	for (const r of rep) {
+		if (r.kind === "pin") {
+			if (r.status !== "live") {
+				console.log(`  · skipped  ${r.name}: ${r.reason}`);
+			} else if (r.ok) {
+				console.log(`  ✓ ${r.name}: ${r.pinned} still offered in ${r.region}`);
+			} else {
+				console.log(
+					`  ✗ ${r.name}: ${r.pinned} is NO LONGER OFFERED in ${r.region} — every AWS apply that ` +
+						`does not override engine_version fails. Cloud offers ${JSON.stringify(r.offered)}. Fix ${r.source}.`,
+				);
+			}
+			continue;
+		}
 		if (r.status === "excluded") {
 			console.log(`  · excluded ${r.provider}: ${r.reason}`);
 			continue;
@@ -438,7 +519,9 @@ async function findExistingIssue() {
 }
 
 function renderIssue(rep) {
-	const live = rep.filter((r) => r.status === "live");
+	// The pin rows carry no `engines`; keep them out of every engine-shaped flatMap below.
+	const pinRows = rep.filter((r) => r.kind === "pin");
+	const live = rep.filter((r) => r.status === "live" && r.kind !== "pin");
 	const staleRows = live.flatMap((r) => r.engines.filter((e) => e.stale.length).map((e) => ({ ...e, provider: r.provider })));
 	const defaultRows = live.flatMap((r) => r.engines.filter((e) => e.defaultGone).map((e) => ({ ...e, provider: r.provider })));
 	const newerRows = live.flatMap((r) => r.engines.filter((e) => e.newer.length).map((e) => ({ ...e, provider: r.provider })));
@@ -453,6 +536,25 @@ function renderIssue(rep) {
 		"fails, not a cosmetic UI nit.",
 		"",
 	];
+	const brokenPins = pinRows.filter((r) => r.status === "live" && !r.ok);
+	if (brokenPins.length) {
+		lines.push(
+			"### Template pin withdrawn — APPLY IS ALREADY FAILING",
+			"",
+			"This is not a forecast. Any apply that does not override `engine_version` fails at the cluster",
+			"with `InvalidParameterCombination: Cannot find version <v>`.",
+			"",
+			"| pin | value | region | cloud offers (same major) | source |",
+			"| --- | --- | --- | --- | --- |",
+		);
+		for (const r of brokenPins)
+			lines.push(`| \`${r.name}\` | \`${r.pinned}\` | \`${r.region}\` | ${JSON.stringify(r.offered)} | \`${r.source}\` |`);
+		lines.push(
+			"",
+			"Fix the Go constant; `TestAuroraVersionCouplings` then forces the template copies to follow.",
+			"",
+		);
+	}
 	if (defaultRows.length) {
 		lines.push(
 			"### Default no longer offered — highest signal",
@@ -481,7 +583,7 @@ function renderIssue(rep) {
 	const notLive = rep.filter((r) => r.status !== "live");
 	if (notLive.length) {
 		lines.push("### Not derived this run", "");
-		for (const r of notLive) lines.push(`- \`${r.provider}\` — ${r.status}: ${r.reason}`);
+		for (const r of notLive) lines.push(`- \`${r.provider ?? r.name}\` — ${r.status}: ${r.reason}`);
 		lines.push("");
 	}
 	lines.push(

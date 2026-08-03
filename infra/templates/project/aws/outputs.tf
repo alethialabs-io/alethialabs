@@ -2,16 +2,23 @@ output "vpc_id" {
   value = var.provision_vpc ? module.common_vpc[0].vpc_id : var.vpc_id
 }
 
+# Every cluster output below is guarded on the MODULE (`length(module.eks) > 0`), never on a copy of
+# its count predicate. The count is `var.provision_eks` today, and restating it here would be correct
+# today and silently wrong the day the predicate grows a second term — the exact drift that made
+# `provision_artifact_registry` diverge from its module on GCP (see gcp/outputs.tf). Until #1772 these
+# eight indexed [0] with NO guard at all, so `provision_eks = false` could not even PLAN:
+#   Invalid index … module.eks is empty tuple.
+# `length(module...)` cannot drift from the count the way a duplicated predicate can.
 output "eks_cluster_arn" {
-  value = module.eks[0].eks_cluster_arn
+  value = length(module.eks) > 0 ? module.eks[0].eks_cluster_arn : null
 }
 
 output "eks_cluster_name" {
-  value = module.eks[0].eks_cluster_id
+  value = length(module.eks) > 0 ? module.eks[0].eks_cluster_id : null
 }
 
 output "eks_cluster_endpoint" {
-  value = module.eks[0].eks_cluster_endpoint
+  value = length(module.eks) > 0 ? module.eks[0].eks_cluster_endpoint : null
 }
 
 output "route53_zone_id" {
@@ -29,16 +36,16 @@ output "route53_name_servers" {
 #}
 
 output "eks_irsa_external_dns_arn" {
-  value = module.eks[0].eks_irsa_external_dns_arn
+  value = length(module.eks) > 0 ? module.eks[0].eks_irsa_external_dns_arn : null
 }
 
 output "eks_irsa_alb_controller_arn" {
-  value = module.eks[0].eks_irsa_alb_controller_arn
+  value = length(module.eks) > 0 ? module.eks[0].eks_irsa_alb_controller_arn : null
 }
 
 output "eks_irsa_external_secrets_arn" {
   description = "IRSA role ARN for the external-secrets operator (gates the AWS ClusterSecretStore render)"
-  value       = module.eks[0].eks_irsa_external_secrets_arn
+  value       = length(module.eks) > 0 ? module.eks[0].eks_irsa_external_secrets_arn : null
 }
 
 output "rds_iam_auth_irsa_arn" {
@@ -52,11 +59,11 @@ output "aws_region" {
 }
 
 output "node_iam_role_name" {
-  value = module.eks[0].node_iam_role_name
+  value = length(module.eks) > 0 ? module.eks[0].node_iam_role_name : null
 }
 
 output "node_security_group" {
-  value = module.eks[0].node_security_group_id
+  value = length(module.eks) > 0 ? module.eks[0].node_security_group_id : null
 }
 
 # AZ outputs are the greenfield subnet AZs (local.azs = region+a/b/c). On brownfield (provision_vpc
@@ -150,8 +157,11 @@ output "acm_certificate_arn" {
 }
 
 # WAF
+# Read by the runner (argocd.InfraFacts.WAFWebACLArn) and attached to the ArgoCD ALB ingress via the
+# alb.ingress.kubernetes.io/wafv2-acl-arn annotation. REGIONAL scope, which is the only scope an ALB
+# can associate with — the CloudFront-scoped ACL next door is deliberately not exported here.
 output "waf_webacl_arn" {
-  description = "RDS Credentials kms key arn"
+  description = "Regional WAFv2 web ACL ARN for the application WAF — the ALB ingress associates with it"
   value       = var.application_waf_enabled ? module.wafv2_application.webacl_arn : null
 }
 
@@ -166,11 +176,14 @@ output "ecr_repository_urls_map" {
 }
 output "ecr_build_role_arn" {
   description = "IRSA role ARN the in-cluster build ServiceAccount assumes to push images (W2 kaniko builds)"
-  value       = var.provision_ecr ? module.irsa_ecr_build[0].iam_role_arn : null
+  value       = length(module.irsa_ecr_build) > 0 ? module.irsa_ecr_build[0].iam_role_arn : null
 }
 output "ecr_build_service_account" {
   description = "The namespace:serviceaccount the build IRSA role trusts — the kaniko Job renderer must schedule builds under exactly this identity"
-  value       = var.provision_ecr ? "${local.ecr_build_namespace}:${local.ecr_build_service_account}" : null
+  # Guarded on the ROLE, not on provision_ecr: the pair must resolve together. Naming an identity the
+  # renderer would schedule builds under while ecr_build_role_arn is null hands it a ServiceAccount
+  # that can push nothing (#1772 — the role now also requires provision_eks).
+  value = length(module.irsa_ecr_build) > 0 ? "${local.ecr_build_namespace}:${local.ecr_build_service_account}" : null
 }
 
 # ElastiCache — Redis (replication group) or Valkey (serverless)
@@ -206,13 +219,19 @@ output "irsa_rds_role_arn" {
 
 output "karpenter_queue_name" {
   description = "Interruption queue name for karpenter"
-  value       = var.enable_karpenter ? module.karpenter[0].queue_name : null
+  value       = length(module.karpenter) > 0 ? module.karpenter[0].queue_name : null
 }
 
 
+# The ONE output on this file whose module guard is not sufficient on its own. module.irsa_karpenter
+# counts on `provision_eks` alone — deliberately, see the note at irsa.tf, so an already-applied
+# cluster does not churn its IAM — while `enable_karpenter` DEFAULTS TO FALSE. Guarding on the module
+# alone would therefore flip this output from null to a live role ARN on the ordinary greenfield
+# shape (provision_eks = true, enable_karpenter = false) and tell any consumer that Karpenter is
+# installed when it is not. Both terms are required: the feature must be ON and the role must EXIST.
 output "karpenter_sa_role" {
   description = "IRSA role for karpenter SA"
-  value       = var.enable_karpenter ? module.irsa_karpenter.iam_role_arn : null
+  value       = var.enable_karpenter && length(module.irsa_karpenter) > 0 ? module.irsa_karpenter[0].iam_role_arn : null
 }
 
 # Label-at-source for Karpenter-launched EC2 (BYOC A1.2). Karpenter provisions instances/volumes
@@ -227,12 +246,17 @@ output "karpenter_sa_role" {
 # non-sensitive, so harvesting this output into execution_metadata is safe.
 output "karpenter_node_tags" {
   description = "Tag map the Karpenter EC2NodeClass spec.tags MUST carry so Karpenter-launched EC2/EBS inherit the classification + sweep-handle tags (provider default_tags do not reach Karpenter resources). Null when Karpenter is disabled."
-  value       = var.enable_karpenter ? local.aws_default_tags : null
+  # Guarded on module.karpenter, matching its sibling karpenter_queue_name (and therefore also
+  # carrying `provision_eks`, which module.karpenter's count gained in #1772). On `enable_karpenter =
+  # true, provision_eks = false` the raw-flag form emitted a live tag map for an EC2NodeClass that
+  # will never be rendered — this output IS consumed (packages/core/provisioner/karpenter.go), so a
+  # non-null there is a positive claim about a Karpenter that does not exist. Unchanged on greenfield.
+  value = length(module.karpenter) > 0 ? local.aws_default_tags : null
 }
 
 output "fluentbit_sa_role_arn" {
   description = "IAM Role ARN for Fluent Bit Service Account"
-  value       = module.irsa_fluentbit_cloudwatch.iam_role_arn
+  value       = length(module.irsa_fluentbit_cloudwatch) > 0 ? module.irsa_fluentbit_cloudwatch[0].iam_role_arn : null
 }
 
 # Custom Secrets

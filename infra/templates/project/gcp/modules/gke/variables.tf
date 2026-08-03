@@ -26,6 +26,20 @@ variable "cluster_name" {
   description = "Name of the GKE cluster"
 }
 
+variable "node_pool_name" {
+  type        = string
+  description = "Name of the default node pool. Derived by the caller (local.gke_node_pool_name in checks_naming.tf), which falls back to a truncated-plus-digest form once the readable name would overflow GKE's cap."
+
+  # Defence in depth, not the primary guard — the caller's derivation is. A node-pool name of 40
+  # characters or more is rejected by the GKE API with a 400, and #1716 proved that failure lands
+  # MID-APPLY, after the cluster and network exist. Refusing it at plan time costs nothing and means
+  # a future caller that derives the name wrongly cannot reach the API to find out.
+  validation {
+    condition     = length(var.node_pool_name) < 40
+    error_message = "node_pool_name is ${length(var.node_pool_name)} characters; GKE requires fewer than 40 (Error 400: Node_pool.name must be less than 40 characters)."
+  }
+}
+
 variable "cluster_version" {
   type        = string
   description = "Kubernetes version for the GKE cluster"

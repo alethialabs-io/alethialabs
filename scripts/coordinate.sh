@@ -52,18 +52,17 @@ now="$(date -u +%s)"
 
 # ── init-labels ──────────────────────────────────────────────────────────────
 if [ "$MODE" = "init" ]; then
+  # The label set is DATA — scripts/lib/board-labels.json — and decompose-validate.mjs derives the
+  # proposal-authorable names from that same file. This used to be a hard-coded list here plus a
+  # hand-written mirror in the validator, and the two drifted: seven program waves were live on the
+  # board while the validator rejected every one of them as `unknown label`.
+  labels_json="$(dirname "${BASH_SOURCE[0]}")/lib/board-labels.json"
+  [ -f "$labels_json" ] || { echo "missing $labels_json" >&2; exit 1; }
   mklabel() { gh label create "$1" --color "$2" --description "$3" --force >/dev/null && echo "  label: $1"; }
-  for w in 1 2 3 4 5 6 7; do mklabel "wave:W$w" "1d76db" "north-star wave $w"; done
-  mklabel "wave:hygiene" "0e8a16" "launch-hygiene track (parallel)"
-  for l in schema server runner core canvas tests docs; do mklabel "lane:$l" "5319e7" "file-ownership lane: $l"; done
-  mklabel "class:backend" "0e8a16" "autonomous: claim→PR→enqueue on green (merge queue)"
-  mklabel "class:ui"      "d93f0b" "human-in-loop: design-spec → Claude Design → gated merge"
-  mklabel "claimed"       "fbca04" "held by an instance (carries a lease comment)"
-  mklabel "blocked"       "b60205" "a blocked-by dependency is still open (coordinate-maintained)"
-  mklabel "mutex:migration" "e99695" "generates a drizzle migration — serialized, one at a time"
-  mklabel "needs:design"  "d4c5f9" "UI unit awaiting the Claude-Design build"
-  mklabel "needs:human"   "d4c5f9" "awaiting a human decision/gate"
-  mklabel "epic"          "8b5cf6" "umbrella/tracking issue — decomposed into sub-issues, never directly built/claimed"
+  while IFS=$'\t' read -r name color description; do
+    [ -n "$name" ] || continue
+    mklabel "$name" "$color" "$description"
+  done < <(jq -r '.labels[] | [.name, .color, .description] | @tsv' "$labels_json")
   echo "✓ label set ready"
   exit 0
 fi

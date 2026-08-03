@@ -76,7 +76,13 @@ jobs:
     # deploy→ArgoCD→teardown chain still finishes well inside the old bound (a tiny Talos
     # cluster provisions in ~10-15m), and the soak adds a bounded ~10-25m of day-2 loops on
     # that same cheap cluster (cents/hour). The finer step timeout below kills a hang first.
-    timeout-minutes: 90
+    #
+    # 90→165 ONLY when the #845 acceptance gate is on. That gate places 2 namespace tiers + a whole
+    # vcluster (its own deploy + app-health + destroy waits) on top of the base proof, for a test ctx
+    # of ~135m — which the 75m step cap would kill mid-run, so an enabled gate could never finish.
+    # The raise is conditional because a fabric-demo night roughly doubles the billed cluster-hours
+    # per cloud; with E2E_FABRIC_DEMO unset the bound is unchanged and so is the cost.
+    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 165 || 90 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -163,7 +169,7 @@ jobs:
       # a green skip. (The gate below decides WHETHER to run; this makes the run honest.)
       ALETHIA_E2E_T2_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
 
       # ── Proof-scrub self-test (BYOC A0.4). Runs UNCONDITIONALLY (no cloud, no secret) so
       #    the proof-bundle secret scrub is exercised on every nightly/dispatch: it seeds a
@@ -262,7 +268,8 @@ jobs:
       #    these from the process env — $GITHUB_ENV carries them into the go-test step) so the run
       #    proves all 11 resource kinds land in tofu state AND all 19 marketplace add-ons converge.
       #    E2E_FULL_BAR gates the raised cost ceiling below; E2E_DIMENSION labels the rollup's ledger
-      #    row (full vs floor). Both are also read by the rollup job, which recomputes the same way.
+      #    row and its issue titles (full vs floor). $GITHUB_ENV is per-JOB, so neither reaches the
+      #    rollup job — it calls the SAME resolve-dimension.sh rather than retyping the cron (#1755).
       #
       #    This MUST resolve BEFORE the cluster shape is chosen: the two are coupled, because the
       #    full-bar surface needs a bigger node pool than the cheap floor (see the next step). It used
@@ -275,10 +282,12 @@ jobs:
           DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
           SCHEDULE: ${{ github.event.schedule }}
         run: |
+          # ONE deriver, every consumer (#1755). This step, the rollup's issue titles and the parity
+          # ledger all read the answer from scripts/e2e/resolve-dimension.sh — which owns the
+          # `17 5 * * 0` cron string and is self-tested — instead of each retyping the comparison.
+          dim="$(bash scripts/e2e/resolve-dimension.sh)"
           full="false"
-          if [ "$EVENT" = "workflow_dispatch" ] && [ "$DISPATCH_FULL" = "true" ]; then full="true"; fi
-          # The weekly Sunday cron (05:17 UTC) is the scheduled full-bar run.
-          if [ "$EVENT" = "schedule" ] && [ "$SCHEDULE" = "17 5 * * 0" ]; then full="true"; fi
+          if [ "$dim" = "full" ]; then full="true"; fi
           if [ "$full" = "true" ]; then
             {
               echo "E2E_FULL_BAR=true"
@@ -363,7 +372,7 @@ jobs:
       - uses: actions/setup-go@v7
         if: steps.gate.outputs.run == 'true'
         with:
-          go-version: "1.26"
+          go-version-file: go.work
       - uses: opentofu/setup-opentofu@v2
         if: steps.gate.outputs.run == 'true'
         with:
@@ -401,8 +410,13 @@ jobs:
       - name: Install hcloud CLI (belt-and-suspenders teardown)
         if: steps.gate.outputs.run == 'true' && matrix.provider == 'hetzner'
         env:
-          HCLOUD_CLI_VERSION: v1.49.1
+          # v1.49.1 was never released — the download 404'd on every run. The leg green-skipped
+          # while HCLOUD_TOKEN was unset, so the pin was never exercised until the gate opened.
+          HCLOUD_CLI_VERSION: v1.67.0
         run: |
+          # pipefail is load-bearing: without it `curl | tar` reports TAR's status, so a 404
+          # surfaced as "gzip: stdin: unexpected end of file" instead of the HTTP error.
+          set -euo pipefail
           curl -fsSL "https://github.com/hetznercloud/cli/releases/download/${HCLOUD_CLI_VERSION}/hcloud-linux-amd64.tar.gz" \
             | tar -xz hcloud
           sudo mv hcloud /usr/local/bin/hcloud
@@ -423,12 +437,37 @@ jobs:
       #    (see infra/aws-oidc/e2e-nightly.tf). aws-region MUST equal the role's locked region
       #    (E2E_REGION defaults to us-east-1 for aws — set in the compute step). ──
       - name: Configure AWS credentials (OIDC)
+        id: aws_creds
         if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.E2E_AWS_ROLE_ARN }}
           aws-region: ${{ env.E2E_REGION }}
           role-duration-seconds: 7200
+
+      # ── The ACCOUNT ID, which credentials alone do not carry into the template. The T2 harness
+      #    runs a self-operator runner with no stored CloudIdentity, so the runner falls through to
+      #    resolveAmbientAccountID (apps/runner/internal/agent/runner.go) — which for aws reads
+      #    $AWS_ACCOUNT_ID. Nothing set it, so every nightly emitted "aws_account_id":{"value":""}
+      #    and the apply died hours in at the RDS secret's KMS key with `InvalidArnException`,
+      #    naming KMS rather than the missing input (run 30738253176). configure-aws-credentials
+      #    resolves the account for the role it just assumed; take it from there rather than
+      #    parsing the role ARN, so a re-pointed role cannot silently disagree.
+      #
+      #    The template now REFUSES an empty value at plan time, so a regression here fails fast
+      #    and says which input is wrong instead of burning an hour of real cloud first. ──
+      - name: Export AWS_ACCOUNT_ID for the T2 harness
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
+        env:
+          ACCOUNT_ID: ${{ steps.aws_creds.outputs.aws-account-id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ACCOUNT_ID}" ]; then
+            echo "::error::configure-aws-credentials returned no aws-account-id — the template would emit an empty aws_account_id and fail mid-apply."
+            exit 1
+          fi
+          echo "AWS_ACCOUNT_ID=${ACCOUNT_ID}" >> "$GITHUB_ENV"
+          echo "::notice::AWS_ACCOUNT_ID resolved for the T2 harness (${ACCOUNT_ID})."
 
       # ── Signal to the T2 harness that AWS creds are configured. The provider table's
       #    credsPresent() for aws requires ALETHIA_E2E_AWS_READY=1 AND a concrete handle
@@ -506,11 +545,79 @@ jobs:
             echo "::error::failed to mint the Alibaba RAM OIDC token — refusing to continue."
             exit 1
           fi
+
+          # ── Perform the exchange. NOBODY USED TO (#1875). ──
+          # The step exported the token file + the two ARNs and stopped, so the workflow assumed the
+          # alicloud PROVIDER would call AssumeRoleWithOIDC, while the template
+          # (infra/templates/project/alibaba/main.tf:20) documents that it reads credentials the
+          # RUNNER already materialised. Neither half called it, and the deploy died at plan with
+          # "no valid credential sources for Terraform Alibaba Cloud Provider found" — accurately.
+          #
+          # AssumeRoleWithOIDC is an ANONYMOUS API: per Alibaba's reference it "allows anonymous
+          # access. Therefore, you do not need to specify the Signature, SignatureMethod,
+          # SignatureVersion, or AccessKeyId common request parameters." So a plain POST does it,
+          # with no chicken-and-egg profile to configure first — which is why this is curl and not
+          # `aliyun sts`, since the CLI has no credentials to run with at this point either.
+          RESP="${RUNNER_TEMP}/alibaba-sts-response.json"
+          HTTP_CODE=$(curl -sS -o "$RESP" -w '%{http_code}' -X POST "https://sts.aliyuncs.com/" \
+            --data-urlencode "Action=AssumeRoleWithOIDC" \
+            --data-urlencode "Format=JSON" \
+            --data-urlencode "Version=2015-04-01" \
+            --data-urlencode "RoleArn=${ROLE_ARN}" \
+            --data-urlencode "OIDCProviderArn=${OIDC_PROVIDER_ARN}" \
+            --data-urlencode "OIDCToken=$(cat "$TOKEN_FILE")" \
+            --data-urlencode "RoleSessionName=e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          if [ "$HTTP_CODE" != "200" ]; then
+            # Only Code/Message/RequestId — never the raw body, which can echo the request back.
+            echo "::error::AssumeRoleWithOIDC failed (HTTP ${HTTP_CODE}): $(jq -r '"\(.Code // "?"): \(.Message // "?") [RequestId \(.RequestId // "?")]"' <"$RESP" 2>/dev/null || echo 'unparseable response')"
+            rm -f "$RESP"
+            exit 1
+          fi
+
+          ALICLOUD_AK=$(jq -r '.Credentials.AccessKeyId' <"$RESP")
+          ALICLOUD_SK=$(jq -r '.Credentials.AccessKeySecret' <"$RESP")
+          ALICLOUD_ST=$(jq -r '.Credentials.SecurityToken' <"$RESP")
+          rm -f "$RESP"
+          if [ -z "$ALICLOUD_AK" ] || [ "$ALICLOUD_AK" = "null" ]; then
+            echo "::error::AssumeRoleWithOIDC returned 200 with no credentials — refusing to continue."
+            exit 1
+          fi
+
+          # These three are REAL SECRETS, unlike every other cloud's handle on this leg. Mask them
+          # before they can reach a log line, and see scrub.sh for the artifact side (#1854).
+          echo "::add-mask::${ALICLOUD_AK}"
+          echo "::add-mask::${ALICLOUD_SK}"
+          echo "::add-mask::${ALICLOUD_ST}"
+
+          # SIX variables from one exchange, because the two consumers do not agree on names:
+          # the alicloud OpenTofu provider reads ALICLOUD_ACCESS_KEY / _SECRET_KEY / _SECURITY_TOKEN,
+          # and the aliyun CLI — which the always() sweeper (scripts/e2e/alibaba-cleanup.sh) runs —
+          # reads ALIBABA_CLOUD_ACCESS_KEY_ID / _ACCESS_KEY_SECRET / _SECURITY_TOKEN. Exporting only
+          # one set leaves the other half of the leg unauthenticated: the sweeper is the guarantee
+          # that a hard-killed run does not leak billable ACK clusters, so it must not be the half
+          # that silently has no credentials.
           {
-            echo "ALICLOUD_OIDC_TOKEN_FILE=$TOKEN_FILE"
-            echo "ALICLOUD_ROLE_ARN=$ROLE_ARN"
-            echo "ALICLOUD_OIDC_PROVIDER_ARN=$OIDC_PROVIDER_ARN"
+            echo "ALICLOUD_ACCESS_KEY=${ALICLOUD_AK}"
+            echo "ALICLOUD_SECRET_KEY=${ALICLOUD_SK}"
+            echo "ALICLOUD_SECURITY_TOKEN=${ALICLOUD_ST}"
+            echo "ALIBABA_CLOUD_ACCESS_KEY_ID=${ALICLOUD_AK}"
+            echo "ALIBABA_CLOUD_ACCESS_KEY_SECRET=${ALICLOUD_SK}"
+            echo "ALIBABA_CLOUD_SECURITY_TOKEN=${ALICLOUD_ST}"
           } >> "$GITHUB_ENV"
+
+          # ── Assert the exchange WORKS, not that a file is non-empty. ──
+          # The old step's only check was `[ -s "$TOKEN_FILE" ]`, which is why this survived until
+          # the gate opened: it went green on every run while proving nothing about federation. One
+          # GetCallerIdentity fails loudly HERE instead of three minutes later inside a deploy job,
+          # where a missing credential reads as a template problem.
+          export ALIBABA_CLOUD_ACCESS_KEY_ID="${ALICLOUD_AK}"
+          export ALIBABA_CLOUD_ACCESS_KEY_SECRET="${ALICLOUD_SK}"
+          export ALIBABA_CLOUD_SECURITY_TOKEN="${ALICLOUD_ST}"
+          if ! IDENTITY=$(aliyun sts GetCallerIdentity --region "${E2E_REGION:-eu-central-1}" 2>&1); then
+            echo "::error::the assumed Alibaba identity cannot call STS — federation is broken: ${IDENTITY}"
+            exit 1
+          fi
+          echo "assumed $(jq -r '.Arn // "?"' <<<"$IDENTITY")"
 
       # ── Stale-cluster preflight (BYOC A1.4). BEFORE provisioning, sweep any leaked e2e
       #    orphans from PRIOR runs — a nightly hard-killed before both its graceful destroy AND
@@ -535,10 +642,15 @@ jobs:
       # ArgoCD Healthy+Synced convergence assertion 8m + build headroom) PLUS the opt-in soak
       # budget (window + drift/PVC bounds, BYOC A0.3), so a soak run has headroom; a non-soak
       # run still finishes far inside this. All three exceed the ctx so the ctx cancels first.
+      #
+      # With the #845 gate on the arithmetic becomes 135m ctx < 145m go-timeout < 150m step < 165m
+      # job — the SAME invariant (the ctx must always cancel first, so a failure reports as the
+      # scenario that ran long rather than as an opaque step kill), just shifted up. See the job
+      # timeout above for why the raise is conditional.
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: 75
+        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 150 || 75 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -595,8 +707,10 @@ jobs:
           #    harness layers a SECOND DEPLOY onto the SAME cluster with placement_mode=namespace and
           #    asserts the tenant app landed in <ns> on that cluster — no new cluster provisioned,
           #    ArgoCD not reinstalled, hardened per-namespace isolation applied (the #955+#956+#957
-          #    activation). aws-first (a clean skip on the other clouds, whose keyless re-mint is a
-          #    follow-up) and REQUIRES the A0.6 apps repo above (E2E_ARGO_APPS_REPO) — the tenant-app
+          #    activation). Runs on EVERY cloud since #1389 finished the activation — the harness's
+          #    old `provider != aws` skip was a second literal that silently no-op'd 4 of the 5
+          #    clouds and has been removed (#845); the product's own allowlist is the single
+          #    control. REQUIRES the A0.6 apps repo above (E2E_ARGO_APPS_REPO) — the tenant-app
           #    routing assertion needs an apps destination to deliver into. Absent ⇒ a clean skip of
           #    this layer (the base T2 proof is unchanged). Real-apply is main-gated, so this
           #    exercises meaningfully only from `main`. Set the repo VARIABLE E2E_NAMESPACE_TENANT
@@ -608,7 +722,9 @@ jobs:
           #    unreachable from the nightly and silently never ran — see the guard test
           #    TestScenarioEnablesReachTheNightly, which now fails if that happens again. Referenced
           #    here so a maintainer can turn it on; UNSET ⇒ empty ⇒ a clean skip, so adding the line
-          #    changes nothing until E2E_VCLUSTER is set. ──
+          #    changes nothing until E2E_VCLUSTER is set. Its own `provider != aws` skip was removed
+          #    in #845 for the same reason as the namespace layer above — a vcluster runs ON the host
+          #    Fabric, so it was never aws-specific, and the mirrored literal hid 4 clouds. ──
           ALETHIA_E2E_VCLUSTER: ${{ vars.E2E_VCLUSTER }}
           # ── DAY-2 ACCESS layer (BYOC A0.2). Same story as vcluster: harness present, never
           #    referenced by the nightly. Off unless E2E_DAY2_ACCESS is set. ──
@@ -621,6 +737,30 @@ jobs:
           #    E2E_DAY2_OFFER is set. ──
           ALETHIA_E2E_DAY2_OFFER: ${{ vars.E2E_DAY2_OFFER }}
           ALETHIA_E2E_DAY2_OFFER_SUMMARY: ${{ runner.temp }}/day2-offer-summary.json
+          # ── FABRIC ENTERPRISE-DEMO acceptance gate (#845). Places dev+staging as NAMESPACE envs
+          #    PLUS one vcluster env on the Fabric this leg just provisioned, each syncing its OWN
+          #    Kustomize overlay (repositories.apps_path) from the apps-destination repo, and proves
+          #    every placement genuinely CAUSED the ArgoCD artifacts it is credited with — the base
+          #    deploy already populated this Fabric, so absent-before/present-after is the only
+          #    honest evidence. It then re-proves the Fabric's drift posture and writes a verdict.
+          #
+          #    NOTE: this does NOT assert the apps-overlays ApplicationSet. That is rendered only on
+          #    the DEDICATED path (provisioner/deploy.go) and never by a placement, so an earlier
+          #    draft of this gate waited on an artifact no placement can create. The
+          #    DeriveExpectedArgoApps blindness to ApplicationSet-generated apps is real, but it
+          #    belongs to the A0.6 base leg where that ApplicationSet is genuinely rendered.
+          #
+          #    The default repo is the PUBLIC github.com/alethialabs-io/enterprise-demo, which ArgoCD
+          #    clones anonymously — so unlike the A0.6 layer above this needs NO git token, and
+          #    E2E_FABRIC_DEMO is the only variable a maintainer must set to turn it on. UNSET ⇒
+          #    empty ⇒ a clean skip, so these lines change nothing until then. Real-apply is
+          #    main-gated, so this exercises meaningfully only from `main`. ──
+          ALETHIA_E2E_FABRIC_DEMO: ${{ vars.E2E_FABRIC_DEMO }}
+          ALETHIA_E2E_FABRIC_DEMO_REPO: ${{ vars.E2E_FABRIC_DEMO_REPO }}
+          ALETHIA_E2E_FABRIC_DEMO_OVERLAYS: ${{ vars.E2E_FABRIC_DEMO_OVERLAYS }}
+          ALETHIA_E2E_FABRIC_DEMO_VCLUSTER: ${{ vars.E2E_FABRIC_DEMO_VCLUSTER }}
+          ALETHIA_E2E_FABRIC_DEMO_TIMEOUT: ${{ vars.E2E_FABRIC_DEMO_TIMEOUT }}
+          ALETHIA_E2E_FABRIC_DEMO_SUMMARY: ${{ runner.temp }}/fabric-demo-summary.json
           # ── CROSS-ACCOUNT KEYLESS CLOUD-SM READ (#1268). Layers ON TOP of the base T2 proof: the
           #    base DEPLOY carries a *-xacct connector row AND a secret-kind binding, so the runner
           #    renders secretstore-<cloud>-xacct and the ExternalSecret that reads through it; the
@@ -695,7 +835,7 @@ jobs:
           ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (env.E2E_FULL_BAR == 'true' && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || '' }}
         run: |
           GOWORK=off go test -tags=e2e_t2 ./... \
-            -run TestT2RealCloudProvisioning -count=1 -timeout 80m -v
+            -run TestT2RealCloudProvisioning -count=1 -timeout ${{ vars.E2E_FABRIC_DEMO != '' && '145m' || '80m' }} -v
 
       # ── Proof capture v2 (BYOC A0.4). Runs on ANY t2 outcome (always()) so a RED night is
       #    debuggable, not just a green one: it builds a structured, SCRUBBED proof bundle
@@ -709,6 +849,10 @@ jobs:
         if: steps.gate.outputs.run == 'true' && always()
         env:
           PROVIDER: ${{ matrix.provider }}
+          # The scrub's exact-literal list is built from the credentials visible HERE. HCLOUD_TOKEN
+          # is job-level and inherited; E2E_GIT_TOKEN was not exposed to this step at all, so the
+          # git token was silently absent from the list the bundle is scrubbed against (#1854).
+          E2E_GIT_TOKEN: ${{ secrets.E2E_GIT_TOKEN }}
           ALETHIA_E2E_PROOF_OUTCOME: ${{ steps.t2.outcome }}
           ALETHIA_E2E_PROOF_RUN_TAG: nightly-${{ github.run_id }}-${{ github.run_attempt }}
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
@@ -727,6 +871,9 @@ jobs:
           # Day-2 offer postures (#1495), written by the T2 test; folded into the bundle +
           # step-summary verdict exactly like the soak summary above (absent ⇒ unchanged).
           ALETHIA_E2E_DAY2_OFFER_SUMMARY: ${{ runner.temp }}/day2-offer-summary.json
+          # Fabric enterprise-demo acceptance verdict (#845), written by the T2 test at the SAME
+          # path the t2 step set; folded into the bundle + step summary (absent ⇒ unchanged).
+          ALETHIA_E2E_FABRIC_DEMO_SUMMARY: ${{ runner.temp }}/fabric-demo-summary.json
           # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
           # the capture script reads (region + the unique cluster name for the summary).
           ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
@@ -749,12 +896,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload runner log
+      # The raw runner log carries a `tofu show -json` plan, and OpenTofu emits the root
+      # module's `variables` map with RAW values — so uploading it verbatim published a live
+      # HCLOUD_TOKEN on this public repo (#1854). Scrub it through the SAME library the proof
+      # bundle uses, and fail closed: if a secret survives, this step goes red and the upload
+      # below finds nothing to publish.
+      - name: Scrub the runner log before upload
+        if: steps.gate.outputs.run == 'true' && always()
+        env:
+          # HCLOUD_TOKEN is job-level and inherited. E2E_GIT_TOKEN is NOT — it is only ever
+          # exposed to the T2 step as ALETHIA_E2E_GIT_TOKEN — so the literal list would omit
+          # it unless it is named here.
+          E2E_GIT_TOKEN: ${{ secrets.E2E_GIT_TOKEN }}
+        run: |
+          ./demos/proofs/scrub-runner-log.sh \
+            "${{ runner.temp }}/t2-runner.log" \
+            "${{ runner.temp }}/runner-log-scrubbed"
+
+      - name: Upload runner log (scrubbed)
         if: steps.gate.outputs.run == 'true' && always()
         uses: actions/upload-artifact@v7
         with:
           name: t2-runner-log-${{ matrix.provider }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/t2-runner.log
+          path: ${{ runner.temp }}/runner-log-scrubbed/t2-runner.log
           if-no-files-found: ignore
           retention-days: 14
 
@@ -833,7 +997,7 @@ jobs:
       # failure rather than an inferred skip.
       actions: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Download all per-provider proof artifacts
         uses: actions/download-artifact@v8
         continue-on-error: true
@@ -864,8 +1028,19 @@ jobs:
           PROOFS_DIR: proofs
           JOBS_JSON: ${{ runner.temp }}/run-jobs.json
           OUT_DIR: ${{ runner.temp }}/rollup
+          # The provision job's $GITHUB_ENV does not cross the job boundary, so the dimension is
+          # re-resolved here from the SAME script rather than a second copy of the cron comparison.
+          EVENT: ${{ github.event_name }}
+          DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
+          # The dimension is part of every red issue TITLE, which is the dedup key: keyed on the cloud
+          # alone, the floor and the full bar collapse onto one issue and the second one filed is
+          # silently dropped (#1755).
+          E2E_DIMENSION="$(bash scripts/e2e/resolve-dimension.sh)"
+          export E2E_DIMENSION
+          echo "::notice::rollup dimension = ${E2E_DIMENSION}"
           # Derive. Everything below just POSTS what this wrote.
           bash scripts/e2e/nightly-rollup.sh
           cat "${OUT_DIR}/summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -904,10 +1079,21 @@ jobs:
             echo "::warning::red legs (${REDS}) but event=${EVENT_NAME} — skipping issue creation (schedule/dispatch only)."
             exit 0
           fi
+          # The dedup CANDIDATES come from the LABELS this filer applies, not from a full-text search
+          # of the title (#1755). `--search` is a fuzzy recall filter, and punctuation in a title can
+          # make it miss an issue that plainly exists: searching the exact open title of #1754
+          # (`fix(e2e): full-bar DNS fixture …`) returns nothing, because `fix(e2e):` parses as a
+          # qualifier. A false negative here files a DUPLICATE every night. `--label` is served live
+          # rather than from the search index, so it also cannot miss an issue filed minutes ago.
+          # The exact-title match below is still what decides — this only widens what it sees.
+          open_reds="${RUNNER_TEMP}/open-red-issues.json"
+          gh issue list --state open --limit 200 \
+            --label class:backend --label lane:tests --label wave:hygiene \
+            --json title >"$open_reds" 2>/dev/null || echo '[]' >"$open_reds"
+
           for cloud in $REDS; do
             title="$(cat "${OUT_DIR}/issue-red-${cloud}.title")"
-            existing="$(gh issue list --state open --search "${title} in:title" --json title \
-              --jq "[.[] | select(.title == \"${title}\")] | length" 2>/dev/null || echo 0)"
+            existing="$(jq --arg t "$title" '[.[] | select(.title == $t)] | length' "$open_reds" 2>/dev/null || echo 0)"
             if [ "${existing:-0}" -gt 0 ]; then
               echo "::notice::an open issue titled '${title}' already exists — skipping create (deduped)."
               continue
@@ -936,15 +1122,16 @@ jobs:
       #    nothing said otherwise (#1613). One discovery, one answer, both consumers. ──
       - name: Append provisioning-e2e ledger rows (RECORD_ONLY)
         env:
-          EVENT: ${{ github.event_name }}
-          DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
-          SCHEDULE: ${{ github.event.schedule }}
           OUT_DIR: ${{ runner.temp }}/rollup
         run: |
           set -uo pipefail
-          dim="floor"
-          if [ "$EVENT" = "workflow_dispatch" ] && [ "$DISPATCH_FULL" = "true" ]; then dim="full"; fi
-          if [ "$EVENT" = "schedule" ] && [ "$SCHEDULE" = "17 5 * * 0" ]; then dim="full"; fi
+          # The dimension comes from the rollup's own state.env — the SAME value that titled the
+          # issues one step above, so a ledger row and its tracking issue can never disagree about
+          # which dimension failed. This used to be a third hand-written copy of the cron comparison
+          # (#1755), the same duplicate-discovery mistake #1613 removed from the row derivation.
+          # shellcheck disable=SC1091
+          . "${OUT_DIR}/state.env"
+          dim="${DIMENSION:-floor}"
           sha="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
           if [ ! -s "${OUT_DIR}/ledger.tsv" ]; then
             echo "::notice::no leg produced a ledger row (nothing ran) — ledger unchanged."

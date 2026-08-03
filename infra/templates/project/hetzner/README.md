@@ -116,3 +116,33 @@ Object Storage exists only in `fsn1`/`nbg1`/`hel1`; a cluster in a compute-only 
   (`control_plane_count > 1`) add a floating-IP VIP — documented upgrade, not
   wired here to keep the minimal path cheap.
 - `install.disk` is pinned to `/dev/sda` (correct for Hetzner Cloud VMs).
+
+## No cluster-less shape — an explicit exclusion (#1772)
+
+Every other project template has a `provision_<cluster>` flag — `provision_eks`,
+`provision_gke`, `provision_aks`, `provision_ack` — that turns the Kubernetes cluster off
+while the rest of the template still provisions. **Hetzner deliberately has no such flag.
+This is a documented exclusion, not an oversight and not a gap left for later.**
+
+The reason is structural. On the managed clouds the cluster is *one component among many*:
+those templates also provision a managed database, a cache, queues, object storage, a
+registry, DNS and secrets, so "everything except the cluster" is a coherent and genuinely
+useful shape — a database for an app that runs elsewhere, or a registry-only project.
+**Here the template *is* the cluster.** Talos on `hcloud_server`, its network, its
+firewall, its CNI and its bootstrap are the entire content; the only non-cluster resources
+are the optional Object Storage buckets in `buckets.tf`, which are a separate Hetzner
+product reached with separate credentials. A `provision_cluster = false` flag would gate
+the whole template and leave a tree that provisions nothing but a bucket — so it would not
+be a *shape*, it would be an off switch.
+
+Two things worth knowing before assuming a cluster-less Hetzner shape exists anyway:
+
+- **`control_plane_count = 0` is NOT that shape.** `network.tf` does
+  `local.control_plane_public_ip = local.control_plane_public_ips[0]`, which is the same
+  empty-index crash #1772 fixed on AWS. It is left unguarded because zero control planes
+  is not a supported configuration — guarding it would advertise a shape that cannot work.
+- **This template has no `*.tftest.hcl` at all**, so
+  `.github/workflows/infra-templates.yml` emits
+  `::notice::no *.tftest.hcl for hetzner — skipping` and none of its guards has ever been
+  executed by CI. That is a real coverage gap, but a different one: it concerns the guards
+  this template *does* have, not a cluster-less shape it does not offer.

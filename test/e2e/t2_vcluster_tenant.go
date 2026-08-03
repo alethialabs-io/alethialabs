@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // vclusterTenantParams carries what the scenario needs from the completed base provision.
@@ -41,7 +42,49 @@ type vclusterTenantParams struct {
 	fabricClust string // meta.ClusterName from the base deploy — the existing shared Fabric cluster
 	owner       string // the SeedRunner owner (so the still-running runner claims the seeded jobs)
 	appsRepo    string // apps-destination repo (reuse the A0.6 apps repo; empty ⇒ vcluster+registration only)
+
+	// ── Optional overrides. Every one defaults to the #1308 behaviour, so that scenario is
+	//    byte-for-byte unchanged; they exist so #845 can drive this same body as its vcluster tier
+	//    instead of forking a near-duplicate copy of it. ──
+
+	// appsPath is the subpath within appsRepo to sync ("" ⇒ the product default ".", the repo root).
+	appsPath string
+	// vcName overrides the vcluster name ("" ⇒ vclusterTenantSlug(env)). #845 places its OWN vcluster
+	// inside the same Fabric lifetime as #1308's, so the two names MUST differ.
+	vcName string
+	// label prefixes the logs ("" ⇒ the #1308 label), so a shared body reads honestly about which
+	// scenario is driving it.
+	label string
+	// requireAppResources turns on the >0 `.status.resources` floor and the source-path assertion.
+	// OFF for #1308, which predates them; ON for #845, where a Healthy+Synced app over an empty
+	// directory would make the whole acceptance gate vacuous.
+	requireAppResources bool
 }
+
+// vclusterTenantResult records what the shared body proved, for a caller that must fold it into an
+// acceptance verdict. It is an OUT-PARAM rather than a return value because every failure in the
+// body is a t.Fatalf: runtime.Goexit runs the caller's deferred summary write, and a returned value
+// would be lost exactly when the partial result matters most.
+type vclusterTenantResult struct {
+	Name          string
+	Placed        bool
+	App           string
+	SourcePath    string
+	ResourceCount int
+	Deregistered  bool
+}
+
+// The bounded waits one vcluster placement can consume, named here (in the UNTAGGED half) so the
+// parent context's budget term is computed from the SAME constants the run half waits on and the two
+// can never drift apart. A ctx that expired mid-placement used to surface as "the placement never
+// converged" — indistinguishable from a real failure.
+const (
+	vcDeployWait    = 20 * time.Minute
+	vcAppHealthWait = 10 * time.Minute
+	vcDestroyWait   = 15 * time.Minute
+	// vclusterTenantBudget is the wall clock one full vcluster placement can consume.
+	vclusterTenantBudget = vcDeployWait + vcAppHealthWait + vcDestroyWait
+)
 
 // vclusterTenantEnabled reports whether the opt-in scenario should run (ALETHIA_E2E_VCLUSTER truthy).
 // Off by default: the base T2 proof is unchanged unless a maintainer opts in.
@@ -52,6 +95,23 @@ func vclusterTenantEnabled() bool { return t2Truthy(os.Getenv("ALETHIA_E2E_VCLUS
 // value is BOTH the env's namespace AND the vcluster's name (buildVClusterSpec derives the host
 // namespace `vcluster-<name>`, the SA, and the exported Secret off it). Bounded to 54 chars so the
 // host namespace `vcluster-<name>` (prefix adds 9) still fits the 63-char k8s namespace limit.
+// vclusterTenantName resolves the vcluster name for a run: the explicit override when a caller set
+// one (#845), else the #1308 slug.
+func vclusterTenantName(p vclusterTenantParams) string {
+	if n := strings.TrimSpace(p.vcName); n != "" {
+		return n
+	}
+	return vclusterTenantSlug(p.env)
+}
+
+// vclusterTenantLabel is the log prefix for whichever scenario is driving the shared body.
+func vclusterTenantLabel(p vclusterTenantParams) string {
+	if l := strings.TrimSpace(p.label); l != "" {
+		return l
+	}
+	return "vcluster-tenant (#1308)"
+}
+
 func vclusterTenantSlug(env string) string {
 	s := strings.Trim(namespaceSlugUnsafe.ReplaceAllString(strings.ToLower(strings.TrimSpace(env)), "-"), "-")
 	if s == "" {
@@ -70,7 +130,9 @@ func vclusterTenantSlug(env string) string {
 // against, and the apps repo. Mirrors buildNamespaceSnapshot.
 func buildVClusterSnapshot(p vclusterTenantParams, vcName string) map[string]any {
 	snap := map[string]any{
-		"id":                "e2e-" + p.env + "-vc",
+		// Keyed on the VCLUSTER NAME, not the env: #845 places a second vcluster inside the same
+		// Fabric lifetime as #1308's, and a shared snapshot id would collide.
+		"id":                "e2e-" + vcName,
 		"project_name":      p.project,
 		"environment_stage": p.env,
 		"region":            p.region,
@@ -81,7 +143,13 @@ func buildVClusterSnapshot(p vclusterTenantParams, vcName string) map[string]any
 		"cluster": map[string]any{"cluster_name": p.fabricClust},
 	}
 	if p.appsRepo != "" {
-		snap["repositories"] = map[string]any{"apps_destination_repo": p.appsRepo}
+		repos := map[string]any{"apps_destination_repo": p.appsRepo}
+		// Emitted only when set, so #1308's snapshot is unchanged and the runner keeps rendering the
+		// repo root for it.
+		if strings.TrimSpace(p.appsPath) != "" {
+			repos["apps_path"] = p.appsPath
+		}
+		snap["repositories"] = repos
 	}
 	return snap
 }
@@ -94,7 +162,13 @@ type vclusterAppState struct {
 		Name string `json:"name"`
 	} `json:"metadata"`
 	Spec struct {
-		Project     string `json:"project"`
+		Project string `json:"project"`
+		// Source is what the app actually syncs. #1308 ignores it; #845 asserts on it, because the
+		// per-tier overlay path is its whole Kustomize claim.
+		Source struct {
+			RepoURL string `json:"repoURL"`
+			Path    string `json:"path"`
+		} `json:"source"`
 		Destination struct {
 			Server    string `json:"server"`
 			Name      string `json:"name"`

@@ -30,7 +30,9 @@ describe("add-on catalog export fixture (e2e full-surface seed)", () => {
 	it("carries every catalog add-on (the full surface, not a sample)", () => {
 		const onDisk = JSON.parse(readFileSync(FIXTURE, "utf8"));
 		// Mirrors the B0.3 SSOT count guard: the harness must exercise ALL of them.
-		expect(onDisk).toHaveLength(19);
+		// 19 → 18: cert-manager moved to the PLATFORM rail, so it is no longer a marketplace
+		// chart this fixture seeds — it ships from the deploy itself.
+		expect(onDisk).toHaveLength(18);
 	});
 
 	it("pins no dead chart repo (the sealed-secrets rot class)", () => {

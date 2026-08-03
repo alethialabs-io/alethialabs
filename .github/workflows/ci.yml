@@ -43,7 +43,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       runner: ${{ steps.filter.outputs.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       - id: filter
@@ -101,7 +101,7 @@ jobs:
     name: TypeScript (lint · types · test · docs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -178,7 +178,7 @@ jobs:
       OPENFGA_TEST_API_URL: http://localhost:8082
       ALETHIA_PDP_PARITY_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -256,7 +256,7 @@ jobs:
       # The Playwright webServer boots `next start` and tees stdout here; the OTP helper reads it.
       DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -362,7 +362,7 @@ jobs:
       # off by default and only the literal "1" engages it).
       ALETHIA_AI_MOCK: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -428,7 +428,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -459,7 +459,7 @@ jobs:
     name: Authz / open-core guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -472,6 +472,8 @@ jobs:
         run: pnpm -F console check:ee-boundary
       - name: Repository-wide open-core boundary and community image contract
         run: pnpm check:open-core
+      - name: Runner self-image is baked, matches its job, and is multi-arch
+        run: pnpm check:runner-self-image
       - name: Community edition type-checks without enterprise activation
         env:
           ALETHIA_EDITION: community
@@ -516,6 +518,16 @@ jobs:
           pnpm -F console gen:keyless-cells
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/keyless-cells.ts \
             || { echo "::error::Generated keyless-cells.ts is stale — run 'pnpm -F console gen:keyless-cells' and commit (source of truth: packages/core/manifests/keyless.go)."; exit 1; }
+      # The offer surface — which canvas switches a user can actually see, per cloud. Derived by
+      # EVALUATING the inspector schema's visibleWhen predicates, because they are closures over
+      # (config, provider, capabilities) that no pattern-match can read. Checked in so the answer is
+      # reviewable, and diffed so it cannot move silently: adding a gate to a field is a real change
+      # to what the product offers, and until now it moved nothing a reviewer could see.
+      - name: Offer surface is in sync with the inspector schema (config-schema.ts → offer-surface.json)
+        run: |
+          pnpm -F console gen:offer-surface
+          git diff --exit-code -- apps/console/lib/cloud-providers/generated/offer-surface.json \
+            || { echo "::error::Generated offer-surface.json is stale — run 'pnpm -F console gen:offer-surface' and commit (source of truth: apps/console/components/design-project/canvas/inspector/config-schema.ts)."; exit 1; }
       # Same shape, same reason (#1621). Which secret stores a cluster can actually read is decided by
       # which store hook each provider registers in Go; the canvas greys out the rest. That answer was
       # a hand-written TS list of two slugs, free to drift from the hooks — and in the direction that
@@ -575,16 +587,32 @@ jobs:
         run: bash scripts/lib/wt-lease.sh --self-test
       - name: Worktree lease guard — replays incident #1247
         run: bash scripts/lib/wt-lease-hook-test.sh
+      - name: Worktree landed-detection (squash merges; merged-PR-plus-new-commit is NOT landed)
+        run: bash scripts/lib/wt-landed-test.sh
       - name: Board claim arbitration (earliest-lease-wins) + PR predicates
         run: bash scripts/claim-work.sh --self-test
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
+      # The capabilities-security REQUIRED check decides which changed files it inspects AT ALL, and a
+      # file outside that set is not "passed" — it is never read and the check goes green (#1789). This
+      # asserts every known-guarded path still exists AND still matches (a rename that quietly drops a
+      # file out of scope reds here, not months later on a green PR), that out-of-scope paths still do
+      # not match, and that invariants A–D still fire. It reads the checkout, but runs no git and no
+      # network — the invariants are driven from inline fixtures.
+      - name: Capabilities-security gate scope + invariants (the guard's own guard)
+        run: node scripts/security/capabilities-gate.mjs --self-test
       # The nightly rollup is the only thing that reads a real-cloud run's verdict, and it reported a
       # leg that provisioned and FAILED as "gate off — no secret/var wired" (#1613). It is main-gated
       # and runs once a night, so a regression there is invisible for a day and then misattributed to
       # whatever diff is nearby. These fixtures are hermetic — no network, no gh, no token.
       - name: Nightly rollup derivation (a red leg is never "not enabled")
         run: bash scripts/e2e/nightly-rollup.sh --self-test
+      # Which dimension a nightly proved decides the tracking issue's TITLE, and the title is the
+      # dedup key: keyed on the cloud alone, the floor and the weekly full bar collapse onto one
+      # issue and the second red filed is silently dropped — which is how the full bar ran unwatched
+      # for weeks (#1755). Both crons are asserted here because neither is reachable from a PR.
+      - name: Nightly dimension resolution (floor and full-bar never collide)
+        run: bash scripts/e2e/resolve-dimension.sh --self-test
       # Each guard proves it still BLOCKS what it must and, more importantly, still
       # ALLOWS what it must — the false positives are what get a guard disabled.
       - name: Guards self-test (runtime · compose · merge)
@@ -609,10 +637,10 @@ jobs:
       matrix:
         module: [apps/cli, apps/runner, packages/core]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: go.work
           cache-dependency-path: ${{ matrix.module }}/go.sum
       # packages/core's untagged provisioning-wiring E2E (deploy_wiring_test.go) runs a real
       # `tofu` against a provider-less module — it self-skips without tofu on PATH, which
@@ -683,7 +711,7 @@ jobs:
     if: needs.detect-changes.outputs.runner == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: docker/setup-buildx-action@v4
       - name: Build runner-base for linux/amd64
         uses: docker/build-push-action@v7
@@ -743,7 +771,7 @@ jobs:
       # In the merge queue a missing prerequisite is a HARD FAIL, never a green skip.
       ALETHIA_E2E_T1_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -753,7 +781,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: go.work
       - uses: opentofu/setup-opentofu@v2
         with:
           tofu_version: "1.9.0"
@@ -797,10 +825,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: go.work
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -832,7 +860,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -842,7 +870,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.26"
+          go-version-file: go.work
       - run: pnpm install --frozen-lockfile
       - name: TS mutation (Stryker — lib + actions)
         run: pnpm -F console mutate || true
@@ -855,7 +883,7 @@ jobs:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
       # gitleaks-action@v2 requires a paid license for ORG-owned repos, so we run the
@@ -889,7 +917,7 @@ jobs:
     # is gated per-step on the `docs` filter; the final step is the explicit no-op pass.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
         if: needs.detect-changes.outputs.docs == 'true'
       - uses: actions/setup-node@v7
         if: needs.detect-changes.outputs.docs == 'true'

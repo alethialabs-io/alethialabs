@@ -416,6 +416,48 @@ sweep_network() {
 	done <<<"$vpcs"
 }
 
+# ── 7. Route 53 hosted zones (tagged). NEW with #1754: until then the max-config `dns` fixture
+#    used example.com, which AWS RESERVES, so the zone could never be created and there was
+#    nothing here to leak. Now that the fixture uses a real name, a hard-killed run leaves a
+#    billable zone ($0.50/month, forever) that `tofu destroy` never got to remove.
+#
+#    Route 53 is GLOBAL, so this is not region-scoped — which is exactly why the tag filter is
+#    load-bearing rather than incidental: an unfiltered zone sweep in the shared platform account
+#    would take out production DNS. tagged_arns() is the same mandatory per-run handle every
+#    other sweep uses, and assert_scope refuses to proceed without it.
+#
+#    A zone only deletes once it holds nothing but its own NS + SOA. tofu owns any other record,
+#    so on the graceful path this finds nothing; on the hard-kill path the zone is typically bare
+#    (the fixture no longer requests an ACM validation record). Anything else is removed first
+#    rather than letting the delete fail — a leak that "failed loudly" is still a leak.
+sweep_route53() {
+	assert_scope
+	local zones zone rrs
+	zones="$(tagged_arns route53:hostedzone | while read -r a; do arn_id "$a"; done | grep -v '^$' || true)"
+	[ -z "$zones" ] && {
+		echo "  · route53 hosted zones: none"
+		return 0
+	}
+	echo "  · route53 hosted zones: $(printf '%s' "$zones" | grep -c .) to delete"
+	while IFS= read -r zone; do
+		[ -n "$zone" ] || continue
+		if [ "$DRY_RUN" != "1" ]; then
+			# Everything except the zone's own NS/SOA, as a single ChangeBatch of DELETEs.
+			# shellcheck disable=SC2016 # the backticks are JMESPath literals, not a subshell
+			rrs="$(aws route53 list-resource-record-sets --hosted-zone-id "$zone" \
+				--query 'ResourceRecordSets[?Type!=`NS` && Type!=`SOA`]' --output json 2>/dev/null || echo '[]')"
+			if [ "$(printf '%s' "$rrs" | jq 'length' 2>/dev/null || echo 0)" -gt 0 ]; then
+				printf '%s' "$rrs" |
+					jq '{Changes: [.[] | {Action: "DELETE", ResourceRecordSet: .}]}' \
+						>"${TMPDIR:-/tmp}/r53-${zone}.json" 2>/dev/null || true
+				aws route53 change-resource-record-sets --hosted-zone-id "$zone" \
+					--change-batch "file://${TMPDIR:-/tmp}/r53-${zone}.json" >/dev/null 2>&1 || true
+			fi
+		fi
+		retry_delete "route53 hosted-zone ${zone}" aws route53 delete-hosted-zone --id "$zone"
+	done <<<"$zones"
+}
+
 # ── Final verification: a leak must NEVER exit green (grill F1/F2/F3). Uses tag-FILTERED
 #    describes (union of the project-id tag AND the cluster tag), which — unlike `--instance-ids`
 #    — never fail the whole call on an already-deregistered id (which would false-GREEN a mix of
@@ -453,6 +495,12 @@ alive_nats() {
 alive_lbs() { cluster_lb_arns; }
 alive_eks() { [ -n "$CLUSTER" ] && aws eks describe-cluster --name "$CLUSTER" --query 'cluster.name' --output text 2>/dev/null || true; }
 
+# A surviving hosted zone bills at $0.50/month FOREVER — small per run, but it never ages out and
+# nothing else would ever notice it. Unlike the describes above there is no tag-filtered Route 53
+# list API, so this goes through the tagging API; its lag can only make this MISS a leak (a
+# false-green already covered by the next run's sweep), never invent one.
+alive_zones() { tagged_arns route53:hostedzone | while read -r a; do arn_id "$a"; done; }
+
 verify_swept() {
 	assert_scope
 	local leaks="" x
@@ -462,6 +510,7 @@ verify_swept() {
 	x="$(alive_nats)"; [ -n "$x" ] && leaks="${leaks}nat-gateway: $(join "$x")\n"
 	x="$(alive_lbs)"; [ -n "$x" ] && leaks="${leaks}load-balancer: $(join "$x")\n"
 	x="$(alive_eks)"; [ -n "$x" ] && leaks="${leaks}eks-cluster: ${x}\n"
+	x="$(alive_zones)"; [ -n "$x" ] && leaks="${leaks}route53-hosted-zone: $(join "$x")\n"
 	if [ -n "$leaks" ]; then
 		echo "  ✗ billable resources still alive:" >&2
 		printf '%b' "  $leaks" >&2
@@ -493,6 +542,7 @@ sweep_env() {
 	sweep_nat_and_eips
 	sweep_volumes
 	sweep_network
+	sweep_route53
 	[ "$DRY_RUN" = "1" ] && return 0
 	verify_swept
 }
@@ -557,6 +607,7 @@ sweep_eks
 sweep_nat_and_eips
 sweep_volumes
 sweep_network
+sweep_route53
 
 if [ "$DRY_RUN" = "1" ]; then
 	echo "✓ aws DRY RUN complete for alethia:project-id=${PROJECT_ID_TAG} (nothing deleted, nothing verified)"

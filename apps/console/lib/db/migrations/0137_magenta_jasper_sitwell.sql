@@ -1,0 +1,1 @@
+ALTER TABLE "project_repositories" ADD COLUMN "apps_path" text;

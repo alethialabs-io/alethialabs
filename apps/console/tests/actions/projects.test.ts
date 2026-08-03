@@ -1073,6 +1073,76 @@ describe("placement-aware dispatch (#837)", () => {
 	});
 });
 
+// #1810: the DNS singleton is hand-enumerated, and both canvas switches were missing from that
+// list — so they were dropped before any provider was asked, on all five clouds. The switches are
+// emitted ONLY when on, like network.subnet_ids, so an absent key means off and the byte-locked
+// t2_config_snapshot fixtures stay green.
+describe("buildConfigSnapshot — DNS switches (#1810)", () => {
+	/** Run planProject against a single DNS row and return the frozen `dns` snapshot object. */
+	async function dnsSnapshot(row: Record<string, unknown>) {
+		const { valuesSpy } = setupDb({
+			select: snapshotSelect(
+				new Map<unknown, RowsResolver>([[projectDns, [row]]]),
+			),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await planProject("p1");
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
+		return snapshot.dns as Record<string, unknown>;
+	}
+
+	it("carries managed_certificate and waf_enabled when the user turns them on", async () => {
+		const dns = await dnsSnapshot({
+			enabled: true,
+			domain_name: "example.com",
+			managed_certificate: true,
+			waf_enabled: true,
+		});
+		expect(dns).toMatchObject({
+			enabled: true,
+			domain_name: "example.com",
+			managed_certificate: true,
+			waf_enabled: true,
+		});
+	});
+
+	it("omits both keys entirely when they are off, so the snapshot bytes do not move", async () => {
+		const dns = await dnsSnapshot({
+			enabled: true,
+			domain_name: "example.com",
+			managed_certificate: false,
+			waf_enabled: false,
+		});
+		expect(dns).not.toHaveProperty("managed_certificate");
+		expect(dns).not.toHaveProperty("waf_enabled");
+	});
+
+	it("omits both keys when the columns are null (a row written before the switches existed)", async () => {
+		const dns = await dnsSnapshot({
+			enabled: true,
+			domain_name: "example.com",
+			managed_certificate: null,
+			waf_enabled: null,
+		});
+		expect(dns).not.toHaveProperty("managed_certificate");
+		expect(dns).not.toHaveProperty("waf_enabled");
+	});
+
+	it("carries each switch independently", async () => {
+		const dns = await dnsSnapshot({
+			enabled: true,
+			domain_name: "example.com",
+			managed_certificate: true,
+			waf_enabled: false,
+		});
+		expect(dns).toMatchObject({ managed_certificate: true });
+		expect(dns).not.toHaveProperty("waf_enabled");
+	});
+});
+
 describe("planProject", () => {
 	it("freezes a config snapshot, queues a PLAN job, flips the env to QUEUED, and notifies the scaler", async () => {
 		const { valuesSpy, executeSpy } = setupDb({
@@ -1907,7 +1977,10 @@ describe("getProjectAsFormData", () => {
 				],
 			],
 			[projectDns, [{ enabled: false }]],
-			[projectRepositories, [{ apps_destination_repo: "git@x" }]],
+			[
+				projectRepositories,
+				[{ apps_destination_repo: "git@x", apps_path: "overlays/dev" }],
+			],
 			[
 				projectDatabases,
 				[
@@ -1971,6 +2044,30 @@ describe("getProjectAsFormData", () => {
 			instance_types: ["m5.large"],
 			cluster_version: "1.31",
 		});
+	});
+
+	// #1767 — the DB → form direction, which the config-snapshot tests cannot see. This is the
+	// path a clone, a duplicate-environment and EVERY canvas edit-page load run through: the
+	// mapper builds `repositories` field by field, so a column it forgets is silently dropped and
+	// then written back as empty by the next save. `toEqual` (not `toMatchObject`) so a future
+	// column added to the table and forgotten here fails rather than passing unnoticed.
+	it("round-trips repositories.apps_path out of the DB — the clone/edit hydration path", async () => {
+		setupDb({ select: formSelect() });
+		const { formData } = await getProjectAsFormData("p1");
+
+		expect(formData.repositories).toEqual({
+			apps_destination_repo: "git@x",
+			apps_path: "overlays/dev",
+		});
+	});
+
+	it("leaves apps_path undefined when the stored row has none", async () => {
+		const m = formSelect();
+		m.set(projectRepositories, [{ apps_destination_repo: "git@x", apps_path: null }]);
+		setupDb({ select: m });
+		const { formData } = await getProjectAsFormData("p1");
+
+		expect(formData.repositories.apps_path).toBeUndefined();
 	});
 
 	it("throws when the linked identity cannot be resolved", async () => {
