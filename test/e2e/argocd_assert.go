@@ -54,6 +54,10 @@ type argoAppState struct {
 	Conditions []string
 }
 
+// anyProvider is the infraServiceArgoApps inner key meaning "the same Application on
+// every cloud" — the common case, where the service is cloud-agnostic.
+const anyProvider = ""
+
 // infraServiceArgoApps maps an `infra_services` decision (see
 // packages/core/argocd/decisions.go InfraServiceDecisions) to the ArgoCD Application
 // that ships it when the decision is "installed". Together with infraServiceNoApp it
@@ -61,19 +65,34 @@ type argoAppState struct {
 // neither is a hard derivation error (fail-closed — a renamed or newly added service
 // must WIDEN the assertion, never silently shrink it), and a unit test pins both
 // maps against the real InfraServiceDecisions service list.
-var infraServiceArgoApps = map[string]string{
+//
+// The mapping is PROVIDER-KEYED, because one service can ship a DIFFERENT Application
+// per cloud: "ingress" is the ALB controller on AWS and will be something else entirely
+// on GCP/Azure/Alibaba as those lanes land. Outer key = service, inner key = provider,
+// with anyProvider ("") meaning "the same on every cloud" — the same shape of per-cloud
+// membership fact as metricsServerProviders below.
+//
+// The fail-closed contract is UNCHANGED and, if anything, tighter: an "installed"
+// decision whose cloud has no entry resolves to nothing, and — absent an
+// infraServiceNoApp entry — is the same hard derivation error as an unknown service.
+// A lane that flips its cloud's ingress decision to "installed" without naming the
+// Application it renders therefore breaks the derivation loudly, instead of the run
+// waiting out the whole ArgoCD timeout for an app nobody rendered (the #1722 shape).
+var infraServiceArgoApps = map[string]map[string]string{
 	// infra/templates/argocd/external-dns.yaml
-	"external-dns": "external-dns",
+	"external-dns": {anyProvider: "external-dns"},
 	// the ClusterSecretStore renders inside the operator's template — an installed
 	// store implies the external-secrets-operator Application must be healthy.
-	"external-secrets-store": "external-secrets-operator",
+	"external-secrets-store": {anyProvider: "external-secrets-operator"},
 	// the cross-account (*-xacct) ClusterSecretStore is applied by the RUNNER
 	// (argocd.EnsureExternalSecretsStore), not by an Application of its own — but it is a
 	// CR whose CRD and admission webhook ship with the operator, so exactly like the
 	// native store above, an installed one implies external-secrets-operator is healthy.
-	"external-secrets-store-xacct": "external-secrets-operator",
-	// ingressDecision is "installed" only on AWS, where it means the ALB controller.
-	"ingress": "aws-load-balancer-controller",
+	"external-secrets-store-xacct": {anyProvider: "external-secrets-operator"},
+	// ingressDecision is "installed" only where argocd.ingressControllers has an entry.
+	// ONE LINE PER CLOUD: add the cloud's controller Application here in the same PR that
+	// adds its ingressControllers entry, and the two stay in step.
+	"ingress": {"aws": "aws-load-balancer-controller"},
 	// appsRepoDecision is "installed" when the project wired an apps-destination repo: the
 	// runner credentials ArgoCD to it (the shared "repo-apps" repository Secret) and renders
 	// the credentialed "apps" app-of-apps that syncs the customer's repo (user-apps.yaml). This
@@ -81,16 +100,34 @@ var infraServiceArgoApps = map[string]string{
 	// hardcoding it) keeps the expected set honest with what the deploy actually shipped. The BYO
 	// (repo-byo-*) half rides the addon_status keys: a bring-your-own git-source chart is a
 	// managed add-on, so its "addon-<id>" Application is already in the derived set.
-	"apps-repo": "apps",
+	"apps-repo": {anyProvider: "apps"},
+}
+
+// argoAppForInfraService resolves the Application an installed decision implies on this
+// cloud: the cloud's own entry if there is one, else the cloud-agnostic anyProvider entry.
+// ok=false means "this service ships no Application ON THIS CLOUD" — the caller must then
+// find it in infraServiceNoApp or fail the derivation.
+func argoAppForInfraService(provider, service string) (app string, ok bool) {
+	byProvider, known := infraServiceArgoApps[service]
+	if !known {
+		return "", false
+	}
+	if app, ok := byProvider[provider]; ok {
+		return app, true
+	}
+	app, ok = byProvider[anyProvider]
+	return app, ok
 }
 
 // infraServiceNoApp whitelists the decisions that genuinely ship NO ArgoCD
-// Application of their own: "storage-class" is a StorageClass object and
-// "argocd-url" is an ingress on the ArgoCD install itself — neither has app health.
+// Application of their own: "storage-class" is a StorageClass object, "argocd-url" is an
+// ingress on the ArgoCD install itself, and "waf" is an ANNOTATION on that same ingress
+// (alb.ingress.kubernetes.io/wafv2-acl-arn) — none has app health of its own.
 // Add a service here ONLY when its install truly has no Application to assert.
 var infraServiceNoApp = map[string]struct{}{
 	"storage-class": {},
 	"argocd-url":    {},
+	"waf":           {},
 }
 
 // alwaysRenderedArgoApps are the Applications infra/templates/argocd renders
@@ -170,14 +207,14 @@ func DeriveExpectedArgoApps(provider string, metaRaw []byte) ([]string, error) {
 		if d.Status != "installed" {
 			continue
 		}
-		if app, ok := infraServiceArgoApps[d.Service]; ok {
+		if app, ok := argoAppForInfraService(provider, d.Service); ok {
 			set[app] = struct{}{}
 			continue
 		}
 		if _, ok := infraServiceNoApp[d.Service]; ok {
 			continue
 		}
-		return nil, fmt.Errorf("unrecognized installed infra service %q in execution_metadata — add it to infraServiceArgoApps (it ships an Application) or infraServiceNoApp (it genuinely has none) in argocd_assert.go so the assertion widens instead of silently shrinking", d.Service)
+		return nil, fmt.Errorf("unrecognized installed infra service %q on provider %q in execution_metadata — add it to infraServiceArgoApps (it ships an Application; the entry is per-cloud) or infraServiceNoApp (it genuinely has none) in argocd_assert.go so the assertion widens instead of silently shrinking", d.Service, provider)
 	}
 	for name := range meta.AddOnStatus {
 		set[name] = struct{}{}
