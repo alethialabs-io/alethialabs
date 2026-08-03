@@ -94,7 +94,7 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
-| `nosql:point_in_time_recovery` | 🚫 #1815 | 🟡 | ⚠️ #1838 | 🚫 #1815 | · | · |
+| `nosql:point_in_time_recovery` | 🚫 #1815 | 🟡 | 🟡 | 🚫 #1815 | · | · |
 | `queue:ordered` | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | · | · |
 | `registry:immutable_tags` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
 | `registry:vulnerability_scanning` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
@@ -110,7 +110,6 @@ product, not about the wiring, so it is confirmed by a person once and by a real
 | Offer | Cloud | Key the branch writes | Where |
 |---|---|---|---|
 | `cache:multi_az` | gcp | `memorystore_tier` | `ProviderTfvars` |
-| `nosql:point_in_time_recovery` | azure | `analytical_storage_enabled` | `buildCosmosDBCollections` |
 | `secret:generate` | aws | `length`, `special`, `manual` | `buildSecrets` |
 
 ## Day-2 posture — would a hazard be caught?
@@ -226,7 +225,6 @@ Only a cell that was measured and came out honored is asked for its entry back.
 | `nosql:point_in_time_recovery` | alibaba | 🚫 `no-carrier` | #1815 | Point-in-time recovery is not enabled on Tablestore yet — the table is created without it whichever way the switch is set. |
 | `dns:enabled` | hetzner | 🚫 `no-carrier` | #1816 | DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing. |
 | `network:provision_network` | hetzner | 🚫 `no-carrier` | #1816 | A Hetzner project always creates its own network — attaching an existing one is not supported yet. |
-| `nosql:point_in_time_recovery` | azure | ⚠️ `gated-carrier` | #1838 | Point-in-time restore is not enabled on Cosmos DB — turning it on enables Synapse analytical storage instead, which is a different, separately-billed feature. |
 
 ---
 
