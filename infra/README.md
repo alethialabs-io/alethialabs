@@ -21,6 +21,30 @@ push to `main`). PR jobs run **no cloud/state credentials** (static checks only:
 | `cp-aws` / `cp-gcp` / `cp-azure` / `cp-alibaba` / `cp-hetzner` | Per-cloud control-plane box | Static cloud keys (CI secrets) | S3-**compatible** `terraform-state` · `<cloud>-cp/` (custom endpoint) | — |
 | `status/` | `status.alethialabs.io` Gatus VPS (Hetzner) | Static keys (CI secrets) | S3-compatible `terraform-state` · `status/` | — |
 
+### The e2e federation stacks
+
+The OIDC/WIF plane the T2 real-cloud nightly authenticates through. **Never applied by CI** — each
+one mints broad provisioning identity, so a maintainer applies it by hand with an admin identity
+(`tofu apply` on `infra/` identity stacks is maintainer-only). All four keep state remotely, in the
+same account/project/subscription as the identity they describe, so the admin's own credentials
+authenticate the backend and no static state keys exist.
+
+| Stack | Purpose | State | Bootstrap |
+|---|---|---|---|
+| `aws-oidc/` | GitHub-OIDC deploy roles + the `alethia-e2e-nightly` provisioning role + budget | `s3` · `alethia-tofu-state-270587882865` · `aws-oidc/` | `email-ses/bootstrap/` already owns the bucket |
+| `gcp-e2e/` | WIF pool + ref-bound provider + provisioner SA + billing budget | `gcs` · `alethia-tofu-state-<project_id>` · `gcp-e2e/` | `gcp-e2e/bootstrap/` — the GCS bucket |
+| `azure-e2e/` | Entra app + federated credential + subscription roles + AKS admin group | `azurerm` · `alethiatfstate`/`tfstate` · `azure-e2e.tfstate` | `azure-e2e/bootstrap/` — RG + storage account + container |
+| `alibaba-e2e/` | RAM OIDC provider + `alethia-e2e-nightly` role + least-priv policy | `oss` · `alethia-tofu-state-e2e-alibaba` · `alibaba-e2e/` | `alibaba-e2e/bootstrap/` — the OSS bucket |
+| `aws-secrets-e2e/` | Account-B canary for the cross-account keyless secret proof | `s3` · `alethia-tofu-state-270587882865` | — |
+
+Each `bootstrap/` owns exactly one thing: the container its parent's state lives in. It exists
+because a stack cannot keep its state in a bucket it has not created yet — the same chicken-and-egg
+`email-ses/bootstrap/` solves on the AWS side. Every state container is **versioned**, refuses
+public access, and carries `prevent_destroy`.
+
+Migrating a stack onto its backend is a maintainer act on live identity, written out step by step in
+[`docs/testing/e2e-state-migration.md`](../docs/testing/e2e-state-migration.md).
+
 Non-stack directories:
 - `connector/` — the artifacts customers run to grant Alethia access (AWS CFN/`.tf`, GCP/Azure
   setup `.sh` + `.tf`). **Single source of truth** for the files mirrored into
@@ -42,6 +66,23 @@ Non-stack directories:
 
 Each bootstrap is admin-applied once and owns **all IAM** so the CI deploy roles carry no
 `iam:*`. See each stack's own README / `bootstrap/` for details.
+
+The e2e federation stacks follow the same shape, per cloud and admin-applied throughout:
+`<stack>/bootstrap/` (the state container) **then** `<stack>/`. The bootstrap's own state goes into
+the container it just created, via one two-phase `tofu init -backend=false` → apply →
+`tofu init -backend-config=backend.hcl -migrate-state`.
+
+## State
+
+Every stack declares a **partial** backend — `terraform { backend "<type>" {} }` — and takes the
+bucket/account at init time from a gitignored `backend.hcl` copied from the checked-in
+`backend.hcl.example`. Nothing about where state lives is hardcoded in the config, and no state
+credential is ever stored: the identity that applies the stack authenticates its backend natively.
+
+A stack with **no** backend block, or with a `backend "local" {}`, keeps state in the working tree —
+one machine, no versioning, no recovery. `infra/.gitignore` refuses to track `*_override.tf` for that
+reason: OpenTofu merges override files over the stack's own config, so a committed one silently
+re-points every operator. That is exactly how `azure-e2e` spent months on local state (#1887).
 
 ## Conventions
 

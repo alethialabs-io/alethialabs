@@ -52,11 +52,45 @@ This is a bootstrap: it creates an Entra app + subscription role assignments, so
 
 ```bash
 az login
+
+# 0. FIRST TIME ONLY — create the state storage account. This stack's state is remote (see
+#    "Remote state"), and a stack cannot keep its state in an account it has not created yet.
+cd infra/azure-e2e/bootstrap
+cp terraform.tfvars.example terraform.tfvars     # same subscription_id + YOUR Entra object id
+tofu init -backend=false && tofu apply
+cp backend.hcl.example backend.hcl && $EDITOR backend.hcl   # names from `tofu output`
+tofu init -backend-config=backend.hcl -migrate-state
+
+cd infra/azure-e2e
 cp terraform.tfvars.example terraform.tfvars     # set subscription_id (dedicated!) + emails
-cp backend.hcl.example backend.hcl               # or `tofu init -backend=false` for local state
+cp backend.hcl.example backend.hcl               # same account/container, key azure-e2e.tfstate
 tofu init -backend-config=backend.hcl
 tofu apply
 ```
+
+## Remote state
+
+State lives in a **versioned blob container** in the same dedicated e2e subscription as the identity
+it describes — the Azure analogue of `infra/aws-oidc`'s S3 backend. What this stack owns is not
+cheaply rebuilt: a fresh `azuread_application` means a new client id, and that id is already
+published as the `E2E_AZURE_CLIENT_ID` repo variable the nightly gates on.
+
+The backend is **partial** (`backend "azurerm" {}`), so the account and container are supplied at
+init time from a gitignored `backend.hcl`. `use_azuread_auth = true` is required, not a preference:
+the bootstrap creates the account with `shared_access_key_enabled = false`, so no storage key exists
+to leak and state access is an Entra role assignment (`Storage Blob Data Contributor`) or nothing.
+
+`bootstrap/` creates the resource group, the storage account and the container: blob versioning,
+30-day soft delete on blobs and containers, TLS 1.2 floor, `prevent_destroy`. It also grants the
+maintainers listed in `state_writer_principal_ids` — leave that empty and every `init` 403s.
+
+**On `backend_override.tf`.** This stack shipped with an untracked, self-labelled TEMPORARY
+`backend_override.tf` forcing `backend "local" {}`, because the azurerm backend needed a storage
+account the stack had not created. `bootstrap/` is that storage account, so the override has no
+remaining purpose: **delete it** as part of the migration, before re-initialising. If you delete it
+afterwards, the init you already ran configured the local backend and the migration prompt never
+appears. `infra/.gitignore` refuses to track override files so one can never be committed. Full
+procedure: [`docs/testing/e2e-state-migration.md`](../../docs/testing/e2e-state-migration.md).
 
 ## Enable the Azure nightly (maintainer runbook)
 
