@@ -14,7 +14,7 @@ Each bucket is scoped to the project's cloud account and environment. Its name i
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | **Name** | Text input | `assets` | Bucket name (S3-safe — see [Naming rules](#naming-rules)) |
-| **Versioning** | Toggle | Off | Keep every version of an object; restore or roll back at any time |
+| **Versioning** | Toggle | Off | Keep every version of an object; restore or roll back at any time (on Azure this applies to the whole project — see [Azure](#azure)) |
 | **Encryption at rest** | Toggle | On | Server-side encryption with the cloud's managed keys |
 | **Public access** | Toggle | Off (private) | Allow unauthenticated reads (static assets); off keeps the bucket private |
 | **CORS origins** | Text | Empty | Comma-separated origins allowed to read from the browser |
@@ -53,6 +53,21 @@ Compute-only Hetzner projects provision buckets natively via Object Storage (the
 
 - **Encryption at rest** is not shown — Hetzner Object Storage always encrypts at rest, so there is no per-bucket toggle.
 - **CORS origins** is not shown — the provider does not apply CORS to Hetzner's S3 backend.
+
+### Azure
+
+Two fields behave differently on Azure, because Blob Storage puts the setting on the storage account rather than the container. An Azure project has one storage account, which holds every bucket in the project.
+
+- **Versioning** is an account setting. Turning it on for one bucket versions **every** bucket in that project. Leaving it on for a bucket that no longer needs it costs storage; the alternative — ignoring a bucket that asks for it — loses data on the first overwrite, so Alethia turns versioning on for the account whenever any bucket asks for it.
+- **Public access** is applied per bucket, as it is everywhere else. The account permission that allows public containers is opened only when at least one bucket asks for public access, and stays closed otherwise.
+
+### Google Cloud
+
+**Public access** on Google Cloud does two things: it stops Cloud Storage from refusing public grants on that bucket, and it grants read access to everyone. Uniform bucket-level access stays on for every bucket regardless — it controls per-object ACLs, not public reads, and Cloud Storage will not let it be turned off again once a bucket has had it for 90 days.
+
+<Callout type="warn">
+Many Google Cloud organizations set the `constraints/iam.allowedPolicyMemberDomains` organization policy, which blocks public grants everywhere in the organization. Under that policy a public bucket is refused when the project is deployed, and the deployment says so rather than failing part-way through.
+</Callout>
 
 ## Cloud placement
 

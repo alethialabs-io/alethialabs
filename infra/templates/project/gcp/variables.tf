@@ -476,12 +476,18 @@ variable "create_cloud_storage" {
 
 variable "cloud_storage_buckets" {
   type = list(object({
-    name_suffix    = string
-    location       = optional(string)
-    storage_class  = optional(string, "STANDARD")
-    versioning     = optional(bool, false)
-    force_destroy  = optional(bool, false)
-    uniform_access = optional(bool, true)
+    name_suffix   = string
+    location      = optional(string)
+    storage_class = optional(string, "STANDARD")
+    versioning    = optional(bool, false)
+    force_destroy = optional(bool, false)
+    # Uniform bucket-level access is NOT a knob, and this attribute is no longer `uniform_access`.
+    # UBLA only disables per-object ACLs — it says nothing about public reads — and Cloud Storage
+    # REFUSES to turn it back off more than 90 days after it was enabled, so a user-facing switch
+    # routed through it would eventually become an apply that can never succeed. UBLA is on for
+    # every bucket, permanently; `public_access` drives `public_access_prevention` and the allUsers
+    # IAM binding in modules/cloud-storage, which is what actually decides public readability.
+    public_access = optional(bool, false)
     lifecycle_rules = optional(list(object({
       action_type          = string
       action_storage_class = optional(string)

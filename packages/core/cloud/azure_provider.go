@@ -386,6 +386,17 @@ func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]in
 	return result
 }
 
+// buildAzureContainers turns the canvas's buckets into the `storage_containers` tfvar.
+//
+// The key is `access_type`, not `container_access_type`. The module has always declared and read
+// `access_type` (modules/storage-account) and mapped it onto the resource's own
+// `container_access_type` argument; sending the resource's spelling meant the value landed on a name
+// nothing read and every container was created private whatever the user chose.
+//
+// `versioning_enabled` is emitted PER CONTAINER even though Azure blob versioning is a property of
+// the storage ACCOUNT, and this template gives a project exactly one. Keeping the per-bucket intent
+// visible in the tfvars is what lets the template aggregate it in one place, with one comment
+// explaining the coarsening — rather than the provider silently deciding for the whole project here.
 func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
@@ -394,8 +405,9 @@ func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[stri
 			accessType = "blob"
 		}
 		result = append(result, map[string]interface{}{
-			"name":                  b.Name,
-			"container_access_type": accessType,
+			"name":               b.Name,
+			"access_type":        accessType,
+			"versioning_enabled": b.Versioning,
 		})
 	}
 	return result
