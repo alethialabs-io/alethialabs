@@ -31,6 +31,10 @@ variable "topics" {
     subscriptions = list(object({
       name                 = string
       ack_deadline_seconds = optional(number, 10)
+      # Ordered delivery, per orderingKey. Optional-with-false so a subscription whose tfvars entry
+      # predates the key plans identically — the argument forces replacement, and a subscription
+      # replaced under a running consumer loses its unacknowledged backlog.
+      enable_message_ordering = optional(bool, false)
     }))
   }))
   description = <<-EOT
@@ -40,7 +44,7 @@ variable "topics" {
         events = {
           message_retention_duration = "86400s"
           subscriptions = [
-            { name = "event-processor", ack_deadline_seconds = 20 },
+            { name = "event-processor", ack_deadline_seconds = 20, enable_message_ordering = true },
             { name = "event-logger" },
           ]
         }
