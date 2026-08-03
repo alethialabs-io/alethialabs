@@ -448,3 +448,80 @@ func TestGitopsFailureRedactsAllTokens(t *testing.T) {
 		t.Errorf("want [REDACTED] marker, got %q", gs.Error)
 	}
 }
+
+// TestInstallArgoCDAttachesWAFWebACLOnlyWhenPresent is the proof that the canvas WAF switch
+// reaches something. The template has always BUILT a regional web ACL and associated it with
+// nothing; the ALB ingress annotation is the attach. Two directions matter and they fail
+// differently:
+//
+//   - the ARN present must reach `alb.ingress.kubernetes.io/wafv2-acl-arn` on the helm command
+//     (otherwise the project pays for an ACL that inspects zero requests, silently);
+//   - the ARN ABSENT must emit NO annotation key at all — an empty wafv2-acl-arn value is not
+//     "no WAF", it is a malformed association the ALB controller refuses, which wedges the
+//     whole ingress reconcile and takes ArgoCD's URL down with it.
+func TestInstallArgoCDAttachesWAFWebACLOnlyWhenPresent(t *testing.T) {
+	const wafArn = "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/app-waf/0c4e-1"
+	const certArn = "arn:aws:acm:us-east-1:123456789012:certificate/123"
+
+	installCommandFor := func(t *testing.T, outputs map[string]interface{}) string {
+		t.Helper()
+		resetDeploySeams(t)
+		executeCommandWithOutput = func(string, string, []string) (string, error) { return "existing-auth", nil }
+		var commands []string
+		executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+			commands = append(commands, command)
+			return nil
+		}
+		vc := &types.ProjectConfig{DNS: types.ProjectDNSConfig{Enabled: true, DomainName: "example.com"}}
+		if err := installArgoCD(context.Background(), vc, outputs, &PlanResult{}, io.Discard, io.Discard); err != nil {
+			t.Fatalf("installArgoCD: %v", err)
+		}
+		if len(commands) == 0 {
+			t.Fatal("no commands executed")
+		}
+		return commands[len(commands)-1]
+	}
+
+	t.Run("web ACL present is annotated onto the ingress", func(t *testing.T) {
+		install := installCommandFor(t, map[string]interface{}{
+			"acm_certificate_arn": certArn,
+			"waf_webacl_arn":      wafArn,
+		})
+		for _, want := range []string{`alb\.ingress\.kubernetes\.io/wafv2-acl-arn=` + wafArn, "server.ingress.enabled=true"} {
+			if !strings.Contains(install, want) {
+				t.Fatalf("install command missing %q:\n%s", want, install)
+			}
+		}
+	})
+
+	t.Run("waf off emits no annotation key at all", func(t *testing.T) {
+		install := installCommandFor(t, map[string]interface{}{"acm_certificate_arn": certArn})
+		if strings.Contains(install, "wafv2-acl-arn") {
+			t.Fatalf("install command carries a wafv2-acl-arn annotation with no web ACL:\n%s", install)
+		}
+		// The rest of the ingress must be untouched — this path is the common case.
+		if !strings.Contains(install, "server.ingress.enabled=true") {
+			t.Fatalf("install command lost the ingress:\n%s", install)
+		}
+	})
+
+	// A null output (the shape tofu emits when application_waf_enabled is false) must behave
+	// exactly like an absent one — ExtractOutput yields "", and "" must mean "no annotation".
+	t.Run("a null waf output is not an empty annotation", func(t *testing.T) {
+		install := installCommandFor(t, map[string]interface{}{
+			"acm_certificate_arn": certArn,
+			"waf_webacl_arn":      nil,
+		})
+		if strings.Contains(install, "wafv2-acl-arn") {
+			t.Fatalf("a null waf_webacl_arn produced an annotation:\n%s", install)
+		}
+	})
+
+	// No certificate ⇒ no ingress at all ⇒ nothing to annotate, even with a web ACL built.
+	t.Run("no ingress means no annotation even with a web ACL", func(t *testing.T) {
+		install := installCommandFor(t, map[string]interface{}{"waf_webacl_arn": wafArn})
+		if strings.Contains(install, "wafv2-acl-arn") || strings.Contains(install, "server.ingress.enabled=true") {
+			t.Fatalf("annotated an ingress that was never configured:\n%s", install)
+		}
+	})
+}
