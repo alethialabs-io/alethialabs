@@ -137,9 +137,40 @@ run "a_managed_certificate_exports_the_name_the_ingress_annotation_takes" {
     cloud_dns_managed_certificate = true
   }
 
+  # The name is "<zone_name>-cert-<8 hex of the SAN set>". The digest is there because changing
+  # `domains` REPLACES the certificate and a certificate attached to a live load balancer cannot be
+  # deleted before its replacement exists — create_before_destroy needs a differing name, and this
+  # resource type has no name_prefix. Matched by shape, not by literal, so the digest is free to
+  # change; the point is that it is PRESENT and that the name is not the old prefix-doubled form.
   assert {
-    condition     = output.cloud_dns_managed_certificate_name == "alethia-nl-production-platform-cert"
-    error_message = "cloud_dns_managed_certificate_name must carry the certificate's bare name, got ${coalesce(output.cloud_dns_managed_certificate_name, "<null>")}."
+    condition     = can(regex("^platform-cert-[0-9a-f]{8}$", output.cloud_dns_managed_certificate_name))
+    error_message = "cloud_dns_managed_certificate_name must be <zone_name>-cert-<8 hex>, got ${coalesce(output.cloud_dns_managed_certificate_name, "<null>")}."
+  }
+
+  # GCP caps a resource name at 63 characters and rejects a longer one AT APPLY. The name used to
+  # be "<project_name>-<environment>-<zone_name>-cert", which repeats the naming stem twice because
+  # zone_name itself defaults to "dns-<region-short>-<environment>-<project_name>" — 56 characters
+  # at the shipped stem budget, and 65 once the SAN digest was added, on precisely the deploys that
+  # bring no zone id of their own. Bounded by construction now (stem truncated to 63-1-8), and
+  # asserted here so a future prefix cannot quietly reintroduce the overflow.
+  assert {
+    condition     = length(output.cloud_dns_managed_certificate_name) <= 63
+    error_message = "the certificate name must fit GCP's 63-character cap, got ${length(output.cloud_dns_managed_certificate_name)}: ${output.cloud_dns_managed_certificate_name}."
+  }
+
+  # THE assertion this file existed without, and the bug it hid: the certificate covered the APEX
+  # (`example.com`) while the Ingress installArgoCD renders serves `argocd.example.com`. Google
+  # validates every name on a managed certificate by resolving it to the attached load balancer,
+  # and this module creates NO record sets — only external-dns does, from the Ingress, for
+  # argocd.<domain>. So the apex could never resolve, the certificate could never leave
+  # FAILED_NOT_VISIBLE, `allow-http: "false"` removed the fallback, and the ingress served nothing
+  # while argocdURLGates["gcp"] reported it installed.
+  #
+  # Asserting the exact set rather than "contains argocd." is deliberate: an extra unserved name is
+  # the same failure as the wrong name, since ONE unresolvable SAN holds the whole certificate.
+  assert {
+    condition     = local.platform_certificate_domains == ["argocd.example.com"]
+    error_message = "the managed certificate must cover exactly the hostnames the platform serves (argocd.<domain>) and nothing else — an unserved name, the bare apex included, holds the whole certificate in FAILED_NOT_VISIBLE. Got ${jsonencode(local.platform_certificate_domains)}."
   }
 }
 
@@ -209,9 +240,17 @@ run "dns_outputs_survive_a_pluggable_dns_connector" {
 ################################################################################
 #
 # Everything here is a PLAN against mocked providers. It proves the output KEYS exist, carry the
-# names the runner reads, and are null in the off direction. It does not prove that the GCLB
-# actually enforces the policy, that the managed certificate ever reaches ACTIVE, or that the GKE
-# ingress controller accepts the BackendConfig — those need a real apply, and T2 real applies are
-# main-gated (they cannot run from a PR). The Go half of the contract is pinned separately: a unit
-# test in packages/core/argocd asserts BuildFromOutputs reads exactly these keys, so a rename here
-# reddens both sides.
+# names the runner reads, are null in the off direction, and that the certificate's SAN set is
+# exactly the hostnames the platform serves. It does not prove that the GCLB actually enforces the
+# policy, that the managed certificate ever reaches ACTIVE, or that the GKE ingress controller
+# accepts the BackendConfig — those need a real apply, and T2 real applies are main-gated (they
+# cannot run from a PR). The Go half of the contract is pinned separately: a unit test in
+# packages/core/argocd asserts BuildFromOutputs reads exactly these keys, so a rename here reddens
+# both sides.
+#
+# The SAN assertion is worth its own note, because it is a NECESSARY condition for ACTIVE that a
+# plan CAN check. Reaching ACTIVE additionally needs each name to resolve to this load balancer,
+# which depends on external-dns running post-apply — unprovable here. But a certificate whose SAN
+# set does not include the name being served can never reach ACTIVE no matter what resolves, and
+# that is precisely the state this template shipped in before: apex-only, permanently
+# FAILED_NOT_VISIBLE, reported as installed.

@@ -385,34 +385,65 @@ func TestInfraServiceDecisions_WAFBuiltButNoIngress(t *testing.T) {
 	}
 }
 
-// The AWS ingress gate is a conjunction, so its skip reason must name WHICH half was missing:
-// "turn DNS on" and "turn the certificate on" are different fixes, and an operator told the
-// wrong one goes looking in the wrong place. The certificate arm deliberately keeps the shared
-// default, so that message is pinned here too — it is the pre-existing behaviour.
+// Every ingress gate is a conjunction, so its skip reason must name WHICH half was missing:
+// "turn DNS on" and "turn the certificate on" are different fixes, and an operator told the wrong
+// one goes looking in the wrong place.
+//
+// Run per cloud that HAS a gate, so an ingress lane adding one to argocdURLGates gets told to
+// supply the same three answers rather than inheriting a single sentence covering none of them.
+// The AWS certificate arm deliberately keeps the shared default, so that message is pinned too —
+// it is the pre-existing behaviour and staying byte-identical is the point.
 func TestArgocdURLSkipReasonNamesTheMissingHalf(t *testing.T) {
-	full := func() *InfraFacts {
-		return &InfraFacts{Provider: "aws", DNSEnabled: true, DomainName: "example.com",
-			ACMCertificateArn: "arn:aws:acm:us-east-1:123:certificate/abc"}
-	}
-	cases := []struct {
-		name   string
-		mutate func(*InfraFacts)
-		want   string
+	clouds := map[string]struct {
+		full           func() *InfraFacts
+		dropCert       func(*InfraFacts)
+		wantNoCertText string
 	}{
-		{"dns off", func(f *InfraFacts) { f.DNSEnabled = false }, "dns is disabled"},
-		{"no domain", func(f *InfraFacts) { f.DomainName = "" }, "no domain is configured"},
-		{"no certificate", func(f *InfraFacts) { f.ACMCertificateArn = "" }, "no managed ingress on this cloud yet"},
+		"aws": {
+			full: func() *InfraFacts {
+				return &InfraFacts{Provider: "aws", DNSEnabled: true, DomainName: "example.com",
+					ACMCertificateArn: "arn:aws:acm:us-east-1:123:certificate/abc"}
+			},
+			dropCert:       func(f *InfraFacts) { f.ACMCertificateArn = "" },
+			wantNoCertText: "no managed ingress on this cloud yet",
+		},
+		"gcp": {
+			full: func() *InfraFacts {
+				return &InfraFacts{Provider: "gcp", DNSEnabled: true, DomainName: "example.com",
+					GCPManagedCertName: "alethia-cert-0c4e1a2b"}
+			},
+			dropCert:       func(f *InfraFacts) { f.GCPManagedCertName = "" },
+			wantNoCertText: "no google-managed ssl certificate was provisioned",
+		},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			f := full()
-			c.mutate(f)
-			d := decisionFor(t, InfraServiceDecisions(f), "argocd-url")
-			if d.Status != infraStatusSkipped {
-				t.Fatalf("want skipped, got %s (%s)", d.Status, d.Reason)
+	for cloud, spec := range clouds {
+		t.Run(cloud, func(t *testing.T) {
+			// Sanity: the fully-wired shape must actually be installed, or the cases below
+			// would pass for the wrong reason.
+			if d := decisionFor(t, InfraServiceDecisions(spec.full()), "argocd-url"); d.Status != infraStatusInstalled {
+				t.Fatalf("fully-wired %s: want installed, got %s (%s)", cloud, d.Status, d.Reason)
 			}
-			if !strings.Contains(strings.ToLower(d.Reason), c.want) {
-				t.Errorf("skip reason should contain %q, got %q", c.want, d.Reason)
+			cases := []struct {
+				name   string
+				mutate func(*InfraFacts)
+				want   string
+			}{
+				{"dns off", func(f *InfraFacts) { f.DNSEnabled = false }, "dns is disabled"},
+				{"no domain", func(f *InfraFacts) { f.DomainName = "" }, "no domain is configured"},
+				{"no certificate", spec.dropCert, spec.wantNoCertText},
+			}
+			for _, c := range cases {
+				t.Run(c.name, func(t *testing.T) {
+					f := spec.full()
+					c.mutate(f)
+					d := decisionFor(t, InfraServiceDecisions(f), "argocd-url")
+					if d.Status != infraStatusSkipped {
+						t.Fatalf("want skipped, got %s (%s)", d.Status, d.Reason)
+					}
+					if !strings.Contains(strings.ToLower(d.Reason), c.want) {
+						t.Errorf("skip reason should contain %q, got %q", c.want, d.Reason)
+					}
+				})
 			}
 		})
 	}

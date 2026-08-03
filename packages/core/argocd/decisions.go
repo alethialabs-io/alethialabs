@@ -356,11 +356,29 @@ var argocdURLGates = map[string]providerDecision{
 	// The skip reason is SPECIFIC rather than the shared default: on GCP the missing piece is a
 	// switch the operator can turn on (the canvas certificate switch → `cloud_dns_managed_certificate`),
 	// not an absent capability, and "no managed ingress on this cloud yet" would now be a lie.
+	//
+	// The DNS conjuncts are DEFENCE IN DEPTH here rather than a live fix, and are stated anyway so
+	// the AWS bug cannot be reintroduced on this cloud by a later edit: `cloud_dns_enabled` is
+	// `config.DNS.Enabled` verbatim and the certificate output is `length(module.cloud_dns) > 0 ?
+	// … : null`, so a non-empty certificate name already implies DNS was on — today.
 	"gcp": {
-		installed:       func(f *InfraFacts) bool { return f.GCPManagedCertName != "" },
+		installed: func(f *InfraFacts) bool {
+			return f.DNSEnabled && f.DomainName != "" && f.GCPManagedCertName != ""
+		},
 		installedReason: "installed — ArgoCD is exposed over a GKE Ingress (`gce` class) fronted by the Google-managed SSL certificate.",
-		skippedReason:   "no Google-managed SSL certificate was provisioned — turn the certificate switch on (with DNS and a domain) to expose ArgoCD over a GKE Ingress; until then use port-forward + the admin password.",
+		skippedReason:   gcpArgocdURLSkipReason,
 	},
+}
+
+// gcpArgocdURLSkipReason names which half of the GCP gate was missing, same shape as the AWS one.
+func gcpArgocdURLSkipReason(f *InfraFacts) string {
+	switch {
+	case !f.DNSEnabled:
+		return "DNS is disabled for this project — the GKE Ingress is only rendered for a DNS hostname, so no managed ArgoCD URL exists however the certificate switch is set; access ArgoCD via port-forward + the admin password."
+	case f.DomainName == "":
+		return "no domain is configured — the GKE Ingress has no hostname to serve, so no managed ArgoCD URL exists; set a DNS domain, or access ArgoCD via port-forward + the admin password."
+	}
+	return "no Google-managed SSL certificate was provisioned — turn the certificate switch on (with DNS and a domain) to expose ArgoCD over a GKE Ingress; until then use port-forward + the admin password."
 }
 
 // awsArgocdURLSkipReason names which half of the AWS gate was missing. The certificate arm
