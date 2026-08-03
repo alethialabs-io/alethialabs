@@ -44,9 +44,14 @@ type InfraFacts struct {
 	Labels map[string]string
 
 	// ── AWS (IRSA) ──────────────────────────────────────────────
-	AWSAccountID           string
-	VPCID                  string
-	ACMCertificateArn      string
+	AWSAccountID      string
+	VPCID             string
+	ACMCertificateArn string
+	// WAFWebACLArn is the REGIONAL wafv2 web ACL the template built for the project's
+	// application WAF switch (root output `waf_webacl_arn`, null when the switch is off).
+	// A REFERENCE, not a credential. Empty ⇒ no `wafv2-acl-arn` annotation is emitted at
+	// all: the ALB controller rejects an empty annotation value and wedges the ingress.
+	WAFWebACLArn           string
 	IRSAExternalDNSArn     string
 	IRSAALBControllerArn   string
 	IRSAExternalSecretsArn string // IRSA role for the external-secrets operator (gates secretstore-aws)
@@ -253,6 +258,9 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.AWSAccountID = vc.CloudAccountID
 		f.VPCID = ExtractOutput(outputs, "vpc_id")
 		f.ACMCertificateArn = ExtractOutput(outputs, "acm_certificate_arn")
+		// null when application_waf_enabled is off — ExtractOutput yields "" for a null, which
+		// is exactly the "attach nothing" signal wafDecision and the ingress annotation want.
+		f.WAFWebACLArn = ExtractOutput(outputs, "waf_webacl_arn")
 		f.IRSAExternalDNSArn = ExtractOutput(outputs, "eks_irsa_external_dns_arn")
 		f.IRSAALBControllerArn = ExtractOutput(outputs, "eks_irsa_alb_controller_arn")
 		f.IRSAExternalSecretsArn = ExtractOutput(outputs, "eks_irsa_external_secrets_arn")

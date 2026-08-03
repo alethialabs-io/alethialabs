@@ -46,3 +46,40 @@ func TestBuildFromOutputs_SecretsXacct(t *testing.T) {
 		}
 	})
 }
+
+// TestBuildFromOutputs_WAFWebACLArn locks the output→fact wiring for the regional web ACL.
+// The fact only exists so the ArgoCD ingress can carry the wafv2-acl-arn annotation, and it is
+// AWS-only: no other cloud declares a web-ACL output, and reading one on another cloud would
+// hand the ALB controller a reference from a cloud it cannot associate.
+func TestBuildFromOutputs_WAFWebACLArn(t *testing.T) {
+	const arn = "arn:aws:wafv2:us-east-1:123456789012:regional/webacl/app-waf/0c4e-1"
+
+	t.Run("aws reads waf_webacl_arn", func(t *testing.T) {
+		f := BuildFromOutputs(map[string]interface{}{"waf_webacl_arn": arn}, &types.ProjectConfig{Provider: "aws"})
+		if f.WAFWebACLArn != arn {
+			t.Fatalf("WAFWebACLArn = %q, want %q", f.WAFWebACLArn, arn)
+		}
+	})
+
+	// The switch off makes the output null; ExtractOutput yields "" — the "attach nothing"
+	// signal both the annotation and wafDecision key on. An empty annotation VALUE would wedge
+	// the ALB controller's ingress reconcile, so this must never become a present-but-empty ARN.
+	t.Run("waf off (null output) leaves the fact empty", func(t *testing.T) {
+		f := BuildFromOutputs(map[string]interface{}{"waf_webacl_arn": nil}, &types.ProjectConfig{Provider: "aws"})
+		if f.WAFWebACLArn != "" {
+			t.Fatalf("WAFWebACLArn = %q, want empty", f.WAFWebACLArn)
+		}
+		if d := decisionFor(t, InfraServiceDecisions(f), "waf"); d.Status != infraStatusSkipped {
+			t.Fatalf("waf decision = %s, want skipped", d.Status)
+		}
+	})
+
+	t.Run("no other cloud reads the key", func(t *testing.T) {
+		for _, p := range []string{"gcp", "azure", "alibaba", "hetzner", "digitalocean"} {
+			f := BuildFromOutputs(map[string]interface{}{"waf_webacl_arn": arn}, &types.ProjectConfig{Provider: types.CloudProvider(p)})
+			if f.WAFWebACLArn != "" {
+				t.Errorf("%s: WAFWebACLArn = %q, want empty — the key is AWS-only", p, f.WAFWebACLArn)
+			}
+		}
+	})
+}

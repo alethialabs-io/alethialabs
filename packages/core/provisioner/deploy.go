@@ -1395,6 +1395,21 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 					// above, so only the host key changes across the 7.x→8.x bump (#1165).
 					" --set 'server.ingress.hostname=%s'",
 				certArn, argoHost)
+			// Attach the project's regional web ACL to the ALB this ingress provisions. The
+			// template has always BUILT one behind the canvas WAF switch and associated it with
+			// nothing; the annotation is what makes the switch mean something. Read straight from
+			// the outputs like certArn above — installArgoCD runs BEFORE BuildFromOutputs, so
+			// there are no InfraFacts to read here yet.
+			//
+			// Emitted ONLY when non-empty: the ALB controller treats a present-but-empty
+			// wafv2-acl-arn as a malformed association and fails the ingress reconcile, so an
+			// empty annotation is strictly worse than none. IAM is already in place —
+			// modules/eks/irsa.tf grants the controller wafv2:AssociateWebACL + Get*.
+			if wafArn := argocd.ExtractOutput(outputs, "waf_webacl_arn"); wafArn != "" {
+				installCmd += fmt.Sprintf(
+					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/wafv2-acl-arn=%s'", wafArn)
+				fmt.Fprintf(stdout, "Attaching WAF web ACL to the ArgoCD Ingress: %s\n", wafArn)
+			}
 			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s\n", argoHost)
 			// The URL is only real when the ingress above is actually configured (AWS
 			// ALB+ACM today). Setting it from DomainName alone reported a URL that
