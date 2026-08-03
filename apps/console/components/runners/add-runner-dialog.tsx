@@ -10,9 +10,13 @@ import { z } from "zod";
 import { useRunnersQuery, useDeployRunner } from "@/lib/query/use-runners-query";
 import { registerRunner } from "@/app/server/actions/runners";
 import {
-	getVerifiedCloudIdentities,
+	getVerifiedCloudIdentitiesByProvider,
 	type CloudIdentityOption,
 } from "@/app/server/actions/aws/identities";
+import {
+	RUNNER_DEPLOY_PROVIDERS,
+	RUNNER_DEPLOY_PROVIDERS_LABEL,
+} from "@/lib/runners/deploy-providers";
 import { groupRegions } from "@/lib/cloud-providers";
 import { useCloudProviderStore as useCloudProvider } from "@/lib/stores/use-cloud-provider-store";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
@@ -76,7 +80,7 @@ const PATHS: {
 		id: "deploy",
 		icon: Cloud,
 		title: "Deploy to a cloud",
-		desc: "Provision a runner into your cloud account through an existing runner — Alethia runs Terraform for you.",
+		desc: `Provision a runner into your ${RUNNER_DEPLOY_PROVIDERS_LABEL} account through an existing runner — Alethia runs Terraform for you. Other clouds must register their own.`,
 	},
 	{
 		id: "register",
@@ -91,10 +95,23 @@ export function AddRunnerDialog({ open, onOpenChange }: AddRunnerDialogProps) {
 	const [identities, setIdentities] = useState<CloudIdentityOption[]>([]);
 	const [credentials, setCredentials] = useState<RegisterCredentials | null>(null);
 
+	// Only the clouds we hold runner templates for. The unfiltered list used to be offered here,
+	// so a GCP-only user could pick an identity, submit, and read "no templates for provider gcp"
+	// in the job log — and because CloudIdentitySelector auto-selects a lone identity, the
+	// unbuildable choice arrived pre-filled.
 	useEffect(() => {
-		if (open) {
-			getVerifiedCloudIdentities().then(setIdentities).catch(() => {});
-		}
+		if (!open) return;
+		let cancelled = false;
+		Promise.all(
+			RUNNER_DEPLOY_PROVIDERS.map((p) => getVerifiedCloudIdentitiesByProvider(p)),
+		)
+			.then((lists) => {
+				if (!cancelled) setIdentities(lists.flat());
+			})
+			.catch(() => {});
+		return () => {
+			cancelled = true;
+		};
 	}, [open]);
 
 	const handleClose = (isOpen: boolean) => {
@@ -245,7 +262,9 @@ function DeployForm({
 		}
 	};
 
-	// No cloud connected → a deploy is impossible. Send them to connect one (Register needs no cloud).
+	// No deployable cloud connected → a deploy is impossible. This is also what a user with only a
+	// GCP/Azure/Alibaba/Hetzner identity now sees: an honest boundary rather than a form that
+	// enqueues a job the runner cannot build. Register needs no cloud at all.
 	if (identities.length === 0) {
 		return (
 			<div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border py-12 text-center">
@@ -253,14 +272,17 @@ function DeployForm({
 					<Cloud className="h-6 w-6 text-muted-foreground" />
 				</div>
 				<div className="space-y-1">
-					<h3 className="text-sm font-medium text-foreground">No cloud account connected</h3>
+					<h3 className="text-sm font-medium text-foreground">
+						No {RUNNER_DEPLOY_PROVIDERS_LABEL} account connected
+					</h3>
 					<p className="mx-auto max-w-xs text-xs leading-relaxed text-muted-foreground">
-						Connect AWS, GCP, or Azure to deploy a runner into your account. No cloud? Register your
-						own runner instead — it needs none.
+						Deployed runners are {RUNNER_DEPLOY_PROVIDERS_LABEL} only. Connect an{" "}
+						{RUNNER_DEPLOY_PROVIDERS_LABEL} account to deploy one, or register your own runner —
+						that runs on any cloud, and needs none connected here.
 					</p>
 				</div>
 				<Button size="sm" onClick={() => onOpenChange(false)} nativeButton={false} render={<Link href={globalHref(orgSlug, "connectors")} />}>
-					Connect a cloud
+					Connect {RUNNER_DEPLOY_PROVIDERS_LABEL}
 				</Button>
 			</div>
 		);

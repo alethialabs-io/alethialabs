@@ -11,6 +11,10 @@ import { getServiceDb, withActorScope, type Tx } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { queryProvisionedHours } from "@/lib/queries/runner-usage";
 import { generateRunnerToken } from "@/lib/runners/auth";
+import {
+	isRunnerDeployProvider,
+	runnerDeployUnsupportedMessage,
+} from "@/lib/runners/deploy-providers";
 import { notifyScaler } from "@/lib/scaler";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 
@@ -248,6 +252,19 @@ export async function deployRunner(params: {
 	await assertJobQuotaAllowed(actor.orgId);
 
 	const result = await withActorScope(actor, async (tx) => {
+		// Resolve + gate the identity BEFORE anything is written: a deploy we cannot build must
+		// not leave an orphan runners row behind, and a MISSING identity is an error rather than
+		// an implicit AWS deploy (the old `?? "aws"` coerced it into one).
+		const [identity] = await tx
+			.select({ provider: cloudIdentities.provider })
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.id, params.cloudIdentityId))
+			.limit(1);
+
+		if (!identity) throw new Error("Cloud identity not found");
+		if (!isRunnerDeployProvider(identity.provider))
+			throw new Error(runnerDeployUnsupportedMessage(identity.provider));
+
 		const [runner] = await tx
 			.insert(runners)
 			.values({
@@ -260,19 +277,13 @@ export async function deployRunner(params: {
 			})
 			.returning({ id: runners.id, name: runners.name });
 
-		const [identity] = await tx
-			.select({ provider: cloudIdentities.provider })
-			.from(cloudIdentities)
-			.where(eq(cloudIdentities.id, params.cloudIdentityId))
-			.limit(1);
-
 		const configSnapshot = {
 			runner_id: runner.id,
 			runner_token: runnerToken,
 			runner_name: params.name,
 			image_tag: params.imageTag || "latest",
 			region: params.region,
-			cloud_provider: identity?.provider ?? "aws",
+			cloud_provider: identity.provider,
 			alethia_url:
 				process.env.NEXT_PUBLIC_APP_URL || "https://alethialabs.io",
 		};

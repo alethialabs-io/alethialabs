@@ -8,6 +8,10 @@ import { ForbiddenError } from "@/lib/authz/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
+import {
+	isRunnerDeployProvider,
+	runnerDeployUnsupportedMessage,
+} from "@/lib/runners/deploy-providers";
 import { notifyScaler } from "@/lib/scaler";
 import { createHash, randomBytes } from "crypto";
 import { desc, eq } from "drizzle-orm";
@@ -76,6 +80,17 @@ export async function POST(req: Request) {
 			);
 		}
 
+		// This route re-implements the enqueue rather than calling deployRunner(), so it needs
+		// the template gate of its own — a fix only in the server action leaves the CLI able to
+		// queue a job that dies in the runner with "no templates for provider <cloud>". Refuse
+		// BEFORE the runner row is inserted so a rejected deploy leaves nothing behind.
+		if (!isRunnerDeployProvider(identity.provider)) {
+			return NextResponse.json(
+				{ error: runnerDeployUnsupportedMessage(identity.provider) },
+				{ status: 400 },
+			);
+		}
+
 		const [latestRelease] = await db
 			.select({ version: runnerReleases.version })
 			.from(runnerReleases)
@@ -105,7 +120,7 @@ export async function POST(req: Request) {
 			runner_name: name,
 			image_tag: imageTag,
 			region,
-			cloud_provider: identity.provider ?? "aws",
+			cloud_provider: identity.provider,
 			alethia_url:
 				process.env.NEXT_PUBLIC_APP_URL || "https://alethialabs.io",
 		};
