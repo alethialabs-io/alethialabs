@@ -44,7 +44,7 @@ resource "hcloud_server" "control_planes" {
   }
 
   network {
-    network_id = hcloud_network.this.id
+    network_id = local.network_id
     ip         = each.value.private_ip
   }
 
@@ -76,7 +76,7 @@ resource "hcloud_server" "workers" {
   }
 
   network {
-    network_id = hcloud_network.this.id
+    network_id = local.network_id
     ip         = each.value.private_ip
   }
 

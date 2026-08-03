@@ -97,8 +97,32 @@ variable "worker_arch" {
   }
 }
 
+# ── Private network: create one, or attach the one you already have ───────────────
+#
+# Greenfield (the default) creates `hcloud_network.this` from network_cidr. Brownfield
+# (provision_network = false) attaches to the network named by network_id and takes its
+# ip_range as the topology supernet — network_cidr is then IGNORED, because the network
+# already exists and its range is not ours to choose.
+#
+# One thing brownfield still CREATES: the node subnet. Servers take their private IP from a
+# subnet, and hcloud publishes no subnet data source, so there is nothing to look up and
+# attach to — Alethia carves its own /24 (the first of the network's range) inside the
+# network you named. That subnet range must be free; a collision is refused by the Hetzner
+# API at apply, and no plan-time check can see it.
+variable "provision_network" {
+  description = "Create the private network (true, default), or attach the existing one named by network_id (false)."
+  type        = bool
+  default     = true
+}
+
+variable "network_id" {
+  description = "Existing hcloud network to attach to when provision_network is false — its numeric id, or its name. Ignored when provision_network is true."
+  type        = string
+  default     = ""
+}
+
 variable "network_cidr" {
-  description = "CIDR for the private Hetzner network the nodes attach to."
+  description = "CIDR for the private Hetzner network the nodes attach to. Used only when provision_network is true; on an existing network the network's own ip_range is the supernet."
   type        = string
   default     = "10.0.0.0/16"
 }
@@ -112,16 +136,25 @@ variable "network_cidr" {
 # route only covers the reply when the pod IP is inside network_cidr. Disjoint pod
 # CIDRs (e.g. 10.244.0.0/16) leave the host with no route to remote pods AND fall
 # outside the private-network firewall allow rule → cross-node pod→apiserver breaks.
+#
+# NULL BY DEFAULT, and that is the fix for the brownfield path rather than a convenience. These used
+# to default to a split of 10.0.0.0/16 — the DEFAULT network_cidr — while `provision_network = false`
+# ignores network_cidr entirely and takes the attached network's own ip_range as the supernet. The
+# canvas hides the CIDR field on that path too, so a user attaching a 10.20.0.0/16 got pod/service
+# CIDRs from a network they were not using, and the byo_network_guard precondition below then
+# blocked the apply fail-closed. Unset means "derive from the network that actually resolved", which
+# is correct on BOTH paths; a caller that names them explicitly still overrides, and is still held
+# to the same invariants.
 variable "pod_cidr" {
-  description = "Pod network CIDR (Cilium). Must be a SUBNET of network_cidr and not overlap service_cidr or the node subnet."
+  description = "Pod network CIDR (Cilium). Defaults to the upper half of the resolved network's range. Must be a SUBNET of it and not overlap service_cidr or the node subnet."
   type        = string
-  default     = "10.0.128.0/17"
+  default     = null
 }
 
 variable "service_cidr" {
-  description = "Service network CIDR. Must be a SUBNET of network_cidr and not overlap pod_cidr or the node subnet."
+  description = "Service network CIDR. Defaults to a /19 inside the resolved network's range. Must be a SUBNET of it and not overlap pod_cidr or the node subnet."
   type        = string
-  default     = "10.0.96.0/19"
+  default     = null
 }
 
 # Optional, for the in-cluster hcloud-cloud-controller-manager secret ONLY.
@@ -135,6 +168,38 @@ variable "hcloud_token" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+# ── DNS (hcloud Zones) — see dns.tf ────────────────────────────────────────
+#
+# Hetzner's DNS moved onto the Cloud API in 2025 (zones are project-scoped and authenticated
+# by the same HCLOUD_TOKEN as everything else here; zones can no longer be created under the
+# retired dns.hetzner.com console). The hcloud provider carries it natively from 1.56 —
+# `hcloud_zone`, `hcloud_zone_rrset` — which is why this is a build and not the architectural
+# ceiling that Hetzner TLS and WAF genuinely are (see infra/offer-exclusions.yaml).
+
+variable "cloud_dns_enabled" {
+  description = "Create and manage the hcloud DNS zone in-template (parity with Route 53 / Cloud DNS / Azure DNS). When false, an existing zone id (dns_hosted_zone) is used and nothing is created."
+  type        = bool
+  default     = false
+}
+
+variable "dns_main_domain" {
+  description = "Apex domain of the zone (e.g. example.com). Required when cloud_dns_enabled is true."
+  type        = string
+  default     = ""
+}
+
+variable "dns_hosted_zone" {
+  description = "Existing hcloud DNS zone id, used when cloud_dns_enabled is false. Reported on the dns_zone_id output so the rest of the platform reads one name either way."
+  type        = string
+  default     = ""
+}
+
+variable "dns_zone_ttl" {
+  description = "Default TTL (seconds) for records in the created zone."
+  type        = number
+  default     = 3600
 }
 
 # ── Object Storage (S3-compatible) — see buckets.tf ────────────────────────────────

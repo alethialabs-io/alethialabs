@@ -11,8 +11,11 @@ terraform {
 
   required_providers {
     hcloud = {
-      source  = "hetznercloud/hcloud"
-      version = ">= 1.51, < 2.0"
+      source = "hetznercloud/hcloud"
+      # Floor 1.56, raised from 1.51 by #1816: `hcloud_zone` (dns.tf) arrived with the Cloud
+      # DNS API in 1.54 and went GA in 1.56. A fresh init that resolved 1.51–1.53 would fail on
+      # an unknown resource type, so the floor has to move with the resource, not after it.
+      version = ">= 1.56, < 2.0"
     }
     talos = {
       source = "siderolabs/talos"

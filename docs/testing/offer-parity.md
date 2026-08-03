@@ -89,10 +89,10 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `bucket:public_access` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `bucket:versioning` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `cache:multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · | · |
-| `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
+| `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `dns:managed_certificate` | — | 🟡 | 🟡 | 🟡 | — | · |
 | `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
-| `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
+| `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `queue:ordered` | — | 🟡 | 🟡 | 🟡 | · | · |
@@ -156,7 +156,7 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 |---|---|---|
 | `database:postgres` | hetzner | Provisioned in-cluster by the CloudNativePG chart, not by OpenTofu — no tfvar carries the engine. |
 | `cache:valkey` | hetzner | Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine. |
-| `dns:managed_certificate` | hetzner | Hetzner sells no managed certificate and cert-manager ships no Hetzner DNS01 solver — nothing can issue one, in OpenTofu or in-cluster. |
+| `dns:managed_certificate` | hetzner | Hetzner's managed certificate can only be presented by a Hetzner load balancer, and an Alethia Hetzner cluster takes traffic at the nodes instead — so there is no listener to attach one to, and cert-manager ships no Hetzner DNS01 solver to issue one in-cluster either. |
 | `dns:waf_enabled` | hetzner | Hetzner sells no web application firewall — the product does not exist. |
 | `cache:valkey` | azure | Azure Cache/Managed Redis has no Valkey engine — the product does not exist. |
 | `cache:valkey` | alibaba | ApsaraDB KVStore offers Redis or Memcache only — no Valkey engine. |
@@ -214,8 +214,6 @@ Only a cell that was measured and came out honored is asked for its entry back.
 |---|---|---|---|---|
 | `registry:vulnerability_scanning` | gcp | 🚫 `no-carrier` | #1844 | Image scanning is not requested from Artifact Registry yet — repositories are created with the platform default instead of your choice. |
 | `registry:vulnerability_scanning` | alibaba | 🚫 `no-carrier` | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
-| `dns:enabled` | hetzner | 🚫 `no-carrier` | #1816 | DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing. |
-| `network:provision_network` | hetzner | 🚫 `no-carrier` | #1816 | A Hetzner project always creates its own network — attaching an existing one is not supported yet. |
 
 ---
 

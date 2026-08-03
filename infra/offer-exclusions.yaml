@@ -78,9 +78,8 @@ exclusions:
 
   # ── Hetzner TLS and WAF — the same architectural ceiling, settled by #1810 ───────────
   # These were baselined while #1810 read as "the switch is dropped in the console". Wiring the
-  # carrier settled it: on Hetzner there is nothing on the other side of the wire. Hetzner sells no
-  # managed certificate and no WAF product, and `infra/templates/project/hetzner` declares no DNS
-  # variable of any kind — the whole cloud's TLS story is in-cluster, exactly like its Postgres.
+  # carrier settled it: on Hetzner there is nothing on the other side of the wire — the whole
+  # cloud's TLS story is in-cluster, exactly like its Postgres.
   #
   # CORRECTED by the cert-manager platform lane. This entry used to read "managed_certificate is
   # still HONORED on Hetzner: cert-manager issues the certificate inside the cluster" — which was
@@ -90,15 +89,23 @@ exclusions:
   # Making cert-manager a platform add-on did not rescue Hetzner either: cert-manager ships no
   # Hetzner Cloud DNS DNS01 solver in the box (it needs a third-party webhook — the same upstream
   # gap external-dns fills with its webhook sidecar), and HTTP01 is not an alternative because
-  # Hetzner has no ingress controller. So nothing issues a certificate on Hetzner, by OpenTofu or
-  # in-cluster, and the reason now says that instead.
+  # Hetzner has no ingress controller.
   #
-  # It stays an EXCLUSION rather than moving to the baseline because it is not scheduled work: a
-  # cloud that sells no managed certificate plus a solver upstream does not ship is the same "the
-  # product does not exist" shape as the WAF entry below, not debt with a fix pending.
+  # CORRECTED AGAIN by #1816, and the correction matters because a `reason:` prints VERBATIM into
+  # the public matrix. The previous text opened "Hetzner sells no managed certificate", which is
+  # not true and is checkable: `hcloud_managed_certificate` is in the pinned provider (1.67.0),
+  # alongside `hcloud_uploaded_certificate`. What it is, is a LOAD BALANCER certificate — the only
+  # thing that can present one is an `hcloud_load_balancer`, and this template provisions none.
+  # A Talos cluster on Hetzner takes traffic at the nodes; there is no Hetzner-managed listener to
+  # terminate TLS on, so there is nothing for the certificate to be attached to. #1816 creating the
+  # DNS zone does not change that: a zone is not a listener.
+  #
+  # It stays an EXCLUSION rather than moving to the baseline because it is not scheduled work. The
+  # cell would need a load balancer this cloud's architecture does not use, which is the same "not
+  # how this cloud is built" shape as the WAF entry below, not debt with a fix pending.
   - offer: dns:managed_certificate
     cloud: hetzner
-    reason: Hetzner sells no managed certificate and cert-manager ships no Hetzner DNS01 solver — nothing can issue one, in OpenTofu or in-cluster.
+    reason: Hetzner's managed certificate can only be presented by a Hetzner load balancer, and an Alethia Hetzner cluster takes traffic at the nodes instead — so there is no listener to attach one to, and cert-manager ships no Hetzner DNS01 solver to issue one in-cluster either.
   - offer: dns:waf_enabled
     cloud: hetzner
     reason: Hetzner sells no web application firewall — the product does not exist.
@@ -364,17 +371,22 @@ baseline:
   #   · a switch the cloud's provider does
   #     not carry, because the thing on the
   #     far side is not built yet            (registry:vulnerability_scanning on gcp, alibaba)
-  #   · a kind the cloud's template omits     (hetzner dns, hetzner network)
   #
-  # TWO of the three shapes this list started with are gone, and both went the honest way — fixed,
-  # or established as a limit, never quietly reworded.
+  # That is the whole list. ALL THREE shapes this section opened with are gone, and every one of
+  # them left the honest way — built, or established as a product limit. None was reworded to make
+  # the guard green, which is the failure mode the ratchet exists to catch.
   #
   #   · "a switch NO provider carries" was both registry switches when the carrier check first
-  #     measured them. `immutable_tags` now reaches ECR, Artifact Registry and ACR; scanning
-  #     reaches the two clouds where it is a repository property rather than a separate service.
+  #     measured them. #1811 carried `immutable_tags` to ECR, Artifact Registry and ACR; scanning
+  #     reached the two clouds where it is a repository property, and the two where it is a
+  #     separate service to stand up stayed here under their own issues (#1844, #1845).
   #   · "a switch carried into tfvars and then read by no resource argument" was queue:ordered and
   #     the Alibaba DNS certificate. #1812 built the first on the three clouds that can honor it,
   #     and #1865 took the second into `exclusions:` as a provider ceiling.
+  #   · "a kind the cloud's template omits entirely" was Hetzner DNS and Hetzner networking. #1816
+  #     built both — including the console inventory and the CIDR derivation the network half
+  #     needed before a user could reach it at all, which is the difference between a cell that
+  #     measures green and a feature that works.
   #
   # The DNS block that stood here is gone. #1810 wired both canvas DNS switches through the snapshot,
   # ProjectDNSConfig and all four providers, which cleared nine of its ten cells; the last one —
@@ -444,20 +456,26 @@ baseline:
   # (Synapse Link column storage) inside an `if PointInTimeRecovery` branch. The old guard scored
   # that as honored. It is named in the matrix as ⚠️ and is not counted as carried.
 
-  # ── Hetzner: two kinds the canvas offers and the template does not build ────────────
-  # Unlike the Hetzner entries in `exclusions:` above, neither of these is a platform ceiling.
-  # Hetzner sells DNS and its provider exposes networks; the template simply has no DNS resources at
-  # all, and always creates its own network rather than attaching one you name.
-  - offer: dns:enabled
-    cloud: hetzner
-    reason: DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing.
-    issue: #1816
-    state: no-carrier
-  - offer: network:provision_network
-    cloud: hetzner
-    reason: A Hetzner project always creates its own network — attaching an existing one is not supported yet.
-    issue: #1816
-    state: no-carrier
+  # ── Hetzner DNS and bring-your-own-network — BOTH BUILT in #1816 ────────────────────
+  # Both entries are gone, and both were RATCHET DELETIONS, not reclassifications: neither moved
+  # into `exclusions:`, because neither was a platform ceiling. Hetzner's Cloud API grew Zones in
+  # 2025 and the pinned hcloud provider exposes `hcloud_zone` natively, so `infra/templates/project/
+  # hetzner/dns.tf` now creates the zone the same way route53.tf / cloud-dns.tf / azure-dns.tf do;
+  # and network.tf gained the greenfield/brownfield branch AWS and GCP already had, so
+  # `provision_network = false` attaches the network you name instead of quietly building a second
+  # one. Proved by root-level checks_dns_and_network.tftest.hcl, on and off, nine runs.
+  #
+  # The network half needed TWO more things before its deletion was honest, and both are in this
+  # lane rather than boarded. A template nobody can reach is a green cell over a feature that does
+  # not exist, which is the exact failure this file is here to prevent.
+  #
+  #   · The canvas's "Existing network" control is a SELECT over synced inventory, and Hetzner's
+  #     inventory sync listed regions only — so the picker was always empty and `provision_network
+  #     = false` was unreachable from the product. The sync now lists networks too.
+  #   · pod_cidr / service_cidr were derived from `network_cidr`, which the brownfield path IGNORES
+  #     (the attached network's own range is the supernet), while the canvas hides the CIDR field on
+  #     that very path. A user attaching anything but a 10.0.0.0/16 would have hit this lane's own
+  #     fail-closed precondition. They are now derived from the network that actually resolved.
 
   # ── nosql: a switch that turned on a DIFFERENT billable feature ─────────────────────
   # Azure used to carry `point_in_time_recovery` into `analytical_storage_enabled` — Synapse Link

@@ -18,9 +18,9 @@ locals {
   # pod/service traffic. So the invariants are: (1) pod & service are inside
   # network_cidr, and (2) pod, service, and the node subnet are mutually disjoint.
   _distinct_pairs = {
-    pod_service  = [var.pod_cidr, var.service_cidr]
-    pod_node     = [var.pod_cidr, local.node_subnet_cidr]
-    service_node = [var.service_cidr, local.node_subnet_cidr]
+    pod_service  = [local.pod_cidr, local.service_cidr]
+    pod_node     = [local.pod_cidr, local.node_subnet_cidr]
+    service_node = [local.service_cidr, local.node_subnet_cidr]
   }
 
   _cidr_overlap = {
@@ -35,8 +35,8 @@ locals {
   # child ⊂ parent iff child's prefix is longer/equal AND child's network address,
   # masked to the PARENT's prefix length, equals the parent's network address.
   _subnet_of = {
-    pod_in_network     = [var.pod_cidr, var.network_cidr]
-    service_in_network = [var.service_cidr, var.network_cidr]
+    pod_in_network     = [local.pod_cidr, local.network_ip_range]
+    service_in_network = [local.service_cidr, local.network_ip_range]
   }
   _is_subnet = {
     for k, pair in local._subnet_of : k => (
