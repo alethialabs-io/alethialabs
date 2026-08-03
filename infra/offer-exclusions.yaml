@@ -82,13 +82,23 @@ exclusions:
   # managed certificate and no WAF product, and `infra/templates/project/hetzner` declares no DNS
   # variable of any kind — the whole cloud's TLS story is in-cluster, exactly like its Postgres.
   #
-  # `managed_certificate` is still HONORED on Hetzner: cert-manager issues the certificate inside the
-  # cluster. It simply is not carried by OpenTofu, so there is no tfvar for the guard to trace — the
-  # same shape as database:postgres above, and the reason the entry belongs here rather than on the
-  # baseline. A WAF has no in-cluster equivalent to offer, so that one is a plain "no".
+  # CORRECTED by the cert-manager platform lane. This entry used to read "managed_certificate is
+  # still HONORED on Hetzner: cert-manager issues the certificate inside the cluster" — which was
+  # never true. cert-manager was installed NOWHERE in this repo, and after the catalog copy was
+  # fixed this exclusion was the last place still asserting it.
+  #
+  # Making cert-manager a platform add-on did not rescue Hetzner either: cert-manager ships no
+  # Hetzner Cloud DNS DNS01 solver in the box (it needs a third-party webhook — the same upstream
+  # gap external-dns fills with its webhook sidecar), and HTTP01 is not an alternative because
+  # Hetzner has no ingress controller. So nothing issues a certificate on Hetzner, by OpenTofu or
+  # in-cluster, and the reason now says that instead.
+  #
+  # It stays an EXCLUSION rather than moving to the baseline because it is not scheduled work: a
+  # cloud that sells no managed certificate plus a solver upstream does not ship is the same "the
+  # product does not exist" shape as the WAF entry below, not debt with a fix pending.
   - offer: dns:managed_certificate
     cloud: hetzner
-    reason: Issued in-cluster by cert-manager, not by OpenTofu — no tfvar carries the certificate.
+    reason: Hetzner sells no managed certificate and cert-manager ships no Hetzner DNS01 solver — nothing can issue one, in OpenTofu or in-cluster.
   - offer: dns:waf_enabled
     cloud: hetzner
     reason: Hetzner sells no web application firewall — the product does not exist.

@@ -157,7 +157,7 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 |---|---|---|
 | `database:postgres` | hetzner | Provisioned in-cluster by the CloudNativePG chart, not by OpenTofu — no tfvar carries the engine. |
 | `cache:valkey` | hetzner | Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine. |
-| `dns:managed_certificate` | hetzner | Issued in-cluster by cert-manager, not by OpenTofu — no tfvar carries the certificate. |
+| `dns:managed_certificate` | hetzner | Hetzner sells no managed certificate and cert-manager ships no Hetzner DNS01 solver — nothing can issue one, in OpenTofu or in-cluster. |
 | `dns:waf_enabled` | hetzner | Hetzner sells no web application firewall — the product does not exist. |
 | `cache:valkey` | azure | Azure Cache/Managed Redis has no Valkey engine — the product does not exist. |
 | `cache:valkey` | alibaba | ApsaraDB KVStore offers Redis or Memcache only — no Valkey engine. |

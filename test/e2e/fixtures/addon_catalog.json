@@ -17,27 +17,6 @@
 		"syncWave": 2
 	},
 	{
-		"id": "cert-manager",
-		"mode": "managed",
-		"chartRepo": "https://charts.jetstack.io",
-		"chart": "cert-manager",
-		"version": "v1.15.3",
-		"namespace": "cert-manager",
-		"values": {
-			"crds": {
-				"enabled": true
-			},
-			"replicaCount": 1,
-			"prometheus": {
-				"enabled": true,
-				"servicemonitor": {
-					"enabled": false
-				}
-			}
-		},
-		"syncWave": 1
-	},
-	{
 		"id": "external-dns",
 		"mode": "managed",
 		"chartRepo": "https://kubernetes-sigs.github.io/external-dns/",

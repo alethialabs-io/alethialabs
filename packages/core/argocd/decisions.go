@@ -36,6 +36,7 @@ func InfraServiceDecisions(f *InfraFacts) []InfraServiceDecision {
 	decisions := []InfraServiceDecision{
 		externalDNSDecision(f),
 		externalSecretsStoreDecision(f),
+		certManagerDecision(f),
 		ingressDecision(f),
 		storageClassDecision(f),
 		argocdURLDecision(f),
@@ -110,6 +111,64 @@ func externalDNSSkipReason(f *InfraFacts) string {
 		return "the Cloudflare DNS connector is selected but its api_token did not reach the job — reconnect the Cloudflare DNS connector."
 	}
 	return "no working external-dns backend for this configuration — external-dns is skipped rather than shipped broken."
+}
+
+// certManagerDecision records whether the in-cluster certificate issuer actually shipped — the
+// honest answer to "I ticked managed certificate, is anything going to issue one?".
+//
+// It reads InfraFacts.CertManagerEnabled(), the SAME predicate the render template gates on and
+// EnsureCertManagerIssuer reads, rather than restating the `and` — the ClusterSecretStore gates
+// were restated by hand in four places and drifted twice.
+//
+// The skip reasons are keyed on the FIRST failing condition, because "you left the switch off",
+// "this cloud cannot do it" and "the identity output is missing" are three completely different
+// things for the operator to do next, and a single generic skip would hide which one it is.
+func certManagerDecision(f *InfraFacts) InfraServiceDecision {
+	d := InfraServiceDecision{Service: "cert-manager"}
+	if f.CertManagerEnabled() {
+		d.Status = infraStatusInstalled
+		d.Reason = fmt.Sprintf(
+			"installed (cert-manager) — the %q ClusterIssuer solves ACME DNS01 challenges for %s via the %s solver, reusing external-dns's identity.",
+			CertManagerIssuerName, f.DomainName, f.CertManagerSolver())
+		return d
+	}
+	d.Status = infraStatusSkipped
+	d.Reason = certManagerSkipReason(f)
+	return d
+}
+
+// certManagerSkipReason explains WHICH half of the gate was missing. The cloud-specific arms are
+// the load-bearing ones: on Alibaba and Hetzner this is a permanent product gap, not a setting the
+// operator can turn on, and saying so is the difference between an honest N/A and a bug report.
+func certManagerSkipReason(f *InfraFacts) string {
+	if !f.ManagedCertificate {
+		return "no managed certificate was requested for this project — turn the managed-certificate switch on to have cert-manager issue and renew one in-cluster."
+	}
+	if !f.DNSEnabled {
+		return "DNS is disabled for this project — cert-manager solves ACME challenges over DNS01, so enable DNS (with a domain) to issue a certificate."
+	}
+	if f.DomainName == "" {
+		return "no domain is configured — set a DNS domain to issue a certificate for it."
+	}
+	// A managed certificate was asked for, DNS is on with a domain, but no solver resolved.
+	switch f.Provider {
+	case "alibaba":
+		return "cert-manager ships no AliDNS DNS01 solver — issuing in-cluster on Alibaba needs the third-party cert-manager-webhook-alidns, so no ClusterIssuer is created rather than one whose challenges would hang pending forever."
+	case "hetzner":
+		return "cert-manager ships no Hetzner DNS01 solver — issuing in-cluster on Hetzner needs a third-party webhook (the same gap external-dns covers with its webhook sidecar), so no ClusterIssuer is created rather than one whose challenges would hang pending forever."
+	}
+	if f.DNSConnector != "" && f.DNSConnector != "native" {
+		return fmt.Sprintf("the %s DNS connector manages this domain, so the cloud's own zone is not authoritative for it — a cloud DNS01 solver would write its challenge record into a zone the ACME server never queries. Issuing through the connector is not wired yet.", f.DNSConnector)
+	}
+	switch f.Provider {
+	case "aws":
+		return "the external-dns IRSA role output is not present — cert-manager's route53 solver would have no identity to write the challenge record with, so it is skipped."
+	case "gcp":
+		return "the external-dns workload-identity or Cloud DNS managed-zone output is not present — cert-manager's clouddns solver could not find or write the zone, so it is skipped."
+	case "azure":
+		return "the external-dns managed-identity, resource-group, subscription or tenant fact is not present — cert-manager's azuredns solver would have no identity to write the challenge record with, so it is skipped."
+	}
+	return "no in-cluster certificate issuer for this configuration — cert-manager is skipped rather than shipped unable to issue."
 }
 
 // externalSecretsStoreDecision mirrors CleanupSkippedInfraServices' per-cloud ESO gates:
