@@ -1021,6 +1021,15 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			fmt.Fprintf(stderr, "Warning: external-secrets ClusterSecretStore not applied yet "+
 				"(will reconcile once the operator webhook is ready): %v\n", esErr)
 		}
+		// The cert-manager ACME DNS01 ClusterIssuer, on the same terms and for the same #1208
+		// reason as the store above: it is a CR whose CRD + webhook the cert-manager Application
+		// installs asynchronously, so it is applied on its own with a bounded retry. No-op unless
+		// cert-manager actually renders for this deploy. NON-fatal: the issuer is idempotent and
+		// reconciles on the next deploy, so a slow webhook must not fail a healthy cluster.
+		if cmErr := argocd.EnsureCertManagerIssuer(facts, stdout, stderr); cmErr != nil {
+			fmt.Fprintf(stderr, "Warning: cert-manager ClusterIssuer not applied yet "+
+				"(will reconcile once the controller webhook is ready): %v\n", cmErr)
+		}
 		// Post-apply Karpenter node class (AWS + enable_karpenter only). Karpenter launches EC2
 		// via its OWN AWS API calls, so the OpenTofu provider default_tags never reach them — the
 		// EC2NodeClass spec.tags (from the karpenter_node_tags output) is the ONLY lever that

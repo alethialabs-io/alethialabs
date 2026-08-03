@@ -357,15 +357,20 @@ describeIfDb("Cross-tenant read of project-child tables (drift + addons)", () =>
 			},
 		]);
 
-		// Distinctive addon installs (catalog ids from lib/addons/catalog.ts).
+		// Distinctive addon installs (catalog ids from lib/addons/catalog.ts). These must be ids the
+		// catalog still carries: `getProjectAddons` joins installs against ADDON_CATALOG, so a row
+		// naming an id the catalog dropped is invisible in the view and the non-vacuity assertion
+		// below reads an empty list. This used to be `cert-manager`, which left the catalog when it
+		// became a PLATFORM add-on (infra/templates/argocd/cert-manager.yaml) — the id was always
+		// incidental here, since these tests are about org-scoped RLS, not about which chart it is.
 		await db.insert(projectAddons).values([
 			{
 				project_id: projectAId,
 				environment_id: envAId,
-				addon_id: "cert-manager",
+				addon_id: "ingress-nginx",
 				enabled: true,
 				mode: "managed",
-				namespace: "cert-manager",
+				namespace: "ingress-nginx",
 				status: "PENDING",
 			},
 			{
@@ -458,7 +463,7 @@ describeIfDb("Cross-tenant read of project-child tables (drift + addons)", () =>
 		const installed = view.items
 			.filter((i) => i.install !== null)
 			.map((i) => i.id);
-		expect(installed).toEqual(["cert-manager"]);
+		expect(installed).toEqual(["ingress-nginx"]);
 	});
 
 	it("returns a teammate's project addons under a Teams org (org-scoped env resolution)", async () => {

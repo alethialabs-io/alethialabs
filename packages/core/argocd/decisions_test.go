@@ -24,11 +24,11 @@ func decisionFor(t *testing.T, decisions []InfraServiceDecision, service string)
 // or skipped — must carry a non-empty reason.
 func assertAllReasonsNonEmpty(t *testing.T, decisions []InfraServiceDecision) {
 	t.Helper()
-	// One per unconditional service: external-dns, external-secrets-store, ingress,
-	// storage-class, argocd-url, apps-repo, waf. (*-xacct is conditionally appended and is
-	// never present in the facts this helper is called with.)
-	if len(decisions) != 7 {
-		t.Fatalf("expected 7 decisions (one per service), got %d", len(decisions))
+	// One per unconditional service: external-dns, external-secrets-store, cert-manager,
+	// ingress, storage-class, argocd-url, apps-repo, waf. (*-xacct is conditionally appended
+	// and is never present in the facts this helper is called with.)
+	if len(decisions) != 8 {
+		t.Fatalf("expected 8 decisions (one per service), got %d", len(decisions))
 	}
 	for _, d := range decisions {
 		if strings.TrimSpace(d.Reason) == "" {
