@@ -619,16 +619,24 @@ func TestAzureBuilders_CosmosDBCollections(t *testing.T) {
 	}
 }
 
+// TestAzureBuilders_Containers pins the tfvar KEY as well as the value. The key is the whole of the
+// bug this replaced: `container_access_type` is the azurerm RESOURCE's spelling, while the module
+// declares and reads `access_type`, so the value landed on a name nothing read.
 func TestAzureBuilders_Containers(t *testing.T) {
 	got := buildAzureContainers([]types.ProjectStorageBucketConfig{
 		{Name: "pub", PublicAccess: true},
 		{Name: "priv"},
 	})
-	if got[0]["container_access_type"] != "blob" {
-		t.Errorf("public container access = %v, want blob", got[0]["container_access_type"])
+	if got[0]["access_type"] != "blob" {
+		t.Errorf("public container access = %v, want blob", got[0]["access_type"])
 	}
-	if got[1]["container_access_type"] != "private" {
-		t.Errorf("private container access = %v, want private", got[1]["container_access_type"])
+	if got[1]["access_type"] != "private" {
+		t.Errorf("private container access = %v, want private", got[1]["access_type"])
+	}
+	for i, c := range got {
+		if _, ok := c["container_access_type"]; ok {
+			t.Errorf("container %d emits container_access_type; the module declares access_type", i)
+		}
 	}
 }
 

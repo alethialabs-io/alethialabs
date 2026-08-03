@@ -380,15 +380,24 @@ func buildGCPSecrets(secrets []types.ProjectSecretConfig) []map[string]interface
 	return result
 }
 
+// buildGCSBuckets turns the canvas's buckets into the `cloud_storage_buckets` tfvar.
+//
+// `public_access` is emitted VERBATIM, and deliberately not as the `uniform_access` inversion this
+// used to send. Uniform bucket-level access is a different feature: it disables per-object ACLs, it
+// says nothing about whether the public may read the bucket, and Cloud Storage REFUSES to turn it
+// back off more than 90 days after it was enabled — so a switch routed through it would become an
+// unfixable apply failure on any bucket older than three months. The template keeps UBLA on
+// permanently and decides public access with `public_access_prevention` plus an explicit allUsers
+// IAM binding, which is the pair that actually implements the label the canvas shows.
 func buildGCSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		entry := map[string]interface{}{
-			"name_suffix":    b.Name,
-			"versioning":     b.Versioning,
-			"uniform_access": !b.PublicAccess,
-			"cors_origins":   b.CorsOrigins,
-			"cors_methods":   []string{"GET", "PUT", "POST"},
+			"name_suffix":   b.Name,
+			"versioning":    b.Versioning,
+			"public_access": b.PublicAccess,
+			"cors_origins":  b.CorsOrigins,
+			"cors_methods":  []string{"GET", "PUT", "POST"},
 		}
 		result = append(result, entry)
 	}

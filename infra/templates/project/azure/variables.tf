@@ -413,8 +413,17 @@ variable "storage_account_replication" {
   description = "Replication type for the Storage Account (LRS, GRS, RAGRS, ZRS)"
 }
 
+# Typed, not `list(any)`. Under `any` this variable accepted every spelling and forwarded it to a
+# module that declares a real object type, which discards whatever it does not name — so the
+# provider spent months sending `container_access_type` into a void with nothing able to say so.
 variable "storage_containers" {
-  type        = list(any)
+  type = list(object({
+    name        = string
+    access_type = optional(string, "private")
+    # Per container because that is how it is chosen; applied per ACCOUNT because that is the only
+    # scope azurerm offers. modules/storage-account/main.tf carries the aggregation and the reason.
+    versioning_enabled = optional(bool, false)
+  }))
   default     = []
   description = "List of storage containers to create in the Storage Account"
 }
