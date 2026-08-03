@@ -27,15 +27,28 @@
 //      must never read as "declared" (which would hide a gap) nor as "missing" (which would invent
 //      one). It is reported as its own state.
 //   3. A read is a read from a RESOURCE or MODULE argument. A name that appears only inside its own
-//      `variable` block (in a `validation` condition, say) or only in an `output` is not something
-//      the plan builds from.
+//      `variable` block (in a `validation` condition, say), only in an `output`, or only in a
+//      `check` block is not something the plan builds from. `check` is the one that actually bit:
+//      the first version of this file kept every block it did not explicitly carve out, so a
+//      variable whose last surviving reference was a `check` assertion scored as honored. This repo
+//      has been burnt by exactly that reading before — `tofu check` NEVER blocks an apply, so a
+//      value that reaches only an assertion reaches nothing a user gets.
+//   4. A ROOT tfvar is declared by the ROOT template, not by anything in the tree. A submodule that
+//      happens to declare a variable of the same name (`sku` in modules/acr AND modules/service-bus)
+//      is not evidence that the root accepts one — OpenTofu DROPS a tfvars value for a variable the
+//      root never declared. The module hop stays on the READ half, where it belongs.
 
 import { dirname, join, normalize } from "node:path";
 
 /** Block types whose body is a CONSUMER — the places an argument can read a value and have it
- * reach the plan. `variable` and `output` are deliberately absent: a name used only to validate
- * itself, or only to report itself, builds nothing. */
-const CONSUMER_BLOCKS = new Set(["resource", "module", "locals", "data", "provider", "terraform", "check", "moved", "import"]);
+ * reach the plan.
+ *
+ * Everything else is carved out, and the omissions are each deliberate: `variable` (a name used only
+ * to validate itself builds nothing), `output` (reporting a value is not building from it), `check`
+ * (an assertion never blocks an apply, so a value that reaches only a `check` reaches no
+ * infrastructure), `terraform` (settings, which cannot take a variable), and `moved` (a state
+ * refactor, which builds nothing new). */
+const CONSUMER_BLOCKS = new Set(["resource", "module", "locals", "data", "provider", "import"]);
 
 /** The `{ … }` block starting at or after `from`, brace-matched, WITH its braces. Returns the span
  * so the caller can carve the body out of the file and keep the rest. */
@@ -99,14 +112,25 @@ const declaresShape = (typeExpr) => /\bobject\s*\(/.test(typeExpr);
  * Index one cloud's templates: what is declared, what is read, and how a root variable is threaded
  * into a module.
  *
- * Flat by design. A cloud's root variable and its module's variable are two declarations of the same
- * shape (`cloud_storage_buckets` → `buckets`), and which file a name is declared in is not the
- * question this guard asks — "is it declared and consumed anywhere on the path" is. Keeping one set
- * per cloud also keeps the reader small enough to be obviously right.
+ * Flat for the ATTRIBUTE half by design — a cloud's root variable and its module's variable are two
+ * declarations of the same shape (`cloud_storage_buckets` → `buckets`), and which file an attribute
+ * of that shape is named in is not the question this guard asks.
+ *
+ * Not flat for the ROOT-VARIABLE half, which is why `rootDir` is required. A root tfvar is a promise
+ * only the root template can make: OpenTofu silently drops a tfvars value whose variable the root
+ * module does not declare. A cloud-wide "is this name declared anywhere" answer lets an unrelated
+ * submodule vouch for it — `sku` is declared by modules/acr and modules/service-bus, so a provider
+ * emitting a ROOT `sku` would have read as declared while tofu threw the value away.
  *
  * @param {{path: string, text: string}[]} files a cloud's .tf files, comments already stripped
+ * @param {string} rootDir the cloud's ROOT template directory — the only place a root tfvar counts
+ *   as declared. Everything below it is a submodule, reachable only by being threaded into.
  */
-export function readTfWiring(files) {
+export function readTfWiring(files, rootDir) {
+	if (typeof rootDir !== "string" || !rootDir) {
+		throw new Error("readTfWiring needs the cloud's ROOT template directory — without it a root tfvar cannot be told from a submodule's.");
+	}
+	const ROOT_DIR = normalize(rootDir);
 	/** @type {Map<string, {path: string, line: number, typeExpr: string, shaped: boolean}>} */
 	const variables = new Map();
 	// The SAME declarations keyed by directory. Not derived from `variables` afterwards, because a
@@ -135,13 +159,20 @@ export function readTfWiring(files) {
 
 	for (const file of files) {
 		const src = file.text;
-		let consumer = ""; // everything that is NOT a variable/output body
+		// ONLY the bodies of CONSUMER_BLOCKS. Built by keeping what belongs rather than by carving
+		// out what does not: the carve-out form leaves every block nobody thought to name — a
+		// `check` block, most of all — silently counting as a place a value can be read.
+		let consumer = "";
 
 		let cursor = 0;
 		for (const m of src.matchAll(/(^|\n)\s*(\w+)(\s+"[^"]*")*\s*\{/g)) {
+			// A match inside a block already consumed is a NESTED block (`validation {`, `lifecycle {`),
+			// not a top-level one. Its enclosing block has already decided whether it counts.
+			if (m.index < cursor) continue;
 			const kind = m[2];
 			const span = bracedSpanAt(src, m.index);
 			if (!span) continue;
+			cursor = span.end;
 			if (kind === "variable") {
 				const name = m[3]?.trim().replace(/^"|"$/g, "");
 				const body = src.slice(span.start, span.end);
@@ -161,22 +192,18 @@ export function readTfWiring(files) {
 						if (!attributes.has(attr)) attributes.set(attr, { path: file.path, line: lineAt(src, m.index), owner: name });
 					}
 				}
-			} else if (kind === "output") {
-				// carved out: reporting a value is not building from it
-			} else {
-				continue; // a consumer block — leave it in `consumer` below
+				continue;
 			}
-			// Carve the variable/output body out of the consumer text.
-			consumer += src.slice(cursor, m.index);
-			cursor = span.end;
+			if (CONSUMER_BLOCKS.has(kind)) consumer += `${src.slice(m.index, span.end)}\n`;
 		}
-		consumer += src.slice(cursor);
 
 		const here = bucketFor(normalize(dirname(file.path)));
+		/** Record a `var.<n>` read, cloud-wide and for this file's directory. */
 		const addVar = (n) => {
 			varReads.add(n);
 			here.vars.add(n);
 		};
+		/** Record an attribute read (`.<n>`, `lookup(x, "<n>")`, `x["<n>"]`), cloud-wide and per-directory. */
 		const addAttr = (n) => {
 			attrReads.add(n);
 			here.attrs.add(n);
@@ -208,32 +235,57 @@ export function readTfWiring(files) {
 	 * Every declaration that carries `root`'s shape: the root variable itself, plus the module
 	 * variables it is handed to. Used only to answer "does ANYTHING on this path declare fields" —
 	 * an all-`any` chain is unmeasurable, and saying so is the whole point.
+	 *
+	 * The chain STARTS at the root directory, always. `root` is a name the provider emits as a
+	 * tfvar, and a tfvar is a promise the root template makes; starting from a cloud-wide name
+	 * lookup would begin the walk at whichever same-named submodule variable happened to be indexed
+	 * last, which is both non-deterministic and the wrong module.
 	 */
 	function carriersOf(root) {
 		const out = [];
 		const seen = new Set();
-		const queue = [{ name: root, dir: null }];
+		const queue = [{ name: root, dir: ROOT_DIR }];
 		while (queue.length) {
 			const cur = queue.shift();
-			const key = `${cur.dir ?? "*"}:${cur.name}`;
+			const key = `${cur.dir}:${cur.name}`;
 			if (seen.has(key)) continue;
 			seen.add(key);
-			const decl = cur.dir ? byDir.get(cur.dir)?.get(cur.name) : variables.get(cur.name);
+			const decl = byDir.get(cur.dir)?.get(cur.name);
 			if (decl) out.push({ name: cur.name, ...decl });
 			for (const t of threads.get(cur.name) ?? []) queue.push({ name: t.arg, dir: t.dir });
 		}
 		return out;
 	}
 
+	// EVERY member below is consumed by check-offer-parity.mjs. That is a rule, not an observation.
+	// This object shipped with three that were not — `hasVariable`, `isVarRead`, `declarationOf` —
+	// and `hasVariable` was `variables.has(name)`: the tree-scoped "is it declared anywhere" answer
+	// that the ROOT-vs-submodule fix existed to stop anyone from asking. An unused member cannot be
+	// wrong today, which is exactly why it is dangerous: nothing reds when it drifts, and it sits
+	// there reading like the obvious thing to reach for. The two loose members that remain
+	// (`isDeclared`, `isRead`) are loose ON PURPOSE and are marked so, because their one caller asks
+	// them an evidence question, never a verdict question.
 	return {
-		/** Is this name declared as a top-level tofu variable? */
-		hasVariable: (name) => variables.has(name),
-		/** Is this name declared anywhere — a variable, or an attribute of an object type? */
+		/**
+		 * Is this name declared as a variable of the ROOT template?
+		 *
+		 * The only honest question to ask of a ROOT tfvar. OpenTofu drops a tfvars value whose
+		 * variable the root module does not declare, so a submodule declaring the same name buys the
+		 * value nothing — the switch never reaches the plan at all.
+		 */
+		hasRootVariable: (name) => byDir.get(ROOT_DIR)?.has(name) ?? false,
+		/** Is this name declared anywhere — a variable, or an attribute of an object type?
+		 *
+		 * DELIBERATELY LOOSE, and never a verdict: use `hasRootVariable` (a root tfvar) or
+		 * `shapeIsDeclared` (an attribute of an object) to decide whether a value survives. This
+		 * answers "does this cloud's tree know this name at all", which is an EVIDENCE question —
+		 * `optionEvidence` uses it to decide whether an option is worth accusing anyone about. */
 		isDeclared: (name) => variables.has(name) || attributes.has(name),
-		/** Is this name read by a resource/module/locals/data argument, anywhere in this cloud? */
+		/** Is this name read by a resource/module/locals/data argument, anywhere in this cloud?
+		 *
+		 * Loose in the same way and for the same one caller: cloud-wide, so an unrelated module's
+		 * read counts. Scope a real verdict with `isReadOnChain`. */
 		isRead: (name) => varReads.has(name) || attrReads.has(name),
-		/** Is this name read as a top-level VARIABLE (`var.name`), anywhere in this cloud? */
-		isVarRead: (name) => varReads.has(name),
 		/**
 		 * Is `key` read ON THE CHAIN that carries `root` — the directory `root` is declared in, and
 		 * every module directory it is threaded into?
@@ -252,8 +304,6 @@ export function readTfWiring(files) {
 			}
 			return false;
 		},
-		/** Where a name is declared, for a finding that points somewhere. */
-		declarationOf: (name) => variables.get(name) ?? attributes.get(name) ?? null,
 		carriersOf,
 		/**
 		 * Does the chain carrying `root` declare a shape at all?
@@ -267,7 +317,12 @@ export function readTfWiring(files) {
 			if (!carriers.length) return null;
 			return carriers.some((c) => c.shaped);
 		},
-		counts: { variables: variables.size, attributes: attributes.size, reads: varReads.size + attrReads.size },
+		counts: {
+			variables: variables.size,
+			rootVariables: byDir.get(ROOT_DIR)?.size ?? 0,
+			attributes: attributes.size,
+			reads: varReads.size + attrReads.size,
+		},
 	};
 }
 
@@ -284,6 +339,16 @@ export function assertParsed(cloud, wiring) {
 				`A wiring probe that reads nothing finds no gaps and reports success.`,
 		);
 	}
+	// A rootDir that does not match where the files actually live leaves every ROOT tfvar reading as
+	// undeclared. That is loud rather than silent — a wall of false gaps — but a wall of false gaps
+	// is answered by baselining them, which would bake the misconfiguration in. Say what it is.
+	if (wiring.counts.rootVariables === 0) {
+		throw new Error(
+			`tf-wiring parsed 0 ROOT variables for ${cloud} — the root template directory handed to ` +
+				`readTfWiring does not match the paths of the files handed with it, so every root tfvar ` +
+				`would read as undeclared.`,
+		);
+	}
 }
 
 /**
@@ -297,7 +362,8 @@ export function assertParsed(cloud, wiring) {
  *
  * The fixture is the set of shapes that have actually bitten: a root variable threaded into a
  * module, a `list(object({…}))` that declares attributes, a `list(any)` that declares none, a read
- * through `each.value`, and a name that appears ONLY in its own declaration.
+ * through `each.value`, a name that appears ONLY in its own declaration, a name whose last
+ * surviving reference is a `check` assertion, and a name declared ONLY by a submodule.
  */
 export function selfCheck() {
 	const files = [
@@ -318,6 +384,8 @@ variable "opaque_list" {
 }
 
 variable "plain_toggle" {}
+
+variable "checked_only" {}
 `,
 		},
 		{
@@ -331,6 +399,17 @@ module "child" {
 
 resource "fake_thing" "t" {
   count = var.plain_toggle ? 1 : 0
+}
+
+check "assertion_is_not_wiring" {
+  assert {
+    condition     = !var.checked_only || var.plain_toggle
+    error_message = "checked_only needs plain_toggle."
+  }
+}
+
+output "echoed" {
+  value = var.checked_only
 }
 `,
 		},
@@ -347,6 +426,8 @@ variable "entries" {
 variable "opaque" {
   type = list(any)
 }
+
+variable "submodule_only" {}
 `,
 		},
 		{
@@ -356,26 +437,45 @@ resource "fake_child" "c" {
   for_each = { for e in var.entries : e.name => e }
   enabled  = each.value.is_read
   loose    = try(each.value.opaque_key, null)
+  sized    = var.submodule_only
 }
 `,
 		},
 	];
 
-	const w = readTfWiring(files);
+	const w = readTfWiring(files, "fx");
+	/** Abort the run with the reason the reader is untrustworthy — never a flag the caller can ignore. */
 	const fail = (msg) => {
 		throw new Error(`tf-wiring self-check failed: ${msg}. The reader is wrong; do not trust this run.`);
 	};
 
-	if (w.counts.variables !== 5) fail(`expected 5 variables across the fixture, saw ${w.counts.variables}`);
+	if (w.counts.variables !== 7) fail(`expected 7 variables across the fixture, saw ${w.counts.variables}`);
+	if (w.counts.rootVariables !== 4) fail(`expected 4 ROOT variables in fx/, saw ${w.counts.rootVariables}`);
 	if (!w.isDeclared("is_read")) fail("`is_read` is declared in an object type and was not seen");
 	if (!w.isDeclared("never_read")) fail("`never_read` is declared in an object type and was not seen");
 	if (w.isDeclared("opaque_key")) fail("`opaque_key` is declared nowhere and was reported as declared");
+
+	// A ROOT tfvar is the root template's promise. A submodule declaring the name is not that promise:
+	// tofu drops a tfvars value the root never declared, so crediting the submodule hides the drop.
+	// Both directions, asked with the two members that survive: the LOOSE one must see it (or the
+	// fixture proves nothing about scope, only about parsing), and the ROOT one must not.
+	if (!w.isDeclared("submodule_only")) fail("`submodule_only` is declared in the child module and was not seen at all");
+	if (w.hasRootVariable("submodule_only")) fail("`submodule_only` is declared only by a SUBMODULE and was reported as a root variable");
+	if (!w.hasRootVariable("plain_toggle")) fail("`plain_toggle` is declared by the root template and was not reported as a root variable");
+	if (w.shapeIsDeclared("submodule_only") !== null) fail("a name the ROOT does not declare must report null, whatever a submodule declares");
 
 	// The direction that matters: a name declared and read by NOTHING must not read as read.
 	if (w.isReadOnChain("shaped_list", "never_read")) fail("`never_read` is read by nothing and was reported as read");
 	if (!w.isReadOnChain("shaped_list", "is_read")) fail("`is_read` is read via each.value in the child module and was not seen");
 	if (!w.isReadOnChain("opaque_list", "opaque_key")) fail("`opaque_key` is read via try() in the child module and was not seen");
 	if (!w.isReadOnChain("plain_toggle", "plain_toggle", true)) fail("`plain_toggle` is read as var.plain_toggle and was not seen");
+
+	// A `check` assertion and an `output` build nothing. `tofu check` never blocks an apply, so a
+	// variable whose only surviving reference is an assertion is a switch that reaches no resource.
+	if (w.isReadOnChain("checked_only", "checked_only", true)) {
+		fail("`checked_only` is referenced only by a `check` block and an `output` and was reported as read");
+	}
+	if (w.isRead("checked_only")) fail("`checked_only` is referenced only by a `check` block and an `output` and was reported as read cloud-wide");
 
 	// Shape: `list(object({…}))` declares fields on the chain, `list(any)` declares none.
 	if (w.shapeIsDeclared("shaped_list") !== true) fail("`shaped_list` declares an object type and did not read as shaped");

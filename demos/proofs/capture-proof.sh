@@ -57,14 +57,10 @@ echo "→ capturing T2 proof v2 for $provider (outcome=$outcome) into $out"
 #    redacted wherever they surface (a token echoed into a manifest/log). Never captured.
 #    Exact-string redaction is the strongest guarantee (independent of the key-name denylist),
 #    so we feed it every credential the run holds: the Hetzner token, the A0.6 git token, and —
-#    for the aws path — the short-lived AWS session credentials the OIDC step exports. ──
-literals=""
-for v in "${HCLOUD_TOKEN:-}" "${E2E_GIT_TOKEN:-}" "${ALETHIA_E2E_GIT_TOKEN:-}" \
-	"${AWS_SECRET_ACCESS_KEY:-}" "${AWS_SESSION_TOKEN:-}"; do
-	[ -n "$v" ] && literals+="$v"$'\n'
-done
-SCRUB_LITERALS="$literals"
-export SCRUB_LITERALS
+#    for the aws path — the short-lived AWS session credentials the OIDC step exports.
+#    The list itself lives in scrub.sh so scrub-runner-log.sh builds the IDENTICAL one; when
+#    these drifted, one artifact was scrubbed and its sibling was not (#1854). ──
+scrub_literals_from_env
 
 # ── Runner-log stage detection: how far the deploy spine actually got (the failure-stage
 #    for a red night; confirmation of each gate for a green one). Markers are the stdout
