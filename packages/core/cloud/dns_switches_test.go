@@ -173,11 +173,16 @@ func TestAWSProviderTfvars_WafSwitchDrivesRegionalOnly(t *testing.T) {
 	assertEq(t, tf, "cloudfront_waf_enabled", true)
 }
 
-// Hetzner carries neither switch, and that is a decision rather than a gap: the template declares
-// no DNS variable at all, TLS is issued in-cluster by cert-manager, and Hetzner sells no WAF.
-// Both cells are documented exclusions in infra/offer-exclusions.yaml; this pins the behaviour so
-// a future change to the Hetzner provider cannot quietly start emitting them.
-func TestHetznerProviderTfvars_CarriesNoDNSSwitches(t *testing.T) {
+// Hetzner carries neither the CERTIFICATE nor the WAF switch, and that is a decision rather than a
+// gap: TLS is issued in-cluster by cert-manager and Hetzner sells no WAF. Both cells are documented
+// exclusions in infra/offer-exclusions.yaml; this pins the behaviour so a future change to the
+// Hetzner provider cannot quietly start emitting them.
+//
+// It says nothing about DNS as a whole. Since #1816 Hetzner DOES carry `cloud_dns_enabled` /
+// `dns_main_domain` / `dns_hosted_zone` and creates an `hcloud_zone` — see
+// TestHetznerProvider_ProviderTfvars_DNS. The distinction is the point: a zone is not a certificate
+// and it is not a WAF, so building one buys the other two cells nothing.
+func TestHetznerProviderTfvars_CarriesNoCertificateOrWafSwitches(t *testing.T) {
 	tf := (&hetznerProvider{}).ProviderTfvars(&types.ProjectConfig{
 		DNS: types.ProjectDNSConfig{ManagedCertificate: true, WafEnabled: true},
 	})
@@ -187,7 +192,7 @@ func TestHetznerProviderTfvars_CarriesNoDNSSwitches(t *testing.T) {
 		"alidns_managed_certificate",
 	} {
 		if _, ok := tf[key]; ok {
-			t.Errorf("hetzner emitted %q — it has no DNS template variables to carry it to", key)
+			t.Errorf("hetzner emitted %q — it has no certificate or WAF template variable to carry it to", key)
 		}
 	}
 }

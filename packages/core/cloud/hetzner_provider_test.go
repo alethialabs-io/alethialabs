@@ -266,3 +266,123 @@ func TestBuildHetznerBuckets(t *testing.T) {
 		t.Errorf("bucket = %#v, want %#v", got[0], want)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// #1816 — the two Hetzner cells the carrier probe found: dns:enabled and
+// network:provision_network. Both switches used to reach NO tfvar at all.
+// ---------------------------------------------------------------------------
+
+// TestHetznerProvider_ProviderTfvars_DNS asserts the canvas's DNS switch reaches the plan in BOTH
+// positions and carries the domain with it.
+//
+// The invariant: `cloud_dns_enabled` is true exactly when the user turned DNS on AND named no
+// existing zone — the same rule aws applies — and it is false otherwise. Asserting only the ON
+// case would pass for a provider that hardcoded the value, which is the exact defect the carrier
+// probe exists to catch: a switch that travels and means nothing.
+func TestHetznerProvider_ProviderTfvars_DNS(t *testing.T) {
+	p := &hetznerProvider{}
+
+	// OFF — the default for every Hetzner project today. Nothing must ask for a zone.
+	off := p.ProviderTfvars(baseHetznerConfig())
+	if off["cloud_dns_enabled"] != false {
+		t.Errorf("cloud_dns_enabled = %v with DNS off, want false", off["cloud_dns_enabled"])
+	}
+	if off["dns_main_domain"] != "" {
+		t.Errorf("dns_main_domain = %v with DNS off, want empty", off["dns_main_domain"])
+	}
+	if off["dns_hosted_zone"] != "" {
+		t.Errorf("dns_hosted_zone = %v with DNS off, want empty", off["dns_hosted_zone"])
+	}
+
+	// ON, no existing zone — Alethia creates and owns the zone.
+	on := baseHetznerConfig()
+	on.DNS = types.ProjectDNSConfig{Enabled: true, DomainName: "acme.example"}
+	got := p.ProviderTfvars(on)
+	if got["cloud_dns_enabled"] != true {
+		t.Errorf("cloud_dns_enabled = %v with DNS on and no zone id, want true", got["cloud_dns_enabled"])
+	}
+	if got["dns_main_domain"] != "acme.example" {
+		t.Errorf("dns_main_domain = %v, want acme.example", got["dns_main_domain"])
+	}
+
+	// ON with an existing zone — the user already owns it, so the template must NOT create a
+	// second one; the id is carried instead. This is the branch that makes the switch a decision
+	// rather than a boolean, and it is the one a presence-only assertion cannot see.
+	byo := baseHetznerConfig()
+	byo.DNS = types.ProjectDNSConfig{Enabled: true, DomainName: "acme.example", ZoneID: "9911"}
+	byoVars := p.ProviderTfvars(byo)
+	if byoVars["cloud_dns_enabled"] != false {
+		t.Errorf("cloud_dns_enabled = %v with an existing zone id, want false (do not create a second zone)", byoVars["cloud_dns_enabled"])
+	}
+	if byoVars["dns_hosted_zone"] != "9911" {
+		t.Errorf("dns_hosted_zone = %v, want 9911", byoVars["dns_hosted_zone"])
+	}
+}
+
+// TestHetznerProvider_ProviderTfvars_ProvisionNetwork asserts the network switch reaches the plan
+// in BOTH positions, and that the "unset" case still provisions.
+//
+// The invariant matches aws/gcp: provision unless the user explicitly opted out AND named a
+// network to attach to. A project that never touched the switch keeps creating its own network,
+// so no existing Hetzner cluster changes shape when this lands.
+func TestHetznerProvider_ProviderTfvars_ProvisionNetwork(t *testing.T) {
+	p := &hetznerProvider{}
+
+	// Explicitly on.
+	on := baseHetznerConfig()
+	on.Network = types.ProjectNetworkConfig{CIDRBlock: "10.0.0.0/16", ProvisionNetwork: true}
+	if got := p.ProviderTfvars(on)["provision_network"]; got != true {
+		t.Errorf("provision_network = %v with the switch on, want true", got)
+	}
+
+	// Unset and no network named — the pre-#1816 behaviour, which must be preserved.
+	def := p.ProviderTfvars(baseHetznerConfig())
+	if def["provision_network"] != true {
+		t.Errorf("provision_network = %v with nothing set, want true (default is still greenfield)", def["provision_network"])
+	}
+	if def["network_id"] != "" {
+		t.Errorf("network_id = %v with nothing set, want empty", def["network_id"])
+	}
+
+	// Off WITH a network named — the case the cell is about. This is the value that has to differ
+	// from the default; if it did not, the switch would be inert whichever way a user set it.
+	byo := baseHetznerConfig()
+	byo.Network = types.ProjectNetworkConfig{CIDRBlock: "10.0.0.0/16", ProvisionNetwork: false, NetworkID: "4242"}
+	byoVars := p.ProviderTfvars(byo)
+	if byoVars["provision_network"] != false {
+		t.Errorf("provision_network = %v with the switch off and a network named, want false", byoVars["provision_network"])
+	}
+	if byoVars["network_id"] != "4242" {
+		t.Errorf("network_id = %v, want 4242", byoVars["network_id"])
+	}
+
+	// THE BROWNFIELD CIDR RULE. `network_cidr` is IGNORED when attaching an existing network — the
+	// attached network's own ip_range is the supernet — so a pod/service split derived from it
+	// describes a network the cluster is not on. The canvas hides the CIDR field on this path too,
+	// so every such request would carry the same 10.0.0.0/16 default and trip the template's
+	// fail-closed guard. Leaving them unset hands the derivation to the template, which is the only
+	// place that knows what actually resolved.
+	if byoVars["pod_cidr"] != nil {
+		t.Errorf("pod_cidr = %v on the brownfield path, want nil (the template derives it from the resolved network)", byoVars["pod_cidr"])
+	}
+	if byoVars["service_cidr"] != nil {
+		t.Errorf("service_cidr = %v on the brownfield path, want nil", byoVars["service_cidr"])
+	}
+
+	// The greenfield path still sends them: there we emit network_cidr, so we know the answer, and
+	// these are the values every Hetzner cluster built so far already has.
+	green := baseHetznerConfig()
+	green.Network = types.ProjectNetworkConfig{CIDRBlock: "10.0.0.0/16", ProvisionNetwork: true}
+	greenVars := p.ProviderTfvars(green)
+	if greenVars["pod_cidr"] != "10.0.128.0/17" || greenVars["service_cidr"] != "10.0.96.0/19" {
+		t.Errorf("greenfield pod/service = %v / %v, want 10.0.128.0/17 / 10.0.96.0/19", greenVars["pod_cidr"], greenVars["service_cidr"])
+	}
+
+	// Off with NOTHING named is not a request to attach — there is nothing to attach to. Falling
+	// back to provisioning is what aws and gcp do, and the alternative is a plan that refuses.
+	empty := baseHetznerConfig()
+	empty.Network = types.ProjectNetworkConfig{CIDRBlock: "10.0.0.0/16", ProvisionNetwork: false}
+	if got := p.ProviderTfvars(empty)["provision_network"]; got != true {
+		t.Errorf("provision_network = %v with the switch off and no network named, want true", got)
+	}
+}
