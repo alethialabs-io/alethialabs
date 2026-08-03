@@ -176,3 +176,20 @@ output "external_secrets_service_account" {
   description = "external-secrets operator Google service account email (Workload Identity; gates the gcpsm ClusterSecretStore render). The adopted GSA when external_secrets_service_account_email is set, otherwise the one this template created."
   value       = var.provision_gke ? local.external_secrets_sa_email : null
 }
+
+#########################################################################
+##                    Cloud Storage Outputs                            ##
+#########################################################################
+
+# Surfaced so the state of the `public_access` switch is legible from the outputs — and so
+# checks_storage.tftest.hcl can assert BOTH halves of it from the root, which is the only place
+# tofu's test harness can see (a *.tftest.hcl under modules/ is never executed).
+output "cloud_storage_public_access_prevention" {
+  description = "Map of bucket suffixes to the public_access_prevention each bucket is planned with"
+  value       = var.create_cloud_storage ? module.cloud_storage[0].bucket_public_access_prevention : {}
+}
+
+output "cloud_storage_publicly_readable_buckets" {
+  description = "Bucket suffixes that carry an allUsers reader binding"
+  value       = var.create_cloud_storage ? module.cloud_storage[0].publicly_readable_buckets : []
+}

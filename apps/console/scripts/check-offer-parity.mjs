@@ -499,6 +499,10 @@ const baselined = (offer, cloud) =>
 const measuredCells = [];
 /** Every cell this run found UNHONORED, with the state it was found in. */
 const unhonoredCells = [];
+/** Excluded cells the code CONTRADICTS — the switch is honored despite an entry saying it never can.
+ * Deliberately not in `measuredCells`: an exclusion is still "the guard declined to look" for ratchet
+ * purposes, and feeding it there would make excluded cells satisfy baseline entries (#1864). */
+const excludedMeasured = [];
 
 /**
  * File a cell's verdict for the ratchet, and hand back its baseline entry if it has one.
@@ -787,6 +791,14 @@ for (const [kind, variants] of Object.entries(AXES)) {
 			if (exc) {
 				state = "excluded";
 				detail = exc.reason ?? "";
+				// NOT re-read here, unlike the option and carrier passes (#1864), and the asymmetry is the
+				// point. On those two axes "excluded" denies one checkable thing: the switch is not carried.
+				// On THIS axis it denies something a text reader cannot pin down — Hetzner's `database:postgres`
+				// and `cache:valkey` entries say the engine is not carried BY OPENTOFU, while CloudNativePG
+				// and the Valkey chart provision it perfectly well. Measured, both come out "the cloud builds
+				// this", so the obvious re-read reports the file's two most settled entries as false ceilings.
+				// A check that reds correct entries does not get shipped to catch a hypothetical one; that is
+				// the same trade already made for `gated-carrier` above.
 			} else if (!carrier && !singleChoice) {
 				state = "no-carrier";
 				detail = `the ${kind} engine never reaches tfvars on ${cloud} — the choice is dropped between the canvas and the plan.`;
@@ -907,6 +919,15 @@ for (const [kind, keys] of Object.entries(OPTIONS)) {
 				if (exc) {
 					state = "excluded";
 					detail = exc.reason ?? "";
+					// Same re-read the carrier pass does (#1864). This path already cross-checks an
+					// exclusion's PROSE against the canvas's own withholding reason above; what it never
+					// checked is the thing the prose asserts. `carriers` is L4 only, so a hit here means
+					// the provider does read the field — weaker evidence than the carrier pass's derived
+					// test, and deliberately so: `missing-branch` is a real way to carry a switch and still
+					// not honor it per engine, which is a gap and not a false ceiling.
+					if (carriers.has(cloud) && !(coverage && !coverage.has(variant))) {
+						excludedMeasured.push({ offer, cloud, honoredNow: true, entry: exc });
+					}
 				} else if (!carriers.has(cloud)) {
 					state = "no-carrier";
 					detail =
@@ -1038,6 +1059,19 @@ for (const offer of SURFACE.offers) {
 	for (const cloud of offeredCloudsFor(offer)) {
 		const exc = excluded(offerBase, cloud);
 		if (exc) {
+			// An exclusion is a CLAIM — "this cloud will never honor this offer" — and until now it was
+			// the one claim in this file nothing re-read. The cell was recorded and skipped before it was
+			// ever traced, so an entry stayed green whether its ceiling was real or had quietly become
+			// false, and moving a cell from `baseline:` to `exclusions:` converted a measured gap into a
+			// permanently unmeasured one (#1864).
+			//
+			// The half a text reader CAN settle is settled here: is the switch carried and derived in our
+			// own code right now? If it is, the ceiling is false no matter what the prose says. Whether a
+			// stated ceiling is TRUE of the cloud's product stays out of reach — that is a claim about
+			// someone else's roadmap, and this guard only reads ours.
+			const t = traceOption(cloud, offer.key);
+			const honoredNow = t.carried && t.sites.some((s) => evaluateWiring(cloud, s).ok && s.strength === "derived");
+			excludedMeasured.push({ offer: offerBase, cloud, honoredNow, entry: exc });
 			carrierCells.push({ kind: offer.kind, key: offer.key, cloud, state: "excluded", detail: exc.reason ?? "" });
 			continue;
 		}
@@ -1695,6 +1729,31 @@ stops being ⚠️ that sentence is about nothing, and an acknowledgement nobody
 amnesty becomes permanent — the same rot the baseline's stale check exists to prevent. Delete the
 entry. If the cell was NOT MEASURED, do not delete it yet: the guard has lost sight of the cell, which
 is a measurement bug, and deleting the entry hides it.
+`);
+}
+
+// An exclusion that has come TRUE in our own code. The mirror of the baseline's stale check, and the
+// last of the three sections to get one: `baseline:` ratchets down, `wired:` gets re-read, and until
+// #1864 `exclusions:` was the only list that could sit unchallenged forever.
+const falseCeilings = excludedMeasured.filter((c) => c.honoredNow);
+if (falseCeilings.length) {
+	failed = true;
+	console.error(`\n✗ offer parity — ${falseCeilings.length} \`exclusions:\` entr(y|ies) the code now contradicts:\n`);
+	for (const c of falseCeilings) {
+		console.error(`  ${c.cloud} · ${c.offer}${c.entry.issue ? `  (${c.entry.issue})` : ""}`);
+		console.error(`      recorded as: ${c.entry.reason ?? "(no reason given)"}`);
+	}
+	console.error(`
+An \`exclusions:\` entry says the cloud will NEVER honor this offer. Each cell above is carried and
+derived in our own provider code right now, so that sentence is false — and it is printed verbatim in
+the public matrix, telling readers a thing we build is a thing we cannot.
+
+Delete the entry. The cell then measures like any other: honored cells pass, and if it turns out to be
+weakly wired the ordinary 🚫/⚠️ reporting will say so and it can be boarded instead.
+
+This is the only half of an exclusion a guard reading our own text can settle. Whether a stated ceiling
+is TRUE of the cloud's product is a claim about someone else's roadmap, and nothing here checks it —
+which is exactly why an exclusion must never be used to retire a gap that is simply unfinished.
 `);
 }
 

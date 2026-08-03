@@ -32,6 +32,16 @@ resource "google_firestore_database" "this" {
   concurrency_mode            = "PESSIMISTIC"
   app_engine_integration_mode = "DISABLED"
 
+  # Point-in-time recovery. The DISABLED arm is spelled out rather than left to null on purpose:
+  # `null` hands the provider its own default, and the OFF position then reads identically to
+  # "never asked" — which is how a switch that does nothing passes for a switch that works.
+  #
+  # SAFE TO TOGGLE. `point_in_time_recovery_enablement` is not ForceNew in hashicorp/google (checked
+  # at v5.0.0, the constraint floor, and at v6.50.0, the pinned version — the ForceNew fields are
+  # location_id, name, cmek_config, database_edition, tags and project). It is an in-place PATCH, so
+  # flipping it never reaches the deletion_policy = "DELETE" below.
+  point_in_time_recovery_enablement = var.point_in_time_recovery ? "POINT_IN_TIME_RECOVERY_ENABLED" : "POINT_IN_TIME_RECOVERY_DISABLED"
+
   delete_protection_state = var.environment == "production" ? "DELETE_PROTECTION_ENABLED" : "DELETE_PROTECTION_DISABLED"
 
   # The provider DEFAULTS deletion_policy to ABANDON: `tofu destroy` then drops the database from

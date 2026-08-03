@@ -226,16 +226,50 @@ exclusions:
   # entry above, a capability the cloud has that its Terraform provider does not expose. That makes
   # it a ceiling rather than debt. Revisit if aliyun ships a certificate-request resource.
   #
-  # NOTE the honest consequence, because an exclusion must not read as an excuse: unlike Hetzner —
-  # where the certificate is still issued, just by cert-manager rather than OpenTofu — this switch
-  # currently issues NOTHING on Alibaba, while the canvas still advertises it as "Managed TLS
-  # certificate from Alibaba Cloud SSL Certificates Service" (catalog.json `live.certOptions`). The
-  # remaining honest alternative is to stop offering the switch here, a canvas change rather than a
-  # template one, tracked separately.
+  # NOTE the honest consequence, because an exclusion must not read as an excuse: this switch issues
+  # NOTHING on Alibaba, while the canvas still advertises it as "Managed TLS certificate from Alibaba
+  # Cloud SSL Certificates Service" (catalog.json `live.certOptions`). The remaining honest
+  # alternative is to stop offering the switch here, a canvas change rather than a template one,
+  # tracked separately.
+  #
+  # ⚠ The `reason:` below was CORRECTED at merge time and the correction is the point of this note.
+  # It used to end "— install the cert-manager add-on to have the cluster issue and renew TLS
+  # instead", and it was written when cert-manager was a marketplace add-on and Hetzner's entry (two
+  # blocks up) still claimed cert-manager issued there. Both halves of that sentence are now false:
+  # the cert-manager platform lane REMOVED it from `ADDON_CATALOG` (it is installed by the deploy,
+  # not by a user ticking a box), and it ships NO Alibaba Cloud DNS DNS01 solver in the box — the
+  # same upstream gap that keeps Hetzner out, and the reason that entry was corrected in the same
+  # lane. So the old sentence told a user to install something they cannot install, to do a thing it
+  # could not do. A `reason:` prints VERBATIM into the public matrix, which is why a stale one here
+  # ships a false claim about a cloud we support rather than merely reading oddly.
   - offer: dns:managed_certificate
     cloud: alibaba
-    reason: Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, so this switch issues nothing here — install the cert-manager add-on to have the cluster issue and renew TLS instead.
+    reason: Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate.
     issue: #1824
+
+  # ── Point-in-time recovery on Alibaba Tablestore — not a property of the table ───────
+  # Boarded under #1815 while it read as a missing carrier. It is not: there is nothing on the other
+  # side of the wire to carry it TO. `alicloud_ots_table` exposes instance_name, table_name,
+  # primary_key, defined_column, time_to_live, max_version, allow_update,
+  # deviation_cell_version_in_sec and the four SSE arguments — no backup or recovery argument of any
+  # kind — and the Tablestore API has none either.
+  #
+  # Get the claim right, because "the product does not exist" is falsifiable here and would make the
+  # matrix wrong: Tablestore CAN be restored. It is restored through Cloud Backup (HBR), a separate
+  # service with its own vault, its own billing and its own IAM, driven by a SCHEDULED plan
+  # (`alicloud_hbr_ots_backup_plan`, schedule `I|{startTime}|{interval}`, full with optional
+  # incremental). Its restore points are backup runs, not a continuous log — the console's restore
+  # range is bounded by the plan's schedule, which is not what "point in time" promises. Alethia will
+  # not map a per-table toggle onto a separately-billed backup service, so the honest statement is
+  # that the capability is not expressible as a property of the table.
+  #
+  # Re-derived against the post-#1833 guard: the carrier probe still measures this cell `no-carrier`,
+  # i.e. it reproduces in the SAME shape it was boarded in. Nothing here is a ratchet "fixed —
+  # delete it". The entry leaves `baseline:` because the ceiling claim above reclassifies it, and
+  # because the guard refuses to let one cell be both excluded and boarded as debt.
+  - offer: nosql:point_in_time_recovery
+    cloud: alibaba
+    reason: Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do.
 
 # ── Baseline — real gaps, already boarded ───────────────────────────────────────────────
 #
@@ -259,7 +293,7 @@ baseline:
   #
   # The shapes, so the list reads as something other than a wall:
   #   · a switch no provider carries          (registry)
-  #   · a switch carried and then not read    (bucket:public_access, queue:ordered)
+  #   · a switch carried and then not read    (queue:ordered)
   #   · a kind the cloud's template omits     (hetzner dns, hetzner network)
   #
   # The DNS block that stood here is gone. #1810 wired both canvas DNS switches through the snapshot,
@@ -340,54 +374,26 @@ baseline:
     issue: #1812
     state: no-carrier
 
-  # ── Buckets: public access and versioning ───────────────────────────────────────────
-  # Three different failures with one appearance. GCP fills `uniform_access` on every apply and the
-  # Cloud Storage module hardcodes `uniform_bucket_level_access = true`. Azure sends
-  # `container_access_type` and the storage-account module declares `access_type`, so the value lands
-  # on a name nothing reads. Azure's container builder never looks at `Versioning` at all.
-  - offer: bucket:public_access
-    cloud: gcp
-    reason: Public access stays enforced on Google Cloud buckets — the setting is sent and the bucket is created with uniform, private access regardless.
-    issue: #1813
-    state: unwired-template
-  - offer: bucket:public_access
-    cloud: azure
-    reason: Public access stays private on Azure containers — the setting is sent under a name the template does not read.
-    issue: #1813
-    state: unwired-template
-  - offer: bucket:versioning
-    cloud: azure
-    reason: Versioning is not applied to Azure containers — the setting never reaches the plan, so blobs are created unversioned.
-    issue: #1813
-    state: no-carrier
-
   # ── Bucket encryption on Alibaba — a gap, and an unresolved question ────────────────
-  # Same wiring verdict as the three exclusions above (nothing carries the switch), but NOT the same
-  # decision, because the outcome is not the same. AWS/GCP/Azure encrypt unconditionally, so an inert
-  # switch is cosmetic. Whether Alibaba OSS applies a default server-side encryption method to a new
-  # bucket is not established from anything in this repo — and if it does not, a user who leaves this
-  # (default-on) switch alone gets unencrypted objects. That difference is why this is boarded rather
-  # than excluded: the answer decides whether it is cosmetic or a security defect.
-  - offer: bucket:encryption_enabled
-    cloud: alibaba
-    reason: Encryption at rest is not requested for Alibaba OSS buckets — the setting never reaches the plan, so the bucket is created with whatever OSS applies by default.
-    issue: #1814
-    state: no-carrier
+  # Nothing carries the switch — the wiring verdict the other bucket cells had before #1813 retired
+  # them — but NOT the same decision, because the outcome is not the same. AWS/GCP/Azure encrypt
+  # unconditionally, so an inert switch is cosmetic. Whether Alibaba OSS applies a default
+  # server-side encryption method to a new bucket is not established from anything in this repo — and
+  # if it does not, a user who leaves this (default-on) switch alone gets unencrypted objects. That
+  # difference is why this is boarded rather than excluded: the answer decides whether it is cosmetic
+  # or a security defect.
 
   # ── NoSQL point-in-time recovery ────────────────────────────────────────────────────
-  # GCP has a builder that reads the setting (`buildFirestoreDatabases`) and nothing calls it — the
-  # provider says so in a comment at gcp_provider.go:88 — so Firestore is created without PITR.
-  # Alibaba's Tablestore builder never reads the field at all.
-  - offer: nosql:point_in_time_recovery
-    cloud: gcp
-    reason: Point-in-time recovery is not enabled on Firestore yet — the database is created without it whichever way the switch is set.
-    issue: #1815
-    state: no-carrier
-  - offer: nosql:point_in_time_recovery
-    cloud: alibaba
-    reason: Point-in-time recovery is not enabled on Tablestore yet — the table is created without it whichever way the switch is set.
-    issue: #1815
-    state: no-carrier
+  # Both #1815 cells are gone from this list, for two DIFFERENT reasons — do not read them as one
+  # fix. GCP: the post-#1833 carrier probe measures the cell HONORED and fails the build until this
+  # entry is deleted (`firestore_point_in_time_recovery` is assigned FROM the field, so it grades
+  # `derived`, not `gated-carrier`). Alibaba: the probe still measures it `no-carrier` — it was NOT
+  # fixed — and it moves to `exclusions:` above as a product ceiling, not as a ratchet deletion.
+  #
+  # Still boarded on this offer's row, and NOT this lane's to claim: azure grades `gated-carrier`
+  # under the new guard, because buildCosmosDBCollections writes `analytical_storage_enabled`
+  # (Synapse Link column storage) inside an `if PointInTimeRecovery` branch. The old guard scored
+  # that as honored. It is named in the matrix as ⚠️ and is not counted as carried.
 
   # ── Hetzner: two kinds the canvas offers and the template does not build ────────────
   # Unlike the Hetzner entries in `exclusions:` above, neither of these is a platform ceiling.
@@ -404,18 +410,12 @@ baseline:
     issue: #1816
     state: no-carrier
 
-
-  # ── nosql: a switch that turns on a DIFFERENT billable feature ──────────────────────
-  # Azure carries `point_in_time_recovery` into `analytical_storage_enabled`, which is Synapse Link
-  # analytical storage — a separate, separately-billed feature. Cosmos point-in-time restore is
-  # `backup { type = "Continuous" }`, which nothing sets. The switch is carried, the plan differs,
-  # and the user gets a feature they did not ask for instead of the one they did. Boarded rather
-  # than `wired:` precisely because the wiring IS wrong.
-  - offer: nosql:point_in_time_recovery
-    cloud: azure
-    reason: Point-in-time restore is not enabled on Cosmos DB — turning it on enables Synapse analytical storage instead, which is a different, separately-billed feature.
-    issue: #1838
-    state: gated-carrier
+  # ── nosql: a switch that turned on a DIFFERENT billable feature ─────────────────────
+  # Azure used to carry `point_in_time_recovery` into `analytical_storage_enabled` — Synapse Link
+  # analytical storage, a separate and separately-billed feature — while the Cosmos account was
+  # declared with no `backup {}` block at all. Asking for recoverability bought a bill and no
+  # recoverability. FIXED in #1838: the provider emits `point_in_time_recovery` and the account is
+  # planned with `backup { type = "Continuous" }` on the free Continuous7Days tier.
 
 # Branch-guard wirings a person has READ and found correct.
 #
