@@ -10,10 +10,21 @@ A runner is described by two axes: **operator** and **provisioning**. Self-opera
 managed fleet. Within `self`, the **provisioning** axis says who placed it:
 
 - **`deployed`** — provisioned into your cloud by an existing runner running `tofu` (Console
-  "Deploy" tab / `alethia runner deploy`). On AWS this lands on ECS Fargate from
+  "Deploy" tab / `alethia runner deploy`). **AWS only** — it lands on ECS Fargate from
   [`infra/templates/runner/aws/`](/runner/infrastructure-templates/aws).
 - **`registered`** — you bring your own runner (your own IaC, or just `alethia runner start`) and
-  register it for a token. For on-premises, air-gapped, or development hosts.
+  register it for a token. Any cloud, plus on-premises, air-gapped, or development hosts.
+
+<Callout type="warn">
+  **Deployed runners are available on AWS only.** `infra/templates/runner/` holds one template,
+  `aws`, so there is no runner template for GCP, Azure, Alibaba Cloud or Hetzner. The Console form
+  offers AWS accounts alone, and both the Console and `alethia runner deploy` refuse a deploy for
+  the other clouds at the moment you queue it.
+
+  This limits **where the runner itself runs**, not what it provisions: one registered runner —
+  the page you are reading — provisions every cloud Alethia supports. To run a runner in GCP,
+  Azure, Alibaba Cloud or Hetzner, register one there.
+</Callout>
 
 <Callout type="info">
   "Self-hosted" is the legacy term for this whole family; the canonical field is

@@ -9,6 +9,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/runners"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 )
@@ -196,7 +197,31 @@ func selectOrgInteractive(orgs []api.OrgSummary) (*api.OrgSummary, error) {
 	return matchOrg(orgs, id), nil
 }
 
+// selectCloudIdentity picks from EVERY linked cloud account. This is the right list for
+// `project create`, which can target any cloud — it is the WRONG list for `runner deploy`,
+// which can only build where a runner template exists (see selectRunnerDeployCloudIdentity).
 func selectCloudIdentity(token string) (identityID string, err error) {
+	return pickCloudIdentity(token, "Which cloud account to provision into", nil)
+}
+
+// selectRunnerDeployCloudIdentity picks from only the cloud accounts a runner can actually be
+// deployed into. `infra/templates/runner/` holds `aws` alone, so offering the unfiltered list
+// here let a user choose GCP and get a refusal from the server (and, before the server gate
+// existed, a job that died in the runner's logs) — the defect #1794 names. The list of clouds
+// comes from packages/core/runners, whose test pins it to the template directories.
+func selectRunnerDeployCloudIdentity(token string) (identityID string, err error) {
+	return pickCloudIdentity(token, "Which cloud account to deploy the runner into", runners.FilterDeployable)
+}
+
+// pickCloudIdentity fetches the caller's cloud accounts, narrows them with `narrow` (nil keeps
+// all of them) and shows the picker. The empty cases are separate errors on purpose: "you have
+// no cloud accounts" and "none of your cloud accounts can host a deployed runner" need
+// different next steps from the user.
+func pickCloudIdentity(
+	token string,
+	description string,
+	narrow func([]api.CloudIdentity) []api.CloudIdentity,
+) (identityID string, err error) {
 	if err := requireInteractive(); err != nil {
 		return "", err
 	}
@@ -216,6 +241,16 @@ func selectCloudIdentity(token string) (identityID string, err error) {
 		return "", fmt.Errorf("no cloud accounts linked — connect one through Alethia first")
 	}
 
+	if narrow != nil {
+		identities = narrow(identities)
+		if len(identities) == 0 {
+			return "", fmt.Errorf(
+				"none of your linked cloud accounts can host a deployed runner — deployed runners are %s only. Register a runner you run yourself instead (Console → Runners → Add runner → Register your own); it runs on any cloud",
+				runners.DeployProvidersLabel(),
+			)
+		}
+	}
+
 	options := make([]huh.Option[string], len(identities))
 	for i, id := range identities {
 		options[i] = huh.NewOption(id.Label, id.ID)
@@ -225,7 +260,7 @@ func selectCloudIdentity(token string) (identityID string, err error) {
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Cloud Account").
-				Description("Which cloud account to deploy into").
+				Description(description).
 				Options(options...).
 				Value(&identityID),
 		),
