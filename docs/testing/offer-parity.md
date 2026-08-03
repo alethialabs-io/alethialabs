@@ -90,7 +90,7 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `bucket:versioning` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `cache:multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · | · |
 | `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
-| `dns:managed_certificate` | 🚫 #1824 | 🟡 | 🟡 | 🟡 | — | · |
+| `dns:managed_certificate` | — | 🟡 | 🟡 | 🟡 | — | · |
 | `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
@@ -173,6 +173,7 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `bucket:encryption_enabled` | gcp | Cloud Storage encrypts every object at rest and the setting cannot be turned off — this switch is informational on Google Cloud. |
 | `bucket:encryption_enabled` | azure | Azure Storage encrypts every blob at rest and the setting cannot be turned off — this switch is informational on Azure. |
 | `network:single_nat_gateway` | hetzner | Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone. |
+| `dns:managed_certificate` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate. |
 | `nosql:point_in_time_recovery` | alibaba | Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do. |
 
 ## Reviewed branch-guard wirings
@@ -208,7 +209,6 @@ Only a cell that was measured and came out honored is asked for its entry back.
 
 | Offer | Cloud | State (measured) | Issue | What a user gets today |
 |---|---|---|---|---|
-| `dns:managed_certificate` | alibaba | 🚫 `unwired-template` | #1824 | The managed TLS certificate is requested but nothing builds it yet — the template declares the variable and no resource reads it. |
 | `registry:immutable_tags` | aws | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to ECR yet — repositories are created with the platform default instead of your choice. |
 | `registry:immutable_tags` | gcp | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice. |
 | `registry:immutable_tags` | azure | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice. |
