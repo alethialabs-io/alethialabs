@@ -311,12 +311,21 @@ func TestAlibabaBuilders_OTSTablesAndKeyType(t *testing.T) {
 	if len(tables) != 4 {
 		t.Fatalf("tables = %d, want 4", len(tables))
 	}
+	// `primary_keys`, a LIST — not the scalar `primary_key` / `primary_key_type` this asserted until
+	// #1836. Those two names were read by NOTHING: modules/ots/main.tf takes
+	// `try(each.value.primary_keys, [{ name = "id", type = "String" }])`, so `try` caught the miss and
+	// every table was built on `id`/`String`. This test passed throughout, which is the lesson — it
+	// checked that the builder agreed with itself, never that it agreed with the template.
 	for i, want := range wantTypes {
-		if tables[i]["primary_key_type"] != want {
-			t.Errorf("table[%d] primary_key_type = %v, want %v", i, tables[i]["primary_key_type"], want)
+		keys, ok := tables[i]["primary_keys"].([]map[string]interface{})
+		if !ok || len(keys) != 1 {
+			t.Fatalf("table[%d] primary_keys = %#v, want one key", i, tables[i]["primary_keys"])
 		}
-		if tables[i]["primary_key"] != "pk" {
-			t.Errorf("table[%d] primary_key = %v, want pk", i, tables[i]["primary_key"])
+		if keys[0]["type"] != want {
+			t.Errorf("table[%d] key type = %v, want %v", i, keys[0]["type"], want)
+		}
+		if keys[0]["name"] != "pk" {
+			t.Errorf("table[%d] key name = %v, want pk", i, keys[0]["name"])
 		}
 	}
 	// Direct otsKeyType mapping.
