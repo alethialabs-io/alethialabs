@@ -583,6 +583,14 @@ jobs:
         run: bash scripts/claim-work.sh --self-test
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
+      # The capabilities-security REQUIRED check decides which changed files it inspects AT ALL, and a
+      # file outside that set is not "passed" — it is never read and the check goes green (#1789). This
+      # asserts every known-guarded path still exists AND still matches (a rename that quietly drops a
+      # file out of scope reds here, not months later on a green PR), that out-of-scope paths still do
+      # not match, and that invariants A–D still fire. It reads the checkout, but runs no git and no
+      # network — the invariants are driven from inline fixtures.
+      - name: Capabilities-security gate scope + invariants (the guard's own guard)
+        run: node scripts/security/capabilities-gate.mjs --self-test
       # The nightly rollup is the only thing that reads a real-cloud run's verdict, and it reported a
       # leg that provisioned and FAILED as "gate off — no secret/var wired" (#1613). It is main-gated
       # and runs once a night, so a regression there is invisible for a day and then misattributed to
