@@ -21,7 +21,9 @@
 # nothing downstream (console, runner, InfraFacts) changes.
 
 resource "azurerm_managed_redis" "this" {
-  name                = "${var.project_name}-${var.environment}-redis"
+  # Derived at the template root (checks_naming.tf, local.azure_cache_name) — Managed Redis caps
+  # the name at 60 and forbids doubled hyphens. The readable form is preserved.
+  name                = var.cache_name
   location            = var.location
   resource_group_name = var.resource_group_name
   sku_name            = var.sku_name

@@ -6,6 +6,7 @@ module "acr" {
   environment         = var.environment
   project_name        = var.project_name
   resource_group_name = azurerm_resource_group.main.name
+  registry_name       = local.azure_acr_name
   sku                 = var.acr_sku
 
   tags = local.azure_default_tags

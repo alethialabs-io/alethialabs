@@ -23,7 +23,11 @@ locals {
 }
 
 resource "azurerm_storage_account" "this" {
-  name                     = replace("${var.project_name}${var.environment}st", "-", "")
+  # Derived at the template root (checks_naming.tf, local.azure_storage_account_name). This
+  # rendered 23 of the permitted 24 characters on the e2e nightly — one character of headroom —
+  # and the root derivation also lowercases and strips every non-alphanumeric, which this
+  # hyphen-only replace() did not.
+  name                     = var.account_name
   resource_group_name      = var.resource_group_name
   location                 = var.location
   account_tier             = var.account_tier

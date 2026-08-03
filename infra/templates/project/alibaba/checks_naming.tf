@@ -50,6 +50,46 @@ locals {
     : format("ts%s", substr(sha256(local.ots_name_full), 0, 12))
   )
   ots_name_len = length(local.ots_name)
+
+  # ── Container Registry Enterprise Edition instance: 30 characters, REPORTED not established ──
+  #
+  # `cr_name` was composed in locals.tf as `replace("cr-<project_name>-<environment>", "_", "-")`
+  # with no budget. The e2e nightly renders:
+  #
+  #   cr-  +  alethia-nl  +  -  +  30829641000-1   =  27 characters
+  #    3         10           1        13
+  #
+  # against a cap of 30. Three characters is not headroom, it is a coincidence — and a GitHub run id
+  # is 11 digits today and only grows.
+  #
+  # THE CAP ITSELF IS UNCONFIRMED, and that is stated rather than hidden — same treatment as the
+  # Tablestore reserved-word rule above. Alibaba's "Create a Container Registry Enterprise Edition
+  # instance" page documents the field as "Instance name: Enter an instance name" and states no
+  # length, no alphabet and no first-character rule; the aliyun provider's own
+  # `alicloud_cr_ee_instance.instance_name` schema carries no ValidateFunc either. 30 is the figure
+  # reported in #1886 and it is adopted here because a budget that is too tight costs readability
+  # while a budget that is absent costs a failed apply, which is the position this composition is in
+  # today.
+  #
+  # The readable form is kept whenever it fits, for the usual reason: `instance_name` is ForceNew on
+  # this resource, so a rename DESTROYS AND RECREATES the registry — and with it every image pushed
+  # to it. The fallback is reachable only above 30, where the current code would be gambling anyway.
+  #
+  # Unlike ots_name the fallback here is not opaque: the reserved-word concern that forced a bare
+  # digest for Tablestore is a Tablestore rule, and "cr-" is already the prefix Alibaba's own
+  # examples use. Truncate-plus-digest keeps the name legible.
+  cr_name_max  = 30
+  cr_name_full = replace("cr-${var.project_name}-${var.environment}", "_", "-")
+  cr_name = (
+    length(local.cr_name_full) <= local.cr_name_max
+    ? local.cr_name_full
+    : format(
+      "%s-%s",
+      replace(substr(local.cr_name_full, 0, 22), "/-+$/", ""),
+      substr(sha256(local.cr_name_full), 0, 7),
+    )
+  )
+  cr_name_len = length(local.cr_name)
 }
 
 # Assert the OUTPUT of the derivation, not its input. The Azure twin of this asserted the input for
@@ -70,5 +110,15 @@ check "ots_instance_name_shape" {
   assert {
     condition     = can(regex("^[a-zA-Z][a-zA-Z0-9-]*[a-zA-Z0-9]$", local.ots_name))
     error_message = "NAMING-003: the derived Tablestore instance name '${local.ots_name}' must start with a letter, contain only letters/digits/hyphens, and not end with a hyphen. Check project_name."
+  }
+}
+
+# Same reasoning for the registry: assert the OUTPUT. This can no longer overflow by construction,
+# so it fires only on an arithmetic regression in the fallback — which checks_naming.tftest.hcl
+# catches on every PR, and which this states in the plan output of a real deploy.
+check "cr_instance_name_within_limit" {
+  assert {
+    condition     = local.cr_name_len >= 3 && local.cr_name_len <= local.cr_name_max
+    error_message = "NAMING-003: the derived Container Registry instance name '${local.cr_name}' is ${local.cr_name_len} chars, over the ${local.cr_name_max}-character budget. The truncate-plus-digest fallback in checks_naming.tf is wrong."
   }
 }

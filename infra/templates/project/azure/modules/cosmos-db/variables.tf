@@ -13,6 +13,11 @@ variable "project_name" {
   type        = string
 }
 
+variable "account_name" {
+  description = "Name of the Cosmos DB account. Derived by the caller (local.azure_cosmos_account_name in checks_naming.tf), which keeps the readable \"<project_name>-<environment>-cosmos\" form while it fits Azure's 3-44 character cap and truncates-plus-digests it above that. Derived at the template root, not here, so it stays reachable from `tofu test`."
+  type        = string
+}
+
 variable "resource_group_name" {
   description = "Name of the resource group"
   type        = string

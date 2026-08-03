@@ -55,17 +55,25 @@ locals {
   # Naming conventions
   location_short = local.azure_locations_short[var.location]
 
-  vnet_name            = "vnet-${local.location_short}-${var.environment}-${var.project_name}"
-  aks_name             = "aks-${local.location_short}-${var.environment}-${var.project_name}"
-  azure_db_name        = "db-${local.location_short}-${var.environment}-${var.project_name}"
-  azure_cache_name     = "redis-${local.location_short}-${var.environment}-${var.project_name}"
-  azure_dns_name       = "dns-${local.location_short}-${var.environment}-${var.project_name}"
-  azure_waf_name       = "waf-${local.location_short}-${var.environment}-${var.project_name}"
-  key_vault_name       = "kv-${local.location_short}-${var.environment}-${var.project_name}"
-  acr_name             = "acr${local.location_short}${var.environment}${var.project_name}"
-  service_bus_name     = "sb-${local.location_short}-${var.environment}-${var.project_name}"
-  cosmos_db_name       = "cosmos-${local.location_short}-${var.environment}-${var.project_name}"
-  storage_account_name = "st${local.location_short}${var.environment}${var.project_name}"
+  aks_name = "aks-${local.location_short}-${var.environment}-${var.project_name}"
+
+  # THE REST OF THIS BLOCK WAS DEAD, AND WORSE THAN DEAD (#1886).
+  #
+  # Ten more names lived here — vnet_name, azure_db_name, azure_cache_name, azure_dns_name,
+  # azure_waf_name, key_vault_name, acr_name, service_bus_name, cosmos_db_name and
+  # storage_account_name — and NOTHING read a single one of them. `aks_name` above is the only
+  # entry with consumers.
+  #
+  # They were not merely unused. They stated a convention the template does not use:
+  #
+  #   here (dead)          cosmos-<location_short>-<environment>-<project_name>
+  #   modules/cosmos-db    <project_name>-<environment>-cosmos
+  #
+  # so anyone reading the root to find out what a resource is called got the wrong answer, in the
+  # wrong order, with an extra segment. #1873 created the pattern by moving the Key Vault name to
+  # checks_naming.tf and leaving `key_vault_name` sitting here; #1886 would have added six more
+  # orphans on top. The live derivations are all in checks_naming.tf (NAMING-002), which is also
+  # where their length budgets are, so there is one place to look.
 
   # The external-secrets managed identity this deploy uses: the caller's adopted one, or the one we
   # created. Everything that federates, grants to, or exports the ESO identity reads these — never

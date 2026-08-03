@@ -1,5 +1,8 @@
 resource "azurerm_cosmosdb_account" "this" {
-  name                = "${var.project_name}-${var.environment}-cosmos"
+  # Derived at the template root (checks_naming.tf, local.azure_cosmos_account_name), not here:
+  # Cosmos caps account names at 44 characters and a local inside a module is unreachable from
+  # `tofu test`. The readable "<project_name>-<environment>-cosmos" form is preserved exactly.
+  name                = var.account_name
   resource_group_name = var.resource_group_name
   location            = var.location
   offer_type          = "Standard"
