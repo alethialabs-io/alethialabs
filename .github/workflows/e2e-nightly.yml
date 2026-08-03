@@ -781,6 +781,10 @@ jobs:
         if: steps.gate.outputs.run == 'true' && always()
         env:
           PROVIDER: ${{ matrix.provider }}
+          # The scrub's exact-literal list is built from the credentials visible HERE. HCLOUD_TOKEN
+          # is job-level and inherited; E2E_GIT_TOKEN was not exposed to this step at all, so the
+          # git token was silently absent from the list the bundle is scrubbed against (#1854).
+          E2E_GIT_TOKEN: ${{ secrets.E2E_GIT_TOKEN }}
           ALETHIA_E2E_PROOF_OUTCOME: ${{ steps.t2.outcome }}
           ALETHIA_E2E_PROOF_RUN_TAG: nightly-${{ github.run_id }}-${{ github.run_attempt }}
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
@@ -824,12 +828,29 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload runner log
+      # The raw runner log carries a `tofu show -json` plan, and OpenTofu emits the root
+      # module's `variables` map with RAW values — so uploading it verbatim published a live
+      # HCLOUD_TOKEN on this public repo (#1854). Scrub it through the SAME library the proof
+      # bundle uses, and fail closed: if a secret survives, this step goes red and the upload
+      # below finds nothing to publish.
+      - name: Scrub the runner log before upload
+        if: steps.gate.outputs.run == 'true' && always()
+        env:
+          # HCLOUD_TOKEN is job-level and inherited. E2E_GIT_TOKEN is NOT — it is only ever
+          # exposed to the T2 step as ALETHIA_E2E_GIT_TOKEN — so the literal list would omit
+          # it unless it is named here.
+          E2E_GIT_TOKEN: ${{ secrets.E2E_GIT_TOKEN }}
+        run: |
+          ./demos/proofs/scrub-runner-log.sh \
+            "${{ runner.temp }}/t2-runner.log" \
+            "${{ runner.temp }}/runner-log-scrubbed"
+
+      - name: Upload runner log (scrubbed)
         if: steps.gate.outputs.run == 'true' && always()
         uses: actions/upload-artifact@v7
         with:
           name: t2-runner-log-${{ matrix.provider }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/t2-runner.log
+          path: ${{ runner.temp }}/runner-log-scrubbed/t2-runner.log
           if-no-files-found: ignore
           retention-days: 14
 
