@@ -18,6 +18,16 @@ resource "azurerm_cosmosdb_account" "this" {
     name = "EnableServerless"
   }
 
+  # Point-in-time restore. `Continuous` is what the canvas's point_in_time_recovery switch means on
+  # Cosmos, and until #1838 nothing here requested it at all — the switch was wired to Synapse Link
+  # analytical storage instead, which is a different, separately-billed feature and not a backup.
+  #
+  # `tier` is only legal in Continuous mode and is null otherwise; the root module derives both.
+  backup {
+    type = var.backup_type
+    tier = var.backup_tier
+  }
+
   tags = var.tags
 }
 
