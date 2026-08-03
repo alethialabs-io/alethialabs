@@ -127,6 +127,24 @@ output "alidns_name_servers" {
 }
 
 #########################################################################
+##                     WAF Outputs                                     ##
+#########################################################################
+
+# Read by the runner (argocd.InfraFacts.AlibabaWAFInstanceID). Exporting it is what lets a deploy
+# record an HONEST answer to "the WAF switch is on — is anything being filtered?". On this cloud
+# the answer is no, and until this output existed nothing could tell "the switch is off" apart
+# from "you are paying for a WAF 3.0 postpaid instance that inspects zero requests". The binding
+# itself (alicloud_wafv3_domain, CNAME mode) needs the ingress load balancer's address, which
+# does not exist at plan time — see modules/waf/main.tf for the provider evidence.
+#
+# null when the switch is off. ExtractOutput turns a null into "", which is exactly the
+# "nothing built" signal the decision reads.
+output "waf_instance_id" {
+  description = "Id of the WAF 3.0 instance for the application WAF — exported UNATTACHED; no hostname is bound to it"
+  value       = var.application_waf_enabled ? module.waf[0].instance_id : null
+}
+
+#########################################################################
 ##                     General Outputs                                 ##
 #########################################################################
 
