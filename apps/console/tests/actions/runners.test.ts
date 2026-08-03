@@ -300,14 +300,14 @@ describe("getAvailableRunners", () => {
 describe("deployRunner", () => {
 	it("inserts a deployed runner + DEPLOY_RUNNER job, then notifies the scaler", async () => {
 		mock.queue.push(
+			[{ provider: "aws" }], // cloud identity lookup — gated BEFORE the insert
 			[{ id: "r-dep", name: "Cloud" }], // runner insert .returning
-			[{ provider: "gcp" }], // cloud identity lookup
 			[{ id: "job-1" }], // job insert .returning
 		);
 		const res = await deployRunner({
 			name: "Cloud",
 			cloudIdentityId: "ci-1",
-			region: "europe-west1",
+			region: "us-east-1",
 		});
 		expect(authorize).toHaveBeenCalledWith("deploy", { type: "runner" });
 		expect(res).toEqual({ runnerId: "r-dep", jobId: "job-1" });
@@ -329,26 +329,39 @@ describe("deployRunner", () => {
 		expect(jobValues.config_snapshot).toMatchObject({
 			runner_id: "r-dep",
 			runner_token: "tok-plain",
-			cloud_provider: "gcp",
-			region: "europe-west1",
+			cloud_provider: "aws",
+			region: "us-east-1",
 		});
 		expect(notifyScaler).toHaveBeenCalledTimes(1);
 	});
 
-	it("defaults the cloud provider to aws when the identity is missing", async () => {
-		mock.queue.push(
-			[{ id: "r-dep", name: "Cloud" }],
-			[], // no identity row
-			[{ id: "job-1" }],
-		);
-		await deployRunner({
-			name: "Cloud",
-			cloudIdentityId: "ci-x",
-			region: "us-east-1",
-		});
-		expect(mock.valuesSpy.mock.calls[1][0].config_snapshot.cloud_provider).toBe(
-			"aws",
-		);
+	// `infra/templates/runner/` holds `aws` alone, so a gcp deploy could only die inside the
+	// runner — after the runners row, the job row and the claim already existed. Refuse it at
+	// enqueue, and write NOTHING.
+	it("refuses a cloud with no runner template, before inserting anything", async () => {
+		mock.queue.push([{ provider: "gcp" }]);
+		await expect(
+			deployRunner({
+				name: "Cloud",
+				cloudIdentityId: "ci-1",
+				region: "europe-west1",
+			}),
+		).rejects.toThrow(/deployed runners are AWS only/i);
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	it("refuses a missing identity instead of coercing it to an aws deploy", async () => {
+		mock.queue.push([]); // no identity row
+		await expect(
+			deployRunner({
+				name: "Cloud",
+				cloudIdentityId: "ci-x",
+				region: "us-east-1",
+			}),
+		).rejects.toThrow(/Cloud identity not found/);
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 });
 
@@ -416,6 +429,56 @@ describe("destroyRunner", () => {
 			[{ id: "r-del", name: "X", cloud_identity_id: null, metadata: {} }],
 		);
 		await expect(destroyRunner("r-del")).rejects.toThrow(/no cloud identity/);
+	});
+
+	// Day-2 on a runner deployed BEFORE the enqueue gate existed. Its identity row is gone, so
+	// the provider can only come from what was recorded at deploy time — and it must be that,
+	// not a hard-coded "aws" that would point `tofu destroy` at an entirely different cloud.
+	// Note this path deliberately does NOT gate on RUNNER_DEPLOY_PROVIDERS: refusing here would
+	// wedge a legacy runner's row with no way to tear it down.
+	it("destroys a pre-gate GCP runner against gcp, not a hard-coded aws", async () => {
+		mock.queue.push(
+			[
+				{
+					...runnerRow,
+					metadata: {
+						deploy_config: {
+							region: "europe-west1",
+							cloud_provider: "gcp",
+							image_tag: "v1",
+						},
+					},
+				},
+			],
+			[], // identity row deleted since the deploy
+			[], // no active lifecycle job
+			[{ id: "job-del" }],
+		);
+		await destroyRunner("r-del");
+		expect(mock.valuesSpy.mock.calls[0][0].config_snapshot).toMatchObject({
+			cloud_provider: "gcp",
+			region: "europe-west1",
+		});
+	});
+
+	// Neither source knows the cloud. Guessing "aws" is how a destroy runs against an account
+	// that never held this runner; a hard error puts the question in front of a human instead.
+	it("refuses to guess a cloud when nothing recorded one", async () => {
+		mock.queue.push(
+			[
+				{
+					...runnerRow,
+					metadata: { deploy_config: { region: "us-east-1", image_tag: "v1" } },
+				},
+			],
+			[], // no identity row
+			[], // no active lifecycle job
+		);
+		await expect(destroyRunner("r-del")).rejects.toThrow(
+			/no recorded cloud provider/i,
+		);
+		expect(mock.valuesSpy).not.toHaveBeenCalled();
+		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 });
 

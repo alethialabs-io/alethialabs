@@ -47,17 +47,19 @@ Click **Add runner** to open a sheet that chooses between two paths — **Deploy
 
 <Tabs items={["Deploy (Self · Deployed)", "Register (Self · Registered)"]}>
   <Tab value="Deploy (Self · Deployed)">
-    Provisions a Runner into your cloud account automatically (an existing runner runs OpenTofu to stand it up — the AWS path uses ECS Fargate via `infra/templates/runner/aws`). This is a `self`-operated, `deployed` runner:
+    Provisions a Runner into your **AWS** account automatically (an existing runner runs OpenTofu to stand it up — ECS Fargate via `infra/templates/runner/aws`). This is a `self`-operated, `deployed` runner:
 
-    1. Select a cloud identity and region
+    1. Select an AWS cloud identity and region
     2. Click Deploy → queues a `DEPLOY_RUNNER` job
     3. The job provisions: ECS task definition, IAM roles, CloudWatch log group, security groups
     4. After ~2 minutes, the Runner appears as ONLINE
 
+    **This path is AWS only.** The account picker lists verified AWS identities alone, because `infra/templates/runner/` holds one template. A deploy into GCP, Azure, Alibaba Cloud or Hetzner is refused when you queue it — in this form and in `alethia runner deploy`. Use **Register your own** for those clouds; a registered Runner provisions every cloud Alethia supports, wherever it runs.
+
     Deployed Runners support [scale-to-zero](/runner/scale-to-zero) — they shut down when no jobs are queued and restart automatically when needed.
   </Tab>
   <Tab value="Register (Self · Registered)">
-    For bringing your own Runner — your own IaC (OpenTofu/Terraform), or just `alethia runner start` — on infrastructure you control. This creates a `self`-operated, `registered` runner:
+    For bringing your own Runner — your own IaC (OpenTofu/Terraform), or just `alethia runner start` — on infrastructure you control, on **any** cloud. This creates a `self`-operated, `registered` runner:
 
     1. Enter a name for the Runner
     2. Click Register → generates a `runner_id` and `runner_token`

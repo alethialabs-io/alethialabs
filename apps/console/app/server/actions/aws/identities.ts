@@ -4,6 +4,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { currentActor } from "@/lib/authz/guard";
+import type { ConnectableCloudSlug } from "@/lib/cloud-providers/generated/catalog";
 import { type Scope, withScope } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
 
@@ -65,9 +66,17 @@ export async function getVerifiedCloudIdentities(): Promise<
 	return rows.map(toOption);
 }
 
-/** Fetches verified cloud identities for a specific provider. */
+/**
+ * Fetches verified cloud identities for a specific provider.
+ *
+ * Typed against `ConnectableCloudSlug` — the generated `cloud_provider` enum, i.e. every cloud an
+ * identity row can actually hold — rather than a hand-written union. The old union omitted
+ * `hetzner`, `digitalocean` and `civo`, so a caller iterating a list of connectable clouds (the
+ * Add-runner dialog iterating `RUNNER_DEPLOY_PROVIDERS`) would have had to widen this signature
+ * as well; that made "adding a template directory is the single edit" false.
+ */
 export async function getVerifiedCloudIdentitiesByProvider(
-	provider: "aws" | "gcp" | "azure" | "alibaba",
+	provider: ConnectableCloudSlug,
 ): Promise<CloudIdentityOption[]> {
 	const scope = await activeScope();
 	if (!scope) return [];

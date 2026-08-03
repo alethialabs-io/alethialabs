@@ -11,6 +11,10 @@ import { getServiceDb, withActorScope, type Tx } from "@/lib/db";
 import { cloudIdentities, jobs, runnerReleases, runners } from "@/lib/db/schema";
 import { queryProvisionedHours } from "@/lib/queries/runner-usage";
 import { generateRunnerToken } from "@/lib/runners/auth";
+import {
+	isRunnerDeployProvider,
+	runnerDeployUnsupportedMessage,
+} from "@/lib/runners/deploy-providers";
 import { notifyScaler } from "@/lib/scaler";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 
@@ -248,6 +252,19 @@ export async function deployRunner(params: {
 	await assertJobQuotaAllowed(actor.orgId);
 
 	const result = await withActorScope(actor, async (tx) => {
+		// Resolve + gate the identity BEFORE anything is written: a deploy we cannot build must
+		// not leave an orphan runners row behind, and a MISSING identity is an error rather than
+		// an implicit AWS deploy (the old `?? "aws"` coerced it into one).
+		const [identity] = await tx
+			.select({ provider: cloudIdentities.provider })
+			.from(cloudIdentities)
+			.where(eq(cloudIdentities.id, params.cloudIdentityId))
+			.limit(1);
+
+		if (!identity) throw new Error("Cloud identity not found");
+		if (!isRunnerDeployProvider(identity.provider))
+			throw new Error(runnerDeployUnsupportedMessage(identity.provider));
+
 		const [runner] = await tx
 			.insert(runners)
 			.values({
@@ -260,19 +277,13 @@ export async function deployRunner(params: {
 			})
 			.returning({ id: runners.id, name: runners.name });
 
-		const [identity] = await tx
-			.select({ provider: cloudIdentities.provider })
-			.from(cloudIdentities)
-			.where(eq(cloudIdentities.id, params.cloudIdentityId))
-			.limit(1);
-
 		const configSnapshot = {
 			runner_id: runner.id,
 			runner_token: runnerToken,
 			runner_name: params.name,
 			image_tag: params.imageTag || "latest",
 			region: params.region,
-			cloud_provider: identity?.provider ?? "aws",
+			cloud_provider: identity.provider,
 			alethia_url:
 				process.env.NEXT_PUBLIC_APP_URL || "https://alethialabs.io",
 		};
@@ -336,7 +347,21 @@ async function fetchDeployedRunner(
 	});
 }
 
-/** Builds a runner config snapshot from deploy_config with optional overrides. */
+/**
+ * Builds a runner config snapshot from deploy_config with optional overrides.
+ *
+ * This is the DAY-2 path (UPDATE_RUNNER / DESTROY_RUNNER on a runner that already exists), not
+ * the enqueue path #1794 is about — the cloud is not being chosen here, it is being RECALLED. So
+ * it deliberately does NOT gate on `isRunnerDeployProvider`: a runner deployed before that gate
+ * existed must still be destroyable, and refusing here would wedge its row forever.
+ *
+ * What it must not do is GUESS. The provider used to fall back to a hard-coded `"aws"` when both
+ * the identity row and `deploy_config.cloud_provider` were missing — a second hand-written
+ * literal for a fact `lib/runners/deploy-providers.ts` now owns, and one that would hand the
+ * runner an AWS destroy for a non-AWS runner (the identity row can be deleted after the deploy).
+ * Two recorded sources, then a hard error: the caller sees "which cloud?" instead of tofu
+ * destroying against the wrong one.
+ */
 function buildRunnerConfigSnapshot(
 	runner: { id: string; name: string },
 	deployConfig: NonNullable<
@@ -345,12 +370,18 @@ function buildRunnerConfigSnapshot(
 	provider: string | null | undefined,
 	overrides?: { runner_token?: string; image_tag?: string },
 ) {
+	const cloudProvider = provider ?? deployConfig.cloud_provider;
+	if (!cloudProvider)
+		throw new Error(
+			`Runner ${runner.name} has no recorded cloud provider — its cloud identity is gone and deploy_config.cloud_provider is unset, so there is nothing safe to target.`,
+		);
+
 	return {
 		runner_id: runner.id,
 		runner_token: overrides?.runner_token ?? "",
 		runner_name: runner.name,
 		region: deployConfig.region,
-		cloud_provider: provider ?? deployConfig.cloud_provider ?? "aws",
+		cloud_provider: cloudProvider,
 		image_tag: overrides?.image_tag ?? deployConfig.image_tag ?? "latest",
 		alethia_url:
 			deployConfig.alethia_url ??
