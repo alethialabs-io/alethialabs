@@ -5,7 +5,8 @@ module "oss" {
   source = "./modules/oss"
   count  = var.create_oss ? 1 : 0
 
-  buckets = var.oss_buckets
+  buckets     = var.oss_buckets
+  name_prefix = local.name_prefix
 
   tags = local.common_tags
 }

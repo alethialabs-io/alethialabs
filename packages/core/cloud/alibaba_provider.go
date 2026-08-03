@@ -314,6 +314,34 @@ func otsKeyType(t string) string {
 	}
 }
 
+// ossSSEAlgorithm resolves the OSS server-side-encryption algorithm from the bucket's
+// provider_config (encryption_algorithm), defaulting to AES256 when encryption is enabled.
+// Mirrors s3SSEAlgorithm.
+//
+// AES256 (SSE-OSS) is the only safe default: Alibaba bills it as "None. Free of charge.", while
+// SSE-KMS incurs a per-call KMS fee. A tenant who wants KMS asks for it explicitly and accepts the
+// bill. "SM4" is deliberately NOT reachable by default even though the Terraform provider's own
+// ValidateFunc accepts it — PutBucketEncryption documents only AES256/KMS and answers anything else
+// with InvalidEncryptionAlgorithmError, so a provider-valid SM4 would plan clean and fail at apply.
+// modules/oss/variables.tf refuses it fail-closed at plan time for the same reason.
+func ossSSEAlgorithm(b types.ProjectStorageBucketConfig) string {
+	if b.ProviderConfig != nil {
+		if v, ok := b.ProviderConfig["encryption_algorithm"].(string); ok && v != "" {
+			return v
+		}
+	}
+	return "AES256"
+}
+
+// buildOSSBuckets renders the canvas's storage buckets into the `oss_buckets` tfvar.
+//
+// `name_suffix` (not `name`) is the cross-cloud spelling — GCP's cloud-storage module and AWS's s3
+// module both take a suffix and compose the real name from the project's own prefix. This builder
+// emitted `name_suffix` while modules/oss keyed on `b.name`, so EVERY Alibaba project carrying a
+// bucket died at plan with "This object does not have an attribute named name" (#1834). That is
+// fixed on the template side rather than here, which keeps the three clouds spelled alike — and the
+// suffix is the honest name besides: OSS bucket names are globally unique across all of Alibaba
+// Cloud, so a raw "assets" could never have been created even once the key names lined up.
 func buildOSSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
@@ -321,11 +349,26 @@ func buildOSSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]in
 		if b.PublicAccess {
 			acl = "public-read"
 		}
+		// BOTH POSITIONS ARE EMITTED, and that is the point. OSS applies NO default server-side
+		// encryption to a new bucket — GetBucketEncryption answers 400 NoSuchServerSideEncryptionRule,
+		// and PutBucket's x-oss-server-side-encryption header has no documented default on a page
+		// where every other optional header states one. So unlike S3/GCS/Blob, leaving this switch
+		// uncarried does not land on an encrypted bucket. It lands on unencrypted objects (#1814).
+		//
+		// Emitting the key ONLY in the `true` branch would be half a fix: the OFF position would
+		// silently inherit whatever the template defaults to, which is exactly the shape that scores
+		// green while the gap survives (#1829). "None" is OSS's own spelling for "no rule", and the
+		// module turns it into an absent server_side_encryption_rule block.
+		sseAlgorithm := "None"
+		if b.EncryptionEnabled {
+			sseAlgorithm = ossSSEAlgorithm(b)
+		}
 		entry := map[string]interface{}{
-			"name_suffix":  b.Name,
-			"acl":          acl,
-			"versioning":   b.Versioning,
-			"cors_origins": b.CorsOrigins,
+			"name_suffix":   b.Name,
+			"acl":           acl,
+			"versioning":    b.Versioning,
+			"cors_origins":  b.CorsOrigins,
+			"sse_algorithm": sseAlgorithm,
 		}
 		result = append(result, entry)
 	}

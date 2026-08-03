@@ -263,18 +263,6 @@ baseline:
     reason: Versioning is not applied to Azure containers — the setting never reaches the plan, so blobs are created unversioned.
     issue: #1813
 
-  # ── Bucket encryption on Alibaba — a gap, and an unresolved question ────────────────
-  # Same wiring verdict as the three exclusions above (nothing carries the switch), but NOT the same
-  # decision, because the outcome is not the same. AWS/GCP/Azure encrypt unconditionally, so an inert
-  # switch is cosmetic. Whether Alibaba OSS applies a default server-side encryption method to a new
-  # bucket is not established from anything in this repo — and if it does not, a user who leaves this
-  # (default-on) switch alone gets unencrypted objects. That difference is why this is boarded rather
-  # than excluded: the answer decides whether it is cosmetic or a security defect.
-  - offer: bucket:encryption_enabled
-    cloud: alibaba
-    reason: Encryption at rest is not requested for Alibaba OSS buckets — the setting never reaches the plan, so the bucket is created with whatever OSS applies by default.
-    issue: #1814
-
   # ── NoSQL point-in-time recovery ────────────────────────────────────────────────────
   # GCP has a builder that reads the setting (`buildFirestoreDatabases`) and nothing calls it — the
   # provider says so in a comment at gcp_provider.go:88 — so Firestore is created without PITR.
