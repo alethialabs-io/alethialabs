@@ -196,16 +196,7 @@ Only a cell that was measured and came out honored is asked for its entry back.
 
 | Offer | Cloud | State (measured) | Issue | What a user gets today |
 |---|---|---|---|---|
-| `dns:managed_certificate` | aws | 🚫 `no-carrier` | #1810 | The managed TLS certificate is not requested yet — the setting is dropped before it reaches AWS, so turning it on changes nothing. |
-| `dns:managed_certificate` | gcp | 🚫 `no-carrier` | #1810 | The managed TLS certificate is not requested yet — the setting is dropped before it reaches Google Cloud, so turning it on changes nothing. |
-| `dns:managed_certificate` | azure | 🚫 `no-carrier` | #1810 | The managed TLS certificate is not requested yet — the setting is dropped before it reaches Azure, so turning it on changes nothing. |
-| `dns:managed_certificate` | alibaba | 🚫 `no-carrier` | #1810 | The managed TLS certificate is not requested yet — the setting is dropped before it reaches Alibaba Cloud, so turning it on changes nothing. |
-| `dns:managed_certificate` | hetzner | 🚫 `no-carrier` | #1810 | The managed TLS certificate is not requested yet — the setting is dropped before it reaches Hetzner, so turning it on changes nothing. |
-| `dns:waf_enabled` | aws | 🚫 `no-carrier` | #1810 | The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches AWS, even though the template can build one. |
-| `dns:waf_enabled` | gcp | 🚫 `no-carrier` | #1810 | The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Google Cloud. |
-| `dns:waf_enabled` | azure | 🚫 `no-carrier` | #1810 | The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Azure, even though the template can build one. |
-| `dns:waf_enabled` | alibaba | 🚫 `no-carrier` | #1810 | The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Alibaba Cloud, even though the template can build one. |
-| `dns:waf_enabled` | hetzner | 🚫 `no-carrier` | #1810 | The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Hetzner. |
+| `dns:managed_certificate` | alibaba | 🚫 `unwired-template` | #1824 | The managed TLS certificate is requested but nothing builds it yet — the template declares the variable and no resource reads it. |
 | `registry:immutable_tags` | aws | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to ECR yet — repositories are created with the platform default instead of your choice. |
 | `registry:immutable_tags` | gcp | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice. |
 | `registry:immutable_tags` | azure | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice. |
