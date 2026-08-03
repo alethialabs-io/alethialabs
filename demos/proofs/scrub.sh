@@ -29,10 +29,19 @@
 # scrub_literals_from_env exports SCRUB_LITERALS from every credential the run holds. Both
 # capture-proof.sh and scrub-runner-log.sh need the identical list — when they drifted, one
 # artifact was scrubbed and its sibling was not (#1854). One definition, two callers.
+#
+# The Alibaba trio is listed under BOTH names on purpose. One AssumeRoleWithOIDC exchange is
+# exported six times because the alicloud OpenTofu provider and the aliyun CLI disagree about the
+# variable names (ALICLOUD_* vs ALIBABA_CLOUD_*), and a literal list that covered only one spelling
+# would scrub the provider's copy while publishing the CLI's — the exact half-covered shape of
+# #1854. They are short-lived STS credentials, which limits the exposure but does not remove it.
 scrub_literals_from_env() {
 	local v literals=""
 	for v in "${HCLOUD_TOKEN:-}" "${E2E_GIT_TOKEN:-}" "${ALETHIA_E2E_GIT_TOKEN:-}" \
-		"${AWS_SECRET_ACCESS_KEY:-}" "${AWS_SESSION_TOKEN:-}"; do
+		"${AWS_SECRET_ACCESS_KEY:-}" "${AWS_SESSION_TOKEN:-}" \
+		"${ALICLOUD_SECRET_KEY:-}" "${ALICLOUD_SECURITY_TOKEN:-}" "${ALICLOUD_ACCESS_KEY:-}" \
+		"${ALIBABA_CLOUD_ACCESS_KEY_SECRET:-}" "${ALIBABA_CLOUD_SECURITY_TOKEN:-}" \
+		"${ALIBABA_CLOUD_ACCESS_KEY_ID:-}"; do
 		[ -n "$v" ] && literals+="$v"$'\n'
 	done
 	SCRUB_LITERALS="$literals"
@@ -159,9 +168,9 @@ _scrub_self_test() {
 	local fake_token="hcloud-FAKE-PLACEHOLDER-9f1c3b2a-DO-NOT-LEAK"
 	local fake_git="git-FAKE-PLACEHOLDER-9f1c3b2a-DO-NOT-LEAK"
 	# #1854's shape: a secret nested in a ONE-LINE tofu plan JSON. Deliberately NOT added to
-	# SCRUB_LITERALS below — a run only exports five credentials, so any other sensitive tfvar
-	# has to be caught by the key rule alone. If this survives, the key rule is not covering
-	# the JSON shape and the literal rule is silently carrying the whole scrub.
+	# SCRUB_LITERALS below — a run only exports the credentials scrub_literals_from_env names, so
+	# any other sensitive tfvar has to be caught by the key rule alone. If this survives, the key
+	# rule is not covering the JSON shape and the literal rule is silently carrying the whole scrub.
 	local fake_planjson="planjson-FAKE-PLACEHOLDER-9f1c3b2a-DO-NOT-LEAK"
 	# The PEM marker is ASSEMBLED at runtime (never a literal in this source file) so the
 	# repo secret scanner doesn't flag the test fixture — the generated file below still
@@ -219,7 +228,41 @@ EOF
 		echo "SELF-TEST FAIL: assert_grep_clean flagged a correctly-scrubbed bundle" >&2
 		return 1
 	fi
-	echo "scrub self-test OK: seeded secrets redacted, sentinel kept, tripwire non-vacuous"
+
+	# ── The HARVEST, not just the redaction (#1875). ──
+	# Everything above builds SCRUB_LITERALS by hand, so it proves scrub_stream redacts what it is
+	# GIVEN and says nothing about whether the run's actual credentials get into that list. That is
+	# the #1854 gap exactly: the scrub worked, the list was short. So drive the real harvester and
+	# assert every credential a leg can hold comes out the other side.
+	local saved_literals="${SCRUB_LITERALS:-}" name missed=""
+	local -a cred_vars=(
+		HCLOUD_TOKEN E2E_GIT_TOKEN ALETHIA_E2E_GIT_TOKEN
+		AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+		# Six names, one AssumeRoleWithOIDC exchange: the alicloud OpenTofu provider and the aliyun
+		# CLI disagree about the spelling, and covering one spelling scrubs the provider's copy
+		# while publishing the CLI's.
+		ALICLOUD_ACCESS_KEY ALICLOUD_SECRET_KEY ALICLOUD_SECURITY_TOKEN
+		ALIBABA_CLOUD_ACCESS_KEY_ID ALIBABA_CLOUD_ACCESS_KEY_SECRET ALIBABA_CLOUD_SECURITY_TOKEN
+	)
+	for name in "${cred_vars[@]}"; do
+		export "$name=harvest-FAKE-PLACEHOLDER-${name}-DO-NOT-LEAK"
+	done
+	scrub_literals_from_env
+	for name in "${cred_vars[@]}"; do
+		grep -qF "harvest-FAKE-PLACEHOLDER-${name}-DO-NOT-LEAK" <<<"$SCRUB_LITERALS" || missed+=" $name"
+	done
+	for name in "${cred_vars[@]}"; do
+		unset "$name"
+	done
+	SCRUB_LITERALS="$saved_literals"
+	export SCRUB_LITERALS
+	if [ -n "$missed" ]; then
+		echo "SELF-TEST FAIL: scrub_literals_from_env does not harvest:${missed}" >&2
+		echo "  A credential the run HOLDS but the literal list never sees is the #1854 shape." >&2
+		return 1
+	fi
+
+	echo "scrub self-test OK: seeded secrets redacted, sentinel kept, tripwire non-vacuous, ${#cred_vars[@]} credentials harvested"
 	return 0
 }
 
