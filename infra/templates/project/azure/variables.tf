@@ -333,13 +333,31 @@ variable "cosmos_db_consistency_level" {
 
 variable "cosmos_db_collections" {
   type = list(object({
-    name                       = string
-    partition_key              = optional(string, "/id")
-    billing_mode               = optional(string, "PAY_PER_REQUEST")
+    name          = string
+    partition_key = optional(string, "/id")
+    billing_mode  = optional(string, "PAY_PER_REQUEST")
+    # Point-in-time restore. Offered per table by the canvas, but Cosmos buys it per ACCOUNT (the
+    # `backup` block below), so any container asking for it puts the whole account in continuous
+    # backup mode — see `local.cosmos_backup_type` in cosmos-db.tf.
+    point_in_time_recovery = optional(bool, false)
+    # Synapse Link analytical (column) storage. A SEPARATE, separately-billed feature that is not a
+    # backup: the canvas offers no switch for it, and nothing derives it from point_in_time_recovery
+    # any more (#1838). Kept accepted so a tenant driving the tfvars directly can still ask for it.
     analytical_storage_enabled = optional(bool, false)
   }))
   default     = []
   description = "List of Cosmos DB containers (collections) to create with partition keys"
+}
+
+variable "cosmos_db_continuous_backup_tier" {
+  type        = string
+  default     = "Continuous7Days"
+  description = "Retention tier used when a container asks for point-in-time recovery. Continuous7Days is free; Continuous30Days is billed."
+
+  validation {
+    condition     = contains(["Continuous7Days", "Continuous30Days"], var.cosmos_db_continuous_backup_tier)
+    error_message = "cosmos_db_continuous_backup_tier must be Continuous7Days or Continuous30Days."
+  }
 }
 
 #########################################################################

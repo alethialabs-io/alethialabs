@@ -371,18 +371,12 @@ baseline:
     issue: #1816
     state: no-carrier
 
-
-  # ── nosql: a switch that turns on a DIFFERENT billable feature ──────────────────────
-  # Azure carries `point_in_time_recovery` into `analytical_storage_enabled`, which is Synapse Link
-  # analytical storage — a separate, separately-billed feature. Cosmos point-in-time restore is
-  # `backup { type = "Continuous" }`, which nothing sets. The switch is carried, the plan differs,
-  # and the user gets a feature they did not ask for instead of the one they did. Boarded rather
-  # than `wired:` precisely because the wiring IS wrong.
-  - offer: nosql:point_in_time_recovery
-    cloud: azure
-    reason: Point-in-time restore is not enabled on Cosmos DB — turning it on enables Synapse analytical storage instead, which is a different, separately-billed feature.
-    issue: #1838
-    state: gated-carrier
+  # ── nosql: a switch that turned on a DIFFERENT billable feature ─────────────────────
+  # Azure used to carry `point_in_time_recovery` into `analytical_storage_enabled` — Synapse Link
+  # analytical storage, a separate and separately-billed feature — while the Cosmos account was
+  # declared with no `backup {}` block at all. Asking for recoverability bought a bill and no
+  # recoverability. FIXED in #1838: the provider emits `point_in_time_recovery` and the account is
+  # planned with `backup { type = "Continuous" }` on the free Continuous7Days tier.
 
 # Branch-guard wirings a person has READ and found correct.
 #
