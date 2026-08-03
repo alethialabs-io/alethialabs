@@ -9,6 +9,7 @@ import (
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/runners"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
@@ -23,8 +24,14 @@ var (
 
 var runnerDeployCmd = &cobra.Command{
 	Use:   "deploy",
-	Short: "Deploy a new runner to a cloud account",
-	Long:  `Creates a runner record and queues a DEPLOY_RUNNER job using the latest stable release.`,
+	Short: fmt.Sprintf("Deploy a new runner to an %s cloud account", runners.DeployProvidersLabel()),
+	Long: fmt.Sprintf(`Creates a runner record and queues a DEPLOY_RUNNER job using the latest stable release.
+
+Deployed runners are %s only — Alethia holds runner infrastructure templates for no other
+cloud. Everywhere else, register a runner you run yourself instead (Console → Runners →
+Add runner → Register your own); it runs on any cloud. Omitting --cloud-identity-id lists
+only the accounts a runner can be built into; passing one for another cloud is rejected by
+the server before a runner or a job is created.`, runners.DeployProvidersLabel()),
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -32,7 +39,10 @@ var runnerDeployCmd = &cobra.Command{
 		}
 
 		if deployCloudIdentityID == "" {
-			deployCloudIdentityID, err = selectCloudIdentity(token)
+			// Deliberately NOT selectCloudIdentity: that lists EVERY linked cloud, which is right
+			// for `project create` and wrong here. Only a cloud with a runner template can be
+			// built into, and offering the rest is the defect #1794 names.
+			deployCloudIdentityID, err = selectRunnerDeployCloudIdentity(token)
 			if err != nil {
 				fail(err)
 			}
@@ -106,7 +116,8 @@ var runnerDeployCmd = &cobra.Command{
 
 func init() {
 	runnerCmd.AddCommand(runnerDeployCmd)
-	runnerDeployCmd.Flags().StringVar(&deployCloudIdentityID, "cloud-identity-id", "", "Cloud identity to deploy into")
+	runnerDeployCmd.Flags().StringVar(&deployCloudIdentityID, "cloud-identity-id", "",
+		fmt.Sprintf("Cloud identity to deploy into (%s only)", runners.DeployProvidersLabel()))
 	runnerDeployCmd.Flags().StringVar(&deployRunnerName, "name", "", "Runner name")
 	runnerDeployCmd.Flags().StringVar(&deployRegion, "region", "", "Cloud region")
 	runnerDeployCmd.Flags().StringVar(&deployAssignedID, "assigned-runner-id", "", "Which runner executes the deployment")
