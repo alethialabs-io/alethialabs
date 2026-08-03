@@ -234,6 +234,44 @@ locals {
       substr(sha256(local.azure_waf_policy_name_full), 0, 7),
     )
   )
+
+  # ── Application Gateway: 1-80 characters ──
+  #
+  # Arrived HERE rather than in locals.tf, and the route is worth recording. The Application
+  # Gateway lane wrote this beside `aks_name` in the root locals block; #1886 then established that
+  # every other name in that block was DEAD and stating a convention the template does not use, and
+  # deleted the lot. `app_gateway_name` is not dead — `application-gateway.tf` reads it twice — so
+  # it belongs where the live derivations and their budgets are, which is here.
+  #
+  # The PUBLIC IP is the binding constraint, not the gateway. `application-gateway.tf` names it
+  # "${local.app_gateway_name}-pip", so the budget is 80 minus that four-character suffix. Deriving
+  # against 76 means the suffixed name cannot overflow either, which the caller would otherwise have
+  # to remember — the exact class of off-by-a-suffix the NAMING checks exist to remove.
+  azure_app_gateway_name_max  = 76
+  azure_app_gateway_name_full = "agw-${local.location_short}-${var.environment}-${var.project_name}"
+  azure_app_gateway_name = (
+    length(local.azure_app_gateway_name_full) <= local.azure_app_gateway_name_max
+    ? local.azure_app_gateway_name_full
+    : format(
+      "%s-%s",
+      replace(substr(local.azure_app_gateway_name_full, 0, 68), "/-+$/", ""),
+      substr(sha256(local.azure_app_gateway_name_full), 0, 7),
+    )
+  )
+}
+
+# Asserts the OUTPUT, and both forms: the gateway itself and the "-pip" the public IP appends. A
+# check on the gateway alone would pass at 78 characters and leave the public IP failing at 82.
+check "app_gateway_name_within_limit" {
+  assert {
+    condition     = length(local.azure_app_gateway_name) >= 1 && length(local.azure_app_gateway_name) <= local.azure_app_gateway_name_max
+    error_message = "NAMING-002: the derived Application Gateway name '${local.azure_app_gateway_name}' is ${length(local.azure_app_gateway_name)} chars, outside the 1-${local.azure_app_gateway_name_max} budget. The truncate-plus-digest fallback in checks_naming.tf is wrong."
+  }
+
+  assert {
+    condition     = length("${local.azure_app_gateway_name}-pip") <= 80
+    error_message = "NAMING-002: the Application Gateway's public IP name '${local.azure_app_gateway_name}-pip' is ${length("${local.azure_app_gateway_name}-pip")} chars, over Azure's 80-character cap. The gateway budget must leave room for the suffix."
+  }
 }
 
 # The derivation is only worth anything if it actually lands inside the cap. This asserts the OUTPUT,

@@ -102,7 +102,11 @@ var infraServiceArgoApps = map[string]map[string]string{
 	// plane, so there is nothing to sync — belongs under its provider key in infraServiceNoApp
 	// instead, never here with an empty string: "" would enter the expected set and make the
 	// poll wait out the full timeout for an Application with no name.
-	"ingress": {"aws": "aws-load-balancer-controller"},
+	//
+	// azure DOES ship one, so it is here rather than there: its Application name is the AGIC chart
+	// name, pinned by `fullnameOverride: ingress-azure` in the template — the same string the
+	// federated identity credential's KSA subject depends on.
+	"ingress": {"aws": "aws-load-balancer-controller", "azure": "ingress-azure"},
 	// appsRepoDecision is "installed" when the project wired an apps-destination repo: the
 	// runner credentials ArgoCD to it (the shared "repo-apps" repository Secret) and renders
 	// the credentialed "apps" app-of-apps that syncs the customer's repo (user-apps.yaml). This

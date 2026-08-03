@@ -14,6 +14,8 @@ locals {
   public_subnet_cidr  = cidrsubnet(var.vnet_cidr, 20 - local.vnet_prefix_length, 1)
   # Third, dedicated subnet for the PostgreSQL Flexible Server delegation (see azurerm_subnet.database).
   database_subnet_cidr = cidrsubnet(var.vnet_cidr, 20 - local.vnet_prefix_length, 2)
+  # Fourth, dedicated subnet for an Application Gateway v2 (see azurerm_subnet.application_gateway).
+  application_gateway_subnet_cidr = cidrsubnet(var.vnet_cidr, 20 - local.vnet_prefix_length, 3)
 
   common_tags = merge(var.labels, {
     Environment = var.environment
@@ -79,6 +81,26 @@ resource "azurerm_subnet" "database" {
       actions = ["Microsoft.Network/virtualNetworks/subnets/join/action"]
     }
   }
+}
+
+# An Application Gateway v2 also needs a subnet of its own: Azure places the gateway's instances
+# into it and refuses to deploy into a subnet holding anything else
+# ("ApplicationGatewaySubnetCannotHaveOtherResources"), and it may not be shared with the AKS nodes.
+# That makes a FOURTH derived block the only way this module can express one — the same shape as the
+# delegated database subnet above, for a different reason (dedication, not delegation).
+#
+# Carved UNCONDITIONALLY rather than behind the gateway's own toggle. A subnet costs nothing, index 3
+# was previously unused so the private/public/database prefixes do not move and no existing subnet is
+# replaced, and turning the gateway on later is then a one-resource add instead of a VNet change on a
+# live cluster. NO network security group is associated: an Application Gateway v2 requires inbound
+# 65200-65535 from the GatewayManager service tag to stay reachable by the control plane, and an NSG
+# that forgets that rule takes the gateway to an unhealthy state — the subnet default (no NSG) is the
+# safe shape here, and the gateway's own listeners are what terminate public traffic.
+resource "azurerm_subnet" "application_gateway" {
+  name                 = "${local.name_prefix}-appgw"
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.this.name
+  address_prefixes     = [local.application_gateway_subnet_cidr]
 }
 
 ################################################################################

@@ -352,6 +352,21 @@ var ingressControllers = map[string]providerDecision{
 	// balancer cannot carry a Cloud Armor policy at all — Cloud Armor binds to a GCLB BACKEND
 	// SERVICE, and only the `gce` ingress class provisions one.
 	"gcp": {installedReason: "built-in (GKE Ingress, the `gce` class) — HTTP(S) Load Balancing is enabled on the cluster, so an Ingress provisions a Google Cloud Load Balancer; there is no controller to install."},
+	"azure": {
+		// AGIC provisions nothing per Ingress the way the ALB controller does: it reconciles every
+		// Ingress in the cluster onto ONE pre-provisioned Application Gateway. So "a controller
+		// shipped" is not a fact about the cluster alone — without the gateway, and without the
+		// federated identity that lets AGIC rewrite it, the chart installs a pod that
+		// authenticates to nothing and reconciles nothing. Both terms are in the predicate
+		// because both are in the template's render gate.
+		installed: func(f *InfraFacts) bool {
+			return f.AzureIngressClient != "" && f.AzureAppGatewayName != ""
+		},
+		installedReason: "installed (Application Gateway Ingress Controller) — Ingress objects with ingressClassName azure-application-gateway become listeners and routing rules on the project's Application Gateway.",
+		skippedReason: func(_ *InfraFacts) string {
+			return "no Application Gateway is provisioned for this project — a v2 gateway is a standing hourly cost, so it is opt-in (azure_application_gateway_enabled, which follows the WAF switch when unset) and needs a template-provisioned VNet to carve its dedicated subnet. Install the ingress-nginx add-on to expose Ingress objects through a cloud load balancer instead."
+		},
+	},
 }
 
 // ingressNoControllerReason is what a cloud with no ingress controller records. Kept
@@ -437,6 +452,26 @@ var argocdURLGates = map[string]providerDecision{
 		installedReason: "installed — ArgoCD is exposed over a GKE Ingress (`gce` class) fronted by the Google-managed SSL certificate.",
 		skippedReason:   gcpArgocdURLSkipReason,
 	},
+	"azure": {
+		// Azure now HAS a managed ingress (AGIC + the Application Gateway) and still has no ArgoCD
+		// URL, and the blocker is TLS rather than ingress. An Application Gateway listener
+		// terminates HTTPS from a certificate on the gateway or in Key Vault, and the only
+		// certificate this template can issue today is the wrong product entirely (#1825 — a
+		// purchased App Service certificate that binds to neither AKS nor an Application Gateway).
+		// Publishing the ArgoCD ADMIN console over the plaintext :80 listener instead is not an
+		// option worth having.
+		//
+		// So the predicate is constant-false rather than the entry being absent: a cloud absent
+		// from this table records "no managed ingress on this cloud yet", which stopped being true
+		// the moment AGIC landed and would send an operator looking for the wrong thing. It flips
+		// to a real predicate (an issued certificate reference) in the lane that closes #1825, and
+		// installedReason is written now so that flip is one line rather than a rewrite.
+		installed:       func(*InfraFacts) bool { return false },
+		installedReason: "installed — ArgoCD is exposed over the Application Gateway ingress.",
+		skippedReason: func(_ *InfraFacts) string {
+			return "an Application Gateway ingress controller is installed, but ArgoCD is not published through it: the gateway has no TLS certificate to terminate on (#1825), and the admin console is not served over plaintext HTTP — reach it with a port-forward and the admin password."
+		},
+	},
 }
 
 // gcpArgocdURLSkipReason names which half of the GCP gate was missing, same shape as the AWS one.
@@ -494,29 +529,74 @@ func wafDecision(f *InfraFacts) InfraServiceDecision {
 		d.Reason = wafNoACLReason(f.Provider)
 		return d
 	}
-	if !wafAttachesToIngress[f.Provider] {
+	// A cloud with no attachment site cannot bind at all — asked BEFORE "did this deploy configure
+	// an ingress", because those are different questions and conflating them was fail-open.
+	site, ok := wafAttachments[f.Provider]
+	if !ok {
 		d.Reason = wafUnattachableReason(f.Provider, acl)
 		return d
 	}
-	if argocdURLDecision(f).Status != infraStatusInstalled {
-		d.Reason = "a web ACL was built but this deploy configured no managed ingress to attach it to — the ACL exists, is billed, and inspects nothing."
+	if !site.attached(f) {
+		d.Reason = site.unattachedReason
 		return d
 	}
 	d.Status = infraStatusInstalled
-	d.Reason = wafAttachedReason(f.Provider, acl)
+	d.Reason = site.attachedReason(acl)
 	return d
 }
 
-// wafAttachedReason names the MECHANISM that attached the web ACL on this cloud, because "attached"
-// alone is not actionable: an operator checking whether traffic is really being filtered needs to
-// know which object to look at, and the objects differ per cloud. One arm per cloud that can attach.
-func wafAttachedReason(provider, acl string) string {
-	switch provider {
-	case "gcp":
-		return fmt.Sprintf("attached (%s) — a BackendConfig binds the Cloud Armor policy to the GCLB backend service the GKE Ingress provisions, so the load balancer evaluates it on every request it serves.", acl)
-	default:
-		return fmt.Sprintf("attached (%s) — the ArgoCD ingress carries alb.ingress.kubernetes.io/wafv2-acl-arn, so the ALB inspects every request it serves.", acl)
-	}
+// wafAttachment is WHERE and WHETHER a cloud binds its web ACL, plus the two sentences an operator
+// reads in each case. It replaces a `map[string]bool` + two switch statements, and the reason is
+// Azure: the bool could say whether a cloud binds but never WHERE, and Azure binds through
+// `firewall_policy_id` on an Application Gateway — no Ingress object, no ArgoCD URL, nothing the
+// "attaches to the ingress" question can express. Keeping the predicate next to its own reasons
+// also stops the three from drifting, which is how a cloud ends up reporting another's mechanism.
+type wafAttachment struct {
+	// attached reports whether THIS deploy actually bound it. Distinct from membership: membership
+	// is a fact about the cloud, this is a fact about the deploy.
+	attached func(*InfraFacts) bool
+	// attachedReason names the object an operator should go and look at — "attached" alone is not
+	// actionable when the object differs per cloud.
+	attachedReason func(ref string) string
+	// unattachedReason explains a construct that was built and bound to nothing on a cloud that
+	// COULD have bound it, i.e. the deploy's fault rather than the cloud's.
+	unattachedReason string
+}
+
+// wafAttachments is the per-cloud attachment site. Absence means the cloud cannot bind at all and
+// `wafUnattachableReason` explains why — fail-closed, so a lane that starts exporting a reference
+// without adding a site here reports it UNATTACHED rather than inheriting another cloud's mechanism.
+var wafAttachments = map[string]wafAttachment{
+	"aws": {
+		// Mirrors BOTH halves: the ACL must exist AND the ingress that carries the annotation must
+		// have been configured. Reads argocdURLDecision rather than re-deriving the ingress gate,
+		// so the two cannot drift.
+		attached: func(f *InfraFacts) bool { return argocdURLDecision(f).Status == infraStatusInstalled },
+		attachedReason: func(ref string) string {
+			return fmt.Sprintf("attached (%s) — the ArgoCD ingress carries alb.ingress.kubernetes.io/wafv2-acl-arn, so the ALB inspects every request it serves.", ref)
+		},
+		unattachedReason: "a web ACL was built but this deploy configured no managed ingress to attach it to — the ACL exists, is billed, and inspects nothing.",
+	},
+	"gcp": {
+		// Same shape as AWS — the BackendConfig binds the policy to the GCLB backend service the
+		// GKE Ingress provisions, so without the Ingress there is no backend service to bind to.
+		attached: func(f *InfraFacts) bool { return argocdURLDecision(f).Status == infraStatusInstalled },
+		attachedReason: func(ref string) string {
+			return fmt.Sprintf("attached (%s) — a BackendConfig binds the Cloud Armor policy to the GCLB backend service the GKE Ingress provisions, so the load balancer evaluates it on every request it serves.", ref)
+		},
+		unattachedReason: "a Cloud Armor policy was built but this deploy configured no managed ingress to attach it to — the policy exists, is billed, and inspects nothing.",
+	},
+	"azure": {
+		// Deliberately NOT argocdURLDecision. The gateway filters everything it serves the moment
+		// firewall_policy_id is set, and on Azure that is decided in the template — ArgoCD's own
+		// exposure (blocked on #1825) has nothing to do with it. The template drives the WAF_v2 SKU
+		// and firewall_policy_id from one term, so a gateway plus a policy is an attachment.
+		attached: func(f *InfraFacts) bool { return f.AzureAppGatewayName != "" },
+		attachedReason: func(ref string) string {
+			return fmt.Sprintf("attached (%s) — the Application Gateway carries firewall_policy_id on a WAF_v2 SKU, so every request it serves is inspected.", ref)
+		},
+		unattachedReason: "a WAF policy was built but no Application Gateway was provisioned to bind it to — on Azure a policy attaches to a gateway (firewall_policy_id) and never to an Ingress annotation, so the policy exists, is billed, and inspects nothing. Enable the Application Gateway (azure_application_gateway_enabled) on a template-provisioned VNet.",
+	},
 }
 
 // wafWebACLRef returns the web ACL / security-policy reference this cloud EXPORTS for the
@@ -531,45 +611,27 @@ func wafWebACLRef(f *InfraFacts) string {
 		// exist until this lane: the module had exported policy_id/policy_self_link since it was
 		// written and the root swallowed both, so the policy was created, billed, and unreachable.
 		return f.GCPArmorPolicy
+	case "azure":
+		// The Application Gateway WAF policy id. Unlike AWS's and GCP's, the runner never ATTACHES
+		// this one: on Azure the bind is `firewall_policy_id` on the gateway, performed by the
+		// template at apply time. The reference is exported so the deploy can REPORT the
+		// attachment honestly, not to perform it.
+		return f.AzureWAFPolicyID
 	case "alibaba":
 		// EXPORTED, DELIBERATELY UNATTACHED. The template buys a WAF 3.0 postpaid instance
-		// behind the canvas switch and can bind nothing to it (see wafAttachesToIngress). The
-		// reference is read anyway because the alternative is worse: with no output, "the switch
-		// is off" and "you are paying for a firewall that inspects nothing" are the same record.
+		// behind the canvas switch and can bind nothing to it (it has no `wafAttachments` entry).
+		// The reference is read anyway because the alternative is worse: with no output, "the
+		// switch is off" and "you are paying for a firewall that inspects nothing" are the same
+		// record.
 		return f.AlibabaWAFInstanceID
 	default:
-		// azure BUILDS a WAF policy behind its own canvas switch but declares no root output the
-		// runner could read and has no managed ingress to bind one to — so there is no reference
-		// here to attach. Hetzner sells no managed WAF at all.
+		// Only hetzner is left, and it sells no managed WAF at all — there is nothing to export.
+		// Every other cloud now exports a reference: aws and gcp attach theirs to the ingress,
+		// azure's is bound by the template, and alibaba's is bound by nothing (which is exactly
+		// why it is exported).
 		return ""
 	}
 }
-
-// wafAttachesToIngress is the per-cloud "can a built WAF actually be BOUND to the ingress this
-// pipeline configures" table. Membership is about the CLOUD's mechanism, not about whether a
-// given deploy happened to configure an ingress — that second question is argocdURLDecision's,
-// and it is asked afterwards.
-//
-// Splitting the two is the point. wafDecision used to reach "installed" whenever a reference
-// existed and the ArgoCD URL was up, which is correct on AWS (the URL implies the ALB ingress
-// that carries the wafv2-acl-arn annotation) and would be FAIL-OPEN anywhere else: the moment an
-// ingress lane gives another cloud a managed ArgoCD URL, that cloud's WAF would start reporting
-// "attached" without a line of code binding it. On Alibaba that is not a hypothetical — the WAF
-// reference is exported today and the pinned provider has no resource that binds it (#1840), so
-// the guard is what keeps the honest answer honest when the ingress arrives.
-//
-// GCP is here because THIS lane is that ingress arriving: the GKE Ingress provisions a GCLB
-// backend service, and a BackendConfig whose `spec.securityPolicy.name` names the Cloud Armor
-// policy binds the two. A different mechanism from AWS's annotation, but the same shape — the
-// cloud CAN bind, so `argocdURLDecision` is then asked whether this deploy actually configured
-// the ingress. `wafAttachedReason` says which object an operator should go and look at.
-//
-// ⚠️ This entry arrived by MERGE, not by either lane writing it. The table was added on dev while
-// this lane was in flight, defaulting every cloud but AWS to false; a textual merge left GCP out
-// and nothing would have failed, because unattachable is the FAIL-CLOSED answer. The result would
-// have been a Cloud Armor policy that is genuinely bound and permanently reported as inspecting
-// nothing — the exact inverse of the fail-open bug the table exists to prevent, and just as wrong.
-var wafAttachesToIngress = map[string]bool{"aws": true, "gcp": true}
 
 // wafUnattachableReason explains a built-but-unbindable WAF, keyed on the cloud so the operator
 // learns whether to wait for a lane or to stop paying for the instance.
@@ -594,6 +656,8 @@ func wafNoACLReason(provider string) string {
 		// that the operator left the switch off, and telling them otherwise would send them to fix a
 		// gap that no longer exists.
 		return "no Cloud Armor policy was built — turn the WAF switch on for this project to create a security policy and bind it to the ingress's backend service."
+	case "azure":
+		return "no WAF policy was built — turn the WAF switch on for this project to create an Application Gateway WAF policy; the template then also provisions the Application Gateway it binds to."
 	case "alibaba":
 		return "no WAF instance was built — turn the WAF switch on for this project to provision Alibaba's WAF 3.0 instance. Note that nothing binds it to your traffic yet, so it would filter nothing."
 	case "hetzner":

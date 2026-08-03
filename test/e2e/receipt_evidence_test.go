@@ -128,12 +128,12 @@ func TestAssertReceiptEvidenceRefuters(t *testing.T) {
 			mutate: func(s *verify.SignedReceipt) { s.Receipt.Verdict = verify.StatusPass },
 		},
 		// A control that cannot be traced or weighted cannot be audited.
-		"a control with no id":       {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.Controls[0].ID = "  " }},
-		"a control with no title":    {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.Controls[0].Title = "" }},
-		"an unknown severity":        {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.Controls[0].Severity = "critical" }},
-		"an unknown control status":  {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.Controls[0].Status = "skipped" }},
-		"an unknown report verdict":  {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.Verdict = "green" }},
-		"no catalog version":         {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.CatalogVersion = " " }},
+		"a control with no id":        {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.Controls[0].ID = "  " }},
+		"a control with no title":     {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.Controls[0].Title = "" }},
+		"an unknown severity":         {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.Controls[0].Severity = "critical" }},
+		"an unknown control status":   {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.Controls[0].Status = "skipped" }},
+		"an unknown report verdict":   {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.Verdict = "green" }},
+		"no catalog version":          {mutate: func(s *verify.SignedReceipt) { s.Receipt.Report.CatalogVersion = " " }},
 		"an unparseable evaluated_at": {mutate: func(s *verify.SignedReceipt) { s.Receipt.EvaluatedAt = "last tuesday" }},
 		// Without a framework mapping the receipt cannot support a compliance claim.
 		"no framework mapping anywhere": {
@@ -186,11 +186,11 @@ func TestAssertRekorAnchorIfPresent(t *testing.T) {
 	}
 
 	refuters := map[string]func(*verify.RekorAnchor){
-		"no log url":                 func(a *verify.RekorAnchor) { a.LogURL = " " },
-		"a negative log index":       func(a *verify.RekorAnchor) { a.LogIndex = -1 },
-		"no body to recompute from":  func(a *verify.RekorAnchor) { a.Body = "" },
-		"no signed entry timestamp":  func(a *verify.RekorAnchor) { a.SignedEntryTimestamp = "" },
-		"a non-base64 SET":           func(a *verify.RekorAnchor) { a.SignedEntryTimestamp = "not base64!!" },
+		"no log url":                func(a *verify.RekorAnchor) { a.LogURL = " " },
+		"a negative log index":      func(a *verify.RekorAnchor) { a.LogIndex = -1 },
+		"no body to recompute from": func(a *verify.RekorAnchor) { a.Body = "" },
+		"no signed entry timestamp": func(a *verify.RekorAnchor) { a.SignedEntryTimestamp = "" },
+		"a non-base64 SET":          func(a *verify.RekorAnchor) { a.SignedEntryTimestamp = "not base64!!" },
 	}
 	for name, mutate := range refuters {
 		t.Run(name, func(t *testing.T) {
