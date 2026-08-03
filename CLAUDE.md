@@ -14,8 +14,9 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 
 ## 1. Non-negotiables
 
-- **Never commit in the main checkout (`app/`).** It is pinned to `dev` and shared by every
-  session. One `git add -A` there once swept three features into one commit.
+- **Never commit or rebase in the main checkout (`app/`).** It is pinned to `dev` and shared by
+  every session. One `git add -A` there once swept three features into one commit; a rebase is
+  worse, because it moves the branch every other live session resolves against.
 - **Never work in a worktree another live instance holds.** Check with `pnpm wt:who`.
 - **Never target `staging` or `main` with a PR**, and never push to them. Feature work goes to
   `dev`; the maintainer promotes `dev → staging → main`.
@@ -125,7 +126,7 @@ Four hooks gate every session (`.claude/settings.json`):
 
 | Hook | Event | What it does |
 |---|---|---|
-| `.claude/hooks/guard-worktree.sh` | PreToolUse · Bash + edits | Lease enforcement + no commits in the main checkout |
+| `.claude/hooks/guard-worktree.sh` | PreToolUse · Bash + edits | Lease enforcement + no commits **or rebases** in the main checkout |
 | `.claude/hooks/guard-runtime.sh` | PreToolUse · Bash | Blocks local dev servers and destructive resets |
 | `.claude/hooks/guard-compose.sh` | PreToolUse · Bash | Blocks a raw `docker compose` bring-up |
 | `.claude/hooks/guard-merge.sh` | PreToolUse · Bash | Resolves a PR's base branch: `dev` may merge, `staging`/`main` and `--admin` may not |
