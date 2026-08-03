@@ -1,0 +1,95 @@
+{{- /* cert-manager as a PLATFORM add-on (Rail B), not a marketplace one.
+
+       WHY IT MOVED RAILS. It used to be a marketplace add-on, and it could never work there:
+       a marketplace add-on is a chart plus a user-filled config schema, and it cannot see
+       `.Provider`, the DNS zone, or the cloud identity external-dns holds. A DNS01 ClusterIssuer
+       needs all three. So the catalog advertised "TLS via in-cluster cert-manager" while
+       cert-manager was installed NOWHERE in this repo and no issuer existed on any cloud.
+
+       ONE OWNER OF THE CRDs. It is also removed from the marketplace in the same change, and
+       that half is not tidiness. `crds.enabled: true` below makes this Application the owner of
+       the cert-manager CRDs; a marketplace copy would install a SECOND owner of the same
+       cluster-scoped objects, which is exactly the metrics-server ownership collision of #1722 —
+       two reconcilers fighting over one set of CRDs, leaving them owned by neither.
+
+       THE GATE IS ONE GO PREDICATE, deliberately. `.CertManagerEnabled` is a method on
+       InfraFacts (packages/core/argocd/infra_facts.go), not an `and` chain spelled out here,
+       because the same question is asked in three other places — certManagerDecision (the record
+       the console shows), CleanupSkippedInfraServices (the reaper) and EnsureCertManagerIssuer
+       (the issuer). Four hand-maintained copies of one condition is how the ClusterSecretStore
+       gates drifted twice. render.go drops an empty render, so this `if` is the whole gate, and
+       TestCertManagerGateMatchesTemplate parses this file to prove the gate is still exactly that
+       method call and never a second copy of the logic.
+
+       It renders only where a DNS01 challenge can actually COMPLETE — see CertManagerSolver():
+       aws/gcp/azure, native DNS only. Alibaba and Hetzner render nothing, because cert-manager
+       ships no in-box solver for either and an issuer that cannot solve is worse than no issuer:
+       every Challenge sits `pending` forever and nothing in the cluster reports it as broken.
+
+       The ClusterIssuer is NOT in this file. It is a custom resource whose CRD and webhook this
+       Application installs, so applying it alongside would race the operator exactly as the
+       ClusterSecretStore did in #1208 — and a client-side apply file that mixes the two can poison
+       itself so the operator never installs and the retry can never converge. It is applied on its
+       own, afterwards, with a bounded retry: argocd.EnsureCertManagerIssuer. */}}
+{{- if .CertManagerEnabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations:
+    {{- /* Wave 1, like external-dns: both are prerequisites that must be up before anything
+           tries to request a certificate or publish a record. The issuer is applied by the
+           runner after this syncs, so it needs no wave of its own. */}}
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: infra
+  source:
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    {{- /* Pinned to the version the marketplace entry carried before this change, so moving
+           rails changes WHERE cert-manager comes from, not WHICH cert-manager. */}}
+    targetRevision: "v1.15.3"
+    helm:
+      values: |
+        fullnameOverride: cert-manager
+        {{- /* This Application owns the CRDs (see the header). `crds.enabled` is the v1.15+
+               spelling; the pre-1.15 `installCRDs` is a no-op on this chart version. */}}
+        crds:
+          enabled: true
+          keep: true
+        serviceAccount:
+          {{- /* The name is FIXED, and the IaC depends on it: each cloud's identity binding
+                 names `cert-manager:cert-manager` as an authorized subject (the IRSA
+                 namespace_service_accounts entry, the GCP workload-identity member, the Azure
+                 federated-identity subject). Renaming it here silently breaks the token
+                 exchange, and the only symptom is a certificate that never issues. */}}
+          name: cert-manager
+          annotations:
+            {{- if eq .Provider "aws" }}
+            eks.amazonaws.com/role-arn: {{ .IRSAExternalDNSArn }}
+            {{- else if eq .Provider "gcp" }}
+            iam.gke.io/gcp-service-account: {{ .GCPExternalDNSSA }}
+            {{- else if eq .Provider "azure" }}
+            azure.workload.identity/client-id: {{ .AzureExternalDNSClient }}
+            {{- end }}
+        {{- if eq .Provider "azure" }}
+        {{- /* AKS injects the projected token only into pods carrying this label — without it
+               the annotation above is inert and every DNS01 challenge fails at token exchange.
+               Same pairing as external-dns.yaml. */}}
+        podLabels:
+          azure.workload.identity/use: "true"
+        {{- end }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cert-manager
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+  revisionHistoryLimit: 3
+{{- end }}

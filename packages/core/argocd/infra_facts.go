@@ -30,7 +30,16 @@ type InfraFacts struct {
 	// actually available (cloudflare connector credential / hetzner HCLOUD_TOKEN).
 	// The token itself NEVER lives on the facts — facts are rendered into templates.
 	DNSCredentialPresent bool
-	EnableKarpenter      bool
+	// ManagedCertificate is vc.DNS.ManagedCertificate — the canvas's "issue a managed TLS
+	// certificate for this domain" switch. It is NOT a tofu output: it is the user's ASK,
+	// carried verbatim from the config snapshot, and it is what gates the cert-manager
+	// platform Application (infra/templates/argocd/cert-manager.yaml). Every cloud ALSO
+	// fronts the same switch with its own tfvar (acm_certificate_enable,
+	// cloud_dns_managed_certificate, …) for the cloud-NATIVE certificate; the in-cluster
+	// issuer is the portable half, and the only half Alethia can offer on a cloud whose
+	// native certificate has nothing to attach to.
+	ManagedCertificate bool
+	EnableKarpenter    bool
 
 	ClusterName     string
 	ClusterEndpoint string
@@ -60,18 +69,30 @@ type InfraFacts struct {
 	KarpenterQueueName     string
 
 	// ── GCP (Workload Identity) ─────────────────────────────────
-	GCPProjectID         string
-	GCPExternalDNSSA     string // GSA email bound to the external-dns KSA
+	GCPProjectID     string
+	GCPExternalDNSSA string // GSA email bound to the external-dns KSA
+	// GCPDNSZoneName is the Cloud DNS MANAGED-ZONE resource name (root output
+	// `cloud_dns_zone_name`), not the domain. cert-manager's cloudDNS solver is rendered
+	// with it explicitly because the external-dns GSA's dns.admin grant is ZONE-scoped and
+	// therefore carries no project-level dns.managedZones.list — without the name the
+	// solver cannot find the zone it is allowed to write to.
+	GCPDNSZoneName       string
 	GCPIngressSA         string // GSA email for the ingress/gateway controller
 	GCPExternalSecretsSA string // GSA email bound to the external-secrets KSA (gates secretstore-gcp)
 
 	// ── Azure (Federated / Workload Identity) ───────────────────
 	AzureResourceGroup string
-	// AzureSubscriptionID is the subscription the project's resources live in — the AGIC chart's
-	// appgw.subscriptionId. Falls back to the config's CloudAccountID, which is the same value the
-	// template is handed as its `subscription_id` input.
+	AzureTenantID      string
+	// AzureSubscriptionID is the subscription the project's resource group, DNS zone and gateway
+	// live in. It comes from the config snapshot's CloudAccountID (the same value
+	// azure_provider.go emits as the `subscription_id` tfvar), NOT from a tofu output — the
+	// template has no output for it.
+	//
+	// TWO consumers now, which is why the fallback matters rather than being a nicety:
+	// cert-manager's azureDNS solver requires it explicitly (there is no ambient default from the
+	// workload identity), and it is the AGIC chart's `appgw.subscriptionId`. A lane that dropped
+	// the fallback would leave cert-manager permanently skipped on Azure while every test passed.
 	AzureSubscriptionID    string
-	AzureTenantID          string
 	AzureExternalDNSClient string // managed-identity client id for external-dns
 	AzureIngressClient     string // managed-identity client id for the AGIC
 	// AzureAppGatewayName is the Application Gateway AGIC reconciles Ingress objects onto, and the
@@ -204,6 +225,85 @@ func (f *InfraFacts) DNSProvider() string {
 	}
 }
 
+// certManagerDNS01Solvers maps a cloud to the cert-manager DNS01 solver stanza that can
+// actually issue there. It is an ALLOWLIST of solvers cert-manager ships IN THE BOX, and
+// the exclusions are as load-bearing as the entries:
+//
+//	aws     — route53,  authenticated by the IRSA role external-dns already holds.
+//	gcp     — clouddns, authenticated by the Workload-Identity GSA external-dns already holds.
+//	azure   — azuredns, authenticated by the federated identity external-dns already holds.
+//	alibaba — EXCLUDED. cert-manager has no AliDNS solver; it needs a third-party webhook
+//	          (cert-manager-webhook-alidns). external-dns is already skipped on Alibaba for
+//	          the sibling upstream gap (external-dns#5019), so the cloud has no in-cluster
+//	          DNS automation of any kind today.
+//	hetzner — EXCLUDED. cert-manager has no Hetzner Cloud DNS solver; it needs a third-party
+//	          webhook, exactly as external-dns needs the Hetzner webhook sidecar. Shipping a
+//	          ClusterIssuer without one would create an issuer whose every Challenge is stuck
+//	          `pending` forever — a certificate that never issues is WORSE than an honest skip,
+//	          because nothing in the cluster reports it as broken.
+//
+// DNS01 and not HTTP01 on purpose: HTTP01 needs a reachable ingress, and AWS is the only
+// cloud with an ingress controller today (argocd.ingressControllers). DNS01 needs only the
+// zone, which every one of these three clouds provisions.
+var certManagerDNS01Solvers = map[string]string{
+	"aws":   "route53",
+	"gcp":   "clouddns",
+	"azure": "azuredns",
+}
+
+// CertManagerSolver returns the cert-manager DNS01 solver this deploy can honestly issue
+// with, or "" when it cannot. It is the SINGLE GATE for the cert-manager platform add-on:
+// the render template (infra/templates/argocd/cert-manager.yaml), certManagerDecision and
+// CleanupSkippedInfraServices all read THIS, so they cannot drift into disagreeing about
+// whether cert-manager shipped — the failure the ClusterSecretStore lanes hit twice.
+//
+// It fails closed on three separate things, because each of them produces an issuer that
+// looks installed and never issues:
+//
+//   - a cloud with no in-box solver (alibaba, hetzner — see certManagerDNS01Solvers);
+//   - a NON-NATIVE DNS connector (cloudflare): the cloud's own zone is then not
+//     authoritative for the domain, so a route53/clouddns/azuredns solver would write its
+//     TXT record into a zone the ACME server never queries. cert-manager does ship a
+//     cloudflare solver, but it needs the connector's api_token seeded into the
+//     cert-manager namespace, which no lane has built yet;
+//   - a MISSING identity/zone fact: the solver authenticates as external-dns's identity, so
+//     without that identity (or, on GCP, without the zone NAME its zone-scoped grant makes
+//     mandatory) the challenge cannot be written at all.
+func (f *InfraFacts) CertManagerSolver() string {
+	solver, ok := certManagerDNS01Solvers[f.Provider]
+	if !ok {
+		return ""
+	}
+	if f.DNSConnector != "" && f.DNSConnector != "native" {
+		return ""
+	}
+	switch f.Provider {
+	case "aws":
+		if f.IRSAExternalDNSArn == "" {
+			return ""
+		}
+	case "gcp":
+		if f.GCPExternalDNSSA == "" || f.GCPProjectID == "" || f.GCPDNSZoneName == "" {
+			return ""
+		}
+	case "azure":
+		if f.AzureExternalDNSClient == "" || f.AzureResourceGroup == "" ||
+			f.AzureSubscriptionID == "" || f.AzureTenantID == "" {
+			return ""
+		}
+	}
+	return solver
+}
+
+// CertManagerEnabled reports whether the cert-manager platform Application renders for this
+// deploy: the user asked for a managed certificate, DNS is on with a domain to issue for,
+// and this cloud has a DNS01 solver that can actually complete a challenge. Kept as a method
+// so the Go decision and the YAML template read the same predicate rather than two copies of
+// the same `and` — the template gate is literally `{{- if .CertManagerEnabled }}`.
+func (f *InfraFacts) CertManagerEnabled() bool {
+	return f.ManagedCertificate && f.DNSEnabled && f.DomainName != "" && f.CertManagerSolver() != ""
+}
+
 // BuildFromOutputs assembles InfraFacts from the tofu outputs for the config's cloud.
 // Common facts come from the ProjectConfig; the cloud-specific cluster + workload-identity
 // outputs are extracted per provider. Every cloud gets an explicit case — an unknown
@@ -226,6 +326,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		DNSEnabled:           vc.DNS.Enabled,
 		DNSConnector:         vc.DNS.Provider,
 		DNSCredentialPresent: dnsCredentialPresent(vc),
+		ManagedCertificate:   vc.DNS.ManagedCertificate,
 		EnableKarpenter:      enableKarpenter,
 		AppsDestinationRepo:  vc.Repositories.AppsDestinationRepo,
 		Labels:               cloud.ClassificationLabels(vc),
@@ -239,12 +340,27 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.ClusterEndpoint = ExtractOutput(outputs, "gke_cluster_endpoint")
 		f.GCPProjectID = firstNonEmpty(ExtractOutput(outputs, "gcp_project_id"), vc.CloudAccountID)
 		f.GCPExternalDNSSA = ExtractOutput(outputs, "external_dns_service_account")
+		f.GCPDNSZoneName = ExtractOutput(outputs, "cloud_dns_zone_name")
 		f.GCPIngressSA = ExtractOutput(outputs, "ingress_service_account")
 		f.GCPExternalSecretsSA = ExtractOutput(outputs, "external_secrets_service_account")
 	case "azure":
 		f.ClusterName = ExtractOutput(outputs, "aks_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "aks_cluster_endpoint")
 		f.AzureResourceGroup = ExtractOutput(outputs, "resource_group_name")
+		// Output FIRST, snapshot as the fallback — and the fallback is the load-bearing half.
+		//
+		// The cert-manager lane read this from `vc.CloudAccountID` alone, correctly at the time:
+		// the azure template declared `subscription_id` as an input VARIABLE and exported no
+		// output for it, so ExtractOutput would have returned "" forever — the permanently-empty
+		// fact bug GCPIngressSA already carries. This lane ADDS `azure_subscription_id` to
+		// outputs.tf, so that reasoning stops holding the moment both land.
+		//
+		// firstNonEmpty satisfies both: a deploy whose state predates the new output still
+		// resolves from the snapshot (CloudAccountID is the identical value azure_provider.go
+		// emits as that tfvar, so the two cannot disagree about what was applied), and a fresh
+		// one prefers the output the template actually produced. Taking either side alone would
+		// have broken the other: snapshot-only leaves AGIC without the authoritative value, and
+		// output-only leaves cert-manager permanently skipped on every pre-existing environment.
 		f.AzureSubscriptionID = firstNonEmpty(ExtractOutput(outputs, "azure_subscription_id"), vc.CloudAccountID)
 		f.AzureTenantID = firstNonEmpty(ExtractOutput(outputs, "azure_tenant_id"), vc.CloudAccountID)
 		f.AzureExternalDNSClient = ExtractOutput(outputs, "external_dns_client_id")
