@@ -50,6 +50,21 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		provisionNetwork = true
 	}
 
+	// Firestore point-in-time recovery, aggregated with ANY across the canvas's NoSQL tables.
+	// GCP allows ONE Firestore database per project, and what the canvas calls a "table" is a
+	// collection inside it — so a per-table switch has no per-table resource to land on. PITR is a
+	// property of the DATABASE, so one table asking for it turns it on for the whole database.
+	// Deliberately written INLINE rather than as a `pitr := anyTableWantsPITR(...)` helper: the
+	// carrier tracer (apps/console/scripts/lib/go-tfvars-trace.mjs) follows a field into the quoted
+	// key derived FROM IT, and a helper that reads the field and returns a bare scalar writes no
+	// quoted key in its own body — the fix would ship working and still score as "not carried".
+	firestorePITR := false
+	for _, t := range config.NosqlTables {
+		if t.PointInTimeRecovery {
+			firestorePITR = true
+		}
+	}
+
 	tfvars := map[string]interface{}{
 		"project_name": config.ProjectName,
 		"project_id":   config.CloudAccountID,
@@ -85,10 +100,13 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		// Firestore. The template's Firestore model is a SINGLE per-project database
 		// (create_firestore + firestore_database_type/location vars) — GCP allows one Firestore
 		// DB per project and NoSQL "tables" are collections within it, created by the app, not
-		// tofu. The old per-table `firestore_databases` list var was never declared in
-		// variables.tf, so it was silently dropped; dropped here too (buildFirestoreDatabases is
-		// retained only for its unit test, out of this issue's scope).
-		"create_firestore": len(config.NosqlTables) > 0,
+		// tofu. There is deliberately no per-table `firestore_databases` list: a list var of that
+		// name was never declared in variables.tf and was silently dropped, and the builder that
+		// produced it (`buildFirestoreDatabases`) was dead code kept alive only by its own unit
+		// test — the canonical false positive the carrier tracer was written to catch. Both are
+		// gone. Everything per-table the database can actually honor is aggregated here instead.
+		"create_firestore":                 len(config.NosqlTables) > 0,
+		"firestore_point_in_time_recovery": firestorePITR,
 
 		// Artifact Registry (container registry)
 		"provision_artifact_registry": len(config.ContainerRegistries) > 0,
@@ -346,21 +364,6 @@ func gcpMemorystoreRedisVersion(v string) string {
 	}
 }
 
-func buildFirestoreDatabases(tables []types.ProjectNosqlConfig) []map[string]interface{} {
-	result := make([]map[string]interface{}, 0, len(tables))
-	for _, t := range tables {
-		entry := map[string]interface{}{
-			"name":         t.Name,
-			"billing_mode": ddbCapacityMode(string(t.CapacityMode)),
-		}
-		if t.PointInTimeRecovery {
-			entry["point_in_time_recovery"] = true
-		}
-		result = append(result, entry)
-	}
-	return result
-}
-
 func buildGCPSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
@@ -377,15 +380,24 @@ func buildGCPSecrets(secrets []types.ProjectSecretConfig) []map[string]interface
 	return result
 }
 
+// buildGCSBuckets turns the canvas's buckets into the `cloud_storage_buckets` tfvar.
+//
+// `public_access` is emitted VERBATIM, and deliberately not as the `uniform_access` inversion this
+// used to send. Uniform bucket-level access is a different feature: it disables per-object ACLs, it
+// says nothing about whether the public may read the bucket, and Cloud Storage REFUSES to turn it
+// back off more than 90 days after it was enabled — so a switch routed through it would become an
+// unfixable apply failure on any bucket older than three months. The template keeps UBLA on
+// permanently and decides public access with `public_access_prevention` plus an explicit allUsers
+// IAM binding, which is the pair that actually implements the label the canvas shows.
 func buildGCSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		entry := map[string]interface{}{
-			"name_suffix":    b.Name,
-			"versioning":     b.Versioning,
-			"uniform_access": !b.PublicAccess,
-			"cors_origins":   b.CorsOrigins,
-			"cors_methods":   []string{"GET", "PUT", "POST"},
+			"name_suffix":   b.Name,
+			"versioning":    b.Versioning,
+			"public_access": b.PublicAccess,
+			"cors_origins":  b.CorsOrigins,
+			"cors_methods":  []string{"GET", "PUT", "POST"},
 		}
 		result = append(result, entry)
 	}

@@ -311,12 +311,21 @@ func TestAlibabaBuilders_OTSTablesAndKeyType(t *testing.T) {
 	if len(tables) != 4 {
 		t.Fatalf("tables = %d, want 4", len(tables))
 	}
+	// `primary_keys`, a LIST — not the scalar `primary_key` / `primary_key_type` this asserted until
+	// #1836. Those two names were read by NOTHING: modules/ots/main.tf takes
+	// `try(each.value.primary_keys, [{ name = "id", type = "String" }])`, so `try` caught the miss and
+	// every table was built on `id`/`String`. This test passed throughout, which is the lesson — it
+	// checked that the builder agreed with itself, never that it agreed with the template.
 	for i, want := range wantTypes {
-		if tables[i]["primary_key_type"] != want {
-			t.Errorf("table[%d] primary_key_type = %v, want %v", i, tables[i]["primary_key_type"], want)
+		keys, ok := tables[i]["primary_keys"].([]map[string]interface{})
+		if !ok || len(keys) != 1 {
+			t.Fatalf("table[%d] primary_keys = %#v, want one key", i, tables[i]["primary_keys"])
 		}
-		if tables[i]["primary_key"] != "pk" {
-			t.Errorf("table[%d] primary_key = %v, want pk", i, tables[i]["primary_key"])
+		if keys[0]["type"] != want {
+			t.Errorf("table[%d] key type = %v, want %v", i, keys[0]["type"], want)
+		}
+		if keys[0]["name"] != "pk" {
+			t.Errorf("table[%d] key name = %v, want pk", i, keys[0]["name"])
 		}
 	}
 	// Direct otsKeyType mapping.
@@ -599,27 +608,34 @@ func TestAzureBuilders_CosmosDBCollections(t *testing.T) {
 	if got[0]["partition_key"] != "/tenant" {
 		t.Errorf("partition_key = %v, want /tenant", got[0]["partition_key"])
 	}
-	if got[0]["analytical_storage_enabled"] != true {
-		t.Errorf("PITR table should set analytical_storage_enabled: %#v", got[0])
-	}
 	if got[1]["partition_key"] != "/id" {
 		t.Errorf("default partition_key = %v, want /id", got[1]["partition_key"])
 	}
-	if _, ok := got[1]["analytical_storage_enabled"]; ok {
-		t.Error("no-PITR table must not set analytical_storage_enabled")
+	// The PITR switch itself is pinned by TestAzureCosmos_PITRIsContinuousBackupNotAnalyticalStorage
+	// (azure_cosmos_pitr_test.go), which also holds the line against the #1838 wiring.
+	if got[0]["point_in_time_recovery"] != true || got[1]["point_in_time_recovery"] != false {
+		t.Errorf("point_in_time_recovery must mirror the switch on every table: %#v", got)
 	}
 }
 
+// TestAzureBuilders_Containers pins the tfvar KEY as well as the value. The key is the whole of the
+// bug this replaced: `container_access_type` is the azurerm RESOURCE's spelling, while the module
+// declares and reads `access_type`, so the value landed on a name nothing read.
 func TestAzureBuilders_Containers(t *testing.T) {
 	got := buildAzureContainers([]types.ProjectStorageBucketConfig{
 		{Name: "pub", PublicAccess: true},
 		{Name: "priv"},
 	})
-	if got[0]["container_access_type"] != "blob" {
-		t.Errorf("public container access = %v, want blob", got[0]["container_access_type"])
+	if got[0]["access_type"] != "blob" {
+		t.Errorf("public container access = %v, want blob", got[0]["access_type"])
 	}
-	if got[1]["container_access_type"] != "private" {
-		t.Errorf("private container access = %v, want private", got[1]["container_access_type"])
+	if got[1]["access_type"] != "private" {
+		t.Errorf("private container access = %v, want private", got[1]["access_type"])
+	}
+	for i, c := range got {
+		if _, ok := c["container_access_type"]; ok {
+			t.Errorf("container %d emits container_access_type; the module declares access_type", i)
+		}
 	}
 }
 

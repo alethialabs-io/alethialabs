@@ -79,3 +79,20 @@ variable "e2e_monthly_budget_usd" {
     error_message = "e2e_monthly_budget_usd must be a sane cap: 0 < amount <= 500 USD."
   }
 }
+
+variable "budget_publisher_binding_enabled" {
+  description = <<-EOT
+    Whether to manage the roles/pubsub.publisher grant to billing-budgets@system.gserviceaccount.com
+    on the budget-alerts topic. Defaults FALSE because the principal does not exist on a billing
+    account that has never had one, and no API we have found creates it — proven, not assumed: the
+    notifying budget applied on 2026-08-03 and the binding still failed hours later behind an
+    explicit depends_on (#1871). Leaving it declared unconditionally would mean this stack could
+    never converge, blocking every unrelated change behind an uncreatable resource.
+
+    Set to true ONLY after the grant exists out of band (Cloud Console), then `tofu import` the
+    binding. While it is false the `budget_alerts_are_deliverable` check warns on every plan, so the
+    missing cost guard is stated out loud rather than silently skipped.
+  EOT
+  type        = bool
+  default     = false
+}

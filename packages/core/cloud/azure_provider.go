@@ -370,22 +370,42 @@ func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interfa
 	return result
 }
 
+// buildCosmosDBCollections maps the canvas's NoSQL tables onto the Cosmos DB container shape the
+// azure template declares (`cosmos_db_collections`).
+//
+// `point_in_time_recovery` carries the switch's OWN VALUE rather than gating a key, because on Cosmos
+// point-in-time restore is an account-level backup MODE — `backup { type = "Continuous" }` — and the
+// template folds these per-container flags into that one mode.
+//
+// This used to write `analytical_storage_enabled = true` instead (#1838). Analytical storage is
+// Synapse Link column storage: a different product, separately billed, and not a backup at all. A
+// user who asked for recoverability got an extra bill and no recoverability. `analytical_storage_enabled`
+// is still an accepted key of the container shape for anyone who genuinely wants Synapse Link — it is
+// simply no longer derived from this switch.
 func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(tables))
 	for _, t := range tables {
-		entry := map[string]interface{}{
-			"name":          t.Name,
-			"partition_key": orDefault(t.PartitionKey, "/id"),
-			"billing_mode":  ddbCapacityMode(string(t.CapacityMode)),
-		}
-		if t.PointInTimeRecovery {
-			entry["analytical_storage_enabled"] = true
-		}
-		result = append(result, entry)
+		result = append(result, map[string]interface{}{
+			"name":                   t.Name,
+			"partition_key":          orDefault(t.PartitionKey, "/id"),
+			"billing_mode":           ddbCapacityMode(string(t.CapacityMode)),
+			"point_in_time_recovery": t.PointInTimeRecovery,
+		})
 	}
 	return result
 }
 
+// buildAzureContainers turns the canvas's buckets into the `storage_containers` tfvar.
+//
+// The key is `access_type`, not `container_access_type`. The module has always declared and read
+// `access_type` (modules/storage-account) and mapped it onto the resource's own
+// `container_access_type` argument; sending the resource's spelling meant the value landed on a name
+// nothing read and every container was created private whatever the user chose.
+//
+// `versioning_enabled` is emitted PER CONTAINER even though Azure blob versioning is a property of
+// the storage ACCOUNT, and this template gives a project exactly one. Keeping the per-bucket intent
+// visible in the tfvars is what lets the template aggregate it in one place, with one comment
+// explaining the coarsening — rather than the provider silently deciding for the whole project here.
 func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
@@ -394,8 +414,9 @@ func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[stri
 			accessType = "blob"
 		}
 		result = append(result, map[string]interface{}{
-			"name":                  b.Name,
-			"container_access_type": accessType,
+			"name":               b.Name,
+			"access_type":        accessType,
+			"versioning_enabled": b.Versioning,
 		})
 	}
 	return result
