@@ -7,9 +7,25 @@ variable "instance_name" {
 }
 
 variable "tables" {
-  type        = list(any)
+  type = list(object({
+    name = string
+    primary_keys = list(object({
+      name = string
+      type = string
+    }))
+    time_to_live = optional(number, -1)
+    max_version  = optional(number, 1)
+  }))
   default     = []
-  description = "List of tables to create. Each entry: { name, primary_keys = [{ name, type }], time_to_live?, max_version? }"
+  description = <<-EOT
+    Tablestore tables to create.
+
+    TYPED, not `list(any)`, and that is the fix for #1836. The provider used to emit a scalar
+    `primary_key` while this module read `try(each.value.primary_keys, [{ name = "id", type =
+    "String" }])`, so `try` swallowed the miss and every table was silently built on the fallback
+    key `id`/`String` instead of the partition key the user picked. Under `any` that is a clean
+    plan; under this object type a caller that sends the wrong name fails the plan instead.
+  EOT
 }
 
 variable "tags" {
