@@ -30,11 +30,18 @@
 //                fail-closed keyless gate. A file that starts touching this API is guarded from that
 //                commit on, with nobody remembering to add it here.
 //
+// Prose, marketing and illustrative-example files are carved out of layers 2 and 3 (never out of an
+// AREA): a docs page or a `backend.hcl.example` that quotes a sample key is not a code path, and must
+// not wedge a REQUIRED check. Committed secrets there are still caught repo-wide by the gitleaks job.
+//
 // A derived list is not available: `gen:keyless-cells` (apps/console/scripts/gen-keyless-cells.mjs)
 // emits a provider × engine STATE matrix — nothing in its output names a file path. So the layers below
-// are authored, and `--self-test` guards them: it asserts every known-guarded path both still EXISTS and
-// still MATCHES (a rename that silently drops a file out of scope reds the guards job), and that
-// out-of-scope paths still do not match (so "widen everything" cannot pass trivially).
+// are authored, and `--self-test` guards them. It hard-asserts only what the scope RULE guarantees:
+// every structurally-guarded path (layer 1 or 2) still exists and is still matched BY ITS PATH, and
+// out-of-scope paths still do not match (so "widen everything" cannot pass trivially). Paths that are in
+// scope only because of what they currently CONTAIN are REPORTED instead — hard-asserting those would
+// turn an ordinary refactor into a red required check claiming a security regression. See the split at
+// STRUCTURAL_GUARDED_PATHS / CONTENT_ANCHORED_PATHS.
 //
 // ── Invariants enforced (deterministic — precise enough not to false-positive a required check) ──
 //   A. RLS registration: a NEW `cloud_capability_*` / `cloud_identity_id`-bearing table must be added to
@@ -97,10 +104,20 @@ const SURFACE_SYMBOLS =
 /** Source files whose CONTENT is worth reading for layer 3 — code, not prose or fixtures. */
 const SOURCE_EXT = /\.(ts|tsx|mjs|go|sql)$/;
 
-// Prose and marketing trees: no cloud-identity code path runs from them, and a docs page that quotes an
+// Prose and marketing TREES: no cloud-identity code path runs from them, and a docs page that quotes an
 // example key must not wedge a REQUIRED check. Committed secrets there are still caught repo-wide by the
 // gitleaks job in ci.yml. They are excluded from layers 2 and 3 only — never from an AREA.
 const PROSE_TREES = [/^apps\/docs\//, /^docs\//, /^demos\//, /^\.claude\//, /^apps\/marketing\//];
+
+// The same carve-out by file SHAPE rather than by tree, because layer 2 reaches everywhere and the trees
+// above cannot enumerate that. `infra/aws-oidc/README.md`, `infra/aws-oidc/backend.hcl.example` and
+// `infra/aws-oidc/.gitignore` are all named for the surface (`oidc`) and are all prose or illustrative
+// examples — an operator pasting a sample `AKIA…` into that README would fire invariant D and wedge a
+// REQUIRED check on a docs-only change, which is the exact false positive this gate is built to avoid.
+// The real coverage under those trees is `.tf` / `.yml` / `.hcl` / `.sh`, and none of it is touched here.
+const PROSE_FILE_EXT = /\.(md|mdx|txt|rst|example|sample|dist)$/i;
+/** Dot-files that are configuration lists, never a code path (and never a place a credential belongs). */
+const PROSE_BASENAMES = new Set([".gitignore", ".gitattributes", ".dockerignore", ".editorconfig"]);
 
 /** True for a test file (TS or Go) — tests legitimately carry fake credentials and cast freely. */
 const isTest = (f) => /\.(test|spec)\.(ts|tsx)$|_test\.go$|\/tests?\//.test(f);
@@ -109,20 +126,34 @@ const isTs = (f) => /\.(ts|tsx)$/.test(f);
 /** True for a drizzle schema file — where invariant A looks for a new tenant table. */
 const isSchema = (f) => /^apps\/console\/lib\/db\/schema\//.test(f);
 
-/** True when a path is documentation, marketing or design prose rather than product code. */
+/** True when a path is documentation, an illustrative example or design prose rather than product code —
+ * either by living in a prose tree, or by its own file shape (`.md`, `.example`, `.gitignore`, …). */
 function isProse(file) {
+	if (PROSE_FILE_EXT.test(file)) return true;
+	if (PROSE_BASENAMES.has(path.posix.basename(file))) return true;
 	return PROSE_TREES.some((re) => re.test(file));
 }
 
-/** True when this file is on the capabilities/connector/keyless surface, and therefore gets inspected.
+/** Which layer, if any, puts a file on the capabilities/connector/keyless surface:
+ * `"area"` (layer 1, the path is inside a surface directory), `"named"` (layer 2, the path's own segments
+ * carry the surface vocabulary), `"symbol"` (layer 3, the file's CONTENT reaches the API) or `null`.
  *
- * `content` is the file's current text; it is only consulted for layer 3 (SYMBOLS) and may be empty for
- * a file whose path already decides the answer. */
+ * The distinction matters to the self-test, not to the gate: `"area"` and `"named"` are properties of the
+ * PATH and survive any edit to the file, while `"symbol"` holds only as long as the current contents do.
+ *
+ * `content` is the file's current text; it is only consulted for layer 3 and may be empty for a file whose
+ * path already decides the answer. */
+function scopeLayer(file, content = "") {
+	if (SURFACE_AREAS.some((re) => re.test(file))) return "area";
+	if (isProse(file)) return null;
+	if (SURFACE_NAMED.test(file)) return "named";
+	if (SOURCE_EXT.test(file) && SURFACE_SYMBOLS.test(content)) return "symbol";
+	return null;
+}
+
+/** True when this file is on the capabilities/connector/keyless surface, and therefore gets inspected. */
 function isRelevant(file, content = "") {
-	if (SURFACE_AREAS.some((re) => re.test(file))) return true;
-	if (isProse(file)) return false;
-	if (SURFACE_NAMED.test(file)) return true;
-	return SOURCE_EXT.test(file) && SURFACE_SYMBOLS.test(content);
+	return scopeLayer(file, content) !== null;
 }
 
 // ── The invariants, as pure functions over one entry ─────────────────────────────────────────────────
@@ -345,16 +376,37 @@ function main() {
 }
 
 // ── self-test ────────────────────────────────────────────────────────────────────────────────────────
-// The guard's own guard (#1789). Two halves, and both are load-bearing:
-//   • scope — every known-guarded path still EXISTS and still MATCHES, and out-of-scope paths still
-//     do NOT match. Without the negative half, "widen everything" would pass trivially.
+// The guard's own guard (#1789). Three parts, and all are load-bearing:
+//   • scope, hard — every STRUCTURALLY guarded path still exists and is still matched BY ITS PATH, and
+//     out-of-scope paths still do NOT match. Without the negative half, "widen everything" would pass.
+//   • scope, reported — the content-anchored paths, which no path rule promises to keep in scope.
 //   • invariants — A/B/C/D still fire, and still stay quiet on the shapes they must not flag. Driven
 //     from inline fixtures. Mirrors scripts/decompose-validate.mjs's runSelfTest.
 // It reads the checkout (that is the point of the scope half) but runs no git and touches no network.
+//
+// ── Why the guarded list is split in two ──
+// A self-test may only hard-assert what the scope RULE guarantees. Layers 1 and 2 are properties of the
+// PATH: `apps/runner/internal/agent/authproxy.go` is in scope because of where it lives, and stays in
+// scope through any edit to it — so "this path is in scope" is a promise the gate can keep, and breaking
+// it IS a scope regression worth reding the guards job for.
+//
+// Layer 3 is not that. A file is in scope because it currently contains a surface symbol, and four of the
+// paths below have no other claim — three of them on a SINGLE occurrence, one of which
+// (`packages/core/provisioner/deploy.go`) is a mention inside a comment. Hard-asserting those turns an
+// ordinary refactor into a red REQUIRED check with a message that reads like a breach: hoisting
+// `DATABASE_STRUCTURAL` out of `apps/console/lib/promotions/diff.ts` into a shared constants module,
+// or renaming the `iam_auth` member, would have failed the old single-list self-test with "a known
+// guarded path is no longer in scope" and Mergify would never have queued it.
+//
+// So they are REPORTED, not asserted — and the report says which situation the operator is in. The gate
+// itself is unchanged: layer 3 still puts any file that reaches the API in scope from the commit that
+// does so. What the self-test pins about layer 3 is the RULE, from a synthetic fixture that no refactor
+// of the real tree can move (see "layer 3 still works" below), rather than today's content matches.
 
-/** Paths that MUST be in scope. Each is a real repo path — the self-test reads it, so a rename or a
- * deletion that quietly drops it out of scope fails here rather than months later on a green PR. */
-const GUARDED_PATHS = [
+/** Paths that MUST be in scope BY THEIR PATH — layer 1 (area) or layer 2 (named). Hard-asserted: their
+ * relevance is checked with EMPTY content, so a path that quietly degraded into a content-only match is
+ * a failure here rather than months later on a green PR. */
+const STRUCTURAL_GUARDED_PATHS = [
 	// console — the third the gate already covered
 	"apps/console/lib/cloud-providers/keyless.ts",
 	"apps/console/lib/cloud-providers/generated/keyless-cells.ts",
@@ -367,11 +419,6 @@ const GUARDED_PATHS = [
 	"apps/console/app/(private)/dashboard/providers/actions.ts",
 	// the #1510 fail-closed keyless gate — the file the old actions regex could not match
 	"apps/console/app/server/actions/projects.ts",
-	// in scope only because of what they CONTAIN (layer 3) — nothing in their path says "keyless"
-	"apps/console/lib/stores/use-canvas-store.ts",
-	"apps/console/lib/promotions/diff.ts",
-	"packages/core/provisioner/deploy.go",
-	"packages/core/types/project_config.go",
 	// console — named for the surface, outside every area (layer 2)
 	"apps/console/app/api/cli/cloud-identities/route.ts",
 	"apps/console/components/connector/aws-connection.tsx",
@@ -389,6 +436,25 @@ const GUARDED_PATHS = [
 	"apps/runner/internal/agent/db_bootstrap.go",
 	"apps/runner/internal/agent/db_token.go",
 	"apps/runner/internal/agent/aws_credentials.go",
+	// infra — the real `.tf` / `.yml` coverage layer 2 reaches, pinned so the prose/example carve-out
+	// below can never be widened into dropping it.
+	"infra/aws-oidc/main.tf",
+	"infra/connector/aws/secrets-xacct/main.tf",
+	".github/workflows/infra-aws-oidc.yml",
+];
+
+/** Paths in scope ONLY because of what they currently CONTAIN (layer 3). Reported, never asserted — see
+ * the note above. Each entry records the symbol that puts it in scope, so the report can say whether the
+ * symbol left the file or the file left the tree. */
+const CONTENT_ANCHORED_PATHS = [
+	// the canvas draft: carries `cloud_identity_id` and the `iam_auth` clearing rule (13 occurrences)
+	"apps/console/lib/stores/use-canvas-store.ts",
+	// one `iam_auth` member of the DATABASE_STRUCTURAL promotion-diff tuple
+	"apps/console/lib/promotions/diff.ts",
+	// one `iam_auth` mention, and it is inside a comment — the weakest anchor in this list
+	"packages/core/provisioner/deploy.go",
+	// `cloud_identity_id` / `iam_auth` json struct tags on the project config
+	"packages/core/types/project_config.go",
 ];
 
 /** Real paths that must stay OUT of scope — the half that stops "widen everything" from passing. */
@@ -396,15 +462,24 @@ const OUT_OF_SCOPE_PATHS = [
 	"packages/ui/src/accordion.tsx",
 	"apps/console/components/ui/bubble.tsx",
 	"apps/console/lib/db/migrations/meta/_journal.json",
-	// Prose carve-out: named for the surface, but documentation, not a code path.
+	// Prose carve-out, by TREE: named for the surface, but documentation, not a code path.
 	"apps/docs/content/docs/console/connectors/aws.mdx",
 	"apps/docs/content/docs/console/design-project/keyless-database-auth.mdx",
 	"apps/marketing/components/landing/home/sections/keyless.tsx",
+	// Prose carve-out, by file SHAPE: named for the surface (`oidc`, `connector`), outside every prose
+	// tree, and prose or an illustrative example all the same. An example key pasted into one of these
+	// must not wedge a required check on a docs-only change.
+	"infra/aws-oidc/README.md",
+	"infra/aws-oidc/backend.hcl.example",
+	"infra/aws-oidc/.gitignore",
+	"infra/connector-assets/bootstrap/terraform.tfvars.example",
+	"apps/console/components/connector/README.md",
 ];
 
 /** Run the inline fixtures. Returns the process exit code. */
 function runSelfTest() {
 	let fails = 0;
+	let notes = 0;
 	/** Assert a named condition, printing an ok/FAIL line and counting failures. */
 	const check = (name, ok, detail = "") => {
 		if (ok) {
@@ -414,21 +489,69 @@ function runSelfTest() {
 		fails++;
 		console.error(`FAIL - ${name}${detail ? `: ${detail}` : ""}`);
 	};
-	/** Assert a file's relevance verdict, reading its real content from the checkout. */
-	const expectScope = (file, shouldMatch) => {
+	/** Print a non-failing observation about the content-anchored half, and count it. */
+	const note = (name, detail) => {
+		notes++;
+		console.log(`note - ${name}: ${detail}`);
+	};
+
+	/** Hard-assert that a path is in scope BECAUSE OF ITS PATH — layer 1 or 2, judged with empty content
+	 * so no incidental content match can rescue a path rule that has stopped covering it. */
+	const expectStructural = (file) => {
 		const abs = path.join(REPO_ROOT, file);
-		const exists = fs.existsSync(abs);
-		if (shouldMatch && !exists) {
-			check(`guarded path exists: ${file}`, false, "file is gone — it was renamed or deleted, so the gate no longer inspects it. Re-point GUARDED_PATHS at wherever this surface moved.");
+		if (!fs.existsSync(abs)) {
+			check(
+				`guarded path exists: ${file}`,
+				false,
+				"file is gone — it was renamed or deleted, so the gate no longer inspects it. Re-point STRUCTURAL_GUARDED_PATHS at wherever this surface moved, and widen SURFACE_AREAS/SURFACE_NAMED to cover the new location.",
+			);
 			return;
 		}
-		const content = exists ? read(abs) : "";
+		const layer = scopeLayer(file, "");
 		check(
-			`${shouldMatch ? "in scope" : "out of scope"}: ${file}`,
-			isRelevant(file, content) === shouldMatch,
-			shouldMatch
-				? "a known-guarded path stopped matching — the gate would now skip it and report GREEN."
-				: "an unrelated path started matching — scope has been widened past the surface this gate is named for.",
+			`in scope by path (${layer ?? "NO LAYER"}): ${file}`,
+			layer === "area" || layer === "named",
+			"SCOPE REGRESSION — this path is no longer matched by SURFACE_AREAS or SURFACE_NAMED, so the gate would skip it (or keep it only for as long as its current contents happen to mention the API) and report GREEN on a real change to it. This is a hole in the gate, not a refactor: fix the path layer.",
+		);
+	};
+
+	/** Hard-assert that a path is NOT in scope, reading its real content from the checkout. */
+	const expectOutOfScope = (file) => {
+		const abs = path.join(REPO_ROOT, file);
+		const content = fs.existsSync(abs) ? read(abs) : "";
+		check(
+			`out of scope: ${file}`,
+			!isRelevant(file, content),
+			"an unrelated path started matching — scope has been widened past the surface this gate is named for.",
+		);
+	};
+
+	/** REPORT (never fail) on a path whose only claim to being in scope is its current content. Says which
+	 * of the three situations the operator is in, so a refactor never reads as a security regression. */
+	const reportContentAnchored = (file) => {
+		const abs = path.join(REPO_ROOT, file);
+		if (!fs.existsSync(abs)) {
+			note(
+				`content-anchored path moved: ${file}`,
+				"the file is gone (renamed or deleted). NOT a scope regression — nothing ever promised this path was guarded. Point CONTENT_ANCHORED_PATHS at wherever the code went, or drop the entry.",
+			);
+			return;
+		}
+		const layer = scopeLayer(file, read(abs));
+		if (layer === "symbol") {
+			console.log(`ok   - content-anchored, still matching (layer 3): ${file}`);
+			return;
+		}
+		if (layer === null) {
+			note(
+				`content-anchored path no longer matches: ${file}`,
+				"it no longer contains a keyless/capability symbol, so the gate no longer inspects it. NOT a security regression and NOT something to 'fix' in this list — this is what it looks like when the API moves out of a file (a constant hoisted into a shared module, a field renamed). Confirm the API really left, then drop the entry.",
+			);
+			return;
+		}
+		note(
+			`content-anchored path is now structural (layer ${layer}): ${file}`,
+			"its PATH now matches — promote it to STRUCTURAL_GUARDED_PATHS so it is hard-asserted.",
 		);
 	};
 	/** Assert an inline entry set produces (or does not produce) violations. */
@@ -444,11 +567,11 @@ function runSelfTest() {
 		);
 	};
 
-	console.log("── scope: every known-guarded path exists and matches ──");
-	for (const f of GUARDED_PATHS) expectScope(f, true);
+	console.log("── scope, HARD: every structurally-guarded path exists and matches by its PATH ──");
+	for (const f of STRUCTURAL_GUARDED_PATHS) expectStructural(f);
 
-	console.log("\n── scope: unrelated paths still do not match ──");
-	for (const f of OUT_OF_SCOPE_PATHS) expectScope(f, false);
+	console.log("\n── scope, HARD: unrelated paths still do not match ──");
+	for (const f of OUT_OF_SCOPE_PATHS) expectOutOfScope(f);
 	// Synthetic negatives: a source file with no surface vocabulary and no surface symbols.
 	check(
 		"out of scope: a plain store with no surface symbols",
@@ -458,13 +581,28 @@ function runSelfTest() {
 		"out of scope: a runner file outside the agent package",
 		!isRelevant("apps/runner/internal/logging/logger.go", "package logging"),
 	);
+	// Synthetic, so it pins the RULE and no refactor of the real tree can move it: layer 3 must still put
+	// a file with no surface vocabulary in its path into scope on the strength of its content alone. This
+	// is what the gate promises about layer 3 — not that any particular file still contains a symbol.
 	check(
-		"in scope: any file that reaches the keyless API, wherever it lives",
-		isRelevant(
-			"apps/console/lib/promotions/diff.ts",
-			"const changed = a.iam_auth !== b.iam_auth;",
-		),
+		"layer 3 still works: a file with no surface vocabulary but a surface symbol is in scope",
+		scopeLayer("apps/console/lib/anywhere/whatever.ts", "const changed = a.iam_auth !== b.iam_auth;") ===
+			"symbol",
 	);
+	check(
+		"layer 3 still works: the same file without the symbol is NOT in scope",
+		scopeLayer("apps/console/lib/anywhere/whatever.ts", "const changed = a.port !== b.port;") === null,
+	);
+	check(
+		"layer 3 does not read prose: a .md holding a surface symbol stays out",
+		scopeLayer("some/tree/notes.md", "cloudIdentityId") === null,
+	);
+
+	console.log("\n── scope, REPORTED: paths in scope only by their current CONTENT (layer 3) ──");
+	console.log(
+		"   These are NOT assertions. A path here dropping out of scope is a refactor, not a breach —\n   see the note above CONTENT_ANCHORED_PATHS.",
+	);
+	for (const f of CONTENT_ANCHORED_PATHS) reportContentAnchored(f);
 
 	console.log("\n── invariant A: RLS registration ──");
 	expectGate(
@@ -622,11 +760,18 @@ function runSelfTest() {
 	console.log("\n── the no-op PASS path ──");
 	check("nothing relevant changed → no violations", evaluate([], "").length === 0);
 
+	const tail = notes
+		? ` · ${notes} content-anchored note(s) above — informational, no action required to merge`
+		: "";
 	if (fails === 0) {
-		console.log(`\nself-test: all passed (${GUARDED_PATHS.length} guarded paths still in scope)`);
+		console.log(
+			`\nself-test: all passed (${STRUCTURAL_GUARDED_PATHS.length} paths guaranteed in scope by path rule, ${CONTENT_ANCHORED_PATHS.length} reported by content)${tail}`,
+		);
 		return 0;
 	}
-	console.error(`\nself-test: ${fails} check(s) FAILED`);
+	console.error(
+		`\nself-test: ${fails} check(s) FAILED${tail}\nEvery failure above is about the SCOPE RULE (which files the gate reads at all) or an invariant — not about a file's contents. A content-anchored path that stopped matching is reported as a \`note\`, never a failure.`,
+	);
 	return 1;
 }
 
