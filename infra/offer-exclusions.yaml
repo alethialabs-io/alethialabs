@@ -195,6 +195,48 @@ exclusions:
     cloud: hetzner
     reason: Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone.
 
+  # ── Alibaba managed TLS certificate — settled by #1824 ──────────────────────────────
+  # This was BASELINE on the reading that the build was merely unfinished — the entry said it "needs
+  # a CAS free-DV request plus the AliDNS validation record". That request resource does not exist.
+  # Checked against the PINNED provider, aliyun/alicloud 1.286.0 (the version
+  # infra/templates/project/alibaba/.terraform.lock.hcl resolves), by reading its own schema: every
+  # resource whose name mentions `cert`, `ssl` or `cas`, plus a sweep of all 1169 resource schemas
+  # for a validation or challenge attribute.
+  #
+  #   · `alicloud_ssl_certificates_service_certificate` and its legacy alias `alicloud_cas_certificate`
+  #     are the SAME schema, and it is UPLOAD-only — cert, key, encrypt_cert, encrypt_private_key,
+  #     sign_cert, sign_private_key, i.e. PEM material you already hold. No domain argument, no
+  #     validation method, no issuance status. There is nothing here to request.
+  #   · `alicloud_ssl_certificates_service_pca_cert` and `_pca_certificate` issue from a PRIVATE CA
+  #     you operate (`parent_identifier`, `common_name`, `years`). A private root is not publicly
+  #     trusted, so it is not a certificate a browser will accept for the domain.
+  #   · `alicloud_esa_certificate` requires a `site_id` — an Edge Security Acceleration site, a
+  #     separate CDN product this template does not provision and which has no tie to AliDNS.
+  #   · `alicloud_waf_certificate` requires a WAF `instance_id` and takes certificate + private_key:
+  #     it ATTACHES material you already have.
+  #   · `alicloud_alidns_record` DOES exist, so the validation-record half is expressible — but no
+  #     certificate resource in the provider emits a challenge to put in it. Nothing in the provider
+  #     exposes a validation or challenge attribute at all, which is exactly what the AWS template
+  #     consumes as `aws_acm_certificate.domain_validation_options`. Without one, the shape the other
+  #     clouds use cannot be written here.
+  #
+  # The ceiling is the PROVIDER's declarative surface, not our backlog. Alibaba Cloud does sell free
+  # DV certificates through SSL Certificates Service, but only the console and OpenAPI can order one,
+  # so there is no resource for the template to declare — the same shape as the Hetzner NAT gateway
+  # entry above, a capability the cloud has that its Terraform provider does not expose. That makes
+  # it a ceiling rather than debt. Revisit if aliyun ships a certificate-request resource.
+  #
+  # NOTE the honest consequence, because an exclusion must not read as an excuse: unlike Hetzner —
+  # where the certificate is still issued, just by cert-manager rather than OpenTofu — this switch
+  # currently issues NOTHING on Alibaba, while the canvas still advertises it as "Managed TLS
+  # certificate from Alibaba Cloud SSL Certificates Service" (catalog.json `live.certOptions`). The
+  # remaining honest alternative is to stop offering the switch here, a canvas change rather than a
+  # template one, tracked separately.
+  - offer: dns:managed_certificate
+    cloud: alibaba
+    reason: Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, so this switch issues nothing here — install the cert-manager add-on to have the cluster issue and renew TLS instead.
+    issue: #1824
+
 # ── Baseline — real gaps, already boarded ───────────────────────────────────────────────
 #
 # NOT exclusions. These are offers a cloud genuinely cannot honor today and that we intend to fix;
@@ -217,23 +259,14 @@ baseline:
   #
   # The shapes, so the list reads as something other than a wall:
   #   · a switch no provider carries          (registry)
-  #   · a switch carried and then not read    (bucket:public_access, queue:ordered, alibaba dns cert)
+  #   · a switch carried and then not read    (bucket:public_access, queue:ordered)
   #   · a kind the cloud's template omits     (hetzner dns, hetzner network)
-
-  # ── DNS: one switch left, on one cloud ──────────────────────────────────────────────
-  # #1810 wired both canvas DNS switches through the snapshot, ProjectDNSConfig and all four
-  # providers, so nine of the ten cells that were here are gone. What is left is the one cloud where
-  # carriage was never the problem: Alibaba declares `alidns_managed_certificate`, the provider sets
-  # it on every apply, and no resource in the template reads it. That is a build, not a wiring fix —
-  # it needs a CAS free-DV request plus the AliDNS validation record.
   #
-  # The two Hetzner cells moved UP into `exclusions:`; Hetzner sells neither product, so they are
-  # decisions, not debt.
-  - offer: dns:managed_certificate
-    cloud: alibaba
-    reason: The managed TLS certificate is requested but nothing builds it yet — the template declares the variable and no resource reads it.
-    issue: #1824
-    state: unwired-template
+  # The DNS block that stood here is gone. #1810 wired both canvas DNS switches through the snapshot,
+  # ProjectDNSConfig and all four providers, which cleared nine of its ten cells; the last one —
+  # Alibaba's managed certificate — moved UP into `exclusions:` when #1824 established that the
+  # pinned alicloud provider cannot express the request at all. It was never a build we had not got
+  # to; it was a build the provider has no resource for.
 
   # ── Container registry: both switches reach no cloud ────────────────────────────────
   # Neither `ImmutableTags` nor `VulnerabilityScanning` is read by ANY provider, so the value a user
