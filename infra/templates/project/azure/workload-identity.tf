@@ -25,7 +25,28 @@ resource "azurerm_federated_identity_credential" "external_dns" {
   subject             = "system:serviceaccount:external-dns:external-dns-sa"
 }
 
-# DNS Zone Contributor over the resource group so external-dns can manage records.
+# The SAME managed identity, federated to a SECOND KSA: cert-manager's DNS01 solver. It
+# writes a TXT record into the project's Azure DNS zone and deletes it again — exactly what
+# the "DNS Zone Contributor" assignment below already permits, so cert-manager reuses
+# external-dns's identity instead of a parallel one carrying an identical role.
+#
+# A federated identity credential maps ONE subject, so this second RESOURCE (not a second
+# subject on the first) is what makes the azure.workload.identity/client-id annotation
+# infra/templates/argocd/cert-manager.yaml puts on `cert-manager:cert-manager` resolve.
+# Without it the AKS OIDC token is rejected at exchange and every DNS01 challenge fails
+# inside a certificate that simply never issues.
+resource "azurerm_federated_identity_credential" "cert_manager" {
+  count               = var.provision_aks ? 1 : 0
+  name                = "cert-manager"
+  resource_group_name = azurerm_resource_group.main.name
+  parent_id           = azurerm_user_assigned_identity.external_dns[0].id
+  audience            = ["api://AzureADTokenExchange"]
+  issuer              = module.aks[0].oidc_issuer_url
+  subject             = "system:serviceaccount:cert-manager:cert-manager"
+}
+
+# DNS Zone Contributor over the resource group so external-dns (and cert-manager's DNS01
+# solver, which shares the identity above) can manage records.
 resource "azurerm_role_assignment" "external_dns_dns" {
   count                = var.provision_aks ? 1 : 0
   scope                = azurerm_resource_group.main.id

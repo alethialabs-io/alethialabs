@@ -17,7 +17,10 @@ import { ADDON_CATALOG } from "@/lib/addons/catalog";
 
 /** The pinned size of the marketplace add-on catalog. Bump this in lockstep with any
  * deliberate catalog change (and revisit the A0.2 ArgoCD expected-set derivation). */
-const EXPECTED_ADDON_COUNT = 19;
+// 19 → 18: cert-manager moved to the PLATFORM rail (infra/templates/argocd/cert-manager.yaml),
+// where it can see the cloud, the DNS zone and the identity a DNS01 ClusterIssuer needs. It is
+// REMOVED here rather than duplicated, so exactly one thing owns the cert-manager CRDs (#1722).
+const EXPECTED_ADDON_COUNT = 18;
 
 describe("ADDON_CATALOG count guard", () => {
 	it("has exactly the pinned number of add-ons", () => {
