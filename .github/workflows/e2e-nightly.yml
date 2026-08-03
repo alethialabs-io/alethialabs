@@ -545,11 +545,79 @@ jobs:
             echo "::error::failed to mint the Alibaba RAM OIDC token — refusing to continue."
             exit 1
           fi
+
+          # ── Perform the exchange. NOBODY USED TO (#1875). ──
+          # The step exported the token file + the two ARNs and stopped, so the workflow assumed the
+          # alicloud PROVIDER would call AssumeRoleWithOIDC, while the template
+          # (infra/templates/project/alibaba/main.tf:20) documents that it reads credentials the
+          # RUNNER already materialised. Neither half called it, and the deploy died at plan with
+          # "no valid credential sources for Terraform Alibaba Cloud Provider found" — accurately.
+          #
+          # AssumeRoleWithOIDC is an ANONYMOUS API: per Alibaba's reference it "allows anonymous
+          # access. Therefore, you do not need to specify the Signature, SignatureMethod,
+          # SignatureVersion, or AccessKeyId common request parameters." So a plain POST does it,
+          # with no chicken-and-egg profile to configure first — which is why this is curl and not
+          # `aliyun sts`, since the CLI has no credentials to run with at this point either.
+          RESP="${RUNNER_TEMP}/alibaba-sts-response.json"
+          HTTP_CODE=$(curl -sS -o "$RESP" -w '%{http_code}' -X POST "https://sts.aliyuncs.com/" \
+            --data-urlencode "Action=AssumeRoleWithOIDC" \
+            --data-urlencode "Format=JSON" \
+            --data-urlencode "Version=2015-04-01" \
+            --data-urlencode "RoleArn=${ROLE_ARN}" \
+            --data-urlencode "OIDCProviderArn=${OIDC_PROVIDER_ARN}" \
+            --data-urlencode "OIDCToken=$(cat "$TOKEN_FILE")" \
+            --data-urlencode "RoleSessionName=e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          if [ "$HTTP_CODE" != "200" ]; then
+            # Only Code/Message/RequestId — never the raw body, which can echo the request back.
+            echo "::error::AssumeRoleWithOIDC failed (HTTP ${HTTP_CODE}): $(jq -r '"\(.Code // "?"): \(.Message // "?") [RequestId \(.RequestId // "?")]"' <"$RESP" 2>/dev/null || echo 'unparseable response')"
+            rm -f "$RESP"
+            exit 1
+          fi
+
+          ALICLOUD_AK=$(jq -r '.Credentials.AccessKeyId' <"$RESP")
+          ALICLOUD_SK=$(jq -r '.Credentials.AccessKeySecret' <"$RESP")
+          ALICLOUD_ST=$(jq -r '.Credentials.SecurityToken' <"$RESP")
+          rm -f "$RESP"
+          if [ -z "$ALICLOUD_AK" ] || [ "$ALICLOUD_AK" = "null" ]; then
+            echo "::error::AssumeRoleWithOIDC returned 200 with no credentials — refusing to continue."
+            exit 1
+          fi
+
+          # These three are REAL SECRETS, unlike every other cloud's handle on this leg. Mask them
+          # before they can reach a log line, and see scrub.sh for the artifact side (#1854).
+          echo "::add-mask::${ALICLOUD_AK}"
+          echo "::add-mask::${ALICLOUD_SK}"
+          echo "::add-mask::${ALICLOUD_ST}"
+
+          # SIX variables from one exchange, because the two consumers do not agree on names:
+          # the alicloud OpenTofu provider reads ALICLOUD_ACCESS_KEY / _SECRET_KEY / _SECURITY_TOKEN,
+          # and the aliyun CLI — which the always() sweeper (scripts/e2e/alibaba-cleanup.sh) runs —
+          # reads ALIBABA_CLOUD_ACCESS_KEY_ID / _ACCESS_KEY_SECRET / _SECURITY_TOKEN. Exporting only
+          # one set leaves the other half of the leg unauthenticated: the sweeper is the guarantee
+          # that a hard-killed run does not leak billable ACK clusters, so it must not be the half
+          # that silently has no credentials.
           {
-            echo "ALICLOUD_OIDC_TOKEN_FILE=$TOKEN_FILE"
-            echo "ALICLOUD_ROLE_ARN=$ROLE_ARN"
-            echo "ALICLOUD_OIDC_PROVIDER_ARN=$OIDC_PROVIDER_ARN"
+            echo "ALICLOUD_ACCESS_KEY=${ALICLOUD_AK}"
+            echo "ALICLOUD_SECRET_KEY=${ALICLOUD_SK}"
+            echo "ALICLOUD_SECURITY_TOKEN=${ALICLOUD_ST}"
+            echo "ALIBABA_CLOUD_ACCESS_KEY_ID=${ALICLOUD_AK}"
+            echo "ALIBABA_CLOUD_ACCESS_KEY_SECRET=${ALICLOUD_SK}"
+            echo "ALIBABA_CLOUD_SECURITY_TOKEN=${ALICLOUD_ST}"
           } >> "$GITHUB_ENV"
+
+          # ── Assert the exchange WORKS, not that a file is non-empty. ──
+          # The old step's only check was `[ -s "$TOKEN_FILE" ]`, which is why this survived until
+          # the gate opened: it went green on every run while proving nothing about federation. One
+          # GetCallerIdentity fails loudly HERE instead of three minutes later inside a deploy job,
+          # where a missing credential reads as a template problem.
+          export ALIBABA_CLOUD_ACCESS_KEY_ID="${ALICLOUD_AK}"
+          export ALIBABA_CLOUD_ACCESS_KEY_SECRET="${ALICLOUD_SK}"
+          export ALIBABA_CLOUD_SECURITY_TOKEN="${ALICLOUD_ST}"
+          if ! IDENTITY=$(aliyun sts GetCallerIdentity --region "${E2E_REGION:-eu-central-1}" 2>&1); then
+            echo "::error::the assumed Alibaba identity cannot call STS — federation is broken: ${IDENTITY}"
+            exit 1
+          fi
+          echo "assumed $(jq -r '.Arn // "?"' <<<"$IDENTITY")"
 
       # ── Stale-cluster preflight (BYOC A1.4). BEFORE provisioning, sweep any leaked e2e
       #    orphans from PRIOR runs — a nightly hard-killed before both its graceful destroy AND

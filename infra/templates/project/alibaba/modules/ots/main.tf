@@ -28,14 +28,19 @@ resource "alicloud_ots_table" "this" {
   instance_name = alicloud_ots_instance.this.name
   table_name    = each.value.name
 
+  # No `try(…, [{ name = "id", type = "String" }])` fallback here any more — see #1836. That default
+  # was not a convenience, it was the bug: the provider emitted the key under a different name, `try`
+  # caught the miss, and every table in every Alibaba project was built on `id`/`String` while the
+  # plan stayed clean. `tables` is now a typed object, so a caller that sends the wrong shape gets a
+  # plan error instead of a silently wrong table.
   dynamic "primary_key" {
-    for_each = try(each.value.primary_keys, [{ name = "id", type = "String" }])
+    for_each = each.value.primary_keys
     content {
       name = primary_key.value.name
       type = primary_key.value.type
     }
   }
 
-  time_to_live = try(each.value.time_to_live, -1)
-  max_version  = try(each.value.max_version, 1)
+  time_to_live = each.value.time_to_live
+  max_version  = each.value.max_version
 }

@@ -1586,7 +1586,13 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "versioning",
 						type: "switch",
 						label: "Versioning",
-						description: "Keep every version of an object; restore or roll back at any time.",
+						// The Azure clause is a PRODUCT DISCLOSURE, not a footnote. azurerm exposes blob
+						// versioning only on the storage account, and an Azure project has exactly one — so
+						// this per-bucket switch genuinely has project-wide effect there. A switch whose real
+						// scope is wider than its label is the same class of untruth as a switch that does
+						// nothing, and saying so is the condition on which the cell counts as honored.
+						description:
+							"Keep every version of an object; restore or roll back at any time. On Azure this is a storage-account setting, so turning it on for one bucket versions every bucket in the project.",
 					},
 					{
 						key: "encryption_enabled",
