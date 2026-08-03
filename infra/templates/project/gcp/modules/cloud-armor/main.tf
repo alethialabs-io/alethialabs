@@ -3,9 +3,19 @@ resource "google_compute_security_policy" "policy" {
   project     = var.project_id
   description = "Cloud Armor security policy for ${var.project_name} (${var.environment})"
 
-  # Default deny rule (lowest priority = evaluated last)
+  # The default rule (priority 2147483647 = evaluated last, matches everything the custom rules
+  # below did not). Its action is var.default_action, NOT a hardcoded deny(403) — that literal was
+  # the whole reason this policy was safe to leave detached (#1826). `cloud_armor_default_action`
+  # has been declared at the root since the template shipped, defaulting to "allow", and no module
+  # ever read it; the policy therefore denied 100% of requests whatever the operator chose. Nothing
+  # noticed because the policy was attached to nothing, so the deny applied to no traffic at all.
+  #
+  # Now that a GKE Ingress BackendConfig actually binds this policy to the ArgoCD backend service,
+  # the hardcoded deny would black-hole every request the moment the WAF switch is turned on —
+  # turning "enable the WAF" into "take the platform down". The default-allow-plus-explicit-deny
+  # posture the root variable always described is what a rule-list policy needs.
   rule {
-    action   = "deny(403)"
+    action   = var.default_action
     priority = 2147483647
 
     match {
@@ -15,7 +25,7 @@ resource "google_compute_security_policy" "policy" {
       }
     }
 
-    description = "Default deny rule"
+    description = "Default rule (${var.default_action}) — evaluated last"
   }
 
   # Custom WAF rules (preconfigured expressions, IP allow/deny, etc.)

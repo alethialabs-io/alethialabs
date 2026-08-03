@@ -32,6 +32,17 @@ variable "rules" {
   default     = []
 }
 
+variable "default_action" {
+  type        = string
+  default     = "allow"
+  description = "Action for the catch-all default rule (priority 2147483647) — what happens to every request none of the rules above matched. A finite, known set, validated rather than left a free string: a typo here is not a plan error, it is a silently different security posture on the policy that fronts the platform ingress."
+
+  validation {
+    condition     = contains(["allow", "deny(403)", "deny(404)", "deny(502)"], var.default_action)
+    error_message = "default_action must be one of: allow, deny(403), deny(404), deny(502) — the actions the Cloud Armor API accepts on a security policy rule."
+  }
+}
+
 variable "enable_rate_limiting" {
   type        = bool
   description = "Whether to add a rate-limiting rule to the security policy"

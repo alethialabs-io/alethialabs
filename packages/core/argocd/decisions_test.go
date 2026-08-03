@@ -385,34 +385,65 @@ func TestInfraServiceDecisions_WAFBuiltButNoIngress(t *testing.T) {
 	}
 }
 
-// The AWS ingress gate is a conjunction, so its skip reason must name WHICH half was missing:
-// "turn DNS on" and "turn the certificate on" are different fixes, and an operator told the
-// wrong one goes looking in the wrong place. The certificate arm deliberately keeps the shared
-// default, so that message is pinned here too — it is the pre-existing behaviour.
+// Every ingress gate is a conjunction, so its skip reason must name WHICH half was missing:
+// "turn DNS on" and "turn the certificate on" are different fixes, and an operator told the wrong
+// one goes looking in the wrong place.
+//
+// Run per cloud that HAS a gate, so an ingress lane adding one to argocdURLGates gets told to
+// supply the same three answers rather than inheriting a single sentence covering none of them.
+// The AWS certificate arm deliberately keeps the shared default, so that message is pinned too —
+// it is the pre-existing behaviour and staying byte-identical is the point.
 func TestArgocdURLSkipReasonNamesTheMissingHalf(t *testing.T) {
-	full := func() *InfraFacts {
-		return &InfraFacts{Provider: "aws", DNSEnabled: true, DomainName: "example.com",
-			ACMCertificateArn: "arn:aws:acm:us-east-1:123:certificate/abc"}
-	}
-	cases := []struct {
-		name   string
-		mutate func(*InfraFacts)
-		want   string
+	clouds := map[string]struct {
+		full           func() *InfraFacts
+		dropCert       func(*InfraFacts)
+		wantNoCertText string
 	}{
-		{"dns off", func(f *InfraFacts) { f.DNSEnabled = false }, "dns is disabled"},
-		{"no domain", func(f *InfraFacts) { f.DomainName = "" }, "no domain is configured"},
-		{"no certificate", func(f *InfraFacts) { f.ACMCertificateArn = "" }, "no managed ingress on this cloud yet"},
+		"aws": {
+			full: func() *InfraFacts {
+				return &InfraFacts{Provider: "aws", DNSEnabled: true, DomainName: "example.com",
+					ACMCertificateArn: "arn:aws:acm:us-east-1:123:certificate/abc"}
+			},
+			dropCert:       func(f *InfraFacts) { f.ACMCertificateArn = "" },
+			wantNoCertText: "no managed ingress on this cloud yet",
+		},
+		"gcp": {
+			full: func() *InfraFacts {
+				return &InfraFacts{Provider: "gcp", DNSEnabled: true, DomainName: "example.com",
+					GCPManagedCertName: "alethia-cert-0c4e1a2b"}
+			},
+			dropCert:       func(f *InfraFacts) { f.GCPManagedCertName = "" },
+			wantNoCertText: "no google-managed ssl certificate was provisioned",
+		},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			f := full()
-			c.mutate(f)
-			d := decisionFor(t, InfraServiceDecisions(f), "argocd-url")
-			if d.Status != infraStatusSkipped {
-				t.Fatalf("want skipped, got %s (%s)", d.Status, d.Reason)
+	for cloud, spec := range clouds {
+		t.Run(cloud, func(t *testing.T) {
+			// Sanity: the fully-wired shape must actually be installed, or the cases below
+			// would pass for the wrong reason.
+			if d := decisionFor(t, InfraServiceDecisions(spec.full()), "argocd-url"); d.Status != infraStatusInstalled {
+				t.Fatalf("fully-wired %s: want installed, got %s (%s)", cloud, d.Status, d.Reason)
 			}
-			if !strings.Contains(strings.ToLower(d.Reason), c.want) {
-				t.Errorf("skip reason should contain %q, got %q", c.want, d.Reason)
+			cases := []struct {
+				name   string
+				mutate func(*InfraFacts)
+				want   string
+			}{
+				{"dns off", func(f *InfraFacts) { f.DNSEnabled = false }, "dns is disabled"},
+				{"no domain", func(f *InfraFacts) { f.DomainName = "" }, "no domain is configured"},
+				{"no certificate", spec.dropCert, spec.wantNoCertText},
+			}
+			for _, c := range cases {
+				t.Run(c.name, func(t *testing.T) {
+					f := spec.full()
+					c.mutate(f)
+					d := decisionFor(t, InfraServiceDecisions(f), "argocd-url")
+					if d.Status != infraStatusSkipped {
+						t.Fatalf("want skipped, got %s (%s)", d.Status, d.Reason)
+					}
+					if !strings.Contains(strings.ToLower(d.Reason), c.want) {
+						t.Errorf("skip reason should contain %q, got %q", c.want, d.Reason)
+					}
+				})
 			}
 		})
 	}
@@ -439,14 +470,25 @@ func TestInfraServiceDecisions_WAFNeverOutrunsTheIngress(t *testing.T) {
 	}
 }
 
-// AWS and Alibaba are the two clouds that export a WAF reference. gcp/azure each BUILD a
-// construct (Cloud Armor / a WAF policy) but declare no root output and have no ingress, and
-// Hetzner sells no managed WAF at all — each must say which of those it is, so "we did not wire
-// it yet" is never mistaken for "this cloud cannot". Alibaba has its own pair of tests below: it
-// exports a reference, so its skip is about the BINDING rather than about the build.
+// THREE clouds export a WAF reference now — aws, gcp (this lane) and alibaba (the lane that
+// landed on dev while this one was in flight) — so none of them is in this table:
+//
+//	· aws + gcp   are ATTACHABLE, so their skip is about the deploy, not the cloud;
+//	· alibaba     exports a reference and can bind nothing to it, so its skip is about the
+//	              BINDING and it has its own pair of tests below.
+//
+// What is left must each say WHICH of three things it is, so "we did not wire it yet" is never
+// mistaken for "this cloud cannot", nor for "you left the switch off":
+//
+//	· azure    — BUILDS a WAF policy, declares no root output, has no ingress to attach it to.
+//	· hetzner  — sells no managed WAF at all.
+//
+// GCP's expectation moved with this lane. Its Cloud Armor policy is exported and attachable now,
+// so the only remaining reason there is nothing to attach is an unset switch; keeping the old
+// "no ingress to attach it to yet" would send the operator to fix a gap that no longer exists.
 func TestInfraServiceDecisions_WAFPerCloudSkipReasons(t *testing.T) {
 	cases := map[string]string{
-		"gcp":     "no ingress to attach it to yet",
+		"gcp":     "no cloud armor policy was built",
 		"azure":   "no ingress to attach it to yet",
 		"hetzner": "sells no managed waf",
 	}
@@ -547,7 +589,11 @@ func TestWAFAttachTableIsASubsetOfTheIngressControllers(t *testing.T) {
 // decisions the lanes touch agree with each other.
 
 func TestIngressDecision_AbsentCloudsSkipWithTheSharedReason(t *testing.T) {
-	for _, p := range []string{"gcp", "azure", "alibaba", "hetzner", "digitalocean", ""} {
+	// gcp has left this list: GKE's Ingress controller is built into the managed control plane, so
+	// its entry is unconditional-installed (see the positive assertion below). azure/alibaba are
+	// the lanes still to land, and hetzner/digitalocean/"" are the fail-closed direction — a cloud
+	// absent from the table inherits nothing.
+	for _, p := range []string{"azure", "alibaba", "hetzner", "digitalocean", ""} {
 		d := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: p}), "ingress")
 		if d.Status != infraStatusSkipped {
 			t.Errorf("%q ingress: want skipped (no table entry), got %s (%s)", p, d.Status, d.Reason)
@@ -556,9 +602,19 @@ func TestIngressDecision_AbsentCloudsSkipWithTheSharedReason(t *testing.T) {
 			t.Errorf("%q ingress: want the shared no-controller reason, got %q", p, d.Reason)
 		}
 	}
-	// AWS is the one entry in the table today, and it is unconditional.
-	if d := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: "aws"}), "ingress"); d.Status != infraStatusInstalled {
-		t.Errorf("aws ingress: want installed, got %s (%s)", d.Status, d.Reason)
+	// Both table entries are unconditional, for opposite reasons: AWS installs the ALB controller
+	// itself, GCP gets one from GKE. Neither depends on a provisioned fact, so zero-value facts
+	// must still report installed.
+	for _, p := range []string{"aws", "gcp"} {
+		if d := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: p}), "ingress"); d.Status != infraStatusInstalled {
+			t.Errorf("%s ingress: want installed, got %s (%s)", p, d.Status, d.Reason)
+		}
+	}
+	// GCP's reason must say the controller is the CLOUD's, not ours. An operator reading
+	// "installed" needs to know there is no Alethia-managed Application to look at.
+	gcp := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: "gcp"}), "ingress")
+	if !strings.Contains(gcp.Reason, "built-in") || !strings.Contains(gcp.Reason, "gce") {
+		t.Errorf("gcp ingress reason must name the built-in `gce` controller, got %q", gcp.Reason)
 	}
 }
 
