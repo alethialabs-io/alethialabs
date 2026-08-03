@@ -1678,10 +1678,11 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						// hide them rather than imply we can set them on someone else's.
 						visibleWhen: (c) => !isPluggable(c.provider),
 						description: "Prevent pushed image tags from being overwritten.",
-						get: (c) => c.provider_config?.immutable_tags ?? false,
-						set: (v, c) => ({
-							provider_config: { ...c.provider_config, immutable_tags: Boolean(v) },
-						}),
+						// Typed columns since #1811, not provider_config keys — and DEFAULT TRUE, which
+						// matches what the templates already build. `?? false` here would show every
+						// existing registry as "off" and, once carried, downgrade live repositories.
+						get: (c) => c.immutable_tags ?? true,
+						set: (v) => ({ immutable_tags: Boolean(v) }),
 					},
 					{
 						key: "vulnerability_scanning",
@@ -1692,13 +1693,9 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						// hide them rather than imply we can set them on someone else's.
 						visibleWhen: (c) => !isPluggable(c.provider),
 						description: "Scan pushed images for known CVEs.",
-						get: (c) => c.provider_config?.vulnerability_scanning ?? false,
-						set: (v, c) => ({
-							provider_config: {
-								...c.provider_config,
-								vulnerability_scanning: Boolean(v),
-							},
-						}),
+						// Typed column since #1811. Default true — see immutable_tags above.
+						get: (c) => c.vulnerability_scanning ?? true,
+						set: (v) => ({ vulnerability_scanning: Boolean(v) }),
 					},
 				],
 			},

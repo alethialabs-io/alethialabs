@@ -504,12 +504,19 @@ describe("provider_config is pinned to the connector catalog", () => {
 				{
 					name: "apps",
 					// A token pasted into the wrong field would otherwise be stored verbatim.
-					provider_config: { immutable_tags: true, password: "s3cr3t-should-not-persist" },
+					// `immutable_tags` rides along for a second reason: it became a typed column in
+					// #1811, so a stale payload still carrying it here must be DROPPED rather than
+					// round-tripped into the config snapshot as a second answer to the same question.
+					provider_config: {
+						namespace: "acme",
+						immutable_tags: true,
+						password: "s3cr3t-should-not-persist",
+					},
 				},
 			],
 		});
 		if (!parsed.success) throw parsed.error;
-		expect(parsed.data.container_registries[0].provider_config).toEqual({ immutable_tags: true });
+		expect(parsed.data.container_registries[0].provider_config).toEqual({ namespace: "acme" });
 	});
 });
 

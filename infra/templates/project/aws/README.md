@@ -60,6 +60,14 @@ component plus one per **repo-sourced service** (the W2 build destination). `pro
 with an empty map creates nothing; `checks.tf: ecr_names_present_when_provisioned` fails that plan
 loudly instead of silently.
 
+The canvas's two registry switches travel beside it in **`ecr_repo_settings`**, keyed by the same
+logical name (`{ <logical name> = { immutable_tags, vulnerability_scanning } }`) and emitted by
+`buildECRRepoSettings`. Both are attributes of `aws_ecr_repository`, so they are decided **per
+repository** — two registry components with opposite answers keep them. A repository the map does
+not name (every repo-sourced service, and every snapshot written before the map existed) falls back
+to `ecr_repository_image_tag_mutability` / `ecr_repository_image_scan_on_push`, which stay at the
+template's own IMMUTABLE + scan-on-push defaults so an upgrade never downgrades a live registry.
+
 The build path is keyless: `irsa.tf` defines the **build-SA IRSA role** (`ecr-build-<eks_name>`),
 trusted only by `alethia-build:kaniko-builder` — the exact ServiceAccount the kaniko Job renderer
 schedules builds under — and scoped to `ecr:GetAuthorizationToken` + push/pull on the project's own

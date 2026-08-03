@@ -69,7 +69,15 @@ function sampleForm(): ProjectFormData {
 			},
 		],
 		container_registries: [
-			{ name: "apps", provider_config: { immutable_tags: true } },
+			// Both switches OFF on purpose: they default to TRUE (#1811), so asserting the ON
+			// position would pass just as well if the round-trip dropped them and the default
+			// filled the hole back in.
+			{
+				name: "apps",
+				immutable_tags: false,
+				vulnerability_scanning: false,
+				provider_config: {},
+			},
 		],
 		helm_registries: [
 			{ name: "ghcr-io", provider: "oci-github-cr", provider_config: {} },
@@ -149,7 +157,8 @@ describe("formToGraph / graphToForm round-trip", () => {
 		expect(parsed.data.container_registries).toHaveLength(1);
 		expect(parsed.data.container_registries[0]).toMatchObject({
 			name: "apps",
-			provider_config: { immutable_tags: true },
+			immutable_tags: false,
+			vulnerability_scanning: false,
 		});
 		// W1 — a service workload survives the round-trip with its full config.
 		expect(parsed.data.services).toHaveLength(1);

@@ -2110,6 +2110,10 @@ export async function getProjectAsFormData(
 		container_registries: source.components.container_registries.map((r) => ({
 			name: r.name,
 			provider: r.provider ?? undefined,
+			// Design, not provisioned state — a copied environment that silently reverted to the
+			// defaults would build MUTABLE, unscanned repositories where the source has neither.
+			immutable_tags: r.immutable_tags ?? undefined,
+			vulnerability_scanning: r.vulnerability_scanning ?? undefined,
 			provider_config: r.provider_config ?? undefined,
 		})),
 		helm_registries: source.components.helm_registries.map((r) => ({

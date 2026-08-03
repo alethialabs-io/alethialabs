@@ -152,7 +152,7 @@ const secretsInsert = createInsertSchema(projectSecrets, {
 const bucketsInsert = createInsertSchema(projectStorageBuckets, {
 	provider_config: z.custom<StorageProviderConfig>().optional(),
 });
-// The cloud-native registry knobs plus every pluggable provider's. SHAPED AND STRIPPED for the same
+// Every pluggable registry provider's knobs. SHAPED AND STRIPPED for the same
 // reason as dns above (this rides whole into the persisted config_snapshot), and annotated with the
 // column's own JSONB interface so the two can't drift.
 //
@@ -161,9 +161,9 @@ const bucketsInsert = createInsertSchema(projectStorageBuckets, {
 // entirely — which is exactly what the catalog-parity test below now catches from the other side.
 const registryProviderConfigSchema: z.ZodType<RegistryProviderConfig> = z
 	.object({
-		// cloud-native (ECR / Artifact Registry / ACR)
-		vulnerability_scanning: z.boolean().optional(),
-		immutable_tags: z.boolean().optional(),
+		// The two cloud-native switches (immutable_tags, vulnerability_scanning) are typed columns
+		// now (#1811), so they are deliberately absent here — `.strip()` below drops them from any
+		// stale payload rather than round-tripping a value nothing reads.
 		// pluggable
 		namespace: z.string().optional(),
 		registry_url: z.string().optional(),
