@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Inventory dispatcher — runs a connection's asset sync by provider and stamps `inventory_synced_at`.
-// All six providers are wired (AWS/Azure/GCP networks+subnets; token clouds regions); the
+// All six providers are wired (AWS/Azure/GCP/Alibaba networks+subnets; token clouds regions, plus
+// Hetzner networks — DigitalOcean and Civo networks are still unwired, see `tokencloud.ts`); the
 // reconciliation sweep + event ingester both route through here. Best-effort: an inventory failure
 // never fails the connect — the sweep retries.
 
