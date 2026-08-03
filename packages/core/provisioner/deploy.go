@@ -1396,14 +1396,26 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
 		argoHost := fmt.Sprintf("argocd.%s", vc.DNS.DomainName)
-		// Each cloud's ingress is gated on ITS OWN certificate output, and the two keys below are
-		// mutually exclusive by construction — only the aws template exports `acm_certificate_arn`,
-		// only the gcp template exports `cloud_dns_managed_certificate_name`. Keying on the output
-		// rather than on vc.Provider is deliberate: this function runs BEFORE BuildFromOutputs, the
-		// certificate is the gate either way, and a provider string that failed to reach here would
-		// silently drop the AWS ingress that has worked for a year.
+		// Each cloud's ingress is gated on the thing that actually gives it TLS, and the two arms are
+		// mutually exclusive by construction.
+		//
+		// AWS still keys on the OUTPUT, deliberately: only the aws template exports
+		// `acm_certificate_arn`, the certificate is the gate either way, and a provider string that
+		// failed to reach here would silently drop the ALB ingress that has worked for a year.
+		//
+		// GCP cannot key on an output any more (#1858). Its TLS now comes from cert-manager, whose
+		// gate is a PREDICATE over several facts (the certificate switch, DNS, the domain, and a
+		// solver that can actually complete a challenge on this cloud) rather than a single tofu
+		// key — so the facts are assembled here rather than waiting for the caller's own
+		// BuildFromOutputs. That call is pure over (outputs, vc) and is made again after this
+		// function returns; building it twice costs nothing and keeps this decision readable from
+		// inside the function that makes it.
+		//
+		// facts.CertManagerEnabled() is the SAME predicate that gates the cert-manager Application,
+		// EnsureCertManagerIssuer, certManagerDecision and argocdURLGates["gcp"] — one predicate, so
+		// "the ingress was rendered" and "something will issue its certificate" cannot disagree.
+		facts := argocd.BuildFromOutputs(outputs, vc)
 		certArn := argocd.ExtractOutput(outputs, "acm_certificate_arn")
-		gkeCert := argocd.ExtractOutput(outputs, "cloud_dns_managed_certificate_name")
 		switch {
 		case certArn != "":
 			installCmd += fmt.Sprintf(
@@ -1441,7 +1453,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 			// resolves nowhere on every other cloud.
 			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 
-		case gkeCert != "":
+		case facts.Provider == "gcp" && facts.CertManagerEnabled():
 			// GKE. There is no controller to install — the Ingress controller lives in the
 			// Google-managed control plane and modules/gke leaves HTTP(S) Load Balancing enabled —
 			// so the whole platform ingress is these values plus, when the WAF switch is on, one
@@ -1451,6 +1463,14 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 			// not ingress-nginx: nginx's L4 pass-through load balancer cannot carry a security
 			// policy at all, so an nginx ingress here would have made the WAF switch permanently
 			// unattachable.
+			//
+			// The Ingress is created here, and cert-manager is installed by ApplyApplications AFTER
+			// this function returns — so for a window there is no `argocd-server-tls` secret. That
+			// window is fail-closed, not plaintext: `kubernetes.io/ingress.allow-http: "false"` in
+			// the rendered values forbids an HTTP frontend, and with no certificate the GCE ingress
+			// controller cannot build an HTTPS one either, so the load balancer serves nothing until
+			// the secret lands. The DNS01 challenge writes a TXT record straight into the zone and
+			// needs no reachable ingress, so the window closes on its own. See GKEArgoServerValues.
 			armorPolicy := argocd.ExtractOutput(outputs, "cloud_armor_policy_name")
 			backendConfig := ""
 			if armorPolicy != "" {
@@ -1475,7 +1495,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 				backendConfig = argocd.GKEBackendConfigName
 				fmt.Fprintf(stdout, "Attaching Cloud Armor policy to the ArgoCD Ingress backend service: %s\n", armorPolicy)
 			}
-			values, vErr := argocd.GKEArgoServerValues(argoHost, gkeCert, backendConfig)
+			values, vErr := argocd.GKEArgoServerValues(argoHost, argocd.CertManagerIssuerName, backendConfig)
 			if vErr != nil {
 				return fmt.Errorf("failed to render the GKE ArgoCD ingress values: %w", vErr)
 			}
@@ -1487,7 +1507,18 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 				return fmt.Errorf("failed to write the GKE ArgoCD ingress values: %w", wErr)
 			}
 			installCmd += " -f " + utils.ShellQuote(valuesPath)
-			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s (GKE `gce` class, certificate %s)\n", argoHost, gkeCert)
+			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s (GKE `gce` class; cert-manager issues its certificate via the %q ClusterIssuer, so the load balancer serves nothing until that certificate lands)\n",
+				argoHost, argocd.CertManagerIssuerName)
+			// The template still BUILDS a Google-managed SSL certificate for the same canvas switch,
+			// and the platform no longer attaches it to anything. Say so where the operator will
+			// read it: an unattached managed certificate never leaves PROVISIONING (Google validates
+			// it by resolving its names to the load balancer it is attached to), and "my certificate
+			// says FAILED_NOT_VISIBLE" is otherwise an unexplainable console reading. Removing the
+			// resource is a template change gated on the offer-parity carrier moving to the
+			// in-cluster column — see the PR for #1858.
+			if gkeCert := facts.GCPManagedCertName; gkeCert != "" {
+				fmt.Fprintf(stdout, "Note: this project also provisioned the Google-managed SSL certificate %q. The platform ingress no longer uses it (cert-manager issues the ingress certificate), so it will stay PROVISIONING/FAILED_NOT_VISIBLE unless you attach it to a load balancer of your own.\n", gkeCert)
+			}
 			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 		}
 	}

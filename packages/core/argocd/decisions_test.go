@@ -407,13 +407,20 @@ func TestArgocdURLSkipReasonNamesTheMissingHalf(t *testing.T) {
 			dropCert:       func(f *InfraFacts) { f.ACMCertificateArn = "" },
 			wantNoCertText: "no managed ingress on this cloud yet",
 		},
+		// The GCP "certificate" is cert-manager since #1858, not the Google-managed one — so the
+		// fully-wired shape is the one CertManagerEnabled() accepts (the switch, DNS, a domain, and
+		// the clouddns solver's identity + zone-name facts), and "drop the certificate" is turning
+		// that switch off. GCPManagedCertName is deliberately absent from `full`: it must not be
+		// what makes the URL installed, and leaving it out proves it is not.
 		"gcp": {
 			full: func() *InfraFacts {
 				return &InfraFacts{Provider: "gcp", DNSEnabled: true, DomainName: "example.com",
-					GCPManagedCertName: "alethia-cert-0c4e1a2b"}
+					ManagedCertificate: true,
+					GCPExternalDNSSA:   "external-dns@alethia-nl.iam.gserviceaccount.com",
+					GCPProjectID:       "alethia-nl", GCPDNSZoneName: "alethia-nl-production-dns"}
 			},
-			dropCert:       func(f *InfraFacts) { f.GCPManagedCertName = "" },
-			wantNoCertText: "no google-managed ssl certificate was provisioned",
+			dropCert:       func(f *InfraFacts) { f.ManagedCertificate = false },
+			wantNoCertText: "cert-manager is not issuing a certificate",
 		},
 	}
 	for cloud, spec := range clouds {

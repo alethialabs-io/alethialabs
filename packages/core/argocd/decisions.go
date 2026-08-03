@@ -432,24 +432,29 @@ var argocdURLGates = map[string]providerDecision{
 		installedReason: "installed — ArgoCD is exposed over the ALB ingress (ACM certificate present).",
 		skippedReason:   awsArgocdURLSkipReason,
 	},
-	// GCP's predicate is its own certificate: installArgoCD renders the `gce` Ingress only when the
-	// GLOBAL Google-managed SSL certificate exists, because `ingress.gcp.kubernetes.io/pre-shared-cert`
-	// is the only way to put TLS on it without a second cert-manager stack, and a GKE Ingress with no
-	// certificate would serve the ArgoCD API over plain HTTP on the public internet.
+	// GCP's predicate is cert-manager, not the Google-managed certificate it used to be (#1858):
+	// installArgoCD renders the `gce` Ingress only when CertManagerEnabled() holds, because the
+	// Ingress asks for its certificate with `cert-manager.io/cluster-issuer` + a `spec.tls[].secretName`
+	// and nothing else on the cluster would ever write that secret. An Ingress rendered without an
+	// issuer serves nothing at all (`allow-http: "false"` forbids the plaintext fallback), so
+	// reporting a URL for it would be reporting a load balancer with no frontend.
+	//
+	// It reads CertManagerEnabled() rather than restating the `and`, so this gate and the thing it
+	// reports on cannot drift — the same reason certManagerDecision reads it.
 	//
 	// The skip reason is SPECIFIC rather than the shared default: on GCP the missing piece is a
-	// switch the operator can turn on (the canvas certificate switch → `cloud_dns_managed_certificate`),
-	// not an absent capability, and "no managed ingress on this cloud yet" would now be a lie.
+	// switch the operator can turn on (the canvas certificate switch → `cloud_dns_managed_certificate`
+	// / `ManagedCertificate`), not an absent capability, and "no managed ingress on this cloud yet"
+	// would now be a lie.
 	//
-	// The DNS conjuncts are DEFENCE IN DEPTH here rather than a live fix, and are stated anyway so
-	// the AWS bug cannot be reintroduced on this cloud by a later edit: `cloud_dns_enabled` is
-	// `config.DNS.Enabled` verbatim and the certificate output is `length(module.cloud_dns) > 0 ?
-	// … : null`, so a non-empty certificate name already implies DNS was on — today.
+	// The DNS conjuncts are DEFENCE IN DEPTH rather than a live fix — CertManagerEnabled() already
+	// requires both — and are stated anyway so the AWS bug cannot be reintroduced on this cloud by a
+	// later edit that loosens the predicate.
 	"gcp": {
 		installed: func(f *InfraFacts) bool {
-			return f.DNSEnabled && f.DomainName != "" && f.GCPManagedCertName != ""
+			return f.DNSEnabled && f.DomainName != "" && f.CertManagerEnabled()
 		},
-		installedReason: "installed — ArgoCD is exposed over a GKE Ingress (`gce` class) fronted by the Google-managed SSL certificate.",
+		installedReason: "installed — ArgoCD is exposed over a GKE Ingress (`gce` class) whose certificate cert-manager issues from Let's Encrypt over an ACME DNS01 challenge.",
 		skippedReason:   gcpArgocdURLSkipReason,
 	},
 	"azure": {
@@ -475,6 +480,13 @@ var argocdURLGates = map[string]providerDecision{
 }
 
 // gcpArgocdURLSkipReason names which half of the GCP gate was missing, same shape as the AWS one.
+//
+// The certificate arm DELEGATES to certManagerSkipReason rather than restating it. Since #1858 the
+// GKE Ingress and cert-manager are gated on one predicate, so they have one set of failure modes —
+// "you left the certificate switch off", "DNS is off", "a Cloudflare connector owns this zone",
+// "the workload-identity or zone-name output is missing" — and writing a second sentence covering
+// them would be a copy that drifts. It is the mistake this file's ClusterSecretStore gates made
+// twice, and the reason certManagerDecision reads the predicate instead of restating it.
 func gcpArgocdURLSkipReason(f *InfraFacts) string {
 	switch {
 	case !f.DNSEnabled:
@@ -482,7 +494,9 @@ func gcpArgocdURLSkipReason(f *InfraFacts) string {
 	case f.DomainName == "":
 		return "no domain is configured — the GKE Ingress has no hostname to serve, so no managed ArgoCD URL exists; set a DNS domain, or access ArgoCD via port-forward + the admin password."
 	}
-	return "no Google-managed SSL certificate was provisioned — turn the certificate switch on (with DNS and a domain) to expose ArgoCD over a GKE Ingress; until then use port-forward + the admin password."
+	return fmt.Sprintf(
+		"cert-manager is not issuing a certificate for this project, and the GKE Ingress is not published without one — it sets kubernetes.io/ingress.allow-http: \"false\", so there is no plaintext fallback to serve in the meantime. %s Until then, access ArgoCD via port-forward + the admin password.",
+		certManagerSkipReason(f))
 }
 
 // awsArgocdURLSkipReason names which half of the AWS gate was missing. The certificate arm

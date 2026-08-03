@@ -89,8 +89,15 @@ type InfraFacts struct {
 	// project's certificate switch (root output `cloud_dns_managed_certificate_name`; null when the
 	// switch is off, or when a pluggable DNS connector means the zone is not ours). A NAME, because
 	// `ingress.gcp.kubernetes.io/pre-shared-cert` takes a comma-separated list of certificate names
-	// and nothing else — an id or a self link there is rejected. It gates the ArgoCD ingress on GKE
-	// exactly as ACMCertificateArn gates it on AWS: no certificate ⇒ no managed ingress ⇒ no URL.
+	// and nothing else — an id or a self link there is rejected.
+	//
+	// IT NO LONGER GATES ANYTHING (#1858). The GKE platform ingress gets its TLS from cert-manager,
+	// like every other cloud's managed_certificate switch, so `CertManagerEnabled()` is what decides
+	// whether that ingress renders and this name is attached to nothing. It is still read — and only
+	// read — so installArgoCD can TELL the operator that the certificate their switch created is now
+	// unattached and will therefore sit in PROVISIONING/FAILED_NOT_VISIBLE. Dropping the fact would
+	// turn that into a silent one. It goes when the resource does, in the lane that moves the
+	// `dns:managed_certificate` offer-parity carrier onto the in-cluster issuer.
 	GCPManagedCertName string
 	// GCPArmorPolicy is the Cloud Armor security policy the template built for the project's WAF
 	// switch (root output `cloud_armor_policy_name`, null when the switch is off). A REFERENCE, not

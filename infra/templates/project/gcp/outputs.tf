@@ -144,8 +144,12 @@ output "cloud_dns_zone_name" {
 #
 # The NAME is the load-bearing one: `ingress.gcp.kubernetes.io/pre-shared-cert` takes a
 # comma-separated list of GLOBAL certificate NAMES, not ids or self links.
+#
+# ⚠ The PLATFORM Ingress no longer attaches it (#1858) — cert-manager issues that certificate now,
+# so this name is for a load balancer of your own, and the runner reads it only to tell you the
+# certificate is unattached. See cloud-dns.tf.
 output "cloud_dns_managed_certificate_name" {
-  description = "Name of the Google-managed SSL certificate — the value the platform Ingress's ingress.gcp.kubernetes.io/pre-shared-cert annotation takes. Null when no certificate was requested; the ArgoCD ingress (and therefore the managed ArgoCD URL) renders only when it is present."
+  description = "Name of the Google-managed SSL certificate, for a pre-shared-cert annotation on a load balancer of your own. Null when no certificate was requested. The platform's ArgoCD ingress does NOT use it — cert-manager issues that certificate in-cluster — so an unattached certificate here stays in PROVISIONING."
   value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].managed_certificate_name : null
 }
 

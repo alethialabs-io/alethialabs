@@ -127,7 +127,12 @@ run "an_unknown_armor_action_is_refused" {
 
 # `ingress.gcp.kubernetes.io/pre-shared-cert` takes NAMES, not ids or self links, which is why the
 # module's long-standing `managed_certificate_id` was not enough on its own.
-run "a_managed_certificate_exports_the_name_the_ingress_annotation_takes" {
+#
+# ⚠ The PLATFORM ingress no longer consumes either (#1858) — it gets its TLS from cert-manager. The
+# assertions below are unchanged and still worth keeping: they bound the name a BYO attachment has
+# to quote, and the 63-char and SAN-set traps are properties of the resource, not of who attaches
+# it. What they no longer prove is that the ArgoCD ingress works.
+run "a_managed_certificate_exports_the_name_a_pre_shared_cert_annotation_takes" {
   command = plan
 
   variables {
@@ -166,6 +171,10 @@ run "a_managed_certificate_exports_the_name_the_ingress_annotation_takes" {
   # FAILED_NOT_VISIBLE, `allow-http: "false"` removed the fallback, and the ingress served nothing
   # while argocdURLGates["gcp"] reported it installed.
   #
+  # That whole-certificate wedge is one of the three reasons the ArgoCD ingress moved to cert-manager
+  # (#1858) — and it is why the SAN set stays pinned rather than being widened now that the platform
+  # has stopped attaching this certificate. A name added here still cannot resolve.
+  #
   # Asserting the exact set rather than "contains argocd." is deliberate: an extra unserved name is
   # the same failure as the wrong name, since ONE unresolvable SAN holds the whole certificate.
   assert {
@@ -174,10 +183,14 @@ run "a_managed_certificate_exports_the_name_the_ingress_annotation_takes" {
   }
 }
 
-# DNS on, certificate off: the zone exists and the certificate does not, so the name must be null
-# and the ArgoCD ingress must not render. This is the case that distinguishes "no certificate" from
-# "no DNS" — without it a template that never created a certificate would pass run 3 above by
-# failing it, and pass nothing else.
+# DNS on, certificate off: the zone exists and the certificate does not, so the name must be null.
+# This is the case that distinguishes "no certificate" from "no DNS" — without it a template that
+# never created a certificate would pass run 3 above by failing it, and pass nothing else.
+#
+# It used to also read "and the ArgoCD ingress must not render", which this run never proved and
+# which #1858 made false besides: the ingress is gated on cert-manager now, and the Go-side gate is
+# asserted against what installArgoCD actually emits in
+# TestGKEArgocdURLAndWAFDecisionsMatchWhatInstallArgoCDEmits.
 run "no_certificate_means_a_null_name_even_with_dns_on" {
   command = plan
 

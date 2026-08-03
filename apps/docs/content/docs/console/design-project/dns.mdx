@@ -59,6 +59,13 @@ When enabled, the platform provisions a TLS certificate automatically:
 
 Certificates are renewed automatically before expiration.
 
+<Callout type="info">
+On GCP the Google-managed certificate is provisioned for you to attach to a load balancer of your
+own. Alethia's own ArgoCD ingress does not use it — it takes its certificate from `cert-manager`,
+described below. A Google-managed certificate stays in `PROVISIONING` until you attach it to a load
+balancer that serves every name on it.
+</Callout>
+
 ### In-cluster certificates
 
 On AWS, GCP and Azure the same toggle also installs `cert-manager` in the cluster and creates a

@@ -36,18 +36,23 @@ locals {
   local.certificate_suffix)
 }
 
-# A GLOBAL Google-managed SSL certificate for the hostnames the platform actually serves.
+# A GLOBAL Google-managed SSL certificate, for a load balancer of the operator's own.
+#
+# ⚠ NOTHING IN THE PLATFORM ATTACHES IT SINCE #1858. The GKE ArgoCD Ingress used to, through
+# `ingress.gcp.kubernetes.io/pre-shared-cert`; it now takes its certificate from cert-manager over
+# ACME DNS01 — one TLS mechanism across aws/gcp/azure instead of a per-cloud special case, no
+# whole-certificate wedge when a single SAN does not resolve, no replacement when the SAN set
+# changes, and wildcards possible. See the caller (cloud-dns.tf) for why the resource is still here.
 #
 # Google provisions a managed certificate by checking that EVERY domain on it resolves to the load
 # balancer the certificate is attached to. A name that never resolves does not degrade the
 # certificate — it holds the whole thing in FAILED_NOT_VISIBLE, and every other name on it with it.
+# Unattached, that check can never pass at all, which is the state this certificate is now in unless
+# you put it in front of something yourself.
 #
-# That is why the apex is not here by default. This module creates a zone and a certificate and NO
-# record sets; the only records that ever appear are the ones external-dns publishes from an
-# Ingress, and today that is `argocd.<domain>`. A certificate issued for the bare apex could
-# therefore never go ACTIVE, and because the GKE Ingress sets `allow-http: "false"` there is no
-# plaintext fallback either — the ingress would serve nothing, permanently, while the ArgoCD-URL
-# decision reported it installed.
+# That is also why the apex is not here by default. This module creates a zone and a certificate and
+# NO record sets; the only records that ever appear are the ones external-dns publishes from an
+# Ingress, and today that is `argocd.<domain>`.
 resource "google_compute_managed_ssl_certificate" "cert" {
   count = var.managed_certificate ? 1 : 0
 

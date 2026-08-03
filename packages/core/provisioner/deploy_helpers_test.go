@@ -613,12 +613,159 @@ func TestArgocdURLAndWAFDecisionsMatchWhatInstallArgoCDEmits(t *testing.T) {
 	}
 }
 
+// TestGKEArgocdURLAndWAFDecisionsMatchWhatInstallArgoCDEmits is the same anti-drift assertion as
+// the AWS one above, for the cloud whose gate just MOVED (#1858).
+//
+// It is a separate test rather than another dimension of that matrix because the two clouds are
+// gated on different KINDS of thing and one loop would have to fake both: AWS's gate is a single
+// tofu output, GCP's is a predicate over four facts (the certificate switch, DNS, the domain, and
+// whether cert-manager has a solver that can complete a challenge here). Sweeping all four is the
+// point — a gate that mirrors the emitter on the happy path and diverges on "the switch is on but
+// the workload identity is missing" is precisely the AWS bug this invariant exists to prevent, and
+// that combination is now REACHABLE on GCP: ManagedCertificate rides straight through
+// provider_config, independent of every output.
+//
+// Both directions are asserted, and the WAF half comes free: wafAttachments["gcp"] reads the
+// argocd-url decision, so a drifting ingress gate would silently drag the Cloud Armor claim with it.
+func TestGKEArgocdURLAndWAFDecisionsMatchWhatInstallArgoCDEmits(t *testing.T) {
+	const policy = "alethia-nl-production-armor-policy"
+
+	decisionStatus := func(t *testing.T, f *argocd.InfraFacts, service string) string {
+		t.Helper()
+		for _, d := range argocd.InfraServiceDecisions(f) {
+			if d.Service == service {
+				return d.Status
+			}
+		}
+		t.Fatalf("no %q decision was produced", service)
+		return ""
+	}
+
+	// An equivalence assertion is satisfied by two sides that are both always false, and "no
+	// combination ever rendered an ingress" is a plausible way for this to rot — so count the
+	// positives and demand at least one of each below.
+	var sawIngress, sawWAF int
+
+	for _, dnsEnabled := range []bool{true, false} {
+		for _, domain := range []string{"example.com", ""} {
+			for _, managedCert := range []bool{true, false} {
+				for _, solverFacts := range []bool{true, false} {
+					for _, armor := range []string{policy, ""} {
+						name := fmt.Sprintf("dns=%t domain=%q cert=%t solver=%t armor=%t",
+							dnsEnabled, domain, managedCert, solverFacts, armor != "")
+						t.Run(name, func(t *testing.T) {
+							resetDeploySeams(t)
+							executeCommandWithOutput = func(string, string, []string) (string, error) { return "existing-auth", nil }
+							var commands []string
+							executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+								commands = append(commands, command)
+								return nil
+							}
+
+							outputs := map[string]interface{}{}
+							if solverFacts {
+								outputs = gkeCertManagerOutputs(nil)
+							}
+							if armor != "" {
+								outputs["cloud_armor_policy_name"] = armor
+							}
+							vc := &types.ProjectConfig{
+								Provider: "gcp",
+								DNS: types.ProjectDNSConfig{
+									Enabled: dnsEnabled, DomainName: domain, ManagedCertificate: managedCert,
+								},
+							}
+							if err := installArgoCD(context.Background(), vc, outputs, &PlanResult{}, io.Discard, io.Discard); err != nil {
+								t.Fatalf("installArgoCD: %v", err)
+							}
+							if len(commands) == 0 {
+								t.Fatal("no commands executed")
+							}
+							install := commands[len(commands)-1]
+
+							// The facts the runner would build from the same deploy — written out
+							// rather than re-read from BuildFromOutputs, so the two sides of the
+							// comparison stay independent.
+							f := &argocd.InfraFacts{
+								Provider: "gcp", DNSEnabled: dnsEnabled, DomainName: domain,
+								ManagedCertificate: managedCert, GCPArmorPolicy: armor,
+							}
+							if solverFacts {
+								f.GCPExternalDNSSA = "external-dns@alethia-nl.iam.gserviceaccount.com"
+								f.GCPProjectID = "alethia-nl"
+								f.GCPDNSZoneName = "alethia-nl-production-dns"
+							}
+
+							// GKE's ingress is a values FILE, so "-f" on the helm command IS the
+							// emission — there is no `--set server.ingress.enabled=true` to grep.
+							emittedIngress := strings.Contains(install, " -f ")
+							if emittedIngress {
+								sawIngress++
+							}
+							reportedURL := decisionStatus(t, f, "argocd-url") == "installed"
+							if emittedIngress != reportedURL {
+								t.Errorf("argocd-url decision (%t) disagrees with the emitted ingress (%t)\n%s",
+									reportedURL, emittedIngress, install)
+							}
+
+							// The Cloud Armor attach is the BackendConfig applied BEFORE helm, not
+							// an annotation on the install command — so it is looked for across
+							// every command rather than in the last one.
+							emittedWAF := false
+							for _, c := range commands {
+								if strings.Contains(c, "backendconfig.yaml") {
+									emittedWAF = true
+								}
+							}
+							if emittedWAF {
+								sawWAF++
+							}
+							reportedWAF := decisionStatus(t, f, "waf") == "installed"
+							if emittedWAF != reportedWAF {
+								t.Errorf("waf decision (%t) disagrees with the applied BackendConfig (%t)\n%v",
+									reportedWAF, emittedWAF, commands)
+							}
+						})
+					}
+				}
+			}
+		}
+	}
+
+	if sawIngress == 0 {
+		t.Error("no combination rendered a GKE ingress — the equivalence above is vacuously true")
+	}
+	if sawWAF == 0 {
+		t.Error("no combination applied a BackendConfig — the WAF equivalence above is vacuously true")
+	}
+}
+
+// gkeCertManagerOutputs is the tofu-output shape a GCP deploy has when cert-manager can actually
+// issue: the external-dns workload identity cert-manager's clouddns solver reuses, the project id,
+// and the zone NAME the solver needs because that grant is zone-scoped. Together with
+// DNS.ManagedCertificate on the config they are exactly InfraFacts.CertManagerEnabled(), which is
+// the gate the GKE ingress moved onto in #1858.
+func gkeCertManagerOutputs(extra map[string]interface{}) map[string]interface{} {
+	outputs := map[string]interface{}{
+		"external_dns_service_account": "external-dns@alethia-nl.iam.gserviceaccount.com",
+		"gcp_project_id":               "alethia-nl",
+		"cloud_dns_zone_name":          "alethia-nl-production-dns",
+	}
+	for k, v := range extra {
+		outputs[k] = v
+	}
+	return outputs
+}
+
 // TestInstallArgoCDGKEIngress is the GCP half of "the canvas switch reaches something".
 //
 // GKE needs no ingress CONTROLLER — Google's runs in the managed control plane — so unlike AWS
-// there is no Application to assert. What must be proven instead is that the two references the
-// template now exports actually leave the runner: the Google-managed certificate onto a `gce`
-// Ingress, and the Cloud Armor policy onto a BackendConfig bound to the ArgoCD server Service.
+// there is no Application to assert. What must be proven instead is that the ingress leaves the
+// runner asking for the RIGHT certificate: since #1858 that is a cert-manager one
+// (`cert-manager.io/cluster-issuer` + a `spec.tls` entry the ingress-shim turns into a Certificate),
+// NOT the Google-managed certificate behind `ingress.gcp.kubernetes.io/pre-shared-cert`. The Cloud
+// Armor half is unchanged and independent of how TLS is obtained: a policy onto a BackendConfig
+// bound to the ArgoCD server Service.
 //
 // The values reach helm as a FILE rather than `--set` flags, because the backend-config
 // annotation's value is the JSON document {"default":"argocd-server"} and helm's --set parser
@@ -630,7 +777,7 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 
 	// run drives installArgoCD with the given outputs and returns every command it issued plus the
 	// contents of the values file the last helm command referenced (empty when it referenced none).
-	run := func(t *testing.T, outputs map[string]interface{}) (cmds []string, values string, url string) {
+	run := func(t *testing.T, managedCert bool, outputs map[string]interface{}) (cmds []string, values string, url string) {
 		t.Helper()
 		resetDeploySeams(t)
 		executeCommandWithOutput = func(string, string, []string) (string, error) { return "existing-auth", nil }
@@ -652,7 +799,9 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 		result := &PlanResult{}
 		vc := &types.ProjectConfig{
 			Provider: "gcp",
-			DNS:      types.ProjectDNSConfig{Enabled: true, DomainName: "example.com"},
+			DNS: types.ProjectDNSConfig{
+				Enabled: true, DomainName: "example.com", ManagedCertificate: managedCert,
+			},
 		}
 		if err := installArgoCD(context.Background(), vc, outputs, result, io.Discard, io.Discard); err != nil {
 			t.Fatalf("installArgoCD: %v", err)
@@ -661,22 +810,31 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 	}
 
 	t.Run("certificate + policy: gce ingress, BackendConfig applied before helm", func(t *testing.T) {
-		cmds, values, url := run(t, map[string]interface{}{
+		cmds, values, url := run(t, true, gkeCertManagerOutputs(map[string]interface{}{
 			"cloud_dns_managed_certificate_name": cert,
 			"cloud_armor_policy_name":            policy,
-		})
+		}))
 		if url != "https://argocd.example.com" {
 			t.Errorf("ArgocdURL = %q", url)
 		}
 		for _, want := range []string{
 			"ingressClassName: gce",
 			"hostname: argocd.example.com",
-			`ingress.gcp.kubernetes.io/pre-shared-cert: "` + cert + `"`,
+			`cert-manager.io/cluster-issuer: "` + argocd.CertManagerIssuerName + `"`,
+			"secretName: " + argocd.GKEArgoServerTLSSecret,
+			// The window before cert-manager exists is fail-closed on this annotation alone.
+			`kubernetes.io/ingress.allow-http: "false"`,
 			`cloud.google.com/backend-config: '{"default":"` + argocd.GKEBackendConfigName + `"}'`,
 		} {
 			if !strings.Contains(values, want) {
 				t.Errorf("helm values missing %q:\n%s", want, values)
 			}
+		}
+		// The Google-managed certificate must not come along for the ride. The project still HAS
+		// one (the output above is set) — the point of this lane is that the ingress stopped
+		// attaching it, so two TLS mechanisms cannot both be live on one Ingress.
+		if strings.Contains(values, "pre-shared-cert") {
+			t.Errorf("the ingress still attaches the Google-managed certificate:\n%s", values)
 		}
 		// ORDER is the point, not merely presence: the BackendConfig must exist before the chart
 		// creates the Service that names it, or the load balancer is programmed once with no
@@ -699,12 +857,12 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 	})
 
 	t.Run("WAF off: ingress intact, no BackendConfig anywhere", func(t *testing.T) {
-		cmds, values, url := run(t, map[string]interface{}{
+		cmds, values, url := run(t, true, gkeCertManagerOutputs(map[string]interface{}{
 			"cloud_dns_managed_certificate_name": cert,
 			// null is the shape tofu emits when cloud_armor_enabled is false; it must behave
 			// exactly like an absent key.
 			"cloud_armor_policy_name": nil,
-		})
+		}))
 		if url != "https://argocd.example.com" {
 			t.Errorf("the ingress must still be configured with the WAF off, ArgocdURL = %q", url)
 		}
@@ -721,30 +879,52 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 		}
 	})
 
-	t.Run("no certificate: no ingress, no URL, no BackendConfig", func(t *testing.T) {
-		// A Cloud Armor policy with no certificate must NOT produce a half-configured ingress:
-		// without TLS the ArgoCD API would be served over plain HTTP, so the whole block is off.
-		cmds, values, url := run(t, map[string]interface{}{"cloud_armor_policy_name": policy})
+	// The certificate switch is off, so nothing issues. Note the Google-managed certificate name is
+	// deliberately PRESENT in the outputs: before #1858 that alone rendered the ingress, and this
+	// case is what stops that gate creeping back.
+	t.Run("certificate switch off: no ingress, no URL, no BackendConfig", func(t *testing.T) {
+		cmds, values, url := run(t, false, gkeCertManagerOutputs(map[string]interface{}{
+			"cloud_dns_managed_certificate_name": cert,
+			"cloud_armor_policy_name":            policy,
+		}))
 		if url != "" {
-			t.Errorf("ArgocdURL = %q, want empty with no certificate", url)
+			t.Errorf("ArgocdURL = %q, want empty with no certificate issuer", url)
 		}
 		if values != "" {
-			t.Errorf("rendered ingress values with no certificate:\n%s", values)
+			t.Errorf("rendered ingress values with nothing to issue its certificate:\n%s", values)
 		}
 		for _, c := range cmds {
 			if strings.Contains(c, "backendconfig.yaml") {
-				t.Errorf("applied a BackendConfig for an ingress that was never certificated: %s", c)
-			}
-			if strings.HasPrefix(c, "helm upgrade --install argo-cd") && strings.Contains(c, " -f ") {
-				t.Errorf("passed ingress values with no certificate: %s", c)
+				t.Errorf("applied a BackendConfig for an ingress that was never rendered: %s", c)
 			}
 		}
 	})
 
-	// The AWS path must be completely unaffected by the new branch: its outputs are disjoint from
-	// GCP's, and a deploy carrying an ACM certificate must still get the ALB `--set` chain.
+	// The switch is ON and the solver's facts are MISSING — the shape that used to be invisible.
+	// cert-manager cannot write a challenge record without the external-dns identity and the
+	// zone-scoped grant's zone NAME, so nothing would ever populate the TLS secret; rendering the
+	// Ingress anyway would publish a load balancer that serves nothing, forever, while the console
+	// reported an ArgoCD URL. A Cloud Armor policy must not drag it into existence either.
+	t.Run("issuer unsatisfiable: no ingress even with the switch on and a policy built", func(t *testing.T) {
+		cmds, values, url := run(t, true, map[string]interface{}{
+			"cloud_dns_managed_certificate_name": cert,
+			"cloud_armor_policy_name":            policy,
+		})
+		if url != "" || values != "" {
+			t.Errorf("rendered an ingress cert-manager could never issue for (url=%q):\n%s", url, values)
+		}
+		for _, c := range cmds {
+			if strings.Contains(c, "backendconfig.yaml") {
+				t.Errorf("applied a BackendConfig for an ingress that was never rendered: %s", c)
+			}
+		}
+	})
+
+	// The AWS path must be completely unaffected by the new branch: its gate is still its own ACM
+	// output, and a deploy carrying one must still get the ALB `--set` chain — even though these
+	// facts would also satisfy cert-manager, since the arms are ordered and mutually exclusive.
 	t.Run("aws is untouched by the gcp branch", func(t *testing.T) {
-		cmds, values, _ := run(t, map[string]interface{}{
+		cmds, values, _ := run(t, true, map[string]interface{}{
 			"acm_certificate_arn": "arn:aws:acm:us-east-1:111111111111:certificate/abc",
 		})
 		if values != "" {
