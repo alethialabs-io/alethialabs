@@ -177,10 +177,22 @@ type ProjectDNSConfig struct {
 	Placement
 	Enabled bool `json:"enabled"`
 	// Pluggable provider slug (connectors.slug); "" / "native" = cloud-native DNS.
-	Provider       string         `json:"provider"`
-	ZoneID         string         `json:"zone_id"`
-	DomainName     string         `json:"domain_name"`
-	ProviderConfig map[string]any `json:"provider_config"`
+	Provider   string `json:"provider"`
+	ZoneID     string `json:"zone_id"`
+	DomainName string `json:"domain_name"`
+	// ManagedCertificate / WafEnabled are the canvas's own two DNS switches. Each cloud
+	// fronts them with a differently-named tfvar (acm_certificate_enable, cloud_armor_enabled,
+	// azure_waf_enabled, …), so the per-cloud provider ORs the typed field into the local it
+	// already derives from ProviderConfig — the JSONB key stays the per-cloud override and the
+	// typed field is the product's answer. Both are `omitempty`: absent-when-false keeps the
+	// byte-locked config-snapshot fixtures green.
+	//
+	// WafEnabled is spelled Waf, not WAF, on purpose: check-offer-parity's carrier trace derives
+	// the field name from the offer key (`waf_enabled` → `WafEnabled`), and a Go-idiomatic
+	// WAFEnabled would make the trace find nothing and silently report the switch as dropped.
+	ManagedCertificate bool           `json:"managed_certificate,omitempty"`
+	WafEnabled         bool           `json:"waf_enabled,omitempty"`
+	ProviderConfig     map[string]any `json:"provider_config"`
 }
 
 // ProjectObservabilityConfig — pluggable-only component (no cloud-native default).

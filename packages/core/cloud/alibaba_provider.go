@@ -27,13 +27,14 @@ func (p *alibabaProvider) RequiredCLIs() []string {
 }
 
 func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
-	managedCert := false
+	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
+	managedCert := config.DNS.ManagedCertificate
 	if v, ok := config.DNS.ProviderConfig["managed_certificate"]; ok {
 		if b, ok := v.(bool); ok {
 			managedCert = b
 		}
 	}
-	wafEnabled := false
+	wafEnabled := config.DNS.WafEnabled
 	if v, ok := config.DNS.ProviderConfig["application_waf"]; ok {
 		if b, ok := v.(bool); ok {
 			wafEnabled = b
