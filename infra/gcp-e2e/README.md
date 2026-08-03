@@ -37,6 +37,8 @@ security model is **defense by guardrail**, and every guardrail is asserted in `
 | File | What |
 |---|---|
 | `versions.tf` / `provider.tf` | Pinned `hashicorp/google ~> 6.0`; provider + `data.google_project.this`. |
+| `backend.tf` / `backend.hcl.example` | Partial `gcs` backend — the bucket is supplied at init time, not hardcoded. |
+| `bootstrap/` | The one-resource stack that creates that bucket. Applied **first**. |
 | `apis.tf` | Enables the federation + estate + billing APIs up-front. |
 | `variables.tf` | `project_id`, `region` (validated ≠ prod), `github_repo`, `e2e_github_ref`, WIF ids, `billing_account_id`, `e2e_monthly_budget_usd`. |
 | `e2e-nightly.tf` | WIF pool + ref-bound OIDC provider + provisioner SA + estate roles + `workloadIdentityUser` binding. |
@@ -44,16 +46,42 @@ security model is **defense by guardrail**, and every guardrail is asserted in `
 | `outputs.tf` | `e2e_gcp_wif_provider`, `e2e_gcp_sa_email`, budget topic, project number. |
 | `checks.tf` | Invariant `check` blocks (ref-bound condition, `container.admin` bound, budget cost-capped + project-scoped, region ≠ prod). |
 
+## Remote state
+
+State lives in a **versioned GCS bucket** in the same dedicated e2e project as the identity it
+describes — the GCP analogue of `infra/aws-oidc`'s S3 backend, and for the same reason: what this
+stack owns (a WIF pool and provider, the provisioner SA and its project role bindings, a Pub/Sub
+topic, a **billing budget**) has to be imported back resource by resource if the state is lost, and
+only the machine holding the file can apply at all.
+
+The backend is **partial** (`backend "gcs" {}`), so the bucket is supplied at init time from a
+gitignored `backend.hcl`. The admin's Application Default Credentials authenticate it — no static
+state keys. The GCS backend locks natively; there is no lock table to configure.
+
+`bootstrap/` creates the bucket and nothing else: versioned, uniform bucket-level access,
+public access prevented, `prevent_destroy`. It keeps its own state in that bucket after one
+two-phase init. Migration of an existing local state is a maintainer act, written out in
+[`docs/testing/e2e-state-migration.md`](../../docs/testing/e2e-state-migration.md).
+
 ## Enable the GCP nightly (maintainer)
 
 **Real `tofu apply` is maintainer-gated** — agents never apply this (it mints broad IAM). Run it with
 an admin identity into a **dedicated e2e project**:
 
 ```bash
+# 0. FIRST TIME ONLY — create the state bucket. This stack's state is remote (see "Remote state"),
+#    and a stack cannot keep its state in a bucket it has not created yet.
+cd infra/gcp-e2e/bootstrap
+cp terraform.tfvars.example terraform.tfvars   # project_id must match the parent stack's
+tofu init -backend=false && tofu apply
+cp backend.hcl.example backend.hcl && $EDITOR backend.hcl   # bucket = `tofu output -raw state_bucket`
+tofu init -backend-config=backend.hcl -migrate-state
+
 cd infra/gcp-e2e
 cp terraform.tfvars.example terraform.tfvars   # set project_id + billing_account_id (+ repo/region)
+cp backend.hcl.example backend.hcl             # same bucket, prefix gcp-e2e
 
-tofu init
+tofu init -backend-config=backend.hcl
 tofu apply    # creates the WIF pool/provider + SA + estate roles + budget in the dedicated project
 
 # Publish the two repo Actions VARIABLES the nightly needs. Set the SA one FIRST: only the

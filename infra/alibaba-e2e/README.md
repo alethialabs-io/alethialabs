@@ -73,16 +73,47 @@ budget). So the cost ceiling is enforced **out-of-band**:
 ## Apply (once, with an admin identity)
 
 This is a bootstrap: it creates RAM entities, so it needs an admin Alibaba identity the first time.
-State is **local** (a one-time bootstrap; gitignored) — wire an `oss` backend if you prefer.
 
 ```bash
 # Authenticate an admin identity (env keys, an `aliyun` CLI profile, or a RAM session):
 export ALICLOUD_ACCESS_KEY=...  ALICLOUD_SECRET_KEY=...  # (admin — used only to CREATE the RAM entities)
 
+# 0. FIRST TIME ONLY — create the state bucket. This stack's state is remote (see "Remote state"),
+#    and a stack cannot keep its state in a bucket it has not created yet.
+cd infra/alibaba-e2e/bootstrap
+cp terraform.tfvars.example terraform.tfvars   # region must match backend.hcl
+tofu init -backend=false && tofu apply
+cp backend.hcl.example backend.hcl && $EDITOR backend.hcl   # bucket = `tofu output -raw state_bucket`
+tofu init -backend-config=backend.hcl -migrate-state
+
+cd infra/alibaba-e2e
 cp terraform.tfvars.example terraform.tfvars   # edit if repo/region differ
-tofu init
+cp backend.hcl.example backend.hcl             # same bucket, prefix alibaba-e2e
+tofu init -backend-config=backend.hcl
 tofu apply
 ```
+
+## Remote state
+
+State lives in a **versioned OSS bucket** in the same Alibaba account as the RAM entities it
+describes — the Alibaba analogue of `infra/aws-oidc`'s S3 backend. The backend is **partial**
+(`backend "oss" {}`), so the bucket is supplied at init time from a gitignored `backend.hcl`; the
+admin's ambient Alibaba credentials authenticate it, so there are no separate state keys.
+
+`region` in `backend.hcl` **must** match the bucket's region — the backend derives its endpoint from
+that value (`oss-<region>.aliyuncs.com`), so a mismatch reads as *bucket not found* rather than as a
+redirect. `prefix` is set explicitly because the backend's default is the literal `env:`.
+
+`bootstrap/` creates the bucket and nothing else: versioned, AES256 server-side encryption, private
+ACL, public access blocked, `prevent_destroy`.
+
+**Known gap — no state locking.** The OSS backend locks only when it is also given a TableStore
+instance and table, and this repo deliberately does not stand one up for a stack exactly one
+maintainer ever applies by hand. If a second operator is ever given these credentials, add
+`tablestore_endpoint` + `tablestore_table` to `backend.hcl` and the matching resources to
+`bootstrap/` **before** they run anything — and mind the 16-character cap on a TableStore instance
+name (#1884). Migration of an existing local state:
+[`docs/testing/e2e-state-migration.md`](../../docs/testing/e2e-state-migration.md).
 
 ## Enable the Alibaba nightly (maintainer)
 
