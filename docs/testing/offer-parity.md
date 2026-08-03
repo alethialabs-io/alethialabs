@@ -94,7 +94,7 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
-| `nosql:point_in_time_recovery` | — | 🟡 | ⚠️ | 🟡 | · | · |
+| `nosql:point_in_time_recovery` | — | 🟡 | ⚠️ #1838 | 🟡 | · | · |
 | `queue:ordered` | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | · | · |
 | `registry:immutable_tags` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
 | `registry:vulnerability_scanning` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
@@ -174,7 +174,19 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `bucket:encryption_enabled` | gcp | Cloud Storage encrypts every object at rest and the setting cannot be turned off — this switch is informational on Google Cloud. |
 | `bucket:encryption_enabled` | azure | Azure Storage encrypts every blob at rest and the setting cannot be turned off — this switch is informational on Azure. |
 | `network:single_nat_gateway` | hetzner | Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone. |
-| `nosql:point_in_time_recovery` | alibaba | Tablestore has no point-in-time recovery setting on the table — Alibaba's restore story is Cloud Backup, a separately-billed service whose restore points are scheduled backups rather than any instant you choose. |
+| `nosql:point_in_time_recovery` | alibaba | Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do. |
+
+## Reviewed branch-guard wirings
+
+A ⚠️ cell means the switch decides whether a key appears, but the code cannot show that the key *is*
+the feature the switch names. These are the ones a person has read and confirmed. They are not
+exclusions — the cloud does honor the offer — and not debt. Every other ⚠️ cell is on the baseline
+above with an issue; a ⚠️ cell in neither list fails the build.
+
+| Offer | Cloud | What was checked |
+|---|---|---|
+| `cache:multi_az` | gcp | Choosing multi-AZ puts the cache on Memorystore's replicated STANDARD_HA tier, which is how zone redundancy is bought on Google Cloud. |
+| `secret:generate` | aws | Asking Alethia to generate a secret sends the length and special-character rules to AWS; supplying your own sends it as a manual value instead. |
 
 ## Known gaps on the baseline
 
@@ -216,6 +228,7 @@ Only a cell that was measured and came out honored is asked for its entry back.
 | `bucket:encryption_enabled` | alibaba | 🚫 `no-carrier` | #1814 | Encryption at rest is not requested for Alibaba OSS buckets — the setting never reaches the plan, so the bucket is created with whatever OSS applies by default. |
 | `dns:enabled` | hetzner | 🚫 `no-carrier` | #1816 | DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing. |
 | `network:provision_network` | hetzner | 🚫 `no-carrier` | #1816 | A Hetzner project always creates its own network — attaching an existing one is not supported yet. |
+| `nosql:point_in_time_recovery` | azure | ⚠️ `gated-carrier` | #1838 | Point-in-time restore is not enabled on Cosmos DB — turning it on enables Synapse analytical storage instead, which is a different, separately-billed feature. |
 
 ---
 
