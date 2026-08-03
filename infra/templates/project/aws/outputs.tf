@@ -157,8 +157,11 @@ output "acm_certificate_arn" {
 }
 
 # WAF
+# Read by the runner (argocd.InfraFacts.WAFWebACLArn) and attached to the ArgoCD ALB ingress via the
+# alb.ingress.kubernetes.io/wafv2-acl-arn annotation. REGIONAL scope, which is the only scope an ALB
+# can associate with — the CloudFront-scoped ACL next door is deliberately not exported here.
 output "waf_webacl_arn" {
-  description = "RDS Credentials kms key arn"
+  description = "Regional WAFv2 web ACL ARN for the application WAF — the ALB ingress associates with it"
   value       = var.application_waf_enabled ? module.wafv2_application.webacl_arn : null
 }
 

@@ -446,3 +446,112 @@ func TestDeriveExpectedArgoApps_EmptyMetadataFails(t *testing.T) {
 		t.Fatal("want an error for malformed execution_metadata")
 	}
 }
+
+// ── the provider-keyed infraServiceArgoApps map ──────────────────────────────────
+
+// t2AllProviders lists the provider keys the derivation accepts, sorted, so the guards below
+// enumerate the SAME set DeriveExpectedArgoApps will refuse to answer for.
+func t2AllProviders() []string {
+	out := make([]string, 0, len(t2ProviderTable))
+	for k := range t2ProviderTable {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Every cloud whose "ingress" decision is INSTALLED must name the Application it renders.
+// This is the metricsServerProviders lesson (#1722) applied to the seam the four per-cloud
+// ingress lanes are about to land on: the decision lives in packages/core, the Application
+// name lives in this module, they are edited in different PRs, and a cloud that installs a
+// controller nobody named here would make every run on that cloud wait out the full ArgoCD
+// timeout for an app that was never rendered.
+//
+// It reads the REAL decision (not a copy of the table), so a lane cannot satisfy it by
+// editing a list.
+func TestInstalledIngressDecisionsNameAnApplication(t *testing.T) {
+	for _, provider := range t2AllProviders() {
+		facts := &argocd.InfraFacts{Provider: provider}
+		for _, d := range argocd.InfraServiceDecisions(facts) {
+			if d.Service != "ingress" || d.Status != "installed" {
+				continue
+			}
+			app, ok := argoAppForInfraService(provider, "ingress")
+			if !ok {
+				t.Errorf("provider %q installs an ingress controller (%s) but infraServiceArgoApps[\"ingress\"] has no entry for it — add the Application name it renders, or the T2 run waits out the full ArgoCD timeout for an app nobody created", provider, d.Reason)
+				continue
+			}
+			if app == "" {
+				t.Errorf("provider %q resolves to an EMPTY ingress Application name", provider)
+			}
+		}
+	}
+	// AWS is the entry that exists today; assert it explicitly so a bad refactor that made the
+	// loop above vacuous (e.g. every decision suddenly "skipped") still fails.
+	if app, ok := argoAppForInfraService("aws", "ingress"); !ok || app != "aws-load-balancer-controller" {
+		t.Errorf("argoAppForInfraService(aws, ingress) = (%q, %v), want the ALB controller", app, ok)
+	}
+}
+
+// The provider-keyed lookup must fall back to the anyProvider entry for cloud-agnostic
+// services, and must NOT leak a per-cloud entry to another cloud.
+func TestArgoAppForInfraService_ProviderResolution(t *testing.T) {
+	for _, provider := range t2AllProviders() {
+		if app, ok := argoAppForInfraService(provider, "external-dns"); !ok || app != "external-dns" {
+			t.Errorf("%s: cloud-agnostic service did not fall back to the anyProvider entry: (%q, %v)", provider, app, ok)
+		}
+		if provider == "aws" {
+			continue
+		}
+		if app, ok := argoAppForInfraService(provider, "ingress"); ok {
+			t.Errorf("%s: resolved the AWS-only ingress Application %q — a per-cloud entry must not leak across clouds", provider, app)
+		}
+	}
+	if _, ok := argoAppForInfraService("aws", "no-such-service"); ok {
+		t.Error("an unknown service must not resolve to an Application")
+	}
+}
+
+// FAIL-CLOSED across the provider dimension: an "installed" ingress on a cloud with no entry
+// is a hard derivation error, exactly like an unknown service. This is the guard that stops a
+// lane shipping a controller whose Application the assertion never checks.
+func TestDeriveExpectedArgoApps_InstalledIngressOnUnmappedCloudFails(t *testing.T) {
+	meta := []byte(`{"infra_services":[{"service":"ingress","status":"installed","reason":"a controller this test invented"}]}`)
+	if _, err := DeriveExpectedArgoApps("gcp", meta); err == nil {
+		t.Fatal("expected a hard error for an installed ingress on a cloud with no infraServiceArgoApps entry")
+	}
+	// The same record on AWS resolves, so the failure above is about the PROVIDER, not the
+	// service name — otherwise this guard would pass for the wrong reason.
+	apps, err := DeriveExpectedArgoApps("aws", meta)
+	if err != nil {
+		t.Fatalf("aws: %v", err)
+	}
+	if !containsString(apps, "aws-load-balancer-controller") {
+		t.Errorf("aws expected set = %v, want the ALB controller", apps)
+	}
+}
+
+// The WAF attach is an ANNOTATION on the ArgoCD ingress, not an Application — an installed
+// "waf" decision must derive cleanly and add nothing to the expected set.
+func TestDeriveExpectedArgoApps_WAFShipsNoApplication(t *testing.T) {
+	meta := []byte(`{"infra_services":[{"service":"waf","status":"installed","reason":"attached"}],"addon_status":{"addon-reloader":{}}}`)
+	apps, err := DeriveExpectedArgoApps("aws", meta)
+	if err != nil {
+		t.Fatalf("DeriveExpectedArgoApps: %v", err)
+	}
+	for _, a := range apps {
+		if strings.Contains(a, "waf") {
+			t.Errorf("expected set %v contains a WAF Application — the attach is an annotation, it renders none", apps)
+		}
+	}
+}
+
+// containsString reports whether the slice holds s.
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
