@@ -36,8 +36,15 @@
 #   cloud   — the template directory name, or "*" for every cloud
 #   reason  — one line, in the product's voice; printed verbatim in the matrix — under "Documented
 #             exclusions" for an `exclusions:` entry, under "Known gaps on the baseline" for a
-#             `baseline:` one. Both are read by people deciding whether to pick that cloud, so write
-#             it as what a USER gets, not as what the code does.
+#             `baseline:` one, and under "Reviewed branch-guard wirings" for a `wired:` one. All are
+#             read by people deciding whether to pick that cloud, so write it as what a USER gets,
+#             not as what the code does.
+#
+# THREE sections, and the difference between them is the decision each one records:
+#   exclusions: — this cloud will never honor the offer. A product decision.
+#   baseline:   — it should honor it and does not yet. Real debt, carries an `issue:` and a `state:`.
+#   wired:      — it DOES honor it, through a branch guard the code cannot self-evidence, and a person
+#                 has read that branch and confirmed it (#1829/#1830). Neither a limit nor debt.
 #   issue   — the tracking issue. Required in `baseline:` (an entry with no issue is an amnesty
 #             nothing will ever come back to collect); optional in `exclusions:`, where it records
 #             the thread the decision was made in.
@@ -351,3 +358,40 @@ baseline:
     issue: #1816
     state: no-carrier
 
+
+  # ── nosql: a switch that turns on a DIFFERENT billable feature ──────────────────────
+  # Azure carries `point_in_time_recovery` into `analytical_storage_enabled`, which is Synapse Link
+  # analytical storage — a separate, separately-billed feature. Cosmos point-in-time restore is
+  # `backup { type = "Continuous" }`, which nothing sets. The switch is carried, the plan differs,
+  # and the user gets a feature they did not ask for instead of the one they did. Boarded rather
+  # than `wired:` precisely because the wiring IS wrong.
+  - offer: nosql:point_in_time_recovery
+    cloud: azure
+    reason: Point-in-time restore is not enabled on Cosmos DB — turning it on enables Synapse analytical storage instead, which is a different, separately-billed feature.
+    issue: #1838
+    state: gated-carrier
+
+# Branch-guard wirings a person has READ and found correct.
+#
+# A ⚠️ `gated-carrier` cell means the switch decides whether a key appears, but the code never shows
+# that the key IS the feature the switch names — a question about semantics that a text-reading guard
+# cannot answer (#1829/#1830). Every ⚠️ cell must therefore be declared: `baseline:` above when the
+# wiring is wrong or unreviewed, or here when someone has read the branch and it does what it says.
+#
+# An entry here is NOT an exclusion (the cloud does honor the offer) and NOT debt (there is nothing to
+# fix). It is a review record, and it is ratcheted like the baseline: when the cell stops reading ⚠️,
+# the entry stops answering anything and the guard asks for it back.
+#
+# Fields: offer / cloud as above, plus `reason` — what you checked, in the product's voice.
+wired:
+  # STANDARD_HA is Memorystore's replicated, zone-redundant tier. GCP exposes no separate multi-AZ
+  # flag on Memorystore — the tier IS the mechanism — so this is the correct wiring for the switch.
+  # (It is also set when NumCacheNodes > 1, which is a superset, not a substitution.)
+  - offer: cache:multi_az
+    cloud: gcp
+    reason: Choosing multi-AZ puts the cache on Memorystore's replicated STANDARD_HA tier, which is how zone redundancy is bought on Google Cloud.
+  # `length` + `special` are the generation parameters; the `else` writes `manual = true`. That is
+  # precisely the generate-vs-bring-your-own choice the switch offers.
+  - offer: secret:generate
+    cloud: aws
+    reason: Asking Alethia to generate a secret sends the length and special-character rules to AWS; supplying your own sends it as a manual value instead.
