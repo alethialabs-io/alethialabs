@@ -168,7 +168,7 @@ baseline:
   #
   # The shapes, so the list reads as something other than a wall:
   #   · a switch no provider carries          (registry)
-  #   · a switch carried and then not read    (bucket:public_access, queue:ordered, alibaba dns cert)
+  #   · a switch carried and then not read    (queue:ordered, alibaba dns cert)
   #   · a kind the cloud's template omits     (hetzner dns, hetzner network)
 
   # ── DNS: one switch left, on one cloud ──────────────────────────────────────────────
@@ -244,24 +244,6 @@ baseline:
     cloud: alibaba
     reason: Ordered delivery is not applied to MNS yet — the queue is created unordered whichever way the switch is set.
     issue: #1812
-
-  # ── Buckets: public access and versioning ───────────────────────────────────────────
-  # Three different failures with one appearance. GCP fills `uniform_access` on every apply and the
-  # Cloud Storage module hardcodes `uniform_bucket_level_access = true`. Azure sends
-  # `container_access_type` and the storage-account module declares `access_type`, so the value lands
-  # on a name nothing reads. Azure's container builder never looks at `Versioning` at all.
-  - offer: bucket:public_access
-    cloud: gcp
-    reason: Public access stays enforced on Google Cloud buckets — the setting is sent and the bucket is created with uniform, private access regardless.
-    issue: #1813
-  - offer: bucket:public_access
-    cloud: azure
-    reason: Public access stays private on Azure containers — the setting is sent under a name the template does not read.
-    issue: #1813
-  - offer: bucket:versioning
-    cloud: azure
-    reason: Versioning is not applied to Azure containers — the setting never reaches the plan, so blobs are created unversioned.
-    issue: #1813
 
   # ── Bucket encryption on Alibaba — a gap, and an unresolved question ────────────────
   # Same wiring verdict as the three exclusions above (nothing carries the switch), but NOT the same

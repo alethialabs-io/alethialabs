@@ -75,8 +75,8 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | Offer | alibaba | aws | azure | gcp | hetzner | local |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | `bucket:encryption_enabled` | 🚫 #1814 | — | — | — | · | · |
-| `bucket:public_access` | 🟡 | 🟡 | 🚫 #1813 | 🚫 #1813 | 🟡 | · |
-| `bucket:versioning` | 🟡 | 🟡 | 🚫 #1813 | 🟡 | 🟡 | · |
+| `bucket:public_access` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
+| `bucket:versioning` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `cache:multi_az` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
 | `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
 | `dns:managed_certificate` | 🚫 #1824 | 🟡 | 🟡 | 🟡 | — | · |

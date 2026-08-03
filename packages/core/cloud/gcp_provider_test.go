@@ -528,8 +528,13 @@ func TestBuildFirestoreDatabases(t *testing.T) {
 	}
 }
 
-// TestBuildGCSBuckets verifies the uniform-access inversion of PublicAccess,
-// versioning pass-through, and the fixed CORS method set.
+// TestBuildGCSBuckets verifies PublicAccess pass-through, versioning pass-through, and the fixed
+// CORS method set.
+//
+// `uniform_access` is asserted ABSENT on purpose. It used to carry the inverted PublicAccess, which
+// is the wrong argument for the job — uniform bucket-level access disables per-object ACLs and says
+// nothing about public readability — and Cloud Storage refuses to turn it back off 90 days after it
+// was enabled, so a bucket older than that could never be made public again.
 func TestBuildGCSBuckets(t *testing.T) {
 	buckets := []types.ProjectStorageBucketConfig{
 		{Name: "public", Versioning: true, PublicAccess: true, CorsOrigins: []string{"https://a"}},
@@ -545,8 +550,8 @@ func TestBuildGCSBuckets(t *testing.T) {
 	if pub["name_suffix"] != "public" || pub["versioning"] != true {
 		t.Errorf("public bucket = %v", pub)
 	}
-	if pub["uniform_access"] != false { // !PublicAccess
-		t.Errorf("public uniform_access = %v, want false", pub["uniform_access"])
+	if pub["public_access"] != true {
+		t.Errorf("public public_access = %v, want true", pub["public_access"])
 	}
 	if !reflect.DeepEqual(pub["cors_origins"], []string{"https://a"}) {
 		t.Errorf("public cors_origins = %v", pub["cors_origins"])
@@ -556,8 +561,14 @@ func TestBuildGCSBuckets(t *testing.T) {
 	}
 
 	priv := got[1]
-	if priv["uniform_access"] != true { // !false
-		t.Errorf("private uniform_access = %v, want true", priv["uniform_access"])
+	if priv["public_access"] != false {
+		t.Errorf("private public_access = %v, want false", priv["public_access"])
+	}
+
+	for i, b := range got {
+		if _, ok := b["uniform_access"]; ok {
+			t.Errorf("bucket %d still emits uniform_access; UBLA is not a user switch", i)
+		}
 	}
 
 	if len(buildGCSBuckets(nil)) != 0 {
