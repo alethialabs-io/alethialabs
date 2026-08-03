@@ -33,6 +33,8 @@ module "azure_cache" {
   project_name        = var.project_name
   resource_group_name = azurerm_resource_group.main.name
 
+  cache_name = local.azure_cache_name
+
   sku_name = local.azure_cache_sku_name
   multi_az = var.azure_cache_multi_az
 

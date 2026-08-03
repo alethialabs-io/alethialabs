@@ -1,5 +1,7 @@
 resource "azurerm_web_application_firewall_policy" "this" {
-  name                = "${var.project_name}-${var.environment}-waf"
+  # Derived at the template root (checks_naming.tf, local.azure_waf_policy_name) — see the note
+  # there on why 80 is an adopted budget rather than a quoted cap.
+  name                = var.policy_name
   resource_group_name = var.resource_group_name
   location            = var.location
 
