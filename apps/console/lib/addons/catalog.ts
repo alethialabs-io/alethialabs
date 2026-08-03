@@ -336,42 +336,18 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		syncWave: 2,
 		requires: ["storage"],
 	}),
-	defineAddOn({
-		id: "cert-manager",
-		name: "cert-manager",
-		category: "networking",
-		icon: "Lock",
-		summary:
-			"Automated TLS certificates for the cluster — issues and renews certs (e.g. Let's Encrypt) for your ingress.",
-		docsUrl: "https://cert-manager.io/docs/installation/helm/",
-		license: "Apache-2.0",
-		chartRepo: "https://charts.jetstack.io",
-		chart: "cert-manager",
-		version: "v1.15.3",
-		namespace: "cert-manager",
-		// Install the CRDs with the chart so ClusterIssuers/Certificates work out of the box.
-		defaultValues: { crds: { enabled: true } },
-		configSchema: z.object({
-			/** Controller replicas (raise for HA). */
-			replicas: z.coerce.number().int().min(1).max(5).default(1),
-			/** Expose a Prometheus ServiceMonitor for cert-manager metrics. */
-			serviceMonitor: z.boolean().default(false),
-		}),
-		toValues: (c) => ({
-			replicaCount: c.replicas,
-			prometheus: { enabled: true, servicemonitor: { enabled: c.serviceMonitor } },
-		}),
-		fields: [
-			{ key: "replicas", label: "Controller replicas", type: "number", default: 1, min: 1, max: 5 },
-			{
-				key: "serviceMonitor",
-				label: "Prometheus ServiceMonitor",
-				type: "boolean",
-				default: false,
-			},
-		],
-		syncWave: 1,
-	}),
+	// cert-manager is NOT here any more. It is a PLATFORM add-on
+	// (infra/templates/argocd/cert-manager.yaml), installed by the deploy when the project asks
+	// for a managed certificate on a cloud where an ACME DNS01 challenge can actually complete.
+	//
+	// It could never work on this rail. A marketplace add-on is a chart plus a user-filled config
+	// schema; it cannot see `.Provider`, the DNS zone, or the cloud identity external-dns holds,
+	// and a DNS01 ClusterIssuer needs all three. So this entry installed a controller with no
+	// issuer — TLS that looked one checkbox away and was not.
+	//
+	// Keeping BOTH would have been worse than either: `crds.enabled` makes whoever installs
+	// cert-manager the owner of its cluster-scoped CRDs, and two owners of one set of CRDs is the
+	// metrics-server collision of #1722.
 	defineAddOn({
 		id: "ingress-nginx",
 		name: "Ingress NGINX",

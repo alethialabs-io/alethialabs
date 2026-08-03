@@ -2783,22 +2783,22 @@
 			"aws": {
 				"providerConfigKey": "acm_certificate",
 				"label": "ACM Certificate",
-				"description": "Free TLS certificate managed by AWS Certificate Manager"
+				"description": "Free TLS certificate from AWS Certificate Manager, plus in-cluster issuance and renewal by cert-manager"
 			},
 			"gcp": {
 				"providerConfigKey": "managed_certificate",
 				"label": "Google-Managed Certificate",
-				"description": "Free TLS certificate managed by Google Cloud"
+				"description": "Free TLS certificate managed by Google Cloud, plus in-cluster issuance and renewal by cert-manager"
 			},
 			"azure": {
 				"providerConfigKey": "managed_certificate",
 				"label": "App Service Certificate",
-				"description": "Managed TLS certificate from Azure"
+				"description": "Managed TLS certificate from Azure, plus in-cluster issuance and renewal by cert-manager"
 			},
 			"hetzner": {
 				"providerConfigKey": "managed_certificate",
-				"label": "cert-manager",
-				"description": "TLS via in-cluster cert-manager"
+				"label": "Not available",
+				"description": "Hetzner sells no managed certificate, and cert-manager ships no Hetzner DNS01 solver — bring your own certificate or run an issuer with a third-party webhook"
 			},
 			"alibaba": {
 				"providerConfigKey": "managed_certificate",

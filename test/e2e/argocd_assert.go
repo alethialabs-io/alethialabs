@@ -89,6 +89,12 @@ var infraServiceArgoApps = map[string]map[string]string{
 	// CR whose CRD and admission webhook ship with the operator, so exactly like the
 	// native store above, an installed one implies external-secrets-operator is healthy.
 	"external-secrets-store-xacct": {anyProvider: "external-secrets-operator"},
+	// infra/templates/argocd/cert-manager.yaml — the platform (Rail B) cert-manager. Cloud-agnostic
+	// HERE on purpose: the decision itself is already per-cloud (certManagerDecision is "installed"
+	// only where CertManagerSolver() resolves, i.e. aws/gcp/azure on native DNS), and where it does
+	// install it is the same Application everywhere. The ClusterIssuer the runner applies afterwards
+	// is a CR, not an Application, so it adds nothing to this set.
+	"cert-manager": {anyProvider: "cert-manager"},
 	// ingressDecision is "installed" only where argocd.ingressControllers has an entry.
 	// ONE LINE PER CLOUD: add the cloud's controller Application here in the same PR that
 	// adds its ingressControllers entry, and the two stay in step.
