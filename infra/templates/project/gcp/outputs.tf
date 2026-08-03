@@ -120,14 +120,67 @@ output "memorystore_port" {
 ##                     Cloud DNS Outputs                               ##
 #########################################################################
 
+# Every output in this block guards on the MODULE (`length(module.cloud_dns) > 0`), not on a copy of
+# its count predicate. `var.cloud_dns_enabled` alone is NOT that predicate: cloud-dns.tf also
+# requires `dns_provider == "native"`, because selecting the Cloudflare DNS connector means the zone
+# is not ours to create. The two outputs below used to index `[0]` off `var.cloud_dns_enabled`, so a
+# DNS-enabled project on the Cloudflare connector planned an "Invalid index" and failed the WHOLE
+# apply — the identical bug, and the identical fix, as `artifact_registry_urls` above (whose note
+# records how far from its cause that crash lands). A `length()` guard cannot drift from the count
+# the way a duplicated predicate did.
 output "cloud_dns_name_servers" {
   description = "Name servers for the Cloud DNS managed zone"
-  value       = var.cloud_dns_enabled ? module.cloud_dns[0].name_servers : []
+  value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].name_servers : []
 }
 
 output "cloud_dns_zone_name" {
   description = "Name of the Cloud DNS managed zone"
-  value       = var.cloud_dns_enabled ? module.cloud_dns[0].zone_name : null
+  value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].zone_name : null
+}
+
+# The Google-managed SSL certificate. The module has exported its id since it was written and the
+# root swallowed it, so the certificate was created, billed, and reachable by nothing — the runner
+# had no way to learn it existed, let alone put it on an Ingress.
+#
+# The NAME is the load-bearing one: `ingress.gcp.kubernetes.io/pre-shared-cert` takes a
+# comma-separated list of GLOBAL certificate NAMES, not ids or self links.
+output "cloud_dns_managed_certificate_name" {
+  description = "Name of the Google-managed SSL certificate — the value the platform Ingress's ingress.gcp.kubernetes.io/pre-shared-cert annotation takes. Null when no certificate was requested; the ArgoCD ingress (and therefore the managed ArgoCD URL) renders only when it is present."
+  value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].managed_certificate_name : null
+}
+
+output "cloud_dns_managed_certificate_id" {
+  description = "Fully-qualified id of the Google-managed SSL certificate, for anything that addresses it outside the cluster's own project. Null when no certificate was requested."
+  value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].managed_certificate_id : null
+}
+
+#########################################################################
+##                     Cloud Armor Outputs                             ##
+#########################################################################
+
+# Cloud Armor's entire reason to exist is to be ATTACHED. The module has exported policy_id and
+# policy_self_link since it was written and the root exported neither, so the security policy was
+# created behind the canvas WAF switch, billed, and associated with nothing: a project could carry
+# the policy, the bill, and zero inspected requests, and no surface said so (#1419).
+#
+# The runner reads `cloud_armor_policy_name` and renders a GKE BackendConfig whose
+# `spec.securityPolicy.name` binds the policy to the GCLB backend service the platform Ingress
+# provisions. Null when the switch is off — precisely the "attach nothing" signal the Go side wants,
+# since an empty securityPolicy name is not "no WAF", it is a BackendConfig the ingress controller
+# rejects (the GCP shape of the empty-wafv2-annotation trap on AWS).
+output "cloud_armor_policy_name" {
+  description = "Name of the Cloud Armor security policy — the value a GKE BackendConfig's spec.securityPolicy.name takes. Null when cloud_armor_enabled is false."
+  value       = length(module.cloud_armor) > 0 ? module.cloud_armor[0].policy_name : null
+}
+
+output "cloud_armor_policy_id" {
+  description = "Fully-qualified id of the Cloud Armor security policy. Null when cloud_armor_enabled is false."
+  value       = length(module.cloud_armor) > 0 ? module.cloud_armor[0].policy_id : null
+}
+
+output "cloud_armor_policy_self_link" {
+  description = "Self link of the Cloud Armor security policy, for cross-project references. Null when cloud_armor_enabled is false."
+  value       = length(module.cloud_armor) > 0 ? module.cloud_armor[0].policy_self_link : null
 }
 
 #########################################################################
