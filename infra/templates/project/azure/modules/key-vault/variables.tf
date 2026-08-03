@@ -3,14 +3,14 @@ variable "location" {
   type        = string
 }
 
-variable "environment" {
-  description = "Environment name (e.g. dev, staging, prod)"
+variable "vault_name" {
+  description = "Name of the key vault. Derived by the caller (local.azure_key_vault_name in checks_naming.tf), which falls back to a truncated-plus-digest form once the readable \"<project_name>-<environment>-kv\" would overflow Azure's 3-24 character cap. Derived at the template root, not here, so it stays reachable from `tofu test`."
   type        = string
-}
 
-variable "project_name" {
-  description = "Project name used in resource naming"
-  type        = string
+  validation {
+    condition     = length(var.vault_name) >= 3 && length(var.vault_name) <= 24
+    error_message = "vault_name must be 3-24 characters (Azure Key Vault's cap); got ${length(var.vault_name)}."
+  }
 }
 
 variable "resource_group_name" {

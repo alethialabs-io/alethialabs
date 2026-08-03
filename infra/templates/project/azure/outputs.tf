@@ -183,3 +183,24 @@ output "key_vault_uri" {
   description = "URI of the project Key Vault (the azurekv ClusterSecretStore's vaultUrl)"
   value       = module.key_vault.vault_uri
 }
+
+#########################################################################
+##                    Storage Account Outputs                          ##
+#########################################################################
+
+# Surfaced so the two bucket switches are legible from the plan — and so checks_storage.tftest.hcl
+# can assert them from the ROOT, which is the only place tofu's test harness runs.
+output "storage_container_access_types" {
+  description = "Map of container name to the container_access_type it is planned with"
+  value       = var.create_storage_account ? module.storage_account[0].container_access_types : {}
+}
+
+output "storage_blob_versioning_enabled" {
+  description = "Whether blob versioning is planned on the project's storage account"
+  value       = var.create_storage_account ? module.storage_account[0].blob_versioning_enabled : null
+}
+
+output "storage_allow_nested_items_to_be_public" {
+  description = "Whether the storage account permits public containers"
+  value       = var.create_storage_account ? module.storage_account[0].allow_nested_items_to_be_public : null
+}

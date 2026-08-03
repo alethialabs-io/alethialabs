@@ -311,12 +311,21 @@ func TestAlibabaBuilders_OTSTablesAndKeyType(t *testing.T) {
 	if len(tables) != 4 {
 		t.Fatalf("tables = %d, want 4", len(tables))
 	}
+	// `primary_keys`, a LIST — not the scalar `primary_key` / `primary_key_type` this asserted until
+	// #1836. Those two names were read by NOTHING: modules/ots/main.tf takes
+	// `try(each.value.primary_keys, [{ name = "id", type = "String" }])`, so `try` caught the miss and
+	// every table was built on `id`/`String`. This test passed throughout, which is the lesson — it
+	// checked that the builder agreed with itself, never that it agreed with the template.
 	for i, want := range wantTypes {
-		if tables[i]["primary_key_type"] != want {
-			t.Errorf("table[%d] primary_key_type = %v, want %v", i, tables[i]["primary_key_type"], want)
+		keys, ok := tables[i]["primary_keys"].([]map[string]interface{})
+		if !ok || len(keys) != 1 {
+			t.Fatalf("table[%d] primary_keys = %#v, want one key", i, tables[i]["primary_keys"])
 		}
-		if tables[i]["primary_key"] != "pk" {
-			t.Errorf("table[%d] primary_key = %v, want pk", i, tables[i]["primary_key"])
+		if keys[0]["type"] != want {
+			t.Errorf("table[%d] key type = %v, want %v", i, keys[0]["type"], want)
+		}
+		if keys[0]["name"] != "pk" {
+			t.Errorf("table[%d] key name = %v, want pk", i, keys[0]["name"])
 		}
 	}
 	// Direct otsKeyType mapping.
@@ -343,6 +352,114 @@ func TestAlibabaBuilders_OSSBuckets(t *testing.T) {
 	}
 	if got[1]["acl"] != "private" {
 		t.Errorf("private bucket acl = %v, want private", got[1]["acl"])
+	}
+}
+
+// TestAlibabaBuilders_OSSEncryption pins the INVARIANT that both positions of
+// `bucket:encryption_enabled` are carried into the tfvars as a VALUE, never as the presence or
+// absence of a key.
+//
+// This matters more on Alibaba than anywhere else. S3, GCS and Blob encrypt at rest
+// unconditionally, so an uncarried switch there is cosmetic and those three cells are documented
+// exclusions. OSS applies NO default server-side encryption to a new bucket — GetBucketEncryption
+// answers 400 NoSuchServerSideEncryptionRule — so an uncarried switch means the tenant's objects
+// are stored unencrypted (#1814).
+//
+// The OFF assertion is the load-bearing one. A builder that emitted the key only inside
+// `if b.EncryptionEnabled` would satisfy every ON assertion and still leave the OFF position falling
+// through to whatever the template happens to default to — a gap that scores green (#1829).
+// Asserting that OFF is PRESENT and equal to "None" is what distinguishes a carried switch from a
+// half-carried one, so this must never be relaxed to a presence-only check.
+func TestAlibabaBuilders_OSSEncryption(t *testing.T) {
+	got := buildOSSBuckets([]types.ProjectStorageBucketConfig{
+		{Name: "on", EncryptionEnabled: true},
+		{Name: "off", EncryptionEnabled: false},
+		{Name: "kms", EncryptionEnabled: true, ProviderConfig: map[string]any{"encryption_algorithm": "KMS"}},
+		// An algorithm named while the switch is OFF must not resurrect the rule: the switch decides
+		// WHETHER there is encryption, provider_config only decides which kind.
+		{Name: "off-with-algo", EncryptionEnabled: false, ProviderConfig: map[string]any{"encryption_algorithm": "KMS"}},
+	})
+	if len(got) != 4 {
+		t.Fatalf("buckets = %d, want 4", len(got))
+	}
+
+	// ON defaults to AES256 (SSE-OSS), which Alibaba bills as "None. Free of charge." SSE-KMS is a
+	// per-call charge, so it must never become the default by accident.
+	if got[0]["sse_algorithm"] != "AES256" {
+		t.Errorf("encryption on: sse_algorithm = %v, want AES256", got[0]["sse_algorithm"])
+	}
+
+	// OFF must be PRESENT and explicit. Presence is asserted separately from the value so that a
+	// future drift to a branch-guarded emit fails here with a message naming which half broke.
+	off, ok := got[1]["sse_algorithm"]
+	if !ok {
+		t.Fatal("encryption off: sse_algorithm is absent — the OFF position must be emitted, not left to the template default")
+	}
+	if off != "None" {
+		t.Errorf("encryption off: sse_algorithm = %v, want None", off)
+	}
+
+	if got[2]["sse_algorithm"] != "KMS" {
+		t.Errorf("explicit algorithm: sse_algorithm = %v, want KMS", got[2]["sse_algorithm"])
+	}
+	if got[3]["sse_algorithm"] != "None" {
+		t.Errorf("off with an algorithm named: sse_algorithm = %v, want None", got[3]["sse_algorithm"])
+	}
+
+	// The two positions must actually DIFFER. Every assertion above would also hold for a builder
+	// that returned a constant, if that constant happened to match — this is the cheap guard against
+	// a switch that is carried in name only.
+	if got[0]["sse_algorithm"] == got[1]["sse_algorithm"] {
+		t.Error("the ON and OFF positions emit the same value — the switch reaches the plan but decides nothing")
+	}
+}
+
+// TestAlibabaBuilders_OSSNameSuffix pins the key name the template keys its for_each on.
+//
+// #1834: this builder emitted `name_suffix` while modules/oss read `b.name`, so every Alibaba
+// project that carried a bucket died at plan with "This object does not have an attribute named
+// name" — a template that had never once planned. The TEMPLATE was corrected to `name_suffix` (the
+// spelling AWS's s3 and GCP's cloud-storage modules already use) rather than this builder to
+// `name`, so this test is what stops the Go side drifting back and re-opening the hole from the
+// other direction.
+func TestAlibabaBuilders_OSSNameSuffix(t *testing.T) {
+	got := buildOSSBuckets([]types.ProjectStorageBucketConfig{{Name: "assets"}})
+	if got[0]["name_suffix"] != "assets" {
+		t.Errorf("name_suffix = %v, want assets", got[0]["name_suffix"])
+	}
+	// The module composes the real bucket name as name_prefix-name_suffix, because OSS bucket names
+	// are globally unique across all of Alibaba Cloud. A bare `name` would be both undeclared by the
+	// module's object type (and therefore silently discarded) and unusable as a bucket name.
+	if _, ok := got[0]["name"]; ok {
+		t.Error("buildOSSBuckets emitted `name`; modules/oss declares `name_suffix` and would discard it")
+	}
+}
+
+// TestAlibabaBuilders_OSSSSEAlgorithm covers the resolver directly, including the value the module's
+// allow-list refuses. "SM4" is accepted by the alicloud provider's ValidateFunc but rejected by
+// PutBucketEncryption with InvalidEncryptionAlgorithmError, so it is passed through here and stopped
+// at plan time by the root `oss_buckets` validation — a plan-time error rather than an apply-time
+// 400. This test records that the split is deliberate: the resolver does not silently rewrite what a
+// tenant asked for.
+func TestAlibabaBuilders_OSSSSEAlgorithm(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  map[string]any
+		want string
+	}{
+		{"nil provider_config defaults to the free algorithm", nil, "AES256"},
+		{"empty provider_config defaults to the free algorithm", map[string]any{}, "AES256"},
+		{"an empty string is not a choice", map[string]any{"encryption_algorithm": ""}, "AES256"},
+		{"a non-string is not a choice", map[string]any{"encryption_algorithm": 7}, "AES256"},
+		{"an explicit choice wins", map[string]any{"encryption_algorithm": "KMS"}, "KMS"},
+		{"an api-invalid choice is passed through for the template to refuse", map[string]any{"encryption_algorithm": "SM4"}, "SM4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ossSSEAlgorithm(types.ProjectStorageBucketConfig{ProviderConfig: tc.cfg})
+			if got != tc.want {
+				t.Errorf("ossSSEAlgorithm = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -599,27 +716,34 @@ func TestAzureBuilders_CosmosDBCollections(t *testing.T) {
 	if got[0]["partition_key"] != "/tenant" {
 		t.Errorf("partition_key = %v, want /tenant", got[0]["partition_key"])
 	}
-	if got[0]["analytical_storage_enabled"] != true {
-		t.Errorf("PITR table should set analytical_storage_enabled: %#v", got[0])
-	}
 	if got[1]["partition_key"] != "/id" {
 		t.Errorf("default partition_key = %v, want /id", got[1]["partition_key"])
 	}
-	if _, ok := got[1]["analytical_storage_enabled"]; ok {
-		t.Error("no-PITR table must not set analytical_storage_enabled")
+	// The PITR switch itself is pinned by TestAzureCosmos_PITRIsContinuousBackupNotAnalyticalStorage
+	// (azure_cosmos_pitr_test.go), which also holds the line against the #1838 wiring.
+	if got[0]["point_in_time_recovery"] != true || got[1]["point_in_time_recovery"] != false {
+		t.Errorf("point_in_time_recovery must mirror the switch on every table: %#v", got)
 	}
 }
 
+// TestAzureBuilders_Containers pins the tfvar KEY as well as the value. The key is the whole of the
+// bug this replaced: `container_access_type` is the azurerm RESOURCE's spelling, while the module
+// declares and reads `access_type`, so the value landed on a name nothing read.
 func TestAzureBuilders_Containers(t *testing.T) {
 	got := buildAzureContainers([]types.ProjectStorageBucketConfig{
 		{Name: "pub", PublicAccess: true},
 		{Name: "priv"},
 	})
-	if got[0]["container_access_type"] != "blob" {
-		t.Errorf("public container access = %v, want blob", got[0]["container_access_type"])
+	if got[0]["access_type"] != "blob" {
+		t.Errorf("public container access = %v, want blob", got[0]["access_type"])
 	}
-	if got[1]["container_access_type"] != "private" {
-		t.Errorf("private container access = %v, want private", got[1]["container_access_type"])
+	if got[1]["access_type"] != "private" {
+		t.Errorf("private container access = %v, want private", got[1]["access_type"])
+	}
+	for i, c := range got {
+		if _, ok := c["container_access_type"]; ok {
+			t.Errorf("container %d emits container_access_type; the module declares access_type", i)
+		}
 	}
 }
 
