@@ -707,27 +707,34 @@ func TestAzureBuilders_CosmosDBCollections(t *testing.T) {
 	if got[0]["partition_key"] != "/tenant" {
 		t.Errorf("partition_key = %v, want /tenant", got[0]["partition_key"])
 	}
-	if got[0]["analytical_storage_enabled"] != true {
-		t.Errorf("PITR table should set analytical_storage_enabled: %#v", got[0])
-	}
 	if got[1]["partition_key"] != "/id" {
 		t.Errorf("default partition_key = %v, want /id", got[1]["partition_key"])
 	}
-	if _, ok := got[1]["analytical_storage_enabled"]; ok {
-		t.Error("no-PITR table must not set analytical_storage_enabled")
+	// The PITR switch itself is pinned by TestAzureCosmos_PITRIsContinuousBackupNotAnalyticalStorage
+	// (azure_cosmos_pitr_test.go), which also holds the line against the #1838 wiring.
+	if got[0]["point_in_time_recovery"] != true || got[1]["point_in_time_recovery"] != false {
+		t.Errorf("point_in_time_recovery must mirror the switch on every table: %#v", got)
 	}
 }
 
+// TestAzureBuilders_Containers pins the tfvar KEY as well as the value. The key is the whole of the
+// bug this replaced: `container_access_type` is the azurerm RESOURCE's spelling, while the module
+// declares and reads `access_type`, so the value landed on a name nothing read.
 func TestAzureBuilders_Containers(t *testing.T) {
 	got := buildAzureContainers([]types.ProjectStorageBucketConfig{
 		{Name: "pub", PublicAccess: true},
 		{Name: "priv"},
 	})
-	if got[0]["container_access_type"] != "blob" {
-		t.Errorf("public container access = %v, want blob", got[0]["container_access_type"])
+	if got[0]["access_type"] != "blob" {
+		t.Errorf("public container access = %v, want blob", got[0]["access_type"])
 	}
-	if got[1]["container_access_type"] != "private" {
-		t.Errorf("private container access = %v, want private", got[1]["container_access_type"])
+	if got[1]["access_type"] != "private" {
+		t.Errorf("private container access = %v, want private", got[1]["access_type"])
+	}
+	for i, c := range got {
+		if _, ok := c["container_access_type"]; ok {
+			t.Errorf("container %d emits container_access_type; the module declares access_type", i)
+		}
 	}
 }
 
