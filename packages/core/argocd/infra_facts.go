@@ -77,6 +77,14 @@ type InfraFacts struct {
 	AlibabaOIDCIssuerURL          string // ACK cluster OIDC issuer
 	AlibabaOIDCProviderArn        string // RAM OIDC provider ARN that RRSA roles trust
 	AlibabaExternalSecretsRoleArn string // RRSA RAM role for the external-secrets operator (gates secretstore-alibaba)
+	// AlibabaWAFInstanceID is the WAF 3.0 instance the template bought for the project's
+	// application WAF switch (root output `waf_instance_id`, null when the switch is off).
+	// A REFERENCE, not a credential — and, unlike AWS's web ACL, one with NOTHING BOUND TO IT:
+	// the pinned alicloud provider can only bind a hostname (alicloud_wafv3_domain, CNAME mode),
+	// which needs the ingress load balancer's address, and that does not exist at plan time.
+	// The fact exists so wafDecision can say "built and billed and filtering nothing" instead of
+	// leaving that indistinguishable from "the switch is off".
+	AlibabaWAFInstanceID string
 
 	// ── Cross-account keyless secret manager (*-xacct) ──────────
 	// The ADDITIONAL foreign-account secret store the project selected (AWS SM / GCP SM / Azure KV /
@@ -242,6 +250,10 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.AlibabaOIDCIssuerURL = ExtractOutput(outputs, "rrsa_oidc_issuer_url")
 		f.AlibabaOIDCProviderArn = ExtractOutput(outputs, "rrsa_oidc_provider_arn")
 		f.AlibabaExternalSecretsRoleArn = ExtractOutput(outputs, "external_secrets_ram_role_arn")
+		// null when application_waf_enabled is off — "" is the "nothing built" signal, the same
+		// shape as AWS's waf_webacl_arn below. Unlike AWS's, a non-empty value here does NOT mean
+		// anything is being filtered; see the field comment and modules/waf/main.tf.
+		f.AlibabaWAFInstanceID = ExtractOutput(outputs, "waf_instance_id")
 		// The RRSA facts feed workload-identity for in-cluster components (the
 		// external-secrets store renders off the role ARN above). external-dns's
 		// alibabacloud provider does NOT
