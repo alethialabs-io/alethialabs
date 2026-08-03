@@ -23,8 +23,9 @@ func (p *azureProvider) RequiredCLIs() []string {
 }
 
 func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
-	wafEnabled := false
-	managedCert := false
+	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
+	wafEnabled := config.DNS.WafEnabled
+	managedCert := config.DNS.ManagedCertificate
 	if v, ok := config.DNS.ProviderConfig["azure_waf"]; ok {
 		if b, ok := v.(bool); ok {
 			wafEnabled = b
