@@ -66,10 +66,25 @@ type InfraFacts struct {
 	GCPExternalSecretsSA string // GSA email bound to the external-secrets KSA (gates secretstore-gcp)
 
 	// ── Azure (Federated / Workload Identity) ───────────────────
-	AzureResourceGroup         string
-	AzureTenantID              string
-	AzureExternalDNSClient     string // managed-identity client id for external-dns
-	AzureIngressClient         string // managed-identity client id for the AGIC
+	AzureResourceGroup string
+	// AzureSubscriptionID is the subscription the project's resources live in — the AGIC chart's
+	// appgw.subscriptionId. Falls back to the config's CloudAccountID, which is the same value the
+	// template is handed as its `subscription_id` input.
+	AzureSubscriptionID    string
+	AzureTenantID          string
+	AzureExternalDNSClient string // managed-identity client id for external-dns
+	AzureIngressClient     string // managed-identity client id for the AGIC
+	// AzureAppGatewayName is the Application Gateway AGIC reconciles Ingress objects onto, and the
+	// resource the project's WAF policy binds to. Empty ⇒ this deploy provisioned no gateway, which
+	// means BOTH no ingress controller and nothing for a web ACL to attach to (root output
+	// `application_gateway_name`, null when the gateway is off).
+	AzureAppGatewayName string
+	// AzureWAFPolicyID is the Application Gateway WAF policy built for the project's WAF switch
+	// (root output `waf_policy_id`, null — so "" — when the switch is off). A REFERENCE, not a
+	// credential, and unlike AWS's one the runner never ATTACHES: on Azure the bind is
+	// `firewall_policy_id` on the gateway, performed by the template at apply time. This fact
+	// exists so the deploy can REPORT the attachment honestly, not to perform it.
+	AzureWAFPolicyID           string
 	AzureExternalSecretsClient string // managed-identity client id for the external-secrets operator (gates secretstore-azure)
 	AzureKeyVaultURI           string // project Key Vault URI (the azurekv store's vaultUrl)
 
@@ -230,9 +245,16 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.ClusterName = ExtractOutput(outputs, "aks_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "aks_cluster_endpoint")
 		f.AzureResourceGroup = ExtractOutput(outputs, "resource_group_name")
+		f.AzureSubscriptionID = firstNonEmpty(ExtractOutput(outputs, "azure_subscription_id"), vc.CloudAccountID)
 		f.AzureTenantID = firstNonEmpty(ExtractOutput(outputs, "azure_tenant_id"), vc.CloudAccountID)
 		f.AzureExternalDNSClient = ExtractOutput(outputs, "external_dns_client_id")
+		// `ingress_client_id` was read here long before any template exported it, so this fact was
+		// permanently "" and the AGIC render gate could never open. The azure template emits it now.
 		f.AzureIngressClient = ExtractOutput(outputs, "ingress_client_id")
+		f.AzureAppGatewayName = ExtractOutput(outputs, "application_gateway_name")
+		// null when azure_waf_enabled is off — ExtractOutput yields "" for a null, which is exactly
+		// the "there is nothing to attach" signal wafDecision wants.
+		f.AzureWAFPolicyID = ExtractOutput(outputs, "waf_policy_id")
 		f.AzureExternalSecretsClient = ExtractOutput(outputs, "external_secrets_client_id")
 		f.AzureKeyVaultURI = ExtractOutput(outputs, "key_vault_uri")
 	case "alibaba":

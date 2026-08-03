@@ -269,6 +269,21 @@ func perProviderDecision(service string, f *InfraFacts, table map[string]provide
 // derivation hard-errors rather than waiting out the ArgoCD timeout on an app nobody rendered.
 var ingressControllers = map[string]providerDecision{
 	"aws": {installedReason: "installed (AWS Load Balancer Controller) — Ingress objects provision ALBs."},
+	"azure": {
+		// AGIC provisions nothing per Ingress the way the ALB controller does: it reconciles every
+		// Ingress in the cluster onto ONE pre-provisioned Application Gateway. So "a controller
+		// shipped" is not a fact about the cluster alone — without the gateway, and without the
+		// federated identity that lets AGIC rewrite it, the chart installs a pod that
+		// authenticates to nothing and reconciles nothing. Both terms are in the predicate
+		// because both are in the template's render gate.
+		installed: func(f *InfraFacts) bool {
+			return f.AzureIngressClient != "" && f.AzureAppGatewayName != ""
+		},
+		installedReason: "installed (Application Gateway Ingress Controller) — Ingress objects with ingressClassName azure-application-gateway become listeners and routing rules on the project's Application Gateway.",
+		skippedReason: func(_ *InfraFacts) string {
+			return "no Application Gateway is provisioned for this project — a v2 gateway is a standing hourly cost, so it is opt-in (azure_application_gateway_enabled, which follows the WAF switch when unset) and needs a template-provisioned VNet to carve its dedicated subnet. Install the ingress-nginx add-on to expose Ingress objects through a cloud load balancer instead."
+		},
+	},
 }
 
 // ingressNoControllerReason is what a cloud with no ingress controller records. Kept
@@ -334,6 +349,26 @@ var argocdURLGates = map[string]providerDecision{
 		installedReason: "installed — ArgoCD is exposed over the ALB ingress (ACM certificate present).",
 		skippedReason:   awsArgocdURLSkipReason,
 	},
+	"azure": {
+		// Azure now HAS a managed ingress (AGIC + the Application Gateway) and still has no ArgoCD
+		// URL, and the blocker is TLS rather than ingress. An Application Gateway listener
+		// terminates HTTPS from a certificate on the gateway or in Key Vault, and the only
+		// certificate this template can issue today is the wrong product entirely (#1825 — a
+		// purchased App Service certificate that binds to neither AKS nor an Application Gateway).
+		// Publishing the ArgoCD ADMIN console over the plaintext :80 listener instead is not an
+		// option worth having.
+		//
+		// So the predicate is constant-false rather than the entry being absent: a cloud absent
+		// from this table records "no managed ingress on this cloud yet", which stopped being true
+		// the moment AGIC landed and would send an operator looking for the wrong thing. It flips
+		// to a real predicate (an issued certificate reference) in the lane that closes #1825, and
+		// installedReason is written now so that flip is one line rather than a rewrite.
+		installed:       func(*InfraFacts) bool { return false },
+		installedReason: "installed — ArgoCD is exposed over the Application Gateway ingress.",
+		skippedReason: func(_ *InfraFacts) string {
+			return "an Application Gateway ingress controller is installed, but ArgoCD is not published through it: the gateway has no TLS certificate to terminate on (#1825), and the admin console is not served over plaintext HTTP — reach it with a port-forward and the admin password."
+		},
+	},
 }
 
 // awsArgocdURLSkipReason names which half of the AWS gate was missing. The certificate arm
@@ -358,19 +393,66 @@ func argocdURLDecision(f *InfraFacts) InfraServiceDecision {
 	return perProviderDecision("argocd-url", f, argocdURLGates, argocdURLNoIngressReason)
 }
 
+// wafAttachment is ONE CLOUD's answer to "where does a built web ACL actually bind, and did it?".
+//
+// It is a table of its own rather than a reuse of ingressControllers because the attach site is
+// not the controller, and the two clouds that have one disagree about what kind of fact it even
+// is. On AWS the bind is an ANNOTATION the runner puts on the ArgoCD server ingress
+// (alb.ingress.kubernetes.io/wafv2-acl-arn), so it exists only where that ingress does — a
+// KUBERNETES fact. On Azure it is `firewall_policy_id` on the Application Gateway, written by the
+// template at apply time and true from the moment the gateway exists, whether or not a single
+// Ingress object was ever created — a TOFU fact. Modelling Azure's as "is there an ArgoCD ingress"
+// would report an attached, request-inspecting WAF as unattached, which is the wrong direction to
+// be wrong in for a security control.
+type wafAttachment struct {
+	// attached reports whether the ACL is bound to something that inspects traffic.
+	attached func(f *InfraFacts) bool
+	// attachedReason renders the installed reason around the ACL/policy reference.
+	attachedReason func(ref string) string
+	// unattachedReason is recorded when an ACL was built and attached returned false. It must say
+	// which knob closes the gap — "skipped" alone flattens three different problems into one.
+	unattachedReason string
+}
+
+var wafAttachments = map[string]wafAttachment{
+	"aws": {
+		// Mirrors BOTH halves: the ACL must exist AND the ingress that carries the annotation must
+		// have been configured. Reads argocdURLDecision rather than re-deriving the ingress gate,
+		// so the two cannot drift.
+		attached: func(f *InfraFacts) bool { return argocdURLDecision(f).Status == infraStatusInstalled },
+		attachedReason: func(ref string) string {
+			return fmt.Sprintf("attached (%s) — the ArgoCD ingress carries alb.ingress.kubernetes.io/wafv2-acl-arn, so the ALB inspects every request it serves.", ref)
+		},
+		unattachedReason: "a web ACL was built but this deploy configured no managed ingress to attach it to — the ACL exists, is billed, and inspects nothing.",
+	},
+	"azure": {
+		// Deliberately NOT argocdURLDecision. The gateway filters everything it serves the moment
+		// firewall_policy_id is set, and on Azure that is decided in the template — ArgoCD's own
+		// exposure (blocked on #1825) has nothing to do with it. The template drives the WAF_v2 SKU
+		// and firewall_policy_id from one term, so a gateway plus a policy is an attachment.
+		attached: func(f *InfraFacts) bool { return f.AzureAppGatewayName != "" },
+		attachedReason: func(ref string) string {
+			return fmt.Sprintf("attached (%s) — the Application Gateway carries firewall_policy_id on a WAF_v2 SKU, so every request it serves is inspected.", ref)
+		},
+		unattachedReason: "a WAF policy was built but no Application Gateway was provisioned to bind it to — on Azure a policy attaches to a gateway (firewall_policy_id) and never to an Ingress annotation, so the policy exists, is billed, and inspects nothing. Enable the Application Gateway (azure_application_gateway_enabled) on a template-provisioned VNet.",
+	},
+}
+
+// wafNoAttachSiteReason is what a cloud that exports a web ACL reference with no wafAttachments
+// entry records. Fail-closed and currently unreachable: a lane that starts exporting an ACL
+// reference must say where it binds, or the deploy reports the ACL as unattached rather than
+// assuming another cloud's attach mechanism applies.
+const wafNoAttachSiteReason = "a web ACL was built but no attachment site is wired on this cloud — the ACL exists, is billed, and inspects nothing."
+
 // wafDecision records whether the project's web ACL is ATTACHED to anything — the honest
 // answer to "I turned the WAF on, is traffic actually being filtered?". Every cloud's template
 // can BUILD a WAF construct behind the canvas switch (#1810), but building one and attaching
 // one are different facts, and until now nothing recorded the difference: a project could carry
 // a web ACL, a bill for it, and zero inspected requests.
 //
-// On AWS the attach is the `alb.ingress.kubernetes.io/wafv2-acl-arn` annotation
-// installArgoCD puts on the ArgoCD server ingress, so this decision mirrors BOTH halves —
-// the ACL must exist AND the ingress that carries the annotation must have been configured.
-// It reads argocdURLDecision rather than re-deriving the ingress gate, so the two cannot drift.
-//
-// This ships NO ArgoCD Application (it is an annotation on an existing ingress), which is why
-// it belongs in test/e2e/argocd_assert.go's infraServiceNoApp.
+// This ships NO ArgoCD Application on any cloud — it is an annotation on an existing ingress
+// (AWS) or an argument on a tofu resource (Azure) — which is why it belongs in
+// test/e2e/argocd_assert.go's infraServiceNoApp.
 func wafDecision(f *InfraFacts) InfraServiceDecision {
 	d := InfraServiceDecision{Service: "waf", Status: infraStatusSkipped}
 	acl := wafWebACLRef(f)
@@ -378,12 +460,17 @@ func wafDecision(f *InfraFacts) InfraServiceDecision {
 		d.Reason = wafNoACLReason(f.Provider)
 		return d
 	}
-	if argocdURLDecision(f).Status != infraStatusInstalled {
-		d.Reason = "a web ACL was built but this deploy configured no managed ingress to attach it to — the ACL exists, is billed, and inspects nothing."
+	site, ok := wafAttachments[f.Provider]
+	if !ok {
+		d.Reason = wafNoAttachSiteReason
+		return d
+	}
+	if !site.attached(f) {
+		d.Reason = site.unattachedReason
 		return d
 	}
 	d.Status = infraStatusInstalled
-	d.Reason = fmt.Sprintf("attached (%s) — the ArgoCD ingress carries alb.ingress.kubernetes.io/wafv2-acl-arn, so the ALB inspects every request it serves.", acl)
+	d.Reason = site.attachedReason(acl)
 	return d
 }
 
@@ -394,11 +481,13 @@ func wafWebACLRef(f *InfraFacts) string {
 	switch f.Provider {
 	case "aws":
 		return f.WAFWebACLArn
+	case "azure":
+		return f.AzureWAFPolicyID
 	default:
-		// gcp (Cloud Armor), azure (a WAF policy) and alibaba (a WAF instance) each BUILD a
-		// construct behind their own canvas switch, but none declares a root output the runner
-		// could read and none has a managed ingress to bind one to — so there is no reference
-		// here to attach. Hetzner sells no managed WAF at all.
+		// gcp (Cloud Armor) and alibaba (a WAF instance) each BUILD a construct behind their own
+		// canvas switch, but neither declares a root output the runner could read and neither has
+		// a managed ingress to bind one to — so there is no reference here to attach. Hetzner
+		// sells no managed WAF at all.
 		return ""
 	}
 }
@@ -409,6 +498,8 @@ func wafNoACLReason(provider string) string {
 	switch provider {
 	case "aws":
 		return "no web ACL was built — turn the WAF switch on for this project to create a regional web ACL and attach it to the ingress."
+	case "azure":
+		return "no WAF policy was built — turn the WAF switch on for this project to create an Application Gateway WAF policy; the template then also provisions the Application Gateway it binds to."
 	case "hetzner":
 		return "Hetzner sells no managed WAF — run your own edge (or an in-cluster WAF add-on) if you need request filtering."
 	default:

@@ -418,35 +418,81 @@ func TestArgocdURLSkipReasonNamesTheMissingHalf(t *testing.T) {
 	}
 }
 
-// The WAF decision must never outrun the ingress that carries it: "installed" implies the
-// argocd-url decision is installed too, on every cloud and every fact shape. They are derived
-// from one another precisely so they cannot drift, and this is the assertion that says so.
-func TestInfraServiceDecisions_WAFNeverOutrunsTheIngress(t *testing.T) {
+// wafWitness is, per cloud, the INDEPENDENT fact that must hold whenever the waf decision says
+// "attached" — deliberately written out here rather than re-reading wafAttachments, which would
+// make the assertion tautological. Every cloud in wafAttachments must appear (checked below), so
+// a lane that adds an attach site is forced to state what its attachment actually depends on.
+//
+// The two entries are different KINDS of fact on purpose. AWS's bind is a Kubernetes annotation
+// on the ArgoCD server ingress, so it cannot exist without that ingress. Azure's is
+// `firewall_policy_id` on the Application Gateway, written by the template at apply time — true
+// from the moment the gateway exists, with no Ingress object and no ArgoCD URL required. Asserting
+// AWS's coupling on Azure would demand a lie.
+var wafWitness = map[string]struct {
+	name  string
+	holds func(f *InfraFacts, decisions []InfraServiceDecision) bool
+}{
+	"aws": {
+		name: "the ArgoCD ingress that carries the annotation (argocd-url installed)",
+		holds: func(_ *InfraFacts, decisions []InfraServiceDecision) bool {
+			for _, d := range decisions {
+				if d.Service == "argocd-url" {
+					return d.Status == infraStatusInstalled
+				}
+			}
+			return false
+		},
+	},
+	"azure": {
+		name:  "the Application Gateway the policy binds to (AzureAppGatewayName present)",
+		holds: func(f *InfraFacts, _ []InfraServiceDecision) bool { return f.AzureAppGatewayName != "" },
+	},
+}
+
+// The WAF decision must never outrun the thing it binds to: "attached" implies that cloud's
+// witness holds, on every fact shape. This is the assertion that stops a web ACL being reported
+// as inspecting traffic when it is associated with nothing.
+func TestInfraServiceDecisions_WAFNeverOutrunsItsAttachmentSite(t *testing.T) {
+	for provider := range wafAttachments {
+		if _, ok := wafWitness[provider]; !ok {
+			t.Fatalf("provider %q has a wafAttachments entry but no witness in this test — state what its attachment depends on, or the 'attached' claim is asserted against nothing.", provider)
+		}
+	}
 	for _, p := range []string{"aws", "gcp", "azure", "alibaba", "hetzner", "digitalocean"} {
 		for _, acl := range []string{"", "acl-ref"} {
 			for _, cert := range []string{"", "arn:aws:acm:us-east-1:123:certificate/abc"} {
-				f := &InfraFacts{Provider: p, DNSEnabled: true, DomainName: "example.com",
-					ACMCertificateArn: cert, WAFWebACLArn: acl}
-				decisions := InfraServiceDecisions(f)
-				waf := decisionFor(t, decisions, "waf")
-				url := decisionFor(t, decisions, "argocd-url")
-				if waf.Status == infraStatusInstalled && url.Status != infraStatusInstalled {
-					t.Errorf("%s (acl=%q cert=%q): waf reported attached with no managed ingress (argocd-url=%s)",
-						p, acl, cert, url.Status)
+				for _, gw := range []string{"", "agw-weu-production-alethia-nl"} {
+					f := &InfraFacts{Provider: p, DNSEnabled: true, DomainName: "example.com",
+						ACMCertificateArn: cert, WAFWebACLArn: acl,
+						AzureWAFPolicyID: acl, AzureAppGatewayName: gw, AzureIngressClient: "client-id"}
+					decisions := InfraServiceDecisions(f)
+					waf := decisionFor(t, decisions, "waf")
+					if waf.Status != infraStatusInstalled {
+						continue
+					}
+					w, ok := wafWitness[p]
+					if !ok {
+						t.Errorf("%s (acl=%q cert=%q gw=%q): waf reported attached on a cloud with no attachment site at all", p, acl, cert, gw)
+						continue
+					}
+					if !w.holds(f, decisions) {
+						t.Errorf("%s (acl=%q cert=%q gw=%q): waf reported attached without %s", p, acl, cert, gw, w.name)
+					}
 				}
 			}
 		}
 	}
 }
 
-// Only AWS exports a web ACL reference today. gcp/azure/alibaba each BUILD a construct
-// (Cloud Armor / a WAF policy / a WAF instance) but declare no root output and have no ingress,
-// and Hetzner sells no managed WAF at all — each must say which of those it is, so "we did not
-// wire it yet" is never mistaken for "this cloud cannot".
+// gcp/alibaba each BUILD a construct (Cloud Armor / a WAF instance) but declare no root output
+// and have no ingress; Hetzner sells no managed WAF at all; azure builds a policy and now also
+// builds the gateway it binds to, so its "nothing was built" reason must point at the SWITCH
+// rather than at a missing ingress. Each must say which of those it is, so "we did not wire it
+// yet" is never mistaken for "this cloud cannot", nor for "you left it off".
 func TestInfraServiceDecisions_WAFPerCloudSkipReasons(t *testing.T) {
 	cases := map[string]string{
 		"gcp":     "no ingress to attach it to yet",
-		"azure":   "no ingress to attach it to yet",
+		"azure":   "no waf policy was built",
 		"alibaba": "no ingress to attach it to yet",
 		"hetzner": "sells no managed waf",
 	}
@@ -474,7 +520,9 @@ func TestInfraServiceDecisions_WAFPerCloudSkipReasons(t *testing.T) {
 // decisions the lanes touch agree with each other.
 
 func TestIngressDecision_AbsentCloudsSkipWithTheSharedReason(t *testing.T) {
-	for _, p := range []string{"gcp", "azure", "alibaba", "hetzner", "digitalocean", ""} {
+	// azure is deliberately NOT here any more: it has a table entry (AGIC) and therefore its own
+	// skip reason, which names the gateway it needs rather than the ingress-nginx add-on.
+	for _, p := range []string{"gcp", "alibaba", "hetzner", "digitalocean", ""} {
 		d := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: p}), "ingress")
 		if d.Status != infraStatusSkipped {
 			t.Errorf("%q ingress: want skipped (no table entry), got %s (%s)", p, d.Status, d.Reason)
@@ -546,5 +594,129 @@ func TestPerProviderDecision_TableSemantics(t *testing.T) {
 			t.Errorf("perProviderDecision(%q, cluster=%q) = %+v, want status %s reason %q",
 				c.provider, c.cluster, d, c.wantStatus, c.wantReason)
 		}
+	}
+}
+
+// ── azure: Application Gateway + AGIC, and the WAF policy it binds ─────────────────────────────
+//
+// The Azure lane is the first cloud whose WAF attachment is a TOFU fact rather than a Kubernetes
+// one, so these cover the three outcomes independently of anything ArgoCD does.
+
+// azureGatewayFacts is a fully-wired Azure project: the gateway is provisioned, AGIC's identity
+// was federated, and the WAF switch built a policy the template bound to the gateway.
+func azureGatewayFacts() *InfraFacts {
+	return &InfraFacts{
+		Provider:            "azure",
+		AzureSubscriptionID: "00000000-0000-0000-0000-000000000001",
+		AzureResourceGroup:  "rg-alethia-nl-production",
+		AzureIngressClient:  "00000000-0000-0000-0000-0000000000dd",
+		AzureAppGatewayName: "agw-weu-production-alethia-nl",
+		AzureWAFPolicyID:    "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-alethia-nl-production/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/alethia-nl-production-waf",
+	}
+}
+
+func TestIngressDecision_AzureInstallsAGIC(t *testing.T) {
+	d := decisionFor(t, InfraServiceDecisions(azureGatewayFacts()), "ingress")
+	if d.Status != infraStatusInstalled {
+		t.Fatalf("azure ingress: want installed, got %s (%s)", d.Status, d.Reason)
+	}
+	// The reason must name the ingressClassName an operator has to put on their Ingress, or the
+	// decision tells them a controller shipped without telling them how to use it.
+	if !strings.Contains(d.Reason, "azure-application-gateway") {
+		t.Errorf("azure ingress reason should name the ingress class, got %q", d.Reason)
+	}
+}
+
+// Both halves of the gate, one at a time. Either missing means the chart would install a
+// controller that authenticates to nothing (no identity) or reconciles onto nothing (no gateway),
+// and the render gate in azure-application-gateway-ingress.yaml refuses on exactly the same terms.
+func TestIngressDecision_AzureNeedsBothTheGatewayAndTheIdentity(t *testing.T) {
+	cases := map[string]func(*InfraFacts){
+		"no gateway":  func(f *InfraFacts) { f.AzureAppGatewayName = "" },
+		"no identity": func(f *InfraFacts) { f.AzureIngressClient = "" },
+		"neither":     func(f *InfraFacts) { f.AzureAppGatewayName, f.AzureIngressClient = "", "" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := azureGatewayFacts()
+			mutate(f)
+			d := decisionFor(t, InfraServiceDecisions(f), "ingress")
+			if d.Status != infraStatusSkipped {
+				t.Fatalf("azure ingress (%s): want skipped, got %s (%s)", name, d.Status, d.Reason)
+			}
+			// The skip must point at the gateway, not at the shared "install ingress-nginx" line —
+			// on Azure the fix is a template flag, and the standing cost behind it is the reason
+			// the flag exists.
+			if !strings.Contains(strings.ToLower(d.Reason), "application gateway") {
+				t.Errorf("azure ingress skip reason should name the Application Gateway, got %q", d.Reason)
+			}
+		})
+	}
+}
+
+func TestInfraServiceDecisions_WAFAttachedOnAzure(t *testing.T) {
+	f := azureGatewayFacts()
+	d := decisionFor(t, InfraServiceDecisions(f), "waf")
+	if d.Status != infraStatusInstalled {
+		t.Fatalf("azure waf (policy + gateway): want installed, got %s (%s)", d.Status, d.Reason)
+	}
+	if !strings.Contains(d.Reason, f.AzureWAFPolicyID) {
+		t.Errorf("azure waf installed reason should carry the policy id, got %q", d.Reason)
+	}
+	// Name the MECHANISM, and specifically not the AWS one: an operator checking the association
+	// in the portal is looking for firewall_policy_id on the gateway, not an Ingress annotation.
+	if !strings.Contains(d.Reason, "firewall_policy_id") {
+		t.Errorf("azure waf installed reason should name firewall_policy_id, got %q", d.Reason)
+	}
+	if strings.Contains(d.Reason, "wafv2-acl-arn") {
+		t.Errorf("azure waf reason must not describe the AWS annotation, got %q", d.Reason)
+	}
+}
+
+// The attach does NOT depend on ArgoCD being published. The gateway filters everything it serves
+// from the moment the policy is bound, and ArgoCD's own exposure is blocked on a certificate
+// problem (#1825) that has nothing to do with the WAF. Reporting "unattached" here would tell an
+// operator their WAF is off when it is inspecting every request.
+func TestInfraServiceDecisions_AzureWAFDoesNotDependOnTheArgoCDURL(t *testing.T) {
+	decisions := InfraServiceDecisions(azureGatewayFacts())
+	if url := decisionFor(t, decisions, "argocd-url"); url.Status == infraStatusInstalled {
+		t.Fatalf("azure has no managed ArgoCD URL yet; this test's premise is gone: %+v", url)
+	}
+	if waf := decisionFor(t, decisions, "waf"); waf.Status != infraStatusInstalled {
+		t.Errorf("azure waf must be attached regardless of the ArgoCD URL, got %s (%s)", waf.Status, waf.Reason)
+	}
+}
+
+// The pre-lane state, still reachable by declining the gateway: the policy is built, billed, and
+// bound to nothing. Recording it as "installed" would be the exact lie this decision exists for.
+func TestInfraServiceDecisions_AzureWAFBuiltWithNoGateway(t *testing.T) {
+	f := azureGatewayFacts()
+	f.AzureAppGatewayName = ""
+	f.AzureIngressClient = ""
+	d := decisionFor(t, InfraServiceDecisions(f), "waf")
+	if d.Status != infraStatusSkipped {
+		t.Fatalf("azure waf (policy, no gateway): want skipped, got %s (%s)", d.Status, d.Reason)
+	}
+	if !strings.Contains(strings.ToLower(d.Reason), "no application gateway") {
+		t.Errorf("azure waf skip reason should say there is no gateway to bind to, got %q", d.Reason)
+	}
+	if !strings.Contains(strings.ToLower(d.Reason), "inspects nothing") {
+		t.Errorf("azure waf skip reason should say the policy inspects nothing, got %q", d.Reason)
+	}
+}
+
+// A cloud with an ingress controller but no ArgoCD URL must not fall back to the shared "no
+// managed ingress on this cloud yet" line — that stopped being true when AGIC landed, and it
+// would send an operator looking for an ingress controller they already have.
+func TestArgocdURLDecision_AzureNamesTheCertificateAsTheBlocker(t *testing.T) {
+	d := decisionFor(t, InfraServiceDecisions(azureGatewayFacts()), "argocd-url")
+	if d.Status != infraStatusSkipped {
+		t.Fatalf("azure argocd-url: want skipped (no TLS certificate), got %s (%s)", d.Status, d.Reason)
+	}
+	if d.Reason == argocdURLNoIngressReason {
+		t.Errorf("azure argocd-url must not claim there is no ingress on this cloud — AGIC is installed. Got the shared default: %q", d.Reason)
+	}
+	if !strings.Contains(strings.ToLower(d.Reason), "certificate") {
+		t.Errorf("azure argocd-url skip reason should name the missing TLS certificate, got %q", d.Reason)
 	}
 }

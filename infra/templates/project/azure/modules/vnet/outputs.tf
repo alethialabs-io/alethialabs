@@ -22,3 +22,8 @@ output "database_subnet_id" {
   description = "ID of the subnet delegated to Microsoft.DBforPostgreSQL/flexibleServers (dedicated; a delegated subnet cannot host other resources)."
   value       = azurerm_subnet.database.id
 }
+
+output "application_gateway_subnet_id" {
+  description = "ID of the subnet dedicated to an Application Gateway v2 (dedicated; the service refuses a subnet that holds any other resource)."
+  value       = azurerm_subnet.application_gateway.id
+}

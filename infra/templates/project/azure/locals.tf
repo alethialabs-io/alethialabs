@@ -61,6 +61,7 @@ locals {
   azure_cache_name     = "redis-${local.location_short}-${var.environment}-${var.project_name}"
   azure_dns_name       = "dns-${local.location_short}-${var.environment}-${var.project_name}"
   azure_waf_name       = "waf-${local.location_short}-${var.environment}-${var.project_name}"
+  app_gateway_name     = "agw-${local.location_short}-${var.environment}-${var.project_name}"
   key_vault_name       = "kv-${local.location_short}-${var.environment}-${var.project_name}"
   acr_name             = "acr${local.location_short}${var.environment}${var.project_name}"
   service_bus_name     = "sb-${local.location_short}-${var.environment}-${var.project_name}"
@@ -91,4 +92,33 @@ locals {
     ? data.azurerm_user_assigned_identity.external_secrets_adopted[0].principal_id
     : azurerm_user_assigned_identity.external_secrets[0].principal_id
   ) : ""
+
+  # ── Application Gateway / AGIC (see application-gateway.tf) ────────────────────────────────
+  #
+  # An Application Gateway is a STANDING cost — a v2 gateway bills per hour from the moment it
+  # exists, whether or not a single Ingress object was ever created — so it is not implied by
+  # merely having a cluster the way the (free) AWS Load Balancer Controller is. The default
+  # (`azure_application_gateway_enabled = null`) is instead "follow the WAF switch": on Azure an
+  # azurerm_web_application_firewall_policy binds to an Application Gateway and to NOTHING else,
+  # so a project that turned the canvas WAF on and got no gateway is carrying a policy, a bill,
+  # and zero inspected requests — the exact defect this lane closes. Setting the variable
+  # explicitly overrides in both directions: `true` buys the ingress without a WAF, `false`
+  # keeps the pre-lane shape.
+  request_application_gateway = var.azure_application_gateway_enabled != null ? var.azure_application_gateway_enabled : var.azure_waf_enabled
+
+  # A gateway needs a subnet of its own, and only the VNet this template creates can carve one
+  # (modules/vnet azurerm_subnet.application_gateway) — a brownfield VNet is the caller's and we
+  # will not go carving subnets in it. So `provision_vnet` is a hard term. An EXPLICIT request on a
+  # brownfield network is refused at plan (checks_ingress.tf) rather than silently dropped; the
+  # IMPLIED one (WAF on, brownfield) degrades to today's behaviour and says so.
+  enable_application_gateway = local.request_application_gateway && var.provision_vnet
+
+  # The WAF_v2 SKU and firewall_policy_id are driven from this ONE term so they cannot diverge:
+  # a Standard_v2 gateway rejects a firewall policy association outright, and a WAF_v2 gateway
+  # with no policy is a more expensive gateway that filters nothing.
+  app_gateway_waf_attached = local.enable_application_gateway && var.azure_waf_enabled
+
+  # AGIC is the in-cluster half: no cluster, no controller (and no OIDC issuer to federate its
+  # identity to). The gateway itself is still built — it is useful, and billed, either way.
+  enable_agic = local.enable_application_gateway && var.provision_aks
 }

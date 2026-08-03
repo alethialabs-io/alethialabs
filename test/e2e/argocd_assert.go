@@ -92,7 +92,9 @@ var infraServiceArgoApps = map[string]map[string]string{
 	// ingressDecision is "installed" only where argocd.ingressControllers has an entry.
 	// ONE LINE PER CLOUD: add the cloud's controller Application here in the same PR that
 	// adds its ingressControllers entry, and the two stay in step.
-	"ingress": {"aws": "aws-load-balancer-controller"},
+	// azure's Application name is the AGIC chart name, pinned by `fullnameOverride: ingress-azure`
+	// in the template — the same string the federated identity credential's KSA subject depends on.
+	"ingress": {"aws": "aws-load-balancer-controller", "azure": "ingress-azure"},
 	// appsRepoDecision is "installed" when the project wired an apps-destination repo: the
 	// runner credentials ArgoCD to it (the shared "repo-apps" repository Secret) and renders
 	// the credentialed "apps" app-of-apps that syncs the customer's repo (user-apps.yaml). This
