@@ -756,3 +756,109 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 		}
 	})
 }
+
+// TestArgocdURLDecisionMatchesWhatInstallArgoCDEmitsOnAzure is the Azure half of the invariant the
+// AWS test above pins, and it exists because that one cannot cover this cloud: it drives the ACM
+// certificate output, and Azure exports no certificate at all (#1825 deleted the App Service order,
+// a purchased product that bound to nothing). Without this, flipping argocdURLGates["azure"] off
+// its constant-false predicate would be asserted by nothing.
+//
+// The invariant is the same one #1831 broke: a gate that reports an ingress must agree with the
+// emitter on EVERY term, not a convenient subset. Azure has four — DNS, a domain, the Application
+// Gateway, and cert-manager being able to issue — so the matrix drives all four independently and
+// asserts the decision equals the emission in all 16 shapes.
+func TestArgocdURLDecisionMatchesWhatInstallArgoCDEmitsOnAzure(t *testing.T) {
+	for _, dnsEnabled := range []bool{true, false} {
+		for _, domain := range []string{"example.com", ""} {
+			for _, gw := range []string{"agw-weu-development-demo", ""} {
+				// The solver's per-cloud identity requirement, driven through the ONE output that
+				// gates it on Azure. The other three facts CertManagerSolver needs come from the
+				// config below, so toggling this alone flips CertManagerEnabled().
+				for _, edns := range []string{"client-id", ""} {
+					name := fmt.Sprintf("dns=%t domain=%q gw=%t certmgr=%t", dnsEnabled, domain, gw != "", edns != "")
+					t.Run(name, func(t *testing.T) {
+						resetDeploySeams(t)
+						executeCommandWithOutput = func(string, string, []string) (string, error) { return "existing-auth", nil }
+						var commands []string
+						var values string
+						executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+							commands = append(commands, command)
+							// Read the values file NOW — installArgoCD removes its temp dir on return.
+							if strings.HasPrefix(command, "helm upgrade --install argo-cd") {
+								if j := strings.Index(command, " -f "); j >= 0 {
+									path := strings.Trim(strings.TrimSpace(command[j+4:]), "'\"")
+									b, err := os.ReadFile(path)
+									if err != nil {
+										t.Errorf("values file %s unreadable at helm time: %v", path, err)
+									}
+									values = string(b)
+								}
+							}
+							return nil
+						}
+
+						vc := &types.ProjectConfig{
+							Provider:       "azure",
+							CloudAccountID: "00000000-0000-0000-0000-000000000001",
+							DNS: types.ProjectDNSConfig{
+								Enabled: dnsEnabled, DomainName: domain, ManagedCertificate: true,
+							},
+						}
+						outputs := map[string]interface{}{
+							"resource_group_name": "rg-demo",
+							"azure_tenant_id":     "00000000-0000-0000-0000-0000000000aa",
+						}
+						if gw != "" {
+							outputs["application_gateway_name"] = gw
+						}
+						if edns != "" {
+							outputs["external_dns_client_id"] = edns
+						}
+
+						if err := installArgoCD(context.Background(), vc, outputs, &PlanResult{}, io.Discard, io.Discard); err != nil {
+							t.Fatalf("installArgoCD: %v", err)
+						}
+						if len(commands) == 0 {
+							t.Fatal("no commands executed")
+						}
+
+						// The facts the runner builds from the SAME deploy — never hand-assembled,
+						// so a fact-derivation bug cannot hide behind a hand-written fixture.
+						f := argocd.BuildFromOutputs(outputs, vc)
+
+						emitted := strings.Contains(values, "ingressClassName: "+argocd.AGWIngressClassName)
+						reported := false
+						for _, d := range argocd.InfraServiceDecisions(f) {
+							if d.Service == "argocd-url" {
+								reported = d.Status == "installed"
+							}
+						}
+						if emitted != reported {
+							t.Errorf("argocd-url decision (%t) disagrees with the emitted ingress (%t)\nvalues:\n%s", reported, emitted, values)
+						}
+
+						// When it IS emitted, the two things that make it a WORKING ingress rather
+						// than a rendered one must both be present. `tls: true` is the whole TLS
+						// contract with argo-cd 8.6.4 (there is no tlsSecret key), and without the
+						// issuer annotation cert-manager never mints the Secret — the listener
+						// would serve the gateway's default certificate forever, silently.
+						if emitted {
+							if !strings.Contains(values, "tls: true") {
+								t.Errorf("emitted ingress has no `tls: true` — no TLS block is rendered at all:\n%s", values)
+							}
+							if !strings.Contains(values, "cert-manager.io/cluster-issuer: \""+argocd.CertManagerIssuerName+"\"") {
+								t.Errorf("emitted ingress does not name the cert-manager ClusterIssuer:\n%s", values)
+							}
+							// AWS's WAF rides an annotation; Azure's policy is bound by the template
+							// to the gateway. Emitting an AWS-shaped annotation here would be a
+							// no-op AGIC ignores, and would suggest a binding that is not happening.
+							if strings.Contains(values, "wafv2-acl-arn") {
+								t.Errorf("Azure ingress must not carry the AWS WAF annotation:\n%s", values)
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+}

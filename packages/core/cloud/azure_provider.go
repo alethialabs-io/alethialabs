@@ -25,17 +25,27 @@ func (p *azureProvider) RequiredCLIs() []string {
 func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	wafEnabled := config.DNS.WafEnabled
-	managedCert := config.DNS.ManagedCertificate
 	if v, ok := config.DNS.ProviderConfig["azure_waf"]; ok {
 		if b, ok := v.(bool); ok {
 			wafEnabled = b
 		}
 	}
-	if v, ok := config.DNS.ProviderConfig["managed_certificate"]; ok {
-		if b, ok := v.(bool); ok {
-			managedCert = b
-		}
-	}
+	// ⚠️ The `managed_certificate` provider_config override is GONE FROM AZURE, and this is a
+	// stated behaviour change rather than a tidy-up (#1825).
+	//
+	// It only ever mutated the `azure_managed_certificate` tfvar. With the certificate issued
+	// in-cluster there is no tfvar, so the override had nothing left to act on: cert-manager gates
+	// on InfraFacts.ManagedCertificate, which reads `vc.DNS.ManagedCertificate` from the config
+	// snapshot and does not consult ProviderConfig at all.
+	//
+	// Leaving the block would be worse than removing it — it would keep accepting the key, keep
+	// appearing to work, and change nothing. An escape hatch that silently stopped working is the
+	// defect this programme exists to remove, so it is deleted where a reader will notice.
+	//
+	// The canvas switch itself is unaffected; only the provider_config back door is. If that back
+	// door is wanted again it belongs at the InfraFacts layer, where the decision now lives, and
+	// it is the same question for GCP under #1858 — so it is worth answering once, for both, not
+	// re-added ad hoc here.
 
 	provisionVnet := config.Network.ProvisionNetwork
 	if !provisionVnet && config.Network.NetworkID == "" {
@@ -67,8 +77,16 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		// WAF
 		"azure_waf_enabled": wafEnabled,
 
-		// TLS
-		"azure_managed_certificate": managedCert,
+		// TLS — no tfvar. Azure's managed certificate is issued IN-CLUSTER by cert-manager
+		// (#1825), so nothing in the template consumes the switch and `azure_managed_certificate`
+		// is not emitted. The user's ask still reaches the runner, by the path it always used:
+		// InfraFacts.ManagedCertificate reads vc.DNS.ManagedCertificate from the config snapshot,
+		// never a tfvar or an output.
+		//
+		// Emitting it anyway would be worse than dead weight. OpenTofu drops a root variable the
+		// template does not declare, so the key would vanish at plan time while the offer-parity
+		// guard still traced the emit and scored the cell as carried — a green cell for a value
+		// that never reaches a plan.
 
 		// Service Bus
 		"create_service_bus": len(config.Queues) > 0 || len(config.Topics) > 0,

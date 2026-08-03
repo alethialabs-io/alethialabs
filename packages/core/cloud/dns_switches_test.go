@@ -22,6 +22,15 @@ type dnsSwitchCell struct {
 	// certKey / wafKey are the legacy provider_config keys, kept as per-cloud overrides.
 	certKey string
 	wafKey  string
+	// certInCluster marks a cloud whose managed certificate is issued IN-CLUSTER by cert-manager
+	// rather than by OpenTofu, so it emits NO certificate tfvar at all (#1825).
+	//
+	// The cell still names certVar, and the assertions below flip to demanding its ABSENCE rather
+	// than skipping. Skipping would let the tfvar quietly come back: it would reach a template that
+	// no longer declares it, OpenTofu would drop it at plan time, and the offer-parity guard would
+	// still trace the emit and score the cell as carried — a green cell for a value that never
+	// reaches a plan. Asserting absence is what makes that un-regressable.
+	certInCluster bool
 }
 
 func dnsSwitchCells() []dnsSwitchCell {
@@ -45,12 +54,13 @@ func dnsSwitchCells() []dnsSwitchCell {
 			wafKey:  "cloud_armor",
 		},
 		{
-			cloud:   "azure",
-			build:   (&azureProvider{}).ProviderTfvars,
-			certVar: "azure_managed_certificate",
-			wafVar:  "azure_waf_enabled",
-			certKey: "managed_certificate",
-			wafKey:  "azure_waf",
+			cloud:         "azure",
+			build:         (&azureProvider{}).ProviderTfvars,
+			certVar:       "azure_managed_certificate",
+			wafVar:        "azure_waf_enabled",
+			certKey:       "managed_certificate",
+			wafKey:        "azure_waf",
+			certInCluster: true,
 		},
 		{
 			cloud:   "alibaba",
@@ -63,6 +73,19 @@ func dnsSwitchCells() []dnsSwitchCell {
 	}
 }
 
+// assertCert asserts the cloud's certificate tfvar — its VALUE on the clouds that carry one, and
+// its ABSENCE on the clouds where cert-manager issues in-cluster.
+func assertCert(t *testing.T, c dnsSwitchCell, tf map[string]interface{}, want bool) {
+	t.Helper()
+	if c.certInCluster {
+		if v, ok := tf[c.certVar]; ok {
+			t.Errorf("%s: %s = %v, want it ABSENT — this cloud issues the certificate in-cluster and its template declares no such variable", c.cloud, c.certVar, v)
+		}
+		return
+	}
+	assertEq(t, tf, c.certVar, want)
+}
+
 // The two canvas DNS switches reach every cloud's own tfvar name (#1810).
 //
 // Before this, `buildConfigSnapshot` hand-enumerated the DNS singleton and simply omitted both
@@ -73,7 +96,7 @@ func TestProviderTfvars_DNSSwitchesReachEveryCloud(t *testing.T) {
 		t.Run(c.cloud, func(t *testing.T) {
 			t.Run("off by default", func(t *testing.T) {
 				tf := c.build(&types.ProjectConfig{})
-				assertEq(t, tf, c.certVar, false)
+				assertCert(t, c, tf, false)
 				assertEq(t, tf, c.wafVar, false)
 			})
 
@@ -81,7 +104,7 @@ func TestProviderTfvars_DNSSwitchesReachEveryCloud(t *testing.T) {
 				tf := c.build(&types.ProjectConfig{
 					DNS: types.ProjectDNSConfig{ManagedCertificate: true, WafEnabled: true},
 				})
-				assertEq(t, tf, c.certVar, true)
+				assertCert(t, c, tf, true)
 				assertEq(t, tf, c.wafVar, true)
 			})
 
@@ -89,7 +112,7 @@ func TestProviderTfvars_DNSSwitchesReachEveryCloud(t *testing.T) {
 				tf := c.build(&types.ProjectConfig{
 					DNS: types.ProjectDNSConfig{ManagedCertificate: true},
 				})
-				assertEq(t, tf, c.certVar, true)
+				assertCert(t, c, tf, true)
 				assertEq(t, tf, c.wafVar, false)
 			})
 		})
@@ -115,7 +138,7 @@ func TestProviderTfvars_DNSProviderConfigStillOverrides(t *testing.T) {
 						},
 					},
 				})
-				assertEq(t, tf, c.certVar, false)
+				assertCert(t, c, tf, false)
 				assertEq(t, tf, c.wafVar, false)
 			})
 
@@ -126,7 +149,7 @@ func TestProviderTfvars_DNSProviderConfigStillOverrides(t *testing.T) {
 						c.wafKey:  true,
 					}},
 				})
-				assertEq(t, tf, c.certVar, true)
+				assertCert(t, c, tf, true)
 				assertEq(t, tf, c.wafVar, true)
 			})
 
@@ -141,7 +164,7 @@ func TestProviderTfvars_DNSProviderConfigStillOverrides(t *testing.T) {
 						},
 					},
 				})
-				assertEq(t, tf, c.certVar, true)
+				assertCert(t, c, tf, true)
 				assertEq(t, tf, c.wafVar, true)
 			})
 		})
