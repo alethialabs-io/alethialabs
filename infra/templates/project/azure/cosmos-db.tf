@@ -27,6 +27,7 @@ module "cosmos_db" {
   environment         = var.environment
   project_name        = var.project_name
   resource_group_name = azurerm_resource_group.main.name
+  account_name        = local.azure_cosmos_account_name
   kind                = var.cosmos_db_kind
   consistency_level   = var.cosmos_db_consistency_level
   collections         = var.cosmos_db_collections

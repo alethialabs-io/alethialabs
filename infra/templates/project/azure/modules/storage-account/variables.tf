@@ -13,6 +13,11 @@ variable "project_name" {
   type        = string
 }
 
+variable "account_name" {
+  description = "Name of the storage account. Derived by the caller (local.azure_storage_account_name in checks_naming.tf), which lowercases, strips every non-alphanumeric and applies Azure's 3-24 character cap. Derived at the template root, not here, so it stays reachable from `tofu test`."
+  type        = string
+}
+
 variable "resource_group_name" {
   description = "Name of the resource group"
   type        = string
