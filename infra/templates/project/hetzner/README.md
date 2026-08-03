@@ -24,7 +24,10 @@ The runner copies this template verbatim, feeds it a `.tfvars.json`, then runs
    `control_plane_arch` / `worker_arch` are built.
 2. **Network:** one `hcloud_network` + `/24` node subnet carved from
    `network_cidr`, plus a firewall allowing Talos apid (50000/50001), the
-   Kubernetes API (6443), and all intra-cluster traffic.
+   Kubernetes API (6443), and all intra-cluster traffic. With
+   `provision_network = false` the network is not created — the one named by
+   `network_id` is looked up instead and its `ip_range` becomes the supernet
+   everything downstream derives from (see *Bringing your own network*).
 3. **Bootstrap:** `talos_machine_secrets` → `talos_machine_configuration`
    (controlplane + worker, patched to disable the default CNI + kube-proxy and
    set the pod/service CIDRs + install disk) → `talos_machine_configuration_apply`
@@ -66,10 +69,17 @@ variable). Agents must never run `tofu plan` / `tofu apply`.
 | `worker_count` | `1` | Number of worker nodes. |
 | `worker_server_type` | `cpx22` | Worker server type (2 vCPU / 4 GB, amd64; orderable). |
 | `worker_arch` | `amd64` | Worker arch. |
-| `network_cidr` | `10.0.0.0/16` | Private network CIDR. |
+| `provision_network` | `true` | Create the private network, or attach the existing one named by `network_id`. |
+| `network_id` | `""` | Existing hcloud network (numeric id **or** name) to attach to when `provision_network = false`. |
+| `network_cidr` | `10.0.0.0/16` | Private network CIDR. Used only when `provision_network = true`; on an existing network its own `ip_range` is the supernet. |
 | `pod_cidr` | `10.0.128.0/17` | Cilium pod CIDR. Must be a **subnet** of `network_cidr` (native routing) and not overlap the service/node subnets. |
 | `service_cidr` | `10.0.96.0/19` | Service CIDR. Must be a **subnet** of `network_cidr` and not overlap the pod/node subnets. |
 | `hcloud_token` | `""` | Optional; **only** for the in-cluster hcloud CCM secret. The providers use `HCLOUD_TOKEN` from the env. May be supplied via `TF_VAR_hcloud_token`. |
+| `dns_provider` | `native` | Pluggable-connector guard. `native` creates the hcloud zone; any other slug means a connector (Cloudflare, …) owns DNS and nothing native is created. |
+| `cloud_dns_enabled` | `false` | Create and manage the hcloud DNS zone here. |
+| `dns_main_domain` | `""` | Apex domain of the zone. **Required** when `cloud_dns_enabled` is true. |
+| `dns_hosted_zone` | `""` | Existing hcloud zone id, used when `cloud_dns_enabled` is false. |
+| `dns_zone_ttl` | `3600` | Default TTL (seconds) for records in the created zone. |
 | `buckets` | `[]` | Object Storage buckets (see below). Empty → the minio provider is never exercised. |
 | `hetzner_s3_endpoint` | `fsn1.your-objectstorage.com` | S3 endpoint **host** (no scheme). Only used when `buckets` is non-empty. |
 | `hetzner_s3_region` | `fsn1` | Object Storage location (`fsn1`/`nbg1`/`hel1`). |
@@ -109,6 +119,58 @@ Object Storage exists only in `fsn1`/`nbg1`/`hel1`; a cluster in a compute-only 
 | `talosconfig` (sensitive) | Talos client configuration. |
 | `bucket_names` | Provisioned Object Storage bucket names (empty when none). |
 | `bucket_endpoints` | Per-bucket S3 URLs (`https://<endpoint>/<bucket>`). |
+| `network_id` | The network the cluster is attached to — created here, or the existing one. |
+| `dns_zone_id` | The hcloud DNS zone id (created here, else `dns_hosted_zone`). |
+| `dns_name_servers` | Authoritative name servers to delegate at the registrar; empty when using an existing zone. |
+
+## DNS — `dns.tf`
+
+Hetzner's DNS moved onto the **Cloud API** in 2025: zones are project-scoped, authenticated
+by the same `HCLOUD_TOKEN` this template already uses, and zones can no longer be created
+under the retired `dns.hetzner.com` console. The `hcloud` provider carries it natively from
+**1.56** (`hcloud_zone`, `hcloud_zone_rrset`), which is why `required_providers` pins
+`>= 1.56` — a lower resolution would fail on an unknown resource type.
+
+`cloud_dns_enabled` creates and owns the zone (`mode = "primary"`); the console sets it when
+the DNS component is on **and** no existing zone id was supplied, exactly as the AWS template
+decides `cloud_dns_enabled` for Route 53. With an existing zone, nothing is created and
+`dns_hosted_zone` is reported on `dns_zone_id` so the rest of the platform reads one name
+either way. `dns_provider != "native"` suppresses the zone entirely — a pluggable DNS
+connector owns the records then.
+
+**This is not the same question as TLS or WAF on Hetzner.** Those two remain documented
+exclusions (`infra/offer-exclusions.yaml`): a managed certificate is issued in-cluster by
+cert-manager and never travels through OpenTofu, and Hetzner sells no web application
+firewall at all. DNS was simply missing (#1816).
+
+## Bringing your own network — `network.tf`
+
+`provision_network = false` attaches the cluster to a network you already have, named by
+`network_id` (numeric id or name). Everything topological is then derived from **that
+network's `ip_range`**, not from `network_cidr`: the node subnet, every server's private IP,
+the firewall's intra-cluster rules and Cilium's `ipv4NativeRoutingCIDR`.
+
+Two consequences worth reading before using it:
+
+- **The node subnet is still created**, in your network. Servers draw their private IP from a
+  subnet and hcloud publishes no `hcloud_network_subnet` **data** source, so there is nothing
+  to look up and attach to. Alethia adds its own `/24` (the first of the network's range).
+  That range must be free — a collision is refused by the Hetzner API at apply, and no
+  plan-time check can see it.
+- **`pod_cidr` and `service_cidr` must be subnets of the existing network's range.** Cilium
+  runs in native-routing mode over it, so pods outside that range break cross-node
+  pod→apiserver traffic — a cluster that comes up Ready and then fails the datapath. A
+  fail-closed precondition (`terraform_data.byo_network_guard`) blocks the plan rather than
+  letting that ship, alongside the `check` block that reports it.
+
+**Known gap — the console cannot reach this yet (#1896).** The template and
+`hetznerProvider.ProviderTfvars` are complete, but the canvas's "Existing network" control is a
+picker over the synced `cloud_networks` inventory, and Hetzner's inventory sync
+(`apps/console/lib/cloud-providers/inventory/tokencloud.ts`) lists **regions only** — it never
+calls `/v1/networks`. So the picker is empty on Hetzner, and `networkSchema` refuses to save
+`provision_network = false` with no id. Today the brownfield path is reachable only by a caller
+that sets `network_id` itself. #1896 adds the inventory; nothing in this template changes when it
+lands.
 
 ## Notes / limits
 
@@ -141,8 +203,10 @@ Two things worth knowing before assuming a cluster-less Hetzner shape exists any
   `local.control_plane_public_ip = local.control_plane_public_ips[0]`, which is the same
   empty-index crash #1772 fixed on AWS. It is left unguarded because zero control planes
   is not a supported configuration — guarding it would advertise a shape that cannot work.
-- **This template has no `*.tftest.hcl` at all**, so
-  `.github/workflows/infra-templates.yml` emits
-  `::notice::no *.tftest.hcl for hetzner — skipping` and none of its guards has ever been
-  executed by CI. That is a real coverage gap, but a different one: it concerns the guards
-  this template *does* have, not a cluster-less shape it does not offer.
+- **Until #1816 this template had no `*.tftest.hcl` at all**, so
+  `.github/workflows/infra-templates.yml` emitted
+  `::notice::no *.tftest.hcl for hetzner — skipping` and none of its guards had ever been
+  executed by CI. `checks_dns_and_network.tftest.hcl` is the first, so that step now runs —
+  but it covers only the DNS and network guards. The rest of this template's `check` blocks
+  and preconditions are still unexecuted, which is a real coverage gap, and a different one
+  from the cluster-less shape this section is about.
