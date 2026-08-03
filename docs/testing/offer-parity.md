@@ -13,8 +13,9 @@ single "All kinds (11)" column is the granularity that let Azure MySQL hide: the
 *variant* was not.
 
 Legend: 🟡 implemented, not yet proven on a real apply · ✅ real-apply proof in the e2e ledger ·
-🚫 offered but unbuildable (tracking issue in the cell) · — documented exclusion · · not offered on
-this cloud (the canvas floor already hides it)
+🚫 offered but unbuildable (tracking issue in the cell) · ⚠️ carried only as a branch guard — the
+wiring exists but the code does not show that it wires *this* feature (see the carrier grid) ·
+— documented exclusion · · not offered on this cloud (the canvas floor already hides it)
 
 **A cell never goes ✅ from this generator.** It only knows what the code says; only the main-gated
 nightly can promote a cell, and it does so in the e2e parity board.
@@ -69,6 +70,16 @@ per-cloud and nothing else. Two hops are checked, and a cell is 🚫 if either o
    reads it. A variable declared and read by nothing is a gap: GCP's `uniform_access` is filled in
    on every apply and the bucket resource hardcodes the value it would have set.
 
+L4 also grades HOW the switch becomes a key, because the two ways are not equally good evidence. A
+key whose value is the switch (`"fifo_queue": *q.Ordered`) can only be about the switch. A key that
+is merely *written inside* an `if <switch>` branch with a value of its own
+(`if t.PointInTimeRecovery { entry["analytical_storage_enabled"] = true }`) shows the switch decides
+whether the key appears — not that the key is that feature. Those two lines look identical to a text
+reader and are not the same thing: Cosmos DB analytical storage is Synapse Link column storage,
+while point-in-time recovery is continuous backup. So a cell carried only that way is ⚠️, never 🟡,
+and is listed below with the key it writes so it can be confirmed — or rewritten to assign the
+switch's own value, which makes the wiring prove itself.
+
 This proves the WIRING is present. It does not prove the resource BEHAVES — that needs a real apply,
 which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not this generator's.
 
@@ -77,18 +88,30 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `bucket:encryption_enabled` | 🚫 #1814 | — | — | — | · | · |
 | `bucket:public_access` | 🟡 | 🟡 | 🚫 #1813 | 🚫 #1813 | 🟡 | · |
 | `bucket:versioning` | 🟡 | 🟡 | 🚫 #1813 | 🟡 | 🟡 | · |
-| `cache:multi_az` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
+| `cache:multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · | · |
 | `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
 | `dns:managed_certificate` | 🚫 #1824 | 🟡 | 🟡 | 🟡 | — | · |
 | `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
-| `nosql:point_in_time_recovery` | 🚫 #1815 | 🟡 | 🟡 | 🚫 #1815 | · | · |
+| `nosql:point_in_time_recovery` | 🚫 #1815 | 🟡 | ⚠️ | 🚫 #1815 | · | · |
 | `queue:ordered` | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | · | · |
 | `registry:immutable_tags` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
 | `registry:vulnerability_scanning` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
-| `secret:generate` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
+| `secret:generate` | 🟡 | ⚠️ | 🟡 | 🟡 | · | · |
 | `secret:special_chars` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
+
+### ⚠️ Carried only as a branch guard
+
+Each of these reaches the plan, and the plan does change with the switch. What the code does not show
+is that the key it writes *is* the feature the switch names — that is a question about the cloud's
+product, not about the wiring, so it is confirmed by a person once and by a real apply after that.
+
+| Offer | Cloud | Key the branch writes | Where |
+|---|---|---|---|
+| `cache:multi_az` | gcp | `memorystore_tier` | `ProviderTfvars` |
+| `nosql:point_in_time_recovery` | azure | `analytical_storage_enabled` | `buildCosmosDBCollections` |
+| `secret:generate` | aws | `length`, `special`, `manual` | `buildSecrets` |
 
 ## Day-2 posture — would a hazard be caught?
 
@@ -151,6 +174,49 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `bucket:encryption_enabled` | gcp | Cloud Storage encrypts every object at rest and the setting cannot be turned off — this switch is informational on Google Cloud. |
 | `bucket:encryption_enabled` | azure | Azure Storage encrypts every blob at rest and the setting cannot be turned off — this switch is informational on Azure. |
 | `network:single_nat_gateway` | hetzner | Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone. |
+
+## Known gaps on the baseline
+
+Not exclusions. Each is an offer a cloud genuinely cannot honor today, already boarded, with the
+issue that tracks it. They do not fail the build; a NEW gap does. The list **ratchets**: when a cell
+is measured and comes out honored the guard fails until its entry is deleted, so it can only shrink.
+
+The **state** column is what this run MEASURED, not what the entry records — the two can disagree,
+and when they do the run is the current fact. Three readings are worth knowing:
+
+- a state on its own — the gap reproduced exactly as boarded;
+- a state with *(boarded as …)* — the gap **changed shape**. It was not fixed. 🚫 → ⚠️ is a change in
+  the wrong direction: the switch still is not shown to do what it says, and now the code does not
+  even show that the key it writes is this feature. The guard reports it and keeps the entry;
+- *not measured this run* — the guard produced no cell here, so it has **nothing to say** about
+  whether the gap is still there. Not a fix. Usually the cloud stopped being offered the switch, or
+  the generated offer surface is stale.
+
+Only a cell that was measured and came out honored is asked for its entry back.
+
+| Offer | Cloud | State (measured) | Issue | What a user gets today |
+|---|---|---|---|---|
+| `dns:managed_certificate` | alibaba | 🚫 `unwired-template` | #1824 | The managed TLS certificate is requested but nothing builds it yet — the template declares the variable and no resource reads it. |
+| `registry:immutable_tags` | aws | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to ECR yet — repositories are created with the platform default instead of your choice. |
+| `registry:immutable_tags` | gcp | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:immutable_tags` | azure | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:immutable_tags` | alibaba | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Container Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:vulnerability_scanning` | aws | 🚫 `no-carrier` | #1811 | Image scanning is not sent to ECR yet — repositories are created with the platform default instead of your choice. |
+| `registry:vulnerability_scanning` | gcp | 🚫 `no-carrier` | #1811 | Image scanning is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:vulnerability_scanning` | azure | 🚫 `no-carrier` | #1811 | Image scanning is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:vulnerability_scanning` | alibaba | 🚫 `no-carrier` | #1811 | Image scanning is not sent to Container Registry yet — repositories are created with the platform default instead of your choice. |
+| `queue:ordered` | aws | 🚫 `unwired-template` | #1812 | FIFO delivery is not applied to SQS yet — the queue is created as a standard, unordered queue whichever way the switch is set. |
+| `queue:ordered` | azure | 🚫 `unwired-template` | #1812 | Session-ordered delivery is not applied to Service Bus yet — the queue is created without sessions whichever way the switch is set. |
+| `queue:ordered` | gcp | 🚫 `no-carrier` | #1812 | Ordered delivery is not applied to Pub/Sub yet — message ordering stays off whichever way the switch is set. |
+| `queue:ordered` | alibaba | 🚫 `no-carrier` | #1812 | Ordered delivery is not applied to MNS yet — the queue is created unordered whichever way the switch is set. |
+| `bucket:public_access` | gcp | 🚫 `unwired-template` | #1813 | Public access stays enforced on Google Cloud buckets — the setting is sent and the bucket is created with uniform, private access regardless. |
+| `bucket:public_access` | azure | 🚫 `unwired-template` | #1813 | Public access stays private on Azure containers — the setting is sent under a name the template does not read. |
+| `bucket:versioning` | azure | 🚫 `no-carrier` | #1813 | Versioning is not applied to Azure containers — the setting never reaches the plan, so blobs are created unversioned. |
+| `bucket:encryption_enabled` | alibaba | 🚫 `no-carrier` | #1814 | Encryption at rest is not requested for Alibaba OSS buckets — the setting never reaches the plan, so the bucket is created with whatever OSS applies by default. |
+| `nosql:point_in_time_recovery` | gcp | 🚫 `no-carrier` | #1815 | Point-in-time recovery is not enabled on Firestore yet — the database is created without it whichever way the switch is set. |
+| `nosql:point_in_time_recovery` | alibaba | 🚫 `no-carrier` | #1815 | Point-in-time recovery is not enabled on Tablestore yet — the table is created without it whichever way the switch is set. |
+| `dns:enabled` | hetzner | 🚫 `no-carrier` | #1816 | DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing. |
+| `network:provision_network` | hetzner | 🚫 `no-carrier` | #1816 | A Hetzner project always creates its own network — attaching an existing one is not supported yet. |
 
 ---
 

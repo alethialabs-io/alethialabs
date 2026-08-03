@@ -310,9 +310,14 @@ function optionCarriers(key) {
 // Carriage is not honoring. A tfvar the template declares and no resource reads is a switch that
 // travels the whole way and is dropped one line before it would have meant something.
 
+// The ROOT template directory travels with the files, and it is load-bearing rather than decorative:
+// a root tfvar is a promise only the root module can make, so "is it declared" has to be asked of
+// `<cloud>/`, not of `<cloud>/**`. Asked cloud-wide, any submodule that happens to declare the same
+// name vouches for the root — `sku` is declared by modules/acr and modules/service-bus, so a provider
+// emitting a ROOT `sku` read as declared while OpenTofu silently threw the value away.
 const TF_WIRING = Object.fromEntries(
 	CLOUDS.map((c) => {
-		const w = readTfWiring(tfFiles[c]);
+		const w = readTfWiring(tfFiles[c], `${TEMPLATES}/${c}`);
 		assertTfWiringParsed(c, w);
 		return [c, w];
 	}),
@@ -392,10 +397,104 @@ const allEntries = readExclusions();
 const exclusions = allEntries.filter((e) => e.section === "exclusions");
 const baseline = allEntries.filter((e) => e.section === "baseline");
 
+// States that are a GAP: offered, unbuildable, silent — the thing the cloud-parity rule forbids. A
+// cell in one of these fails the build unless the yaml records it.
+//
+// `gated-carrier` is deliberately NOT here, and that is a judgement worth stating rather than
+// leaving to be inferred. It means the switch DOES reach the plan and the plan DOES differ; what is
+// unestablished is whether the key the branch writes is the same feature the switch names. That is a
+// question about SEMANTICS, and this guard reads text. Failing on a question it cannot answer would
+// make the only available answer "add a baseline entry", which is how a guard becomes a formality —
+// and it would manufacture debt records for cells that are correctly wired (gcp's `memorystore_tier`
+// really is Memorystore's zone-redundant tier; aws's `length`/`special`/`manual` really are what
+// generating a secret means). So the cell is shown as its own state instead, with its own glyph, and
+// listed by name on every run. Two ratchets still hold it: `docs/testing/offer-parity.md` is
+// generated and CI-diff-gated, so a NEW gated cell changes a checked-in file and lands in review —
+// and `UNHONORED_STATES` below keeps it out of the "fixed" bucket, which is a different question
+// from this one and was answered wrongly by leaving it out of this set alone.
+const GAP_STATES = new Set(["no-carrier", "missing-branch", "unwired-template"]);
+
+// States in which the cloud does NOT demonstrably honor the offer: every GAP state, plus
+// `gated-carrier`. The gap between these two sets is the whole answer to "what does ⚠️ mean to the
+// baseline", and it has to be answered in one place because four code paths ask it:
+//
+//   · GAP_STATES       — FAIL the build when unrecorded. The guard can show the switch is dropped,
+//                        so silence about one is a defect it is entitled to accuse someone of.
+//   · UNHONORED_STATES — KEEP a baseline entry alive. ⚠️ is not an accusation, but it is not
+//                        honoring either: what the code shows is that some key appears, never that
+//                        the key IS this feature.
+//
+// Reading ⚠️ as honored is the defect this pair replaces. `gated-carrier` was kept out of GAP_STATES
+// and out of nothing else, so the ratchet — which asks "does this baselined gap still reproduce?" —
+// saw a ⚠️ cell produce no gap and reported the entry FIXED. Two failures came out of that, and the
+// second is the serious one:
+//
+//   (a) a ⚠️ cell could not be BOARDED. Adding a legitimate entry for one made the guard demand it
+//       back as stale, so the only cell the guard says "confirm this by hand" about was the one cell
+//       the board could not hold a note against.
+//   (b) a baselined 🚫 that DRIFTED to ⚠️ printed "Fixed — thank you. Now delete these". The gap was
+//       not fixed; it was rewired on WEAKER evidence. Deleting the entry would have removed the board
+//       record of a gap that is still shipping — the silent deletion this whole guard exists to make
+//       impossible, arriving through the fix for it.
+//
+// So: a ⚠️ cell is unhonored. It is boardable, it keeps its entry, and a cell that MOVES between
+// these states has changed shape rather than been fixed — reported as its own thing further down.
+const UNHONORED_STATES = new Set([...GAP_STATES, "gated-carrier"]);
+
+// States in which the guard actually REACHED A VERDICT on a cell: it read the cloud's code and
+// decided whether the offer is honored there. `not-offered` and `excluded` are deliberately absent —
+// in those the guard DECLINED TO LOOK, and "looked and found nothing wrong" is a different fact from
+// "did not look".
+//
+// The ratchet needs this set as much as it needs UNHONORED_STATES, and for the same reason the two
+// above had to be split. "No unhonored state was recorded for this baseline entry" has TWO causes:
+//
+//   · the cell was measured and came out HONORED               → the entry is stale, ask for it back;
+//   · the cell was NOT MEASURED — `offeredOn` lost the cloud,
+//     the catalog floor stopped offering the variant, the key
+//     was renamed, the kind lost its tofu evidence            → the guard has NOTHING to say about
+//                                                               whether the gap is still there.
+//
+// Collapsing those reported the second as "Fixed — thank you. Now delete these", which deletes the
+// board record of a gap nobody touched — the silent deletion this whole guard exists to prevent,
+// arriving through the one door the guard itself holds open. Dropping a cloud from `offeredOn`
+// reached it in one line, and the congratulation was the only thing printed.
+const MEASURED_STATES = new Set(["ok", ...UNHONORED_STATES]);
+
+/** The recorded EXCLUSION for this (offer, cloud), if the cloud has been decided never to honor it. */
 const excluded = (offer, cloud) =>
 	exclusions.find((e) => e.offer === offer && (e.cloud === cloud || e.cloud === "*"));
+/** The recorded BASELINE entry for this (offer, cloud) — real, boarded debt that does not fail the build. */
 const baselined = (offer, cloud) =>
 	baseline.find((e) => e.offer === offer && (e.cloud === cloud || e.cloud === "*"));
+
+/** Every cell this run reached a verdict on, honored or not. The ratchet reads this to tell "no gap
+ * found here" apart from "nothing was looked at here". */
+const measuredCells = [];
+/** Every cell this run found UNHONORED, with the state it was found in. */
+const unhonoredCells = [];
+
+/**
+ * File a cell's verdict for the ratchet, and hand back its baseline entry if it has one.
+ *
+ * One helper for all three passes rather than the condition written out three times, because the
+ * ratchet is exactly as good as its most forgetful caller: a pass that records nothing is a pass
+ * whose every baseline entry reads as fixed, and that failure is silent and congratulatory.
+ *
+ * Both ledgers are written HERE, from one `state`, so no pass can file a cell as measured without
+ * also filing what it measured — or file a gap the ratchet never learns was even looked for.
+ *
+ * @param {string} offer  the offer key this cell is boarded under (`<kind>:<variant>`, `<kind>:<option>`, …)
+ * @param {string} cloud  the cloud the verdict is about
+ * @param {string} state  the verdict — `ok`, a GAP state, `gated-carrier`, `excluded`, `not-offered`
+ * @returns {object|null} the baseline entry covering this cell, or null (honored, or unboarded)
+ */
+function recordVerdict(offer, cloud, state) {
+	if (MEASURED_STATES.has(state)) measuredCells.push({ offer, cloud, state });
+	if (!UNHONORED_STATES.has(state)) return null;
+	unhonoredCells.push({ offer, cloud, state });
+	return baselined(offer, cloud);
+}
 
 // ── check B · missing branch ────────────────────────────────────────────────────────
 // Where a template ENUMERATES the values of a variant it branches on, that enumeration is the
@@ -412,6 +511,8 @@ const baselined = (offer, cloud) =>
 function enumeratedValues(cloud, axisValues) {
 	const src = tf[cloud];
 	const axis = new Set(axisValues.map((v) => v.toLowerCase()));
+	/** Keep only the members of `set` that belong to THIS axis's vocabulary, lowercased. What makes the
+	 * whole-template scan safe: without it the database's `is_postgres` branch leaks onto the cache axis. */
 	const onAxis = (set) => new Set([...set].map((h) => h.toLowerCase()).filter((v) => axis.has(v)));
 
 	// BRANCHED — the values the template actually builds something for: an equality branch or a
@@ -455,6 +556,10 @@ const CARRIER_READS = {
 	cache: /resolveCacheEngine|cache\.EngineFamily|cache\.Engine\b/,
 };
 
+/** Does this cloud's provider read the engine the user chose for this kind at all?
+ *
+ * A kind with no `CARRIER_READS` probe has no engine axis to drop, so it passes by construction —
+ * an unprobed kind must never read as broken. */
 function hasCarrier(cloud, kind) {
 	const probe = CARRIER_READS[kind];
 	if (!probe) return true;
@@ -499,6 +604,20 @@ function gatedTypes() {
 
 const GATED = gatedTypes();
 
+// The gate the day-2 rows are measured against has to EXIST, and it has to be established BEFORE
+// anything is measured against it — same class as the two reader self-checks at the top of this file.
+// If t2_day2_offer.go moves or its map is renamed, every day-2 cell reads `blind`: a wall of false
+// failures, and with `--matrix` a checked-in board rewritten to say every cloud is unguarded. Say
+// what actually happened instead of publishing the consequence of it.
+if (!GATED) {
+	console.error(
+		`\n✗ offer parity — could not read \`day2StatefulTypes\` from ${DAY2_GATE_SRC}.\n` +
+			`  The day-2 rows measure gate coverage against that map; without it they mean nothing.\n` +
+			`  If the gate moved, update DAY2_GATE_SRC in this script.\n`,
+	);
+	process.exit(1);
+}
+
 /** Tokens that make a resource type (or module source) data-bearing FOR AN AXIS.
  *
  * A detector, not a source of truth — its only job is to notice a candidate the gate may not know
@@ -539,6 +658,10 @@ const VARIANT_ALIASES = {
 	valkey: ["valkey", "memorystore"],
 };
 
+/** The single variant this text names, or null when it names none or more than one.
+ *
+ * Ambiguity returns null on purpose: a declaration matching two variants is not evidence for either,
+ * and `day2Backings` resolves what is left by elimination rather than by guessing here. */
 function namedVariant(text, variants) {
 	const hay = text.toLowerCase();
 	const hits = variants.filter((v) => (VARIANT_ALIASES[v] ?? [v]).some((a) => hay.includes(a)));
@@ -650,11 +773,10 @@ for (const [kind, variants] of Object.entries(AXES)) {
 					`the ${cloud} template branches to ${[...enumerated.supported].join("/")} for ${kind} — ` +
 					`${variant} has no branch, so selecting it provisions nothing.${advertised}`;
 			}
-			const known = state !== "ok" && state !== "excluded" ? baselined(offer, cloud) : null;
+			const known = recordVerdict(offer, cloud, state);
 			cells.push({ kind, variant, cloud, state, detail, known });
-			if (state !== "ok" && state !== "excluded") {
-				(known ? knownDebt : findings).push({ shape: state, cloud, offer, detail, known });
-			}
+			if (known) knownDebt.push({ shape: state, cloud, offer, detail, known });
+			else if (GAP_STATES.has(state)) findings.push({ shape: state, cloud, offer, detail, known: null });
 
 			// ── day-2 · gate coverage for this same cell ───────────────────────────────────
 			// Only cells the product actually offers get a day-2 row: an excluded or unoffered
@@ -771,11 +893,10 @@ for (const [kind, keys] of Object.entries(OPTIONS)) {
 						`the ${cloud} template gates \`${key}\` per engine (${[...coverage].join("/")}) and ${variant} ` +
 						`has no branch — carried into tfvars, then honored for the other engine only.`;
 				}
-				const known = state !== "ok" && state !== "excluded" ? baselined(offer, cloud) : null;
+				const known = recordVerdict(offer, cloud, state);
 				optionCells.push({ kind, variant, key, cloud, state, detail, known });
-				if (state !== "ok" && state !== "excluded") {
-					(known ? knownDebt : findings).push({ shape: state, cloud, offer, detail, known });
-				}
+				if (known) knownDebt.push({ shape: state, cloud, offer, detail, known });
+				else if (GAP_STATES.has(state)) findings.push({ shape: state, cloud, offer, detail, known: null });
 			}
 		}
 	}
@@ -845,15 +966,21 @@ const MEASURED_KINDS = new Set(
 /**
  * Does this tfvars key survive into the plan on this cloud?
  *
- * A ROOT key is a tofu variable: it must be declared and read as `var.<key>`. A NESTED key is one
- * attribute of one entry of a list-of-objects, so "declared" means the object type names it and
- * "read" means some argument reaches for it (`each.value.<key>`, `try(each.value.<key>, …)`).
+ * A ROOT key is a tofu variable: it must be declared BY THE ROOT TEMPLATE and read as `var.<key>`.
+ * Root-scoped, not tree-scoped, because that is the only scope the question has an answer in —
+ * OpenTofu drops a tfvars value whose variable the root module does not declare, so a submodule
+ * declaring the same name changes nothing about whether the value arrives. The module hop stays on
+ * the READ half, where a value genuinely does travel.
+ *
+ * A NESTED key is one attribute of one entry of a list-of-objects, so "declared" means the object
+ * type names it — anywhere on the chain, including inside the module the root is threaded into —
+ * and "read" means some argument reaches for it (`each.value.<key>`, `try(each.value.<key>, …)`).
  */
 function evaluateWiring(cloud, site) {
 	const w = TF_WIRING[cloud];
 	const nested = site.root !== null && site.root !== site.key;
 	if (!nested) {
-		const declared = w.hasVariable(site.key);
+		const declared = w.hasRootVariable(site.key);
 		const read = w.isReadOnChain(site.key, site.key, true);
 		return { ok: declared && read, declared, read, shapeKnown: true, rootMissing: false };
 	}
@@ -873,6 +1000,7 @@ function evaluateWiring(cloud, site) {
 
 const carrierCells = [];
 const unmeasurableShapes = [];
+const gatedCarriage = [];
 
 for (const offer of SURFACE.offers) {
 	const offerBase = `${offer.kind}:${offer.key}`;
@@ -899,18 +1027,36 @@ for (const offer of SURFACE.offers) {
 				`becomes a tfvar, so a user sets it and the plan is identical either way.`;
 		} else {
 			const verdicts = trace.sites.map((s) => ({ site: s, ...evaluateWiring(cloud, s) }));
-			const honored = verdicts.find((v) => v.ok);
-			if (honored && !honored.shapeKnown) {
+			const wired = verdicts.filter((v) => v.ok);
+			// STRENGTH decides `ok`, not just wiredness. A key whose value moves with the switch
+			// (`derived`) proves the switch decides something. A key that is merely WRITTEN inside an
+			// `if <field>` branch (`gated`) proves only that the switch decides whether some key
+			// appears — not that the key is about the switch. Azure files Cosmos DB Synapse Link
+			// analytical storage under the point-in-time-recovery toggle that way, and grading the two
+			// the same is what printed that cell as implemented.
+			const honored = wired.find((v) => v.site.strength === "derived");
+			const gatedOnly = !honored && wired.length > 0;
+			if ((honored ?? wired[0]) && !(honored ?? wired[0]).shapeKnown) {
+				const v = honored ?? wired[0];
 				unmeasurableShapes.push({
 					offer: offerBase,
 					cloud,
 					detail:
-						`\`${honored.site.root}\` is typed \`any\` — the template declares no fields, so whether ` +
-						`\`${honored.site.key}\` is an accepted key cannot be read from it. Judged on the resource ` +
+						`\`${v.site.root}\` is typed \`any\` — the template declares no fields, so whether ` +
+						`\`${v.site.key}\` is an accepted key cannot be read from it. Judged on the resource ` +
 						`argument that reads it, which is the only half that IS measurable here.`,
 				});
 			}
-			if (!honored) {
+			if (gatedOnly) {
+				state = "gated-carrier";
+				detail =
+					`the ${cloud} provider only ever writes ${wired.map((x) => `\`${x.site.key}\``).join("/")} ` +
+					`INSIDE an \`if <${goFieldFor(offer.key)}>\` branch, never as the value of the switch itself. ` +
+					`That establishes the switch decides whether the key appears; it does not establish that the ` +
+					`key IS this feature, and a text reader cannot tell those apart. Confirm by inspection, or ` +
+					`assign the switch's value so the wiring proves itself.`;
+				gatedCarriage.push({ offer: offerBase, cloud, detail, sites: wired.map((x) => x.site) });
+			} else if (!honored) {
 				const v = verdicts[0];
 				state = "unwired-template";
 				const carriedAs = verdicts.map((x) => `\`${x.site.key}\``).join("/");
@@ -927,11 +1073,14 @@ for (const offer of SURFACE.offers) {
 			}
 		}
 
-		const known = state !== "ok" && state !== "excluded" ? baselined(offerBase, cloud) : null;
+		// `gated-carrier` reaches this the same way a 🚫 does. It does not become a FINDING — the guard
+		// cannot answer the semantic question it raises — but it is unhonored, so it carries its
+		// baseline entry (a ⚠️ cell is boardable) and it keeps that entry alive (a ⚠️ cell is not a
+		// fix). Both halves live in `recordVerdict`; neither is re-decided here.
+		const known = recordVerdict(offerBase, cloud, state);
 		carrierCells.push({ kind: offer.kind, key: offer.key, cloud, state, detail, known });
-		if (state !== "ok" && state !== "excluded") {
-			(known ? knownDebt : findings).push({ shape: state, cloud, offer: offerBase, detail, known });
-		}
+		if (known) knownDebt.push({ shape: state, cloud, offer: offerBase, detail, known });
+		else if (GAP_STATES.has(state)) findings.push({ shape: state, cloud, offer: offerBase, detail, known: null });
 	}
 }
 
@@ -973,16 +1122,154 @@ for (const offerBase of ADJUDICATED) {
 	});
 }
 
-// ── matrix ──────────────────────────────────────────────────────────────────────────
-
+// One glyph per state, shared by the matrix and by the ratchet's rendering of it below — because a
+// state that reads 🚫 in the grid and something else in the table beside it is the contradiction this
+// file already shipped once.
 const GLYPH = {
 	ok: "🟡",
 	excluded: "—",
 	"missing-branch": "🚫",
 	"no-carrier": "🚫",
 	"unwired-template": "🚫",
+	// Its OWN glyph, not 🟡 and not 🚫. Neither of those is true: the wiring exists, and whether it
+	// wires the right thing is exactly what could not be established.
+	"gated-carrier": "⚠️",
 	"not-offered": "·",
 };
+
+// ── the ratchet ─────────────────────────────────────────────────────────────────────
+//
+// ADJUDICATED HERE, ABOVE THE MATRIX, AND REPORTED FURTHER DOWN. The two halves are split on purpose
+// and each position is load-bearing:
+//
+//  · the VERDICTS have to exist before the matrix is written, because the matrix RENDERS them. The
+//    board's baseline table used to be rendered from the yaml while the grid beside it was rendered
+//    from the measurement, so a run with a drifted entry wrote a checked-in document saying two
+//    different things about one cell (`⚠️ #1811` in the grid, `🚫 no-carrier #1811` in the table) and
+//    then exited 1 — leaving the contradiction committed and the reader to pick.
+//  · the FAILURE REPORTS stay at the bottom, after every measurement is printed, with exactly one
+//    exit. That order is its own fix, recorded below.
+//
+// A baseline entry records that a gap EXISTS and is boarded. Exactly four things can have happened to
+// one since it was written, and the whole value of the mechanism is telling them apart:
+//
+//   · the cell is HONORED now          → the entry is stale and must be deleted, or the baseline
+//                                        rots into a permanent amnesty and stops meaning anything;
+//   · the cell is still unhonored, in
+//     a DIFFERENT state than recorded  → the gap changed shape. It was not fixed. Saying "fixed,
+//                                        delete this" here is how a still-broken cell loses its
+//                                        board record, so it is reported as a change with both
+//                                        states named, and the entry is updated rather than deleted;
+//   · the cell was NOT MEASURED        → this run has nothing to say about it. Not a fix, not a
+//                                        drift, and NOT a deletion request — the entry points at a
+//                                        cell the guard can no longer see, which is a real thing to
+//                                        report and the opposite of a congratulation;
+//   · nothing changed                  → tracked, not failing.
+//
+// `state:` on each entry is what makes the second case visible at all. Without it a 🚫 that drifts to
+// ⚠️ is indistinguishable from a 🚫 that never moved, and the only two available answers are both
+// wrong: demand the entry back, or say nothing. `measuredCells` is what makes the third visible, and
+// it was missing for the same reason: emptiness was read as evidence when it was the absence of it.
+
+/** The cells this run reached a verdict on for a baseline entry — empty ⇒ nothing was measured. */
+const measuredFor = (b) => measuredCells.filter((c) => c.offer === b.offer && (b.cloud === "*" || c.cloud === b.cloud));
+
+/** The distinct states a baseline entry's cell reproduced in this run. Empty ⇒ no gap was FOUND —
+ * which is only a fix if the cell was measured at all, hence `measuredFor` above. */
+const reproducedStates = (b) => [
+	...new Set(
+		unhonoredCells.filter((c) => c.offer === b.offer && (b.cloud === "*" || c.cloud === b.cloud)).map((c) => c.state),
+	),
+];
+
+/**
+ * What the guard can still see that would account for an entry producing no measured cell.
+ *
+ * Facts it can check, never a guess dressed as one — an empty string when nothing it can see accounts
+ * for the entry, which is worth printing as "unexplained" rather than papering over with a plausible
+ * story. This is the difference between "the offer went away, delete the entry" and "the measurement
+ * broke, fix the measurement", and only the reader can make that call.
+ *
+ * @param {object} b  a `baseline:` entry from infra/offer-exclusions.yaml
+ * @returns {string}  a short factual clause, or "" when the guard cannot account for it
+ */
+function unmeasuredBecause(b) {
+	const clouds = b.cloud === "*" ? CLOUDS : [b.cloud];
+	if (b.cloud !== "*" && !CLOUDS.includes(b.cloud)) {
+		return `there is no \`${b.cloud}\` template directory under ${TEMPLATES} — the guard measures no cell on a cloud it cannot read`;
+	}
+	if (excluded(b.offer, b.cloud)) {
+		return `this cell now carries an EXCLUSION as well, and an excluded cell is never measured — one cell cannot be both permanently excluded and boarded as debt`;
+	}
+	const parts = b.offer.split(":");
+	const kind = parts[0];
+	if (parts.length === 3) {
+		const [, variant, key] = parts;
+		if (!ADJUDICATED.has(`${kind}:${key}`)) {
+			return `\`${kind}:${key}\` is no longer adjudicated per engine, so no \`<kind>:<variant>:<option>\` cell is produced for it at all`;
+		}
+		if (!clouds.some((c) => offeredOn(c, kind, variant))) {
+			return `the catalog floor no longer offers \`${kind}\` variant \`${variant}\` on ${clouds.join("/")}`;
+		}
+		return "";
+	}
+	const tail = parts[1];
+	if ((AXES[kind] ?? []).includes(tail)) {
+		if (!clouds.some((c) => offeredOn(c, kind, tail))) {
+			return `the catalog floor no longer offers \`${kind}\` variant \`${tail}\` on ${clouds.join("/")}`;
+		}
+		return "";
+	}
+	const surfaceOffer = SURFACE.offers.find((o) => o.kind === kind && o.key === tail);
+	if (!surfaceOffer) {
+		return `${OFFER_SURFACE} lists no \`${tail}\` switch under \`${kind}\` — the offer was renamed, removed, or that file is stale`;
+	}
+	if (!MEASURED_KINDS.has(kind)) {
+		return `\`${kind}\` is no longer held to the carrier rule — no switch of that kind has tofu evidence this run, so every cell of the kind is unmeasured`;
+	}
+	if (!clouds.some((c) => (surfaceOffer.offeredOn ?? []).includes(c))) {
+		return `\`offeredOn\` in ${OFFER_SURFACE} no longer lists ${clouds.join("/")} for \`${b.offer}\` — the canvas is not recorded as offering it there`;
+	}
+	return "";
+}
+
+/** Entries whose cell was MEASURED and came out honored — the ratchet's one "delete this" case. */
+const stale = [];
+/** Entries still reproducing, in a state other than the one recorded. */
+const drifted = [];
+/** Entries carrying no `state:` at all — the ratchet cannot tell "fixed" from "changed" for these. */
+const unstated = [];
+/** Entries pointing at a cell this run never measured — no verdict, in either direction. */
+const unmeasured = [];
+for (const b of baseline) {
+	const states = reproducedStates(b);
+	if (measuredFor(b).length === 0) unmeasured.push({ entry: b, why: unmeasuredBecause(b) });
+	else if (states.length === 0) stale.push(b);
+	else if (!b.state) unstated.push({ entry: b, states });
+	else if (!states.includes(b.state)) drifted.push({ entry: b, states });
+}
+
+/**
+ * How a baseline entry's cell actually came out THIS RUN, for the board's State column.
+ *
+ * Rendered from the measurement, never from the entry's own `state:`. The two can disagree, and when
+ * they do the recorded value is the stale one — printing it as the answer beside a grid printing the
+ * measured one is how one generated file came to say `🚫 no-carrier` and `⚠️` about the same cell in
+ * the same commit. The recorded value survives here only as provenance, clearly marked as such.
+ *
+ * @param {object} b  a `baseline:` entry from infra/offer-exclusions.yaml
+ * @returns {string}  a markdown table cell
+ */
+function boardState(b) {
+	const boarded = b.state ? ` (boarded as \`${b.state}\`)` : "";
+	if (measuredFor(b).length === 0) return `— not measured this run${boarded}`;
+	const states = reproducedStates(b);
+	if (states.length === 0) return `✅ honored — entry is stale${boarded}`;
+	const shown = states.map((s) => `${GLYPH[s] ?? ""} \`${s}\``.trim()).join(" / ");
+	return b.state && states.includes(b.state) ? shown : `${shown}${boarded}`;
+}
+
+// ── matrix ──────────────────────────────────────────────────────────────────────────
 
 if (writeMatrix) {
 	const axes = Object.entries(AXES);
@@ -1001,8 +1288,9 @@ single "All kinds (11)" column is the granularity that let Azure MySQL hide: the
 *variant* was not.
 
 Legend: 🟡 implemented, not yet proven on a real apply · ✅ real-apply proof in the e2e ledger ·
-🚫 offered but unbuildable (tracking issue in the cell) · — documented exclusion · · not offered on
-this cloud (the canvas floor already hides it)
+🚫 offered but unbuildable (tracking issue in the cell) · ⚠️ carried only as a branch guard — the
+wiring exists but the code does not show that it wires *this* feature (see the carrier grid) ·
+— documented exclusion · · not offered on this cloud (the canvas floor already hides it)
 
 **A cell never goes ✅ from this generator.** It only knows what the code says; only the main-gated
 nightly can promote a cell, and it does so in the e2e parity board.
@@ -1070,6 +1358,16 @@ per-cloud and nothing else. Two hops are checked, and a cell is 🚫 if either o
    reads it. A variable declared and read by nothing is a gap: GCP's \`uniform_access\` is filled in
    on every apply and the bucket resource hardcodes the value it would have set.
 
+L4 also grades HOW the switch becomes a key, because the two ways are not equally good evidence. A
+key whose value is the switch (\`"fifo_queue": *q.Ordered\`) can only be about the switch. A key that
+is merely *written inside* an \`if <switch>\` branch with a value of its own
+(\`if t.PointInTimeRecovery { entry["analytical_storage_enabled"] = true }\`) shows the switch decides
+whether the key appears — not that the key is that feature. Those two lines look identical to a text
+reader and are not the same thing: Cosmos DB analytical storage is Synapse Link column storage,
+while point-in-time recovery is continuous backup. So a cell carried only that way is ⚠️, never 🟡,
+and is listed below with the key it writes so it can be confirmed — or rewritten to assign the
+switch's own value, which makes the wiring prove itself.
+
 This proves the WIRING is present. It does not prove the resource BEHAVES — that needs a real apply,
 which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not this generator's.
 
@@ -1083,6 +1381,25 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 				return cell.known?.issue ? `${GLYPH[cell.state]} ${cell.known.issue}` : GLYPH[cell.state];
 			});
 			md += `| \`${offer.kind}:${offer.key}\` | ${row.join(" | ")} |\n`;
+		}
+
+		// The ⚠️ cells, named, with the key each one actually writes. A glyph on its own would just
+		// relocate the problem: "something about this cell is weaker" is not reviewable, and the whole
+		// complaint against the 🟡 it replaces was that it hid WHICH key the switch turned into.
+		if (gatedCarriage.length) {
+			md += `\n### ⚠️ Carried only as a branch guard\n
+Each of these reaches the plan, and the plan does change with the switch. What the code does not show
+is that the key it writes *is* the feature the switch names — that is a question about the cloud's
+product, not about the wiring, so it is confirmed by a person once and by a real apply after that.
+
+| Offer | Cloud | Key the branch writes | Where |
+|---|---|---|---|
+`;
+			for (const g of gatedCarriage) {
+				const keys = g.sites.map((s) => `\`${s.key}\``).join(", ");
+				const where = [...new Set(g.sites.map((s) => `\`${s.fn}\``))].join(", ");
+				md += `| \`${g.offer}\` | ${g.cloud} | ${keys} | ${where} |\n`;
+			}
 		}
 	}
 
@@ -1128,50 +1445,66 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 		for (const e of exclusions) md += `| \`${e.offer}\` | ${e.cloud} | ${e.reason ?? ""} |\n`;
 	}
 
+	// The baseline's reasons, rendered — because they were written to be read.
+	//
+	// Every 🚫 above carries its tracking issue and nothing else, so the only thing the board said
+	// about a known gap was its number. The reason each entry carries — what a user who picks that
+	// switch actually gets — was stored, never printed: `baselined()` results are kept as `known` and
+	// only `known.issue` is ever read. The file's own header promised the opposite ("printed verbatim
+	// in the matrix"), so ninety lines of prose written for a reader had no reader. That is the same
+	// defect shape as everything else on this board: a document that overstates its code.
+	if (baseline.length) {
+		md += `\n## Known gaps on the baseline\n
+Not exclusions. Each is an offer a cloud genuinely cannot honor today, already boarded, with the
+issue that tracks it. They do not fail the build; a NEW gap does. The list **ratchets**: when a cell
+is measured and comes out honored the guard fails until its entry is deleted, so it can only shrink.
+
+The **state** column is what this run MEASURED, not what the entry records — the two can disagree,
+and when they do the run is the current fact. Three readings are worth knowing:
+
+- a state on its own — the gap reproduced exactly as boarded;
+- a state with *(boarded as …)* — the gap **changed shape**. It was not fixed. 🚫 → ⚠️ is a change in
+  the wrong direction: the switch still is not shown to do what it says, and now the code does not
+  even show that the key it writes is this feature. The guard reports it and keeps the entry;
+- *not measured this run* — the guard produced no cell here, so it has **nothing to say** about
+  whether the gap is still there. Not a fix. Usually the cloud stopped being offered the switch, or
+  the generated offer surface is stale.
+
+Only a cell that was measured and came out honored is asked for its entry back.
+
+| Offer | Cloud | State (measured) | Issue | What a user gets today |
+|---|---|---|---|---|
+`;
+		for (const b of baseline) {
+			md += `| \`${b.offer}\` | ${b.cloud} | ${boardState(b)} | ${b.issue ?? "—"} | ${normalizeReason(b.reason)} |\n`;
+		}
+	}
+
 	md += `\n---\n\nRegenerate with \`pnpm -F console check:offer-parity -- --matrix\`. CI runs the guard on every PR.\n`;
 	writeFileSync(MATRIX_OUT, md);
 	console.log(`✓ wrote ${MATRIX_OUT}`);
 }
 
 // ── report ──────────────────────────────────────────────────────────────────────────
-
-// The ratchet: a baseline entry whose finding is GONE means the gap was fixed, so the entry has to
-// go with it. Without this the baseline rots into a permanent amnesty and the guard quietly stops
-// meaning anything — the failure mode of every "known issues" list ever written.
-const stale = baseline.filter(
-	(b) => !knownDebt.some((f) => f.offer === b.offer && (b.cloud === "*" || f.cloud === b.cloud)),
-);
-
-if (knownDebt.length) {
-	console.log(`  ${knownDebt.length} known gap(s) on the baseline (tracked, not failing):`);
-	for (const f of knownDebt) {
-		console.log(`    · ${f.cloud} ${f.offer}${f.known?.issue ? `  → ${f.known.issue}` : ""}`);
-	}
-}
-
-if (stale.length) {
-	console.error(`\n✗ offer parity — ${stale.length} baseline entr(y|ies) no longer reproduce:\n`);
-	for (const b of stale) console.error(`  ${b.cloud} · ${b.offer}${b.issue ? `  (${b.issue})` : ""}`);
-	console.error(`
-Fixed — thank you. Now delete these from the \`baseline:\` section of infra/offer-exclusions.yaml so the
-list keeps meaning what it says. The baseline ratchets down; it never grows on its own.
-`);
-	process.exit(1);
-}
-
-// The gate the day-2 rows are measured against has to EXIST. If t2_day2_offer.go moves or its map is
-// renamed, every cell would quietly read `blind` (a wall of false failures) or the parse would return
-// an empty set. Say so instead of reporting nonsense.
-if (!GATED) {
-	console.error(
-		`\n✗ offer parity — could not read \`day2StatefulTypes\` from ${DAY2_GATE_SRC}.\n` +
-			`  The day-2 rows measure gate coverage against that map; without it they mean nothing.\n` +
-			`  If the gate moved, update DAY2_GATE_SRC in this script.\n`,
-	);
-	process.exit(1);
-}
+//
+// EVERYTHING MEASURED IS PRINTED BEFORE ANYTHING IS ADJUDICATED, and there is exactly one exit at
+// the bottom. The ratchet used to `process.exit(1)` the instant a baseline entry stopped reproducing
+// — which meant the run that had just decided a cell was ⚠️ never got to say so. The congratulation
+// was printed and the evidence contradicting it was suppressed by the same statement. A guard that
+// withholds its own measurements at the moment it fails is asking to be believed instead of checked,
+// and this one failed in the direction of "delete the record of a live gap".
 
 const day2Summary = day2Cells.reduce((acc, c) => ({ ...acc, [c.state]: (acc[c.state] ?? 0) + 1 }), {});
+
+// Every boarded cell, WITH THE STATE it reproduced in. The state is not decoration: it is the thing
+// the entry's `state:` is checked against below, so printing it is what lets a reader confirm a drift
+// report — or spot one the entry has not caught up with — without running anything else.
+if (knownDebt.length) {
+	console.log(`  ${knownDebt.length} known cell(s) on the baseline (tracked, not failing):`);
+	for (const f of knownDebt) {
+		console.log(`    · ${f.cloud} ${f.offer}  [${f.shape}]${f.known?.issue ? `  → ${f.known.issue}` : ""}`);
+	}
+}
 
 // Kinds the carrier pass declined to accuse, and why. Reported rather than silent: "this kind is not
 // provisioned through tofu" is a claim, and a claim nobody can see is a claim nobody can correct.
@@ -1192,36 +1525,133 @@ if (unmeasurableShapes.length) {
 	for (const u of unmeasurableShapes) console.log(`    · ${u.cloud} ${u.offer} — ${u.detail}`);
 }
 
-if (findings.length === 0) {
-	console.log(
-		`✓ offer parity — ${cells.length} (offer × cloud) cells + ${optionCells.length} option cell(s) + ` +
-			`${carrierCells.length} carrier cell(s), ${exclusions.length} documented exclusion(s), ` +
-			`${baseline.length} on the baseline, no NEW silent gaps.`,
-	);
-	console.log(
-		`✓ day-2 gate coverage — ${day2Cells.length} offered cell(s): ` +
-			`${day2Summary.guarded ?? 0} guarded, ${day2Summary["not-evaluable"] ?? 0} not evaluable from ` +
-			`template text (external modules), 0 unguarded data-bearing types.`,
-	);
-	process.exit(0);
+// Cells whose only carriage is a branch guard. Printed every run, by name and with the key each one
+// writes, because the whole point of grading them separately is that a person can settle in seconds
+// what no text reader can settle at all — and a signal nobody is shown is a signal nobody acts on.
+if (gatedCarriage.length) {
+	console.log(`  ${gatedCarriage.length} cell(s) carried ONLY as a branch guard (⚠️ in the matrix, not 🟡):`);
+	for (const g of gatedCarriage) {
+		console.log(`    · ${g.cloud} ${g.offer} — writes ${g.sites.map((s) => `\`${s.key}\``).join(", ")} in ${g.sites[0].fn}`);
+	}
 }
 
-console.error(`\n✗ offer parity — ${findings.length} NEW offer(s) the product presents but a cloud cannot build:\n`);
-for (const f of findings) {
-	console.error(`  [${f.shape}] ${f.cloud} · ${f.offer}`);
-	console.error(`      ${f.detail}`);
+// ── adjudication · every failure is reported, then ONE exit ─────────────────────────
+
+let failed = false;
+
+// The one legitimate "delete this" case: the cell was MEASURED this run and came out honored.
+if (stale.length) {
+	failed = true;
+	console.error(`\n✗ offer parity — ${stale.length} baseline entr(y|ies) measured HONORED:\n`);
+	for (const b of stale) console.error(`  ${b.cloud} · ${b.offer}${b.issue ? `  (${b.issue})` : ""}`);
+	console.error(`
+Fixed — thank you. Now delete these from the \`baseline:\` section of infra/offer-exclusions.yaml so the
+list keeps meaning what it says. The baseline ratchets down; it never grows on its own.
+
+Every cell listed here WAS measured this run: the guard read the cloud's code for it and found no
+unhonored state. That is the only claim this report makes, and it is the only report that asks for a
+deletion. Two other things can happen to an entry and NEITHER appears here — a gap that is still a gap
+in a different state ("changed shape"), and an entry whose cell this run did not measure at all ("did
+not measure"). Both are printed separately, and neither asks you to delete anything.
+`);
 }
-console.error(`
+
+// The entry points at a cell this run produced no verdict for. Reported as its own thing because it
+// is neither a fix nor a drift, and calling it either would be a claim the run cannot support.
+if (unmeasured.length) {
+	failed = true;
+	console.error(`\n✗ offer parity — ${unmeasured.length} baseline entr(y|ies) point at a cell this run did NOT measure:\n`);
+	for (const u of unmeasured) {
+		console.error(`  ${u.entry.cloud} · ${u.entry.offer}${u.entry.issue ? `  (${u.entry.issue})` : ""}`);
+		console.error(`      ${u.why || "the guard cannot account for this from anything it reads — treat it as a broken measurement until shown otherwise"}`);
+	}
+	console.error(`
+NOT a fix, and the guard is NOT asking for these entries back. The cell did not become honored — it
+stopped being LOOKED AT, so this run has nothing to say about whether the gap is still there. The gap
+may be shipping untouched right now; nothing here measured it either way.
+
+Treating this as "fixed" is how the record of a live gap gets deleted by a green build, and it is
+reachable in one line: drop a cloud from \`offeredOn\` and the cell simply stops existing.
+
+Settle it from the cloud's side, then do ONE of:
+  · the product genuinely stopped offering it there → the gap is gone WITH the offer. Delete the
+    entry, and say so in the issue it references — that issue is now moot, not done.
+  · the generated offer surface is stale → regenerate it (\`pnpm -F console gen:offer-surface\`) and
+    re-run. The offer never went anywhere; ${OFFER_SURFACE} did.
+  · the offer, its kind or its cloud was renamed, or a template directory moved → RE-KEY the entry to
+    the name the guard measures now. The debt is unchanged; only its address moved.
+  · the kind lost its last piece of tofu evidence → the carrier pass stopped holding it to the rule,
+    so every cell of that kind is unmeasured rather than honored. Restore the evidence or record the
+    kind's exclusion; do not let the whole kind fall off the board silently.
+`);
+}
+
+// Still a gap, in a state other than the one on record. Emphatically not a fix.
+if (drifted.length) {
+	failed = true;
+	console.error(`\n✗ offer parity — ${drifted.length} baseline entr(y|ies) changed shape:\n`);
+	for (const d of drifted) {
+		console.error(`  ${d.entry.cloud} · ${d.entry.offer}${d.entry.issue ? `  (${d.entry.issue})` : ""}`);
+		console.error(`      boarded as \`${d.entry.state}\`, now reproduces as \`${d.states.join("/")}\``);
+	}
+	console.error(`
+NOT fixed. The gap is still there in a different shape, so the entry STAYS — update its \`state:\`, and
+its \`reason:\` if what a user gets has changed with it.
+
+\`unwired-template\` → \`gated-carrier\` is the one to read slowly: that cell did not improve, the
+evidence got WEAKER. All the code now shows is that the switch decides whether some key appears, not
+that the key is this feature. Deleting the entry there would remove the board record of a gap that is
+still shipping — the silent deletion this list exists to prevent.
+`);
+}
+
+// An entry the ratchet cannot adjudicate. Loud, because the alternative is a quiet half-check.
+if (unstated.length) {
+	failed = true;
+	console.error(`\n✗ offer parity — ${unstated.length} baseline entr(y|ies) record no \`state:\`:\n`);
+	for (const u of unstated) {
+		console.error(`  ${u.entry.cloud} · ${u.entry.offer} — reproduces as \`${u.states.join("/")}\``);
+	}
+	console.error(`
+Add \`state:\` with the value shown, next to \`issue:\`. It is what lets the ratchet tell "this was
+fixed" from "this changed shape": without it a gap that drifts from 🚫 to ⚠️ reads exactly like one
+that never moved, and the guard would have to guess which — it guessed "fixed" once already.
+`);
+}
+
+if (findings.length) {
+	failed = true;
+	console.error(`\n✗ offer parity — ${findings.length} NEW offer(s) the product presents but a cloud cannot build:\n`);
+	for (const f of findings) {
+		console.error(`  [${f.shape}] ${f.cloud} · ${f.offer}`);
+		console.error(`      ${f.detail}`);
+	}
+	console.error(`
 Each of these is the state the cloud-parity rule forbids: offered, unbuildable, and silent.
 Do one of three things — never a fourth:
   · fix it, so the offer builds;
   · record an EXCLUSION in infra/offer-exclusions.yaml, if the cloud genuinely cannot ever honor it;
-  · add it to the BASELINE there with its tracking issue, if it is real work that is already boarded.
+  · add it to the BASELINE there with its tracking issue and \`state:\`, if it is real work that is
+    already boarded.
 `);
-if (findings.some((f) => f.shape === "day2-blind")) {
-	console.error(`A [day2-blind] finding has exactly ONE fix, and it is a one-line one: add the resource type to
+	if (findings.some((f) => f.shape === "day2-blind")) {
+		console.error(`A [day2-blind] finding has exactly ONE fix, and it is a one-line one: add the resource type to
 \`day2StatefulTypes\` in test/e2e/t2_day2_offer.go. It is not baseline material — an unguarded
 data-bearing type does not report a gap, it reports SAFE, so nothing would ever come back to collect it.
 `);
+	}
 }
-process.exit(1);
+
+if (failed) process.exit(1);
+
+console.log(
+	`✓ offer parity — ${cells.length} (offer × cloud) cells + ${optionCells.length} option cell(s) + ` +
+		`${carrierCells.length} carrier cell(s), ${exclusions.length} documented exclusion(s), ` +
+		`${baseline.length} on the baseline, no NEW silent gaps.`,
+);
+console.log(
+	`✓ day-2 gate coverage — ${day2Cells.length} offered cell(s): ` +
+		`${day2Summary.guarded ?? 0} guarded, ${day2Summary["not-evaluable"] ?? 0} not evaluable from ` +
+		`template text (external modules), 0 unguarded data-bearing types.`,
+);
+process.exit(0);

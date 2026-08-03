@@ -116,21 +116,68 @@ export function reachableFrom(pkg, entry) {
 	return seen;
 }
 
-/** The `{ … }` block starting at or after `from` in a function body, braces included. */
-function blockAt(body, from) {
-	const neutral = neutralize(body);
+/** The span of the `{ … }` block starting at or after `from` in an ALREADY-NEUTRALIZED body, braces
+ * included. Neutralized once by the caller because the chain walk below asks this repeatedly. */
+function blockSpanIn(neutral, from) {
 	const open = neutral.indexOf("{", from);
-	if (open === -1) return "";
+	if (open === -1) return null;
 	let depth = 0;
 	for (let i = open; i < neutral.length; i++) {
 		if (neutral[i] === "{") depth++;
-		else if (neutral[i] === "}" && --depth === 0) return body.slice(open, i + 1);
+		else if (neutral[i] === "}" && --depth === 0) return { start: open, end: i + 1 };
 	}
-	return "";
+	return null;
 }
 
 /**
- * The quoted tfvars keys a function body derives from `.<field>`.
+ * Every block ONE `if` statement decides: its own body, and each `else if` / `else` body chained
+ * after it.
+ *
+ * The `else` half is not a detail. A switch that chooses between two key SETS writes half its
+ * evidence there, and a matcher that stops at the closing brace of the `if` never sees it. AWS's
+ * `buildSecrets` is exactly that shape —
+ *
+ *     if s.Generate { entry["length"] = s.Length; entry["special"] = s.SpecialChars }
+ *     else          { entry["manual"] = true }
+ *
+ * — so `manual` was invisible, and the cell was graded on the two keys that happened to sit on the
+ * true side. Reading half the branch is the same failure the strength grading exists to prevent, one
+ * level down: a verdict that looks measured and was taken on partial evidence.
+ *
+ * Both halves are the field's, because both are chosen BY the field — the `else` runs precisely when
+ * the switch is off. They are not graded here: `keysDerivedFrom` grades each line on whether that
+ * line names the field, exactly as it does inside the `if`.
+ *
+ * Seeing both halves deliberately does NOT upgrade the grade, and the temptation to make it is worth
+ * naming, because completing the case analysis looks like proof and is not. `if x.Versioning {
+ * entry["access_type"] = "blob" } else { entry["access_type"] = "private" }` is a two-sided branch
+ * writing one key both ways, and it is the WRONG FEATURE — container access, not versioning. A rule
+ * that read two-sidedness as `derived` would launder precisely the class this grading exists to
+ * catch. So aws's `buildSecrets` reports `length`, `special` AND `manual`, all three `gated`: the
+ * evidence is now complete, and what it establishes is still only that the switch decides which keys
+ * appear. `entry["length"] = s.Length` names a DIFFERENT field — the sibling `length` option — which
+ * is evidence about that offer, not about this one.
+ */
+function branchBlocksAt(body, from) {
+	const neutral = neutralize(body);
+	const blocks = [];
+	let at = from;
+	for (;;) {
+		const span = blockSpanIn(neutral, at);
+		if (!span) break;
+		blocks.push(body.slice(span.start, span.end));
+		// `}` followed by `else` / `else if` is the only thing that continues the chain; a `}` followed
+		// by anything else ends the statement, and reading on would attribute a LATER block's keys to
+		// this switch.
+		const chain = neutral.slice(span.end).match(/^\s*else\b/);
+		if (!chain) break;
+		at = span.end + chain[0].length;
+	}
+	return blocks;
+}
+
+/**
+ * The quoted tfvars keys a function body derives from `.<field>`, each with HOW STRONGLY it derives.
  *
  * A three-shape taint, because the providers write all three and missing any one of them scores a
  * working path as a gap:
@@ -141,12 +188,32 @@ function blockAt(body, from) {
  *      `if t.PointInTimeRecovery { entry["analytical_storage_enabled"] = true }`
  *
  * Shape 3 is why the `if` body has to be brace-matched rather than line-scanned: the line that names
- * the field and the line that names the key are never the same line.
+ * the field and the line that names the key are never the same line. And it is the whole branch —
+ * `else` and `else if` included (see `branchBlocksAt`) — because a switch that chooses between two
+ * key SETS writes half of what it decides on the false side.
+ *
+ * TWO STRENGTHS, because shape 3's second form is materially weaker evidence than the other two and
+ * scoring them the same is how a WRONG-FEATURE cell reads as fine:
+ *
+ *   · `derived` — the statement that writes the key references the field, or a local the field has
+ *     tainted. The key's VALUE moves with the switch, so the key is about the switch. Both
+ *     `"…": !b.PublicAccess` and `"…": accessType` (where `accessType` was set inside an
+ *     `if b.PublicAccess` branch) are this.
+ *   · `gated`   — the key is only WRITTEN inside a branch guarded by the field, and its own
+ *     statement never names it: `if t.PointInTimeRecovery { entry["analytical_storage_enabled"] =
+ *     true }`. All that establishes is *the switch decides whether some key appears*. It does not
+ *     establish that the key MEANS the switch — and on azure that exact line files Cosmos DB
+ *     Synapse Link analytical (column) storage under a point-in-time-recovery toggle. PITR on Cosmos
+ *     is continuous backup; they are different products. No text reader can tell those apart, so the
+ *     honest move is to GRADE the evidence rather than launder it into a pass.
+ *
+ * @returns {Map<string, "derived"|"gated">} key → the strongest evidence seen for it
  */
 export function keysDerivedFrom(body, field) {
 	const fieldRx = new RegExp(`\\.${field}\\b`);
 	const tainted = new Set();
-	const keys = new Set();
+	/** @type {Map<string, "derived"|"gated">} */
+	const keys = new Map();
 
 	const lines = body.split("\n");
 	const offsets = [];
@@ -159,9 +226,16 @@ export function keysDerivedFrom(body, field) {
 	/** Does this text mention the field, or a local already known to carry it? */
 	const carries = (text) => fieldRx.test(text) || [...tainted].some((t) => new RegExp(`\\b${t}\\b`).test(text));
 
-	const harvestKeys = (text) => {
-		for (const m of text.matchAll(KEY_IN_LITERAL)) keys.add(m[1]);
-		for (const m of text.matchAll(KEY_BY_INDEX)) keys.add(m[1]);
+	/** File `key` at `level`, keeping the STRONGEST evidence seen for it: a key written both ways is
+	 * genuinely carried on at least one path, and the strongest path is the one a user gets. */
+	const record = (key, level) => {
+		if (level === "derived" || !keys.has(key)) keys.set(key, level);
+	};
+
+	/** Harvest every quoted tfvars key written by `text`, filing each one at `level`. */
+	const harvestKeys = (text, level) => {
+		for (const m of text.matchAll(KEY_IN_LITERAL)) record(m[1], level);
+		for (const m of text.matchAll(KEY_BY_INDEX)) record(m[1], level);
 	};
 
 	// Three passes: a local can be tainted after the line that consumes it has already been seen
@@ -172,18 +246,27 @@ export function keysDerivedFrom(body, field) {
 			const line = lines[i];
 			if (!carries(line)) continue;
 
-			harvestKeys(line);
+			harvestKeys(line, "derived");
 			for (const m of line.matchAll(ASSIGN)) {
 				if (/\[/.test(line.slice(0, m.index + m[0].length))) continue; // a map write, not a local
 				tainted.add(m[2]);
 			}
-			// A branch ON the field carries the field into everything the branch decides.
+			// A branch ON the field carries the field into everything the branch decides — but the
+			// branch alone only decides WHETHER a key is written, so a key whose own statement never
+			// names the field is `gated`, not `derived`. Graded per LINE rather than per block,
+			// because one branch routinely holds both: `acl = "public-read"` taints a local that a
+			// later line assigns to a key, and that line is `derived` on its own merits.
+			//
+			// EVERY block the statement decides, `else` included. The false side is chosen by the
+			// switch just as the true side is, and a reader that stops at the first closing brace
+			// grades the cell on whichever half it happened to see.
 			if (/(^|\s)if\s/.test(line) && line.includes("{")) {
-				const block = blockAt(body, offsets[i]);
-				harvestKeys(block);
-				for (const m of block.matchAll(ASSIGN)) {
-					if (/\w\[[^\]]*\]\s*$/.test(block.slice(0, m.index + m[0].length).split("\n").pop())) continue;
-					tainted.add(m[2]);
+				for (const block of branchBlocksAt(body, offsets[i])) {
+					for (const inner of block.split("\n")) harvestKeys(inner, carries(inner) ? "derived" : "gated");
+					for (const m of block.matchAll(ASSIGN)) {
+						if (/\w\[[^\]]*\]\s*$/.test(block.slice(0, m.index + m[0].length).split("\n").pop())) continue;
+						tainted.add(m[2]);
+					}
 				}
 			}
 		}
@@ -212,8 +295,17 @@ export function rootKeyForBuilder(pkg, reachable, builderName) {
 /**
  * Trace one canvas switch on one cloud: does the provider carry it into tfvars, and under what?
  *
- * Returns `{carried, sites}` where each site is `{fn, key, root}` — `root` is the tfvars variable
- * the key lives inside, or the key itself when it IS a top-level tfvar.
+ * Returns `{carried, sites, entryMissing}` where each site is `{fn, file, key, root, strength}` —
+ * `root` is the tfvars variable the key lives inside, or the key itself when it IS a top-level
+ * tfvar, and `strength` is `derived` or `gated` (see `keysDerivedFrom`).
+ *
+ * `carried` is deliberately LOOSE: it answers "is this kind provisioned through tofu at all", which
+ * is an evidence question. It is not a verdict, and there is no `carriedStrongly` companion to
+ * mistake for one — the ACCUSATION question ("does this switch demonstrably decide a value") cannot
+ * be answered here, because it also depends on whether the template honors the key, which is the
+ * caller's half. The caller weighs `site.strength` against its own wiring verdict; a second
+ * summary flag on this end would answer half the question in a field named as if it answered all
+ * of it.
  */
 export function traceField(pkg, cloud, goField) {
 	const entry = `${cloud}Provider.ProviderTfvars`;
@@ -227,8 +319,8 @@ export function traceField(pkg, cloud, goField) {
 		if (!new RegExp(`\\.${goField}\\b`).test(fn.body)) continue;
 		const isEntry = key === entry;
 		const root = isEntry ? null : rootKeyForBuilder(pkg, reachable, fn.name);
-		for (const k of keysDerivedFrom(fn.body, goField)) {
-			sites.push({ fn: fn.name, file: fn.file, key: k, root: isEntry ? k : root });
+		for (const [k, strength] of keysDerivedFrom(fn.body, goField)) {
+			sites.push({ fn: fn.name, file: fn.file, key: k, root: isEntry ? k : root, strength });
 		}
 	}
 	return { carried: sites.length > 0, sites, entryMissing: false };
@@ -265,6 +357,7 @@ export function assertParsed(pkg) {
  * in the same function does NOT get attributed to the field.
  */
 export function selfCheck() {
+	/** Abort the run with the reason the tracer is untrustworthy — never a flag the caller can ignore. */
 	const fail = (msg) => {
 		throw new Error(`go-tfvars-trace self-check failed: ${msg}. The tracer is wrong; do not trust this run.`);
 	};
@@ -299,6 +392,11 @@ func buildEntries(items []types.Item) []map[string]interface{} {
 		if b.PublicAccess {
 			entry["in_branch"] = true
 		}
+		if b.GatedOnly {
+			entry["gated_only"] = true
+		} else {
+			entry["else_gated"] = true
+		}
 		out = append(out, entry)
 	}
 	return out
@@ -317,14 +415,51 @@ func neverCalled(items []types.Item) []map[string]interface{} {
 		fail("a builder's body came back empty or truncated");
 	}
 
+	/** Does any traced site carry the field's own VALUE, rather than merely being guarded by it? The
+	 * question `traceField` deliberately no longer answers for its callers — asked here, of the sites,
+	 * so the fixture pins the fact and not a convenience field nobody consumed. */
+	const anyDerived = (t) => t.sites.some((s) => s.strength === "derived");
+
 	const traced = traceField(pkg, "fixture", "PublicAccess");
 	if (!traced.carried) fail("a field read by a reachable builder traced to nothing");
+	if (!anyDerived(traced)) fail("a field whose value is assigned straight to a key produced no `derived` site");
 	const keys = new Map(traced.sites.map((s) => [s.key, s.root]));
 	for (const want of ["direct", "via_local", "via_branch", "in_branch"]) {
 		if (!keys.has(want)) fail(`\`${want}\` derives from the field and was not traced`);
 	}
 	if (keys.get("direct") !== "nested_list") fail("a builder's keys were not attributed to the root tfvar it fills");
 	if (keys.has("unrelated")) fail("`unrelated` derives from a different field and was attributed to this one");
+
+	// STRENGTH, in both directions. An `if <field>` guard establishes that the switch decides whether
+	// a key appears; it does not establish that the key is ABOUT the switch. Grading these the same
+	// is what scored azure's `analytical_storage_enabled` (Synapse Link column storage) as an
+	// implementation of `point_in_time_recovery` (continuous backup) — the wrong feature, reading as
+	// honored. If this assertion ever flips, that cell silently goes green again.
+	const strength = new Map(traced.sites.map((s) => [s.key, s.strength]));
+	for (const want of ["direct", "via_local", "via_branch"]) {
+		if (strength.get(want) !== "derived") fail(`\`${want}\` carries the field's own value and did not read as \`derived\``);
+	}
+	if (strength.get("in_branch") !== "gated") {
+		fail("`in_branch` is written only under an `if <field>` guard with a literal value and did not read as `gated`");
+	}
+	// A field carried ONLY by an if-guard must produce no `derived` site at all — that is the whole
+	// distinction, and a single leaked `derived` would put the cell back on the honored side.
+	const gatedOnly = traceField(pkg, "fixture", "GatedOnly");
+	if (!gatedOnly.carried) fail("a field that gates a key write traced to nothing");
+	if (anyDerived(gatedOnly)) fail("a field that ONLY gates a key write produced a `derived` site");
+
+	// THE ELSE HALF. `else_gated` is written on the false side of `if b.GatedOnly` with a literal
+	// value, so nothing but walking the else block can find it — this is the assertion that fails if
+	// the chain walk is ever lost, and the shape is aws's `buildSecrets` (`if s.Generate { length,
+	// special } else { manual }`), where the invisible half was a third of the evidence.
+	const elseStrength = new Map(gatedOnly.sites.map((s) => [s.key, s.strength]));
+	if (!elseStrength.has("else_gated")) fail("a key written in the `else` half of a branch on the field was not traced");
+	if (elseStrength.get("else_gated") !== "gated") {
+		fail("`else_gated` is a literal on the false side of the branch and did not read as `gated` — seeing both halves is not evidence about the key's MEANING");
+	}
+	// …and the else half belongs to ITS OWN switch. Attributing it to a neighbouring branch would be
+	// a taint leak that reads as extra carriage for a field that decides nothing.
+	if (keys.has("else_gated")) fail("`else_gated` is decided by a different field and was attributed to this one");
 
 	// Reachability, both directions. `neverCalled` reads the field too and must NOT count — that is
 	// the exact shape of GCP's dead `buildFirestoreDatabases`.
