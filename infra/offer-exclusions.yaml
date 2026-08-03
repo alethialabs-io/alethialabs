@@ -32,6 +32,23 @@ exclusions:
     cloud: hetzner
     reason: Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine.
 
+  # ── Hetzner TLS and WAF — the same architectural ceiling, settled by #1810 ───────────
+  # These were baselined while #1810 read as "the switch is dropped in the console". Wiring the
+  # carrier settled it: on Hetzner there is nothing on the other side of the wire. Hetzner sells no
+  # managed certificate and no WAF product, and `infra/templates/project/hetzner` declares no DNS
+  # variable of any kind — the whole cloud's TLS story is in-cluster, exactly like its Postgres.
+  #
+  # `managed_certificate` is still HONORED on Hetzner: cert-manager issues the certificate inside the
+  # cluster. It simply is not carried by OpenTofu, so there is no tfvar for the guard to trace — the
+  # same shape as database:postgres above, and the reason the entry belongs here rather than on the
+  # baseline. A WAF has no in-cluster equivalent to offer, so that one is a plain "no".
+  - offer: dns:managed_certificate
+    cloud: hetzner
+    reason: Issued in-cluster by cert-manager, not by OpenTofu — no tfvar carries the certificate.
+  - offer: dns:waf_enabled
+    cloud: hetzner
+    reason: Hetzner sells no web application firewall — the product does not exist.
+
   # ── Valkey on the clouds that have no Valkey product ────────────────────────────────
   # Checked against the pinned providers, not assumed: azurerm exposes `azurerm_managed_redis`
   # (Redis only), and `alicloud_kvstore_instance.instance_type` accepts Redis or Memcache. Neither
@@ -150,56 +167,23 @@ baseline:
   # no engine axis could not be named by the old offer key.
   #
   # The shapes, so the list reads as something other than a wall:
-  #   · a switch no provider carries          (registry, dns:managed_certificate, dns:waf_enabled)
-  #   · a switch carried and then not read    (bucket:public_access, queue:ordered)
+  #   · a switch no provider carries          (registry)
+  #   · a switch carried and then not read    (bucket:public_access, queue:ordered, alibaba dns cert)
   #   · a kind the cloud's template omits     (hetzner dns, hetzner network)
 
-  # ── DNS: two switches that never leave the console ──────────────────────────────────
-  # `buildConfigSnapshot` hand-enumerates the DNS singleton it sends to the runner
-  # (apps/console/app/server/actions/projects.ts) as {placement, enabled, provider, zone_id,
-  # domain_name, provider_config}. `managed_certificate` and `waf_enabled` are not in that list, so
-  # they are gone before any provider is asked — on every cloud, including the ones whose template
-  # can already build a WAF (aws/waf.tf, azure/azure-waf.tf, alibaba/waf.tf).
-  - offer: dns:managed_certificate
-    cloud: aws
-    reason: The managed TLS certificate is not requested yet — the setting is dropped before it reaches AWS, so turning it on changes nothing.
-    issue: #1810
-  - offer: dns:managed_certificate
-    cloud: gcp
-    reason: The managed TLS certificate is not requested yet — the setting is dropped before it reaches Google Cloud, so turning it on changes nothing.
-    issue: #1810
-  - offer: dns:managed_certificate
-    cloud: azure
-    reason: The managed TLS certificate is not requested yet — the setting is dropped before it reaches Azure, so turning it on changes nothing.
-    issue: #1810
+  # ── DNS: one switch left, on one cloud ──────────────────────────────────────────────
+  # #1810 wired both canvas DNS switches through the snapshot, ProjectDNSConfig and all four
+  # providers, so nine of the ten cells that were here are gone. What is left is the one cloud where
+  # carriage was never the problem: Alibaba declares `alidns_managed_certificate`, the provider sets
+  # it on every apply, and no resource in the template reads it. That is a build, not a wiring fix —
+  # it needs a CAS free-DV request plus the AliDNS validation record.
+  #
+  # The two Hetzner cells moved UP into `exclusions:`; Hetzner sells neither product, so they are
+  # decisions, not debt.
   - offer: dns:managed_certificate
     cloud: alibaba
-    reason: The managed TLS certificate is not requested yet — the setting is dropped before it reaches Alibaba Cloud, so turning it on changes nothing.
-    issue: #1810
-  - offer: dns:managed_certificate
-    cloud: hetzner
-    reason: The managed TLS certificate is not requested yet — the setting is dropped before it reaches Hetzner, so turning it on changes nothing.
-    issue: #1810
-  - offer: dns:waf_enabled
-    cloud: aws
-    reason: The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches AWS, even though the template can build one.
-    issue: #1810
-  - offer: dns:waf_enabled
-    cloud: gcp
-    reason: The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Google Cloud.
-    issue: #1810
-  - offer: dns:waf_enabled
-    cloud: azure
-    reason: The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Azure, even though the template can build one.
-    issue: #1810
-  - offer: dns:waf_enabled
-    cloud: alibaba
-    reason: The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Alibaba Cloud, even though the template can build one.
-    issue: #1810
-  - offer: dns:waf_enabled
-    cloud: hetzner
-    reason: The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Hetzner.
-    issue: #1810
+    reason: The managed TLS certificate is requested but nothing builds it yet — the template declares the variable and no resource reads it.
+    issue: #1824
 
   # ── Container registry: both switches reach no cloud ────────────────────────────────
   # Neither `ImmutableTags` nor `VulnerabilityScanning` is read by ANY provider, so the value a user

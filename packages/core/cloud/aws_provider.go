@@ -54,9 +54,16 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		}
 	}
 
+	// The canvas's two DNS switches seed these; an explicitly-set provider_config key below still
+	// overrides, so the documented escape hatch keeps working in both directions (#1810).
+	//
+	// `waf_enabled` drives the REGIONAL web ACL, not the CloudFront one: no template creates an
+	// aws_cloudfront_* resource, so a CLOUDFRONT-scoped ACL could never be attached to anything.
+	// cloudfront_waf stays reachable through provider_config for anyone fronting their own
+	// distribution.
 	cloudfrontWaf := false
-	acmCert := false
-	appWaf := false
+	acmCert := config.DNS.ManagedCertificate
+	appWaf := config.DNS.WafEnabled
 	if v, ok := config.DNS.ProviderConfig["cloudfront_waf"]; ok {
 		if b, ok := v.(bool); ok {
 			cloudfrontWaf = b

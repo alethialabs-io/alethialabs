@@ -79,8 +79,8 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `bucket:versioning` | 🟡 | 🟡 | 🚫 #1813 | 🟡 | 🟡 | · |
 | `cache:multi_az` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
 | `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
-| `dns:managed_certificate` | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | · |
-| `dns:waf_enabled` | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | · |
+| `dns:managed_certificate` | 🚫 #1824 | 🟡 | 🟡 | 🟡 | — | · |
+| `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `nosql:point_in_time_recovery` | 🚫 #1815 | 🟡 | 🟡 | 🚫 #1815 | · | · |
@@ -134,6 +134,8 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 |---|---|---|
 | `database:postgres` | hetzner | Provisioned in-cluster by the CloudNativePG chart, not by OpenTofu — no tfvar carries the engine. |
 | `cache:valkey` | hetzner | Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine. |
+| `dns:managed_certificate` | hetzner | Issued in-cluster by cert-manager, not by OpenTofu — no tfvar carries the certificate. |
+| `dns:waf_enabled` | hetzner | Hetzner sells no web application firewall — the product does not exist. |
 | `cache:valkey` | azure | Azure Cache/Managed Redis has no Valkey engine — the product does not exist. |
 | `cache:valkey` | alibaba | ApsaraDB KVStore offers Redis or Memcache only — no Valkey engine. |
 | `database:postgres` | local | A local kind cluster has no managed services — data services run in-cluster. |

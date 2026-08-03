@@ -1205,6 +1205,12 @@ async function buildConfigSnapshot(
 				provider: dns?.provider ?? "",
 				zone_id: dns?.zone_id,
 				domain_name: dns?.domain_name,
+				// The canvas's two DNS switches (#1810). Emitted ONLY when on, like
+				// network.subnet_ids above: the runner reads them `omitempty`, so an absent
+				// key means off and the byte-locked snapshot fixtures stay green. Leaving
+				// them out of this hand-enumeration is what dropped them on every cloud.
+				...(dns?.managed_certificate ? { managed_certificate: true } : {}),
+				...(dns?.waf_enabled ? { waf_enabled: true } : {}),
 				provider_config: dns?.provider_config ?? {},
 			},
 			observability: {

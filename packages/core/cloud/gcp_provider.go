@@ -31,8 +31,9 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		}
 	}
 
-	cloudArmorEnabled := false
-	managedCert := false
+	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
+	cloudArmorEnabled := config.DNS.WafEnabled
+	managedCert := config.DNS.ManagedCertificate
 	if v, ok := config.DNS.ProviderConfig["cloud_armor"]; ok {
 		if b, ok := v.(bool); ok {
 			cloudArmorEnabled = b
