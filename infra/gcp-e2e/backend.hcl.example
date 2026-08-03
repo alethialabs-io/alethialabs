@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# GCS state backend for OpenTofu. Copy to backend.hcl (gitignored) and:
+#
+#   tofu init -backend-config=backend.hcl
+#
+# Applied by an admin identity (this stack mints broad IAM). Its Application Default Credentials
+# authenticate the backend — no static state keys. The bucket must already exist: apply
+# infra/gcp-e2e/bootstrap first, which prints its name as `state_bucket`.
+#
+# The GCS backend locks natively (object generation preconditions) — nothing else to configure.
+
+bucket = "alethia-tofu-state-alethia-e2e-nightly"
+prefix = "gcp-e2e"

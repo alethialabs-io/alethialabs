@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Azure state backend for the azure-e2e BOOTSTRAP stack. Copy to backend.hcl (gitignored):
+#
+#   tofu init -backend-config=backend.hcl
+#
+# The storage account below is the one THIS stack creates: on the very first apply it does not exist
+# yet, so run `tofu init -backend=false` first, apply, then re-init with `-migrate-state`.
+#
+# `use_azuread_auth` is REQUIRED, not a preference: the account is created with
+# `shared_access_key_enabled = false`, so there is no account key for the backend's default auth
+# path to use. Your `az login` identity needs `Storage Blob Data Contributor` on the account —
+# which is what `state_writer_principal_ids` grants.
+
+resource_group_name  = "alethia-tfstate"
+storage_account_name = "alethiatfstate"
+container_name       = "tfstate"
+key                  = "azure-e2e-bootstrap.tfstate"
+use_azuread_auth     = true
+
+# Set these if your az CLI has more than one subscription/tenant in scope.
+# subscription_id = "00000000-0000-0000-0000-000000000000"
+# tenant_id       = "00000000-0000-0000-0000-000000000000"
