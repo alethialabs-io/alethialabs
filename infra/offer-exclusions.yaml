@@ -195,6 +195,30 @@ exclusions:
     cloud: hetzner
     reason: Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone.
 
+  # ── Point-in-time recovery on Alibaba Tablestore — not a property of the table ───────
+  # Boarded under #1815 while it read as a missing carrier. It is not: there is nothing on the other
+  # side of the wire to carry it TO. `alicloud_ots_table` exposes instance_name, table_name,
+  # primary_key, defined_column, time_to_live, max_version, allow_update,
+  # deviation_cell_version_in_sec and the four SSE arguments — no backup or recovery argument of any
+  # kind — and the Tablestore API has none either.
+  #
+  # Get the claim right, because "the product does not exist" is falsifiable here and would make the
+  # matrix wrong: Tablestore CAN be restored. It is restored through Cloud Backup (HBR), a separate
+  # service with its own vault, its own billing and its own IAM, driven by a SCHEDULED plan
+  # (`alicloud_hbr_ots_backup_plan`, schedule `I|{startTime}|{interval}`, full with optional
+  # incremental). Its restore points are backup runs, not a continuous log — the console's restore
+  # range is bounded by the plan's schedule, which is not what "point in time" promises. Alethia will
+  # not map a per-table toggle onto a separately-billed backup service, so the honest statement is
+  # that the capability is not expressible as a property of the table.
+  #
+  # Re-derived against the post-#1833 guard: the carrier probe still measures this cell `no-carrier`,
+  # i.e. it reproduces in the SAME shape it was boarded in. Nothing here is a ratchet "fixed —
+  # delete it". The entry leaves `baseline:` because the ceiling claim above reclassifies it, and
+  # because the guard refuses to let one cell be both excluded and boarded as debt.
+  - offer: nosql:point_in_time_recovery
+    cloud: alibaba
+    reason: Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do.
+
 # ── Baseline — real gaps, already boarded ───────────────────────────────────────────────
 #
 # NOT exclusions. These are offers a cloud genuinely cannot honor today and that we intend to fix;
@@ -322,19 +346,16 @@ baseline:
     state: no-carrier
 
   # ── NoSQL point-in-time recovery ────────────────────────────────────────────────────
-  # GCP has a builder that reads the setting (`buildFirestoreDatabases`) and nothing calls it — the
-  # provider says so in a comment at gcp_provider.go:88 — so Firestore is created without PITR.
-  # Alibaba's Tablestore builder never reads the field at all.
-  - offer: nosql:point_in_time_recovery
-    cloud: gcp
-    reason: Point-in-time recovery is not enabled on Firestore yet — the database is created without it whichever way the switch is set.
-    issue: #1815
-    state: no-carrier
-  - offer: nosql:point_in_time_recovery
-    cloud: alibaba
-    reason: Point-in-time recovery is not enabled on Tablestore yet — the table is created without it whichever way the switch is set.
-    issue: #1815
-    state: no-carrier
+  # Both #1815 cells are gone from this list, for two DIFFERENT reasons — do not read them as one
+  # fix. GCP: the post-#1833 carrier probe measures the cell HONORED and fails the build until this
+  # entry is deleted (`firestore_point_in_time_recovery` is assigned FROM the field, so it grades
+  # `derived`, not `gated-carrier`). Alibaba: the probe still measures it `no-carrier` — it was NOT
+  # fixed — and it moves to `exclusions:` above as a product ceiling, not as a ratchet deletion.
+  #
+  # Still boarded on this offer's row, and NOT this lane's to claim: azure grades `gated-carrier`
+  # under the new guard, because buildCosmosDBCollections writes `analytical_storage_enabled`
+  # (Synapse Link column storage) inside an `if PointInTimeRecovery` branch. The old guard scored
+  # that as honored. It is named in the matrix as ⚠️ and is not counted as carried.
 
   # ── Hetzner: two kinds the canvas offers and the template does not build ────────────
   # Unlike the Hetzner entries in `exclusions:` above, neither of these is a platform ceiling.
