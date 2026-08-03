@@ -311,15 +311,20 @@ describe("field get/set escape hatches", () => {
 		});
 	});
 
-	it("writes registry knobs into provider_config without clobbering siblings", () => {
+	// The two registry switches are typed columns since #1811, not `provider_config` keys — so the
+	// setter writes ONE field and touches nobody's bag, and the getter defaults to TRUE rather than
+	// false. That default is the whole point: it is what every template already builds, and reading
+	// an unset row as `false` would show an existing registry as "mutable, unscanned" and then, now
+	// that the switch is carried, build it that way.
+	it("reads and writes the registry switches as their own fields, defaulting to on", () => {
 		const field = getKindConfig("registry")
 			?.sections.flatMap((s) => s.fields)
 			.find((f) => f.key === "immutable_tags");
-		expect(field?.get?.({ provider_config: { immutable_tags: true } })).toBe(true);
-		expect(
-			field?.set?.(true, { name: "apps", provider_config: { vulnerability_scanning: true } }),
-		).toEqual({
-			provider_config: { vulnerability_scanning: true, immutable_tags: true },
+		expect(field?.get?.({ immutable_tags: false })).toBe(false);
+		expect(field?.get?.({ immutable_tags: true })).toBe(true);
+		expect(field?.get?.({})).toBe(true);
+		expect(field?.set?.(true, { name: "apps", provider_config: { namespace: "acme" } })).toEqual({
+			immutable_tags: true,
 		});
 	});
 });

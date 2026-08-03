@@ -154,6 +154,20 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		// empty and NOTHING was ever created even with provision_ecr=true.
 		"provision_ecr": len(ecrNames) > 0,
 		"ecr_names_map": ecrNames,
+		// The two canvas switches, PER REPOSITORY and keyed like ecr_names_map. Both are attributes
+		// of `aws_ecr_repository`, so two registry components with opposite answers stay opposite —
+		// an earlier cut of this lane OR-aggregated them into the template's two scalars and quietly
+		// overruled whichever component asked to be less safe.
+		//
+		// Called INLINE rather than through a local, like buildArtifactRegistryRepos on GCP: the
+		// offer-parity carrier probe resolves which root tfvar a builder's nested keys belong to by
+		// finding `"<root>": <builder>(`, and a variable in between makes `immutable_tags` resolve
+		// to nothing — a working fix scoring as an unfixed gap. It is a pure function.
+		"ecr_repo_settings": buildECRRepoSettings(config),
+		// Left in place as the project-wide DEFAULTS the template falls back to for any repository
+		// `ecr_repo_settings` does not name — including every snapshot written before it existed.
+		"ecr_repository_image_tag_mutability": "IMMUTABLE",
+		"ecr_repository_image_scan_on_push":   true,
 
 		// RDS
 		"create_rds": len(config.Databases) > 0,
@@ -594,6 +608,37 @@ func buildECRNamesMap(config *types.ProjectConfig) map[string]string {
 		}
 		if base := ecrRepoBaseName(s.Name); base != "" {
 			out[s.Name] = base
+		}
+	}
+	return out
+}
+
+// buildECRRepoSettings answers the canvas's two registry switches PER repository, keyed by the same
+// logical name buildECRNamesMap keys by — so `ecr_repo_settings["api"]` and `ecr_names_map["api"]`
+// describe one repository, and the template resolves them together in `local.ecr_input`.
+//
+// Only NATIVE registry components get an entry. A pluggable registry is somebody else's to
+// configure, and a repo-sourced SERVICE gets a repository from buildECRNamesMap but no entry here
+// on purpose: a service has no registry switches to answer, and inventing an answer would mean
+// picking which registry component's settings it inherits. It falls back to the project-wide
+// defaults instead, which is what it got before this existed.
+//
+// A nil switch is an older row or a hand-written snapshot, and reads as the SAFE setting — the one
+// the template would have built anyway. Nothing here can downgrade a live repository: a project
+// that emits no entry at all keeps `IMMUTABLE` / scan-on-push, and `image_tag_mutability` going
+// MUTABLE cannot be undone for images already pushed under it.
+func buildECRRepoSettings(config *types.ProjectConfig) map[string]interface{} {
+	out := map[string]interface{}{}
+	for _, r := range config.ContainerRegistries {
+		if r.Provider != "" && r.Provider != "native" {
+			continue
+		}
+		if r.Name == "" || ecrRepoBaseName(r.Name) == "" {
+			continue
+		}
+		out[r.Name] = map[string]interface{}{
+			"immutable_tags":         r.ImmutableTags == nil || *r.ImmutableTags,
+			"vulnerability_scanning": r.VulnerabilityScanning == nil || *r.VulnerabilityScanning,
 		}
 	}
 	return out

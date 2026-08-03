@@ -17,11 +17,9 @@ import { PROJECT_NODE_ID, useCanvasStore } from "@/lib/stores/use-canvas-store";
 import {
 	NATIVE_LABELS,
 	environmentConnector,
-	nativeRegistryKnobs,
 	registryUnavailable,
 	secretsStoreUnavailable,
 } from "@/lib/canvas/environment-connector";
-import { toRecord } from "@/lib/coerce";
 import { ConfigFields } from "./inspector/config-fields";
 import { getKindConfig } from "./inspector/config-schema";
 import { ConnectorSelect } from "./inspector/connector-select";
@@ -211,17 +209,15 @@ export function EnvSettingsSheet() {
 										// registry — an ImagePullBackOff against a secret that exists.
 										onChange={(patch) => {
 											for (const node of registryNodes) {
-												// Merge, don't replace: `provider_config` also carries this row's OWN
-												// cloud-registry settings (immutable tags, scanning), which are per
-												// row while the provider is per environment. Writing the patch whole
-												// would flatten two registries' distinct settings on any provider
-												// change — including choosing the native option they already had.
+												// `provider_config` may be replaced whole now. It used to also carry
+												// this row's OWN cloud-registry settings (immutable tags, scanning),
+												// which are per row while the provider is per environment, so the
+												// patch had to be merged over them or two registries' distinct
+												// settings were flattened on any provider change. Those two became
+												// typed columns in #1811, and this write never touches them.
 												updateNodeConfig(node.id, {
 													provider: patch.provider,
-													provider_config: {
-														...nativeRegistryKnobs(toRecord(toRecord(node.data.config).provider_config)),
-														...patch.provider_config,
-													},
+													provider_config: patch.provider_config,
 												});
 											}
 										}}

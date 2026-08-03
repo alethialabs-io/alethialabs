@@ -37,6 +37,18 @@ variable "ecr_names_map" {
   description = "Map of repositories to create. Example: { r1 = \"myfirstrepo\", r2 = \"mysecondrepo\" }"
 }
 
+# Per-repository switches, keyed like ecr_names_map. Optional in both directions: the map may omit a
+# repository, and an entry may omit either attribute. Whatever is missing falls back to the two
+# project-wide defaults below — see local.ecr_input, which does the resolving once.
+variable "ecr_repo_settings" {
+  type = map(object({
+    immutable_tags         = optional(bool, true)
+    vulnerability_scanning = optional(bool, true)
+  }))
+  default     = {}
+  description = "Per-repository tag-immutability and vulnerability-scanning settings, keyed like ecr_names_map."
+}
+
 variable "ecr_prefix_with_projectname" {
   type        = bool
   default     = true

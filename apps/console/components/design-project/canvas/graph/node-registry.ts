@@ -643,19 +643,23 @@ export const NODE_REGISTRY: NodeRegistry = {
 						]
 					: [
 							{ label: "Service", value: provider ? getProvider(provider).registryService : "" },
+							// Typed columns since #1811, defaulting TRUE — which is what the templates
+							// already build, so an unset value must read as the safer setting here too.
 							{
 								label: "Tags",
-								value: config.provider_config?.immutable_tags ? "immutable" : "mutable",
+								value: config.immutable_tags === false ? "mutable" : "immutable",
 							},
 							{
 								label: "Scanning",
-								value: config.provider_config?.vulnerability_scanning ? "on push" : "off",
+								value: config.vulnerability_scanning === false ? "off" : "on push",
 							},
 						],
 		},
 		palette: { group: "DevOps", subtitle: "Private container images" },
 		defaultData: () => ({
 			name: "apps",
+			immutable_tags: true,
+			vulnerability_scanning: true,
 			provider_config: {},
 		}),
 	},

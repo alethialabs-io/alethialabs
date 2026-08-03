@@ -1,0 +1,2 @@
+ALTER TABLE "project_container_registries" ADD COLUMN "immutable_tags" boolean DEFAULT true;--> statement-breakpoint
+ALTER TABLE "project_container_registries" ADD COLUMN "vulnerability_scanning" boolean DEFAULT true;
