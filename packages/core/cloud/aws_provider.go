@@ -471,15 +471,36 @@ func derefIntOr(p *int, def int) int {
 	return def
 }
 
+// derefBoolOr resolves an optional canvas switch to a concrete value. An unset switch is the OFF
+// position, not "leave the key out": a tri-state that sometimes omits a key produces a tfvars shape
+// that differs between two projects with the same visible configuration, and a template argument
+// then falls back to a default nobody chose.
+func derefBoolOr(p *bool, def bool) bool {
+	if p != nil {
+		return *p
+	}
+	return def
+}
+
+// buildSQSQueues maps each canvas queue onto one entry of the `sqs_queues` tfvar.
+//
+// Ordered delivery is SQS FIFO, and FIFO is not one argument: `fifo_queue` decides it, the queue's
+// name must then end in `.fifo`, and the queue's dead-letter queue must be FIFO too (AWS rejects a
+// standard DLQ on a FIFO queue). The template owns the name and the DLQ, so what is carried here is
+// the decision — `fifo_queue` — plus `content_based_deduplication`, without which every SendMessage
+// to a FIFO queue must carry its own MessageDeduplicationId or fail.
+//
+// `content_based_deduplication` follows `fifo_queue` rather than standing on its own switch: SQS
+// refuses it on a standard queue, so the two can never be set independently from one canvas
+// boolean.
 func buildSQSQueues(queues []types.ProjectQueueConfig, topics []types.ProjectTopicConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, q := range queues {
+		ordered := derefBoolOr(q.Ordered, false)
 		cfg := map[string]interface{}{
-			"fifo_queue": false,
-			"dlq_enable": false,
-		}
-		if q.Ordered != nil {
-			cfg["fifo_queue"] = *q.Ordered
+			"fifo_queue":                  ordered,
+			"content_based_deduplication": ordered,
+			"dlq_enable":                  false,
 		}
 		if q.VisibilityTimeout != nil {
 			cfg["visibility_timeout_seconds"] = *q.VisibilityTimeout

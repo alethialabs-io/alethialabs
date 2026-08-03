@@ -442,32 +442,39 @@ describe("convertProjectConfig — NoSQL", () => {
 	});
 });
 
+// #1812 — this suite used to assert the opposite cloud. The warning named GCP ("no direct Pub/Sub
+// equivalent") while Pub/Sub was the one being wired, and said nothing about Alibaba, which is the
+// documented `queue:ordered` exclusion. Converting to a cloud that honors the switch loses nothing
+// and must stay silent; converting to the one that does not is the whole point of the warning.
 describe("convertProjectConfig — messaging", () => {
-	it("warns about FIFO queues only when converting to GCP", () => {
-		const toGcp = convertProjectConfig(
+	it("warns about ordered queues only when converting to Alibaba", () => {
+		const toAlibaba = convertProjectConfig(
 			makeConfig({ queues: [{ name: "q", ordered: true }] }),
 			"aws",
-			"gcp",
+			"alibaba",
 		);
 		expect(
-			byComponent(toGcp.warnings, "Messaging").some((w) =>
-				w.message.includes("Pub/Sub"),
+			byComponent(toAlibaba.warnings, "Messaging").some((w) =>
+				w.message.includes("Ordered delivery is not applied on Alibaba Cloud"),
 			),
 		).toBe(true);
 
-		const toAzure = convertProjectConfig(
-			makeConfig({ queues: [{ name: "q", ordered: true }] }),
-			"aws",
-			"azure",
-		);
-		expect(byComponent(toAzure.warnings, "Messaging")).toEqual([]);
+		// The three clouds that carry the switch stay silent.
+		for (const target of ["gcp", "azure", "aws"] as const) {
+			const converted = convertProjectConfig(
+				makeConfig({ queues: [{ name: "q", ordered: true }] }),
+				target === "aws" ? "gcp" : "aws",
+				target,
+			);
+			expect(byComponent(converted.warnings, "Messaging")).toEqual([]);
+		}
 	});
 
-	it("does not warn for non-ordered queues to GCP", () => {
+	it("does not warn for non-ordered queues to Alibaba", () => {
 		const { warnings } = convertProjectConfig(
 			makeConfig({ queues: [{ name: "q", ordered: false }] }),
 			"aws",
-			"gcp",
+			"alibaba",
 		);
 		expect(byComponent(warnings, "Messaging")).toEqual([]);
 	});

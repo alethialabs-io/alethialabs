@@ -75,6 +75,24 @@ describe("kind summaries", () => {
 		expect(registrySummary(null, { name: "apps" })).toBe("apps");
 	});
 
+	it("renders the queue summary as Ordered only where ordered delivery is actually built", () => {
+		const queueSummary = (provider: CloudProviderSlug | null, config: object = {}) =>
+			getKindConfig("queue")?.summary(
+				config as Record<string, unknown>,
+				provider,
+			);
+		expect(queueSummary("aws", { ordered: true })).toBe("Ordered · 30s");
+		expect(queueSummary("azure", { ordered: true, visibility_timeout: 60 })).toBe(
+			"Ordered · 60s",
+		);
+		expect(queueSummary("gcp", { ordered: false })).toBe("Standard · 30s");
+		// Alibaba is a documented exclusion for `queue:ordered` (infra/offer-exclusions.yaml):
+		// its queue service takes a `fifo` type and publishes no ordering guarantee, so nothing
+		// carries the switch. The card must not print an ordering claim over a queue that will be
+		// built standard — that is the difference between a visible gap and a silent one.
+		expect(queueSummary("alibaba", { ordered: true })).toBe("Standard · 30s");
+	});
+
 	it("renders in-cluster sizing summaries on hetzner (defaults + explicit)", () => {
 		const hetzner = (kind: Parameters<typeof getKindConfig>[0], config: object) =>
 			getKindConfig(kind)?.summary(config as Record<string, unknown>, "hetzner");

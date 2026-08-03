@@ -287,14 +287,23 @@ func (p *gcpProvider) ConfigureKubeconfig(ctx context.Context, config *types.Pro
 	)
 }
 
+// buildPubSubTopics maps canvas topics AND canvas queues onto the `pubsub_topics` tfvar — GCP has no
+// queue primitive, so a queue is modelled as a topic with exactly one subscription.
+//
+// Ordered delivery is a property of the SUBSCRIPTION (`enable_message_ordering`), never of the
+// topic, so the queue's switch travels on the single subscription the queue owns. A canvas TOPIC is
+// fan-out with subscribers Alethia does not model, and ordering there would be a promise about
+// publishers we cannot see — its subscriptions are emitted explicitly unordered rather than left
+// out, so the tfvars shape is the same for both origins.
 func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.ProjectQueueConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
 		subs := []map[string]interface{}{}
 		for _, s := range t.Subscriptions {
 			subs = append(subs, map[string]interface{}{
-				"name":                 s.Endpoint,
-				"ack_deadline_seconds": 10,
+				"name":                    s.Endpoint,
+				"ack_deadline_seconds":    10,
+				"enable_message_ordering": false,
 			})
 		}
 		result[t.Name] = map[string]interface{}{
@@ -313,9 +322,12 @@ func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.Project
 			retention = fmt.Sprintf("%ds", *q.MessageRetention)
 		}
 
-		subs := []map[string]interface{}{
-			{"name": q.Name + "-sub", "ack_deadline_seconds": ackDeadline},
+		sub := map[string]interface{}{
+			"name":                 q.Name + "-sub",
+			"ack_deadline_seconds": ackDeadline,
 		}
+		sub["enable_message_ordering"] = derefBoolOr(q.Ordered, false)
+		subs := []map[string]interface{}{sub}
 		result[q.Name] = map[string]interface{}{
 			"message_retention_duration": retention,
 			"subscriptions":              subs,

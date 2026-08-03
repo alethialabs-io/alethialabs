@@ -698,13 +698,17 @@ func TestAzureBuilders_ServiceBusQueues(t *testing.T) {
 		t.Errorf("delay_seconds = %v, want 9", q["delay_seconds"])
 	}
 
-	// Defaults when nothing set: ISO-8601 PT1M lock, max_delivery_count 10, no session key.
+	// Defaults when nothing set: ISO-8601 PT1M lock, max_delivery_count 10, sessions explicitly OFF.
 	def := buildServiceBusQueues([]types.ProjectQueueConfig{{Name: "d"}})["d"].(map[string]interface{})
 	if def["lock_duration"] != "PT1M" || def["max_delivery_count"] != 10 {
 		t.Errorf("defaults wrong: %#v", def)
 	}
-	if _, ok := def["requires_session"]; ok {
-		t.Error("requires_session must be absent when Ordered is nil")
+	// requires_session is emitted for EVERY queue since #1812, the untouched switch included. It
+	// used to be OMITTED when Ordered was nil, which made the tfvars shape depend on whether a user
+	// had ever opened the field; the module types it `optional(bool, false)`, so the explicit OFF
+	// position plans identically. The cross-cloud assertions live in queue_ordered_parity_test.go.
+	if def["requires_session"] != false {
+		t.Errorf("requires_session = %v, want false when Ordered is nil", def["requires_session"])
 	}
 }
 

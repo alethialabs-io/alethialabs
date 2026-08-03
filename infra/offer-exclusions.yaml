@@ -281,6 +281,38 @@ exclusions:
     cloud: alibaba
     reason: Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do.
 
+  # ── Ordered delivery on Alibaba — an argument with nothing behind it ─────────────────
+  # The other three clouds are built (#1812). Alibaba is not, and the reason is NOT that the
+  # argument is missing — that would make this baseline debt, and it is deliberately not filed as
+  # such. `alicloud_message_service_queue.queue_type` exists in the pinned provider 1.286.0 (read
+  # out of `tofu providers schema` against the real lockfile, not off a docs page), and Alibaba's
+  # CreateQueue reference documents `QueueType` with exactly two values, verbatim:
+  #   "The type of the queue. Valid values: normal: standard queue. fifo: FIFO queue." — default normal
+  #
+  # That sentence is the entire published specification. Alibaba states no ordering scope, no
+  # message-group or deduplication key for a publisher to set, no throughput ceiling, no region
+  # availability and no pricing; the Simple Message Service limits page does not use the word FIFO
+  # anywhere, and the console's create-queue panel has no queue-type selector at all. Alibaba's own
+  # best-practice guidance for this service still tells applications to attach a sequence id and
+  # sort client-side.
+  #
+  # Wiring it would ship the one thing this guard exists to prevent: a switch that reaches a real
+  # provider argument and promises the user a behaviour nobody has stated. Alethia does not offer a
+  # guarantee the cloud does not make. Revisit if Alibaba publishes one — the argument is already
+  # there, so it would be a small change and a large amount of new documentation. Until then the
+  # canvas card reads "Standard" on Alibaba and the field says the switch is not applied.
+  #
+  # Re-derived against the post-#1833 guard, the same way #1815's Tablestore entry above was: the
+  # carrier probe still measures this cell `no-carrier`, i.e. it reproduces in exactly the shape it
+  # was boarded in. This is NOT a ratchet "fixed — delete it". It leaves `baseline:` because the
+  # ceiling claim above reclassifies it, and because the guard refuses to let one cell be both
+  # excluded and boarded as debt. packages/core/cloud/queue_ordered_parity_test.go pins the
+  # ABSENCE, so a later one-line "fix" cannot contradict this entry in silence.
+  - offer: queue:ordered
+    cloud: alibaba
+    reason: Alibaba Cloud's queue service accepts a FIFO queue type but publishes no ordering guarantee behind it — no delivery order, no message key to group by, no throughput limit — so Alethia does not offer ordered delivery there.
+    issue: #1812
+
 # ── Baseline — real gaps, already boarded ───────────────────────────────────────────────
 #
 # NOT exclusions. These are offers a cloud genuinely cannot honor today and that we intend to fix;
@@ -303,8 +335,12 @@ baseline:
   #
   # The shapes, so the list reads as something other than a wall:
   #   · a switch no provider carries          (registry)
-  #   · a switch carried and then not read    (queue:ordered)
   #   · a kind the cloud's template omits     (hetzner dns, hetzner network)
+  #
+  # The second shape this list started with — a switch carried into tfvars and then read by no
+  # resource argument — has no members left. #1865 took the last of the Alibaba DNS certificate
+  # cells into `exclusions:` as a provider ceiling, and #1812 fixed queue:ordered on the three
+  # clouds that can honor it. Both went the honest way: fixed, or established as a limit.
   #
   # The DNS block that stood here is gone. #1810 wired both canvas DNS switches through the snapshot,
   # ProjectDNSConfig and all four providers, which cleared nine of its ten cells; the last one —
@@ -359,30 +395,13 @@ baseline:
     issue: #1811
     state: no-carrier
 
-  # ── Queues: ordered delivery lands nowhere ──────────────────────────────────────────
-  # AWS and Azure carry the switch all the way into tfvars — `fifo_queue` on `sqs_queues`,
-  # `requires_session` on `service_bus_queues` — and then no resource argument reads either name. GCP
-  # and Alibaba never carry it at all. Four clouds, one user-visible outcome: the queue is unordered.
-  - offer: queue:ordered
-    cloud: aws
-    reason: FIFO delivery is not applied to SQS yet — the queue is created as a standard, unordered queue whichever way the switch is set.
-    issue: #1812
-    state: unwired-template
-  - offer: queue:ordered
-    cloud: azure
-    reason: Session-ordered delivery is not applied to Service Bus yet — the queue is created without sessions whichever way the switch is set.
-    issue: #1812
-    state: unwired-template
-  - offer: queue:ordered
-    cloud: gcp
-    reason: Ordered delivery is not applied to Pub/Sub yet — message ordering stays off whichever way the switch is set.
-    issue: #1812
-    state: no-carrier
-  - offer: queue:ordered
-    cloud: alibaba
-    reason: Ordered delivery is not applied to MNS yet — the queue is created unordered whichever way the switch is set.
-    issue: #1812
-    state: no-carrier
+  # ── Queues: ordered delivery ────────────────────────────────────────────────────────
+  # All four #1812 cells are gone from this list, and NOT for one reason — do not read them as one
+  # fix. AWS, Azure and GCP are built: the switch now reaches `aws_sqs_queue.fifo_queue`,
+  # `azurerm_servicebus_queue.requires_session` and
+  # `google_pubsub_subscription.enable_message_ordering`, so the carrier probe measures those three
+  # cells HONORED and fails the build until their entries are deleted. Alibaba was NOT fixed — the
+  # probe still measures it `no-carrier` — and it moves to `exclusions:` above as a product ceiling.
 
   # ── Bucket encryption on Alibaba — a gap, and an unresolved question ────────────────
   # Nothing carries the switch — the wiring verdict the other bucket cells had before #1813 retired
