@@ -6,6 +6,7 @@ module "storage_account" {
   environment         = var.environment
   project_name        = var.project_name
   resource_group_name = azurerm_resource_group.main.name
+  account_name        = local.azure_storage_account_name
   account_tier        = var.storage_account_tier
   replication_type    = var.storage_account_replication
   containers          = var.storage_containers

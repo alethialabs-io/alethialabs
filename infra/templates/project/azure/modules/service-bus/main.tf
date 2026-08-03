@@ -3,7 +3,9 @@ resource "azurerm_servicebus_namespace" "this" {
   #   Error: "name" cannot end with a hyphen, -sb, or -mgmt
   # The old "${project}-${environment}-sb" therefore made Service Bus — i.e. the queue AND topic
   # kinds — impossible to create. Lead with the discriminator instead of trailing it.
-  name                = "sb-${var.project_name}-${var.environment}"
+  # Derived at the template root (checks_naming.tf, local.azure_service_bus_name) — see the
+  # NAMING-002 note there. The readable "sb-<project_name>-<environment>" form is preserved.
+  name                = var.namespace_name
   resource_group_name = var.resource_group_name
   location            = var.location
   sku                 = var.sku

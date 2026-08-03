@@ -6,6 +6,7 @@ module "service_bus" {
   environment         = var.environment
   project_name        = var.project_name
   resource_group_name = azurerm_resource_group.main.name
+  namespace_name      = local.azure_service_bus_name
   sku                 = var.service_bus_sku
   queues              = var.service_bus_queues
   topics              = var.service_bus_topics

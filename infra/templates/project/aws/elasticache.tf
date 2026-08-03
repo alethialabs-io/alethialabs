@@ -8,6 +8,14 @@ module "elasticache" {
   environment  = var.environment
   product_name = var.project_name
 
+  # Derived at the root (checks_naming.tf, NAMING-004) rather than composed inside the module, so
+  # the length budget against ElastiCache's 40-character cap is reachable from `tofu test`.
+  redis_name                = local.aws_redis_name
+  redis_user_name           = local.aws_redis_user_name
+  redis_user_group_name     = local.aws_redis_user_group_name
+  redis_default_user_id     = local.aws_redis_default_user_id
+  aws_elasticache_user_name = var.aws_elasticache_user_name
+
   vpc_id                     = var.provision_vpc ? module.common_vpc[0].vpc_id : var.vpc_id
   subnet_ids                 = var.provision_vpc ? slice(module.common_vpc[0].database_subnets, 0, 2) : var.vpc_private_subnet_ids
   cluster_size               = var.redis_cluster_size

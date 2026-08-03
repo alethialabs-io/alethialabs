@@ -587,6 +587,17 @@ variable "redis_automatic_failover_enabled" {
   default     = true
 }
 
+# Declared at the ROOT because NAMING-004 composes the default user's id from it
+# ("restricted-<environment>-<aws_elasticache_user_name>-user") and that name has to be derived
+# where `tofu test` can reach it. The default matches modules/redis/variables.tf so no existing
+# deploy changes; it is now passed explicitly rather than left to the module's own default, so the
+# value the name is built from and the value the resource uses cannot drift apart.
+variable "aws_elasticache_user_name" {
+  type        = string
+  description = "Username for the ElastiCache default user. Change this only if the default user already exists by other means. Feeds the NAMING-004 derivation of the default user's id."
+  default     = "default"
+}
+
 #########################################################################
 ##                   Elasticache Valkey                                ##
 #########################################################################

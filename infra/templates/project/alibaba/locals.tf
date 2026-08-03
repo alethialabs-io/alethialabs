@@ -19,9 +19,9 @@ locals {
   ack_name     = "${var.project_name}-${var.environment}"
   rds_name     = "rds-${local.name_prefix}"
   kvstore_name = "redis-${local.name_prefix}"
-  # ots_name is DERIVED, not composed — see checks_naming.tf (NAMING-003). Tablestore caps instance
-  # names at 16 characters and this composition renders 24 for the e2e fixture (#1884).
-  cr_name        = replace("cr-${local.name_prefix}", "_", "-")
+  # ots_name and cr_name are both DERIVED, not composed — see checks_naming.tf (NAMING-003).
+  # Tablestore caps instance names at 16 and this composition renders 24 for the e2e fixture
+  # (#1884); the registry instance renders 27 against a reported cap of 30 (#1886).
   secret_prefix  = local.name_prefix
   vswitch_prefix = "vsw-${local.name_prefix}"
 }
