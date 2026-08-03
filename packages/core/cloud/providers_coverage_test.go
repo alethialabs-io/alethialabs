@@ -355,6 +355,114 @@ func TestAlibabaBuilders_OSSBuckets(t *testing.T) {
 	}
 }
 
+// TestAlibabaBuilders_OSSEncryption pins the INVARIANT that both positions of
+// `bucket:encryption_enabled` are carried into the tfvars as a VALUE, never as the presence or
+// absence of a key.
+//
+// This matters more on Alibaba than anywhere else. S3, GCS and Blob encrypt at rest
+// unconditionally, so an uncarried switch there is cosmetic and those three cells are documented
+// exclusions. OSS applies NO default server-side encryption to a new bucket — GetBucketEncryption
+// answers 400 NoSuchServerSideEncryptionRule — so an uncarried switch means the tenant's objects
+// are stored unencrypted (#1814).
+//
+// The OFF assertion is the load-bearing one. A builder that emitted the key only inside
+// `if b.EncryptionEnabled` would satisfy every ON assertion and still leave the OFF position falling
+// through to whatever the template happens to default to — a gap that scores green (#1829).
+// Asserting that OFF is PRESENT and equal to "None" is what distinguishes a carried switch from a
+// half-carried one, so this must never be relaxed to a presence-only check.
+func TestAlibabaBuilders_OSSEncryption(t *testing.T) {
+	got := buildOSSBuckets([]types.ProjectStorageBucketConfig{
+		{Name: "on", EncryptionEnabled: true},
+		{Name: "off", EncryptionEnabled: false},
+		{Name: "kms", EncryptionEnabled: true, ProviderConfig: map[string]any{"encryption_algorithm": "KMS"}},
+		// An algorithm named while the switch is OFF must not resurrect the rule: the switch decides
+		// WHETHER there is encryption, provider_config only decides which kind.
+		{Name: "off-with-algo", EncryptionEnabled: false, ProviderConfig: map[string]any{"encryption_algorithm": "KMS"}},
+	})
+	if len(got) != 4 {
+		t.Fatalf("buckets = %d, want 4", len(got))
+	}
+
+	// ON defaults to AES256 (SSE-OSS), which Alibaba bills as "None. Free of charge." SSE-KMS is a
+	// per-call charge, so it must never become the default by accident.
+	if got[0]["sse_algorithm"] != "AES256" {
+		t.Errorf("encryption on: sse_algorithm = %v, want AES256", got[0]["sse_algorithm"])
+	}
+
+	// OFF must be PRESENT and explicit. Presence is asserted separately from the value so that a
+	// future drift to a branch-guarded emit fails here with a message naming which half broke.
+	off, ok := got[1]["sse_algorithm"]
+	if !ok {
+		t.Fatal("encryption off: sse_algorithm is absent — the OFF position must be emitted, not left to the template default")
+	}
+	if off != "None" {
+		t.Errorf("encryption off: sse_algorithm = %v, want None", off)
+	}
+
+	if got[2]["sse_algorithm"] != "KMS" {
+		t.Errorf("explicit algorithm: sse_algorithm = %v, want KMS", got[2]["sse_algorithm"])
+	}
+	if got[3]["sse_algorithm"] != "None" {
+		t.Errorf("off with an algorithm named: sse_algorithm = %v, want None", got[3]["sse_algorithm"])
+	}
+
+	// The two positions must actually DIFFER. Every assertion above would also hold for a builder
+	// that returned a constant, if that constant happened to match — this is the cheap guard against
+	// a switch that is carried in name only.
+	if got[0]["sse_algorithm"] == got[1]["sse_algorithm"] {
+		t.Error("the ON and OFF positions emit the same value — the switch reaches the plan but decides nothing")
+	}
+}
+
+// TestAlibabaBuilders_OSSNameSuffix pins the key name the template keys its for_each on.
+//
+// #1834: this builder emitted `name_suffix` while modules/oss read `b.name`, so every Alibaba
+// project that carried a bucket died at plan with "This object does not have an attribute named
+// name" — a template that had never once planned. The TEMPLATE was corrected to `name_suffix` (the
+// spelling AWS's s3 and GCP's cloud-storage modules already use) rather than this builder to
+// `name`, so this test is what stops the Go side drifting back and re-opening the hole from the
+// other direction.
+func TestAlibabaBuilders_OSSNameSuffix(t *testing.T) {
+	got := buildOSSBuckets([]types.ProjectStorageBucketConfig{{Name: "assets"}})
+	if got[0]["name_suffix"] != "assets" {
+		t.Errorf("name_suffix = %v, want assets", got[0]["name_suffix"])
+	}
+	// The module composes the real bucket name as name_prefix-name_suffix, because OSS bucket names
+	// are globally unique across all of Alibaba Cloud. A bare `name` would be both undeclared by the
+	// module's object type (and therefore silently discarded) and unusable as a bucket name.
+	if _, ok := got[0]["name"]; ok {
+		t.Error("buildOSSBuckets emitted `name`; modules/oss declares `name_suffix` and would discard it")
+	}
+}
+
+// TestAlibabaBuilders_OSSSSEAlgorithm covers the resolver directly, including the value the module's
+// allow-list refuses. "SM4" is accepted by the alicloud provider's ValidateFunc but rejected by
+// PutBucketEncryption with InvalidEncryptionAlgorithmError, so it is passed through here and stopped
+// at plan time by the root `oss_buckets` validation — a plan-time error rather than an apply-time
+// 400. This test records that the split is deliberate: the resolver does not silently rewrite what a
+// tenant asked for.
+func TestAlibabaBuilders_OSSSSEAlgorithm(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  map[string]any
+		want string
+	}{
+		{"nil provider_config defaults to the free algorithm", nil, "AES256"},
+		{"empty provider_config defaults to the free algorithm", map[string]any{}, "AES256"},
+		{"an empty string is not a choice", map[string]any{"encryption_algorithm": ""}, "AES256"},
+		{"a non-string is not a choice", map[string]any{"encryption_algorithm": 7}, "AES256"},
+		{"an explicit choice wins", map[string]any{"encryption_algorithm": "KMS"}, "KMS"},
+		{"an api-invalid choice is passed through for the template to refuse", map[string]any{"encryption_algorithm": "SM4"}, "SM4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ossSSEAlgorithm(types.ProjectStorageBucketConfig{ProviderConfig: tc.cfg})
+			if got != tc.want {
+				t.Errorf("ossSSEAlgorithm = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAlibabaBuilders_Secrets(t *testing.T) {
 	got := buildAlibabaSecrets([]types.ProjectSecretConfig{{Name: "s", Generate: true, Length: 24, SpecialChars: true}})
 	if len(got) != 1 {
