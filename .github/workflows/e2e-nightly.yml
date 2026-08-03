@@ -410,8 +410,13 @@ jobs:
       - name: Install hcloud CLI (belt-and-suspenders teardown)
         if: steps.gate.outputs.run == 'true' && matrix.provider == 'hetzner'
         env:
-          HCLOUD_CLI_VERSION: v1.49.1
+          # v1.49.1 was never released — the download 404'd on every run. The leg green-skipped
+          # while HCLOUD_TOKEN was unset, so the pin was never exercised until the gate opened.
+          HCLOUD_CLI_VERSION: v1.67.0
         run: |
+          # pipefail is load-bearing: without it `curl | tar` reports TAR's status, so a 404
+          # surfaced as "gzip: stdin: unexpected end of file" instead of the HTTP error.
+          set -euo pipefail
           curl -fsSL "https://github.com/hetznercloud/cli/releases/download/${HCLOUD_CLI_VERSION}/hcloud-linux-amd64.tar.gz" \
             | tar -xz hcloud
           sudo mv hcloud /usr/local/bin/hcloud
