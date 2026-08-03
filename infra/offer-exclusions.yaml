@@ -339,11 +339,6 @@ baseline:
   # if it does not, a user who leaves this (default-on) switch alone gets unencrypted objects. That
   # difference is why this is boarded rather than excluded: the answer decides whether it is cosmetic
   # or a security defect.
-  - offer: bucket:encryption_enabled
-    cloud: alibaba
-    reason: Encryption at rest is not requested for Alibaba OSS buckets — the setting never reaches the plan, so the bucket is created with whatever OSS applies by default.
-    issue: #1814
-    state: no-carrier
 
   # ── NoSQL point-in-time recovery ────────────────────────────────────────────────────
   # Both #1815 cells are gone from this list, for two DIFFERENT reasons — do not read them as one

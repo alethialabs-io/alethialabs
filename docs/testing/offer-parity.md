@@ -85,7 +85,7 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 
 | Offer | alibaba | aws | azure | gcp | hetzner | local |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| `bucket:encryption_enabled` | 🚫 #1814 | — | — | — | · | · |
+| `bucket:encryption_enabled` | 🟡 | — | — | — | · | · |
 | `bucket:public_access` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `bucket:versioning` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `cache:multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · | · |
@@ -221,7 +221,6 @@ Only a cell that was measured and came out honored is asked for its entry back.
 | `queue:ordered` | azure | 🚫 `unwired-template` | #1812 | Session-ordered delivery is not applied to Service Bus yet — the queue is created without sessions whichever way the switch is set. |
 | `queue:ordered` | gcp | 🚫 `no-carrier` | #1812 | Ordered delivery is not applied to Pub/Sub yet — message ordering stays off whichever way the switch is set. |
 | `queue:ordered` | alibaba | 🚫 `no-carrier` | #1812 | Ordered delivery is not applied to MNS yet — the queue is created unordered whichever way the switch is set. |
-| `bucket:encryption_enabled` | alibaba | 🚫 `no-carrier` | #1814 | Encryption at rest is not requested for Alibaba OSS buckets — the setting never reaches the plan, so the bucket is created with whatever OSS applies by default. |
 | `dns:enabled` | hetzner | 🚫 `no-carrier` | #1816 | DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing. |
 | `network:provision_network` | hetzner | 🚫 `no-carrier` | #1816 | A Hetzner project always creates its own network — attaching an existing one is not supported yet. |
 
