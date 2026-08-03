@@ -461,7 +461,16 @@ variable "cloud_armor_rules" {
 variable "cloud_armor_default_action" {
   type        = string
   default     = "allow"
-  description = "Default action for Cloud Armor (allow or deny(403))"
+  description = "Action the Cloud Armor catch-all rule applies to every request none of cloud_armor_rules matched. Reachable through the DNS provider_config passthrough."
+
+  # Validated, not free text. The value is now READ (it reaches modules/cloud-armor.default_action —
+  # until #1826 it reached nothing at all), and the module binds to the platform ingress, so a typo
+  # would either fail mid-apply at the GCP API or, worse, be accepted as a different posture than the
+  # operator asked for. Finite and known ⇒ an enumerated set.
+  validation {
+    condition     = contains(["allow", "deny(403)", "deny(404)", "deny(502)"], var.cloud_armor_default_action)
+    error_message = "cloud_armor_default_action must be one of: allow, deny(403), deny(404), deny(502)."
+  }
 }
 
 #########################################################################

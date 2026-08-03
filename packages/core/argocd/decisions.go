@@ -264,11 +264,25 @@ func perProviderDecision(service string, f *InfraFacts, table map[string]provide
 // (infra/templates/argocd/aws-load-balancer-controller.yaml); no other cloud has one yet, so
 // every other cloud is ABSENT and records ingressNoControllerReason unchanged.
 //
-// Adding a cloud is ONE ENTRY here — and the e2e assertion's own provider-keyed map
-// (test/e2e/argocd_assert.go infraServiceArgoApps) needs the matching Application name, or the
-// derivation hard-errors rather than waiting out the ArgoCD timeout on an app nobody rendered.
+// Adding a cloud is ONE ENTRY here — and the e2e assertion's own provider-keyed maps
+// (test/e2e/argocd_assert.go infraServiceArgoApps / infraServiceNoApp) need the matching
+// Application name, or an explicit "this cloud ships none", or the derivation hard-errors rather
+// than waiting out the ArgoCD timeout on an app nobody rendered.
 var ingressControllers = map[string]providerDecision{
 	"aws": {installedReason: "installed (AWS Load Balancer Controller) — Ingress objects provision ALBs."},
+	// GKE's Ingress controller is NOT something Alethia installs: it runs in the Google-managed
+	// control plane, gated on the cluster's HTTP(S) Load Balancing add-on, which modules/gke enables
+	// unconditionally (`http_load_balancing { disabled = false }`). So the honest decision is
+	// "installed, by the cloud" — the same shape storageClassDecision already records for GCP
+	// ("built-in default (standard-rwo) … no install needed"). It ships no ArgoCD Application, which
+	// is why "ingress" gets a gcp entry in infraServiceNoApp rather than a controller name in
+	// infraServiceArgoApps.
+	//
+	// Installing ingress-nginx instead would have been wrong twice over: it is a second controller
+	// nobody asked for (the #1722 ownership collision, one layer up), and its L4 pass-through load
+	// balancer cannot carry a Cloud Armor policy at all — Cloud Armor binds to a GCLB BACKEND
+	// SERVICE, and only the `gce` ingress class provisions one.
+	"gcp": {installedReason: "built-in (GKE Ingress, the `gce` class) — HTTP(S) Load Balancing is enabled on the cluster, so an Ingress provisions a Google Cloud Load Balancer; there is no controller to install."},
 }
 
 // ingressNoControllerReason is what a cloud with no ingress controller records. Kept
@@ -334,6 +348,19 @@ var argocdURLGates = map[string]providerDecision{
 		installedReason: "installed — ArgoCD is exposed over the ALB ingress (ACM certificate present).",
 		skippedReason:   awsArgocdURLSkipReason,
 	},
+	// GCP's predicate is its own certificate: installArgoCD renders the `gce` Ingress only when the
+	// GLOBAL Google-managed SSL certificate exists, because `ingress.gcp.kubernetes.io/pre-shared-cert`
+	// is the only way to put TLS on it without a second cert-manager stack, and a GKE Ingress with no
+	// certificate would serve the ArgoCD API over plain HTTP on the public internet.
+	//
+	// The skip reason is SPECIFIC rather than the shared default: on GCP the missing piece is a
+	// switch the operator can turn on (the canvas certificate switch → `cloud_dns_managed_certificate`),
+	// not an absent capability, and "no managed ingress on this cloud yet" would now be a lie.
+	"gcp": {
+		installed:       func(f *InfraFacts) bool { return f.GCPManagedCertName != "" },
+		installedReason: "installed — ArgoCD is exposed over a GKE Ingress (`gce` class) fronted by the Google-managed SSL certificate.",
+		skippedReason:   "no Google-managed SSL certificate was provisioned — turn the certificate switch on (with DNS and a domain) to expose ArgoCD over a GKE Ingress; until then use port-forward + the admin password.",
+	},
 }
 
 // awsArgocdURLSkipReason names which half of the AWS gate was missing. The certificate arm
@@ -364,13 +391,15 @@ func argocdURLDecision(f *InfraFacts) InfraServiceDecision {
 // one are different facts, and until now nothing recorded the difference: a project could carry
 // a web ACL, a bill for it, and zero inspected requests.
 //
-// On AWS the attach is the `alb.ingress.kubernetes.io/wafv2-acl-arn` annotation
-// installArgoCD puts on the ArgoCD server ingress, so this decision mirrors BOTH halves —
-// the ACL must exist AND the ingress that carries the annotation must have been configured.
-// It reads argocdURLDecision rather than re-deriving the ingress gate, so the two cannot drift.
+// On AWS the attach is the `alb.ingress.kubernetes.io/wafv2-acl-arn` annotation installArgoCD puts
+// on the ArgoCD server ingress; on GCP it is a BackendConfig whose `spec.securityPolicy.name` names
+// the Cloud Armor policy, bound to the ArgoCD server Service by a `cloud.google.com/backend-config`
+// annotation. Different mechanisms, one shape: the construct must exist AND the ingress that carries
+// it must have been configured, so this decision mirrors BOTH halves. It reads argocdURLDecision
+// rather than re-deriving the ingress gate, so the two cannot drift.
 //
-// This ships NO ArgoCD Application (it is an annotation on an existing ingress), which is why
-// it belongs in test/e2e/argocd_assert.go's infraServiceNoApp.
+// This ships NO ArgoCD Application on any cloud (it is an annotation or a small CR on an existing
+// ingress), which is why it belongs in test/e2e/argocd_assert.go's infraServiceNoApp.
 func wafDecision(f *InfraFacts) InfraServiceDecision {
 	d := InfraServiceDecision{Service: "waf", Status: infraStatusSkipped}
 	acl := wafWebACLRef(f)
@@ -383,8 +412,20 @@ func wafDecision(f *InfraFacts) InfraServiceDecision {
 		return d
 	}
 	d.Status = infraStatusInstalled
-	d.Reason = fmt.Sprintf("attached (%s) — the ArgoCD ingress carries alb.ingress.kubernetes.io/wafv2-acl-arn, so the ALB inspects every request it serves.", acl)
+	d.Reason = wafAttachedReason(f.Provider, acl)
 	return d
+}
+
+// wafAttachedReason names the MECHANISM that attached the web ACL on this cloud, because "attached"
+// alone is not actionable: an operator checking whether traffic is really being filtered needs to
+// know which object to look at, and the objects differ per cloud. One arm per cloud that can attach.
+func wafAttachedReason(provider, acl string) string {
+	switch provider {
+	case "gcp":
+		return fmt.Sprintf("attached (%s) — a BackendConfig binds the Cloud Armor policy to the GCLB backend service the GKE Ingress provisions, so the load balancer evaluates it on every request it serves.", acl)
+	default:
+		return fmt.Sprintf("attached (%s) — the ArgoCD ingress carries alb.ingress.kubernetes.io/wafv2-acl-arn, so the ALB inspects every request it serves.", acl)
+	}
 }
 
 // wafWebACLRef returns the web ACL / security-policy reference this cloud EXPORTS for the
@@ -394,11 +435,16 @@ func wafWebACLRef(f *InfraFacts) string {
 	switch f.Provider {
 	case "aws":
 		return f.WAFWebACLArn
+	case "gcp":
+		// The Cloud Armor security policy NAME. Its root output (`cloud_armor_policy_name`) did not
+		// exist until this lane: the module had exported policy_id/policy_self_link since it was
+		// written and the root swallowed both, so the policy was created, billed, and unreachable.
+		return f.GCPArmorPolicy
 	default:
-		// gcp (Cloud Armor), azure (a WAF policy) and alibaba (a WAF instance) each BUILD a
-		// construct behind their own canvas switch, but none declares a root output the runner
-		// could read and none has a managed ingress to bind one to — so there is no reference
-		// here to attach. Hetzner sells no managed WAF at all.
+		// azure (a WAF policy) and alibaba (a WAF instance) each BUILD a construct behind their own
+		// canvas switch, but neither declares a root output the runner could read and neither has a
+		// managed ingress to bind one to — so there is no reference here to attach. Hetzner sells no
+		// managed WAF at all.
 		return ""
 	}
 }
@@ -409,6 +455,12 @@ func wafNoACLReason(provider string) string {
 	switch provider {
 	case "aws":
 		return "no web ACL was built — turn the WAF switch on for this project to create a regional web ACL and attach it to the ingress."
+	case "gcp":
+		// Now that the policy IS reachable, GCP must stop falling into the "this cloud has nowhere to
+		// attach it" default below: on GCP the only remaining reason there is nothing to attach is
+		// that the operator left the switch off, and telling them otherwise would send them to fix a
+		// gap that no longer exists.
+		return "no Cloud Armor policy was built — turn the WAF switch on for this project to create a security policy and bind it to the ingress's backend service."
 	case "hetzner":
 		return "Hetzner sells no managed WAF — run your own edge (or an in-cluster WAF add-on) if you need request filtering."
 	default:

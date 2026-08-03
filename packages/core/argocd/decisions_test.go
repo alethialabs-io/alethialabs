@@ -439,13 +439,17 @@ func TestInfraServiceDecisions_WAFNeverOutrunsTheIngress(t *testing.T) {
 	}
 }
 
-// Only AWS exports a web ACL reference today. gcp/azure/alibaba each BUILD a construct
-// (Cloud Armor / a WAF policy / a WAF instance) but declare no root output and have no ingress,
-// and Hetzner sells no managed WAF at all — each must say which of those it is, so "we did not
-// wire it yet" is never mistaken for "this cloud cannot".
+// AWS and GCP export a web ACL reference. azure/alibaba each BUILD a construct (a WAF policy / a
+// WAF instance) but declare no root output and have no ingress, and Hetzner sells no managed WAF
+// at all — each must say which of those it is, so "we did not wire it yet" is never mistaken for
+// "you left the switch off", and neither is mistaken for "this cloud cannot".
+//
+// GCP's reason moved with this lane. Its Cloud Armor policy is exported and attachable now, so the
+// only remaining reason there is nothing to attach is an unset switch; keeping the old "no ingress
+// to attach it to yet" would send the operator to fix a gap that no longer exists.
 func TestInfraServiceDecisions_WAFPerCloudSkipReasons(t *testing.T) {
 	cases := map[string]string{
-		"gcp":     "no ingress to attach it to yet",
+		"gcp":     "no cloud armor policy was built",
 		"azure":   "no ingress to attach it to yet",
 		"alibaba": "no ingress to attach it to yet",
 		"hetzner": "sells no managed waf",
@@ -474,7 +478,11 @@ func TestInfraServiceDecisions_WAFPerCloudSkipReasons(t *testing.T) {
 // decisions the lanes touch agree with each other.
 
 func TestIngressDecision_AbsentCloudsSkipWithTheSharedReason(t *testing.T) {
-	for _, p := range []string{"gcp", "azure", "alibaba", "hetzner", "digitalocean", ""} {
+	// gcp has left this list: GKE's Ingress controller is built into the managed control plane, so
+	// its entry is unconditional-installed (see the positive assertion below). azure/alibaba are
+	// the lanes still to land, and hetzner/digitalocean/"" are the fail-closed direction — a cloud
+	// absent from the table inherits nothing.
+	for _, p := range []string{"azure", "alibaba", "hetzner", "digitalocean", ""} {
 		d := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: p}), "ingress")
 		if d.Status != infraStatusSkipped {
 			t.Errorf("%q ingress: want skipped (no table entry), got %s (%s)", p, d.Status, d.Reason)
@@ -483,9 +491,19 @@ func TestIngressDecision_AbsentCloudsSkipWithTheSharedReason(t *testing.T) {
 			t.Errorf("%q ingress: want the shared no-controller reason, got %q", p, d.Reason)
 		}
 	}
-	// AWS is the one entry in the table today, and it is unconditional.
-	if d := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: "aws"}), "ingress"); d.Status != infraStatusInstalled {
-		t.Errorf("aws ingress: want installed, got %s (%s)", d.Status, d.Reason)
+	// Both table entries are unconditional, for opposite reasons: AWS installs the ALB controller
+	// itself, GCP gets one from GKE. Neither depends on a provisioned fact, so zero-value facts
+	// must still report installed.
+	for _, p := range []string{"aws", "gcp"} {
+		if d := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: p}), "ingress"); d.Status != infraStatusInstalled {
+			t.Errorf("%s ingress: want installed, got %s (%s)", p, d.Status, d.Reason)
+		}
+	}
+	// GCP's reason must say the controller is the CLOUD's, not ours. An operator reading
+	// "installed" needs to know there is no Alethia-managed Application to look at.
+	gcp := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: "gcp"}), "ingress")
+	if !strings.Contains(gcp.Reason, "built-in") || !strings.Contains(gcp.Reason, "gce") {
+		t.Errorf("gcp ingress reason must name the built-in `gce` controller, got %q", gcp.Reason)
 	}
 }
 

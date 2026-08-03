@@ -60,10 +60,30 @@ type InfraFacts struct {
 	KarpenterQueueName     string
 
 	// ── GCP (Workload Identity) ─────────────────────────────────
-	GCPProjectID         string
-	GCPExternalDNSSA     string // GSA email bound to the external-dns KSA
-	GCPIngressSA         string // GSA email for the ingress/gateway controller
+	GCPProjectID     string
+	GCPExternalDNSSA string // GSA email bound to the external-dns KSA
+	// GCPIngressSA is wired to the output key `ingress_service_account`, which NO template exports —
+	// so it has been "" on every deploy since it was written. The GKE ingress lane deliberately did
+	// not use it and deliberately did not export one to match: GKE's Ingress controller runs in the
+	// Google-managed control plane and authenticates as the cluster's own service agent, so there is
+	// no in-cluster workload identity to annotate. Left in place rather than deleted because removing
+	// it is a rename across the Azure/Alibaba lanes landing beside this one; tracked separately.
+	GCPIngressSA         string // GSA email for the ingress/gateway controller — SEE ABOVE: permanently empty
 	GCPExternalSecretsSA string // GSA email bound to the external-secrets KSA (gates secretstore-gcp)
+	// GCPManagedCertName is the GLOBAL Google-managed SSL certificate the template built for the
+	// project's certificate switch (root output `cloud_dns_managed_certificate_name`; null when the
+	// switch is off, or when a pluggable DNS connector means the zone is not ours). A NAME, because
+	// `ingress.gcp.kubernetes.io/pre-shared-cert` takes a comma-separated list of certificate names
+	// and nothing else — an id or a self link there is rejected. It gates the ArgoCD ingress on GKE
+	// exactly as ACMCertificateArn gates it on AWS: no certificate ⇒ no managed ingress ⇒ no URL.
+	GCPManagedCertName string
+	// GCPArmorPolicy is the Cloud Armor security policy the template built for the project's WAF
+	// switch (root output `cloud_armor_policy_name`, null when the switch is off). A REFERENCE, not
+	// a credential. The NAME, because a GKE BackendConfig's `spec.securityPolicy.name` resolves a
+	// bare policy name inside the cluster's own project. Empty ⇒ NO BackendConfig is rendered at all:
+	// one carrying an empty securityPolicy name is not "no WAF", it is a resource the GKE ingress
+	// controller rejects, which wedges the ingress — the GCP shape of the empty-wafv2-annotation trap.
+	GCPArmorPolicy string
 
 	// ── Azure (Federated / Workload Identity) ───────────────────
 	AzureResourceGroup         string
@@ -226,6 +246,13 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.GCPExternalDNSSA = ExtractOutput(outputs, "external_dns_service_account")
 		f.GCPIngressSA = ExtractOutput(outputs, "ingress_service_account")
 		f.GCPExternalSecretsSA = ExtractOutput(outputs, "external_secrets_service_account")
+		// Both keys are exported by infra/templates/project/gcp/outputs.tf and both are null when
+		// their canvas switch is off — ExtractOutput yields "" for a null, which is exactly the
+		// "render no ingress" / "attach nothing" signal argocdURLGates and wafWebACLRef want.
+		// The spelling is pinned from BOTH sides: checks_ingress_armor.tftest.hcl asserts the output
+		// names in the template, and TestGCPIngressFactsMatchTemplateOutputs asserts them here.
+		f.GCPManagedCertName = ExtractOutput(outputs, "cloud_dns_managed_certificate_name")
+		f.GCPArmorPolicy = ExtractOutput(outputs, "cloud_armor_policy_name")
 	case "azure":
 		f.ClusterName = ExtractOutput(outputs, "aks_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "aks_cluster_endpoint")
