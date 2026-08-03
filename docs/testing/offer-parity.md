@@ -56,6 +56,40 @@ canvas and the plan), or when the template gates it per engine and this engine h
 | `postgres` | — | 🟡 | 🟡 | 🟡 | — | — |
 | `mysql` | — | 🟡 | 🟡 | 🟡 | · | — |
 
+## Carrier coverage — does the switch reach the plan?
+
+Every row is a switch in the inspector on a kind with no engine choice, so it makes a promise
+per-cloud and nothing else. Two hops are checked, and a cell is 🚫 if either one is missing:
+
+1. **L4 · carrier** — something reachable from `(*<cloud>Provider).ProviderTfvars` reads the field
+   and turns it into a tfvars key. Traced through the call graph, not grepped per file: Azure's
+   secrets are built by `buildGCPSecrets` in gcp_provider.go (a grep would score that a gap), and
+   GCP's `buildFirestoreDatabases` is dead code (a grep would score that carriage).
+2. **L5 · template** — that key is declared in the template *and* a resource or module argument
+   reads it. A variable declared and read by nothing is a gap: GCP's `uniform_access` is filled in
+   on every apply and the bucket resource hardcodes the value it would have set.
+
+This proves the WIRING is present. It does not prove the resource BEHAVES — that needs a real apply,
+which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not this generator's.
+
+| Offer | alibaba | aws | azure | gcp | hetzner | local |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| `bucket:encryption_enabled` | 🚫 #1814 | — | — | — | · | · |
+| `bucket:public_access` | 🟡 | 🟡 | 🚫 #1813 | 🚫 #1813 | 🟡 | · |
+| `bucket:versioning` | 🟡 | 🟡 | 🚫 #1813 | 🟡 | 🟡 | · |
+| `cache:multi_az` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
+| `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
+| `dns:managed_certificate` | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | · |
+| `dns:waf_enabled` | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | 🚫 #1810 | · |
+| `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
+| `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
+| `nosql:point_in_time_recovery` | 🚫 #1815 | 🟡 | 🟡 | 🚫 #1815 | · | · |
+| `queue:ordered` | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | · | · |
+| `registry:immutable_tags` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
+| `registry:vulnerability_scanning` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
+| `secret:generate` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
+| `secret:special_chars` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
+
 ## Day-2 posture — would a hazard be caught?
 
 Day 1 asks *could this ever be built*. Day 2 asks *what happens when you change it afterwards*: does a
@@ -111,6 +145,10 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `database:mysql:iam_auth` | local | A local kind cluster has no cloud identity plane — there is nothing to mint an IAM token against. |
 | `database:postgres:iam_auth` | alibaba | Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password. |
 | `database:mysql:iam_auth` | alibaba | Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password. |
+| `bucket:encryption_enabled` | aws | S3 encrypts every object at rest and the setting cannot be turned off — this switch is informational on AWS. |
+| `bucket:encryption_enabled` | gcp | Cloud Storage encrypts every object at rest and the setting cannot be turned off — this switch is informational on Google Cloud. |
+| `bucket:encryption_enabled` | azure | Azure Storage encrypts every blob at rest and the setting cannot be turned off — this switch is informational on Azure. |
+| `network:single_nat_gateway` | hetzner | Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone. |
 
 ---
 
