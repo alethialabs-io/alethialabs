@@ -374,7 +374,7 @@ function readExclusions() {
 		if (/^\s*#/.test(raw)) continue;
 		const line = raw.trimEnd();
 		if (!line.trim()) continue;
-		const head = line.match(/^(exclusions|baseline):\s*$/);
+		const head = line.match(/^(exclusions|baseline|wired):\s*$/);
 		if (head) {
 			if (cur) { out.push(cur); cur = null; }
 			section = head[1];
@@ -396,23 +396,47 @@ function readExclusions() {
 const allEntries = readExclusions();
 const exclusions = allEntries.filter((e) => e.section === "exclusions");
 const baseline = allEntries.filter((e) => e.section === "baseline");
+// Cells whose branch-guard wiring has been READ BY A PERSON and found to wire the feature it names.
+// Not debt and not an exclusion — a third thing, and it needs its own section because the other two
+// both say something false about it: a `baseline:` entry calls working code a known gap, and an
+// `exclusions:` entry says the cloud will never honor the offer when it already does. See
+// UNDECLARED_GATED below for why the state has to be declared at all.
+const wired = allEntries.filter((e) => e.section === "wired");
 
 // States that are a GAP: offered, unbuildable, silent — the thing the cloud-parity rule forbids. A
 // cell in one of these fails the build unless the yaml records it.
 //
-// `gated-carrier` is deliberately NOT here, and that is a judgement worth stating rather than
-// leaving to be inferred. It means the switch DOES reach the plan and the plan DOES differ; what is
-// unestablished is whether the key the branch writes is the same feature the switch names. That is a
-// question about SEMANTICS, and this guard reads text. Failing on a question it cannot answer would
-// make the only available answer "add a baseline entry", which is how a guard becomes a formality —
-// and it would manufacture debt records for cells that are correctly wired (gcp's `memorystore_tier`
-// really is Memorystore's zone-redundant tier; aws's `length`/`special`/`manual` really are what
-// generating a secret means). So the cell is shown as its own state instead, with its own glyph, and
-// listed by name on every run. Two ratchets still hold it: `docs/testing/offer-parity.md` is
-// generated and CI-diff-gated, so a NEW gated cell changes a checked-in file and lands in review —
-// and `UNHONORED_STATES` below keeps it out of the "fixed" bucket, which is a different question
-// from this one and was answered wrongly by leaving it out of this set alone.
+// `gated-carrier` is still NOT here, and that part of the original judgement stands: the switch DOES
+// reach the plan and the plan DOES differ, and whether the key the branch writes is the same feature
+// the switch names is a question about SEMANTICS that a guard reading text cannot answer. Failing on
+// the STATE would manufacture debt records for cells that are correctly wired — gcp's
+// `memorystore_tier` really is Memorystore's zone-redundant tier; aws's `length`/`special`/`manual`
+// really are what generating a secret means.
+//
+// What did not stand is leaving it undeclared. #1829/#1830 are one defect from two sides:
+//
+//   · a FAILING 🚫 cell could be turned green by adding `if x.Foo { tfvars["<any wired key>"] = … }`
+//     — the cell moves 🚫 → ⚠️, stops being a finding, and nothing asserts the branch does what the
+//     switch says (#1829);
+//   · a BOARDED ⚠️ entry could be deleted while the cell still reproduced ⚠️, and the guard exited 0
+//     (#1830) — whereas deleting a 🚫 entry correctly reds, because the cell falls back into
+//     GAP_STATES and fails as unrecorded.
+//
+// Both are the same hole: ⚠️ was the one unhonored state no declaration had to exist for, so it was
+// the one state the yaml ratchet could not hold. The fix is not to move it into GAP_STATES — that
+// re-opens the formality objection above — but to require it be DECLARED, in whichever of the two
+// senses is true: `baseline:` when the wiring is wrong or unreviewed (real debt, carries an issue),
+// `wired:` when a person has read it and it does wire the feature. An UNDECLARED ⚠️ fails, which is
+// what makes the two sides agree: whichever direction a cell arrives in ⚠️ from, someone has to say
+// which of the two it is. See UNDECLARED_GATED.
 const GAP_STATES = new Set(["no-carrier", "missing-branch", "unwired-template"]);
+
+// The finding shape for a ⚠️ cell nobody has decided about. Deliberately NOT a member of GAP_STATES
+// or of any `state` a cell can be measured in: the cell's state is `gated-carrier` either way, and
+// what fails is the ABSENCE OF A DECLARATION, not the measurement. Keeping the two apart is what lets
+// `boardState`, the matrix glyph and the drift ratchet keep reading one state while the build fails
+// on the other.
+const UNDECLARED_GATED = "undeclared-gated-carrier";
 
 // States in which the cloud does NOT demonstrably honor the offer: every GAP state, plus
 // `gated-carrier`. The gap between these two sets is the whole answer to "what does ⚠️ mean to the
@@ -464,6 +488,8 @@ const MEASURED_STATES = new Set(["ok", ...UNHONORED_STATES]);
 /** The recorded EXCLUSION for this (offer, cloud), if the cloud has been decided never to honor it. */
 const excluded = (offer, cloud) =>
 	exclusions.find((e) => e.offer === offer && (e.cloud === cloud || e.cloud === "*"));
+/** The recorded `wired:` acknowledgement for this (offer, cloud) — a reviewed branch-guard wiring. */
+const wiredAck = (offer, cloud) => wired.find((e) => e.offer === offer && (e.cloud === cloud || e.cloud === "*"));
 /** The recorded BASELINE entry for this (offer, cloud) — real, boarded debt that does not fail the build. */
 const baselined = (offer, cloud) =>
 	baseline.find((e) => e.offer === offer && (e.cloud === cloud || e.cloud === "*"));
@@ -1073,14 +1099,18 @@ for (const offer of SURFACE.offers) {
 			}
 		}
 
-		// `gated-carrier` reaches this the same way a 🚫 does. It does not become a FINDING — the guard
-		// cannot answer the semantic question it raises — but it is unhonored, so it carries its
+		// `gated-carrier` reaches this the same way a 🚫 does. It is unhonored, so it carries its
 		// baseline entry (a ⚠️ cell is boardable) and it keeps that entry alive (a ⚠️ cell is not a
 		// fix). Both halves live in `recordVerdict`; neither is re-decided here.
 		const known = recordVerdict(offerBase, cloud, state);
-		carrierCells.push({ kind: offer.kind, key: offer.key, cloud, state, detail, known });
+		const ack = state === "gated-carrier" ? wiredAck(offerBase, cloud) : null;
+		carrierCells.push({ kind: offer.kind, key: offer.key, cloud, state, detail, known, ack });
 		if (known) knownDebt.push({ shape: state, cloud, offer: offerBase, detail, known });
 		else if (GAP_STATES.has(state)) findings.push({ shape: state, cloud, offer: offerBase, detail, known: null });
+		// An UNDECLARED ⚠️ is the #1829/#1830 hole: neither boarded as debt nor acknowledged as
+		// reviewed wiring, and previously the only unhonored state that could reach here and exit 0.
+		else if (state === "gated-carrier" && !ack)
+			findings.push({ shape: UNDECLARED_GATED, cloud, offer: offerBase, detail, known: null });
 	}
 }
 
@@ -1247,6 +1277,22 @@ for (const b of baseline) {
 	else if (states.length === 0) stale.push(b);
 	else if (!b.state) unstated.push({ entry: b, states });
 	else if (!states.includes(b.state)) drifted.push({ entry: b, states });
+}
+
+/** `wired:` entries whose cell no longer reproduces ⚠️ — the acknowledgement outlived what it answered. */
+const staleWired = [];
+// The same ratchet the baseline gets, for the same reason: an amnesty nobody re-checks stops meaning
+// anything, and this one is easier to rot than the baseline because it is not attached to an issue
+// somebody is chasing. Two ways an entry goes stale, and they are different facts:
+//   · the cell is measured and is no longer ⚠️  → the wiring was strengthened (or removed); the
+//     acknowledgement now answers a question nobody is asking;
+//   · the cell was not measured at all         → the guard cannot see the cell any more, so the
+//     acknowledgement is unfalsifiable, which is the state a declaration must never be allowed to sit in.
+for (const w of wired) {
+	const measured = measuredCells.filter((c) => c.offer === w.offer && (w.cloud === "*" || c.cloud === w.cloud));
+	if (measured.length === 0) staleWired.push({ entry: w, why: unmeasuredBecause(w) || "no cell was measured for it this run" });
+	else if (!measured.some((c) => c.state === "gated-carrier"))
+		staleWired.push({ entry: w, why: `the cell is \`${[...new Set(measured.map((c) => c.state))].join("/")}\` now, not \`gated-carrier\`` });
 }
 
 /**
@@ -1445,6 +1491,24 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 		for (const e of exclusions) md += `| \`${e.offer}\` | ${e.cloud} | ${e.reason ?? ""} |\n`;
 	}
 
+	// The `wired:` acknowledgements, rendered for the same reason the baseline's reasons are: an
+	// undocumented decision is indistinguishable from an oversight. Without this table a reader sees a
+	// bare ⚠️ in the grid and cannot tell whether it is the reviewed kind or the not-yet-looked-at
+	// kind — which is exactly the ambiguity #1829/#1830 were about, reintroduced in the artifact the
+	// board is read from.
+	if (wired.length) {
+		md += `\n## Reviewed branch-guard wirings\n
+A ⚠️ cell means the switch decides whether a key appears, but the code cannot show that the key *is*
+the feature the switch names. These are the ones a person has read and confirmed. They are not
+exclusions — the cloud does honor the offer — and not debt. Every other ⚠️ cell is on the baseline
+above with an issue; a ⚠️ cell in neither list fails the build.
+
+| Offer | Cloud | What was checked |
+|---|---|---|
+`;
+		for (const w of wired) md += `| \`${w.offer}\` | ${w.cloud} | ${w.reason ?? ""} |\n`;
+	}
+
 	// The baseline's reasons, rendered — because they were written to be read.
 	//
 	// Every 🚫 above carries its tracking issue and nothing else, so the only thing the board said
@@ -1619,6 +1683,21 @@ that never moved, and the guard would have to guess which — it guessed "fixed"
 `);
 }
 
+if (staleWired.length) {
+	failed = true;
+	console.error(`\n✗ offer parity — ${staleWired.length} \`wired:\` acknowledgement(s) no longer answer anything:\n`);
+	for (const s of staleWired) {
+		console.error(`  ${s.entry.cloud} · ${s.entry.offer} — ${s.why}`);
+	}
+	console.error(`
+A \`wired:\` entry says "a person read this branch guard and it does wire the feature". When the cell
+stops being ⚠️ that sentence is about nothing, and an acknowledgement nobody re-checks is how an
+amnesty becomes permanent — the same rot the baseline's stale check exists to prevent. Delete the
+entry. If the cell was NOT MEASURED, do not delete it yet: the guard has lost sight of the cell, which
+is a measurement bug, and deleting the entry hides it.
+`);
+}
+
 if (findings.length) {
 	failed = true;
 	console.error(`\n✗ offer parity — ${findings.length} NEW offer(s) the product presents but a cloud cannot build:\n`);
@@ -1634,6 +1713,18 @@ Do one of three things — never a fourth:
   · add it to the BASELINE there with its tracking issue and \`state:\`, if it is real work that is
     already boarded.
 `);
+	if (findings.some((f) => f.shape === UNDECLARED_GATED)) {
+		console.error(`An [${UNDECLARED_GATED}] finding is a different question from the rest, and "fix it" is usually
+the wrong answer. The switch DOES reach the plan and the plan DOES differ — what no code can show is
+whether the key the branch writes is the feature the switch names. Only a person can say. So say it:
+  · \`wired:\` in infra/offer-exclusions.yaml — you read the branch and it does wire this feature.
+    Not debt, not an exclusion; it stops failing and the matrix keeps showing ⚠️ with your reason.
+  · \`baseline:\` with an issue and \`state: gated-carrier\` — the branch writes something else, or
+    nobody has checked. That is real debt and belongs on the board.
+Reaching ⚠️ by adding \`if x.Foo { tfvars["<already-wired key>"] = … }\` to silence a 🚫 lands here on
+purpose: that edit changes the state without establishing anything, and this is the line that says so.
+`);
+	}
 	if (findings.some((f) => f.shape === "day2-blind")) {
 		console.error(`A [day2-blind] finding has exactly ONE fix, and it is a one-line one: add the resource type to
 \`day2StatefulTypes\` in test/e2e/t2_day2_offer.go. It is not baseline material — an unguarded
@@ -1647,7 +1738,7 @@ if (failed) process.exit(1);
 console.log(
 	`✓ offer parity — ${cells.length} (offer × cloud) cells + ${optionCells.length} option cell(s) + ` +
 		`${carrierCells.length} carrier cell(s), ${exclusions.length} documented exclusion(s), ` +
-		`${baseline.length} on the baseline, no NEW silent gaps.`,
+		`${baseline.length} on the baseline, ${wired.length} reviewed branch-guard wiring(s), no NEW silent gaps.`,
 );
 console.log(
 	`✓ day-2 gate coverage — ${day2Cells.length} offered cell(s): ` +
