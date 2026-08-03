@@ -15,6 +15,11 @@
 //   B · MISSING BRANCH    where a template BRANCHES on a variant, every offered variant needs a
 //                         branch. Azure's azure-db gates every resource on `is_postgres`, so the
 //                         MySQL the canvas offers provisions nothing (#1382).
+//   C · UNWIRED TEMPLATE  the switch reaches tfvars and then no resource argument reads it. GCP
+//                         declares `uniform_access` on `cloud_storage_buckets`, the provider fills
+//                         it in on every apply, and the bucket resource hardcodes
+//                         `uniform_bucket_level_access = true`. Carried the whole way, dropped one
+//                         line before it would have meant something.
 //
 // What this deliberately does NOT flag: a template variable the provider doesn't set by default.
 // `mergeProviderConfig` (packages/core/cloud/aws_provider.go) copies any `provider_config` JSONB key
@@ -43,7 +48,24 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+	assertParsed as assertGoTraceParsed,
+	readGoPackage,
+	selfCheck as goTraceSelfCheck,
+	traceField,
+} from "./lib/go-tfvars-trace.mjs";
 import { readKeylessCells } from "./lib/keyless-cells.mjs";
+import {
+	assertParsed as assertTfWiringParsed,
+	readTfWiring,
+	selfCheck as tfWiringSelfCheck,
+} from "./lib/tf-wiring.mjs";
+
+// Before anything is measured, prove the two readers still read. Both pin themselves against a
+// fixture in BOTH directions — a reader that sees nothing, and a reader that sees everything, are
+// equally silent here, and only one of them is loud on its own.
+goTraceSelfCheck();
+tfWiringSelfCheck();
 
 const ROOT = "../..";
 const TEMPLATES = `${ROOT}/infra/templates/project`;
@@ -51,7 +73,7 @@ const PROVIDERS = `${ROOT}/packages/core/cloud`;
 const EXCLUSIONS = `${ROOT}/infra/offer-exclusions.yaml`;
 const MATRIX_OUT = `${ROOT}/docs/testing/offer-parity.md`;
 const NODE_REGISTRY = "components/design-project/canvas/graph/node-registry.ts";
-const CONFIG_SCHEMA_SRC = "components/design-project/canvas/inspector/config-schema.ts";
+const OFFER_SURFACE = "lib/cloud-providers/generated/offer-surface.json";
 const CATALOG = `${ROOT}/packages/core/catalog/catalog.json`;
 
 const writeMatrix = process.argv.includes("--matrix");
@@ -194,12 +216,9 @@ function offeredOn(cloud, kind, variant) {
 //
 // TWO LIMITS, stated because a guard that looks more complete than it is, is worse than no guard:
 //
-//  1. Only kinds that ALSO have a variant axis are covered, because the offer key is
-//     `<kind>:<variant>:<option>`. Unconditional switches on variant-less kinds — `bucket:versioning`,
-//     `registry:immutable_tags`, `dns:waf_enabled`, `nosql:point_in_time_recovery`,
-//     `network:provision_network`, `secret:generate`, `service:probe_enabled` — are NOT measured here.
-//     Several of those are provider-carried on some clouds and not others, so the same class of gap
-//     can still hide there. Extending to a `<kind>:<option>` key is the follow-on.
+//  1. Only kinds that ALSO have a variant axis are covered HERE, because this key is
+//     `<kind>:<variant>:<option>`. Variant-less kinds are measured by the CARRIER pass further down,
+//     which keys `<kind>:<option>` and is where `bucket:versioning` and friends live.
 //  2. Only `type: "switch"` is read. An enum-shaped option (a `select` whose values are not a
 //     `variants:` axis) makes the same cross-cloud promise and is equally invisible.
 
@@ -217,48 +236,34 @@ function keylessGate() {
 /** Options whose canvas gate this guard knows how to read, keyed `<kind>:<option>`. */
 const KNOWN_GATES = { "database:iam_auth": keylessGate() };
 
-/** Drop FULL-LINE `//` comments. Deliberately not a general comment stripper: a `//` inside a
- * description string must survive, and a field's own doc comment naming `visibleWhen` must not make
- * the field read as gated. */
-const stripLineComments = (src) =>
-	src
-		.split("\n")
-		.filter((l) => !l.trimStart().startsWith("//"))
-		.join("\n");
-
-/** The `{ … }` object literal starting at `from`, brace-matched, braces included. */
-function objectLiteralAt(src, from) {
-	const open = src.indexOf("{", from);
-	let depth = 0;
-	for (let i = open; i < src.length; i++) {
-		if (src[i] === "{") depth++;
-		else if (src[i] === "}" && --depth === 0) return src.slice(open, i + 1);
+/** The OFFER SURFACE — every switch the canvas shows, and the clouds it shows it on.
+ *
+ * This used to be a regex over `config-schema.ts`, and the regex could not read a `visibleWhen`
+ * closure — so every gated field was SKIPPED, and "add a gate" was a way to delete an offer from
+ * this guard's vocabulary without failing anything. #1802 replaced the guess with an artifact:
+ * `gen:offer-surface` imports the schema, CALLS the predicates against witness configs, and checks
+ * the answer in. CI regenerates and diffs it, exactly like `gen:keyless-cells`.
+ *
+ * Reading it here rather than re-deriving is the same rule the catalog floor follows: a guard that
+ * reads a DIFFERENT source than the thing it guards is how the drift it exists to catch gets in. */
+function readOfferSurface() {
+	const surface = JSON.parse(readFileSync(OFFER_SURFACE, "utf8"));
+	if (!Array.isArray(surface.offers) || surface.offers.length === 0) {
+		throw new Error(
+			`${OFFER_SURFACE} lists no offers — regenerate it with \`pnpm -F console gen:offer-surface\`. ` +
+				`An empty surface measures nothing and reports success.`,
+		);
 	}
-	return "";
+	return surface;
 }
 
-/** Switch fields per kind: `{key, gate}` — gate null when the canvas offers it on every cloud.
- *
- * The field literal is BRACE-MATCHED rather than window-matched. A fixed character window silently
- * drops any field that outgrows it, and "the guard stopped measuring this" is not a failure anyone
- * sees — it just goes green with less in it. */
+const SURFACE = readOfferSurface();
+
+/** Switch fields per kind: `{key, gate}` — gate null when there is no gate this guard can read. */
 function offeredOptions() {
-	const src = stripLineComments(readFileSync(CONFIG_SCHEMA_SRC, "utf8"));
-	const body = src.slice(src.indexOf("CONFIG_SCHEMA"));
-	const kinds = [...body.matchAll(/\n\t(\w+): \{/g)];
 	const out = {};
-	for (let i = 0; i < kinds.length; i++) {
-		const kind = kinds[i][1];
-		const seg = body.slice(kinds[i].index, kinds[i + 1]?.index ?? body.length);
-		for (const f of seg.matchAll(/\{\s*key:\s*"(\w+)",\s*type:\s*"switch"/g)) {
-			const key = f[1];
-			const gate = KNOWN_GATES[`${kind}:${key}`] ?? null;
-			// A gate we can read keeps the offer measurable; one we cannot makes no promise to measure.
-			if (!gate && /visibleWhen|requiresProvider/.test(objectLiteralAt(seg, f.index))) {
-				continue;
-			}
-			(out[kind] ??= []).push({ key, gate });
-		}
+	for (const offer of SURFACE.offers) {
+		(out[offer.kind] ??= []).push({ key: offer.key, gate: KNOWN_GATES[`${offer.kind}:${offer.key}`] ?? null });
 	}
 	return out;
 }
@@ -272,23 +277,56 @@ const goFieldFor = (key) =>
 		.map((s) => s.charAt(0).toUpperCase() + s.slice(1))
 		.join("");
 
-/** Which clouds' providers demonstrably READ this option (i.e. carry it into tfvars)? */
-function optionCarriers(key) {
-	const probe = new RegExp(`\\.${goFieldFor(key)}\\b`);
-	return new Set(CLOUDS.filter((c) => probe.test(goSrc[c])));
+// ── L4 · the carrier hop, traced rather than grepped ─────────────────────────────────
+//
+// "Does `.PublicAccess` appear in <cloud>_provider.go" is the question this used to ask, and it is
+// wrong in both directions. Azure's secrets are built by `buildGCPSecrets`, which lives in
+// gcp_provider.go — a per-file grep says Azure drops the offer, and Azure does not. GCP's
+// `buildFirestoreDatabases` reads `PointInTimeRecovery` into a list nobody assigns to a tfvar — a
+// grep says GCP carries the offer, and GCP does not (gcp_provider.go:88 says so in a comment).
+//
+// So the carrier question is asked of the CALL GRAPH from each cloud's own `ProviderTfvars`, and it
+// answers with the tfvars keys the switch actually becomes — which is what makes the L5 hop below
+// possible at all.
+
+const GO_PKG = readGoPackage(PROVIDERS);
+assertGoTraceParsed(GO_PKG);
+
+const traceCache = new Map();
+
+/** Trace one option on one cloud through the Go package, memoized. */
+function traceOption(cloud, key) {
+	const id = `${cloud}:${key}`;
+	if (!traceCache.has(id)) traceCache.set(id, traceField(GO_PKG, cloud, goFieldFor(key)));
+	return traceCache.get(id);
 }
 
-// Which option cells are ADJUDICATED — i.e. failing the build rather than merely reported.
+/** Which clouds' providers demonstrably READ this option (i.e. carry it into tfvars)? */
+function optionCarriers(key) {
+	return new Set(CLOUDS.filter((c) => traceOption(c, key).carried));
+}
+
+// ── L5 · the template hop ────────────────────────────────────────────────────────────
+// Carriage is not honoring. A tfvar the template declares and no resource reads is a switch that
+// travels the whole way and is dropped one line before it would have meant something.
+
+const TF_WIRING = Object.fromEntries(
+	CLOUDS.map((c) => {
+		const w = readTfWiring(tfFiles[c]);
+		assertTfWiringParsed(c, w);
+		return [c, w];
+	}),
+);
+
+// Options measured PER ENGINE rather than per cloud.
 //
-// This is deliberately a short list, and it is NOT the offer vocabulary (that is derived above). It is
-// the adjudication queue. Seven of the derived options are provider-carried today, and turning them
-// all on at once would dump ~10 unclassified cells into offer-exclusions.yaml — where each entry is
-// supposed to be a DECISION ("can never be honored" vs "real debt, here is the issue"), not a guess.
-// A file full of guesses is the "wall of red people stop reading" this guard's own comments warn
-// about. So options graduate one at a time, with their per-cloud decisions made deliberately.
+// This is not the offer vocabulary and never was — that is derived from the offer surface. It is the
+// short list of options whose honoring splits along the engine axis, so a cloud-level verdict would
+// be wrong in both directions: `iam_auth` is read once per cloud, and GCP still shipped Postgres
+// keyless working and MySQL keyless dead (#1505). Those get `<kind>:<variant>:<option>` cells.
 //
-// Everything carried-but-unadjudicated is still REPORTED below, so nothing is hidden and the follow-on
-// is visible in the output rather than living only in someone's head.
+// Everything else is measured once per cloud by the CARRIER pass further down, under
+// `<kind>:<option>`. Nothing is unmeasured: an option is either here or there.
 const ADJUDICATED = new Set(["database:iam_auth"]);
 
 /** Does the template gate this option per ENGINE, and if so which engines does it cover?
@@ -662,23 +700,15 @@ for (const [kind, variants] of Object.entries(AXES)) {
 // while gcp carried it and still had no MySQL branch until #1505.
 
 const optionCells = [];
-const unadjudicated = [];
 
 for (const [kind, keys] of Object.entries(OPTIONS)) {
 	const variants = AXES[kind];
 	if (!variants) continue; // no variant axis → no `<kind>:<variant>:<option>` cell to name
 	for (const { key, gate } of keys) {
-		const carriers = optionCarriers(key);
-		// No provider reads it → the guard cannot see whether this option is a tfvars-carried capability
-		// at all (it may be console-only or template-default). Saying nothing is the honest result;
-		// claiming a gap on zero evidence is how a guard earns its way onto the ignore list.
-		if (carriers.size === 0) continue;
 		const offerBase = `${kind}:${key}`;
-		if (!ADJUDICATED.has(offerBase)) {
-			const missing = CLOUDS.filter((c) => !carriers.has(c) && variants.some((v) => offeredOn(c, kind, v)));
-			if (missing.length) unadjudicated.push({ offer: offerBase, missing });
-			continue;
-		}
+		// Everything not adjudicated per engine is measured per cloud by the carrier pass below.
+		if (!ADJUDICATED.has(offerBase)) continue;
+		const carriers = optionCarriers(key);
 		for (const cloud of CLOUDS) {
 			const coverage = carriers.has(cloud) ? optionEngineCoverage(cloud, key, variants) : null;
 			for (const variant of variants) {
@@ -751,6 +781,179 @@ for (const [kind, keys] of Object.entries(OPTIONS)) {
 	}
 }
 
+// ── carrier pass · `<kind>:<option>` · L4 → L5 ───────────────────────────────────────
+//
+// The pass above can only name a cell `<kind>:<variant>:<option>`, so a kind with no variant axis —
+// bucket, network, dns, registry, nosql, queue, secret — could not be measured AT ALL. That is not a
+// small corner: `bucket:versioning` is offered on five clouds and Azure drops it on the floor, and
+// this file has carried a comment naming that exact example as something it could not see.
+//
+// Widening the key to `<kind>:<option>` makes those kinds measurable. What makes them WORTH
+// measuring is the second hop:
+//
+//   L4  the cloud's provider carries the switch into a tfvars key       (traced, see above)
+//   L5  the template DECLARES that key and a resource/module argument READS it
+//
+// L5 is new. Nothing in this repo walked variables.tf → resource argument before: the Go-side tests
+// stop at "is it emitted", the tofu-side test stops at "is it declared", and a variable that is
+// declared and read by nothing sits exactly in the gap between them. It is a real defect shape —
+// GCP declares `uniform_access` on `cloud_storage_buckets`, the provider fills it in every apply,
+// and the bucket resource hardcodes `uniform_bucket_level_access = true`. The switch is carried the
+// whole way and then ignored.
+//
+// THREE RULES this pass inherits rather than reinvents:
+//
+//  · UNMEASURABLE IS NOT DECLARED. `list(any)` declares no fields, so "the template does not declare
+//    this key" is not a statement that variable can make. Those cells are judged on the READ half
+//    alone and the missing half is REPORTED, never guessed. Alibaba is the whole reason: it declares
+//    zero object types, so every nested key on that cloud is in this state.
+//  · PASSTHROUGH IS NOT A GAP. `mergeProviderConfig` copies any `provider_config` key onto a
+//    same-named tofu variable, so a DECLARED-BUT-UNEMITTED variable is the escape hatch working as
+//    designed. This pass never enumerates template variables looking for unemitted ones; it starts
+//    from the switch and asks where it goes.
+//  · EVIDENCE BEFORE ACCUSATION. An option is only held to the parity rule when its KIND is
+//    demonstrably provisioned through tofu — some option of that kind is provider-carried, or the
+//    template declares and reads a name spelled exactly like it, on a cloud that offers it.
+//    `service:probe_enabled` fails that test (a health check is a Helm chart's business, not
+//    OpenTofu's) and is correctly never accused. `registry:vulnerability_scanning` passes it, on the
+//    strength of its sibling `immutable_tags`, and is correctly accused on all four clouds.
+
+/** The clouds a surface offer is shown on, restricted to the clouds that ship a template. */
+const offeredCloudsFor = (offer) => CLOUDS.filter((c) => (offer.offeredOn ?? []).includes(c));
+
+/** Evidence that an option is a tofu-carried capability: a provider carries it, or a template both
+ * declares and reads a name spelled exactly like it. Either one is enough; neither means this guard
+ * has nothing to measure and should say nothing. */
+function optionEvidence(offer) {
+	const clouds = offeredCloudsFor(offer);
+	return {
+		carried: clouds.filter((c) => traceOption(c, offer.key).carried),
+		named: clouds.filter((c) => TF_WIRING[c].isDeclared(offer.key) && TF_WIRING[c].isRead(offer.key)),
+	};
+}
+
+/** Kinds held to the parity rule — see EVIDENCE BEFORE ACCUSATION above. */
+const MEASURED_KINDS = new Set(
+	SURFACE.offers
+		.filter((o) => {
+			const e = optionEvidence(o);
+			return e.carried.length > 0 || e.named.length > 0;
+		})
+		.map((o) => o.kind),
+);
+
+/**
+ * Does this tfvars key survive into the plan on this cloud?
+ *
+ * A ROOT key is a tofu variable: it must be declared and read as `var.<key>`. A NESTED key is one
+ * attribute of one entry of a list-of-objects, so "declared" means the object type names it and
+ * "read" means some argument reaches for it (`each.value.<key>`, `try(each.value.<key>, …)`).
+ */
+function evaluateWiring(cloud, site) {
+	const w = TF_WIRING[cloud];
+	const nested = site.root !== null && site.root !== site.key;
+	if (!nested) {
+		const declared = w.hasVariable(site.key);
+		const read = w.isReadOnChain(site.key, site.key, true);
+		return { ok: declared && read, declared, read, shapeKnown: true, rootMissing: false };
+	}
+	const shape = w.shapeIsDeclared(site.root);
+	const declared = w.isDeclared(site.key);
+	const read = w.isReadOnChain(site.root, site.key);
+	// shape === null: the provider emits a root tfvar this template never declared.
+	// shape === false: `any`/`list(any)` — the declaration half is unmeasurable, so only READ counts.
+	return {
+		ok: shape !== null && read && (declared || shape === false),
+		declared,
+		read,
+		shapeKnown: shape === true,
+		rootMissing: shape === null,
+	};
+}
+
+const carrierCells = [];
+const unmeasurableShapes = [];
+
+for (const offer of SURFACE.offers) {
+	const offerBase = `${offer.kind}:${offer.key}`;
+	// Already adjudicated at the finer `<kind>:<variant>:<option>` granularity — measuring it twice
+	// would put the same cell on the board under two names.
+	if (ADJUDICATED.has(offerBase)) continue;
+	if (!MEASURED_KINDS.has(offer.kind)) continue;
+
+	for (const cloud of offeredCloudsFor(offer)) {
+		const exc = excluded(offerBase, cloud);
+		if (exc) {
+			carrierCells.push({ kind: offer.kind, key: offer.key, cloud, state: "excluded", detail: exc.reason ?? "" });
+			continue;
+		}
+
+		const trace = traceOption(cloud, offer.key);
+		let state = "ok";
+		let detail = "";
+		if (!trace.carried) {
+			state = "no-carrier";
+			detail =
+				`the canvas offers \`${offer.key}\` on ${cloud}, but nothing reachable from ` +
+				`\`(*${cloud}Provider).ProviderTfvars\` reads \`${goFieldFor(offer.key)}\` — the switch never ` +
+				`becomes a tfvar, so a user sets it and the plan is identical either way.`;
+		} else {
+			const verdicts = trace.sites.map((s) => ({ site: s, ...evaluateWiring(cloud, s) }));
+			const honored = verdicts.find((v) => v.ok);
+			if (honored && !honored.shapeKnown) {
+				unmeasurableShapes.push({
+					offer: offerBase,
+					cloud,
+					detail:
+						`\`${honored.site.root}\` is typed \`any\` — the template declares no fields, so whether ` +
+						`\`${honored.site.key}\` is an accepted key cannot be read from it. Judged on the resource ` +
+						`argument that reads it, which is the only half that IS measurable here.`,
+				});
+			}
+			if (!honored) {
+				const v = verdicts[0];
+				state = "unwired-template";
+				const carriedAs = verdicts.map((x) => `\`${x.site.key}\``).join("/");
+				detail = v.rootMissing
+					? `the ${cloud} provider emits ${carriedAs} inside \`${v.site.root}\`, which the ${cloud} ` +
+						`template does not declare at all — tofu never sees the value.`
+					: v.read
+						? `${carriedAs} is read by the ${cloud} template but declared nowhere in the shape it ` +
+							`arrives in — the value is silently defaulted away.`
+						: `the ${cloud} provider carries \`${offer.key}\` into tfvars as ${carriedAs}` +
+							`${v.site.root && v.site.root !== v.site.key ? ` (on \`${v.site.root}\`)` : ""}, and no ` +
+							`resource or module argument in the template reads it. Declared${v.declared ? "" : " nowhere"}, ` +
+							`consumed by nothing: the switch is dropped one hop before the plan.`;
+			}
+		}
+
+		const known = state !== "ok" && state !== "excluded" ? baselined(offerBase, cloud) : null;
+		carrierCells.push({ kind: offer.kind, key: offer.key, cloud, state, detail, known });
+		if (state !== "ok" && state !== "excluded") {
+			(known ? knownDebt : findings).push({ shape: state, cloud, offer: offerBase, detail, known });
+		}
+	}
+}
+
+// The same anti-silence rule the option pass takes, applied to the carrier pass: a measured offer
+// that produced ZERO cells has stopped being measured, and a measurement that quietly shrinks its
+// own vocabulary reports success on less than it did yesterday.
+for (const offer of SURFACE.offers) {
+	const offerBase = `${offer.kind}:${offer.key}`;
+	if (ADJUDICATED.has(offerBase) || !MEASURED_KINDS.has(offer.kind)) continue;
+	if (carrierCells.some((c) => c.kind === offer.kind && c.key === offer.key)) continue;
+	findings.push({
+		shape: "unmeasured-offer",
+		cloud: "—",
+		offer: offerBase,
+		detail:
+			`its kind is provisioned through tofu, but this offer produced ZERO cells — the carrier pass ` +
+			`is no longer measuring it and would go green whatever the clouds do. Usually this means ` +
+			`\`offeredOn\` in ${OFFER_SURFACE} went empty (regenerate it) or every cloud that offers it lost ` +
+			`its template directory.`,
+	});
+}
+
 // An adjudicated offer that produces NO cells has stopped being measured, and the failure mode of
 // that is silence: the grid disappears from the matrix, its exclusions become dead entries, and the
 // guard reports success on a vocabulary that shrank. That is precisely how gating a switch used to
@@ -777,6 +980,7 @@ const GLYPH = {
 	excluded: "—",
 	"missing-branch": "🚫",
 	"no-carrier": "🚫",
+	"unwired-template": "🚫",
 	"not-offered": "·",
 };
 
@@ -846,6 +1050,39 @@ canvas and the plan), or when the template gates it per engine and this engine h
 				});
 				md += `| \`${variant}\` | ${row.join(" | ")} |\n`;
 			}
+		}
+	}
+
+	// ── carrier grid · one row per option, one column per cloud ────────────────────────
+	// The variant grids above cannot hold these: `bucket:versioning` has no engine axis to be a row
+	// of. One grid for the lot is also the right shape for what it measures — the question is
+	// per-cloud and nothing else, so a row per option reads at a glance.
+	if (carrierCells.length) {
+		md += `\n## Carrier coverage — does the switch reach the plan?\n
+Every row is a switch in the inspector on a kind with no engine choice, so it makes a promise
+per-cloud and nothing else. Two hops are checked, and a cell is 🚫 if either one is missing:
+
+1. **L4 · carrier** — something reachable from \`(*<cloud>Provider).ProviderTfvars\` reads the field
+   and turns it into a tfvars key. Traced through the call graph, not grepped per file: Azure's
+   secrets are built by \`buildGCPSecrets\` in gcp_provider.go (a grep would score that a gap), and
+   GCP's \`buildFirestoreDatabases\` is dead code (a grep would score that carriage).
+2. **L5 · template** — that key is declared in the template *and* a resource or module argument
+   reads it. A variable declared and read by nothing is a gap: GCP's \`uniform_access\` is filled in
+   on every apply and the bucket resource hardcodes the value it would have set.
+
+This proves the WIRING is present. It does not prove the resource BEHAVES — that needs a real apply,
+which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not this generator's.
+
+| Offer | ${CLOUDS.join(" | ")} |\n|---|${CLOUDS.map(() => ":---:").join("|")}|\n`;
+		for (const offer of SURFACE.offers) {
+			const rows = carrierCells.filter((c) => c.kind === offer.kind && c.key === offer.key);
+			if (!rows.length) continue;
+			const row = CLOUDS.map((c) => {
+				const cell = rows.find((x) => x.cloud === c);
+				if (!cell) return GLYPH["not-offered"];
+				return cell.known?.issue ? `${GLYPH[cell.state]} ${cell.known.issue}` : GLYPH[cell.state];
+			});
+			md += `| \`${offer.kind}:${offer.key}\` | ${row.join(" | ")} |\n`;
 		}
 	}
 
@@ -936,23 +1173,30 @@ if (!GATED) {
 
 const day2Summary = day2Cells.reduce((acc, c) => ({ ...acc, [c.state]: (acc[c.state] ?? 0) + 1 }), {});
 
-// Options that ARE provider-carried on some clouds and not others, but have not been adjudicated yet.
-// Reported, never silent: these are the next cells to graduate into ADJUDICATED, and leaving them
-// invisible would recreate exactly the blind spot #1508 closed. Not fatal — nobody has decided them.
-if (unadjudicated.length) {
-	console.log(`  ${unadjudicated.length} carried option(s) not yet adjudicated (reported, not failing):`);
-	for (const u of unadjudicated) {
-		console.log(`    · ${u.offer} — carried on some clouds, not on: ${u.missing.join(", ")}`);
-	}
+// Kinds the carrier pass declined to accuse, and why. Reported rather than silent: "this kind is not
+// provisioned through tofu" is a claim, and a claim nobody can see is a claim nobody can correct.
+const unmeasuredKinds = [...new Set(SURFACE.offers.map((o) => o.kind))].filter((k) => !MEASURED_KINDS.has(k));
+if (unmeasuredKinds.length) {
 	console.log(
-		`    Graduate one at a time via ADJUDICATED in this script, deciding each cloud deliberately.`,
+		`  ${unmeasuredKinds.length} kind(s) not held to the carrier rule (no tofu evidence for any of ` +
+			`their switches): ${unmeasuredKinds.join(", ")}. A switch on one of these is honored somewhere ` +
+			`other than OpenTofu, or by nothing at all — this guard cannot tell which.`,
 	);
+}
+
+// Cells whose DECLARATION half could not be read because the variable carrying them is typed `any`.
+// Said out loud rather than folded into the pass rate: the guard measured half a hop there, and a
+// number that does not say so is a number that will be believed to mean more than it does.
+if (unmeasurableShapes.length) {
+	console.log(`  ${unmeasurableShapes.length} cell(s) measured on the READ half only (a carrier variable is \`any\`):`);
+	for (const u of unmeasurableShapes) console.log(`    · ${u.cloud} ${u.offer} — ${u.detail}`);
 }
 
 if (findings.length === 0) {
 	console.log(
-		`✓ offer parity — ${cells.length} (offer × cloud) cells + ${optionCells.length} option cell(s), ` +
-			`${exclusions.length} documented exclusion(s), ${baseline.length} on the baseline, no NEW silent gaps.`,
+		`✓ offer parity — ${cells.length} (offer × cloud) cells + ${optionCells.length} option cell(s) + ` +
+			`${carrierCells.length} carrier cell(s), ${exclusions.length} documented exclusion(s), ` +
+			`${baseline.length} on the baseline, no NEW silent gaps.`,
 	);
 	console.log(
 		`✓ day-2 gate coverage — ${day2Cells.length} offered cell(s): ` +

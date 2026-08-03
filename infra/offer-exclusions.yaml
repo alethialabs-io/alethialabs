@@ -105,6 +105,35 @@ exclusions:
     cloud: alibaba
     reason: Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password.
 
+  # ── Object storage that cannot be UN-encrypted ──────────────────────────────────────
+  # The switch offers both positions and these three clouds only have one. S3 has applied SSE-S3 to
+  # every new object since January 2023 with no way to turn it off; Cloud Storage encrypts every
+  # object server-side and exposes no disable; Azure Storage Service Encryption is permanent on every
+  # account. So the OFF position is the unbuildable one, and it is unbuildable because the platform
+  # refuses it — a ceiling, not unfinished wiring.
+  #
+  # The honest alternative is to stop offering the switch on these clouds (a canvas change, not a
+  # template one). Recorded here rather than assumed, so the matrix says out loud that the toggle
+  # does nothing on three of the four clouds that show it.
+  - offer: bucket:encryption_enabled
+    cloud: aws
+    reason: S3 encrypts every object at rest and the setting cannot be turned off — this switch is informational on AWS.
+  - offer: bucket:encryption_enabled
+    cloud: gcp
+    reason: Cloud Storage encrypts every object at rest and the setting cannot be turned off — this switch is informational on Google Cloud.
+  - offer: bucket:encryption_enabled
+    cloud: azure
+    reason: Azure Storage encrypts every blob at rest and the setting cannot be turned off — this switch is informational on Azure.
+
+  # ── NAT gateways Hetzner does not sell ──────────────────────────────────────────────
+  # `single_nat_gateway` chooses between one shared NAT gateway and one per availability zone. Hetzner
+  # Cloud has neither: private networks route through a server you run yourself, and the hcloud
+  # provider exposes no managed NAT gateway resource to count one of or several of. Same architectural
+  # ceiling as the data-service entries above.
+  - offer: network:single_nat_gateway
+    cloud: hetzner
+    reason: Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone.
+
 # ── Baseline — real gaps, already boarded ───────────────────────────────────────────────
 #
 # NOT exclusions. These are offers a cloud genuinely cannot honor today and that we intend to fix;
@@ -115,7 +144,176 @@ exclusions:
 # Delete the entry in the same PR that fixes the gap.
 
 baseline:
-  # Empty, and that is the ratchet working. The two Alibaba `iam_auth` entries that lived here were
-  # settled by #1510 and moved up into `exclusions:` with the evidence — the guard failed until they
-  # were deleted, which is exactly what it is for.
+  # Everything below arrived in one pass, from the CARRIER check the guard gained when it learned to
+  # measure `<kind>:<option>` cells and to walk variables.tf → resource argument. None of it is new
+  # breakage; all of it was already shipping, and none of it was visible before, because a kind with
+  # no engine axis could not be named by the old offer key.
+  #
+  # The shapes, so the list reads as something other than a wall:
+  #   · a switch no provider carries          (registry, dns:managed_certificate, dns:waf_enabled)
+  #   · a switch carried and then not read    (bucket:public_access, queue:ordered)
+  #   · a kind the cloud's template omits     (hetzner dns, hetzner network)
+
+  # ── DNS: two switches that never leave the console ──────────────────────────────────
+  # `buildConfigSnapshot` hand-enumerates the DNS singleton it sends to the runner
+  # (apps/console/app/server/actions/projects.ts) as {placement, enabled, provider, zone_id,
+  # domain_name, provider_config}. `managed_certificate` and `waf_enabled` are not in that list, so
+  # they are gone before any provider is asked — on every cloud, including the ones whose template
+  # can already build a WAF (aws/waf.tf, azure/azure-waf.tf, alibaba/waf.tf).
+  - offer: dns:managed_certificate
+    cloud: aws
+    reason: The managed TLS certificate is not requested yet — the setting is dropped before it reaches AWS, so turning it on changes nothing.
+    issue: #1810
+  - offer: dns:managed_certificate
+    cloud: gcp
+    reason: The managed TLS certificate is not requested yet — the setting is dropped before it reaches Google Cloud, so turning it on changes nothing.
+    issue: #1810
+  - offer: dns:managed_certificate
+    cloud: azure
+    reason: The managed TLS certificate is not requested yet — the setting is dropped before it reaches Azure, so turning it on changes nothing.
+    issue: #1810
+  - offer: dns:managed_certificate
+    cloud: alibaba
+    reason: The managed TLS certificate is not requested yet — the setting is dropped before it reaches Alibaba Cloud, so turning it on changes nothing.
+    issue: #1810
+  - offer: dns:managed_certificate
+    cloud: hetzner
+    reason: The managed TLS certificate is not requested yet — the setting is dropped before it reaches Hetzner, so turning it on changes nothing.
+    issue: #1810
+  - offer: dns:waf_enabled
+    cloud: aws
+    reason: The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches AWS, even though the template can build one.
+    issue: #1810
+  - offer: dns:waf_enabled
+    cloud: gcp
+    reason: The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Google Cloud.
+    issue: #1810
+  - offer: dns:waf_enabled
+    cloud: azure
+    reason: The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Azure, even though the template can build one.
+    issue: #1810
+  - offer: dns:waf_enabled
+    cloud: alibaba
+    reason: The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Alibaba Cloud, even though the template can build one.
+    issue: #1810
+  - offer: dns:waf_enabled
+    cloud: hetzner
+    reason: The web application firewall is not attached from the canvas yet — the setting is dropped before it reaches Hetzner.
+    issue: #1810
+
+  # ── Container registry: both switches reach no cloud ────────────────────────────────
+  # Neither `ImmutableTags` nor `VulnerabilityScanning` is read by ANY provider, so the value a user
+  # picks is discarded on all four clouds that show the switch. Two templates are already waiting for
+  # it — AWS declares `ecr_repository_image_tag_mutability` and `ecr_repository_image_scan_on_push`
+  # and reads both, and GCP declares `immutable_tags` on `artifact_registry_repos` and reads it — so
+  # on those two clouds the repository silently keeps the template default instead of the choice.
+  - offer: registry:immutable_tags
+    cloud: aws
+    reason: Tag immutability is not sent to ECR yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+  - offer: registry:immutable_tags
+    cloud: gcp
+    reason: Tag immutability is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+  - offer: registry:immutable_tags
+    cloud: azure
+    reason: Tag immutability is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+  - offer: registry:immutable_tags
+    cloud: alibaba
+    reason: Tag immutability is not sent to Container Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+  - offer: registry:vulnerability_scanning
+    cloud: aws
+    reason: Image scanning is not sent to ECR yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+  - offer: registry:vulnerability_scanning
+    cloud: gcp
+    reason: Image scanning is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+  - offer: registry:vulnerability_scanning
+    cloud: azure
+    reason: Image scanning is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+  - offer: registry:vulnerability_scanning
+    cloud: alibaba
+    reason: Image scanning is not sent to Container Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1811
+
+  # ── Queues: ordered delivery lands nowhere ──────────────────────────────────────────
+  # AWS and Azure carry the switch all the way into tfvars — `fifo_queue` on `sqs_queues`,
+  # `requires_session` on `service_bus_queues` — and then no resource argument reads either name. GCP
+  # and Alibaba never carry it at all. Four clouds, one user-visible outcome: the queue is unordered.
+  - offer: queue:ordered
+    cloud: aws
+    reason: FIFO delivery is not applied to SQS yet — the queue is created as a standard, unordered queue whichever way the switch is set.
+    issue: #1812
+  - offer: queue:ordered
+    cloud: azure
+    reason: Session-ordered delivery is not applied to Service Bus yet — the queue is created without sessions whichever way the switch is set.
+    issue: #1812
+  - offer: queue:ordered
+    cloud: gcp
+    reason: Ordered delivery is not applied to Pub/Sub yet — message ordering stays off whichever way the switch is set.
+    issue: #1812
+  - offer: queue:ordered
+    cloud: alibaba
+    reason: Ordered delivery is not applied to MNS yet — the queue is created unordered whichever way the switch is set.
+    issue: #1812
+
+  # ── Buckets: public access and versioning ───────────────────────────────────────────
+  # Three different failures with one appearance. GCP fills `uniform_access` on every apply and the
+  # Cloud Storage module hardcodes `uniform_bucket_level_access = true`. Azure sends
+  # `container_access_type` and the storage-account module declares `access_type`, so the value lands
+  # on a name nothing reads. Azure's container builder never looks at `Versioning` at all.
+  - offer: bucket:public_access
+    cloud: gcp
+    reason: Public access stays enforced on Google Cloud buckets — the setting is sent and the bucket is created with uniform, private access regardless.
+    issue: #1813
+  - offer: bucket:public_access
+    cloud: azure
+    reason: Public access stays private on Azure containers — the setting is sent under a name the template does not read.
+    issue: #1813
+  - offer: bucket:versioning
+    cloud: azure
+    reason: Versioning is not applied to Azure containers — the setting never reaches the plan, so blobs are created unversioned.
+    issue: #1813
+
+  # ── Bucket encryption on Alibaba — a gap, and an unresolved question ────────────────
+  # Same wiring verdict as the three exclusions above (nothing carries the switch), but NOT the same
+  # decision, because the outcome is not the same. AWS/GCP/Azure encrypt unconditionally, so an inert
+  # switch is cosmetic. Whether Alibaba OSS applies a default server-side encryption method to a new
+  # bucket is not established from anything in this repo — and if it does not, a user who leaves this
+  # (default-on) switch alone gets unencrypted objects. That difference is why this is boarded rather
+  # than excluded: the answer decides whether it is cosmetic or a security defect.
+  - offer: bucket:encryption_enabled
+    cloud: alibaba
+    reason: Encryption at rest is not requested for Alibaba OSS buckets — the setting never reaches the plan, so the bucket is created with whatever OSS applies by default.
+    issue: #1814
+
+  # ── NoSQL point-in-time recovery ────────────────────────────────────────────────────
+  # GCP has a builder that reads the setting (`buildFirestoreDatabases`) and nothing calls it — the
+  # provider says so in a comment at gcp_provider.go:88 — so Firestore is created without PITR.
+  # Alibaba's Tablestore builder never reads the field at all.
+  - offer: nosql:point_in_time_recovery
+    cloud: gcp
+    reason: Point-in-time recovery is not enabled on Firestore yet — the database is created without it whichever way the switch is set.
+    issue: #1815
+  - offer: nosql:point_in_time_recovery
+    cloud: alibaba
+    reason: Point-in-time recovery is not enabled on Tablestore yet — the table is created without it whichever way the switch is set.
+    issue: #1815
+
+  # ── Hetzner: two kinds the canvas offers and the template does not build ────────────
+  # Unlike the Hetzner entries in `exclusions:` above, neither of these is a platform ceiling.
+  # Hetzner sells DNS and its provider exposes networks; the template simply has no DNS resources at
+  # all, and always creates its own network rather than attaching one you name.
+  - offer: dns:enabled
+    cloud: hetzner
+    reason: DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing.
+    issue: #1816
+  - offer: network:provision_network
+    cloud: hetzner
+    reason: A Hetzner project always creates its own network — attaching an existing one is not supported yet.
+    issue: #1816
 
