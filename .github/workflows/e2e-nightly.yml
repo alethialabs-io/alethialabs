@@ -1161,9 +1161,21 @@ jobs:
           #    coverage. Schedule/dispatch only, same as the red-issue path below. Never fails the run:
           #    an unwired cloud is a deliberate no-op, and a red "not configured yet" nightly is how a
           #    signal gets trained into noise. ──
+          #
+          #    The dedup key is the `from:e2e-coverage` LABEL, not the title (#1958). This filer is
+          #    the only thing that applies that label, so it is an identity, and `--label` is served
+          #    live rather than from the search index — the same two reasons the red filer below
+          #    stopped using `--search` in #1755.
+          #
+          #    The title CANNOT be the key here, unlike the red path's: it carries the counts
+          #    ("1 of 5"), so it changes as coverage changes and can only ever be matched by a
+          #    pattern. A pattern over a mutable field is not an identity — #1720 was hand-edited to
+          #    "1 of 5 clouds IS not enabled" and the anchored `are` regex stopped matching it, which
+          #    sent this branch to `gh issue create` and would have filed a duplicate every night.
+          #    Under the label key a hand-edited title is now harmless: the refresh below restores it.
           if [ "$EVENT_NAME" = "schedule" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            open_cov="$(gh issue list --state open --search "e2e nightly: in:title clouds are not enabled" --json number,title \
-              --jq '[.[] | select(.title | test("^e2e nightly: [0-9]+ of [0-9]+ clouds are not enabled$"))] | .[0].number // ""' 2>/dev/null || echo "")"
+            open_cov="$(gh issue list --state open --limit 200 --label "$COV_LABEL" --json number \
+              --jq '.[0].number // ""' 2>/dev/null || echo "")"
             if [ "$SKIP_N" -eq 0 ]; then
               if [ -n "$open_cov" ]; then
                 gh issue close "$open_cov" --comment "All ${TOTAL} clouds are now enabled — every nightly leg provisions for real. Closing automatically." \
@@ -1173,9 +1185,34 @@ jobs:
               gh issue edit "$open_cov" --title "$COV_TITLE" --body-file "${OUT_DIR}/issue-body-coverage.md" \
                 && echo "::notice::refreshed coverage issue #${open_cov}." || true
             else
-              gh issue create --title "$COV_TITLE" --body-file "${OUT_DIR}/issue-body-coverage.md" \
-                && echo "::notice::filed coverage issue: ${COV_TITLE}" \
-                || echo "::warning::could not create the coverage issue (continuing)."
+              # LABEL what we file, for two distinct reasons. `from:e2e-coverage` is what the dedup
+              # above reads — an unlabelled coverage issue is invisible to it and the NEXT night
+              # files another one. The `class:`/`lane:`/`wave:` trio is what makes the unit visible
+              # to scripts/claim-work.sh; #1720 was filed bare and sat unclaimable, the same way
+              # #1259 did for nine nights before the red path was fixed.
+              #
+              # A create that lands WITHOUT the dedup label is the duplicate-every-night bug in slow
+              # motion (a missing label in the repo makes `gh issue create` drop it), so it is
+              # verified rather than assumed. `|| true` keeps a label outage from breaking the rollup;
+              # the check below turns a silent partial success into a warning naming the consequence.
+              #
+              # The verification reads the NEW ISSUE DIRECTLY rather than re-running the `--label`
+              # query above. A filtered list is index-backed and lags by seconds right after a write
+              # — measured while building this — so re-querying it here would emit a false warning on
+              # a perfectly good create. `gh issue view` is a direct object read and cannot lag.
+              # A warning nobody can trust is how this file's own comments describe a signal being
+              # trained into noise, and the fix must not reintroduce that.
+              cov_url="$(gh issue create --title "$COV_TITLE" --body-file "${OUT_DIR}/issue-body-coverage.md" \
+                --label "$COV_LABEL" --label class:backend --label lane:tests --label wave:hygiene 2>/dev/null || echo "")"
+              if [ -z "$cov_url" ]; then
+                echo "::warning::could not create the coverage issue (continuing)."
+              else
+                echo "::notice::filed coverage issue: ${COV_TITLE} (${cov_url})"
+                if ! gh issue view "$cov_url" --json labels --jq '.labels[].name' \
+                     | grep -Fxq "$COV_LABEL"; then
+                  echo "::warning::${cov_url} is NOT carrying '${COV_LABEL}' — the dedup above cannot see it, so the next run will file ANOTHER coverage issue. Create the label in the repo."
+                fi
+              fi
             fi
           fi
 
