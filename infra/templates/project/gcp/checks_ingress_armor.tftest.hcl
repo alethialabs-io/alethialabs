@@ -122,79 +122,36 @@ run "an_unknown_armor_action_is_refused" {
 }
 
 ################################################################################
-# 3. The Google-managed SSL certificate
+# 3. There is no Google-managed SSL certificate any more (#1858)
 ################################################################################
 
-# `ingress.gcp.kubernetes.io/pre-shared-cert` takes NAMES, not ids or self links, which is why the
-# module's long-standing `managed_certificate_id` was not enough on its own.
-run "a_managed_certificate_exports_the_name_the_ingress_annotation_takes" {
+# This section used to assert the certificate's NAME, its 63-character budget, and that it covered
+# exactly `argocd.<domain>` — because Google validates a managed certificate by resolving EVERY name
+# on it to the attached load balancer, so one unserved name (the bare apex included) held the whole
+# certificate in FAILED_NOT_VISIBLE.
+#
+# All three assertions are gone with the resource. GCP's certificate is issued in-cluster by
+# cert-manager now, over an ACME DNS01 challenge, and the GKE Ingress reads it from a Kubernetes
+# Secret via `spec.tls` — so there is no SAN set to keep in lockstep, no replacement on change, and
+# no 63-char name to budget.
+#
+# What survives is the inverse assertion: the template must export NO certificate outputs. Without
+# it, re-adding the resource would go unnoticed here and the offer-parity guard would then score the
+# cell as OpenTofu-carried while `carried_in_cluster:` claimed cert-manager — two mechanisms both
+# claiming one cell.
+run "the_template_exports_no_certificate_outputs" {
   command = plan
 
   variables {
-    cloud_dns_enabled             = true
-    cloud_dns_zone_name           = "platform"
-    cloud_dns_domain              = "example.com."
-    cloud_dns_managed_certificate = true
+    cloud_dns_enabled   = true
+    cloud_dns_zone_name = "platform"
+    cloud_dns_domain    = "example.com."
   }
 
-  # The name is "<zone_name>-cert-<8 hex of the SAN set>". The digest is there because changing
-  # `domains` REPLACES the certificate and a certificate attached to a live load balancer cannot be
-  # deleted before its replacement exists — create_before_destroy needs a differing name, and this
-  # resource type has no name_prefix. Matched by shape, not by literal, so the digest is free to
-  # change; the point is that it is PRESENT and that the name is not the old prefix-doubled form.
+  # The zone is still exported — only the certificate went.
   assert {
-    condition     = can(regex("^platform-cert-[0-9a-f]{8}$", output.cloud_dns_managed_certificate_name))
-    error_message = "cloud_dns_managed_certificate_name must be <zone_name>-cert-<8 hex>, got ${coalesce(output.cloud_dns_managed_certificate_name, "<null>")}."
-  }
-
-  # GCP caps a resource name at 63 characters and rejects a longer one AT APPLY. The name used to
-  # be "<project_name>-<environment>-<zone_name>-cert", which repeats the naming stem twice because
-  # zone_name itself defaults to "dns-<region-short>-<environment>-<project_name>" — 56 characters
-  # at the shipped stem budget, and 65 once the SAN digest was added, on precisely the deploys that
-  # bring no zone id of their own. Bounded by construction now (stem truncated to 63-1-8), and
-  # asserted here so a future prefix cannot quietly reintroduce the overflow.
-  assert {
-    condition     = length(output.cloud_dns_managed_certificate_name) <= 63
-    error_message = "the certificate name must fit GCP's 63-character cap, got ${length(output.cloud_dns_managed_certificate_name)}: ${output.cloud_dns_managed_certificate_name}."
-  }
-
-  # THE assertion this file existed without, and the bug it hid: the certificate covered the APEX
-  # (`example.com`) while the Ingress installArgoCD renders serves `argocd.example.com`. Google
-  # validates every name on a managed certificate by resolving it to the attached load balancer,
-  # and this module creates NO record sets — only external-dns does, from the Ingress, for
-  # argocd.<domain>. So the apex could never resolve, the certificate could never leave
-  # FAILED_NOT_VISIBLE, `allow-http: "false"` removed the fallback, and the ingress served nothing
-  # while argocdURLGates["gcp"] reported it installed.
-  #
-  # Asserting the exact set rather than "contains argocd." is deliberate: an extra unserved name is
-  # the same failure as the wrong name, since ONE unresolvable SAN holds the whole certificate.
-  assert {
-    condition     = local.platform_certificate_domains == ["argocd.example.com"]
-    error_message = "the managed certificate must cover exactly the hostnames the platform serves (argocd.<domain>) and nothing else — an unserved name, the bare apex included, holds the whole certificate in FAILED_NOT_VISIBLE. Got ${jsonencode(local.platform_certificate_domains)}."
-  }
-}
-
-# DNS on, certificate off: the zone exists and the certificate does not, so the name must be null
-# and the ArgoCD ingress must not render. This is the case that distinguishes "no certificate" from
-# "no DNS" — without it a template that never created a certificate would pass run 3 above by
-# failing it, and pass nothing else.
-run "no_certificate_means_a_null_name_even_with_dns_on" {
-  command = plan
-
-  variables {
-    cloud_dns_enabled             = true
-    cloud_dns_zone_name           = "platform"
-    cloud_dns_domain              = "example.com."
-    cloud_dns_managed_certificate = false
-  }
-
-  assert {
-    condition = alltrue([
-      output.cloud_dns_managed_certificate_name == null,
-      output.cloud_dns_managed_certificate_id == null,
-      output.cloud_dns_zone_name != null,
-    ])
-    error_message = "With the certificate off the certificate outputs must be null while the zone output stays populated."
+    condition     = output.cloud_dns_zone_name != null
+    error_message = "the managed zone output must survive the certificate's removal."
   }
 }
 
@@ -216,11 +173,10 @@ run "dns_outputs_survive_a_pluggable_dns_connector" {
   command = plan
 
   variables {
-    cloud_dns_enabled             = true
-    cloud_dns_zone_name           = "platform"
-    cloud_dns_domain              = "example.com."
-    cloud_dns_managed_certificate = true
-    dns_provider                  = "cloudflare"
+    cloud_dns_enabled   = true
+    cloud_dns_zone_name = "platform"
+    cloud_dns_domain    = "example.com."
+    dns_provider        = "cloudflare"
   }
 
   assert {
@@ -228,8 +184,6 @@ run "dns_outputs_survive_a_pluggable_dns_connector" {
       length(module.cloud_dns) == 0,
       output.cloud_dns_zone_name == null,
       output.cloud_dns_name_servers == [],
-      output.cloud_dns_managed_certificate_name == null,
-      output.cloud_dns_managed_certificate_id == null,
     ])
     error_message = "With a pluggable DNS connector the cloud-dns module must be absent and every one of its outputs must resolve to a null/empty value rather than an Invalid index."
   }

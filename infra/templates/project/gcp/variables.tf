@@ -452,11 +452,6 @@ variable "cloud_dns_domain" {
   description = "DNS domain name for the managed zone (must end with a dot)"
 }
 
-variable "cloud_dns_managed_certificate" {
-  type        = bool
-  default     = false
-  description = "Whether to create a Google-managed SSL certificate for the domain"
-}
 
 #########################################################################
 ##                   Cloud Armor Variables                             ##

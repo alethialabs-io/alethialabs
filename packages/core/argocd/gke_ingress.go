@@ -65,25 +65,50 @@ spec:
 // GKEArgoServerValues renders the argo-cd chart values that expose the ArgoCD server through a GKE
 // Ingress, optionally armored by a Cloud Armor policy.
 //
-//   - host is the DNS name the Ingress serves (argocd.<domain>).
-//   - preSharedCert is the GLOBAL Google-managed SSL certificate NAME. REQUIRED — it is the whole
-//     gate: `ingress.gcp.kubernetes.io/pre-shared-cert` is the only way to put TLS on a GKE Ingress
-//     without standing up a second cert-manager stack, and an Ingress without it would serve the
-//     ArgoCD API over plain HTTP on the public internet.
+//   - host is the DNS name the Ingress serves (argocd.<domain>). It also becomes the Ingress's
+//     `spec.rules[].host`, which Google's docs require alongside `spec.tls` for the certificate to
+//     be matched to a route.
+//   - issuer is the cert-manager ClusterIssuer name (CertManagerIssuerName). REQUIRED — without it
+//     the `spec.tls` Secret is never created and the Ingress would serve the ArgoCD API over plain
+//     HTTP on the public internet.
 //   - backendConfig is GKEBackendConfigName when a Cloud Armor policy was rendered, and "" when the
 //     project's WAF switch is off. Empty emits NO `cloud.google.com/backend-config` annotation at
 //     all — an annotation naming a BackendConfig that does not exist stalls the ingress.
 //
-// `server.insecure` mirrors the AWS path: the load balancer terminates TLS, so argocd-server must
-// stop trying to as well or the health checks fail against its self-signed certificate.
-func GKEArgoServerValues(host, preSharedCert, backendConfig string) (string, error) {
+// TLS ARRIVES FROM A KUBERNETES SECRET NOW, not a pre-shared certificate (#1858). The
+// `ingress.gcp.kubernetes.io/pre-shared-cert` annotation is gone along with the
+// `google_compute_managed_ssl_certificate` it named. Google's Ingress docs present the two as
+// SEPARATE options rather than complementary ones — "to provide an HTTP(S) load balancer with a
+// certificates and keys that you created yourself, create one or more Kubernetes Secret objects …
+// in the spec.tls section, list the Secrets that you created" — so this drops the annotation
+// rather than setting both.
+//
+// Why converge a mechanism that worked: the Google-managed certificate carried three failure modes
+// cert-manager does not. Google validates it by resolving EVERY name on it to the attached load
+// balancer, so one unresolvable SAN holds the whole certificate in FAILED_NOT_VISIBLE; changing the
+// SAN set REPLACES the certificate (which is why the module needed create_before_destroy and a
+// digest in the name, and why a 63-char overflow was lurking there); and it cannot issue a wildcard.
+//
+// `server.insecure` mirrors the AWS and Azure paths: the load balancer terminates TLS, so
+// argocd-server must stop trying to as well or the health checks fail against its self-signed
+// certificate.
+func GKEArgoServerValues(host, issuer, backendConfig string) (string, error) {
 	if strings.TrimSpace(host) == "" {
 		return "", fmt.Errorf("refusing to render GKE ArgoCD ingress values with no host")
 	}
-	if strings.TrimSpace(preSharedCert) == "" {
-		return "", fmt.Errorf("refusing to render a GKE ArgoCD Ingress with no pre-shared certificate — it would serve the ArgoCD API over plain HTTP")
+	if strings.TrimSpace(issuer) == "" {
+		return "", fmt.Errorf("refusing to render a GKE ArgoCD Ingress with no cert-manager issuer — the TLS secret would never be created and the Ingress would serve the ArgoCD API over plain HTTP")
 	}
 	var b strings.Builder
+	// `tls: true` is the whole TLS contract with argo-cd 8.6.4: it renders `spec.tls` for `hostname`
+	// with secretName argocd-server-tls, which is what makes cert-manager mint a Certificate (the
+	// annotation names the issuer) and what the GCE ingress controller then reads. Verified against
+	// the chart's own values.yaml — there is no `tlsSecret` key, and helm accepts an invented key
+	// silently while rendering no TLS block at all.
+	//
+	// `allow-http: "false"` is KEPT and matters more now, not less. cert-manager issues
+	// asynchronously, so there is a window after the Ingress appears and before the Secret lands;
+	// without this the load balancer would answer plaintext :80 for the ArgoCD API during it.
 	fmt.Fprintf(&b, `configs:
   params:
     server.insecure: "true"
@@ -92,13 +117,14 @@ server:
     enabled: true
     ingressClassName: gce
     hostname: %s
+    tls: true
     annotations:
-      ingress.gcp.kubernetes.io/pre-shared-cert: %q
+      cert-manager.io/cluster-issuer: %q
       kubernetes.io/ingress.allow-http: "false"
   service:
     type: ClusterIP
     annotations:
-`, host, preSharedCert)
+`, host, issuer)
 	// Container-native load balancing. Stated explicitly rather than left to GKE's default for a
 	// ClusterIP Service behind an Ingress: the default is version- and cluster-shape-dependent
 	// (VPC-native only), and the instance-group fallback would put the backend service on the node

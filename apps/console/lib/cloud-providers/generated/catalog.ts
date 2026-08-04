@@ -3112,13 +3112,13 @@ export const CERT_OPTIONS: Record<CloudProviderSlug, CertOption> = {
 		},
 		"gcp": {
 			"providerConfigKey": "managed_certificate",
-			"label": "Google-Managed Certificate",
-			"description": "Free TLS certificate managed by Google Cloud, plus in-cluster issuance and renewal by cert-manager"
+			"label": "Managed Certificate",
+			"description": "Free Let's Encrypt certificate issued and renewed in-cluster by cert-manager over a DNS01 challenge, served by the GKE Ingress"
 		},
 		"azure": {
 			"providerConfigKey": "managed_certificate",
-			"label": "App Service Certificate",
-			"description": "Managed TLS certificate from Azure, plus in-cluster issuance and renewal by cert-manager"
+			"label": "Managed Certificate",
+			"description": "Free Let's Encrypt certificate issued and renewed in-cluster by cert-manager over a DNS01 challenge, served by the Application Gateway"
 		},
 		"hetzner": {
 			"providerConfigKey": "managed_certificate",
@@ -3127,8 +3127,8 @@ export const CERT_OPTIONS: Record<CloudProviderSlug, CertOption> = {
 		},
 		"alibaba": {
 			"providerConfigKey": "managed_certificate",
-			"label": "SSL Certificate",
-			"description": "Managed TLS certificate from Alibaba Cloud SSL Certificates Service"
+			"label": "Not available",
+			"description": "The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — bring your own certificate"
 		}
 	};
 
