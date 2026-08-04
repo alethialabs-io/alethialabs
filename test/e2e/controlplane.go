@@ -174,26 +174,27 @@ func (cp *ControlPlane) SeedRunner(ctx context.Context, ownerUserID, ownerOrgID 
 // full surface below now carries it, and catalog-export.test.ts guards the whole set against that
 // class of rot.)
 //
-// FULL SURFACE: with ALETHIA_E2E_ALL_ADDONS=1 every tier seeds ALL 19 catalog add-ons instead of the
+// FULL SURFACE: with ALETHIA_E2E_ALL_ADDONS=1 every tier seeds ALL 18 catalog add-ons instead of the
 // lean single seed — the maintainer's FULLY-TESTED bar ("every single add-on we have available").
 // The set is loaded from the generated fixture (SSOT = catalog.ts; see addon_surface.go), and a
 // stale/short fixture is a hard FAIL, never a silent fallback to a smaller set — a full-surface run
 // that quietly installed one add-on and reported green is exactly the vacuous proof the bar exists
 // to prevent.
+//
+// BOTH tiers now read that ONE generated artifact. The lean seed used to be a hand-written literal
+// beside it, and the two drifted the moment they could: #643 (2026-07-16) gave reloader real knob
+// defaults, regenerated catalog.ts + addon_catalog.json + t2_config_snapshot.hetzner.json, and left
+// this literal emitting `Values: map[string]interface{}{}` — contradicting the promise three lines
+// up that this is "the exact camelCase shape the console's resolveAddOnInstall emits". Deriving both
+// tiers from the same SSOT makes that unrepresentable instead of merely detectable (#1965).
 func seedAddOns() []types.AddOnInstall {
-	lean := []types.AddOnInstall{
-		{
-			ID:        "reloader",
-			Mode:      "managed",
-			ChartRepo: "https://stakater.github.io/stakater-charts",
-			Chart:     "reloader",
-			Version:   "1.1.0",
-			Namespace: "reloader",
-			Values:    map[string]interface{}{},
-			SyncWave:  1,
-		},
+	reloader, err := CatalogAddOn("reloader")
+	if err != nil {
+		// Fail loudly, exactly as the full surface does. A zero-valued lean seed would strip the
+		// ArgoCD health assertion of its teeth and let the tier report green having installed nothing.
+		panic(fmt.Sprintf("lean add-on seed unavailable: %v", err))
 	}
-	addons, err := SeedAddOnsForSurface(lean)
+	addons, err := SeedAddOnsForSurface([]types.AddOnInstall{reloader})
 	if err != nil {
 		// Fail loudly: the caller asked for the full surface and we cannot honour it.
 		panic(fmt.Sprintf("full add-on surface requested but unavailable: %v", err))

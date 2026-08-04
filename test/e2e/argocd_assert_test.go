@@ -13,6 +13,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"sort"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // argoAppsJSON builds a minimal `kubectl get applications -o json` document from
@@ -465,40 +467,35 @@ func TestInfraServiceMapsCoverDecisionsSSOT(t *testing.T) {
 }
 
 func TestSeedAddOnsPinnedToCatalog(t *testing.T) {
-	// The seeded add-on coordinates are pinned in two places: seedAddOns (this module)
-	// and the console catalog (apps/console/lib/addons/catalog.ts, the product SSOT).
-	// Guard the pin so a catalog bump (version/repo/chart/namespace) breaks this test
-	// instead of the tiers drifting from what the product actually ships.
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	catalogPath := filepath.Join(filepath.Dir(thisFile), "..", "..", "apps", "console", "lib", "addons", "catalog.ts")
-	raw, err := os.ReadFile(catalogPath)
+	// The seeded add-ons must be EXACTLY what the console emits for the same ids.
+	//
+	// This used to string-grep apps/console/lib/addons/catalog.ts for four scalar fields
+	// (version/chartRepo/chart/namespace) against a hand-written Go literal. That pin is what let
+	// #643 through: it gave reloader real knob defaults, and `values` was not in the four-field list,
+	// so the literal kept emitting `{}` and this test stayed green for three weeks (#1965). A pin
+	// that silently omits the field that drifted is worse than no pin, because it reads as coverage.
+	//
+	// Now both sides come from the generated fixture, so the comparison can be TOTAL — every field of
+	// the install spec, including `values`, with no hand-maintained field list to fall out of date.
+	// The fixture↔catalog.ts edge is held by the console's own catalog-export.test.ts, which
+	// regenerates in-memory and deep-equals; this asserts the Go seed sits on that same artifact.
+	catalog, err := AllCatalogAddOns()
 	if err != nil {
-		t.Fatalf("read console catalog: %v", err)
+		t.Fatalf("load generated add-on catalog: %v", err)
 	}
-	catalog := string(raw)
+	byID := make(map[string]types.AddOnInstall, len(catalog))
+	for _, a := range catalog {
+		byID[a.ID] = a
+	}
 	for _, a := range seedAddOns() {
-		idx := strings.Index(catalog, `id: "`+a.ID+`"`)
-		if idx < 0 {
-			t.Errorf("seeded add-on %q not found in the console catalog", a.ID)
+		want, ok := byID[a.ID]
+		if !ok {
+			t.Errorf("seeded add-on %q is not in the generated catalog fixture — regenerate: pnpm -F console export:addon-catalog", a.ID)
 			continue
 		}
-		// The entry runs until the next defineAddOn( — check the pins inside it.
-		entry := catalog[idx:]
-		if end := strings.Index(entry, "defineAddOn("); end > 0 {
-			entry = entry[:end]
-		}
-		for field, val := range map[string]string{
-			"version":   a.Version,
-			"chartRepo": a.ChartRepo,
-			"chart":     a.Chart,
-			"namespace": a.Namespace,
-		} {
-			if !strings.Contains(entry, field+`: "`+val+`"`) {
-				t.Errorf("seeded add-on %q: %s %q does not match the console catalog entry — update seedAddOns to the catalog's pin", a.ID, field, val)
-			}
+		if !reflect.DeepEqual(a, want) {
+			t.Errorf("seeded add-on %q diverges from the console's install spec.\n seeded: %+v\ncatalog: %+v\n"+
+				"the seed should DERIVE from the generated fixture (CatalogAddOn), never restate it", a.ID, a, want)
 		}
 	}
 }
