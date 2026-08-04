@@ -4,11 +4,16 @@ module "aks" {
 
   depends_on = [module.vnet]
 
-  location            = var.location
-  environment         = var.environment
-  project_name        = var.project_name
-  cluster_name        = local.aks_name
-  cluster_version     = var.aks_cluster_version
+  location        = var.location
+  environment     = var.environment
+  project_name    = var.project_name
+  cluster_name    = local.aks_name
+  cluster_version = var.aks_cluster_version
+
+  # Derived in checks_naming.tf (NAMING-002), not left to Azure: the auto-derived
+  # "MC_<resource_group>_<cluster_name>_<location>" rendered 82 characters against an 80-character
+  # cap on the e2e nightly and failed the apply mid-create (#1921).
+  node_resource_group = local.azure_aks_node_resource_group
   resource_group_name = azurerm_resource_group.main.name
   vnet_subnet_id      = var.provision_vnet ? module.vnet[0].private_subnet_id : data.azurerm_subnet.existing[0].id
 

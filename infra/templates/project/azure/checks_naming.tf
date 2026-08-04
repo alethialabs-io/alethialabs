@@ -258,6 +258,67 @@ locals {
       substr(sha256(local.azure_app_gateway_name_full), 0, 7),
     )
   )
+
+  # ── AKS node resource group: 80 characters — and AZURE derives it, not OpenTofu (#1921) ──
+  #
+  # This is the one name in the #1886/#1905 length-budget class that no guard in this repo could
+  # ever have caught, and the reason is structural rather than an oversight: until this block
+  # existed, the string was never present in the configuration at all.
+  # `modules/aks/main.tf` set every AKS argument EXCEPT `node_resource_group`, so Azure auto-derived
+  # the resource group that holds the agent pool, VMSS, NICs and load balancers as
+  #
+  #   MC_<resource_group>_<cluster_name>_<location>
+  #
+  # server-side. The sweep that budgeted the other eight names on this surface reads the template;
+  # a name only Azure computes is invisible to it, and to any `check` block, and to `tofu test`.
+  # It surfaced the only way it could — as a 400 from the ARM control plane, 489 seconds into
+  # `tofu apply`, with the cluster half-created (e2e nightly run 30882660761):
+  #
+  #   creating Kubernetes Cluster ...: 400 InvalidParameter: "The length of the node resource group
+  #   name is too long. The maximum length is 80 and the length of the value provided is 82."
+  #
+  #   MC_ rg-alethia-nl-30882660761-1 _ aks-gwc-30882660761-1-alethia-nl _ germanywestcentral
+  #    3  +           27            +1+              32               +1+        18          = 82
+  #
+  # Note what the composition does: it concatenates TWO names that each already carry their own
+  # budget — the resource group (90) and the cluster — and adds the region. Both can be at their
+  # own limits and legal, and the pair still overflows a THIRD, tighter cap. A per-name budget
+  # cannot see that; only deriving the composed name can.
+  #
+  # So the fix is the same one the class demands everywhere else: by CONSTRUCTION, at the root,
+  # where both halves are in scope. A `check` block was never an option here — `check` only ever
+  # warns, so it would have printed the overflow and then let the apply fail exactly as it did.
+  #
+  # 80, not the 90 the resource-group naming rules give, because AKS enforces its own cap on this
+  # one — quoted above from ARM's own refusal, which is the most authoritative source there is.
+  #
+  # BACKWARD-COMPATIBLE BY CONSTRUCTION, and here that matters more than anywhere else in this
+  # file: `node_resource_group` is ForceNew, so a value that differs from what a live cluster
+  # already carries REPLACES THE CLUSTER. The readable form therefore reproduces Azure's own
+  # auto-derivation byte for byte, which makes setting it explicitly a no-op for every cluster that
+  # exists today. The fallback can only trigger above 80 — precisely where Azure refuses to create
+  # the cluster at all, so no cluster that could be replaced can be sitting in that range.
+  #
+  # Uniqueness: a resource group name is unique within a subscription. The readable form already
+  # contains both the parent resource group and the cluster name, so two clusters in one
+  # subscription cannot collide; the fallback digests the FULL name rather than the truncated stem,
+  # so two clusters sharing a 72-character prefix cannot either. Sharing a node resource group
+  # would be worse than the overflow — the second apply would adopt the first cluster's VMSS.
+  #
+  # The strip before the digest covers `-`, `_` and `.`: the separator here is `_`, so a truncation
+  # landing on one would otherwise produce a doubled `__`, and Azure rejects a resource group name
+  # ending in a period.
+  azure_aks_node_resource_group_max  = 80
+  azure_aks_node_resource_group_full = "MC_${local.azure_resource_group_name}_${local.aks_name}_${var.location}"
+  azure_aks_node_resource_group = (
+    length(local.azure_aks_node_resource_group_full) <= local.azure_aks_node_resource_group_max
+    ? local.azure_aks_node_resource_group_full
+    : format(
+      "%s_%s",
+      replace(substr(local.azure_aks_node_resource_group_full, 0, 72), "/[-_.]+$/", ""),
+      substr(sha256(local.azure_aks_node_resource_group_full), 0, 7),
+    )
+  )
 }
 
 # Asserts the OUTPUT, and both forms: the gateway itself and the "-pip" the public IP appends. A
@@ -377,5 +438,27 @@ check "waf_policy_name_within_limit" {
   assert {
     condition     = length(local.azure_waf_policy_name) >= 1 && length(local.azure_waf_policy_name) <= local.azure_waf_policy_name_max
     error_message = "NAMING-002: the derived WAF policy name '${local.azure_waf_policy_name}' is ${length(local.azure_waf_policy_name)} chars, over the adopted ${local.azure_waf_policy_name_max}-character budget."
+  }
+}
+
+# The AKS node resource group (#1921). This check is DOCUMENTATION OF THE ARITHMETIC, not the gate —
+# and unusually for this file, that distinction is the whole point of the bug it follows. `check`
+# only warns, so had one existed before the derivation above it would have printed "82 chars" and
+# then watched `tofu apply` fail on Azure's 400 anyway. What actually prevents the failure is the
+# construction; this states the result in the plan output of a real deploy, and fires only on an
+# arithmetic regression in the lines that build it. checks_naming.tftest.hcl is what catches that on
+# every PR.
+check "aks_node_resource_group_within_limit" {
+  assert {
+    condition     = length(local.azure_aks_node_resource_group) >= 1 && length(local.azure_aks_node_resource_group) <= local.azure_aks_node_resource_group_max
+    error_message = "NAMING-002: the derived AKS node resource group '${local.azure_aks_node_resource_group}' is ${length(local.azure_aks_node_resource_group)} chars, over AKS's ${local.azure_aks_node_resource_group_max}-character cap. Azure rejects this at APPLY, after the cluster has started creating."
+  }
+
+  # A resource group name may not end in a period, and the derivation's separator is an underscore —
+  # so the trailing-separator strip has to cover both. This is where a strip that stopped working
+  # would be reported.
+  assert {
+    condition     = can(regex("^[A-Za-z0-9_()][A-Za-z0-9._()-]*[A-Za-z0-9_()-]$", local.azure_aks_node_resource_group))
+    error_message = "NAMING-002: the derived AKS node resource group '${local.azure_aks_node_resource_group}' must contain only alphanumerics, underscores, parentheses, hyphens and periods, and must not end with a period. Check project_name and environment."
   }
 }
