@@ -67,12 +67,26 @@ export interface HetznerDataServiceFixture {
 
 /**
  * Builds the fixture: the declared components plus the specs the REAL mapper produces for them.
- * Structured-cloned through JSON so the `as const` readonly literals become plain mutable data
- * (what both the writer and the equality guard compare).
+ *
+ * The declaration above is `as const`, so its arrays and fields are readonly; the fixture is plain
+ * mutable data. Widened by naming each field rather than by round-tripping through JSON and
+ * asserting the result: an assertion would tell the compiler the shapes match instead of asking it,
+ * and it is exactly the cast this repo's lint refuses (`consistent-type-assertions`). Spelling the
+ * fields out means a field added to the declaration and forgotten here is a type error, which is the
+ * check we actually want on a file whose whole job is not to drift.
  */
 export function exportHetznerDataServiceFixture(): HetznerDataServiceFixture {
-	const components = JSON.parse(
-		JSON.stringify(E2E_MAX_CONFIG_HETZNER_COMPONENTS),
-	) as HetznerDataServiceFixture["components"];
+	const components: HetznerDataServiceFixture["components"] = {
+		databases: E2E_MAX_CONFIG_HETZNER_COMPONENTS.databases.map((d) => ({
+			name: d.name,
+			engine_family: d.engine_family,
+			engine_version: d.engine_version,
+		})),
+		caches: E2E_MAX_CONFIG_HETZNER_COMPONENTS.caches.map((c) => ({
+			name: c.name,
+			num_cache_nodes: c.num_cache_nodes,
+		})),
+		queues: E2E_MAX_CONFIG_HETZNER_COMPONENTS.queues.map((q) => ({ name: q.name })),
+	};
 	return { components, addons: hetznerDataServicesToAddOns(components) };
 }
