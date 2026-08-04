@@ -116,17 +116,17 @@ type CouplingWorkflow struct {
 // it has to, the upstream reference, and what retires it. The cloud-parity rule
 // admits an exclusion; it does not admit a silent one.
 type CouplingWorkflowExclusion struct {
-	ID          string `json:"id"`
-	Workflow    string `json:"workflow"`
-	EnvKey      string `json:"env_key"`
-	Value       string `json:"value"`
-	Scope       string `json:"scope,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Upstream    string `json:"upstream,omitempty"`
-	UpstreamFix string `json:"upstream_fix,omitempty"`
+	ID           string `json:"id"`
+	Workflow     string `json:"workflow"`
+	EnvKey       string `json:"env_key"`
+	Value        string `json:"value"`
+	Scope        string `json:"scope,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	Upstream     string `json:"upstream,omitempty"`
+	UpstreamFix  string `json:"upstream_fix,omitempty"`
 	WhyThisValue string `json:"why_this_value,omitempty"`
-	RetireWhen  string `json:"retire_when,omitempty"`
-	Issue       int    `json:"issue,omitempty"`
+	RetireWhen   string `json:"retire_when,omitempty"`
+	Issue        int    `json:"issue,omitempty"`
 }
 
 var (
