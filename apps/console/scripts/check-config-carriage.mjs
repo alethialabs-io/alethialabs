@@ -737,10 +737,15 @@ const tfText = Object.fromEntries(PROVIDER_CLOUDS.map((c) => [c, tfFiles[c].map(
  * Kept narrow on purpose: this only rescues a site the value-site rule below would otherwise call
  * broken. It is not a general consumer, and it cannot make an unread variable look built.
  */
-function reportedAsOutput(cloud, root) {
+function reportedAsOutputIn(text, root) {
 	if (!root) return false;
 	const re = new RegExp(`\\boutput\\s+"[^"]*"\\s*\\{[^}]*\\bvar\\.${root}\\b`, "s");
-	return re.test(tfText[cloud] ?? "");
+	return re.test(text ?? "");
+}
+
+/** The live caller: the same question, asked of one cloud's joined `.tf` text. */
+function reportedAsOutput(cloud, root) {
+	return reportedAsOutputIn(tfText[cloud] ?? "", root);
 }
 
 /**
@@ -878,6 +883,33 @@ function selfCheck() {
 	}
 	if (UNSCOPED_READS.length !== before + 1) fail("an unresolvable receiver was decided silently — nothing was recorded to print");
 	UNSCOPED_READS.length = before;
+
+	// ── the output-passthrough rescue, in BOTH directions ───────────────────────────
+	//
+	// This is the one exemption the value-site rule grants, and an exemption nobody pins is how a
+	// narrow rescue quietly becomes a general escape. It shipped without this pin; that was the gap.
+	//
+	// Direction 1 — a root an `output` reports back out is NOT a drop. Hetzner returns the zone you
+	// already own that way and deliberately creates no resource, so demanding a resource argument
+	// would demand one whose whole point is not to exist.
+	// Direction 2 — everything else. A root mentioned in a `locals`, in a `resource`, in a comment,
+	// or nowhere at all must NOT be rescued, or the rule stops measuring anything.
+	const outFixture =
+		'output "zone" {\n  value = var.reported_zone\n}\n' +
+		'locals {\n  x = var.only_in_locals\n}\n' +
+		'resource "r" "s" {\n  a = var.only_in_resource\n}\n' +
+		"# var.only_in_a_comment\n";
+	if (!reportedAsOutputIn(outFixture, "reported_zone")) fail("an `output` that reports a root did not read as reported");
+	if (reportedAsOutputIn(outFixture, "only_in_locals")) fail("a `locals` reference read as an output — the rescue is not narrow");
+	if (reportedAsOutputIn(outFixture, "only_in_resource")) fail("a `resource` argument read as an output — the rescue is not narrow");
+	if (reportedAsOutputIn(outFixture, "only_in_a_comment")) fail("a comment read as an output");
+	if (reportedAsOutputIn(outFixture, "absent")) fail("a root mentioned nowhere read as reported");
+	// A PREFIX must not match: `var.reported_zone_id` is a different variable, and crediting it would
+	// rescue a genuinely dropped value whose name happens to extend a reported one.
+	if (reportedAsOutputIn('output "z" {\n  value = var.reported_zone_id\n}\n', "reported_zone")) {
+		fail("a longer variable name matched as a prefix — a dropped value would be rescued by its neighbour");
+	}
+	if (reportedAsOutputIn(outFixture, "")) fail("an empty root read as reported");
 }
 
 selfCheck();
