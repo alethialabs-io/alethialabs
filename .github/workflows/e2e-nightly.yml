@@ -32,7 +32,7 @@ on:
     # (base provision + cluster_ready + ArgoCD Healthy, + A0.6 repos when wired).
     - cron: "17 3 * * *"
     # 05:17 UTC Sunday — the OPT-IN FULL-BAR run (P2-F, #1068): the same matrix but with
-    # ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (11 kinds + 19 add-ons — heavy/costly,
+    # ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (11 kinds + 18 add-ons — heavy/costly,
     # so weekly not nightly). Resolved from this exact cron string in "Resolve full-bar dimension".
     - cron: "17 5 * * 0"
   workflow_dispatch:
@@ -52,7 +52,7 @@ on:
         type: string
         default: ""
       full_bar:
-        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 19 add-ons) instead of the cheap green-floor smoke. Heavy + costly — uses the raised cost ceiling. Also auto-on for the weekly Sunday cron."
+        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly — uses the raised cost ceiling. Also auto-on for the weekly Sunday cron."
         type: boolean
         default: false
 
@@ -136,6 +136,16 @@ jobs:
       # skips the real work. Also read directly by the T2 runner process (HCLOUD_TOKEN
       # is the env var the hcloud/imager/talos providers authenticate from).
       HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      # Hetzner OBJECT STORAGE — a SECOND, unrelated credential pair, and the only way the `bucket`
+      # kind can be proven on hetzner. Object Storage is S3-compatible and driven through the
+      # aminueza/minio provider; HCLOUD_TOKEN does not authenticate it, and Hetzner has no API to mint
+      # these (a human generates them in the console), so they cannot be derived from anything already
+      # here. Unset is fine for a FLOOR run — no bucket is seeded, and the runner simply omits the
+      # tfvars. On a FULL-BAR run the hetzner row's credential gate (hetznerCredsPresent,
+      # test/e2e/t2_providers.go) HARD-FAILS on them before any spend, because the alternative is a
+      # full cluster provisioned and then an apply that dies at the bucket.
+      HETZNER_S3_ACCESS_KEY: ${{ secrets.HETZNER_S3_ACCESS_KEY }}
+      HETZNER_S3_SECRET_KEY: ${{ secrets.HETZNER_S3_SECRET_KEY }}
       # The AWS gate. A repo VARIABLE (not a secret — a role ARN is not sensitive), so it can
       # be read in a plain `if:`/`case`. Empty until a maintainer applies infra/aws-oidc and
       # sets it → the aws path green-skips (mirrors the HCLOUD_TOKEN gate). The role itself is
@@ -275,7 +285,7 @@ jobs:
       #    green-floor smoke); ON for the weekly Sunday cron OR a workflow_dispatch with full_bar=true.
       #    When on, export ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (the T2 harness reads
       #    these from the process env — $GITHUB_ENV carries them into the go-test step) so the run
-      #    proves all 11 resource kinds land in tofu state AND all 19 marketplace add-ons converge.
+      #    proves all 11 resource kinds land in tofu state AND all 18 marketplace add-ons converge.
       #    E2E_FULL_BAR gates the raised cost ceiling below; E2E_DIMENSION labels the rollup's ledger
       #    row and its issue titles (full vs floor). $GITHUB_ENV is per-JOB, so neither reaches the
       #    rollup job — it calls the SAME resolve-dimension.sh rather than retyping the cron (#1755).
@@ -320,10 +330,19 @@ jobs:
       #    Hetzner keeps its proven cents/run default (no override). Per-cloud SKUs/disk floors
       #    are validated in each cloud's wave.
       #
-      #    On a FULL-BAR run the floor shape is the WRONG shape: max-config + all-add-ons need >= 3
-      #    nodes / 12 vCPU / 48 GB to schedule the 7 heavy charts + 11 kinds' controllers, which the
-      #    FT-5 guard (test/e2e/t2_providers.go) enforces before any spend. So full-bar loads the
-      #    per-provider heavy profile instead — the fixtures the guard's own error message names. ──
+      #    On a FULL-BAR run the floor shape is the WRONG shape: max-config + all-add-ons need a pool
+      #    big enough for the 7 heavy charts + the 11 kinds' controllers, which the FT-5 guard
+      #    (t2RequireMaxConfigNodeShape, test/e2e/t2_providers.go) enforces before any spend. So
+      #    full-bar loads the per-provider heavy profile instead — the fixtures the guard's own error
+      #    message names, which is the part that cannot drift: both sides name the same path.
+      #
+      #    The FLOOR NUMBERS are deliberately NOT restated here. They live in t2_providers.go
+      #    (heavyMinNodes / heavyMinMemGB, and the PER-CLOUD heavyMinVCPUFor), and this comment used
+      #    to say ">= 3 nodes / 12 vCPU / 48 GB" one line above claiming guard and workflow cannot
+      #    drift. They did: azure's e2e subscription has a 10 vCPU Total Regional quota, so its floor
+      #    was lowered to 6 and its heavy fixture is Standard_E2s_v5 x3 — a maintainer following the
+      #    prose would have built a shape azure cannot create. Read the constants; the guard prints
+      #    the exact shortfall when a profile misses. ──
       - name: Compute cluster shape
         if: steps.gate.outputs.run == 'true'
         env:
@@ -345,15 +364,16 @@ jobs:
             alibaba) SHAPE='{"instance_types":["ecs.e-c1m2.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":40}' ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
           esac
-          # FULL-BAR: swap the floor shape for the provider's heavy profile. The fixtures are the ones
-          # the FT-5 guard names in its own failure message, so guard and workflow cannot drift.
+          # FULL-BAR: swap the floor shape for the provider's heavy profile. The fixture PATH is the
+          # one the FT-5 guard names in its own failure message, so guard and workflow cannot disagree
+          # about which file is used. The floor NUMBERS are the guard's, not this file's.
           if [ "${E2E_FULL_BAR:-false}" = "true" ]; then
             HEAVY="test/e2e/fixtures/cluster_json.heavy.${PROVIDER}.json"
             if [ ! -f "$HEAVY" ]; then
               # Documented exclusion, not a silent gap (cloud-parity rule): a cloud without a heavy
               # profile cannot host the full bar, and must say so rather than trip the guard later
               # with a message about node counts.
-              echo "::error::full-bar requested for '$PROVIDER' but $HEAVY does not exist — that cloud has no heavy profile. Add the fixture (>= 3 nodes / 12 vCPU / 48 GB total) or exclude the cloud from full-bar runs."
+              echo "::error::full-bar requested for '$PROVIDER' but $HEAVY does not exist — that cloud has no heavy profile. Add the fixture sized to that cloud's floor (heavyMinNodes / heavyMinMemGB / heavyMinVCPUFor(\"$PROVIDER\") in test/e2e/t2_providers.go — the per-cloud vCPU floor differs where a quota forces it) or exclude the cloud from full-bar runs. TestMaxConfigNodeShapeGuard checks a new fixture against its own cloud's floor for free on every PR."
               exit 1
             fi
             SHAPE="$(jq -c . "$HEAVY")"
