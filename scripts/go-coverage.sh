@@ -402,33 +402,41 @@ fi
 MODPATH=$(awk '$1 == "module" { print $2; exit }' "$ROOT/$MODULE/go.mod")
 FLOORS="$MODULE/coverage-floors.json"
 [ -n "$PROFILE" ] || PROFILE="$MODULE/cover.out"
+# --profile may be given as an absolute path (comparing against a profile downloaded from a CI
+# artifact is the motivating case). Resolve once, here, rather than prefixing $ROOT at each use —
+# doing that turns an absolute path into "$ROOT//abs/path" and the script reports "no profile"
+# for a file that plainly exists.
+case "$PROFILE" in
+/*) PROFILE_ABS="$PROFILE" ;;
+*) PROFILE_ABS="$ROOT/$PROFILE" ;;
+esac
 
 # ── regenerate the profile when it is missing or stale (write paths only) ──────────────────────
 ensure_profile() {
 	local stale=0
-	if [ ! -s "$ROOT/$PROFILE" ]; then
+	if [ ! -s "$PROFILE_ABS" ]; then
 		stale=1
-	elif [ -n "$(find "$ROOT/$MODULE" -name '*.go' -newer "$ROOT/$PROFILE" -print -quit 2>/dev/null)" ]; then
+	elif [ -n "$(find "$ROOT/$MODULE" -name '*.go' -newer "$PROFILE_ABS" -print -quit 2>/dev/null)" ]; then
 		echo "  $PROFILE is older than the sources — re-running the suite..."
 		stale=1
 	fi
 	if [ "$stale" -eq 1 ]; then
-		(cd "$ROOT/$MODULE" && go test ./... -coverprofile="$ROOT/$PROFILE" -covermode=set >/dev/null)
+		(cd "$ROOT/$MODULE" && go test ./... -coverprofile="$PROFILE_ABS" -covermode=set >/dev/null)
 	fi
 }
 
 case "$MODE" in
 print)
-	[ -s "$ROOT/$PROFILE" ] || { echo "no profile at $PROFILE" >&2; exit 2; }
-	measure "$ROOT/$PROFILE" "$MODPATH"
+	[ -s "$PROFILE_ABS" ] || { echo "no profile at $PROFILE" >&2; exit 2; }
+	measure "$PROFILE_ABS" "$MODPATH"
 	exit 0
 	;;
 
 update | accept)
 	command -v jq >/dev/null 2>&1 || { echo "jq is required to write floors" >&2; exit 2; }
 	ensure_profile
-	NOW=$(measure "$ROOT/$PROFILE" "$MODPATH") || { echo "unreadable profile at $PROFILE" >&2; exit 2; }
-	COVERMODE=$(head -1 "$ROOT/$PROFILE" | sed 's/^mode: //')
+	NOW=$(measure "$PROFILE_ABS" "$MODPATH") || { echo "unreadable profile at $PROFILE" >&2; exit 2; }
+	COVERMODE=$(head -1 "$PROFILE_ABS" | sed 's/^mode: //')
 
 	MERGED=""
 	RAISED=0 KEPT=0 LOWERED=0 ADDED=0
@@ -492,10 +500,10 @@ jq -e '.packages' "$ROOT/$FLOORS" >/dev/null 2>&1 || {
 
 # F4 — no profile. The only way to reach this is that the `go test` step already failed and
 # failed the job. Failing twice adds noise and misattributes the cause.
-[ -s "$ROOT/$PROFILE" ] || { warn "no coverprofile at $PROFILE — ratchet SKIPPED for $MODULE"; exit 0; }
+[ -s "$PROFILE_ABS" ] || { warn "no coverprofile at $PROFILE — ratchet SKIPPED for $MODULE"; exit 0; }
 
 # F5 — unrecognised mode line (a future Go release, or -race forcing atomic).
-NOW=$(measure "$ROOT/$PROFILE" "$MODPATH") || { warn "$PROFILE has an unrecognised 'mode:' line — ratchet SKIPPED"; exit 0; }
+NOW=$(measure "$PROFILE_ABS" "$MODPATH") || { warn "$PROFILE has an unrecognised 'mode:' line — ratchet SKIPPED"; exit 0; }
 
 # F6 — the profile parsed to nothing (truncated, interrupted, disk full). Left alone this would
 # read as "every package collapsed to 0%" and red them all at once.
