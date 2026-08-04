@@ -25,6 +25,18 @@ module "gke" {
   disk_size_gb      = var.gke_disk_size_gb
   disk_type         = var.gke_disk_type
 
+  # Boot-disk performance (aws parity: eks_volume_iops). Both null by default; the module renders no
+  # `boot_disk` block at all in that case, so the default plan is unchanged.
+  volume_iops       = var.gke_volume_iops
+  volume_throughput = var.gke_volume_throughput
+
+  # Interruptible capacity (aws parity: eks_ng_capacity_type). gke_spot and gke_preemptible were
+  # BOTH declared and read by nothing before this line — gke_spot at `default = true`, so the
+  # template claimed Spot for every node pool it has ever built. Its default is flipped to false in
+  # the same commit (variables.tf) precisely so that wiring it changes nothing that already exists.
+  spot        = var.gke_spot
+  preemptible = var.gke_preemptible
+
   master_authorized_cidr_blocks = var.gke_master_authorized_cidr_blocks
 
   labels = local.gcp_default_labels

@@ -18,6 +18,23 @@ dedicated Go field. So **full customizability already exists for any variable th
 passthrough can't reach an undeclared knob. So the real parity gap is *declared-variable coverage*, not
 the plumbing.
 
+⚠️ **And the passthrough is per-COMPONENT, not global.** `mergeProviderConfig` is called for exactly
+three components — `Cluster.ProviderConfig`, `DNS.ProviderConfig` and each database's
+`ProviderConfig`. `ProjectContainerRegistryConfig` carries a `ProviderConfig` field
+(`packages/core/types/project_config.go`) that **no provider passes to it**, so a registry variable is
+reachable only by a BYO-IaC caller writing raw tfvars, whatever the template declares. Declaring more
+`ecr_*`-style registry knobs before that line exists would manufacture unreachable knobs — the
+"unwired template" state `apps/console/scripts/check-offer-parity.mjs` is built to catch. Wire the
+registry passthrough first.
+
+Two claims, not one: *declared in `variables.tf`* and *reachable through a component's
+`provider_config`*. `TestProviderTfvars_NodeShapeAndSecretKeepersAreReachable`
+(`packages/core/cloud/passthrough_test.go`) asserts both halves per knob, re-scraping the `.tf` on
+every run so the two cannot drift apart silently. And a third claim sits under those: *read by a
+resource argument*. A knob can be declared, reachable, and assigned to nothing — which is why the
+node-shape suites assert on the **planned resource** where the template can plan one under mocks
+(`alibaba/checks_cluster.tftest.hcl`), not merely on the local that feeds it.
+
 ## Full escape hatch — Bring Your Own IaC (E3)
 
 Declared-variable coverage is the parity story for the **built-in templates**. When a customer needs a
@@ -40,14 +57,27 @@ Full detail: [Bring Your Own IaC](../../../apps/docs/content/docs/concepts/bring
 
 ## Current declared-variable coverage
 
+Counted with `grep -c '^variable "' <cloud>/variables.tf`, so the number is re-derivable rather than
+remembered:
+
 | Template | root variables |
 |----------|----------------|
-| AWS      | ~100 |
-| GCP      | ~65 |
-| Azure    | ~52 |
+| AWS      | 106 |
+| GCP      | 75 |
+| Azure    | 70 |
+| Alibaba  | 49 |
+| Hetzner  | 28 |
 
-AWS is the most fleshed-out; Azure the least. AWS↔GCP↔Azure are at full **feature** parity (every
-component provisions), but AWS exposes more fine-grained knobs.
+AWS is the most fleshed-out because it was built first. Some of the spread below it is legitimate:
+Hetzner substitutes in-cluster OSS (CloudNativePG, Vault, Harbor, RabbitMQ, Valkey, MinIO) for
+managed services, so it genuinely has fewer cloud-native knobs to expose. The rest is drift.
+
+**A raw count is not a parity measure**, and this table should not be read as one. GCP's number
+included `gke_spot`, `gke_preemptible`, `gke_enable_private_endpoint` and `gke_log_retention_days` —
+four variables declared in `variables.tf` and read by **no resource on any code path**. `gke_spot`
+shipped `default = true`, so the template advertised Spot node pools it never provisioned. A count
+credits a dead declaration exactly as much as a working knob; only the carrier rule
+(`check-offer-parity.mjs`) tells them apart.
 
 ## Top gaps to close for full parity (Phase A.2 backlog)
 
@@ -58,8 +88,8 @@ some GCP. (AWS-only knobs with no analogue — Karpenter, IRSA, CloudFront-WAF �
 |---|-----------|------|-----|-------|-----------------|
 | 1 | Cluster | log retention | ok | **missing** | `aks_log_retention_days` (Log Analytics) |
 | 2 | Cluster | API-server authorized CIDRs | ok | **missing** | `aks_master_authorized_cidr_blocks` |
-| 3 | Cluster | node disk type | ok | **missing** | `aks_disk_type` (Managed/Ephemeral) |
-| 4 | Cluster | spot/preemptible nodes | ok | **missing** | `aks_node_pool_spot_instances` |
+| 3 | Cluster | node disk type | ok | ✅ shipped | `aks_os_disk_type` (Managed/Ephemeral) |
+| 4 | Cluster | spot/preemptible nodes | ✅ shipped | ✅ shipped | `aks_spot_*` (a separate node pool); `gke_spot`/`gke_preemptible` were declared-and-dead |
 | 5 | Database | log exports | **missing** | **missing** | `cloud_sql_log_exports` / `azure_db_log_exports` |
 | 6 | Database | network CIDR allowlist | ok | **missing** | `azure_db_allowed_cidr_blocks` |
 | 7 | Database | parameter/flags | ok | **missing** | `azure_db_database_flags` |
@@ -89,9 +119,17 @@ as machine-readable per-service decisions (`packages/core/argocd/decisions.go`, 
   shared `iam_auth` toggle is a no-op on Alibaba (AWS Aurora / GCP Cloud SQL / Azure DB support it).
 - **Aurora-only `rds_scaling_config`** — serverless-v2 min/max ACU capacity is an Aurora concept; GCP
   Cloud SQL / Azure Database use fixed vCPU/vCore tiers, so the scaling-config block is AWS-only.
-- **`ClusterAdmins` on gcp / alibaba / hetzner** — cluster-admin binding is granted **outside** the
-  template on these clouds (GKE via IAM, ACK via RAM, Talos via the emitted `talosconfig`/kubeconfig),
-  so there is no in-template `cluster_admins` knob to wire there.
+- **`ClusterAdmins` on hetzner** — Talos has no cloud IAM plane; access is the emitted
+  `talosconfig`/kubeconfig, so there is no in-template `cluster_admins` knob to wire. A genuine
+  ceiling.
+- **`ClusterAdmins` on gcp / alibaba — DEBT, not a ceiling ([#2005](https://github.com/alethialabs-io/alethialabs/issues/2005))**.
+  An earlier version of this line said the binding is "granted outside the template" on both, as if
+  the provider forced it. Checking the pinned provider schemas refuted that:
+  `alicloud_cs_kubernetes_permissions` is in `aliyun/alicloud` 1.286.0 and is exactly a cluster-admin
+  binding, and on GCP `google_project_iam_member` with `roles/container.clusterAdmin` is the same
+  mechanism this template already uses two files over (`gcp/app-db-identity.tf:48`). "The binding
+  happens elsewhere" described where the work is, not where the provider put it — and a wrong
+  cloud-inherent line is worse than an open gap, because it stops anyone looking again.
 - **external-dns on Alibaba** — the alibabacloud external-dns provider has **no RRSA support upstream**
   ([external-dns#5019](https://github.com/kubernetes-sigs/external-dns/issues/5019)); external-dns is
   skipped on Alibaba until that lands. Manage AliDNS records outside the cluster meanwhile.
@@ -131,3 +169,17 @@ as machine-readable per-service decisions (`packages/core/argocd/decisions.go`, 
 - **AWS Route53 zone-create**: added (`aws/route53.tf` + `aws/modules/route53/`, wired into ACM + outputs;
   Go emits `cloud_dns_enabled`) — DNS zone-creation parity with GCP/Azure. Done, this phase.
 - **The 10 knobs above**: backlog (Phase A.2) — declare + module-wire per cloud.
+
+## Where these decisions are recorded, and the gap in that
+
+Every deferral on this page lives in prose — here, and in `.tf` comments. Neither is machine-checked.
+
+`apps/console/scripts/check-offer-parity.mjs` builds `MEASURED_KINDS` from the **canvas offer
+surface**, and `check-config-carriage.mjs` measures **user-settable fields**. Node shape, registry
+depth, WAF depth, cluster-admin IAM and control-plane secret encryption are none of those things:
+they are template variables reached through `provider_config` passthrough. So no guard can red any
+cell on this page, and no deferral here can ever go stale the way a `baseline:` entry does.
+
+That is why two of the entries above carry issue numbers rather than a confident sentence. Until the
+template-variable surface has a ratchet of its own — or these knobs become first-class offers and
+inherit one — treat this page as a record of intent, not as enforcement.

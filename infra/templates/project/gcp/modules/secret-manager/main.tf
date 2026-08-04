@@ -23,6 +23,14 @@ resource "random_password" "generated" {
 
   length  = each.value.length
   special = each.value.special_chars
+
+  # Rotation handle (parity with aws/modules/awssm-passgen). `keepers` is the only lever
+  # random_password offers for re-generating a value: change any entry and the password is replaced,
+  # leave it alone and the stored value is stable forever. Absent it a generated secret could only
+  # be rotated by destroying the Secret Manager secret itself. A secret with no entry in the map
+  # gets `{}` — identical to the previous, keeper-less resource, so every existing project plans
+  # unchanged.
+  keepers = lookup(var.secret_keepers, each.key, {})
 }
 
 resource "google_secret_manager_secret_version" "version" {

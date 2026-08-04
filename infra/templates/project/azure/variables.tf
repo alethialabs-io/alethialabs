@@ -147,6 +147,83 @@ variable "aks_disk_size_gb" {
   }
 }
 
+# ⚠️ NOT the analogue of aws's eks_volume_type, and the description says so on purpose. AKS gives no
+# OS-disk SKU and no OS-disk IOPS at all — neither azurerm 4.81.0's agent-pool schema nor the ARM
+# `agentPools` reference carries either, because AKS derives the OS disk from the VM size you pick.
+# What Azure DOES let you choose is where the disk LIVES: Managed (a durable attached disk) or
+# Ephemeral (the VM's local storage — faster, free, and lost on reimage). Calling this a disk-type
+# knob and moving on would have marked a parity cell green for a different feature.
+#
+# Null, not "Managed": the attribute is optional and NOT computed, so a null renders no argument at
+# all — byte-identical to the config that shipped before this variable existed. "Managed" is the
+# Azure default and would almost certainly plan the same, but "almost certainly" is not a claim
+# worth making about every existing cluster when null makes it by construction.
+variable "aks_os_disk_type" {
+  type        = string
+  default     = null
+  description = "Where each AKS node's OS disk lives: \"Managed\" (durable attached disk) or \"Ephemeral\" (VM-local storage — faster and free, but reset on reimage and capped by the VM size's cache). Null (the default) leaves Azure's own default, Managed."
+
+  validation {
+    condition     = var.aks_os_disk_type == null || contains(["Managed", "Ephemeral"], var.aks_os_disk_type)
+    error_message = "aks_os_disk_type must be \"Managed\", \"Ephemeral\", or null."
+  }
+}
+
+# ── Spot node pool (aws parity: eks_ng_capacity_type) ────────────────────────────────────────────
+# Spot on AKS is a SEPARATE NODE POOL, never a flag on an existing one, and that is not a style
+# choice: `priority`, `eviction_policy` and `spot_max_price` are ForceNew on
+# azurerm_kubernetes_cluster_node_pool, and Microsoft's own documented limitation is that a Spot
+# pool cannot be the default node pool. Off by default, so an existing cluster's plan is unchanged.
+variable "aks_spot_enabled" {
+  type        = bool
+  default     = false
+  description = "Add a Spot node pool alongside the on-demand pools. Spot nodes are evictable at any time, so the system pool stays on-demand and workloads must tolerate the kubernetes.azure.com/scalesetpriority=spot taint Azure applies."
+}
+
+variable "aks_spot_max_price" {
+  type        = number
+  default     = -1
+  description = "Hourly ceiling (USD) for a Spot node. -1 (the default) means pay up to the on-demand price and never get evicted on price alone — only on capacity."
+
+  validation {
+    condition     = var.aks_spot_max_price == -1 || var.aks_spot_max_price > 0
+    error_message = "aks_spot_max_price must be -1 (pay up to on-demand) or a positive hourly price."
+  }
+}
+
+variable "aks_spot_eviction_policy" {
+  type        = string
+  default     = "Delete"
+  description = "What Azure does to a reclaimed Spot node: \"Delete\" (the default — the node is removed and the autoscaler replaces it) or \"Deallocate\" (the node is stopped but its quota is held)."
+
+  validation {
+    condition     = contains(["Delete", "Deallocate"], var.aks_spot_eviction_policy)
+    error_message = "aks_spot_eviction_policy must be \"Delete\" or \"Deallocate\"."
+  }
+}
+
+variable "aks_spot_node_min_size" {
+  type        = number
+  default     = 0
+  description = "Minimum nodes in the Spot pool. 0 (the default) lets the pool scale to nothing when there is no work for it, which is the point of buying interruptible capacity."
+
+  validation {
+    condition     = var.aks_spot_node_min_size >= 0
+    error_message = "aks_spot_node_min_size must be 0 or greater."
+  }
+}
+
+variable "aks_spot_node_max_size" {
+  type        = number
+  default     = 3
+  description = "Maximum nodes in the Spot pool. Only read when aks_spot_enabled is true."
+
+  validation {
+    condition     = var.aks_spot_node_max_size >= 1
+    error_message = "aks_spot_node_max_size must be at least 1."
+  }
+}
+
 # BYOC AZ-SELF-ADMIN (mirror of EKS #470): grant the apply/runner identity RBAC Cluster
 # Admin on the AKS cluster so it can install ArgoCD/add-ons over its own AAD token. Default
 # true. Turning it off requires aks_admin_group_object_ids (enforced by checks.tf below).
@@ -503,6 +580,15 @@ variable "custom_secrets" {
   }))
   default     = []
   description = "List of secrets to create in Azure Key Vault"
+}
+
+# Parity with aws (custom_secrets.tf) and gcp (secret-manager.tf): the ONLY lever random_password
+# offers for re-generating a value it has already produced. Without it an Azure project's generated
+# secrets are immutable for the life of the vault entry — rotation would mean destroying the secret.
+variable "custom_secret_keepers" {
+  type        = map(map(string))
+  default     = {}
+  description = "Per-secret rotation keepers, keyed by secret name. Changing any value under a name re-generates that secret's password; a name absent from the map keeps its value forever. Empty (the default) is behavior-preserving."
 }
 
 #########################################################################

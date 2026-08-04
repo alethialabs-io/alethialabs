@@ -13,5 +13,9 @@ module "key_vault" {
   # (checks.tf requires vault_uri whenever AKS is up); only its contents are gated.
   secrets = var.secrets_provider == "native" ? var.custom_secrets : []
 
+  # Rotation handle for the generated secrets above (aws/gcp parity). Empty by default, so this is a
+  # new reachable knob rather than a change to any vault that already exists.
+  secret_keepers = var.custom_secret_keepers
+
   tags = local.azure_default_tags
 }

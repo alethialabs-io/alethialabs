@@ -147,6 +147,69 @@ variable "ack_disk_size_gb" {
   }
 }
 
+# ── Node system disk (aws parity: eks_volume_type / eks_volume_iops) ─────────────────────────────
+# `cloud_essd` is not a chosen default — it is the value modules/cluster/main.tf hardcoded until
+# this change, so every project that exists plans unchanged.
+variable "ack_disk_category" {
+  type        = string
+  default     = "cloud_essd"
+  description = "System disk category for each ACK node. cloud_essd takes a performance level (ack_disk_performance_level); cloud_auto takes provisioned IOPS (ack_disk_provisioned_iops); the others take neither."
+
+  validation {
+    condition     = contains(["cloud_efficiency", "cloud_ssd", "cloud_essd", "cloud_auto", "cloud_essd_entry"], var.ack_disk_category)
+    error_message = "ack_disk_category must be one of cloud_efficiency, cloud_ssd, cloud_essd, cloud_auto, cloud_essd_entry."
+  }
+}
+
+# ⚠️ Alibaba does NOT have aws's single `iops` number. Disk performance is TWO mutually exclusive
+# arguments, each coupled to a different disk category, and the API silently ignores the one that
+# does not belong to the category in play. checks_cluster.tf blocks that pairing at plan time — a
+# knob that is reachable and quietly does nothing is worse than a knob that is missing.
+variable "ack_disk_performance_level" {
+  type        = number
+  default     = null
+  description = "ESSD performance level for each ACK node's system disk (0-3, rendered as PL0-PL3). Requires ack_disk_category = cloud_essd. Null (the default) leaves Alibaba's own default in place."
+
+  validation {
+    condition     = var.ack_disk_performance_level == null || contains([0, 1, 2, 3], var.ack_disk_performance_level)
+    error_message = "ack_disk_performance_level must be 0, 1, 2 or 3 (PL0-PL3), or null."
+  }
+}
+
+variable "ack_disk_provisioned_iops" {
+  type        = number
+  default     = null
+  description = "Provisioned IOPS for each ACK node's system disk. Requires ack_disk_category = cloud_auto. Null (the default) leaves the disk on its category's baseline performance."
+
+  validation {
+    condition     = var.ack_disk_provisioned_iops == null || var.ack_disk_provisioned_iops > 0
+    error_message = "ack_disk_provisioned_iops must be a positive number, or null."
+  }
+}
+
+# ── Interruptible capacity (aws parity: eks_ng_capacity_type) ────────────────────────────────────
+# "NoSpot" is the ACK API's own name for on-demand and is what the node pool provisions today with
+# the argument unset, so the default is behavior-preserving.
+variable "ack_node_capacity_type" {
+  type        = string
+  default     = "NoSpot"
+  description = "Bidding strategy for the ACK node pool. NoSpot = on-demand (the default). SpotWithPriceLimit requires ack_spot_price_limit; SpotAsPriceGo bids the market rate."
+
+  validation {
+    condition     = contains(["NoSpot", "SpotWithPriceLimit", "SpotAsPriceGo"], var.ack_node_capacity_type)
+    error_message = "ack_node_capacity_type must be one of NoSpot, SpotWithPriceLimit, SpotAsPriceGo."
+  }
+}
+
+variable "ack_spot_price_limit" {
+  type = list(object({
+    instance_type = string
+    price_limit   = string
+  }))
+  default     = []
+  description = "Per-instance-type hourly bid ceilings, required when ack_node_capacity_type = SpotWithPriceLimit and meaningless otherwise. price_limit is a decimal string, e.g. \"0.35\"."
+}
+
 #########################################################################
 ##                   DNS (AliDNS) / WAF Variables                      ##
 #########################################################################
@@ -306,6 +369,15 @@ variable "custom_secrets" {
   type        = list(any)
   default     = []
   description = "List of secrets to create in KMS Secrets Manager"
+}
+
+# Parity with aws (custom_secrets.tf), gcp and azure: the ONLY lever random_password offers for
+# re-generating a value it has already produced. Without it an Alibaba project's generated secrets
+# are immutable for the life of the KMS secret — rotation would mean destroying it.
+variable "custom_secret_keepers" {
+  type        = map(map(string))
+  default     = {}
+  description = "Per-secret rotation keepers, keyed by secret name. Changing any value under a name re-generates that secret's password; a name absent from the map keeps its value forever. Empty (the default) is behavior-preserving."
 }
 
 #########################################################################
