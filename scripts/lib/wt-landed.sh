@@ -57,7 +57,14 @@ wt_branch_landed() { # <worktree> <branch> <base> → 0 landed, 1 not
 	# the commits the tree is holding now.
 	pr_line="$(gh pr list --state all --head "$br" --json number,state \
 		--jq 'sort_by(.number) | reverse | .[0] | "\(.number) \(.state)"' 2>/dev/null)" || pr_line=""
-	if [ -z "$pr_line" ] || [ "$pr_line" = "null" ]; then
+	# An EMPTY PR list makes jq's `.[0]` null, and the interpolation then yields the two-word
+	# string "null null" — not the bare "null" this used to test for. So a branch that never had a
+	# PR fell through to the state check below and reported "PR #null is null, not MERGED", which
+	# reads like a failed lookup rather than the ordinary "there was never a PR" it actually is.
+	# The verdict was right either way (both are "not landed"); the message was misleading, and it
+	# was invisible until `branch:prune` started asking about branches that never had one — 12 of
+	# them on the first real sweep.
+	if [ -z "$pr_line" ] || [ "$pr_line" = "null" ] || [ "${pr_line%% *}" = "null" ]; then
 		WT_LANDED_WHY="not an ancestor of $base, and no PR was ever opened for $br"
 		return 1
 	fi

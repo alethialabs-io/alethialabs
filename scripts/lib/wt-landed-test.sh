@@ -48,7 +48,8 @@ mk() { # <branch> <commit-subject>...
 
 mk squashed feature-a           # merged as a squash → NOT an ancestor of dev
 mk still-open feature-b         # PR open
-mk no-pr feature-c              # never had a PR
+mk no-pr feature-c              # never had a PR (gh prints nothing)
+mk no-pr-null feature-g         # never had a PR (gh prints jq's "null null" — the real shape)
 mk merged-plus-new feature-d extra # PR merged, then a NEW commit was added
 mk unreadable feature-e         # PR merged but `gh pr view` fails
 
@@ -72,6 +73,7 @@ if [ "\$1" = "pr" ] && [ "\$2" = "list" ]; then
 	squashed)        echo "101 MERGED" ;;
 	still-open)      echo "102 OPEN" ;;
 	no-pr)           echo "" ;;
+	no-pr-null)      echo "null null" ;;
 	merged-plus-new) echo "104 MERGED" ;;
 	unreadable)      echo "105 MERGED" ;;
 	*)               echo "" ;;
@@ -100,6 +102,13 @@ expect yes "$(check ff)" "a real fast-forward is landed (offline path)"
 expect yes "$(check squashed)" "a squash-merged branch is landed — the whole point"
 expect no "$(check still-open)" "an OPEN PR is not landed"
 expect no "$(check no-pr)" "a branch with no PR is not landed"
+expect no "$(check no-pr-null)" "an empty PR list (jq renders it \"null null\") is not landed"
+# The REASON matters as much as the verdict here: both spellings return "not landed", so only the
+# message distinguishes "there was never a PR" from "the lookup failed". Read it inside the
+# subshell — WT_LANDED_WHY does not survive a command substitution.
+why() { PATH="$TMP/bin:$PATH" wt_branch_landed "$R" "$1" dev >/dev/null 2>&1; echo "${WT_LANDED_WHY:-}"; }
+case "$(why no-pr-null)" in *"no PR was ever opened"*) pass "...and says so, rather than 'PR #null is null'" ;;
+*) fail "no-PR reason misreported as: $(why no-pr-null)" ;; esac
 expect no "$(check merged-plus-new)" "merged PR + a NEW local commit is NOT landed"
 expect no "$(check unreadable)" "an unreadable commit list is not landed"
 
