@@ -97,7 +97,7 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `queue:ordered` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `registry:immutable_tags` | 🟡 | 🟡 | — | 🟡 | · | · |
-| `registry:vulnerability_scanning` | 🚫 #1845 | 🟡 | — | 🚫 #1844 | · | · |
+| `registry:vulnerability_scanning` | 🚫 #1845 | 🟡 | — | 🟡 | · | · |
 | `secret:generate` | 🟡 | ⚠️ | 🟡 | 🟡 | · | · |
 | `secret:special_chars` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
 
@@ -212,7 +212,6 @@ Only a cell that was measured and came out honored is asked for its entry back.
 
 | Offer | Cloud | State (measured) | Issue | What a user gets today |
 |---|---|---|---|---|
-| `registry:vulnerability_scanning` | gcp | 🚫 `no-carrier` | #1844 | Image scanning is not requested from Artifact Registry yet — repositories are created with the platform default instead of your choice. |
 | `registry:vulnerability_scanning` | alibaba | 🚫 `no-carrier` | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
 
 ---
