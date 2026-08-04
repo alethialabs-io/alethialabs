@@ -90,7 +90,7 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `bucket:versioning` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `cache:multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · | · |
 | `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
-| `dns:managed_certificate` | — | 🟡 | 🟡 | 🟡 | — | · |
+| `dns:managed_certificate` | — | 🟡 | ☸️ | ☸️ | — | · |
 | `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
@@ -149,6 +149,22 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `cache:redis` | azure | `azurerm_managed_redis` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. |
 | `cache:redis` | gcp | `google_redis_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. Switching to `valkey` crosses backing resources — a delete + create, not an in-place change. |
 | `cache:valkey` | gcp | `google_memorystore_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. Switching to `redis` crosses backing resources — a delete + create, not an in-place change. |
+
+## Carried in-cluster — honored, but not by OpenTofu
+
+A ☸️ cell means the cloud **does** honor the offer, through a component the platform installs into
+the cluster rather than through a resource in the template. The carrier grid above cannot see these:
+it checks that a tfvar is declared and read by a resource argument, and an in-cluster component
+writes no tfvar at all. That is a limit of the measurement, not of the cloud.
+
+These are not exclusions — nothing here is unavailable — and not debt. Each names the predicate that
+decides which clouds the component ships for, and the guard re-reads it on every run: if the
+predicate stops listing the cloud, the entry fails until it is corrected.
+
+| Offer | Cloud | Delivered by | Predicate re-read | What you get |
+|---|---|---|---|---|
+| `dns:managed_certificate` | azure | cert-manager | `certManagerDNS01Solvers` | Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the Application Gateway. |
+| `dns:managed_certificate` | gcp | cert-manager | `certManagerDNS01Solvers` | Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the GKE Ingress from a Kubernetes Secret. |
 
 ## Documented exclusions
 

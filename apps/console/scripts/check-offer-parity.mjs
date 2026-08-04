@@ -374,7 +374,7 @@ function readExclusions() {
 		if (/^\s*#/.test(raw)) continue;
 		const line = raw.trimEnd();
 		if (!line.trim()) continue;
-		const head = line.match(/^(exclusions|baseline|wired):\s*$/);
+		const head = line.match(/^(exclusions|baseline|wired|carried_in_cluster):\s*$/);
 		if (head) {
 			if (cur) { out.push(cur); cur = null; }
 			section = head[1];
@@ -402,6 +402,75 @@ const baseline = allEntries.filter((e) => e.section === "baseline");
 // `exclusions:` entry says the cloud will never honor the offer when it already does. See
 // UNDECLARED_GATED below for why the state has to be declared at all.
 const wired = allEntries.filter((e) => e.section === "wired");
+
+// Cells the cloud DOES honor, through a component the platform installs INTO THE CLUSTER rather than
+// through OpenTofu. A fourth section, and it exists because the carrier rule structurally cannot see
+// these: L5 requires the tfvar to be DECLARED in the template and READ by a resource argument, and a
+// component installed by Go writes no tfvar at all. So no cell served that way can ever satisfy it,
+// however correct the implementation is.
+//
+// The other three sections all say something false about such a cell:
+//   · `exclusions:` — prints under a heading meaning "this cloud cannot do this". For gcp/azure
+//     `dns:managed_certificate` that is the OPPOSITE of the truth: cert-manager issues there.
+//   · `baseline:`   — calls working, shipped code a known gap, and demands an issue nobody can close.
+//   · `wired:`      — is about a ⚠️ BRANCH GUARD in provider code. There is no branch here to read.
+//
+// ⚠️ AND IT MUST NOT BECOME A MUTE BUTTON. #1864 is the cautionary case: `exclusions:` was the one
+// claim nothing re-read, so any measured gap could be discharged by RECLASSIFYING it instead of
+// fixing it — green either way. A bare "cert-manager does this one" would reopen that hole through a
+// third door. So an entry here is a CHECKABLE claim, not prose: it names the PREDICATE that decides
+// per cloud, and `verifyInClusterCarriage` re-reads it from the Go source on every run. The entry
+// survives only while the predicate still covers the cloud.
+const carriedInCluster = allEntries.filter((e) => e.section === "carried_in_cluster");
+
+/**
+ * Re-read a `carried_in_cluster:` entry's claim against the Go source that owns it.
+ *
+ * The entry names `predicate` — a Go `map[string]…` literal whose KEYS are the clouds the installing
+ * component actually ships for — and `source`, the file it lives in. Reading the map is what turns a
+ * declaration into a ratchet: drop a cloud from `certManagerDNS01Solvers` and every entry claiming
+ * that cloud goes stale on the next run, exactly as a `baseline:` entry does when its gap is fixed.
+ *
+ * Reading the MAP and not, say, a hand-kept list in this file is the same rule the floor reader
+ * learned the hard way: a guard must read the same source as the thing it guards. `HETZNER_VARIANT_VALUES`
+ * was deleted out from under the old floor reader and the guard kept passing while measuring nothing.
+ *
+ * Returns `{ ok }` when the predicate covers the cloud, or `{ ok: false, why }` naming what broke —
+ * a missing file, a missing symbol, or a cloud the map no longer lists. All three are failures: an
+ * unreadable predicate is NOT a pass, or "I could not check" would silently mean "fine".
+ */
+function verifyInClusterCarriage(entry) {
+	const { predicate, source, cloud } = entry;
+	if (!predicate || !source) {
+		return { ok: false, why: "the entry names no \`predicate:\`/\`source:\`, so nothing re-reads it — see the note above this function" };
+	}
+	const path = `${ROOT}/${source}`;
+	if (!existsSync(path)) {
+		return { ok: false, why: `\`source: ${source}\` does not exist` };
+	}
+	const text = readFileSync(path, "utf8");
+	// `var <name> = map[string]<T>{ … }` — take the literal body up to the closing brace at column 0,
+	// which is where gofmt puts it for a top-level var.
+	const m = text.match(new RegExp(`\\b${predicate}\\s*=\\s*map\\[string\\][^{]*\\{([\\s\\S]*?)\\n\\}`));
+	if (!m) {
+		return { ok: false, why: `\`${predicate}\` is not a top-level \`map[string]…\` literal in ${source}` };
+	}
+	// Keys with a NON-EMPTY value. An entry mapped to "" is the map's own way of saying "not here".
+	const keys = new Set(
+		[...m[1].matchAll(/"([^"]+)"\s*:\s*"([^"]*)"/g)].filter((k) => k[2] !== "").map((k) => k[1]),
+	);
+	if (!keys.has(cloud)) {
+		return {
+			ok: false,
+			why: `\`${predicate}\` in ${source} no longer lists \`${cloud}\` (it has: ${[...keys].join(", ") || "nothing"}), so nothing installs the component that was said to honor this offer`,
+		};
+	}
+	return { ok: true };
+}
+
+/** The recorded in-cluster carriage for this (offer, cloud), if one is declared. */
+const inClusterAck = (offer, cloud) =>
+	carriedInCluster.find((e) => e.offer === offer && (e.cloud === cloud || e.cloud === "*"));
 
 // States that are a GAP: offered, unbuildable, silent — the thing the cloud-parity rule forbids. A
 // cell in one of these fails the build unless the yaml records it.
@@ -483,7 +552,16 @@ const UNHONORED_STATES = new Set([...GAP_STATES, "gated-carrier"]);
 // board record of a gap nobody touched — the silent deletion this whole guard exists to prevent,
 // arriving through the one door the guard itself holds open. Dropping a cloud from `offeredOn`
 // reached it in one line, and the congratulation was the only thing printed.
-const MEASURED_STATES = new Set(["ok", ...UNHONORED_STATES]);
+// `carried-in-cluster` IS measured, and deliberately so. `not-offered` and `excluded` are absent from
+// this set because in those the guard DECLINED TO LOOK — but here it looked, and at the only source
+// that could answer: it re-read the installing predicate and confirmed the cloud is covered. Leaving
+// it out would recreate #1864 precisely — a state that is green because nothing measures it, which is
+// how a gap becomes permanently undischargeable while every run passes.
+//
+// It is NOT in UNHONORED_STATES: the offer IS delivered. So a `baseline:` entry for the same cell
+// correctly goes stale, which is the ratchet doing its job when a gap is closed by shipping the
+// in-cluster component rather than by wiring a tfvar.
+const MEASURED_STATES = new Set(["ok", "carried-in-cluster", ...UNHONORED_STATES]);
 
 /** The recorded EXCLUSION for this (offer, cloud), if the cloud has been decided never to honor it. */
 const excluded = (offer, cloud) =>
@@ -503,6 +581,8 @@ const unhonoredCells = [];
  * Deliberately not in `measuredCells`: an exclusion is still "the guard declined to look" for ratchet
  * purposes, and feeding it there would make excluded cells satisfy baseline entries (#1864). */
 const excludedMeasured = [];
+/** Every `carried_in_cluster:` entry this run re-read, with the verdict on its predicate. */
+const inClusterMeasured = [];
 
 /**
  * File a cell's verdict for the ratchet, and hand back its baseline entry if it has one.
@@ -1057,6 +1137,26 @@ for (const offer of SURFACE.offers) {
 	if (!MEASURED_KINDS.has(offer.kind)) continue;
 
 	for (const cloud of offeredCloudsFor(offer)) {
+		// An in-cluster carriage claim is settled BEFORE the OpenTofu trace, because the trace can only
+		// ever say "no carrier" here — the component writes no tfvar — and that answer would be true and
+		// useless. What IS checkable is the claim itself, so check that instead.
+		const ic = inClusterAck(offerBase, cloud);
+		if (ic) {
+			const v = verifyInClusterCarriage(ic);
+			// A redundant claim is also a wrong one: if OpenTofu carries and derives the switch today, the
+			// entry says the offer arrives by a route it no longer needs, and the matrix would credit the
+			// wrong mechanism. Mirrors the `exclusions:` false-ceiling check for the same reason.
+			const t = traceOption(cloud, offer.key);
+			const alsoCarried = t.carried && t.sites.some((s) => evaluateWiring(cloud, s).ok && s.strength === "derived");
+			inClusterMeasured.push({ offer: offerBase, cloud, entry: ic, verdict: v, alsoCarried });
+			carrierCells.push({
+				kind: offer.kind, key: offer.key, cloud,
+				state: "carried-in-cluster",
+				detail: ic.reason ?? "", by: ic.by ?? "",
+			});
+			continue;
+		}
+
 		const exc = excluded(offerBase, cloud);
 		if (exc) {
 			// An exclusion is a CLAIM — "this cloud will never honor this offer" — and until now it was
@@ -1198,6 +1298,12 @@ const GLYPH = {
 	// Its OWN glyph, not 🟡 and not 🚫. Neither of those is true: the wiring exists, and whether it
 	// wires the right thing is exactly what could not be established.
 	"gated-carrier": "⚠️",
+	// Honored, but not by OpenTofu — a component the platform installs into the cluster delivers it.
+	// Distinct from 🟡 because the two hops this grid measures were NOT what established it (they
+	// cannot be: an in-cluster component writes no tfvar), and emphatically distinct from the `—` of
+	// an exclusion, which is read as "this cloud cannot". A reader choosing a cloud needs to know the
+	// offer arrives, and by which mechanism, because the failure modes differ.
+	"carried-in-cluster": "☸️",
 	"not-offered": "·",
 };
 
@@ -1520,6 +1626,27 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 		}
 	}
 
+	// Rendered ABOVE the exclusions, and that ordering is the point: these cells are honored, and a
+	// reader who meets `—` first will have already concluded the cloud cannot do it.
+	if (carriedInCluster.length) {
+		md += `\n## Carried in-cluster — honored, but not by OpenTofu\n
+A ☸️ cell means the cloud **does** honor the offer, through a component the platform installs into
+the cluster rather than through a resource in the template. The carrier grid above cannot see these:
+it checks that a tfvar is declared and read by a resource argument, and an in-cluster component
+writes no tfvar at all. That is a limit of the measurement, not of the cloud.
+
+These are not exclusions — nothing here is unavailable — and not debt. Each names the predicate that
+decides which clouds the component ships for, and the guard re-reads it on every run: if the
+predicate stops listing the cloud, the entry fails until it is corrected.
+
+| Offer | Cloud | Delivered by | Predicate re-read | What you get |
+|---|---|---|---|---|
+`;
+		for (const e of carriedInCluster) {
+			md += `| \`${e.offer}\` | ${e.cloud} | ${e.by ?? ""} | \`${e.predicate ?? ""}\` | ${e.reason ?? ""} |\n`;
+		}
+	}
+
 	if (exclusions.length) {
 		md += `\n## Documented exclusions\n\n| Offer | Cloud | Reason |\n|---|---|---|\n`;
 		for (const e of exclusions) md += `| \`${e.offer}\` | ${e.cloud} | ${e.reason ?? ""} |\n`;
@@ -1732,6 +1859,48 @@ is a measurement bug, and deleting the entry hides it.
 `);
 }
 
+// A `carried_in_cluster:` entry whose predicate no longer covers the cloud. This is the whole reason
+// the section carries a `predicate:` at all: without it the entry would be prose, and prose is what
+// let #1864 discharge a measured gap by reclassifying it.
+const brokenInCluster = inClusterMeasured.filter((c) => !c.verdict.ok);
+if (brokenInCluster.length) {
+	failed = true;
+	console.error(`\n✗ offer parity — ${brokenInCluster.length} \`carried_in_cluster:\` entr(y|ies) whose predicate no longer holds:\n`);
+	for (const c of brokenInCluster) {
+		console.error(`  ${c.cloud} · ${c.offer}${c.entry.by ? `  (${c.entry.by})` : ""}`);
+		console.error(`      ${c.verdict.why}`);
+	}
+	console.error(`
+A \`carried_in_cluster:\` entry says the offer IS honored on this cloud, by a component the platform
+installs into the cluster rather than by OpenTofu. That is not a thing the carrier rule can see — L5
+wants a tfvar read by a resource argument, and an in-cluster component writes none — so the entry
+names the PREDICATE that decides per cloud and this guard re-reads it every run.
+
+The predicate has stopped covering this cloud. Either the component genuinely no longer ships there,
+in which case the offer is now unhonored and this belongs on the \`baseline:\` with an issue or in
+\`exclusions:\`, or the entry names the wrong symbol. Do not delete the entry to make this pass — a
+cell that quietly stops being honored is exactly what the ratchet exists to catch.
+`);
+}
+
+// A `carried_in_cluster:` entry that OpenTofu has since made redundant. Same shape as the false
+// ceiling below: the entry is not wrong about the offer being honored, it is wrong about BY WHAT, and
+// the matrix would credit the wrong mechanism to a reader choosing a cloud.
+const redundantInCluster = inClusterMeasured.filter((c) => c.verdict.ok && c.alsoCarried);
+if (redundantInCluster.length) {
+	failed = true;
+	console.error(`\n✗ offer parity — ${redundantInCluster.length} \`carried_in_cluster:\` entr(y|ies) OpenTofu now carries anyway:\n`);
+	for (const c of redundantInCluster) {
+		console.error(`  ${c.cloud} · ${c.offer} — the template carries and derives this switch today.`);
+	}
+	console.error(`
+The offer is honored twice over, and the entry names the wrong mechanism. Delete it: the cell then
+measures like any other, and the ordinary reporting will confirm the OpenTofu route. Leaving it would
+tell the matrix's readers that a cloud depends on an in-cluster component it does not need — and hide
+a real regression later, because the entry would keep the cell green if the template carriage broke.
+`);
+}
+
 // An exclusion that has come TRUE in our own code. The mirror of the baseline's stale check, and the
 // last of the three sections to get one: `baseline:` ratchets down, `wired:` gets re-read, and until
 // #1864 `exclusions:` was the only list that could sit unchallenged forever.
@@ -1797,7 +1966,8 @@ if (failed) process.exit(1);
 console.log(
 	`✓ offer parity — ${cells.length} (offer × cloud) cells + ${optionCells.length} option cell(s) + ` +
 		`${carrierCells.length} carrier cell(s), ${exclusions.length} documented exclusion(s), ` +
-		`${baseline.length} on the baseline, ${wired.length} reviewed branch-guard wiring(s), no NEW silent gaps.`,
+		`${baseline.length} on the baseline, ${wired.length} reviewed branch-guard wiring(s), ` +
+		`${carriedInCluster.length} carried in-cluster, no NEW silent gaps.`,
 );
 console.log(
 	`✓ day-2 gate coverage — ${day2Cells.length} offered cell(s): ` +

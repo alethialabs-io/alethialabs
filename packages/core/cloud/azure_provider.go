@@ -25,17 +25,19 @@ func (p *azureProvider) RequiredCLIs() []string {
 func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	wafEnabled := config.DNS.WafEnabled
-	managedCert := config.DNS.ManagedCertificate
 	if v, ok := config.DNS.ProviderConfig["azure_waf"]; ok {
 		if b, ok := v.(bool); ok {
 			wafEnabled = b
 		}
 	}
-	if v, ok := config.DNS.ProviderConfig["managed_certificate"]; ok {
-		if b, ok := v.(bool); ok {
-			managedCert = b
-		}
-	}
+	// No `managed_certificate` override here: Azure's certificate is issued in-cluster by
+	// cert-manager (#1825), so the template declares no certificate variable for one to act on.
+	//
+	// The escape hatch still WORKS — it moved to `managedCertificateAsk` in
+	// packages/core/argocd/infra_facts.go, which is where the decision now lives. Overriding there
+	// covers every cloud, converged or not, and is written once instead of restated per provider.
+	// Leaving a copy here would keep accepting the key and change nothing, which is the defect this
+	// programme exists to remove.
 
 	provisionVnet := config.Network.ProvisionNetwork
 	if !provisionVnet && config.Network.NetworkID == "" {
@@ -67,8 +69,16 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		// WAF
 		"azure_waf_enabled": wafEnabled,
 
-		// TLS
-		"azure_managed_certificate": managedCert,
+		// TLS — no tfvar. Azure's managed certificate is issued IN-CLUSTER by cert-manager
+		// (#1825), so nothing in the template consumes the switch and `azure_managed_certificate`
+		// is not emitted. The user's ask still reaches the runner, by the path it always used:
+		// InfraFacts.ManagedCertificate reads vc.DNS.ManagedCertificate from the config snapshot,
+		// never a tfvar or an output.
+		//
+		// Emitting it anyway would be worse than dead weight. OpenTofu drops a root variable the
+		// template does not declare, so the key would vanish at plan time while the offer-parity
+		// guard still traced the emit and scored the cell as carried — a green cell for a value
+		// that never reaches a plan.
 
 		// Service Bus
 		"create_service_bus": len(config.Queues) > 0 || len(config.Topics) > 0,

@@ -376,20 +376,33 @@ var ssotFactVariants = map[string]*argocd.InfraFacts{
 	// DecisionsSSOT overrides Provider per iteration, and a fact belonging to another cloud is
 	// simply unread by the arm that runs.
 	"every installable service turned on": {
-		DNSEnabled:                    true,
-		DomainName:                    "example.com",
-		DNSCredentialPresent:          true,
-		AppsDestinationRepo:           "https://github.com/acme/apps",
-		ACMCertificateArn:             "arn:aws:acm:us-east-1:111111111111:certificate/abc",
-		WAFWebACLArn:                  "arn:aws:wafv2:us-east-1:111111111111:regional/webacl/app/0c4e-1",
-		IRSAExternalSecretsArn:        "arn:aws:iam::111111111111:role/eks-ue1-dev-x-secrets-operator",
+		DNSEnabled:             true,
+		DomainName:             "example.com",
+		DNSCredentialPresent:   true,
+		AppsDestinationRepo:    "https://github.com/acme/apps",
+		ACMCertificateArn:      "arn:aws:acm:us-east-1:111111111111:certificate/abc",
+		WAFWebACLArn:           "arn:aws:wafv2:us-east-1:111111111111:regional/webacl/app/0c4e-1",
+		IRSAExternalSecretsArn: "arn:aws:iam::111111111111:role/eks-ue1-dev-x-secrets-operator",
+		// ManagedCertificate is the canvas ASK, and on gcp/azure it is now the whole certificate
+		// story — both converged onto cert-manager, so there is no per-cloud certificate fact to
+		// set. The solver's per-cloud identity/zone facts below are what make CertManagerEnabled
+		// true on each, and without them "every installable service turned on" would quietly not
+		// include the ingress on either cloud.
+		ManagedCertificate:            true,
+		ClusterName:                   "mock-cluster",
 		GCPExternalDNSSA:              "external-dns@mock-project.iam.gserviceaccount.com",
 		GCPExternalSecretsSA:          "external-secrets@mock-project.iam.gserviceaccount.com",
-		GCPManagedCertName:            "alethia-nl-production-platform-cert",
+		GCPProjectID:                  "mock-project",
+		GCPDNSZoneName:                "mock-zone",
 		GCPArmorPolicy:                "alethia-nl-production-armor-policy",
 		AzureExternalDNSClient:        "11111111-2222-3333-4444-555555555555",
 		AzureExternalSecretsClient:    "66666666-7777-8888-9999-000000000000",
 		AzureKeyVaultURI:              "https://mock-kv.vault.azure.net/",
+		AzureResourceGroup:            "rg-mock",
+		AzureSubscriptionID:           "99999999-8888-7777-6666-555555555555",
+		AzureTenantID:                 "12121212-3434-5656-7878-909090909090",
+		AzureIngressClient:            "22222222-3333-4444-5555-666666666666",
+		AzureAppGatewayName:           "agw-mock",
 		AlibabaExternalSecretsRoleArn: "acs:ram::111111111111:role/alethia-eso",
 	},
 }

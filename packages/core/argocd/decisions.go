@@ -432,44 +432,48 @@ var argocdURLGates = map[string]providerDecision{
 		installedReason: "installed — ArgoCD is exposed over the ALB ingress (ACM certificate present).",
 		skippedReason:   awsArgocdURLSkipReason,
 	},
-	// GCP's predicate is its own certificate: installArgoCD renders the `gce` Ingress only when the
-	// GLOBAL Google-managed SSL certificate exists, because `ingress.gcp.kubernetes.io/pre-shared-cert`
-	// is the only way to put TLS on it without a second cert-manager stack, and a GKE Ingress with no
-	// certificate would serve the ArgoCD API over plain HTTP on the public internet.
+	// GCP converged onto cert-manager (#1858), so its predicate is no longer a certificate output —
+	// there isn't one. `google_compute_managed_ssl_certificate` and the `pre-shared-cert` annotation
+	// that named it are both deleted; the GKE Ingress now carries `spec.tls` and the GCE controller
+	// reads the Secret cert-manager writes.
 	//
-	// The skip reason is SPECIFIC rather than the shared default: on GCP the missing piece is a
-	// switch the operator can turn on (the canvas certificate switch → `cloud_dns_managed_certificate`),
-	// not an absent capability, and "no managed ingress on this cloud yet" would now be a lie.
+	// ⚠️ MIRRORS THE EMITTER, EVERY TERM, same as azure below. installArgoCD renders this inside
+	// `vc.DNS.Enabled && vc.DNS.DomainName != ""` and then only when
+	// `gkeCluster != "" && certManagerWillIssue`. The cluster term is not ceremony: a deploy with DNS
+	// and cert-manager but no GKE cluster emits nothing, and a gate that skipped it would report an
+	// ingress that does not exist — #1831 on a second cloud.
 	//
-	// The DNS conjuncts are DEFENCE IN DEPTH here rather than a live fix, and are stated anyway so
-	// the AWS bug cannot be reintroduced on this cloud by a later edit: `cloud_dns_enabled` is
-	// `config.DNS.Enabled` verbatim and the certificate output is `length(module.cloud_dns) > 0 ?
-	// … : null`, so a non-empty certificate name already implies DNS was on — today.
+	// CertManagerEnabled() is CALLED, not restated. It already folds in the managed-certificate
+	// switch, DNS, the domain and the per-cloud solver.
 	"gcp": {
 		installed: func(f *InfraFacts) bool {
-			return f.DNSEnabled && f.DomainName != "" && f.GCPManagedCertName != ""
+			return f.DNSEnabled && f.DomainName != "" && f.ClusterName != "" && f.CertManagerEnabled()
 		},
-		installedReason: "installed — ArgoCD is exposed over a GKE Ingress (`gce` class) fronted by the Google-managed SSL certificate.",
+		installedReason: "installed — ArgoCD is exposed over a GKE Ingress (`gce` class), with TLS issued in-cluster by cert-manager and served from a Kubernetes Secret.",
 		skippedReason:   gcpArgocdURLSkipReason,
 	},
 	"azure": {
-		// Azure now HAS a managed ingress (AGIC + the Application Gateway) and still has no ArgoCD
-		// URL, and the blocker is TLS rather than ingress. An Application Gateway listener
-		// terminates HTTPS from a certificate on the gateway or in Key Vault, and the only
-		// certificate this template can issue today is the wrong product entirely (#1825 — a
-		// purchased App Service certificate that binds to neither AKS nor an Application Gateway).
-		// Publishing the ArgoCD ADMIN console over the plaintext :80 listener instead is not an
-		// option worth having.
+		// STILL CONSTANT-FALSE, and now for a different reason than before.
 		//
-		// So the predicate is constant-false rather than the entry being absent: a cloud absent
-		// from this table records "no managed ingress on this cloud yet", which stopped being true
-		// the moment AGIC landed and would send an operator looking for the wrong thing. It flips
-		// to a real predicate (an issued certificate reference) in the lane that closes #1825, and
-		// installedReason is written now so that flip is one line rather than a rewrite.
+		// It was false because Azure had no certificate that could terminate anything: the only one
+		// the template could produce was a purchased App Service order binding to neither AKS nor an
+		// Application Gateway (#1825). That resource is deleted and cert-manager issues in-cluster
+		// now, so the TLS blocker is gone — AGIC serves the project's own Ingress objects with it.
+		//
+		// What is held is the EXPOSURE. Publishing the ArgoCD ADMIN console over the Application
+		// Gateway is a security decision worth reviewing on its own rather than riding along with a
+		// certificate refactor, so the flip and the ingress the runner would emit for it are split
+		// out. `installedReason` stays written so that lane is one line plus its emitter.
+		//
+		// The pair is what matters: installArgoCD emits NO azure ingress, and this reports none.
+		// A gate that ran ahead of its emitter is #1831 exactly.
 		installed:       func(*InfraFacts) bool { return false },
-		installedReason: "installed — ArgoCD is exposed over the Application Gateway ingress.",
-		skippedReason: func(_ *InfraFacts) string {
-			return "an Application Gateway ingress controller is installed, but ArgoCD is not published through it: the gateway has no TLS certificate to terminate on (#1825), and the admin console is not served over plaintext HTTP — reach it with a port-forward and the admin password."
+		installedReason: "installed — ArgoCD is exposed over the Application Gateway ingress, with TLS issued in-cluster by cert-manager and lifted onto the listener by AGIC.",
+		skippedReason: func(f *InfraFacts) string {
+			if !f.CertManagerEnabled() {
+				return "an Application Gateway ingress controller is installed and cert-manager is not issuing a certificate for this project: " + certManagerSkipReason(f) + " ArgoCD is reachable via port-forward + the admin password."
+			}
+			return "an Application Gateway ingress controller is installed and cert-manager issues certificates for your own Ingress objects, but the ArgoCD admin console is not published over the gateway — that exposure is a separate, reviewed decision. Reach ArgoCD with a port-forward and the admin password."
 		},
 	},
 }
@@ -481,8 +485,14 @@ func gcpArgocdURLSkipReason(f *InfraFacts) string {
 		return "DNS is disabled for this project — the GKE Ingress is only rendered for a DNS hostname, so no managed ArgoCD URL exists however the certificate switch is set; access ArgoCD via port-forward + the admin password."
 	case f.DomainName == "":
 		return "no domain is configured — the GKE Ingress has no hostname to serve, so no managed ArgoCD URL exists; set a DNS domain, or access ArgoCD via port-forward + the admin password."
+	case f.ClusterName == "":
+		return "no GKE cluster was provisioned for this project — there is nothing for a GKE Ingress to run on, so no managed ArgoCD URL exists."
+	case !f.CertManagerEnabled():
+		// Delegates rather than restating, so "you left the switch off" / "this cloud has no solver"
+		// / "the identity output is missing" stay one sentence each, written once.
+		return "the GKE cluster is provisioned, but nothing will issue its TLS certificate: " + certManagerSkipReason(f) + " The GKE Ingress sets allow-http=false, so it would serve nothing at all rather than fall back to plaintext — use port-forward + the admin password."
 	}
-	return "no Google-managed SSL certificate was provisioned — turn the certificate switch on (with DNS and a domain) to expose ArgoCD over a GKE Ingress; until then use port-forward + the admin password."
+	return ""
 }
 
 // awsArgocdURLSkipReason names which half of the AWS gate was missing. The certificate arm
