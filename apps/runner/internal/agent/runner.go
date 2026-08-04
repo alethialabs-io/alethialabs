@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1149,7 +1150,136 @@ func getSnapshotString(snapshot map[string]any, key string) string {
 	return ""
 }
 
+// consoleOnlySnapshotKeys — keys the console writes onto a job's `config_snapshot` that
+// types.ProjectConfig deliberately does NOT hold, keyed by the object path they appear at
+// ("" is the snapshot root). Each row is a DECISION, not an accident: adding one requires a
+// reason, because the alternative — the lenient decode this replaces — dropped console keys
+// silently on every real deploy (#1962).
+//
+// The remedy for an unlisted key is almost always the OTHER one: give types.ProjectConfig the
+// field. Only add a row here when the runner genuinely must not read the key.
+var consoleOnlySnapshotKeys = map[string][]string{
+	"": {
+		// org_id — zero readers in either language. The runner's own Job struct (api.go) has no
+		// OrgID field at all: tenancy travels on the `jobs.org_id` COLUMN, which the atomic claim
+		// and the RLS policies use. Forensic only.
+		"org_id",
+		// slug — zero readers. It reached the snapshot through buildConfigSnapshot's `...project`
+		// DB-row spread; the runner addresses a project by `id`, never by slug.
+		"slug",
+		// fabric_name — zero readers: `grep -rn "fabric_name\|FabricName" --include='*.go' .`
+		// returns nothing. The per-Fabric tofu state is keyed on `fabric_id` (a UUID, regex
+		// validated) and it is keyed in TYPESCRIPT — apps/console/lib/storage/tofu-state.ts,
+		// `stateKeyForJob`, called by the state-token mint route. The runner never chooses the
+		// state key. Go's only `fabric_id` use is TF_VAR_alethia_fabric_id on the BYO-IaC path.
+		"fabric_name",
+		// compat — the config-time compatibility report (#1218). Forensic only, by design: the
+		// canvas re-runs the same pure engine client-side (apps/console/lib/compat/addon.ts) and
+		// the apply gate re-evaluates independently in Go from the RESOLVED config
+		// (packages/core/provisioner/deploy.go, `compat.Evaluate`). NOT to be confused with
+		// `classification`, which IS a ProjectConfig field and IS consumed.
+		"compat",
+		// created_at / updated_at / estimated_monthly_cost — `projects` DB-row columns that the
+		// old `...project` spread put on every production snapshot (they are absent from the
+		// committed fixture only because its mocked row omits them). The console now emits an
+		// explicit pick instead, so NEW snapshots do not carry them — but reconcile, drift, probe
+		// and reap re-dispatch a STORED snapshot verbatim into a new job (lib/reconcile/reap.ts,
+		// lib/drift/dispatch.ts, lib/probes/dispatch.ts), so a pre-pick snapshot keeps arriving
+		// here indefinitely. Dropping these rows would fail those jobs.
+		"created_at",
+		"updated_at",
+		"estimated_monthly_cost",
+	},
+	"cluster": {
+		// cluster_endpoint — written by buildConfigSnapshot for the CONSOLE's day-2 surfaces. The
+		// runner acquires kubeconfig from the provider by cluster NAME (ConfigureKubeconfig) and
+		// reads an endpoint back out of `execution_metadata`, never off the snapshot.
+		"cluster_endpoint",
+	},
+}
+
+// dbRowSpreadSnapshotKeys — snapshot keys whose LIST ELEMENTS are whole `project_*` DB rows.
+// `buildConfigSnapshot` spreads each row (`...d`) into its wire object, so every element carries
+// its table's bookkeeping and write-back columns (`id`, `project_id`, `environment_id`, `status`,
+// `status_message`, `estimated_monthly_cost`, `created_at`, `updated_at`) plus per-table columns
+// the runner contract does not model (`databases.storage_gb`, `caches.allowed_cidr_blocks`,
+// `nosql_tables.provider_config`, `container_registries.repository_url`, …).
+//
+// Those drops are real and worth closing, but they have to be closed on the CONSOLE side by
+// replacing each spread with an explicit pick — the same fix #1962 makes for `...project`.
+// Enforcing here first would hard-fail every deploy that has any component today, and would turn
+// the NEXT component migration into a production outage with nothing to catch it at PR time: the
+// committed fidelity fixture carries empty component lists, so no CI test exercises this subtree.
+// A strict runtime check with no CI-time counterpart is how you ship an outage, so these subtrees
+// are excluded from the unknown-key check deliberately, with the reason written down.
+var dbRowSpreadSnapshotKeys = []string{
+	"databases", "caches", "queues", "topics", "nosql_tables", "secrets",
+	"container_registries", "helm_registries", "storage_buckets", "services",
+}
+
+// assertNoUnknownSnapshotKeys fails when the console's config_snapshot carries a key that
+// types.ProjectConfig has no field for and consoleOnlySnapshotKeys does not name. It strips the
+// allowlisted paths from a COPY of the snapshot and then strict-decodes what is left, so the
+// allowlist stays a written decision rather than an unstructured decoder error.
+//
+// Only "unknown field" is reported here; a type mismatch is left to the real decode below, which
+// has always surfaced it, so this check adds exactly one new failure mode and no others.
+func assertNoUnknownSnapshotKeys(snapshot map[string]any) error {
+	checked := make(map[string]any, len(snapshot))
+	for k, v := range snapshot {
+		checked[k] = v
+	}
+	for _, k := range dbRowSpreadSnapshotKeys {
+		delete(checked, k)
+	}
+	for path, keys := range consoleOnlySnapshotKeys {
+		if path == "" {
+			for _, k := range keys {
+				delete(checked, k)
+			}
+			continue
+		}
+		nested, ok := checked[path].(map[string]any)
+		if !ok {
+			continue
+		}
+		trimmed := make(map[string]any, len(nested))
+		for k, v := range nested {
+			trimmed[k] = v
+		}
+		for _, k := range keys {
+			delete(trimmed, k)
+		}
+		checked[path] = trimmed
+	}
+
+	data, err := json.Marshal(checked)
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var probe types.ProjectConfig
+	if err := dec.Decode(&probe); err != nil && strings.Contains(err.Error(), "unknown field") {
+		return fmt.Errorf(
+			"config_snapshot carries a key the runner contract does not model (%s). Either add the "+
+				"field to types.ProjectConfig (packages/core/types/project_config.go), or — if the "+
+				"runner genuinely must not read it — record it in consoleOnlySnapshotKeys "+
+				"(apps/runner/internal/agent/runner.go) with the reason it stays console-only",
+			err,
+		)
+	}
+	return nil
+}
+
+// snapshotToProjectConfig decodes a job's frozen console `config_snapshot` into the runner's
+// ProjectConfig contract, failing closed on any key the console writes that the contract has no
+// field for and consoleOnlySnapshotKeys does not name (#1962).
 func snapshotToProjectConfig(snapshot map[string]any) (*types.ProjectConfig, error) {
+	if err := assertNoUnknownSnapshotKeys(snapshot); err != nil {
+		return nil, err
+	}
+
 	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return nil, err

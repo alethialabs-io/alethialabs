@@ -5,7 +5,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -209,8 +211,6 @@ func TestSnapshotToProjectConfig(t *testing.T) {
 				"project_name":      "myproject",
 				"region":            "eu-west-1",
 				"environment_stage": "dev",
-				"create_vpc":        true,
-				"vpc_cidr":          "10.0.0.0/16",
 			},
 			wantName:   "myproject",
 			wantRegion: "eu-west-1",
@@ -228,6 +228,43 @@ func TestSnapshotToProjectConfig(t *testing.T) {
 			wantName:   "dbproject",
 			wantRegion: "eu-central-1",
 		},
+		{
+			// The DB-row-spread lists are excluded from the unknown-key check on purpose
+			// (dbRowSpreadSnapshotKeys) — the console spreads whole `project_*` rows into them, so
+			// their bookkeeping columns must keep decoding leniently.
+			name: "component rows keep their DB bookkeeping columns",
+			snapshot: map[string]any{
+				"project_name":      "rowproject",
+				"region":            "eu-north-1",
+				"environment_stage": "prod",
+				"databases": []any{map[string]any{
+					"name": "main", "engine": "aurora-postgresql",
+					"id": "db-1", "project_id": "p1", "environment_id": "env-1",
+					"status": "PENDING", "created_at": "2026-01-01T00:00:00.000Z",
+				}},
+			},
+			wantName:   "rowproject",
+			wantRegion: "eu-north-1",
+		},
+		{
+			// Every key in consoleOnlySnapshotKeys, at the root and nested, in one snapshot.
+			name: "allowlisted console-only keys decode",
+			snapshot: map[string]any{
+				"project_name":           "allowproject",
+				"region":                 "us-east-1",
+				"environment_stage":      "dev",
+				"org_id":                 "org-1",
+				"slug":                   "allowproject",
+				"fabric_name":            "fixture",
+				"compat":                 map[string]any{"verdict": "pass"},
+				"created_at":             "2026-01-01T00:00:00.000Z",
+				"updated_at":             "2026-01-02T00:00:00.000Z",
+				"estimated_monthly_cost": 12.5,
+				"cluster":                map[string]any{"cluster_name": "c1", "cluster_endpoint": "https://c1"},
+			},
+			wantName:   "allowproject",
+			wantRegion: "us-east-1",
+		},
 	}
 
 	for _, tt := range tests {
@@ -243,6 +280,117 @@ func TestSnapshotToProjectConfig(t *testing.T) {
 				t.Errorf("Region = %q, want %q", vc.Region, tt.wantRegion)
 			}
 		})
+	}
+}
+
+// A key types.ProjectConfig does not model and consoleOnlySnapshotKeys does not name must FAIL the
+// decode, naming the key. Before #1962 this decoded happily and dropped the key on the floor — the
+// `create_vpc` / `vpc_cidr` case below used to assert exactly that lenient behaviour.
+func TestSnapshotToProjectConfig_UnknownKeyFailsClosed(t *testing.T) {
+	tests := []struct {
+		name     string
+		snapshot map[string]any
+		wantKey  string
+	}{
+		{
+			name: "unknown root key",
+			snapshot: map[string]any{
+				"project_name": "myproject",
+				"region":       "eu-west-1",
+				"create_vpc":   true,
+				"vpc_cidr":     "10.0.0.0/16",
+			},
+			wantKey: "create_vpc",
+		},
+		{
+			// DisallowUnknownFields is recursive, and the allowlist is keyed by path — an unlisted
+			// key under `cluster` fails even though `cluster.cluster_endpoint` is allowed.
+			name: "unknown nested key under an allowlisted path",
+			snapshot: map[string]any{
+				"project_name": "myproject",
+				"cluster": map[string]any{
+					"cluster_name":     "c1",
+					"cluster_endpoint": "https://c1",
+					"argocd_url":       "https://argocd",
+				},
+			},
+			wantKey: "argocd_url",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vc, err := snapshotToProjectConfig(tt.snapshot)
+			if err == nil {
+				t.Fatalf("expected an error for %q, got config %+v", tt.wantKey, vc)
+			}
+			if !strings.Contains(err.Error(), tt.wantKey) {
+				t.Errorf("error must name the offending key %q, got: %v", tt.wantKey, err)
+			}
+			if !strings.Contains(err.Error(), "consoleOnlySnapshotKeys") {
+				t.Errorf("error must point at the allowlist, got: %v", err)
+			}
+		})
+	}
+}
+
+// The CI-time counterpart to the strict decode: the committed fixture is what the REAL console
+// `buildConfigSnapshot` freezes (apps/console/tests/e2e-fixtures/t2-config-snapshot.test.ts drives
+// the real action and deep-equals it), so a console key the runner contract does not model reds
+// HERE, at PR time, instead of failing a production deploy. A strict runtime check with no
+// CI-time detector is how you ship an outage.
+func TestSnapshotToProjectConfig_ConsoleFixtureDecodes(t *testing.T) {
+	// apps/runner/internal/agent → repo root is four levels up.
+	const fixture = "../../../../test/e2e/fixtures/t2_config_snapshot.hetzner.json"
+	raw, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatalf("read %s: %v", fixture, err)
+	}
+	var snapshot map[string]any
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		t.Fatalf("fixture is not a JSON object: %v", err)
+	}
+
+	vc, err := snapshotToProjectConfig(snapshot)
+	if err != nil {
+		t.Fatalf("the console's own frozen config_snapshot must decode: %v", err)
+	}
+	if vc.ProjectName != "alethia-fixture" || vc.Provider != "hetzner" {
+		t.Errorf("fixture decoded to the wrong project: name=%q provider=%q", vc.ProjectName, vc.Provider)
+	}
+
+	// The `projects` DB-row columns an OLD console (pre explicit-pick) put on the snapshot must
+	// still decode: reconcile/drift/probe/reap re-dispatch a STORED snapshot verbatim into a new
+	// job, so pre-pick snapshots keep arriving here indefinitely.
+	for _, k := range []string{"created_at", "updated_at", "estimated_monthly_cost"} {
+		snapshot[k] = "2026-01-01T00:00:00.000Z"
+	}
+	if _, err := snapshotToProjectConfig(snapshot); err != nil {
+		t.Fatalf("a re-dispatched pre-pick snapshot must still decode: %v", err)
+	}
+}
+
+// The W1 services fixture is the console's REAL emitted `services` wire — whole `project_services`
+// DB rows, bookkeeping columns and all. It must decode, which is what dbRowSpreadSnapshotKeys buys.
+func TestSnapshotToProjectConfig_W1ServicesWireDecodes(t *testing.T) {
+	const fixture = "../../../../test/e2e/fixtures/w1_services.json"
+	raw, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatalf("read %s: %v", fixture, err)
+	}
+	var services []any
+	if err := json.Unmarshal(raw, &services); err != nil {
+		t.Fatalf("fixture is not a JSON array: %v", err)
+	}
+
+	vc, err := snapshotToProjectConfig(map[string]any{
+		"project_name": "w1", "region": "nbg1", "services": services,
+	})
+	if err != nil {
+		t.Fatalf("the console's real services wire must decode: %v", err)
+	}
+	if len(vc.Services) != len(services) {
+		t.Errorf("decoded %d services, fixture has %d", len(vc.Services), len(services))
 	}
 }
 
