@@ -80,8 +80,14 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"create_ots": len(config.NosqlTables) > 0,
 		"ots_tables": buildOTSTables(config.NosqlTables),
 
-		// Container Registry (ACR)
-		"provision_cr": len(config.ContainerRegistries) > 0,
+		// Container Registry (CR Enterprise Edition). `cr_repos` drives the module's for_each — one
+		// repository per NATIVE registry component. The module used to create an instance and a
+		// namespace and no `alicloud_cr_ee_repo` at all (#1837), so a project with a native registry
+		// got a PAID Enterprise Edition instance with nowhere to push an image. Both keys derive
+		// from the one builder so the flag and the repositories cannot disagree; see the GCP
+		// emitter for why the builder is called twice rather than hoisted to a local.
+		"provision_cr": len(buildCRRepos(config)) > 0,
+		"cr_repos":     buildCRRepos(config),
 
 		// OSS (object storage)
 		"create_oss":  len(config.StorageBuckets) > 0,
@@ -289,13 +295,29 @@ func buildMNSTopics(topics []types.ProjectTopicConfig) map[string]interface{} {
 	return result
 }
 
+// buildOTSTables shapes the canvas's NoSQL tables into `ots_tables`.
+//
+// The key name is load-bearing and was wrong (#1836). This emitted a scalar `primary_key` plus a
+// `primary_key_type`, while `modules/ots/main.tf` reads
+// `try(each.value.primary_keys, [{ name = "id", type = "String" }])` — a LIST under a different
+// name. `try` swallows the miss, so the plan was always clean and every Tablestore table in every
+// Alibaba project was built with the module's fallback key `id`/`String` rather than the partition
+// key the user chose. Nothing failed; the choice was simply discarded.
+//
+// So the emit is a list under the name the module actually reads. Tablestore's primary key is
+// immutable, so correcting this REPLACES any table that was built with the wrong key — which is the
+// cost of the table having been wrong, not a new hazard introduced here.
 func buildOTSTables(tables []types.ProjectNosqlConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(tables))
 	for _, t := range tables {
 		entry := map[string]interface{}{
-			"name":             t.Name,
-			"primary_key":      t.PartitionKey,
-			"primary_key_type": otsKeyType(string(t.PartitionKeyType)),
+			"name": t.Name,
+			"primary_keys": []map[string]interface{}{
+				{
+					"name": t.PartitionKey,
+					"type": otsKeyType(string(t.PartitionKeyType)),
+				},
+			},
 		}
 		result = append(result, entry)
 	}
@@ -314,6 +336,71 @@ func otsKeyType(t string) string {
 	}
 }
 
+// buildCRRepos collects the Container Registry repositories the template must create, keyed by the
+// registry component's logical name — the same key the `cr_repository_urls` output is keyed by.
+//
+// It did not exist, and neither did the repositories: `modules/cr` created an
+// `alicloud_cr_ee_instance` and an `alicloud_cr_ee_namespace` and stopped there (#1837). A namespace
+// is not a place to push an image, so a native Alibaba registry produced a paid Enterprise Edition
+// subscription and nothing usable. That absence is also why `registry:immutable_tags` could not be
+// wired on Alibaba: `tag_immutability` is an argument on the repository, and there was no repository.
+//
+// Only NATIVE registry components produce a repository, and the switch travels per repository — the
+// instance's own arguments are never touched by it. That matters more here than elsewhere: the CR EE
+// instance is `payment_type = "Subscription"`, so landing a canvas switch on one of its arguments
+// would put a monthly commitment behind a checkbox and, worse, could force its replacement.
+func buildCRRepos(config *types.ProjectConfig) map[string]interface{} {
+	out := map[string]interface{}{}
+	for _, r := range config.ContainerRegistries {
+		// A pluggable registry (connectors.slug) is not CR's to create.
+		if r.Provider != "" && r.Provider != "native" {
+			continue
+		}
+		if r.Name == "" {
+			continue
+		}
+		// A nil switch is an older row or a hand-written snapshot. Read it as the SAFE setting
+		// rather than as false, so an upgrade never turns a live repository's tags mutable.
+		immutable := true
+		if r.ImmutableTags != nil {
+			immutable = *r.ImmutableTags
+		}
+		out[r.Name] = map[string]interface{}{
+			"summary":        "Container images for " + r.Name,
+			"immutable_tags": immutable,
+		}
+	}
+	return out
+}
+
+// ossSSEAlgorithm resolves the OSS server-side-encryption algorithm from the bucket's
+// provider_config (encryption_algorithm), defaulting to AES256 when encryption is enabled.
+// Mirrors s3SSEAlgorithm.
+//
+// AES256 (SSE-OSS) is the only safe default: Alibaba bills it as "None. Free of charge.", while
+// SSE-KMS incurs a per-call KMS fee. A tenant who wants KMS asks for it explicitly and accepts the
+// bill. "SM4" is deliberately NOT reachable by default even though the Terraform provider's own
+// ValidateFunc accepts it — PutBucketEncryption documents only AES256/KMS and answers anything else
+// with InvalidEncryptionAlgorithmError, so a provider-valid SM4 would plan clean and fail at apply.
+// modules/oss/variables.tf refuses it fail-closed at plan time for the same reason.
+func ossSSEAlgorithm(b types.ProjectStorageBucketConfig) string {
+	if b.ProviderConfig != nil {
+		if v, ok := b.ProviderConfig["encryption_algorithm"].(string); ok && v != "" {
+			return v
+		}
+	}
+	return "AES256"
+}
+
+// buildOSSBuckets renders the canvas's storage buckets into the `oss_buckets` tfvar.
+//
+// `name_suffix` (not `name`) is the cross-cloud spelling — GCP's cloud-storage module and AWS's s3
+// module both take a suffix and compose the real name from the project's own prefix. This builder
+// emitted `name_suffix` while modules/oss keyed on `b.name`, so EVERY Alibaba project carrying a
+// bucket died at plan with "This object does not have an attribute named name" (#1834). That is
+// fixed on the template side rather than here, which keeps the three clouds spelled alike — and the
+// suffix is the honest name besides: OSS bucket names are globally unique across all of Alibaba
+// Cloud, so a raw "assets" could never have been created even once the key names lined up.
 func buildOSSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
@@ -321,11 +408,26 @@ func buildOSSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]in
 		if b.PublicAccess {
 			acl = "public-read"
 		}
+		// BOTH POSITIONS ARE EMITTED, and that is the point. OSS applies NO default server-side
+		// encryption to a new bucket — GetBucketEncryption answers 400 NoSuchServerSideEncryptionRule,
+		// and PutBucket's x-oss-server-side-encryption header has no documented default on a page
+		// where every other optional header states one. So unlike S3/GCS/Blob, leaving this switch
+		// uncarried does not land on an encrypted bucket. It lands on unencrypted objects (#1814).
+		//
+		// Emitting the key ONLY in the `true` branch would be half a fix: the OFF position would
+		// silently inherit whatever the template defaults to, which is exactly the shape that scores
+		// green while the gap survives (#1829). "None" is OSS's own spelling for "no rule", and the
+		// module turns it into an absent server_side_encryption_rule block.
+		sseAlgorithm := "None"
+		if b.EncryptionEnabled {
+			sseAlgorithm = ossSSEAlgorithm(b)
+		}
 		entry := map[string]interface{}{
-			"name_suffix":  b.Name,
-			"acl":          acl,
-			"versioning":   b.Versioning,
-			"cors_origins": b.CorsOrigins,
+			"name_suffix":   b.Name,
+			"acl":           acl,
+			"versioning":    b.Versioning,
+			"cors_origins":  b.CorsOrigins,
+			"sse_algorithm": sseAlgorithm,
 		}
 		result = append(result, entry)
 	}

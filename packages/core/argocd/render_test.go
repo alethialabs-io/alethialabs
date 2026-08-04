@@ -6,6 +6,7 @@ package argocd
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -582,4 +583,96 @@ func TestRender_ESOStoresPerCloud(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The AGIC Application: Azure's ingress controller, gated on the three facts it cannot work
+// without. The gate is deliberately three-part — a controller with no gateway reconciles onto
+// nothing, and one with no identity or subscription authenticates to nothing — so each term is
+// removed on its own here. A partial render would be a crash-looping pod, not a degraded install.
+func TestRender_AzureApplicationGatewayIngress(t *testing.T) {
+	const file = "azure-application-gateway-ingress.yaml"
+	outputs := map[string]interface{}{
+		"aks_cluster_name":         "aks-demo",
+		"resource_group_name":      "rg-demo-development",
+		"azure_subscription_id":    "00000000-0000-0000-0000-000000000001",
+		"ingress_client_id":        "00000000-0000-0000-0000-0000000000dd",
+		"application_gateway_name": "agw-eus-development-demo",
+	}
+	files := renderAll(t, BuildFromOutputs(outputs, cfg("azure")))
+	agic, ok := files[file]
+	if !ok {
+		t.Fatalf("AGIC must render on azure with a gateway and an identity; rendered: %v", keysOf(files))
+	}
+	for _, want := range []string{
+		"name: ingress-azure",
+		"chart: ingress-azure",
+		"fullnameOverride: ingress-azure",
+		"subscriptionId: 00000000-0000-0000-0000-000000000001",
+		"resourceGroup: rg-demo-development",
+		"name: agw-eus-development-demo",
+		"type: workloadIdentity",
+		"identityClientID: 00000000-0000-0000-0000-0000000000dd",
+	} {
+		if !strings.Contains(agic, want) {
+			t.Errorf("AGIC application missing %q:\n%s", want, agic)
+		}
+	}
+	// The chart's ServiceAccount name is derived from the release name unless fullnameOverride
+	// pins it, and the federated identity credential in the azure template trusts exactly
+	// `system:serviceaccount:agic:ingress-azure`. A namespace change here silently breaks the
+	// token exchange with no error the controller can report.
+	if !strings.Contains(agic, "namespace: agic") {
+		t.Errorf("AGIC must deploy into the `agic` namespace the federated credential's subject names:\n%s", agic)
+	}
+
+	for name, drop := range map[string]string{
+		"no gateway":      "application_gateway_name",
+		"no identity":     "ingress_client_id",
+		"no subscription": "azure_subscription_id",
+	} {
+		t.Run(name, func(t *testing.T) {
+			partial := map[string]interface{}{}
+			for k, v := range outputs {
+				if k != drop {
+					partial[k] = v
+				}
+			}
+			vc := cfg("azure")
+			// AzureSubscriptionID falls back to the config's cloud account id, so the
+			// "no subscription" case has to remove BOTH or it is not testing the gate.
+			vc.CloudAccountID = ""
+			if _, ok := renderAll(t, BuildFromOutputs(partial, vc))[file]; ok {
+				t.Errorf("AGIC must NOT render with %s — it would install a controller that cannot work", name)
+			}
+		})
+	}
+}
+
+// AGIC is azure-only; it must never leak onto another cloud the way a missing `eq .Provider`
+// guard would let it. The inverse of TestRender_AWSUnchanged's ALB assertion.
+func TestRender_AGICIsAzureOnly(t *testing.T) {
+	for _, p := range []string{"aws", "gcp", "alibaba", "hetzner"} {
+		files := renderAll(t, BuildFromOutputs(map[string]interface{}{
+			"eks_cluster_name":         "c",
+			"gke_cluster_name":         "c",
+			"ack_cluster_name":         "c",
+			"talos_cluster_name":       "c",
+			"ingress_client_id":        "00000000-0000-0000-0000-0000000000dd",
+			"application_gateway_name": "agw-x",
+			"azure_subscription_id":    "00000000-0000-0000-0000-000000000001",
+		}, cfg(p)))
+		if _, ok := files["azure-application-gateway-ingress.yaml"]; ok {
+			t.Errorf("AGIC must NOT render on %s", p)
+		}
+	}
+}
+
+// keysOf lists the rendered file names, for failure messages.
+func keysOf(files map[string]string) []string {
+	out := make([]string, 0, len(files))
+	for k := range files {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

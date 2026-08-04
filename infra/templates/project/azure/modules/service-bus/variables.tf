@@ -13,6 +13,11 @@ variable "project_name" {
   type        = string
 }
 
+variable "namespace_name" {
+  description = "Name of the Service Bus namespace. Derived by the caller (local.azure_service_bus_name in checks_naming.tf) against Azure's 6-50 character cap. Derived at the template root, not here, so it stays reachable from `tofu test`."
+  type        = string
+}
+
 variable "resource_group_name" {
   description = "Name of the resource group"
   type        = string
@@ -28,6 +33,10 @@ variable "queues" {
   type = map(object({
     max_delivery_count = optional(number, 10)
     lock_duration      = optional(string, "PT1M")
+    # Ordered delivery, via Service Bus sessions. Optional-with-false so an existing queue whose
+    # tfvars entry predates the key plans identically. The root's checks_queue.tf refuses the
+    # session-on-Basic combination at plan time, because Azure only refuses it at apply.
+    requires_session = optional(bool, false)
   }))
   default = {}
 }

@@ -41,6 +41,31 @@ resource "google_service_account_iam_member" "external_dns_wi" {
   depends_on = [module.gke]
 }
 
+# The SAME GSA, bound to a SECOND KSA: cert-manager's DNS01 solver. It writes a TXT record
+# into the project's managed zone and deletes it again — precisely the operation the
+# zone-scoped `roles/dns.admin` above already grants, so cert-manager reuses external-dns's
+# identity rather than minting a parallel one with an identical policy.
+#
+# Workload Identity binds ONE KSA per member string, so this second binding is what makes
+# the iam.gke.io/gcp-service-account annotation infra/templates/argocd/cert-manager.yaml
+# puts on `cert-manager:cert-manager` actually resolve. Without it the token exchange is
+# refused and every DNS01 challenge fails inside a certificate that simply never issues.
+#
+# NOTE the zone-scoped grant is why the cloudDNS solver is rendered with an explicit
+# `hostedZoneName` (InfraFacts.GCPDNSZoneName, root output `cloud_dns_zone_name`): a
+# zone-scoped binding does not carry the project-level `dns.managedZones.list` permission
+# cert-manager would otherwise need to FIND the zone. CertManagerSolver() fails closed when
+# that output is absent, so we never ship an issuer that cannot look its zone up.
+resource "google_service_account_iam_member" "cert_manager_wi" {
+  count              = var.provision_gke ? 1 : 0
+  service_account_id = google_service_account.external_dns[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[cert-manager/cert-manager]"
+
+  # Same Identity-Pool race as external_dns_wi above — the edge must be explicit.
+  depends_on = [module.gke]
+}
+
 # GSA for the external-secrets operator: bound to its KSA via Workload Identity so the
 # gcpsm ClusterSecretStore reads Secret Manager with NO static key. Exported as
 # `external_secrets_service_account` and rendered onto the operator's ServiceAccount

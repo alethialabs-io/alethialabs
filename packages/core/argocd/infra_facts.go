@@ -30,7 +30,16 @@ type InfraFacts struct {
 	// actually available (cloudflare connector credential / hetzner HCLOUD_TOKEN).
 	// The token itself NEVER lives on the facts — facts are rendered into templates.
 	DNSCredentialPresent bool
-	EnableKarpenter      bool
+	// ManagedCertificate is vc.DNS.ManagedCertificate — the canvas's "issue a managed TLS
+	// certificate for this domain" switch. It is NOT a tofu output: it is the user's ASK,
+	// carried verbatim from the config snapshot, and it is what gates the cert-manager
+	// platform Application (infra/templates/argocd/cert-manager.yaml). Every cloud ALSO
+	// fronts the same switch with its own tfvar (acm_certificate_enable,
+	// cloud_dns_managed_certificate, …) for the cloud-NATIVE certificate; the in-cluster
+	// issuer is the portable half, and the only half Alethia can offer on a cloud whose
+	// native certificate has nothing to attach to.
+	ManagedCertificate bool
+	EnableKarpenter    bool
 
 	ClusterName     string
 	ClusterEndpoint string
@@ -60,16 +69,65 @@ type InfraFacts struct {
 	KarpenterQueueName     string
 
 	// ── GCP (Workload Identity) ─────────────────────────────────
-	GCPProjectID         string
-	GCPExternalDNSSA     string // GSA email bound to the external-dns KSA
-	GCPIngressSA         string // GSA email for the ingress/gateway controller
+	GCPProjectID     string
+	GCPExternalDNSSA string // GSA email bound to the external-dns KSA
+	// GCPDNSZoneName is the Cloud DNS MANAGED-ZONE resource name (root output
+	// `cloud_dns_zone_name`), not the domain. cert-manager's cloudDNS solver is rendered
+	// with it explicitly because the external-dns GSA's dns.admin grant is ZONE-scoped and
+	// therefore carries no project-level dns.managedZones.list — without the name the
+	// solver cannot find the zone it is allowed to write to.
+	GCPDNSZoneName string
+	// GCPIngressSA is wired to the output key `ingress_service_account`, which NO template exports —
+	// so it has been "" on every deploy since it was written. The GKE ingress lane deliberately did
+	// not use it and deliberately did not export one to match: GKE's Ingress controller runs in the
+	// Google-managed control plane and authenticates as the cluster's own service agent, so there is
+	// no in-cluster workload identity to annotate. Left in place rather than deleted because removing
+	// it is a rename across the Azure/Alibaba lanes landing beside this one; tracked separately.
+	GCPIngressSA         string // GSA email for the ingress/gateway controller — SEE ABOVE: permanently empty
 	GCPExternalSecretsSA string // GSA email bound to the external-secrets KSA (gates secretstore-gcp)
+	// GCPManagedCertName is the GLOBAL Google-managed SSL certificate the template built for the
+	// project's certificate switch (root output `cloud_dns_managed_certificate_name`; null when the
+	// switch is off, or when a pluggable DNS connector means the zone is not ours). A NAME, because
+	// `ingress.gcp.kubernetes.io/pre-shared-cert` takes a comma-separated list of certificate names
+	// and nothing else — an id or a self link there is rejected. It gates the ArgoCD ingress on GKE
+	// exactly as ACMCertificateArn gates it on AWS: no certificate ⇒ no managed ingress ⇒ no URL.
+	GCPManagedCertName string
+	// GCPArmorPolicy is the Cloud Armor security policy the template built for the project's WAF
+	// switch (root output `cloud_armor_policy_name`, null when the switch is off). A REFERENCE, not
+	// a credential. The NAME, because a GKE BackendConfig's `spec.securityPolicy.name` resolves a
+	// bare policy name inside the cluster's own project. Empty ⇒ NO BackendConfig is rendered at all:
+	// one carrying an empty securityPolicy name is not "no WAF", it is a resource the GKE ingress
+	// controller rejects, which wedges the ingress — the GCP shape of the empty-wafv2-annotation trap.
+	GCPArmorPolicy string
 
 	// ── Azure (Federated / Workload Identity) ───────────────────
-	AzureResourceGroup         string
-	AzureTenantID              string
-	AzureExternalDNSClient     string // managed-identity client id for external-dns
-	AzureIngressClient         string // managed-identity client id for the AGIC
+	AzureResourceGroup string
+	AzureTenantID      string
+	// AzureSubscriptionID is the subscription the project's resource group, DNS zone and gateway
+	// live in. Read output-first with the config snapshot's CloudAccountID as the fallback — this
+	// lane adds the `azure_subscription_id` output, and CloudAccountID is the identical value
+	// azure_provider.go emits as the `subscription_id` tfvar, so the two cannot disagree about
+	// what was applied.
+	//
+	// TWO consumers, which is why the fallback is load-bearing rather than a nicety:
+	// cert-manager's azureDNS solver requires it explicitly (there is no ambient default from the
+	// workload identity), and it is the AGIC chart's `appgw.subscriptionId`. Dropping the fallback
+	// would leave cert-manager permanently skipped on every environment whose state predates the
+	// new output — the exact latent bug the cert-manager lane fixed for Azure.
+	AzureSubscriptionID    string
+	AzureExternalDNSClient string // managed-identity client id for external-dns
+	AzureIngressClient     string // managed-identity client id for the AGIC
+	// AzureAppGatewayName is the Application Gateway AGIC reconciles Ingress objects onto, and the
+	// resource the project's WAF policy binds to. Empty ⇒ this deploy provisioned no gateway, which
+	// means BOTH no ingress controller and nothing for a web ACL to attach to (root output
+	// `application_gateway_name`, null when the gateway is off).
+	AzureAppGatewayName string
+	// AzureWAFPolicyID is the Application Gateway WAF policy built for the project's WAF switch
+	// (root output `waf_policy_id`, null — so "" — when the switch is off). A REFERENCE, not a
+	// credential, and unlike AWS's one the runner never ATTACHES: on Azure the bind is
+	// `firewall_policy_id` on the gateway, performed by the template at apply time. This fact
+	// exists so the deploy can REPORT the attachment honestly, not to perform it.
+	AzureWAFPolicyID           string
 	AzureExternalSecretsClient string // managed-identity client id for the external-secrets operator (gates secretstore-azure)
 	AzureKeyVaultURI           string // project Key Vault URI (the azurekv store's vaultUrl)
 
@@ -77,6 +135,14 @@ type InfraFacts struct {
 	AlibabaOIDCIssuerURL          string // ACK cluster OIDC issuer
 	AlibabaOIDCProviderArn        string // RAM OIDC provider ARN that RRSA roles trust
 	AlibabaExternalSecretsRoleArn string // RRSA RAM role for the external-secrets operator (gates secretstore-alibaba)
+	// AlibabaWAFInstanceID is the WAF 3.0 instance the template bought for the project's
+	// application WAF switch (root output `waf_instance_id`, null when the switch is off).
+	// A REFERENCE, not a credential — and, unlike AWS's web ACL, one with NOTHING BOUND TO IT:
+	// the pinned alicloud provider can only bind a hostname (alicloud_wafv3_domain, CNAME mode),
+	// which needs the ingress load balancer's address, and that does not exist at plan time.
+	// The fact exists so wafDecision can say "built and billed and filtering nothing" instead of
+	// leaving that indistinguishable from "the switch is off".
+	AlibabaWAFInstanceID string
 
 	// ── Cross-account keyless secret manager (*-xacct) ──────────
 	// The ADDITIONAL foreign-account secret store the project selected (AWS SM / GCP SM / Azure KV /
@@ -189,6 +255,85 @@ func (f *InfraFacts) DNSProvider() string {
 	}
 }
 
+// certManagerDNS01Solvers maps a cloud to the cert-manager DNS01 solver stanza that can
+// actually issue there. It is an ALLOWLIST of solvers cert-manager ships IN THE BOX, and
+// the exclusions are as load-bearing as the entries:
+//
+//	aws     — route53,  authenticated by the IRSA role external-dns already holds.
+//	gcp     — clouddns, authenticated by the Workload-Identity GSA external-dns already holds.
+//	azure   — azuredns, authenticated by the federated identity external-dns already holds.
+//	alibaba — EXCLUDED. cert-manager has no AliDNS solver; it needs a third-party webhook
+//	          (cert-manager-webhook-alidns). external-dns is already skipped on Alibaba for
+//	          the sibling upstream gap (external-dns#5019), so the cloud has no in-cluster
+//	          DNS automation of any kind today.
+//	hetzner — EXCLUDED. cert-manager has no Hetzner Cloud DNS solver; it needs a third-party
+//	          webhook, exactly as external-dns needs the Hetzner webhook sidecar. Shipping a
+//	          ClusterIssuer without one would create an issuer whose every Challenge is stuck
+//	          `pending` forever — a certificate that never issues is WORSE than an honest skip,
+//	          because nothing in the cluster reports it as broken.
+//
+// DNS01 and not HTTP01 on purpose: HTTP01 needs a reachable ingress, and AWS is the only
+// cloud with an ingress controller today (argocd.ingressControllers). DNS01 needs only the
+// zone, which every one of these three clouds provisions.
+var certManagerDNS01Solvers = map[string]string{
+	"aws":   "route53",
+	"gcp":   "clouddns",
+	"azure": "azuredns",
+}
+
+// CertManagerSolver returns the cert-manager DNS01 solver this deploy can honestly issue
+// with, or "" when it cannot. It is the SINGLE GATE for the cert-manager platform add-on:
+// the render template (infra/templates/argocd/cert-manager.yaml), certManagerDecision and
+// CleanupSkippedInfraServices all read THIS, so they cannot drift into disagreeing about
+// whether cert-manager shipped — the failure the ClusterSecretStore lanes hit twice.
+//
+// It fails closed on three separate things, because each of them produces an issuer that
+// looks installed and never issues:
+//
+//   - a cloud with no in-box solver (alibaba, hetzner — see certManagerDNS01Solvers);
+//   - a NON-NATIVE DNS connector (cloudflare): the cloud's own zone is then not
+//     authoritative for the domain, so a route53/clouddns/azuredns solver would write its
+//     TXT record into a zone the ACME server never queries. cert-manager does ship a
+//     cloudflare solver, but it needs the connector's api_token seeded into the
+//     cert-manager namespace, which no lane has built yet;
+//   - a MISSING identity/zone fact: the solver authenticates as external-dns's identity, so
+//     without that identity (or, on GCP, without the zone NAME its zone-scoped grant makes
+//     mandatory) the challenge cannot be written at all.
+func (f *InfraFacts) CertManagerSolver() string {
+	solver, ok := certManagerDNS01Solvers[f.Provider]
+	if !ok {
+		return ""
+	}
+	if f.DNSConnector != "" && f.DNSConnector != "native" {
+		return ""
+	}
+	switch f.Provider {
+	case "aws":
+		if f.IRSAExternalDNSArn == "" {
+			return ""
+		}
+	case "gcp":
+		if f.GCPExternalDNSSA == "" || f.GCPProjectID == "" || f.GCPDNSZoneName == "" {
+			return ""
+		}
+	case "azure":
+		if f.AzureExternalDNSClient == "" || f.AzureResourceGroup == "" ||
+			f.AzureSubscriptionID == "" || f.AzureTenantID == "" {
+			return ""
+		}
+	}
+	return solver
+}
+
+// CertManagerEnabled reports whether the cert-manager platform Application renders for this
+// deploy: the user asked for a managed certificate, DNS is on with a domain to issue for,
+// and this cloud has a DNS01 solver that can actually complete a challenge. Kept as a method
+// so the Go decision and the YAML template read the same predicate rather than two copies of
+// the same `and` — the template gate is literally `{{- if .CertManagerEnabled }}`.
+func (f *InfraFacts) CertManagerEnabled() bool {
+	return f.ManagedCertificate && f.DNSEnabled && f.DomainName != "" && f.CertManagerSolver() != ""
+}
+
 // BuildFromOutputs assembles InfraFacts from the tofu outputs for the config's cloud.
 // Common facts come from the ProjectConfig; the cloud-specific cluster + workload-identity
 // outputs are extracted per provider. Every cloud gets an explicit case — an unknown
@@ -211,6 +356,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		DNSEnabled:           vc.DNS.Enabled,
 		DNSConnector:         vc.DNS.Provider,
 		DNSCredentialPresent: dnsCredentialPresent(vc),
+		ManagedCertificate:   vc.DNS.ManagedCertificate,
 		EnableKarpenter:      enableKarpenter,
 		AppsDestinationRepo:  vc.Repositories.AppsDestinationRepo,
 		Labels:               cloud.ClassificationLabels(vc),
@@ -224,15 +370,44 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.ClusterEndpoint = ExtractOutput(outputs, "gke_cluster_endpoint")
 		f.GCPProjectID = firstNonEmpty(ExtractOutput(outputs, "gcp_project_id"), vc.CloudAccountID)
 		f.GCPExternalDNSSA = ExtractOutput(outputs, "external_dns_service_account")
+		f.GCPDNSZoneName = ExtractOutput(outputs, "cloud_dns_zone_name")
 		f.GCPIngressSA = ExtractOutput(outputs, "ingress_service_account")
 		f.GCPExternalSecretsSA = ExtractOutput(outputs, "external_secrets_service_account")
+		// Both keys are exported by infra/templates/project/gcp/outputs.tf and both are null when
+		// their canvas switch is off — ExtractOutput yields "" for a null, which is exactly the
+		// "render no ingress" / "attach nothing" signal argocdURLGates and wafWebACLRef want.
+		// The spelling is pinned from BOTH sides: checks_ingress_armor.tftest.hcl asserts the output
+		// names in the template, and TestGCPIngressFactsMatchTemplateOutputs asserts them here.
+		f.GCPManagedCertName = ExtractOutput(outputs, "cloud_dns_managed_certificate_name")
+		f.GCPArmorPolicy = ExtractOutput(outputs, "cloud_armor_policy_name")
 	case "azure":
 		f.ClusterName = ExtractOutput(outputs, "aks_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "aks_cluster_endpoint")
 		f.AzureResourceGroup = ExtractOutput(outputs, "resource_group_name")
+		// Output FIRST, snapshot as the fallback — and the fallback is the load-bearing half.
+		//
+		// The cert-manager lane read this from `vc.CloudAccountID` alone, correctly at the time:
+		// the azure template declared `subscription_id` as an input VARIABLE and exported no
+		// output for it, so ExtractOutput would have returned "" forever — the permanently-empty
+		// fact bug GCPIngressSA already carries. This lane ADDS `azure_subscription_id` to
+		// outputs.tf, so that reasoning stops holding the moment both land.
+		//
+		// firstNonEmpty satisfies both: a deploy whose state predates the new output still
+		// resolves from the snapshot (CloudAccountID is the identical value azure_provider.go
+		// emits as that tfvar, so the two cannot disagree about what was applied), and a fresh
+		// one prefers the output the template actually produced. Taking either side alone would
+		// have broken the other: snapshot-only leaves AGIC without the authoritative value, and
+		// output-only leaves cert-manager permanently skipped on every pre-existing environment.
+		f.AzureSubscriptionID = firstNonEmpty(ExtractOutput(outputs, "azure_subscription_id"), vc.CloudAccountID)
 		f.AzureTenantID = firstNonEmpty(ExtractOutput(outputs, "azure_tenant_id"), vc.CloudAccountID)
 		f.AzureExternalDNSClient = ExtractOutput(outputs, "external_dns_client_id")
+		// `ingress_client_id` was read here long before any template exported it, so this fact was
+		// permanently "" and the AGIC render gate could never open. The azure template emits it now.
 		f.AzureIngressClient = ExtractOutput(outputs, "ingress_client_id")
+		f.AzureAppGatewayName = ExtractOutput(outputs, "application_gateway_name")
+		// null when azure_waf_enabled is off — ExtractOutput yields "" for a null, which is exactly
+		// the "there is nothing to attach" signal wafDecision wants.
+		f.AzureWAFPolicyID = ExtractOutput(outputs, "waf_policy_id")
 		f.AzureExternalSecretsClient = ExtractOutput(outputs, "external_secrets_client_id")
 		f.AzureKeyVaultURI = ExtractOutput(outputs, "key_vault_uri")
 	case "alibaba":
@@ -242,6 +417,10 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.AlibabaOIDCIssuerURL = ExtractOutput(outputs, "rrsa_oidc_issuer_url")
 		f.AlibabaOIDCProviderArn = ExtractOutput(outputs, "rrsa_oidc_provider_arn")
 		f.AlibabaExternalSecretsRoleArn = ExtractOutput(outputs, "external_secrets_ram_role_arn")
+		// null when application_waf_enabled is off — "" is the "nothing built" signal, the same
+		// shape as AWS's waf_webacl_arn below. Unlike AWS's, a non-empty value here does NOT mean
+		// anything is being filtered; see the field comment and modules/waf/main.tf.
+		f.AlibabaWAFInstanceID = ExtractOutput(outputs, "waf_instance_id")
 		// The RRSA facts feed workload-identity for in-cluster components (the
 		// external-secrets store renders off the role ARN above). external-dns's
 		// alibabacloud provider does NOT

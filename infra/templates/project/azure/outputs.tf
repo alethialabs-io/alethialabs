@@ -118,6 +118,26 @@ output "azure_dns_name_servers" {
 }
 
 #########################################################################
+##          Application Gateway / WAF Outputs                          ##
+#########################################################################
+
+# The gateway AGIC manages — and the WAF policy's ONLY attachment site on Azure. The runner reads
+# this to decide whether an ingress controller shipped (argocd ingressControllers) and whether the
+# web ACL is genuinely bound (argocd wafAttachments); null means neither.
+output "application_gateway_name" {
+  description = "Name of the Application Gateway — the AGIC chart's appgw.name, and the resource a WAF policy binds to"
+  value       = local.enable_application_gateway ? azurerm_application_gateway.this[0].name : null
+}
+
+# modules/azure-waf has exported policy_id since it was written; nothing re-exported it, so the
+# runner had no way to see that a policy existed at all. Null when the switch is off — which
+# ExtractOutput turns into "", exactly the "there is nothing to attach" signal the decision wants.
+output "waf_policy_id" {
+  description = "Resource id of the Azure WAF policy (null when azure_waf_enabled is off) — bound to the Application Gateway via firewall_policy_id"
+  value       = var.azure_waf_enabled ? module.azure_waf[0].policy_id : null
+}
+
+#########################################################################
 ##                     General Outputs                                 ##
 #########################################################################
 
@@ -135,9 +155,23 @@ output "azure_tenant_id" {
   value       = data.azurerm_client_config.current.tenant_id
 }
 
+output "azure_subscription_id" {
+  description = "Subscription the project's resources live in — the AGIC chart's appgw.subscriptionId"
+  value       = data.azurerm_client_config.current.subscription_id
+}
+
 output "external_dns_client_id" {
   description = "external-dns managed identity client id (Workload Identity)"
   value       = var.provision_aks ? azurerm_user_assigned_identity.external_dns[0].client_id : null
+}
+
+# InfraFacts.AzureIngressClient has read an `ingress_client_id` output since the facts struct
+# gained a per-cloud ingress identity, and NO template ever exported one — so the fact was
+# permanently "", and any render gate reading it could never open. This is that output, emitted at
+# last, rather than a second name for the same thing.
+output "ingress_client_id" {
+  description = "AGIC managed identity client id (Workload Identity) — rendered onto the AGIC ServiceAccount as armAuth.identityClientID; gates the AGIC ArgoCD Application"
+  value       = local.enable_agic ? azurerm_user_assigned_identity.agic[0].client_id : null
 }
 
 output "external_secrets_client_id" {
@@ -148,4 +182,25 @@ output "external_secrets_client_id" {
 output "key_vault_uri" {
   description = "URI of the project Key Vault (the azurekv ClusterSecretStore's vaultUrl)"
   value       = module.key_vault.vault_uri
+}
+
+#########################################################################
+##                    Storage Account Outputs                          ##
+#########################################################################
+
+# Surfaced so the two bucket switches are legible from the plan — and so checks_storage.tftest.hcl
+# can assert them from the ROOT, which is the only place tofu's test harness runs.
+output "storage_container_access_types" {
+  description = "Map of container name to the container_access_type it is planned with"
+  value       = var.create_storage_account ? module.storage_account[0].container_access_types : {}
+}
+
+output "storage_blob_versioning_enabled" {
+  description = "Whether blob versioning is planned on the project's storage account"
+  value       = var.create_storage_account ? module.storage_account[0].blob_versioning_enabled : null
+}
+
+output "storage_allow_nested_items_to_be_public" {
+  description = "Whether the storage account permits public containers"
+  value       = var.create_storage_account ? module.storage_account[0].allow_nested_items_to_be_public : null
 }

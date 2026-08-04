@@ -218,10 +218,12 @@ describe("environment container registry", () => {
 		expect(providersOf("registry")).toEqual(["harbor", "harbor"]);
 	});
 
-	// `provider_config` on a registry mixes PER-ROW cloud settings (immutable tags, scanning) with the
-	// per-environment connector knobs. Writing the picker's patch whole would replace each row's bag
-	// and silently flatten two registries' distinct settings — including when picking the native
-	// option they already had.
+	// `provider_config` on a registry USED to mix PER-ROW cloud settings (immutable tags, scanning)
+	// with the per-environment connector knobs, so the picker had to merge its patch over them or it
+	// flattened two registries' distinct settings — including when picking the native option they
+	// already had. Both became typed columns in #1811 and the picker replaces the bag whole again.
+	// The outcome the merge existed to protect is what is asserted, so this keeps catching a
+	// regression whichever way the settings are stored.
 	it("keeps each registry's own cloud settings across a provider change", async () => {
 		seed(["apps", "jobs"], {}, "registry");
 		// Give the two rows different native settings.
@@ -229,10 +231,12 @@ describe("environment container registry", () => {
 			.getState()
 			.nodes.filter((n) => n.data.kind === "registry");
 		useCanvasStore.getState().updateNodeConfig(a.id, {
-			provider_config: { immutable_tags: true, vulnerability_scanning: true },
+			immutable_tags: true,
+			vulnerability_scanning: true,
 		});
 		useCanvasStore.getState().updateNodeConfig(b.id, {
-			provider_config: { immutable_tags: false },
+			immutable_tags: false,
+			vulnerability_scanning: false,
 		});
 
 		const user = userEvent.setup();
@@ -243,10 +247,13 @@ describe("environment container registry", () => {
 		const configs = useCanvasStore
 			.getState()
 			.nodes.filter((n) => n.data.kind === "registry")
-			.map((n) => (n.data.config as { provider_config?: Record<string, unknown> }).provider_config);
+			.map(
+				(n) =>
+					n.data.config as { immutable_tags?: boolean; vulnerability_scanning?: boolean },
+			);
 
 		expect(configs[0]).toMatchObject({ immutable_tags: true, vulnerability_scanning: true });
-		expect(configs[1]).toMatchObject({ immutable_tags: false });
+		expect(configs[1]).toMatchObject({ immutable_tags: false, vulnerability_scanning: false });
 	});
 
 	it("offers nothing to configure when the environment has no registries", () => {

@@ -13,6 +13,11 @@ variable "project_name" {
   type        = string
 }
 
+variable "cache_name" {
+  description = "Name of the Managed Redis cluster. Derived by the caller (local.azure_cache_name in checks_naming.tf) against Microsoft.Cache/redisEnterprise's 60-character cap. Derived at the template root, not here, so it stays reachable from `tofu test`."
+  type        = string
+}
+
 variable "resource_group_name" {
   description = "Name of the resource group"
   type        = string

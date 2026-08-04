@@ -106,8 +106,31 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// split checks.tf documents (pod = upper /17, service = /19), disjoint from the node
 	// subnet (first /24), so the invariant holds for ANY network_cidr override.
 	networkCIDR := orDefault(config.Network.CIDRBlock, "10.0.0.0/16")
-	podCIDR := orDefault(cidrSubnet(networkCIDR, 1, 1), "10.0.128.0/17")
-	serviceCIDR := orDefault(cidrSubnet(networkCIDR, 3, 3), "10.0.96.0/19")
+
+	// Greenfield vs brownfield network, resolved the same way aws (`provision_vpc`) and gcp
+	// (`provision_network`) resolve it: a project that never made the choice AND named no existing
+	// network still provisions its own, so today's behaviour is the default in both directions.
+	// #1816: until now the Hetzner template ALWAYS created `hcloud_network.this` and the canvas's
+	// switch reached no tfvar, so "attach the network I already have" silently built a second one.
+	provisionNetwork := config.Network.ProvisionNetwork
+	if !provisionNetwork && config.Network.NetworkID == "" {
+		provisionNetwork = true
+	}
+
+	// On the BROWNFIELD path these stay nil, and the template derives them from the range of the
+	// network that actually resolved. That is the only correct source there: `network_cidr` is
+	// ignored when attaching an existing network, so a CIDR split from it describes a network the
+	// cluster is not on — and the canvas hides the CIDR field on that path, so the value would be
+	// the 10.0.0.0/16 default for every user regardless of what they attached. The template's
+	// fail-closed precondition would then block the apply on a network we chose for them.
+	//
+	// On the greenfield path we know network_cidr (we emit it), so the split is computed here and
+	// the tfvars stay explicit — the same values, from the same rule the template uses.
+	var podCIDR, serviceCIDR interface{}
+	if provisionNetwork {
+		podCIDR = orDefault(cidrSubnet(networkCIDR, 1, 1), "10.0.128.0/17")
+		serviceCIDR = orDefault(cidrSubnet(networkCIDR, 3, 3), "10.0.96.0/19")
+	}
 
 	tfvars := map[string]interface{}{
 		"project_name": config.ProjectName,
@@ -137,9 +160,22 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"control_plane_arch": hetznerServerArch(controlPlaneType),
 
 		// Networking (pod/service are non-overlapping subnets of network_cidr).
-		"network_cidr": networkCIDR,
-		"pod_cidr":     podCIDR,
-		"service_cidr": serviceCIDR,
+		// `network_id` is the hcloud network to ATTACH to when provision_network is false; it is
+		// read by `data "hcloud_network" "existing"` and ignored on the greenfield path.
+		"provision_network": provisionNetwork,
+		"network_id":        config.Network.NetworkID,
+		"network_cidr":      networkCIDR,
+		"pod_cidr":          podCIDR,
+		"service_cidr":      serviceCIDR,
+
+		// DNS. Hetzner's Cloud API grew Zones in 2025 (GA in the hcloud provider at 1.56), so DNS
+		// on Hetzner is a first-class tofu resource like Route 53 / Cloud DNS / Azure DNS — not the
+		// in-cluster story its TLS and WAF exclusions describe. Same shape as aws (#1816): create
+		// the zone in-template when the user wants Alethia to own it AND named no existing zone;
+		// otherwise `dns_hosted_zone` carries the one they already have.
+		"cloud_dns_enabled": config.DNS.Enabled && config.DNS.ZoneID == "",
+		"dns_main_domain":   config.DNS.DomainName,
+		"dns_hosted_zone":   config.DNS.ZoneID,
 	}
 
 	// The hcloud provider authenticates from HCLOUD_TOKEN in the runner env (activated

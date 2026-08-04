@@ -50,6 +50,21 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		provisionNetwork = true
 	}
 
+	// Firestore point-in-time recovery, aggregated with ANY across the canvas's NoSQL tables.
+	// GCP allows ONE Firestore database per project, and what the canvas calls a "table" is a
+	// collection inside it — so a per-table switch has no per-table resource to land on. PITR is a
+	// property of the DATABASE, so one table asking for it turns it on for the whole database.
+	// Deliberately written INLINE rather than as a `pitr := anyTableWantsPITR(...)` helper: the
+	// carrier tracer (apps/console/scripts/lib/go-tfvars-trace.mjs) follows a field into the quoted
+	// key derived FROM IT, and a helper that reads the field and returns a bare scalar writes no
+	// quoted key in its own body — the fix would ship working and still score as "not carried".
+	firestorePITR := false
+	for _, t := range config.NosqlTables {
+		if t.PointInTimeRecovery {
+			firestorePITR = true
+		}
+	}
+
 	tfvars := map[string]interface{}{
 		"project_name": config.ProjectName,
 		"project_id":   config.CloudAccountID,
@@ -85,13 +100,28 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		// Firestore. The template's Firestore model is a SINGLE per-project database
 		// (create_firestore + firestore_database_type/location vars) — GCP allows one Firestore
 		// DB per project and NoSQL "tables" are collections within it, created by the app, not
-		// tofu. The old per-table `firestore_databases` list var was never declared in
-		// variables.tf, so it was silently dropped; dropped here too (buildFirestoreDatabases is
-		// retained only for its unit test, out of this issue's scope).
-		"create_firestore": len(config.NosqlTables) > 0,
+		// tofu. There is deliberately no per-table `firestore_databases` list: a list var of that
+		// name was never declared in variables.tf and was silently dropped, and the builder that
+		// produced it (`buildFirestoreDatabases`) was dead code kept alive only by its own unit
+		// test — the canonical false positive the carrier tracer was written to catch. Both are
+		// gone. Everything per-table the database can actually honor is aggregated here instead.
+		"create_firestore":                 len(config.NosqlTables) > 0,
+		"firestore_point_in_time_recovery": firestorePITR,
 
-		// Artifact Registry (container registry)
-		"provision_artifact_registry": len(config.ContainerRegistries) > 0,
+		// Artifact Registry (container registry). `artifact_registry_repos` drives the module's
+		// for_each — one repository per NATIVE registry component. Nothing emitted it at all, so
+		// `provision_artifact_registry` read true from the mere PRESENCE of a registry row while
+		// the map resolved empty, and GCP created ZERO repositories (#1835) — the same defect the
+		// ECR names map had before buildECRNamesMap existed. Both are derived from the one builder
+		// now, so the flag and the repositories cannot disagree again.
+		//
+		// The builder is called twice rather than hoisted to a local, and that is not an oversight:
+		// the offer-parity carrier probe resolves which ROOT tfvar a builder's nested keys belong to
+		// by finding `"<root>": <builder>(` — a local in between makes it resolve to nothing, and
+		// `immutable_tags` is then judged as if it were a top-level variable, which no template
+		// declares. It is a pure function over a handful of registry rows.
+		"provision_artifact_registry": len(buildArtifactRegistryRepos(config)) > 0,
+		"artifact_registry_repos":     buildArtifactRegistryRepos(config),
 
 		// Cloud Storage
 		"create_cloud_storage":  len(config.StorageBuckets) > 0,
@@ -269,14 +299,23 @@ func (p *gcpProvider) ConfigureKubeconfig(ctx context.Context, config *types.Pro
 	)
 }
 
+// buildPubSubTopics maps canvas topics AND canvas queues onto the `pubsub_topics` tfvar — GCP has no
+// queue primitive, so a queue is modelled as a topic with exactly one subscription.
+//
+// Ordered delivery is a property of the SUBSCRIPTION (`enable_message_ordering`), never of the
+// topic, so the queue's switch travels on the single subscription the queue owns. A canvas TOPIC is
+// fan-out with subscribers Alethia does not model, and ordering there would be a promise about
+// publishers we cannot see — its subscriptions are emitted explicitly unordered rather than left
+// out, so the tfvars shape is the same for both origins.
 func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.ProjectQueueConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, t := range topics {
 		subs := []map[string]interface{}{}
 		for _, s := range t.Subscriptions {
 			subs = append(subs, map[string]interface{}{
-				"name":                 s.Endpoint,
-				"ack_deadline_seconds": 10,
+				"name":                    s.Endpoint,
+				"ack_deadline_seconds":    10,
+				"enable_message_ordering": false,
 			})
 		}
 		result[t.Name] = map[string]interface{}{
@@ -295,9 +334,12 @@ func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.Project
 			retention = fmt.Sprintf("%ds", *q.MessageRetention)
 		}
 
-		subs := []map[string]interface{}{
-			{"name": q.Name + "-sub", "ack_deadline_seconds": ackDeadline},
+		sub := map[string]interface{}{
+			"name":                 q.Name + "-sub",
+			"ack_deadline_seconds": ackDeadline,
 		}
+		sub["enable_message_ordering"] = derefBoolOr(q.Ordered, false)
+		subs := []map[string]interface{}{sub}
 		result[q.Name] = map[string]interface{}{
 			"message_retention_duration": retention,
 			"subscriptions":              subs,
@@ -346,21 +388,6 @@ func gcpMemorystoreRedisVersion(v string) string {
 	}
 }
 
-func buildFirestoreDatabases(tables []types.ProjectNosqlConfig) []map[string]interface{} {
-	result := make([]map[string]interface{}, 0, len(tables))
-	for _, t := range tables {
-		entry := map[string]interface{}{
-			"name":         t.Name,
-			"billing_mode": ddbCapacityMode(string(t.CapacityMode)),
-		}
-		if t.PointInTimeRecovery {
-			entry["point_in_time_recovery"] = true
-		}
-		result = append(result, entry)
-	}
-	return result
-}
-
 func buildGCPSecrets(secrets []types.ProjectSecretConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(secrets))
 	for _, s := range secrets {
@@ -377,15 +404,69 @@ func buildGCPSecrets(secrets []types.ProjectSecretConfig) []map[string]interface
 	return result
 }
 
+// buildArtifactRegistryRepos collects the Artifact Registry repositories the template must create,
+// keyed by the registry component's logical name — the SAME key `artifact_registry_urls` is keyed
+// by, so a caller can look a repository's push URL up by the name the user typed.
+//
+// It did not exist. `provision_artifact_registry` was emitted from the mere PRESENCE of a registry
+// row while `artifact_registry_repos` was emitted by nothing, so the module's for_each resolved to
+// {} and a GCP project with a native registry got ZERO repositories and an empty URL map (#1835).
+// That is the identical defect buildECRNamesMap was written to fix on AWS.
+//
+// Only NATIVE registry components produce a repository. Unlike ECR's map this deliberately does NOT
+// also add one per repo-sourced service: `provision_artifact_registry` has always been derived from
+// registry components alone, GCP has no build path pushing to a per-service repository, and giving
+// a service a repository would raise a question this issue cannot answer honestly — which
+// component's `immutable_tags` that repository should take.
+//
+// The map key is the component name UNNORMALIZED, because it is the lookup key of the URL output.
+// The canvas already restricts a registry name to lowercase alphanumerics and hyphens; a snapshot
+// that arrives with anything else is refused at plan time by the template's
+// `artifact_registry_repo_names_valid` check rather than silently renamed here, which would break
+// exactly the lookup this key exists for.
+func buildArtifactRegistryRepos(config *types.ProjectConfig) map[string]interface{} {
+	out := map[string]interface{}{}
+	for _, r := range config.ContainerRegistries {
+		// A pluggable registry (connectors.slug) is not Artifact Registry's to create.
+		if r.Provider != "" && r.Provider != "native" {
+			continue
+		}
+		if r.Name == "" {
+			continue
+		}
+		// A nil switch is an older row or a hand-written snapshot. Read it as the SAFE setting —
+		// which is also what the module's `optional(bool, …)` would have produced — rather than as
+		// false, so nothing a live project already built is downgraded by the upgrade itself.
+		immutable := true
+		if r.ImmutableTags != nil {
+			immutable = *r.ImmutableTags
+		}
+		out[r.Name] = map[string]interface{}{
+			"description":    "Container images for " + r.Name,
+			"immutable_tags": immutable,
+		}
+	}
+	return out
+}
+
+// buildGCSBuckets turns the canvas's buckets into the `cloud_storage_buckets` tfvar.
+//
+// `public_access` is emitted VERBATIM, and deliberately not as the `uniform_access` inversion this
+// used to send. Uniform bucket-level access is a different feature: it disables per-object ACLs, it
+// says nothing about whether the public may read the bucket, and Cloud Storage REFUSES to turn it
+// back off more than 90 days after it was enabled — so a switch routed through it would become an
+// unfixable apply failure on any bucket older than three months. The template keeps UBLA on
+// permanently and decides public access with `public_access_prevention` plus an explicit allUsers
+// IAM binding, which is the pair that actually implements the label the canvas shows.
 func buildGCSBuckets(buckets []types.ProjectStorageBucketConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(buckets))
 	for _, b := range buckets {
 		entry := map[string]interface{}{
-			"name_suffix":    b.Name,
-			"versioning":     b.Versioning,
-			"uniform_access": !b.PublicAccess,
-			"cors_origins":   b.CorsOrigins,
-			"cors_methods":   []string{"GET", "PUT", "POST"},
+			"name_suffix":   b.Name,
+			"versioning":    b.Versioning,
+			"public_access": b.PublicAccess,
+			"cors_origins":  b.CorsOrigins,
+			"cors_methods":  []string{"GET", "PUT", "POST"},
 		}
 		result = append(result, entry)
 	}

@@ -14,13 +14,14 @@ locals {
   common_tags = merge(var.classification_tags, local.common_base_tags)
 
   # Naming conventions (kept short — Alibaba resource names are length-limited).
-  name_prefix    = "${var.project_name}-${var.environment}"
-  vpc_name       = "vpc-${local.name_prefix}"
-  ack_name       = "${var.project_name}-${var.environment}"
-  rds_name       = "rds-${local.name_prefix}"
-  kvstore_name   = "redis-${local.name_prefix}"
-  ots_name       = replace("ots${var.project_name}${var.environment}", "-", "")
-  cr_name        = replace("cr-${local.name_prefix}", "_", "-")
+  name_prefix  = "${var.project_name}-${var.environment}"
+  vpc_name     = "vpc-${local.name_prefix}"
+  ack_name     = "${var.project_name}-${var.environment}"
+  rds_name     = "rds-${local.name_prefix}"
+  kvstore_name = "redis-${local.name_prefix}"
+  # ots_name and cr_name are both DERIVED, not composed — see checks_naming.tf (NAMING-003).
+  # Tablestore caps instance names at 16 and this composition renders 24 for the e2e fixture
+  # (#1884); the registry instance renders 27 against a reported cap of 30 (#1886).
   secret_prefix  = local.name_prefix
   vswitch_prefix = "vsw-${local.name_prefix}"
 }

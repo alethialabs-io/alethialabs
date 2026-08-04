@@ -261,12 +261,18 @@ export function convertProjectConfig(
 
 	// --- Messaging ---
 	if (data.queues && data.queues.length > 0) {
-		const hasFireQueues = data.queues.some((q) => q.ordered);
-		if (hasFireQueues && targetProvider === "gcp") {
+		const hasOrderedQueues = data.queues.some((q) => q.ordered);
+		// This warned about GCP until #1812, on the grounds that "FIFO queues have no direct Pub/Sub
+		// equivalent". Pub/Sub's `message_ordering` is now carried, so that sentence became false —
+		// and it pointed at the one cloud of the three that DOES honor the switch while saying
+		// nothing about the cloud that does not. Alibaba is the documented `queue:ordered` exclusion
+		// (infra/offer-exclusions.yaml), so it is the conversion that actually loses something.
+		if (hasOrderedQueues && targetProvider === "alibaba") {
 			warnings.push({
 				severity: "warning",
 				component: "Messaging",
-				message: "FIFO queues have no direct Pub/Sub equivalent. Consider using ordering keys for partial ordering.",
+				message:
+					"Ordered delivery is not applied on Alibaba Cloud — its queue service publishes no ordering guarantee, so these queues will be created unordered.",
 			});
 		}
 	}

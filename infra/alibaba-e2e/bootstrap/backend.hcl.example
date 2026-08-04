@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# OSS state backend for the alibaba-e2e BOOTSTRAP stack. Copy to backend.hcl (gitignored):
+#
+#   tofu init -backend-config=backend.hcl
+#
+# `bucket` is the bucket THIS stack creates: on the very first apply it does not exist yet, so run
+# `tofu init -backend=false` first, apply, then re-init with `-migrate-state`.
+
+bucket = "alethia-tofu-state-e2e-alibaba"
+prefix = "alibaba-e2e-bootstrap"
+key    = "terraform.tfstate"
+region = "eu-central-1"

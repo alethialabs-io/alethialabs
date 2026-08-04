@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# GCS state backend for the gcp-e2e BOOTSTRAP stack. Copy to backend.hcl (gitignored):
+#
+#   tofu init -backend-config=backend.hcl
+#
+# Auth comes from Application Default Credentials (`gcloud auth application-default login` as the
+# admin who applies this) — no static state keys, matching infra/aws-oidc.
+#
+# `bucket` is the bucket THIS stack creates: on the very first apply it does not exist yet, so run
+# `tofu init -backend=false` first, apply, then re-init with `-migrate-state`.
+
+bucket = "alethia-tofu-state-alethia-e2e-nightly"
+prefix = "gcp-e2e-bootstrap"

@@ -505,6 +505,23 @@ func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
 			fmt.Fprintf(stderr, "Warning: could not remove stale external-dns application: %v\n", err)
 		}
 	}
+	// The cert-manager ClusterIssuer, when cert-manager no longer renders for this deploy (the
+	// switch was turned off, the domain changed, an identity output disappeared). An issuer left
+	// behind is not inert: an Ingress still referencing it keeps requesting certificates that can
+	// never be solved, so it must go — and it is cheap and idempotent to recreate.
+	//
+	// The cert-manager APPLICATION is deliberately NOT reaped alongside it, unlike external-dns
+	// above. Deleting it cascades through the resources-finalizer to the cert-manager CRDs, and
+	// deleting those deletes every Certificate in the cluster — including ones owned by workloads
+	// that have nothing to do with this switch. Re-issuing them all then meets Let's Encrypt's
+	// duplicate-certificate rate limit (5 per week), which no retry recovers from. An idle
+	// controller is the strictly smaller harm, and certManagerDecision still records the skip.
+	if !facts.CertManagerEnabled() {
+		cmd := fmt.Sprintf("kubectl delete clusterissuer %s --ignore-not-found --timeout=60s", CertManagerIssuerName)
+		if err := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "Warning: could not remove stale cert-manager ClusterIssuer %s: %v\n", CertManagerIssuerName, err)
+		}
+	}
 	// Per-cloud ClusterSecretStores: each gate must mirror external-secrets-operator.yaml's
 	// render conditions — a store whose identity fact disappeared (or that belongs to another
 	// cloud) stops rendering and would otherwise be orphaned in a permanently-broken state.

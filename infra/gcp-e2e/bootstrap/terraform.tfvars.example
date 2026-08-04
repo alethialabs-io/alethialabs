@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_*. Applied ONCE, before the parent
+# infra/gcp-e2e stack, by a maintainer with an admin identity in the DEDICATED e2e project.
+
+# REQUIRED — must be the SAME project_id the parent infra/gcp-e2e stack uses.
+project_id = "alethia-e2e-nightly"
+
+# Where the bucket lives. "EU" (multi-region) by default; a single region such as "europe-west3"
+# also works. State is tiny, so multi-region costs nothing meaningful.
+# location = "EU"
+
+# Override only if the derived name `alethia-tofu-state-<project_id>` is already taken — GCS bucket
+# names are globally unique.
+# state_bucket_name = "alethia-tofu-state-e2e-gcp"
+
+# How many superseded state generations to keep.
+# noncurrent_state_versions_kept = 30

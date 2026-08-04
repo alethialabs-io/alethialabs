@@ -369,22 +369,74 @@ var ssotFactVariants = map[string]*argocd.InfraFacts{
 		IRSAExternalSecretsArn: "arn:aws:iam::111111111111:role/eks-ue1-dev-x-secrets-operator",
 		SecretsXacctRef:        "arn:aws:iam::222222222222:role/AlethiaSecretsReadRole",
 	},
+	// Everything ON. The two variants above leave nearly every decision "skipped", and the
+	// map coverage that matters is over INSTALLED decisions — a skipped service is never
+	// looked up, so a variant set that installs nothing proves nothing about the lookup.
+	// Every cloud's identity/certificate/WAF fact is set at once: TestInfraServiceMapsCover-
+	// DecisionsSSOT overrides Provider per iteration, and a fact belonging to another cloud is
+	// simply unread by the arm that runs.
+	"every installable service turned on": {
+		DNSEnabled:                    true,
+		DomainName:                    "example.com",
+		DNSCredentialPresent:          true,
+		AppsDestinationRepo:           "https://github.com/acme/apps",
+		ACMCertificateArn:             "arn:aws:acm:us-east-1:111111111111:certificate/abc",
+		WAFWebACLArn:                  "arn:aws:wafv2:us-east-1:111111111111:regional/webacl/app/0c4e-1",
+		IRSAExternalSecretsArn:        "arn:aws:iam::111111111111:role/eks-ue1-dev-x-secrets-operator",
+		GCPExternalDNSSA:              "external-dns@mock-project.iam.gserviceaccount.com",
+		GCPExternalSecretsSA:          "external-secrets@mock-project.iam.gserviceaccount.com",
+		GCPManagedCertName:            "alethia-nl-production-platform-cert",
+		GCPArmorPolicy:                "alethia-nl-production-armor-policy",
+		AzureExternalDNSClient:        "11111111-2222-3333-4444-555555555555",
+		AzureExternalSecretsClient:    "66666666-7777-8888-9999-000000000000",
+		AzureKeyVaultURI:              "https://mock-kv.vault.azure.net/",
+		AlibabaExternalSecretsRoleArn: "acs:ram::111111111111:role/alethia-eso",
+	},
 }
 
 func TestInfraServiceMapsCoverDecisionsSSOT(t *testing.T) {
-	// Tie infraServiceArgoApps + infraServiceNoApp to the REAL decision list: every
-	// service InfraServiceDecisions can record must be in exactly one of the two maps,
-	// and the maps must contain nothing else — so a rename/add/remove in decisions.go
-	// breaks this test instead of silently shrinking the assertion.
+	// Tie infraServiceArgoApps + infraServiceNoApp to the REAL decision list: every service
+	// InfraServiceDecisions can record must resolve, ON EVERY CLOUD, to exactly one of "this
+	// Application" or "no Application here" — and the maps must contain nothing else, so a
+	// rename/add/remove in decisions.go breaks this test instead of silently shrinking the
+	// assertion.
+	//
+	// The enumeration crosses the variants with every provider rather than trusting each
+	// variant's own Provider field. Both maps are provider-keyed now — "ingress" is an
+	// Application on AWS and nothing at all on GKE — so a service-level check would pass while
+	// a cloud in between resolved to neither, which is the exact hole that lets a run wait out
+	// the ArgoCD timeout on an app nobody rendered.
 	seen := map[string]struct{}{}
-	for name, facts := range ssotFactVariants {
-		for _, d := range argocd.InfraServiceDecisions(facts) {
-			seen[d.Service] = struct{}{}
-			_, hasApp := infraServiceArgoApps[d.Service]
-			_, noApp := infraServiceNoApp[d.Service]
-			if hasApp == noApp { // neither, or both
-				t.Errorf("service %q (facts: %s) must be in exactly one of infraServiceArgoApps / infraServiceNoApp (hasApp=%v noApp=%v)", d.Service, name, hasApp, noApp)
+	for _, provider := range t2AllProviders() {
+		for name, base := range ssotFactVariants {
+			facts := *base
+			facts.Provider = provider
+			for _, d := range argocd.InfraServiceDecisions(&facts) {
+				seen[d.Service] = struct{}{}
+				// The exactly-one rule binds where the derivation actually LOOKS: on an
+				// installed decision. A skipped one is `continue`d before either map is
+				// consulted, and demanding an entry for it would force every lane to claim
+				// something about a cloud it does not ship on.
+				if d.Status != "installed" {
+					continue
+				}
+				_, hasApp := argoAppForInfraService(provider, d.Service)
+				noApp := infraServiceShipsNoApp(provider, d.Service)
+				if hasApp == noApp { // neither, or both
+					t.Errorf("service %q on provider %q (facts: %s) must resolve to exactly one of an Application or infraServiceNoApp (hasApp=%v noApp=%v)", d.Service, provider, name, hasApp, noApp)
+				}
 			}
+		}
+	}
+	// Independently of any cloud: a service the decisions can record must be KNOWN to at least
+	// one of the maps. Without this, a brand-new service that happens never to be "installed"
+	// in the variants above would slip through the per-cloud loop entirely and only be caught
+	// on a live run.
+	for s := range seen {
+		_, hasApp := infraServiceArgoApps[s]
+		_, noApp := infraServiceNoApp[s]
+		if !hasApp && !noApp {
+			t.Errorf("service %q is recorded by InfraServiceDecisions but appears in neither infraServiceArgoApps nor infraServiceNoApp", s)
 		}
 	}
 	for s := range infraServiceArgoApps {
@@ -460,12 +512,16 @@ func t2AllProviders() []string {
 	return out
 }
 
-// Every cloud whose "ingress" decision is INSTALLED must name the Application it renders.
-// This is the metricsServerProviders lesson (#1722) applied to the seam the four per-cloud
-// ingress lanes are about to land on: the decision lives in packages/core, the Application
-// name lives in this module, they are edited in different PRs, and a cloud that installs a
-// controller nobody named here would make every run on that cloud wait out the full ArgoCD
-// timeout for an app that was never rendered.
+// Every cloud whose "ingress" decision is INSTALLED must either name the Application it renders
+// or be recorded as shipping none ON THAT CLOUD. This is the metricsServerProviders lesson
+// (#1722) applied to the seam the per-cloud ingress lanes land on: the decision lives in
+// packages/core, the Application name lives in this module, they are edited in different PRs,
+// and a cloud that installs a controller nobody named here would make every run on that cloud
+// wait out the full ArgoCD timeout for an app that was never rendered.
+//
+// "Or ships none" is not a loophole — it is the GKE case, where the Ingress controller runs in
+// the Google-managed control plane and Alethia installs nothing. Saying so EXPLICITLY, per
+// cloud, is what keeps it from becoming one: a cloud that is in neither map still fails.
 //
 // It reads the REAL decision (not a copy of the table), so a lane cannot satisfy it by
 // editing a list.
@@ -478,7 +534,9 @@ func TestInstalledIngressDecisionsNameAnApplication(t *testing.T) {
 			}
 			app, ok := argoAppForInfraService(provider, "ingress")
 			if !ok {
-				t.Errorf("provider %q installs an ingress controller (%s) but infraServiceArgoApps[\"ingress\"] has no entry for it — add the Application name it renders, or the T2 run waits out the full ArgoCD timeout for an app nobody created", provider, d.Reason)
+				if !infraServiceShipsNoApp(provider, "ingress") {
+					t.Errorf("provider %q installs an ingress controller (%s) but neither infraServiceArgoApps[\"ingress\"] nor infraServiceNoApp[\"ingress\"] has an entry for it — name the Application it renders, or record that it renders none, or the T2 run waits out the full ArgoCD timeout for an app nobody created", provider, d.Reason)
+				}
 				continue
 			}
 			if app == "" {
@@ -486,25 +544,44 @@ func TestInstalledIngressDecisionsNameAnApplication(t *testing.T) {
 			}
 		}
 	}
-	// AWS is the entry that exists today; assert it explicitly so a bad refactor that made the
-	// loop above vacuous (e.g. every decision suddenly "skipped") still fails.
+	// The two entries that exist today, asserted explicitly so a bad refactor that made the loop
+	// above vacuous (e.g. every decision suddenly "skipped") still fails.
 	if app, ok := argoAppForInfraService("aws", "ingress"); !ok || app != "aws-load-balancer-controller" {
 		t.Errorf("argoAppForInfraService(aws, ingress) = (%q, %v), want the ALB controller", app, ok)
+	}
+	if !infraServiceShipsNoApp("gcp", "ingress") {
+		t.Error("gcp's built-in GKE Ingress must be recorded in infraServiceNoApp — it installs no Application")
+	}
+	// …and the no-app entry must NOT leak: it is keyed on gcp alone, so a lane that ships an
+	// Azure or Alibaba controller is still forced to name it.
+	for _, provider := range []string{"aws", "azure", "alibaba", "hetzner"} {
+		if infraServiceShipsNoApp(provider, "ingress") {
+			t.Errorf("provider %q inherited gcp's \"ingress ships no Application\" entry — the no-app whitelist must stay per-cloud", provider)
+		}
 	}
 }
 
 // The provider-keyed lookup must fall back to the anyProvider entry for cloud-agnostic
 // services, and must NOT leak a per-cloud entry to another cloud.
 func TestArgoAppForInfraService_ProviderResolution(t *testing.T) {
+	// The clouds that ship their own ingress controller, and the Application each renders. The
+	// point of the loop below is that a cloud gets ITS OWN entry or nothing at all — the ALB
+	// controller must never resolve on azure, nor AGIC on aws.
+	ingressApps := map[string]string{
+		"aws":   "aws-load-balancer-controller",
+		"azure": "ingress-azure",
+	}
 	for _, provider := range t2AllProviders() {
 		if app, ok := argoAppForInfraService(provider, "external-dns"); !ok || app != "external-dns" {
 			t.Errorf("%s: cloud-agnostic service did not fall back to the anyProvider entry: (%q, %v)", provider, app, ok)
 		}
-		if provider == "aws" {
-			continue
-		}
-		if app, ok := argoAppForInfraService(provider, "ingress"); ok {
-			t.Errorf("%s: resolved the AWS-only ingress Application %q — a per-cloud entry must not leak across clouds", provider, app)
+		app, ok := argoAppForInfraService(provider, "ingress")
+		want, hasController := ingressApps[provider]
+		switch {
+		case hasController && (!ok || app != want):
+			t.Errorf("%s: ingress resolved to (%q, %v), want %q", provider, app, ok, want)
+		case !hasController && ok:
+			t.Errorf("%s: resolved another cloud's ingress Application %q — a per-cloud entry must not leak across clouds", provider, app)
 		}
 	}
 	if _, ok := argoAppForInfraService("aws", "no-such-service"); ok {
@@ -517,8 +594,28 @@ func TestArgoAppForInfraService_ProviderResolution(t *testing.T) {
 // lane shipping a controller whose Application the assertion never checks.
 func TestDeriveExpectedArgoApps_InstalledIngressOnUnmappedCloudFails(t *testing.T) {
 	meta := []byte(`{"infra_services":[{"service":"ingress","status":"installed","reason":"a controller this test invented"}]}`)
-	if _, err := DeriveExpectedArgoApps("gcp", meta); err == nil {
-		t.Fatal("expected a hard error for an installed ingress on a cloud with no infraServiceArgoApps entry")
+	// ⚠️ THE FIXTURE CLOUD MOVES EVERY TIME AN INGRESS LANE LANDS, and it has moved twice: gcp →
+	// azure (gcp became mapped as "installs no Application", its controller being in the managed
+	// control plane) → alibaba (azure became mapped to the AGIC Application). Using a MAPPED cloud
+	// here does not fail the test — it makes it pass for the wrong reason, which is worse.
+	//
+	// alibaba is the durable choice rather than the next one along: it is unmapped ON PURPOSE and
+	// expected to stay that way, because ACK ships its own nginx-ingress-controller and a second
+	// one from Alethia would be the #1722 ownership collision. If a lane ever does map it, pick
+	// another genuinely-unmapped cloud — never one that merely has not landed yet.
+	if _, err := DeriveExpectedArgoApps("alibaba", meta); err == nil {
+		t.Fatal("expected a hard error for an installed ingress on a cloud in neither infraServiceArgoApps nor infraServiceNoApp")
+	}
+	// gcp, in contrast, derives CLEANLY and adds nothing — the no-app path, pinned so a future
+	// edit cannot turn it back into an error or into a phantom Application.
+	gcpApps, gcpErr := DeriveExpectedArgoApps("gcp", meta)
+	if gcpErr != nil {
+		t.Fatalf("gcp: an installed ingress that ships no Application must derive cleanly: %v", gcpErr)
+	}
+	for _, a := range gcpApps {
+		if strings.Contains(a, "ingress") || a == "" {
+			t.Errorf("gcp expected set %v contains an ingress Application — GKE's controller renders none", gcpApps)
+		}
 	}
 	// The same record on AWS resolves, so the failure above is about the PROVIDER, not the
 	// service name — otherwise this guard would pass for the wrong reason.
@@ -554,4 +651,55 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// The AGIC Application name is a THREE-WAY constant: the template's `metadata.name`, the
+// infraServiceArgoApps entry this assertion derives the expected set from, and — through
+// `fullnameOverride` — the ServiceAccount name the azure template's federated identity credential
+// trusts. A rename in one place and not the others produces either a run that waits out the whole
+// ArgoCD timeout for an Application nobody rendered (the #1722 shape, one dimension over) or a
+// controller whose token exchange silently fails. Parsed from the template, like
+// TestMetricsServerGateMatchesTemplate, rather than restated.
+func TestAGICApplicationNameMatchesTemplate(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "..", "..")
+	path := filepath.Join(root, "infra", "templates", "argocd", "azure-application-gateway-ingress.yaml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	name := regexp.MustCompile(`(?m)^metadata:\n\s+name:\s+(\S+)`).FindSubmatch(b)
+	if name == nil {
+		t.Fatalf("no Application metadata.name found in %s", path)
+	}
+	want, ok := argoAppForInfraService("azure", "ingress")
+	if !ok {
+		t.Fatalf("azure has no infraServiceArgoApps entry for \"ingress\" — the decision would resolve to nothing and hard-error the derivation")
+	}
+	if got := string(name[1]); got != want {
+		t.Fatalf("AGIC Application name DRIFT:\n  template %s renders: %q\n  infraServiceArgoApps[\"ingress\"][\"azure\"]: %q", path, got, want)
+	}
+
+	// fullnameOverride is what pins the chart's ServiceAccount name; the azure template's
+	// federated identity credential trusts `system:serviceaccount:agic:<that name>`.
+	if !regexp.MustCompile(`fullnameOverride:\s+` + regexp.QuoteMeta(want)).Match(b) {
+		t.Errorf("%s must set fullnameOverride: %s — without it the chart derives its ServiceAccount name from the Helm release name and the federated credential's subject no longer matches", path, want)
+	}
+	if !regexp.MustCompile(`namespace:\s+agic`).Match(b) {
+		t.Errorf("%s must deploy into the `agic` namespace named by the federated credential's subject", path)
+	}
+
+	// The gate must be azure-only. A missing provider term would render the Application on every
+	// cloud, where the chart has no gateway to reconcile onto.
+	gate := regexp.MustCompile(`\{\{-?\s*if\s+([^}]*?)\s*-?\}\}`).FindSubmatch(b)
+	if gate == nil {
+		t.Fatalf("no {{ if }} gate found in %s — AGIC would render on every cloud", path)
+	}
+	if !regexp.MustCompile(`eq\s+\.Provider\s+"azure"`).Match(gate[1]) {
+		t.Errorf("AGIC gate %q must be azure-only", gate[1])
+	}
 }

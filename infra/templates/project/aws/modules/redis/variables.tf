@@ -22,6 +22,36 @@ variable "product_name" {
 }
 
 ################################################################################
+# Derived names (NAMING-004)
+#
+# All four are derived by the CALLER, in the template root's checks_naming.tf, which applies a
+# length budget against ElastiCache's 40-character cap and falls back to a truncated-plus-digest
+# form when the readable one would overflow. They are inputs rather than module locals for one
+# reason: `tofu test` only reaches ./*.tftest.hcl in the cloud root, so a derivation living here
+# could never be asserted. Same shape as azure's modules/key-vault/variables.tf (NAMING-002).
+################################################################################
+
+variable "redis_name" {
+  type        = string
+  description = "Replication group id. Derived by the caller (local.aws_redis_name), which keeps the readable \"redis-<region_short>-<environment>-<product_name>\" form while it fits ElastiCache's 40-character cap and truncates-plus-digests it above that."
+}
+
+variable "redis_user_name" {
+  type        = string
+  description = "User id and user name of the password-authenticated Redis user. Derived by the caller (local.aws_redis_user_name) against the same 40-character budget."
+}
+
+variable "redis_user_group_name" {
+  type        = string
+  description = "User group id. Derived by the caller (local.aws_redis_user_group_name) against the same 40-character budget."
+}
+
+variable "redis_default_user_id" {
+  type        = string
+  description = "User id of the no-op restricted default user ElastiCache requires in every user group. Derived by the caller (local.aws_redis_default_user_id) against the same 40-character budget; it renders 37 characters on the e2e nightly, the tightest of the four."
+}
+
+################################################################################
 # Networking variables
 ################################################################################
 

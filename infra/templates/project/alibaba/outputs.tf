@@ -112,6 +112,14 @@ output "cr_namespace" {
   value       = (var.provision_cr && var.registry_provider == "native") ? module.cr[0].namespace : null
 }
 
+output "cr_repository_paths" {
+  description = "Map of registry component names to their <namespace>/<repository> path"
+  # Guarded on the MODULE, not on a copy of its count predicate: indexing [0] of an empty module
+  # fails the WHOLE apply with "Invalid index", a mile from its cause. Same reasoning as
+  # gcp/outputs.tf's artifact_registry_urls, whose comment records that exact crash.
+  value = length(module.cr) > 0 ? module.cr[0].repository_paths : {}
+}
+
 output "custom_secret_names" {
   description = "Names of the created KMS secrets"
   value       = (length(var.custom_secrets) > 0 && var.secrets_provider == "native") ? module.kms[0].secret_names : []
@@ -124,6 +132,24 @@ output "custom_secret_names" {
 output "alidns_name_servers" {
   description = "AliDNS name servers for the managed domain"
   value       = (var.alidns_enabled && var.dns_provider == "native") ? module.dns[0].name_servers : []
+}
+
+#########################################################################
+##                     WAF Outputs                                     ##
+#########################################################################
+
+# Read by the runner (argocd.InfraFacts.AlibabaWAFInstanceID). Exporting it is what lets a deploy
+# record an HONEST answer to "the WAF switch is on — is anything being filtered?". On this cloud
+# the answer is no, and until this output existed nothing could tell "the switch is off" apart
+# from "you are paying for a WAF 3.0 postpaid instance that inspects zero requests". The binding
+# itself (alicloud_wafv3_domain, CNAME mode) needs the ingress load balancer's address, which
+# does not exist at plan time — see modules/waf/main.tf for the provider evidence.
+#
+# null when the switch is off. ExtractOutput turns a null into "", which is exactly the
+# "nothing built" signal the decision reads.
+output "waf_instance_id" {
+  description = "Id of the WAF 3.0 instance for the application WAF — exported UNATTACHED; no hostname is bound to it"
+  value       = var.application_waf_enabled ? module.waf[0].instance_id : null
 }
 
 #########################################################################

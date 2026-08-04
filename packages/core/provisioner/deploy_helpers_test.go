@@ -612,3 +612,147 @@ func TestArgocdURLAndWAFDecisionsMatchWhatInstallArgoCDEmits(t *testing.T) {
 		}
 	}
 }
+
+// TestInstallArgoCDGKEIngress is the GCP half of "the canvas switch reaches something".
+//
+// GKE needs no ingress CONTROLLER — Google's runs in the managed control plane — so unlike AWS
+// there is no Application to assert. What must be proven instead is that the two references the
+// template now exports actually leave the runner: the Google-managed certificate onto a `gce`
+// Ingress, and the Cloud Armor policy onto a BackendConfig bound to the ArgoCD server Service.
+//
+// The values reach helm as a FILE rather than `--set` flags, because the backend-config
+// annotation's value is the JSON document {"default":"argocd-server"} and helm's --set parser
+// reads a leading `{` as a list literal. The file is read back here, inside the fake executor,
+// while it still exists — asserting the flag alone would prove only that a path was interpolated.
+func TestInstallArgoCDGKEIngress(t *testing.T) {
+	const cert = "alethia-nl-production-platform-cert"
+	const policy = "alethia-nl-production-armor-policy"
+
+	// run drives installArgoCD with the given outputs and returns every command it issued plus the
+	// contents of the values file the last helm command referenced (empty when it referenced none).
+	run := func(t *testing.T, outputs map[string]interface{}) (cmds []string, values string, url string) {
+		t.Helper()
+		resetDeploySeams(t)
+		executeCommandWithOutput = func(string, string, []string) (string, error) { return "existing-auth", nil }
+		executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
+			cmds = append(cmds, command)
+			// Read any -f'd values file NOW: installArgoCD removes its temp dir on return.
+			if i := strings.Index(command, "helm upgrade --install argo-cd"); i == 0 {
+				if j := strings.Index(command, " -f "); j >= 0 {
+					path := strings.Trim(strings.TrimSpace(command[j+4:]), "'\"")
+					b, err := os.ReadFile(path)
+					if err != nil {
+						t.Errorf("values file %s unreadable at helm time: %v", path, err)
+					}
+					values = string(b)
+				}
+			}
+			return nil
+		}
+		result := &PlanResult{}
+		vc := &types.ProjectConfig{
+			Provider: "gcp",
+			DNS:      types.ProjectDNSConfig{Enabled: true, DomainName: "example.com"},
+		}
+		if err := installArgoCD(context.Background(), vc, outputs, result, io.Discard, io.Discard); err != nil {
+			t.Fatalf("installArgoCD: %v", err)
+		}
+		return cmds, values, result.ArgocdURL
+	}
+
+	t.Run("certificate + policy: gce ingress, BackendConfig applied before helm", func(t *testing.T) {
+		cmds, values, url := run(t, map[string]interface{}{
+			"cloud_dns_managed_certificate_name": cert,
+			"cloud_armor_policy_name":            policy,
+		})
+		if url != "https://argocd.example.com" {
+			t.Errorf("ArgocdURL = %q", url)
+		}
+		for _, want := range []string{
+			"ingressClassName: gce",
+			"hostname: argocd.example.com",
+			`ingress.gcp.kubernetes.io/pre-shared-cert: "` + cert + `"`,
+			`cloud.google.com/backend-config: '{"default":"` + argocd.GKEBackendConfigName + `"}'`,
+		} {
+			if !strings.Contains(values, want) {
+				t.Errorf("helm values missing %q:\n%s", want, values)
+			}
+		}
+		// ORDER is the point, not merely presence: the BackendConfig must exist before the chart
+		// creates the Service that names it, or the load balancer is programmed once with no
+		// security policy on it — the exact window this lane closes.
+		applyIdx, helmIdx := -1, -1
+		for i, c := range cmds {
+			if strings.HasPrefix(c, "kubectl apply -f") && strings.Contains(c, "backendconfig.yaml") {
+				applyIdx = i
+			}
+			if strings.HasPrefix(c, "helm upgrade --install argo-cd") {
+				helmIdx = i
+			}
+		}
+		if applyIdx < 0 {
+			t.Fatalf("no BackendConfig apply issued:\n%v", cmds)
+		}
+		if helmIdx < 0 || applyIdx > helmIdx {
+			t.Errorf("BackendConfig applied at %d, helm install at %d — it must come first", applyIdx, helmIdx)
+		}
+	})
+
+	t.Run("WAF off: ingress intact, no BackendConfig anywhere", func(t *testing.T) {
+		cmds, values, url := run(t, map[string]interface{}{
+			"cloud_dns_managed_certificate_name": cert,
+			// null is the shape tofu emits when cloud_armor_enabled is false; it must behave
+			// exactly like an absent key.
+			"cloud_armor_policy_name": nil,
+		})
+		if url != "https://argocd.example.com" {
+			t.Errorf("the ingress must still be configured with the WAF off, ArgocdURL = %q", url)
+		}
+		if !strings.Contains(values, "ingressClassName: gce") {
+			t.Errorf("lost the ingress when the WAF switch was off:\n%s", values)
+		}
+		if strings.Contains(values, "backend-config") {
+			t.Errorf("values name a BackendConfig with no Cloud Armor policy — GKE would stall on it:\n%s", values)
+		}
+		for _, c := range cmds {
+			if strings.Contains(c, "backendconfig.yaml") {
+				t.Errorf("applied a BackendConfig with no policy: %s", c)
+			}
+		}
+	})
+
+	t.Run("no certificate: no ingress, no URL, no BackendConfig", func(t *testing.T) {
+		// A Cloud Armor policy with no certificate must NOT produce a half-configured ingress:
+		// without TLS the ArgoCD API would be served over plain HTTP, so the whole block is off.
+		cmds, values, url := run(t, map[string]interface{}{"cloud_armor_policy_name": policy})
+		if url != "" {
+			t.Errorf("ArgocdURL = %q, want empty with no certificate", url)
+		}
+		if values != "" {
+			t.Errorf("rendered ingress values with no certificate:\n%s", values)
+		}
+		for _, c := range cmds {
+			if strings.Contains(c, "backendconfig.yaml") {
+				t.Errorf("applied a BackendConfig for an ingress that was never certificated: %s", c)
+			}
+			if strings.HasPrefix(c, "helm upgrade --install argo-cd") && strings.Contains(c, " -f ") {
+				t.Errorf("passed ingress values with no certificate: %s", c)
+			}
+		}
+	})
+
+	// The AWS path must be completely unaffected by the new branch: its outputs are disjoint from
+	// GCP's, and a deploy carrying an ACM certificate must still get the ALB `--set` chain.
+	t.Run("aws is untouched by the gcp branch", func(t *testing.T) {
+		cmds, values, _ := run(t, map[string]interface{}{
+			"acm_certificate_arn": "arn:aws:acm:us-east-1:111111111111:certificate/abc",
+		})
+		if values != "" {
+			t.Errorf("aws must not use a values file:\n%s", values)
+		}
+		install := cmds[len(cmds)-1]
+		if !strings.Contains(install, "server.ingress.ingressClassName=alb") {
+			t.Errorf("aws lost its ALB ingress:\n%s", install)
+		}
+	})
+}

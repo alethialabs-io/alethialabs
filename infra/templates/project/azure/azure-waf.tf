@@ -6,6 +6,7 @@ module "azure_waf" {
   environment         = var.environment
   project_name        = var.project_name
   resource_group_name = azurerm_resource_group.main.name
+  policy_name         = local.azure_waf_policy_name
   rules               = var.azure_waf_rules
 
   tags = local.azure_default_tags

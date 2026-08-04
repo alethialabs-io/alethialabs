@@ -12,30 +12,64 @@ The messaging section configures message queues and publish/subscribe topics. Qu
 | Field | Type | Description |
 |-------|------|-------------|
 | **Name** | Text input | Queue name |
-| **FIFO** | Toggle | First-In-First-Out ordering guarantee |
+| **Ordered (FIFO) delivery** | Toggle | Per-key ordering. See [What "ordered" means](#what-ordered-means) |
 | **Visibility Timeout** | Number | 0–43,200 seconds (displayed as human-readable: s/m/h) |
 
-<Tabs items={["AWS", "GCP", "Azure"]}>
+### What ordered means
+
+Ordered delivery means one thing on every cloud Alethia supports:
+
+> Messages tagged with the same ordering key are delivered to consumers in the order the service
+> received them. Messages with different keys have no relative order and are still processed
+> concurrently.
+
+Three consequences apply everywhere. Read them before you turn the toggle on.
+
+**It is per key, never a total order.** No cloud orders a whole queue. AWS orders within a message
+group, Azure within a session, and Google Cloud within an ordering key. A queue with no keys is
+unordered even with the toggle on.
+
+**It is an application change, not only an infrastructure change.** Your publisher must set a key on
+every message. On Azure your consumer must also accept a session instead of receiving plain
+messages — once sessions are on, a client that sends or receives regular messages stops working.
+
+**It costs throughput, and on AWS money.** AWS charges more per request for a FIFO queue and caps it
+at 300 messages per second, or 3,000 batched. Google Cloud caps each ordering key at 1 MB/s and
+raises delivery latency. Azure gives each session to exactly one receiver at a time.
+
+<Callout type="warn">
+Changing this setting on a queue that already exists **destroys the queue and every message in
+it** — on Google Cloud, the subscription and every message it has not acknowledged. Every service
+that offers ordering makes the choice when the queue is created and never after, so Alethia has to
+replace the queue to change it. Set it when you create the queue.
+</Callout>
+
+<Tabs items={["AWS", "GCP", "Azure", "Alibaba Cloud"]}>
   <Tab value="AWS">
-    **SQS** (Simple Queue Service)
-    - Standard queues: at-least-once delivery, best-effort ordering
-    - FIFO queues: exactly-once processing, strict ordering (name must end in `.fifo`)
+    **SQS** (Simple Queue Service) — ordered delivery creates a FIFO queue.
+    - Order holds within a `MessageGroupId`, which your publisher sets on every send
+    - The queue name gains a `.fifo` suffix, and the 80-character name limit counts it
+    - Deduplication is content-based, so a publisher that sets only a group id can still send
+    - The dead letter queue becomes FIFO too — SQS requires it
     - Visibility timeout: how long a message is hidden after a consumer reads it
-    - Dead letter queues configured automatically
   </Tab>
   <Tab value="GCP">
-    **Pub/Sub Subscriptions** (pull mode)
-    - No direct FIFO support — use ordering keys for per-key ordering
-    - At-least-once delivery by default
-    <Callout type="warn">
-    When converting from AWS SQS with FIFO enabled, a warning is shown: "GCP Pub/Sub has no direct FIFO support. Consider using ordering keys."
-    </Callout>
+    **Pub/Sub Subscriptions** (pull mode) — ordered delivery sets message ordering on the queue's subscription.
+    - Order holds within an `orderingKey`, and all messages for one key must be published from one region
+    - A redelivered message causes every later message for that key to be delivered again
+    - Order is not preserved for messages written to a dead-letter topic
   </Tab>
   <Tab value="Azure">
-    **Service Bus Queues**
-    - FIFO support via Sessions
-    - At-least-once or at-most-once delivery modes
-    - Dead letter queues built-in
+    **Service Bus Queues** — ordered delivery enables sessions.
+    - Order holds within a `SessionId`, and one receiver holds every message for that session
+    - Sessions need the Standard or Premium tier. Alethia blocks a Basic project before it deploys
+    - Dead letter queues built-in. A message moved back from one loses its place in the session
+  </Tab>
+  <Tab value="Alibaba Cloud">
+    **Simple Message Service** — Alethia does not offer ordered delivery here, and the toggle has no
+    effect. The service accepts a FIFO queue type, but Alibaba Cloud publishes no ordering
+    guarantee behind it: no delivery order, no message key to group by, and no throughput limit.
+    Alethia does not offer a guarantee the cloud does not make.
   </Tab>
 </Tabs>
 

@@ -333,13 +333,31 @@ variable "cosmos_db_consistency_level" {
 
 variable "cosmos_db_collections" {
   type = list(object({
-    name                       = string
-    partition_key              = optional(string, "/id")
-    billing_mode               = optional(string, "PAY_PER_REQUEST")
+    name          = string
+    partition_key = optional(string, "/id")
+    billing_mode  = optional(string, "PAY_PER_REQUEST")
+    # Point-in-time restore. Offered per table by the canvas, but Cosmos buys it per ACCOUNT (the
+    # `backup` block below), so any container asking for it puts the whole account in continuous
+    # backup mode — see `local.cosmos_backup_type` in cosmos-db.tf.
+    point_in_time_recovery = optional(bool, false)
+    # Synapse Link analytical (column) storage. A SEPARATE, separately-billed feature that is not a
+    # backup: the canvas offers no switch for it, and nothing derives it from point_in_time_recovery
+    # any more (#1838). Kept accepted so a tenant driving the tfvars directly can still ask for it.
     analytical_storage_enabled = optional(bool, false)
   }))
   default     = []
   description = "List of Cosmos DB containers (collections) to create with partition keys"
+}
+
+variable "cosmos_db_continuous_backup_tier" {
+  type        = string
+  default     = "Continuous7Days"
+  description = "Retention tier used when a container asks for point-in-time recovery. Continuous7Days is free; Continuous30Days is billed."
+
+  validation {
+    condition     = contains(["Continuous7Days", "Continuous30Days"], var.cosmos_db_continuous_backup_tier)
+    error_message = "cosmos_db_continuous_backup_tier must be Continuous7Days or Continuous30Days."
+  }
 }
 
 #########################################################################
@@ -392,6 +410,39 @@ variable "azure_waf_rules" {
 }
 
 #########################################################################
+##            Application Gateway / AGIC Variables                     ##
+#########################################################################
+
+variable "azure_application_gateway_enabled" {
+  type        = bool
+  default     = null
+  description = <<-EOT
+    Whether to provision an Application Gateway v2 (and, on a cluster, the Application Gateway
+    Ingress Controller that drives it from Kubernetes Ingress objects).
+
+    Leave UNSET (null, the default) to follow `azure_waf_enabled`: on Azure a WAF policy binds to
+    an Application Gateway and to nothing else, so a WAF with no gateway inspects no requests.
+    Set true to get the ingress without a WAF; set false to keep neither.
+
+    COST: a v2 gateway bills per hour for as long as it exists, independently of traffic and of
+    whether any Ingress object was ever created — materially more than the WAF policy itself.
+    Requires `provision_vnet = true`; the gateway needs a dedicated subnet, which only the VNet
+    this template creates can carve.
+  EOT
+}
+
+variable "azure_application_gateway_capacity" {
+  type        = number
+  default     = 1
+  description = "Fixed instance count for the Application Gateway v2 SKU. Azure requires at least 1; raise it for capacity or zone redundancy."
+
+  validation {
+    condition     = var.azure_application_gateway_capacity >= 1 && var.azure_application_gateway_capacity <= 125
+    error_message = "azure_application_gateway_capacity must be between 1 and 125 (the Application Gateway v2 instance-count range)."
+  }
+}
+
+#########################################################################
 ##                   Storage Account Variables                         ##
 #########################################################################
 
@@ -413,8 +464,17 @@ variable "storage_account_replication" {
   description = "Replication type for the Storage Account (LRS, GRS, RAGRS, ZRS)"
 }
 
+# Typed, not `list(any)`. Under `any` this variable accepted every spelling and forwarded it to a
+# module that declares a real object type, which discards whatever it does not name — so the
+# provider spent months sending `container_access_type` into a void with nothing able to say so.
 variable "storage_containers" {
-  type        = list(any)
+  type = list(object({
+    name        = string
+    access_type = optional(string, "private")
+    # Per container because that is how it is chosen; applied per ACCOUNT because that is the only
+    # scope azurerm offers. modules/storage-account/main.tf carries the aggregation and the reason.
+    versioning_enabled = optional(bool, false)
+  }))
   default     = []
   description = "List of storage containers to create in the Storage Account"
 }

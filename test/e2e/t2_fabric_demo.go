@@ -404,9 +404,9 @@ type FabricDemoTier struct {
 	Tier              string `json:"tier"`
 	Namespace         string `json:"namespace"`
 	Placed            bool   `json:"placed"`
-	TenantApp         string `json:"tenant_app"`      // app-<project>-<ns>
+	TenantApp         string `json:"tenant_app"`        // app-<project>-<ns>
 	TenantProject     string `json:"tenant_appproject"` // tenant-<project>-<ns>
-	SourcePath        string `json:"source_path"`     // overlays/<tier>
+	SourcePath        string `json:"source_path"`       // overlays/<tier>
 	CausedByPlacement bool   `json:"caused_by_placement"`
 	Converged         bool   `json:"converged"`
 	ResourceCount     int    `json:"managed_resources"`
@@ -428,11 +428,11 @@ type FabricDemoVCluster struct {
 // ALETHIA_E2E_FABRIC_DEMO_SUMMARY so the proof capture can fold one line into the per-provider step
 // summary. It carries only names/booleans/counts and the Fabric's PUBLIC plan digest — no secrets.
 type FabricDemoSummary struct {
-	Enabled  bool             `json:"enabled"`
-	Provider string           `json:"provider"`
-	Fabric   string           `json:"fabric_cluster"`
-	Repo     string           `json:"apps_repo"`
-	Tiers    []FabricDemoTier `json:"tiers"`
+	Enabled  bool               `json:"enabled"`
+	Provider string             `json:"provider"`
+	Fabric   string             `json:"fabric_cluster"`
+	Repo     string             `json:"apps_repo"`
+	Tiers    []FabricDemoTier   `json:"tiers"`
 	VCluster FabricDemoVCluster `json:"vcluster"`
 	// BaseAppsRepo and PreExistingApps record what the placements were measured AGAINST, so a reader
 	// can see the causality baseline rather than take it on trust.
