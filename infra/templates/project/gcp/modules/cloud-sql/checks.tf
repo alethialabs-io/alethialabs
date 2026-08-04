@@ -58,10 +58,18 @@ check "mysql_iam_auth_flag_present" {
 # against origin/dev, so it predates #1772 — found here because adding `var.provision_gke` to
 # locals.enable_app_db_iam makes a cluster-less keyless request produce exactly that null. The
 # conditions are unchanged and still fail-closed; only the message is made renderable.
+#
+# The CONDITION needed the same treatment for the same reason, one version down. `||` does not
+# short-circuit on OpenTofu 1.9.0 — the version the runner ships (apps/runner/Dockerfile.base
+# TOFU_VERSION, compat matrix `tofu`) — so `length(local.app_iam_user)` is reached even when the
+# left disjunct is a known `true`, and a POSTGRES instance died with "argument must not be null"
+# exactly like the message did. See gcp/checks_data.tf for the measured version table (#1920).
+# `try(..., false)` keeps the fail-closed meaning: a null or renamed local yields `false`, and the
+# disjunction still evaluates to `true` on the shapes this check does not judge.
 check "mysql_iam_user_fits_mysql_limits" {
   assert {
-    condition = !(var.engine == "MYSQL" && var.app_iam_sa_email != null) || (
-      length(local.app_iam_user) <= 32 && local.app_iam_user == lower(local.app_iam_user)
+    condition = !(var.engine == "MYSQL" && var.app_iam_sa_email != null) || try(
+      length(local.app_iam_user) <= 32 && local.app_iam_user == lower(local.app_iam_user), false
     )
     error_message = "MySQL IAM login '${coalesce(local.app_iam_user, "(none)")}' is longer than 32 characters or not lowercase; rename the app service account (its local part IS the login)."
   }
@@ -89,11 +97,12 @@ resource "terraform_data" "mysql_iam_auth_guard" {
     }
 
     precondition {
-      condition = !(var.engine == "MYSQL" && var.app_iam_sa_email != null) || (
-        length(local.app_iam_user) <= 32 && local.app_iam_user == lower(local.app_iam_user)
+      condition = !(var.engine == "MYSQL" && var.app_iam_sa_email != null) || try(
+        length(local.app_iam_user) <= 32 && local.app_iam_user == lower(local.app_iam_user), false
       )
       # coalesce for the same reason as the check above — a message that cannot render turns a
-      # passing precondition into a failed plan.
+      # passing precondition into a failed plan. The `try()` on the condition is the 1.9.0
+      # non-short-circuit fix; see the check of the same name above.
       error_message = "GCP-MYSQL-IAM-002: MySQL IAM login '${coalesce(local.app_iam_user, "(none)")}' exceeds 32 characters or is not lowercase. Apply blocked fail-closed — Cloud SQL MySQL truncates the @ and domain, so the service account's local part IS the login and there is no remediation but renaming it."
     }
 
