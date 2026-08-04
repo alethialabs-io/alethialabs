@@ -95,7 +95,13 @@ log_has "Destroy complete!" && destroyed=true
 #    backstop. We do NOT dump the whole log into the committable bundle (the raw log is a
 #    separate, short-retention debug artifact). ──
 if [ "$have_log" = 1 ]; then
+	# The length cap is load-bearing. `reachab` matched the word "reachable" inside a resource
+	# DESCRIPTION in the `tofu show -json` plan the harness writes to the runner log — one 148 KB
+	# line, and the only one of these ten patterns that matched it. So azure's "highlights" file
+	# WAS the entire plan (run 30882660761). A highlight is a sentence; anything longer is a
+	# payload, and the payload already has its own home in the separate runner-log artifact.
 	grep -E 'Starting deployment|Applying OpenTofu|Apply complete!|Verification (gate|override)|Evidence receipt (signed|built)|Deployment completed|ArgoCD (installed|ready)|Destroy complete!|reachab|Ready' "$runner_log" 2>/dev/null \
+		| awk 'length($0) <= 2000' \
 		| scrub_stream >"$out/summary.txt" || true
 fi
 
