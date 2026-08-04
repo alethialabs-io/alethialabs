@@ -613,6 +613,14 @@ jobs:
       # for weeks (#1755). Both crons are asserted here because neither is reachable from a PR.
       - name: Nightly dimension resolution (floor and full-bar never collide)
         run: bash scripts/e2e/resolve-dimension.sh --self-test
+      # The proof-bundle scrub decides what a PUBLIC repo publishes, and its only run was inside
+      # e2e-nightly.yml — a workflow no PR triggers. So the change that made the tripwire fire on
+      # every azure plan JSON could not have been caught before merge, and wasn't: azure lost its
+      # runner log on every run and published an unscrubbed 148 KB plan (#1923). The suite pins
+      # both directions — non-vacuous AND not over-broad — and is hermetic: no cloud, no secret,
+      # obviously-fake literals only.
+      - name: Proof-scrub denylist (non-vacuous, and no false positive on a tofu plan JSON)
+        run: bash demos/proofs/scrub.sh --self-test
       # Each guard proves it still BLOCKS what it must and, more importantly, still
       # ALLOWS what it must — the false positives are what get a guard disabled.
       - name: Guards self-test (runtime · compose · merge)

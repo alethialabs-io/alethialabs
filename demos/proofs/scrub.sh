@@ -54,9 +54,19 @@ scrub_literals_from_env() {
 #   3. the VALUE of any `key: value` / `key = value` / `"key": value` line whose key
 #      contains a denylisted token (kubeconfig / talosconfig / *client[_-]key /
 #      *private[_-]key / *password / *_token / *secret_value / *access_key / *manifest …).
-#   4. the same denylisted keys appearing INSIDE a JSON object mid-line, in either of the
-#      two shapes OpenTofu emits: `"key":"value"` and `"key":{"value":"…"}`.
+#   4. the same denylisted keys appearing INSIDE a JSON object mid-line, in the shapes OpenTofu
+#      emits: `"key":"value"`, `"key":{"value":"…"}`, `"key":{"constant_value":"…"}` and the
+#      array forms `"key":["…"]` / `"key":{"value":["…"]}`.
+#   5. a denylisted BARE key mid-line — `…msg="apply failed" hcloud_token=abc…`, the shape a
+#      logfmt line has. Rule (3) is line-anchored and cannot see it.
 # The key is kept (so the proof still shows WHICH field existed) — only the value dies.
+#
+# Rules (4-`constant_value`), (4-array) and (5) close a gap that made the TRIPWIRE unsatisfiable
+# (#1923 follow-up). assert_grep_clean flags a denylisted key carrying any non-structural value —
+# correctly — but this scrubber could not redact those four shapes, so a leg carrying one had no
+# way to ever produce a bundle: red on every run, with the secret sitting in plaintext until the
+# capture deleted it. A tripwire that flags what the scrub cannot fix is a permanent outage, and
+# the honest fix is to make the scrub cover the shape, not to stop flagging it.
 #
 # Rule (4) exists because rule (3) is LINE-ANCHORED (`^`), and a tofu `show -json` plan is one
 # enormous single line. #1854: `"hcloud_token":{"value":"<live token>"}` sat mid-line in the
@@ -85,8 +95,31 @@ scrub_stream() {
 		# (4) JSON-embedded, mid-line. Wrapped form FIRST: `"key":{"value":"…"}` is what a tofu
 		#     plan JSON emits for a root variable, and the bare form would otherwise match its
 		#     inner `"value":"…"` only by luck of ordering.
-		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*\{\s*["]value["]\s*:\s*)"(?:[^"\\]|\\.)*"/$1"[REDACTED]"/g;
+		#     `constant_value` is the same hazard one section over: a secret written as a literal in
+		#     the .tf source lands in the plan JSON `configuration` block under that key, verbatim.
+		#     assert_grep_clean deliberately does NOT excuse it, so covering only `value` left the
+		#     shape most worth catching flagged-but-unredactable.
+		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*\{\s*["]value["]\s*:\s*)"(?:[^"\\]|\\.)*"/${1}"[REDACTED]"/g;
+		#     `constant_value` COLLAPSES the wrapper rather than redacting inside it. The tripwire
+		#     classifies a value by its first 24 characters, and `{"constant_value":"` is 19 of them
+		#     — leaving `[REDA`, so its "already redacted?" filter could not see our marker and the
+		#     shape stayed flagged even once scrubbed. Emitting `"key":"[REDACTED]"` puts the marker
+		#     inside the window. Verify with the round-trip assertion below if that window moves.
+		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*)\{\s*["]constant_value["]\s*:\s*"(?:[^"\\]|\\.)*"\s*\}/${1}"[REDACTED]"/g;
+		#     Array-valued, bare and inside the `{"value":…}` wrapper. The elements have no key of
+		#     their own, so the denylisted key is the only cover they get.
+		#     `${1}` is NOT optional: `$1[` interpolates as an ARRAY SUBSCRIPT, so the replacement
+		#     silently became empty and the rule DELETED the whole array instead of redacting it.
+		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*\{\s*["]value["]\s*:\s*)\[[^\]]*"[^\]]*\]/${1}["[REDACTED]"]/g;
+		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*)\[[^\]]*"[^\]]*\]/${1}["[REDACTED]"]/g;
 		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*)"(?:[^"\\]|\\.)*"/$1"[REDACTED]"/g;
+		# (5) BARE key mid-line: logfmt `hcloud_token=abc` inside a longer line. The lookbehind
+		#     keeps it off quoted JSON keys (rule 4 territory — a JSON key sits behind a `"`), and
+		#     the lookaheads leave structural values alone: a `{` or `[` opener, a JSON literal,
+		#     the tofu placeholders, and our own marker. Those carry no secret, and redacting them
+		#     would corrupt the plan JSON for no gain.
+		s/(?<!["\w.\-])([\w.\-]*$den[\w.\-]*\s*[:=]\s*)"(?:[^"\\]|\\.)*"/$1"[REDACTED]"/g;
+		s/(?<!["\w.\-])([\w.\-]*$den[\w.\-]*\s*[:=]\s*)(?!["\{\[])(?!true\b)(?!false\b)(?!null\b)(?!\((?:sensitive value|sensitive|known after apply)\))(?!\[REDACTED)([^\s,}\]]+)/$1\[REDACTED\]/g;
 		print;
 	'
 }
@@ -221,6 +254,8 @@ password: FAKE-PASSWORD-should-be-redacted-by-key
 FAKE-KEY-BODY-should-never-survive
 -----END EC $pk-----
 {"format_version":"1.2","variables":{"hcloud_token":{"value":"$fake_planjson"},"region":{"value":"KEEP-ME-PLANJSON-REGION"}},"hetzner_s3_secret_key":"$fake_planjson"}
+{"configuration":{"root_module":{"resources":[{"expressions":{"admin_password":{"constant_value":"$fake_planjson"}}}]}},"registry_tokens":["$fake_planjson"],"rotation_tokens":{"value":["$fake_planjson"]},"region":{"value":"KEEP-ME-ARRAYLINE-REGION"}}
+time=2026-08-04T06:12:12Z level=error msg="apply failed" hcloud_token=$fake_planjson step=KEEP-ME-LOGFMT-STEP
 KEEP-ME-SENTINEL-non-secret-marker
 EOF
 
@@ -258,9 +293,23 @@ EOF
 		echo "SELF-TEST FAIL: the JSON rule ate a non-secret sibling value (over-broad)" >&2
 		return 1
 	fi
-	# The scrubbed bundle must pass the tripwire.
+	# Same, for the array/constant_value line and the logfmt line: redact the value, keep the line.
+	local marker
+	for marker in KEEP-ME-ARRAYLINE-REGION KEEP-ME-LOGFMT-STEP; do
+		grep -qF "$marker" "$scrubbed" && continue
+		echo "SELF-TEST FAIL: a scrub rule ate the non-secret remainder of its line ($marker)" >&2
+		return 1
+	done
+	# The scrubbed bundle must pass the tripwire. This is the assertion that keeps the scrub and
+	# the tripwire in step: assert_grep_clean flags a denylisted key carrying any non-structural
+	# value, so EVERY shape it flags must be one scrub_stream can redact. When they drifted apart
+	# — `{"constant_value":"…"}`, `["…"]`, `{"value":["…"]}` and logfmt `key=value` were flagged
+	# but unredactable — the affected leg could never produce a bundle at all. Adding a shape to
+	# the tripwire without adding it here is what that regression looks like.
 	if ! assert_grep_clean "$work/out"; then
 		echo "SELF-TEST FAIL: assert_grep_clean flagged a correctly-scrubbed bundle" >&2
+		echo "  If a NEW shape was added to the tripwire, scrub_stream has to be able to redact it," >&2
+		echo "  or the leg carrying that shape is red forever." >&2
 		return 1
 	fi
 

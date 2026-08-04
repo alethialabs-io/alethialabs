@@ -208,6 +208,15 @@ jobs:
       # the rollup can then distinguish an explicit inert leg from a job that started but failed
       # before proof capture. If the gate itself fails, this step does not run and the missing
       # current-run summary remains a hard failure.
+      #
+      # `emitted_by: "gate-off"` is this emitter declaring its own provenance (#1922). The rollup
+      # currently INFERS it — `is_gate_off_summary()` checks the directory is literally
+      # `gate-<run_id>-<attempt>` and that the payload has no `deploy_stage` — and says so itself:
+      # "The airtight fix is for the gate-off step to STAMP its own provenance
+      # (e.g. `emitted_by: \"gate-off\"`), which this rollup would then read." Without it, renaming
+      # this step's OUT path silently turns every inert leg into a false red, from a file that
+      # never mentions this one. Purely ADDITIVE: the path and every existing field are unchanged,
+      # so the existing inference keeps working until the rollup is taught to prefer the stamp.
       - name: Record gate-off proof
         if: steps.gate.outputs.run == 'false'
         env:
@@ -221,7 +230,7 @@ jobs:
             --arg provider "$PROVIDER" \
             --arg run_tag "nightly-${RUN_ID}-${RUN_ATTEMPT}" \
             --arg verdict "${PROVIDER}: SKIPPED — gate off, no secret/var wired" \
-            '{provider: $provider, run_tag: $run_tag, outcome: "skipped", verdict: $verdict}' \
+            '{provider: $provider, run_tag: $run_tag, outcome: "skipped", emitted_by: "gate-off", verdict: $verdict}' \
             > "$OUT/provision-summary.json"
 
       # ── Deterministic, unique-per-run cluster identity + region. `<project>-<env>` is the
@@ -868,6 +877,7 @@ jobs:
       #    the per-provider PASS/FAIL verdict to the job step summary. The runner wrote a
       #    host-usable kubeconfig to $HOME/.alethia/kubeconfig (read only on the success path). ──
       - name: Capture proof (scrubbed bundle + step-summary verdict)
+        id: capture
         if: steps.gate.outputs.run == 'true' && always()
         env:
           PROVIDER: ${{ matrix.provider }}
@@ -909,13 +919,41 @@ jobs:
           fi
           ./demos/proofs/capture-proof.sh "${{ matrix.provider }}"
 
+      # GATED ON THE CAPTURE STEP (#1923). capture-proof.sh deletes a bundle that fails the secret
+      # tripwire, which covers the tripwire path — but this step used to upload whenever the gate
+      # step had merely produced an output, and that says nothing about whether the capture got as
+      # far as running the tripwire AT ALL. capture-proof.sh is `set -euo pipefail`: any earlier
+      # failure aborts it with a partially-written, never-checked bundle on disk, and `if: always()`
+      # published exactly that. Uploading is now conditional on the capture having SUCCEEDED, so
+      # "unscrubbed" and "unchecked" are both unpublishable, not just the former.
+      #
+      # Two branches, and only two: a gate-OFF leg (run == 'false') publishes the inert marker the
+      # `Record gate-off proof` step wrote — no cloud ran, no secret was in scope, nothing to scrub.
+      # A gate-ON leg publishes only if the capture step succeeded.
       - name: Upload proof artifact
-        if: always() && (steps.gate.outputs.run == 'true' || steps.gate.outputs.run == 'false')
+        if: always() && (steps.gate.outputs.run == 'false' || steps.capture.outcome == 'success')
         uses: actions/upload-artifact@v7
         with:
           name: e2e-proof-${{ matrix.provider }}-${{ github.run_id }}
           path: demos/proofs/${{ matrix.provider }}/
           if-no-files-found: warn
+          retention-days: 30
+
+      # …but a capture that ABORTED still has something worth publishing: the CAPTURE-ABORTED.txt
+      # marker capture-proof.sh leaves in place of the deleted bundle, so an empty artifact slot
+      # cannot be misread as "this cloud never ran". The step above would otherwise suppress it.
+      #
+      # Fail-closed BY CONSTRUCTION rather than by trust: the path is a glob for that one filename,
+      # so it can only ever match the marker — never a captured file that escaped the delete. The
+      # marker is written only on the path where the bundle has already been removed, and the two
+      # steps are mutually exclusive on `outcome`, so they can share one artifact name safely.
+      - name: Upload capture-abort marker
+        if: always() && steps.capture.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-proof-${{ matrix.provider }}-${{ github.run_id }}
+          path: demos/proofs/${{ matrix.provider }}/**/CAPTURE-ABORTED.txt
+          if-no-files-found: ignore
           retention-days: 30
 
       # The raw runner log carries a `tofu show -json` plan, and OpenTofu emits the root
@@ -924,6 +962,7 @@ jobs:
       # bundle uses, and fail closed: if a secret survives, this step goes red and the upload
       # below finds nothing to publish.
       - name: Scrub the runner log before upload
+        id: scrublog
         if: steps.gate.outputs.run == 'true' && always()
         env:
           # HCLOUD_TOKEN is job-level and inherited. E2E_GIT_TOKEN is NOT — it is only ever
@@ -935,8 +974,11 @@ jobs:
             "${{ runner.temp }}/t2-runner.log" \
             "${{ runner.temp }}/runner-log-scrubbed"
 
+      # Same gating as the proof bundle. scrub-runner-log.sh already `rm -f`s the file it refuses,
+      # so this was correct by accident; make it correct by declaration, so both upload steps state
+      # the same invariant instead of one depending on the other's side effect.
       - name: Upload runner log (scrubbed)
-        if: steps.gate.outputs.run == 'true' && always()
+        if: always() && steps.scrublog.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: t2-runner-log-${{ matrix.provider }}-${{ github.run_id }}
