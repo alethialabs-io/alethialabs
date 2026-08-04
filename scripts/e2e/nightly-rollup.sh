@@ -19,7 +19,9 @@
 # So discovery here never looks at a path. It reads every provision-summary.json under the proofs
 # tree and keys on the bundle's OWN `.provider`, accepting it only when `.run_tag` names THIS run
 # (the tree also carries checked-in history — the aws artifact held a bundle from six days earlier).
-# Gate-off legs write an explicit `outcome: skipped` summary using that same contract. Existence gets
+# Gate-off legs write an explicit `outcome: skipped` summary using that same contract — but so does
+# a leg that DIED before the harness, so `outcome` alone can never grant SKIP: see gate_off_bundle()
+# below, which classifies on which emitter wrote the bundle and defaults to FAIL (#1922). Existence gets
 # a SECOND, INDEPENDENT source from the run's jobs API only as a fail-closed fallback: a matrix job
 # with no current-run success/failure/skip summary is FAIL, never an inferred SKIP.
 #
@@ -40,12 +42,12 @@
 #
 # Writes into OUT_DIR:
 #   summary.md              the step-summary block (table + coverage)
-#   state.env               REDS / SKIPS / JOB_NO_SUMMARY / ENABLED_N / SKIP_N / TOTAL / COV_TITLE
-#                           / DIMENSION / DIMENSION_LABEL
+#   state.env               REDS / SKIPS / JOB_NO_SUMMARY / DIED_EARLY / ENABLED_N / SKIP_N / TOTAL
+#                           / COV_TITLE / DIMENSION / DIMENSION_LABEL
 #   issue-red-<id>.md       one body per red leg, with its title on the first `title:` line
 #   issue-body-coverage.md  the standing coverage-issue body
 #   ledger.tsv              provider<TAB>verdict<TAB>detail<TAB>bundle — one row per PASS/FAIL leg;
-#                           explicit gate-off SKIPs are omitted. The ledger step reuses this
+#                           only PROVABLY gate-off SKIPs are omitted. The ledger step reuses this
 #                           discovery instead of repeating the join that just lost a whole run.
 set -uo pipefail
 
@@ -92,6 +94,62 @@ summary_for() {
 	return 1
 }
 
+# gate_off_bundle <summary-path> <run_id> — is this `outcome:skipped` bundle PROVABLY the
+# workflow's gate-off proof, or is it a leg that DIED before the harness ever started? (#1922)
+#
+# `outcome` alone cannot tell them apart, and reading it as "inert" is the whole bug. On run
+# 30882660761 alibaba's gate was ON — both E2E_ALIBABA_ROLE_ARN and E2E_ALIBABA_OIDC_PROVIDER_ARN
+# have been set since 2026-08-03 — and its `Configure Alibaba credentials (RAM OIDC)` step failed
+# with `400 MissingTimestamp`. The `always()` capture then ran with the step outcome it was handed
+# and wrote `outcome:"skipped"` — carrying a verdict that literally reads `❌ FAILED at stage
+# 'queued'` — which this rollup rendered as a SKIP row. No red was filed, the coverage issue (#1720)
+# was refreshed with a body claiming a variable that IS set is unset, and SKIP_N said 2 where the
+# truth was 1. #1850 (hetzner, `Install hcloud CLI` 404) is the same mechanism; #1723 the same family.
+#
+# So classify on the bundle's PROVENANCE — which emitter wrote it — and DEFAULT TO FAIL: only a
+# bundle that is provably the gate-off one is inert. The two emitters are already distinguishable
+# without any workflow change, and this mirrors EVERY condition the gate-off emitter checks (#1831 —
+# a gate that reports on an emitter must mirror all of its conditions, not one of three):
+#
+#   .github/workflows/e2e-nightly.yml `Record gate-off proof`, `if: steps.gate.outputs.run == 'false'`
+#     dir     demos/proofs/<provider>/gate-<run_id>-<run_attempt>/     ← the run-scoped literal
+#     payload exactly {provider, run_tag, outcome:"skipped", verdict}  ← no deploy_stage, ever
+#   demos/proofs/capture-proof.sh (the normal, gate-ON path)
+#     dir     demos/proofs/<provider>/<UTC-stamp>/                     ← never starts with `gate-`
+#     payload always carries deploy_stage (queued|planning|…)          ← written unconditionally
+#
+# The DIRECTORY NAME is the primary discriminator, preferred over sniffing field combinations: it is
+# a literal only the gate-off step can write, it embeds the same run id + attempt the `run_tag`
+# already anchors on, and it survives both artifact layouts (upload-artifact publishes
+# `demos/proofs/<provider>/`, so the stamp/gate dir is the top level of the artifact and download
+# preserves it whether or not the per-artifact wrapper dir is flattened — the #1613 hazard).
+# The absent `deploy_stage` is a second, independent condition from the same emitter contract, so a
+# real capture that somehow landed in a `gate-*` dir still cannot pass as inert.
+#
+# Every failure mode of this function — unreadable JSON, a run_tag that does not name this run, a
+# directory name that does not match — returns non-zero, i.e. FAIL. A reporting layer whose failure
+# mode is silence is worse than one that is occasionally noisy.
+#
+# RESIDUAL GAP, deliberately left to a separate change on the workflow side. Both conditions above
+# are the emitter's contract MIRRORED here as literals; nothing compiles them together. Edit that
+# step's `OUT=` path and every inert leg starts filing a red — loud and immediately obvious, which is
+# the direction we want it to fail, but still a silent coupling. The airtight fix is for the gate-off
+# step to STAMP its own provenance (e.g. `emitted_by: "gate-off"`), which this rollup would then read
+# directly; that is a workflow edit and is sequenced separately. write_gate_off() in the self-test
+# reconstructs the contract from the same two literals, so a drift shows up as a red test here.
+gate_off_bundle() {
+	local path="$1" run_id="$2" dir tag attempt
+	dir="$(basename "$(dirname "$path")")"
+	tag="$(jq -r '.run_tag // ""' "$path" 2>/dev/null || echo "")"
+	# The attempt suffix, taken from the run_tag the bundle itself carries.
+	# Quoted separately (SC2295): unquoted, $run_id would be read as a GLOB, not a literal.
+	attempt="${tag#nightly-"${run_id}"-}"
+	[ -n "$attempt" ] && [ "$attempt" != "$tag" ] || return 1
+	[ "$dir" = "gate-${run_id}-${attempt}" ] || return 1
+	jq -e 'has("deploy_stage") | not' "$path" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 # job_exists <provider> — did Actions create this cloud's matrix job?
 # Echoes yes | no | unknown. `unknown` is deliberate and distinct from `no`: it means we could not
 # ask, and the caller must NOT infer whether the gate was enabled.
@@ -130,7 +188,7 @@ derive() {
 	mkdir -p "$out"
 	: >"$out/ledger.tsv"
 
-	local reds="" skips="" job_no_summary="" p hit path outcome verdict detail status exists
+	local reds="" skips="" job_no_summary="" died_early="" p hit path outcome verdict detail status exists stage
 
 	if jobs_payload_is_broken; then
 		echo "::warning::the jobs payload has no job starting with '${PROVISION_JOB_PREFIX}' — the existence cross-check is DEAD (was the matrix job renamed?). Falling back to proof-presence, which cannot tell a red leg from an unwired one."
@@ -156,9 +214,20 @@ derive() {
 			if [ "$outcome" = "success" ]; then
 				status="PASS"
 				printf '%s\t%s\t%s\t%s\n' "$p" "$status" "$detail" "e2e-proof-${p}-${run_id}" >>"$out/ledger.tsv"
-			elif [ "$outcome" = "skipped" ]; then
+			elif [ "$outcome" = "skipped" ] && gate_off_bundle "$path" "$run_id"; then
+				# Provably the gate-off emitter's own bundle: correct, inert, nothing to report.
 				status="SKIP"
 				skips="$skips $p"
+			elif [ "$outcome" = "skipped" ]; then
+				# `outcome:skipped` from the CAPTURE path — the leg's gate was on and it died before
+				# the harness started (a credentials/CLI-install step failed, so every later step
+				# green-skipped). That is a red, not an unwired cloud (#1922).
+				status="FAIL"
+				stage="$(jq -r '.deploy_stage // "unknown"' "$path" 2>/dev/null || echo unknown)"
+				detail="died before the harness (stage \`${stage}\`) — skipped by a failed setup step, NOT a gate-off"
+				reds="$reds $p"
+				died_early="$died_early $p"
+				printf '%s\t%s\t%s\t%s\n' "$p" "$status" "$detail" "e2e-proof-${p}-${run_id}" >>"$out/ledger.tsv"
 			else
 				status="FAIL"
 				reds="$reds $p"
@@ -207,6 +276,10 @@ derive() {
 		if [ -n "${job_no_summary// /}" ]; then
 			echo
 			echo "> ⚠️ Matrix job left no readable explicit summary:${job_no_summary} — counted as FAIL, not as an unwired leg."
+		fi
+		if [ -n "${died_early// /}" ]; then
+			echo
+			echo "> ⚠️ Gate ON but the leg never reached the harness:${died_early} — \`outcome: skipped\` from the capture path, not the gate-off proof. Counted as FAIL, and NOT as an unwired leg (#1922)."
 		fi
 	} >>"$out/summary.md"
 
@@ -272,6 +345,11 @@ derive() {
 				printf '%s\n\n' "This cloud's matrix job existed but produced no readable \`provision-summary.json\`, so there is no explicit PASS, FAIL, or SKIP verdict to quote. It is reported as FAIL rather than inferred to be unwired."
 				;;
 			esac
+			case " $died_early " in
+			*" $cloud "*)
+				printf '%s\n\n' "**This leg died before the harness started.** Its gate was ON, but a setup step (credentials, CLI install) failed, so every later step green-skipped and the \`always()\` capture wrote \`outcome: \"skipped\"\` from the normal capture path — NOT the \`gate-<run>-<attempt>\` proof the gate-off branch writes. Start from the run's job log at the FIRST red step, not at the deploy spine: nothing was provisioned. Until #1922 this was rendered as \`SKIP — gate off\` and no red was filed at all."
+				;;
+			esac
 			printf '%s\n' "See the run's step-summary rollup + the \`e2e-proof-${cloud}-${run_id}\` artifact for the failing stage (deploy stage / cost / leak / stale sweep)."
 			printf '%s\n' "_Auto-created by the e2e-nightly rollup and deduped by title — close it once \`${cloud}\` is green again._"
 		} >"$out/issue-red-${cloud}.md"
@@ -284,6 +362,9 @@ derive() {
 		echo "REDS='${reds# }'"
 		echo "SKIPS='${skips# }'"
 		echo "JOB_NO_SUMMARY='${job_no_summary# }'"
+		# Legs whose gate was ON but which died before the harness (#1922). A subset of REDS —
+		# exported separately so the ledger/notification steps can name the failure mode.
+		echo "DIED_EARLY='${died_early# }'"
 		echo "ENABLED_N='${enabled_n}'"
 		echo "SKIP_N='${skip_n}'"
 		echo "TOTAL='${TOTAL}'"
@@ -300,11 +381,29 @@ derive() {
 # ── self-test ──────────────────────────────────────────────────────────────────────────────────
 # Every case below is a bug that HAPPENED or is one layout change away from happening. They run
 # offline against synthetic trees: no network, no gh, no token.
-write_summary() { # <dir> <provider> <run_tag> <outcome>
+
+# write_summary — a bundle from the NORMAL capture path (demos/proofs/capture-proof.sh). It always
+# carries `deploy_stage`, whatever the outcome; that is what makes it distinguishable from the
+# gate-off bundle below. Callers pass a timestamp-shaped dir, as the real capture does.
+write_summary() { # <dir> <provider> <run_tag> <outcome> [deploy_stage]
 	mkdir -p "$1"
 	cat >"$1/provision-summary.json" <<EOF
-{ "provider": "$2", "run_tag": "$3", "outcome": "$4",
+{ "provider": "$2", "run_tag": "$3", "outcome": "$4", "deploy_stage": "${5:-applied}",
+  "region": "eu-x", "cluster": "c", "git_sha": "deadbeef", "captured_at": "2026-08-04T00:00:00Z",
   "verdict": "$2: verdict for $3" }
+EOF
+}
+
+# write_gate_off — byte-for-byte the contract of e2e-nightly.yml's `Record gate-off proof` step:
+# the run-scoped `gate-<run_id>-<attempt>` directory and the four-field payload with NO
+# deploy_stage. The fixture constructs the directory itself so a drift in that literal shows up
+# here, in the tests, rather than as a silently-swallowed red on a real night.
+write_gate_off() { # <proofs-root> <provider> <run_id> <attempt>
+	local d="$1/$2/gate-$3-$4"
+	mkdir -p "$d"
+	cat >"$d/provision-summary.json" <<EOF
+{ "provider": "$2", "run_tag": "nightly-$3-$4", "outcome": "skipped",
+  "verdict": "$2: SKIPPED — gate off, no secret/var wired" }
 EOF
 }
 
@@ -379,12 +478,97 @@ run_self_test() {
 	# summary written by the workflow. Job existence must not turn those inert legs red (#1683).
 	c="$tmp/gateoff"
 	for p in hetzner aws gcp azure alibaba; do
-		write_summary "$c/proofs/$p/gate" "$p" "nightly-777-1" skipped
+		write_gate_off "$c/proofs" "$p" 777 1
 	done
 	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
 	_a "|hetzner aws gcp azure alibaba|0" "$(CASE_MATRIX=success _derive "$c")" \
 		"explicit gate-off summaries stay SKIP even though all matrix jobs exist (#1683)"
 	_a "0" "$(wc -l <"$c/out/ledger.tsv" | tr -d ' ')" "gate-off legs do not enter the execution ledger"
+
+	# ── #1922 — `outcome: skipped` is TWO states and only one of them is inert. ────────────────────
+	# All five states a leg can be in, each as its own fixture. Before the provenance check every
+	# `skipped` bundle became a SKIP row, so state (2) filed NO red: on run 30882660761 alibaba's
+	# gate was ON — E2E_ALIBABA_ROLE_ARN *and* E2E_ALIBABA_OIDC_PROVIDER_ARN have been set since
+	# 2026-08-03 — and `Configure Alibaba credentials (RAM OIDC)` died with `400 MissingTimestamp`.
+	# Only (2) changes behaviour; (1)(3)(4)(5) are pins that must hold in BOTH directions, because a
+	# fix that reds a genuinely inert leg files a false red every single night.
+	_state() { sed -n "s/^$2='\(.*\)'\$/\1/p" "$1/state.env"; } # read state.env without clobbering $REDS
+
+	# (1) GATE OFF ⇒ SKIP. Byte-for-byte the bundle `Record gate-off proof` writes.
+	c="$tmp/s1-gate-off"
+	write_gate_off "$c/proofs" alibaba 777 1
+	write_jobs "$c/jobs.json" alibaba
+	_a "|hetzner aws gcp azure alibaba|0" "$(CASE_MATRIX=success _derive "$c")" \
+		"(1) gate off ⇒ SKIP — the fix must NOT red an inert leg"
+
+	# (2) DIED BEFORE THE HARNESS ⇒ FAIL. The alibaba shape exactly: the capture path's bundle
+	#     (timestamp dir, `deploy_stage` present) carrying the failed setup step's `skipped`.
+	c="$tmp/s2-died-early"
+	write_summary "$c/proofs/e2e-proof-alibaba-777/2026-08-03T031545Z" alibaba "nightly-777-1" skipped queued
+	write_jobs "$c/jobs.json" alibaba
+	_a "alibaba|hetzner aws gcp azure|1" "$(CASE_MATRIX=success _derive "$c")" \
+		"(2) gate ON, died before the harness ⇒ FAIL, not a gate-off SKIP (#1922)"
+	_a "e2e nightly: alibaba RED (floor)" "$(cat "$tmp/s2-died-early/out/issue-red-alibaba.title")" \
+		"(2) a red issue is filed for it at all — on 30882660761 none was, it was found by hand"
+	_a "1" "$(grep -c 'died before the harness started' "$tmp/s2-died-early/out/issue-red-alibaba.md")" \
+		"(2) the red body names the failure mode instead of pointing at the deploy spine"
+	_a "1" "$(wc -l <"$tmp/s2-died-early/out/ledger.tsv" | tr -d ' ')" \
+		"(2) the died-early leg enters the execution ledger like any other red"
+	_a "alibaba" "$(_state "$tmp/s2-died-early/out" DIED_EARLY)" \
+		"(2) state.env names the died-early legs for the downstream steps"
+	# The coverage issue is the second casualty: #1720 was auto-refreshed with a body claiming
+	# E2E_ALIBABA_ROLE_ARN is unset, and the run's own coverage line said 3/5 where the truth was 4/5.
+	_a "e2e nightly: 4 of 5 clouds are not enabled" "$(_state "$tmp/s2-died-early/out" COV_TITLE)" \
+		"(2) the coverage issue no longer counts a WIRED cloud as unwired (#1720's false body)"
+
+	# (3) SUCCESS ⇒ PASS.
+	c="$tmp/s3-success"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-03T031545Z" aws "nightly-777-1" success argocd-ready
+	write_jobs "$c/jobs.json" aws
+	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" "(3) success ⇒ PASS"
+
+	# (4) EXPLICIT FAILURE ⇒ FAIL.
+	c="$tmp/s4-failure"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-03T031545Z" aws "nightly-777-1" failure applying
+	write_jobs "$c/jobs.json" aws
+	_a "aws|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" "(4) explicit failure ⇒ FAIL"
+
+	# (5) JOB EXISTS, NO READABLE SUMMARY ⇒ FAIL. Already true today; pinned so it stays.
+	c="$tmp/s5-no-summary"
+	mkdir -p "$c/proofs"
+	write_jobs "$c/jobs.json" aws
+	_a "aws|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
+		"(5) job exists but no readable summary ⇒ FAIL"
+
+	# ── The discriminator MIRRORS EVERY CONDITION of the gate-off emitter (#1831), and anything it
+	#    cannot prove inert is FAIL. Each fixture below breaks exactly ONE of those conditions. ──
+	# 5d-i. The directory names a DIFFERENT run. The bundle claims this run in its run_tag, so
+	#       run-scoping alone would accept it; only the dir literal catches the mismatch.
+	c="$tmp/gate-dir-wrong-run"
+	mkdir -p "$c/proofs/alibaba/gate-999-1"
+	cat >"$c/proofs/alibaba/gate-999-1/provision-summary.json" <<-'EOF'
+		{ "provider": "alibaba", "run_tag": "nightly-777-1", "outcome": "skipped",
+		  "verdict": "alibaba: SKIPPED — gate off, no secret/var wired" }
+	EOF
+	write_jobs "$c/jobs.json" alibaba
+	_a "alibaba|hetzner aws gcp azure|1" "$(CASE_MATRIX=success _derive "$c")" \
+		"a gate-shaped dir naming ANOTHER run is not provably inert ⇒ FAIL"
+
+	# 5d-ii. Right directory, but the payload is a real capture (`deploy_stage` present). The
+	#        gate-off step never writes that field, so this cannot be its output.
+	c="$tmp/gate-dir-real-payload"
+	write_summary "$c/proofs/alibaba/gate-777-1" alibaba "nightly-777-1" skipped queued
+	write_jobs "$c/jobs.json" alibaba
+	_a "alibaba|hetzner aws gcp azure|1" "$(CASE_MATRIX=success _derive "$c")" \
+		"a capture-path payload in a gate-* dir is not provably inert ⇒ FAIL"
+
+	# 5d-iii. The ATTEMPT is read from the bundle's own run_tag, not assumed to be 1 — a re-run
+	#         writes gate-<run>-2 and must still be inert.
+	c="$tmp/gate-attempt-2"
+	write_gate_off "$c/proofs" alibaba 777 2
+	write_jobs "$c/jobs.json" alibaba
+	_a "|hetzner aws gcp azure alibaba|0" "$(CASE_MATRIX=success _derive "$c")" \
+		"a gate-off proof from run attempt 2 is still SKIP"
 
 	# 6. ALL LEGS OFF — nothing ran, nothing found, no red. The genuinely-inert night.
 	c="$tmp/alloff"
@@ -419,10 +603,10 @@ run_self_test() {
 
 	# 9. A MIXED night, which is what a real 5-cloud run looks like once more legs are wired.
 	c="$tmp/mixed"
-	write_summary "$c/proofs/e2e-proof-hetzner-777/s" hetzner "nightly-777-1" skipped
+	write_gate_off "$c/proofs" hetzner 777 1
 	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
 	write_summary "$c/proofs/e2e-proof-gcp-777/s" gcp "nightly-777-1" success
-	write_summary "$c/proofs/e2e-proof-alibaba-777/s" alibaba "nightly-777-1" skipped
+	write_gate_off "$c/proofs" alibaba 777 1
 	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
 	_a "aws azure|hetzner alibaba|3" "$(_derive "$c")" "mixed: aws FAIL + gcp PASS + azure ran-without-proof"
 
