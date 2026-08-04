@@ -33,7 +33,7 @@ output "kube_config_raw" {
 }
 
 output "node_resource_group" {
-  description = "Auto-generated resource group containing AKS agent pool nodes"
+  description = "Resource group containing the AKS agent pool nodes. Set explicitly from var.node_resource_group (#1921), no longer auto-derived by Azure; read back off the cluster so it reflects what Azure actually holds."
   value       = azurerm_kubernetes_cluster.this.node_resource_group
 }
 
