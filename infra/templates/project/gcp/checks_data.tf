@@ -22,7 +22,7 @@
 #
 #   fixture: !requested || (gke && length(res) == 1 && module.cloud_sql[0].out != null), no cloud_sql
 #   1.9.0   (apps/runner/Dockerfile.base TOFU_VERSION, compat matrix `tofu`) → Invalid index, PLAN DIES
-#   1.10.10 (what infra-templates.yml used to gate this file with)          → plans clean
+#   1.10.10 (what infra-templates.yml gated this file with until #1931)     → plans clean
 #   1.12.3                                                                  → plans clean
 #
 # Without the `try()` this check made the ENTIRE gcp template unplannable on 1.9.0 for every project
@@ -32,9 +32,10 @@
 # The guard that should have caught this ALREADY EXISTS and already fails: run
 # `clusterless_still_plans_with_every_cluster_identity_requested` in checks_cluster_optional.tftest.hcl
 # plans exactly this shape, and on 1.9.0 every one of the seven gcp suites died here. It is run on a
-# version where it cannot fail — infra-templates.yml pins TOFU_VERSION 1.10.10 while the runner
-# applies 1.9.0. That skew is its own defect (it also hides two live azure ones) and is tracked
-# separately; do not read the green template gate as proof this file plans.
+# version where it cannot fail — infra-templates.yml pinned TOFU_VERSION 1.10.10 while the runner
+# applied 1.9.0. CLOSED by #1931: that env is now coupled to compat matrix `static_couplings[tofu]`,
+# so the gate runs the runner's engine and this suite bites where it is written. A green template
+# gate is proof this file plans again.
 #
 # `length(trimspace(...)) > 0` rather than `!= null` matches the sibling checks on aws and alibaba,
 # and means a genuinely renamed module output still fails the check loudly instead of being

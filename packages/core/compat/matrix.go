@@ -79,8 +79,9 @@ type K8sRange struct {
 	Note   string `json:"note,omitempty"`
 }
 
-// StaticCoupling records a build-time version that must match a peer (Go const ↔
-// Dockerfile ARG). Data only; asserted by a CI guard, not the runtime engine.
+// StaticCoupling records a build-time version that must match its peers (a Go
+// const, a Dockerfile ARG, and any CI workflow that must run the same engine).
+// Data only; asserted by a CI guard, not the runtime engine.
 type StaticCoupling struct {
 	ID            string `json:"id"`
 	Title         string `json:"title,omitempty"`
@@ -88,7 +89,44 @@ type StaticCoupling struct {
 	GoConst       string `json:"go_const,omitempty"`
 	DockerfileArg string `json:"dockerfile_arg,omitempty"`
 	Dockerfile    string `json:"dockerfile,omitempty"`
-	Note          string `json:"note,omitempty"`
+	// Workflows are CI workflows whose top-level `env` carries another copy of
+	// Value. A workflow that gates an artifact on a version DIFFERENT from the one
+	// the product ships proves nothing about it, and nothing used to say so: the
+	// project-template gate ran OpenTofu 1.10.10 against a runner applying 1.9.0
+	// for the life of those templates (#1931). Listing it here brings it under the
+	// same drift test as the Go const and the Dockerfile ARG.
+	Workflows []CouplingWorkflow `json:"workflows,omitempty"`
+	// WorkflowExclusions are the narrow, deliberate places a listed workflow runs
+	// something OTHER than Value, carried as data so an exclusion is explicit and
+	// drift-checked rather than a silent second literal in a YAML file.
+	WorkflowExclusions []CouplingWorkflowExclusion `json:"workflow_exclusions,omitempty"`
+	Note               string                      `json:"note,omitempty"`
+}
+
+// CouplingWorkflow names a CI workflow and the top-level `env` key in it that must
+// carry the coupling's value.
+type CouplingWorkflow struct {
+	Path   string `json:"path"`
+	EnvKey string `json:"env_key"`
+	Note   string `json:"note,omitempty"`
+}
+
+// CouplingWorkflowExclusion records one documented departure from a coupling
+// inside a workflow — what runs a different version, which env key holds it, why
+// it has to, the upstream reference, and what retires it. The cloud-parity rule
+// admits an exclusion; it does not admit a silent one.
+type CouplingWorkflowExclusion struct {
+	ID           string `json:"id"`
+	Workflow     string `json:"workflow"`
+	EnvKey       string `json:"env_key"`
+	Value        string `json:"value"`
+	Scope        string `json:"scope,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	Upstream     string `json:"upstream,omitempty"`
+	UpstreamFix  string `json:"upstream_fix,omitempty"`
+	WhyThisValue string `json:"why_this_value,omitempty"`
+	RetireWhen   string `json:"retire_when,omitempty"`
+	Issue        int    `json:"issue,omitempty"`
 }
 
 var (
