@@ -112,6 +112,14 @@ output "cr_namespace" {
   value       = (var.provision_cr && var.registry_provider == "native") ? module.cr[0].namespace : null
 }
 
+output "cr_repository_paths" {
+  description = "Map of registry component names to their <namespace>/<repository> path"
+  # Guarded on the MODULE, not on a copy of its count predicate: indexing [0] of an empty module
+  # fails the WHOLE apply with "Invalid index", a mile from its cause. Same reasoning as
+  # gcp/outputs.tf's artifact_registry_urls, whose comment records that exact crash.
+  value = length(module.cr) > 0 ? module.cr[0].repository_paths : {}
+}
+
 output "custom_secret_names" {
   description = "Names of the created KMS secrets"
   value       = (length(var.custom_secrets) > 0 && var.secrets_provider == "native") ? module.kms[0].secret_names : []

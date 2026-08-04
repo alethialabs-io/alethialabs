@@ -226,6 +226,11 @@ const KINDS: Record<string, KindDef> = {
 				region: true,
 				provider: true,
 				repository_url: true,
+				// Typed columns since #1811, so `--set` reaches them the same way it reaches nosql's
+				// point_in_time_recovery. While they were provider_config keys the CLI could not
+				// touch them at all.
+				immutable_tags: true,
+				vulnerability_scanning: true,
 			})
 			.partial(),
 	},

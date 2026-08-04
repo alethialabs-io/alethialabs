@@ -343,15 +343,23 @@ func azureAdminGroupObjectIDs(admins []any) []string {
 	return out
 }
 
+// buildServiceBusQueues maps each canvas queue onto one entry of the `service_bus_queues` tfvar.
+//
+// Ordered delivery on Azure is a Service Bus SESSION: `requires_session` makes the queue hand every
+// message carrying one SessionId to a single receiver, in arrival order.
+//
+// `requires_session` is emitted for EVERY queue, not only when the canvas switch was touched. The
+// key used to appear only when `Ordered != nil`, which made the tfvars shape depend on whether a
+// user had ever opened the field — two queues that look identical in the console produced different
+// input to the template. The module declares `optional(bool, false)`, so emitting the OFF position
+// explicitly is a no-op diff for every queue that exists today.
 func buildServiceBusQueues(queues []types.ProjectQueueConfig) map[string]interface{} {
 	result := make(map[string]interface{})
 	for _, q := range queues {
 		cfg := map[string]interface{}{
 			"max_delivery_count": 10,
 			"lock_duration":      "PT1M",
-		}
-		if q.Ordered != nil {
-			cfg["requires_session"] = *q.Ordered
+			"requires_session":   derefBoolOr(q.Ordered, false),
 		}
 		if q.VisibilityTimeout != nil {
 			cfg["lock_duration"] = fmt.Sprintf("PT%dS", *q.VisibilityTimeout)

@@ -78,9 +78,8 @@ exclusions:
 
   # ── Hetzner TLS and WAF — the same architectural ceiling, settled by #1810 ───────────
   # These were baselined while #1810 read as "the switch is dropped in the console". Wiring the
-  # carrier settled it: on Hetzner there is nothing on the other side of the wire. Hetzner sells no
-  # managed certificate and no WAF product, and `infra/templates/project/hetzner` declares no DNS
-  # variable of any kind — the whole cloud's TLS story is in-cluster, exactly like its Postgres.
+  # carrier settled it: on Hetzner there is nothing on the other side of the wire — the whole
+  # cloud's TLS story is in-cluster, exactly like its Postgres.
   #
   # CORRECTED by the cert-manager platform lane. This entry used to read "managed_certificate is
   # still HONORED on Hetzner: cert-manager issues the certificate inside the cluster" — which was
@@ -90,15 +89,23 @@ exclusions:
   # Making cert-manager a platform add-on did not rescue Hetzner either: cert-manager ships no
   # Hetzner Cloud DNS DNS01 solver in the box (it needs a third-party webhook — the same upstream
   # gap external-dns fills with its webhook sidecar), and HTTP01 is not an alternative because
-  # Hetzner has no ingress controller. So nothing issues a certificate on Hetzner, by OpenTofu or
-  # in-cluster, and the reason now says that instead.
+  # Hetzner has no ingress controller.
   #
-  # It stays an EXCLUSION rather than moving to the baseline because it is not scheduled work: a
-  # cloud that sells no managed certificate plus a solver upstream does not ship is the same "the
-  # product does not exist" shape as the WAF entry below, not debt with a fix pending.
+  # CORRECTED AGAIN by #1816, and the correction matters because a `reason:` prints VERBATIM into
+  # the public matrix. The previous text opened "Hetzner sells no managed certificate", which is
+  # not true and is checkable: `hcloud_managed_certificate` is in the pinned provider (1.67.0),
+  # alongside `hcloud_uploaded_certificate`. What it is, is a LOAD BALANCER certificate — the only
+  # thing that can present one is an `hcloud_load_balancer`, and this template provisions none.
+  # A Talos cluster on Hetzner takes traffic at the nodes; there is no Hetzner-managed listener to
+  # terminate TLS on, so there is nothing for the certificate to be attached to. #1816 creating the
+  # DNS zone does not change that: a zone is not a listener.
+  #
+  # It stays an EXCLUSION rather than moving to the baseline because it is not scheduled work. The
+  # cell would need a load balancer this cloud's architecture does not use, which is the same "not
+  # how this cloud is built" shape as the WAF entry below, not debt with a fix pending.
   - offer: dns:managed_certificate
     cloud: hetzner
-    reason: Hetzner sells no managed certificate and cert-manager ships no Hetzner DNS01 solver — nothing can issue one, in OpenTofu or in-cluster.
+    reason: Hetzner's managed certificate can only be presented by a Hetzner load balancer, and an Alethia Hetzner cluster takes traffic at the nodes instead — so there is no listener to attach one to, and cert-manager ships no Hetzner DNS01 solver to issue one in-cluster either.
   - offer: dns:waf_enabled
     cloud: hetzner
     reason: Hetzner sells no web application firewall — the product does not exist.
@@ -281,6 +288,65 @@ exclusions:
     cloud: alibaba
     reason: Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do.
 
+  # ── Ordered delivery on Alibaba — an argument with nothing behind it ─────────────────
+  # The other three clouds are built (#1812). Alibaba is not, and the reason is NOT that the
+  # argument is missing — that would make this baseline debt, and it is deliberately not filed as
+  # such. `alicloud_message_service_queue.queue_type` exists in the pinned provider 1.286.0 (read
+  # out of `tofu providers schema` against the real lockfile, not off a docs page), and Alibaba's
+  # CreateQueue reference documents `QueueType` with exactly two values, verbatim:
+  #   "The type of the queue. Valid values: normal: standard queue. fifo: FIFO queue." — default normal
+  #
+  # That sentence is the entire published specification. Alibaba states no ordering scope, no
+  # message-group or deduplication key for a publisher to set, no throughput ceiling, no region
+  # availability and no pricing; the Simple Message Service limits page does not use the word FIFO
+  # anywhere, and the console's create-queue panel has no queue-type selector at all. Alibaba's own
+  # best-practice guidance for this service still tells applications to attach a sequence id and
+  # sort client-side.
+  #
+  # Wiring it would ship the one thing this guard exists to prevent: a switch that reaches a real
+  # provider argument and promises the user a behaviour nobody has stated. Alethia does not offer a
+  # guarantee the cloud does not make. Revisit if Alibaba publishes one — the argument is already
+  # there, so it would be a small change and a large amount of new documentation. Until then the
+  # canvas card reads "Standard" on Alibaba and the field says the switch is not applied.
+  #
+  # Re-derived against the post-#1833 guard, the same way #1815's Tablestore entry above was: the
+  # carrier probe still measures this cell `no-carrier`, i.e. it reproduces in exactly the shape it
+  # was boarded in. This is NOT a ratchet "fixed — delete it". It leaves `baseline:` because the
+  # ceiling claim above reclassifies it, and because the guard refuses to let one cell be both
+  # excluded and boarded as debt. packages/core/cloud/queue_ordered_parity_test.go pins the
+  # ABSENCE, so a later one-line "fix" cannot contradict this entry in silence.
+  - offer: queue:ordered
+    cloud: alibaba
+    reason: Alibaba Cloud's queue service accepts a FIFO queue type but publishes no ordering guarantee behind it — no delivery order, no message key to group by, no throughput limit — so Alethia does not offer ordered delivery there.
+    issue: #1812
+  # ── Azure Container Registry — neither switch exists where a template can reach ──────
+  # Both were baselined under #1811 as "not sent to ACR yet". They are not unfinished wiring: there
+  # is nothing on the other side to send them to. The pressure to make the parity guard green points
+  # at two wrong answers here, so the reasoning is written down rather than the verdict alone.
+  #
+  # Tag immutability. `azurerm_container_registry` has no immutability argument — the resource is
+  # `name`, `resource_group_name`, `location`, `sku`, `admin_enabled`, georeplications, network and
+  # policy blocks, and `modules/acr/main.tf` uses all of the ones that exist. Locking a repository on
+  # ACR is a per-repository DATA-PLANE operation (`az acr repository update --write-enabled false`)
+  # that Resource Manager does not model, so no argument on any resource can carry the choice.
+  # `quarantine_policy_enabled` is a DIFFERENT feature — hold a newly pushed image until it is
+  # validated — and must not be substituted for this one to make a cell go green.
+  #
+  # Image scanning. On Azure this is Microsoft Defender for Containers, expressed as
+  # `azurerm_security_center_subscription_pricing`. It is SUBSCRIPTION-scoped and billed: the
+  # provider's own docs warn that changing the pricing tier to Standard affects all resources of that
+  # type in the subscription and can be costly, and that deleting the resource resets the tier to
+  # Free. A per-project switch wired to it would re-bill an entire subscription on deploy and, on
+  # teardown, disable Defender for every other workload in it. That is not a per-project setting.
+  - offer: registry:immutable_tags
+    cloud: azure
+    reason: Azure Container Registry has no tag-immutability setting on the registry — locking a repository is an operation outside Resource Manager, so no template argument can carry your choice.
+    issue: #1811
+  - offer: registry:vulnerability_scanning
+    cloud: azure
+    reason: Image scanning on Azure is Microsoft Defender for Containers, a billed security plan that switches on for the whole subscription — not something one project's registry can turn on for itself.
+    issue: #1811
+
 # ── Baseline — real gaps, already boarded ───────────────────────────────────────────────
 #
 # NOT exclusions. These are offers a cloud genuinely cannot honor today and that we intend to fix;
@@ -302,9 +368,25 @@ baseline:
   # no engine axis could not be named by the old offer key.
   #
   # The shapes, so the list reads as something other than a wall:
-  #   · a switch no provider carries          (registry)
-  #   · a switch carried and then not read    (queue:ordered)
-  #   · a kind the cloud's template omits     (hetzner dns, hetzner network)
+  #   · a switch the cloud's provider does
+  #     not carry, because the thing on the
+  #     far side is not built yet            (registry:vulnerability_scanning on gcp, alibaba)
+  #
+  # That is the whole list. ALL THREE shapes this section opened with are gone, and every one of
+  # them left the honest way — built, or established as a product limit. None was reworded to make
+  # the guard green, which is the failure mode the ratchet exists to catch.
+  #
+  #   · "a switch NO provider carries" was both registry switches when the carrier check first
+  #     measured them. #1811 carried `immutable_tags` to ECR, Artifact Registry and ACR; scanning
+  #     reached the two clouds where it is a repository property, and the two where it is a
+  #     separate service to stand up stayed here under their own issues (#1844, #1845).
+  #   · "a switch carried into tfvars and then read by no resource argument" was queue:ordered and
+  #     the Alibaba DNS certificate. #1812 built the first on the three clouds that can honor it,
+  #     and #1865 took the second into `exclusions:` as a provider ceiling.
+  #   · "a kind the cloud's template omits entirely" was Hetzner DNS and Hetzner networking. #1816
+  #     built both — including the console inventory and the CIDR derivation the network half
+  #     needed before a user could reach it at all, which is the difference between a cell that
+  #     measures green and a feature that works.
   #
   # The DNS block that stood here is gone. #1810 wired both canvas DNS switches through the snapshot,
   # ProjectDNSConfig and all four providers, which cleared nine of its ten cells; the last one —
@@ -312,77 +394,46 @@ baseline:
   # pinned alicloud provider cannot express the request at all. It was never a build we had not got
   # to; it was a build the provider has no resource for.
 
-  # ── Container registry: both switches reach no cloud ────────────────────────────────
-  # Neither `ImmutableTags` nor `VulnerabilityScanning` is read by ANY provider, so the value a user
-  # picks is discarded on all four clouds that show the switch. Two templates are already waiting for
-  # it — AWS declares `ecr_repository_image_tag_mutability` and `ecr_repository_image_scan_on_push`
-  # and reads both, and GCP declares `immutable_tags` on `artifact_registry_repos` and reads it — so
-  # on those two clouds the repository silently keeps the template default instead of the choice.
-  - offer: registry:immutable_tags
-    cloud: aws
-    reason: Tag immutability is not sent to ECR yet — repositories are created with the platform default instead of your choice.
-    issue: #1811
-    state: no-carrier
-  - offer: registry:immutable_tags
-    cloud: gcp
-    reason: Tag immutability is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice.
-    issue: #1811
-    state: no-carrier
-  - offer: registry:immutable_tags
-    cloud: azure
-    reason: Tag immutability is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice.
-    issue: #1811
-    state: no-carrier
-  - offer: registry:immutable_tags
-    cloud: alibaba
-    reason: Tag immutability is not sent to Container Registry yet — repositories are created with the platform default instead of your choice.
-    issue: #1811
-    state: no-carrier
-  - offer: registry:vulnerability_scanning
-    cloud: aws
-    reason: Image scanning is not sent to ECR yet — repositories are created with the platform default instead of your choice.
-    issue: #1811
-    state: no-carrier
+  # ── Container registry: image scanning, on the two clouds where it is a build ───────
+  # Eight cells were here. #1811 promoted both registry switches out of `provider_config` into typed
+  # columns and typed Go fields, and carried `immutable_tags` onto a real resource argument on aws
+  # (`image_tag_mutability`), gcp (`docker_config.immutable_tags`) and alibaba
+  # (`alicloud_cr_ee_repo.tag_immutability` — a resource the module never created at all, #1837).
+  # `vulnerability_scanning` reached ECR's `scan_on_push` on aws in the same pass. Azure's two cells
+  # moved UP into `exclusions:`: ACR exposes neither setting through Resource Manager.
+  #
+  # These two are the remainder, and they are honest debt rather than a ceiling — both clouds sell
+  # image scanning. Neither is a wiring change:
+  #
+  #   · gcp — `vulnerability_scanning_config` takes INHERITED|DISABLED, with no ENABLED. The ON
+  #     position means "follow the project default", which is only on once
+  #     `containerscanning.googleapis.com` is enabled, and the provisioner our connector grants has
+  #     no `serviceusage` role to enable it with. #1844 has the full cost, including re-running the
+  #     connector stack for every onboarded tenant.
+  #   · alibaba — scanning is `alicloud_cr_scan_rule`, an instance-scoped SIBLING resource, not an
+  #     argument on the repository; and Alibaba's own guide requires a VPC on the Enterprise Edition
+  #     instance for image scanning, which `modules/cr` does not configure. #1845.
+  #
+  # Wiring either one anyway would have satisfied this guard while the ON position did nothing —
+  # which is the defect the guard exists to catch, not a way to pass it.
   - offer: registry:vulnerability_scanning
     cloud: gcp
-    reason: Image scanning is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice.
-    issue: #1811
-    state: no-carrier
-  - offer: registry:vulnerability_scanning
-    cloud: azure
-    reason: Image scanning is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice.
-    issue: #1811
+    reason: Image scanning is not requested from Artifact Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1844
     state: no-carrier
   - offer: registry:vulnerability_scanning
     cloud: alibaba
-    reason: Image scanning is not sent to Container Registry yet — repositories are created with the platform default instead of your choice.
-    issue: #1811
+    reason: Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice.
+    issue: #1845
     state: no-carrier
 
-  # ── Queues: ordered delivery lands nowhere ──────────────────────────────────────────
-  # AWS and Azure carry the switch all the way into tfvars — `fifo_queue` on `sqs_queues`,
-  # `requires_session` on `service_bus_queues` — and then no resource argument reads either name. GCP
-  # and Alibaba never carry it at all. Four clouds, one user-visible outcome: the queue is unordered.
-  - offer: queue:ordered
-    cloud: aws
-    reason: FIFO delivery is not applied to SQS yet — the queue is created as a standard, unordered queue whichever way the switch is set.
-    issue: #1812
-    state: unwired-template
-  - offer: queue:ordered
-    cloud: azure
-    reason: Session-ordered delivery is not applied to Service Bus yet — the queue is created without sessions whichever way the switch is set.
-    issue: #1812
-    state: unwired-template
-  - offer: queue:ordered
-    cloud: gcp
-    reason: Ordered delivery is not applied to Pub/Sub yet — message ordering stays off whichever way the switch is set.
-    issue: #1812
-    state: no-carrier
-  - offer: queue:ordered
-    cloud: alibaba
-    reason: Ordered delivery is not applied to MNS yet — the queue is created unordered whichever way the switch is set.
-    issue: #1812
-    state: no-carrier
+  # ── Queues: ordered delivery ────────────────────────────────────────────────────────
+  # All four #1812 cells are gone from this list, and NOT for one reason — do not read them as one
+  # fix. AWS, Azure and GCP are built: the switch now reaches `aws_sqs_queue.fifo_queue`,
+  # `azurerm_servicebus_queue.requires_session` and
+  # `google_pubsub_subscription.enable_message_ordering`, so the carrier probe measures those three
+  # cells HONORED and fails the build until their entries are deleted. Alibaba was NOT fixed — the
+  # probe still measures it `no-carrier` — and it moves to `exclusions:` above as a product ceiling.
 
   # ── Bucket encryption on Alibaba — a gap, and an unresolved question ────────────────
   # Nothing carries the switch — the wiring verdict the other bucket cells had before #1813 retired
@@ -405,20 +456,26 @@ baseline:
   # (Synapse Link column storage) inside an `if PointInTimeRecovery` branch. The old guard scored
   # that as honored. It is named in the matrix as ⚠️ and is not counted as carried.
 
-  # ── Hetzner: two kinds the canvas offers and the template does not build ────────────
-  # Unlike the Hetzner entries in `exclusions:` above, neither of these is a platform ceiling.
-  # Hetzner sells DNS and its provider exposes networks; the template simply has no DNS resources at
-  # all, and always creates its own network rather than attaching one you name.
-  - offer: dns:enabled
-    cloud: hetzner
-    reason: DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing.
-    issue: #1816
-    state: no-carrier
-  - offer: network:provision_network
-    cloud: hetzner
-    reason: A Hetzner project always creates its own network — attaching an existing one is not supported yet.
-    issue: #1816
-    state: no-carrier
+  # ── Hetzner DNS and bring-your-own-network — BOTH BUILT in #1816 ────────────────────
+  # Both entries are gone, and both were RATCHET DELETIONS, not reclassifications: neither moved
+  # into `exclusions:`, because neither was a platform ceiling. Hetzner's Cloud API grew Zones in
+  # 2025 and the pinned hcloud provider exposes `hcloud_zone` natively, so `infra/templates/project/
+  # hetzner/dns.tf` now creates the zone the same way route53.tf / cloud-dns.tf / azure-dns.tf do;
+  # and network.tf gained the greenfield/brownfield branch AWS and GCP already had, so
+  # `provision_network = false` attaches the network you name instead of quietly building a second
+  # one. Proved by root-level checks_dns_and_network.tftest.hcl, on and off, nine runs.
+  #
+  # The network half needed TWO more things before its deletion was honest, and both are in this
+  # lane rather than boarded. A template nobody can reach is a green cell over a feature that does
+  # not exist, which is the exact failure this file is here to prevent.
+  #
+  #   · The canvas's "Existing network" control is a SELECT over synced inventory, and Hetzner's
+  #     inventory sync listed regions only — so the picker was always empty and `provision_network
+  #     = false` was unreachable from the product. The sync now lists networks too.
+  #   · pod_cidr / service_cidr were derived from `network_cidr`, which the brownfield path IGNORES
+  #     (the attached network's own range is the supernet), while the canvas hides the CIDR field on
+  #     that very path. A user attaching anything but a 10.0.0.0/16 would have hit this lane's own
+  #     fail-closed precondition. They are now derived from the network that actually resolved.
 
   # ── nosql: a switch that turned on a DIFFERENT billable feature ─────────────────────
   # Azure used to carry `point_in_time_recovery` into `analytical_storage_enabled` — Synapse Link

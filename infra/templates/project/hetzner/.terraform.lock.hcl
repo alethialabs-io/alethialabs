@@ -65,7 +65,7 @@ provider "registry.opentofu.org/hcloud-talos/imager" {
 
 provider "registry.opentofu.org/hetznercloud/hcloud" {
   version     = "1.67.0"
-  constraints = ">= 1.51.0, < 2.0.0"
+  constraints = ">= 1.56.0, < 2.0.0"
   hashes = [
     "h1:1RpfvF8uQFzOKjiHKdvsVLLgsOxwA+GZysvKerNEBLU=",
     "h1:7gV0NahMB5gNfp76g2cJSV6jvjBpbR7yn/W/7GQ3mZQ=",

@@ -28,9 +28,13 @@ variable "project_name" {
 
 variable "repos" {
   type = map(object({
-    description    = string
-    immutable_tags = optional(bool, false)
+    # OPTIONAL, so a caller that supplies only the switch is not a plan error. It was required while
+    # nothing at all called this module (#1835); now that something does, the shape has to match the
+    # root's, which makes both attributes optional.
+    description    = optional(string, "")
+    immutable_tags = optional(bool, true)
   }))
+  default     = {}
   description = "Map of repository names to their configuration"
 }
 

@@ -39,7 +39,7 @@ import type {
 	PluggableCategory,
 } from "@/lib/connectors/registry.generated";
 import { isPluggable } from "@/lib/canvas/environment-connector";
-import { variantOptionsFor } from "../graph/node-registry";
+import { carriesOrderedDelivery, variantOptionsFor } from "../graph/node-registry";
 import type { NodeConfigMap, NodeKind } from "../graph/types";
 
 /**
@@ -1338,7 +1338,18 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "ordered",
 						type: "switch",
 						label: "Ordered (FIFO) delivery",
-						description: "Guarantee message order at the cost of throughput.",
+						// The pinned cross-cloud meaning (#1812). No cloud gives a TOTAL order over a
+						// queue — AWS orders within a MessageGroupId, Azure within a SessionId, GCP
+						// within an orderingKey — so the promise is per-key, and it costs an
+						// application change on every one of them. Saying only "guarantee message
+						// order" over-promised on all four, and the caveats are the whole difference
+						// between a working queue and a broken one.
+						//
+						// `key`, `type`, `label` and `visibleWhen` are the generated offer surface
+						// (scripts/gen-offer-surface.ts reads exactly those four); `description` is
+						// not, so this text cannot move offer-surface.json.
+						description:
+							"Messages tagged with the same ordering key are delivered in the order the service received them. Messages with different keys stay concurrent — this is not a total order over the queue. Your publisher must set a key on every message, and on Azure your consumer must use a session receiver. Throughput drops, and on AWS each request costs more. On Alibaba Cloud the switch is not applied: its queue service publishes no ordering guarantee.",
 						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
 					{
@@ -1379,7 +1390,10 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 		summary: (c, provider) =>
 			provider === "hetzner"
 				? `RabbitMQ · ${c.storage_gb ?? 8} GiB`
-				: `${c.ordered ? "FIFO" : "Standard"} · ${c.visibility_timeout ?? 30}s`,
+				: // `carriesOrderedDelivery` is shared with the canvas card's `Delivery` fact — the two
+					// used to decide this separately, and the card was the one that printed "FIFO" over
+					// a queue Alibaba builds standard.
+					`${c.ordered && carriesOrderedDelivery(provider) ? "Ordered" : "Standard"} · ${c.visibility_timeout ?? 30}s`,
 	},
 
 	topic: {
@@ -1664,10 +1678,11 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						// hide them rather than imply we can set them on someone else's.
 						visibleWhen: (c) => !isPluggable(c.provider),
 						description: "Prevent pushed image tags from being overwritten.",
-						get: (c) => c.provider_config?.immutable_tags ?? false,
-						set: (v, c) => ({
-							provider_config: { ...c.provider_config, immutable_tags: Boolean(v) },
-						}),
+						// Typed columns since #1811, not provider_config keys — and DEFAULT TRUE, which
+						// matches what the templates already build. `?? false` here would show every
+						// existing registry as "off" and, once carried, downgrade live repositories.
+						get: (c) => c.immutable_tags ?? true,
+						set: (v) => ({ immutable_tags: Boolean(v) }),
 					},
 					{
 						key: "vulnerability_scanning",
@@ -1678,13 +1693,9 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						// hide them rather than imply we can set them on someone else's.
 						visibleWhen: (c) => !isPluggable(c.provider),
 						description: "Scan pushed images for known CVEs.",
-						get: (c) => c.provider_config?.vulnerability_scanning ?? false,
-						set: (v, c) => ({
-							provider_config: {
-								...c.provider_config,
-								vulnerability_scanning: Boolean(v),
-							},
-						}),
+						// Typed column since #1811. Default true — see immutable_tags above.
+						get: (c) => c.vulnerability_scanning ?? true,
+						set: (v) => ({ vulnerability_scanning: Boolean(v) }),
 					},
 				],
 			},

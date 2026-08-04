@@ -7,4 +7,5 @@ module "cr" {
 
   instance_name  = local.cr_name
   namespace_name = var.project_name
+  repos          = var.cr_repos
 }

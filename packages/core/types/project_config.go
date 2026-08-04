@@ -307,9 +307,32 @@ type ProjectContainerRegistryConfig struct {
 	Placement
 	Name string `json:"name"`
 	// Pluggable provider slug (connectors.slug); "" / "native" = cloud-native registry.
-	Provider       string         `json:"provider"`
+	Provider string `json:"provider"`
+	// Cross-cloud registry switches — typed fields rather than ProviderConfig keys since #1811.
+	// They are shown on all four managed clouds, so they were cross-cloud settings misfiled as
+	// provider knobs; and the offer-parity carrier probe can only follow a TYPED field, so a value
+	// read out of ProviderConfig is indistinguishable from a value nobody reads at all.
+	//
+	// POINTERS, deliberately. Every template already defaults to the SAFE setting (ECR:
+	// IMMUTABLE + scan-on-push), so "absent" has to mean "leave the template default alone"
+	// rather than "false" — decoding a missing field as false would downgrade every repository a
+	// live project already has. The console column defaults to true, so a real row always carries
+	// a value and only a hand-written snapshot can be silent.
+	ImmutableTags         *bool `json:"immutable_tags"`
+	VulnerabilityScanning *bool `json:"vulnerability_scanning"`
+
 	ProviderConfig map[string]any `json:"provider_config"`
 }
+
+// There is deliberately NO `func (r ProjectContainerRegistryConfig) Immutable() bool` wrapper here,
+// tempting as it is: every provider spells `r.ImmutableTags == nil || *r.ImmutableTags` out. The
+// offer-parity carrier probe decides that a switch is carried by finding a literal `.ImmutableTags`
+// in a function inside packages/core/cloud that is reachable from that cloud's ProviderTfvars. A
+// wrapper here moves the only read into packages/core/types, which the probe does not index — so
+// every cloud using it would score "carries nothing" while working perfectly, the baseline entry
+// could never be deleted, and the build would stay green either way. A wrapper in the cloud package
+// is no better: it makes the emit a scalar aggregator, which the probe reads as a ROOT tfvar named
+// after the attribute. Four lines of repetition buy a measurement that means something.
 
 // ProjectHelmRegistryConfig selects a connected private Helm/OCI chart-repo connector
 // (connectors.slug in the helm_registry category) for a project. Unlike a container registry (a
