@@ -842,6 +842,51 @@ jobs:
           ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE }}
           ALETHIA_E2E_KEYLESS_DB_NAMESPACE: ${{ vars.E2E_KEYLESS_DB_NAMESPACE }}
           ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
+          # ── CROSS-ACCOUNT KEYLESS REGISTRY PULL (#1047) — the last unproven link in epic #1046.
+          #
+          #    The `registry-token` MINT was proven in July 2026 against live ECR/GAR/ACR, but with
+          #    AMBIENT LOCAL credentials and no cluster. The half the product actually ships — the B4
+          #    tofu Workload-Identity pull role federating the in-cluster refresher, the refresher
+          #    minting with NO local credential and patching the <slug>-pull Secret, and a real app
+          #    pod pulling an image out of a DIFFERENT account/project/subscription through it — had
+          #    never run. It LOOKED shipped: scripts/e2e/registry-e2e.sh invoked a test function that
+          #    existed in no file, and this workflow set no variable for it at all.
+          #
+          #    Layers ON TOP of the base T2 proof, like #1268 and #1511: the base DEPLOY carries the
+          #    *-xacct registry row (which activates the pull role) and a service whose image lives in
+          #    the foreign registry, and the layer then asserts the mint, the pull, and — the control
+          #    that makes it non-vacuous — that the SAME image does NOT pull without the Secret.
+          #
+          #    All THREE managed registry clouds are runnable (unlike #1268's aws-only lane): the
+          #    grant the target account applies is a STANDING customer object, not a per-run identity.
+          #    alibaba/hetzner resolve to the documented parity exclusion and skip carrying it.
+          #
+          #    REQUIRES the A0.6 apps repo above — the refresher and the probe workload reach the
+          #    cluster only through GitOps.
+          #
+          #    All plain VARIABLES: an account id, a project, a registry host, an image reference and
+          #    an identity REFERENCE are not sensitive. Nothing here is a pull token — the token is
+          #    minted in-cluster and never leaves it. Unset ⇒ a clean skip.
+          #
+          #    NOT SET TODAY, deliberately: the target-account trust (an ECR repository policy, a
+          #    cross-project artifactregistry.reader grant, an AcrPull assignment) plus a scoped
+          #    canary image must be applied out of band first. See docs/testing/xacct-registry-parity.md. ──
+          ALETHIA_E2E_XACCT_REGISTRY: ${{ vars.E2E_XACCT_REGISTRY }}
+          ALETHIA_E2E_XACCT_REGISTRY_HOST: ${{ vars.E2E_XACCT_REGISTRY_HOST }}
+          ALETHIA_E2E_XACCT_REGISTRY_IMAGE: ${{ vars.E2E_XACCT_REGISTRY_IMAGE }}
+          ALETHIA_E2E_XACCT_REGISTRY_ACCOUNT: ${{ vars.E2E_XACCT_REGISTRY_ACCOUNT }}
+          ALETHIA_E2E_XACCT_REGISTRY_PROJECT_ID: ${{ vars.E2E_XACCT_REGISTRY_PROJECT_ID }}
+          ALETHIA_E2E_XACCT_REGISTRY_REGION: ${{ vars.E2E_XACCT_REGISTRY_REGION }}
+          ALETHIA_E2E_XACCT_REGISTRY_ROLE_ARN: ${{ vars.E2E_XACCT_REGISTRY_ROLE_ARN }}
+          ALETHIA_E2E_XACCT_REGISTRY_READER_SA: ${{ vars.E2E_XACCT_REGISTRY_READER_SA }}
+          ALETHIA_E2E_XACCT_REGISTRY_CLIENT_ID: ${{ vars.E2E_XACCT_REGISTRY_CLIENT_ID }}
+          ALETHIA_E2E_XACCT_REGISTRY_SERVICE: ${{ vars.E2E_XACCT_REGISTRY_SERVICE }}
+          ALETHIA_E2E_XACCT_REGISTRY_NAMESPACE: ${{ vars.E2E_XACCT_REGISTRY_NAMESPACE }}
+          #    The summary is written here but the nightly proof bundle does NOT fold it in yet: that
+          #    belongs in the capture step + demos/proofs/capture-proof.sh, which PR #1941 is
+          #    rewriting. Stated rather than half-wired — scripts/e2e/registry-e2e.sh points this at
+          #    its own bundle, so the verdict already has a real consumer on the recording path.
+          ALETHIA_E2E_XACCT_REGISTRY_SUMMARY: ${{ runner.temp }}/xacct-registry-summary.json
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
           #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).

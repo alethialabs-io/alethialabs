@@ -16,7 +16,14 @@
 #   mint/aws  : ALETHIA_E2E_ECR_ROLE ALETHIA_E2E_ECR_HOST ALETHIA_E2E_ECR_REGION ALETHIA_E2E_ECR_IMAGE
 #   mint/gcp  : ALETHIA_E2E_GAR_HOST ALETHIA_E2E_GAR_IMAGE            (+ ambient GCP ADC)
 #   mint/azure: ALETHIA_E2E_ACR_HOST ALETHIA_E2E_ACR_IMAGE ALETHIA_E2E_ACR_AAD_TOKEN
-#   cluster/* : ALETHIA_E2E_XACCT_REGISTRY=1 + the provider creds + ALETHIA_E2E_XACCT_* (see the T2 test)
+#   cluster/* : ALETHIA_E2E_XACCT_REGISTRY_{HOST,IMAGE} plus, per cloud,
+#               aws   ALETHIA_E2E_XACCT_REGISTRY_{ACCOUNT,REGION,ROLE_ARN}
+#               gcp   ALETHIA_E2E_XACCT_REGISTRY_{PROJECT_ID,REGION,READER_SA}
+#               azure ALETHIA_E2E_XACCT_REGISTRY_{ACCOUNT,CLIENT_ID}
+#               + the A0.6 apps repo (ALETHIA_E2E_ARGO_APPS_REPO + ALETHIA_E2E_GIT_TOKEN), without
+#               which the refresher and the probe workload never reach the cluster, + the provider
+#               creds the base T2 proof needs. This script sets ALETHIA_E2E_XACCT_REGISTRY=1 itself.
+#               See docs/testing/xacct-registry-parity.md.
 #
 # A run that can't proceed (missing env/quota) is recorded as BLOCKED, not skipped silently.
 #
@@ -44,7 +51,13 @@ case "$stage" in
       *) echo "unknown cloud $cloud" >&2; exit 2 ;;
     esac ;;
   cluster)
-    run=(go test -tags=e2e_t2 ./... -run "TestT2XacctRegistry" -count=1 -timeout 80m -v) ; dir="test/e2e" ;;
+    # The REAL test name — never an aspirational one. This line invoked "TestT2XacctRegistry" from the
+    # day it was written until #1047; that function existed in NO file, so `go test` matched nothing,
+    # the empty run was classified BLOCKED, and the parity board went on reporting the harness as the
+    # shipped vehicle. The in-cluster scenario is LAYERED onto the base T2 proof (it needs a real
+    # provisioned cluster, the B4 pull role and the GitOps apps repo), exactly like #1268 and #1511,
+    # so the driver is TestT2RealCloudProvisioning and the layer is selected by its own env switch.
+    run=(go test -tags=e2e_t2 ./... -run "TestT2RealCloudProvisioning" -count=1 -timeout 80m -v) ; dir="test/e2e" ;;
   *) echo "unknown stage $stage" >&2; exit 2 ;;
 esac
 
@@ -54,13 +67,22 @@ if [[ -n "${BLOCKED:-}" ]]; then
   printf 'BLOCKED: %s\n' "$BLOCKED" | tee "$log" >/dev/null
 else
   echo "▶ $cloud/$stage @ $sha → $bundle" >&2
+  # The in-cluster stage is a LAYER on the base T2 proof, selected by its own switch (#1047). Set here
+  # rather than left to the caller so the script cannot run the base proof and record its verdict as a
+  # cross-account registry result.
+  if [[ "$stage" == "cluster" ]]; then
+    export ALETHIA_E2E_XACCT_REGISTRY=1
+    # Point the layer's machine-readable verdict straight into THIS run's bundle, so the summary has
+    # a real consumer here rather than being written and never read (#1525's lesson).
+    export ALETHIA_E2E_XACCT_REGISTRY_SUMMARY="$outdir/xacct-registry-summary.json"
+  fi
   ( cd "$root/$dir" && GOWORK=off "${run[@]}" ) >"$log" 2>&1
   rc=$?
   if [[ $rc -eq 0 ]] && grep -q "^ok\|^--- PASS\|^PASS" "$log"; then verdict="PASS"
   elif grep -q "^--- SKIP\|^ok.*\[no tests to run\]\|SKIP:" "$log" && ! grep -q "FAIL" "$log"; then
     verdict="BLOCKED"; detail="test SKIPPED (env not set)"
   else verdict="FAIL"; fi
-  detail="${detail:-$(grep -E "OK — |FAIL:|Error:|--- (PASS|FAIL)" "$log" | tail -1 | sed 's/|/;/g')}"
+  detail="${detail:-$(grep -E "xacct-registry: |OK — |FAIL:|Error:|--- (PASS|FAIL)" "$log" | tail -1 | sed 's/|/;/g')}"
 fi
 
 # ── scrub the log (best-effort; the bundle must be secret-clean) ──────────────────────────────

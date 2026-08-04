@@ -182,6 +182,25 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Logf("#1511: keyless DB auth SKIPPED — set %s (+ its engine vars) to enable.", envKeylessDB)
 	}
 
+	// #1047: the cross-account keyless REGISTRY pull, resolved on the same terms. The mint half was
+	// proven off-cluster in July 2026; what has never run is the in-cluster half — the B4 pull role
+	// federating the refresher, the refresher minting with no local credential, and a real pod
+	// pulling through the Secret it patches. alibaba/hetzner resolve to a documented exclusion.
+	registry := xacctRegistryFromEnv(provider)
+	registryOn, registryBlocked, registryErr := registry.decide()
+	if registryErr != nil {
+		t.Fatalf("#1047 cross-account registry: %v", registryErr)
+	}
+	switch {
+	case registryOn:
+		t.Logf("#1047: cross-account keyless registry ENABLED — %s pulling %q from %s into service %q",
+			registry.connectorSlug(), registry.image, registry.host, registry.serviceName)
+	case registryBlocked != "":
+		t.Logf("#1047: cross-account keyless registry EXCLUDED on %s — %s", provider, registryBlocked)
+	default:
+		t.Logf("#1047: cross-account keyless registry SKIPPED — set %s (+ its target vars) to enable.", envXacctRegistry)
+	}
+
 	root := t2RepoRoot(t)
 	waitTimeout := resolveT2WaitTimeout(p)
 
@@ -225,6 +244,13 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if keylessOn {
 		keylessBudget = keyless.dwell + 20*time.Minute
 	}
+	// #1047 needs its own term for the same reason: the refresher-Available, mint, pod-pull and
+	// denied-probe windows are ~20m of polling AFTER ArgoCD converges, and a ctx that expired
+	// mid-poll would be indistinguishable from a cross-account pull that never worked.
+	registryBudget := time.Duration(0)
+	if registryOn {
+		registryBudget = 25 * time.Minute
+	}
 	// The three PLACEMENT scenarios each seed their OWN jobs onto this Fabric after the base proof,
 	// and none of them had a ctx term. An overrun therefore surfaced as "the placement never
 	// converged" — indistinguishable from a real product failure, which is the exact confusion the
@@ -251,7 +277,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		fabricDemoBudget = time.Duration(len(tiers))*2*d + d + vclusterTenantBudget
 	}
 	ctx, cancel := context.WithTimeout(context.Background(),
-		waitTimeout+ArgoAssertTimeout()+soakBudget+xacctBudget+keylessBudget+
+		waitTimeout+ArgoAssertTimeout()+soakBudget+xacctBudget+keylessBudget+registryBudget+
 			nsTenantBudget+vclusterBudget+fabricDemoBudget+7*time.Minute)
 	defer cancel()
 
@@ -312,7 +338,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// fidelity check runs against (lean synthetic by default; the REAL console fixture shape under
 	// ALETHIA_E2E_A05_REAL_SNAPSHOT); `full` layers the A0.6 repos + the per-cloud cluster-json
 	// override the runner actually consumes.
-	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, a05)
+	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, registry, registryOn, a05)
 	if err != nil {
 		t.Fatalf("build deploy snapshot: %v", err)
 	}
@@ -374,6 +400,16 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		// Wiring it to the scenario's own switch makes that impossible, and #1513 deletes both
 		// together.
 		cmd.Env = append(cmd.Env, "ALETHIA_KEYLESS_DB_AUTH_ENABLED=true")
+	}
+	if registryOn {
+		// #1047: the cross-account registry refresher is DARK by default
+		// (provisioner.writeRegistryRefresher returns before rendering anything unless this is
+		// "true"), so with the flag off the generated manifests are byte-identical and the scenario
+		// would poll for a Deployment that was never written. Set HERE, wired to the scenario's own
+		// switch, for the same reason as the keyless flag above: it is not an ALETHIA_E2E_* variable,
+		// so TestScenarioEnablesReachTheNightly cannot protect it, and a workflow-side setting could
+		// silently stop being passed while every leg still reported green.
+		cmd.Env = append(cmd.Env, "ALETHIA_XACCT_REGISTRY_ENABLED=true")
 	}
 	var runnerSink io.Writer = &runnerOut
 	if p := os.Getenv("ALETHIA_E2E_T2_RUNNER_LOG"); p != "" {
@@ -667,6 +703,17 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			dbName:  keyless.snapshotDBName(full),
 			metaRaw: metaRaw,
 		})
+	}
+
+	// (13) CROSS-ACCOUNT KEYLESS REGISTRY PULL (#1047). Opt-in via ALETHIA_E2E_XACCT_REGISTRY — the
+	//      base DEPLOY already carried the *-xacct registry row (which activates the B4 tofu pull
+	//      role) and a service whose image lives in that foreign registry, so the runner rendered the
+	//      standalone registry-token refresher and attached its <slug>-pull Secret to the generated
+	//      pods. This layer closes the last unproven link in epic #1046: the mint was proven with
+	//      ambient laptop credentials, never in-cluster, and never consumed by a pod. Runs BEFORE the
+	//      guaranteed teardown.
+	if registryOn {
+		runT2XacctRegistry(t, ctx, kc, xacctRegistryParams{cfg: registry, metaRaw: metaRaw})
 	}
 }
 
