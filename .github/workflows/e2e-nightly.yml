@@ -792,6 +792,44 @@ jobs:
           ALETHIA_E2E_FABRIC_DEMO_VCLUSTER: ${{ vars.E2E_FABRIC_DEMO_VCLUSTER }}
           ALETHIA_E2E_FABRIC_DEMO_TIMEOUT: ${{ vars.E2E_FABRIC_DEMO_TIMEOUT }}
           ALETHIA_E2E_FABRIC_DEMO_SUMMARY: ${{ runner.temp }}/fabric-demo-summary.json
+          # ── BRING-YOUR-OWN IaC continuous proof (#1765, the cloud-tier half of #845's BYO
+          #    bullet). The ONE leg that runs OpenTofu Alethia did not write, and it proves the
+          #    custody chain around it, not just that an apply worked:
+          #
+          #      a module at the same pinned commit declaring a NON-allowlisted provider is REFUSED
+          #      → the real customer module clones at that pinned sha → fail-closed iacsafety gate
+          #      → signed verify receipt over the CUSTOMER's plan → apply → state on ALETHIA's
+          #      proxy → a change induced OUT OF BAND with this cloud's own CLI → the posture FLIPS
+          #      to drifted → the same commit re-applies to HEAL → in-sync → DESTROY → state cleared
+          #
+          #    Inducing real drift (rather than re-proving one unchanged commit) was the call on
+          #    #1765's open question, and it is why each cloud needs its OWN module owning one
+          #    mutable resource. Each owns exactly one, chosen as the cheapest thing on that cloud
+          #    that can genuinely drift — an SSM parameter, an empty resource group, a
+          #    project-metadata item, an empty OSS bucket, an empty placement group. No cluster, no
+          #    VM, no gateway: the module emits no `cluster_name`, which is precisely what keeps the
+          #    kubeconfig → CNI → ArgoCD tail off.
+          #
+          #    The default repo is the PUBLIC github.com/alethialabs-io/enterprise-demo, cloned
+          #    ANONYMOUSLY (prepareByoIacWorkdir clones without auth when the token is empty), so
+          #    like the fabric-demo gate above this needs NO git token and NO new secret.
+          #    E2E_BYO_IAC is the only variable a maintainer must set to turn it on; the repo, ref,
+          #    module path and blocked-fixture path all default correctly and the path defaults
+          #    per-cloud to iac/drift/<provider>. UNSET ⇒ empty ⇒ a clean skip, so these lines
+          #    change nothing until then. Real-apply is main-gated, so this exercises meaningfully
+          #    only from `main`.
+          #
+          #    The out-of-band mutation shells out to that cloud's CLI, all five of which this job
+          #    already puts on PATH and authenticates: aws + az ship with the runner image, gcloud
+          #    is installed by setup-gcloud, aliyun by the Alibaba credential step, hcloud by the
+          #    teardown step. ──
+          ALETHIA_E2E_BYO_IAC: ${{ vars.E2E_BYO_IAC }}
+          ALETHIA_E2E_BYO_IAC_REPO: ${{ vars.E2E_BYO_IAC_REPO }}
+          ALETHIA_E2E_BYO_IAC_REF: ${{ vars.E2E_BYO_IAC_REF }}
+          ALETHIA_E2E_BYO_IAC_PATH: ${{ vars.E2E_BYO_IAC_PATH }}
+          ALETHIA_E2E_BYO_IAC_BLOCKED_PATH: ${{ vars.E2E_BYO_IAC_BLOCKED_PATH }}
+          ALETHIA_E2E_BYO_IAC_TIMEOUT: ${{ vars.E2E_BYO_IAC_TIMEOUT }}
+          ALETHIA_E2E_BYO_IAC_SUMMARY: ${{ runner.temp }}/byo-iac-summary.json
           # ── CROSS-ACCOUNT KEYLESS CLOUD-SM READ (#1268). Layers ON TOP of the base T2 proof: the
           #    base DEPLOY carries a *-xacct connector row AND a secret-kind binding, so the runner
           #    renders secretstore-<cloud>-xacct and the ExternalSecret that reads through it; the
@@ -951,6 +989,10 @@ jobs:
           # Fabric enterprise-demo acceptance verdict (#845), written by the T2 test at the SAME
           # path the t2 step set; folded into the bundle + step summary (absent ⇒ unchanged).
           ALETHIA_E2E_FABRIC_DEMO_SUMMARY: ${{ runner.temp }}/fabric-demo-summary.json
+          # BYO-IaC continuous-proof verdict (#1765), written by the T2 leg at the SAME path the t2
+          # step set; folded into the bundle + step summary (absent ⇒ unchanged). It carries only
+          # names, booleans, counts and a PUBLIC commit + plan digest.
+          ALETHIA_E2E_BYO_IAC_SUMMARY: ${{ runner.temp }}/byo-iac-summary.json
           # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
           # the capture script reads (region + the unique cluster name for the summary).
           ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}

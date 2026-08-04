@@ -680,6 +680,28 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		planSHA:      planSHA,
 	})
 
+	// (10c) BRING-YOUR-OWN IaC continuous proof (#1765, the cloud-tier half of #845's BYO bullet).
+	//       Opt-in via ALETHIA_E2E_BYO_IAC. This is the ONE leg that runs code Alethia did not
+	//       write, and it proves the whole custody chain around it rather than "an apply worked":
+	//       a module in the same public repo at the same pinned commit but declaring a
+	//       NON-allowlisted provider must be REFUSED (the gate has teeth), then the real customer
+	//       module clones at that pinned sha, passes the fail-closed gate, yields a signed receipt
+	//       over the CUSTOMER's own plan, applies, and lands its state on ALETHIA's proxy. It then
+	//       induces a real change OUT OF BAND with the cloud's own CLI, requires the posture to
+	//       FLIP to drifted on the probe resource, re-applies the same commit to HEAL, requires
+	//       in-sync again, and destroys — leaving the state cleared. It uses neither the cluster
+	//       nor the kubeconfig (a customer module emits no cluster_name, which is exactly what
+	//       keeps the ArgoCD tail off); it needs only this control plane and this running runner.
+	runT2ByoIac(t, ctx, cp, byoIacParams{
+		project:    project,
+		env:        env,
+		provider:   provider,
+		region:     region,
+		owner:      owner,
+		cpURL:      cp.URL(),
+		receiptPub: pub,
+	})
+
 	// (11) CROSS-ACCOUNT KEYLESS SECRETS (#1268). Opt-in via ALETHIA_E2E_SECRETS_XACCT — the base
 	//      DEPLOY already carried the *-xacct connector row and a secret-kind binding, so the runner
 	//      rendered secretstore-<cloud>-xacct AND the ExternalSecret that reads through it. This
