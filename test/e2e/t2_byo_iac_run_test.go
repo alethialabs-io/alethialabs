@@ -284,11 +284,13 @@ func runT2ByoIac(t *testing.T, ctx context.Context, cp *ControlPlane, p byoIacPa
 	t.Logf("byo-iac: posture FLIPPED to drifted — %d resource(s) %v, including the probe resource", posture.Drifted, summary.DriftedTypes)
 
 	// ── (6) HEAL: re-apply the SAME pinned commit. Detection without convergence is half a claim. ──
+	// Alias BEFORE the INSERT (see byoIacDriftCheck): a heal that started against its own empty
+	// slot would try to CREATE the probe resource rather than reconcile the existing one.
 	healJobID := newUUID()
+	cp.AliasStateToJob(healJobID, deployJobID)
 	if err := byoIacSeedJob(ctx, cp, healJobID, "DEPLOY", snap, p.owner); err != nil {
 		t.Fatalf("byo-iac: seed the heal DEPLOY job: %v", err)
 	}
-	cp.AliasStateToJob(healJobID, deployJobID)
 	healStatus, err := cp.WaitTerminal(ctx, healJobID, wait)
 	if err != nil {
 		t.Fatalf("byo-iac: waiting for the heal DEPLOY job: %v\n%s", err, jobFailureDump(ctx, cp, healJobID))
@@ -308,11 +310,14 @@ func runT2ByoIac(t *testing.T, ctx context.Context, cp *ControlPlane, p byoIacPa
 
 	// ── (7) DESTROY through a real job, and the state is CLEARED ⇒ nothing left to orphan, so
 	//        detaching the BYO source is safe. ──
+	// Alias BEFORE the INSERT (see byoIacDriftCheck). A destroy over its own empty slot plans
+	// nothing, "succeeds", and leaves the real resource alive — the worst of the three races,
+	// because it reads as a clean teardown while leaking.
 	destroyJobID := newUUID()
+	cp.AliasStateToJob(destroyJobID, deployJobID)
 	if err := byoIacSeedJob(ctx, cp, destroyJobID, "DESTROY", snap, p.owner); err != nil {
 		t.Fatalf("byo-iac: seed the DESTROY job: %v", err)
 	}
-	cp.AliasStateToJob(destroyJobID, deployJobID)
 	destroyStatus, err := cp.WaitTerminal(ctx, destroyJobID, wait)
 	if err != nil {
 		t.Fatalf("byo-iac: waiting for the DESTROY job: %v\n%s", err, jobFailureDump(ctx, cp, destroyJobID))
@@ -420,11 +425,16 @@ func (p byoIacPosture) types() []string {
 func byoIacDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p byoIacParams, snap map[string]any, deployJobID string, wait time.Duration, label string) byoIacPosture {
 	t.Helper()
 
+	// Alias BEFORE the INSERT, never after. The runner's safety poll can claim a QUEUED job within
+	// seconds, and a job that starts before its alias is registered reads its OWN empty state slot:
+	// refresh-only would then see nothing to reconcile and report a vacuous in_sync, and a DEPLOY
+	// would try to CREATE a resource that already exists. The alias is harness-local map state, so
+	// registering it for an id that is not in the DB yet is free.
 	driftJobID := newUUID()
+	cp.AliasStateToJob(driftJobID, deployJobID)
 	if err := byoIacSeedJob(ctx, cp, driftJobID, "DETECT_DRIFT", snap, p.owner); err != nil {
 		t.Fatalf("byo-iac %s drift: seed DETECT_DRIFT job: %v", label, err)
 	}
-	cp.AliasStateToJob(driftJobID, deployJobID)
 
 	status, err := cp.WaitTerminal(ctx, driftJobID, wait)
 	if err != nil {
