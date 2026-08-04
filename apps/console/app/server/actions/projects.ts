@@ -1147,7 +1147,28 @@ async function buildConfigSnapshot(
 		);
 
 		const configSnapshot = {
-			...project,
+			// An EXPLICIT PICK of the `projects` row, never `...project` (#1962). A DB-row spread
+			// puts every column of the table onto this HMAC-signed snapshot, so the next migration
+			// would add a key to it silently — and the runner's decode is now strict, so that key
+			// would hard-fail EVERY deploy at runtime with nothing in CI to catch it (the fidelity
+			// fixture below is built from a mocked row, not the real table). The pick reproduces the
+			// fixture's key set and order exactly, so the frozen bytes and the HMAC input do not
+			// move. What it does drop is the three bookkeeping columns the spread also carried in
+			// production and the fixture never showed — `estimated_monthly_cost`, `created_at`,
+			// `updated_at` — which nothing in either language reads.
+			// Adding a column here is now a deliberate act that must be matched by a field on
+			// types.ProjectConfig (packages/core/types/project_config.go).
+			id: project.id,
+			user_id: project.user_id,
+			org_id: project.org_id,
+			cloud_identity_id: project.cloud_identity_id,
+			project_name: project.project_name,
+			slug: project.slug,
+			// M1: the ENVIRONMENT's region wins over the project's. Written once, in the position
+			// the spread put `region` in, so the emitted key ORDER is unchanged too — under the
+			// spread this was `project.region` overwritten in place a few lines down.
+			region: environment.region ?? project.region,
+			iac_version: project.iac_version,
 			// M1: the Go provisioner reads `environment_stage` (frozen wire key) for the
 			// tofu state path + the `environment` tfvar — feed it the environment's name.
 			environment_stage: environment.name,
@@ -1156,16 +1177,22 @@ async function buildConfigSnapshot(
 			// destroys to exactly one environment's cloud resources.
 			environment_id: environment.id,
 			// #837 (decoupled env-model): the Fabric (infra unit) this env is PLACED onto, and how.
-			// The #838 provisioner re-keys the per-Fabric tofu state onto `fabric_name` and sets the
-			// ArgoCD Application destination from `placement_mode` + `namespace`. For a backfilled
-			// `dedicated` env `fabric_name === environment.name`, so the state path stays
-			// byte-identical (fabric is null only for not-yet-linked transitional rows → fall back
-			// to the env name). `namespace` is null for `dedicated` (owns the whole Fabric).
+			// The per-Fabric tofu state is keyed on `fabric_id` — a UUID, regex-validated before it
+			// reaches an object key — and it is keyed HERE, in TypeScript: `stateKeyForJob`
+			// (lib/storage/tofu-state.ts), called by the state-token mint route
+			// (app/api/jobs/[id]/state-token/route.ts). The runner never chooses the state key. Only
+			// a SHARED placement keys on the Fabric; `dedicated` (and any snapshot predating these
+			// fields) keys on `environment_id`, so its state path is byte-identical to the
+			// pre-Fabric scheme and no state object is orphaned. The #838 provisioner does set the
+			// ArgoCD Application destination from `placement_mode` + `namespace`.
+			// `fabric_name` is NOT part of any of that: nothing in Go reads it (see
+			// consoleOnlySnapshotKeys in apps/runner/internal/agent/runner.go). It is emitted for
+			// forensics only, falling back to the env name for not-yet-linked transitional rows.
+			// `namespace` is null for `dedicated` (the env owns the whole Fabric).
 			fabric_id: fabric?.id ?? null,
 			fabric_name: fabric?.name ?? environment.name,
 			placement_mode: environment.placement_mode,
 			namespace,
-			region: environment.region ?? project.region,
 			provider: identity.provider,
 			// B1.1: frozen per-dimension classification map ({ dimension_key: value_slug[] }),
 			// environment overriding project per dimension. See ClassificationSnapshot.
