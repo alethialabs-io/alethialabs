@@ -147,10 +147,19 @@ pct() { # $1=covered $2=total -> "63.57%"
 # ── environment fingerprint ───────────────────────────────────────────────────────────────────
 # What was present when these numbers were produced. Only binaries that measurably move coverage
 # in this repo (verified by re-running the suites with each removed from PATH).
-FINGERPRINT_KEYS="docker git helm kubectl tofu alethia_credentials"
+#
+# `os` is in here for a measured reason. A maintainer's Mac and ubuntu-latest can carry ALL of
+# these binaries — an identical boolean fingerprint — and still disagree: apps/runner/internal/agent
+# measures 1669/3366 on macOS and 1671/3366 on Linux with the same commit and the same tools. So a
+# matching boolean fingerprint is NOT sufficient to make two numbers comparable. Without the `os`
+# key, a developer running this locally gets a failure they cannot act on. CI itself is unaffected
+# (it is always ubuntu-latest, and the 5-run determinism probe pins that), but "unaffected in CI"
+# is not a good enough reason to hand someone an unexplainable red.
+FINGERPRINT_KEYS="os docker git helm kubectl tofu alethia_credentials"
 
-current_env() { # $1 = key -> "true"|"false"
+current_env() { # $1 = key -> "true"|"false", or the OS name for `os`
 	case "$1" in
+	os) uname -s ;;
 	alethia_credentials)
 		local cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
 		[ "$(uname)" = "Darwin" ] && cfg="$HOME/Library/Application Support"
@@ -176,10 +185,15 @@ write_floors() { # $1 = floors path, $2 = module import path, $3 = covermode, st
 	local pkgs env_json
 	pkgs=$(awk '{ printf "%s{\"k\":\"%s\",\"c\":%d,\"t\":%d}", (NR > 1 ? "," : ""), $1, $2, $3 } END { print "" }')
 	env_json="{"
-	local first=1 k
+	local first=1 k v
 	for k in $FINGERPRINT_KEYS; do
 		[ $first -eq 1 ] || env_json="$env_json,"
-		env_json="$env_json\"$k\":$(current_env "$k")"
+		v=$(current_env "$k")
+		# `os` is a string; every other key is a JSON boolean.
+		case "$k" in
+		os) env_json="$env_json\"$k\":\"$v\"" ;;
+		*) env_json="$env_json\"$k\":$v" ;;
+		esac
 		first=0
 	done
 	env_json="$env_json}"
@@ -515,9 +529,18 @@ NOW=$(measure "$PROFILE_ABS" "$MODPATH") || { warn "$PROFILE has an unrecognised
 DEMOTE="" MISSING=""
 for k in $FINGERPRINT_KEYS; do
 	rec=$(jq -r --arg k "$k" '.env[$k] // "unknown"' "$ROOT/$FLOORS")
+	cur=$(current_env "$k")
+	if [ "$k" = "os" ]; then
+		# A different OS makes the two numbers incomparable in BOTH directions — measured:
+		# apps/runner/internal/agent is 1669/3366 on Darwin and 1671/3366 on Linux with an
+		# otherwise identical fingerprint. Any mismatch demotes.
+		if [ "$rec" != "unknown" ] && [ "$rec" != "$cur" ]; then
+			DEMOTE=1
+			MISSING="$MISSING os($rec!=$cur)"
+		fi
 	# Only a true->false transition can lower coverage. More tools than before cannot hurt, and
 	# an older floors file with no `env` block ("unknown") must NOT silently disarm the gate.
-	if [ "$rec" = "true" ] && [ "$(current_env "$k")" != "true" ]; then
+	elif [ "$rec" = "true" ] && [ "$cur" != "true" ]; then
 		DEMOTE=1
 		MISSING="$MISSING $k"
 	fi
