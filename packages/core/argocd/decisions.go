@@ -453,26 +453,28 @@ var argocdURLGates = map[string]providerDecision{
 		skippedReason:   gcpArgocdURLSkipReason,
 	},
 	"azure": {
-		// THE FLIP THE PREVIOUS LANE PROMISED (#1825). This was a constant-false predicate while
-		// the only certificate Azure could produce was a purchased App Service order that binds to
-		// neither AKS nor an Application Gateway. That resource is deleted; cert-manager issues the
-		// certificate in-cluster now, and AGIC lifts the Secret onto the gateway listener.
+		// STILL CONSTANT-FALSE, and now for a different reason than before.
 		//
-		// ⚠️ MIRRORS THE EMITTER, EVERY TERM. installArgoCD renders this ingress inside
-		// `vc.DNS.Enabled && vc.DNS.DomainName != ""` and then only when `agwName != "" &&
-		// certManagerWillIssue`. All four are here. Checking a subset is #1831 exactly: that gate
-		// tested one of three conditions and reported "installed — exposed over the ALB ingress"
-		// for a deploy that emitted no ingress at all, and wafDecision read the lie downstream.
+		// It was false because Azure had no certificate that could terminate anything: the only one
+		// the template could produce was a purchased App Service order binding to neither AKS nor an
+		// Application Gateway (#1825). That resource is deleted and cert-manager issues in-cluster
+		// now, so the TLS blocker is gone — AGIC serves the project's own Ingress objects with it.
 		//
-		// CertManagerEnabled() is called rather than restated — the same method the emitter calls,
-		// the render template gates on, and certManagerDecision reads. It already folds in the
-		// managed-certificate switch, DNS, the domain and the per-cloud solver, so spelling those
-		// out here would be four more chances to drift.
-		installed: func(f *InfraFacts) bool {
-			return f.DNSEnabled && f.DomainName != "" && f.AzureAppGatewayName != "" && f.CertManagerEnabled()
-		},
+		// What is held is the EXPOSURE. Publishing the ArgoCD ADMIN console over the Application
+		// Gateway is a security decision worth reviewing on its own rather than riding along with a
+		// certificate refactor, so the flip and the ingress the runner would emit for it are split
+		// out. `installedReason` stays written so that lane is one line plus its emitter.
+		//
+		// The pair is what matters: installArgoCD emits NO azure ingress, and this reports none.
+		// A gate that ran ahead of its emitter is #1831 exactly.
+		installed:       func(*InfraFacts) bool { return false },
 		installedReason: "installed — ArgoCD is exposed over the Application Gateway ingress, with TLS issued in-cluster by cert-manager and lifted onto the listener by AGIC.",
-		skippedReason:   azureArgocdURLSkipReason,
+		skippedReason: func(f *InfraFacts) string {
+			if !f.CertManagerEnabled() {
+				return "an Application Gateway ingress controller is installed and cert-manager is not issuing a certificate for this project: " + certManagerSkipReason(f) + " ArgoCD is reachable via port-forward + the admin password."
+			}
+			return "an Application Gateway ingress controller is installed and cert-manager issues certificates for your own Ingress objects, but the ArgoCD admin console is not published over the gateway — that exposure is a separate, reviewed decision. Reach ArgoCD with a port-forward and the admin password."
+		},
 	},
 }
 
@@ -487,32 +489,8 @@ func gcpArgocdURLSkipReason(f *InfraFacts) string {
 		return "no GKE cluster was provisioned for this project — there is nothing for a GKE Ingress to run on, so no managed ArgoCD URL exists."
 	case !f.CertManagerEnabled():
 		// Delegates rather than restating, so "you left the switch off" / "this cloud has no solver"
-		// / "the identity output is missing" stay one sentence each, written once. Same shape as
-		// azureArgocdURLSkipReason.
+		// / "the identity output is missing" stay one sentence each, written once.
 		return "the GKE cluster is provisioned, but nothing will issue its TLS certificate: " + certManagerSkipReason(f) + " The GKE Ingress sets allow-http=false, so it would serve nothing at all rather than fall back to plaintext — use port-forward + the admin password."
-	}
-	return ""
-}
-
-// azureArgocdURLSkipReason names WHICH of the four terms was missing, keyed on the first failing
-// one. Azure has more distinct ways to not get a URL than the other clouds, and they need different
-// things done about them: two are settings, one is a paid opt-in, and one is a per-cloud capability
-// the operator cannot change at all. Collapsing them would tell someone to turn on a switch that is
-// already on.
-//
-// The cert-manager arm delegates to certManagerSkipReason rather than restating it, so "the switch
-// is off" / "this cloud has no solver" / "the identity output is missing" stay one sentence each,
-// written once.
-func azureArgocdURLSkipReason(f *InfraFacts) string {
-	switch {
-	case !f.DNSEnabled:
-		return "DNS is disabled for this project — the Application Gateway ingress is only rendered for a DNS hostname, so no managed ArgoCD URL exists however the certificate switch is set; access ArgoCD via port-forward + the admin password."
-	case f.DomainName == "":
-		return "no domain is configured — the Application Gateway ingress has no hostname to serve, so no managed ArgoCD URL exists; set a DNS domain, or access ArgoCD via port-forward + the admin password."
-	case f.AzureAppGatewayName == "":
-		return "no Application Gateway is provisioned for this project — a v2 gateway is a standing hourly cost, so it is opt-in (azure_application_gateway_enabled, which follows the WAF switch when unset) and needs a template-provisioned VNet to carve its dedicated subnet; until then use port-forward + the admin password."
-	case !f.CertManagerEnabled():
-		return "the Application Gateway is provisioned, but nothing will issue its TLS certificate: " + certManagerSkipReason(f) + " ArgoCD is not published over the gateway's plaintext listener, so use port-forward + the admin password."
 	}
 	return ""
 }
