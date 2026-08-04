@@ -26,6 +26,22 @@ func (p *alibabaProvider) RequiredCLIs() []string {
 	return []string{"kubectl", "helm"}
 }
 
+// ValidateConfig refuses an Alibaba project config the ACK templates cannot provision: the
+// shared node-pool sizing invariants, the `ack_disk_size_gb` floor, and the VPC-CIDR floor
+// implied by the vswitch carve.
+func (p *alibabaProvider) ValidateConfig(config *types.ProjectConfig) error {
+	if config == nil {
+		return fmt.Errorf("ProjectConfig is required")
+	}
+	if err := validateNodeSizing(config); err != nil {
+		return err
+	}
+	if err := validateNodeDiskSize(config, "ack_disk_size_gb", alibabaNodeDiskFloorGB); err != nil {
+		return err
+	}
+	return validateNetworkCIDR(config, "network_cidr", alibabaMaxNetworkPrefix)
+}
+
 func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	managedCert := config.DNS.ManagedCertificate

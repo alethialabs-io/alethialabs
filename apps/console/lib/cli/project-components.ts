@@ -31,6 +31,7 @@ import {
 	projectTopics,
 } from "@/lib/db/schema";
 import { appsPathSchema } from "@/lib/validations/apps-path";
+import { clusterNodeSizingBounds } from "@/lib/validations/project-form.schema";
 
 /** A component as it appears on the CLI wire — uniform across every kind. `config` is the
  * kind-specific column set as an open object (mirrors componentWire). */
@@ -94,7 +95,14 @@ const KINDS: Record<string, KindDef> = {
 	cluster: {
 		table: projectCluster,
 		singleton: true,
-		fields: createInsertSchema(projectCluster)
+		// The sizing bounds are IMPORTED, not restated. This registry builds a fresh insert
+		// schema and shares no validator with the canvas, so a bound added only there left
+		// `alethia project component set cluster node_min_size=-4` wide open — one definition,
+		// two write paths. The cross-field rule (min <= desired <= max) can't live here: it
+		// needs a `.superRefine`, and validateComponentFields introspects `.shape` to reject
+		// unknown keys, which a ZodEffects wrapper would empty out. CloudProvider.ValidateConfig
+		// is the backstop that catches it on this path.
+		fields: createInsertSchema(projectCluster, clusterNodeSizingBounds)
 			.pick({
 				cloud_identity_id: true,
 				region: true,

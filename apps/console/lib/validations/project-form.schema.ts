@@ -49,11 +49,39 @@ import type {
 // otherwise) so ProjectFormData keeps the same field types the form components rely on.
 const projectsInsert = createInsertSchema(projects);
 const networkInsert = createInsertSchema(projectNetwork);
+/**
+ * Node-pool sizing bounds — clamped to the inspector's own min/max, the same way the in-cluster
+ * `storage_gb` overrides below are.
+ *
+ * EXPORTED because there are TWO write paths into project_cluster and they share no validator:
+ * the canvas parses against the schemas in this file, while the CLI builds its own picked insert
+ * schema (lib/cli/project-components.ts) and imports nothing from here. A bound written only on
+ * the canvas leaves `alethia project component set cluster node_min_size=-4` wide open, so both
+ * paths spread THIS object into their `createInsertSchema` refinement rather than restating the
+ * numbers.
+ *
+ * NULL is the "inherit the cloud's default" channel (the columns are nullable), which is why the
+ * floor is 1 and not 0: a 0 reaches no tfvar at all — every ProviderTfvars guards emission on
+ * `> 0` — so it would be silently discarded rather than honoured.
+ *
+ * The CROSS-FIELD rule (max >= min, min <= desired <= max) is not here: it can only be expressed
+ * as a `.superRefine`, and the CLI's field validator introspects `.shape` to reject unknown keys,
+ * which a ZodEffects wrapper would break. It lives on `clusterSchema` below for the canvas, and
+ * `CloudProvider.ValidateConfig` (packages/core/cloud/validate.go) is the backstop that catches
+ * it on every path — including a CLI `--set` that only carries one of the three fields.
+ */
+export const clusterNodeSizingBounds = {
+	node_min_size: z.number().int().min(1).max(100).nullable().optional(),
+	node_max_size: z.number().int().min(1).max(100).nullable().optional(),
+	node_desired_size: z.number().int().min(1).max(100).nullable().optional(),
+};
+
 // cluster_admins is no longer a project_cluster column (contract phase — it persists to the
 // cluster_admins child table), so it's a form-only field extended onto the insert shape.
 const clusterInsert = createInsertSchema(projectCluster, {
 	provider_config: z.custom<ClusterProviderConfig>().optional(),
 	node_size: z.custom<NodeSize>().optional(),
+	...clusterNodeSizingBounds,
 }).extend({
 	cluster_admins: z.custom<ClusterAdmin[]>().optional(),
 });
@@ -366,11 +394,43 @@ const networkSchema = networkInsert
 		}
 	});
 
-const clusterSchema = clusterInsert.omit({
-	...componentAutoFields,
-	cluster_name: true,
-	cluster_endpoint: true,
-});
+// Cross-field node-pool sizing. `clusterSchema` carried ZERO refinements until now, so a pool
+// whose max sits below its min — or whose desired sits outside the range entirely — saved
+// cleanly. Four of the five templates hard-fail on `max >= min` at plan; NOTHING at any layer
+// checked `min <= desired <= max`, so a bad desired planned clean and was rejected by the
+// cluster API mid-apply. Null means "inherit the cloud's default", so each comparison only runs
+// when both of its operands are set.
+const clusterSchema = clusterInsert
+	.omit({
+		...componentAutoFields,
+		cluster_name: true,
+		cluster_endpoint: true,
+	})
+	.superRefine((data, ctx) => {
+		const { node_min_size: min, node_max_size: max, node_desired_size: desired } = data;
+
+		if (min != null && max != null && max < min) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Max nodes must be at least min nodes",
+				path: ["node_max_size"],
+			});
+		}
+		if (desired != null && min != null && desired < min) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Desired nodes must be at least min nodes",
+				path: ["node_desired_size"],
+			});
+		}
+		if (desired != null && max != null && desired > max) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				message: "Desired nodes must be at most max nodes",
+				path: ["node_desired_size"],
+			});
+		}
+	});
 
 // Fail-closed on the connector selection, mirroring the secrets and helm lanes.
 //

@@ -446,6 +446,25 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		if err := ValidatePlacement(vc); err != nil {
 			return nil, err
 		}
+
+		// Config validation — the seam ProviderTfvars never had (#1967). RunDeployV2 serves
+		// BOTH plan and apply (params.DryRun), so this one site refuses a bad value at plan
+		// time and at apply time.
+		//
+		// DELIBERATELY ASYMMETRIC: this is the ONLY path that calls ValidateConfig. destroy.go,
+		// drift.go and state_import.go call ProviderTfvars too, and they must NOT gain this
+		// check. A stack that was already applied carrying a bad value has to stay destroyable
+		// — refusing there would turn a config mistake into an un-teardownable stack with live
+		// cloud resources and a running bill. Do not "complete" this later.
+		//
+		// An unsupported provider is not this gate's business: the existing NewCloudProvider
+		// call further down owns that error, and reporting it from here would change which
+		// message the namespace/vcluster paths surface.
+		if provider, perr := cloud.NewCloudProvider(params.Provider); perr == nil {
+			if err := provider.ValidateConfig(vc); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Placement activation dispatch (#955/#956). `dedicated` (incl. empty = legacy env=cluster) falls
