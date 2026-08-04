@@ -23,6 +23,21 @@ output "talosconfig" {
   sensitive   = true
 }
 
+output "network_id" {
+  description = "The private network the cluster is attached to — created here when provision_network is true, otherwise the existing one named by var.network_id."
+  value       = local.network_id
+}
+
+output "dns_zone_id" {
+  description = "The hcloud DNS zone id (created in-template when cloud_dns_enabled, else the existing dns_hosted_zone)."
+  value       = length(hcloud_zone.this) > 0 ? tostring(hcloud_zone.this[0].id) : var.dns_hosted_zone
+}
+
+output "dns_name_servers" {
+  description = "Authoritative name servers for the created zone (delegate these at the registrar); empty when using an existing zone."
+  value       = length(hcloud_zone.this) > 0 ? hcloud_zone.this[0].authoritative_nameservers.assigned : []
+}
+
 output "bucket_names" {
   description = "Provisioned Object Storage bucket names (namespaced by cluster). Empty when no buckets were requested."
   value       = [for b in minio_s3_bucket.bucket : b.bucket]

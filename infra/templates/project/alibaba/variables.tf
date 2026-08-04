@@ -257,6 +257,18 @@ variable "provision_cr" {
   description = "Whether to provision a Container Registry (CR) instance and namespace"
 }
 
+# TYPED on purpose — see the note on the module's own `repos`. Keyed by the registry component's
+# name. `immutable_tags` is the canvas's "Immutable tags" switch, defaulting to the setting the
+# repository would have been created with anyway, so an emitter that omits it downgrades nothing.
+variable "cr_repos" {
+  type = map(object({
+    summary        = optional(string, "")
+    immutable_tags = optional(bool, true)
+  }))
+  default     = {}
+  description = "Container Registry repositories to create, keyed by the registry component's name"
+}
+
 #########################################################################
 ##                   OSS (Object Storage) Variables                    ##
 #########################################################################

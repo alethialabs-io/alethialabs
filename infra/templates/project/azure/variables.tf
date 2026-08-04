@@ -410,6 +410,39 @@ variable "azure_waf_rules" {
 }
 
 #########################################################################
+##            Application Gateway / AGIC Variables                     ##
+#########################################################################
+
+variable "azure_application_gateway_enabled" {
+  type        = bool
+  default     = null
+  description = <<-EOT
+    Whether to provision an Application Gateway v2 (and, on a cluster, the Application Gateway
+    Ingress Controller that drives it from Kubernetes Ingress objects).
+
+    Leave UNSET (null, the default) to follow `azure_waf_enabled`: on Azure a WAF policy binds to
+    an Application Gateway and to nothing else, so a WAF with no gateway inspects no requests.
+    Set true to get the ingress without a WAF; set false to keep neither.
+
+    COST: a v2 gateway bills per hour for as long as it exists, independently of traffic and of
+    whether any Ingress object was ever created — materially more than the WAF policy itself.
+    Requires `provision_vnet = true`; the gateway needs a dedicated subnet, which only the VNet
+    this template creates can carve.
+  EOT
+}
+
+variable "azure_application_gateway_capacity" {
+  type        = number
+  default     = 1
+  description = "Fixed instance count for the Application Gateway v2 SKU. Azure requires at least 1; raise it for capacity or zone redundancy."
+
+  validation {
+    condition     = var.azure_application_gateway_capacity >= 1 && var.azure_application_gateway_capacity <= 125
+    error_message = "azure_application_gateway_capacity must be between 1 and 125 (the Application Gateway v2 instance-count range)."
+  }
+}
+
+#########################################################################
 ##                   Storage Account Variables                         ##
 #########################################################################
 

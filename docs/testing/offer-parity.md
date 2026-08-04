@@ -89,15 +89,15 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `bucket:public_access` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `bucket:versioning` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `cache:multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · | · |
-| `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
+| `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `dns:managed_certificate` | — | 🟡 | 🟡 | 🟡 | — | · |
 | `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
-| `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 #1816 | · |
+| `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · | · |
-| `queue:ordered` | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | 🚫 #1812 | · | · |
-| `registry:immutable_tags` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
-| `registry:vulnerability_scanning` | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | 🚫 #1811 | · | · |
+| `queue:ordered` | — | 🟡 | 🟡 | 🟡 | · | · |
+| `registry:immutable_tags` | 🟡 | 🟡 | — | 🟡 | · | · |
+| `registry:vulnerability_scanning` | 🚫 #1845 | 🟡 | — | 🚫 #1844 | · | · |
 | `secret:generate` | 🟡 | ⚠️ | 🟡 | 🟡 | · | · |
 | `secret:special_chars` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
 
@@ -156,7 +156,7 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 |---|---|---|
 | `database:postgres` | hetzner | Provisioned in-cluster by the CloudNativePG chart, not by OpenTofu — no tfvar carries the engine. |
 | `cache:valkey` | hetzner | Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine. |
-| `dns:managed_certificate` | hetzner | Hetzner sells no managed certificate and cert-manager ships no Hetzner DNS01 solver — nothing can issue one, in OpenTofu or in-cluster. |
+| `dns:managed_certificate` | hetzner | Hetzner's managed certificate can only be presented by a Hetzner load balancer, and an Alethia Hetzner cluster takes traffic at the nodes instead — so there is no listener to attach one to, and cert-manager ships no Hetzner DNS01 solver to issue one in-cluster either. |
 | `dns:waf_enabled` | hetzner | Hetzner sells no web application firewall — the product does not exist. |
 | `cache:valkey` | azure | Azure Cache/Managed Redis has no Valkey engine — the product does not exist. |
 | `cache:valkey` | alibaba | ApsaraDB KVStore offers Redis or Memcache only — no Valkey engine. |
@@ -175,6 +175,9 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `network:single_nat_gateway` | hetzner | Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone. |
 | `dns:managed_certificate` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate. |
 | `nosql:point_in_time_recovery` | alibaba | Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do. |
+| `queue:ordered` | alibaba | Alibaba Cloud's queue service accepts a FIFO queue type but publishes no ordering guarantee behind it — no delivery order, no message key to group by, no throughput limit — so Alethia does not offer ordered delivery there. |
+| `registry:immutable_tags` | azure | Azure Container Registry has no tag-immutability setting on the registry — locking a repository is an operation outside Resource Manager, so no template argument can carry your choice. |
+| `registry:vulnerability_scanning` | azure | Image scanning on Azure is Microsoft Defender for Containers, a billed security plan that switches on for the whole subscription — not something one project's registry can turn on for itself. |
 
 ## Reviewed branch-guard wirings
 
@@ -209,20 +212,8 @@ Only a cell that was measured and came out honored is asked for its entry back.
 
 | Offer | Cloud | State (measured) | Issue | What a user gets today |
 |---|---|---|---|---|
-| `registry:immutable_tags` | aws | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to ECR yet — repositories are created with the platform default instead of your choice. |
-| `registry:immutable_tags` | gcp | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice. |
-| `registry:immutable_tags` | azure | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice. |
-| `registry:immutable_tags` | alibaba | 🚫 `no-carrier` | #1811 | Tag immutability is not sent to Container Registry yet — repositories are created with the platform default instead of your choice. |
-| `registry:vulnerability_scanning` | aws | 🚫 `no-carrier` | #1811 | Image scanning is not sent to ECR yet — repositories are created with the platform default instead of your choice. |
-| `registry:vulnerability_scanning` | gcp | 🚫 `no-carrier` | #1811 | Image scanning is not sent to Artifact Registry yet — repositories are created with the platform default instead of your choice. |
-| `registry:vulnerability_scanning` | azure | 🚫 `no-carrier` | #1811 | Image scanning is not sent to Azure Container Registry yet — repositories are created with the platform default instead of your choice. |
-| `registry:vulnerability_scanning` | alibaba | 🚫 `no-carrier` | #1811 | Image scanning is not sent to Container Registry yet — repositories are created with the platform default instead of your choice. |
-| `queue:ordered` | aws | 🚫 `unwired-template` | #1812 | FIFO delivery is not applied to SQS yet — the queue is created as a standard, unordered queue whichever way the switch is set. |
-| `queue:ordered` | azure | 🚫 `unwired-template` | #1812 | Session-ordered delivery is not applied to Service Bus yet — the queue is created without sessions whichever way the switch is set. |
-| `queue:ordered` | gcp | 🚫 `no-carrier` | #1812 | Ordered delivery is not applied to Pub/Sub yet — message ordering stays off whichever way the switch is set. |
-| `queue:ordered` | alibaba | 🚫 `no-carrier` | #1812 | Ordered delivery is not applied to MNS yet — the queue is created unordered whichever way the switch is set. |
-| `dns:enabled` | hetzner | 🚫 `no-carrier` | #1816 | DNS records are not provisioned on Hetzner yet — a DNS component on a Hetzner project builds nothing. |
-| `network:provision_network` | hetzner | 🚫 `no-carrier` | #1816 | A Hetzner project always creates its own network — attaching an existing one is not supported yet. |
+| `registry:vulnerability_scanning` | gcp | 🚫 `no-carrier` | #1844 | Image scanning is not requested from Artifact Registry yet — repositories are created with the platform default instead of your choice. |
+| `registry:vulnerability_scanning` | alibaba | 🚫 `no-carrier` | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
 
 ---
 

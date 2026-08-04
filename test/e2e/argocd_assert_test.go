@@ -564,15 +564,24 @@ func TestInstalledIngressDecisionsNameAnApplication(t *testing.T) {
 // The provider-keyed lookup must fall back to the anyProvider entry for cloud-agnostic
 // services, and must NOT leak a per-cloud entry to another cloud.
 func TestArgoAppForInfraService_ProviderResolution(t *testing.T) {
+	// The clouds that ship their own ingress controller, and the Application each renders. The
+	// point of the loop below is that a cloud gets ITS OWN entry or nothing at all — the ALB
+	// controller must never resolve on azure, nor AGIC on aws.
+	ingressApps := map[string]string{
+		"aws":   "aws-load-balancer-controller",
+		"azure": "ingress-azure",
+	}
 	for _, provider := range t2AllProviders() {
 		if app, ok := argoAppForInfraService(provider, "external-dns"); !ok || app != "external-dns" {
 			t.Errorf("%s: cloud-agnostic service did not fall back to the anyProvider entry: (%q, %v)", provider, app, ok)
 		}
-		if provider == "aws" {
-			continue
-		}
-		if app, ok := argoAppForInfraService(provider, "ingress"); ok {
-			t.Errorf("%s: resolved the AWS-only ingress Application %q — a per-cloud entry must not leak across clouds", provider, app)
+		app, ok := argoAppForInfraService(provider, "ingress")
+		want, hasController := ingressApps[provider]
+		switch {
+		case hasController && (!ok || app != want):
+			t.Errorf("%s: ingress resolved to (%q, %v), want %q", provider, app, ok, want)
+		case !hasController && ok:
+			t.Errorf("%s: resolved another cloud's ingress Application %q — a per-cloud entry must not leak across clouds", provider, app)
 		}
 	}
 	if _, ok := argoAppForInfraService("aws", "no-such-service"); ok {
@@ -585,10 +594,16 @@ func TestArgoAppForInfraService_ProviderResolution(t *testing.T) {
 // lane shipping a controller whose Application the assertion never checks.
 func TestDeriveExpectedArgoApps_InstalledIngressOnUnmappedCloudFails(t *testing.T) {
 	meta := []byte(`{"infra_services":[{"service":"ingress","status":"installed","reason":"a controller this test invented"}]}`)
-	// azure, not gcp: gcp is now MAPPED (as "installs no Application" — its controller is in the
-	// managed control plane), so using it here would make this guard pass for the wrong reason.
-	// azure is the next lane to land and is in neither map, which is exactly the state under test.
-	if _, err := DeriveExpectedArgoApps("azure", meta); err == nil {
+	// ⚠️ THE FIXTURE CLOUD MOVES EVERY TIME AN INGRESS LANE LANDS, and it has moved twice: gcp →
+	// azure (gcp became mapped as "installs no Application", its controller being in the managed
+	// control plane) → alibaba (azure became mapped to the AGIC Application). Using a MAPPED cloud
+	// here does not fail the test — it makes it pass for the wrong reason, which is worse.
+	//
+	// alibaba is the durable choice rather than the next one along: it is unmapped ON PURPOSE and
+	// expected to stay that way, because ACK ships its own nginx-ingress-controller and a second
+	// one from Alethia would be the #1722 ownership collision. If a lane ever does map it, pick
+	// another genuinely-unmapped cloud — never one that merely has not landed yet.
+	if _, err := DeriveExpectedArgoApps("alibaba", meta); err == nil {
 		t.Fatal("expected a hard error for an installed ingress on a cloud in neither infraServiceArgoApps nor infraServiceNoApp")
 	}
 	// gcp, in contrast, derives CLEANLY and adds nothing — the no-app path, pinned so a future
@@ -636,4 +651,55 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// The AGIC Application name is a THREE-WAY constant: the template's `metadata.name`, the
+// infraServiceArgoApps entry this assertion derives the expected set from, and — through
+// `fullnameOverride` — the ServiceAccount name the azure template's federated identity credential
+// trusts. A rename in one place and not the others produces either a run that waits out the whole
+// ArgoCD timeout for an Application nobody rendered (the #1722 shape, one dimension over) or a
+// controller whose token exchange silently fails. Parsed from the template, like
+// TestMetricsServerGateMatchesTemplate, rather than restated.
+func TestAGICApplicationNameMatchesTemplate(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "..", "..")
+	path := filepath.Join(root, "infra", "templates", "argocd", "azure-application-gateway-ingress.yaml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+
+	name := regexp.MustCompile(`(?m)^metadata:\n\s+name:\s+(\S+)`).FindSubmatch(b)
+	if name == nil {
+		t.Fatalf("no Application metadata.name found in %s", path)
+	}
+	want, ok := argoAppForInfraService("azure", "ingress")
+	if !ok {
+		t.Fatalf("azure has no infraServiceArgoApps entry for \"ingress\" — the decision would resolve to nothing and hard-error the derivation")
+	}
+	if got := string(name[1]); got != want {
+		t.Fatalf("AGIC Application name DRIFT:\n  template %s renders: %q\n  infraServiceArgoApps[\"ingress\"][\"azure\"]: %q", path, got, want)
+	}
+
+	// fullnameOverride is what pins the chart's ServiceAccount name; the azure template's
+	// federated identity credential trusts `system:serviceaccount:agic:<that name>`.
+	if !regexp.MustCompile(`fullnameOverride:\s+` + regexp.QuoteMeta(want)).Match(b) {
+		t.Errorf("%s must set fullnameOverride: %s — without it the chart derives its ServiceAccount name from the Helm release name and the federated credential's subject no longer matches", path, want)
+	}
+	if !regexp.MustCompile(`namespace:\s+agic`).Match(b) {
+		t.Errorf("%s must deploy into the `agic` namespace named by the federated credential's subject", path)
+	}
+
+	// The gate must be azure-only. A missing provider term would render the Application on every
+	// cloud, where the chart has no gateway to reconcile onto.
+	gate := regexp.MustCompile(`\{\{-?\s*if\s+([^}]*?)\s*-?\}\}`).FindSubmatch(b)
+	if gate == nil {
+		t.Fatalf("no {{ if }} gate found in %s — AGIC would render on every cloud", path)
+	}
+	if !regexp.MustCompile(`eq\s+\.Provider\s+"azure"`).Match(gate[1]) {
+		t.Errorf("AGIC gate %q must be azure-only", gate[1])
+	}
 }

@@ -1,0 +1,61 @@
+{{- /* The Application Gateway Ingress Controller — Azure's ingress controller, and the Azure
+       counterpart of aws-load-balancer-controller.yaml.
+
+       AGIC does NOT create a load balancer per Ingress the way the ALB controller does. It
+       reconciles every Ingress in the cluster into the listener / routing-rule / backend-pool
+       configuration of ONE pre-existing Application Gateway, which infra/templates/project/azure
+       provisions (application-gateway.tf) and which is also the only resource an Azure WAF policy
+       can be bound to. Hence the three-part render gate: without the gateway's name, the
+       subscription it lives in, and the AGIC identity's client id, the chart installs a controller
+       that authenticates to nothing and reconciles nothing — a crash-loop, not a degraded install.
+       Every one of the three comes from a root output that only exists when the gateway does, so
+       the gate is closed by construction on a project that did not ask for one.
+
+       fullnameOverride is load-bearing, not cosmetic. Without it the chart derives its
+       ServiceAccount name from the Helm release name, and the federated identity credential in
+       application-gateway.tf trusts one exact subject
+       (system:serviceaccount:agic:ingress-azure) — a renamed Application would silently break the
+       token exchange. Pinning the name here makes the subject a constant on both sides.
+
+       Mirrored by packages/core/argocd/decisions.go (ingressControllers["azure"]) and by
+       test/e2e/argocd_assert.go (infraServiceArgoApps["ingress"]["azure"] = "ingress-azure").
+       TestAGICGateMatchesTemplate parses this file to keep the Go gate and this `if` in step. */ -}}
+{{- if and (eq .Provider "azure") .AzureIngressClient .AzureAppGatewayName .AzureSubscriptionID }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-azure
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: infra
+  source:
+    repoURL: oci://mcr.microsoft.com/azure-application-gateway/charts
+    chart: ingress-azure
+    targetRevision: "1.9.12"
+    helm:
+      values: |
+        fullnameOverride: ingress-azure
+        appgw:
+          subscriptionId: {{ .AzureSubscriptionID }}
+          resourceGroup: {{ .AzureResourceGroup }}
+          name: {{ .AzureAppGatewayName }}
+        armAuth:
+          type: workloadIdentity
+          identityClientID: {{ .AzureIngressClient }}
+        rbac:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: agic
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+  revisionHistoryLimit: 3
+{{- end }}

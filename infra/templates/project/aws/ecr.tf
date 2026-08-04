@@ -11,6 +11,9 @@ module "ecr" {
   ecr_repository_read_access_arns       = var.ecr_repository_read_access_arns
   ecr_repository_encryption_type        = var.ecr_repository_encryption_type
 
+  # The per-repository answers, plus the project-wide defaults every repository they do not name
+  # falls back to. Both travel: the module resolves one against the other per for_each key.
+  ecr_repo_settings                   = var.ecr_repo_settings
   ecr_repository_image_scan_on_push   = var.ecr_repository_image_scan_on_push
   ecr_repository_image_tag_mutability = var.ecr_repository_image_tag_mutability
 

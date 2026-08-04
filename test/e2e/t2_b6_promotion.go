@@ -18,10 +18,10 @@
 // on the target, a classification value whose enforcement forces approval + verify), then shells out
 // to the tsx shim (scripts/e2e/promotion-gate.ts) that runs the ACTUAL exported console actions:
 //
-//	1. GATE BLOCKS      advancePromotionOnPlan(planJob) → PENDING_APPROVAL (approval slot materialized).
-//	2. APPROVAL CLEARS  applyPromotionApproval(promotion, approver) → DEPLOYING + a QUEUED DEPLOY job.
-//	3. DEPLOY APPLIES   the enqueued DEPLOY job → SUCCESS through the REAL update_job_status SSOT.
-//	4. FINALIZE         finalizeDeployment (env→ACTIVE) + finalizePromotionOnDeploy (promotion→SUCCEEDED).
+//  1. GATE BLOCKS      advancePromotionOnPlan(planJob) → PENDING_APPROVAL (approval slot materialized).
+//  2. APPROVAL CLEARS  applyPromotionApproval(promotion, approver) → DEPLOYING + a QUEUED DEPLOY job.
+//  3. DEPLOY APPLIES   the enqueued DEPLOY job → SUCCESS through the REAL update_job_status SSOT.
+//  4. FINALIZE         finalizeDeployment (env→ACTIVE) + finalizePromotionOnDeploy (promotion→SUCCEEDED).
 //
 // Non-vacuity is asserted at every step (see t2_b6_promotion_run_test.go): the env's own protection
 // rules are ALL OFF, so a REFUTER promotion WITHOUT the classification tag sails straight to DEPLOYING —

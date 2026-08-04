@@ -443,3 +443,149 @@ run "every_remaining_name_falls_back_inside_its_own_cap" {
     error_message = "Resource group: expected a 90-char truncate-plus-digest, got ${local.azure_resource_group_name} (${length(local.azure_resource_group_name)} chars)."
   }
 }
+
+################################################################################
+# 5. The AKS node resource group — 80 characters, derived by AZURE (#1921)
+#
+# The leak in the #1886/#1905 length-budget class that this file could not have caught, because
+# until the derivation existed the string was never in the configuration: `modules/aks/main.tf` set
+# every AKS argument except `node_resource_group`, so Azure composed
+# "MC_<resource_group>_<cluster_name>_<location>" server-side. The e2e nightly hit it the only way
+# it could — as a 400 from ARM, 489 seconds into `tofu apply`, with the cluster half-created:
+#
+#   creating Kubernetes Cluster ...: 400 InvalidParameter: "The length of the node resource group
+#   name is too long. The maximum length is 80 and the length of the value provided is 82."
+#
+# So what is pinned here is the same property as everywhere else in this file, with one addition
+# that only applies to this name: `node_resource_group` is ForceNew. A derivation that does not
+# reproduce Azure's own form byte for byte would not merely rename something — it would REPLACE
+# every AKS cluster in existence on the next apply. The verbatim cases below are that guarantee.
+################################################################################
+
+# Azure's own composition, reproduced exactly. This is the no-op case and it is the common one.
+run "node_rg_reproduces_azures_own_form_when_it_fits" {
+  command = plan
+
+  variables {
+    project_name = "alethia"
+    environment  = "prod"
+  }
+
+  assert {
+    condition     = local.azure_aks_node_resource_group == "MC_rg-alethia-prod_aks-weu-prod-alethia_westeurope"
+    error_message = "A node resource group that fits must reproduce Azure's own MC_<rg>_<cluster>_<location> form byte for byte — anything else REPLACES the cluster. Got ${local.azure_aks_node_resource_group}."
+  }
+}
+
+# The exact boundary. 80 is legal, so it must NOT fall back: an off-by-one here replaces every
+# cluster sitting exactly on the cap.
+run "node_rg_a_name_exactly_at_the_cap_is_kept_verbatim" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "production-eu-w1"
+  }
+
+  assert {
+    condition     = local.azure_aks_node_resource_group == "MC_rg-alethia-nl-production-eu-w1_aks-weu-production-eu-w1-alethia-nl_westeurope" && length(local.azure_aks_node_resource_group) == 80
+    error_message = "A node resource group of exactly 80 characters must be kept verbatim, got ${local.azure_aks_node_resource_group} (${length(local.azure_aks_node_resource_group)} chars)."
+  }
+}
+
+# THE case from #1921 — run 30882660761 of the e2e nightly, byte for byte. The first assertion pins
+# the REPRODUCTION: the composition Azure would have made is 82 characters, exactly the number ARM
+# reported. The second is the fix. Without the budget the second fails at 82 while the first still
+# passes, which is what makes this pair a regression test rather than a restatement.
+run "node_rg_the_e2e_nightly_shape_lands_inside_the_cap" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "30882660761-1"
+    location     = "germanywestcentral"
+  }
+
+  assert {
+    condition     = local.azure_aks_node_resource_group_full == "MC_rg-alethia-nl-30882660761-1_aks-gwc-30882660761-1-alethia-nl_germanywestcentral" && length(local.azure_aks_node_resource_group_full) == 82
+    error_message = "The e2e nightly must still reproduce the 82-character composition ARM refused; got ${local.azure_aks_node_resource_group_full} (${length(local.azure_aks_node_resource_group_full)} chars). If this changed, the regression it guards has moved."
+  }
+
+  assert {
+    condition     = local.azure_aks_node_resource_group == "MC_rg-alethia-nl-30882660761-1_aks-gwc-30882660761-1-alethia-nl_germanyw_b01a9ca" && length(local.azure_aks_node_resource_group) == 80
+    error_message = "NAMING-002 produced ${local.azure_aks_node_resource_group} (${length(local.azure_aks_node_resource_group)} chars) — AKS caps the node resource group at 80, and rejects it at APPLY, not at plan."
+  }
+}
+
+# Two consecutive attempts of the same nightly run. They share their first 72 characters, so under
+# plain truncation both clusters would claim ONE node resource group — and the second apply would
+# adopt the first cluster's VMSS, NICs and load balancer. Worse than the overflow it replaced.
+run "node_rg_two_clusters_sharing_a_prefix_get_distinct_names_a" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "30882660761-1"
+    location     = "germanywestcentral"
+  }
+
+  assert {
+    condition     = local.azure_aks_node_resource_group == "MC_rg-alethia-nl-30882660761-1_aks-gwc-30882660761-1-alethia-nl_germanyw_b01a9ca"
+    error_message = "Expected the -1 attempt's own digest, got ${local.azure_aks_node_resource_group}."
+  }
+}
+
+run "node_rg_two_clusters_sharing_a_prefix_get_distinct_names_b" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "30882660761-2"
+    location     = "germanywestcentral"
+  }
+
+  assert {
+    condition     = local.azure_aks_node_resource_group == "MC_rg-alethia-nl-30882660761-2_aks-gwc-30882660761-2-alethia-nl_germanyw_8ed7a68"
+    error_message = "Expected the -2 attempt's own digest (distinct from -1's b01a9ca), got ${local.azure_aks_node_resource_group}."
+  }
+}
+
+# The separator here is an underscore, so a truncation landing on one would leave "__" — which is
+# why the strip covers `_` as well as `-` and `.`. This input truncates at exactly that point: 71
+# characters survive the strip, so the result is 79 rather than 80.
+run "node_rg_a_truncation_landing_on_a_separator_trims_it" {
+  command = plan
+
+  variables {
+    project_name = "alethia-nl"
+    environment  = "production-eu-w1x"
+  }
+
+  assert {
+    condition     = local.azure_aks_node_resource_group == "MC_rg-alethia-nl-production-eu-w1x_aks-weu-production-eu-w1x-alethia-nl_bce9384" && length(local.azure_aks_node_resource_group) == 79
+    error_message = "A truncation landing on the underscore separator must trim it rather than double it, got ${local.azure_aks_node_resource_group} (${length(local.azure_aks_node_resource_group)} chars)."
+  }
+}
+
+# The longest input the generators permit, and the case a per-name budget cannot see: the parent
+# resource group is ALREADY at its own 90-character fallback and the cluster name is 96 characters,
+# both legal — and the composition is 202. Every other name on this surface is inside its cap here
+# (asserted in section 4c above); this one is two and a half times over.
+run "node_rg_the_longest_realistic_input_lands_inside_the_cap" {
+  command = plan
+
+  variables {
+    project_name = "alethia-labs-northwest-region-group-extended"
+    environment  = "production-eu-west-1-with-a-very-long-suffix"
+  }
+
+  assert {
+    condition     = length(local.azure_aks_node_resource_group_full) == 202
+    error_message = "Expected the composed form to be 202 chars at the longest realistic input, got ${length(local.azure_aks_node_resource_group_full)}."
+  }
+
+  assert {
+    condition     = local.azure_aks_node_resource_group == "MC_rg-alethia-labs-northwest-region-group-extended-production-eu-west-1_cb46f00" && length(local.azure_aks_node_resource_group) <= 80
+    error_message = "The longest realistic input must land inside 80, got ${local.azure_aks_node_resource_group} (${length(local.azure_aks_node_resource_group)} chars)."
+  }
+}

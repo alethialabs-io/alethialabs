@@ -24,8 +24,11 @@ kill-drill. Everything else the leg needs must already be in place, because the 
 
 ## Order of operations
 
-1. **Apply the cloud's e2e stack** (`tofu init && tofu apply` in the directory below). Agents don't do
-   this step.
+1. **Apply the cloud's e2e stack** (in the directory below). Agents don't do this step. Each stack
+   keeps its state remotely, in the same account/project/subscription as the identity it creates, so
+   the first apply on a cloud is really two: its `bootstrap/` (the state container), then the stack
+   itself. See [`e2e-state-migration.md`](./e2e-state-migration.md) — which is also the procedure for
+   moving a stack that is still on local state.
 2. **Set every non-gate variable first** — the gate only checks one value, so a cloud enabled with its
    companions missing turns green-skip into a confusing failure.
 3. **Dispatch that cloud alone.** `workflow_dispatch` derives the matrix from the `provider` input, so
@@ -279,5 +282,6 @@ target `provider` from `main`, then record the bundle. The parity table in
 
 ## Related
 
+- `docs/testing/e2e-state-migration.md` — putting the four federation stacks on remote state
 - `docs/testing/runner-xcloud-parity.md` — per-cloud runner → cluster parity
 - `demos/proofs/` — committed proof bundles and the parity ledger

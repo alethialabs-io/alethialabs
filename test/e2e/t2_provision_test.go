@@ -641,7 +641,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		owner:        owner,
 		baseAppsRepo: repos.appsRepo,
 		deployJobID:  jobID,
-		planSHA:     planSHA,
+		planSHA:      planSHA,
 	})
 
 	// (11) CROSS-ACCOUNT KEYLESS SECRETS (#1268). Opt-in via ALETHIA_E2E_SECRETS_XACCT — the base

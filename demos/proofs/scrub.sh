@@ -128,14 +128,49 @@ assert_grep_clean() {
 	#    hetzner template alone emits kubeconfig, talosconfig and client_key in exactly that
 	#    shape — so a perfectly clean bundle is reported as secret-bearing. That is not a
 	#    harmless false alarm: a caller treating the tripwire as fatal discards a good bundle.
-	hits="$(grep -rIhnE -- '(client[_-]?key|client-key-data|private[_-]?key|talosconfig|kubeconfig|kube_config|password|secret[_-]?value|secret[_-]?key|access[_-]?key|[_-]token)["]?[[:space:]]*[:=][[:space:]]*[^[:space:]]' "$dir" 2>/dev/null | grep -v 'REDACTED' | grep -vF '(sensitive value)' || true)"
+	#
+	#    A `tofu show -json` plan is the other shape that made this rule fire on a clean bundle,
+	#    and it did so on EVERY azure run (#1937): the plan's `configuration` and
+	#    `sensitive_values` sections name every sensitive attribute, with a STRUCTURAL value
+	#    rather than a secret one —
+	#      "admin_password":{"sensitive":true,"expression":…,"references":…}
+	#      "client_key":{"references":[…]}
+	#      "kube_config":true
+	#    The old rule required only a single non-space character after the separator, so `t` of
+	#    `true` and `{` of `{"sensitive"` both matched. The azure leg therefore lost its runner
+	#    log on every run — a fail-closed guard that always fails is not fail-closed, it is off.
+	#
+	#    So: capture enough of the value to classify it (stopping at `,` or `}`, because compact
+	#    JSON has no spaces to stop at), then drop the shapes that are metadata BY CONSTRUCTION.
+	#    Both exclusions are deliberately narrow, because every one of them is a hole if it is
+	#    wider than the shape it names:
+	#
+	#      a) the value is EXACTLY the literal `true`/`false`/`null` (or tofu's own
+	#         `(sensitive value)` marker). Anchored with `$` to the end of the captured
+	#         occurrence, so a real credential that merely STARTS with those letters —
+	#         `token: null+Yg==` — is still flagged. An unanchored form excluded it.
+	#      b) the value is an object whose FIRST key is `sensitive`/`references`/`expression`
+	#         AND whose own value is a bool/array/object — never a string.
+	#
+	#    `constant_value` is NOT on that list, deliberately: `"password":{"constant_value":"…"}`
+	#    is precisely where a hardcoded secret in a .tf shows up in the plan JSON's
+	#    `configuration` section. Excluding it would have hidden the one shape most worth
+	#    catching. Nothing in the real azure bundle needed it.
+	#
+	#    Matching with -o rather than -n is also what lets the message name the KEY: with -n,
+	#    grep prefixes `<lineno>:` and the sanitising sed below cut at THAT colon, so the operator
+	#    was told `2: [value withheld]` — a line number and nothing else.
+	hits="$(grep -rIhoE -- '["]?[A-Za-z0-9_.-]*(client[_-]?key|client-key-data|private[_-]?key|talosconfig|kubeconfig|kube_config|password|secret[_-]?value|secret[_-]?key|access[_-]?key|[_-]token)[A-Za-z0-9_.-]*["]?[[:space:]]*[:=][[:space:]]*[^[:space:],}]{1,24}' "$dir" 2>/dev/null |
+		grep -v 'REDACTED' |
+		grep -vE '[:=][[:space:]]*(\(sensitive|true|false|null)$' |
+		grep -vE '[:=][[:space:]]*\{["]?(sensitive|references|expression)["]?[[:space:]]*:[[:space:]]*(true|false|null|\[|\{)' || true)"
 	if [ -n "$hits" ]; then
 		echo "::error::proof-scrub: a denylisted key still carries a plaintext value in the proof bundle ($dir):" >&2
-		# Print the line number and the KEY only. This used to print the whole matching line,
-		# which meant the tripwire pasted the surviving secret into the CI log — republishing
-		# the leak into the very place the scrub exists to keep clean. Found while testing the
-		# #1854 fail-closed path against a deliberately weakened scrub.
-		printf '%s\n' "$hits" | sed -E 's/([:=])[[:space:]]*[^[:space:]].*$/\1 [value withheld]/' | head -5 >&2
+		# Print the KEY only. This used to print the whole matching line, which meant the tripwire
+		# pasted the surviving secret into the CI log — republishing the leak into the very place
+		# the scrub exists to keep clean. Found while testing the #1854 fail-closed path against a
+		# deliberately weakened scrub.
+		printf '%s\n' "$hits" | sed -E 's/[[:space:]]*[:=][[:space:]]*.*$/ = [value withheld]/' | sort -u | head -5 >&2
 		rc=1
 	fi
 	# 4) The same denylisted keys nested in JSON mid-line — the shape a tofu `show -json` plan
@@ -226,6 +261,72 @@ EOF
 	# The scrubbed bundle must pass the tripwire.
 	if ! assert_grep_clean "$work/out"; then
 		echo "SELF-TEST FAIL: assert_grep_clean flagged a correctly-scrubbed bundle" >&2
+		return 1
+	fi
+
+	# ── The tripwire must be non-vacuous AND not over-broad (#1937). ──
+	# A `tofu show -json` plan names every sensitive attribute in its `configuration` and
+	# `sensitive_values` sections, with a STRUCTURAL value — an object keyed by
+	# sensitive/expression/references, or the bare literal `true`. The tripwire used to require
+	# only one non-space character after the separator, so all of these matched, and the azure leg
+	# failed its capture on EVERY run and lost its runner log with it. A guard that always fires is
+	# off, not fail-closed — so pin BOTH directions on the same fixture.
+	local meta="$work/meta"
+	mkdir -p "$meta"
+	cat >"$meta/plan.json" <<'EOF'
+{"configuration":{"root_module":{"resources":[{"expressions":{"administrator_password":{"references":["random_password.db"]},"admin_password":{"sensitive":true,"expression":{},"references":[]},"primary_access_key":{"sensitive":true,"expression":{},"references":[]},"client_key":{"references":["azurerm_kubernetes_cluster.this"]}}}]}},"sensitive_values":{"kube_config":true,"kube_config_raw":true,"client_key":false}}
+EOF
+	if ! assert_grep_clean "$meta" >/dev/null 2>&1; then
+		echo "SELF-TEST FAIL: assert_grep_clean flagged a plan JSON's structural metadata (over-broad — this is #1937)" >&2
+		return 1
+	fi
+	# …and a REAL secret in the very same shapes must still trip it, or the narrowing went too far.
+	local meta_bad="$work/meta-bad"
+	mkdir -p "$meta_bad"
+	cat >"$meta_bad/plan.json" <<'EOF'
+{"variables":{"administrator_password":{"value":"planjson-FAKE-PLACEHOLDER-real-secret-DO-NOT-LEAK"}},"sensitive_values":{"kube_config":true}}
+EOF
+	if assert_grep_clean "$meta_bad" >/dev/null 2>&1; then
+		echo "SELF-TEST FAIL: assert_grep_clean passed a REAL secret sitting beside plan-JSON metadata" >&2
+		return 1
+	fi
+	# The two shapes the narrowing must NOT swallow, pinned individually because each is a hole if
+	# its exclusion is a character wider than the metadata it names:
+	#   - a hardcoded secret in the plan JSON's `configuration` section, which appears under
+	#     `constant_value` — the one key deliberately left off the metadata list;
+	#   - a credential whose value merely BEGINS with `null`/`true`/`false`.
+	local meta_edge
+	for meta_edge in \
+		'{"expressions":{"administrator_password":{"constant_value":"planjson-FAKE-PLACEHOLDER-hardcoded-DO-NOT-LEAK"}}}' \
+		'{"kube_config_token":"null+FAKE-PLACEHOLDER-base64ish-DO-NOT-LEAK"}'; do
+		rm -f "$meta_bad/plan.json" "$meta_bad/plain.txt" "$meta_bad/edge.json"
+		printf '%s\n' "$meta_edge" >"$meta_bad/edge.json"
+		if assert_grep_clean "$meta_bad" >/dev/null 2>&1; then
+			echo "SELF-TEST FAIL: assert_grep_clean passed a real secret in shape: ${meta_edge:0:40}…" >&2
+			return 1
+		fi
+	done
+	rm -f "$meta_bad/edge.json"
+	cat >"$meta_bad/plan.json" <<'EOF'
+{"variables":{"administrator_password":{"value":"planjson-FAKE-PLACEHOLDER-real-secret-DO-NOT-LEAK"}},"sensitive_values":{"kube_config":true}}
+EOF
+	# The failure message must name the KEY. It used to print grep's `-n` line-number prefix and
+	# cut the sanitising sed at THAT colon, so the operator was told `2: [value withheld]` — a line
+	# number and nothing else, which is why an azure capture failure could not be diagnosed.
+	cat >"$meta_bad/plain.txt" <<'EOF'
+argocd_admin_password: FAKE-PASSWORD-should-be-named-by-the-tripwire
+EOF
+	# Captured into a variable, not piped: the function legitimately returns 1 here, and under
+	# `set -o pipefail` a pipeline carrying that 1 would make every assertion below read backwards.
+	local msg
+	msg="$(assert_grep_clean "$meta_bad" 2>&1 || true)"
+	if ! grep -q 'argocd_admin_password' <<<"$msg"; then
+		echo "SELF-TEST FAIL: the tripwire's message does not name the offending key" >&2
+		return 1
+	fi
+	# …and it must still never print the value itself.
+	if grep -q 'FAKE-PASSWORD-should-be-named-by-the-tripwire' <<<"$msg"; then
+		echo "SELF-TEST FAIL: the tripwire republished the surviving value into its own message" >&2
 		return 1
 	fi
 

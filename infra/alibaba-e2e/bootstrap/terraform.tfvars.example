@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_*. Applied ONCE, before the parent
+# infra/alibaba-e2e stack, by a maintainer with an admin Alibaba identity.
+
+# The region the state bucket lives in. MUST match `region` in backend.hcl.
+region = "eu-central-1"
+
+# OSS bucket names are globally unique — change this if the default is taken.
+# state_bucket_name = "alethia-tofu-state-e2e-alibaba"

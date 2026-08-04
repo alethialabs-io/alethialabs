@@ -54,8 +54,8 @@ locals {
         cni = {
           name = "none"
         }
-        podSubnets     = [var.pod_cidr]
-        serviceSubnets = [var.service_cidr]
+        podSubnets     = [local.pod_cidr]
+        serviceSubnets = [local.service_cidr]
       }
       proxy = {
         disabled = true
@@ -90,7 +90,7 @@ locals {
     type       = "Opaque"
     data = {
       token   = base64encode(var.hcloud_token)
-      network = base64encode(tostring(hcloud_network.this.id))
+      network = base64encode(tostring(local.network_id))
     }
   })
   bootstrap_manifests = join("\n---\n", [
