@@ -148,8 +148,51 @@ func TestStaticCouplings(t *testing.T) {
 			if normVer(arg) != normVer(c.Value) {
 				t.Errorf("%s ARG %s = %q, matrix value = %q", c.Dockerfile, c.DockerfileArg, arg, c.Value)
 			}
+
+			// And so must any CI workflow that gates an artifact on this version. A
+			// workflow env is a THIRD copy, and until #1931 it was the one copy nothing
+			// checked: .github/workflows/infra-templates.yml gated every project
+			// template with OpenTofu 1.10.10 while the runner applied them with 1.9.0.
+			// The two disagree on `||` short-circuiting, so the gate could not see a
+			// whole class of plan-time failure — it was measuring a different engine.
+			for _, w := range c.Workflows {
+				got := workflowEnv(t, root, w.Path, w.EnvKey)
+				if normVer(got) != normVer(c.Value) {
+					t.Errorf("%s env %s = %q, matrix static_couplings[%s].value = %q — a gate must run the version the product ships, not a newer one",
+						w.Path, w.EnvKey, got, c.ID, c.Value)
+				}
+			}
+
+			// A documented exclusion is still a literal in a YAML file, so it is
+			// drift-checked the same way. It must also differ from the coupled value —
+			// an exclusion that has converged back onto it is dead weight the workflow
+			// should drop, per its own retire_when.
+			for _, x := range c.WorkflowExclusions {
+				t.Run("exclusion/"+x.ID, func(t *testing.T) {
+					if x.Reason == "" || x.RetireWhen == "" {
+						t.Errorf("exclusion %q must carry a reason and a retire_when — the cloud-parity rule admits an exclusion, not a silent one", x.ID)
+					}
+					got := workflowEnv(t, root, x.Workflow, x.EnvKey)
+					if normVer(got) != normVer(x.Value) {
+						t.Errorf("%s env %s = %q, matrix exclusion %q value = %q", x.Workflow, x.EnvKey, got, x.ID, x.Value)
+					}
+					if normVer(x.Value) == normVer(c.Value) {
+						t.Errorf("exclusion %q pins %q, which is now the coupled value — retire it (%s)", x.ID, x.Value, x.RetireWhen)
+					}
+				})
+			}
 		})
 	}
+}
+
+// workflowEnv reads one top-level `env:` value out of a GitHub Actions workflow.
+// A missing key is a hard failure for the same reason a missing Dockerfile ARG is:
+// the coupling is no longer verifiable, which is the drift this test exists to catch.
+func workflowEnv(t *testing.T, root, path, key string) string {
+	t.Helper()
+	src := readRepoFile(t, root, path)
+	re := regexp.MustCompile(`(?m)^\s+` + regexp.QuoteMeta(key) + `:\s*"?([^"\s#]+)"?`)
+	return firstMatch(t, src, path, re)
 }
 
 // TestHetznerTemplateCouplings locks the Hetzner template's Talos / Cilium / CCM /
