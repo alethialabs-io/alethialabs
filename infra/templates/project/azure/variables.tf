@@ -163,8 +163,12 @@ variable "aks_os_disk_type" {
   default     = null
   description = "Where each AKS node's OS disk lives: \"Managed\" (durable attached disk) or \"Ephemeral\" (VM-local storage — faster and free, but reset on reimage and capped by the VM size's cache). Null (the default) leaves Azure's own default, Managed."
 
+  # `coalesce` to a valid member rather than `var.x == null || contains(…)`. OpenTofu does NOT
+  # short-circuit `||` inside a validation condition, so the right-hand side is evaluated even when
+  # the left is true, and `contains(list, null)` is an "Invalid function argument" error rather than
+  # a false. The guard then fails on the DEFAULT, which is the one input it must accept.
   validation {
-    condition     = var.aks_os_disk_type == null || contains(["Managed", "Ephemeral"], var.aks_os_disk_type)
+    condition     = contains(["Managed", "Ephemeral"], coalesce(var.aks_os_disk_type, "Managed"))
     error_message = "aks_os_disk_type must be \"Managed\", \"Ephemeral\", or null."
   }
 }

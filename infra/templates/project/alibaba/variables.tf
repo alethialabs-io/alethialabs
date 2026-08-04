@@ -170,8 +170,11 @@ variable "ack_disk_performance_level" {
   default     = null
   description = "ESSD performance level for each ACK node's system disk (0-3, rendered as PL0-PL3). Requires ack_disk_category = cloud_essd. Null (the default) leaves Alibaba's own default in place."
 
+  # `coalesce` to a valid member rather than `var.x == null || contains(…)`. OpenTofu does NOT
+  # short-circuit `||` inside a validation condition, so `contains(list, null)` is evaluated and
+  # raises "Invalid function argument" — the guard fails on the DEFAULT, the one input it must accept.
   validation {
-    condition     = var.ack_disk_performance_level == null || contains([0, 1, 2, 3], var.ack_disk_performance_level)
+    condition     = contains([0, 1, 2, 3], coalesce(var.ack_disk_performance_level, 0))
     error_message = "ack_disk_performance_level must be 0, 1, 2 or 3 (PL0-PL3), or null."
   }
 }
@@ -181,8 +184,10 @@ variable "ack_disk_provisioned_iops" {
   default     = null
   description = "Provisioned IOPS for each ACK node's system disk. Requires ack_disk_category = cloud_auto. Null (the default) leaves the disk on its category's baseline performance."
 
+  # Same non-short-circuit rule as above: `null > 0` is an "Operation failed" error, not a false, so
+  # the null default must be replaced before the comparison rather than guarded in front of it.
   validation {
-    condition     = var.ack_disk_provisioned_iops == null || var.ack_disk_provisioned_iops > 0
+    condition     = coalesce(var.ack_disk_provisioned_iops, 1) > 0
     error_message = "ack_disk_provisioned_iops must be a positive number, or null."
   }
 }
