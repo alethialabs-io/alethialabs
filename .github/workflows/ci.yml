@@ -508,6 +508,17 @@ jobs:
           pnpm -F console gen:offer-parity
           git diff --exit-code -- docs/testing/offer-parity.md \
             || { echo "::error::docs/testing/offer-parity.md is stale — run 'pnpm -F console gen:offer-parity' and commit."; exit 1; }
+      # The sibling of offer parity, on a different unit: offer parity asks whether a CHOICE the
+      # canvas presents is buildable, this asks whether the VALUE a user typed reaches the plan. A
+      # choice can be perfectly buildable while the number beside it is discarded — #1981 shipped a
+      # cache allow-list that saved cleanly, provisioned nothing, and left the cache open.
+      - name: Every value the product collects reaches the plan, or is documented (config carriage)
+        run: pnpm -F console check:config-carriage
+      - name: Config-carriage board is in sync with the code
+        run: |
+          pnpm -F console gen:config-carriage
+          git diff --exit-code -- docs/testing/config-carriage.md \
+            || { echo "::error::docs/testing/config-carriage.md is stale — run 'pnpm -F console gen:config-carriage' and commit."; exit 1; }
       - name: Keyless cells agree with the code that implements them
         run: pnpm -F console check:keyless-cells
       # The canvas gates the IAM-auth toggle on this table (#1510). Hand-mirroring it would only
