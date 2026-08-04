@@ -14,6 +14,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -22,7 +23,7 @@ import (
 // them all first (t.Setenv "") so an ambient AWS_*/ARM_* on the developer's shell or the
 // CI runner cannot leak into a "creds absent" assertion.
 var allCredEnvVars = []string{
-	"HCLOUD_TOKEN",
+	"HCLOUD_TOKEN", "HETZNER_S3_ACCESS_KEY", "HETZNER_S3_SECRET_KEY",
 	"ALETHIA_E2E_AWS_READY", "AWS_ACCESS_KEY_ID", "AWS_ROLE_ARN",
 	"GOOGLE_APPLICATION_CREDENTIALS",
 	"ARM_CLIENT_ID", "ARM_TENANT_ID", "ARM_SUBSCRIPTION_ID",
@@ -37,6 +38,9 @@ var allResolutionEnvVars = []string{
 	"ALETHIA_E2E_T2_REQUIRE", "ALETHIA_E2E_CLUSTER_JSON",
 	"ALETHIA_E2E_NETWORK_JSON",
 	"ALETHIA_E2E_ARGO_TIMEOUT",
+	// The hetzner row's credential gate is dimension-aware (the `bucket` kind only exists on a
+	// max-config run), so the dimension switches have to be cleared like any other resolver input.
+	"ALETHIA_E2E_MAX_CONFIG", "ALETHIA_E2E_ALL_ADDONS",
 }
 
 // clearT2Env blanks every credential + resolution env var for a hermetic subtest.
@@ -99,6 +103,31 @@ func TestT2CredsPresent(t *testing.T) {
 		{"hetzner present", "hetzner", map[string]string{"HCLOUD_TOKEN": "tok"}, true},
 		{"hetzner absent", "hetzner", nil, false},
 
+		// FULL BAR adds the `bucket` kind, which is real Hetzner Object Storage behind the
+		// aminueza/minio provider — a credential pair HCLOUD_TOKEN cannot stand in for, that
+		// Hetzner has no API to mint, and that nothing used to check. The gate cleared on the API
+		// token alone and the leg died at the bucket having already provisioned a whole cluster.
+		{"hetzner full-bar with S3 keys", "hetzner", map[string]string{
+			"HCLOUD_TOKEN": "tok", "ALETHIA_E2E_MAX_CONFIG": "1",
+			"HETZNER_S3_ACCESS_KEY": "ak", "HETZNER_S3_SECRET_KEY": "sk",
+		}, true},
+		{"hetzner full-bar missing BOTH S3 keys", "hetzner", map[string]string{
+			"HCLOUD_TOKEN": "tok", "ALETHIA_E2E_MAX_CONFIG": "1",
+		}, false},
+		{"hetzner full-bar missing the S3 secret key", "hetzner", map[string]string{
+			"HCLOUD_TOKEN": "tok", "ALETHIA_E2E_MAX_CONFIG": "1", "HETZNER_S3_ACCESS_KEY": "ak",
+		}, false},
+		{"hetzner full-bar missing the S3 access key", "hetzner", map[string]string{
+			"HCLOUD_TOKEN": "tok", "ALETHIA_E2E_MAX_CONFIG": "1", "HETZNER_S3_SECRET_KEY": "sk",
+		}, false},
+		// …and the FLOOR run must not gain a new prerequisite: it seeds no bucket, so the minio
+		// provider is declared and never exercised. Gating the cheap nightly on a credential it
+		// does not use would be its own kind of dishonesty.
+		{"hetzner floor needs no S3 keys", "hetzner", map[string]string{"HCLOUD_TOKEN": "tok"}, true},
+		{"hetzner all-addons alone is not full bar", "hetzner", map[string]string{
+			"HCLOUD_TOKEN": "tok", "ALETHIA_E2E_ALL_ADDONS": "1",
+		}, true},
+
 		{"aws ready+key", "aws", map[string]string{"ALETHIA_E2E_AWS_READY": "1", "AWS_ACCESS_KEY_ID": "AKIA"}, true},
 		{"aws ready+role", "aws", map[string]string{"ALETHIA_E2E_AWS_READY": "true", "AWS_ROLE_ARN": "arn:aws:iam::1:role/x"}, true},
 		{"aws ready no handle", "aws", map[string]string{"ALETHIA_E2E_AWS_READY": "1"}, false},
@@ -136,6 +165,54 @@ func TestT2CredsPresent(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHetznerFullBarCredsMessageNamesTheS3Pair pins WHAT the refusal says, not just that it refuses.
+// The whole value of a pre-spend gate is that the human reading a red nightly at 05:00 knows which
+// two secrets to create — and these two cannot be derived from anything else the run holds, because
+// Hetzner has no API that mints them.
+func TestHetznerFullBarCredsMessageNamesTheS3Pair(t *testing.T) {
+	clearT2Env(t)
+	t.Setenv("HCLOUD_TOKEN", "tok")
+	t.Setenv("ALETHIA_E2E_MAX_CONFIG", "1")
+
+	hz, ok := t2LookupProvider("hetzner")
+	if !ok {
+		t.Fatal("hetzner row missing from the provider table")
+	}
+	okCreds, msg := hz.credsPresent()
+	if okCreds {
+		t.Fatal("a full-bar hetzner run without the Object Storage keys must NOT pass the credential gate: the `bucket` kind is CarriedByTofu, so the run would provision a cluster and then fail at the bucket")
+	}
+	for _, name := range hetznerS3CredEnv {
+		if !strings.Contains(msg, name) {
+			t.Errorf("the refusal must name %q so the fix is actionable from the log alone; got: %s", name, msg)
+		}
+	}
+}
+
+// TestHetznerBucketCellHasNoUnprovenEscape is the structural half of the same guarantee: there must
+// be no verdict under which a hetzner run reports success while `bucket` was never proven. The cell
+// is CarriedByTofu, and AssertMaxConfigKindsInState requires a CarriedByTofu kind's resource to be
+// in state — no exclusion, no "skipped", no soft path. If someone were to soften the credential gate
+// by re-verdicting the cell instead, this fails.
+func TestHetznerBucketCellHasNoUnprovenEscape(t *testing.T) {
+	for _, k := range MaxConfigKinds {
+		if k.Kind != "bucket" {
+			continue
+		}
+		cell, ok := k.Cell("hetzner")
+		if !ok {
+			t.Fatal("bucket has no hetzner column")
+		}
+		if cell.Carriage != CarriedByTofu {
+			t.Fatalf("hetzner's bucket cell is %q, want %q — Object Storage is a REAL Hetzner product that a real apply must create. "+
+				"If this was softened to avoid needing HETZNER_S3_ACCESS_KEY/HETZNER_S3_SECRET_KEY, that trades a loud pre-spend failure for a run that reports green having proven nothing about buckets.",
+				cell.Carriage, CarriedByTofu)
+		}
+		return
+	}
+	t.Fatal("no bucket kind in MaxConfigKinds — this guard has stopped guarding anything")
 }
 
 // TestT2ResolveRegion covers the default, the generalized override, the hetzner-only

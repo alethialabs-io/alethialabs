@@ -49,7 +49,8 @@
     "test:e2e:ui": "playwright test --ui",
     "email:dev": "email dev --dir emails --port 3001",
     "email:export": "email export --dir emails --outDir .react-email-out",
-    "export:addon-catalog": "tsx scripts/export-addon-catalog.mts"
+    "export:addon-catalog": "tsx scripts/export-addon-catalog.mts",
+    "export:hetzner-data-services": "tsx scripts/export-hetzner-data-services.mts"
   },
   "dependencies": {
     "@alethia/enterprise-api": "workspace:*",
