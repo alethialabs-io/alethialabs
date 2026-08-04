@@ -77,8 +77,13 @@ The matrix feeds a **two-gate** design (epic #1186), neither wired by this seam:
 - **K8s ↔ cloud** — supported minors per managed cloud (mirrored from the catalog).
 - **Add-on ↔ K8s** — the 19 charts, seeded with **empty windows** (no upstream data yet →
   honest `not_evaluable`); deriving real windows is #1213/#1216.
-- **Static build couplings** — infracost / OpenTofu Go const ↔ Dockerfile ARG, carried as data
-  (the SSOT a CI guard asserts against); no per-config subject, so the engine emits no control.
+- **Static build couplings** — infracost / OpenTofu Go const ↔ Dockerfile ARG ↔ the CI workflows
+  that must run the same engine, carried as data (the SSOT a CI guard asserts against); no
+  per-config subject, so the engine emits no control. A coupling's `workflows` are the third
+  copies the drift test used not to see — `infra-templates.yml` gated every project template with
+  OpenTofu 1.10.10 while the runner applied 1.9.0 (#1931). A `workflow_exclusions` entry is the
+  one way a workflow may run something else: reason, upstream reference and `retire_when`
+  required, and its literal is drift-checked like any other.
 
 ## Regenerate
 
