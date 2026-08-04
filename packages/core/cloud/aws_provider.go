@@ -46,6 +46,24 @@ func (p *awsProvider) RequiredCLIs() []string {
 	return []string{"kubectl", "helm"}
 }
 
+// ValidateConfig refuses an AWS project config the EKS templates cannot provision: the shared
+// node-pool sizing invariants, plus the `eks_disk_size` floor the template itself declares.
+//
+// The VPC-CIDR floor is deliberately ABSENT. `cidrsubnet(var.vpc_cidr, 10, …)`
+// (infra/templates/project/aws/networking.tf:23-35) plus the AWS /28 subnet minimum implies a
+// /18, but that number is owned by #1942 and blocked on #1936, which is still a draft and may
+// move it. Encoding it here would pin a value that has not settled; the drift guard
+// (validate_drift_test.go) pins the carve so the deferral cannot be forgotten.
+func (p *awsProvider) ValidateConfig(config *types.ProjectConfig) error {
+	if config == nil {
+		return fmt.Errorf("ProjectConfig is required")
+	}
+	if err := validateNodeSizing(config); err != nil {
+		return err
+	}
+	return validateNodeDiskSize(config, "eks_disk_size", awsNodeDiskFloorGB)
+}
+
 func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	enableKarpenter := false
 	if v, ok := config.Cluster.ProviderConfig["enable_karpenter"]; ok {

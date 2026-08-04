@@ -23,6 +23,27 @@ func (p *gcpProvider) RequiredCLIs() []string {
 	return []string{"kubectl", "helm"}
 }
 
+// ValidateConfig refuses a GCP project config the GKE templates cannot provision: the shared
+// node-pool sizing invariants, plus the `gke_disk_size_gb` floor the template itself declares.
+//
+// GCP is STRUCTURALLY EXEMPT from the network-CIDR floor every other cloud carries, and that is
+// a deliberate absence rather than a gap. The other templates carve their subnets out of the
+// user's CIDR with cidrsubnet(), so a too-narrow CIDR is a hard tofu error; GCP uses
+// `var.network_cidr` VERBATIM as the subnetwork's ip_cidr_range
+// (infra/templates/project/gcp/modules/vpc-network/main.tf:53) and puts pods and services in
+// SECONDARY ranges of their own. There is nothing to carve, so there is no floor to derive.
+// TestNetworkCIDRFloorsMatchTemplates asserts that verbatim use still holds — the day GCP
+// starts carving, the exemption reds instead of quietly becoming wrong.
+func (p *gcpProvider) ValidateConfig(config *types.ProjectConfig) error {
+	if config == nil {
+		return fmt.Errorf("ProjectConfig is required")
+	}
+	if err := validateNodeSizing(config); err != nil {
+		return err
+	}
+	return validateNodeDiskSize(config, "gke_disk_size_gb", gcpNodeDiskFloorGB)
+}
+
 func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	enableAutopilot := false
 	if v, ok := config.Cluster.ProviderConfig["enable_autopilot"]; ok {
