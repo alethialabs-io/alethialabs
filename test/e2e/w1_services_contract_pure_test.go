@@ -5,8 +5,15 @@
 // (apps/console/tests/e2e-fixtures/w1-services-contract.test.ts) drives the REAL
 // buildConfigSnapshot and freezes its emitted `services` wire into
 // fixtures/w1_services.json; this untagged pure test proves that wire unmarshals into
-// types.ProjectServiceConfig with no silent zero-filling — the exact decode the runner's
-// snapshotToProjectConfig performs (plain encoding/json, unknown DB columns ignored by design).
+// types.ProjectServiceConfig with no silent zero-filling — the same decode the runner's
+// snapshotToProjectConfig performs for this subtree. Since #1962 that function REJECTS an unknown
+// key at the snapshot root (and inside the hand-enumerated singletons like `cluster`) unless
+// `consoleOnlySnapshotKeys` names it; the component LISTS stay lenient on purpose, because the
+// console spreads whole `project_*` DB rows into them — see dbRowSpreadSnapshotKeys in
+// apps/runner/internal/agent/runner.go for why that exclusion is deliberate and what closes it.
+// So the bookkeeping columns in this fixture (id / project_id / status / created_at / …) are still
+// ignored by design, and the runner test TestSnapshotToProjectConfig_W1ServicesWireDecodes locks
+// that in from the runner's side.
 //
 //   - Value asserts catch RENAME drift: a TS-side key rename regenerates the fixture, the Go
 //     decode zero-fills the field, and the assert here reds until the Go struct catches up.
