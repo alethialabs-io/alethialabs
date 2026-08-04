@@ -4,8 +4,11 @@ terraform {
 
   required_providers {
     google = {
-      source  = "hashicorp/google"
-      version = ">= 5.0, < 7.0"
+      source = "hashicorp/google"
+      # >= 6.15.0 for `vulnerability_scanning_config` on google_artifact_registry_repository
+      # (#1844). The lockfile already resolves 6.50.0, so this moves the CONSTRAINT to match what is
+      # actually required, not the resolved version.
+      version = ">= 6.15.0, < 7.0"
     }
     google-beta = {
       source  = "hashicorp/google-beta"

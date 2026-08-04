@@ -465,9 +465,22 @@ func buildArtifactRegistryRepos(config *types.ProjectConfig) map[string]interfac
 		if r.ImmutableTags != nil {
 			immutable = *r.ImmutableTags
 		}
+		// `vulnerability_scanning` reads the OPPOSITE default to immutable_tags, and for a reason
+		// that is specific to GCP (#1844). Artifact Registry's per-repository enum is
+		// INHERITED | DISABLED — there is no ENABLED — so the ON position can only mean "follow the
+		// project default", which is on only when `containerscanning.googleapis.com` is enabled.
+		// The template refuses the ON position when it is not (checks_registry.tf), so defaulting a
+		// silent field to TRUE would make every project that has not done the onboarding
+		// prerequisite fail at plan on a switch nobody set. Absent therefore reads as OFF, which
+		// maps exactly onto DISABLED and asks nothing of the tenant.
+		scanning := false
+		if r.VulnerabilityScanning != nil {
+			scanning = *r.VulnerabilityScanning
+		}
 		out[r.Name] = map[string]interface{}{
-			"description":    "Container images for " + r.Name,
-			"immutable_tags": immutable,
+			"description":            "Container images for " + r.Name,
+			"immutable_tags":         immutable,
+			"vulnerability_scanning": scanning,
 		}
 	}
 	return out
