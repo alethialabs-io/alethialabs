@@ -667,8 +667,24 @@ jobs:
       # packages/core's untagged provisioning-wiring E2E (deploy_wiring_test.go) runs a real
       # `tofu` against a provider-less module — it self-skips without tofu on PATH, which
       # would make the keystone's per-PR signal hollow. Install it so the test actually runs.
+      #
+      # apps/runner needs it for the SAME reason, and did not have it. Its chart-scan and
+      # IaC-scan suites (chart_scan_test.go, exec_stage_test.go, iac_scan_test.go) self-skip
+      # without `helm` and `tofu` on PATH. The 2026-08-04 determinism probe confirmed what
+      # ubuntu-latest actually ships: helm IS preinstalled (/usr/local/bin/helm) but **tofu is
+      # MISSING**, so those runner tests have been silently skipping in CI — passing by not
+      # running. Worth fixing on its own; it also makes the leg's coverage reproducible, which
+      # a floor depends on (the same suites measure 49.58% locally with tofu present and
+      # 47.24% without).
+      #
+      # helm is pinned rather than inherited: "happens to be on the GitHub-managed image" is an
+      # unpinned property, and the day it is pruned those tests would go quiet again.
+      - uses: azure/setup-helm@v4
+        if: matrix.module == 'apps/runner'
+        with:
+          version: v3.16.3
       - uses: opentofu/setup-opentofu@v2
-        if: matrix.module == 'packages/core'
+        if: matrix.module == 'packages/core' || matrix.module == 'apps/runner'
         with:
           tofu_version: "1.9.0"
       - name: Build · vet · test (with coverage)
@@ -749,6 +765,16 @@ jobs:
         with:
           go-version-file: go.work
           cache-dependency-path: ${{ matrix.module }}/go.sum
+      # Must mirror the `go` job's toolchain EXACTLY, or the numbers this probe prints are not
+      # the numbers the ratchet will compare against and flooring from them reds every PR.
+      - uses: azure/setup-helm@v4
+        if: matrix.module == 'apps/runner'
+        with:
+          version: v3.16.3
+      - uses: opentofu/setup-opentofu@v2
+        if: matrix.module == 'packages/core' || matrix.module == 'apps/runner'
+        with:
+          tofu_version: "1.9.0"
       - name: Which coverage-affecting binaries does this runner image actually ship?
         run: |
           for b in docker git helm kubectl tofu; do
