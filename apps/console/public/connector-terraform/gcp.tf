@@ -174,8 +174,22 @@ resource "google_project_iam_custom_role" "project_reader" {
   role_id     = "alethiaProjectReader"
   project     = var.project_id
   title       = "Alethia Project Reader"
-  description = "Read project metadata for data.google_project (replaces roles/browser; no folder/org hierarchy reads)."
-  permissions = ["resourcemanager.projects.get"]
+  description = "Read project metadata and service-enablement state (replaces roles/browser; no folder/org hierarchy reads)."
+  # `serviceusage.services.get` is a READ, and the distinction is the whole point (#1844). Artifact
+  # Registry's per-repository scanning enum is INHERITED | DISABLED with no ENABLED, so the ON
+  # position only means anything when `containerscanning.googleapis.com` is enabled on the project.
+  # The template refuses that switch when the API is absent — which it can only do if it can SEE the
+  # answer.
+  #
+  # `serviceusage.services.enable` was refused (maintainer, 2026-08-03) and stays refused: it would
+  # let the provisioner turn on ANY API in the customer's project, including billable ones nobody
+  # asked for, and there is no narrower form of that verb. `get` has one: it reads a boolean about a
+  # service the customer already chose. Enabling the API remains an onboarding step the CUSTOMER
+  # performs.
+  permissions = [
+    "resourcemanager.projects.get",
+    "serviceusage.services.get",
+  ]
 }
 
 resource "google_project_iam_member" "alethia_provisioner_custom" {

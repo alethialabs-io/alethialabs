@@ -19,6 +19,18 @@ output "repository_immutable_tags" {
   }
 }
 
+# Same reasoning as repository_immutable_tags, one boundary further: `vulnerability_scanning` is a
+# BOOL on both object types and an ENUM on the resource, so the mapping (true → INHERITED, false →
+# DISABLED) is a place the switch can be carried and still mean nothing. Projected off the resource
+# so a root test asserts what was planned, not what was passed in.
+output "repository_vulnerability_scanning" {
+  description = "Map of repository names to the enablement_config planned on the resource"
+  value = {
+    for name, repo in google_artifact_registry_repository.repo :
+    name => repo.vulnerability_scanning_config[0].enablement_config
+  }
+}
+
 output "repository_urls" {
   description = "Map of repository names to their Docker registry URLs"
   value = {
