@@ -216,7 +216,7 @@ variable "ack_spot_price_limit" {
 }
 
 #########################################################################
-##                   DNS (AliDNS) / WAF Variables                      ##
+##                     DNS (AliDNS) Variables                          ##
 #########################################################################
 
 variable "alidns_enabled" {
@@ -243,11 +243,14 @@ variable "alidns_managed_certificate" {
   description = "Whether to request a managed certificate for the AliDNS domain"
 }
 
-variable "application_waf_enabled" {
-  type        = bool
-  default     = false
-  description = "Whether to provision an Application (Web Application Firewall) domain protection"
-}
+# NO `application_waf_enabled` HERE, unlike aws/azure/gcp — the WAF offer is withdrawn on this
+# cloud (#1841), and re-adding the variable is how it would quietly come back. `alicloud_wafv3_instance`
+# takes no arguments at all, so nothing distinguishes two instances, and its create/delete are
+# CreatePostpaidInstance/ReleaseInstance: the purchase is ACCOUNT-scoped, and a per-project state
+# model cannot own it safely — destroying one project would release the account's firewall out from
+# under every other project sharing it. The decision is recorded in infra/offer-exclusions.yaml and
+# pinned by TestAlibabaProviderTfvars_CarriesNoWafSwitch, so nothing can carry a switch to a variable
+# that is deliberately absent.
 
 #########################################################################
 ##                   MNS (Message Service) Variables                   ##

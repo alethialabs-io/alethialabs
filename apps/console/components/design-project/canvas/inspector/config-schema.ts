@@ -18,6 +18,7 @@ import {
 	K8S_VERSIONS,
 	keylessUnavailableReason,
 	NOSQL,
+	wafUnavailableReason,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import { coerceEnum } from "@/lib/coerce";
@@ -1768,7 +1769,18 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "switch",
 						label: "Managed TLS certificate",
 					},
-					{ key: "waf_enabled", type: "switch", label: "Web application firewall (WAF)" },
+						{
+						key: "waf_enabled",
+						type: "switch",
+						label: "Web application firewall (WAF)",
+						// Gated rather than hidden, the same call as `iam_auth`: a switch that
+						// silently is not there reads as a bug, while one that says why is an
+						// answer. Withheld only on Alibaba (#1841) — see lib/cloud-providers/waf.ts
+						// for why, and for why the store normalizer and the deploy gate exist too.
+						requiresProvider: true,
+						unavailableWhen: (_config, { provider }) =>
+							wafUnavailableReason(provider),
+					},
 					{
 						key: "zone_id",
 						type: "text",

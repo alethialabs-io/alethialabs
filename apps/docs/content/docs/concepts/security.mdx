@@ -231,14 +231,15 @@ from `ALIBABA_CLOUD_OIDC_TOKEN_FILE` (re-read on refresh). Revocation is instant
 ### Permissions scope
 
 **Exactly what Alethia provisions in Alibaba Cloud:** ACK (managed cluster + node pool), VPC (vSwitches, NAT,
-SNAT), EIP, RDS, Container Registry EE, KVStore (Redis), AliDNS, KMS, Message Service (MNS), OSS, Tablestore
-(OTS), and WAF.
+SNAT), EIP, RDS, Container Registry EE, KVStore (Redis), AliDNS, KMS, Message Service (MNS), OSS, and
+Tablestore (OTS). Not a WAF: Alibaba's WAF 3.0 instance is an account-level purchase, so Alethia does not
+buy one on your behalf and the role is granted no `yundun-waf` actions.
 
 <Callout type="info">
 **Least-privilege by enumerated custom policy — never account admin.** The Alibaba RAM role attaches **4
 enumerated custom policies** (replacing the per-service `*FullAccess` System policies): `ComputeCluster`
 (ACK + its transitive node-pool ECS + API-server/Service SLB), `Network` (VPC/vSwitch/NAT/SNAT + EIP),
-`Data` (RDS/KVStore/OSS/Tablestore/KMS), and `EdgeReg` (Container Registry/AliDNS/MNS/WAF). Each lists the
+`Data` (RDS/KVStore/OSS/Tablestore/KMS), and `EdgeReg` (Container Registry/AliDNS/MNS). Each lists the
 **specific create/read/modify/delete/tag actions** the templates issue (reads stay `Describe*`/`Get*`/`List*`
 so a provider bump doesn't break a real apply) — never `service:*`, `AliyunRAMFullAccess`, or an admin
 policy. The service-linked roles ACK/NAT need are covered by a **narrow custom policy granting only

@@ -41,7 +41,7 @@ rejected.
 ### Attach provisioning permissions
 The setup attaches **4 enumerated custom RAM policies** — `ComputeCluster` (ACK + its transitive node-pool
 ECS + API-server/Service SLB), `Network` (VPC/vSwitch/NAT/SNAT + EIP), `Data` (RDS/KVStore/OSS/Tablestore/
-KMS), and `EdgeReg` (Container Registry/AliDNS/MNS/WAF) — each listing the **specific
+KMS), and `EdgeReg` (Container Registry/AliDNS/MNS) — each listing the **specific
 create/read/modify/delete/tag actions** the templates issue, never a `service:*` wildcard or an admin
 policy. Service-linked roles ACK/NAT need are covered by a narrow `ram:CreateServiceLinkedRole`-only policy.
 

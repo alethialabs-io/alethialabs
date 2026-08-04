@@ -540,10 +540,11 @@ func argocdURLDecision(f *InfraFacts) InfraServiceDecision {
 }
 
 // wafDecision records whether the project's web ACL is ATTACHED to anything — the honest
-// answer to "I turned the WAF on, is traffic actually being filtered?". Every cloud's template
-// can BUILD a WAF construct behind the canvas switch (#1810), but building one and attaching
-// one are different facts, and until now nothing recorded the difference: a project could carry
-// a web ACL, a bill for it, and zero inspected requests.
+// answer to "I turned the WAF on, is traffic actually being filtered?". Three clouds' templates
+// BUILD a WAF construct behind the canvas switch (#1810) — aws, gcp and azure — but building one
+// and attaching one are different facts, and until now nothing recorded the difference: a project
+// could carry a web ACL, a bill for it, and zero inspected requests. Hetzner sells none, and
+// Alibaba's offer is withdrawn (#1841), so on both the honest answer is that nothing is built.
 //
 // On AWS the attach is the `alb.ingress.kubernetes.io/wafv2-acl-arn` annotation installArgoCD puts
 // on the ArgoCD server ingress; on GCP it is a BackendConfig whose `spec.securityPolicy.name` names
@@ -649,31 +650,27 @@ func wafWebACLRef(f *InfraFacts) string {
 		// template at apply time. The reference is exported so the deploy can REPORT the
 		// attachment honestly, not to perform it.
 		return f.AzureWAFPolicyID
-	case "alibaba":
-		// EXPORTED, DELIBERATELY UNATTACHED. The template buys a WAF 3.0 postpaid instance
-		// behind the canvas switch and can bind nothing to it (it has no `wafAttachments` entry).
-		// The reference is read anyway because the alternative is worse: with no output, "the
-		// switch is off" and "you are paying for a firewall that inspects nothing" are the same
-		// record.
-		return f.AlibabaWAFInstanceID
 	default:
-		// Only hetzner is left, and it sells no managed WAF at all — there is nothing to export.
-		// Every other cloud now exports a reference: aws and gcp attach theirs to the ingress,
-		// azure's is bound by the template, and alibaba's is bound by nothing (which is exactly
-		// why it is exported).
+		// hetzner and alibaba, for DIFFERENT reasons, both of them settled: Hetzner sells no
+		// managed WAF at all, and Alibaba's offer is withdrawn (#1841) because WAF 3.0 is an
+		// account-level purchase a per-project state model cannot own. Neither builds anything,
+		// so neither has a reference to export. The three clouds that do — aws and gcp attach
+		// theirs to the ingress, azure's is bound by the template — all carry a `wafAttachments`
+		// entry, which is why the unattachable arm below is now a backstop rather than a live path.
 		return ""
 	}
 }
 
-// wafUnattachableReason explains a built-but-unbindable WAF, keyed on the cloud so the operator
-// learns whether to wait for a lane or to stop paying for the instance.
+// wafUnattachableReason explains a built-but-unbindable WAF: a cloud exported a reference and has no
+// `wafAttachments` entry to bind it with.
+//
+// UNREACHABLE TODAY, ON PURPOSE. Alibaba was its only live caller and its offer is withdrawn
+// (#1841), so every cloud that now exports a reference also has an attachment site. It stays because
+// it is the fail-closed half of wafDecision: the next lane to export a reference before wiring its
+// attachment reports the WAF UNATTACHED here rather than inheriting another cloud's "attached"
+// claim. Deleting it would turn that lane's first deploy into a silent fail-open.
 func wafUnattachableReason(provider, ref string) string {
-	switch provider {
-	case "alibaba":
-		return fmt.Sprintf("a WAF 3.0 instance (%s) is provisioned and billed for this project and NOTHING is behind it — the pinned alicloud provider binds a hostname only in CNAME mode (alicloud_wafv3_domain), whose origin is the ingress load balancer's address, which does not exist until after the cluster is up; it exposes no resource at all for WAF 3.0's cloud-native mode, the one that binds a load balancer directly. Turn the WAF switch off, or put the instance in front of your ingress from the WAF console.", ref)
-	default:
-		return fmt.Sprintf("a web ACL (%s) was built and nothing on this cloud can attach it yet — it exists, is billed, and inspects nothing.", ref)
-	}
+	return fmt.Sprintf("a web ACL (%s) was built and nothing on %s can attach it yet — it exists, is billed, and inspects nothing.", ref, provider)
 }
 
 // wafNoACLReason explains why there was no web ACL reference to attach, keyed on the cloud so
@@ -691,7 +688,13 @@ func wafNoACLReason(provider string) string {
 	case "azure":
 		return "no WAF policy was built — turn the WAF switch on for this project to create an Application Gateway WAF policy; the template then also provisions the Application Gateway it binds to."
 	case "alibaba":
-		return "no WAF instance was built — turn the WAF switch on for this project to provision Alibaba's WAF 3.0 instance. Note that nothing binds it to your traffic yet, so it would filter nothing."
+		// NOT "turn the switch on" — there is no switch to turn on any more, and promising one
+		// would send the operator looking for a control the canvas now renders disabled. The offer
+		// is withdrawn (#1841): WAF 3.0 is an account-level purchase (`alicloud_wafv3_instance`
+		// takes no arguments at all, and its create/delete are CreatePostpaidInstance /
+		// ReleaseInstance), so one project destroying it would release the firewall for every other
+		// project in the account.
+		return "Alethia does not provision a WAF on Alibaba Cloud — WAF 3.0 is an account-level purchase there, and a project that owned it would release the whole account's firewall when it was destroyed. Buy a WAF 3.0 instance in your account and put it in front of your ingress from the WAF console."
 	case "hetzner":
 		return "Hetzner sells no managed WAF — run your own edge (or an in-cluster WAF add-on) if you need request filtering."
 	default:
