@@ -653,15 +653,9 @@ func TestDeriveExpectedArgoApps_WAFShipsNoApplication(t *testing.T) {
 	}
 }
 
-// containsString reports whether the slice holds s.
-func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
+// containsString lives in maxconfig.go: the in-cluster carriage verdict needs it in NON-test code
+// (it checks an ArgoCD Application name against the converged set), so the test-local copy that used
+// to sit here would now be a redeclaration.
 
 // The AGIC Application name is a THREE-WAY constant: the template's `metadata.name`, the
 // infraServiceArgoApps entry this assertion derives the expected set from, and — through
