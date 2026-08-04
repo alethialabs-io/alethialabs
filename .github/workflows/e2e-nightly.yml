@@ -558,11 +558,33 @@ jobs:
           # SignatureVersion, or AccessKeyId common request parameters." So a plain POST does it,
           # with no chicken-and-egg profile to configure first — which is why this is curl and not
           # `aliyun sts`, since the CLI has no credentials to run with at this point either.
+          #
+          # ANONYMITY WAIVES THE SIGNATURE PARAMETERS, NOT THE COMMON PARAMETERS (#1582).
+          # That sentence lists exactly four names, and it is exhaustive. Everything else in the
+          # RPC common-parameter set still applies — which is why Action, Format and Version are
+          # already here. Timestamp is one of them, and omitting it cost a whole nightly:
+          #   AssumeRoleWithOIDC failed (HTTP 400): MissingTimestamp: Timestamp is mandatory for
+          #   this action.
+          # So, for an anonymous AssumeRoleWithOIDC:
+          #   WAIVED   — Signature, SignatureMethod, SignatureVersion, AccessKeyId, and with them
+          #              SignatureNonce, which exists only to salt a signature that is not computed.
+          #   REQUIRED — Action, Version, Timestamp (+ Format, to get JSON instead of the XML default).
+          # Cross-checked against Alibaba's own credentials-go, which builds this same call with
+          # exactly Version/Action/Format/Timestamp and no nonce:
+          #   https://github.com/aliyun/credentials-go/blob/master/credentials/providers/oidc.go
+          #
+          # Timestamp must be ISO-8601 UTC, `yyyy-MM-ddTHH:mm:ssZ`, and is valid for 31 minutes —
+          # so it is generated HERE, at call time, never hoisted to a step env. `date -u
+          # +%Y-%m-%dT%H:%M:%SZ` yields that on GNU date (the ubuntu runner) and BSD date (macOS)
+          # alike; the literal Z is safe because -u already forces UTC.
+          # Docs: https://www.alibabacloud.com/help/en/ram/developer-reference/api-sts-2015-04-01-assumerolewithoidc
+          #       https://www.alibabacloud.com/help/en/sdk/product-overview/rpc-mechanism
           RESP="${RUNNER_TEMP}/alibaba-sts-response.json"
           HTTP_CODE=$(curl -sS -o "$RESP" -w '%{http_code}' -X POST "https://sts.aliyuncs.com/" \
             --data-urlencode "Action=AssumeRoleWithOIDC" \
             --data-urlencode "Format=JSON" \
             --data-urlencode "Version=2015-04-01" \
+            --data-urlencode "Timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --data-urlencode "RoleArn=${ROLE_ARN}" \
             --data-urlencode "OIDCProviderArn=${OIDC_PROVIDER_ARN}" \
             --data-urlencode "OIDCToken=$(cat "$TOKEN_FILE")" \
