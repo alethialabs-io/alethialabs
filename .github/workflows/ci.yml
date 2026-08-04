@@ -591,6 +591,20 @@ jobs:
         run: bash scripts/lib/wt-landed-test.sh
       - name: Board claim arbitration (earliest-lease-wins) + PR predicates
         run: bash scripts/claim-work.sh --self-test
+      # The Go coverage ratchet becomes a step inside `Go (build · vet · test · lint)`, a REQUIRED
+      # check with no path filter — so it gates every PR in the repository and a false failure
+      # stops the merge queue for everyone, not just its author. Three properties are pinned here
+      # because each is a way it could wedge the repo:
+      #   · the arithmetic is integer cross-multiplication, never a percentage. packages/core/git
+      #     is 185/291 = 63.5739% and DISPLAYS as 63.6%; comparing displayed values fails with
+      #     zero code change, forever.
+      #   · the fail-open set (unparseable floors from a hand-resolved conflict, partial profile,
+      #     unknown covermode, new/deleted package) — the gate may only fail on a real regression.
+      #   · the floors JSON layout, asserted with a real `git merge-file`: two PRs each raising a
+      #     DIFFERENT, ADJACENT package must merge clean, or every concurrent Go PR conflicts.
+      # Hermetic: no go, no network, no repo state.
+      - name: Go coverage ratchet (arithmetic · fail-open set · merge-safe layout)
+        run: bash scripts/go-coverage.sh --self-test
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
       # The capabilities-security REQUIRED check decides which changed files it inspects AT ALL, and a
@@ -653,8 +667,24 @@ jobs:
       # packages/core's untagged provisioning-wiring E2E (deploy_wiring_test.go) runs a real
       # `tofu` against a provider-less module — it self-skips without tofu on PATH, which
       # would make the keystone's per-PR signal hollow. Install it so the test actually runs.
+      #
+      # apps/runner needs it for the SAME reason, and did not have it. Its chart-scan and
+      # IaC-scan suites (chart_scan_test.go, exec_stage_test.go, iac_scan_test.go) self-skip
+      # without `helm` and `tofu` on PATH. The 2026-08-04 determinism probe confirmed what
+      # ubuntu-latest actually ships: helm IS preinstalled (/usr/local/bin/helm) but **tofu is
+      # MISSING**, so those runner tests have been silently skipping in CI — passing by not
+      # running. Worth fixing on its own; it also makes the leg's coverage reproducible, which
+      # a floor depends on (the same suites measure 49.58% locally with tofu present and
+      # 47.24% without).
+      #
+      # helm is pinned rather than inherited: "happens to be on the GitHub-managed image" is an
+      # unpinned property, and the day it is pruned those tests would go quiet again.
+      - uses: azure/setup-helm@v4
+        if: matrix.module == 'apps/runner'
+        with:
+          version: v3.16.3
       - uses: opentofu/setup-opentofu@v2
-        if: matrix.module == 'packages/core'
+        if: matrix.module == 'packages/core' || matrix.module == 'apps/runner'
         with:
           tofu_version: "1.9.0"
       - name: Build · vet · test (with coverage)
@@ -704,6 +734,79 @@ jobs:
         with:
           version: v2.12.2
           working-directory: ${{ matrix.module }}
+
+  coverage-determinism:
+    name: Coverage determinism probe (manual)
+    # MANUAL ONLY. This exists to answer one question before the ratchet is armed: are the numbers
+    # CI produces stable, and are they the same numbers a laptop produces?
+    #
+    # They are not, and that is the whole point. Go coverage here depends on what is on PATH:
+    # measured locally, packages/core/tofu moves 51.98% -> 36.72% with `tofu` removed,
+    # packages/core/provisioner 50.73% -> 39.12%, apps/runner/internal/agent 49.58% -> 47.24%
+    # (those suites self-skip). packages/core/api moves by two statements depending on whether an
+    # alethia credentials file exists in the user's config dir — which it does on a maintainer's
+    # Mac and never in CI. Recording floors from a laptop therefore bakes numbers CI can never
+    # reach and reds EVERY PR in the repository until someone regenerates them.
+    #
+    # So: run this, read its output, and generate the floors from THESE numbers.
+    #
+    # It compares PARSED pairs, never raw profiles — block order in a coverprofile follows package
+    # completion order under `go test -p N` and is genuinely unstable run to run, so diffing or
+    # checksumming the file itself is broken on arrival.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [apps/cli, apps/runner, packages/core, test/e2e]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      # Must mirror the `go` job's toolchain EXACTLY, or the numbers this probe prints are not
+      # the numbers the ratchet will compare against and flooring from them reds every PR.
+      - uses: azure/setup-helm@v4
+        if: matrix.module == 'apps/runner'
+        with:
+          version: v3.16.3
+      - uses: opentofu/setup-opentofu@v2
+        if: matrix.module == 'packages/core' || matrix.module == 'apps/runner'
+        with:
+          tofu_version: "1.9.0"
+      - name: Which coverage-affecting binaries does this runner image actually ship?
+        run: |
+          for b in docker git helm kubectl tofu; do
+            printf '%-10s %s\n' "$b" "$(command -v "$b" || echo MISSING)"
+          done
+      - name: Five runs, comparing parsed pairs
+        run: |
+          for i in 1 2 3 4 5; do
+            (cd ${{ matrix.module }} && GOWORK=${{ matrix.module == 'test/e2e' && 'off' || 'auto' }} \
+              go test -count=1 -coverprofile=cover.$i.out ./... >/dev/null)
+            bash scripts/go-coverage.sh --module ${{ matrix.module }} \
+              --profile ${{ matrix.module }}/cover.$i.out --print >run.$i.txt
+          done
+          echo "── per-package covered/total, run 1 ──"
+          cat run.1.txt
+          if [ "$(cat run.*.txt | sort -u | wc -l)" -eq "$(wc -l <run.1.txt)" ]; then
+            echo "✓ ${{ matrix.module }} is run-to-run deterministic across 5 runs"
+          else
+            echo "::error::${{ matrix.module }} is NONDETERMINISTIC — do NOT floor it. Differing rows:"
+            cat run.*.txt | sort | uniq -c | awk '$1 != 5'
+            exit 1
+          fi
+      - name: Floors these numbers would produce (copy into the A4 PR)
+        run: |
+          bash scripts/go-coverage.sh --module ${{ matrix.module }} \
+            --profile ${{ matrix.module }}/cover.1.out --update
+          echo "── ${{ matrix.module }}/coverage-floors.json ──"
+          cat ${{ matrix.module }}/coverage-floors.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-floors-${{ strategy.job-index }}
+          path: ${{ matrix.module }}/coverage-floors.json
 
   runner-image-arch:
     name: Runner image arch (amd64 ships x86-64 — INCIDENT 2026-07-22 guard)
