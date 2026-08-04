@@ -533,3 +533,51 @@ wired:
   - offer: secret:generate
     cloud: aws
     reason: Asking Alethia to generate a secret sends the length and special-character rules to AWS; supplying your own sends it as a manual value instead.
+
+# ── Carried in-cluster — honored, but not by OpenTofu ───────────────────────────────────
+#
+# The offer IS delivered on these clouds, by a component the platform installs into the cluster
+# rather than by a resource in the template. The carrier rule cannot see them by construction: L5
+# wants a tfvar declared in the template and read by a resource argument, and an in-cluster
+# component writes no tfvar at all.
+#
+# Each entry names the PREDICATE that decides which clouds the component ships for, and the guard
+# RE-READS it from the Go source on every run. That is what makes this a ratchet rather than a mute
+# button: drop a cloud from the map and its entry goes stale, exactly as a `baseline:` entry does
+# when its gap is fixed. An entry with no `predicate:` is refused, and so is one for a cell OpenTofu
+# carries anyway — that would credit the wrong mechanism in the matrix.
+carried_in_cluster:
+  # Azure's certificate switch used to build an `azurerm_app_service_certificate_order`: a purchased,
+  # GoDaddy-backed App Service Certificate (~$300/yr for a wildcard) that cannot bind to an AKS
+  # ingress under any configuration. It was billed and it terminated nothing (#1825). Deleted.
+  #
+  # cert-manager issues the certificate over an ACME DNS01 challenge using the identity external-dns
+  # already holds, and AGIC lifts the resulting Secret onto the Application Gateway listener.
+  - offer: dns:managed_certificate
+    cloud: azure
+    by: cert-manager
+    predicate: certManagerDNS01Solvers
+    source: packages/core/argocd/infra_facts.go
+    reason: Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the Application Gateway.
+    issue: "#1825"
+  # GCP's certificate was NOT broken — unlike Azure's, `google_compute_managed_ssl_certificate` was
+  # free, automatic and genuinely terminated the GKE ingress. It goes for a different reason: one
+  # mechanism instead of two (#1858), and it takes three real failure modes with it.
+  #
+  # Google validates a managed certificate by resolving EVERY name on it to the attached load
+  # balancer, so a single unresolvable SAN holds the whole certificate in FAILED_NOT_VISIBLE and
+  # every other name with it; changing the SAN set REPLACES the certificate, which is why the module
+  # needed create_before_destroy plus a digest in the name and still had a 63-char overflow lurking;
+  # and it cannot issue a wildcard at all.
+  #
+  # cert-manager has none of those: the certificate covers exactly what the Ingress asks for, adding
+  # a hostname is not a replacement, and DNS01 can issue wildcards. The GKE Ingress consumes the
+  # Secret via `spec.tls` — Google documents Secrets and pre-shared certificates as separate
+  # options, so the annotation is dropped rather than kept alongside.
+  - offer: dns:managed_certificate
+    cloud: gcp
+    by: cert-manager
+    predicate: certManagerDNS01Solvers
+    source: packages/core/argocd/infra_facts.go
+    reason: Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the GKE Ingress from a Kubernetes Secret.
+    issue: "#1858"

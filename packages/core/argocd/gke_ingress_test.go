@@ -17,58 +17,54 @@ import (
 // rather than a fixture, so a renamed output reddens here instead of on a live cluster.
 const gcpRootOutputsPath = "../../../infra/templates/project/gcp/outputs.tf"
 
-// TestBuildFromOutputs_GCPIngressFacts locks the output→fact wiring for the two references the GKE
-// platform ingress attaches: the Google-managed SSL certificate and the Cloud Armor policy.
+// TestBuildFromOutputs_GCPIngressFacts locks the output→fact wiring for the reference the GKE
+// platform ingress attaches: the Cloud Armor policy.
 //
-// Both are NAMES, not ids — `ingress.gcp.kubernetes.io/pre-shared-cert` and a BackendConfig's
-// `spec.securityPolicy.name` each take a bare name and reject anything else — and both are GCP-only:
-// no other template exports either key, and reading one on another cloud would hand the runner a
-// reference it cannot bind.
+// It used to lock TWO. The Google-managed SSL certificate went with #1858 — GCP's certificate is
+// issued in-cluster by cert-manager now, so there is no `cloud_dns_managed_certificate_name` output
+// and no fact to read it into. What remains is the armor policy, and the properties that mattered
+// for both still matter for it: it is a NAME, not an id (a BackendConfig's
+// `spec.securityPolicy.name` takes a bare name and rejects anything else), and it is GCP-only — no
+// other template exports the key, and reading it elsewhere would hand the runner a reference it
+// cannot bind.
 func TestBuildFromOutputs_GCPIngressFacts(t *testing.T) {
-	const cert = "alethia-nl-production-platform-cert"
 	const policy = "alethia-nl-production-armor-policy"
 
-	t.Run("gcp reads both keys", func(t *testing.T) {
+	t.Run("gcp reads the armor policy", func(t *testing.T) {
 		f := BuildFromOutputs(map[string]interface{}{
-			"cloud_dns_managed_certificate_name": cert,
-			"cloud_armor_policy_name":            policy,
+			"cloud_armor_policy_name": policy,
 		}, &types.ProjectConfig{Provider: "gcp"})
-		if f.GCPManagedCertName != cert {
-			t.Errorf("GCPManagedCertName = %q, want %q", f.GCPManagedCertName, cert)
-		}
 		if f.GCPArmorPolicy != policy {
 			t.Errorf("GCPArmorPolicy = %q, want %q", f.GCPArmorPolicy, policy)
 		}
 	})
 
-	// Both switches off make both outputs null. ExtractOutput yields "" — the "render no ingress" /
-	// "attach nothing" signal. A present-but-empty value on either side is strictly worse than an
-	// absent one: an empty pre-shared-cert leaves the ArgoCD API on plain HTTP, and an empty
-	// securityPolicy name is a BackendConfig the GKE ingress controller refuses.
-	t.Run("null outputs leave both facts empty and skip both decisions", func(t *testing.T) {
+	// The WAF switch off makes the output null. ExtractOutput yields "" — the "attach nothing"
+	// signal. A present-but-empty value is strictly worse than an absent one: an empty
+	// securityPolicy name is a BackendConfig the GKE ingress controller refuses outright.
+	t.Run("a null output leaves the fact empty and skips the decision", func(t *testing.T) {
 		f := BuildFromOutputs(map[string]interface{}{
-			"cloud_dns_managed_certificate_name": nil,
-			"cloud_armor_policy_name":            nil,
+			"cloud_armor_policy_name": nil,
 		}, &types.ProjectConfig{Provider: "gcp"})
-		if f.GCPManagedCertName != "" || f.GCPArmorPolicy != "" {
-			t.Fatalf("null outputs must yield empty facts, got cert=%q policy=%q", f.GCPManagedCertName, f.GCPArmorPolicy)
-		}
-		if d := decisionFor(t, InfraServiceDecisions(f), "argocd-url"); d.Status != infraStatusSkipped {
-			t.Errorf("argocd-url = %s, want skipped without a certificate", d.Status)
+		if f.GCPArmorPolicy != "" {
+			t.Fatalf("a null output must yield an empty fact, got policy=%q", f.GCPArmorPolicy)
 		}
 		if d := decisionFor(t, InfraServiceDecisions(f), "waf"); d.Status != infraStatusSkipped {
 			t.Errorf("waf = %s, want skipped without a policy", d.Status)
 		}
+		// And with no cluster and no certificate ask, there is no managed ArgoCD URL either.
+		if d := decisionFor(t, InfraServiceDecisions(f), "argocd-url"); d.Status != infraStatusSkipped {
+			t.Errorf("argocd-url = %s, want skipped with nothing provisioned", d.Status)
+		}
 	})
 
-	t.Run("no other cloud reads the keys", func(t *testing.T) {
+	t.Run("no other cloud reads the key", func(t *testing.T) {
 		for _, p := range []string{"aws", "azure", "alibaba", "hetzner", "digitalocean"} {
 			f := BuildFromOutputs(map[string]interface{}{
-				"cloud_dns_managed_certificate_name": cert,
-				"cloud_armor_policy_name":            policy,
+				"cloud_armor_policy_name": policy,
 			}, &types.ProjectConfig{Provider: types.CloudProvider(p)})
-			if f.GCPManagedCertName != "" || f.GCPArmorPolicy != "" {
-				t.Errorf("%s: read a GCP-only output (cert=%q policy=%q)", p, f.GCPManagedCertName, f.GCPArmorPolicy)
+			if f.GCPArmorPolicy != "" {
+				t.Errorf("%s: read a GCP-only output (policy=%q)", p, f.GCPArmorPolicy)
 			}
 		}
 	})
@@ -227,14 +223,19 @@ func TestGKEBackendConfigManifest(t *testing.T) {
 	})
 }
 
-// TestGKEArgoServerValues pins the chart values that make the GKE Ingress exist and carry the
-// certificate + the BackendConfig. Both directions of the Cloud Armor half matter and fail
-// differently: with a policy the Service must be annotated (or the load balancer is programmed
-// with no security policy and the WAF switch means nothing), and WITHOUT one the annotation key
-// must be absent entirely (or GKE waits on a BackendConfig nobody rendered and the ingress stalls).
+// TestGKEArgoServerValues pins the chart values that make the GKE Ingress exist and carry its TLS
+// + the BackendConfig. Both directions of the Cloud Armor half matter and fail differently: with a
+// policy the Service must be annotated (or the load balancer is programmed with no security policy
+// and the WAF switch means nothing), and WITHOUT one the annotation key must be absent entirely (or
+// GKE waits on a BackendConfig nobody rendered and the ingress stalls).
+//
+// TLS comes from a cert-manager Secret now, not `pre-shared-cert` (#1858). `tls: true` is the whole
+// contract with argo-cd 8.6.4 — verified against the chart's values.yaml, which has no `tlsSecret`
+// key — and `allow-http: "false"` is asserted alongside it because cert-manager issues
+// ASYNCHRONOUSLY: without it the load balancer would answer plaintext :80 for the ArgoCD API during
+// the window before the Secret lands.
 func TestGKEArgoServerValues(t *testing.T) {
 	const host = "argocd.example.com"
-	const cert = "alethia-nl-production-platform-cert"
 
 	parse := func(t *testing.T, raw string) map[string]interface{} {
 		t.Helper()
@@ -245,8 +246,8 @@ func TestGKEArgoServerValues(t *testing.T) {
 		return v
 	}
 
-	t.Run("armored: ingress, certificate and backend-config all present", func(t *testing.T) {
-		raw, err := GKEArgoServerValues(host, cert, GKEBackendConfigName)
+	t.Run("armored: ingress, TLS and backend-config all present", func(t *testing.T) {
+		raw, err := GKEArgoServerValues(host, CertManagerIssuerName, GKEBackendConfigName)
 		if err != nil {
 			t.Fatalf("GKEArgoServerValues: %v", err)
 		}
@@ -254,7 +255,9 @@ func TestGKEArgoServerValues(t *testing.T) {
 		for _, want := range []string{
 			"ingressClassName: gce",
 			"hostname: " + host,
-			`ingress.gcp.kubernetes.io/pre-shared-cert: "` + cert + `"`,
+			"tls: true",
+			`cert-manager.io/cluster-issuer: "` + CertManagerIssuerName + `"`,
+			`kubernetes.io/ingress.allow-http: "false"`,
 			`cloud.google.com/backend-config: '{"default":"` + GKEBackendConfigName + `"}'`,
 			`cloud.google.com/neg: '{"ingress": true}'`,
 			`server.insecure: "true"`,
@@ -268,10 +271,15 @@ func TestGKEArgoServerValues(t *testing.T) {
 		if strings.Contains(raw, "nginx") {
 			t.Errorf("values reference nginx — Cloud Armor binds to a GCLB backend service, which only the gce class provisions:\n%s", raw)
 		}
+		// Google documents Secrets and pre-shared certificates as SEPARATE options, not
+		// complementary ones, and the resource the annotation named no longer exists.
+		if strings.Contains(raw, "pre-shared-cert") {
+			t.Errorf("values still carry the pre-shared-cert annotation — the certificate it names was deleted with #1858:\n%s", raw)
+		}
 	})
 
 	t.Run("no policy emits no backend-config key at all", func(t *testing.T) {
-		raw, err := GKEArgoServerValues(host, cert, "")
+		raw, err := GKEArgoServerValues(host, CertManagerIssuerName, "")
 		if err != nil {
 			t.Fatalf("GKEArgoServerValues: %v", err)
 		}
@@ -280,16 +288,16 @@ func TestGKEArgoServerValues(t *testing.T) {
 			t.Errorf("values name a BackendConfig with no Cloud Armor policy rendered — GKE would stall on it:\n%s", raw)
 		}
 		// The rest of the ingress must be untouched: this is the common case (WAF switch off).
-		if !strings.Contains(raw, "ingressClassName: gce") || !strings.Contains(raw, "pre-shared-cert") {
+		if !strings.Contains(raw, "ingressClassName: gce") || !strings.Contains(raw, "tls: true") {
 			t.Errorf("values lost the ingress when the WAF switch was off:\n%s", raw)
 		}
 	})
 
-	t.Run("refuses to render without a certificate or a host", func(t *testing.T) {
+	t.Run("refuses to render without an issuer or a host", func(t *testing.T) {
 		if _, err := GKEArgoServerValues(host, "", GKEBackendConfigName); err == nil {
-			t.Error("a GKE Ingress with no pre-shared certificate would serve ArgoCD over plain HTTP — it must be refused")
+			t.Error("a GKE Ingress with no cert-manager issuer never gets a TLS Secret — with allow-http=false it would serve nothing at all, so it must be refused")
 		}
-		if _, err := GKEArgoServerValues("", cert, ""); err == nil {
+		if _, err := GKEArgoServerValues("", CertManagerIssuerName, ""); err == nil {
 			t.Error("an empty host must be refused")
 		}
 	})

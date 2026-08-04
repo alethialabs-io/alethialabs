@@ -138,21 +138,7 @@ output "cloud_dns_zone_name" {
   value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].zone_name : null
 }
 
-# The Google-managed SSL certificate. The module has exported its id since it was written and the
-# root swallowed it, so the certificate was created, billed, and reachable by nothing — the runner
-# had no way to learn it existed, let alone put it on an Ingress.
-#
-# The NAME is the load-bearing one: `ingress.gcp.kubernetes.io/pre-shared-cert` takes a
-# comma-separated list of GLOBAL certificate NAMES, not ids or self links.
-output "cloud_dns_managed_certificate_name" {
-  description = "Name of the Google-managed SSL certificate — the value the platform Ingress's ingress.gcp.kubernetes.io/pre-shared-cert annotation takes. Null when no certificate was requested; the ArgoCD ingress (and therefore the managed ArgoCD URL) renders only when it is present."
-  value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].managed_certificate_name : null
-}
 
-output "cloud_dns_managed_certificate_id" {
-  description = "Fully-qualified id of the Google-managed SSL certificate, for anything that addresses it outside the cluster's own project. Null when no certificate was requested."
-  value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].managed_certificate_id : null
-}
 
 #########################################################################
 ##                     Cloud Armor Outputs                             ##

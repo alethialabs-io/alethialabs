@@ -1403,7 +1403,12 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		// certificate is the gate either way, and a provider string that failed to reach here would
 		// silently drop the AWS ingress that has worked for a year.
 		certArn := argocd.ExtractOutput(outputs, "acm_certificate_arn")
-		gkeCert := argocd.ExtractOutput(outputs, "cloud_dns_managed_certificate_name")
+		// GCP no longer has a certificate output to key on — #1858 deleted
+		// `google_compute_managed_ssl_certificate` along with the annotation that named it — so the
+		// GKE case keys on a GCP-ONLY output that still exists plus cert-manager's readiness, the
+		// same shape as Azure below. `gke_cluster_name` is exported only by the gcp template, so the
+		// three cases stay mutually exclusive without dispatching on vc.Provider.
+		gkeCluster := argocd.ExtractOutput(outputs, "gke_cluster_name")
 		// Azure exports no certificate at all (#1825 deleted the App Service order — a purchased
 		// product that bound to nothing), so its gate is the gateway plus cert-manager's own
 		// readiness. `CertManagerEnabled()` is READ, never restated: it is the same method the
@@ -1452,7 +1457,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 			// resolves nowhere on every other cloud.
 			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 
-		case gkeCert != "":
+		case gkeCluster != "" && certManagerWillIssue:
 			// GKE. There is no controller to install — the Ingress controller lives in the
 			// Google-managed control plane and modules/gke leaves HTTP(S) Load Balancing enabled —
 			// so the whole platform ingress is these values plus, when the WAF switch is on, one
@@ -1486,7 +1491,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 				backendConfig = argocd.GKEBackendConfigName
 				fmt.Fprintf(stdout, "Attaching Cloud Armor policy to the ArgoCD Ingress backend service: %s\n", armorPolicy)
 			}
-			values, vErr := argocd.GKEArgoServerValues(argoHost, gkeCert, backendConfig)
+			values, vErr := argocd.GKEArgoServerValues(argoHost, argocd.CertManagerIssuerName, backendConfig)
 			if vErr != nil {
 				return fmt.Errorf("failed to render the GKE ArgoCD ingress values: %w", vErr)
 			}
@@ -1498,7 +1503,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 				return fmt.Errorf("failed to write the GKE ArgoCD ingress values: %w", wErr)
 			}
 			installCmd += " -f " + utils.ShellQuote(valuesPath)
-			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s (GKE `gce` class, certificate %s)\n", argoHost, gkeCert)
+			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s (GKE `gce` class, TLS issued in-cluster by cert-manager)\n", argoHost)
 			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 
 		case agwName != "" && certManagerWillIssue:

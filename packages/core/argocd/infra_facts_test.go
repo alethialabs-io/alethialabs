@@ -181,3 +181,73 @@ func TestBuildFromOutputs_AlibabaWAFInstanceID(t *testing.T) {
 		}
 	})
 }
+
+// TestManagedCertificateAsk_ProviderConfigOverridesOnEveryCloud pins the escape hatch that moved
+// here from the providers (#1858).
+//
+// It moved because it BROKE silently. While every cloud's certificate came from OpenTofu, each
+// provider seeded a local from the typed field and let `provider_config` mutate the cloud's own
+// tfvar. When gcp and azure converged onto cert-manager there was no tfvar left to mutate, so the
+// key kept being accepted and changed nothing — an escape hatch that looks live and is not.
+//
+// The per-cloud spelling is the part most likely to be got wrong by a later edit: aws reads
+// `acm_certificate`, everyone else reads `managed_certificate`. Accepting one spelling everywhere
+// would silently drop the override on four clouds, which is the same failure in a new place.
+func TestManagedCertificateAsk_ProviderConfigOverridesOnEveryCloud(t *testing.T) {
+	keys := map[string]string{
+		"aws":     "acm_certificate",
+		"gcp":     "managed_certificate",
+		"azure":   "managed_certificate",
+		"alibaba": "managed_certificate",
+		"hetzner": "managed_certificate",
+	}
+
+	for cloud, key := range keys {
+		t.Run(cloud, func(t *testing.T) {
+			facts := func(ask bool, pc map[string]any) *InfraFacts {
+				return BuildFromOutputs(map[string]interface{}{}, &types.ProjectConfig{
+					Provider: types.CloudProvider(cloud),
+					DNS:      types.ProjectDNSConfig{ManagedCertificate: ask, ProviderConfig: pc},
+				})
+			}
+
+			t.Run("no override: the typed field carries", func(t *testing.T) {
+				if !facts(true, nil).ManagedCertificate {
+					t.Error("the canvas switch must reach the facts on its own")
+				}
+				if facts(false, nil).ManagedCertificate {
+					t.Error("an unset switch must stay unset")
+				}
+			})
+
+			// BOTH directions. Seeding from the typed field rather than OR-ing is what keeps the
+			// override able to turn something back OFF; an OR would make provider_config write-only.
+			t.Run("override forces on and off", func(t *testing.T) {
+				if !facts(false, map[string]any{key: true}).ManagedCertificate {
+					t.Errorf("provider_config[%q]=true must turn the ask ON", key)
+				}
+				if facts(true, map[string]any{key: false}).ManagedCertificate {
+					t.Errorf("provider_config[%q]=false must turn the ask OFF", key)
+				}
+			})
+
+			t.Run("a wrong-typed override is ignored and the typed field survives", func(t *testing.T) {
+				if !facts(true, map[string]any{key: "false"}).ManagedCertificate {
+					t.Errorf("a string under %q must be ignored, not coerced", key)
+				}
+			})
+
+			// The OTHER spelling must do nothing on this cloud, or a copy-paste in a later lane
+			// would appear to work on the cloud it was copied from and silently no-op here.
+			t.Run("the other cloud's spelling does nothing", func(t *testing.T) {
+				other := "acm_certificate"
+				if cloud == "aws" {
+					other = "managed_certificate"
+				}
+				if facts(true, map[string]any{other: false}).ManagedCertificate != true {
+					t.Errorf("%q is not %s's key — it must not override", other, cloud)
+				}
+			})
+		})
+	}
+}

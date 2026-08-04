@@ -41,22 +41,21 @@ func TestGCPProvider_ProviderTfvars_Defaults(t *testing.T) {
 	tfvars := p.ProviderTfvars(cfg)
 
 	checks := map[string]interface{}{
-		"project_name":                  "min",
-		"project_id":                    "proj-1",
-		"region":                        "us-central1",
-		"network_cidr":                  "10.0.0.0/16", // orDefault fallback
-		"gke_cluster_version":           "1.35",        // catalog SSOT default (resolveK8sVersion)
-		"provision_gke":                 true,
-		"gke_enable_autopilot":          false,
-		"cloud_armor_enabled":           false,
-		"cloud_dns_managed_certificate": false,
-		"create_pubsub":                 false,
-		"create_memorystore":            false,
-		"create_firestore":              false,
-		"create_cloud_storage":          false,
-		"create_cloud_sql":              false,
-		"provision_artifact_registry":   false,
-		"provision_network":             true, // no NetworkID + not provisioned => auto true
+		"project_name":                "min",
+		"project_id":                  "proj-1",
+		"region":                      "us-central1",
+		"network_cidr":                "10.0.0.0/16", // orDefault fallback
+		"gke_cluster_version":         "1.35",        // catalog SSOT default (resolveK8sVersion)
+		"provision_gke":               true,
+		"gke_enable_autopilot":        false,
+		"cloud_armor_enabled":         false,
+		"create_pubsub":               false,
+		"create_memorystore":          false,
+		"create_firestore":            false,
+		"create_cloud_storage":        false,
+		"create_cloud_sql":            false,
+		"provision_artifact_registry": false,
+		"provision_network":           true, // no NetworkID + not provisioned => auto true
 	}
 	for k, want := range checks {
 		if got := tfvars[k]; got != want {
@@ -385,20 +384,21 @@ func TestGCPProvider_ProviderTfvars_NodePool(t *testing.T) {
 // resilient to wrong-typed values.
 func TestGCPProvider_ProviderTfvars_ProviderConfigFlags(t *testing.T) {
 	tests := []struct {
-		name            string
-		cluster         map[string]any
-		dns             map[string]any
-		wantAutopilot   bool
-		wantCloudArmor  bool
-		wantManagedCert bool
+		name           string
+		cluster        map[string]any
+		dns            map[string]any
+		wantAutopilot  bool
+		wantCloudArmor bool
 	}{
 		{
-			name:            "all true",
-			cluster:         map[string]any{"enable_autopilot": true},
-			dns:             map[string]any{"cloud_armor": true, "managed_certificate": true},
-			wantAutopilot:   true,
-			wantCloudArmor:  true,
-			wantManagedCert: true,
+			// `managed_certificate` is still SET here on purpose: the key is no longer read by
+			// this provider, and the absence assertion below proves it produces no tfvar rather
+			// than merely not being exercised.
+			name:           "all true",
+			cluster:        map[string]any{"enable_autopilot": true},
+			dns:            map[string]any{"cloud_armor": true, "managed_certificate": true},
+			wantAutopilot:  true,
+			wantCloudArmor: true,
 		},
 		{
 			name:    "wrong types ignored",
@@ -426,8 +426,12 @@ func TestGCPProvider_ProviderTfvars_ProviderConfigFlags(t *testing.T) {
 			if tfvars["cloud_armor_enabled"] != tt.wantCloudArmor {
 				t.Errorf("cloud_armor_enabled = %v, want %v", tfvars["cloud_armor_enabled"], tt.wantCloudArmor)
 			}
-			if tfvars["cloud_dns_managed_certificate"] != tt.wantManagedCert {
-				t.Errorf("cloud_dns_managed_certificate = %v, want %v", tfvars["cloud_dns_managed_certificate"], tt.wantManagedCert)
+			// GCP emits NO certificate tfvar since #1858 — cert-manager issues in-cluster and the
+			// template declares no such variable. Asserting ABSENCE rather than dropping the case:
+			// a re-added emit would reach a template that ignores it, OpenTofu would drop it at
+			// plan time, and the parity guard would still trace it and score the cell as carried.
+			if v, ok := tfvars["cloud_dns_managed_certificate"]; ok {
+				t.Errorf("cloud_dns_managed_certificate = %v, want it ABSENT — GCP issues the certificate in-cluster", v)
 			}
 		})
 	}

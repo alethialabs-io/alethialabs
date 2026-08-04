@@ -30,22 +30,14 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 			wafEnabled = b
 		}
 	}
-	// ⚠️ The `managed_certificate` provider_config override is GONE FROM AZURE, and this is a
-	// stated behaviour change rather than a tidy-up (#1825).
+	// No `managed_certificate` override here: Azure's certificate is issued in-cluster by
+	// cert-manager (#1825), so the template declares no certificate variable for one to act on.
 	//
-	// It only ever mutated the `azure_managed_certificate` tfvar. With the certificate issued
-	// in-cluster there is no tfvar, so the override had nothing left to act on: cert-manager gates
-	// on InfraFacts.ManagedCertificate, which reads `vc.DNS.ManagedCertificate` from the config
-	// snapshot and does not consult ProviderConfig at all.
-	//
-	// Leaving the block would be worse than removing it — it would keep accepting the key, keep
-	// appearing to work, and change nothing. An escape hatch that silently stopped working is the
-	// defect this programme exists to remove, so it is deleted where a reader will notice.
-	//
-	// The canvas switch itself is unaffected; only the provider_config back door is. If that back
-	// door is wanted again it belongs at the InfraFacts layer, where the decision now lives, and
-	// it is the same question for GCP under #1858 — so it is worth answering once, for both, not
-	// re-added ad hoc here.
+	// The escape hatch still WORKS — it moved to `managedCertificateAsk` in
+	// packages/core/argocd/infra_facts.go, which is where the decision now lives. Overriding there
+	// covers every cloud, converged or not, and is written once instead of restated per provider.
+	// Leaving a copy here would keep accepting the key and change nothing, which is the defect this
+	// programme exists to remove.
 
 	provisionVnet := config.Network.ProvisionNetwork
 	if !provisionVnet && config.Network.NetworkID == "" {
