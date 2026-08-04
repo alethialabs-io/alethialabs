@@ -10,18 +10,21 @@ check "ack_rrsa_provider_present" {
     # The `try()` brings this into line with the identical assertion on aws (checks_secrets.tf),
     # which has always carried one, and with its own sibling below.
     #
-    # To be precise about what it is and is not doing, because #1772 was fixed once on a false
-    # premise: OpenTofu's short-circuiting IS reliable. `||` does not evaluate its right operand when
-    # the left is a known `true`, so `!var.provision_ack || module.cluster[0]…` genuinely plans on a
-    # cluster-less shape, with or without this `try()`. The protection is real — it is just
-    # POSITIONAL. Reorder the disjuncts, or add a term in front, and the index is reached and the
-    # plan dies with "Invalid index … module.cluster is empty tuple", which is precisely how
-    # `provision_eks = false` stayed unplannable on aws for the whole life of that template.
+    # CORRECTED (#1920). This note used to say OpenTofu's short-circuiting IS reliable and that the
+    # `try()` was therefore belt-and-braces against a future reordering. That was measured on the
+    # wrong binary. Short-circuiting is VERSION-DEPENDENT, and it is ABSENT in the version this
+    # product ships — so the `try()` is load-bearing, today, exactly where it stands:
     #
-    # So this is belt-and-braces against a future edit, not a correctness fix, and it is cheap HERE
-    # in a way it would not be elsewhere: the surrounding `length(trimspace(…)) > 0` already fails
-    # the check on "", so a `try()` that swallowed a genuinely renamed module output would still be
-    # reported loudly rather than passing silently.
+    #   fixture: !requested || (… && module.x[0].out != null), module absent
+    #   1.9.0   (apps/runner/Dockerfile.base TOFU_VERSION, compat matrix `tofu`) → Invalid index
+    #   1.10.10 (what infra-templates.yml gates with) and 1.12.3                 → plans clean
+    #
+    # Strip the `try()` here and the alibaba template stops planning on every cluster-less project,
+    # which is how the same expression on gcp (checks_data.tf) took the gcp nightly leg down at
+    # `planning`. The template gate did not see it because it runs 1.10.10.
+    #
+    # What the note got right, and still holds: the `try()` cannot hide a rename, because the
+    # surrounding `length(trimspace(…)) > 0` fails the check on "" just as loudly.
     condition     = !var.provision_ack || length(trimspace(try(module.cluster[0].rrsa_oidc_provider_arn, ""))) > 0
     error_message = "ACK RRSA (workload identity) did not report an OIDC provider ARN — in-cluster components can't assume RAM roles."
   }
