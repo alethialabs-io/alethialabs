@@ -277,7 +277,7 @@ describe("W1 services contract-lock (#572)", () => {
 		// whatever the seed happens to hold, so it passed vacuously while the wire still carried
 		// eight bookkeeping columns. Naming the keys is what makes the drop visible in review.
 		const placement = { cloud_provider: "hetzner", cloud_identity_id: "ci-1", region: "nbg1" };
-		const wireOf = (row: typeof webRow) => ({
+		const wireOf = (row: typeof webRow | typeof workerRow) => ({
 			name: row.name,
 			type: row.type,
 			source: row.source,
