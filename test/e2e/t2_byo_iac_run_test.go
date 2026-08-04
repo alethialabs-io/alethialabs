@@ -385,10 +385,16 @@ func byoIacSeedJob(ctx context.Context, cp *ControlPlane, jobID, jobType string,
 	if err != nil {
 		return err
 	}
+	// `$3::text::public.provision_job_type`, not `$3::public.provision_job_type`. The direct form
+	// makes Postgres infer the PARAMETER's type as the enum, which asks pgx to encode a Go string
+	// as an OID it has no registered codec for. Going through text first keeps the parameter a
+	// plain string and does the enum conversion server-side. The neighbouring seeds sidestep this
+	// by hardcoding the literal per function; this one is parameterised because three job types
+	// share it, and the switch above is what keeps that safe.
 	_, err = cp.pool.Exec(ctx, `
 		INSERT INTO public.jobs
 		  (id, user_id, org_id, job_type, config_snapshot, status, provider)
-		VALUES ($1, $2, $2, $3::public.provision_job_type, $4::jsonb, 'QUEUED', NULL)`,
+		VALUES ($1, $2, $2, $3::text::public.provision_job_type, $4::jsonb, 'QUEUED', NULL)`,
 		jobID, owner, jobType, string(snapshot))
 	if err != nil {
 		return fmt.Errorf("seed %s job: %w", jobType, err)
