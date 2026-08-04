@@ -1409,20 +1409,16 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		// same shape as Azure below. `gke_cluster_name` is exported only by the gcp template, so the
 		// three cases stay mutually exclusive without dispatching on vc.Provider.
 		gkeCluster := argocd.ExtractOutput(outputs, "gke_cluster_name")
-		// GCP exports no certificate any more (#1858 deleted the Google-managed one), so its gate is
-		// the cluster plus cert-manager's own readiness. `CertManagerEnabled()` is READ, never
-		// restated: it is the same method the render template gates on
-		// (`{{- if .CertManagerEnabled }}`) and the same one certManagerDecision and
-		// EnsureCertManagerIssuer read. The ClusterSecretStore gates were restated by hand in four
-		// places and drifted twice; this is that lesson applied.
+		// Azure exports no certificate at all (#1825 deleted the App Service order — a purchased
+		// product that bound to nothing), so its gate is the gateway plus cert-manager's own
+		// readiness. `CertManagerEnabled()` is READ, never restated: it is the same method the
+		// render template gates on (`{{- if .CertManagerEnabled }}`) and the same one
+		// certManagerDecision and EnsureCertManagerIssuer read. The ClusterSecretStore gates were
+		// restated by hand in four places and drifted twice; this is that lesson applied.
 		//
 		// BuildFromOutputs is pure — outputs plus the config — so calling it here is safe even
 		// though the pipeline's own call happens later.
-		//
-		// AZURE IS DELIBERATELY ABSENT. cert-manager issues a certificate there and AGIC serves the
-		// project's own Ingress objects with it — but publishing the ArgoCD ADMIN console over the
-		// Application Gateway is a separate exposure decision, held for its own review. Until it
-		// lands, argocdURLGates["azure"] stays constant-false and the two agree.
+		agwName := argocd.ExtractOutput(outputs, "application_gateway_name")
 		certManagerWillIssue := argocd.BuildFromOutputs(outputs, vc).CertManagerEnabled()
 		switch {
 		case certArn != "":
@@ -1510,6 +1506,34 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s (GKE `gce` class, TLS issued in-cluster by cert-manager)\n", argoHost)
 			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 
+		case agwName != "" && certManagerWillIssue:
+			// Azure. Unlike the two above, this is NOT gated on a certificate that already exists —
+			// there isn't one yet. cert-manager issues asynchronously (EnsureCertManagerIssuer runs
+			// after the Applications are applied, and the ACME DNS01 challenge completes seconds
+			// after that), so the Ingress ASKS for a certificate and AGIC picks up the Secret when
+			// it lands.
+			//
+			// Both terms are load-bearing and neither is redundant:
+			//   · agwName      — AGIC reconciles onto ONE pre-provisioned gateway. No gateway, no
+			//                    ingress, whatever else is true.
+			//   · certManager  — without an issuer the `spec.tls` Secret is never created and the
+			//                    listener serves the gateway's DEFAULT certificate indefinitely.
+			//                    Publishing the ArgoCD admin console like that is worse than not
+			//                    publishing it, so it is a hard term rather than a degraded mode.
+			values, vErr := argocd.AGWArgoServerValues(argoHost, argocd.CertManagerIssuerName)
+			if vErr != nil {
+				return fmt.Errorf("failed to render the Application Gateway ArgoCD ingress values: %w", vErr)
+			}
+			valuesPath := filepath.Join(valuesDir, "argocd-agw-ingress.yaml")
+			if wErr := os.WriteFile(valuesPath, []byte(values), 0o600); wErr != nil {
+				return fmt.Errorf("failed to write the Application Gateway ArgoCD ingress values: %w", wErr)
+			}
+			installCmd += " -f " + utils.ShellQuote(valuesPath)
+			// No WAF annotation, unlike AWS. On Azure the policy is bound by the TEMPLATE
+			// (firewall_policy_id on the gateway), so it already covers every listener this Ingress
+			// creates — see wafAttachments["azure"].
+			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s (Application Gateway via AGIC, TLS issued in-cluster by cert-manager)\n", argoHost)
+			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 		}
 	}
 
