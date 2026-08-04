@@ -33,17 +33,15 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	cloudArmorEnabled := config.DNS.WafEnabled
-	managedCert := config.DNS.ManagedCertificate
 	if v, ok := config.DNS.ProviderConfig["cloud_armor"]; ok {
 		if b, ok := v.(bool); ok {
 			cloudArmorEnabled = b
 		}
 	}
-	if v, ok := config.DNS.ProviderConfig["managed_certificate"]; ok {
-		if b, ok := v.(bool); ok {
-			managedCert = b
-		}
-	}
+	// No `managed_certificate` override here: GCP converged onto cert-manager (#1858), so the
+	// template declares no certificate variable for one to act on. The escape hatch still WORKS —
+	// it moved to `managedCertificateAsk` in packages/core/argocd/infra_facts.go, where the decision
+	// now lives, so it covers every cloud rather than being restated per provider.
 
 	provisionNetwork := config.Network.ProvisionNetwork
 	if !provisionNetwork && config.Network.NetworkID == "" {
@@ -82,10 +80,15 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"gke_enable_autopilot": enableAutopilot,
 
 		// DNS
-		"cloud_dns_enabled":             config.DNS.Enabled,
-		"cloud_dns_domain":              config.DNS.DomainName,
-		"cloud_dns_zone_name":           config.DNS.ZoneID,
-		"cloud_dns_managed_certificate": managedCert,
+		"cloud_dns_enabled":   config.DNS.Enabled,
+		"cloud_dns_domain":    config.DNS.DomainName,
+		"cloud_dns_zone_name": config.DNS.ZoneID,
+		// No certificate tfvar: GCP's managed certificate is issued IN-CLUSTER by cert-manager
+		// (#1858). `google_compute_managed_ssl_certificate` and the pre-shared-cert annotation that
+		// named it are deleted, so nothing in the template consumes the switch. Emitting it anyway
+		// would be dropped at plan time (OpenTofu discards a root variable the template does not
+		// declare) while the offer-parity guard still traced the emit and scored the cell as
+		// carried — a green cell for a value that never reaches a plan.
 
 		// Cloud Armor
 		"cloud_armor_enabled": cloudArmorEnabled,

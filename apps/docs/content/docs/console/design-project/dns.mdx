@@ -51,13 +51,28 @@ DNS zones are provider-specific. When duplicating a project across providers, th
 
 When enabled, the platform provisions a TLS certificate automatically:
 
-| Provider | Service | Validation |
-|----------|---------|------------|
+| Provider | Issued by | Validation |
+|----------|-----------|------------|
 | AWS | ACM (AWS Certificate Manager) | DNS validation via Route 53 |
-| GCP | Google-managed certificate | DNS validation via Cloud DNS |
-| Azure | App Service Certificate | DNS validation via Azure DNS |
+| GCP | cert-manager, in your cluster | ACME DNS01 via Cloud DNS |
+| Azure | cert-manager, in your cluster | ACME DNS01 via Azure DNS |
+| Alibaba | Not available — bring your own | — |
+| Hetzner | Not available — bring your own | — |
 
 Certificates are renewed automatically before expiration.
+
+On **GCP and Azure** the certificate is a free Let's Encrypt one, issued and renewed inside your
+cluster by cert-manager and served by the cloud's own ingress — the GKE Ingress reads it from a
+Kubernetes Secret, and the Application Gateway has it lifted onto its listener by AGIC. Neither
+cloud provisions a cloud-native certificate any more.
+
+On **AWS** the certificate stays in ACM. That is not an oversight: an Application Load Balancer can
+only reference a certificate by ARN in ACM or IAM, and ACM will not bind a certificate whose private
+key it never held — so a cert-manager certificate cannot terminate an ALB at all. ACM is free and
+renews itself, so nothing is lost by it.
+
+On **Alibaba and Hetzner** nothing issues a certificate. The alicloud provider can only upload one
+you already hold, and cert-manager ships no DNS01 solver for either cloud's DNS. Bring your own.
 
 ### In-cluster certificates
 

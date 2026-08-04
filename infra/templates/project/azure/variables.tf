@@ -382,11 +382,6 @@ variable "azure_dns_domain" {
   description = "DNS domain name for the managed zone"
 }
 
-variable "azure_managed_certificate" {
-  type        = bool
-  default     = false
-  description = "Whether to provision an Azure-managed TLS certificate via App Service Managed Certificate"
-}
 
 #########################################################################
 ##                   Azure WAF Variables                               ##
