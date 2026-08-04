@@ -184,6 +184,19 @@ export type NodeRegistry = { [K in NodeKind]: NodeKindDef<K> };
 // a managed service exists.
 const isInCluster = (provider: CloudProviderSlug | null) => provider === "hetzner";
 
+/**
+ * Does this cloud carry the queue's "Ordered (FIFO) delivery" switch into the queue it builds?
+ *
+ * Alibaba is a documented `queue:ordered` exclusion (infra/offer-exclusions.yaml): MNS takes a
+ * `fifo` type and publishes no guarantee behind it, so the switch is deliberately not carried and
+ * the queue is built standard whichever way it is set. EXPORTED because two surfaces render this
+ * — the canvas card's `Delivery` fact below and the inspector's summary line — and they drifted:
+ * the summary was guarded and the card was not, so the card printed FIFO over a standard queue,
+ * which is exactly the silence the exclusion exists to prevent. One predicate, both readers.
+ */
+export const carriesOrderedDelivery = (provider: CloudProviderSlug | null) =>
+	provider !== "alibaba";
+
 /** A connector slug as its catalog display name, falling back to the raw slug. */
 const providerName = (slug: string | null | undefined): string =>
 	(slug ? getConnectorProviderBySlug(slug)?.name : undefined) ?? slug ?? "";
@@ -434,7 +447,11 @@ export const NODE_REGISTRY: NodeRegistry = {
 							{ label: "Storage", value: `${config.storage_gb ?? 8} GiB` },
 						]
 					: [
-							{ label: "Delivery", value: config.ordered ? "FIFO" : "standard" },
+							{
+								label: "Delivery",
+								value:
+									config.ordered && carriesOrderedDelivery(provider) ? "FIFO" : "standard",
+							},
 							{ label: "Visibility", value: `${config.visibility_timeout ?? 30} s` },
 							{
 								label: "Retain",
@@ -626,19 +643,23 @@ export const NODE_REGISTRY: NodeRegistry = {
 						]
 					: [
 							{ label: "Service", value: provider ? getProvider(provider).registryService : "" },
+							// Typed columns since #1811, defaulting TRUE — which is what the templates
+							// already build, so an unset value must read as the safer setting here too.
 							{
 								label: "Tags",
-								value: config.provider_config?.immutable_tags ? "immutable" : "mutable",
+								value: config.immutable_tags === false ? "mutable" : "immutable",
 							},
 							{
 								label: "Scanning",
-								value: config.provider_config?.vulnerability_scanning ? "on push" : "off",
+								value: config.vulnerability_scanning === false ? "off" : "on push",
 							},
 						],
 		},
 		palette: { group: "DevOps", subtitle: "Private container images" },
 		defaultData: () => ({
 			name: "apps",
+			immutable_tags: true,
+			vulnerability_scanning: true,
 			provider_config: {},
 		}),
 	},

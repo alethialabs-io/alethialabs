@@ -85,6 +85,57 @@ func TestBuildFromOutputs_WAFWebACLArn(t *testing.T) {
 	})
 }
 
+// The Application Gateway lane's facts, from the outputs that carry them. `ingress_client_id` is
+// the notable one: InfraFacts read it from the day AzureIngressClient was added and NO template
+// ever exported it, so the fact was permanently "" and every gate reading it was dead. Pinning the
+// extraction here is what stops that regressing into a dead fact a second time.
+func TestBuildFromOutputs_AzureApplicationGatewayFacts(t *testing.T) {
+	vc := &types.ProjectConfig{
+		ProjectName:      "demo",
+		EnvironmentStage: "development",
+		Region:           "westeurope",
+		Provider:         "azure",
+		CloudAccountID:   "00000000-0000-0000-0000-000000000009",
+	}
+	f := BuildFromOutputs(map[string]interface{}{
+		"aks_cluster_name":         "aks-demo",
+		"resource_group_name":      "rg-demo-development",
+		"azure_subscription_id":    "00000000-0000-0000-0000-000000000001",
+		"ingress_client_id":        "00000000-0000-0000-0000-0000000000dd",
+		"application_gateway_name": "agw-weu-development-demo",
+		"waf_policy_id":            "/subscriptions/x/resourceGroups/y/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/demo",
+	}, vc)
+
+	if f.AzureIngressClient != "00000000-0000-0000-0000-0000000000dd" {
+		t.Errorf("AzureIngressClient = %q, want the ingress_client_id output", f.AzureIngressClient)
+	}
+	if f.AzureAppGatewayName != "agw-weu-development-demo" {
+		t.Errorf("AzureAppGatewayName = %q", f.AzureAppGatewayName)
+	}
+	if f.AzureWAFPolicyID == "" {
+		t.Errorf("AzureWAFPolicyID must carry the waf_policy_id output, got %q", f.AzureWAFPolicyID)
+	}
+	if f.AzureSubscriptionID != "00000000-0000-0000-0000-000000000001" {
+		t.Errorf("AzureSubscriptionID = %q, want the output to win over CloudAccountID", f.AzureSubscriptionID)
+	}
+
+	// The switch off / gateway off shape: the outputs are null, which ExtractOutput turns into "" —
+	// exactly the "nothing to attach, no controller" signal the decisions read. The subscription
+	// still resolves, from the config, because the template is handed it as an input.
+	off := BuildFromOutputs(map[string]interface{}{
+		"aks_cluster_name":         "aks-demo",
+		"ingress_client_id":        nil,
+		"application_gateway_name": nil,
+		"waf_policy_id":            nil,
+	}, vc)
+	if off.AzureIngressClient != "" || off.AzureAppGatewayName != "" || off.AzureWAFPolicyID != "" {
+		t.Errorf("null outputs must yield empty facts, got %+v", off)
+	}
+	if off.AzureSubscriptionID != "00000000-0000-0000-0000-000000000009" {
+		t.Errorf("AzureSubscriptionID must fall back to the config's cloud account id, got %q", off.AzureSubscriptionID)
+	}
+}
+
 // TestBuildFromOutputs_AlibabaWAFInstanceID locks the output→fact wiring for the WAF 3.0
 // instance. It is the mirror image of the AWS fact above and must never be confused with it:
 // the AWS ARN exists so the ingress can be ANNOTATED with it, while this id exists so the deploy

@@ -5,13 +5,22 @@
 #
 #   tofu init -backend-config=backend.hcl
 #
-# Applied ONCE with an admin identity (it creates an Entra app + role assignments). The admin's
-# Azure creds (az login / ARM_* env) authenticate the backend — no static state keys. The storage
-# account + container below must already exist in a state-holding resource group.
+# Applied by an admin identity (this stack creates an Entra app + role assignments). Its az login /
+# ARM_* credentials authenticate the backend — no static state keys. The storage account and
+# container must already exist: apply infra/azure-e2e/bootstrap first, which prints all three names
+# below as outputs.
 #
-# For a first local apply you may instead run `tofu init -backend=false` and keep state local.
+# `use_azuread_auth` is REQUIRED, not a preference: the bootstrap creates the account with
+# `shared_access_key_enabled = false`, so there is no account key for the backend's default auth
+# path to use. Your identity needs `Storage Blob Data Contributor` on the account — which is what
+# the bootstrap's `state_writer_principal_ids` grants.
 
 resource_group_name  = "alethia-tfstate"
 storage_account_name = "alethiatfstate"
 container_name       = "tfstate"
 key                  = "azure-e2e.tfstate"
+use_azuread_auth     = true
+
+# Set these if your az CLI has more than one subscription/tenant in scope.
+# subscription_id = "00000000-0000-0000-0000-000000000000"
+# tenant_id       = "00000000-0000-0000-0000-000000000000"

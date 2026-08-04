@@ -704,7 +704,19 @@ export const projectContainerRegistries = pgTable(
 		// cluster cloud's native registry (ECR / Artifact Registry / ACR).
 		provider: text(),
 		repository_url: text(),
-		// Provider-specific knobs (immutable_tags, vulnerability_scanning) — neutral JSONB.
+		// Cross-cloud registry switches. They lived in provider_config, which was a misfiling: all
+		// four managed clouds show them, so they are cross-cloud settings like storage's
+		// `encryption_enabled` below, not per-provider knobs. Typed columns because the offer-parity
+		// carrier probe can only follow a TYPED Go struct field — a value read out of an untyped
+		// `provider_config` map traces to nothing, so a landed fix would have been indistinguishable
+		// from an unfixed gap (#1811).
+		//
+		// Both DEFAULT TRUE, and that is load-bearing rather than taste: the AWS template already
+		// defaults to IMMUTABLE + scan-on-push, so carrying a `?? false` canvas default would
+		// DOWNGRADE every existing repository to MUTABLE and switch scanning off on the next apply.
+		immutable_tags: boolean().default(true),
+		vulnerability_scanning: boolean().default(true),
+		// Remaining provider-specific knobs (pluggable registry host, cross-account references).
 		provider_config: jsonb().$type<RegistryProviderConfig>().default({}),
 		status: componentStatus().default("PENDING").notNull(),
 		status_message: text(),

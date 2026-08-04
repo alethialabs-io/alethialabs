@@ -13,6 +13,7 @@ import {
 } from "@/components/design-project/canvas/graph/node-registry";
 import type {
 	NodeConfig,
+	NodeConfigMap,
 	NodeKind,
 } from "@/components/design-project/canvas/graph/types";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
@@ -24,6 +25,20 @@ const KINDS = Object.keys(NODE_REGISTRY) as NodeKind[];
 function factsFor(kind: NodeKind, provider: CloudProviderSlug): NodeFact[] {
 	const def = NODE_REGISTRY[kind];
 	const config = def.defaultData(provider) as NodeConfig;
+	const build = def.card.facts as (ctx: {
+		config: NodeConfig;
+		provider: CloudProviderSlug | null;
+	}) => NodeFact[];
+	return build({ config, provider });
+}
+
+/** Queue facts for an explicit config — `factsFor` can only reach a kind's defaults. */
+function queueFacts(
+	provider: CloudProviderSlug,
+	overrides: Partial<NodeConfigMap["queue"]>,
+): NodeFact[] {
+	const def = NODE_REGISTRY.queue;
+	const config = { ...def.defaultData(provider), ...overrides } as NodeConfig;
 	const build = def.card.facts as (ctx: {
 		config: NodeConfig;
 		provider: CloudProviderSlug | null;
@@ -80,6 +95,20 @@ describe("cards are cloud-honest", () => {
 	it("a Hetzner queue says it runs as RabbitMQ", () => {
 		const values = factsFor("queue", "hetzner").map((f) => f.value);
 		expect(values).toContain("RabbitMQ");
+	});
+
+	// #1812. The inspector's summary was guarded against Alibaba and this card was not, so the same
+	// config rendered "Standard" in one place and "FIFO" in the other — over a queue Alibaba builds
+	// unordered either way. Both read `carriesOrderedDelivery` now.
+	it("an Alibaba queue never says FIFO, however the switch is set", () => {
+		const delivery = (provider: CloudProviderSlug) =>
+			queueFacts(provider, { ordered: true }).find((f) => f.label === "Delivery")?.value;
+
+		expect(delivery("alibaba")).toBe("standard");
+		// The three clouds that carry the switch still say so.
+		expect(delivery("aws")).toBe("FIFO");
+		expect(delivery("gcp")).toBe("FIFO");
+		expect(delivery("azure")).toBe("FIFO");
 	});
 
 	it("a managed-cloud database shows capacity, not an in-cluster chart", () => {

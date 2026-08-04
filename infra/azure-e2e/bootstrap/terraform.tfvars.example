@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Copy to terraform.tfvars (gitignored). Applied ONCE, before the parent infra/azure-e2e stack, by a
+# maintainer with an admin identity in the DEDICATED e2e subscription.
+
+# REQUIRED — must be the SAME subscription_id the parent infra/azure-e2e stack uses.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# REQUIRED in practice. The state account has shared-key auth disabled, so state access is Entra-only:
+# without at least one Storage Blob Data Contributor here, `tofu init` against the real backend 403s.
+#   az ad signed-in-user show --query id -o tsv
+state_writer_principal_ids = ["00000000-0000-0000-0000-000000000000"]
+
+# Where the state resource group + storage account live.
+# location = "germanywestcentral"
+
+# Storage account names are globally unique, lowercase alphanumeric only, 3-24 chars. Change this if
+# the default is taken — and keep backend.hcl in step.
+# state_storage_account_name = "alethiatfstate"
+# state_resource_group_name  = "alethia-tfstate"
+# state_container_name       = "tfstate"
+
+# Soft-delete recovery window for state blobs and containers, in days (7-365).
+# state_retention_days = 30

@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# OSS state backend for OpenTofu. Copy to backend.hcl (gitignored) and:
+#
+#   tofu init -backend-config=backend.hcl
+#
+# Applied by an admin identity (this stack mints RAM entities). Its ambient Alibaba credentials
+# authenticate the backend — no separate state keys. The bucket must already exist: apply
+# infra/alibaba-e2e/bootstrap first, which prints its name as `state_bucket`.
+#
+# `region` MUST match the bucket's region — the backend derives its endpoint from it
+# (oss-<region>.aliyuncs.com), so a mismatch surfaces as a bucket-not-found, not as a redirect.
+#
+# `prefix` is set explicitly because the backend's default is the literal `env:`, which is not a
+# name anyone would choose on purpose.
+
+bucket = "alethia-tofu-state-e2e-alibaba"
+prefix = "alibaba-e2e"
+key    = "terraform.tfstate"
+region = "eu-central-1"

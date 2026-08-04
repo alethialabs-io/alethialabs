@@ -162,6 +162,46 @@ var day2StatefulTypes = map[string]bool{
 	// Alibaba — RDS + KVStore (Redis / Valkey).
 	"alicloud_db_instance":      true,
 	"alicloud_kvstore_instance": true,
+
+	// Queues. Added with ordered delivery (#1812), and NOT as hardening: ordered delivery is
+	// create-time-only on every cloud that has it, so the canvas switch that #1812 just wired is a
+	// switch that DESTROYS the queue and everything in flight. `aws_sqs_queue.fifo_queue`,
+	// `azurerm_servicebus_queue.requires_session` and
+	// `google_pubsub_subscription.enable_message_ordering` are all ForceNew, and all three services
+	// refuse the change at the API too — so there is no provider workaround to wait for. Without
+	// these entries AnalyzeDay2 sees an unknown type, returns Safe, and a checkbox that wipes a
+	// message backlog reads as a routine day-2 update.
+	//
+	// The SQS entry covers the dead-letter queue as well: it is the same resource type, and it is
+	// replaced alongside its primary because AWS requires a FIFO queue's DLQ to be FIFO too.
+	//
+	// `alicloud_message_service_queue` is here for the OTHER reason: #1812 deliberately wires
+	// nothing onto it (queue:ordered on Alibaba is a documented exclusion — see
+	// infra/offer-exclusions.yaml), so no switch this PR ships can replace it. It is listed because
+	// it holds messages, and this map is a map of what LOSES DATA, not of what this PR touched.
+	"aws_sqs_queue":                  true,
+	"azurerm_servicebus_queue":       true,
+	"google_pubsub_subscription":     true,
+	"alicloud_message_service_queue": true,
+
+	// Buckets and NoSQL tables. Same reason as the Alibaba queue above, and equally NOT reachable
+	// from an ordering switch — every one of them was returning Safe on replacement. The sibling
+	// offer-parity lanes have since landed switches onto exactly these resources (#1813
+	// bucket:public_access / bucket:versioning, #1814 bucket:encryption_enabled, #1815
+	// nosql:point_in_time_recovery) and none of them added its type here, so the gap is live rather
+	// than hypothetical. A switch landing on a create-time-only argument of an UNLISTED type is the
+	// silent-false-PASS shape above: AnalyzeDay2 sees a type it does not know and calls the
+	// replacement Safe.
+	//
+	// The offer-parity guard does not require these entries — it reports the same day-2 coverage
+	// with or without them — so this is hardening carried past the strict boundary of #1812 on
+	// purpose, not something a check forced.
+	"aws_s3_bucket":             true,
+	"google_storage_bucket":     true,
+	"azurerm_storage_container": true,
+	"alicloud_oss_bucket":       true,
+	"google_firestore_database": true,
+	"alicloud_ots_table":        true,
 }
 
 // isDay2StatefulType reports whether a resource type is a data-bearing offer resource whose

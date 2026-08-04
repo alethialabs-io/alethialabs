@@ -21,7 +21,8 @@ The Azure template set (`infra/templates/project/azure/`) provides Azure-native 
 | `service-bus.tf` | Service Bus namespace, queues, topics |
 | `azure-dns.tf` | Azure DNS zone, record sets |
 | `key-vault.tf` | Key Vault, access policies |
-| `azure-waf.tf` | Azure Application Gateway with WAF |
+| `azure-waf.tf` | Web application firewall policy (OWASP 3.2 plus your custom rules) |
+| `application-gateway.tf` | Application Gateway v2, its public IP, and the AGIC workload identity |
 
 ## Modules
 
@@ -35,7 +36,7 @@ The Azure template set (`infra/templates/project/azure/`) provides Azure-native 
 | `modules/storage-account/` | Azure Blob Storage |
 | `modules/service-bus/` | Service Bus queues and topics |
 | `modules/azure-dns/` | DNS zones |
-| `modules/azure-waf/` | WAF via Application Gateway |
+| `modules/azure-waf/` | Web application firewall policy |
 | `modules/key-vault/` | Key Vault for secrets |
 | `modules/vnet/` | Virtual Network with subnets and NSGs |
 
@@ -46,3 +47,9 @@ The Azure template set (`infra/templates/project/azure/`) provides Azure-native 
 **Flexible Server** — Azure's latest managed database tier with zone-redundant HA, automatic backups, and vCore-based scaling (1–64 vCores).
 
 **Cosmos DB** — Globally distributed multi-model database supporting SQL (document), Table (key-value), MongoDB, Cassandra, and Gremlin APIs. Multi-region writes for global distribution.
+
+**Ingress through an Application Gateway** — Azure has no per-Ingress load balancer. Instead, the template provisions one Application Gateway v2, and the Application Gateway Ingress Controller (AGIC) turns every `Ingress` object in the cluster into listeners and routing rules on that gateway. Set `ingressClassName: azure-application-gateway` on your `Ingress` to publish through it. AGIC authenticates with a workload identity, so it holds no static credential.
+
+**The firewall binds to the gateway** — On Azure a firewall policy attaches to an Application Gateway, not to an `Ingress` annotation. Turning the firewall on therefore also provisions a gateway (on the WAF\_v2 tier, which the association requires) and binds the policy to it, so every request the gateway serves is inspected.
+
+**The gateway is opt-in** — An Application Gateway bills per hour for as long as it exists, whether or not you have published anything through it. It is created when you turn the firewall on, or when you set `azure_application_gateway_enabled` to `true`. It needs a dedicated subnet, so the template must be creating your virtual network. Without a gateway, expose services with the `ingress-nginx` add-on instead.

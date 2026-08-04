@@ -75,6 +75,24 @@ describe("kind summaries", () => {
 		expect(registrySummary(null, { name: "apps" })).toBe("apps");
 	});
 
+	it("renders the queue summary as Ordered only where ordered delivery is actually built", () => {
+		const queueSummary = (provider: CloudProviderSlug | null, config: object = {}) =>
+			getKindConfig("queue")?.summary(
+				config as Record<string, unknown>,
+				provider,
+			);
+		expect(queueSummary("aws", { ordered: true })).toBe("Ordered · 30s");
+		expect(queueSummary("azure", { ordered: true, visibility_timeout: 60 })).toBe(
+			"Ordered · 60s",
+		);
+		expect(queueSummary("gcp", { ordered: false })).toBe("Standard · 30s");
+		// Alibaba is a documented exclusion for `queue:ordered` (infra/offer-exclusions.yaml):
+		// its queue service takes a `fifo` type and publishes no ordering guarantee, so nothing
+		// carries the switch. The card must not print an ordering claim over a queue that will be
+		// built standard — that is the difference between a visible gap and a silent one.
+		expect(queueSummary("alibaba", { ordered: true })).toBe("Standard · 30s");
+	});
+
 	it("renders in-cluster sizing summaries on hetzner (defaults + explicit)", () => {
 		const hetzner = (kind: Parameters<typeof getKindConfig>[0], config: object) =>
 			getKindConfig(kind)?.summary(config as Record<string, unknown>, "hetzner");
@@ -293,15 +311,20 @@ describe("field get/set escape hatches", () => {
 		});
 	});
 
-	it("writes registry knobs into provider_config without clobbering siblings", () => {
+	// The two registry switches are typed columns since #1811, not `provider_config` keys — so the
+	// setter writes ONE field and touches nobody's bag, and the getter defaults to TRUE rather than
+	// false. That default is the whole point: it is what every template already builds, and reading
+	// an unset row as `false` would show an existing registry as "mutable, unscanned" and then, now
+	// that the switch is carried, build it that way.
+	it("reads and writes the registry switches as their own fields, defaulting to on", () => {
 		const field = getKindConfig("registry")
 			?.sections.flatMap((s) => s.fields)
 			.find((f) => f.key === "immutable_tags");
-		expect(field?.get?.({ provider_config: { immutable_tags: true } })).toBe(true);
-		expect(
-			field?.set?.(true, { name: "apps", provider_config: { vulnerability_scanning: true } }),
-		).toEqual({
-			provider_config: { vulnerability_scanning: true, immutable_tags: true },
+		expect(field?.get?.({ immutable_tags: false })).toBe(false);
+		expect(field?.get?.({ immutable_tags: true })).toBe(true);
+		expect(field?.get?.({})).toBe(true);
+		expect(field?.set?.(true, { name: "apps", provider_config: { namespace: "acme" } })).toEqual({
+			immutable_tags: true,
 		});
 	});
 });

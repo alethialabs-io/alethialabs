@@ -66,6 +66,19 @@ mock_provider "azurerm" {
     }
   }
 
+  # Application Gateway lane. The gateway's `public_ip_address_id`, the gateway id (the SCOPE of
+  # AGIC's Contributor grant) and the WAF policy id (bound as `firewall_policy_id`) are all PARSED
+  # by the provider, so the generated strings will not do.
+  mock_resource "azurerm_public_ip" {
+    defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock/providers/Microsoft.Network/publicIPAddresses/mock" }
+  }
+  mock_resource "azurerm_application_gateway" {
+    defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock/providers/Microsoft.Network/applicationGateways/mock" }
+  }
+  mock_resource "azurerm_web_application_firewall_policy" {
+    defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock/providers/Microsoft.Network/applicationGatewayWebApplicationFirewallPolicies/mock" }
+  }
+
   mock_resource "azurerm_mysql_flexible_server" {
     defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock/providers/Microsoft.DBforMySQL/flexibleServers/mock" }
   }
@@ -316,4 +329,183 @@ run "an_admin_group_is_a_valid_runner_admin_path" {
     aks_enable_creator_admin   = false
     aks_admin_group_object_ids = ["3f2504e0-4f89-11d3-9a0c-0305e82c3301"]
   }
+}
+
+################################################################################
+# 5. Application Gateway + AGIC — and the WAF policy's ONE attachment site
+################################################################################
+
+# The default shape is unchanged by this lane: no gateway, no controller, and — because the
+# gateway is what a WAF policy binds to — nothing dangling either. This run is what stops the
+# gateway becoming a standing per-hour cost on every Azure project that never asked for one.
+run "no_application_gateway_by_default" {
+  command = plan
+
+  variables {
+    provision_aks = true
+  }
+
+  assert {
+    condition = alltrue([
+      length(azurerm_application_gateway.this) == 0,
+      length(azurerm_public_ip.application_gateway) == 0,
+      length(azurerm_user_assigned_identity.agic) == 0,
+      length(azurerm_federated_identity_credential.agic) == 0,
+      length(azurerm_role_assignment.agic_gateway) == 0,
+      length(azurerm_role_assignment.agic_resource_group_reader) == 0,
+    ])
+    error_message = "An Application Gateway bills per hour for as long as it exists; it must not appear unless it was asked for."
+  }
+
+  assert {
+    condition = alltrue([
+      output.application_gateway_name == null,
+      output.ingress_client_id == null,
+      output.waf_policy_id == null,
+    ])
+    error_message = "With no gateway the ingress/WAF outputs must be null — the runner reads them to decide whether an ingress controller and a WAF attachment shipped."
+  }
+}
+
+# THE lane. Turning the canvas WAF switch on used to create a policy and associate it with
+# nothing; now it also creates the only resource on Azure that a policy CAN be associated with,
+# and binds it. Both halves are asserted, because either alone is the bug: a gateway with no
+# policy filters nothing, and a policy with no gateway inspects nothing.
+run "the_waf_switch_builds_a_gateway_and_binds_the_policy" {
+  command = plan
+
+  variables {
+    provision_aks     = true
+    azure_waf_enabled = true
+  }
+
+  assert {
+    condition     = length(module.azure_waf) == 1 && length(azurerm_application_gateway.this) == 1
+    error_message = "azure_waf_enabled must produce BOTH a WAF policy and the Application Gateway it binds to."
+  }
+
+  # A Standard_v2 gateway REJECTS firewall_policy_id outright, and OWASP 3.2 (what
+  # modules/azure-waf pins) is a WAF-tier-only rule set — so the SKU is part of the attachment,
+  # not a preference. Pinned in both fields: name and tier are separate arguments and a mismatched
+  # pair is an apply-time rejection.
+  assert {
+    condition     = azurerm_application_gateway.this[0].sku[0].name == "WAF_v2" && azurerm_application_gateway.this[0].sku[0].tier == "WAF_v2"
+    error_message = "A gateway carrying a firewall policy must be on the WAF_v2 SKU; Standard_v2 refuses the association."
+  }
+
+  assert {
+    condition     = azurerm_application_gateway.this[0].firewall_policy_id == module.azure_waf[0].policy_id
+    error_message = "The gateway's firewall_policy_id must be THE project's WAF policy — this is the attach, and without it the policy is billed and inspects nothing."
+  }
+
+  # AGIC is the half that makes Ingress objects mean something. Its identity is federated to the
+  # AKS OIDC issuer, so it is cluster-scoped in exactly the way the external-dns/external-secrets
+  # identities above are.
+  assert {
+    condition = alltrue([
+      length(azurerm_user_assigned_identity.agic) == 1,
+      length(azurerm_federated_identity_credential.agic) == 1,
+      length(azurerm_role_assignment.agic_gateway) == 1,
+      length(azurerm_role_assignment.agic_resource_group_reader) == 1,
+    ])
+    error_message = "A gateway on a cluster must come with AGIC's workload identity and its two grants, or nothing translates Ingress objects into gateway configuration."
+  }
+
+  # The grants are the documented AGIC minimum. Contributor is scoped to the GATEWAY — widening it
+  # to the resource group would hand the ingress controller write access to the cluster, the
+  # database and the vault.
+  assert {
+    condition     = azurerm_role_assignment.agic_gateway[0].scope == azurerm_application_gateway.this[0].id && azurerm_role_assignment.agic_gateway[0].role_definition_name == "Contributor"
+    error_message = "AGIC's Contributor grant must be scoped to the Application Gateway alone."
+  }
+
+  assert {
+    condition     = output.application_gateway_name != null && output.ingress_client_id != null && output.waf_policy_id != null
+    error_message = "The runner derives 'an ingress controller shipped' and 'the WAF is attached' from these three outputs; a null here silently downgrades both decisions to skipped."
+  }
+}
+
+# The gateway is useful without a WAF, and asking for it explicitly must NOT drag a policy in —
+# nor leave a WAF_v2 SKU that costs more and filters nothing.
+run "an_explicit_gateway_without_the_waf_is_standard_v2" {
+  command = plan
+
+  variables {
+    provision_aks                     = true
+    azure_application_gateway_enabled = true
+  }
+
+  assert {
+    condition     = length(azurerm_application_gateway.this) == 1 && length(module.azure_waf) == 0
+    error_message = "azure_application_gateway_enabled alone must build the gateway and no WAF policy."
+  }
+
+  assert {
+    condition     = azurerm_application_gateway.this[0].sku[0].name == "Standard_v2" && azurerm_application_gateway.this[0].firewall_policy_id == null
+    error_message = "With no WAF policy the gateway must stay on Standard_v2 with no firewall policy — a WAF_v2 SKU with nothing to enforce is pure cost."
+  }
+}
+
+# The pre-lane defect, still reachable by an operator who explicitly opts OUT of the gateway: the
+# policy is built and attaches to nothing. Advisory rather than fatal — projects in exactly this
+# state plan today, and the runner records the same fact as a `waf` InfraServiceDecision — but it
+# must be SAID, which is what the check block is for.
+run "a_waf_switch_with_the_gateway_declined_warns_that_nothing_is_attached" {
+  command = plan
+
+  variables {
+    provision_aks                     = true
+    azure_waf_enabled                 = true
+    azure_application_gateway_enabled = false
+  }
+
+  assert {
+    condition     = length(module.azure_waf) == 1 && length(azurerm_application_gateway.this) == 0
+    error_message = "Declining the gateway must still build the policy — the point of the warning is that it exists and is bound to nothing."
+  }
+
+  expect_failures = [check.azure_waf_policy_is_attached]
+}
+
+# An Application Gateway v2 needs a DEDICATED subnet, and this template only carves one inside the
+# VNet it creates (modules/vnet). On a brownfield VNet there is no shape that satisfies both, so an
+# EXPLICIT request must fail the plan rather than apply green and leave the operator with no
+# ingress and no explanation. A `check` would not have done it — checks never block an apply.
+run "an_explicit_gateway_on_a_brownfield_vnet_is_refused" {
+  command = plan
+
+  # Left cluster-less on purpose: the guard is decided from variables alone, and attaching a
+  # cluster would only drag the brownfield subnet lookup — whose mocked id is not a parseable
+  # subnet id — into a run that is not about AKS.
+  variables {
+    provision_vnet                    = false
+    vnet_id                           = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/byo/providers/Microsoft.Network/virtualNetworks/byo-vnet"
+    subnet_ids                        = ["byo-subnet"]
+    azure_application_gateway_enabled = true
+  }
+
+  expect_failures = [terraform_data.application_gateway_subnet_guard]
+}
+
+# A gateway with no cluster is a legitimate shape (the resource is fine on its own) but a useless
+# one: nothing translates Ingress objects, so it serves its placeholder 502 backend and bills for
+# the privilege. Inert, not refused — and said out loud.
+run "a_gateway_without_a_cluster_installs_no_controller" {
+  command = plan
+
+  variables {
+    azure_application_gateway_enabled = true
+  }
+
+  assert {
+    condition     = length(azurerm_application_gateway.this) == 1 && length(azurerm_user_assigned_identity.agic) == 0
+    error_message = "With no cluster there is no OIDC issuer to federate AGIC's identity to; the gateway is still built, the controller is not."
+  }
+
+  assert {
+    condition     = output.application_gateway_name != null && output.ingress_client_id == null
+    error_message = "A cluster-less gateway must report itself but export no AGIC client id — an empty identity would render a crash-looping controller."
+  }
+
+  expect_failures = [check.application_gateway_has_a_controller]
 }

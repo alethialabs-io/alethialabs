@@ -432,10 +432,10 @@ export interface NosqlProviderConfig {
 }
 
 export interface RegistryProviderConfig {
-	// Cloud-native registry knobs (ECR / Artifact Registry / ACR). Meaningless once a pluggable
-	// registry connector is selected — the registry is then someone else's to configure.
-	vulnerability_scanning?: boolean;
-	immutable_tags?: boolean;
+	// `immutable_tags` and `vulnerability_scanning` used to live here. They are shown on all four
+	// managed clouds, so they were cross-cloud switches misfiled as provider knobs — they are now
+	// typed columns on project_container_registries (#1811). Nothing reads them from here; the
+	// validator's `.strip()` discards any that survive in an old row.
 	// Docker Hub
 	namespace?: string;
 	// The registry host for the providers that serve any host (generic-cr, ghcr-enterprise, harbor,

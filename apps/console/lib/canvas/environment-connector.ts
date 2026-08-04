@@ -73,28 +73,12 @@ export function connectorLabel(provider: string | null, nativeLabel: string): st
 	return getConnectorProviderBySlug(provider)?.name ?? provider;
 }
 
-/**
- * Knobs on `project_container_registries.provider_config` that describe the CLOUD's registry
- * (ECR / Artifact Registry / ACR), not any connector.
- *
- * They are genuinely PER ROW — one registry can have immutable tags while another doesn't — but the
- * provider is per environment, so the picker writes through to every row. Without preserving these,
- * choosing a provider would replace each row's whole bag and silently flatten those settings, with
- * no way to get them back. Registry is the only category where `provider_config` mixes per-row cloud
- * settings with per-environment connector knobs.
- */
-const NATIVE_REGISTRY_KNOBS = ["immutable_tags", "vulnerability_scanning"] as const;
-
-/** A row's own cloud-registry settings, to carry across an environment-level provider change. */
-export function nativeRegistryKnobs(
-	providerConfig: Record<string, unknown>,
-): Record<string, unknown> {
-	const out: Record<string, unknown> = {};
-	for (const key of NATIVE_REGISTRY_KNOBS) {
-		if (key in providerConfig) out[key] = providerConfig[key];
-	}
-	return out;
-}
+// `nativeRegistryKnobs` lived here. It existed because `project_container_registries.provider_config`
+// mixed two things with different scopes: per-ROW cloud-registry settings (immutable tags, image
+// scanning) and the per-ENVIRONMENT connector knobs the provider picker writes through to every row.
+// The picker replaces the whole bag, so those two had to be lifted out and merged back or they were
+// silently flattened. Both are typed columns since #1811, the bag holds only connector knobs again,
+// and the merge is gone with the reason for it.
 
 /** Whether a slug names a pluggable connector rather than the cloud's own service. */
 export function isPluggable(provider: unknown): provider is string {

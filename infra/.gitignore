@@ -13,3 +13,10 @@
 **/terraform.tfvars
 **/backends/
 **/variable-template/
+
+# Override files are a LOCAL escape hatch and must never be tracked. OpenTofu merges `*_override.tf`
+# on top of the stack's own config, so a committed one silently re-points every operator — which is
+# exactly how `infra/azure-e2e` spent months on a `backend "local" {}` nobody meant to keep (#1887).
+# If you need an override, it is yours alone; the fix belongs in the stack.
+**/*_override.tf
+**/override.tf

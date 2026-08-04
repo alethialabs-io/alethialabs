@@ -33,6 +33,10 @@ variable "queues" {
   type = map(object({
     max_delivery_count = optional(number, 10)
     lock_duration      = optional(string, "PT1M")
+    # Ordered delivery, via Service Bus sessions. Optional-with-false so an existing queue whose
+    # tfvars entry predates the key plans identically. The root's checks_queue.tf refuses the
+    # session-on-Basic combination at plan time, because Azure only refuses it at apply.
+    requires_session = optional(bool, false)
   }))
   default = {}
 }

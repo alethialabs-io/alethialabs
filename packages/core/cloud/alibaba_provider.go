@@ -80,8 +80,14 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"create_ots": len(config.NosqlTables) > 0,
 		"ots_tables": buildOTSTables(config.NosqlTables),
 
-		// Container Registry (ACR)
-		"provision_cr": len(config.ContainerRegistries) > 0,
+		// Container Registry (CR Enterprise Edition). `cr_repos` drives the module's for_each — one
+		// repository per NATIVE registry component. The module used to create an instance and a
+		// namespace and no `alicloud_cr_ee_repo` at all (#1837), so a project with a native registry
+		// got a PAID Enterprise Edition instance with nowhere to push an image. Both keys derive
+		// from the one builder so the flag and the repositories cannot disagree; see the GCP
+		// emitter for why the builder is called twice rather than hoisted to a local.
+		"provision_cr": len(buildCRRepos(config)) > 0,
+		"cr_repos":     buildCRRepos(config),
 
 		// OSS (object storage)
 		"create_oss":  len(config.StorageBuckets) > 0,
@@ -328,6 +334,43 @@ func otsKeyType(t string) string {
 	default:
 		return "String"
 	}
+}
+
+// buildCRRepos collects the Container Registry repositories the template must create, keyed by the
+// registry component's logical name — the same key the `cr_repository_urls` output is keyed by.
+//
+// It did not exist, and neither did the repositories: `modules/cr` created an
+// `alicloud_cr_ee_instance` and an `alicloud_cr_ee_namespace` and stopped there (#1837). A namespace
+// is not a place to push an image, so a native Alibaba registry produced a paid Enterprise Edition
+// subscription and nothing usable. That absence is also why `registry:immutable_tags` could not be
+// wired on Alibaba: `tag_immutability` is an argument on the repository, and there was no repository.
+//
+// Only NATIVE registry components produce a repository, and the switch travels per repository — the
+// instance's own arguments are never touched by it. That matters more here than elsewhere: the CR EE
+// instance is `payment_type = "Subscription"`, so landing a canvas switch on one of its arguments
+// would put a monthly commitment behind a checkbox and, worse, could force its replacement.
+func buildCRRepos(config *types.ProjectConfig) map[string]interface{} {
+	out := map[string]interface{}{}
+	for _, r := range config.ContainerRegistries {
+		// A pluggable registry (connectors.slug) is not CR's to create.
+		if r.Provider != "" && r.Provider != "native" {
+			continue
+		}
+		if r.Name == "" {
+			continue
+		}
+		// A nil switch is an older row or a hand-written snapshot. Read it as the SAFE setting
+		// rather than as false, so an upgrade never turns a live repository's tags mutable.
+		immutable := true
+		if r.ImmutableTags != nil {
+			immutable = *r.ImmutableTags
+		}
+		out[r.Name] = map[string]interface{}{
+			"summary":        "Container images for " + r.Name,
+			"immutable_tags": immutable,
+		}
+	}
+	return out
 }
 
 // ossSSEAlgorithm resolves the OSS server-side-encryption algorithm from the bucket's

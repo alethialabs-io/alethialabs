@@ -63,7 +63,7 @@ data "helm_template" "cilium" {
     # A pod-only native-routing CIDR (disjoint from the network) breaks pod->apiserver
     # across nodes — the apiserver reply has no host route. (Verified on real infra.)
     name  = "ipv4NativeRoutingCIDR"
-    value = var.network_cidr
+    value = local.network_ip_range
   }
   set {
     name  = "kubeProxyReplacement"
@@ -122,6 +122,6 @@ data "helm_template" "hcloud_ccm" {
   }
   set {
     name  = "networking.clusterCIDR"
-    value = var.pod_cidr
+    value = local.pod_cidr
   }
 }

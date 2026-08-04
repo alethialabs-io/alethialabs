@@ -26,6 +26,16 @@ resource "azurerm_kubernetes_cluster" "this" {
   dns_prefix          = var.cluster_name
   kubernetes_version  = var.cluster_version
 
+  # SET EXPLICITLY, and it must stay that way (#1921). Unset, Azure derives this itself as
+  # "MC_<resource_group>_<cluster_name>_<location>" and refuses the CREATE with
+  # "400 InvalidParameter: The length of the node resource group name is too long. The maximum
+  # length is 80 and the length of the value provided is 82" — 489 seconds into apply, because a
+  # name that only exists server-side cannot be checked at plan. The value is derived against an
+  # 80-character budget in the root's checks_naming.tf (NAMING-002) and reproduces Azure's own form
+  # byte for byte whenever it fits, so this is a no-op for every cluster that already exists. It is
+  # ForceNew: a value that differs from what a live cluster carries REPLACES the cluster.
+  node_resource_group = var.node_resource_group
+
   # --- Identity -----------------------------------------------------------
   identity {
     type = "SystemAssigned"
