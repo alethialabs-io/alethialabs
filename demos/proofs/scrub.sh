@@ -38,6 +38,7 @@
 scrub_literals_from_env() {
 	local v literals=""
 	for v in "${HCLOUD_TOKEN:-}" "${E2E_GIT_TOKEN:-}" "${ALETHIA_E2E_GIT_TOKEN:-}" \
+		"${HETZNER_S3_ACCESS_KEY:-}" "${HETZNER_S3_SECRET_KEY:-}" \
 		"${AWS_SECRET_ACCESS_KEY:-}" "${AWS_SESSION_TOKEN:-}" \
 		"${ALICLOUD_SECRET_KEY:-}" "${ALICLOUD_SECURITY_TOKEN:-}" "${ALICLOUD_ACCESS_KEY:-}" \
 		"${ALIBABA_CLOUD_ACCESS_KEY_SECRET:-}" "${ALIBABA_CLOUD_SECURITY_TOKEN:-}" \
@@ -503,6 +504,11 @@ EOF
 	local saved_literals="${SCRUB_LITERALS:-}" name missed=""
 	local -a cred_vars=(
 		HCLOUD_TOKEN E2E_GIT_TOKEN ALETHIA_E2E_GIT_TOKEN
+		# Hetzner Object Storage: a SECOND hetzner credential pair, unrelated to HCLOUD_TOKEN and
+		# not derivable from it, that a full-bar leg holds so the `bucket` kind can be proven. Both
+		# halves are listed — an S3 access key is a credential, not an identifier, and covering one
+		# half is the #1854 shape in miniature.
+		HETZNER_S3_ACCESS_KEY HETZNER_S3_SECRET_KEY
 		AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 		# Six names, one AssumeRoleWithOIDC exchange: the alicloud OpenTofu provider and the aliyun
 		# CLI disagree about the spelling, and covering one spelling scrubs the provider's copy

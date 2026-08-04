@@ -345,7 +345,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// FT-5 node-shape guard: the full heavy surface (max-config + all-add-ons) must not be launched on
 	// a node too small to schedule it — a HARD FAIL under REQUIRE (before any provisioning spend),
 	// a warning locally. A no-op unless both heavy dimensions are on.
-	if fatal, msg := t2RequireMaxConfigNodeShape(full); msg != "" {
+	if fatal, msg := t2RequireMaxConfigNodeShape(provider, full); msg != "" {
 		if fatal {
 			t.Fatalf("FT-5 node-shape guard: %s", msg)
 		}
@@ -555,27 +555,39 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	}
 	t.Logf("all %d expected ArgoCD Applications are Healthy+Synced", len(expectedApps))
 
-	// (7.6) MAX-CONFIG SURFACE (FT-5). When ALETHIA_E2E_MAX_CONFIG=1 the deploy seeded all 11 kinds;
-	//       prove each kind's resource GENUINELY landed in the deploy's tofu state — the real-apply
-	//       half of the max-config table. Structural (resource type in state), per-kind, fail-closed:
-	//       a kind whose resource is missing fails the nightly instead of a green "provisioned
-	//       everything" that only stood up cluster+network. A no-op unless max-config is enabled.
+	// (7.6) MAX-CONFIG SURFACE (FT-5). When ALETHIA_E2E_MAX_CONFIG=1 the deploy seeded every kind this
+	//       cloud offers; prove each one GENUINELY landed — the real-apply half of the max-config
+	//       table. Per-kind and fail-closed, under the cell's own verdict: a tofu-carried kind must
+	//       have its resource type in the deploy's state, an in-cluster kind must have its ArgoCD
+	//       Application in the set just driven to Healthy+Synced (expectedApps), and a documented
+	//       ceiling is recorded as an exclusion. There is no "unmapped" escape any more: a cloud with
+	//       no column, or a cell with no verdict, is an ERROR — that hole is why hetzner and alibaba
+	//       used to log a full-surface success line having asserted zero of their 11 kinds. A no-op
+	//       unless max-config is enabled.
 	if MaxConfigEnabled() {
 		stateBytes := cp.StateSnapshot(jobID)
-		missing, unmapped, aerr := AssertMaxConfigKindsInState(stateBytes, provider)
+		proof, aerr := AssertMaxConfigKindsInState(stateBytes, provider, expectedApps)
 		if aerr != nil {
 			t.Fatalf("FT-5 max-config state assertion: %v", aerr)
 		}
-		if len(missing) > 0 {
-			t.Fatalf("FT-5 max-config: %d kind(s) did NOT land in tofu state: %v", len(missing), missing)
+		if len(proof.Missing) > 0 {
+			t.Fatalf("FT-5 max-config: %d kind(s) did NOT land on %s: %v", len(proof.Missing), provider, proof.Missing)
 		}
-		if len(unmapped) > 0 {
-			// Loud, non-fatal: these kinds have no resource-type column for this provider yet (AWS is
-			// wired first). Surfaced so the run can't read as a full-surface proof when it isn't.
-			t.Logf("FT-5 max-config: %d kind(s) not yet asserted on %s (no resource mapping): %v — assert-gap, add the column",
-				len(unmapped), provider, unmapped)
+		if len(proof.Excluded) > 0 {
+			// Not a gap — a DOCUMENTED ceiling (MaxConfigCell.Why). Logged so the run reads as the
+			// surface it actually proved, never as "all 11".
+			t.Logf("FT-5 max-config: %d kind(s) are documented ceilings on %s (no service, no chart): %v",
+				len(proof.Excluded), provider, proof.Excluded)
 		}
-		t.Logf("FT-5 max-config: all mapped kinds present in tofu state on %s", provider)
+		if len(proof.Deferred) > 0 {
+			// DEBT, reported separately from the ceilings on purpose: a chart this repo ships backs
+			// each of these and is simply not wired to the kind (MaxConfigCell.Chart names it). Folding
+			// them into the ceiling line is how a backlog item stops being counted.
+			t.Logf("FT-5 max-config: %d kind(s) are DEFERRED debt on %s (a shipped chart backs them; the mapping is missing): %v",
+				len(proof.Deferred), provider, proof.Deferred)
+		}
+		t.Logf("FT-5 max-config on %s: %d kind(s) proven in tofu state %v, %d proven as converged ArgoCD Applications %v",
+			provider, len(proof.ProvenInTofu), proof.ProvenInTofu, len(proof.ProvenInCluster), proof.ProvenInCluster)
 	}
 
 	// (7.5) CONSOLE → ACTIVE (BYOC A0.5). The runner reported SUCCESS via the SQL SSOT, but the Go
