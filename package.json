@@ -55,6 +55,7 @@
     "wt:rm": "bash scripts/worktree.sh --remove",
     "wt:release": "bash scripts/worktree.sh --release",
     "wt:steal": "bash scripts/worktree.sh --steal",
+    "branch:prune": "bash scripts/branch-prune.sh",
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {

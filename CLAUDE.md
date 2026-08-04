@@ -32,6 +32,8 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 `pnpm wt <name>` creates `../wt-<name>` on `feat/<name>` off `dev`. Commit there, push, open a
 PR into `dev`. `pnpm wt:ls` lists them · `pnpm wt:who` shows holders · `pnpm wt:rm <name>` ·
 `pnpm wt:prune` sweeps landed ones (`--dry-run` previews) · `pnpm wt:release` · `pnpm wt:steal <name>`.
+`pnpm branch:prune` does the same for the *branches* they leave behind (also `--dry-run`); plain
+`git branch -d` cannot, because it asks an ancestry question that a squash merge always answers "no".
 
 A worktree is **owned** while you work in it. Creating, reusing, or writing into one takes a
 lease (`scripts/lib/wt-lease.sh`) keyed on your Claude process. Another instance then cannot
