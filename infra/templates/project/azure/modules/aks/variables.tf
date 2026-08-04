@@ -41,6 +41,18 @@ variable "cluster_name" {
   description = "Name of the AKS cluster"
 }
 
+# The resource group Azure puts the agent pool, VMSS, NICs and load balancers in. Passed IN rather
+# than composed here because it is a function of the PARENT resource group name and the cluster
+# name together, and both are budgeted at the root (checks_naming.tf, NAMING-002) — deriving it here
+# would mean composing two already-budgeted names against a third, tighter cap in a place the root's
+# tests cannot reach. Left unset, Azure derives "MC_<resource_group>_<cluster_name>_<location>"
+# server-side and rejects it at APPLY when that exceeds 80 characters (#1921). No default: a default
+# would silently restore exactly that failure mode.
+variable "node_resource_group" {
+  type        = string
+  description = "Name of the AKS-managed node resource group holding the agent pool infrastructure. Derived with an 80-character budget at the root (NAMING-002); ForceNew, so changing it REPLACES the cluster."
+}
+
 variable "cluster_version" {
   type        = string
   description = "Kubernetes version for the AKS cluster"
