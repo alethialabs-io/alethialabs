@@ -1,0 +1,523 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Config-carriage decisions — the machine-readable half of "a value you typed reaches the plan".
+#
+# `apps/console/scripts/check-config-carriage.mjs` follows every user-settable field from the column
+# the product stores it in, through the Go config-snapshot contract, into the cloud's tfvars, into a
+# resource argument. Where that chain breaks, the guard fails — unless the break is recorded here as
+# a DECISION. The generated board, docs/testing/config-carriage.md, prints every entry.
+#
+# ── WHY THIS IS NOT infra/offer-exclusions.yaml ────────────────────────────────────────────────────
+#
+# Two reasons, and the first is the one that matters:
+#
+#   1. DIFFERENT UNIT. offer-exclusions.yaml decides whether an OFFER is buildable on a cloud — a
+#      choice the canvas presents, like "Valkey" or "IAM authentication". This file decides whether a
+#      FIELD'S VALUE reaches the plan. Those are not the same question and they have different right
+#      answers about the same cell: `cache:multi_az` is offered and buildable on Azure, and
+#      `caches.num_cache_nodes` is collected there and turns into a tier flip that ignores the number
+#      you typed. An offer can be perfectly buildable while the number beside it is discarded — that
+#      is the whole class this guard exists for (#1981: a CIDR allow-list that saved cleanly,
+#      provisioned nothing, and left the cache open).
+#
+#      Key shapes differ for the same reason, and deliberately: an entry here is keyed
+#      `<kind>.<column>` — a DOT, and the storage column's own name — where offer-exclusions is keyed
+#      `<kind>:<variant>[:<option>]` with a colon and the canvas's vocabulary. A key of the wrong
+#      shape matches nothing and silently does nothing, so the two shapes cannot be confused for each
+#      other even by a copy-paste.
+#
+#   2. CONVOY ISOLATION. offer-exclusions.yaml is touched by every parity PR and is a known conflict
+#      hotspot — a draft convoy of twenty cell PRs all editing one file, each rebase re-resolving the
+#      same hunks. A second decision file on a different unit does not need to share that queue.
+#
+# Overlap is expected and is not duplication: where a cloud has no managed product at all, both files
+# say so about their own unit. Where a cell is decided in both, keep the reasons consistent — both
+# print into public matrices, and two documents disagreeing about one cloud is worse than one
+# document saying nothing, because a reader believes them.
+#
+# ── FIELDS ─────────────────────────────────────────────────────────────────────────────────────────
+#
+#   field   — the cell being decided, as `<kind>.<column>`:
+#
+#               <kind>    the component kind, which is the drizzle table minus its `project_` prefix,
+#                         the node registry's `schemaKey`, the CLI's kind name and the ProjectConfig
+#                         json tag — one word, spelled the same in all four places.
+#               <column>  the storage column, NOT the canvas control. The inspector splits
+#                         `node_size` across two controls and `probe` across four; the column is what
+#                         the guard measures, and it is what the failure prints.
+#
+#             Copy the key the guard printed and it will always be right.
+#
+#   cloud   — the template directory name, or "*" for every cloud. "*" is REQUIRED for a hop-1
+#             (`dropped-by-type`) decision: an unmodelled json key is dropped by `json.Unmarshal` on
+#             every cloud at once, so it is a fact about the contract and has no per-cloud answer.
+#
+#   reason  — one line, in the product's voice, printed VERBATIM into docs/testing/config-carriage.md.
+#             Write what a USER gets, not what the code does: these are read by people deciding
+#             whether a cloud can do what they need.
+#
+#   issue   — the tracking issue. Required in `baseline:` (an entry with no issue is an amnesty
+#             nothing will ever come back to collect); optional elsewhere, where it records the
+#             thread the decision was made in.
+#
+#   state   — `baseline:` ONLY, and required there: the state the guard measured, verbatim from its
+#             own report — `dropped-by-type`, `no-carrier`, `unwired-template` or `gated-carrier`.
+#             This is what lets the ratchet tell "the gap was FIXED, delete this" from "the gap
+#             CHANGED SHAPE, update this". Without it the two are one observation and the guard has
+#             to guess; guessing "fixed" for a drifted cell tells a reviewer to delete the record of
+#             something still shipping.
+#
+# ── FOUR SECTIONS, and the difference is the decision each one records ─────────────────────────────
+#
+#   exclusions:         — this cloud will never honor the value. A product or provider ceiling, on the
+#                         record. Not a mute button: the guard RE-READS every excluded cell, and if
+#                         the value is carried and derived today the entry is a false ceiling and
+#                         fails. (#1864: `exclusions:` was the one claim nothing re-read, so any
+#                         measured gap could be discharged by RECLASSIFYING it — green either way.)
+#
+#   baseline:           — it should be honored and is not yet. Real debt, carries `issue:` + `state:`.
+#                         Ratcheted four ways, all of which fail: FIXED (delete it), DRIFTED (update
+#                         the `state:`), UNSTATED (the ratchet cannot adjudicate), and NOT MEASURED —
+#                         which is explicitly NOT a fix. A cell the guard stopped producing tells it
+#                         nothing about whether the gap is still there, and calling that "fixed" is
+#                         how the record of a live gap gets deleted by a green build.
+#
+#   wired:              — it IS honored, through a branch guard the code cannot self-evidence, and a
+#                         person has read the branch and confirmed it. A ⚠️ `gated-carrier` cell means
+#                         the value decides whether a key APPEARS; nothing in the text shows the key
+#                         IS this setting. Neither a ceiling nor debt — a review record, ratcheted:
+#                         when the cell stops reading ⚠️ the entry stops answering anything.
+#
+#                         ⚠️ "The value decides something" is not the same as "the value is honored".
+#                         Azure's cache flips the tier to Standard when the node count exceeds one —
+#                         the switch decides something and the NUMBER is still discarded. That is
+#                         `baseline:`, not this section.
+#
+#   carried_in_cluster: — it IS honored, by a component the platform installs INTO THE CLUSTER rather
+#                         than through OpenTofu. Hop 3 structurally cannot see these: it wants a tfvar
+#                         declared in the template and read by a resource argument, and a Helm chart
+#                         writes no tfvar at all. The other three sections all say something false
+#                         about such a cell — `exclusions:` prints under a heading meaning "this cloud
+#                         cannot", `baseline:` calls shipped code a gap and demands an issue nobody can
+#                         close, and `wired:` is about a branch in provider code there is none of here.
+#
+#                         ⚠️ IT IS A CHECKABLE CLAIM, NOT PROSE, or it becomes the third door into
+#                         #1864. Each entry names WHERE the value is read and the guard re-reads it
+#                         every run. Two evidence forms, at least one required, and both are checked
+#                         when both are given:
+#
+#                           source:     the file the carriage lives in, repo-relative. Required.
+#                           reads:      a literal token that must appear in `source:` (comments
+#                                       stripped — a read that survives only in a comment is not a
+#                                       read). REQUIRED for a `cloud: "*"` entry, where a per-cloud
+#                                       predicate has nothing to say.
+#                           predicate:  a Go `map[string]…` whose KEYS are the clouds the installing
+#                                       component ships for; the entry survives only while the map
+#                                       still lists this cloud.
+#                           by:         the component, for the board (cert-manager, CloudNativePG).
+#
+#                         An entry the guard cannot check FAILS — "I could not verify" never means
+#                         "fine" — and so does one for a cell OpenTofu carries anyway, which would
+#                         credit the wrong mechanism and stay green if the template carriage broke.
+
+exclusions:
+  # ── Hetzner — compute-only by architecture ──────────────────────────────────────────
+  # The same ceiling infra/offer-exclusions.yaml records at the engine level, restated here for the
+  # unit this file measures. Hetzner sells no managed NAT gateway, no WAF and no certificate a
+  # node-terminated cluster could present, so the values these fields collect have nothing on the far
+  # side of the wire to reach. Data-service fields are not listed at all: Hetzner provisions no
+  # managed database, cache, queue or table through OpenTofu, so the guard never measures those cells
+  # (it holds a cloud to a kind's fields only where it provisions that kind) and thirty entries
+  # restating one architectural fact would be noise on a board people are meant to read.
+  - field: network.single_nat_gateway
+    cloud: hetzner
+    reason: Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone.
+  - field: dns.managed_certificate
+    cloud: hetzner
+    reason: Hetzner's managed certificate can only be presented by a Hetzner load balancer, and an Alethia Hetzner cluster takes traffic at the nodes instead — so there is no listener to attach one to, and cert-manager ships no Hetzner DNS01 solver to issue one in-cluster either.
+  - field: dns.waf_enabled
+    cloud: hetzner
+    reason: Hetzner sells no web application firewall — the product does not exist.
+
+  # ── Hetzner cluster sizing — three ceilings, three different reasons ────────────────
+  # Not one fact restated three times, which is why they are three entries with three reasons.
+  #
+  # cluster_version: the provider says so itself. `hetzner_provider.go` forwards `talos_version` and
+  # `kubernetes_version` from provider_config and NOT `config.Cluster.ClusterVersion`, with the
+  # reason inline: Talos installs the version VERBATIM as the component image tag
+  # (registry.k8s.io/kube-apiserver:v<ver>), which only exists per PATCH, and the console collects a
+  # bare MINOR. Forwarding it would resolve to an unpullable tag — a cluster that cannot come up.
+  # The version is pinned in lockstep with the Talos release (Talos v1.13.6 → k8s 1.35.6).
+  #
+  # node_max_size: there is nothing to grow into. The template builds a fixed count of
+  # `hcloud_server` resources (servers.tf:59) from `worker_count`, which the provider derives from
+  # NodeDesiredSize then NodeMinSize. No autoscaler is installed and hcloud has no managed node
+  # group, so a maximum has no meaning.
+  #
+  # node_disk_size_gb: `hcloud_server` takes no root-disk argument in any provider version — the
+  # disk is part of the server type (cpx22 = 2 vCPU / 4 GB / 40 GB). Sizing it means choosing a
+  # different type, which is what the node size control already does.
+  - field: cluster.cluster_version
+    cloud: hetzner
+    reason: A Hetzner cluster's Kubernetes version comes with the Talos release Alethia pins, because Talos installs the exact patch as an image tag and a bare minor version has no image to pull. Pin a different pair through provider_config if you need one.
+  - field: cluster.node_max_size
+    cloud: hetzner
+    reason: Hetzner clusters run a fixed set of servers rather than an autoscaling node group, so there is no upper bound to set — the node count you ask for is the node count you get.
+  - field: cluster.node_disk_size_gb
+    cloud: hetzner
+    reason: A Hetzner server's disk comes with its server type and cannot be sized separately — choose a larger node size to get a larger disk.
+
+  # ── Serverless capacity range — an Aurora Serverless v2 concept ─────────────────────
+  # `min_capacity`/`max_capacity` are ACUs: the range an Aurora Serverless v2 cluster scales its
+  # compute between, wired on AWS as `rds_scaling_config` → `serverlessv2_scaling_configuration`
+  # (modules/rds/rds.tf:39). The other two managed clouds provision PROVISIONED compute and have no
+  # equivalent range to set:
+  #   · azure — `azurerm_postgresql_flexible_server` / `azurerm_mysql_flexible_server`
+  #     (modules/azure-db/main.tf:66,175). Flexible Server compute is a fixed `sku_name`; Azure sells
+  #     no serverless tier for either engine, so there is no floor and ceiling to scale between.
+  #   · gcp — `google_sql_database_instance` (modules/cloud-sql/main.tf:87). Cloud SQL compute is a
+  #     fixed `settings.tier`; scaling it is an instance edit, not a range the instance manages.
+  # Alibaba is deliberately NOT here: `alicloud_db_instance` does expose a serverless configuration,
+  # so that cell is debt rather than a ceiling.
+  #
+  # ⚠️ These four also say the canvas shows an inert control on two clouds. The matching product fix
+  # is to withdraw the offer with `unavailableWhen` — never `visibleWhen`, which would drop the cloud
+  # from `offeredOn` and leave the exclusion matching nothing.
+  - field: databases.min_capacity
+    cloud: azure
+    reason: Azure Database for PostgreSQL and MySQL Flexible Server run on a compute size you choose, not on a capacity range that scales itself — there is no minimum to set. Pick a larger instance class instead.
+  - field: databases.max_capacity
+    cloud: azure
+    reason: Azure Database for PostgreSQL and MySQL Flexible Server run on a compute size you choose, not on a capacity range that scales itself — there is no maximum to set. Pick a larger instance class instead.
+  - field: databases.min_capacity
+    cloud: gcp
+    reason: Cloud SQL runs on a machine type you choose, not on a capacity range that scales itself — there is no minimum to set. Pick a larger instance class instead.
+  - field: databases.max_capacity
+    cloud: gcp
+    reason: Cloud SQL runs on a machine type you choose, not on a capacity range that scales itself — there is no maximum to set. Pick a larger instance class instead.
+
+  # ── Cache engine on the two clouds that sell exactly one ────────────────────────────
+  # The engine choice has ONE offered value on these clouds, and it is the value the template
+  # builds — so nothing is dropped. The catalog SSOT is the evidence and it is the same source the
+  # canvas renders the dropdown from: `catalog.json` live.cacheEngines lists `[redis]` for azure and
+  # for alibaba, against `[redis, valkey]` for aws and gcp. infra/offer-exclusions.yaml already
+  # records the other half of the same fact at the offer level (`cache:valkey` on both, checked
+  # against the pinned providers: azurerm exposes Redis only, and
+  # `alicloud_kvstore_instance.instance_type` takes Redis or Memcache).
+  #
+  # This is the one exclusion shape worth being suspicious of, so state the test it passes: a
+  # single-valued choice is only harmless while the canvas cannot offer a SECOND value. If a Valkey
+  # offer is ever added on either cloud, `cache:valkey` leaves offer-exclusions.yaml and this entry
+  # becomes a live drop — the engine would then have to be carried.
+  - field: caches.engine
+    cloud: azure
+    reason: Azure Managed Redis is the only cache engine offered here, and it is what gets built — there is no second engine for the choice to select between.
+  - field: caches.engine
+    cloud: alibaba
+    reason: ApsaraDB for Redis is the only cache engine offered here, and it is what gets built — there is no second engine for the choice to select between.
+
+  # ── NoSQL: three table models, and the canvas control is DynamoDB-shaped ────────────
+  # `partition_key`, `partition_key_type` and `capacity_mode` describe a DynamoDB table. The other
+  # clouds provision genuinely different products, and the cells below are the places where the
+  # DynamoDB vocabulary has no counterpart to reach:
+  #
+  #   · GCP is Firestore (modules/firestore, one database per project — gcp_provider.go:72-85 spells
+  #     out that what the canvas calls a "table" is a COLLECTION inside it). Firestore documents have
+  #     no partition key: placement is by document path and every field is indexed by default. Nor
+  #     does it have a billing-mode switch — Firestore Native bills per operation, with no
+  #     provisioned-throughput mode to choose instead. `point_in_time_recovery` IS carried, which is
+  #     why the kind is measured on GCP at all.
+  #   · Azure is Cosmos DB, whose partition key IS carried — as a document PATH
+  #     (`partition_key_paths = [each.value.partition_key]`, modules/cosmos-db/main.tf:54). A path has
+  #     no declared scalar TYPE; Cosmos infers it from the document. There is nothing for
+  #     `partition_key_type` to become.
+  #   · Alibaba is Tablestore, and capacity is a property of the INSTANCE, not the table:
+  #     `alicloud_ots_instance.instance_type` (modules/ots/main.tf:21) is the Capacity /
+  #     HighPerformance choice, and `alicloud_ots_table` has no throughput or billing argument at all.
+  #     Same shape as the point-in-time-recovery ceiling #1815 records on the same product.
+  - field: nosql_tables.partition_key
+    cloud: gcp
+    reason: Firestore has no partition key — documents are placed by their path and every field is indexed for you, so there is no key to nominate.
+  - field: nosql_tables.partition_key_type
+    cloud: gcp
+    reason: Firestore has no partition key, so there is no key type to declare.
+  - field: nosql_tables.capacity_mode
+    cloud: gcp
+    reason: Firestore bills per operation and offers no provisioned-throughput mode to switch to.
+  - field: nosql_tables.partition_key_type
+    cloud: azure
+    reason: A Cosmos DB partition key is a path into the document ("/id"), and Cosmos reads the value's type from the document itself — there is no key type to declare separately. The key path you choose IS applied.
+  - field: nosql_tables.capacity_mode
+    cloud: alibaba
+    reason: Tablestore chooses capacity mode on the instance that holds your tables, not on each table, so a per-table setting has nothing to land on.
+
+  # ── Alibaba managed TLS certificate — settled by #1824 ──────────────────────────────
+  # The alicloud provider has no certificate REQUEST resource at all: its certificate resources are
+  # upload-only (PEM material you already hold), private-CA, or attachments to a WAF/ESA instance
+  # this template does not provision. Nothing in the provider exposes the validation challenge the
+  # AWS template consumes, so the shape the other clouds use cannot be written here. The value
+  # reaches tfvars as `alidns_managed_certificate` and no resource reads it, which is exactly what
+  # the guard measures — and the ceiling is the provider's declarative surface, not our backlog.
+  - field: dns.managed_certificate
+    cloud: alibaba
+    reason: Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate.
+    issue: "#1824"
+
+  # ── Keyless database auth on Alibaba — settled by #1510 ─────────────────────────────
+  # RAM governs ApsaraDB's control plane. `ModifyPGHbaConfig` enumerates every auth method RDS
+  # PostgreSQL accepts and it is upstream Postgres's list with no cloud-identity method in it, and
+  # `CreateAccount` makes a password REQUIRED for MySQL with no auth-mode parameter. There is no
+  # data-plane token login for the value to switch on.
+  - field: databases.iam_auth
+    cloud: alibaba
+    reason: Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password.
+    issue: "#1510"
+
+  # ── Ordered delivery on Alibaba — an argument with nothing behind it ────────────────
+  # `alicloud_message_service_queue.queue_type` exists in the pinned provider, and Alibaba's entire
+  # published specification for it is "normal: standard queue. fifo: FIFO queue." No ordering scope,
+  # no message-group key, no throughput ceiling. Wiring the value would ship the thing this guard
+  # exists to prevent: a setting that reaches a real provider argument and promises a behaviour
+  # nobody has stated. packages/core/cloud/queue_ordered_parity_test.go pins the absence.
+  - field: queues.ordered
+    cloud: alibaba
+    reason: Alibaba Cloud's queue service accepts a FIFO queue type but publishes no ordering guarantee behind it — no delivery order, no message key to group by, no throughput limit — so Alethia does not offer ordered delivery there.
+    issue: "#1812"
+
+  # ── Point-in-time recovery on Alibaba Tablestore — not a property of the table ──────
+  # `alicloud_ots_table` has no backup or recovery argument of any kind, and the Tablestore API has
+  # none either. Tablestore CAN be restored — through Cloud Backup, a separately-billed service whose
+  # restore points are scheduled backup runs rather than a continuous log — so the honest statement
+  # is that the capability is not expressible as a property of the table, not that it does not exist.
+  - field: nosql_tables.point_in_time_recovery
+    cloud: alibaba
+    reason: Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do.
+    issue: "#1815"
+
+  # ── Object storage that cannot be UN-encrypted ─────────────────────────────────────
+  # The control offers both positions and these three clouds only have one: S3 has applied SSE-S3 to
+  # every new object since January 2023 with no way to turn it off, Cloud Storage encrypts every
+  # object server-side and exposes no disable, and Azure Storage Service Encryption is permanent on
+  # every account. So the OFF position is the unbuildable one, and it is unbuildable because the
+  # platform refuses it. Recorded rather than assumed, so the board says out loud that the control is
+  # informational on three of the four clouds that show it — the honest alternative is to stop
+  # showing it, which is a canvas change rather than a template one.
+  - field: storage_buckets.encryption_enabled
+    cloud: aws
+    reason: S3 encrypts every object at rest and the setting cannot be turned off — this control is informational on AWS.
+  - field: storage_buckets.encryption_enabled
+    cloud: gcp
+    reason: Cloud Storage encrypts every object at rest and the setting cannot be turned off — this control is informational on Google Cloud.
+  - field: storage_buckets.encryption_enabled
+    cloud: azure
+    reason: Azure Storage encrypts every blob at rest and the setting cannot be turned off — this control is informational on Azure.
+
+# ── Baseline — real gaps, already boarded ──────────────────────────────────────────────
+#
+# NOT exclusions. These are values a cloud should honor and does not yet, each carrying the issue
+# tracking it. They do not fail the build — the guard could otherwise never land on a codebase that
+# already had the debt — but a NEW gap does, and the list RATCHETS: when a cell is MEASURED and comes
+# out honored, the guard fails until its entry is deleted. It can only shrink.
+#
+# Delete the entry in the same PR that fixes the gap.
+baseline:
+  # ── The two that named this class ──────────────────────────────────────────────────
+  # Both are one line of Go: a field on the struct with the column's exact json tag, then a read in
+  # the providers that can honor it. They are boarded rather than fixed here because this lane built
+  # the guard; the guard's whole point is that the next one of these cannot ship silently.
+  #
+  # #1981 is the security-relevant one. The AWS template is FULLY WIRED — `redis_allowed_cidr_blocks`
+  # is declared in variables.tf, threaded through locals.tf and consumed by the ElastiCache security
+  # group — so every hop except the contract is already built, and the provider hardcodes an empty
+  # list because the field it would read does not exist. A customer types an allow-list, it saves,
+  # and the cache is provisioned open.
+  - field: caches.allowed_cidr_blocks
+    cloud: "*"
+    reason: The network allow-list you set on a cache is not applied — the cache is created with the template's own default access rules instead.
+    issue: "#1981"
+    state: dropped-by-type
+  - field: nosql_tables.global_replicas
+    cloud: "*"
+    reason: The replica regions you choose for a table are not created — the table is provisioned in its own region only.
+    issue: "#1982"
+    state: dropped-by-type
+
+  # ── The same shape on the network, and it is the worst of the three ────────────────
+  # #1981's cache template is fully wired and only the Go field is missing. This one has no
+  # variable on ANY of the five templates either — the value is collected in the inspector
+  # (config-schema.ts:875) and the CLI (project-components.ts:91) and there is nowhere for it to go.
+  # Boarded rather than excluded because the decision is not "no cloud can do this" — every cloud
+  # can express a source-range allow-list — it is that nobody has said what the control means.
+  - field: network.allowed_cidr_blocks
+    cloud: "*"
+    reason: The network allow-list is not applied — the network is created with the template's own default access rules instead.
+    issue: "#1987"
+    state: dropped-by-type
+
+  # ── Container registry image scanning on Alibaba ───────────────────────────────────
+  # Alibaba sells image scanning, so this is debt rather than a ceiling — but it is not a wiring
+  # change: scanning is `alicloud_cr_scan_rule`, an instance-scoped SIBLING resource rather than an
+  # argument on the repository, and Alibaba's own guide requires a VPC on the Enterprise Edition
+  # instance, which `modules/cr` does not configure. Wiring it anyway would satisfy the guard while
+  # the ON position did nothing, which is the defect the guard exists to catch, not a way to pass it.
+  - field: container_registries.vulnerability_scanning
+    cloud: alibaba
+    reason: Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice.
+    issue: "#1845"
+    state: no-carrier
+
+  # ── Azure DNS: an existing zone is declared, checked, and then ignored ──────────────
+  # `azure_dns_zone_name` is declared (variables.tf:373) and read ONLY by a check block asserting it
+  # is non-empty — and a check never blocks an apply. modules/azure-dns/main.tf:1 then creates a NEW
+  # zone from the domain unconditionally, so naming the zone you own buys a second one with
+  # different name servers. hetzner and aws (#1816) already gate creation on `ZoneID == ""`.
+  - field: dns.zone_id
+    cloud: azure
+    reason: An existing Azure DNS zone is not used — Alethia creates a new zone for the domain instead, with different name servers from the one you named.
+    issue: "#1992"
+    state: unwired-template
+
+  # ── Azure cache: two knobs, two different shapes of drop ───────────────────────────
+  # The version is the textbook unwired template — carried, declared, and named by no resource.
+  # The node count is the reason ⚠️ gated-carrier exists as a state: the value decides whether
+  # `azure_cache_sku = "Standard"` appears and never becomes a count, so two nodes and twenty
+  # produce the same plan. It is recorded here rather than in `wired:` precisely because the branch
+  # does NOT carry the setting it is named after.
+  - field: caches.engine_version
+    cloud: azure
+    reason: The Redis version you choose is not applied — the cache is created on the provider's default version.
+    issue: "#1993"
+    state: unwired-template
+  - field: caches.num_cache_nodes
+    cloud: azure
+    reason: The node count you set on a cache is not applied — asking for more than one node moves the cache to the Standard tier, and the number itself is discarded.
+    issue: "#1993"
+    state: gated-carrier
+
+  # ── Azure Service Bus: dropped at a module boundary, not at the root ────────────────
+  # The root type is `map(any)` so the key passes; the module's `queues` is a typed object that does
+  # not name `default_message_ttl`, and OpenTofu drops object attributes a declared type omits. No
+  # error, no plan diff. `delay_seconds` and `forward_dead_lettered_messages_to` ride the same path.
+  - field: queues.message_retention
+    cloud: azure
+    reason: The message retention you set is not applied — the queue keeps the Service Bus default.
+    issue: "#1994"
+    state: unwired-template
+
+  # ── Azure bucket CORS: the only cloud of five that drops it ────────────────────────
+  # alibaba, aws, gcp and hetzner all carry CorsOrigins; nothing reachable from
+  # (*azureProvider).ProviderTfvars reads it. blob_properties is already rendered for versioning, so
+  # the landing site exists.
+  - field: storage_buckets.cors_origins
+    cloud: azure
+    reason: The CORS origins you allow on a bucket are not applied — browser requests from those origins are refused.
+    issue: "#1995"
+    state: no-carrier
+
+  # ── Alibaba: expressible and not expressed ─────────────────────────────────────────
+  # Deliberately NOT folded into the azure/gcp min/max_capacity ceiling above. Azure Flexible Server
+  # and Cloud SQL provision fixed-size instances and genuinely cannot express a range;
+  # `alicloud_db_instance` (modules/rds/main.tf:25) exposes a serverless configuration and simply
+  # does not receive one. Recording those together would have written a false ceiling.
+  - field: databases.min_capacity
+    cloud: alibaba
+    reason: The capacity range you set is not applied — the database is created at a fixed instance size.
+    issue: "#1996"
+    state: no-carrier
+  - field: databases.max_capacity
+    cloud: alibaba
+    reason: The capacity range you set is not applied — the database is created at a fixed instance size.
+    issue: "#1996"
+    state: no-carrier
+  # Baseline rather than an exclusion ON PURPOSE: ApsaraDB may encode topology in the instance class,
+  # in which case this becomes an evidence-backed exclusion. Nobody has read the schema yet, and an
+  # unread assumption is debt, not a ceiling.
+  - field: caches.num_cache_nodes
+    cloud: alibaba
+    reason: The node count you set on a cache is not applied — the cache is created with the node count its instance class implies.
+    issue: "#1996"
+    state: no-carrier
+
+# ── Branch-guard wirings a person has READ and found correct ───────────────────────────
+#
+# A ⚠️ `gated-carrier` cell means the value decides whether a key appears, but nothing in the text
+# shows the key IS this setting — a question about semantics a text-reading guard cannot answer
+# (#1829/#1830). Every ⚠️ cell must therefore be declared: `baseline:` when the wiring is wrong or
+# unreviewed, or here when someone has read the branch and it does what it says.
+wired:
+  # STANDARD_HA is Memorystore's replicated, zone-redundant tier. GCP exposes no separate multi-AZ
+  # flag — the tier IS the mechanism — so this is the correct wiring for the value. (It is also set
+  # when the node count exceeds one, which is a superset, not a substitution.)
+  - field: caches.multi_az
+    cloud: gcp
+    reason: Choosing multi-AZ puts the cache on Memorystore's replicated STANDARD_HA tier, which is how zone redundancy is bought on Google Cloud.
+  # `length` + `special` are the generation parameters and the `else` writes `manual = true`. That is
+  # precisely the generate-vs-bring-your-own choice the control offers.
+  - field: secrets.generate
+    cloud: aws
+    reason: Asking Alethia to generate a secret sends the length and special-character rules to AWS; supplying your own sends it as a manual value instead.
+
+# ── Carried in-cluster — honored, but not by OpenTofu ──────────────────────────────────
+#
+# The value IS applied on these clouds, by a component the platform installs into the cluster. Each
+# entry names where to verify that and the guard re-reads it every run — see the header for why that
+# is the difference between a decision and a mute button.
+carried_in_cluster:
+  # Azure's certificate control used to build a purchased App Service Certificate that could not bind
+  # to an AKS ingress under any configuration: billed, and terminating nothing (#1825). cert-manager
+  # issues over an ACME DNS01 challenge using the identity external-dns already holds, and AGIC lifts
+  # the resulting Secret onto the Application Gateway listener.
+  - field: dns.managed_certificate
+    cloud: azure
+    by: cert-manager
+    predicate: certManagerDNS01Solvers
+    source: packages/core/argocd/infra_facts.go
+    reason: Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the Application Gateway.
+    issue: "#1825"
+  # GCP's certificate was not broken; it goes for a different reason — one mechanism instead of two
+  # (#1858) — and it takes three real failure modes with it: a single unresolvable SAN holding the
+  # whole certificate in FAILED_NOT_VISIBLE, a SAN change REPLACING the certificate, and no wildcard
+  # issuance at all. The GKE Ingress consumes the Secret via `spec.tls`.
+  - field: dns.managed_certificate
+    cloud: gcp
+    by: cert-manager
+    predicate: certManagerDNS01Solvers
+    source: packages/core/argocd/infra_facts.go
+    reason: Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the GKE Ingress from a Kubernetes Secret.
+    issue: "#1858"
+
+  # ── The Hetzner in-cluster sizing fields ───────────────────────────────────────────
+  # These four are `cloud: "*"` because they break at HOP 1 — no field on the Go struct, so no cloud
+  # can read them — and that is CORRECT here rather than a gap: the canvas only shows them when the
+  # provider is Hetzner, and on Hetzner a data service is a Helm chart, so the value is resolved in
+  # TypeScript into the chart's values and travels to the runner as `addons[].values`. It never needs
+  # to be a ProjectConfig field, and adding one would create a second, silent path.
+  #
+  # ⚠️ This is the entry shape most likely to be misused, so read the rule again: it applies because
+  # the value demonstrably IS read on the way to the chart, and `reads:` is what proves that on every
+  # run. A field that is merely "handled elsewhere, probably" is a `baseline:` entry, not this.
+  - field: databases.storage_gb
+    cloud: "*"
+    by: CloudNativePG chart
+    source: apps/console/lib/cloud-providers/hetzner-services.ts
+    reads: db.storage_gb
+    reason: The storage you size an in-cluster Postgres with becomes the CloudNativePG cluster's persistent volume.
+  - field: databases.replicas
+    cloud: "*"
+    by: CloudNativePG chart
+    source: apps/console/lib/cloud-providers/hetzner-services.ts
+    reads: db.replicas
+    reason: The instance count you set on an in-cluster Postgres becomes the CloudNativePG cluster's instance count — one primary plus replicas.
+  - field: caches.storage_gb
+    cloud: "*"
+    by: Valkey chart
+    source: apps/console/lib/cloud-providers/hetzner-services.ts
+    reads: cache.storage_gb
+    reason: The storage you size an in-cluster cache with becomes the Valkey chart's persistent volume, falling back to the memory size when you leave it unset.
+  - field: queues.storage_gb
+    cloud: "*"
+    by: RabbitMQ chart
+    source: apps/console/lib/cloud-providers/hetzner-services.ts
+    reads: queue.storage_gb
+    reason: The storage you size an in-cluster queue with becomes the RabbitMQ chart's persistent volume.
