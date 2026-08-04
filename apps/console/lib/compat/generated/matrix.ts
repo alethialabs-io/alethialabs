@@ -34,7 +34,29 @@ export interface K8sRange {
 	note?: string;
 }
 
-/** A build-time version coupling (Go const ↔ Dockerfile ARG). Data only. */
+/** A CI workflow whose top-level `env` carries another copy of a coupled version. */
+export interface CouplingWorkflow {
+	path: string;
+	env_key: string;
+	note?: string;
+}
+
+/** One documented departure from a coupling inside a workflow (#1931). */
+export interface CouplingWorkflowExclusion {
+	id: string;
+	workflow: string;
+	env_key: string;
+	value: string;
+	scope?: string;
+	reason?: string;
+	upstream?: string;
+	upstream_fix?: string;
+	why_this_value?: string;
+	retire_when?: string;
+	issue?: number;
+}
+
+/** A build-time version coupling (Go const ↔ Dockerfile ARG ↔ CI workflow). Data only. */
 export interface StaticCoupling {
 	id: string;
 	title?: string;
@@ -42,6 +64,8 @@ export interface StaticCoupling {
 	go_const?: string;
 	dockerfile_arg?: string;
 	dockerfile?: string;
+	workflows?: CouplingWorkflow[];
+	workflow_exclusions?: CouplingWorkflowExclusion[];
 	note?: string;
 }
 
@@ -271,12 +295,34 @@ export const MATRIX: Matrix = {
 			},
 			{
 				"id": "tofu",
-				"title": "OpenTofu Go const ↔ runner Dockerfile ARG",
+				"title": "OpenTofu Go const ↔ runner Dockerfile ARG ↔ project-template gate",
 				"value": "1.9.0",
 				"go_const": "packages/core/tofu/tofu.go",
 				"dockerfile_arg": "TOFU_VERSION",
 				"dockerfile": "apps/runner/Dockerfile.base",
-				"note": "DefaultIaCVersion must match the ARG baked into the runner image."
+				"workflows": [
+					{
+						"path": ".github/workflows/infra-templates.yml",
+						"env_key": "TOFU_VERSION",
+						"note": "The gate whose whole job is to prove the project templates plan. It ran 1.10.10 against a runner that applies 1.9.0 for the life of the templates (#1931); the two versions disagree on || short-circuiting, so the gate proved nothing about the engine that runs them."
+					}
+				],
+				"workflow_exclusions": [
+					{
+						"id": "hetzner-tofu-test",
+						"workflow": ".github/workflows/infra-templates.yml",
+						"env_key": "TOFU_TEST_EXCLUSION_VERSION",
+						"value": "1.9.4",
+						"scope": "infra/templates/project/hetzner — `tofu test` (both invocations: the workflow's own step and the one inside .github/actions/iac-checks) plus, as a consequence of where the binary swap has to sit, `tofu fmt -check`. `tofu validate`, the step that evaluates the template, still runs on the coupled value.",
+						"reason": "OpenTofu 1.9.0 CRASHES (nil pointer, cty.testConformance via readDataSource) composing a mock value for data.talos_image_factory_extensions_versions.this, whose schema uses a structural NestedType attribute. It is a `tofu test` mock-composer bug, not a plan bug — a real provider read never goes through MockValueComposer.",
+						"upstream": "https://github.com/opentofu/opentofu/issues/2993",
+						"upstream_fix": "https://github.com/opentofu/opentofu/pull/2994",
+						"why_this_value": "1.9.4 is the newest patch on the runner's own 1.9 minor. It carries the mock fix and still does NOT short-circuit ||, so hetzner's suite is judged on the shipped evaluation semantics — a fallback to 1.10.x would silently restore short-circuiting and keep hiding the very class this coupling exists to catch.",
+						"retire_when": "the runner's tofu moves to >= 1.9.4 (a patch bump on the same minor); then delete this exclusion and the workflow step that reads it.",
+						"issue": 1931
+					}
+				],
+				"note": "DefaultIaCVersion must match the ARG baked into the runner image, and the project-template gate must run that same engine."
 			}
 		]
 	};

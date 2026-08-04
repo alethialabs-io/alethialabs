@@ -17,11 +17,12 @@ check "ack_rrsa_provider_present" {
     #
     #   fixture: !requested || (… && module.x[0].out != null), module absent
     #   1.9.0   (apps/runner/Dockerfile.base TOFU_VERSION, compat matrix `tofu`) → Invalid index
-    #   1.10.10 (what infra-templates.yml gates with) and 1.12.3                 → plans clean
+    #   1.10.10 (what infra-templates.yml gated with until #1931) and 1.12.3     → plans clean
     #
     # Strip the `try()` here and the alibaba template stops planning on every cluster-less project,
     # which is how the same expression on gcp (checks_data.tf) took the gcp nightly leg down at
-    # `planning`. The template gate did not see it because it runs 1.10.10.
+    # `planning`. The template gate did not see it because it ran 1.10.10; #1931 coupled that env
+    # to compat matrix `static_couplings[tofu]`, so it now runs the engine the runner applies.
     #
     # What the note got right, and still holds: the `try()` cannot hide a rename, because the
     # surrounding `length(trimspace(…)) > 0` fails the check on "" just as loudly.
