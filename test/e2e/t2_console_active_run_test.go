@@ -77,7 +77,7 @@ func setupA05(t *testing.T, ctx context.Context, cp *ControlPlane, root, project
 // (with per-run dynamic overrides) under ALETHIA_E2E_A05_REAL_SNAPSHOT. `full` clones `base` and
 // layers the A0.6 apps/BYO repo wiring + the per-cloud cluster-json override — the exact snapshot
 // the runner consumes. Cloning keeps `base` pristine so fidelity is judged on the un-mutated shape.
-func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, keyless keylessDBConfig, keylessEnabled bool, s *a05Session) (base, full map[string]any, err error) {
+func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, keyless keylessDBConfig, keylessEnabled bool, registry xacctRegistryConfig, registryEnabled bool, s *a05Session) (base, full map[string]any, err error) {
 	t.Helper()
 	if s.enabled && a05RealSnapshotEnabled() {
 		envID := ""
@@ -130,6 +130,18 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 		keyless.applyToSnapshot(full)
 		t.Logf("#1511: seeding the DEPLOY job with an iam_auth %s database + a database binding on service %q",
 			keyless.engine, keyless.serviceName)
+	}
+	// #1047: append the cross-account registry row + the service whose image lives in it. AFTER
+	// MaxConfigSnapshot for the same reason as #1268 — it assigns `container_registries` wholesale,
+	// so an earlier layer would be silently dropped on a full-bar run. Appending (not assigning) also
+	// leaves max-config's NATIVE registry row intact: a keyless registry sets the separate
+	// `registry_pull_provider` guard rather than `registry_provider`, so the cluster keeps its own
+	// registry and gains a foreign-account pull. On `full` ONLY (never `base`, the A0.5 fidelity
+	// target).
+	if registryEnabled {
+		registry.applyToSnapshot(full)
+		t.Logf("#1047: seeding the DEPLOY job with a %s registry row + service %q running %q",
+			registry.connectorSlug(), registry.serviceName, registry.image)
 	}
 	// Merge the per-cloud cluster shape override into the `cluster` block. Malformed JSON is a loud
 	// failure — a workflow typo must not silently provision the wrong shape.
