@@ -470,6 +470,40 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		return nil, err
 	}
 
+	// Config validation — the seam ProviderTfvars never had (#1967). RunDeployV2 serves BOTH
+	// plan and apply (params.DryRun), so this one site refuses a bad value at plan time AND at
+	// apply time.
+	//
+	// It sits BELOW the placement dispatch on purpose, not beside ValidatePlacement. Every rule
+	// in cloud/validate.go is derived from a project template's own literals and may only ever
+	// refuse what that template would refuse. The dedicated path — the one this line is on — is
+	// the only one that renders those templates:
+	//
+	//   · placementNamespaceAWS deploys onto an EXISTING shared Fabric cluster by keyless
+	//     re-mint. No tofu runs, and it reads none of node_min/max/desired_size,
+	//     node_disk_size_gb or network.cidr_block. The canvas builds a cluster node for every
+	//     project regardless of placement, so those fields EXIST and can hold anything on a
+	//     namespace env — validating them there would refuse a project that deploys fine today,
+	//     against floors from a template that is never rendered.
+	//   · placementVcluster is the same story, and placementUnactivated already fails closed
+	//     with a message about the placement, which a sizing error would only obscure.
+	//
+	// BYO IaC is excluded for the reason ValidatePlacement is: a customer's own module owns its
+	// resource graph and our template floors say nothing about it.
+	//
+	// DELIBERATELY ASYMMETRIC, in the other direction too: this is the ONLY path that calls
+	// ValidateConfig. destroy.go, drift.go and state_import.go call ProviderTfvars as well, and
+	// they must NOT gain this check — a stack that was already applied carrying a bad value has
+	// to stay destroyable, or a config mistake becomes an un-teardownable stack with live cloud
+	// resources and a running bill.
+	//
+	// Neither half of that asymmetry is an oversight. Do not "complete" it later.
+	if !byoIac {
+		if err := provider.ValidateConfig(vc); err != nil {
+			return nil, err
+		}
+	}
+
 	stdout := params.Stdout
 	if stdout == nil {
 		stdout = os.Stdout

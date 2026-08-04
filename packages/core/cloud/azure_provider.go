@@ -22,6 +22,23 @@ func (p *azureProvider) RequiredCLIs() []string {
 	return []string{"kubectl", "helm"}
 }
 
+// ValidateConfig refuses an Azure project config the AKS templates cannot provision: the shared
+// node-pool sizing invariants, the `aks_disk_size_gb` floor (30 GB — the Azure OS-disk minimum,
+// which the canvas's single cross-cloud `min: 20` undershoots), and the VNet-CIDR floor implied
+// by the four /20 subnets the vnet module carves.
+func (p *azureProvider) ValidateConfig(config *types.ProjectConfig) error {
+	if config == nil {
+		return fmt.Errorf("ProjectConfig is required")
+	}
+	if err := validateNodeSizing(config); err != nil {
+		return err
+	}
+	if err := validateNodeDiskSize(config, "aks_disk_size_gb", azureNodeDiskFloorGB); err != nil {
+		return err
+	}
+	return validateNetworkCIDR(config, "vnet_cidr", azureMaxNetworkPrefix)
+}
+
 func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	wafEnabled := config.DNS.WafEnabled

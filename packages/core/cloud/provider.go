@@ -15,6 +15,14 @@ type CloudProvider interface {
 	Name() string
 	RequiredCLIs() []string
 	ProviderTfvars(config *types.ProjectConfig) map[string]interface{}
+	// ValidateConfig refuses a project config this cloud's templates cannot provision.
+	//
+	// It is a SIBLING of ProviderTfvars, not an error return added to it, on purpose:
+	// ProviderTfvars is also called by destroy, drift and state import, and those paths must
+	// keep working on a stack that was already applied with a bad value. Only the deploy/plan
+	// path calls this (packages/core/provisioner/deploy.go) — the asymmetry is deliberate and
+	// documented at that call site. See validate.go for the rules and the drift guard.
+	ValidateConfig(config *types.ProjectConfig) error
 	ConfigureKubeconfig(ctx context.Context, config *types.ProjectConfig, outputs map[string]interface{}, stdout io.Writer) error
 }
 
