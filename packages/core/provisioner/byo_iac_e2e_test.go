@@ -30,8 +30,26 @@
 // The BYO deploy/drift/destroy path rejects a `file://` repo_url at the untrusted
 // boundary (validateByoRepoURL); only the in-package test escape `allowInsecureRepoURLForTest`
 // re-admits it for a local git fixture. That escape is an UNEXPORTED package var, so a
-// hermetic BYO e2e over a local fixture must live INSIDE this package. The separate-binary
-// T1 in test/e2e would need a real https/ssh git server to drive the BYO path — a follow-up.
+// HERMETIC BYO e2e — one that runs with no network and no account, which is what makes it
+// safe to keep in the merge queue — must live INSIDE this package.
+//
+// This note used to add that a separate-binary tier "would need a real https/ssh git server".
+// That was wrong, and #1765 corrected it: a PUBLIC repo needs no git server and no token at
+// all. prepareByoIacWorkdir clones anonymously when the token is empty and validateByoRepoURL
+// accepts https, and the T2 harness seeds jobs by direct SQL (test/e2e/controlplane.go), so it
+// can put `iac_source` straight into config_snapshot without going through
+// attachIacSource/scanIacSource. The cloud tier now exists: test/e2e/t2_byo_iac_run_test.go
+// drives the customer's own module out of the public alethialabs-io/enterprise-demo.
+//
+// The two tiers prove DIFFERENT things and neither replaces the other:
+//
+//	here (T1)  hermetic, free, runs on every PR — the lifecycle over a local fixture, plus the
+//	           TOCTOU pinned-commit property, which needs a repo the test can push a second
+//	           commit to and therefore CANNOT be a public repo it does not control.
+//	T2 (#1765) real cloud, main-gated — induces drift OUT OF BAND and proves the posture flips
+//	           and then heals, which needs a real mutable cloud resource and so can never be
+//	           hermetic.
+//
 // This test still drives the REAL provisioner spine (real tofu init/plan/apply/refresh/
 // destroy, real iacsafety gate, real HTTP state backend, real kind cluster), which is the
 // BYO-specific risk surface end to end.
