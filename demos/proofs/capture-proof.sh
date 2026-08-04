@@ -327,9 +327,42 @@ keyless-db: ${keyless_verdict:-n/a (#1511 keyless DB auth off or not reached)}
 EOF
 
 # ── FAIL-CLOSED tripwire: the finished bundle MUST be grep-clean. A surviving secret makes
-#    this exit non-zero → the step goes RED and nothing is uploaded/committed. ──
+#    this exit non-zero → the step goes RED.
+#
+#    DELETING the bundle is what makes "not uploading" true (#1937). The workflow's
+#    `Upload proof artifact` step is `if: always()` and uploads `demos/proofs/<provider>/`
+#    whatever happened here — so exiting non-zero while leaving the bundle on disk published
+#    the exact bundle that had just failed its own secret tripwire, on a PUBLIC repo, with the
+#    job showing `Capture proof: failure` → `Upload proof artifact: success`. That is #1854's
+#    shape on the sibling path: scrub-runner-log.sh was taught to `rm -f` its output before
+#    failing, and this path was not.
+#
+#    Only THIS capture's directory goes. The provider dir also holds committed historical
+#    proofs, which are already scrubbed and are not ours to delete. The marker left behind says
+#    a capture happened and was withheld, so an empty slot cannot be misread as "nothing ran". ──
 if ! assert_grep_clean "$out"; then
-	echo "::error::proof capture ABORTED — the bundle failed the secret grep-clean tripwire. Not uploading." >&2
+	# Never let a computed path reach `rm -rf` unchecked: refuse anything that is not this
+	# capture's own timestamped directory under the proofs tree.
+	case "$out" in
+	"$root/demos/proofs/$provider/$stamp")
+		[ -n "$provider" ] && [ -n "$stamp" ] && rm -rf "$out"
+		;;
+	*)
+		echo "::error::proof capture: refusing to delete an unexpected output path ($out) — remove it by hand." >&2
+		exit 1
+		;;
+	esac
+	mkdir -p "$out"
+	cat >"$out/CAPTURE-ABORTED.txt" <<EOF
+proof capture ABORTED for ${provider} at ${stamp}.
+
+The finished bundle failed the secret grep-clean tripwire, so every captured file was
+DELETED rather than uploaded. Nothing from this capture was published.
+
+The workflow log for this step names the offending key (value withheld). Fix that, then
+re-run — do not weaken the tripwire to get the artifact back.
+EOF
+	echo "::error::proof capture ABORTED — the bundle failed the secret grep-clean tripwire. Captured files deleted; not uploading." >&2
 	exit 1
 fi
 echo "✓ proof bundle scrubbed + grep-clean: $out"
