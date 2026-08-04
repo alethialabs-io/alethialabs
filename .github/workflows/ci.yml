@@ -450,9 +450,16 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add .github/badges/coverage.json
             # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
-            # commits to main; this CI-authored badge commit to main is legitimate.
+            # commits to main; this CI-authored badge commit is legitimate.
             git commit --no-verify -m "chore(ci): update coverage badge [skip ci]"
-            git push || echo "::warning::badge push skipped (branch protection?)"
+            # Publish to the unprotected orphan `badges` branch, NOT to main. `protect-main` is
+            # enforcement:active with bypass_actors:[] and a pull_request rule, so a direct push
+            # to refs/heads/main is refused with GH006 — contents:write on the token is
+            # irrelevant, the ruleset denies the ref update. See publish_badge in the Go badge
+            # job below for the full diagnosis; this badge was dead for the same reason.
+            #
+            # NO `|| true`. A push that cannot land must RED this job.
+            git push --force origin HEAD:badges
           fi
 
   guards:
@@ -693,6 +700,22 @@ jobs:
           go build ./...
           go vet ./...
           go test -coverprofile=cover.out ./...
+      # Per-package statement-coverage RATCHET: coverage may rise, never fall. Reads the cover.out
+      # written directly above — it does NOT re-run the suite.
+      #
+      # No `working-directory`: the script cd's to the repo root itself, so it is invoked
+      # identically for every module and the fix command it prints needs no cd puzzle.
+      #
+      # No `if: always()`: when the step above fails there is no usable profile, and reporting a
+      # coverage collapse on top of a test failure would misattribute the cause.
+      #
+      # This blocks a PR that lowers coverage in ANY package, including one the author does not
+      # own. That is deliberate. Every false-failure path is fail-OPEN and enumerated in the
+      # script header — the floors carry a fingerprint of the environment that recorded them, and
+      # a mismatch (including a different OS) demotes failures to warnings rather than blaming
+      # coverage for a toolchain change.
+      - name: Coverage ratchet (per package, no regressions)
+        run: bash scripts/go-coverage.sh --module ${{ matrix.module }}
       # Each Go module must be tidy STANDALONE (no go.work) — the CLI mirror + GoReleaser build
       # apps/cli outside the workspace, where go.work can't paper over a missing require. This guard
       # fails the PR instead of the (post-merge) mirror when go.mod/go.sum drift standalone.
@@ -724,7 +747,20 @@ jobs:
           GOWORK=off go vet -tags=e2e_t1 ./...
           GOWORK=off go vet -tags=e2e_t2 ./...
           GOWORK=off go vet -tags=e2e_b6 ./...
-          GOWORK=off go test ./...
+          GOWORK=off go test -coverprofile=cover.out ./...
+      # test/e2e is the FOURTH Go module and has no matrix leg of its own — it is exercised from
+      # inside the packages/core leg above, which is why its 2,193 statements have never been
+      # coverage-measured. Its ratchet is therefore an explicit step here rather than a matrix
+      # entry.
+      #
+      # Its floors were recorded by the determinism probe, whose test/e2e leg installs no tofu,
+      # while this leg does. That makes the recorded floor CONSERVATIVE, not wrong: extra tools
+      # can only raise coverage, so the real measurement clears the floor with margin, and if the
+      # tofu install ever breaks, coverage falls back to exactly the recorded value and still
+      # passes. It tightens on the first `--update`.
+      - name: Coverage ratchet — test/e2e harness
+        if: matrix.module == 'packages/core'
+        run: bash scripts/go-coverage.sh --module test/e2e
       - name: CLI logic-scope coverage gate (≥90%)
         if: matrix.module == 'apps/cli'
         working-directory: ${{ matrix.module }}
@@ -959,9 +995,26 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add .github/badges/go-coverage.json
             # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
-            # commits to main; this CI-authored badge commit to main is legitimate.
+            # commits to main; this CI-authored badge commit is legitimate.
             git commit --no-verify -m "chore(ci): update go coverage badge [skip ci]"
-            git push || echo "::warning::badge push skipped (branch protection?)"
+            # WHY NOT `git push` TO MAIN, AND WHY NO `|| true`:
+            #
+            # `protect-main` (infra/github/main.tf) is enforcement:active with bypass_actors:[]
+            # and a pull_request rule, so EVERY update to refs/heads/main must arrive via a PR.
+            # This push was refused with `GH006: Protected branch update failed … Changes must be
+            # made through a pull request`, and `|| echo "::warning::badge push skipped"` turned
+            # that hard failure into a green job. `permissions: contents: write` never mattered —
+            # the token has the permission, the ruleset denies the ref update.
+            #
+            # Consequence: this job had NEVER pushed successfully. .github/badges/go-coverage.json
+            # has exactly one commit in its history (23892e35, 2026-06-28, hand-authored); the
+            # job was added 2026-06-30 and the ruleset created 2026-07-03. The README advertised
+            # 21.6% for five weeks while the real aggregate was 61.2% — a 40-point error that the
+            # swallowed exit code hid. The TypeScript badge above was dead for the same reason.
+            #
+            # The rulesets match only refs/heads/{dev,main,staging} with empty excludes, so the
+            # orphan `badges` branch is writable with no Terraform apply and no hole in main.
+            git push --force origin HEAD:badges
           fi
 
   mutation:
