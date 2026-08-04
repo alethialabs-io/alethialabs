@@ -56,9 +56,10 @@ case "$cloud" in
   *) echo "unknown cloud $cloud" >&2; exit 2 ;;
 esac
 
-# The REAL test name — never an aspirational one. registry-e2e.sh invokes TestT2XacctRegistry, which
-# exists in no file, so it has recorded BLOCKED forever; a script that names a test nobody wrote is
-# worse than no script.
+# The REAL test name — never an aspirational one. registry-e2e.sh invoked TestT2XacctRegistry, which
+# existed in no file, so it recorded BLOCKED forever; a script that names a test nobody wrote is worse
+# than no script. Fixed in #1047, and now guarded by TestScriptRunTargetsResolveToRealTests
+# (test/e2e/nightly_reachability_test.go), which fails CI on any unresolvable `-run` target.
 run=(go test -tags=e2e_t2 ./... -run "TestT2RealCloudProvisioning" -count=1 -timeout 80m -v)
 dir="test/e2e"
 
