@@ -274,3 +274,50 @@ func TestUnsetImmutableTagsReadsAsTheSaferSetting(t *testing.T) {
 		t.Errorf("alibaba: an unset switch must read as true, got %v", crRepos["apps"])
 	}
 }
+
+// GCP carries `vulnerability_scanning` per repository too, which the module maps onto
+// `vulnerability_scanning_config.enablement_config` (#1844). The mapping is the interesting half:
+// the enum is INHERITED | DISABLED with no ENABLED, so ON can only mean "follow the project
+// default" — asserted on the template side by checks_registry.tftest.hcl. Here we pin only that the
+// bool reaches tfvars per repository and that the two positions differ.
+func TestGCPArtifactRegistryReposCarryVulnerabilityScanning(t *testing.T) {
+	p := &gcpProvider{}
+
+	on := p.ProviderTfvars(registryConfig(true, true))
+	repos := on["artifact_registry_repos"].(map[string]interface{})
+	if repos["apps"].(map[string]interface{})["vulnerability_scanning"] != true {
+		t.Errorf("vulnerability_scanning ON → %v, want true", repos["apps"])
+	}
+
+	off := p.ProviderTfvars(registryConfig(true, false))
+	offRepos := off["artifact_registry_repos"].(map[string]interface{})
+	if offRepos["apps"].(map[string]interface{})["vulnerability_scanning"] != false {
+		t.Errorf("vulnerability_scanning OFF → %v, want false", offRepos["apps"])
+	}
+}
+
+// The two GCP registry switches read OPPOSITE defaults when unset, and that asymmetry is deliberate
+// rather than an oversight — so pin it, or a later "consistency" pass will quietly align them.
+//
+// `immutable_tags` unset reads TRUE: the safe setting, and what the module's `optional(bool, true)`
+// would have produced anyway, so an upgrade never turns a live repository's tags mutable.
+//
+// `vulnerability_scanning` unset reads FALSE, because ON is not free on GCP. It requires
+// `containerscanning.googleapis.com` enabled on the tenant's project — an onboarding prerequisite
+// the customer performs — and the template REFUSES the ON position when it is absent. A silent
+// field defaulting to ON would therefore fail the plan of every project whose tenant has not done
+// that step, on a switch nobody set.
+func TestUnsetGCPScanningReadsAsOffWhileImmutableTagsReadsAsOn(t *testing.T) {
+	config := &types.ProjectConfig{
+		ProjectName:         "acme",
+		ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "apps"}},
+	}
+
+	repo := (&gcpProvider{}).ProviderTfvars(config)["artifact_registry_repos"].(map[string]interface{})["apps"].(map[string]interface{})
+	if repo["immutable_tags"] != true {
+		t.Errorf("unset immutable_tags = %v, want true (the safe setting)", repo["immutable_tags"])
+	}
+	if repo["vulnerability_scanning"] != false {
+		t.Errorf("unset vulnerability_scanning = %v, want false — ON needs a project API the tenant may not have enabled, and the template refuses it", repo["vulnerability_scanning"])
+	}
+}

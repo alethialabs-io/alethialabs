@@ -100,13 +100,37 @@ roles + 5 custom roles**:
   must never hold, granting management verbs only: GCS bucket mgmt *without object data*, Firestore
   database/index mgmt *without entity data*, Pub/Sub topic/sub mgmt *without publish/consume*, add-on SA
   mgmt (dropping undelete/enable/disable), and a project-metadata reader (replacing `roles/browser`, no
-  folder/org hierarchy reads).
+  folder/org hierarchy reads, plus read-only `serviceusage.services.get` — see *Optional APIs* below).
 
 The templates also use **resource-scoped IAM** (zone-scoped external-dns, per-secret accessor, per-GSA
 `workloadIdentityUser`), so the provisioner needs **no project `setIamPolicy`** — closing the
 owner-equivalent escalation path. (`secretmanager.admin` is kept predefined on purpose: dropping
 `secretmanager.versions.access` breaks the provider's secret-version refresh.)
 </Callout>
+
+## Optional APIs you enable yourself
+
+Alethia cannot turn APIs on in your project. Enabling one needs
+`serviceusage.services.enable`, which would let the provisioner switch on **any** API in your
+project, including billable ones you did not ask for. There is no narrower version of that
+permission, so Alethia does not hold it. The provisioner can only *read* whether an API is on
+(`serviceusage.services.get`), which is what lets a deployment tell you a prerequisite is missing
+instead of silently doing nothing.
+
+One feature needs an API you enable once per project:
+
+| Feature | API | Enable with |
+|---|---|---|
+| Container registry → **Vulnerability scanning** | `containerscanning.googleapis.com` | `gcloud services enable containerscanning.googleapis.com --project <PROJECT_ID>` |
+
+Artifact Registry has no per-repository "on" switch for scanning — a repository can only *follow the
+project default* or opt out. So the switch does nothing unless the API is enabled for the project.
+
+If you turn the switch on without it, the deployment **stops before it changes anything** and tells
+you which API to enable. Nothing is half-applied, and no repository is created claiming to be
+scanned when it is not. Enable the API, then deploy again.
+
+Leaving the switch off needs nothing — repositories are created with scanning explicitly disabled.
 
 ## What's Stored
 

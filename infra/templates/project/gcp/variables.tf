@@ -550,10 +550,20 @@ variable "provision_artifact_registry" {
 # `immutable_tags` now defaults TRUE, matching the console column and the other clouds' templates:
 # it is the setting a repository built without an opinion should have, and the OFF position has to
 # be asked for explicitly rather than arrived at by omission.
+#
+# `vulnerability_scanning` defaults FALSE, unlike its sibling, and the asymmetry is deliberate
+# (#1844). Artifact Registry's per-repository enum is `INHERITED | DISABLED` — there is no
+# `ENABLED` — so ON can only mean "follow the project default", which is on only when
+# `containerscanning.googleapis.com` is enabled on the tenant's project. Enabling that API is an
+# onboarding prerequisite the customer performs (the provisioner is deliberately not a service-usage
+# admin), and checks_registry.tf REFUSES the ON position when it is absent rather than landing on
+# INHERITED and scanning nothing. A safe-by-default TRUE would therefore fail the plan of every
+# project whose tenant has not done that step, on a switch nobody set.
 variable "artifact_registry_repos" {
   type = map(object({
-    description    = optional(string, "")
-    immutable_tags = optional(bool, true)
+    description            = optional(string, "")
+    immutable_tags         = optional(bool, true)
+    vulnerability_scanning = optional(bool, false)
   }))
   default     = {}
   description = "Map of Artifact Registry repositories to create, keyed by the registry component's name"
