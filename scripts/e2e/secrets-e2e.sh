@@ -56,8 +56,10 @@ if [[ -z "${BLOCKED:-}" && "$cloud" != "aws" ]]; then
   esac
 fi
 
-# The REAL test name — never an aspirational one. (registry-e2e.sh still invokes TestT2XacctRegistry,
-# which exists in no file; a script that names a test nobody wrote records BLOCKED forever.)
+# The REAL test name — never an aspirational one. registry-e2e.sh spent months invoking
+# TestT2XacctRegistry, which existed in no file, recording BLOCKED forever while the board reported
+# the harness as shipped (#1047, now fixed). TestScriptRunTargetsResolveToRealTests
+# (test/e2e/nightly_reachability_test.go) makes that impossible to repeat.
 run=(go test -tags=e2e_t2 ./... -run "TestT2RealCloudProvisioning" -count=1 -timeout 80m -v)
 dir="test/e2e"
 
