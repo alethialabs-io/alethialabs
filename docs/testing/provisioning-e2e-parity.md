@@ -30,7 +30,7 @@ proof nor a ledger row; a later `RETRACTED` ledger row corrects any historical c
 | **AWS — EKS** | 🚫 [#1714] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
 | **GCP — GKE** | 🚫 [#1716] [#1714] [#1722] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
 | **Azure — AKS** | 🚫 [#1722] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
-| **Hetzner — Talos** | 🚫 [#1714] | ⏳ (7 of 11 — see below) | — | — | — | — | ✅ | — | <!-- floor tracked by the nightly; the KINDS column is fully described in maxconfig.go: 4 tofu + 3 in-cluster (now actually seeded) + 2 ceilings + 2 deferred-debt -->
+| **Hetzner — Talos** | 🚫 [#2058] | ⏳ (7 of 11 — see below) | — | — | — | — | ✅ | — | <!-- floor tracked by the nightly; the KINDS column is fully described in maxconfig.go: 4 tofu + 3 in-cluster (now actually seeded) + 2 ceilings + 2 deferred-debt; teardown ✅ re-verified by hand on the 20260805T064043Z run — account swept to zero -->
 | **Alibaba — ACK** | ⏳ | ⏳ ⚠️ | — | — | — | — | ⏳ | — | <!-- floor tracked by the nightly; all 11 kinds are CarriedByTofu in maxconfig.go. ⚠️ = a full bar leaves a standing prepaid CR EE instance; see the All-kinds column notes -->
 
 Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
@@ -106,8 +106,34 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
       independent convergence defects. The observed failed run tore down cleanly, but it is not a floor PASS.
 - [ ] **Azure floor (#1722)** — AKS's platform metrics-server collided with ours; the render gate now skips
       it there. The observed failed run tore down cleanly; a real run is still required for floor proof.
-- [ ] **Hetzner floor (#1714)** — provisioning and teardown are verified clean, but `addon-reloader` remains
-      OutOfSync, so the floor is blocked rather than proven.
+- [ ] **Hetzner `addons` dimension — first real run, FAIL at the ArgoCD gate**
+      ([`20260805T064043Z`](../../demos/proofs/hetzner/20260805T064043Z), 2026-08-05). This is the first
+      time `ALETHIA_E2E_ALL_ADDONS` has been driven against a real cluster on **any** cloud, and it
+      settled three open questions at once.
+
+      **Proven.** The cluster provisions and is reachable — 7 nodes `Ready` (1 control plane + 6 workers),
+      Kubernetes 1.35.6 on Talos, the signed receipt verified against the plan hash, 220 log lines shipped
+      to `job_logs`. That is further than any leg has reached before: the only prior genuine attempt (aws,
+      2026-07-22) died with a 401 from the API server. **`addon-reloader` reached Healthy+Synced**, so
+      **#1714 is verified against a real apply** rather than merely closed; the same run verifies **#1722**,
+      since `metrics-server` also converged on one of the two clouds where it still installs.
+
+      **Failed.** 12 of 20 Applications were not Healthy+Synced within the 8-minute budget. Two distinct
+      causes, and only one of them is a timeout:
+      - **`addon-loki` can never install** (#2058) — its catalog values set `deploymentMode: SingleBinary`
+        *and* non-zero `read`/`write`/`backend` replicas, which the chart's own `validate.yaml` rejects. The
+        manifest never renders (`sync=Unknown`, not `OutOfSync` — there is no target state to compare).
+      - **The rest were still converging.** `velero` was `Missing`, and `falco`, `ingress-nginx`,
+        `kube-prometheus-stack` and `vault` were all `Progressing`. Eight minutes is not a realistic budget
+        for 18 charts of this weight; the number needs deriving from the surface rather than guessing.
+
+      **Teardown swept to zero** — servers, volumes, network, load balancer, firewall and primary IPs all
+      back to the pre-run baseline, verified by hand against the account.
+
+      ⚠️ The run produced **no ledger row of its own**: the proof-scrub tripwire fired on already-redacted
+      values and its fail-closed exit discarded the record (#2062). The row was appended by hand with
+      `RECORD_ONLY`. The bundle was independently checked for the live token, certificate material and a
+      kubeconfig body — none present.
 - [ ] **Alibaba floor** — pending enablement and its first real run; no floor or teardown verdict exists.
 - [ ] **Raise the nightly (or a dispatch/weekly full-bar job) to the FULLY-TESTED dimensions** —
       `MAX_CONFIG` (11 kinds) + `ALL_ADDONS` (19) + A0.6 BYO/services + a real day-2 access assertion — per
