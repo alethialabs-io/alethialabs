@@ -51,9 +51,12 @@ func (p *awsProvider) RequiredCLIs() []string {
 //
 // The VPC-CIDR floor is deliberately ABSENT. `cidrsubnet(var.vpc_cidr, 10, …)`
 // (infra/templates/project/aws/networking.tf:23-35) plus the AWS /28 subnet minimum implies a
-// /18, but that number is owned by #1942 and blocked on #1936, which is still a draft and may
-// move it. Encoding it here would pin a value that has not settled; the drift guard
-// (validate_drift_test.go) pins the carve so the deferral cannot be forgotten.
+// /18, and that number is owned by #1942. #1936 has now landed the TEMPLATE-side gate for it
+// (terraform_data.vpc_cidr_carvable_guard blocks the plan fail-closed, with a `check` stating the
+// same violation in the plan output), so an unusable CIDR can no longer reach an apply — but the
+// Go-side rule is still #1942's, so it stays absent here rather than being half-encoded in two
+// places. The drift guard (validate_drift_test.go) pins the carve so the deferral cannot be
+// forgotten.
 func (p *awsProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if config == nil {
 		return fmt.Errorf("ProjectConfig is required")
