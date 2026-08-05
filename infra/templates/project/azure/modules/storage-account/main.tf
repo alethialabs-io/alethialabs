@@ -20,6 +20,18 @@ locals {
   # the account permission exactly as wide as the containers actually need: false when every
   # container is private (tighter than azurerm's own default of true), true only when one is not.
   allow_public_blobs = anytrue([for c in var.containers : c.access_type != "private"])
+
+  # CORS is `blob_properties.cors_rule` — an ACCOUNT property, like versioning above — so the
+  # per-container lists are UNIONED into one rule (#1995). distinct() keeps the rule stable when two
+  # containers name the same origin, and sort() keeps it stable against list order, so re-ordering
+  # buckets on the canvas does not produce a plan diff.
+  #
+  # Union, not intersection, and the direction matters the same way anytrue does above: a container
+  # may be reachable from an origin nobody asked to allow for it, which is a wider grant than
+  # strictly needed. The alternative silently REFUSES an origin the user explicitly allowed, and
+  # that surfaces as a CORS error in the browser against infrastructure they already configured —
+  # the failure this issue is about. The coarsening is disclosed on the canvas.
+  cors_origins = sort(distinct(flatten([for c in var.containers : c.cors_origins])))
 }
 
 resource "azurerm_storage_account" "this" {
@@ -47,6 +59,22 @@ resource "azurerm_storage_account" "this" {
 
     delete_retention_policy {
       days = 7
+    }
+
+    # Only when an origin was actually allowed: an empty cors_rule is not "no CORS", it is a rule
+    # matching nothing, and it churns the plan for every project that never set one.
+    dynamic "cors_rule" {
+      for_each = length(local.cors_origins) > 0 ? [1] : []
+      content {
+        allowed_origins = local.cors_origins
+        # The methods a browser preflight can ask for on blob storage. Scoped to reads plus the
+        # writes the account already permits, rather than "*", so allowing an origin does not also
+        # widen what that origin may DO.
+        allowed_methods    = ["GET", "HEAD", "OPTIONS", "PUT", "POST"]
+        allowed_headers    = ["*"]
+        exposed_headers    = ["*"]
+        max_age_in_seconds = 3600
+      }
     }
   }
 

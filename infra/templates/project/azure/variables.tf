@@ -365,11 +365,13 @@ variable "azure_cache_capacity" {
   description = "Size of the Azure Cache for Redis instance (0-6 for C family, 1-5 for P family)"
 }
 
-variable "azure_cache_redis_version" {
-  type        = string
-  default     = "6"
-  description = "Redis version for Azure Cache"
-}
+# azure_cache_redis_version was here. DELETED, not left declared (#1993): Azure Cache for Redis is
+# retired and the kind is backed by azurerm_managed_redis, which accepts NO engine-version argument
+# — neither `redis_version` on the resource nor `version` inside `default_database`. Both were
+# probed against the pinned provider and both are "Unsupported argument".
+#
+# A variable nobody can honor is worse than no variable: it reads as a setting, and it manufactures
+# a false green in the parity guards, which ask whether a tfvar is DECLARED and read.
 
 variable "azure_cache_multi_az" {
   type        = bool

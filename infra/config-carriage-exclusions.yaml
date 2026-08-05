@@ -168,6 +168,25 @@ exclusions:
     cloud: hetzner
     reason: A Hetzner server's disk comes with its server type and cannot be sized separately — choose a larger node size to get a larger disk.
 
+  # ── Redis engine version on Azure — no knob exists on the replacement resource ──────
+  # Azure Cache for Redis is RETIRED: Azure refuses to create `azurerm_redis_cache` ("Azure Cache
+  # for Redis is retiring, create Azure Managed Redis instance instead"), so the cache kind is
+  # backed by `azurerm_managed_redis` (Microsoft.Cache/redisEnterprise). That resource exposes no
+  # engine-version argument at all — both candidate spellings were PROBED against the pinned
+  # provider and both are rejected as "Unsupported argument": `redis_version` on the resource, and
+  # `version` inside the `default_database` block.
+  #
+  # #1993 asked for this to be wired, on the strength of `azurerm_redis_cache` taking
+  # `redis_version`. That was true of the resource the template no longer uses. Verified rather
+  # than assumed, per the rule that a ceiling must carry provider evidence.
+  #
+  # ⚠️ The canvas therefore shows an inert control on Azure. The matching product fix is to withdraw
+  # it with `unavailableWhen` — never `visibleWhen`, which drops the cloud from `offeredOn` and
+  # leaves this exclusion matching nothing.
+  - field: caches.engine_version
+    cloud: azure
+    reason: The Redis version cannot be chosen on Azure — Azure Cache for Redis is retired, and its replacement (Azure Managed Redis) runs a fixed engine version with no knob to set.
+
   # ── Serverless capacity range — an Aurora Serverless v2 concept ─────────────────────
   # `min_capacity`/`max_capacity` are ACUs: the range an Aurora Serverless v2 cluster scales its
   # compute between, wired on AWS as `rds_scaling_config` → `serverlessv2_scaling_configuration`
@@ -322,6 +341,15 @@ exclusions:
 #
 # Delete the entry in the same PR that fixes the gap.
 baseline:
+  # alibaba's databases.min_capacity / max_capacity / caches.num_cache_nodes were here (#1996).
+  # FIXED, and each was PROBED against the pinned provider rather than assumed — the issue warned
+  # that ApsaraDB may encode topology in the SKU, which would have made them ceilings:
+  #   · alicloud_db_instance   accepts a `serverless_config` block  -> the range is expressible
+  #   · alicloud_kvstore_instance accepts `shard_count`             -> the count is expressible
+  # (`node_type`, the replica axis, is deprecated from provider 1.120.1 and is deliberately unused.)
+  # All three render nothing when unset, so a fixed-size instance and an SKU-topology cache are
+  # unaffected.
+
   # ── The two that named this class ──────────────────────────────────────────────────
   # Both are one line of Go: a field on the struct with the column's exact json tag, then a read in
   # the providers that can honor it. They are boarded rather than fixed here because this lane built
@@ -375,11 +403,13 @@ baseline:
   # `azure_cache_sku = "Standard"` appears and never becomes a count, so two nodes and twenty
   # produce the same plan. It is recorded here rather than in `wired:` precisely because the branch
   # does NOT carry the setting it is named after.
-  - field: caches.engine_version
-    cloud: azure
-    reason: The Redis version you choose is not applied — the cache is created on the provider's default version.
-    issue: "#1993"
-    state: unwired-template
+  # MEASURED CEILING, not debt (#1993). The issue asked to wire `redis_version` onto
+  # `azurerm_redis_cache` — but that resource is RETIRED and Azure refuses to create it, so the
+  # kind is backed by `azurerm_managed_redis`, which exposes no engine-version knob at all. Both
+  # candidate spellings were probed against the pinned provider and both are rejected as
+  # "Unsupported argument": `redis_version` on the resource, and `version` inside
+  # `default_database`. The template variable and the provider emit are DELETED rather than left
+  # declared-and-unread, which is what was manufacturing the false green.
   - field: caches.num_cache_nodes
     cloud: azure
     reason: The node count you set on a cache is not applied — asking for more than one node moves the cache to the Standard tier, and the number itself is discarded.
@@ -390,45 +420,30 @@ baseline:
   # The root type is `map(any)` so the key passes; the module's `queues` is a typed object that does
   # not name `default_message_ttl`, and OpenTofu drops object attributes a declared type omits. No
   # error, no plan diff. `delay_seconds` and `forward_dead_lettered_messages_to` ride the same path.
-  - field: queues.message_retention
-    cloud: azure
-    reason: The message retention you set is not applied — the queue keeps the Service Bus default.
-    issue: "#1994"
-    state: unwired-template
+  # queues.message_retention / azure was here (#1994) — the subtlest true positive of the guard's
+  # first run: the root's `service_bus_queues` is map(any) so the key passed every check the root
+  # could make, and the module's typed `queues` object then DROPPED it, with no error and no plan
+  # diff. FIXED: the module type names `default_message_ttl` and the resource reads it.
+  #
+  # `delay_seconds` and `forward_dead_lettered_messages_to` rode the same path and are DELETED from
+  # the emit rather than added to the type — neither describes anything the resource can do.
 
   # ── Azure bucket CORS: the only cloud of five that drops it ────────────────────────
   # alibaba, aws, gcp and hetzner all carry CorsOrigins; nothing reachable from
   # (*azureProvider).ProviderTfvars reads it. blob_properties is already rendered for versioning, so
   # the landing site exists.
-  - field: storage_buckets.cors_origins
-    cloud: azure
-    reason: The CORS origins you allow on a bucket are not applied — browser requests from those origins are refused.
-    issue: "#1995"
-    state: no-carrier
+  # storage_buckets.cors_origins / azure was here (#1995) — the only cloud of five that dropped it.
+  # FIXED: carried by buildAzureContainers and unioned into blob_properties.cors_rule, which is an
+  # ACCOUNT property, so the per-container lists collapse the same way versioning_enabled does.
 
   # ── Alibaba: expressible and not expressed ─────────────────────────────────────────
   # Deliberately NOT folded into the azure/gcp min/max_capacity ceiling above. Azure Flexible Server
   # and Cloud SQL provision fixed-size instances and genuinely cannot express a range;
   # `alicloud_db_instance` (modules/rds/main.tf:25) exposes a serverless configuration and simply
   # does not receive one. Recording those together would have written a false ceiling.
-  - field: databases.min_capacity
-    cloud: alibaba
-    reason: The capacity range you set is not applied — the database is created at a fixed instance size.
-    issue: "#1996"
-    state: no-carrier
-  - field: databases.max_capacity
-    cloud: alibaba
-    reason: The capacity range you set is not applied — the database is created at a fixed instance size.
-    issue: "#1996"
-    state: no-carrier
   # Baseline rather than an exclusion ON PURPOSE: ApsaraDB may encode topology in the instance class,
   # in which case this becomes an evidence-backed exclusion. Nobody has read the schema yet, and an
   # unread assumption is debt, not a ceiling.
-  - field: caches.num_cache_nodes
-    cloud: alibaba
-    reason: The node count you set on a cache is not applied — the cache is created with the node count its instance class implies.
-    issue: "#1996"
-    state: no-carrier
 
 # ── Branch-guard wirings a person has READ and found correct ───────────────────────────
 #

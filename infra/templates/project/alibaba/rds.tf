@@ -15,6 +15,9 @@ module "rds" {
 
   backup_retention_days = var.rds_backup_retention_days
 
+  serverless_min_capacity = var.rds_serverless_min_capacity
+  serverless_max_capacity = var.rds_serverless_max_capacity
+
   vswitch_id = local.vswitch_ids[0]
 
   tags = local.common_tags
