@@ -85,7 +85,7 @@ func TestApplyAddOnsInWaves(t *testing.T) {
 	switch {
 	case operatorAt < 0 || waitAt < 0 || dbAt < 0:
 		t.Fatalf("missing an expected call:\n%s", calls)
-	case !(operatorAt < waitAt && waitAt < dbAt):
+	case operatorAt >= waitAt || waitAt >= dbAt:
 		t.Errorf("wave order broken — want operator apply, then the CRD wait, then wave 1:\n%s", calls)
 	}
 	// A gitops add-on has no Application here, and a manifest add-on is applied by the operator rail.
