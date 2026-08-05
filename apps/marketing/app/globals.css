@@ -277,6 +277,24 @@
     color var(--dur-1) var(--ease),
     border-color var(--dur-1) var(--ease);
 }
+.mkt-btn::before,
+.mkt-btn::after {
+  position: absolute;
+  top: 50%;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-2) var(--ease),
+    translate var(--dur-3) var(--ease-out);
+}
+.mkt-btn::before { content: "["; left: 7px; translate: 5px -50%; }
+.mkt-btn::after { content: "]"; right: 7px; translate: -5px -50%; }
+.mkt-btn:hover::before,
+.mkt-btn:hover::after,
+.mkt-btn:focus-visible::before,
+.mkt-btn:focus-visible::after { opacity: 0.55; translate: 0 -50%; }
 .mkt-btn:hover { background: var(--text-primary); color: var(--background); }
 .mkt-btn--solid { background: var(--text-primary); color: var(--background); }
 .mkt-btn--solid:hover { background: transparent; color: var(--text-primary); }
@@ -306,7 +324,9 @@
   min-height: 100svh;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  /* Not centred: the lower third belongs to the pile, so the copy sits above it. */
+  justify-content: flex-start;
+  padding-top: 21vh;
   pointer-events: none;
 }
 .mkt-hero-in a,
@@ -460,6 +480,8 @@
   .mkt-h2 { font-size: 27px; }
   .mkt-close-h { font-size: 30px; }
   .mkt-hero-in, .mkt-wrap { padding-left: 26px; padding-right: 26px; }
+  /* Less top offset on a phone: the lower third is the consent notice, not the pile. */
+  .mkt-hero-in { padding-top: 13vh; }
   .mkt-beat { padding: 72px 0; }
   .mkt-keep { grid-template-columns: 1fr; }
 }

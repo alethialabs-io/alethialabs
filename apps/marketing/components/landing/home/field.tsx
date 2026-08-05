@@ -34,7 +34,8 @@ interface Body {
 	/** Rotation and angular velocity. */
 	a: number;
 	va: number;
-	/** Collision radius. Chips are boxes but resolve as circles — close enough. */
+	/** Collision radius. Chips are boxes resolved as circles, so this must stay close
+	 * to the drawn half-height or they hold each other apart and never look stacked. */
 	r: number;
 	/** Half-width / half-height, measured at draw time for hit-testing. */
 	hw: number;
@@ -54,6 +55,9 @@ const FLOOR_FRICTION = 0.88;
 const WALL_DAMPING = 0.12;
 /** Frames the scan hairline takes to cross a subject. */
 const SCAN_FRAMES = 22;
+/** The pile rests this far above the viewport floor. Resting on the floor itself put
+ * the chips half off-screen, which made the one interactive thing on the page invisible. */
+const FLOOR_INSET = 132;
 
 export interface FieldVerdict {
 	subject: FieldSubject;
@@ -94,6 +98,10 @@ export function Field({ onVerdict }: FieldProps) {
 		let throwX = 0;
 		let throwY = 0;
 		let gate = { x: 0, y: 0, w: 0, h: 0 };
+		/* Narrow viewports get the falling pile as texture but no gate: there is no room
+		   for a drop target that does not collide with the headline, and the fixed consent
+		   notice covers the lower half on a phone anyway. The chips stay throwable. */
+		let showGate = true;
 		let held: Body | null = null;
 		let scan = -1;
 		let seq = 0;
@@ -153,34 +161,48 @@ export function Field({ onVerdict }: FieldProps) {
 			canvas.width = Math.round(width * dpr);
 			canvas.height = Math.round(height * dpr);
 			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+			showGate = width >= 900;
 			const w = Math.min(300, Math.max(180, width * 0.26));
-			const h = Math.min(200, Math.max(140, height * 0.28));
-			gate = { x: width - w - Math.max(40, width * 0.06), y: height * 0.3, w, h };
+			const h = Math.min(190, Math.max(130, height * 0.24));
+			// Upper right. It cannot sit above the pile where the drag would be shortest:
+			// the first-visit consent notice is fixed to the lower right and would cover
+			// it completely on the one view that matters most.
+			gate = {
+				x: width - w - Math.max(40, width * 0.08),
+				y: Math.max(96, height * 0.26),
+				w,
+				h,
+			};
 		};
 
 		const seed = () => {
 			const small = width < 820;
+			// Clustered right of the copy column, not spread across the full width: a
+			// dozen chips strewn edge to edge read as debris, stacked they read as a pile.
+			const spawn = (spread: number) =>
+				width * (small ? 0.14 : 0.46) + Math.random() * width * spread;
+
 			bodies = FIELD_SUBJECTS.map((subject) => ({
-				x: width * 0.5 + Math.random() * width * 0.42,
-				y: -90 - Math.random() * height,
+				x: spawn(small ? 0.72 : 0.44),
+				y: -80 - Math.random() * height * 0.45,
 				vx: (Math.random() - 0.5) * 1.6,
 				vy: Math.random(),
 				a: (Math.random() - 0.5) * 0.5,
 				va: (Math.random() - 0.5) * 0.05,
-				r: small ? 30 : 40,
+				r: small ? 17 : 22,
 				hw: 0,
 				hh: 0,
 				subject,
 			}));
 			FIELD_GLYPHS.forEach((glyph, i) => {
 				bodies.push({
-					x: width * 0.58 + Math.random() * width * 0.36,
-					y: -60 - Math.random() * height * 0.8,
+					x: spawn(small ? 0.72 : 0.44),
+					y: -60 - Math.random() * height * 0.35,
 					vx: (Math.random() - 0.5) * 2,
 					vy: Math.random(),
 					a: (Math.random() - 0.5) * 0.7,
 					va: (Math.random() - 0.5) * 0.07,
-					r: small ? 19 : 25,
+					r: small ? 16 : 21,
 					hw: 0,
 					hh: 0,
 					glyph,
@@ -200,6 +222,7 @@ export function Field({ onVerdict }: FieldProps) {
 		};
 
 		const drawGate = () => {
+			if (!showGate) return;
 			const { x, y, w, h } = gate;
 			const arm = Math.min(34, w * 0.15);
 			ctx.save();
@@ -311,8 +334,9 @@ export function Field({ onVerdict }: FieldProps) {
 					b.vx = -Math.abs(b.vx) * WALL_DAMPING;
 					b.va = -b.va;
 				}
-				if (b.y + b.r > height) {
-					b.y = height - b.r;
+				const floor = height - FLOOR_INSET;
+				if (b.y + b.r > floor) {
+					b.y = floor - b.r;
 					b.vy = -b.vy * RESTITUTION;
 					b.vx *= FLOOR_FRICTION;
 					b.va *= 0.8;
@@ -436,6 +460,7 @@ export function Field({ onVerdict }: FieldProps) {
 			body.va = Math.max(-0.2, Math.min(0.2, throwX * 0.006));
 
 			const inside =
+				showGate &&
 				body.x > gate.x &&
 				body.x < gate.x + gate.w &&
 				body.y > gate.y &&
