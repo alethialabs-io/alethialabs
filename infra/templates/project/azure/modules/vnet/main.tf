@@ -167,6 +167,26 @@ resource "azurerm_network_security_group" "private" {
     destination_address_prefix = "VirtualNetwork"
   }
 
+  # #1987: extra operator-supplied source ranges. Priority 200 sits BELOW DenyInternetInbound
+  # (4096) — Azure evaluates lowest-number-first — so these ranges are genuinely admitted rather
+  # than shadowed by the deny. One rule per CIDR, because a security_rule takes a single
+  # source_address_prefix and the plural form (source_address_prefixes) is a different argument
+  # whose ordering churns the plan.
+  dynamic "security_rule" {
+    for_each = var.allowed_cidr_blocks
+    content {
+      name                       = "AllowOperatorInbound${security_rule.key}"
+      priority                   = 200 + security_rule.key
+      direction                  = "Inbound"
+      access                     = "Allow"
+      protocol                   = "*"
+      source_port_range          = "*"
+      destination_port_range     = "*"
+      source_address_prefix      = security_rule.value
+      destination_address_prefix = "*"
+    }
+  }
+
   # Deny all other inbound from internet
   security_rule {
     name                       = "DenyInternetInbound"

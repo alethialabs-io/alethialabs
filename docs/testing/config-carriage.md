@@ -28,7 +28,6 @@ Does `packages/core/types/project_config.go` model a `json:` key for the column?
 | `caches.storage_gb` | ☸️ | The storage you size an in-cluster cache with becomes the Valkey chart's persistent volume, falling back to the memory size when you leave it unset. |
 | `databases.replicas` | ☸️ | The instance count you set on an in-cluster Postgres becomes the CloudNativePG cluster's instance count — one primary plus replicas. |
 | `databases.storage_gb` | ☸️ | The storage you size an in-cluster Postgres with becomes the CloudNativePG cluster's persistent volume. |
-| `network.allowed_cidr_blocks` | 🚫 #1987 | the product collects `allowed_cidr_blocks` (canvas + CLI) and `ProjectNetworkConfig` models no `json:"allowed_cidr_blocks"` field, so `json.Unmarshal` drops it on the way to the runner. It saves cleanly, the plan is identical, and nothing anywhere reports it. |
 | `nosql_tables.global_replicas` | 🚫 #1982 | the product collects `global_replicas` (canvas + CLI) and `ProjectNosqlConfig` models no `json:"global_replicas"` field, so `json.Unmarshal` drops it on the way to the runner. It saves cleanly, the plan is identical, and nothing anywhere reports it. |
 | `queues.storage_gb` | ☸️ | The storage you size an in-cluster queue with becomes the RabbitMQ chart's persistent volume. |
 
@@ -103,6 +102,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 
 | Field | alibaba | aws | azure | gcp | hetzner |
 |---|:---:|:---:|:---:|:---:|:---:|
+| `allowed_cidr_blocks` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | `cidr_block` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | `network_id` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | `provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
@@ -244,7 +244,6 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 |---|---|:---:|---|---|---|
 | `caches.allowed_cidr_blocks` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1981 | The network allow-list you set on a cache is not applied — the cache is created with the template's own default access rules instead. |
 | `nosql_tables.global_replicas` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1982 | The replica regions you choose for a table are not created — the table is provisioned in its own region only. |
-| `network.allowed_cidr_blocks` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1987 | The network allow-list is not applied — the network is created with the template's own default access rules instead. |
 | `container_registries.vulnerability_scanning` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
 | `dns.zone_id` | azure | 🚫 | unwired-template (boarded as unwired-template) | #1992 | An existing Azure DNS zone is not used — Alethia creates a new zone for the domain instead, with different name servers from the one you named. |
 | `caches.engine_version` | azure | 🚫 | unwired-template (boarded as unwired-template) | #1993 | The Redis version you choose is not applied — the cache is created on the provider's default version. |
@@ -257,4 +256,4 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 
 ---
 
-Measured this run: 370 schema columns examined, 73 of them user-settable, 158 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.
+Measured this run: 370 schema columns examined, 73 of them user-settable, 163 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.

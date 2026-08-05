@@ -190,3 +190,11 @@ variable "secret_resource_arns" {
   description = "Secrets Manager secret ARNs (exact or prefix-wildcard) the external-secrets operator may read — scopes its IRSA policy to the project's secrets instead of \"*\""
   type        = list(string)
 }
+
+# #1987. ADDITIVE, never restrictive: merged into node_security_group_additional_rules alongside
+# the module's own rule, so the empty default leaves the plan byte-identical.
+variable "allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to the EKS node security group. Empty (the default) adds nothing."
+}

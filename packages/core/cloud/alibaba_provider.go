@@ -69,9 +69,10 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"alibaba_account": config.CloudAccountID,
 
 		// Network (VPC + VSwitch)
-		"provision_network": provisionNetwork,
-		"network_cidr":      orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
-		"single_cloud_nat":  config.Network.SingleNatGateway,
+		"provision_network":           provisionNetwork,
+		"network_cidr":                orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"single_cloud_nat":            config.Network.SingleNatGateway,
+		"network_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// ACK (managed Kubernetes)
 		"provision_ack":       true,

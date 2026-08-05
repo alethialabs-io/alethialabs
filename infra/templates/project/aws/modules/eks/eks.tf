@@ -74,16 +74,32 @@ module "eks" {
     }
   }
 
-  node_security_group_additional_rules = {
-    ingress_self_all = {
-      description = "Node to node all ports/protocols"
-      protocol    = "-1"
-      from_port   = 0
-      to_port     = 0
-      type        = "ingress"
-      self        = true
-    }
-  }
+  # #1987: the project's extra ingress allow-list is MERGED in rather than replacing the fixed
+  # rule, so an empty list (the default) produces a byte-identical plan. One rule, carrying every
+  # permitted CIDR — the upstream module maps `cidr_blocks` onto a single aws_security_group_rule,
+  # so listing them together avoids a rule-per-CIDR whose addresses churn when the list is reordered.
+  node_security_group_additional_rules = merge(
+    {
+      ingress_self_all = {
+        description = "Node to node all ports/protocols"
+        protocol    = "-1"
+        from_port   = 0
+        to_port     = 0
+        type        = "ingress"
+        self        = true
+      }
+    },
+    length(var.allowed_cidr_blocks) > 0 ? {
+      ingress_operator_allow_list = {
+        description = "Operator allow-list (project network allowed_cidr_blocks)"
+        protocol    = "-1"
+        from_port   = 0
+        to_port     = 0
+        type        = "ingress"
+        cidr_blocks = var.allowed_cidr_blocks
+      }
+    } : {},
+  )
 
   cluster_ip_family          = "ipv4"
   create_cni_ipv6_iam_policy = false

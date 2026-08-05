@@ -91,9 +91,10 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"environment":  config.EnvironmentStage,
 
 		// Network
-		"provision_network": provisionNetwork,
-		"network_cidr":      orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
-		"single_cloud_nat":  config.Network.SingleNatGateway,
+		"provision_network":           provisionNetwork,
+		"network_cidr":                orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"single_cloud_nat":            config.Network.SingleNatGateway,
+		"network_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// GKE
 		"provision_gke":        true,

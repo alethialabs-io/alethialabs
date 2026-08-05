@@ -62,6 +62,10 @@ resource "alicloud_cs_kubernetes_node_pool" "default" {
   vswitch_ids    = var.vswitch_ids
   instance_types = var.instance_types
 
+  # #1987: the operator allow-list group, created by modules/network only when a list is set.
+  # Empty is the default and leaves the node pool's own ACK-managed group untouched.
+  security_group_ids = var.security_group_ids
+
   system_disk_category = var.disk_category
   system_disk_size     = var.disk_size_gb
 
