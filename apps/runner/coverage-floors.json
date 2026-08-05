@@ -13,15 +13,15 @@
   },
   "packages": {
     "cmd/runner": {
-      "covered": 3,
+      "covered": 17,
       "total": 93
     },
     "internal/agent": {
-      "covered": 1671,
+      "covered": 1969,
       "total": 3366
     },
     "internal/obs": {
-      "covered": 16,
+      "covered": 33,
       "total": 41
     }
   }
