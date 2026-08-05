@@ -385,13 +385,16 @@ func buildServiceBusQueues(queues []types.ProjectQueueConfig) map[string]interfa
 		if q.MessageRetention != nil {
 			cfg["default_message_ttl"] = fmt.Sprintf("PT%dS", *q.MessageRetention)
 		}
-		if d, ok := providerInt(q.ProviderConfig, "delay_seconds"); ok {
-			cfg["forward_dead_lettered_messages_to"] = ""
-			cfg["max_delivery_count"] = 10
-			// Azure Service Bus doesn't have a direct delay_seconds equivalent,
-			// but we can pass it for scheduled enqueue support
-			cfg["delay_seconds"] = d
-		}
+		// `delay_seconds` and `forward_dead_lettered_messages_to` were emitted here and are NOT
+		// emitted any more (#1994). Both rode the same path `default_message_ttl` did — the root's
+		// map(any) accepted them and the module's typed `queues` object dropped them, silently.
+		//
+		// They are deleted rather than added to that type, because neither describes anything the
+		// resource can do. This code's own comment conceded that Service Bus "doesn't have a direct
+		// delay_seconds equivalent" — scheduled enqueue is a per-MESSAGE property a sender sets, not
+		// a queue setting tofu can provision — and forwarding was emitted as the empty string, which
+		// names no queue to forward to. Carrying them further would have satisfied the guard while
+		// the values still meant nothing, which is the defect it exists to catch, not a way past it.
 		result[q.Name] = cfg
 	}
 	return result

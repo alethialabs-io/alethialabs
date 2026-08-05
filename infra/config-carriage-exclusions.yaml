@@ -411,11 +411,13 @@ baseline:
   # The root type is `map(any)` so the key passes; the module's `queues` is a typed object that does
   # not name `default_message_ttl`, and OpenTofu drops object attributes a declared type omits. No
   # error, no plan diff. `delay_seconds` and `forward_dead_lettered_messages_to` ride the same path.
-  - field: queues.message_retention
-    cloud: azure
-    reason: The message retention you set is not applied — the queue keeps the Service Bus default.
-    issue: "#1994"
-    state: unwired-template
+  # queues.message_retention / azure was here (#1994) — the subtlest true positive of the guard's
+  # first run: the root's `service_bus_queues` is map(any) so the key passed every check the root
+  # could make, and the module's typed `queues` object then DROPPED it, with no error and no plan
+  # diff. FIXED: the module type names `default_message_ttl` and the resource reads it.
+  #
+  # `delay_seconds` and `forward_dead_lettered_messages_to` rode the same path and are DELETED from
+  # the emit rather than added to the type — neither describes anything the resource can do.
 
   # ── Azure bucket CORS: the only cloud of five that drops it ────────────────────────
   # alibaba, aws, gcp and hetzner all carry CorsOrigins; nothing reachable from
