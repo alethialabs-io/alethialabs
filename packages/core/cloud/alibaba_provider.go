@@ -79,7 +79,13 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"ack_cluster_version": resolveK8sVersion("alibaba", config.Cluster.ClusterVersion),
 
 		// DNS (Alibaba Cloud DNS) + WAF
-		"alidns_enabled":             config.DNS.Enabled,
+		// Same rule as aws and azure: CREATE the domain only when the caller brought none of their
+		// own. `alicloud_alidns_domain.this` was created unconditionally, so alibaba carried the
+		// #1992 defect too — naming a domain you already own registered a SECOND one. Found by
+		// checking alibaba in the same pass, as the cloud-parity rule requires; it was not on the
+		// board, because the guard measures whether zone_id is READ, and alibaba does read it (into
+		// `group_name`, a DNS group, which is a different thing entirely).
+		"alidns_enabled":             config.DNS.Enabled && config.DNS.ZoneID == "",
 		"alidns_domain":              config.DNS.DomainName,
 		"alidns_zone_name":           config.DNS.ZoneID,
 		"alidns_managed_certificate": managedCert,

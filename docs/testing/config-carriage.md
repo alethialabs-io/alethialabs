@@ -90,7 +90,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 | `managed_certificate` | — | 🟡 | ☸️ | ☸️ | — |
 | `provider` | · | · | · | · | · |
 | `waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — |
-| `zone_id` | 🟡 | 🟡 | 🚫 #1992 | 🟡 | 🟡 |
+| `zone_id` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 
 ### `helm_registries`
 
@@ -245,7 +245,6 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 | `caches.allowed_cidr_blocks` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1981 | The network allow-list you set on a cache is not applied — the cache is created with the template's own default access rules instead. |
 | `nosql_tables.global_replicas` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1982 | The replica regions you choose for a table are not created — the table is provisioned in its own region only. |
 | `container_registries.vulnerability_scanning` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
-| `dns.zone_id` | azure | 🚫 | unwired-template (boarded as unwired-template) | #1992 | An existing Azure DNS zone is not used — Alethia creates a new zone for the domain instead, with different name servers from the one you named. |
 | `caches.engine_version` | azure | 🚫 | unwired-template (boarded as unwired-template) | #1993 | The Redis version you choose is not applied — the cache is created on the provider's default version. |
 | `caches.num_cache_nodes` | azure | ⚠️ | gated-carrier (boarded as gated-carrier) | #1993 | The node count you set on a cache is not applied — asking for more than one node moves the cache to the Standard tier, and the number itself is discarded. |
 | `queues.message_retention` | azure | 🚫 | unwired-template (boarded as unwired-template) | #1994 | The message retention you set is not applied — the queue keeps the Service Bus default. |

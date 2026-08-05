@@ -362,16 +362,12 @@ baseline:
     issue: "#1845"
     state: no-carrier
 
-  # ── Azure DNS: an existing zone is declared, checked, and then ignored ──────────────
-  # `azure_dns_zone_name` is declared (variables.tf:373) and read ONLY by a check block asserting it
-  # is non-empty — and a check never blocks an apply. modules/azure-dns/main.tf:1 then creates a NEW
-  # zone from the domain unconditionally, so naming the zone you own buys a second one with
-  # different name servers. hetzner and aws (#1816) already gate creation on `ZoneID == ""`.
-  - field: dns.zone_id
-    cloud: azure
-    reason: An existing Azure DNS zone is not used — Alethia creates a new zone for the domain instead, with different name servers from the one you named.
-    issue: "#1992"
-    state: unwired-template
+  # dns.zone_id / azure was here (#1992): declared, read only by a `check` that never blocks, and
+  # then ignored while modules/azure-dns created a NEW zone unconditionally. FIXED — creation is
+  # gated on `ZoneID == ""` the way aws already gates it, and a resolved-zone output makes both
+  # paths look identical to downstream bindings. ALIBABA carried the same defect and is fixed in the
+  # same pass: it was never boarded, because the guard measures whether zone_id is READ and alibaba
+  # did read it — into `group_name`, a DNS group, which is a different thing entirely.
 
   # ── Azure cache: two knobs, two different shapes of drop ───────────────────────────
   # The version is the textbook unwired template — carried, declared, and named by no resource.
