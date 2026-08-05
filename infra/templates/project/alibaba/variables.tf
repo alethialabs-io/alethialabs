@@ -445,3 +445,25 @@ variable "network_allowed_cidr_blocks" {
     error_message = "network_allowed_cidr_blocks must all be valid CIDRs (e.g. 10.1.0.0/16)."
   }
 }
+
+# #1996. See modules/kvstore for why this is shards rather than replicas.
+variable "kvstore_shard_count" {
+  type        = number
+  default     = 0
+  description = "Number of cluster-mode shards for the Redis instance. 0 (the default) leaves the instance class's own topology alone."
+}
+
+# #1996. Alibaba is NOT part of the azure/gcp serverless ceiling: alicloud_db_instance accepts a
+# serverless_config block, so the range is expressible. Both default to 0, which renders no block at
+# all — a provisioned (non-serverless) instance is unaffected.
+variable "rds_serverless_min_capacity" {
+  type        = number
+  default     = 0
+  description = "Minimum serverless capacity (RCUs). 0 (the default) provisions a fixed-size instance with no serverless range."
+}
+
+variable "rds_serverless_max_capacity" {
+  type        = number
+  default     = 0
+  description = "Maximum serverless capacity (RCUs). 0 (the default) provisions a fixed-size instance with no serverless range."
+}

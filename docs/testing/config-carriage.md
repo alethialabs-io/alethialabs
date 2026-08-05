@@ -44,7 +44,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 | `memory_gb` | ⚙️ | 🟡 | ⚙️ | 🟡 | · |
 | `multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · |
 | `node_type` | · | · | · | · | · |
-| `num_cache_nodes` | 🚫 #1996 | 🟡 | ⚠️ #1993 | 🟡 | · |
+| `num_cache_nodes` | 🟡 | 🟡 | ⚠️ #1993 | 🟡 | · |
 
 ### `cluster`
 
@@ -77,8 +77,8 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 | `engine_version` | · | · | · | · | · |
 | `iam_auth` | — | 🟡 | 🟡 | 🟡 | · |
 | `instance_class` | 🟡 | 🟡 | 🟡 | 🟡 | · |
-| `max_capacity` | 🚫 #1996 | 🟡 | — | — | · |
-| `min_capacity` | 🚫 #1996 | 🟡 | — | — | · |
+| `max_capacity` | 🟡 | 🟡 | — | — | · |
+| `min_capacity` | 🟡 | 🟡 | — | — | · |
 | `port` | 🟡 | 🟡 | 🟡 | 🟡 | · |
 
 ### `dns`
@@ -247,9 +247,6 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 | `nosql_tables.global_replicas` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1982 | The replica regions you choose for a table are not created — the table is provisioned in its own region only. |
 | `container_registries.vulnerability_scanning` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
 | `caches.num_cache_nodes` | azure | ⚠️ | gated-carrier (boarded as gated-carrier) | #1993 | The node count you set on a cache is not applied — asking for more than one node moves the cache to the Standard tier, and the number itself is discarded. |
-| `databases.min_capacity` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1996 | The capacity range you set is not applied — the database is created at a fixed instance size. |
-| `databases.max_capacity` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1996 | The capacity range you set is not applied — the database is created at a fixed instance size. |
-| `caches.num_cache_nodes` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1996 | The node count you set on a cache is not applied — the cache is created with the node count its instance class implies. |
 
 ---
 

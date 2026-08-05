@@ -341,6 +341,15 @@ exclusions:
 #
 # Delete the entry in the same PR that fixes the gap.
 baseline:
+  # alibaba's databases.min_capacity / max_capacity / caches.num_cache_nodes were here (#1996).
+  # FIXED, and each was PROBED against the pinned provider rather than assumed — the issue warned
+  # that ApsaraDB may encode topology in the SKU, which would have made them ceilings:
+  #   · alicloud_db_instance   accepts a `serverless_config` block  -> the range is expressible
+  #   · alicloud_kvstore_instance accepts `shard_count`             -> the count is expressible
+  # (`node_type`, the replica axis, is deprecated from provider 1.120.1 and is deliberately unused.)
+  # All three render nothing when unset, so a fixed-size instance and an SKU-topology cache are
+  # unaffected.
+
   # ── The two that named this class ──────────────────────────────────────────────────
   # Both are one line of Go: a field on the struct with the column's exact json tag, then a read in
   # the providers that can honor it. They are boarded rather than fixed here because this lane built
@@ -432,24 +441,9 @@ baseline:
   # and Cloud SQL provision fixed-size instances and genuinely cannot express a range;
   # `alicloud_db_instance` (modules/rds/main.tf:25) exposes a serverless configuration and simply
   # does not receive one. Recording those together would have written a false ceiling.
-  - field: databases.min_capacity
-    cloud: alibaba
-    reason: The capacity range you set is not applied — the database is created at a fixed instance size.
-    issue: "#1996"
-    state: no-carrier
-  - field: databases.max_capacity
-    cloud: alibaba
-    reason: The capacity range you set is not applied — the database is created at a fixed instance size.
-    issue: "#1996"
-    state: no-carrier
   # Baseline rather than an exclusion ON PURPOSE: ApsaraDB may encode topology in the instance class,
   # in which case this becomes an evidence-backed exclusion. Nobody has read the schema yet, and an
   # unread assumption is debt, not a ceiling.
-  - field: caches.num_cache_nodes
-    cloud: alibaba
-    reason: The node count you set on a cache is not applied — the cache is created with the node count its instance class implies.
-    issue: "#1996"
-    state: no-carrier
 
 # ── Branch-guard wirings a person has READ and found correct ───────────────────────────
 #
