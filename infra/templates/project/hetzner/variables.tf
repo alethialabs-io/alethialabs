@@ -127,6 +127,21 @@ variable "network_cidr" {
   default     = "10.0.0.0/16"
 }
 
+# #1987. ADDITIVE, never restrictive: these ranges are permitted IN ADDITION to the rules the
+# template already writes, so the empty default is behaviour-preserving and cannot lock the
+# external runner out of a cluster it still has to provision. Read by hcloud_firewall.this.
+variable "network_allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to this network's nodes, on top of the template's own rules. Empty (the default) adds nothing."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.network_allowed_cidr_blocks : can(cidrhost(c, 0))])
+    error_message = "network_allowed_cidr_blocks must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}
+
 # Pod + service CIDRs are SUBNETS of network_cidr (Cilium native routing over the
 # Hetzner private network). Keeping pods inside the network supernet — and setting
 # ipv4NativeRoutingCIDR = network_cidr in cilium.tf — is what the canonical

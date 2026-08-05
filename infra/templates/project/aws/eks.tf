@@ -10,6 +10,7 @@ module "eks" {
   environment = var.environment
 
   eks_cluster_version = var.eks_cluster_version
+  allowed_cidr_blocks = var.vpc_allowed_cidr_blocks
   eks_cluster_name    = local.eks_name
 
   cluster_admins = var.eks_cluster_admins

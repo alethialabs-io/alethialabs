@@ -146,6 +146,17 @@ type ProjectNetworkConfig struct {
 	// when non-empty; consumed per-cloud in ProviderTfvars (gcp/azure/alibaba) and in
 	// deploy.go's AWS brownfield subnet classification (#1352).
 	SubnetIDs []string `json:"subnet_ids,omitempty"`
+	// AllowedCidrBlocks are EXTRA source ranges permitted to reach resources in this
+	// network, on top of whatever the template already allows. The canvas and the CLI
+	// have collected it since the network inspector shipped; nothing modelled it, so
+	// `json.Unmarshal` dropped it here and a user could type an allow-list, save it, and
+	// be shown a setting that changed nothing (#1987).
+	//
+	// ADDITIVE by definition — "extra networks permitted", never "only these". Empty (the
+	// default) therefore means no extra rules and is bit-for-bit behaviour-preserving,
+	// which is also what keeps it from locking the external runner out of a cluster it
+	// still has to provision.
+	AllowedCidrBlocks []string `json:"allowed_cidr_blocks,omitempty"`
 }
 
 // NodeSize is a cloud-indifferent node capability; the catalog resolver maps it to the

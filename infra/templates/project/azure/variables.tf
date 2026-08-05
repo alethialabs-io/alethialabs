@@ -53,6 +53,21 @@ variable "provision_vnet" {
   description = "Whether to provision a new Virtual Network"
 }
 
+# #1987. ADDITIVE, never restrictive: admitted alongside the template's own NSG rules, so the empty
+# default is behaviour-preserving and cannot lock the external runner out of a cluster it still has
+# to provision. Read by modules/vnet's azurerm_network_security_group.private.
+variable "vnet_allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to this VNet's private subnet, on top of the template's own rules. Empty (the default) adds nothing."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.vnet_allowed_cidr_blocks : can(cidrhost(c, 0))])
+    error_message = "vnet_allowed_cidr_blocks must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}
+
 variable "vnet_cidr" {
   type        = string
   default     = "10.0.0.0/16"

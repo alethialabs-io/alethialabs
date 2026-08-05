@@ -167,4 +167,28 @@ resource "hcloud_firewall" "this" {
     protocol    = "icmp"
     source_ips  = [local.network_ip_range]
   }
+
+  # Extra operator-supplied source ranges (#1987). ADDITIVE: each CIDR gets its own inbound rules
+  # alongside the fixed ones above, so an empty list — the default — changes nothing. Split by
+  # protocol because hcloud requires `port` on tcp/udp and REJECTS it on icmp.
+  dynamic "rule" {
+    for_each = length(var.network_allowed_cidr_blocks) > 0 ? ["tcp", "udp"] : []
+    content {
+      description = "Operator allow-list (${rule.value})"
+      direction   = "in"
+      protocol    = rule.value
+      port        = "any"
+      source_ips  = var.network_allowed_cidr_blocks
+    }
+  }
+
+  dynamic "rule" {
+    for_each = length(var.network_allowed_cidr_blocks) > 0 ? [1] : []
+    content {
+      description = "Operator allow-list (icmp)"
+      direction   = "in"
+      protocol    = "icmp"
+      source_ips  = var.network_allowed_cidr_blocks
+    }
+  }
 }
