@@ -86,8 +86,8 @@ resource "alicloud_security_group" "operator_allow_list" {
   # warns on it.
   security_group_name = "${var.vpc_name}-operator-allow"
   description         = "Extra source ranges permitted by this project's network allow-list (#1987)."
-  vpc_id      = alicloud_vpc.this.id
-  tags        = var.tags
+  vpc_id              = alicloud_vpc.this.id
+  tags                = var.tags
 }
 
 # One rule per CIDR: alicloud_security_group_rule takes a single cidr_ip, unlike the AWS/GCP forms
