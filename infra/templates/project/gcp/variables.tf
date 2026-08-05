@@ -434,11 +434,17 @@ variable "firestore_location_id" {
   description = "Location for Firestore database (defaults to var.region if empty)"
 }
 
-variable "firestore_delete_protection_state" {
-  type        = string
-  default     = "DELETE_PROTECTION_ENABLED"
-  description = "Delete protection state for Firestore (DELETE_PROTECTION_ENABLED or DELETE_PROTECTION_DISABLED)"
-}
+# `firestore_delete_protection_state` used to be declared here, defaulting to
+# DELETE_PROTECTION_ENABLED. NOTHING read it — not firestore.tf, not the module, and not
+# packages/core/cloud/gcp_provider.go, which emits `firestore_point_in_time_recovery` and nothing
+# else for Firestore. modules/firestore/main.tf derives the state from `var.environment` instead.
+#
+# It is removed rather than wired because a declared-but-unread variable is worse than absent here:
+# `provider_config` passthrough (mergeProviderConfig) makes every declared root variable settable
+# from the console, so a user could set this one, see it accepted, and get a database whose delete
+# protection was decided by something else entirely. Its default also read as the template's
+# posture while the real posture — protection in production only, plus deletion_policy = ABANDON so
+# a production destroy is never REFUSED, only declined — lives in the module.
 
 variable "firestore_point_in_time_recovery" {
   type        = bool

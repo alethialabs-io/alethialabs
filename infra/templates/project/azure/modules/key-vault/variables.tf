@@ -45,3 +45,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "purge_protection_enabled" {
+  description = "Block purging a soft-deleted vault until the retention window expires. IRREVERSIBLE once applied — Azure refuses to disable it, so true → false fails the next apply on an existing vault. Defaults to true so no deployed environment sees a diff. See modules/key-vault/main.tf."
+  type        = bool
+  default     = true
+}
