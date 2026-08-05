@@ -170,7 +170,13 @@ func TestProviderTfvars_ParityKnobs(t *testing.T) {
 		tf := (&azureProvider{}).ProviderTfvars(cfg)
 		assertEq(t, tf, "aks_disk_size_gb", 120)
 		assertEq(t, tf, "azure_db_sku_name", "GP_Standard_D2s_v3")
-		assertEq(t, tf, "azure_cache_redis_version", "6")
+		// azure_cache_redis_version is NOT emitted any more (#1993), and asserting its absence is
+		// the point: Azure Cache for Redis is retired, so the kind runs on azurerm_managed_redis,
+		// which accepts no engine-version argument in any spelling. Emitting one would be dropped
+		// at plan time while the parity guards scored the cell as carried.
+		if _, present := tf["azure_cache_redis_version"]; present {
+			t.Error("azure_cache_redis_version is emitted again — Azure Managed Redis has no version knob to carry it to")
+		}
 	})
 }
 

@@ -175,9 +175,12 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
 			tfvars["azure_cache_sku"] = "Standard"
 		}
-		if cache.EngineVersion != "" {
-			tfvars["azure_cache_redis_version"] = cache.EngineVersion
-		}
+		// EngineVersion is deliberately NOT emitted on Azure (#1993). Azure Managed Redis
+		// (azurerm_managed_redis, the replacement for the retired Azure Cache for Redis) exposes no
+		// engine-version knob at all — verified against the pinned provider, which rejects both
+		// `redis_version` and a `version` inside `default_database` as unsupported arguments.
+		// Emitting it anyway would be dropped at plan time while the guards still scored the cell as
+		// carried. Recorded as a CLOUD CEILING in infra/config-carriage-exclusions.yaml instead.
 		if cache.MultiAz != nil {
 			tfvars["azure_cache_multi_az"] = *cache.MultiAz
 		}
@@ -382,13 +385,16 @@ func buildServiceBusQueues(queues []types.ProjectQueueConfig) map[string]interfa
 		if q.MessageRetention != nil {
 			cfg["default_message_ttl"] = fmt.Sprintf("PT%dS", *q.MessageRetention)
 		}
-		if d, ok := providerInt(q.ProviderConfig, "delay_seconds"); ok {
-			cfg["forward_dead_lettered_messages_to"] = ""
-			cfg["max_delivery_count"] = 10
-			// Azure Service Bus doesn't have a direct delay_seconds equivalent,
-			// but we can pass it for scheduled enqueue support
-			cfg["delay_seconds"] = d
-		}
+		// `delay_seconds` and `forward_dead_lettered_messages_to` were emitted here and are NOT
+		// emitted any more (#1994). Both rode the same path `default_message_ttl` did — the root's
+		// map(any) accepted them and the module's typed `queues` object dropped them, silently.
+		//
+		// They are deleted rather than added to that type, because neither describes anything the
+		// resource can do. This code's own comment conceded that Service Bus "doesn't have a direct
+		// delay_seconds equivalent" — scheduled enqueue is a per-MESSAGE property a sender sets, not
+		// a queue setting tofu can provision — and forwarding was emitted as the empty string, which
+		// names no queue to forward to. Carrying them further would have satisfied the guard while
+		// the values still meant nothing, which is the defect it exists to catch, not a way past it.
 		result[q.Name] = cfg
 	}
 	return result
@@ -443,6 +449,8 @@ func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]in
 // `container_access_type` argument; sending the resource's spelling meant the value landed on a name
 // nothing read and every container was created private whatever the user chose.
 //
+// `cors_origins` rides the same rule as `versioning_enabled` below — see the note on the field.
+//
 // `versioning_enabled` is emitted PER CONTAINER even though Azure blob versioning is a property of
 // the storage ACCOUNT, and this template gives a project exactly one. Keeping the per-bucket intent
 // visible in the tfvars is what lets the template aggregate it in one place, with one comment
@@ -458,6 +466,12 @@ func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[stri
 			"name":               b.Name,
 			"access_type":        accessType,
 			"versioning_enabled": b.Versioning,
+			// Emitted per container for the same reason versioning_enabled is: Azure CORS is a
+			// property of the storage ACCOUNT (blob_properties.cors_rule) and a project gets one
+			// account, so N answers must collapse to one rule — but the coarsening belongs in the
+			// template, next to the comment that explains it, not hidden in this builder (#1995).
+			// Honored on the other four clouds; azure was the only one dropping it.
+			"cors_origins": ensureStringSlice(b.CorsOrigins),
 		})
 	}
 	return result

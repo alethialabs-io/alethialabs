@@ -59,3 +59,17 @@ variable "tags" {
   default     = {}
   description = "Tags to apply to the RDS instance"
 }
+
+# #1996. Serverless capacity range (RCUs). Both 0 (the default) renders NO serverless_config block,
+# so a provisioned fixed-size instance is unaffected — which is every instance today.
+variable "serverless_min_capacity" {
+  type        = number
+  default     = 0
+  description = "Minimum serverless capacity (RCUs). 0 with max also 0 means a fixed-size instance."
+}
+
+variable "serverless_max_capacity" {
+  type        = number
+  default     = 0
+  description = "Maximum serverless capacity (RCUs). 0 with min also 0 means a fixed-size instance."
+}

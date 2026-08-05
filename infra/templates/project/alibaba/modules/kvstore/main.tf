@@ -17,6 +17,10 @@ resource "alicloud_kvstore_instance" "this" {
   instance_type    = "Redis"
   engine_version   = var.engine_version
 
+  # null, not 0, when unset: passing 0 would ask Alibaba for a zero-shard instance. null omits the
+  # argument entirely and the SKU decides, which is today's behaviour (#1996).
+  shard_count = var.shard_count > 0 ? var.shard_count : null
+
   vswitch_id        = var.vswitch_id
   zone_id           = var.zone_id
   secondary_zone_id = var.multi_az && var.secondary_zone_id != "" ? var.secondary_zone_id : null

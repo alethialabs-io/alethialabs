@@ -37,6 +37,11 @@ variable "queues" {
     # tfvars entry predates the key plans identically. The root's checks_queue.tf refuses the
     # session-on-Basic combination at plan time, because Azure only refuses it at apply.
     requires_session = optional(bool, false)
+    # #1994: the root's `service_bus_queues` is map(any), so this key passed the root happily and was
+    # then DROPPED HERE — OpenTofu discards object attributes a declared type omits, with no error
+    # and no plan diff. null (not a literal) so a queue that never set a retention keeps Azure's own
+    # default rather than being pinned to whatever we would have guessed.
+    default_message_ttl = optional(string, null)
   }))
   default = {}
 }

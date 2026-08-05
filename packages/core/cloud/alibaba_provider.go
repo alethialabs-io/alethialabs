@@ -149,6 +149,17 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		if db.BackupRetentionDays != nil {
 			tfvars["rds_backup_retention_days"] = *db.BackupRetentionDays
 		}
+		// Serverless capacity range (#1996). Alibaba is deliberately NOT part of the azure/gcp
+		// ceiling for these: `alicloud_db_instance` accepts a `serverless_config` block — verified
+		// against the pinned provider, not assumed — so the range is expressible here and was simply
+		// never expressed. Emitted only when the user set a bound, so a provisioned (non-serverless)
+		// instance renders exactly as it does today; the template gates the block on the same test.
+		if db.MinCapacity != nil {
+			tfvars["rds_serverless_min_capacity"] = *db.MinCapacity
+		}
+		if db.MaxCapacity != nil {
+			tfvars["rds_serverless_max_capacity"] = *db.MaxCapacity
+		}
 		// Generic passthrough — see mergeProviderConfig (aws_provider.go). No IAM-auth flag to reserve:
 		// Alibaba has no keyless DB cell (ApsaraDB exposes no data-plane token login we could find), so
 		// db.IamAuth is never emitted here and the offer-parity baseline records the gap. `log_exports`
@@ -166,6 +177,16 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		}
 		if cache.MultiAz != nil {
 			tfvars["kvstore_multi_az"] = *cache.MultiAz
+		}
+		// Node count -> shards (#1996). The issue warned this might be a ceiling, because ApsaraDB
+		// often encodes topology in the instance-class SKU; probed instead of assumed, and
+		// `alicloud_kvstore_instance` does accept `shard_count` as its own argument. (`node_type`,
+		// the read-replica axis, is deprecated from provider 1.120.1 and is NOT used.)
+		//
+		// A cluster-mode Redis spreads the keyspace across shards, so this is the axis a node count
+		// means here. Emitted only when set, so an unset count leaves the SKU's own topology alone.
+		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 0 {
+			tfvars["kvstore_shard_count"] = *cache.NumCacheNodes
 		}
 	}
 

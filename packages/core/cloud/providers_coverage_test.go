@@ -697,8 +697,16 @@ func TestAzureBuilders_ServiceBusQueues(t *testing.T) {
 	if q["default_message_ttl"] != "PT120S" {
 		t.Errorf("default_message_ttl = %v, want PT120S", q["default_message_ttl"])
 	}
-	if q["delay_seconds"] != 9 {
-		t.Errorf("delay_seconds = %v, want 9", q["delay_seconds"])
+	// delay_seconds is no longer emitted, and asserting its ABSENCE is the point (#1994). It was
+	// dropped at the module boundary on every run — the module's typed `queues` object never named
+	// it — and the builder's own comment conceded Service Bus has "no direct delay_seconds
+	// equivalent". Scheduled enqueue is a per-message property a sender sets, not a queue setting
+	// tofu can provision, so there was nothing for it to reach.
+	if _, present := q["delay_seconds"]; present {
+		t.Error("delay_seconds is emitted again — Service Bus has no queue-level setting to carry it to")
+	}
+	if _, present := q["forward_dead_lettered_messages_to"]; present {
+		t.Error("forward_dead_lettered_messages_to is emitted again — it was always the empty string, naming no queue")
 	}
 
 	// Defaults when nothing set: ISO-8601 PT1M lock, max_delivery_count 10, sessions explicitly OFF.
