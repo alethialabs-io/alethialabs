@@ -12,6 +12,20 @@
 # Balancer Controller's ELBs, and CSI pvc-* volumes. This script is the guarantee: the nightly
 # runs it in an `always()` step so the run's resources are gone no matter how the test ended.
 #
+# ── WHAT IS COVERED, AND WHY THE LIST IS EXPLICIT ───────────────────────────────────────────────
+# Compute/network was covered from the start; the STATEFUL half of a max-config project was not.
+# Aurora (db.r6g.large), ElastiCache, DynamoDB, S3, ECR, Secrets Manager, SQS, SNS and four KMS keys
+# were swept by nothing and — worse — verified by nothing, so a hard-killed run could leave an
+# Aurora cluster running while this script printed "no billable resources remain" and exited 0. A
+# sweeper that reports clean without looking is more expensive than no sweeper, because it stops
+# anyone else looking. Everything now sweeps and verifies:
+#
+#   instances · ELBv2 + target groups · EKS · NAT + EIPs · EBS · RDS clusters + instances ·
+#   ElastiCache replication groups · DynamoDB · S3 · ECR · Secrets Manager · SQS · SNS · KMS ·
+#   network (ENI/SG/subnet/RT/IGW/VPC) · Route 53
+#
+# Adding a component to infra/templates/project/aws means adding it here too; that is not automated.
+#
 # ─────────────────────────────  S A F E T Y  ─────────────────────────────
 # The AWS account (270587882865) is the SHARED platform account. An unfiltered delete would be
 # catastrophic (cf. the shared-hcloud near-wipe; scope-destructive-cloud-ops memory). So:
@@ -458,6 +472,149 @@ sweep_route53() {
 	done <<<"$zones"
 }
 
+# ── 8. Data services: Aurora/RDS + ElastiCache. THESE MUST GO BEFORE THE NETWORK SWEEP.
+#
+#    Neither was swept and neither was verified, so a hard-killed run left an Aurora cluster
+#    (db.r6g.large, the most expensive thing the max-config fixture builds) and an ElastiCache
+#    replication group running while the step exited 0. They are also the reason the network sweep
+#    fails: both hold ENIs in the private subnets, so their subnets — and then the VPC — refuse to
+#    delete for as long as they live. Deleting them here is what makes step 6 able to finish.
+#
+#    Both are tag-discovered like everything else. Final snapshots are explicitly skipped: a
+#    snapshot of an e2e database is itself a billable artifact nothing would ever reclaim, and
+#    RDS refuses the delete outright if neither a snapshot id nor the skip flag is given.
+sweep_data_services() {
+	assert_scope
+	local ids id
+	# Cluster INSTANCES first — a cluster with members refuses to delete.
+	ids="$(tagged_arns rds:db | while read -r a; do arn_id "$a"; done)"
+	while IFS= read -r id; do
+		[ -n "$id" ] || continue
+		retry_delete "rds instance ${id}" aws rds delete-db-instance --db-instance-identifier "$id" --skip-final-snapshot --delete-automated-backups
+	done <<<"$ids"
+	ids="$(tagged_arns rds:cluster | while read -r a; do arn_id "$a"; done)"
+	while IFS= read -r id; do
+		[ -n "$id" ] || continue
+		retry_delete "rds cluster ${id}" aws rds delete-db-cluster --db-cluster-identifier "$id" --skip-final-snapshot
+	done <<<"$ids"
+	ids="$(tagged_arns elasticache:replicationgroup | while read -r a; do arn_id "$a"; done)"
+	while IFS= read -r id; do
+		[ -n "$id" ] || continue
+		retry_delete "elasticache replication-group ${id}" aws elasticache delete-replication-group --replication-group-id "$id" --no-retain-primary-cluster
+	done <<<"$ids"
+
+	# Wait for the ENIs to actually be released. Without this the network sweep runs against
+	# subnets that are still in use and every delete fails — which, before the classification fix
+	# below, was reported as a NOTICE and exited green.
+	[ "$DRY_RUN" = "1" ] && return 0
+	local waited=0 live
+	while [ "$waited" -lt "$DETACH_TIMEOUT" ]; do
+		live="$({ alive_rds_clusters; alive_rds_instances; alive_elasticache; } | grep -c . || true)"
+		[ "${live:-0}" -eq 0 ] && break
+		echo "  · waiting for ${live} data service(s) to finish deleting… (${waited}s/${DETACH_TIMEOUT}s)"
+		sleep 15
+		waited=$((waited + 15))
+	done
+}
+
+# ── 9. Everything else the max-config fixture builds that nothing swept and nothing verified:
+#       DynamoDB, S3, ECR, Secrets Manager, SQS, SNS, KMS. None of them holds an ENI, so they run
+#       after the network teardown; all of them bill, and all of them carry the project-id tag via
+#       the provider `default_tags` block (aws/main.tf:26), which is what makes them tag-discoverable
+#       at all. ──
+sweep_managed_services() {
+	assert_scope
+	local arns arn name
+
+	# DynamoDB. `update-table --no-deletion-protection-enabled` first: the root template defaulted
+	# deletion protection ON until this change, so a table built by an EARLIER apply is still
+	# protected and DeleteTable on it is refused forever. Harmless on an unprotected table.
+	arns="$(tagged_arns dynamodb:table)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		name="$(arn_id "$arn")"
+		[ "$DRY_RUN" != "1" ] && aws dynamodb update-table --table-name "$name" --no-deletion-protection-enabled >/dev/null 2>&1 || true
+		retry_delete "dynamodb table ${name}" aws dynamodb delete-table --table-name "$name"
+	done <<<"$arns"
+
+	# S3. A non-empty bucket cannot be deleted, and versioning leaves delete-markers that
+	# `rm --recursive` does not remove — so purge object VERSIONS explicitly before the bucket.
+	arns="$(tagged_arns s3)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		name="${arn##*:}"
+		[ -n "$name" ] || continue
+		if [ "$DRY_RUN" != "1" ]; then
+			aws s3 rm "s3://${name}" --recursive >/dev/null 2>&1 || true
+			purge_bucket_versions "$name"
+		fi
+		retry_delete "s3 bucket ${name}" aws s3api delete-bucket --bucket "$name"
+	done <<<"$arns"
+
+	arns="$(tagged_arns ecr:repository)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		retry_delete "ecr repository $(arn_id "$arn")" aws ecr delete-repository --repository-name "$(arn_id "$arn")" --force
+	done <<<"$arns"
+
+	# Secrets Manager. WITHOUT --force-delete-without-recovery a deleted secret sits in a 7-30 day
+	# recovery window, still occupying its name, and describe-secret keeps returning it — so a
+	# plain delete would leave verify_swept reporting a leak it could never clear.
+	arns="$(tagged_arns secretsmanager:secret)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		retry_delete "secret ${arn##*:}" aws secretsmanager delete-secret --secret-id "$arn" --force-delete-without-recovery
+	done <<<"$arns"
+
+	# SQS deletes by queue URL, not ARN; the queue name is the ARN's last segment.
+	arns="$(tagged_arns sqs)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		name="${arn##*:}"
+		local url
+		url="$(aws sqs get-queue-url --queue-name "$name" --query 'QueueUrl' --output text 2>/dev/null || true)"
+		[ -n "$url" ] && [ "$url" != "None" ] || continue
+		retry_delete "sqs queue ${name}" aws sqs delete-queue --queue-url "$url"
+	done <<<"$arns"
+
+	arns="$(tagged_arns sns)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		retry_delete "sns topic ${arn##*:}" aws sns delete-topic --topic-arn "$arn"
+	done <<<"$arns"
+
+	# KMS. There is NO immediate delete — a customer-managed key can only be SCHEDULED for
+	# deletion, minimum 7 days, and it bills $1/key/month until it actually goes. Four keys is
+	# $4/month per leaked run, which is why they belong here. It also means a key sitting in
+	# PendingDeletion is as swept as a key can be, and alive_kms_keys() below must not call that a
+	# leak — otherwise every clean run would fail its own verification.
+	arns="$(tagged_arns kms:key)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		name="$(arn_id "$arn")"
+		# Never touch an AWS-managed key. The tag filter already excludes them (they carry no
+		# default_tags), but a scheduled deletion is irreversible and cheap to guard twice.
+		if [ "$(aws kms describe-key --key-id "$name" --query 'KeyMetadata.KeyManager' --output text 2>/dev/null || echo UNKNOWN)" != "CUSTOMER" ]; then
+			echo "      skip kms key ${name} (not customer-managed)"
+			continue
+		fi
+		retry_delete "kms key ${name} (schedule 7d)" aws kms schedule-key-deletion --key-id "$name" --pending-window-in-days 7
+	done <<<"$arns"
+}
+
+# purge_bucket_versions <bucket> — delete every object VERSION and delete-marker, in batches of
+# 1000 (the DeleteObjects cap). A versioned bucket is not empty just because `s3 rm` returned.
+purge_bucket_versions() {
+	local bucket="$1" raw payload
+	while :; do
+		raw="$(aws s3api list-object-versions --bucket "$bucket" --max-keys 1000 --output json 2>/dev/null || echo '{}')"
+		# Versions AND DeleteMarkers — a bucket holding only delete-markers still refuses to delete.
+		payload="$(printf '%s' "$raw" | jq -c '{Objects: (((.Versions // []) + (.DeleteMarkers // [])) | map({Key, VersionId}))}' 2>/dev/null || echo '{"Objects":[]}')"
+		[ "$(printf '%s' "$payload" | jq '.Objects | length' 2>/dev/null || echo 0)" -gt 0 ] || break
+		aws s3api delete-objects --bucket "$bucket" --delete "$payload" >/dev/null 2>&1 || break
+	done
+}
+
 # ── Final verification: a leak must NEVER exit green (grill F1/F2/F3). Uses tag-FILTERED
 #    describes (union of the project-id tag AND the cluster tag), which — unlike `--instance-ids`
 #    — never fail the whole call on an already-deregistered id (which would false-GREEN a mix of
@@ -501,6 +658,119 @@ alive_eks() { [ -n "$CLUSTER" ] && aws eks describe-cluster --name "$CLUSTER" --
 # false-green already covered by the next run's sweep), never invent one.
 alive_zones() { tagged_arns route53:hostedzone | while read -r a; do arn_id "$a"; done; }
 
+# ── The eight types that were swept by nothing and verified by nothing. Each takes the tagged ARN
+#    list and then CONFIRMS the resource with an authoritative per-service describe, the same
+#    posture the compute probes use: the tagging API can lag behind a delete, and a lagging list on
+#    its own would false-RED a clean run. Confirming can only make these MISS a leak the tagging API
+#    has not caught up to yet — which the next run's PREFLIGHT sweeps — never invent one.
+#
+#    Terminal states are NOT leaks. A resource in `deleting` has been swept; reporting it would fail
+#    every well-behaved run. That distinction is load-bearing for KMS in particular, where
+#    PendingDeletion is the ONLY end state a sweeper can reach. ──
+alive_rds_clusters() {
+	local id
+	for id in $(tagged_arns rds:cluster | while read -r a; do arn_id "$a"; done); do
+		# shellcheck disable=SC2016 # backtick is JMESPath
+		aws rds describe-db-clusters --db-cluster-identifier "$id" \
+			--query 'DBClusters[?Status!=`deleting`].DBClusterIdentifier' --output text 2>/dev/null || true
+	done | tr '\t' '\n' | grep -v '^$' || true
+}
+alive_rds_instances() {
+	local id
+	for id in $(tagged_arns rds:db | while read -r a; do arn_id "$a"; done); do
+		# shellcheck disable=SC2016
+		aws rds describe-db-instances --db-instance-identifier "$id" \
+			--query 'DBInstances[?DBInstanceStatus!=`deleting`].DBInstanceIdentifier' --output text 2>/dev/null || true
+	done | tr '\t' '\n' | grep -v '^$' || true
+}
+alive_elasticache() {
+	local id
+	for id in $(tagged_arns elasticache:replicationgroup | while read -r a; do arn_id "$a"; done); do
+		# shellcheck disable=SC2016
+		aws elasticache describe-replication-groups --replication-group-id "$id" \
+			--query 'ReplicationGroups[?Status!=`deleting`].ReplicationGroupId' --output text 2>/dev/null || true
+	done | tr '\t' '\n' | grep -v '^$' || true
+}
+alive_ddb_tables() {
+	# describe-table returns `Table` as an OBJECT, not a list — a `[?…]` filter projection over it
+	# silently evaluates to null, which would report every table as gone. Read the scalar status and
+	# compare in shell instead.
+	local id state
+	for id in $(tagged_arns dynamodb:table | while read -r a; do arn_id "$a"; done); do
+		state="$(aws dynamodb describe-table --table-name "$id" --query 'Table.TableStatus' --output text 2>/dev/null || true)"
+		case "$state" in "" | None | DELETING) ;; *) printf '%s\n' "$id" ;; esac
+	done
+}
+alive_s3_buckets() {
+	local arn name
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		name="${arn##*:}"
+		[ -n "$name" ] || continue
+		aws s3api head-bucket --bucket "$name" >/dev/null 2>&1 && printf '%s\n' "$name"
+	done <<<"$(tagged_arns s3)"
+}
+alive_ecr_repos() {
+	local id
+	for id in $(tagged_arns ecr:repository | while read -r a; do arn_id "$a"; done); do
+		aws ecr describe-repositories --repository-names "$id" \
+			--query 'repositories[].repositoryName' --output text 2>/dev/null || true
+	done | tr '\t' '\n' | grep -v '^$' || true
+}
+alive_secrets() {
+	local arn
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		aws secretsmanager describe-secret --secret-id "$arn" >/dev/null 2>&1 && printf '%s\n' "${arn##*:}"
+	done <<<"$(tagged_arns secretsmanager:secret)"
+}
+alive_sqs_queues() {
+	local arn url
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		url="$(aws sqs get-queue-url --queue-name "${arn##*:}" --query 'QueueUrl' --output text 2>/dev/null || true)"
+		[ -n "$url" ] && [ "$url" != "None" ] && printf '%s\n' "${arn##*:}"
+	done <<<"$(tagged_arns sqs)"
+}
+alive_sns_topics() {
+	local arn
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		aws sns get-topic-attributes --topic-arn "$arn" >/dev/null 2>&1 && printf '%s\n' "${arn##*:}"
+	done <<<"$(tagged_arns sns)"
+}
+alive_kms_keys() {
+	# A key SCHEDULED for deletion is swept — 7 days is the shortest window AWS offers and nothing
+	# can shorten it. Only a key still Enabled/Disabled means the sweep did not reach it.
+	local id state
+	for id in $(tagged_arns kms:key | while read -r a; do arn_id "$a"; done); do
+		state="$(aws kms describe-key --key-id "$id" --query 'KeyMetadata.KeyState' --output text 2>/dev/null || true)"
+		case "$state" in Enabled | Disabled) printf '%s\n' "$id" ;; esac
+	done
+}
+
+# ── Tag-FILTERED network describes. Authoritative and lag-free (they return only live resources),
+#    unlike the resourcegroupstaggingapi list this used to grep. The default security group and a
+#    VPC's main route table are excluded because neither can be deleted on its own — they go with
+#    the VPC, and the VPC is reported in its own right, so listing them would be noise that trains
+#    people to ignore the output. ──
+net_by_tag() {
+	aws ec2 "$1" --filters "Name=tag:alethia:project-id,Values=${PROJECT_ID_TAG}" \
+		--query "$2" --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true
+}
+alive_network() {
+	{
+		net_by_tag describe-vpcs 'Vpcs[].VpcId'
+		net_by_tag describe-subnets 'Subnets[].SubnetId'
+		net_by_tag describe-internet-gateways 'InternetGateways[].InternetGatewayId'
+		net_by_tag describe-network-interfaces 'NetworkInterfaces[].NetworkInterfaceId'
+		# shellcheck disable=SC2016 # backticks are JMESPath
+		net_by_tag describe-security-groups 'SecurityGroups[?GroupName!=`default`].GroupId'
+		# shellcheck disable=SC2016
+		net_by_tag describe-route-tables 'RouteTables[?!not_null(Associations[?Main==`true`] | [0])].RouteTableId'
+	} | sort -u || true
+}
+
 verify_swept() {
 	assert_scope
 	local leaks="" x
@@ -511,18 +781,34 @@ verify_swept() {
 	x="$(alive_lbs)"; [ -n "$x" ] && leaks="${leaks}load-balancer: $(join "$x")\n"
 	x="$(alive_eks)"; [ -n "$x" ] && leaks="${leaks}eks-cluster: ${x}\n"
 	x="$(alive_zones)"; [ -n "$x" ] && leaks="${leaks}route53-hosted-zone: $(join "$x")\n"
+	# The data + managed services. Aurora is the single most expensive survivor a killed run can
+	# leave, and until this change nothing here was looked at even once.
+	x="$(alive_rds_clusters)"; [ -n "$x" ] && leaks="${leaks}rds-cluster: $(join "$x")\n"
+	x="$(alive_rds_instances)"; [ -n "$x" ] && leaks="${leaks}rds-instance: $(join "$x")\n"
+	x="$(alive_elasticache)"; [ -n "$x" ] && leaks="${leaks}elasticache-replication-group: $(join "$x")\n"
+	x="$(alive_ddb_tables)"; [ -n "$x" ] && leaks="${leaks}dynamodb-table: $(join "$x")\n"
+	x="$(alive_s3_buckets)"; [ -n "$x" ] && leaks="${leaks}s3-bucket: $(join "$x")\n"
+	x="$(alive_ecr_repos)"; [ -n "$x" ] && leaks="${leaks}ecr-repository: $(join "$x")\n"
+	x="$(alive_secrets)"; [ -n "$x" ] && leaks="${leaks}secretsmanager-secret: $(join "$x")\n"
+	x="$(alive_sqs_queues)"; [ -n "$x" ] && leaks="${leaks}sqs-queue: $(join "$x")\n"
+	x="$(alive_sns_topics)"; [ -n "$x" ] && leaks="${leaks}sns-topic: $(join "$x")\n"
+	x="$(alive_kms_keys)"; [ -n "$x" ] && leaks="${leaks}kms-key: $(join "$x")\n"
+
+	# ── Surviving network is a LEAK, not a notice. ──
+	# It used to be a `::notice::` on the reasoning that subnets and VPCs are free. They are, but
+	# that is not what a surviving subnet MEANS: these deletes only fail while something still holds
+	# an ENI in them, and the things that hold ENIs — RDS, ElastiCache, a load balancer, a lingering
+	# ENI of any kind — are exactly the billable survivors. So the one signal that something
+	# expensive is still alive was being printed as an FYI and the step exited 0. It is also the
+	# only signal left when the billable holder is a type this script does not model at all.
+	x="$(alive_network)"; [ -n "$x" ] && leaks="${leaks}network(vpc/subnet/eni/sg/rt/igw — SOMETHING STILL HOLDS AN ENI): $(join "$x")\n"
+
 	if [ -n "$leaks" ]; then
-		echo "  ✗ billable resources still alive:" >&2
+		echo "  ✗ resources still alive:" >&2
 		printf '%b' "  $leaks" >&2
-		echo "::error::aws cleanup INCOMPLETE — billable resources for run ${ENV} still exist and are BILLING. Investigate + remove (stay scope-locked; never account-wide)." >&2
+		echo "::error::aws cleanup INCOMPLETE — resources for run ${ENV} still exist (billable, or network still held by something billable). Investigate + remove (stay scope-locked; never account-wide)." >&2
 		return 1
 	fi
-	# Non-billable network residue (subnets/RT/SG/IGW/VPC still project-id-tagged) is a NOTICE, not
-	# a hard fail — it ages out or indicates an upstream billable already caught above.
-	local residue
-	residue="$(tagged_arns | grep -E ':(subnet|route-table|security-group|internet-gateway|vpc|network-interface)/' || true)"
-	# shellcheck disable=SC2086
-	[ -n "$residue" ] && echo "::notice::aws cleanup: network residue still tagged (non-billable, will age out): $(printf '%s ' $residue)"
 	return 0
 }
 
@@ -539,9 +825,11 @@ sweep_env() {
 	sweep_instances
 	sweep_load_balancers
 	sweep_eks
+	sweep_data_services
 	sweep_nat_and_eips
 	sweep_volumes
 	sweep_network
+	sweep_managed_services
 	sweep_route53
 	[ "$DRY_RUN" = "1" ] && return 0
 	verify_swept
@@ -599,14 +887,18 @@ if [ "$PREFLIGHT" = "1" ]; then
 	exit 0 # preflight never blocks the provisioning run
 fi
 
-# ── Orchestrate, in strict dependency order. ──
+# ── Orchestrate, in strict dependency order. sweep_data_services sits BEFORE the network teardown
+#    because RDS and ElastiCache hold ENIs in the private subnets; sweep_managed_services sits after
+#    it because nothing it touches does. ──
 discover_cluster
 sweep_instances
 sweep_load_balancers
 sweep_eks
+sweep_data_services
 sweep_nat_and_eips
 sweep_volumes
 sweep_network
+sweep_managed_services
 sweep_route53
 
 if [ "$DRY_RUN" = "1" ]; then

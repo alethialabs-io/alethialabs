@@ -449,45 +449,93 @@ sweep_network() {
 #    Cloud SQL and Memorystore RUNNING AND BILLING while verify_swept still reported "no billable
 #    resources remain". Observed for real: a Firestore database survived a "successful" destroy
 #    (provider deletion_policy defaults to ABANDON) and the sweeper never noticed.
-#    Every list below is label-filtered, with the `e2e-<ENV>-` name prefix as the fallback for the
-#    services that carry no labels (Firestore). Never project-wide. ──
+#
+# ── THE SECOND BUG, WHICH IS WHY THESE READ THE WAY THEY DO ────────────────────────────────────
+#    Every list here was NAME-filtered on `e2e-<ENV>-`, and NO RESOURCE IN THIS TEMPLATE IS EVER
+#    NAMED THAT WAY. `e2e-<ENV>` is the value of the alethia_project-id LABEL; the NAMES are built
+#    from project_name + environment (infra/templates/project/gcp/*.tf), so they render
+#    `alethia-nl-<ENV>-sql`, `alethia-nl-<ENV>-assets`, `<ENV>-alethia-nl-api-key`, and so on. Not
+#    one of them starts with, or even contains, `e2e-<ENV>-`. Every filter below matched exactly
+#    nothing, in the sweep AND in verify_swept, so a hard-killed run left Cloud SQL, the GCS bucket
+#    and the Artifact Registry repo billing while the step printed "no billable resources remain" —
+#    the failure the header above claims to have closed.
+#
+#    The fix is to scope on the LABEL the resources actually carry, exactly as the compute half
+#    (list_gke_clusters) already does, NOT to widen the name filter. Widening it is the more
+#    dangerous direction by a distance: these run against a project shared with real work
+#    (itgix-adp), and a broad name match there deletes someone else's database. The label value is
+#    unique per run and guard-validated at the top of this file; a name prefix is neither.
+#
+#    Proven present, by reading the template rather than by assumption — every root module is
+#    handed `labels = local.gcp_default_labels`, into which var.classification_tags (carrying
+#    alethia_project-id) is merged, and each module applies it to its resource:
+#      cloud-sql.tf:34         → modules/cloud-sql/main.tf:145      settings.user_labels
+#      memorystore.tf:18       → modules/memorystore/main.tf:41     labels
+#      memorystore-valkey.tf   → modules/memorystore-valkey:53      labels
+#      cloud-storage.tf:12     → modules/cloud-storage/main.tf:112  labels
+#      artifact-registry.tf:12 → modules/artifact-registry:38       labels
+#      pubsub.tf:11            → modules/pubsub/main.tf:47          labels
+#      secret-manager.tf:13    → modules/secret-manager/main.tf:16  labels
+#      cloud-dns.tf:28         → modules/cloud-dns/main.tf:7        labels
+#    Cloud SQL is the one that is not `labels.<key>`: the API field is settings.userLabels, so its
+#    filter path differs. Getting that path wrong fails the same silent way the name filter did.
+#
+#    FIRESTORE IS THE ONE GENUINE EXCEPTION. google_firestore_database has no labels field at all —
+#    modules/firestore/main.tf accepts a `labels` variable and never applies it, because there is
+#    nothing to apply it to. So Firestore keeps a NAME filter, but the narrowest safe one: the
+#    database id is deterministic, `<project_name>-<environment>-firestore`, so we anchor on the
+#    full `<project>-<ENV>-firestore` when ALETHIA_E2E_PROJECT is known and otherwise fall back to
+#    the `-<ENV>-` embedding the compute half already relies on. Both still carry this run's unique
+#    ENV; neither is a bare `e2e-` prefix. ──
 
 # BILLABLE managed services
 list_sql_instances() {
 	assert_scope
-	gc sql instances list --filter="name~^e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	# Cloud SQL exposes labels as settings.userLabels, NOT labels.
+	gc sql instances list --filter="settings.userLabels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 }
 list_redis_instances() {
 	assert_scope
 	gc redis instances list --region "${REGION}" \
-		--filter="labels.alethia_project-id=${PID_LABEL} OR name~^e2e-${ENV}-" \
+		--filter="labels.alethia_project-id=${PID_LABEL}" \
 		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 }
 list_buckets() {
 	assert_scope
-	gc storage buckets list --filter="name~^e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc storage buckets list --filter="labels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 }
 list_artifact_repos() {
 	assert_scope
 	gc artifacts repositories list --location "${REGION}" \
-		--filter="name~e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+		--filter="labels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 }
 # NON-BILLABLE residue (still reclaimed — a stale one blocks re-creating the same name)
 list_firestore_dbs() {
 	assert_scope
-	gc firestore databases list --filter="name~e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	# No labels on google_firestore_database (see the block above) — the deterministic database id
+	# is the narrowest handle there is. With the project name known this is an exact name;
+	# without it, the same `-<ENV>-` embedding every other unlabellable lookup in this file uses.
+	local f="name~-${ENV}-"
+	[ -n "$PROJECT_NAME" ] && f="name~^(.*/)?${PROJECT_NAME}-${ENV}-firestore\$"
+	gc firestore databases list --filter="$f" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 }
 list_pubsub_topics() {
 	assert_scope
-	gc pubsub topics list --filter="name~e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc pubsub topics list --filter="labels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 }
 list_secrets() {
 	assert_scope
-	gc secrets list --filter="name~e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc secrets list --filter="labels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 }
 list_dns_zones() {
 	assert_scope
-	gc dns managed-zones list --filter="name~e2e-${ENV}-" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc dns managed-zones list --filter="labels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
 }
 
 sweep_managed_services() {
@@ -586,6 +634,12 @@ list_orphan_envs() {
 			gc container clusters list --format="value(resourceLabels.alethia_project-id)" 2>/dev/null
 			gc compute disks list --format="value(labels.alethia_project-id)" 2>/dev/null
 			gc compute addresses list --format="value(labels.alethia_project-id)" 2>/dev/null
+			# The managed services too, now that they are discoverable by label. Without these a run
+			# killed AFTER its GKE cluster went but BEFORE Cloud SQL did left an orphan no preflight
+			# could ever name — the compute half found nothing, so the whole ENV went unswept while
+			# a db-custom instance billed by the hour.
+			gc sql instances list --format="value(settings.userLabels.alethia_project-id)" 2>/dev/null
+			gc storage buckets list --format="value(labels.alethia_project-id)" 2>/dev/null
 		} | grep -E '^e2e-' | sort -u || true
 	)"
 	while IFS= read -r v; do
