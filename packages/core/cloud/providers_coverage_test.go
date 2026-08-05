@@ -81,15 +81,18 @@ func TestAlibabaProviderTfvars_FullConfig(t *testing.T) {
 
 	// Core toggles derived from presence of each resource kind.
 	for k, want := range map[string]interface{}{
-		"provision_ack":              true,
-		"create_mns":                 true,
-		"create_kvstore":             true,
-		"create_ots":                 true,
-		"create_oss":                 true,
-		"create_rds":                 true,
-		"provision_network":          true,
-		"single_cloud_nat":           true,
-		"alidns_enabled":             true,
+		"provision_ack":     true,
+		"create_mns":        true,
+		"create_kvstore":    true,
+		"create_ots":        true,
+		"create_oss":        true,
+		"create_rds":        true,
+		"provision_network": true,
+		"single_cloud_nat":  true,
+		// FALSE, and that is the fix: this fixture supplies ZoneID "zone-1", so the caller already
+		// owns a domain and the template must NOT register a second one (#1992). `alidns_enabled`
+		// is the CREATE gate, not an "is DNS on" flag. See TestExistingZoneSuppressesZoneCreation.
+		"alidns_enabled":             false,
 		"alidns_managed_certificate": true,
 		"application_waf_enabled":    true,
 		"rds_engine":                 "PostgreSQL",

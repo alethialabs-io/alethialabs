@@ -134,6 +134,13 @@ output "alidns_name_servers" {
   value       = (var.alidns_enabled && var.dns_provider == "native") ? module.dns[0].name_servers : []
 }
 
+# The domain downstream bindings should use, resolved identically on both paths — aws/azure parity
+# (#1992). Created in-template when alidns_enabled, else the domain the caller already owns.
+output "alidns_domain_resolved" {
+  description = "The AliDNS domain serving this project — created in-template when alidns_enabled, else the existing alidns_domain supplied by the caller."
+  value       = (var.alidns_enabled && var.dns_provider == "native") ? module.dns[0].domain_name : var.alidns_domain
+}
+
 #########################################################################
 ##                     WAF Outputs                                     ##
 #########################################################################
