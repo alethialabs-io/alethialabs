@@ -4,6 +4,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { RAMP_THEME } from "@repo/brand/ramp-srgb";
 
 import {
 	FIELD_GLYPHS,
@@ -99,16 +100,36 @@ export function Field({ onVerdict }: FieldProps) {
 		let running = true;
 		let frame = 0;
 
-		/* Theme colours are read from the tokens, not hardcoded, and re-read only
-		   when the theme actually changes — never per frame. */
-		let ink = "#fafafa";
-		let surface = "#2a2a2a";
-		let page = "#212121";
+		/* Theme colours come from the tokens, not hardcoded, and are re-read only
+		   when the theme actually changes — never per frame.
+
+		   The tokens are OKLCH. Canvas 2D accepts CSS Color 4 in current browsers,
+		   but when it does not, assigning an unparseable `fillStyle` is a silent
+		   no-op that leaves the previous colour in place — which would render the
+		   whole field in whatever was set last. So each value is probed once and
+		   falls back to the ramp's sRGB transcription if the canvas rejects it. */
+		let ink: string = RAMP_THEME.dark.textPrimary;
+		let surface: string = RAMP_THEME.dark.surface;
+		let page: string = RAMP_THEME.dark.background;
+
+		const accepts = (value: string) => {
+			if (!value) return false;
+			const probe = "#010203";
+			ctx.fillStyle = probe;
+			ctx.fillStyle = value;
+			return ctx.fillStyle !== probe;
+		};
 		const readTheme = () => {
 			const s = getComputedStyle(document.documentElement);
-			ink = s.getPropertyValue("--text-primary").trim() || ink;
-			surface = s.getPropertyValue("--surface").trim() || surface;
-			page = s.getPropertyValue("--background").trim() || page;
+			const dark = document.documentElement.classList.contains("dark");
+			const fallback = RAMP_THEME[dark ? "dark" : "light"];
+			const pick = (token: string, spare: string) => {
+				const value = s.getPropertyValue(token).trim();
+				return accepts(value) ? value : spare;
+			};
+			ink = pick("--text-primary", fallback.textPrimary);
+			surface = pick("--surface", fallback.surface);
+			page = pick("--background", fallback.background);
 		};
 
 		const cursorFor = (closed: boolean) => {
