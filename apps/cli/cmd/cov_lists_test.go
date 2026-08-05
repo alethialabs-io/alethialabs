@@ -259,6 +259,14 @@ const (
 // returns the exit code a fatal path asked for, or 0.
 func covListEnv(t *testing.T, mode covListMode) func(args ...string) int {
 	t.Helper()
+	return covListEnvFormat(t, mode, "table")
+}
+
+// covListEnvFormat is covListEnv with the --output value chosen by the caller, so
+// the same fake control plane can drive the non-interactive render arm ("json")
+// as well as the interactive table one.
+func covListEnvFormat(t *testing.T, mode covListMode, format string) func(args ...string) int {
+	t.Helper()
 	credsPath := isolatedHome(t)
 	tok := makeToken(t, time.Now().Add(time.Hour))
 	if err := saveCredentials(credsPath, types.ExchangeResponse{AccessToken: tok, RefreshToken: "r"}); err != nil {
@@ -301,7 +309,7 @@ func covListEnv(t *testing.T, mode covListMode) func(args ...string) int {
 				code = e.code
 			}
 		}()
-		rootCmd.SetArgs(append(args, "--output", "table"))
+		rootCmd.SetArgs(append(args, "--output", format))
 		if err := rootCmd.Execute(); err != nil {
 			t.Errorf("%v: %v", args, err)
 		}
@@ -504,5 +512,89 @@ func TestList_ProjectGetOpensBrowserWhenConfirmed(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, os.Getenv("ALETHIA_WEB_ORIGIN")) {
 		t.Errorf("openBrowser url = %q, want it rooted at the configured web origin", got)
+	}
+}
+
+// covListWithBrokenStdout runs fn with os.Stdout pointed at a read-only handle, so
+// every write to it fails with EBADF.
+//
+// This is the only way to reach the `if err := render…(os.Stdout, …); err != nil`
+// arms of the list commands: the writer is not a parameter, and ui.Render's own
+// error return is otherwise unreachable because outputFormat() already rejects an
+// unknown format before the render is ever called. Only the json/csv encoders
+// propagate a write error — the static table renderer discards it — so callers of
+// this helper must ask for json.
+//
+// os.Stdout is restored on the way out rather than via t.Cleanup, to keep the
+// window in which the testing package's own reporting could hit the broken handle
+// as narrow as possible.
+func covListWithBrokenStdout(t *testing.T, fn func()) {
+	t.Helper()
+	f, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
+	if err != nil {
+		t.Fatalf("open %s read-only: %v", os.DevNull, err)
+	}
+	old := os.Stdout
+	os.Stdout = f
+	defer func() {
+		os.Stdout = old
+		_ = f.Close()
+	}()
+	fn()
+}
+
+// covListInlineRenderCommands are the list commands that render inline in the
+// non-interactive arm — `renderX(os.Stdout, …)` straight in the RunE body rather
+// than inside a run*List helper whose error the fetch already exercises. For these
+// the render error is the only way into their fail(err) branch.
+var covListInlineRenderCommands = [][]string{
+	{"cluster", "list"},
+	{"connector", "list"},
+	{"jobs", "list"},
+	{"project", "list"},
+	{"runner", "list"},
+}
+
+// TestList_RenderWriteFailureIsFatal pins that a list command which cannot write
+// its rendered output reports that fatally instead of exiting 0 having printed
+// nothing. Each command is run twice against the same populated control plane —
+// once with a working stdout, which must succeed, and once with a stdout that
+// rejects every write, which must exit 1 — so the difference is attributable to
+// the render and not to an earlier stage.
+func TestList_RenderWriteFailureIsFatal(t *testing.T) {
+	run := covListEnvFormat(t, covListPopulated, "json")
+	for _, args := range covListInlineRenderCommands {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			if got := run(args...); got != 0 {
+				t.Fatalf("baseline exit code = %d, want 0", got)
+			}
+			var got int
+			covListWithBrokenStdout(t, func() { got = run(args...) })
+			if got != 1 {
+				t.Errorf("exit code with an unwritable stdout = %d, want 1", got)
+			}
+		})
+	}
+}
+
+// TestList_NoInputSkipsTheInteractiveTable pins that --no-input beats a terminal:
+// even with both TTY probes forced true, the list commands take the static render
+// arm. It is observable because `cluster list` is one of the commands that treats
+// a failed table program as fatal — interactive it exits 1 on this headless
+// terminal, non-interactive it renders and exits 0.
+func TestList_NoInputSkipsTheInteractiveTable(t *testing.T) {
+	run := covListEnv(t, covListPopulated)
+
+	// noInputMode is a package global the root PersistentPreRun writes. Every run
+	// through rootCmd recomputes it, but restore it anyway so a test that never
+	// executes a command cannot inherit this one's --no-input.
+	oldNoInput := noInputMode
+	t.Cleanup(func() { noInputMode = oldNoInput })
+
+	if got := run("cluster", "list"); got != 1 {
+		t.Fatalf("interactive exit code = %d, want 1 (the table program cannot start headless)", got)
+	}
+	if got := run("cluster", "list", "--no-input"); got != 0 {
+		t.Errorf("--no-input exit code = %d, want 0 (static render, no table program)", got)
 	}
 }

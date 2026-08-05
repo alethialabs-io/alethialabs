@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/verify"
@@ -255,6 +258,16 @@ func TestDep_SpinePostApplyClusterPath(t *testing.T) {
 		StateBackend:  testStateBackend(srv),
 		Stdout:        logw,
 		Stderr:        logw,
+		// A waiver of a control that is NOT failing here. It changes no verdict — its only job is
+		// to prove the audit line the gate emits alongside a conclusive report, which is the half
+		// of the override path the missing-verdict backstop test can never reach (that one has no
+		// report at all).
+		VerifyOverride: &verify.Override{
+			By:       "cov-operator",
+			Reason:   "coverage probe",
+			Expiry:   time.Now().Add(time.Hour),
+			Controls: []string{"LEASTPRIV-001"},
+		},
 	}
 	t.Cleanup(func() {
 		// A fresh context: t.Context() is already cancelled by the time cleanups run.
@@ -1688,8 +1701,11 @@ func TestDep_SpineApplyGates(t *testing.T) {
 		params := depSpineParams(t, vc, depClusterModuleTF, &out)
 		params.PlanFile = filepath.Join(t.TempDir(), "approved.plan")
 		params.VerifyOverride = &verify.Override{
-			By:       "cov-operator",
-			Reason:   "coverage probe",
+			By:     "cov-operator",
+			Reason: "coverage probe",
+			// The backstop sentinel is waivable ONLY by a time-boxed override: a zero Expiry is
+			// refused by verify.Override.Covers, so an override without one never reaches the apply.
+			Expiry:   time.Now().Add(time.Hour),
 			Controls: []string{verify.ControlPlanUnavailable},
 		}
 		_, err := RunDeployV2(t.Context(), params)
@@ -1851,3 +1867,350 @@ func TestDep_SpinePostApplyFailuresAreFatal(t *testing.T) {
 		depContains(t, err.Error(), "infrastructure applications", "apply step")
 	})
 }
+
+// ── AWS brownfield, the pluggable-connector seeding tail, and the two gate lanes ──
+//
+// Everything below stays offline. The AWS lane is driven by a FAKE EC2 endpoint
+// (AWS_ENDPOINT_URL_EC2 + static dummy credentials), which is what makes the brownfield
+// subnet classification — the one branch of the network attach that talks to a cloud —
+// testable at all; the alternative was a live DescribeSubnets.
+
+// depSubnetsXML is the ec2query DescribeSubnets response for the brownfield VPC: one public and
+// one private subnet. EVERY field ListSubnets dereferences is present — a missing one would nil-
+// panic the client inside the SDK rather than fail the assertion.
+const depSubnetsXML = `<?xml version="1.0" encoding="UTF-8"?>
+<DescribeSubnetsResponse xmlns="http://ec2.amazonaws.com/doc/2016-11-15/">
+  <requestId>cov-req</requestId>
+  <subnetSet>
+    <item>
+      <subnetId>subnet-cov-public</subnetId>
+      <cidrBlock>10.0.1.0/24</cidrBlock>
+      <availabilityZone>eu-central-1a</availabilityZone>
+      <vpcId>vpc-cov</vpcId>
+      <mapPublicIpOnLaunch>true</mapPublicIpOnLaunch>
+    </item>
+    <item>
+      <subnetId>subnet-cov-private</subnetId>
+      <cidrBlock>10.0.2.0/24</cidrBlock>
+      <availabilityZone>eu-central-1b</availabilityZone>
+      <vpcId>vpc-cov</vpcId>
+      <mapPublicIpOnLaunch>false</mapPublicIpOnLaunch>
+    </item>
+  </subnetSet>
+</DescribeSubnetsResponse>
+`
+
+// depEC2ErrorXML is a NON-retryable EC2 client error, so the failing lookup costs one round trip
+// rather than the SDK's retry budget.
+const depEC2ErrorXML = `<?xml version="1.0" encoding="UTF-8"?>
+<Response><Errors><Error><Code>InvalidVpcID.NotFound</Code><Message>cov: no such vpc</Message></Error></Errors><RequestID>cov-req</RequestID></Response>
+`
+
+// depFakeEC2 serves one canned ec2query response on every path and returns its base URL.
+func depFakeEC2(t *testing.T, status int, body string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/xml")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// depAWSEnv neutralises every ambient AWS input (this host has real credentials and a shared
+// config; CI has neither) and points the SDK at `endpoint`. Static dummy credentials keep the
+// signer off IMDS, and one attempt keeps a deliberate failure fast.
+func depAWSEnv(t *testing.T, endpoint string) {
+	t.Helper()
+	none := filepath.Join(t.TempDir(), "absent")
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIACOVERAGETEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "cov-secret")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_REGION", "eu-central-1")
+	t.Setenv("AWS_DEFAULT_REGION", "eu-central-1")
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_CONFIG_FILE", none)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", none)
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+	t.Setenv("AWS_MAX_ATTEMPTS", "1")
+	t.Setenv("AWS_ENDPOINT_URL", endpoint)
+	t.Setenv("AWS_ENDPOINT_URL_EC2", endpoint)
+}
+
+// depBrokenAWSConfig points the SDK's shared-config loader at a file that is not INI, so
+// LoadDefaultConfig FAILS. That is the only offline way to reach the two "the AWS SDK could not
+// even be configured" branches, which are otherwise dead code under test.
+func depBrokenAWSConfig(t *testing.T) {
+	t.Helper()
+	bad := filepath.Join(t.TempDir(), "broken-config")
+	if err := os.WriteFile(bad, []byte("this line is not ini and has no equals sign\n"), 0o600); err != nil {
+		t.Fatalf("write broken aws config: %v", err)
+	}
+	t.Setenv("AWS_CONFIG_FILE", bad)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", bad)
+	t.Setenv("AWS_PROFILE", "cov-broken")
+}
+
+// TestDep_BrownfieldAwsSubnetResolution pins the AWS half of the brownfield network attach — the
+// only branch of it that calls a cloud. Auto-discovery, an explicit subnet selection, a failed
+// lookup that must NOT drop the selection, and an unconfigurable SDK: all four report what they
+// did, and none of them may silently emit no subnet tfvars (the template's fail-closed brownfield
+// precondition is the backstop, not the plan).
+func TestDep_BrownfieldAwsSubnetResolution(t *testing.T) {
+	depRequireTofu(t)
+
+	// run drives RunDeployV2 as far as the StateBackend gate — the step immediately after the
+	// brownfield tfvars are computed — and returns everything the deploy printed.
+	run := func(t *testing.T, selection []string) string {
+		t.Helper()
+		depFakeBins(t, "kubectl", "helm")
+		vc := newLocalProjectConfig("alethia", "bfaws")
+		vc.Network.ProvisionNetwork = false
+		vc.Network.NetworkID = "vpc-cov"
+		vc.Network.SubnetIDs = selection
+		var out strings.Builder
+		_, err := RunDeployV2(t.Context(), DeployParams{
+			ProjectConfig: vc, Provider: "aws",
+			TemplatesDir: depWriteModule(t, depClusterModuleTF),
+			Stdout:       &out, Stderr: &out,
+			// StateBackend deliberately nil: it is the very next gate, so the run stops the
+			// moment the brownfield block has done its work.
+		})
+		if err == nil {
+			t.Fatalf("a deploy without a StateBackend must be refused\n%s", out.String())
+		}
+		depContains(t, err.Error(), "StateBackend", "state backend gate")
+		depContains(t, out.String(), "Using existing VPC vpc-cov", "brownfield attach")
+		return out.String()
+	}
+
+	t.Run("auto-discovers the VPC's subnets", func(t *testing.T) {
+		depIsolateHome(t)
+		depAWSEnv(t, depFakeEC2(t, http.StatusOK, depSubnetsXML))
+		depContains(t, run(t, nil), "Found 1 private and 1 public subnets", "auto-discovery")
+	})
+
+	t.Run("honours an explicit subnet selection", func(t *testing.T) {
+		depIsolateHome(t)
+		depAWSEnv(t, depFakeEC2(t, http.StatusOK, depSubnetsXML))
+		out := run(t, []string{"subnet-cov-public"})
+		depContains(t, out, "from your 1-subnet selection", "explicit selection")
+		if strings.Contains(out, "Found ") {
+			t.Error("an explicit selection must not also report the auto-discovery message")
+		}
+	})
+
+	t.Run("a failed lookup still honours the explicit selection", func(t *testing.T) {
+		depIsolateHome(t)
+		depAWSEnv(t, depFakeEC2(t, http.StatusBadRequest, depEC2ErrorXML))
+		out := run(t, []string{"subnet-cov-public"})
+		depContains(t, out, "failed to list subnets", "lookup warning")
+		depContains(t, out, "from your 1-subnet selection", "selection survives the failed lookup")
+	})
+
+	t.Run("an unconfigurable SDK is reported, not swallowed", func(t *testing.T) {
+		depIsolateHome(t)
+		depAWSEnv(t, depFakeEC2(t, http.StatusOK, depSubnetsXML))
+		depBrokenAWSConfig(t)
+		depContains(t, run(t, nil), "failed to create EC2 client", "EC2 client warning")
+	})
+}
+
+// TestDep_NamespaceIdentityCloudRefusals pins the two per-namespace identity lanes whose
+// provisioner is a live cloud write (aws IRSA, alibaba RRSA): when the cloud call cannot be made
+// the namespace lane FAILS, naming the namespace. It must never fall through to a namespace with
+// no identity — that would hand the tenant the cluster-wide node role, which is the #957 defect.
+func TestDep_NamespaceIdentityCloudRefusals(t *testing.T) {
+	vc := depPlacementConfig(types.PlacementModeNamespace, "team-x")
+
+	t.Run("aws", func(t *testing.T) {
+		depIsolateHome(t)
+		// A closed local port: the EKS lookup fails on the first round trip, offline and fast.
+		depAWSEnv(t, "http://127.0.0.1:1")
+		err := provisionAndBindNamespaceIdentity(t.Context(), nil, "aws", "eu-central-1", vc, "fabric-1", "team-x", io.Discard, io.Discard)
+		if err == nil {
+			t.Fatal("an unreachable IAM/EKS control plane must fail the namespace identity, not skip it")
+		}
+		depContains(t, err.Error(), "failed to provision per-namespace identity", "aws identity refusal")
+	})
+
+	t.Run("alibaba", func(t *testing.T) {
+		// An empty region: the keyless ACS3 signing client refuses to build before any network I/O.
+		err := provisionAndBindNamespaceIdentity(t.Context(), nil, "alibaba", "", vc, "fabric-1", "team-x", io.Discard, io.Discard)
+		if err == nil {
+			t.Fatal("an unbuildable Alibaba signing client must fail the namespace identity, not skip it")
+		}
+		depContains(t, err.Error(), "failed to provision per-namespace identity", "alibaba identity refusal")
+	})
+}
+
+// depPlanSpineParams builds the params for a PLAN-ONLY spine run on an arbitrary provider. Nothing
+// is applied, so no destroy teardown is owed and no cloud is ever reached.
+func depPlanSpineParams(t *testing.T, vc *types.ProjectConfig, providerSlug, module string, out io.Writer) DeployParams {
+	t.Helper()
+	return DeployParams{
+		ProjectConfig: vc,
+		Provider:      providerSlug,
+		TemplatesDir:  depWriteModule(t, module),
+		StateBackend:  testStateBackend(startTestStateServer(t)),
+		DryRun:        true,
+		Stdout:        out,
+		Stderr:        out,
+	}
+}
+
+// TestDep_SpineAccessAnalyzerCorroboration pins the opt-in IAM Access Analyzer lane of the
+// verification gate: on aws with the flag set the checker is wired into the evaluator and said so,
+// and when the SDK cannot be configured at all the gate DEGRADES with a named warning rather than
+// failing the plan — corroboration is additive, never load-bearing.
+func TestDep_SpineAccessAnalyzerCorroboration(t *testing.T) {
+	depRequireTofu(t)
+
+	t.Run("enabled on aws", func(t *testing.T) {
+		depIsolateHome(t)
+		depFakeBins(t, "kubectl", "helm")
+		depNoSlowProbes(t)
+		// A closed local port: the analyzer client is CONSTRUCTED but never usefully callable, so
+		// nothing here can reach a real AWS endpoint even if a control tried.
+		depAWSEnv(t, "http://127.0.0.1:1")
+		t.Setenv("ALETHIA_VERIFY_ACCESS_ANALYZER", "1")
+		vc := newLocalProjectConfig("alethia", "covaa")
+		var out strings.Builder
+		if _, err := RunDeployV2(t.Context(), depPlanSpineParams(t, vc, "aws", depClusterModuleTF, &out)); err != nil {
+			t.Fatalf("plan with Access Analyzer enabled: %v\n%s", err, out.String())
+		}
+		depContains(t, out.String(), "Access Analyzer corroboration enabled", "analyzer wiring")
+	})
+
+	t.Run("an unconfigurable SDK degrades the corroboration, not the gate", func(t *testing.T) {
+		depIsolateHome(t)
+		depFakeBins(t, "kubectl", "helm")
+		depNoSlowProbes(t)
+		depAWSEnv(t, "http://127.0.0.1:1")
+		depBrokenAWSConfig(t)
+		t.Setenv("ALETHIA_VERIFY_ACCESS_ANALYZER", "1")
+		vc := newLocalProjectConfig("alethia", "covab")
+		var out strings.Builder
+		result, err := RunDeployV2(t.Context(), depPlanSpineParams(t, vc, "aws", depClusterModuleTF, &out))
+		if err != nil {
+			t.Fatalf("a failed Access Analyzer setup must not fail the plan: %v\n%s", err, out.String())
+		}
+		depContains(t, out.String(), "Access Analyzer disabled", "degraded corroboration")
+		if result.VerifyReport == nil {
+			t.Error("VerifyReport is nil — the gate itself must still have run without corroboration")
+		}
+	})
+}
+
+// depFakeInfracostBinary plants a stub in the version-keyed cache path the Infracost wrapper
+// checks FIRST, so ensureBinary finds it and the release download never happens. The stub writes
+// the breakdown JSON the caller asked for to --out-file.
+func depFakeInfracostBinary(t *testing.T, version string) {
+	t.Helper()
+	dir := filepath.Join(os.TempDir(), "alethia-infracost")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create infracost cache dir: %v", err)
+	}
+	path := filepath.Join(dir, "infracost_"+version)
+	script := `#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--out-file" ]; then out="$2"; fi
+  shift
+done
+[ -n "$out" ] || exit 1
+cat > "$out" <<'BREAKDOWN'
+{
+  "version": "0.2",
+  "currency": "USD",
+  "totalMonthlyCost": "12.34",
+  "totalHourlyCost": "0.0169",
+  "diffTotalMonthlyCost": "0",
+  "projects": [
+    {
+      "name": "cov",
+      "breakdown": {
+        "totalMonthlyCost": "12.34",
+        "totalHourlyCost": "0.0169",
+        "resources": [{"name": "terraform_data.noop", "monthlyCost": "12.34"}]
+      }
+    }
+  ]
+}
+BREAKDOWN
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake infracost: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(path) })
+}
+
+// TestDep_SpineInfracostBreakdown pins the cost-estimation lane of the plan: with a token the
+// spine runs the breakdown over the plan JSON and ATTACHES it to the result, which is what the
+// fail-closed cost ceiling on the apply path later reads. Without the attachment a configured
+// ceiling blocks every apply, so "the estimate reached the result" is the contract.
+func TestDep_SpineInfracostBreakdown(t *testing.T) {
+	depRequireTofu(t)
+	depIsolateHome(t)
+	depFakeBins(t, "kubectl", "helm")
+	depNoSlowProbes(t)
+
+	version := "vcov" + shortID(t)
+	t.Setenv("ALETHIA_INFRACOST_VERSION", version)
+	depFakeInfracostBinary(t, version)
+
+	vc := newLocalProjectConfig("alethia", "covic")
+	var out strings.Builder
+	params := depPlanSpineParams(t, vc, "hetzner", depClusterModuleTF, &out)
+	params.InfracostToken = "cov-infracost-token"
+
+	result, err := RunDeployV2(t.Context(), params)
+	if err != nil {
+		t.Fatalf("plan with an Infracost token: %v\n%s", err, out.String())
+	}
+	if result.CostBreakdown == nil {
+		t.Fatalf("CostBreakdown is nil — the breakdown never reached the result\n%s", out.String())
+	}
+	if result.CostBreakdown.Summary == nil || result.CostBreakdown.Summary.TotalMonthly != 12.34 {
+		t.Errorf("CostBreakdown.Summary = %+v, want the parsed 12.34 monthly total", result.CostBreakdown.Summary)
+	}
+}
+
+// TestDep_SpineGitOpsNeedsACredentialOrAPublicRepo pins the fail-closed git gate on the dedicated
+// lane: an apps repo that is neither token-backed nor anonymously cloneable FAILS the deploy, and
+// records WHICH step died on the partial result. Silently skipping the wiring would report a
+// successful deploy for a cluster ArgoCD can never sync.
+func TestDep_SpineGitOpsNeedsACredentialOrAPublicRepo(t *testing.T) {
+	depRequireTofu(t)
+	depIsolateHome(t)
+	depFakeBins(t, "kubectl", "helm", "git")
+	depArgoTemplates(t)
+	depNoSlowProbes(t)
+
+	vc := newLocalProjectConfig("alethia", "covgt"+shortID(t))
+	// A closed local port: the anonymous ref-advertisement probe fails on connect — no DNS, no
+	// egress, and no chance of a real host answering 200 and flipping the branch.
+	vc.Repositories.AppsDestinationRepo = "https://127.0.0.1:1/acme/apps.git"
+
+	var out strings.Builder
+	result, err := RunDeployV2(t.Context(), depSpineParams(t, vc, depClusterModuleTF, &out))
+	if err == nil {
+		t.Fatalf("a GitOps deploy with no token and no public repo must fail\n%s", out.String())
+	}
+	depContains(t, err.Error(), "no git access token is available", "git token gate")
+	if result == nil || result.GitopsStatus == nil {
+		t.Fatal("the partial result must carry a GitopsStatus naming the failed step")
+	}
+	if result.GitopsStatus.FailedStep != argocd.GitopsStepGitToken {
+		t.Errorf("GitopsStatus.FailedStep = %q, want %q", result.GitopsStatus.FailedStep, argocd.GitopsStepGitToken)
+	}
+}
+
+// depEcrIrsaModuleTF is depClusterModuleTF plus the pull-identity output the keyless Helm ECR
+// refresher is gated on — without it the lane fail-closes and applies nothing.
+var depEcrIrsaModuleTF = depClusterModuleTF + `
+output "helm_repo_pull_irsa_arn" {
+  value = "arn:aws:iam::123456789012:role/alethia-helm-repo-pull"
+}
+`

@@ -32,6 +32,8 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
+	"github.com/alethialabs-io/alethialabs/packages/core/selfimage"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -1584,12 +1586,15 @@ func TestProv_WriteAddOnGitOpsReportsEveryFailureMode(t *testing.T) {
 	t.Run("an unrenderable add-on", func(t *testing.T) {
 		bare := newBareAppsRepo(t, nil)
 		bad := provGitopsAddOn("grafana")
-		// A value YAML cannot marshal — the render must fail rather than write a broken manifest.
-		bad.Values = map[string]interface{}{"ch": make(chan int)}
+		// A namespace carrying an unclosed YAML flow sequence renders a manifest the label
+		// injector cannot re-parse. That is the reachable render failure: it must be REPORTED
+		// rather than committing a manifest ArgoCD would reject.
+		bad.Namespace = "[unclosed"
 		vc := &types.ProjectConfig{AddOns: []types.AddOnInstall{bad}}
 		vc.Repositories.AppsDestinationRepo = "file://" + bare
 
-		err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard)
+		labels := map[string]string{"alethia.io/environment-id": "env-1"}
+		err := writeAddOnGitOps(context.Background(), vc, "tok", labels, io.Discard, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "render gitops add-on") {
 			t.Fatalf("want the render failure named, got: %v", err)
 		}
@@ -1664,5 +1669,839 @@ func TestProv_PruneOrphanAddOnManifestsOnlyTouchesOurOwn(t *testing.T) {
 func TestProv_PruneOrphanAddOnManifestsIsNonFatal(t *testing.T) {
 	if got := pruneOrphanAddOnManifests(filepath.Join(t.TempDir(), "absent"), nil, io.Discard, io.Discard); got != 0 {
 		t.Fatalf("an unreadable addons dir must prune nothing, got %d", got)
+	}
+}
+
+// ─────────────────────────── apps-repo scaffold failures ───────────────────────────
+
+// provAppsRepoConfig is a project that scaffolds `services` into the bare apps repo at `bare`.
+func provAppsRepoConfig(bare string, services ...types.ProjectServiceConfig) *types.ProjectConfig {
+	vc := &types.ProjectConfig{ProjectName: "acme", Provider: types.CloudProviderAws}
+	vc.Repositories.AppsDestinationRepo = "file://" + bare
+	vc.Services = services
+	return vc
+}
+
+// provFreezeTree makes every directory under root read-only (r-x) and restores it before the
+// enclosing t.TempDir cleanup runs, so a git PUSH into it cannot create objects and a file inside
+// it cannot be unlinked. Cleanups run LIFO and t.TempDir registered its own earlier, so the
+// restore always wins the race.
+func provFreezeTree(t *testing.T, root string) {
+	t.Helper()
+	var dirs []string
+	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			dirs = append(dirs, path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	t.Cleanup(func() {
+		for _, d := range dirs {
+			_ = os.Chmod(d, 0o755)
+		}
+	})
+	// Deepest first, so a parent is still writable while its children are being locked.
+	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := os.Chmod(dirs[i], 0o500); err != nil {
+			t.Fatalf("chmod %s: %v", dirs[i], err)
+		}
+	}
+}
+
+// blockManifestPath makes `name` inside dir a DIRECTORY, so os.WriteFile to that exact path fails.
+func blockManifestPath(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
+		t.Fatalf("block %s: %v", name, err)
+	}
+}
+
+// TestProv_GenerateAppManifestsReportsEveryRepoFailure walks the scaffold lane's failure modes.
+// Each one must be REPORTED: a silent failure here leaves the customer's GitOps repo without the
+// manifests the console says were deployed, and ArgoCD syncing nothing looks exactly like success.
+func TestProv_GenerateAppManifestsReportsEveryRepoFailure(t *testing.T) {
+	t.Run("no temp dir to stage the clone", func(t *testing.T) {
+		bare := newBareAppsRepo(t, nil)
+		vc := provAppsRepoConfig(bare, imageService("web", "nginx:1.27"))
+		provNoTempDir(t) // after the fixture — the fixture needs a working TMPDIR of its own
+
+		if _, _, err := generateAppManifests(context.Background(), vc, nil, "tok", nil, io.Discard, io.Discard); err == nil {
+			t.Fatal("want the temp-dir failure to propagate")
+		}
+	})
+
+	t.Run("the apps repo cannot be cloned", func(t *testing.T) {
+		hermeticGitIdentity(t)
+		vc := provAppsRepoConfig(filepath.Join(t.TempDir(), "no-such-repo"), imageService("web", "nginx:1.27"))
+
+		_, _, err := generateAppManifests(context.Background(), vc, nil, "tok", nil, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "clone apps repo") {
+			t.Fatalf("want the clone failure named, got: %v", err)
+		}
+	})
+
+	t.Run("a manifest path is blocked by a customer directory", func(t *testing.T) {
+		// `web.yaml` exists as a DIRECTORY in the repo. hasManifests only counts FILES, so the
+		// bring-your-own guard does not trip and the write is attempted — and must fail loudly
+		// rather than push a commit missing the service the console promised.
+		bare := newBareAppsRepo(t, map[string]string{"web.yaml/keep.txt": "customer file\n"})
+		vc := provAppsRepoConfig(bare, imageService("web", "nginx:1.27"))
+
+		if _, _, err := generateAppManifests(context.Background(), vc, nil, "tok", nil, io.Discard, io.Discard); err == nil {
+			t.Fatal("want the manifest write failure to propagate")
+		}
+	})
+
+	t.Run("no git identity to commit with", func(t *testing.T) {
+		bare := newBareAppsRepo(t, nil)
+		vc := provAppsRepoConfig(bare, imageService("web", "nginx:1.27"))
+		// Take the fixture's .gitconfig away: go-git then cannot resolve an author. CI has no
+		// global identity either — this is that case.
+		t.Setenv("HOME", t.TempDir())
+
+		_, _, err := generateAppManifests(context.Background(), vc, nil, "tok", nil, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "commit generated manifests") {
+			t.Fatalf("want the commit failure named, got: %v", err)
+		}
+	})
+
+	t.Run("the apps repo cannot be pushed to", func(t *testing.T) {
+		bare := newBareAppsRepo(t, nil)
+		vc := provAppsRepoConfig(bare, imageService("web", "nginx:1.27"))
+		provFreezeTree(t, bare) // readable (the clone works), unwritable (the push does not)
+
+		_, _, err := generateAppManifests(context.Background(), vc, nil, "tok", nil, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "push generated manifests") {
+			t.Fatalf("want the push failure named, got: %v", err)
+		}
+	})
+}
+
+// TestProv_GenerateAppManifestsAttachesTheRegistryPullSecret pins #1007's last hop: a project
+// pulling from a PRIVATE pluggable registry must render imagePullSecrets onto the generated pods,
+// or the dockerconfigjson Secret the registry module creates is orphaned and every pull 401s.
+func TestProv_GenerateAppManifestsAttachesTheRegistryPullSecret(t *testing.T) {
+	bare := newBareAppsRepo(t, nil)
+	vc := provAppsRepoConfig(bare, imageService("web", "private.example.com/web:1.0"))
+	vc.ContainerRegistries = []types.ProjectContainerRegistryConfig{{Name: "app", Provider: "dockerhub"}}
+
+	if _, _, err := generateAppManifests(context.Background(), vc, nil, "tok", nil, io.Discard, io.Discard); err != nil {
+		t.Fatalf("generateAppManifests: %v", err)
+	}
+	body := readBareRepo(t, bare)["web.yaml"]
+	if !strings.Contains(body, "dockerhub-pull") {
+		t.Errorf("the generated pod does not reference the registry pull secret:\n%s", body)
+	}
+}
+
+// TestProv_GenerateAppManifestsLogsKeylessBindingDecisions pins that a keyless DB binding's
+// decision reaches the JOB LOG, not only the returned record. A fail-closed keyless binding is the
+// one outcome nobody should have to go digging through execution_metadata for.
+func TestProv_GenerateAppManifestsLogsKeylessBindingDecisions(t *testing.T) {
+	t.Setenv("ALETHIA_KEYLESS_DB_AUTH_ENABLED", "true")
+	bare := newBareAppsRepo(t, nil)
+
+	iam := true
+	svc := imageService("web", "nginx:1.27")
+	svc.Bindings = []types.ServiceBinding{{
+		Target: types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "primary"},
+		Inject: []types.ServiceBindingInjection{{Env: "DB_PASSWORD", From: "password"}},
+	}}
+	vc := provAppsRepoConfig(bare, svc)
+	vc.Databases = []types.ProjectDatabaseConfig{{Name: "primary", EngineFamily: "postgres", IamAuth: &iam}}
+
+	var out strings.Builder
+	_, keyless, err := generateAppManifests(context.Background(), vc, nil, "tok", nil, &out, io.Discard)
+	if err != nil {
+		t.Fatalf("generateAppManifests: %v\nlog:\n%s", err, out.String())
+	}
+	if len(keyless) == 0 {
+		t.Fatal("a binding to an iam_auth database must produce a keyless decision record")
+	}
+	if !strings.Contains(out.String(), "Keyless DB binding web→database/primary") {
+		t.Errorf("the keyless decision never reached the job log:\n%s", out.String())
+	}
+}
+
+// ─────────────────────────── keyless bootstrap Jobs ───────────────────────────
+
+// provKeylessBootstrapOpts are the render inputs an AWS keyless bootstrap Job needs: the RDS
+// endpoint, its database name and the master-credentials secret the admin ExternalSecret reads.
+func provKeylessBootstrapOpts() manifests.Options {
+	return manifests.Options{
+		Namespace:     appNamespace,
+		Provider:      "aws",
+		KeylessDBAuth: true,
+		RunnerImage:   "ghcr.io/alethialabs-io/runner:cov",
+		Databases:     []types.ProjectDatabaseConfig{{Name: "primary", EngineFamily: "postgres"}},
+		Outputs: map[string]string{
+			"rds_cluster_endpoint":               "db.example.internal",
+			"rds_database_name":                  "appdb",
+			"rds_master_credentials_secret_name": "acme/rds/master",
+		},
+	}
+}
+
+// provKeylessBoundProject is a project whose two services both bind the SAME iam_auth database, so
+// the bootstrap lane's per-database dedup is observable.
+func provKeylessBoundProject() *types.ProjectConfig {
+	iam := true
+	bind := []types.ServiceBinding{{
+		Target: types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "primary"},
+		Inject: []types.ServiceBindingInjection{{Env: "DB_PASSWORD", From: "password"}},
+	}}
+	web := imageService("web", "nginx:1.27")
+	web.Bindings = bind
+	api := imageService("api", "api:1.0")
+	api.Bindings = bind
+	return &types.ProjectConfig{
+		Services:  []types.ProjectServiceConfig{web, api},
+		Databases: []types.ProjectDatabaseConfig{{Name: "primary", EngineFamily: "postgres", IamAuth: &iam}},
+	}
+}
+
+// TestProv_WriteBootstrapJobsRendersOnePerKeylessDatabase drives the #722 R5 lane: without the
+// one-shot PreSync Job a keyless app has an identity but no role to log in as. Two services
+// binding one database must share ONE Job — two would race to create the same role.
+func TestProv_WriteBootstrapJobsRendersOnePerKeylessDatabase(t *testing.T) {
+	dir := t.TempDir()
+	skips, count, err := writeBootstrapJobs(dir, provKeylessBoundProject(), provKeylessBootstrapOpts(), io.Discard)
+	if err != nil {
+		t.Fatalf("writeBootstrapJobs: %v", err)
+	}
+	if len(skips) != 0 {
+		t.Errorf("a fully-resolved keyless database must not be skipped: %v", skips)
+	}
+	if count != 1 {
+		t.Fatalf("two services binding one database must share ONE bootstrap Job, got %d", count)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job, adminES bool
+	for _, e := range entries {
+		switch {
+		case strings.HasSuffix(e.Name(), "-admin-externalsecret.yaml"):
+			adminES = true
+		case strings.HasSuffix(e.Name(), ".yaml"):
+			job = true
+		}
+	}
+	if !job || !adminES {
+		t.Errorf("want the Job and its admin ExternalSecret written, got %v", entries)
+	}
+}
+
+// TestProv_WriteBootstrapJobsReportsWhatItCannotRender pins the fail-closed-but-non-fatal rule:
+// an unrenderable Job is REPORTED (the app still deploys, its binding fail-closes in lock-step),
+// and a Job that cannot be WRITTEN is fatal — a half-written manifest set must not be committed.
+func TestProv_WriteBootstrapJobsReportsWhatItCannotRender(t *testing.T) {
+	t.Run("keyless off renders nothing", func(t *testing.T) {
+		opts := provKeylessBootstrapOpts()
+		opts.KeylessDBAuth = false
+		skips, count, err := writeBootstrapJobs(t.TempDir(), provKeylessBoundProject(), opts, io.Discard)
+		if err != nil || count != 0 || len(skips) != 0 {
+			t.Fatalf("keyless off must be a no-op, got skips=%v count=%d err=%v", skips, count, err)
+		}
+	})
+
+	t.Run("an unsupported cloud is reported, not fatal", func(t *testing.T) {
+		opts := provKeylessBootstrapOpts()
+		opts.Provider = "hetzner"
+		var out strings.Builder
+		skips, count, err := writeBootstrapJobs(t.TempDir(), provKeylessBoundProject(), opts, &out)
+		if err != nil {
+			t.Fatalf("an unrenderable Job must never be fatal: %v", err)
+		}
+		if count != 0 || len(skips) != 1 {
+			t.Fatalf("want exactly one reported skip and no Job, got skips=%v count=%d", skips, count)
+		}
+		if !strings.Contains(out.String(), "Bootstrap Job skipped") {
+			t.Errorf("the skip never reached the job log:\n%s", out.String())
+		}
+	})
+
+	t.Run("a Job that cannot be written is fatal", func(t *testing.T) {
+		dir := t.TempDir()
+		// Block the Job's own filename with a directory: the write fails, and a partially seeded
+		// manifest set must stop the deploy rather than be committed.
+		blockManifestPath(t, dir, manifests.BootstrapJobName(
+			types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "primary"})+".yaml")
+
+		if _, _, err := writeBootstrapJobs(dir, provKeylessBoundProject(), provKeylessBootstrapOpts(), io.Discard); err == nil {
+			t.Fatal("want the Job write failure to propagate")
+		}
+	})
+}
+
+// ─────────────────────────── cross-account registry refresher ───────────────────────────
+
+// provKeylessRegistryProject selects one cross-account keyless registry with the given
+// provider_config (keyless connectors carry no credentials — only provider_config).
+func provKeylessRegistryProject(slug string, pc map[string]any) *types.ProjectConfig {
+	return &types.ProjectConfig{
+		ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "app", Provider: slug, ProviderConfig: pc}},
+	}
+}
+
+// provEcrXacctConfig is a complete cross-account ECR provider_config.
+func provEcrXacctConfig() map[string]any {
+	return map[string]any{
+		"target_account_id": "111111111111", "region": "us-east-1",
+		"registry_host":   "111111111111.dkr.ecr.us-east-1.amazonaws.com",
+		"target_role_arn": "arn:aws:iam::111111111111:role/pull",
+	}
+}
+
+// TestProv_WriteRegistryRefresherIsDarkUntilFlagged pins the "byte-identical with the flag off"
+// contract: no ALETHIA_XACCT_REGISTRY_ENABLED, no rendered refresher, whatever is connected.
+func TestProv_WriteRegistryRefresherIsDarkUntilFlagged(t *testing.T) {
+	dir := t.TempDir()
+	vc := provKeylessRegistryProject("ecr-xacct", provEcrXacctConfig())
+
+	skips, err := writeRegistryRefresher(dir, vc, map[string]string{"ecr_pull_irsa_arn": "arn:aws:iam::222:role/cluster"}, io.Discard)
+	if err != nil || len(skips) != 0 {
+		t.Fatalf("the flag is off — nothing may render: skips=%v err=%v", skips, err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("the flag is off but files were written: %v", entries)
+	}
+}
+
+// provKeylessRegistryCase is one cloud's cross-account registry: its connector config, the tofu
+// pull-identity output the refresher needs, and the KSA annotation that proves it was wired.
+type provKeylessRegistryCase struct {
+	slug        string
+	pc          map[string]any
+	outputKey   string
+	outputValue string
+	wantAnn     string
+}
+
+// provKeylessRegistryCases covers all three keyless registry clouds.
+func provKeylessRegistryCases() []provKeylessRegistryCase {
+	return []provKeylessRegistryCase{
+		{
+			slug:        "ecr-xacct",
+			pc:          provEcrXacctConfig(),
+			outputKey:   "ecr_pull_irsa_arn",
+			outputValue: "arn:aws:iam::222222222222:role/cluster-pull",
+			wantAnn:     "eks.amazonaws.com/role-arn",
+		},
+		{
+			slug: "gar-xacct",
+			pc: map[string]any{
+				"target_project_id": "acme-prod", "region": "europe-west1",
+				"registry_host":          "europe-west1-docker.pkg.dev",
+				"target_service_account": "reader@acme-prod.iam.gserviceaccount.com",
+			},
+			outputKey:   "gar_pull_gsa_email",
+			outputValue: "pull@cluster.iam.gserviceaccount.com",
+			wantAnn:     "iam.gke.io/gcp-service-account",
+		},
+		{
+			slug: "acr-xacct",
+			pc: map[string]any{
+				"target_subscription_id":    "00000000-0000-0000-0000-000000000000",
+				"registry_host":             "acme.azurecr.io",
+				"target_identity_client_id": "11111111-1111-1111-1111-111111111111",
+			},
+			outputKey:   "acr_pull_client_id",
+			outputValue: "22222222-2222-2222-2222-222222222222",
+			wantAnn:     "azure.workload.identity/client-id",
+		},
+	}
+}
+
+// TestProv_WriteRegistryRefresherFailsClosedPerCloud walks each keyless registry cloud with its
+// pull-identity output ABSENT. Every one must be reported and render nothing: a refresher without
+// its Workload Identity cannot mint a token, and a silent no-op would leave the pull 401ing with
+// nothing in the job log to explain it.
+func TestProv_WriteRegistryRefresherFailsClosedPerCloud(t *testing.T) {
+	t.Setenv("ALETHIA_XACCT_REGISTRY_ENABLED", "true")
+	for _, tc := range provKeylessRegistryCases() {
+		t.Run(tc.slug, func(t *testing.T) {
+			dir := t.TempDir()
+			var out strings.Builder
+			skips, err := writeRegistryRefresher(dir, provKeylessRegistryProject(tc.slug, tc.pc), nil, &out)
+			if err != nil {
+				t.Fatalf("a missing pull identity must be reported, not fatal: %v", err)
+			}
+			if len(skips) != 1 || !strings.Contains(skips[0], tc.outputKey) {
+				t.Fatalf("want the missing output %q named, got %v", tc.outputKey, skips)
+			}
+			if !strings.Contains(out.String(), "Registry refresher skipped") {
+				t.Errorf("the skip never reached the job log:\n%s", out.String())
+			}
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Errorf("fail-closed must write nothing, got %v", entries)
+			}
+		})
+	}
+}
+
+// TestProv_WriteRegistryRefresherRendersEachCloudWhenWired is the other half: with the pull
+// identity present each cloud renders its refresher, annotated to that cloud's Workload Identity.
+func TestProv_WriteRegistryRefresherRendersEachCloudWhenWired(t *testing.T) {
+	t.Setenv("ALETHIA_XACCT_REGISTRY_ENABLED", "true")
+	t.Setenv(selfimage.EnvOverride, "ghcr.io/alethialabs-io/runner:cov")
+	for _, tc := range provKeylessRegistryCases() {
+		t.Run(tc.slug, func(t *testing.T) {
+			dir := t.TempDir()
+			outputs := map[string]string{tc.outputKey: tc.outputValue}
+			skips, err := writeRegistryRefresher(dir, provKeylessRegistryProject(tc.slug, tc.pc), outputs, io.Discard)
+			if err != nil || len(skips) != 0 {
+				t.Fatalf("a fully-wired keyless registry must render: skips=%v err=%v", skips, err)
+			}
+			body, readErr := os.ReadFile(filepath.Join(dir, "registry-pull-refresher.yaml"))
+			if readErr != nil {
+				t.Fatalf("no refresher was written: %v", readErr)
+			}
+			if !strings.Contains(string(body), tc.wantAnn) {
+				t.Errorf("the KSA is not annotated to the %s pull identity:\n%s", tc.slug, body)
+			}
+		})
+	}
+}
+
+// TestProv_WriteRegistryRefresherReportsRenderAndWriteFailures covers the remaining exits: a
+// misconfigured connector (fail-closed, reported), a render that cannot complete without a runner
+// image (reported), and a manifest that cannot be written (fatal — never a half-seeded repo).
+func TestProv_WriteRegistryRefresherReportsRenderAndWriteFailures(t *testing.T) {
+	t.Setenv("ALETHIA_XACCT_REGISTRY_ENABLED", "true")
+	wired := map[string]string{"ecr_pull_irsa_arn": "arn:aws:iam::222222222222:role/cluster-pull"}
+
+	t.Run("a misconfigured keyless connector is reported", func(t *testing.T) {
+		var out strings.Builder
+		skips, err := writeRegistryRefresher(t.TempDir(), provKeylessRegistryProject("ecr-xacct", nil), wired, &out)
+		if err != nil {
+			t.Fatalf("a misconfigured connector must be reported, not fatal: %v", err)
+		}
+		if len(skips) != 1 || !strings.Contains(skips[0], "keyless registry:") {
+			t.Fatalf("want the connector misconfiguration reported, got %v", skips)
+		}
+		if !strings.Contains(out.String(), "Registry refresher skipped") {
+			t.Errorf("the skip never reached the job log:\n%s", out.String())
+		}
+	})
+
+	t.Run("no runner image to run the refresher with", func(t *testing.T) {
+		// selfimage.Ref() resolves from the environment; with both keys empty the refresher has no
+		// image to run, which must fail CLOSED (reported, nothing rendered) rather than emit a
+		// Deployment with an empty image reference.
+		t.Setenv(selfimage.EnvOverride, "")
+		t.Setenv(selfimage.EnvBaked, "")
+		dir := t.TempDir()
+		skips, err := writeRegistryRefresher(dir, provKeylessRegistryProject("ecr-xacct", provEcrXacctConfig()), wired, io.Discard)
+		if err != nil {
+			t.Fatalf("a render failure must be reported, not fatal: %v", err)
+		}
+		if len(skips) != 1 || !strings.Contains(skips[0], "pull refresher not rendered") {
+			t.Fatalf("want the render failure reported, got %v", skips)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Errorf("a failed render must write nothing, got %v", entries)
+		}
+	})
+
+	t.Run("the manifest cannot be written", func(t *testing.T) {
+		t.Setenv(selfimage.EnvOverride, "ghcr.io/alethialabs-io/runner:cov")
+		dir := t.TempDir()
+		blockManifestPath(t, dir, "registry-pull-refresher.yaml")
+
+		if _, err := writeRegistryRefresher(dir, provKeylessRegistryProject("ecr-xacct", provEcrXacctConfig()), wired, io.Discard); err == nil {
+			t.Fatal("want the refresher write failure to propagate")
+		}
+	})
+}
+
+// TestProv_RenderKeylessHelmRefreshersReportsARenderFailure pins the last fail-closed exit of the
+// #1185 lane: targets and a pull identity present, but nothing to run the refresher with. It must
+// report a Skip and render no manifest — never a Deployment with an empty image.
+func TestProv_RenderKeylessHelmRefreshersReportsARenderFailure(t *testing.T) {
+	res := renderKeylessHelmRefreshers(ecrHelmProject(), "arn:aws:iam::111:role/helm-pull", "")
+	if res.Manifest != "" {
+		t.Fatal("a failed render must produce no manifest (fail-closed)")
+	}
+	if !strings.Contains(res.Skip, "not rendered (fail-closed)") {
+		t.Fatalf("want the render failure reported as a fail-closed skip, got %q", res.Skip)
+	}
+	if len(res.DesiredSecrets) != 0 || len(res.DesiredRefreshers) != 0 {
+		t.Errorf("nothing rendered ⇒ nothing desired, got %+v", res)
+	}
+}
+
+// ─────────────────────────── binding ExternalSecrets ───────────────────────────
+
+// provBoundService returns a service named `name` carrying one binding to `target` injecting
+// exactly the facets in `from`.
+func provBoundService(name string, target types.ServiceBindingTarget, from ...string) types.ProjectServiceConfig {
+	inj := make([]types.ServiceBindingInjection, 0, len(from))
+	for _, f := range from {
+		inj = append(inj, types.ServiceBindingInjection{Env: strings.ToUpper(f), From: types.ServiceBindingFacet(f)})
+	}
+	s := imageService(name, "nginx:1.27")
+	s.Bindings = []types.ServiceBinding{{Target: target, Inject: inj}}
+	return s
+}
+
+// TestProv_WriteBindingExternalSecretsSkipsFacetlessBindings pins that a binding with no
+// CREDENTIAL facet needs no Secret at all — an endpoint/port injection is a templated tofu output,
+// and writing an empty ExternalSecret for it would block the pod on a Secret ESO never fills.
+func TestProv_WriteBindingExternalSecretsSkipsFacetlessBindings(t *testing.T) {
+	dir := t.TempDir()
+	vc := &types.ProjectConfig{
+		Provider: types.CloudProviderAws,
+		Services: []types.ProjectServiceConfig{
+			provBoundService("web", types.ServiceBindingTarget{Kind: types.ServiceBindingKindSecret, Name: "api-key"}, "endpoint"),
+			provBoundService("api", types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "primary"}, "endpoint"),
+		},
+	}
+	skips, count, err := writeBindingExternalSecrets(dir, vc, nil, false, nil, io.Discard)
+	if err != nil {
+		t.Fatalf("writeBindingExternalSecrets: %v", err)
+	}
+	if count != 0 || len(skips) != 0 {
+		t.Fatalf("a facet-less binding needs no ExternalSecret and no report, got count=%d skips=%v", count, skips)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("nothing should have been written, got %v", entries)
+	}
+}
+
+// TestProv_WriteBindingExternalSecretsFailsOnAnUnwritableManifest pins that a Secret manifest that
+// cannot be written stops the scaffold. Continuing would commit app manifests whose secretKeyRef
+// points at a Secret this lane never created — a pod stuck on CreateContainerConfigError forever.
+func TestProv_WriteBindingExternalSecretsFailsOnAnUnwritableManifest(t *testing.T) {
+	t.Run("a project-secret binding", func(t *testing.T) {
+		dir := t.TempDir()
+		target := types.ServiceBindingTarget{Kind: types.ServiceBindingKindSecret, Name: "api-key"}
+		blockManifestPath(t, dir, manifests.BindingSecretName("web", target)+"-externalsecret.yaml")
+
+		vc := &types.ProjectConfig{
+			Provider: types.CloudProviderAws,
+			Services: []types.ProjectServiceConfig{provBoundService("web", target, "value")},
+		}
+		stores := map[string]manifests.SecretStoreRef{"api-key": {StoreName: "secretstore-vault", ValueProperty: "value"}}
+		if _, _, err := writeBindingExternalSecrets(dir, vc, nil, false, stores, io.Discard); err == nil {
+			t.Fatal("want the ExternalSecret write failure to propagate")
+		}
+	})
+
+	t.Run("a cloud credential binding", func(t *testing.T) {
+		dir := t.TempDir()
+		target := types.ServiceBindingTarget{Kind: types.ServiceBindingKindDatabase, Name: "primary"}
+		blockManifestPath(t, dir, manifests.BindingSecretName("web", target)+"-externalsecret.yaml")
+
+		vc := &types.ProjectConfig{
+			Provider: types.CloudProviderAws,
+			Services: []types.ProjectServiceConfig{provBoundService("web", target, "password")},
+		}
+		outputs := map[string]string{"rds_master_credentials_secret_name": "acme/rds/master"}
+		if _, _, err := writeBindingExternalSecrets(dir, vc, outputs, false, nil, io.Discard); err == nil {
+			t.Fatal("want the ExternalSecret write failure to propagate")
+		}
+	})
+}
+
+// ─────────────────────────── BYO IaC workdir edges ───────────────────────────
+
+// TestProv_PrepareByoIacWorkdirRejectsAMalformedSource pins the two preconditions ahead of the
+// URL transport gate: a call with no source at all, and a source with no repo to fetch.
+func TestProv_PrepareByoIacWorkdirRejectsAMalformedSource(t *testing.T) {
+	cases := []struct {
+		name string
+		src  *types.ProjectIacSourceConfig
+		want string
+	}{
+		{name: "no IaC source", src: nil, want: "without an IacSource"},
+		{name: "no repo url", src: &types.ProjectIacSourceConfig{Ref: "main", CommitSHA: "abc"}, want: "missing repo_url"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			vc := provConfig()
+			vc.IacSource = tc.src
+			_, _, _, err := prepareByoIacWorkdir(vc, "", t.TempDir(), io.Discard, io.Discard)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want an error containing %q, got: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+// TestProv_PrepareByoIacWorkdirClonesWithAToken drives the tokened clone transport — the
+// production shape, a PRIVATE customer repo — and pins that the token never reaches the job log.
+// It also covers the module-resolution exit past it: a path that is not in the repo must stop the
+// flow BEFORE `tofu`, because a module we could not fully prepare is a module we never vetted.
+func TestProv_PrepareByoIacWorkdirClonesWithAToken(t *testing.T) {
+	allowInsecureRepoURLForTest = true
+	t.Cleanup(func() { allowInsecureRepoURLForTest = false })
+	repo, branch, sha := gitInitModuleRepo(t, validModuleTF)
+
+	newVC := func(path string) *types.ProjectConfig {
+		vc := provConfig()
+		vc.IacSource = &types.ProjectIacSourceConfig{
+			RepoURL: "file://" + repo, Ref: branch, CommitSHA: sha, Path: path,
+		}
+		return vc
+	}
+
+	t.Run("a tokened clone reaches the module", func(t *testing.T) {
+		var out strings.Builder
+		tfDir, _, restore, err := prepareByoIacWorkdir(newVC("module"), "ghp_covtoken", filepath.Join(t.TempDir(), "clone"), &out, io.Discard)
+		if err != nil {
+			t.Fatalf("prepareByoIacWorkdir with a token: %v\nlog:\n%s", err, out.String())
+		}
+		if restore != nil {
+			restore()
+		}
+		if _, statErr := os.Stat(filepath.Join(tfDir, byoBackendOverrideFile)); statErr != nil {
+			t.Errorf("the platform backend override was not written: %v", statErr)
+		}
+		if strings.Contains(out.String(), "ghp_covtoken") {
+			t.Errorf("the git token leaked into the job log:\n%s", out.String())
+		}
+	})
+
+	t.Run("the module path is not in the repo", func(t *testing.T) {
+		_, _, _, err := prepareByoIacWorkdir(newVC("no-such-module"), "", filepath.Join(t.TempDir(), "clone"), io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "not found in repository") {
+			t.Fatalf("want the missing module path named, got: %v", err)
+		}
+	})
+}
+
+// TestProv_ResolveByoModuleDirRejectsANonDirectory pins that a module path pointing at a FILE is
+// rejected — running tofu in a non-directory would fail late and opaquely.
+func TestProv_ResolveByoModuleDirRejectsANonDirectory(t *testing.T) {
+	clone := t.TempDir()
+	if err := os.WriteFile(filepath.Join(clone, "main.tf"), []byte("# not a module dir\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveByoModuleDir(clone, "main.tf"); err == nil ||
+		!strings.Contains(err.Error(), "is not a directory") {
+		t.Fatalf("want the not-a-directory refusal, got: %v", err)
+	}
+}
+
+// TestProv_WriteByoBackendOverrideReportsAWriteFailure pins that an override the platform cannot
+// write is an ERROR: silently continuing would run the customer's own backend, putting the
+// environment's state somewhere Alethia can neither read nor protect.
+func TestProv_WriteByoBackendOverrideReportsAWriteFailure(t *testing.T) {
+	dir := t.TempDir()
+	blockManifestPath(t, dir, byoBackendOverrideFile)
+
+	err := writeByoBackendOverride(dir)
+	if err == nil || !strings.Contains(err.Error(), byoBackendOverrideFile) {
+		t.Fatalf("want the blocked override file named, got: %v", err)
+	}
+}
+
+// TestProv_ScanByoIacFailClosedRunsAndWarns pins both halves of the inline gate: a module it
+// cannot even scan BLOCKS (fail-closed), and a warning-severity finding is SURFACED without
+// blocking — a customer declaring their own backend is told, not refused.
+func TestProv_ScanByoIacFailClosedRunsAndWarns(t *testing.T) {
+	t.Run("an unscannable module blocks", func(t *testing.T) {
+		err := scanByoIacFailClosed(filepath.Join(t.TempDir(), "absent"), io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "failed to run (fail-closed)") {
+			t.Fatalf("want the fail-closed scan error, got: %v", err)
+		}
+	})
+
+	t.Run("a warning is surfaced without blocking", func(t *testing.T) {
+		dir := t.TempDir()
+		// A customer-declared backend is a WARNING: the platform override replaces it, so the deploy
+		// proceeds — but the operator must be told their backend block is being ignored.
+		body := "terraform {\n  backend \"local\" {}\n}\n\nresource \"null_resource\" \"x\" {}\n"
+		if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var out, errOut strings.Builder
+		if err := scanByoIacFailClosed(dir, &out, &errOut); err != nil {
+			t.Fatalf("a warning-only module must pass the gate: %v", err)
+		}
+		if !strings.Contains(errOut.String(), "BYO IaC gate warning") {
+			t.Errorf("the warning was never surfaced:\n%s", errOut.String())
+		}
+		if !strings.Contains(out.String(), "BYO IaC static gate: OK") {
+			t.Errorf("the gate result was never reported:\n%s", out.String())
+		}
+	})
+}
+
+// TestProv_SetByoAlethiaTFVarsRestoresWhatItReplaced pins the restore contract for a var that was
+// ALREADY set: the frozen context must be published for the child tofu and then put back exactly,
+// so one job's TF_VAR_ can never leak into the next on a long-lived runner.
+func TestProv_SetByoAlethiaTFVarsRestoresWhatItReplaced(t *testing.T) {
+	t.Setenv("TF_VAR_alethia_project", "someone-elses-project")
+	if _, had := os.LookupEnv("TF_VAR_alethia_region"); had {
+		t.Skip("TF_VAR_alethia_region is set in the ambient environment")
+	}
+
+	vc := provConfig()
+	restore := setByoAlethiaTFVars(vc)
+	if got := os.Getenv("TF_VAR_alethia_project"); got != vc.ProjectName {
+		t.Fatalf("TF_VAR_alethia_project = %q, want the frozen contract value %q", got, vc.ProjectName)
+	}
+	restore()
+
+	if got := os.Getenv("TF_VAR_alethia_project"); got != "someone-elses-project" {
+		t.Errorf("a pre-existing TF_VAR must be restored, got %q", got)
+	}
+	if _, had := os.LookupEnv("TF_VAR_alethia_region"); had {
+		t.Errorf("a TF_VAR that did not exist must be unset again, got %q", os.Getenv("TF_VAR_alethia_region"))
+	}
+}
+
+// ─────────────────────────── GitOps add-on seed edges ───────────────────────────
+
+// TestProv_WriteAddOnGitOpsReportsAPushFailure pins that a seed which committed but could not be
+// pushed is an ERROR. Returning nil would tell the console the add-on is deployed while the
+// customer's repo — the only thing the app-of-apps syncs — never received it.
+func TestProv_WriteAddOnGitOpsReportsAPushFailure(t *testing.T) {
+	bare := newBareAppsRepo(t, nil)
+	vc := &types.ProjectConfig{AddOns: []types.AddOnInstall{provGitopsAddOn("grafana")}}
+	vc.Repositories.AppsDestinationRepo = "file://" + bare
+	provFreezeTree(t, bare)
+
+	err := writeAddOnGitOps(context.Background(), vc, "tok", nil, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "push add-on manifests") {
+		t.Fatalf("want the push failure named, got: %v", err)
+	}
+}
+
+// TestProv_PruneOrphanAddOnManifestsWarnsWhenRemoveFails pins that a manifest we own but cannot
+// delete is WARNED about and not counted — reporting it as pruned would claim a sweep that never
+// happened, and the stale Application would keep syncing.
+func TestProv_PruneOrphanAddOnManifestsWarnsWhenRemoveFails(t *testing.T) {
+	dir := t.TempDir()
+	writeFileT(t, dir, "orphan.yaml", "metadata:\n  labels:\n    alethia.io/managed-by: addon-marketplace\n")
+	provFreezeTree(t, dir) // the file stays readable; its directory denies the unlink
+
+	var errOut strings.Builder
+	if got := pruneOrphanAddOnManifests(dir, nil, io.Discard, &errOut); got != 0 {
+		t.Fatalf("a manifest that could not be removed must not be counted, got %d", got)
+	}
+	if !strings.Contains(errOut.String(), "could not prune add-on manifest") {
+		t.Errorf("the failed prune must be warned about, got:\n%s", errOut.String())
+	}
+}
+
+// ─────────────────────────── destroy-plan workdir edges ───────────────────────────
+
+// TestProv_DestroyPlanRejectsAnUnbuildableWorkdir pins that the read-only teardown refuses the
+// same way the applying one does. A plan built from a workdir we could not assemble would not
+// describe the teardown RunDestroy performs — which is the whole invariant the shared setup holds.
+func TestProv_DestroyPlanRejectsAnUnbuildableWorkdir(t *testing.T) {
+	cases := []struct {
+		name      string
+		provider  string
+		absentDir bool
+		want      string
+	}{
+		{name: "unknown cloud", provider: "not-a-cloud", want: "not-a-cloud"},
+		{name: "templates dir is absent", provider: "aws", absentDir: true, want: "failed to copy templates"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			templatesDir := t.TempDir()
+			if tc.absentDir {
+				templatesDir = filepath.Join(templatesDir, "absent")
+			}
+			plan, err := RunDestroyPlan(context.Background(), DestroyParams{
+				DryRun:        true,
+				ProjectConfig: provConfig(),
+				Provider:      tc.provider,
+				TemplatesDir:  templatesDir,
+				StateBackend:  provBackend(t),
+				Stdout:        io.Discard,
+				Stderr:        io.Discard,
+			})
+			if err == nil {
+				t.Fatalf("want an error containing %q, got plan %#v", tc.want, plan)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("want an error containing %q, got: %v", tc.want, err)
+			}
+			if plan != nil {
+				t.Errorf("a workdir that could not be built must return no plan, got %#v", plan)
+			}
+		})
+	}
+}
+
+// ─────────────────────────── probe cluster-name synthesis ───────────────────────────
+
+// provTofuNoClusterNameScript answers `output` with the kubeconfig alone — no cluster_name — which
+// is the shape that forces the probe to synthesize the name from the config.
+const provTofuNoClusterNameScript = `#!/bin/sh
+printf '%s\n' "$*" >> "LOGPATH"
+case "$1" in
+  version)
+    echo '{"terraform_version":"1.9.0","platform":"linux_amd64","provider_selections":{},"terraform_outdated":false}'
+    ;;
+  output)
+    echo '{"kubeconfig":{"sensitive":true,"type":"string","value":"PROV-FAKE-KUBECONFIG"}}'
+    ;;
+esac
+exit 0
+`
+
+// TestProv_ProbeSynthesizesTheClusterNameWhenTheOutputIsAbsent pins the merge the probe does before
+// asking the provider for a kubeconfig: aws/gcp/azure build an exec-plugin kubeconfig from the
+// cluster NAME, so an environment whose state does not carry that output must still be probeable
+// from the name the config already holds — otherwise a healthy cluster reports as unreachable.
+func TestProv_ProbeSynthesizesTheClusterNameWhenTheOutputIsAbsent(t *testing.T) {
+	provFakeTofu(t, provTofuNoClusterNameScript)
+	provStubTool(t, "kubectl", provKubectlScript)
+
+	vc := provConfig()
+	vc.Cluster.ClusterName = "cov-prov-cluster"
+
+	res, err := RunProbe(context.Background(), ProbeParams{
+		ProjectConfig: vc,
+		Provider:      "aws",
+		IacVersion:    "1.9.0",
+		StateBackend:  provBackend(t),
+		Timeout:       3 * time.Second,
+		Stdout:        io.Discard,
+		Stderr:        io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("RunProbe: %v", err)
+	}
+	if res == nil || !res.Reachable {
+		t.Fatalf("the synthesized cluster name must still yield a reachable probe, got %#v", res)
+	}
+}
+
+// ─────────────────────────── BYO chart binding + project edges ───────────────────────────
+
+// TestProv_PrepareByoChartsWarnsWhenTheAppProjectCannotRender pins the best-effort posture at the
+// render step: a namespace that produces an unparseable AppProject is warned about and the deploy
+// continues. The charts then fail closed (no project ⇒ nothing syncs) rather than failing a cluster.
+func TestProv_PrepareByoChartsWarnsWhenTheAppProjectCannotRender(t *testing.T) {
+	provStubTool(t, "kubectl", "#!/bin/sh\nexit 0\n")
+
+	vc := &types.ProjectConfig{
+		ProjectName: "Acme Corp",
+		AddOns: []types.AddOnInstall{
+			// The namespace is emitted into a quoted YAML scalar; an embedded quote makes the
+			// rendered AppProject unparseable, which the label injector reports.
+			{ID: "api", Source: "git", ChartRepo: "https://github.com/acme/charts.git", Path: "charts/api", Namespace: `a"b`},
+		},
+	}
+	var errOut strings.Builder
+	if !prepareByoCharts(vc, "tok", nil, map[string]string{"alethia.io/environment-id": "env-1"}, io.Discard, &errOut) {
+		t.Fatal("prepareByoCharts did not report the BYO chart")
+	}
+	if !strings.Contains(errOut.String(), "could not render BYO AppProject") {
+		t.Errorf("the failed render must be warned about, got:\n%s", errOut.String())
 	}
 }

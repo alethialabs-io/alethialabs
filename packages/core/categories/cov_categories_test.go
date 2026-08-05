@@ -806,3 +806,29 @@ func TestCat_HalfAddedProviderFailsClosed(t *testing.T) {
 		}
 	})
 }
+
+// TestCat_CopyTreeReportsAnUnwalkableSubdirectory pins that a module directory holding a
+// subdirectory whose entries cannot be listed aborts the vendoring with that error, instead of
+// silently vendoring the module minus the unreadable subtree — a truncated module plans clean and
+// applies wrong.
+func TestCat_CopyTreeReportsAnUnwalkableSubdirectory(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — a 0000 directory is still readable, so Walk reports no error")
+	}
+	src := filepath.Join(t.TempDir(), "module")
+	sealed := filepath.Join(src, "sealed")
+	if err := os.MkdirAll(sealed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sealed, "main.tf"), []byte("# hidden\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sealed, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sealed, 0o755) })
+
+	if err := copyTree(src, filepath.Join(t.TempDir(), "dst")); err == nil {
+		t.Fatal("copyTree() = nil, want the unlistable subdirectory's error")
+	}
+}
