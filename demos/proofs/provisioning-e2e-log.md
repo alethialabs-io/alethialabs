@@ -30,3 +30,4 @@ audit trail; git history is the timeline. Parity board:
 | 2026-07-31 | 8c53441 | hetzner | floor | **RETRACTED** | Supersedes the 2026-07-22 Hetzner/floor PASS: `nightly-29895597616` recorded an explicit gate-off SKIP; no provision or proof bundle ran. | `nightly-29895597616` | #1723 |
 
 <!-- provisioning-e2e.sh appends new rows below this line -->
+| 2026-08-05 | fa093c24 | hetzner | addons | **FAIL** | ArgoCD gate: 12/20 apps not Healthy+Synced within 8m. Cluster provisioned and reachable (7 nodes Ready, k8s 1.35.6, signed receipt verified); addon-reloader and metrics-server BOTH converged, so #1714 and #1722 are verified. addon-loki cannot render at all (#2058). Teardown swept to zero. | `demos/proofs/hetzner/20260805T064043Z` | #2058 |
