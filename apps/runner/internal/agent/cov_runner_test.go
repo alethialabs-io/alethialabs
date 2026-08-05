@@ -452,7 +452,7 @@ func TestRun_Run_StartsLoopsAndDrainsOnSignal(t *testing.T) {
 	deadline := time.After(3 * time.Second)
 	for {
 		api.mockAPI.mu.Lock()
-		beats := api.mockAPI.heartbeatCount
+		beats := api.heartbeatCount
 		api.mockAPI.mu.Unlock()
 		if beats > 0 {
 			break
