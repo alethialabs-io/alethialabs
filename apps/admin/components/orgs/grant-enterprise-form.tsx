@@ -62,7 +62,7 @@ export function GrantEnterpriseForm({
 			<ContractFields value={state} onChange={setState} />
 			{error && <p className="text-sm text-destructive">{error}</p>}
 			{invoiceUrl && (
-				<p className="text-sm text-green-600 dark:text-green-500">
+				<p className="text-sm text-foreground">
 					Done. Invoice:{" "}
 					<a href={invoiceUrl} target="_blank" rel="noreferrer" className="underline">
 						{invoiceUrl}

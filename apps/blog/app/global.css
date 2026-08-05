@@ -1,102 +1,18 @@
 /* SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
  * SPDX-License-Identifier: AGPL-3.0-only
  *
- * Alethia design system — grayscale, light default, squared (no border-radius),
- * Geist. Mirrors .claude/skills/alethia-design/tokens/colors.css.
+ * The blog used to re-declare the entire ink ramp and its own `@theme inline`,
+ * and it had drifted: no --gray-25/-800/-1100, --radius:0 against the system's
+ * 0.25rem, and none of the --cta / --signal-* / sidebar / chart tokens. It now
+ * consumes the same foundation as every other app.
  */
 
 @import "tailwindcss";
+@import "@repo/brand/tokens.css";
 
-@theme inline {
-	--color-background: var(--background);
-	--color-foreground: var(--foreground);
-	--color-card: var(--card);
-	--color-card-foreground: var(--card-foreground);
-	--color-muted: var(--muted);
-	--color-muted-foreground: var(--muted-foreground);
-	--color-border: var(--border);
-	--color-border-strong: var(--border-strong);
-	--color-ink: var(--ink);
-	--color-ink-foreground: var(--ink-foreground);
-	--font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
-	--font-mono: var(--font-geist-mono), ui-monospace, monospace;
-	--radius: 0px;
-}
-
-:root {
-	/* Grayscale ink ramp (zero chroma). */
-	--gray-0: oklch(1 0 0);
-	--gray-50: oklch(0.985 0 0);
-	--gray-100: oklch(0.967 0 0);
-	--gray-200: oklch(0.928 0 0);
-	--gray-300: oklch(0.882 0 0);
-	--gray-400: oklch(0.788 0 0);
-	--gray-500: oklch(0.664 0 0);
-	--gray-600: oklch(0.556 0 0);
-	--gray-700: oklch(0.44 0 0);
-	--gray-900: oklch(0.268 0 0);
-	--gray-950: oklch(0.205 0 0);
-	--gray-1000: oklch(0.165 0 0);
-	--gray-1050: oklch(0.13 0 0);
-
-	/* Semantic — light theme (default). */
-	--background: var(--gray-50);
-	--foreground: var(--gray-1000);
-	--card: var(--gray-0);
-	--card-foreground: var(--gray-1000);
-	--muted: var(--gray-100);
-	--muted-foreground: var(--gray-700);
-	--border: var(--gray-200);
-	--border-strong: var(--gray-300);
-	--ink: var(--gray-950);
-	--ink-foreground: var(--gray-50);
-}
-
-.dark {
-	--background: var(--gray-1050);
-	--foreground: var(--gray-50);
-	--card: var(--gray-1000);
-	--card-foreground: var(--gray-50);
-	--muted: var(--gray-950);
-	--muted-foreground: var(--gray-500);
-	--border: oklch(1 0 0 / 0.1);
-	--border-strong: oklch(1 0 0 / 0.17);
-	--ink: var(--gray-50);
-	--ink-foreground: var(--gray-1000);
-}
-
-* {
-	border-color: var(--border);
-}
-
-html {
-	background: var(--background);
-	color: var(--foreground);
-}
-
-body {
-	font-family: var(--font-sans);
-	-webkit-font-smoothing: antialiased;
-}
-
-/* Minimal grayscale scrollbars — mirrors packages/brand/src/tokens.css (blog doesn't
-   import the brand tokens). The squared rule below flattens the thumb radius, on-brand. */
-* {
-	scrollbar-width: thin;
-	scrollbar-color: color-mix(in oklab, var(--foreground) 18%, transparent) transparent;
-}
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb {
-	background: color-mix(in oklab, var(--foreground) 16%, transparent);
-	border: 2px solid transparent;
-	background-clip: padding-box;
-}
-*::-webkit-scrollbar-thumb:hover {
-	background: color-mix(in oklab, var(--foreground) 30%, transparent);
-	background-clip: padding-box;
-}
-*::-webkit-scrollbar-corner { background: transparent; }
+/* Scan shared workspace packages so their Tailwind classes are generated. */
+@source "../../../packages/ui/src";
+@source "../../../packages/brand/src";
 
 /* Squared everywhere — the brand rejects rounding. */
 * {

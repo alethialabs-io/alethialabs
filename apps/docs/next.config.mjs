@@ -17,6 +17,8 @@ const config = {
 	// standalone bundle inside Docker.
 	outputFileTracingRoot: repoRoot,
 	reactStrictMode: true,
+	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
+	transpilePackages: ["@repo/brand"],
 	async rewrites() {
 		return [
 			{
