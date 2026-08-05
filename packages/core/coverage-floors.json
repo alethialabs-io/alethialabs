@@ -17,11 +17,11 @@
       "total": 10
     },
     "api": {
-      "covered": 418,
+      "covered": 619,
       "total": 622
     },
     "argocd": {
-      "covered": 857,
+      "covered": 1319,
       "total": 1404
     },
     "assets": {
@@ -45,7 +45,7 @@
       "total": 161
     },
     "compat": {
-      "covered": 109,
+      "covered": 137,
       "total": 140
     },
     "drift": {
@@ -53,7 +53,7 @@
       "total": 34
     },
     "git": {
-      "covered": 187,
+      "covered": 252,
       "total": 291
     },
     "helmoci": {
@@ -61,7 +61,7 @@
       "total": 228
     },
     "iacsafety": {
-      "covered": 351,
+      "covered": 363,
       "total": 383
     },
     "imagebuild": {
@@ -73,7 +73,7 @@
       "total": 125
     },
     "k8s": {
-      "covered": 330,
+      "covered": 374,
       "total": 392
     },
     "manifests": {
@@ -81,7 +81,7 @@
       "total": 602
     },
     "provisioner": {
-      "covered": 1009,
+      "covered": 1317,
       "total": 1989
     },
     "runners": {
@@ -89,7 +89,7 @@
       "total": 19
     },
     "sandbox": {
-      "covered": 95,
+      "covered": 158,
       "total": 159
     },
     "scanner": {
@@ -109,7 +109,7 @@
       "total": 5
     },
     "tofu": {
-      "covered": 92,
+      "covered": 168,
       "total": 177
     },
     "types": {
@@ -121,7 +121,7 @@
       "total": 44
     },
     "verify": {
-      "covered": 1023,
+      "covered": 1219,
       "total": 1229
     },
     "verify/cmd/elench-verify": {
