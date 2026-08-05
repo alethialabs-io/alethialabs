@@ -14,6 +14,19 @@ import (
 	"github.com/charmbracelet/huh"
 )
 
+// runHuhForm runs an interactive huh form. It is a variable so a test can supply the
+// answer a user would have given.
+//
+// Measured, not assumed: under `go test` the real implementation returns
+// `huh: could not open a new TTY: open /dev/tty: device not configured` — it does NOT
+// block. So a test may call straight through and get the error arm; the seam is only
+// needed to reach what happens AFTER a successful selection.
+//
+// Production behaviour is exactly ui.NewForm(groups...).Run().
+var runHuhForm = func(groups ...*huh.Group) error {
+	return ui.NewForm(groups...).Run()
+}
+
 // envLister is the slice of the API client resolveEnvironmentID needs — kept small so the
 // resolution logic is unit-testable with a fake (the concrete *api.Client satisfies it).
 type envLister interface {
@@ -84,7 +97,7 @@ func selectProject(token string) (projectID string, err error) {
 		return "", fmt.Errorf("no projects found — create one through Alethia")
 	}
 
-	err = ui.NewForm(
+	err = runHuhForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Project").
@@ -92,7 +105,7 @@ func selectProject(token string) (projectID string, err error) {
 				Options(projectOptions...).
 				Value(&projectID),
 		),
-	).Run()
+	)
 
 	return projectID, err
 }
@@ -158,7 +171,7 @@ func selectRunner(token string, excludeID string) (runnerID string, err error) {
 
 	runnerID = defaultValue
 
-	err = ui.NewForm(
+	err = runHuhForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Runner").
@@ -166,7 +179,7 @@ func selectRunner(token string, excludeID string) (runnerID string, err error) {
 				Options(options...).
 				Value(&runnerID),
 		),
-	).Run()
+	)
 
 	return runnerID, err
 }
@@ -182,7 +195,7 @@ func selectOrgInteractive(orgs []api.OrgSummary) (*api.OrgSummary, error) {
 		options[i] = huh.NewOption(label, o.ID)
 	}
 	var id string
-	err := ui.NewForm(
+	err := runHuhForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Organization").
@@ -190,7 +203,7 @@ func selectOrgInteractive(orgs []api.OrgSummary) (*api.OrgSummary, error) {
 				Options(options...).
 				Value(&id),
 		),
-	).Run()
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +269,7 @@ func pickCloudIdentity(
 		options[i] = huh.NewOption(id.Label, id.ID)
 	}
 
-	err = ui.NewForm(
+	err = runHuhForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Cloud Account").
@@ -264,7 +277,7 @@ func pickCloudIdentity(
 				Options(options...).
 				Value(&identityID),
 		),
-	).Run()
+	)
 
 	return identityID, err
 }

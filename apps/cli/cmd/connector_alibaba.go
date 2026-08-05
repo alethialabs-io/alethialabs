@@ -141,12 +141,12 @@ func alibabaTerraformFlow(issuer string) (string, error) {
 // promptAlibabaRoleArn asks the user to paste the RAM role ARN and validates it is non-empty.
 func promptAlibabaRoleArn() (string, error) {
 	var roleArn string
-	if err := ui.NewForm(huh.NewGroup(
+	if err := runHuhForm(huh.NewGroup(
 		huh.NewInput().
 			Title("RAM Role ARN").
 			Placeholder("acs:ram::123456789012:role/AlethiaProvisioner").
 			Value(&roleArn),
-	)).Run(); err != nil {
+	)); err != nil {
 		return "", err
 	}
 	roleArn = strings.TrimSpace(roleArn)

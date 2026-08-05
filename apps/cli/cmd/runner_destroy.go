@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -35,7 +34,7 @@ var runnerDestroyCmd = &cobra.Command{
 			}
 			if destroyRunnerID == "" {
 				fmt.Println("Please select a specific runner to destroy, not 'Any available'.")
-				os.Exit(1)
+				exitFunc(1)
 			}
 		}
 
@@ -73,7 +72,7 @@ var runnerDestroyCmd = &cobra.Command{
 		if destroyRunnerWait {
 			ui.JobQueued("DESTROY_RUNNER", job.ID)
 			if err := waitForJob(apiClient, job.ID); err != nil {
-				os.Exit(1)
+				exitFunc(1)
 			}
 		} else {
 			ui.JobQueued("DESTROY_RUNNER", job.ID)

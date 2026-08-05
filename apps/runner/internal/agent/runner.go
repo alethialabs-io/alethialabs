@@ -107,6 +107,20 @@ func (w *Runner) stateBackend(jobID string) (*cloud.HTTPBackendConfig, error) {
 	}, nil
 }
 
+// Timing constants of the runner's background loops. They are package vars rather than
+// consts purely so a test can shorten them; production never reassigns them, and the
+// values are the ones the loops have always used.
+var (
+	// heartbeatInterval is the period of the liveness heartbeat.
+	heartbeatInterval = 30 * time.Second
+	// shutdownGracePeriod is how long a draining runner may keep finishing its current
+	// job after SIGINT/SIGTERM before the root context is force-cancelled.
+	shutdownGracePeriod = 10 * time.Minute
+	// wakeBackoffBase / wakeMaxBackoff bound the wake-stream reconnect backoff.
+	wakeBackoffBase = time.Second
+	wakeMaxBackoff  = 30 * time.Second
+)
+
 func (w *Runner) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -122,7 +136,7 @@ func (w *Runner) Run(ctx context.Context) error {
 		<-sigCh
 		Log().Info("received shutdown signal, finishing current job")
 		draining.Store(true)
-		time.AfterFunc(10*time.Minute, func() {
+		time.AfterFunc(shutdownGracePeriod, func() {
 			Log().Warn("grace period expired, forcing shutdown")
 			cancel()
 		})
@@ -139,7 +153,7 @@ func (w *Runner) Run(ctx context.Context) error {
 }
 
 func (w *Runner) heartbeatLoop(ctx context.Context) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
 	if cancelled, err := w.api.Heartbeat(); err != nil {
@@ -264,8 +278,8 @@ func (w *Runner) dispatchWakeEvent(ev WakeEvent, trigger func()) {
 // wakeLoop maintains the push-dispatch SSE connection, reconnecting with backoff.
 // Each event is dispatched via onEvent (wake → claim attempt; cancel → job teardown).
 func (w *Runner) wakeLoop(ctx context.Context, onEvent func(WakeEvent)) {
-	backoff := time.Second
-	const maxBackoff = 30 * time.Second
+	backoff := wakeBackoffBase
+	maxBackoff := wakeMaxBackoff
 	for {
 		if ctx.Err() != nil {
 			return

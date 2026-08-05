@@ -43,12 +43,12 @@ installer in the browser Cloud Shell and paste the result.`,
 
 		ui.PrintStepper(steps, 0)
 		if connectorGcpProject == "" {
-			if err := ui.NewForm(huh.NewGroup(
+			if err := runHuhForm(huh.NewGroup(
 				huh.NewInput().
 					Title("GCP Project ID").
 					Description("The project Alethia should provision into").
 					Value(&connectorGcpProject),
-			)).Run(); err != nil {
+			)); err != nil {
 				fail(err)
 			}
 		}
@@ -119,11 +119,11 @@ func gcpManualFlow(projectID string) (string, error) {
 	fmt.Println("  3. Paste the config it prints (between START CONFIG and END CONFIG) below.")
 
 	var wifJSON string
-	if err := ui.NewForm(huh.NewGroup(
+	if err := runHuhForm(huh.NewGroup(
 		huh.NewText().
 			Title("WIF credential config JSON").
 			Value(&wifJSON),
-	)).Run(); err != nil {
+	)); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(wifJSON) == "" {

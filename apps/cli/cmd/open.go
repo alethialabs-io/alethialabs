@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
-	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +38,7 @@ var openCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Opening %s\n", url)
-		if err := browser.OpenURL(url); err != nil {
+		if err := openBrowser(url); err != nil {
 			ui.Error(fmt.Sprintf("Failed to open browser: %v", err))
 		}
 	},

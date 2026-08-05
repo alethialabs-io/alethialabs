@@ -97,7 +97,7 @@ func runHelmRepoTokenLoop(ctx context.Context, mint helmRepoTokenMinter, patch h
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(refreshAfter(exp, time.Now())):
+		case <-refreshTimer(refreshAfter(exp, time.Now())):
 		}
 		user, pass, exp, err = mint(ctx)
 		if err != nil {

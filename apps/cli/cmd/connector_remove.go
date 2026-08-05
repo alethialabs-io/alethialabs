@@ -82,12 +82,12 @@ func pickIdentity(identities []api.CloudIdentity, args []string) (*api.CloudIden
 	}
 
 	var chosenID string
-	if err := ui.NewForm(huh.NewGroup(
+	if err := runHuhForm(huh.NewGroup(
 		huh.NewSelect[string]().
 			Title("Select a connection to remove").
 			Options(options...).
 			Value(&chosenID),
-	)).Run(); err != nil {
+	)); err != nil {
 		return nil, err
 	}
 
