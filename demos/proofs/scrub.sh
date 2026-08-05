@@ -221,6 +221,25 @@ assert_grep_clean() {
 	#         `git::https://user:TOKEN@host/repo`. It is safe ONLY because check (3b) below
 	#         positively re-flags exactly those two sub-shapes. Never widen one without the other.
 	#
+	#      d) the value is an object whose FIRST key is `type` — a variable's TYPE CONSTRAINT, and
+	#         the shape that cost the first real hetzner run its ledger row (#2062). A plan JSON's
+	#         `configuration.root_module.variables` section declares every root variable as
+	#         `"hcloud_token":{"type":"string","description":…}`. The captured 24-character window
+	#         stops at `{"type":"string"` — before any value — so the `REDACTED` filter above never
+	#         sees the marker that was in fact already there, and three correctly-scrubbed hetzner
+	#         credentials plus a DURATION (`admin_kubeconfig_cert_lifetime`) were reported as
+	#         plaintext. A type constraint is a string or an array of strings and can hold no
+	#         value, so it is metadata by construction, exactly like (b) and (c).
+	#
+	#      e) the value is an object whose FIRST key is `actions` and whose array holds only
+	#         OpenTofu's own change verbs — `"kubeconfig":{"actions":["create"]…`, the
+	#         `resource_changes[].change` shape. Anchored to the verb vocabulary rather than to
+	#         "any array", because an unanchored `actions` exclusion would swallow
+	#         `{"actions":["<secret>"]}` on its way past.
+	#
+	#    (d) and (e) are safe for the same reason (c) is: 3b below positively re-flags a hardcoded
+	#    `default`, so a variable that declares BOTH a type and a secret default is still caught.
+	#
 	#    `constant_value` is NOT on that list, deliberately: `"password":{"constant_value":"…"}`
 	#    is precisely where a hardcoded secret in a .tf shows up in the plan JSON's
 	#    `configuration` section. Excluding it would have hidden the one shape most worth
@@ -233,7 +252,9 @@ assert_grep_clean() {
 		grep -v 'REDACTED' |
 		grep -vE '[:=][[:space:]]*(\(sensitive|true|false|null)$' |
 		grep -vE '[:=][[:space:]]*\{["]?(sensitive|references|expression)["]?[[:space:]]*:[[:space:]]*(true|false|null|\[|\{)' |
-		grep -vE '[:=][[:space:]]*\{["]?(default|source)["]?[[:space:]]*:' || true)"
+		grep -vE '[:=][[:space:]]*\{["]?(default|source)["]?[[:space:]]*:' |
+		grep -vE '[:=][[:space:]]*\{["]?type["]?[[:space:]]*:[[:space:]]*(["]|\[)' |
+		grep -vE '[:=][[:space:]]*\{["]?actions["]?[[:space:]]*:[[:space:]]*\[[[:space:]]*["](create|read|update|delete|no-op)["]' || true)"
 	if [ -n "$hits" ]; then
 		echo "::error::proof-scrub: a denylisted key still carries a plaintext value in the proof bundle ($dir):" >&2
 		# Print the KEY only. This used to print the whole matching line, which meant the tripwire
@@ -406,6 +427,43 @@ EOF
 		echo "SELF-TEST FAIL: assert_grep_clean passed a REAL secret sitting beside plan-JSON metadata" >&2
 		return 1
 	fi
+	# ── #2062: a variable TYPE CONSTRAINT and a resource-change ACTION LIST are metadata too. ──
+	# This is the fixture the first real hetzner run died on. Its credentials were ALREADY scrubbed
+	# to `[REDACTED]`; what the tripwire matched was the plan JSON's declaration of the same names,
+	# whose 24-character window ends at `{"type":"string"` — before the marker that would have
+	# cleared it. The run lost its ledger row to a bundle that was clean.
+	local meta_decl="$work/meta-decl"
+	mkdir -p "$meta_decl"
+	cat >"$meta_decl/plan.json" <<'EOF'
+{"configuration":{"root_module":{"variables":{"hcloud_token":{"type":"string","description":"…"},"hetzner_s3_access_key":{"type":"string"},"hetzner_s3_secret_key":{"type":"string"},"admin_kubeconfig_cert_lifetime":{"type":"string"},"password_list":{"type":["list","string"]}}}},"resource_changes":[{"change":{"kubeconfig":{"actions":["create"]},"talosconfig":{"actions":["create"]},"client_key":{"actions":["delete","create"]}}}],"variables":{"hcloud_token":{"value":"[REDACTED]"},"hetzner_s3_secret_key":{"value":"[REDACTED]"}}}
+EOF
+	if ! assert_grep_clean "$meta_decl" >/dev/null 2>&1; then
+		echo "SELF-TEST FAIL: assert_grep_clean flagged variable type constraints / change actions (over-broad — this is #2062)" >&2
+		return 1
+	fi
+	# …and the narrowing must not have opened a hole: a variable that declares a type AND carries a
+	# hardcoded secret default is still a leak, and 3b is what has to catch it.
+	local meta_decl_bad="$work/meta-decl-bad"
+	mkdir -p "$meta_decl_bad"
+	cat >"$meta_decl_bad/plan.json" <<'EOF'
+{"variables":{"admin_password":{"default":"planjson-FAKE-PLACEHOLDER-typed-default-DO-NOT-LEAK"}}}
+EOF
+	if assert_grep_clean "$meta_decl_bad" >/dev/null 2>&1; then
+		echo "SELF-TEST FAIL: the #2062 narrowing swallowed a hardcoded secret default" >&2
+		return 1
+	fi
+	# An `actions` array that is NOT a tofu change verb is not metadata — it is an array whose
+	# contents were never vetted, and the exclusion must not reach it.
+	rm -f "$meta_decl_bad/plan.json"
+	cat >"$meta_decl_bad/smuggled.json" <<'EOF'
+{"hcloud_token":{"actions":["planjson-FAKE-PLACEHOLDER-smuggled-in-an-array-DO-NOT-LEAK"]}}
+EOF
+	if assert_grep_clean "$meta_decl_bad" >/dev/null 2>&1; then
+		echo "SELF-TEST FAIL: the #2062 actions exclusion accepted a non-verb array (too wide)" >&2
+		return 1
+	fi
+	rm -f "$meta_decl_bad/smuggled.json"
+
 	# The two shapes the narrowing must NOT swallow, pinned individually because each is a hole if
 	# its exclusion is a character wider than the metadata it names:
 	#   - a hardcoded secret in the plan JSON's `configuration` section, which appears under
