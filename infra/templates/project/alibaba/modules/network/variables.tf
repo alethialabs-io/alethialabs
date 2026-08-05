@@ -43,3 +43,11 @@ variable "tags" {
   default     = {}
   description = "Tags to apply to taggable resources"
 }
+
+# #1987. ADDITIVE, never restrictive: the group below is created only when this list is non-empty,
+# so the empty default leaves the plan byte-identical.
+variable "allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to this VPC. Empty (the default) creates no security group at all."
+}

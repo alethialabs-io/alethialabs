@@ -430,3 +430,18 @@ variable "vswitch_count" {
   default     = 3
   description = "STATIC number of vswitches the network module creates (plan-known under the keyless RAM-OIDC provider — #621); zone assignment wraps over the discovered zones via element()."
 }
+
+# #1987. ADDITIVE, never restrictive: modules/network creates a security group for these ranges and
+# attaches it to the ACK node pool, alongside the group ACK manages itself. Empty (the default)
+# creates nothing at all, so the plan is byte-identical and the external runner keeps its access.
+variable "network_allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to this VPC's cluster nodes. Empty (the default) adds nothing."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.network_allowed_cidr_blocks : can(cidrhost(c, 0))])
+    error_message = "network_allowed_cidr_blocks must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}

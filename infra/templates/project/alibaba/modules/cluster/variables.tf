@@ -91,3 +91,10 @@ variable "tags" {
   default     = {}
   description = "Tags to apply to the cluster and node pool"
 }
+
+# #1987. Empty (the default) means the node pool keeps only its ACK-managed security group.
+variable "security_group_ids" {
+  type        = list(string)
+  default     = []
+  description = "Extra security groups attached to the default node pool. Empty (the default) adds none."
+}

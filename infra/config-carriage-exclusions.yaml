@@ -343,17 +343,12 @@ baseline:
     issue: "#1982"
     state: dropped-by-type
 
-  # ── The same shape on the network, and it is the worst of the three ────────────────
-  # #1981's cache template is fully wired and only the Go field is missing. This one has no
-  # variable on ANY of the five templates either — the value is collected in the inspector
-  # (config-schema.ts:875) and the CLI (project-components.ts:91) and there is nowhere for it to go.
-  # Boarded rather than excluded because the decision is not "no cloud can do this" — every cloud
-  # can express a source-range allow-list — it is that nobody has said what the control means.
-  - field: network.allowed_cidr_blocks
-    cloud: "*"
-    reason: The network allow-list is not applied — the network is created with the template's own default access rules instead.
-    issue: "#1987"
-    state: dropped-by-type
+  # network.allowed_cidr_blocks was here, boarded as #1987 and the worst of the three: no variable
+  # on ANY of the five templates, so a value collected in the inspector and the CLI had nowhere to
+  # go. FIXED — the field is modelled, carried by all five providers, and read by a real rule on
+  # each cloud (hcloud_firewall, google_compute_firewall, the AKS NSG, the EKS node security group,
+  # and a security group attached to the ACK node pool). Deleted rather than left behind, because
+  # the guard fails on a baseline entry whose gap no longer reproduces.
 
   # ── Container registry image scanning on Alibaba ───────────────────────────────────
   # Alibaba sells image scanning, so this is debt rather than a ceiling — but it is not a wiring
