@@ -17,5 +17,10 @@ module "key_vault" {
   # new reachable knob rather than a change to any vault that already exists.
   secret_keepers = var.custom_secret_keepers
 
+  # Reachable per project through provider_config passthrough. Defaults to true, which is what every
+  # vault in the field already carries — see modules/key-vault/main.tf for why it cannot simply be
+  # flipped, and why leaving it unreachable was the actual defect.
+  purge_protection_enabled = var.key_vault_purge_protection_enabled
+
   tags = local.azure_default_tags
 }

@@ -595,6 +595,17 @@ variable "custom_secret_keepers" {
   description = "Per-secret rotation keepers, keyed by secret name. Changing any value under a name re-generates that secret's password; a name absent from the map keeps its value forever. Empty (the default) is behavior-preserving."
 }
 
+variable "key_vault_purge_protection_enabled" {
+  type    = bool
+  default = true
+  # DEFAULT `true` IS DELIBERATE AND IS NOT AN ENDORSEMENT. Purge protection cannot be disabled
+  # once applied, so any other default fails the next `tofu apply` on every environment that
+  # already exists. The default preserves them bit-for-bit; the variable is what makes the setting
+  # reachable at all, for a new environment or an e2e-shaped one that should not leave a vault name
+  # reserved and unpurgeable for seven days after its own teardown.
+  description = "Block purging this project's soft-deleted Key Vault until the retention window expires. IRREVERSIBLE: Azure refuses to disable purge protection once it is on, so this can only be set to false BEFORE the vault is first created. Leaving it true means a destroyed environment cannot be rebuilt under the same project + environment name for 7 days."
+}
+
 #########################################################################
 ##                   Custom Terraform Variables                        ##
 #########################################################################
