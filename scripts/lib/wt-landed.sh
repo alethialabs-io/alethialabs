@@ -42,8 +42,32 @@ wt_branch_landed() { # <worktree> <branch> <base> → 0 landed, 1 not
 	local pr_line pr state pr_oids missing="" oid
 	WT_LANDED_WHY=""
 
-	# The cheap, offline, always-correct case: a real fast-forward or merge commit.
-	if git -C "$wt" merge-base --is-ancestor "$br" "$base" 2>/dev/null; then
+	# How much does this branch carry that base does not? Asked FIRST, because the ancestry test
+	# below cannot tell the two zero-ahead shapes apart and used to resolve both as "landed".
+	local ahead
+	ahead="$(git -C "$wt" rev-list --count "$base..$br" 2>/dev/null)" || ahead=""
+	if [ -z "$ahead" ]; then
+		WT_LANDED_WHY="could not compare $br against $base"
+		return 1
+	fi
+
+	# The offline shortcut, now guarded. `--is-ancestor` is true for a fast-forwarded branch AND
+	# for a brand-new one that has not committed yet — both carry zero commits beyond base, and
+	# git cannot distinguish them: after a fast-forward the branch tip IS the base tip, which is
+	# exactly where `pnpm wt` puts a fresh branch. Reporting both as "merged into $base" is how a
+	# worktree could be created and swept seconds later (#1986) — observed, on this session's own
+	# tree, mid-task.
+	#
+	# Squash merges make that worse than a corner case. Every dev PR lands as a squash
+	# (.mergify.yml), and a squashed branch is never an ancestor of dev — so in this repo
+	# `--is-ancestor` is almost never true for work that really landed, and this shortcut was in
+	# practice a fresh-branch detector wearing a "landed" label.
+	#
+	# So ambiguity is resolved by the PR rather than guessed: a zero-ahead branch falls through to
+	# the lookup below, where a real fast-forward still shows a MERGED PR and still reports landed,
+	# while a fresh branch has no PR and is kept. Only a branch that genuinely carries commits into
+	# base takes the offline path.
+	if [ "$ahead" != "0" ] && git -C "$wt" merge-base --is-ancestor "$br" "$base" 2>/dev/null; then
 		WT_LANDED_WHY="merged into $base"
 		return 0
 	fi
@@ -65,7 +89,15 @@ wt_branch_landed() { # <worktree> <branch> <base> → 0 landed, 1 not
 	# was invisible until `branch:prune` started asking about branches that never had one — 12 of
 	# them on the first real sweep.
 	if [ -z "$pr_line" ] || [ "$pr_line" = "null" ] || [ "${pr_line%% *}" = "null" ]; then
-		WT_LANDED_WHY="not an ancestor of $base, and no PR was ever opened for $br"
+		# Separate the two no-PR shapes in the MESSAGE, because an operator reading a sweep needs to
+		# tell "work in progress that never opened a PR" from "this tree was created minutes ago and
+		# has nothing in it yet". The verdict is the same — keep it — but "not an ancestor of dev"
+		# is simply false for a fresh branch, and printing it was half of why #1986 read as correct.
+		if [ "$ahead" = "0" ]; then
+			WT_LANDED_WHY="no commits beyond $base yet and no PR — a fresh branch, nothing to land"
+		else
+			WT_LANDED_WHY="not an ancestor of $base, and no PR was ever opened for $br"
+		fi
 		return 1
 	fi
 	pr="${pr_line%% *}"
