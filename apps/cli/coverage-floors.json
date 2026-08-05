@@ -17,7 +17,7 @@
       "total": 1
     },
     "cmd": {
-      "covered": 1382,
+      "covered": 1450,
       "total": 3112
     },
     "internal/cloudshell": {
@@ -29,7 +29,7 @@
       "total": 90
     },
     "pkg/utils/ui": {
-      "covered": 134,
+      "covered": 290,
       "total": 319
     }
   }
