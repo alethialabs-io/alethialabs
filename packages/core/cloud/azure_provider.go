@@ -80,7 +80,12 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		"aks_cluster_version": resolveK8sVersion("azure", config.Cluster.ClusterVersion),
 
 		// DNS
-		"azure_dns_enabled":   config.DNS.Enabled,
+		// CREATE the zone in-template only when DNS is on AND the caller brought no zone of their
+		// own — the same rule aws applies via `cloud_dns_enabled` (#1816). Before this, azure
+		// created a zone unconditionally, so naming a zone you already own produced a SECOND zone
+		// with different name servers: your records were not used and delegation still pointed at
+		// the old zone, so nothing resolved until you noticed and re-delegated (#1992).
+		"azure_dns_enabled":   config.DNS.Enabled && config.DNS.ZoneID == "",
 		"azure_dns_domain":    config.DNS.DomainName,
 		"azure_dns_zone_name": config.DNS.ZoneID,
 
