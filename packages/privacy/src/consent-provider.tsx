@@ -42,16 +42,20 @@ export function useConsent(): ConsentContextValue {
 
 interface ConsentProviderProps {
 	children: ReactNode;
-	/** Show the floating preferences launcher after the visitor has chosen. */
-	showPersistentTrigger?: boolean;
 	/** Deployment-aware destination for the cookie notice. */
 	cookieNoticeHref?: string;
 }
 
-/** Shared consent state, first-visit notice, and persistent preferences control. */
+/**
+ * Shared consent state, the first-visit notice, and the preferences dialog.
+ *
+ * There is deliberately no floating launcher: it covered the console's sidebar
+ * profile. Consent stays withdrawable from a real control in each surface — the
+ * account menu in the console (`components/shell/sidebar-profile.tsx`) and the
+ * footer on the marketing site — both of which call `openPreferences()`.
+ */
 export function ConsentProvider({
 	children,
-	showPersistentTrigger = true,
 	cookieNoticeHref = "/cookies",
 }: ConsentProviderProps) {
 	const [consent, setConsent] = useState<ConsentRecord | null>(null);
@@ -107,15 +111,6 @@ export function ConsentProvider({
 					cookieNoticeHref={cookieNoticeHref}
 				/>
 			) : null}
-			{ready && consent !== null && showPersistentTrigger ? (
-				<button
-					type="button"
-					onClick={() => setPreferencesOpen(true)}
-					className="fixed bottom-4 right-4 z-[80] rounded-md border border-border bg-background px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground shadow-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-				>
-					Privacy choices
-				</button>
-			) : null}
 			{preferencesOpen ? (
 				<ConsentPreferencesDialog
 					initial={consent ?? { analytics: false, replay: false }}
@@ -134,7 +129,13 @@ interface ConsentNoticeProps {
 	cookieNoticeHref: string;
 }
 
-/** First-visit notice with equally prominent accept, reject, and customize controls. */
+/**
+ * First-visit notice with equally prominent accept, reject, and customize controls.
+ *
+ * Right-anchored and width-capped at every breakpoint. It used to be `inset-x-4`
+ * with only an `sm:` escape, so below 640px it spanned the viewport and covered
+ * the console's sidebar profile.
+ */
 function ConsentNotice({
 	onAccept,
 	onReject,
@@ -144,7 +145,7 @@ function ConsentNotice({
 	return (
 		<section
 			aria-label="Privacy choices"
-			className="fixed inset-x-4 bottom-4 z-[90] rounded-lg border border-border bg-background p-5 shadow-xl sm:left-auto sm:w-[28rem] sm:p-6"
+			className="fixed inset-x-4 bottom-4 z-[90] ml-auto max-w-[28rem] rounded-lg border border-border bg-background p-5 shadow-xl sm:left-auto sm:w-[28rem] sm:p-6"
 		>
 			<div className="grid gap-5">
 				<div>

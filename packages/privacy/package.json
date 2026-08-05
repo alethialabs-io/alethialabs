@@ -4,7 +4,8 @@
   "private": true,
   "exports": {
     "./consent": "./src/consent.ts",
-    "./consent-provider": "./src/consent-provider.tsx"
+    "./consent-provider": "./src/consent-provider.tsx",
+    "./privacy-settings-button": "./src/privacy-settings-button.tsx"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",
