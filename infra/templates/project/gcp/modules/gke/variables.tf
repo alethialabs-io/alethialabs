@@ -112,8 +112,32 @@ variable "disk_size_gb" {
 
 variable "disk_type" {
   type        = string
-  description = "Disk type for each node (pd-standard, pd-ssd, pd-balanced)"
+  description = "Disk type for each node (pd-standard, pd-ssd, pd-balanced, hyperdisk-balanced)"
   default     = "pd-standard"
+}
+
+variable "volume_iops" {
+  type        = number
+  description = "Provisioned IOPS for each node's boot disk. Only valid with disk_type = hyperdisk-balanced. Null leaves the boot_disk block off entirely."
+  default     = null
+}
+
+variable "volume_throughput" {
+  type        = number
+  description = "Provisioned throughput (MiB/s) for each node's boot disk. Only valid with disk_type = hyperdisk-balanced. Null leaves the boot_disk block off entirely."
+  default     = null
+}
+
+variable "spot" {
+  type        = bool
+  description = "Run the node pool on Spot VMs."
+  default     = false
+}
+
+variable "preemptible" {
+  type        = bool
+  description = "Run the node pool on the legacy preemptible tier. Mutually exclusive with spot."
+  default     = false
 }
 
 ################################################################################

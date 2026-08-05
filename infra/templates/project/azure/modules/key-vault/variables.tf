@@ -34,6 +34,12 @@ variable "secrets" {
   default = []
 }
 
+variable "secret_keepers" {
+  description = "Per-secret rotation keepers, keyed by secret name. Changing any value under a name re-generates that secret's password; a name absent from the map keeps its value forever. Empty is behavior-preserving."
+  type        = map(map(string))
+  default     = {}
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
