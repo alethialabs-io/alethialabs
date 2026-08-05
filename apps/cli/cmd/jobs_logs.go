@@ -15,6 +15,11 @@ import (
 
 var jobsLogsFollow bool
 
+// jobsLogsPollInterval is how long `--follow` waits between log fetches. It is a
+// variable so a test can shorten it; nothing in production assigns to it, so the
+// interval is the same 2 seconds it always was.
+var jobsLogsPollInterval = 2 * time.Second
+
 var jobsLogsCmd = &cobra.Command{
 	Use:   "logs <job_id>",
 	Short: "View logs for a job",
@@ -76,7 +81,7 @@ var jobsLogsCmd = &cobra.Command{
 				}
 			}
 
-			time.Sleep(2 * time.Second)
+			time.Sleep(jobsLogsPollInterval)
 		}
 	},
 }

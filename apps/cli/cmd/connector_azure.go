@@ -42,12 +42,12 @@ Azure Cloud Shell and paste back the tenant, client, and subscription IDs.`,
 
 		ui.PrintStepper(steps, 0)
 		if connectorAzureSubscription == "" {
-			if err := ui.NewForm(huh.NewGroup(
+			if err := runHuhForm(huh.NewGroup(
 				huh.NewInput().
 					Title("Azure Subscription ID").
 					Description("The subscription Alethia should provision into").
 					Value(&connectorAzureSubscription),
-			)).Run(); err != nil {
+			)); err != nil {
 				fail(err)
 			}
 		}
@@ -113,11 +113,11 @@ func azureManualFlow(subscriptionID string) (*cloudshell.AzureIDs, error) {
 	fmt.Println("  Then paste the values it prints below.")
 
 	ids := &cloudshell.AzureIDs{SubscriptionID: subscriptionID}
-	if err := ui.NewForm(huh.NewGroup(
+	if err := runHuhForm(huh.NewGroup(
 		huh.NewInput().Title("Tenant ID").Value(&ids.TenantID),
 		huh.NewInput().Title("Client ID").Description("The managed identity's application id").Value(&ids.ClientID),
 		huh.NewInput().Title("Subscription ID").Value(&ids.SubscriptionID),
-	)).Run(); err != nil {
+	)); err != nil {
 		return nil, err
 	}
 

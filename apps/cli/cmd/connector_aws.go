@@ -132,12 +132,12 @@ func awsManualFlow(issuerURL string) (string, error) {
 	fmt.Println("  2. Create the stack (it trusts the Alethia issuer — no external id), then copy its RoleArn output below.")
 
 	var roleArn string
-	if err := ui.NewForm(huh.NewGroup(
+	if err := runHuhForm(huh.NewGroup(
 		huh.NewInput().
 			Title("Role ARN").
 			Placeholder("arn:aws:iam::123456789012:role/AlethiaProvisionerRole-...").
 			Value(&roleArn),
-	)).Run(); err != nil {
+	)); err != nil {
 		return "", err
 	}
 	roleArn = strings.TrimSpace(roleArn)
