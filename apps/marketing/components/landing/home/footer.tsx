@@ -178,6 +178,9 @@ export function Footer() {
               justifyContent: "flex-end",
             }}
           >
+            <Link href="/security" style={{ ...eyebrow, fontSize: 9 }}>
+              Security
+            </Link>
             <Link href="/terms" style={{ ...eyebrow, fontSize: 9 }}>
               Terms
             </Link>
@@ -202,6 +205,9 @@ export function Footer() {
             />
             <Link href="/legal/dpa" style={{ ...eyebrow, fontSize: 9 }}>
               DPA
+            </Link>
+            <Link href="/acceptable-use" style={{ ...eyebrow, fontSize: 9 }}>
+              AUP
             </Link>
             <p style={{ ...eyebrow, fontSize: 10, margin: 0, ...mono }}>
               aletheia · truth, brought into focus
