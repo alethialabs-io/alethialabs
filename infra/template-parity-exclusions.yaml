@@ -238,11 +238,6 @@ baseline:
     off: "alibaba,aws,gcp,hetzner"
     state: unreviewed
     issue: "#2004"
-  - variable: azure_cache_redis_version
-    on: "azure"
-    off: "alibaba,aws,gcp,hetzner"
-    state: unreviewed
-    issue: "#2004"
   - variable: azure_cache_sku
     on: "azure"
     off: "alibaba,aws,gcp,hetzner"
@@ -1520,6 +1515,22 @@ baseline:
     issue: "#2004"
 
 uniform:
+  # ── Alibaba serverless / shard knobs (#1996) ──────────────────────────────────────
+  # Single-cloud because the CAPABILITY is, not because alibaba is ahead. min/max capacity is an
+  # Aurora Serverless v2 concept: aws wires it as rds_scaling_config, and azure and gcp provision
+  # FIXED-SIZE compute with no range to set — that ceiling is already recorded in
+  # infra/config-carriage-exclusions.yaml with the provider evidence. Alibaba was the one cloud that
+  # could express it and did not, which is why #1996 was debt rather than a ceiling.
+  #
+  # kvstore_shard_count is the same story on the cache: ApsaraDB exposes shard_count as its own
+  # argument, while azure's Managed Redis encodes topology in the SKU.
+  - variable: rds_serverless_min_capacity
+    reason: Serverless capacity range. Expressible on alibaba (serverless_config) and aws (rds_scaling_config, different name); azure and gcp provision fixed-size compute — see the ceiling in config-carriage-exclusions.yaml.
+  - variable: rds_serverless_max_capacity
+    reason: Serverless capacity range. Expressible on alibaba (serverless_config) and aws (rds_scaling_config, different name); azure and gcp provision fixed-size compute — see the ceiling in config-carriage-exclusions.yaml.
+  - variable: kvstore_shard_count
+    reason: ApsaraDB for Redis exposes shard_count as its own argument; azure's Managed Redis encodes topology in the SKU instead, so there is no equivalent knob to add there.
+
   # #2004's own switches. Each cloud names its own — there is no shared spelling for "encrypt
   # Secrets in etcd" — so the four are one capability under four names rather than four asymmetries.
   # The capability itself is uniform: every cloud that CAN do it, does, by default.

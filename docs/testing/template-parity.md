@@ -58,7 +58,6 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `azure_cache_capacity` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `azure_cache_family` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `azure_cache_multi_az` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
-| `azure_cache_redis_version` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `azure_cache_sku` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `azure_cache_sku_name` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `azure_db_allowed_cidrs` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
@@ -207,6 +206,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `kvstore_engine_version` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `kvstore_instance_class` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `kvstore_multi_az` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
+| `kvstore_shard_count` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | uniform | ApsaraDB for Redis exposes shard_count as its own argument; azure's Managed Redis encodes topology in the SKU instead, so there is no equivalent knob to add there. |
 | `location` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `memorystore_auth_enabled` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `memorystore_memory_size_gb` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
@@ -255,6 +255,8 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `rds_logs_exports` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `rds_port` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `rds_scaling_config` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
+| `rds_serverless_max_capacity` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | uniform | Serverless capacity range. Expressible on alibaba (serverless_config) and aws (rds_scaling_config, different name); azure and gcp provision fixed-size compute — see the ceiling in config-carriage-exclusions.yaml. |
+| `rds_serverless_min_capacity` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | uniform | Serverless capacity range. Expressible on alibaba (serverless_config) and aws (rds_scaling_config, different name); azure and gcp provision fixed-size compute — see the ceiling in config-carriage-exclusions.yaml. |
 | `redis_allowed_cidr_blocks` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `redis_allowed_security_group_ids` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `redis_automatic_failover_enabled` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
