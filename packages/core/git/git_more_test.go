@@ -213,13 +213,18 @@ func TestPullFetchesNewUpstreamCommits(t *testing.T) {
 
 // TestAddCommitAndPushLandOnTheRemote covers the real (non dry-run) commit and push
 // paths against a local bare remote.
+// Uses NewGITWithToken so getAuth takes the token branch. The token-less branch
+// unconditionally demands an SSH agent (see the getAuth defect filed by the audit),
+// which a CI runner does not have — a developer machine passes only because an agent
+// happens to be running. The remote here is a local file:// path, so the credential
+// is never actually used.
 func TestAddCommitAndPushLandOnTheRemote(t *testing.T) {
 	repo, branch, _, _ := makeFixtureRepo(t)
 	bare := filepath.Join(t.TempDir(), "bare.git")
 	gitCmd(t, t.TempDir(), "clone", "-q", "--bare", repo, bare)
 
 	cloneDir := filepath.Join(t.TempDir(), "clone")
-	g := NewGIT("file://"+bare, cloneDir, false)
+	g := NewGITWithToken("file://"+bare, cloneDir, false, "test-token")
 	if err := g.Clone(context.Background(), branch, true); err != nil {
 		t.Fatalf("Clone: %v", err)
 	}
@@ -446,6 +451,11 @@ func TestCopyFilesIgnoresListedEntries(t *testing.T) {
 
 // TestBootstrapUpdateAndNoOpPaths covers Bootstrap's update-flag branch, its
 // leave-alone branch, and the "no changes" early return.
+// Uses NewGITWithToken so getAuth takes the token branch. The token-less branch
+// unconditionally demands an SSH agent (see the getAuth defect filed by the audit),
+// which a CI runner does not have — a developer machine passes only because an agent
+// happens to be running. The remote here is a local file:// path, so the credential
+// is never actually used.
 func TestBootstrapUpdateAndNoOpPaths(t *testing.T) {
 	repo, branch, _, _ := makeFixtureRepo(t)
 	bare := filepath.Join(t.TempDir(), "bare.git")
@@ -466,7 +476,7 @@ func TestBootstrapUpdateAndNoOpPaths(t *testing.T) {
 	logger := utils.NewLogger(nil, "")
 
 	cloneDir := filepath.Join(t.TempDir(), "clone")
-	client := NewGIT("file://"+bare, cloneDir, false)
+	client := NewGITWithToken("file://"+bare, cloneDir, false, "test-token")
 	if err := client.Clone(context.Background(), branch, true); err != nil {
 		t.Fatalf("Clone: %v", err)
 	}

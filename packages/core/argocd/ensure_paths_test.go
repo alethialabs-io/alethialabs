@@ -322,19 +322,19 @@ func TestPrunersToleratePartialReads(t *testing.T) {
 	}{
 		"helm repo credentials": {
 			listMatch: "get secrets -n argocd",
-			run: func(d []string, o, e *bytes.Buffer) { PruneHelmRepoCredentials(d, o, e) },
+			run:       func(d []string, o, e *bytes.Buffer) { PruneHelmRepoCredentials(d, o, e) },
 		},
 		"registry pull secrets": {
 			listMatch: "get secrets -A",
-			run: func(d []string, o, e *bytes.Buffer) { PruneRegistryPullSecrets(d, o, e) },
+			run:       func(d []string, o, e *bytes.Buffer) { PruneRegistryPullSecrets(d, o, e) },
 		},
 		"vcluster cluster secrets": {
 			listMatch: "get secrets -n argocd",
-			run: func(d []string, o, e *bytes.Buffer) { PruneVClusterClusterSecrets(d, o, e) },
+			run:       func(d []string, o, e *bytes.Buffer) { PruneVClusterClusterSecrets(d, o, e) },
 		},
 		"byo binding external secrets": {
 			listMatch: "get externalsecrets -A",
-			run: func(d []string, o, e *bytes.Buffer) { PruneChartBindingSecrets(d, o, e) },
+			run:       func(d []string, o, e *bytes.Buffer) { PruneChartBindingSecrets(d, o, e) },
 		},
 	}
 
@@ -786,7 +786,7 @@ func TestApplyAddOnsAppliesANonEmptyDir(t *testing.T) {
 	if err := ApplyAddOns(dir, &stdout, &stderr); err != nil {
 		t.Fatalf("ApplyAddOns() error = %v, want nil", err)
 	}
-	if !stub.calledWith("apply -f "+dir) {
+	if !stub.calledWith("apply -f " + dir) {
 		t.Errorf("the rendered dir was not applied: %v", stub.calls())
 	}
 	if !strings.Contains(stdout.String(), "Applying marketplace add-ons") {

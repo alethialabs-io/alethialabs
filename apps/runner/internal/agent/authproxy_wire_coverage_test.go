@@ -24,9 +24,9 @@ func mysqlServerHandshake(caps uint32) []byte {
 	b = append(b, 10)
 	b = append(b, []byte("8.0.36-test")...)
 	b = append(b, 0)
-	b = binary.LittleEndian.AppendUint32(b, 7)  // connection id
-	b = append(b, []byte("12345678")...)        // auth-plugin-data-part-1
-	b = append(b, 0)                            // filler
+	b = binary.LittleEndian.AppendUint32(b, 7) // connection id
+	b = append(b, []byte("12345678")...)       // auth-plugin-data-part-1
+	b = append(b, 0)                           // filler
 	b = binary.LittleEndian.AppendUint16(b, uint16(caps&0xFFFF))
 	b = append(b, mysqlDefaultCharset)
 	b = binary.LittleEndian.AppendUint16(b, 2) // status

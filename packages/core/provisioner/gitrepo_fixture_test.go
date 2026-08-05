@@ -33,10 +33,30 @@ func fixtureGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// hermeticGitIdentity points HOME at a throwaway dir holding a .gitconfig with a fixed
+// identity.
+//
+// The env vars fixtureGit sets only reach the `git` BINARY. The code under test commits
+// through go-git, which ignores GIT_AUTHOR_* and resolves its identity from the repo config
+// and then ~/.gitconfig — so on a machine with no global git config it fails with
+// "author field is required". A developer's laptop has that config and CI does not, which is
+// the whole reason this is here: without it these tests pass locally and fail in CI.
+func hermeticGitIdentity(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	cfg := "[user]\n\tname = alethia\n\temail = alethia@e.com\n"
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(cfg), 0o600); err != nil {
+		t.Fatalf("write .gitconfig: %v", err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+}
+
 // newBareAppsRepo creates a bare git repo seeded with `files` (relative path → content)
 // and returns its filesystem path. Pass an empty map for a repo holding only a README.
 func newBareAppsRepo(t *testing.T, files map[string]string) string {
 	t.Helper()
+	hermeticGitIdentity(t)
 	bare := t.TempDir()
 	fixtureGit(t, bare, "init", "--bare", "-q", "-b", "main")
 
