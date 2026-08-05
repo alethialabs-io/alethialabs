@@ -176,3 +176,19 @@ variable "authorized_ip_ranges" {
   description = "CIDRs allowed to reach the AKS public API server (api_server_access_profile.authorized_ip_ranges). Empty = open to all source IPs (unchanged)."
   default     = []
 }
+
+# #2004. When set, the cluster runs as this user-assigned identity instead of a system-assigned one,
+# and envelope-encrypts Kubernetes Secrets in etcd under secrets_kms_key_id. Both are set together
+# or neither is: AKS encrypts AS the cluster identity, so a key without the identity that was
+# granted access to it cannot be used. Empty (both) is the pre-#2004 shape.
+variable "cluster_identity_id" {
+  type        = string
+  default     = ""
+  description = "User-assigned identity resource id for the cluster. Empty uses a system-assigned identity."
+}
+
+variable "secrets_kms_key_id" {
+  type        = string
+  default     = ""
+  description = "Key Vault key id for KMS etcd encryption of Kubernetes Secrets. Empty leaves Secrets under the platform key."
+}
