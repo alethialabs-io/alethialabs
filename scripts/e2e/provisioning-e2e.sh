@@ -126,22 +126,40 @@ if [[ -f "$root/demos/proofs/scrub.sh" ]]; then
   # artifact should not survive — but the tripwire is a heuristic over key NAMES, so a false
   # positive destroyed a good bundle AND skipped the ledger row, losing the whole run's
   # evidence. Deleting is also the wrong remedy even when the hit is real: by then the secret
-  # has already been written to disk, so the fix is to rotate it, not to hide the file. Leave
-  # the bundle in place, say plainly what to rotate, and let the non-zero exit stop the record.
+  # has already been written to disk, so the fix is to rotate it, not to hide the file.
+  #
+  # …and it no longer stops the RECORD either (#2062). Leaving the bundle but exiting before
+  # the ledger kept the file and threw away the only thing that points at it: the first real
+  # hetzner run of the 18-add-on set died here on five false positives, and the board then read
+  # as though the run had never happened. That is the same "a green-skip is not a proof" failure
+  # the ledger discipline exists to prevent, arriving from the other direction — a run that DID
+  # happen, erased. A row a human still has to clear beats no row at all.
+  #
+  # So: mark the bundle quarantined, record the verdict the run actually earned, and carry the
+  # non-zero exit to the END of the script. Still fail-closed — the step goes red either way —
+  # but the evidence survives the alarm.
   if declare -F assert_grep_clean >/dev/null 2>&1; then
     if ! assert_grep_clean "$outdir" >&2; then
-      echo "✗ SECRET-BEARING BUNDLE at $outdir — not recording it, and NOT deleting it." >&2
-      echo "  Inspect the lines above, rotate anything they name, then delete the bundle by hand." >&2
-      exit 1
+      quarantined=1
+      echo "✗ SECRET-BEARING BUNDLE at $outdir — QUARANTINED, recorded, and NOT deleted." >&2
+      echo "  Inspect the lines above and rotate anything they name. If they are false positives," >&2
+      echo "  the tripwire needs narrowing (see demos/proofs/scrub.sh) — clear the quarantine flag" >&2
+      echo "  on the ledger row once reviewed." >&2
     fi
   fi
 fi
 cat >"$outdir/provision-summary.json" <<EOF
 {"feature":"provisioning","cloud":"$cloud","dimension":"$dimension","verdict":"$verdict",
+ "quarantined":$([[ -n "${quarantined:-}" ]] && echo true || echo false),
  "git_sha":"$sha","captured_at":"$stamp","detail":$(printf '%s' "${detail:-}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read().strip()))' 2>/dev/null || echo '""')}
 EOF
 
-append_ledger "$sha" "$verdict" "${detail:-}" "$bundle" "—"
+# The quarantine is carried INTO the ledger detail, not kept beside it — a reader of the log has
+# to see that the bundle is pending a secret review without cross-referencing another file.
+ledger_detail="${detail:-}"
+[[ -n "${quarantined:-}" ]] && ledger_detail="⚠ QUARANTINED (proof-scrub tripwire) — ${ledger_detail:-see bundle}"
+
+append_ledger "$sha" "$verdict" "$ledger_detail" "$bundle" "—"
 
 # ── on FAIL: file/update a title-deduped GitHub issue (mirror the e2e-nightly rollup filer) ─────
 if [[ "$verdict" == "FAIL" && -z "${NO_ISSUE:-}" ]] && command -v gh >/dev/null 2>&1; then
@@ -157,4 +175,6 @@ if [[ "$verdict" == "FAIL" && -z "${NO_ISSUE:-}" ]] && command -v gh >/dev/null 
   fi
 fi
 
-[[ "$verdict" == "PASS" ]]
+# A quarantined bundle fails the step even on a PASS verdict — the record is written, but the run
+# is not clean until a human clears the tripwire hit.
+[[ "$verdict" == "PASS" && -z "${quarantined:-}" ]]
