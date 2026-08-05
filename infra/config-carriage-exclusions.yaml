@@ -421,11 +421,9 @@ baseline:
   # alibaba, aws, gcp and hetzner all carry CorsOrigins; nothing reachable from
   # (*azureProvider).ProviderTfvars reads it. blob_properties is already rendered for versioning, so
   # the landing site exists.
-  - field: storage_buckets.cors_origins
-    cloud: azure
-    reason: The CORS origins you allow on a bucket are not applied — browser requests from those origins are refused.
-    issue: "#1995"
-    state: no-carrier
+  # storage_buckets.cors_origins / azure was here (#1995) — the only cloud of five that dropped it.
+  # FIXED: carried by buildAzureContainers and unioned into blob_properties.cors_rule, which is an
+  # ACCOUNT property, so the per-container lists collapse the same way versioning_enabled does.
 
   # ── Alibaba: expressible and not expressed ─────────────────────────────────────────
   # Deliberately NOT folded into the azure/gcp min/max_capacity ceiling above. Azure Flexible Server

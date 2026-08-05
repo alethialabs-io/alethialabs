@@ -446,6 +446,8 @@ func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]in
 // `container_access_type` argument; sending the resource's spelling meant the value landed on a name
 // nothing read and every container was created private whatever the user chose.
 //
+// `cors_origins` rides the same rule as `versioning_enabled` below — see the note on the field.
+//
 // `versioning_enabled` is emitted PER CONTAINER even though Azure blob versioning is a property of
 // the storage ACCOUNT, and this template gives a project exactly one. Keeping the per-bucket intent
 // visible in the tfvars is what lets the template aggregate it in one place, with one comment
@@ -461,6 +463,12 @@ func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[stri
 			"name":               b.Name,
 			"access_type":        accessType,
 			"versioning_enabled": b.Versioning,
+			// Emitted per container for the same reason versioning_enabled is: Azure CORS is a
+			// property of the storage ACCOUNT (blob_properties.cors_rule) and a project gets one
+			// account, so N answers must collapse to one rule — but the coarsening belongs in the
+			// template, next to the comment that explains it, not hidden in this builder (#1995).
+			// Honored on the other four clouds; azure was the only one dropping it.
+			"cors_origins": ensureStringSlice(b.CorsOrigins),
 		})
 	}
 	return result

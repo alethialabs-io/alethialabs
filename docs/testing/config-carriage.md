@@ -165,7 +165,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 
 | Field | alibaba | aws | azure | gcp | hetzner |
 |---|:---:|:---:|:---:|:---:|:---:|
-| `cors_origins` | 🟡 | 🟡 | 🚫 #1995 | 🟡 | · |
+| `cors_origins` | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `encryption_enabled` | 🟡 | — | — | — | · |
 | `public_access` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | `versioning` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
@@ -248,7 +248,6 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 | `container_registries.vulnerability_scanning` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
 | `caches.num_cache_nodes` | azure | ⚠️ | gated-carrier (boarded as gated-carrier) | #1993 | The node count you set on a cache is not applied — asking for more than one node moves the cache to the Standard tier, and the number itself is discarded. |
 | `queues.message_retention` | azure | 🚫 | unwired-template (boarded as unwired-template) | #1994 | The message retention you set is not applied — the queue keeps the Service Bus default. |
-| `storage_buckets.cors_origins` | azure | 🚫 | no-carrier (boarded as no-carrier) | #1995 | The CORS origins you allow on a bucket are not applied — browser requests from those origins are refused. |
 | `databases.min_capacity` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1996 | The capacity range you set is not applied — the database is created at a fixed instance size. |
 | `databases.max_capacity` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1996 | The capacity range you set is not applied — the database is created at a fixed instance size. |
 | `caches.num_cache_nodes` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1996 | The node count you set on a cache is not applied — the cache is created with the node count its instance class implies. |
