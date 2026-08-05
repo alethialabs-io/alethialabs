@@ -168,6 +168,25 @@ exclusions:
     cloud: hetzner
     reason: A Hetzner server's disk comes with its server type and cannot be sized separately — choose a larger node size to get a larger disk.
 
+  # ── Redis engine version on Azure — no knob exists on the replacement resource ──────
+  # Azure Cache for Redis is RETIRED: Azure refuses to create `azurerm_redis_cache` ("Azure Cache
+  # for Redis is retiring, create Azure Managed Redis instance instead"), so the cache kind is
+  # backed by `azurerm_managed_redis` (Microsoft.Cache/redisEnterprise). That resource exposes no
+  # engine-version argument at all — both candidate spellings were PROBED against the pinned
+  # provider and both are rejected as "Unsupported argument": `redis_version` on the resource, and
+  # `version` inside the `default_database` block.
+  #
+  # #1993 asked for this to be wired, on the strength of `azurerm_redis_cache` taking
+  # `redis_version`. That was true of the resource the template no longer uses. Verified rather
+  # than assumed, per the rule that a ceiling must carry provider evidence.
+  #
+  # ⚠️ The canvas therefore shows an inert control on Azure. The matching product fix is to withdraw
+  # it with `unavailableWhen` — never `visibleWhen`, which drops the cloud from `offeredOn` and
+  # leaves this exclusion matching nothing.
+  - field: caches.engine_version
+    cloud: azure
+    reason: The Redis version cannot be chosen on Azure — Azure Cache for Redis is retired, and its replacement (Azure Managed Redis) runs a fixed engine version with no knob to set.
+
   # ── Serverless capacity range — an Aurora Serverless v2 concept ─────────────────────
   # `min_capacity`/`max_capacity` are ACUs: the range an Aurora Serverless v2 cluster scales its
   # compute between, wired on AWS as `rds_scaling_config` → `serverlessv2_scaling_configuration`
@@ -375,11 +394,13 @@ baseline:
   # `azure_cache_sku = "Standard"` appears and never becomes a count, so two nodes and twenty
   # produce the same plan. It is recorded here rather than in `wired:` precisely because the branch
   # does NOT carry the setting it is named after.
-  - field: caches.engine_version
-    cloud: azure
-    reason: The Redis version you choose is not applied — the cache is created on the provider's default version.
-    issue: "#1993"
-    state: unwired-template
+  # MEASURED CEILING, not debt (#1993). The issue asked to wire `redis_version` onto
+  # `azurerm_redis_cache` — but that resource is RETIRED and Azure refuses to create it, so the
+  # kind is backed by `azurerm_managed_redis`, which exposes no engine-version knob at all. Both
+  # candidate spellings were probed against the pinned provider and both are rejected as
+  # "Unsupported argument": `redis_version` on the resource, and `version` inside
+  # `default_database`. The template variable and the provider emit are DELETED rather than left
+  # declared-and-unread, which is what was manufacturing the false green.
   - field: caches.num_cache_nodes
     cloud: azure
     reason: The node count you set on a cache is not applied — asking for more than one node moves the cache to the Standard tier, and the number itself is discarded.

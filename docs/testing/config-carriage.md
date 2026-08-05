@@ -40,7 +40,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 | Field | alibaba | aws | azure | gcp | hetzner |
 |---|:---:|:---:|:---:|:---:|:---:|
 | `engine` | — | 🟡 | — | 🟡 | · |
-| `engine_version` | 🟡 | 🟡 | 🚫 #1993 | 🟡 | · |
+| `engine_version` | 🟡 | 🟡 | — | 🟡 | · |
 | `memory_gb` | ⚙️ | 🟡 | ⚙️ | 🟡 | · |
 | `multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · |
 | `node_type` | · | · | · | · | · |
@@ -208,6 +208,7 @@ Decisions, not silence: this cloud will not honor the setting, and here is what 
 | `cluster.cluster_version` | hetzner | A Hetzner cluster's Kubernetes version comes with the Talos release Alethia pins, because Talos installs the exact patch as an image tag and a bare minor version has no image to pull. Pin a different pair through provider_config if you need one. |
 | `cluster.node_max_size` | hetzner | Hetzner clusters run a fixed set of servers rather than an autoscaling node group, so there is no upper bound to set — the node count you ask for is the node count you get. |
 | `cluster.node_disk_size_gb` | hetzner | A Hetzner server's disk comes with its server type and cannot be sized separately — choose a larger node size to get a larger disk. |
+| `caches.engine_version` | azure | The Redis version cannot be chosen on Azure — Azure Cache for Redis is retired, and its replacement (Azure Managed Redis) runs a fixed engine version with no knob to set. |
 | `databases.min_capacity` | azure | Azure Database for PostgreSQL and MySQL Flexible Server run on a compute size you choose, not on a capacity range that scales itself — there is no minimum to set. Pick a larger instance class instead. |
 | `databases.max_capacity` | azure | Azure Database for PostgreSQL and MySQL Flexible Server run on a compute size you choose, not on a capacity range that scales itself — there is no maximum to set. Pick a larger instance class instead. |
 | `databases.min_capacity` | gcp | Cloud SQL runs on a machine type you choose, not on a capacity range that scales itself — there is no minimum to set. Pick a larger instance class instead. |
@@ -245,7 +246,6 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 | `caches.allowed_cidr_blocks` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1981 | The network allow-list you set on a cache is not applied — the cache is created with the template's own default access rules instead. |
 | `nosql_tables.global_replicas` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1982 | The replica regions you choose for a table are not created — the table is provisioned in its own region only. |
 | `container_registries.vulnerability_scanning` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
-| `caches.engine_version` | azure | 🚫 | unwired-template (boarded as unwired-template) | #1993 | The Redis version you choose is not applied — the cache is created on the provider's default version. |
 | `caches.num_cache_nodes` | azure | ⚠️ | gated-carrier (boarded as gated-carrier) | #1993 | The node count you set on a cache is not applied — asking for more than one node moves the cache to the Standard tier, and the number itself is discarded. |
 | `queues.message_retention` | azure | 🚫 | unwired-template (boarded as unwired-template) | #1994 | The message retention you set is not applied — the queue keeps the Service Bus default. |
 | `storage_buckets.cors_origins` | azure | 🚫 | no-carrier (boarded as no-carrier) | #1995 | The CORS origins you allow on a bucket are not applied — browser requests from those origins are refused. |
@@ -255,4 +255,4 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 
 ---
 
-Measured this run: 370 schema columns examined, 73 of them user-settable, 163 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.
+Measured this run: 370 schema columns examined, 73 of them user-settable, 162 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.

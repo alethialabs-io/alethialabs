@@ -175,9 +175,12 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
 			tfvars["azure_cache_sku"] = "Standard"
 		}
-		if cache.EngineVersion != "" {
-			tfvars["azure_cache_redis_version"] = cache.EngineVersion
-		}
+		// EngineVersion is deliberately NOT emitted on Azure (#1993). Azure Managed Redis
+		// (azurerm_managed_redis, the replacement for the retired Azure Cache for Redis) exposes no
+		// engine-version knob at all — verified against the pinned provider, which rejects both
+		// `redis_version` and a `version` inside `default_database` as unsupported arguments.
+		// Emitting it anyway would be dropped at plan time while the guards still scored the cell as
+		// carried. Recorded as a CLOUD CEILING in infra/config-carriage-exclusions.yaml instead.
 		if cache.MultiAz != nil {
 			tfvars["azure_cache_multi_az"] = *cache.MultiAz
 		}
