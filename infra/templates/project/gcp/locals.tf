@@ -93,4 +93,11 @@ locals {
     ? data.google_service_account.external_secrets_adopted[0].name
     : google_service_account.external_secrets[0].name
   ) : ""
+
+  # Whether the customer asked for provisioned boot-disk performance at all. Hoisted to the ROOT
+  # rather than left inside modules/gke because `tofu test` can read `local.` in an assert and
+  # cannot reach into a module — and modules/gke is unplannable under mocks (its computed-only
+  # `master_auth` block cannot be overridden; see checks_cluster_optional.tftest.hcl). A predicate
+  # that decides whether an apply is blocked has to be reachable from a test.
+  gke_boot_disk_performance_requested = var.gke_volume_iops != null || var.gke_volume_throughput != null
 }

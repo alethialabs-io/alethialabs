@@ -178,24 +178,51 @@ variable "gke_disk_size_gb" {
 variable "gke_disk_type" {
   type        = string
   default     = "pd-standard"
-  description = "Type of the disk attached to each node (pd-standard, pd-ssd, pd-balanced)"
+  description = "Type of the disk attached to each node (pd-standard, pd-ssd, pd-balanced, hyperdisk-balanced). hyperdisk-balanced is the only type that accepts gke_volume_iops / gke_volume_throughput."
 
   validation {
-    condition     = contains(["pd-standard", "pd-ssd", "pd-balanced"], var.gke_disk_type)
-    error_message = "gke_disk_type must be one of pd-standard, pd-ssd, pd-balanced."
+    # hyperdisk-balanced added alongside gke_volume_iops/gke_volume_throughput: the google provider
+    # states provisioned IOPS and throughput are "Only valid with disk type hyperdisk-balanced", so
+    # without this entry the two new knobs would be declared, reachable, and unusable on every legal
+    # value of this variable.
+    condition     = contains(["pd-standard", "pd-ssd", "pd-balanced", "hyperdisk-balanced"], var.gke_disk_type)
+    error_message = "gke_disk_type must be one of pd-standard, pd-ssd, pd-balanced, hyperdisk-balanced."
   }
+}
+
+# ── Provisioned boot-disk performance (aws parity: eks_volume_iops) ───────────────────────────
+# Both null by default, and null is not merely "the same number as before": modules/gke/main.tf
+# renders the `boot_disk` block ONLY when one of them is set, so the default plan is byte-identical
+# to the one this template produced before they existed.
+variable "gke_volume_iops" {
+  type        = number
+  default     = null
+  description = "Provisioned IOPS for each node's boot disk. Requires gke_disk_type = hyperdisk-balanced. Null (the default) leaves the disk on its type's baseline performance."
+}
+
+variable "gke_volume_throughput" {
+  type        = number
+  default     = null
+  description = "Provisioned throughput (MiB/s) for each node's boot disk. Requires gke_disk_type = hyperdisk-balanced. Null (the default) leaves the disk on its type's baseline performance."
 }
 
 variable "gke_preemptible" {
   type        = bool
   default     = false
-  description = "Whether to use preemptible VMs for the node pool"
+  description = "Whether to use preemptible VMs for the node pool. Preemptible is the LEGACY interruptible tier; prefer gke_spot. Mutually exclusive with gke_spot."
 }
 
+# ⚠️ DEFAULT DELIBERATELY FLIPPED true → false in the same commit that wires it.
+# This variable shipped `default = true` and was read by NO resource: every GCP node pool this
+# template has ever built ran on-demand while the template claimed Spot. Wiring it at `true` would
+# have converted every existing node pool to Spot VMs on the next apply — a node-pool replacement
+# plus live eviction exposure, delivered by a "parity" change nobody asked for. `false` is what the
+# template actually provisions today, so the wiring is a no-op for every project that exists and the
+# knob becomes real for anyone who sets it.
 variable "gke_spot" {
   type        = bool
-  default     = true
-  description = "Whether to use Spot VMs for the node pool"
+  default     = false
+  description = "Whether to use Spot VMs for the node pool. Mutually exclusive with gke_preemptible."
 }
 
 variable "gke_master_authorized_cidr_blocks" {

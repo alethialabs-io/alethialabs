@@ -38,3 +38,55 @@ check "aks_runner_admin_path" {
     error_message = "AKS would have NO runner-reachable admin: set aks_enable_creator_admin=true (default — grants the apply-runner RBAC Cluster Admin), or provide aks_admin_group_object_ids. Without one, the runner cannot install ArgoCD."
   }
 }
+
+################################################################################
+# Spot node pool (template-parity: aws eks_ng_capacity_type)
+################################################################################
+
+# ── CLUSTER-005 · a Spot pool that cannot scale ─────────────────────────────────────────────────
+# min above max is rejected by the API, minutes into the apply. The on-demand pools have no such
+# guard today (aks_node_min_size/max_size are unchecked); this one is added with the knobs it
+# belongs to rather than retro-fitted across the file in the same pass.
+check "aks_spot_pool_scales" {
+  assert {
+    condition     = !var.aks_spot_enabled || var.aks_spot_node_max_size >= var.aks_spot_node_min_size
+    error_message = "CLUSTER-005: aks_spot_node_max_size must be >= aks_spot_node_min_size; terraform_data.aks_spot_guard blocks apply."
+  }
+}
+
+# ── CLUSTER-006 · Spot settings with no Spot pool reach nothing ─────────────────────────────────
+# A price ceiling or an eviction policy configured while aks_spot_enabled is false is not an error
+# anywhere — tofu accepts it, no resource reads it, and the customer is left believing they have
+# capped, interruptible capacity. Silence is the failure here, so the plan stops instead.
+check "aks_spot_settings_have_a_pool" {
+  assert {
+    condition = var.aks_spot_enabled || (
+      var.aks_spot_max_price == -1 &&
+      var.aks_spot_eviction_policy == "Delete" &&
+      var.aks_spot_node_min_size == 0 &&
+      var.aks_spot_node_max_size == 3
+    )
+    error_message = "CLUSTER-006: Spot settings were configured with aks_spot_enabled = false — no node pool reads them; terraform_data.aks_spot_guard blocks apply."
+  }
+}
+
+# Fail-closed apply gate for both. A `check` only warns, and both conditions above describe a knob
+# that is accepted and then reaches nothing — precisely the case a warning does not cover.
+resource "terraform_data" "aks_spot_guard" {
+  lifecycle {
+    precondition {
+      condition     = !var.aks_spot_enabled || var.aks_spot_node_max_size >= var.aks_spot_node_min_size
+      error_message = "CLUSTER-005: aks_spot_node_max_size (${var.aks_spot_node_max_size}) must be >= aks_spot_node_min_size (${var.aks_spot_node_min_size}). Apply blocked fail-closed — AKS rejects the pool mid-provision otherwise."
+    }
+
+    precondition {
+      condition = var.aks_spot_enabled || (
+        var.aks_spot_max_price == -1 &&
+        var.aks_spot_eviction_policy == "Delete" &&
+        var.aks_spot_node_min_size == 0 &&
+        var.aks_spot_node_max_size == 3
+      )
+      error_message = "CLUSTER-006: aks_spot_max_price / aks_spot_eviction_policy / aks_spot_node_min_size / aks_spot_node_max_size are only read when aks_spot_enabled = true. Apply blocked fail-closed — otherwise the settings are accepted, no node pool exists to honor them, and the cluster silently has no interruptible capacity at all."
+    }
+  }
+}
