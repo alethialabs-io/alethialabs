@@ -112,9 +112,10 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"aws_account_id": config.CloudAccountID,
 
 		// VPC
-		"provision_vpc":          provisionVPC,
-		"vpc_cidr":               orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
-		"vpc_single_nat_gateway": config.Network.SingleNatGateway,
+		"provision_vpc":           provisionVPC,
+		"vpc_cidr":                orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"vpc_single_nat_gateway":  config.Network.SingleNatGateway,
+		"vpc_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// EKS
 		"eks_cluster_version": resolveK8sVersion("aws", config.Cluster.ClusterVersion),

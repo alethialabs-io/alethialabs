@@ -53,6 +53,21 @@ variable "provision_network" {
   description = "Whether to provision a new VPC network"
 }
 
+# #1987. ADDITIVE, never restrictive: permitted IN ADDITION to the rules the template already
+# writes, so the empty default is behaviour-preserving and cannot lock the external runner out of a
+# cluster it still has to provision. Read by google_compute_firewall.operator_allow_list.
+variable "network_allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to this network, on top of the template's own rules. Empty (the default) adds nothing."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.network_allowed_cidr_blocks : can(cidrhost(c, 0))])
+    error_message = "network_allowed_cidr_blocks must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}
+
 variable "network_cidr" {
   type        = string
   default     = "10.0.0.0/16"

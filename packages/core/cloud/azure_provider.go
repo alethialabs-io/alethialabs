@@ -68,9 +68,10 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		"environment":     config.EnvironmentStage,
 
 		// Network
-		"provision_vnet":     provisionVnet,
-		"vnet_cidr":          orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
-		"single_nat_gateway": config.Network.SingleNatGateway,
+		"provision_vnet":           provisionVnet,
+		"vnet_cidr":                orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"single_nat_gateway":       config.Network.SingleNatGateway,
+		"vnet_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// AKS. Default resolves from the catalog SSOT (catalog.json default_k8s_version) — keep it on
 		// a version in Azure's STANDARD support window, since an AKS create rejects a version that has

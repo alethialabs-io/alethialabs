@@ -127,6 +127,22 @@ variable "eks_cluster_version" {
   default     = "1.35"
 }
 
+# #1987. ADDITIVE, never restrictive: merged into the EKS node security group's rules alongside the
+# template's own, so the empty default leaves the plan byte-identical and cannot lock the external
+# runner out of a cluster it still has to provision. Distinct from
+# cluster_endpoint_public_access_cidrs below, which gates the API ENDPOINT rather than the network.
+variable "vpc_allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to this VPC's cluster nodes, on top of the template's own rules. Empty (the default) adds nothing."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.vpc_allowed_cidr_blocks : can(cidrhost(c, 0))])
+    error_message = "vpc_allowed_cidr_blocks must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}
+
 variable "cluster_endpoint_public_access_cidrs" {
   description = "CIDRs with access to the EKS cluster. Restricted to customer and Alethia"
   type        = list(string)

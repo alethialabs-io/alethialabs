@@ -189,6 +189,9 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"network_cidr":      networkCIDR,
 		"pod_cidr":          podCIDR,
 		"service_cidr":      serviceCIDR,
+		// Extra source ranges permitted inbound, added to hcloud_firewall.this as their own rules
+		// (#1987). Empty is the default and adds nothing.
+		"network_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// DNS. Hetzner's Cloud API grew Zones in 2025 (GA in the hcloud provider at 1.56), so DNS
 		// on Hetzner is a first-class tofu resource like Route 53 / Cloud DNS / Azure DNS — not the
