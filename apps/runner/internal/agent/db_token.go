@@ -47,6 +47,12 @@ const (
 // needs workload-identity env that only exists in-cluster).
 type dbTokenMinter func(ctx context.Context) (token string, exp time.Time, err error)
 
+// refreshTimer is the sleep the three refresher loops (db-token, registry-token, helm-repo-token)
+// wait on between mints. It is a package-level var solely so a test can drive the post-sleep arms —
+// the refresh mint, its keep-the-last-credential failure path and the re-patch — without waiting a
+// real tokenRefreshFloor. Production value is exactly time.After; nothing reassigns it outside tests.
+var refreshTimer = time.After
+
 // RunDBToken parses the db-token flags and runs the refresh loop until the context is cancelled.
 // Invoked as a one-shot subcommand from main (a sidecar container's entrypoint).
 func RunDBToken(ctx context.Context, args []string) error {
@@ -100,7 +106,7 @@ func runDBTokenLoop(ctx context.Context, mint dbTokenMinter, out string, once bo
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(refreshAfter(exp, time.Now())):
+		case <-refreshTimer(refreshAfter(exp, time.Now())):
 		}
 		token, exp, err = mint(ctx)
 		if err != nil {

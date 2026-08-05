@@ -10,7 +10,6 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
-	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +58,7 @@ var projectGetCmd = &cobra.Command{
 		if openInBrowser {
 			url := fmt.Sprintf("%s/dashboard", WebOrigin())
 			fmt.Printf("Opening in browser: %s\n", url)
-			if err := browser.OpenURL(url); err != nil {
+			if err := openBrowser(url); err != nil {
 				ui.Error(fmt.Sprintf("Failed to open browser: %v", err))
 			}
 		}

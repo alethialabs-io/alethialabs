@@ -5,10 +5,8 @@ package cmd
 
 import (
 	"errors"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
-	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -27,7 +25,7 @@ func resolveInputMode(cmd *cobra.Command) {
 		noInputMode = true
 		return
 	}
-	noInputMode = !isatty.IsTerminal(os.Stdin.Fd())
+	noInputMode = !stdinIsTTY()
 }
 
 // outputFormat returns the validated --output value, exiting on an invalid one.
@@ -49,7 +47,7 @@ func interactiveTable(cmd *cobra.Command) bool {
 	if noInputMode {
 		return false
 	}
-	return isatty.IsTerminal(os.Stdout.Fd())
+	return stdoutIsTTY()
 }
 
 // requireInteractive returns errNoInput when prompts are disabled, for selectors

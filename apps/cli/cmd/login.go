@@ -28,6 +28,22 @@ type cliPreferences struct {
 	HideLoginWarning bool `json:"hide_login_warning"`
 }
 
+// The device-login flow talks to three things a test cannot have: a TTY, a desktop
+// browser, and a control plane. These four variables are the seams that let the flow
+// run headlessly. Each default is exactly the call it replaced, so production
+// behaviour is unchanged.
+var (
+	// authRequiredPrompt asks whether to log in now (opens a TTY form).
+	authRequiredPrompt = ui.AuthRequiredPrompt
+	// openBrowser launches the system browser at the device-login URL.
+	openBrowser = browser.OpenURL
+	// loginProgramOptions is nil in production, so tea.NewProgram is called exactly as
+	// before; tests pass WithInput(nil)/WithOutput to keep the program off the terminal.
+	loginProgramOptions []tea.ProgramOption
+	// loginPollInterval is how long pollForToken waits between "pending" (404) polls.
+	loginPollInterval = 2 * time.Second
+)
+
 // resolveLogin handles the "not authenticated" branch of getAuthTokenInternal:
 // it errors fast when prompting is disabled, otherwise offers an interactive
 // "log in now?" prompt, runs the device flow, and returns the fresh token. This
@@ -37,7 +53,7 @@ func resolveLogin(credsPath string, promptLogin bool) (string, error) {
 		return "", fmt.Errorf("authentication required. Please run `alethia login`")
 	}
 
-	confirmLogin, err := ui.AuthRequiredPrompt()
+	confirmLogin, err := authRequiredPrompt()
 	if err != nil || !confirmLogin {
 		return "", fmt.Errorf("authentication required. Please run `alethia login`")
 	}
@@ -182,7 +198,7 @@ func pollForToken(deviceCode, exchangeURL string) tea.Cmd {
 			}
 
 			// If it's a 404, just wait and try again
-			time.Sleep(2 * time.Second)
+			time.Sleep(loginPollInterval)
 		}
 	}
 }
@@ -223,13 +239,13 @@ func performLoginFlow() error {
 		fmt.Println()
 
 		var hideWarning bool
-		err := ui.NewForm(
+		err := runHuhForm(
 			huh.NewGroup(
 				huh.NewConfirm().
 					Title("Hide this message in the future?").
 					Value(&hideWarning),
 			),
-		).Run()
+		)
 
 		if err == nil && hideWarning {
 			prefs.HideLoginWarning = true
@@ -246,11 +262,11 @@ func performLoginFlow() error {
 	fmt.Println(ui.CyanStyle.Render("Please open the following URL in your browser to log in:"))
 	fmt.Println(loginURL)
 
-	if err := browser.OpenURL(loginURL); err != nil {
+	if err := openBrowser(loginURL); err != nil {
 		fmt.Printf("\nCould not open browser automatically. Please open the link manually.\n")
 	}
 
-	p := tea.NewProgram(initialModel())
+	p := tea.NewProgram(initialModel(), loginProgramOptions...)
 	go func() {
 		// This is a bit of a hack to ensure the Bubble Tea UI has time to render before polling starts
 		time.Sleep(100 * time.Millisecond)

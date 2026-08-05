@@ -52,14 +52,14 @@ the server before a runner or a job is created.`, runners.DeployProvidersLabel()
 			hostname, _ := os.Hostname()
 			defaultName := fmt.Sprintf("runner-%s", hostname)
 
-			err = ui.NewForm(
+			err = runHuhForm(
 				huh.NewGroup(
 					huh.NewInput().
 						Title("Runner name").
 						Value(&deployRunnerName).
 						Placeholder(defaultName),
 				),
-			).Run()
+			)
 			if err != nil {
 				fail(err)
 			}
@@ -70,7 +70,7 @@ the server before a runner or a job is created.`, runners.DeployProvidersLabel()
 		}
 
 		if deployRegion == "" {
-			err = ui.NewForm(
+			err = runHuhForm(
 				huh.NewGroup(
 					huh.NewInput().
 						Title("Region").
@@ -78,7 +78,7 @@ the server before a runner or a job is created.`, runners.DeployProvidersLabel()
 						Value(&deployRegion).
 						Placeholder("eu-west-1"),
 				),
-			).Run()
+			)
 			if err != nil {
 				fail(err)
 			}
@@ -106,7 +106,7 @@ the server before a runner or a job is created.`, runners.DeployProvidersLabel()
 		if deployRunnerWait {
 			ui.JobQueued("DEPLOY_RUNNER", resp.Job.ID)
 			if err := waitForJob(apiClient, resp.Job.ID); err != nil {
-				os.Exit(1)
+				exitFunc(1)
 			}
 		} else {
 			ui.JobQueued("DEPLOY_RUNNER", resp.Job.ID)
