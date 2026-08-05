@@ -1083,6 +1083,29 @@ jobs:
             gitleaks git . --redact --log-opts="-1"
           fi
 
+  addon-charts-render:
+    name: Add-on charts render (helm template · pinned charts)
+    runs-on: ubuntu-latest
+    # Its own job because it needs helm on PATH and fetches real charts — neither belongs in the
+    # console's vitest run. It renders the DEFAULT values of every marketplace add-on against its
+    # pinned chart and requires exit 0.
+    #
+    # #2058 is why this exists: Loki's entry paired `deploymentMode: SingleBinary` with non-zero
+    # read/write/backend replicas. Both values are individually valid, the combination is rejected by
+    # the chart's own validate.yaml, and NOTHING in this repo could see it — types pass, unit tests
+    # assert what the resolver emits rather than what the chart accepts, and neither parity guard
+    # measures add-on values. It shipped, and a real cluster found it.
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - name: Every add-on renders with its pinned chart and its own defaults
+        run: node apps/console/scripts/check-addon-charts-render.mjs
+
   docs-prose:
     name: Docs prose (Vale · Diátaxis + plain-language)
     needs: detect-changes
