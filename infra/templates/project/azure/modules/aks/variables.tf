@@ -102,6 +102,48 @@ variable "disk_size_gb" {
   default     = 50
 }
 
+variable "os_disk_type" {
+  type        = string
+  description = "OS-disk placement: \"Managed\" or \"Ephemeral\". Null omits the argument, leaving Azure's default (Managed)."
+  default     = null
+}
+
+################################################################################
+# Spot node pool (aws parity: eks_ng_capacity_type)
+################################################################################
+# A Spot pool is a SEPARATE resource, never a flag on an existing one: priority /
+# eviction_policy / spot_max_price are ForceNew, and AKS refuses a Spot default node pool.
+
+variable "spot_enabled" {
+  type        = bool
+  description = "Create a Spot node pool alongside the on-demand pools."
+  default     = false
+}
+
+variable "spot_max_price" {
+  type        = number
+  description = "Hourly ceiling (USD) for a Spot node; -1 means pay up to the on-demand price."
+  default     = -1
+}
+
+variable "spot_eviction_policy" {
+  type        = string
+  description = "Eviction policy for reclaimed Spot nodes: \"Delete\" or \"Deallocate\"."
+  default     = "Delete"
+}
+
+variable "spot_node_min_size" {
+  type        = number
+  description = "Minimum nodes in the Spot pool. 0 lets it scale to nothing."
+  default     = 0
+}
+
+variable "spot_node_max_size" {
+  type        = number
+  description = "Maximum nodes in the Spot pool."
+  default     = 3
+}
+
 ################################################################################
 # Access control (BYOC B4.1 knobs)
 ################################################################################

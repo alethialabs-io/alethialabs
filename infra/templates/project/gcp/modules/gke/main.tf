@@ -3,8 +3,13 @@ terraform {
 
   required_providers {
     google = {
-      source  = "hashicorp/google"
-      version = ">= 5.0"
+      source = "hashicorp/google"
+      # >= 6.50.0 for `node_config.boot_disk` on google_container_node_pool (provisioned_iops /
+      # provisioned_throughput). 6.50.0 is the version the block was VERIFIED present in, by reading
+      # `tofu providers schema -json`, NOT necessarily the version that introduced it — lowering this
+      # floor means re-reading the schema at the candidate version, not guessing. The root already
+      # resolves 6.50.0, so this raises no version anybody is actually running.
+      version = ">= 6.50.0"
     }
   }
 }
@@ -14,6 +19,11 @@ locals {
     environment = var.environment
     managed-by  = "opentofu"
   })
+
+  # See node_config below: the flat disk attributes and the nested `boot_disk` block are two
+  # spellings of one disk, and only `boot_disk` carries provisioned performance. This predicate
+  # picks which spelling is rendered, and false — the default — is the pre-existing shape.
+  boot_disk_configured = var.volume_iops != null || var.volume_throughput != null
 }
 
 ################################################################################
@@ -165,8 +175,34 @@ resource "google_container_node_pool" "default" {
 
   node_config {
     machine_type = var.machine_types[0]
-    disk_size_gb = var.disk_size_gb
-    disk_type    = var.disk_type
+
+    # The flat pair and the nested `boot_disk` block are two spellings of the same disk, and
+    # `boot_disk` is the ONLY one that accepts provisioned IOPS/throughput. They are rendered
+    # MUTUALLY EXCLUSIVELY rather than both at once: the flat pair is the exact shape every existing
+    # project already plans, and `boot_disk` replaces it whole the moment a performance figure is
+    # asked for. With both figures null (the default) `local.boot_disk_configured` is false, the
+    # dynamic block yields nothing, and the rendered node_config is byte-identical to the one this
+    # module produced before these knobs existed — which is the only claim about the default path
+    # that can be made without a real GCP plan, and it is made by construction.
+    disk_size_gb = local.boot_disk_configured ? null : var.disk_size_gb
+    disk_type    = local.boot_disk_configured ? null : var.disk_type
+
+    dynamic "boot_disk" {
+      for_each = local.boot_disk_configured ? [1] : []
+      content {
+        size_gb                = var.disk_size_gb
+        disk_type              = var.disk_type
+        provisioned_iops       = var.volume_iops
+        provisioned_throughput = var.volume_throughput
+      }
+    }
+
+    # Interruptible capacity (aws parity: eks_ng_capacity_type). Both attributes are optional and
+    # NOT computed, so writing the `false` default explicitly is indistinguishable from omitting
+    # them — which is what this module did until now. The root guards the mutual exclusion at plan
+    # time (checks_cluster.tf); the API rejects both-at-once far later.
+    spot        = var.spot
+    preemptible = var.preemptible
 
     oauth_scopes = [
       "https://www.googleapis.com/auth/cloud-platform",

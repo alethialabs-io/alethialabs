@@ -23,6 +23,19 @@ module "aks" {
   node_desired_size = var.aks_node_desired_size
   disk_size_gb      = var.aks_disk_size_gb
 
+  # OS-disk PLACEMENT (Managed vs Ephemeral). Null by default = the argument is not rendered, so
+  # every existing cluster plans unchanged. AKS carries no OS-disk SKU or IOPS to expose.
+  os_disk_type = var.aks_os_disk_type
+
+  # Spot node pool (aws parity: eks_ng_capacity_type). Off by default; when on it is an ADDITIONAL
+  # pool beside the on-demand ones, because AKS refuses a Spot default pool and the three spot
+  # arguments are ForceNew.
+  spot_enabled         = var.aks_spot_enabled
+  spot_max_price       = var.aks_spot_max_price
+  spot_eviction_policy = var.aks_spot_eviction_policy
+  spot_node_min_size   = var.aks_spot_node_min_size
+  spot_node_max_size   = var.aks_spot_node_max_size
+
   # BYOC B4.1 access-control knobs (both default-empty = behavior-preserving)
   admin_group_object_ids = var.aks_admin_group_object_ids
   authorized_ip_ranges   = var.aks_authorized_ip_ranges

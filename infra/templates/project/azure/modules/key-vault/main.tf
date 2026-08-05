@@ -34,6 +34,11 @@ resource "random_password" "this" {
 
   length  = each.value.length
   special = each.value.special_chars
+
+  # Rotation handle (parity with aws/modules/awssm-passgen and gcp/modules/secret-manager).
+  # `{}` for a secret with no entry — identical to the previous, keeper-less resource, so an
+  # existing vault plans unchanged.
+  keepers = lookup(var.secret_keepers, each.key, {})
 }
 
 # The vault is created with rbac_authorization_enabled = true, but NOTHING granted the identity

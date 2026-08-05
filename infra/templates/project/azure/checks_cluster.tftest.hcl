@@ -509,3 +509,122 @@ run "a_gateway_without_a_cluster_installs_no_controller" {
 
   expect_failures = [check.application_gateway_has_a_controller]
 }
+
+################################################################################
+# 6. Node shape — OS-disk placement and the Spot node pool
+################################################################################
+#
+# What these runs can reach: the AKS module's internals are not addressable from a test, so the
+# Spot POOL itself cannot be counted here the way azurerm_application_gateway.this is above. What
+# IS pinned is everything that decides whether it is built and whether it is legal — the defaults,
+# the two gates, and the fact that a cluster with Spot switched on plans at all (which a ForceNew
+# misuse or an illegal enum value would break). The pool's rendered arguments are covered only by a
+# real apply, and that is stated rather than papered over.
+
+# THE behavior-preserving run. Six new variables reached this template; a project that set none of
+# them must plan exactly what it planned before, and `null` on aks_os_disk_type is what makes that
+# true by construction rather than by matching Azure's default.
+run "the_default_node_shape_adds_nothing" {
+  command = plan
+
+  variables {
+    provision_aks = true
+  }
+
+  assert {
+    condition     = var.aks_os_disk_type == null
+    error_message = "aks_os_disk_type must default to null so no os_disk_type argument is rendered — an explicit \"Managed\" would be a new argument on every existing cluster, and os_disk_type is ForceNew on the default node pool."
+  }
+
+  assert {
+    condition     = var.aks_spot_enabled == false
+    error_message = "The Spot node pool must be off by default; a cluster that did not ask for interruptible capacity must not grow a pool."
+  }
+
+  assert {
+    condition     = length(module.aks) == 1
+    error_message = "The cluster must still plan with the node-shape knobs at their defaults."
+  }
+}
+
+# Ephemeral must be an accepted value, not merely a listed one — otherwise the validation could be
+# satisfied by refusing every value and the knob would be unreachable.
+run "an_ephemeral_os_disk_is_accepted" {
+  command = plan
+
+  variables {
+    provision_aks    = true
+    aks_os_disk_type = "Ephemeral"
+  }
+
+  assert {
+    condition     = var.aks_os_disk_type == "Ephemeral"
+    error_message = "Ephemeral OS-disk placement must be an accepted node shape."
+  }
+}
+
+# A cluster with Spot switched on has to plan end to end. This is the run that would catch an
+# illegal eviction policy, a ForceNew argument on the wrong resource, or a spot pool wired onto the
+# default node pool (which AKS refuses outright).
+run "a_spot_pool_plans_alongside_the_on_demand_pools" {
+  command = plan
+
+  variables {
+    provision_aks          = true
+    aks_spot_enabled       = true
+    aks_spot_max_price     = 0.25
+    aks_spot_node_min_size = 0
+    aks_spot_node_max_size = 5
+  }
+
+  assert {
+    condition     = length(module.aks) == 1
+    error_message = "A cluster with a Spot node pool must plan."
+  }
+}
+
+# CLUSTER-005 — a pool whose ceiling sits below its floor is rejected by AKS mid-provision.
+run "a_spot_pool_with_max_below_min_blocks_the_plan" {
+  command = plan
+
+  variables {
+    aks_spot_enabled       = true
+    aks_spot_node_min_size = 4
+    aks_spot_node_max_size = 2
+  }
+
+  expect_failures = [
+    check.aks_spot_pool_scales,
+    terraform_data.aks_spot_guard,
+  ]
+}
+
+# CLUSTER-006 — the silent one. A price ceiling with no pool to apply it to is accepted everywhere
+# and read by nothing, leaving a customer who believes they bought capped interruptible capacity.
+run "a_spot_price_ceiling_without_a_spot_pool_blocks_the_plan" {
+  command = plan
+
+  variables {
+    aks_spot_max_price = 0.25
+  }
+
+  expect_failures = [
+    check.aks_spot_settings_have_a_pool,
+    terraform_data.aks_spot_guard,
+  ]
+}
+
+# The same gate from the other side, on a knob nobody would call a mistake in isolation: an
+# eviction policy is meaningless without something to evict.
+run "a_spot_eviction_policy_without_a_spot_pool_blocks_the_plan" {
+  command = plan
+
+  variables {
+    aks_spot_eviction_policy = "Deallocate"
+  }
+
+  expect_failures = [
+    check.aks_spot_settings_have_a_pool,
+    terraform_data.aks_spot_guard,
+  ]
+}

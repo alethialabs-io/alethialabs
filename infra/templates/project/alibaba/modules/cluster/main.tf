@@ -62,8 +62,32 @@ resource "alicloud_cs_kubernetes_node_pool" "default" {
   vswitch_ids    = var.vswitch_ids
   instance_types = var.instance_types
 
-  system_disk_category = "cloud_essd"
+  system_disk_category = var.disk_category
   system_disk_size     = var.disk_size_gb
+
+  # Disk performance is TWO arguments on Alibaba, not aws's one number, and each belongs to a
+  # different disk category — the API accepts the one that does not match and silently drops it.
+  # Both arrive here ALREADY DECIDED (local.ack_system_disk_* in the root's locals.tf): the
+  # category coupling is a pure derivation, and a `tofu test` can read a root local while it cannot
+  # reach inside this module, so the rule that keeps a figure from being sent where it would be
+  # dropped lives where it can be proven. Null means "omit the argument".
+  system_disk_performance_level = var.disk_performance_level
+  system_disk_provisioned_iops  = var.disk_provisioned_iops
+
+  # Interruptible capacity. "NoSpot" is the API's own name for on-demand and is what an unset
+  # argument resolves to, so the default renders the node pool exactly as before.
+  spot_strategy = var.node_capacity_type
+
+  # Bid ceilings belong to SpotWithPriceLimit alone; the root has already emptied this list for any
+  # other strategy. An empty list renders NO block at all rather than an empty one, so an on-demand
+  # pool's plan is unchanged.
+  dynamic "spot_price_limit" {
+    for_each = var.spot_price_limit
+    content {
+      instance_type = spot_price_limit.value.instance_type
+      price_limit   = spot_price_limit.value.price_limit
+    }
+  }
 
   desired_size = var.node_desired_size
 

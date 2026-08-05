@@ -4,6 +4,7 @@
 package cloud
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -222,5 +223,135 @@ func assertEq(t *testing.T, tf map[string]interface{}, key string, want interfac
 	t.Helper()
 	if tf[key] != want {
 		t.Errorf("%s = %v (%T), want %v (%T)", key, tf[key], tf[key], want, want)
+	}
+}
+
+// TestProviderTfvars_NodeShapeAndSecretKeepersAreReachable pins the ONE fact that makes a newly
+// declared template variable worth declaring: a customer can actually set it.
+//
+// Declaring a variable in variables.tf is necessary and not sufficient. The knob is reachable only
+// if `mergeProviderConfig` carries the key from the component's provider_config onto a same-named
+// tfvar, and it will NOT if the provider reserves the key (consumed above under a different tfvar
+// name) or if the component's provider_config is never passed to mergeProviderConfig at all —
+// which is the live state of ProjectContainerRegistryConfig, whose ProviderConfig field no
+// provider reads. So "the template declares it" and "a user can set it" are two claims, and this
+// test is the second one, per cloud, for every variable added by the template-parity pass.
+//
+// Every key here is checked against the tfvar name the template declares. A rename on either side
+// breaks this test, which is the point: the two halves cannot drift apart silently.
+func TestProviderTfvars_NodeShapeAndSecretKeepersAreReachable(t *testing.T) {
+	cases := []struct {
+		cloud    string
+		provider CloudProvider
+		// cluster knobs, set through the CLUSTER component's provider_config
+		clusterKeys []string
+		// secret-rotation keepers, also a cluster-scoped passthrough today
+		secretKeys []string
+	}{
+		{
+			cloud:    "gcp",
+			provider: &gcpProvider{},
+			clusterKeys: []string{
+				"gke_volume_iops", "gke_volume_throughput", "gke_spot", "gke_preemptible", "gke_disk_type",
+			},
+			secretKeys: []string{"custom_secret_keepers"},
+		},
+		{
+			cloud:    "azure",
+			provider: &azureProvider{},
+			clusterKeys: []string{
+				"aks_os_disk_type", "aks_spot_enabled", "aks_spot_max_price",
+				"aks_spot_eviction_policy", "aks_spot_node_min_size", "aks_spot_node_max_size",
+			},
+			secretKeys: []string{"custom_secret_keepers"},
+		},
+		{
+			cloud:    "alibaba",
+			provider: &alibabaProvider{},
+			clusterKeys: []string{
+				"ack_disk_category", "ack_disk_performance_level", "ack_disk_provisioned_iops",
+				"ack_node_capacity_type", "ack_spot_price_limit",
+			},
+			secretKeys: []string{"custom_secret_keepers"},
+		},
+	}
+
+	root := templateRepoRoot(t)
+
+	for _, tc := range cases {
+		t.Run(tc.cloud, func(t *testing.T) {
+			keys := append(append([]string{}, tc.clusterKeys...), tc.secretKeys...)
+
+			// HALF ONE — the template really declares the name. Re-scraped from the .tf on every
+			// run rather than asserted from memory, the way validate_drift_test.go binds the disk
+			// floors: without this the test below passes for ANY string, because the passthrough
+			// is generic and will happily carry a key no template has ever heard of. A test that
+			// green-lights an undeclared knob is the exact "green cell, dead feature" failure the
+			// offer-parity guard exists to prevent, reproduced in Go.
+			rel := "infra/templates/project/" + tc.cloud + "/variables.tf"
+			src := readTemplateSource(t, root, rel)
+			for _, k := range keys {
+				declared := regexp.MustCompile(`(?m)^variable "` + regexp.QuoteMeta(k) + `"`)
+				if !declared.MatchString(src) {
+					t.Errorf("%s: %s declares no `variable %q` — the Go side would pass this key "+
+						"through to a tfvar the template does not accept, and tofu would refuse the "+
+						"apply with an undeclared-variable error", tc.cloud, rel, k)
+				}
+			}
+
+			// HALF TWO — a customer's provider_config actually reaches that tfvar.
+			pc := map[string]any{}
+			for _, k := range keys {
+				pc[k] = "set-by-the-customer"
+			}
+			cfg := &types.ProjectConfig{
+				ProjectName: "p",
+				Cluster:     types.ProjectClusterConfig{ProviderConfig: pc},
+			}
+			tf := tc.provider.ProviderTfvars(cfg)
+			for k := range pc {
+				if tf[k] != "set-by-the-customer" {
+					t.Errorf("%s: %q is declared in the template but did NOT survive the provider_config "+
+						"passthrough (got %v) — the knob is unreachable, which is the unwired-template "+
+						"defect rather than a closed parity gap", tc.cloud, k, tf[k])
+				}
+			}
+		})
+	}
+}
+
+// The behavior-preserving half of the same change: a project that sets none of the new knobs must
+// emit none of them, so the template's own (deliberately unchanged) defaults apply and an existing
+// deploy plans byte-for-byte as before.
+func TestProviderTfvars_NodeShapeKnobsAbsentByDefault(t *testing.T) {
+	absent := map[string][]string{
+		"gcp": {"gke_volume_iops", "gke_volume_throughput", "gke_spot", "gke_preemptible", "custom_secret_keepers"},
+		"azure": {
+			"aks_os_disk_type", "aks_spot_enabled", "aks_spot_max_price",
+			"aks_spot_eviction_policy", "aks_spot_node_min_size", "aks_spot_node_max_size",
+			"custom_secret_keepers",
+		},
+		"alibaba": {
+			"ack_disk_category", "ack_disk_performance_level", "ack_disk_provisioned_iops",
+			"ack_node_capacity_type", "ack_spot_price_limit", "custom_secret_keepers",
+		},
+	}
+	providers := map[string]CloudProvider{
+		"gcp":     &gcpProvider{},
+		"azure":   &azureProvider{},
+		"alibaba": &alibabaProvider{},
+	}
+
+	for cloudName, keys := range absent {
+		t.Run(cloudName, func(t *testing.T) {
+			tf := providers[cloudName].ProviderTfvars(&types.ProjectConfig{ProjectName: "p"})
+			for _, k := range keys {
+				if _, ok := tf[k]; ok {
+					t.Errorf("%s: %q must be ABSENT when nothing asked for it (got %v) — emitting it "+
+						"would pin the template default into every project's tfvars and turn a later "+
+						"default change into a silent no-op", cloudName, k, tf[k])
+				}
+			}
+		})
 	}
 }
