@@ -37,8 +37,8 @@
       "total": 616
     },
     "cloud": {
-      "covered": 1287,
-      "total": 1644
+      "covered": 1286,
+      "total": 1646
     },
     "cloud/aws": {
       "covered": 64,
