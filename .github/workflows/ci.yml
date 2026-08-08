@@ -697,7 +697,7 @@ jobs:
       #
       # helm is pinned rather than inherited: "happens to be on the GitHub-managed image" is an
       # unpinned property, and the day it is pruned those tests would go quiet again.
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         if: matrix.module == 'apps/runner'
         with:
           version: v3.16.3
@@ -814,7 +814,7 @@ jobs:
           cache-dependency-path: ${{ matrix.module }}/go.sum
       # Must mirror the `go` job's toolchain EXACTLY, or the numbers this probe prints are not
       # the numbers the ratchet will compare against and flooring from them reds every PR.
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         if: matrix.module == 'apps/runner'
         with:
           version: v3.16.3
@@ -850,7 +850,7 @@ jobs:
             --profile ${{ matrix.module }}/cover.1.out --update
           echo "── ${{ matrix.module }}/coverage-floors.json ──"
           cat ${{ matrix.module }}/coverage-floors.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-floors-${{ strategy.job-index }}
           path: ${{ matrix.module }}/coverage-floors.json
@@ -1100,7 +1100,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.16.2
       - name: Every add-on renders with its pinned chart and its own defaults
