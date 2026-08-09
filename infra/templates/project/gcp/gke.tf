@@ -1,3 +1,16 @@
+# Cluster-admin grants — DOCUMENTED EXCLUSION (#2005), by this template's own invariants, not by
+# GCP. The provider has two in-template mechanisms (`google_project_iam_member` with
+# `roles/container.clusterAdmin`; `kubernetes_cluster_role_binding` — hashicorp/kubernetes is in
+# the lockfile), and an earlier CUSTOMIZABILITY-PARITY line that called the binding "granted
+# outside the template via IAM" as if the cloud forced it was wrong to. Both paths are refused by
+# NAMED invariants instead: project IAM needs resourcemanager.projects.setIamPolicy, the
+# owner-equivalent permission #300 deliberately stripped from the provisioner (the two #722
+# bindings that tried 403'd on every apply — see app-db-identity.tf's ADOPTION note); and an
+# in-tofu kubernetes_* resource breaks the runner's `tofu plan -out` path, which
+# scripts/check-templates-plan-safe.sh gates (the provider below is wired from this cluster's own
+# known-after-apply endpoint). So GKE cluster-admin grants live where the adopted service accounts
+# already live — the customer's own IAM (connector bootstrap) or the runner's post-apply path. If
+# either invariant moves, this exclusion goes stale loudly rather than silently.
 module "gke" {
   source = "./modules/gke"
   count  = var.provision_gke ? 1 : 0
