@@ -819,97 +819,190 @@ func TestExecuteJob_CancelledWithOrphanRiskFlags(t *testing.T) {
 	}
 }
 
-func TestDeployValidation_PlanNotSuccess(t *testing.T) {
+// TestHygRunnerAgentDeployValidationSettlesTheJobFailed replaces TestDeployValidation_PlanNotSuccess
+// and TestDeployValidation_HashMismatch, which asserted nothing they claimed: both carried a
+// CloudIdentity{Provider:"aws"} on an Operator:"self" runner, so executeJob took the AssumeRole arm
+// and returned FAILED there — a REAL STS call from CI, and executeDeploy was never reached.
+//
+// The pre-approved-plan gate itself is proved at the unit level by
+// TestRun_ExecuteDeploy_EnforcesPlanApprovalContract (cov_runner_test.go). What is proved HERE is
+// the part that test cannot see: that the refusal travels all the way out of executeJob and settles
+// the job FAILED carrying the refusal text. No CloudIdentity is set, so no credential arm runs and
+// no network call is made — the "assumed role" precondition below is what pins that.
+func TestHygRunnerAgentDeployValidationSettlesTheJobFailed(t *testing.T) {
 	planHash := "abc123"
-	planJobID := "plan-1"
-	api := &mockAPI{
-		jobs: map[string]*Job{
-			"plan-1": {
-				ID:                "plan-1",
-				Status:            "FAILED",
-				ConfigurationHash: &planHash,
-			},
+	currentHash := "new-hash"
+
+	cases := []struct {
+		name      string
+		planJobID string
+		// planStatus / jobHash describe the plan job the deploy references and the deploy's own
+		// configuration hash.
+		planStatus string
+		jobHash    *string
+		wantErr    string
+	}{
+		{
+			name:       "plan job did not succeed",
+			planJobID:  "hyg-plan-1",
+			planStatus: "FAILED",
+			jobHash:    &planHash,
+			wantErr:    "has status FAILED, expected SUCCESS",
+		},
+		{
+			name:       "configuration changed since the plan",
+			planJobID:  "hyg-plan-2",
+			planStatus: "SUCCESS",
+			jobHash:    &currentHash,
+			wantErr:    "configuration changed since plan was generated",
 		},
 	}
-	w := NewWithAPI(Config{Operator: "self"}, api)
 
-	claim := &ClaimResponse{
-		Job: &Job{
-			ID:                "deploy-1",
-			JobType:           "DEPLOY",
-			PlanJobID:         &planJobID,
-			ConfigurationHash: &planHash,
-			ConfigSnapshot: map[string]any{
-				"project_name":      "test",
-				"region":            "eu-west-1",
-				"environment_stage": "dev",
-			},
-		},
-		CloudIdentity: &CloudIdentity{Provider: "aws"},
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			planJobID := tc.planJobID
+			api := &mockAPI{
+				jobs: map[string]*Job{
+					planJobID: {ID: planJobID, Status: tc.planStatus, ConfigurationHash: &planHash},
+				},
+			}
+			w := NewWithAPI(Config{Operator: "self"}, api)
 
-	err := w.executeJob(t.Context(), claim)
-	if err == nil {
-		t.Fatal("expected error when plan job status is FAILED")
-	}
+			// No CloudIdentity: the deploy path is reached directly, with no credential
+			// activation and therefore no STS/IMDS traffic.
+			err := w.executeJob(t.Context(), &ClaimResponse{
+				Job: &Job{
+					ID:                "hyg-deploy",
+					JobType:           "DEPLOY",
+					PlanJobID:         &planJobID,
+					ConfigurationHash: tc.jobHash,
+					ConfigSnapshot: map[string]any{
+						"project_name":      "test",
+						"region":            "eu-west-1",
+						"environment_stage": "dev",
+					},
+				},
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("expected the plan-approval refusal %q, got %v", tc.wantErr, err)
+			}
 
-	updates := api.getStatusUpdates()
-	found := false
-	for _, u := range updates {
-		if u.status == "FAILED" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("expected FAILED status for deploy with non-SUCCESS plan")
+			// Preconditions, asserted before the outcome: executeDeploy really ran the
+			// validation (it announces the plan it is validating against), and no credential
+			// arm ran (the AssumeRole banner is the tell that sank the deleted tests).
+			var validated, assumedRole bool
+			for _, c := range api.getLogChunks() {
+				if strings.Contains(c.chunk, "Validating against plan job "+planJobID) {
+					validated = true
+				}
+				if strings.Contains(c.chunk, "Assuming role") {
+					assumedRole = true
+				}
+			}
+			if !validated {
+				t.Fatal("executeDeploy was never reached — the plan-validation banner was not emitted")
+			}
+			if assumedRole {
+				t.Fatal("the AWS credential arm ran: this test must not reach AssumeRole/STS")
+			}
+
+			var failed bool
+			for _, u := range api.getStatusUpdates() {
+				if u.jobID == "hyg-deploy" && u.status == "FAILED" {
+					failed = true
+					if !strings.Contains(u.errMsg, tc.wantErr) {
+						t.Errorf("the FAILED update must carry the refusal text %q, got %q", tc.wantErr, u.errMsg)
+					}
+				}
+			}
+			if !failed {
+				t.Error("a refused deploy must settle the job FAILED")
+			}
+		})
 	}
 }
 
-func TestDeployValidation_HashMismatch(t *testing.T) {
-	planHash := "old-hash"
-	currentHash := "new-hash"
-	planJobID := "plan-2"
-	api := &mockAPI{
-		jobs: map[string]*Job{
-			"plan-2": {
-				ID:                "plan-2",
-				Status:            "SUCCESS",
-				ConfigurationHash: &planHash,
-			},
-		},
-	}
-	w := NewWithAPI(Config{Operator: "self"}, api)
+// hygRunnerAgentWakeDownAPI is a mockAPI whose push-dispatch stream is permanently unavailable, so
+// the safety poll is the ONLY thing that can drive a claim drain. Every ClaimJob returns an empty
+// claim, which makes the claim count equal the number of loop wakeups.
+type hygRunnerAgentWakeDownAPI struct {
+	*mockAPI
+	streamAttempts atomic.Int32
+	claims         atomic.Int32
+}
 
-	claim := &ClaimResponse{
-		Job: &Job{
-			ID:                "deploy-2",
-			JobType:           "DEPLOY",
-			PlanJobID:         &planJobID,
-			ConfigurationHash: &currentHash,
-			ConfigSnapshot: map[string]any{
-				"project_name":      "test",
-				"region":            "eu-west-1",
-				"environment_stage": "dev",
-			},
-		},
-		CloudIdentity: &CloudIdentity{Provider: "aws"},
-	}
+// StreamWake always fails, never delivering an event — the wake-stream-down condition.
+func (a *hygRunnerAgentWakeDownAPI) StreamWake(context.Context, func(WakeEvent)) error {
+	a.streamAttempts.Add(1)
+	return fmt.Errorf("wake stream unavailable")
+}
 
-	err := w.executeJob(t.Context(), claim)
-	if err == nil {
-		t.Fatal("expected error when config hash changed since plan")
-	}
+// ClaimJob counts the drain attempts and always reports an empty queue.
+func (a *hygRunnerAgentWakeDownAPI) ClaimJob() (*ClaimResponse, error) {
+	a.claims.Add(1)
+	return &ClaimResponse{}, nil
+}
 
-	updates := api.getStatusUpdates()
-	found := false
-	for _, u := range updates {
-		if u.status == "FAILED" {
-			found = true
+// hygRunnerAgentRunClaimLoop runs claimLoop against a wake-down API for the given settle time and
+// returns how many claim drains it performed. The startup trigger always accounts for exactly one.
+func hygRunnerAgentRunClaimLoop(t *testing.T, settle time.Duration) (*hygRunnerAgentWakeDownAPI, int32) {
+	t.Helper()
+	api := &hygRunnerAgentWakeDownAPI{mockAPI: &mockAPI{}}
+	w := NewWithAPI(Config{Operator: "self", RunnerID: "hyg-r"}, api)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var draining atomic.Bool
+	done := make(chan error, 1)
+	go func() { done <- w.claimLoop(ctx, &draining) }()
+
+	deadline := time.Now().Add(settle)
+	for time.Now().Before(deadline) {
+		if api.claims.Load() >= 3 {
 			break
 		}
+		time.Sleep(time.Millisecond)
 	}
-	if !found {
-		t.Error("expected FAILED status for hash mismatch")
+	claims := api.claims.Load()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("claimLoop did not exit after its context was cancelled")
+	}
+	return api, claims
+}
+
+// TestHygRunnerAgentSafetyPollDrainsWhenTheWakeStreamIsDown proves claimLoop's fallback poll is
+// live and now has a test seam. With the wake stream permanently failing, wakeLoop never delivers
+// an event, so the startup trigger is the ONLY non-safety drain — any further drain is the safety
+// tick and nothing else.
+//
+// The long-interval case is the control: it pins that a drain count above one is attributable to
+// safetyInterval, not to the loop spinning on its own. Before safetyInterval was hoisted to a
+// package var this test could not be written at all — the poll was a function-local const.
+func TestHygRunnerAgentSafetyPollDrainsWhenTheWakeStreamIsDown(t *testing.T) {
+	restore := safetyInterval
+	t.Cleanup(func() { safetyInterval = restore })
+
+	// Control: with the production-length interval no tick can fire inside the settle window,
+	// so the startup trigger must be the only drain.
+	safetyInterval = time.Hour
+	idleAPI, idleClaims := hygRunnerAgentRunClaimLoop(t, 200*time.Millisecond)
+	if idleAPI.streamAttempts.Load() == 0 {
+		t.Fatal("precondition: the wake stream was never attempted, so it cannot be 'down'")
+	}
+	if idleClaims != 1 {
+		t.Fatalf("with no safety tick only the startup drain may run, got %d drains", idleClaims)
+	}
+
+	// Now shorten the poll: the fallback must drive further drains with no wake at all.
+	safetyInterval = 5 * time.Millisecond
+	pollAPI, pollClaims := hygRunnerAgentRunClaimLoop(t, 5*time.Second)
+	if pollAPI.streamAttempts.Load() == 0 {
+		t.Fatal("precondition: the wake stream was never attempted, so it cannot be 'down'")
+	}
+	if pollClaims < 3 {
+		t.Fatalf("the safety poll must keep draining while the wake stream is down, got %d drains", pollClaims)
 	}
 }
