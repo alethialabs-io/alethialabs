@@ -280,6 +280,21 @@ exclusions:
     cloud: alibaba
     reason: Tablestore chooses capacity mode on the instance that holds your tables, not on each table, so a per-table setting has nothing to land on.
 
+  # ── NoSQL replica regions — same three products, same shapes (#1982) ────────────────
+  # AWS carries the list (a DynamoDB global table takes `replicas` per table). Firestore replicates
+  # by the DATABASE's location choice — a region or one of Google's fixed multi-region pairs picked
+  # at creation — so a chosen per-table region list has nothing to land on. Tablestore keeps tables
+  # in a single-region instance (its DR products are backups and tunnels, not table replicas), so
+  # the list has nothing to land on there either. Cosmos CAN geo-replicate — at the ACCOUNT level —
+  # and is boarded in `baseline:` below (#2158) until that carrier and its union-of-tables
+  # semantics are built.
+  - field: nosql_tables.global_replicas
+    cloud: gcp
+    reason: Firestore replicates by its database location — a region or one of Google's fixed multi-region pairs chosen when the database is created — so a hand-picked list of replica regions cannot be applied to a table.
+  - field: nosql_tables.global_replicas
+    cloud: alibaba
+    reason: Tablestore keeps your tables in a single-region instance and offers backups and tunnels rather than table replicas — there is no replica-region list to apply.
+
   # ── Alibaba managed TLS certificate — settled by #1824 ──────────────────────────────
   # The alicloud provider has no certificate REQUEST resource at all: its certificate resources are
   # upload-only (PEM material you already hold), private-CA, or attachments to a WAF/ESA instance
@@ -396,10 +411,10 @@ baseline:
     issue: "#2149"
     state: no-carrier
   - field: nosql_tables.global_replicas
-    cloud: "*"
-    reason: The replica regions you choose for a table are not created — the table is provisioned in its own region only.
-    issue: "#1982"
-    state: dropped-by-type
+    cloud: azure
+    reason: The replica regions you choose for a table are not applied on Azure yet — the Cosmos account is created in its own region only.
+    issue: "#2158"
+    state: no-carrier
 
   # network.allowed_cidr_blocks was here, boarded as #1987 and the worst of the three: no variable
   # on ANY of the five templates, so a value collected in the inspector and the CLI had nowhere to

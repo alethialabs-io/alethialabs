@@ -306,6 +306,11 @@ type ProjectNosqlConfig struct {
 	TableType           NosqlTableType    `json:"table_type"`
 	CapacityMode        NosqlCapacityMode `json:"capacity_mode"`
 	PointInTimeRecovery bool              `json:"point_in_time_recovery"`
+	// Replica regions for a global table. Collected by the inspector's
+	// nosql-replication section and the CLI; without this field json.Unmarshal
+	// dropped the value and a global table got the template's default replica
+	// set, not the regions the user chose (#1982).
+	GlobalReplicas []string `json:"global_replicas"`
 }
 
 type ProjectSecretConfig struct {
