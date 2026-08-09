@@ -16,6 +16,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -118,6 +120,350 @@ func TestRunDestroyNamespaceValidatesTheSnapshotLikeDeployDoes(t *testing.T) {
 				t.Fatalf("err = %v, want one containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestRunNamespaceDestroyNeverReportsSuccessItCannotDeliver is the core anti-regression property,
+// stated directly rather than through RunDestroy. Whatever stops the teardown — no kubectl, an
+// unreachable API server, a cancelled job — the ONE answer it may never give is nil. The bug being
+// fixed was precisely a teardown that returned nil having done nothing.
+//
+// The context is cancelled so the mint fails deterministically without a network call, and the
+// assertion is only "not nil", so it holds whether the runner image has kubectl on PATH or not.
+// That keeps it from depending on ambient laptop state the way a message assertion would.
+func TestRunNamespaceDestroyNeverReportsSuccessItCannotDeliver(t *testing.T) {
+	provider, err := cloud.NewCloudProvider("aws")
+	if err != nil {
+		t.Fatalf("NewCloudProvider: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	cfg := &types.ProjectConfig{
+		ProjectName:      "p",
+		EnvironmentStage: types.EnvironmentStage("dev"),
+		PlacementMode:    types.PlacementModeNamespace,
+		Namespace:        "team-ns",
+	}
+	cfg.Cluster.ClusterName = "cluster-a"
+
+	if err := runNamespaceDestroy(ctx, provider, DestroyParams{
+		ProjectConfig: cfg,
+		Provider:      "aws",
+		Stdout:        io.Discard,
+		Stderr:        io.Discard,
+	}); err == nil {
+		t.Fatal("runNamespaceDestroy returned nil without reaching the cluster — a teardown that reports success having done nothing is the defect itself")
+	}
+}
+
+// TestRunNamespaceDestroyFailsOpenOnAnUnactivatedCloud is the one case where nil IS correct:
+// selectPlacementPath would never have deployed a namespace env onto a cloud that is not in
+// namespaceRemintProviders, so there is nothing of ours there to reclaim. Mirrors
+// runVClusterDestroy's fail-open, and is asserted so the distinction from the test above — where
+// nil is a bug — stays deliberate rather than incidental.
+func TestRunNamespaceDestroyFailsOpenOnAnUnactivatedCloud(t *testing.T) {
+	provider, err := cloud.NewCloudProvider("aws")
+	if err != nil {
+		t.Fatalf("NewCloudProvider: %v", err)
+	}
+	if namespaceRemintWired("zzz-unknown") {
+		t.Fatal("test premise broken: zzz-unknown must not be an activated cloud")
+	}
+	cfg := &types.ProjectConfig{ProjectName: "p", PlacementMode: types.PlacementModeNamespace, Namespace: "team-ns"}
+	cfg.Cluster.ClusterName = "cluster-a"
+
+	if err := runNamespaceDestroy(context.Background(), provider, DestroyParams{
+		ProjectConfig: cfg,
+		Provider:      "zzz-unknown",
+		Stdout:        io.Discard,
+		Stderr:        io.Discard,
+	}); err != nil {
+		t.Fatalf("nothing was ever provisioned on an unactivated cloud, so teardown has nothing to reclaim: %v", err)
+	}
+}
+
+// fakeNamespaceProvider is a cloud.CloudProvider whose ConfigureKubeconfig succeeds without a cloud,
+// so the teardown's happy path can be exercised end to end in-process. Everything else the interface
+// requires is inert — this fake exists only to get past the kube mint.
+type fakeNamespaceProvider struct {
+	configureErr error
+}
+
+func (f fakeNamespaceProvider) Name() string           { return "fake" }
+func (f fakeNamespaceProvider) RequiredCLIs() []string { return nil }
+func (f fakeNamespaceProvider) ProviderTfvars(*types.ProjectConfig) map[string]interface{} {
+	return map[string]interface{}{}
+}
+func (f fakeNamespaceProvider) ValidateConfig(*types.ProjectConfig) error { return nil }
+func (f fakeNamespaceProvider) ConfigureKubeconfig(context.Context, *types.ProjectConfig, map[string]interface{}, io.Writer) error {
+	return f.configureErr
+}
+
+// stubKubectlOnPath puts an executable named `kubectl` on PATH for the duration of the test.
+// runNamespaceDestroy preflights with exec.LookPath, and CI's Go job installs helm and tofu but NOT
+// kubectl — so a test that relied on the runner image happening to ship it would pass here and
+// silently stop covering this path there. The stub is never executed; executeCommand is stubbed too.
+func stubKubectlOnPath(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write kubectl stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestRunNamespaceDestroyDeletesTheAppBeforeTheNamespace walks the whole teardown in-process and
+// pins the ORDER, which is the part that is easy to get wrong and invisible when it is: the tenant
+// Application must be deleted BEFORE the Namespace. Delete them the other way round and ArgoCD
+// re-syncs the tenant's resources into a namespace that is already terminating, which wedges it in
+// Terminating behind its own finalizers.
+//
+// Hermetic: fake provider, stub kube-conn resolver, stub identity deprovisioner, stubbed
+// executeCommand and a stub kubectl on PATH. No cloud, no cluster, no network.
+func TestRunNamespaceDestroyDeletesTheAppBeforeTheNamespace(t *testing.T) {
+	stubKubectlOnPath(t)
+	orig := executeCommand
+	t.Cleanup(func() { executeCommand = orig })
+
+	var manifests []string
+	executeCommand = func(cmd, _ string, _ []string, _, _ io.Writer) error {
+		fields := strings.Fields(cmd)
+		b, err := os.ReadFile(fields[len(fields)-1])
+		if err != nil {
+			t.Errorf("could not read the manifest passed to %q: %v", cmd, err)
+			return nil
+		}
+		manifests = append(manifests, string(b))
+		return nil
+	}
+
+	deprovisioned := 0
+	cfg := &types.ProjectConfig{
+		ProjectName:      "acme",
+		EnvironmentStage: types.EnvironmentStage("dev"),
+		PlacementMode:    types.PlacementModeNamespace,
+		Namespace:        "team-web",
+	}
+	cfg.Cluster.ClusterName = "acme-prod-cluster"
+	cfg.Repositories.AppsDestinationRepo = "https://github.com/acme/apps"
+
+	err := runNamespaceDestroy(context.Background(), fakeNamespaceProvider{}, DestroyParams{
+		ProjectConfig: cfg,
+		Provider:      "gcp",
+		KubeConn: func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			return "https://api.example.invalid", "Y2E=", nil
+		},
+		NamespaceIdentity: func(context.Context, string, *types.ProjectConfig, string, string) error {
+			deprovisioned++
+			return nil
+		},
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("runNamespaceDestroy: %v", err)
+	}
+
+	if len(manifests) != 2 {
+		t.Fatalf("issued %d deletes, want 2 (the Application, then the Namespace + AppProject)", len(manifests))
+	}
+	if !strings.Contains(manifests[0], "kind: Application") {
+		t.Errorf("the FIRST delete must be the Application, so ArgoCD stops re-syncing into a namespace being removed; got:\n%s", manifests[0])
+	}
+	if !strings.Contains(manifests[1], "kind: Namespace") {
+		t.Errorf("the SECOND delete must carry the Namespace; got:\n%s", manifests[1])
+	}
+	if deprovisioned != 1 {
+		t.Errorf("the per-namespace cloud identity was deprovisioned %d times, want exactly 1 — a teardown that skips it leaves a live IAM principal", deprovisioned)
+	}
+}
+
+// TestRunNamespaceDestroyKeepsGoingAndStillReportsTheFailure pins the best-effort contract. A failed
+// Application delete must NOT stop the namespace delete or the identity deprovision — stopping at the
+// first error would strand exactly the resources this reclaims — and the call must still report the
+// failure so nobody reads a partial teardown as a complete one.
+func TestRunNamespaceDestroyKeepsGoingAndStillReportsTheFailure(t *testing.T) {
+	stubKubectlOnPath(t)
+	orig := executeCommand
+	t.Cleanup(func() { executeCommand = orig })
+
+	calls := 0
+	executeCommand = func(string, string, []string, io.Writer, io.Writer) error {
+		calls++
+		if calls == 1 {
+			return errors.New("the api server said no")
+		}
+		return nil
+	}
+
+	deprovisioned := 0
+	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web"}
+	cfg.Cluster.ClusterName = "acme-prod-cluster"
+	cfg.Repositories.AppsDestinationRepo = "https://github.com/acme/apps"
+
+	err := runNamespaceDestroy(context.Background(), fakeNamespaceProvider{}, DestroyParams{
+		ProjectConfig: cfg,
+		Provider:      "gcp",
+		KubeConn: func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			return "https://api.example.invalid", "Y2E=", nil
+		},
+		NamespaceIdentity: func(context.Context, string, *types.ProjectConfig, string, string) error {
+			deprovisioned++
+			return nil
+		},
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if err == nil {
+		t.Fatal("a failed delete was reported as a successful teardown")
+	}
+	if calls != 2 {
+		t.Errorf("issued %d deletes, want 2 — the namespace delete must be attempted even after the Application delete failed", calls)
+	}
+	if deprovisioned != 1 {
+		t.Errorf("the cloud identity was deprovisioned %d times, want 1 — a leaked IAM principal outlives a leaked namespace, so it is attempted regardless", deprovisioned)
+	}
+}
+
+// TestRunNamespaceDestroyAttemptsEveryStepWhenEveryStepFails is the best-effort contract at its
+// limit: when all three reclaim steps fail, all three must still have been ATTEMPTED, and the call
+// must report failure. This is the case where giving up early would strand the most.
+//
+// It also passes nil writers, which is how the runner calls it when a job has no captured streams —
+// the defaults must hold rather than nil-panic mid-teardown.
+func TestRunNamespaceDestroyAttemptsEveryStepWhenEveryStepFails(t *testing.T) {
+	stubKubectlOnPath(t)
+	orig := executeCommand
+	t.Cleanup(func() { executeCommand = orig })
+
+	deletes := 0
+	executeCommand = func(string, string, []string, io.Writer, io.Writer) error {
+		deletes++
+		return errors.New("the api server said no")
+	}
+
+	identityAttempts := 0
+	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web"}
+	cfg.Cluster.ClusterName = "acme-prod-cluster"
+	cfg.Repositories.AppsDestinationRepo = "https://github.com/acme/apps"
+
+	err := runNamespaceDestroy(context.Background(), fakeNamespaceProvider{}, DestroyParams{
+		ProjectConfig: cfg,
+		Provider:      "gcp",
+		KubeConn: func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			return "https://api.example.invalid", "Y2E=", nil
+		},
+		NamespaceIdentity: func(context.Context, string, *types.ProjectConfig, string, string) error {
+			identityAttempts++
+			return errors.New("IAM said no")
+		},
+		// nil Stdout/Stderr on purpose — the defaults must hold.
+	})
+	if err == nil {
+		t.Fatal("every reclaim step failed and the teardown still reported success")
+	}
+	if !strings.Contains(err.Error(), "re-run the destroy to converge") {
+		t.Errorf("the error should tell the operator a re-run converges, got: %v", err)
+	}
+	if deletes != 2 {
+		t.Errorf("issued %d deletes, want 2 — a failing Application delete must not skip the Namespace delete", deletes)
+	}
+	if identityAttempts != 1 {
+		t.Errorf("identity deprovision attempted %d times, want 1 — it must be tried even when both kube deletes failed", identityAttempts)
+	}
+}
+
+// TestRunNamespaceDestroyRefusesWithoutKubectl pins the preflight. Without kubectl there is no way
+// to delete anything, so the teardown must refuse rather than fall through and report whatever the
+// later steps returned.
+func TestRunNamespaceDestroyRefusesWithoutKubectl(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // an empty directory: nothing is on PATH, including kubectl
+	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web"}
+	cfg.Cluster.ClusterName = "acme-prod-cluster"
+
+	err := runNamespaceDestroy(context.Background(), fakeNamespaceProvider{}, DestroyParams{
+		ProjectConfig: cfg,
+		Provider:      "gcp",
+		Stdout:        io.Discard,
+		Stderr:        io.Discard,
+	})
+	if err == nil || !strings.Contains(err.Error(), "preflight") {
+		t.Fatalf("err = %v, want a preflight refusal naming the missing dependency", err)
+	}
+}
+
+// TestRunNamespaceDestroyFailsClosedWhenItCannotMintKubeAccess pins the one step that is NOT
+// best-effort. Without a kubeconfig nothing downstream can run, so continuing would delete nothing
+// and report whatever the later steps happened to return.
+func TestRunNamespaceDestroyFailsClosedWhenItCannotMintKubeAccess(t *testing.T) {
+	stubKubectlOnPath(t)
+	orig := executeCommand
+	t.Cleanup(func() { executeCommand = orig })
+	executeCommand = func(string, string, []string, io.Writer, io.Writer) error {
+		t.Error("no kubectl should run when the kube mint failed")
+		return nil
+	}
+
+	cfg := &types.ProjectConfig{ProjectName: "acme", PlacementMode: types.PlacementModeNamespace, Namespace: "team-web"}
+	cfg.Cluster.ClusterName = "acme-prod-cluster"
+
+	err := runNamespaceDestroy(context.Background(), fakeNamespaceProvider{configureErr: errors.New("no credentials")}, DestroyParams{
+		ProjectConfig: cfg,
+		Provider:      "gcp",
+		KubeConn: func(context.Context, string, *types.ProjectConfig, string) (string, string, error) {
+			return "https://api.example.invalid", "Y2E=", nil
+		},
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+	if err == nil || !strings.Contains(err.Error(), "kubeconfig mint failed") {
+		t.Fatalf("err = %v, want a fail-closed kubeconfig-mint error", err)
+	}
+}
+
+// TestKubectlDeleteManifestIsIdempotentAndDeletesTheRenderedDoc pins the two properties the
+// teardown depends on: it deletes the DOCUMENT (not a hand-written resource name, which is how the
+// teardown's idea of a name drifts from the apply's), and it passes --ignore-not-found so a re-run
+// after a partial teardown converges instead of failing on the half that already succeeded.
+func TestKubectlDeleteManifestIsIdempotentAndDeletesTheRenderedDoc(t *testing.T) {
+	orig := executeCommand
+	t.Cleanup(func() { executeCommand = orig })
+
+	var gotCmd, gotFileContents string
+	executeCommand = func(cmd, _ string, _ []string, _, _ io.Writer) error {
+		gotCmd = cmd
+		fields := strings.Fields(cmd)
+		if b, err := os.ReadFile(fields[len(fields)-1]); err == nil {
+			gotFileContents = string(b)
+		}
+		return nil
+	}
+
+	const manifest = "kind: Namespace\nmetadata:\n  name: team-ns\n"
+	if err := kubectlDeleteManifest(manifest, "namespace isolation", io.Discard, io.Discard); err != nil {
+		t.Fatalf("kubectlDeleteManifest: %v", err)
+	}
+	if !strings.HasPrefix(gotCmd, "kubectl delete ") {
+		t.Errorf("command = %q, want a kubectl delete", gotCmd)
+	}
+	if !strings.Contains(gotCmd, "--ignore-not-found") {
+		t.Errorf("command = %q — without --ignore-not-found a re-run of a partial teardown fails on what it already removed", gotCmd)
+	}
+	if !strings.Contains(gotCmd, " -f ") {
+		t.Errorf("command = %q, want a -f <manifest> delete rather than a by-name delete", gotCmd)
+	}
+	if gotFileContents != manifest {
+		t.Errorf("the applied file held %q, want the rendered manifest %q", gotFileContents, manifest)
+	}
+}
+
+// TestKubectlDeleteManifestReportsAnUnwritableWorkdir mirrors the apply twin's guard: the teardown
+// must fail rather than report a delete it never issued.
+func TestKubectlDeleteManifestReportsAnUnwritableWorkdir(t *testing.T) {
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "does-not-exist"))
+	if err := kubectlDeleteManifest("kind: Namespace\n", "cov", io.Discard, io.Discard); err == nil {
+		t.Error("kubectlDeleteManifest with an unusable TMPDIR = nil, want an error")
 	}
 }
 

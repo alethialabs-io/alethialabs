@@ -187,7 +187,15 @@ func DeprovisionACKNamespaceIdentity(ctx context.Context, region, clusterName, n
 	if err != nil {
 		return fmt.Errorf("ack namespace identity teardown: build keyless signing client: %w", err)
 	}
-	roleName := ackNamespaceRoleName(clusterName, namespace)
+	return deleteACKNamespaceRole(ctx, client, ackNamespaceRoleName(clusterName, namespace))
+}
+
+// deleteACKNamespaceRole deletes the per-namespace RAM role. Idempotent: an already-absent role is
+// success, so a destroy re-run after a partial teardown converges rather than wedging on the half
+// that already succeeded. Split from the exported entrypoint for the same reason
+// ensureACKNamespaceRole is on the provision side — it takes the http.Client, so the RAM answers
+// that matter (deleted / already gone / denied) are testable without a keyless session.
+func deleteACKNamespaceRole(ctx context.Context, client *http.Client, roleName string) error {
 	params := url.Values{}
 	params.Set("RoleName", roleName)
 	if _, err := ramRPC(ctx, client, "DeleteRole", params); err != nil {
