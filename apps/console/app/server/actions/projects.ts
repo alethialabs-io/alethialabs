@@ -1263,33 +1263,133 @@ async function buildConfigSnapshot(
 				scan_path: r.scan_path,
 				services: r.services ?? [],
 			})),
-			databases: databases.map((d) => ({ ...d, ...resolvePlacement(d) })),
-			caches: caches.map((c) => ({ ...c, ...resolvePlacement(c) })),
-			queues: queues.map((q) => ({ ...q, ...resolvePlacement(q) })),
+			// EXPLICIT PICKS, never `...row` (#1974) — the component-list half of the `...project`
+			// fix above. `readEnvComponents` is a bare `SELECT *`, so a spread put every column of
+			// every `project_*` table onto this HMAC-signed snapshot: eight bookkeeping columns
+			// (`id`, `project_id`, `environment_id`, `status`, `status_message`,
+			// `estimated_monthly_cost`, `created_at`, `updated_at`) plus the write-back columns
+			// `finalizeDeployment` fills in AFTER a deploy (`endpoint`, `reader_endpoint`,
+			// `provider_outputs`) — none of which any runner reads.
+			//
+			// Each pick below is the json-tag set of the matching struct in
+			// packages/core/types/project_config.go, and nothing else. That is what lets the
+			// runner's strict decode cover these subtrees at all: `dbRowSpreadSnapshotKeys` used
+			// to delete all ten from the unknown-key probe because a spread guaranteed unknown
+			// keys. It is gone, so ADDING a key here now requires a matching field on the Go
+			// struct, and the next `project_*` migration reds a PR instead of a deploy.
+			//
+			// Deliberate drops that are NOT bookkeeping, so that nobody "restores" them:
+			//  · `databases.storage_gb`/`replicas`, `caches.storage_gb`, `queues.storage_gb` —
+			//    Hetzner-only knobs, already read at snapshot-build time by
+			//    hetznerDataServicesToAddOns() above and baked into `addons[]` Helm values. They
+			//    reach the runner by that route; the component array was never the carrier.
+			//  · `container_registries.repository_url` — has no writer anywhere in the repo; the
+			//    runner resolves registry URLs from the tofu output map at BUILD time instead.
+			//  · `nosql_tables.provider_config` — no producer and no consumer. Nothing writes it
+			//    (no inspector field, no CLI field) and nosql does not route through
+			//    mergeProviderConfig, which only databases, cluster and DNS use.
+			//  · `caches.allowed_cidr_blocks` and `nosql_tables.global_replicas` — user-settable
+			//    in the inspector and the CLI, but dropped on every deploy today because neither
+			//    has a Go field. Tracked to be given one; the pick makes the drop explicit rather
+			//    than accidental, and does not change behaviour.
+			databases: databases.map((d) => ({
+				name: d.name,
+				engine: d.engine,
+				engine_family: d.engine_family,
+				engine_version: d.engine_version,
+				instance_class: d.instance_class,
+				min_capacity: d.min_capacity,
+				max_capacity: d.max_capacity,
+				port: d.port,
+				backup_retention_days: d.backup_retention_days,
+				iam_auth: d.iam_auth,
+				provider_config: d.provider_config,
+				...resolvePlacement(d),
+			})),
+			caches: caches.map((c) => ({
+				name: c.name,
+				engine: c.engine,
+				engine_version: c.engine_version,
+				node_type: c.node_type,
+				memory_gb: c.memory_gb,
+				num_cache_nodes: c.num_cache_nodes,
+				multi_az: c.multi_az,
+				...resolvePlacement(c),
+			})),
+			queues: queues.map((q) => ({
+				name: q.name,
+				ordered: q.ordered,
+				visibility_timeout: q.visibility_timeout,
+				message_retention: q.message_retention,
+				provider_config: q.provider_config,
+				...resolvePlacement(q),
+			})),
 			topics: topics.map((t) => ({
-				...t,
+				name: t.name,
 				...resolvePlacement(t),
 				subscriptions: topicSubs.get(t.id) ?? [],
 			})),
-			nosql_tables: nosqlTables.map((n) => ({ ...n, ...resolvePlacement(n) })),
-			secrets: secrets.map((s) => ({ ...s, ...resolvePlacement(s) })),
+			nosql_tables: nosqlTables.map((n) => ({
+				name: n.name,
+				partition_key: n.partition_key,
+				partition_key_type: n.partition_key_type,
+				sort_key: n.sort_key,
+				sort_key_type: n.sort_key_type,
+				table_type: n.table_type,
+				capacity_mode: n.capacity_mode,
+				point_in_time_recovery: n.point_in_time_recovery,
+				...resolvePlacement(n),
+			})),
+			secrets: secrets.map((s) => ({
+				name: s.name,
+				generate: s.generate,
+				length: s.length,
+				special_chars: s.special_chars,
+				provider: s.provider,
+				provider_config: s.provider_config,
+				...resolvePlacement(s),
+			})),
 			container_registries: containerRegistries.map((r) => ({
-				...r,
+				name: r.name,
+				provider: r.provider,
+				immutable_tags: r.immutable_tags,
+				vulnerability_scanning: r.vulnerability_scanning,
+				provider_config: r.provider_config,
 				...resolvePlacement(r),
 			})),
 			helm_registries: helmRegistries.map((r) => ({
-				...r,
+				name: r.name,
+				provider: r.provider,
+				provider_config: r.provider_config,
 				...resolvePlacement(r),
 			})),
 			storage_buckets: storageBuckets.map((b) => ({
-				...b,
+				name: b.name,
+				versioning: b.versioning,
+				encryption_enabled: b.encryption_enabled,
+				public_access: b.public_access,
+				cors_origins: b.cors_origins,
+				provider_config: b.provider_config,
 				...resolvePlacement(b),
 			})),
 			// W1 — first-class application workloads (the customer's own code). The runner renders
 			// each into k8s manifests; image build/push (from source when kind==="repo") is W2.
+			// `resolved_image` is the one write-back column that MUST stay on the wire: the manifest
+			// renderer substitutes it for the workload image, so dropping it sends every
+			// repo-sourced deploy back to `:latest` (W2 #591). It is absent from the committed
+			// w1_services.json only because that fixture's mocked rows lack the column.
 			services: services.map((s) => ({
-				...s,
+				name: s.name,
+				type: s.type,
+				source: s.source,
+				build: s.build,
+				env: s.env,
 				bindings: bindingsByService.get(s.id) ?? [],
+				ports: s.ports,
+				replicas: s.replicas,
+				resources: s.resources,
+				probe: s.probe,
+				resolved_image: s.resolved_image,
 				...resolvePlacement(s),
 			})),
 			// Marketplace add-ons (resolved install specs) — the runner renders each as an
