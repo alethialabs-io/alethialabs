@@ -4,6 +4,7 @@
 package provisioner
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -62,7 +63,7 @@ terraform {
 //   - inline iacsafety gate, fail-closed: any scan error or error-severity finding
 //     blocks BEFORE any plan/apply. This is defense in depth — the runner's IAC_SCAN
 //     row is never trusted alone (an older/newer runner, or a different commit).
-func prepareByoIacWorkdir(vc *types.ProjectConfig, gitToken, cloneDir string, stdout, stderr io.Writer) (tfDir string, tfvars map[string]interface{}, restore func(), err error) {
+func prepareByoIacWorkdir(ctx context.Context, vc *types.ProjectConfig, gitToken, cloneDir string, stdout, stderr io.Writer) (tfDir string, tfvars map[string]interface{}, restore func(), err error) {
 	src := vc.IacSource
 	if src == nil {
 		return "", nil, nil, fmt.Errorf("prepareByoIacWorkdir called without an IacSource")
@@ -91,7 +92,7 @@ func prepareByoIacWorkdir(vc *types.ProjectConfig, gitToken, cloneDir string, st
 	} else {
 		repo = git.NewGIT(src.RepoURL, cloneDir, false)
 	}
-	if cloneErr := repo.CloneAndCheckoutCommit(src.Ref, src.CommitSHA, true); cloneErr != nil {
+	if cloneErr := repo.CloneAndCheckoutCommit(ctx, src.Ref, src.CommitSHA, true); cloneErr != nil {
 		return "", nil, nil, fmt.Errorf("BYO IaC clone/checkout failed: %w", cloneErr)
 	}
 

@@ -2227,7 +2227,7 @@ func TestProv_PrepareByoIacWorkdirRejectsAMalformedSource(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			vc := provConfig()
 			vc.IacSource = tc.src
-			_, _, _, err := prepareByoIacWorkdir(vc, "", t.TempDir(), io.Discard, io.Discard)
+			_, _, _, err := prepareByoIacWorkdir(context.Background(), vc, "", t.TempDir(), io.Discard, io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want an error containing %q, got: %v", tc.want, err)
 			}
@@ -2254,7 +2254,7 @@ func TestProv_PrepareByoIacWorkdirClonesWithAToken(t *testing.T) {
 
 	t.Run("a tokened clone reaches the module", func(t *testing.T) {
 		var out strings.Builder
-		tfDir, _, restore, err := prepareByoIacWorkdir(newVC("module"), "ghp_covtoken", filepath.Join(t.TempDir(), "clone"), &out, io.Discard)
+		tfDir, _, restore, err := prepareByoIacWorkdir(context.Background(), newVC("module"), "ghp_covtoken", filepath.Join(t.TempDir(), "clone"), &out, io.Discard)
 		if err != nil {
 			t.Fatalf("prepareByoIacWorkdir with a token: %v\nlog:\n%s", err, out.String())
 		}
@@ -2270,7 +2270,7 @@ func TestProv_PrepareByoIacWorkdirClonesWithAToken(t *testing.T) {
 	})
 
 	t.Run("the module path is not in the repo", func(t *testing.T) {
-		_, _, _, err := prepareByoIacWorkdir(newVC("no-such-module"), "", filepath.Join(t.TempDir(), "clone"), io.Discard, io.Discard)
+		_, _, _, err := prepareByoIacWorkdir(context.Background(), newVC("no-such-module"), "", filepath.Join(t.TempDir(), "clone"), io.Discard, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "not found in repository") {
 			t.Fatalf("want the missing module path named, got: %v", err)
 		}

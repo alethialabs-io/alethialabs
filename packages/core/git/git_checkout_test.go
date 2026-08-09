@@ -4,6 +4,7 @@
 package git
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,7 +63,7 @@ func TestCloneAndCheckoutCommitPinsExactCommit(t *testing.T) {
 	g := &GIT{RepoURL: "file://" + repo, LocalPath: cloneDir}
 
 	// Check out the OLDER commit (sha1) while the branch tip is sha2.
-	if err := g.CloneAndCheckoutCommit(branch, sha1, true); err != nil {
+	if err := g.CloneAndCheckoutCommit(context.Background(), branch, sha1, true); err != nil {
 		t.Fatalf("CloneAndCheckoutCommit(sha1): %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(cloneDir, "a.txt"))
@@ -83,7 +84,7 @@ func TestCloneAndCheckoutCommitRejectsMissingSHA(t *testing.T) {
 
 	// A well-formed but non-existent SHA must fail (never silently use HEAD).
 	bogus := "0123456789abcdef0123456789abcdef01234567"
-	if err := g.CloneAndCheckoutCommit(branch, bogus, true); err == nil {
+	if err := g.CloneAndCheckoutCommit(context.Background(), branch, bogus, true); err == nil {
 		t.Fatal("expected CloneAndCheckoutCommit to fail on a missing commit, got nil")
 	}
 }
@@ -93,7 +94,7 @@ func TestCheckoutRejectsMalformedSHA(t *testing.T) {
 	repo, branch, sha1, _ := makeFixtureRepo(t)
 	cloneDir := filepath.Join(t.TempDir(), "clone")
 	g := &GIT{RepoURL: "file://" + repo, LocalPath: cloneDir}
-	if err := g.CloneAndCheckoutCommit(branch, sha1, true); err != nil {
+	if err := g.CloneAndCheckoutCommit(context.Background(), branch, sha1, true); err != nil {
 		t.Fatalf("setup clone: %v", err)
 	}
 	if err := g.Checkout("deadbeef"); err == nil {

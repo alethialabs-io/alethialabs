@@ -109,7 +109,7 @@ func TestTail_CloneAndCheckoutCommitReportsUnusableLocalPath(t *testing.T) {
 	}
 	g := &GIT{RepoURL: "file://" + repo, LocalPath: filepath.Join(blocker, "clone")}
 
-	err := g.CloneAndCheckoutCommit(branch, sha1, true)
+	err := g.CloneAndCheckoutCommit(context.Background(), branch, sha1, true)
 	if err == nil || !strings.Contains(err.Error(), "failed to clone repository") {
 		t.Fatalf("CloneAndCheckoutCommit error = %v, want the clone failure", err)
 	}
@@ -204,7 +204,7 @@ func TestTail_PushFailureArms(t *testing.T) {
 	t.Run("no auth method", func(t *testing.T) {
 		tailIsolateAmbientGit(t)
 		g := tailOpenBare(t)
-		if err := g.Push(); err == nil || !strings.Contains(err.Error(), "failed to get auth method") {
+		if err := g.Push(context.Background()); err == nil || !strings.Contains(err.Error(), "failed to get auth method") {
 			t.Fatalf("Push error = %v, want the auth failure", err)
 		}
 	})
@@ -222,7 +222,7 @@ func TestTail_PushFailureArms(t *testing.T) {
 		g.Token = "a-token"
 		gitCmd(t, cloneDir, "remote", "set-url", "origin", "file://"+filepath.Join(t.TempDir(), "absent"))
 
-		if err := g.Push(); err == nil || !strings.Contains(err.Error(), "failed to push changes") {
+		if err := g.Push(context.Background()); err == nil || !strings.Contains(err.Error(), "failed to push changes") {
 			t.Fatalf("Push error = %v, want the push failure", err)
 		}
 	})
@@ -439,7 +439,7 @@ func TestTail_BootstrapFailureArms(t *testing.T) {
 	t.Run("unusable local path", func(t *testing.T) {
 		g := &GIT{LocalPath: filepath.Join(t.TempDir(), "absent")}
 		tmplRepo := &GIT{LocalPath: t.TempDir()}
-		if err := g.Bootstrap(tmplRepo, nil, false, logger); err == nil ||
+		if err := g.Bootstrap(context.Background(), tmplRepo, nil, false, logger); err == nil ||
 			!strings.Contains(err.Error(), "does not exist or is not a directory") {
 			t.Fatalf("Bootstrap error = %v, want the local-path failure", err)
 		}
@@ -452,7 +452,7 @@ func TestTail_BootstrapFailureArms(t *testing.T) {
 		}
 		g := &GIT{LocalPath: local}
 		tmplRepo := &GIT{LocalPath: filepath.Join(t.TempDir(), "absent")}
-		if err := g.Bootstrap(tmplRepo, nil, true, logger); err == nil {
+		if err := g.Bootstrap(context.Background(), tmplRepo, nil, true, logger); err == nil {
 			t.Fatal("Bootstrap accepted a template repo that does not exist")
 		}
 	})
@@ -469,7 +469,7 @@ func TestTail_BootstrapFailureArms(t *testing.T) {
 		tmplRepo := &GIT{LocalPath: t.TempDir()}
 		// updateRepo, so the copy runs even though os.Stat reports the (unstattable) destination
 		// as present — otherwise this lands on the "will not overwrite" arm instead.
-		if err := g.Bootstrap(tmplRepo, map[string]string{"src.tfvars": "blocker/nested/x.tfvars"}, true, logger); err == nil {
+		if err := g.Bootstrap(context.Background(), tmplRepo, map[string]string{"src.tfvars": "blocker/nested/x.tfvars"}, true, logger); err == nil {
 			t.Fatal("Bootstrap accepted a var-file destination nested under a regular file")
 		}
 	})
@@ -481,7 +481,7 @@ func TestTail_BootstrapFailureArms(t *testing.T) {
 		}
 		g := &GIT{LocalPath: local}
 		tmplRepo := &GIT{LocalPath: t.TempDir()}
-		if err := g.Bootstrap(tmplRepo, map[string]string{"absent.tfvars": "vars.tfvars"}, false, logger); err == nil {
+		if err := g.Bootstrap(context.Background(), tmplRepo, map[string]string{"absent.tfvars": "vars.tfvars"}, false, logger); err == nil {
 			t.Fatal("Bootstrap accepted a var-file source that does not exist")
 		}
 	})
@@ -499,7 +499,7 @@ func TestTail_BootstrapFailureArms(t *testing.T) {
 			t.Fatal(err)
 		}
 		g := &GIT{LocalPath: local}
-		if err := g.Bootstrap(&GIT{LocalPath: tmplDir}, map[string]string{"src.tfvars": "occupied"}, true, logger); err == nil {
+		if err := g.Bootstrap(context.Background(), &GIT{LocalPath: tmplDir}, map[string]string{"src.tfvars": "occupied"}, true, logger); err == nil {
 			t.Fatal("Bootstrap wrote a var file over a directory")
 		}
 	})
@@ -510,7 +510,7 @@ func TestTail_BootstrapFailureArms(t *testing.T) {
 			t.Fatal(err)
 		}
 		g := &GIT{LocalPath: local}
-		if err := g.Bootstrap(&GIT{LocalPath: t.TempDir()}, nil, false, logger); err == nil ||
+		if err := g.Bootstrap(context.Background(), &GIT{LocalPath: t.TempDir()}, nil, false, logger); err == nil ||
 			!strings.Contains(err.Error(), "not initialized") {
 			t.Fatalf("Bootstrap error = %v, want the uninitialized-repo failure", err)
 		}
@@ -533,7 +533,7 @@ func TestTail_BootstrapSurfacesCommitFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmplDir, "main.tf"), []byte("# tf"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := g.Bootstrap(&GIT{LocalPath: tmplDir}, nil, false, utils.NewLogger(nil, ""))
+	err := g.Bootstrap(context.Background(), &GIT{LocalPath: tmplDir}, nil, false, utils.NewLogger(nil, ""))
 	if err == nil || !strings.Contains(err.Error(), "failed to commit changes") {
 		t.Fatalf("Bootstrap error = %v, want the commit failure", err)
 	}
