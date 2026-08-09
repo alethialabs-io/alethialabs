@@ -21,7 +21,7 @@
       "total": 622
     },
     "argocd": {
-      "covered": 1319,
+      "covered": 1359,
       "total": 1404
     },
     "assets": {
@@ -33,15 +33,15 @@
       "total": 63
     },
     "categories": {
-      "covered": 505,
+      "covered": 606,
       "total": 616
     },
     "cloud": {
-      "covered": 1286,
+      "covered": 1476,
       "total": 1646
     },
     "cloud/aws": {
-      "covered": 64,
+      "covered": 156,
       "total": 161
     },
     "compat": {
@@ -53,11 +53,11 @@
       "total": 34
     },
     "git": {
-      "covered": 252,
+      "covered": 284,
       "total": 291
     },
     "helmoci": {
-      "covered": 196,
+      "covered": 224,
       "total": 228
     },
     "iacsafety": {
@@ -69,7 +69,7 @@
       "total": 40
     },
     "infracost": {
-      "covered": 106,
+      "covered": 124,
       "total": 125
     },
     "k8s": {
@@ -77,11 +77,11 @@
       "total": 392
     },
     "manifests": {
-      "covered": 532,
+      "covered": 592,
       "total": 602
     },
     "provisioner": {
-      "covered": 1317,
+      "covered": 1863,
       "total": 1989
     },
     "runners": {
@@ -93,7 +93,7 @@
       "total": 159
     },
     "scanner": {
-      "covered": 177,
+      "covered": 190,
       "total": 194
     },
     "selfimage": {
@@ -113,11 +113,11 @@
       "total": 177
     },
     "types": {
-      "covered": 22,
+      "covered": 32,
       "total": 33
     },
     "utils": {
-      "covered": 31,
+      "covered": 44,
       "total": 44
     },
     "verify": {

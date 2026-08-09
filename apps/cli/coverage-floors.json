@@ -17,11 +17,11 @@
       "total": 1
     },
     "cmd": {
-      "covered": 1450,
-      "total": 3112
+      "covered": 3096,
+      "total": 3115
     },
     "internal/cloudshell": {
-      "covered": 20,
+      "covered": 135,
       "total": 138
     },
     "internal/update": {
