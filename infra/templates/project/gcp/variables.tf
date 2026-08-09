@@ -703,3 +703,26 @@ variable "memorystore_valkey_replica_count" {
   description = "Replica nodes per Valkey shard"
   default     = 0
 }
+
+# ── Application-layer Secrets encryption (#2004) ────────────────────────────────────────────────
+# ON BY DEFAULT, matching what AWS has always done silently (the upstream EKS module defaults
+# create_kms_key = true and encrypts `secrets`). Turning it OFF for an existing cluster does not
+# decrypt anything already written — GKE keeps reading through the retained key version — so the
+# switch is not a way to undo it.
+variable "gke_secrets_encryption_enabled" {
+  type        = bool
+  default     = true
+  description = "Envelope-encrypt Kubernetes Secrets in etcd under a customer-managed Cloud KMS key. On by default (AWS parity)."
+}
+
+variable "gke_secrets_encryption_rotation_period" {
+  type        = string
+  default     = "7776000s"
+  description = "Cloud KMS rotation period for the Secrets encryption key (default 90 days). Old versions are retained, so existing Secrets stay readable."
+
+  validation {
+    # KMS takes seconds-with-suffix and refuses anything under 24h.
+    condition     = can(regex("^[0-9]+s$", var.gke_secrets_encryption_rotation_period))
+    error_message = "gke_secrets_encryption_rotation_period must be a seconds duration like \"7776000s\"."
+  }
+}

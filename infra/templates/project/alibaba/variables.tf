@@ -467,3 +467,12 @@ variable "rds_serverless_max_capacity" {
   default     = 0
   description = "Maximum serverless capacity (RCUs). 0 (the default) provisions a fixed-size instance with no serverless range."
 }
+
+# ── Secrets envelope encryption for ACK (#2004) ─────────────────────────────────────────────────
+# ON BY DEFAULT, matching what AWS has always done silently (the upstream EKS module defaults
+# create_kms_key = true and encrypts `secrets`).
+variable "ack_secrets_encryption_enabled" {
+  type        = bool
+  default     = true
+  description = "Envelope-encrypt Kubernetes Secrets in etcd under a customer-managed KMS key. On by default (AWS parity)."
+}

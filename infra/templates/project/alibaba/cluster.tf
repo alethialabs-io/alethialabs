@@ -7,8 +7,10 @@ module "cluster" {
 
   depends_on = [module.network]
 
-  cluster_name    = local.ack_name
-  cluster_version = var.ack_cluster_version
+  cluster_name = local.ack_name
+
+  secrets_encryption_key_id = local.alibaba_secrets_encryption ? alicloud_kms_key.ack_secrets[0].id : ""
+  cluster_version           = var.ack_cluster_version
 
   vswitch_ids = local.vswitch_ids
 
