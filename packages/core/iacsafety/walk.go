@@ -59,6 +59,7 @@ func (s *scanner) scanNativeFile(path, moduleDir string) {
 			if len(blk.Labels) > 0 {
 				s.recordImpliedProviderRef(blk.Labels[0], rel, blk.DefRange().Start.Line)
 			}
+			s.sweepProviderExec(blk.Body, rel)
 		case "import":
 			// `import` (tofu 1.5+) pulls in the provider of the `to` address's
 			// resource type at init/plan, so gate the implied provider from it.
@@ -122,6 +123,31 @@ func (s *scanner) checkDataBlock(labels []string, rel string, line int) {
 			`data "terraform_remote_state" reads arbitrary remote state during plan`)
 	}
 	s.recordImpliedUse(labels[0], rel, line)
+}
+
+// sweepProviderExec recursively flags any `exec` block or attribute inside a
+// provider configuration body. The exec credential plugin runs `command` with
+// `args` as a local subprocess while the provider configures its client during
+// plan — hashicorp/kubernetes accepts it directly, hashicorp/helm nested under
+// kubernetes{}, and both are allowlisted, so this is plan-time command
+// execution reachable with zero non-allowlisted providers (#2031). Deliberately
+// scoped to provider bodies: an exec block inside a RESOURCE (a Kubernetes
+// liveness-probe exec, say) is workload configuration that runs in the
+// cluster, not on the runner, and must not be flagged.
+func (s *scanner) sweepProviderExec(body *hclsyntax.Body, rel string) {
+	for name, attr := range body.Attributes {
+		if name == "exec" {
+			s.addFinding(SeverityError, RuleExecCredentialPlugin, rel, attr.SrcRange.Start.Line,
+				"exec attribute in a provider configuration: the exec credential plugin runs an arbitrary command during plan")
+		}
+	}
+	for _, blk := range body.Blocks {
+		if blk.Type == "exec" {
+			s.addFinding(SeverityError, RuleExecCredentialPlugin, rel, blk.DefRange().Start.Line,
+				"exec block in a provider configuration: the exec credential plugin runs an arbitrary command during plan")
+		}
+		s.sweepProviderExec(blk.Body, rel)
+	}
 }
 
 // recordProviderMetaArg gates the provider a resource/data/ephemeral block
