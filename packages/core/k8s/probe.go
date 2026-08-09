@@ -6,6 +6,7 @@ package k8s
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -73,6 +74,16 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 		}
 	}()
 	if apiErr != nil {
+		// A caller who cancelled (job cancelled, parent deadline) is NOT a cluster fault, and must not
+		// be dressed as one: classifyReachability has no bucket for a context error, so routing a
+		// cancellation through the last probe's verdict reports "NETWORK UNREACHABLE" and sends the
+		// operator to a firewall nobody's cluster ever refused — the #1259 misdiagnosis class again.
+		// ctx.Err() is what gets wrapped, so callers can test errors.Is(err, context.Canceled) /
+		// context.DeadlineExceeded; the last probe error stays as colour but drives nothing.
+		if errors.Is(apiErr, context.Canceled) || errors.Is(apiErr, context.DeadlineExceeded) {
+			return fmt.Errorf("waiting for the cluster API server was cancelled after %s (timeout %s) — the caller's context ended, so this is NOT a cluster fault%s: %w",
+				time.Since(started).Round(time.Second), timeout, lastProbeDetail(lastErr), apiErr)
+		}
 		if lastErr == nil {
 			lastErr = apiErr
 		}
@@ -114,6 +125,16 @@ func WaitClusterReady(ctx context.Context, timeout time.Duration, requireNode bo
 	}
 	fmt.Fprintf(stdout, "%d/%d nodes Ready.\n", lastReady, lastTotal)
 	return nil
+}
+
+// lastProbeDetail renders the last probe error as diagnostic context on a cancelled wait. It is
+// deliberately a parenthetical: on a cancellation the probe's verdict is stale evidence, useful to
+// read but never the diagnosis. Empty when no probe has failed yet. Pure/unit-tested.
+func lastProbeDetail(lastErr error) string {
+	if lastErr == nil {
+		return ""
+	}
+	return " (last probe error: " + lastErr.Error() + ")"
 }
 
 // reachClass names WHICH layer a reachability probe is failing at, so a timeout tells the operator
