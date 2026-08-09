@@ -36,7 +36,8 @@ import "strings"
 //     Principal/Condition shape as AWS IAM, so parseIAMPolicy + subjectIsBound are
 //     reused verbatim. The only Alibaba-specific difference is the trust ACTION
 //     (`sts:AssumeRole`, not AWS's `sts:AssumeRoleWithWebIdentity`) — hence a dedicated
-//     isALIFederatedTrust.
+//     isALIFederatedTrust. Like its AWS twin the action match is wildcard-aware
+//     (actionCovers): "sts:*" / "*" grants keep the role in scope (#2014).
 func alibabaControls(planned []plannedResource) []ControlResult {
 	return []ControlResult{
 		controlALINoStaticKeys(planned),
@@ -264,7 +265,8 @@ func parseALIPolicy(r plannedResource) (doc *iamDoc, present, evaluable bool) {
 // isALIFederatedTrust reports whether a RAM trust statement allows sts:AssumeRole for
 // a Federated (RRSA/OIDC) principal. This is the Alibaba analogue of AWS's
 // isFederatedWebIdentity — the difference is the action (`sts:AssumeRole`, whereas AWS
-// uses `sts:AssumeRoleWithWebIdentity`).
+// uses `sts:AssumeRoleWithWebIdentity`). Wildcard grants ("sts:*", "*") cover the
+// assume call and are strictly MORE permissive, so they count too (#2014).
 func isALIFederatedTrust(st iamStatement) bool {
 	if !strings.EqualFold(st.Effect, "Allow") {
 		return false
@@ -276,7 +278,7 @@ func isALIFederatedTrust(st iamStatement) bool {
 		return false
 	}
 	for _, a := range st.Action {
-		if strings.EqualFold(a, "sts:AssumeRole") {
+		if actionCovers(a, "sts:AssumeRole") {
 			return true
 		}
 	}

@@ -152,6 +152,59 @@ func TestControlFederatedTrustCoverageArms(t *testing.T) {
 	}
 }
 
+// TestControlFederatedTrustWildcardAction is the #2014 regression: a trust policy
+// granting "sts:*" (or "*") to a Federated principal is strictly MORE permissive
+// than the literal sts:AssumeRoleWithWebIdentity, so it must be judged, not dropped
+// out of scope into the vacuous-pass arm with subjectIsBound never consulted.
+func TestControlFederatedTrustWildcardAction(t *testing.T) {
+	trust := func(action, condition string) string {
+		return `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"` + action +
+			`","Principal":{"Federated":"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"}` + condition + `}]}`
+	}
+	boundSub := `,"Condition":{"StringEquals":{"token.actions.githubusercontent.com:sub":"repo:acme/infra:ref:refs/heads/main"}}`
+
+	t.Run("sts wildcard with no sub condition fails", func(t *testing.T) {
+		c := controlFederatedTrust([]plannedResource{{
+			address: "aws_iam_role.deployer", rtype: "aws_iam_role",
+			after: map[string]any{"assume_role_policy": trust("sts:*", "")},
+		}})
+		if c.Status != StatusFail || len(c.Findings) != 1 {
+			t.Fatalf("OIDC-001 = %q findings %+v, want fail with the missing-sub finding (coverage %q)", c.Status, c.Findings, c.Coverage)
+		}
+	})
+	t.Run("bare wildcard with no sub condition fails", func(t *testing.T) {
+		c := controlFederatedTrust([]plannedResource{{
+			address: "aws_iam_role.deployer", rtype: "aws_iam_role",
+			after: map[string]any{"assume_role_policy": trust("*", "")},
+		}})
+		if c.Status != StatusFail || len(c.Findings) != 1 {
+			t.Fatalf("OIDC-001 = %q findings %+v, want fail (coverage %q)", c.Status, c.Findings, c.Coverage)
+		}
+	})
+	t.Run("sts wildcard with pinned sub is an evaluated pass", func(t *testing.T) {
+		c := controlFederatedTrust([]plannedResource{{
+			address: "aws_iam_role.deployer", rtype: "aws_iam_role",
+			after: map[string]any{"assume_role_policy": trust("sts:*", boundSub)},
+		}})
+		if c.Status != StatusPass || len(c.Findings) != 0 {
+			t.Fatalf("OIDC-001 = %q findings %+v, want pass", c.Status, c.Findings)
+		}
+		// Pass must come from evaluable > 0, not the vacuous out-of-scope arm.
+		if strings.Contains(c.Coverage, "no resources in scope") {
+			t.Fatalf("coverage %q claims out-of-scope — the wildcard role was not judged", c.Coverage)
+		}
+	})
+	t.Run("alibaba twin: sts wildcard with no sub condition fails", func(t *testing.T) {
+		c := controlALIFederatedTrust([]plannedResource{{
+			address: "alicloud_ram_role.workload", rtype: "alicloud_ram_role",
+			after: map[string]any{"assume_role_policy_document": `{"Version":"1","Statement":[{"Effect":"Allow","Action":"sts:*","Principal":{"Federated":["acs:ram::1234567890123456:oidc-provider/ack-rrsa-cluster-demo"]}}]}`},
+		}})
+		if c.Status != StatusFail || len(c.Findings) != 1 {
+			t.Fatalf("ALI-OIDC-001 = %q findings %+v, want fail (coverage %q)", c.Status, c.Findings, c.Coverage)
+		}
+	})
+}
+
 // TestControlLeastPrivilegeAbsentPolicyBodyIsNotEvaluable: an inline policy resource
 // whose body is not in the plan at all is a coverage gap, never a pass.
 func TestControlLeastPrivilegeAbsentPolicyBodyIsNotEvaluable(t *testing.T) {

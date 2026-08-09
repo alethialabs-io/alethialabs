@@ -285,6 +285,36 @@ func TestAsStringNonString(t *testing.T) {
 
 // ── AWS federated-trust helpers ──────────────────────────────────────────────
 
+// TestActionCovers pins the wildcard-aware action matcher (#2014): globs expand
+// in the POLICY action only, `want` is always literal, and matching is
+// case-insensitive like IAM's.
+func TestActionCovers(t *testing.T) {
+	tests := []struct {
+		policy, want string
+		covers       bool
+	}{
+		{"sts:AssumeRoleWithWebIdentity", "sts:AssumeRoleWithWebIdentity", true},
+		{"STS:assumerolewithwebidentity", "sts:AssumeRoleWithWebIdentity", true},
+		{"*", "sts:AssumeRoleWithWebIdentity", true},
+		{"sts:*", "sts:AssumeRoleWithWebIdentity", true},
+		{"sts:AssumeRole*", "sts:AssumeRoleWithWebIdentity", true},
+		{"sts:AssumeRoleWithWebIdentit?", "sts:AssumeRoleWithWebIdentity", true},
+		{"sts:*", "sts:AssumeRole", true},
+		// Literal-vs-literal asymmetry: neither near-miss covers the other.
+		{"sts:AssumeRole", "sts:AssumeRoleWithWebIdentity", false},
+		{"sts:AssumeRoleWithWebIdentity", "sts:AssumeRole", false},
+		// A wildcard in `want` is NOT expanded — want is always a literal.
+		{"sts:AssumeRole", "sts:*", false},
+		{"ec2:*", "sts:AssumeRoleWithWebIdentity", false},
+		{"sts:Get*", "sts:AssumeRoleWithWebIdentity", false},
+	}
+	for _, tc := range tests {
+		if got := actionCovers(tc.policy, tc.want); got != tc.covers {
+			t.Errorf("actionCovers(%q, %q) = %v, want %v", tc.policy, tc.want, got, tc.covers)
+		}
+	}
+}
+
 // TestIsFederatedWebIdentity pins which trust statements OIDC-001 considers in scope.
 func TestIsFederatedWebIdentity(t *testing.T) {
 	fed := map[string]any{"Federated": "arn:aws:iam::1:oidc-provider/x"}
@@ -299,6 +329,12 @@ func TestIsFederatedWebIdentity(t *testing.T) {
 		{name: "federated but wrong action", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"sts:AssumeRole"}}},
 		{name: "federated web identity", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"sts:AssumeRoleWithWebIdentity"}}, want: true},
 		{name: "case insensitive", st: iamStatement{Effect: "allow", Principal: fed, Action: []string{"STS:AssumeRoleWithWebIdentity"}}, want: true},
+		// #2014: wildcard grants are strictly MORE permissive than the literal
+		// spelling — they must stay in scope, never fall out of it.
+		{name: "sts service wildcard", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"sts:*"}}, want: true},
+		{name: "full wildcard", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"*"}}, want: true},
+		{name: "prefix glob", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"sts:AssumeRole*"}}, want: true},
+		{name: "other-service wildcard", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"ec2:*"}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -919,6 +955,10 @@ func TestIsALIFederatedTrust(t *testing.T) {
 		{name: "service principal", st: iamStatement{Effect: "Allow", Principal: map[string]any{"Service": "ecs.aliyuncs.com"}, Action: []string{"sts:AssumeRole"}}},
 		{name: "wrong action", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"sts:AssumeRoleWithWebIdentity"}}},
 		{name: "rrsa trust", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"sts:AssumeRole"}}, want: true},
+		// #2014 twin: wildcard grants cover sts:AssumeRole and must stay in scope.
+		{name: "sts service wildcard", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"sts:*"}}, want: true},
+		{name: "full wildcard", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"*"}}, want: true},
+		{name: "other-service wildcard", st: iamStatement{Effect: "Allow", Principal: fed, Action: []string{"ram:*"}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

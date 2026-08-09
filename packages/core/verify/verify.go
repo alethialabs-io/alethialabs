@@ -551,6 +551,9 @@ func inspectPolicyDoc(address string, doc *iamDoc) (findings []Finding, failed, 
 
 // isFederatedWebIdentity reports whether a trust statement allows
 // sts:AssumeRoleWithWebIdentity for a Federated principal (an OIDC trust).
+// Wildcard grants count: an Action of "sts:*" or "*" covers the assume call
+// and is strictly MORE permissive than the literal spelling, so it must not
+// drop the role out of scope (that was the #2014 fail-open).
 func isFederatedWebIdentity(st iamStatement) bool {
 	if !strings.EqualFold(st.Effect, "Allow") {
 		return false
@@ -562,7 +565,7 @@ func isFederatedWebIdentity(st iamStatement) bool {
 		return false
 	}
 	for _, a := range st.Action {
-		if strings.EqualFold(a, "sts:AssumeRoleWithWebIdentity") {
+		if actionCovers(a, "sts:AssumeRoleWithWebIdentity") {
 			return true
 		}
 	}
