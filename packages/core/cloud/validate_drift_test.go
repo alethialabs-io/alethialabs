@@ -4,6 +4,7 @@
 package cloud
 
 import (
+	"math/bits"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -124,8 +125,11 @@ func TestNodeDiskFloorsMatchTemplates(t *testing.T) {
 type cidrFloorKind int
 
 const (
-	// `cidrsubnet(x, N - <prefix length>, …)` — newbits >= 0 requires prefix <= N, so the floor
-	// IS the scraped N.
+	// `cidrsubnet(x, N - <prefix length>, netnum)` — cidrsubnet() needs BOTH newbits >= 0 AND
+	// netnum < 2^newbits, so the floor is N minus the bits the largest carved netnum needs:
+	// N - bits.Len(maxNetnum). With a single subnet at netnum 0 that degenerates to N; with
+	// netnums 0..3 it is N - 2. Deriving only the newbits half is how #2050 shipped a floor
+	// two too wide.
 	cidrFloorFromPrefixExpr cidrFloorKind = iota
 	// `cidrsubnet(x, N, …)` — the result runs past /32 once prefix + N > 32, so the floor is
 	// 32 - N.
@@ -140,7 +144,7 @@ const (
 type cidrFloorCoupling struct {
 	kind     cidrFloorKind
 	rel      string         // repo-relative .tf carrying the expression
-	pattern  *regexp.Regexp // must match; captures the newbits integer for the two carved kinds
+	pattern  *regexp.Regexp // must match; captures the newbits integer for the two carved kinds, plus every carved netnum for the prefix-expr kind
 	absent   *regexp.Regexp // for the exempt kind: a pattern that must NOT match
 	constant int            // the Go constant, for the two carved kinds
 	why      string         // for the two non-carved kinds
@@ -150,13 +154,13 @@ var networkCIDRFloorCouplings = map[string]cidrFloorCoupling{
 	"azure": {
 		kind:     cidrFloorFromPrefixExpr,
 		rel:      "infra/templates/project/azure/modules/vnet/main.tf",
-		pattern:  regexp.MustCompile(`cidrsubnet\(var\.vnet_cidr,\s*(\d+)\s*-\s*local\.vnet_prefix_length`),
+		pattern:  regexp.MustCompile(`cidrsubnet\(var\.vnet_cidr,\s*(\d+)\s*-\s*local\.vnet_prefix_length,\s*(\d+)\)`),
 		constant: azureMaxNetworkPrefix,
 	},
 	"hetzner": {
 		kind:     cidrFloorFromPrefixExpr,
 		rel:      "infra/templates/project/hetzner/network.tf",
-		pattern:  regexp.MustCompile(`cidrsubnet\(local\.network_ip_range,\s*(\d+)\s*-\s*tonumber`),
+		pattern:  regexp.MustCompile(`cidrsubnet\(local\.network_ip_range,\s*(\d+)\s*-\s*tonumber\(split\("/", local\.network_ip_range\)\[1\]\),\s*(\d+)\)`),
 		constant: hetznerMaxNetworkPrefix,
 	},
 	"alibaba": {
@@ -207,10 +211,40 @@ func TestNetworkCIDRFloorsMatchTemplates(t *testing.T) {
 
 			switch coupling.kind {
 			case cidrFloorFromPrefixExpr:
-				got := scrapeInt(t, src, coupling.rel, coupling.pattern)
-				if got != coupling.constant {
-					t.Errorf("%s: %s carves at `%d - <prefix>`, so the floor is /%d, but validate.go "+
-						"encodes /%d", cloudName, coupling.rel, got, got, coupling.constant)
+				// EVERY carve matters, not just one: the floor is the target prefix N minus the
+				// newbits the largest carved netnum needs (netnum < 2^newbits is a hard tofu
+				// error, exactly like negative newbits). Matching a single expression here is
+				// how azure's floor shipped as /20 while the template carved four subnets
+				// (#2050) — so scrape them all, and hard-fail if the template's carves ever
+				// disagree on N.
+				matches := coupling.pattern.FindAllStringSubmatch(src, -1)
+				if matches == nil {
+					t.Fatalf("pattern %s not found in %s (format changed? re-anchor this coupling)",
+						coupling.pattern, coupling.rel)
+				}
+				targetPrefix, maxNetnum := 0, 0
+				for i, m := range matches {
+					n, err := strconv.Atoi(m[1])
+					if err != nil {
+						t.Fatalf("captured %q from %s is not an integer: %v", m[1], coupling.rel, err)
+					}
+					if i == 0 {
+						targetPrefix = n
+					} else if n != targetPrefix {
+						t.Fatalf("%s: %s carves at both `%d - <prefix>` and `%d - <prefix>` — the "+
+							"subnets no longer share one target prefix, so a single floor cannot be "+
+							"derived; re-anchor this coupling", cloudName, coupling.rel, targetPrefix, n)
+					}
+					netnum, err := strconv.Atoi(m[2])
+					if err != nil {
+						t.Fatalf("captured %q from %s is not an integer: %v", m[2], coupling.rel, err)
+					}
+					maxNetnum = max(maxNetnum, netnum)
+				}
+				if want := targetPrefix - bits.Len(uint(maxNetnum)); want != coupling.constant {
+					t.Errorf("%s: %s carves %d subnet(s) at `%d - <prefix>` up to netnum %d, so the "+
+						"floor is /%d, but validate.go encodes /%d", cloudName, coupling.rel,
+						len(matches), targetPrefix, maxNetnum, want, coupling.constant)
 				}
 
 			case cidrFloorFromFixedNewbits:
