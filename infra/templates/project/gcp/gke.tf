@@ -2,7 +2,13 @@ module "gke" {
   source = "./modules/gke"
   count  = var.provision_gke ? 1 : 0
 
-  depends_on = [module.vpc_network]
+  # The IAM binding is a HARD dependency, not an ordering preference: GKE performs the envelope
+  # encryption as its own service agent, and a cluster create against a key it cannot yet use fails
+  # outright. Without this, whether the cluster comes up depends on which resource tofu happens to
+  # finish first (#2004).
+  depends_on = [module.vpc_network, google_kms_crypto_key_iam_member.gke_secrets]
+
+  secrets_kms_key_id = local.gke_secrets_encryption ? google_kms_crypto_key.gke_secrets[0].id : ""
 
   project_id  = var.project_id
   region      = var.region

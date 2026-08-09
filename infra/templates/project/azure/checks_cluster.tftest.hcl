@@ -58,6 +58,17 @@ mock_provider "azurerm" {
     }
   }
 
+  # #2004: the AKS `key_management_service` block parses key_vault_key_id as a vault key URI, and
+  # rejects the random string a mock otherwise generates ("expected 2 or 3 path segments"). A
+  # mocked computed attribute has no shape unless one is given, and this one is parsed rather than
+  # merely carried — the same reason azurerm_key_vault below is mocked.
+  mock_resource "azurerm_key_vault_key" {
+    defaults = {
+      id                      = "https://mock-vault.vault.azure.net/keys/aks-secrets-encryption/00000000000000000000000000000001"
+      resource_versionless_id = "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/mock/providers/Microsoft.KeyVault/vaults/mock/keys/aks-secrets-encryption"
+    }
+  }
+
   # checks_secrets.tf asserts the vault URI starts with https://, which the generated string does not.
   mock_resource "azurerm_key_vault" {
     defaults = {
