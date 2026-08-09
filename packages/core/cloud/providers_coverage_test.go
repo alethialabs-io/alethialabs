@@ -94,7 +94,6 @@ func TestAlibabaProviderTfvars_FullConfig(t *testing.T) {
 		// is the CREATE gate, not an "is DNS on" flag. See TestExistingZoneSuppressesZoneCreation.
 		"alidns_enabled":             false,
 		"alidns_managed_certificate": true,
-		"application_waf_enabled":    true,
 		"rds_engine":                 "PostgreSQL",
 		"project_name":               "acme",
 		"alibaba_account":            "123456",
@@ -151,6 +150,13 @@ func TestAlibabaProviderTfvars_FullConfig(t *testing.T) {
 	}
 	if _, present := tf["application_waf"]; present {
 		t.Error("reserved key application_waf leaked into tfvars verbatim")
+	}
+	// …and the reserved key must not be honoured under its OWN tfvar name either. The rich config
+	// above sets `application_waf: true`, the loudest way a caller can ask for a WAF on this cloud;
+	// the offer is withdrawn (#1841), so the answer is nothing at all. See
+	// TestAlibabaProviderTfvars_CarriesNoWafSwitch for the full statement of why.
+	if _, present := tf["application_waf_enabled"]; present {
+		t.Error("alibaba emitted application_waf_enabled — the WAF offer is withdrawn on this cloud (#1841)")
 	}
 }
 

@@ -91,7 +91,7 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `cache:multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · | · |
 | `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `dns:managed_certificate` | — | 🟡 | ☸️ | ☸️ | — | · |
-| `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
+| `dns:waf_enabled` | — | 🟡 | 🟡 | 🟡 | — | · |
 | `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · | · |
@@ -174,6 +174,7 @@ predicate stops listing the cloud, the entry fails until it is corrected.
 | `cache:valkey` | hetzner | Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine. |
 | `dns:managed_certificate` | hetzner | Hetzner's managed certificate can only be presented by a Hetzner load balancer, and an Alethia Hetzner cluster takes traffic at the nodes instead — so there is no listener to attach one to, and cert-manager ships no Hetzner DNS01 solver to issue one in-cluster either. |
 | `dns:waf_enabled` | hetzner | Hetzner sells no web application firewall — the product does not exist. |
+| `dns:waf_enabled` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider models WAF 3.0 as an account-level purchase — the instance resource takes no arguments at all, so nothing distinguishes two of them, and its create/delete are CreatePostpaidInstance/ReleaseInstance. A per-project state model cannot own that safely: destroying one project would release the account's firewall out from under every other project sharing it. Buy a WAF 3.0 instance in your account and put it in front of your ingress from the WAF console. |
 | `cache:valkey` | azure | Azure Cache/Managed Redis has no Valkey engine — the product does not exist. |
 | `cache:valkey` | alibaba | ApsaraDB KVStore offers Redis or Memcache only — no Valkey engine. |
 | `database:postgres` | local | A local kind cluster has no managed services — data services run in-cluster. |

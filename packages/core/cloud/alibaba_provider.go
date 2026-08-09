@@ -50,12 +50,10 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 			managedCert = b
 		}
 	}
-	wafEnabled := config.DNS.WafEnabled
-	if v, ok := config.DNS.ProviderConfig["application_waf"]; ok {
-		if b, ok := v.(bool); ok {
-			wafEnabled = b
-		}
-	}
+	// No WAF term, unlike aws/azure/gcp: the offer is WITHDRAWN on Alibaba (#1841). Carrying
+	// config.DNS.WafEnabled to a tfvar here is what would resurrect it, and the template
+	// deliberately declares no `application_waf_enabled` variable to receive it — see
+	// infra/templates/project/alibaba/variables.tf and infra/offer-exclusions.yaml.
 
 	provisionNetwork := config.Network.ProvisionNetwork
 	if !provisionNetwork && config.Network.NetworkID == "" {
@@ -78,7 +76,7 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"provision_ack":       true,
 		"ack_cluster_version": resolveK8sVersion("alibaba", config.Cluster.ClusterVersion),
 
-		// DNS (Alibaba Cloud DNS) + WAF
+		// DNS (Alibaba Cloud DNS) — no WAF term, the offer is withdrawn (#1841).
 		// Same rule as aws and azure: CREATE the domain only when the caller brought none of their
 		// own. `alicloud_alidns_domain.this` was created unconditionally, so alibaba carried the
 		// #1992 defect too — naming a domain you already own registered a SECOND one. Found by
@@ -89,7 +87,6 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"alidns_domain":              config.DNS.DomainName,
 		"alidns_zone_name":           config.DNS.ZoneID,
 		"alidns_managed_certificate": managedCert,
-		"application_waf_enabled":    wafEnabled,
 
 		// MNS (queues + topics)
 		"create_mns": len(config.Queues) > 0 || len(config.Topics) > 0,
@@ -225,6 +222,10 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	tfvars["classification_tags"] = classificationTags(config, alibabaTagStyle)
 
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
+	// `application_waf` stays RESERVED even though nothing consumes it any more. The offer is
+	// withdrawn (#1841), so unreserving it would let a legacy provider_config key pass through
+	// verbatim as a tfvar the root template no longer declares — a value silently dropped at plan
+	// time, which reads to the user exactly like a switch that worked.
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "managed_certificate", "application_waf")
 
 	return tfvars

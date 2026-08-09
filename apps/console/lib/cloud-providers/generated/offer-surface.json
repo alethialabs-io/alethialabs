@@ -138,7 +138,9 @@
 				"alibaba",
 				"hetzner"
 			],
-			"unavailableOn": {},
+			"unavailableOn": {
+				"alibaba": "Unavailable on Alibaba Cloud. WAF 3.0 is an account-level purchase there — the provider gives no way to tell two instances apart, so a project that owned one would release the whole account's firewall when it was destroyed. Buy a WAF 3.0 instance in your account and put it in front of your ingress from the WAF console."
+			},
 			"notOfferedOn": []
 		},
 		{

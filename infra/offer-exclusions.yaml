@@ -134,6 +134,18 @@ exclusions:
   - offer: dns:waf_enabled
     cloud: hetzner
     reason: Hetzner sells no web application firewall — the product does not exist.
+  # Alibaba is a DIFFERENT shape from Hetzner's above, and the reason has to say so: the product
+  # exists and is good, but the provider models it as an ACCOUNT-level purchase. `alicloud_wafv3_instance`
+  # takes no arguments at all — four computed attributes and a `timeouts` block — so nothing could
+  # distinguish two instances, and its create/delete are CreatePostpaidInstance/ReleaseInstance. The
+  # companion data source accepts no filter arguments either, because there is nothing to filter by.
+  # Two projects in one account therefore share one firewall, and destroying either releases it for
+  # both. Withdrawn in #1841 while nothing was attached to it, which is the only cheap moment: once a
+  # binding lands, the same cross-project release drops a firewall inspecting live traffic.
+  - offer: dns:waf_enabled
+    cloud: alibaba
+    reason: Unavailable on Alibaba Cloud. The alicloud provider models WAF 3.0 as an account-level purchase — the instance resource takes no arguments at all, so nothing distinguishes two of them, and its create/delete are CreatePostpaidInstance/ReleaseInstance. A per-project state model cannot own that safely: destroying one project would release the account's firewall out from under every other project sharing it. Buy a WAF 3.0 instance in your account and put it in front of your ingress from the WAF console.
+    issue: '#1841'
 
   # ── Valkey on the clouds that have no Valkey product ────────────────────────────────
   # Checked against the pinned providers, not assumed: azurerm exposes `azurerm_managed_redis`
