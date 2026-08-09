@@ -433,3 +433,20 @@ func TestProviderTfvars_NosqlGlobalReplicas(t *testing.T) {
 		t.Errorf("a regional table must never emit replicas")
 	}
 }
+
+// NumCacheNodes is withdrawn on Azure (#1993): the old wiring flipped the
+// legacy tier to "Standard" and discarded the number (two nodes and twenty
+// produced the same plan), and Azure Managed Redis has no node/replica/shard
+// count for the number to become. The withdrawn knob must emit NOTHING — a
+// tier flip wearing a count's name is exactly what the gated-carrier state
+// exists to catch.
+func TestProviderTfvars_AzureCacheNodeCountWithdrawn(t *testing.T) {
+	three := 3
+	cfg := &types.ProjectConfig{
+		Caches: []types.ProjectCacheConfig{{Name: "c", NumCacheNodes: &three}},
+	}
+	tf := (&azureProvider{}).ProviderTfvars(cfg)
+	if v, present := tf["azure_cache_sku"]; present {
+		t.Errorf("azure_cache_sku = %v — the node count flips the tier again; it must emit nothing", v)
+	}
+}
