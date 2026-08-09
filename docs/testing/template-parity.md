@@ -207,6 +207,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `kvstore_engine_version` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `kvstore_instance_class` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `kvstore_multi_az` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
+| `kvstore_security_ips` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline | Alibaba's per-cloud spelling of the cache network allow-list capability (caches.allowed_cidr_blocks). AWS carries the same capability as redis_allowed_cidr_blocks; gcp cannot express a per-instance allow-list at all (VPC-scoped ceiling); azure can but its carrier does not exist yet (#2148) — remove this record once it does. (#2148) |
 | `kvstore_shard_count` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | uniform | ApsaraDB for Redis exposes shard_count as its own argument; azure's Managed Redis encodes topology in the SKU instead, so there is no equivalent knob to add there. |
 | `location` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `memorystore_auth_enabled` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |

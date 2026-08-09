@@ -456,6 +456,21 @@ variable "kvstore_shard_count" {
   description = "Number of cluster-mode shards for the Redis instance. 0 (the default) leaves the instance class's own topology alone."
 }
 
+# #2149. Extra source ranges permitted to reach the Redis instance — the cache allow-list the canvas
+# collects. Empty (the default) renders no security_ips argument at all, so an existing instance
+# keeps whatever whitelist it has.
+variable "kvstore_security_ips" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted to reach the Redis instance. Empty (the default) leaves the instance's whitelist alone."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.kvstore_security_ips : can(cidrhost(c, 0))])
+    error_message = "kvstore_security_ips must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}
+
 # #1996. Alibaba is NOT part of the azure/gcp serverless ceiling: alicloud_db_instance accepts a
 # serverless_config block, so the range is expressible. Both default to 0, which renders no block at
 # all — a provisioned (non-serverless) instance is unaffected.
