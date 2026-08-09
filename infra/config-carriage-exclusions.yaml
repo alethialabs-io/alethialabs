@@ -236,6 +236,15 @@ exclusions:
     cloud: alibaba
     reason: ApsaraDB for Redis is the only cache engine offered here, and it is what gets built — there is no second engine for the choice to select between.
 
+  # ── Cache network allow-list on Google Cloud ────────────────────────────────────────
+  # Memorystore sells no per-instance IP allow-list: access is bought by attaching the instance to
+  # a VPC (`authorized_network`) and governed by that network's own rules — there is no instance
+  # argument for the extra CIDRs to reach, on Redis or on Valkey. AWS carries this field (#1981);
+  # azure (#2148) and alibaba (#2149) can express it and are boarded in `baseline:` below.
+  - field: caches.allowed_cidr_blocks
+    cloud: gcp
+    reason: Memorystore has no per-cache IP allow-list — access is granted by the VPC the cache is attached to, so manage reachability with the network's own rules instead.
+
   # ── NoSQL: three table models, and the canvas control is DynamoDB-shaped ────────────
   # `partition_key`, `partition_key_type` and `capacity_mode` describe a DynamoDB table. The other
   # clouds provision genuinely different products, and the cells below are the places where the
@@ -370,16 +379,22 @@ baseline:
   # the providers that can honor it. They are boarded rather than fixed here because this lane built
   # the guard; the guard's whole point is that the next one of these cannot ship silently.
   #
-  # #1981 is the security-relevant one. The AWS template is FULLY WIRED — `redis_allowed_cidr_blocks`
-  # is declared in variables.tf, threaded through locals.tf and consumed by the ElastiCache security
-  # group — so every hop except the contract is already built, and the provider hardcodes an empty
-  # list because the field it would read does not exist. A customer types an allow-list, it saves,
-  # and the cache is provisioned open.
+  # caches.allowed_cidr_blocks (#1981, the security-relevant one) was here as dropped-by-type.
+  # FIXED at the contract and on AWS: the field is modelled and carried into
+  # `redis_allowed_cidr_blocks` (the template chain was already fully wired). gcp cannot express it
+  # (excluded above). The two clouds that CAN are boarded here until their carriers exist:
+  # azure via `azurerm_redis_firewall_rule` (one start/end pair per CIDR), alibaba via
+  # `alicloud_kvstore_instance.security_ips`.
   - field: caches.allowed_cidr_blocks
-    cloud: "*"
-    reason: The network allow-list you set on a cache is not applied — the cache is created with the template's own default access rules instead.
-    issue: "#1981"
-    state: dropped-by-type
+    cloud: azure
+    reason: The network allow-list you set on a cache is not applied on Azure yet — the cache is created with the template's default access rules instead.
+    issue: "#2148"
+    state: no-carrier
+  - field: caches.allowed_cidr_blocks
+    cloud: alibaba
+    reason: The network allow-list you set on a cache is not applied on Alibaba Cloud yet — the cache is created with the template's default access rules instead.
+    issue: "#2149"
+    state: no-carrier
   - field: nosql_tables.global_replicas
     cloud: "*"
     reason: The replica regions you choose for a table are not created — the table is provisioned in its own region only.
