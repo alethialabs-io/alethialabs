@@ -77,6 +77,7 @@ func EvaluateManifests(manifests []byte) (*Report, error) {
 var workloadKinds = map[string]bool{
 	"Deployment": true, "StatefulSet": true, "DaemonSet": true,
 	"ReplicaSet": true, "Job": true, "Pod": true, "ReplicationController": true,
+	"CronJob": true,
 }
 
 // podSpec returns the PodSpec of a workload resource ("" kinds → not a workload).
@@ -90,6 +91,21 @@ func podSpec(r k8sResource) (map[string]any, bool) {
 	}
 	if r.kind == "Pod" {
 		return spec, true
+	}
+	if r.kind == "CronJob" {
+		// A CronJob wraps a Job template one level deeper —
+		// spec.jobTemplate.spec.template.spec. Without this path a
+		// privileged, root, hostNetwork CronJob skipped every k8s control
+		// as "not a workload" and passed with zero findings (#2023).
+		jt, ok := spec["jobTemplate"].(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		js, ok := jt["spec"].(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		spec = js
 	}
 	tmpl, ok := spec["template"].(map[string]any)
 	if !ok {
