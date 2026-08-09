@@ -4,6 +4,8 @@
 import Link from "next/link";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
 
+import { VerifyReceipt } from "./verify-receipt";
+
 /**
  * Everything after the hero: two short beats and the close.
  *
@@ -12,25 +14,31 @@ import { AlethiaLogo } from "@repo/brand/alethia-logo";
  * there is no state here, and the scroll lift is CSS.
  */
 
-/** The console, shown as a real capture rather than a reconstruction. */
-export function ConsoleBeat() {
+/**
+ * The receipt, rendered from real engine output.
+ *
+ * This slot used to hold a full-width 16:9 placeholder waiting on a console
+ * screenshot, which read as a large empty rectangle — the worst thing on the
+ * page. The receipt needs no capture: it is genuine `packages/core/verify`
+ * output, and the download button emits JSON that verifies offline against the
+ * published key. Show the artifact rather than a promise of a picture of one.
+ */
+export function ReceiptBeat() {
 	return (
 		<section className="mkt-beat">
-			<div className="mkt-wrap">
-				<p className="mkt-tag">The console</p>
-				<h2 className="mkt-h2">The canvas is the design surface.</h2>
-				<p className="mkt-lede">
-					Every service and dependency on one canvas — configured in place, compiled
-					to OpenTofu, costed live. No YAML, no separate form.
-				</p>
-				<div className="mkt-plate mkt-lift">
-					{/* Replaced by demos/proofs/marketing-capture/stills/03-canvas.png once the
-					    seeder's enterprise org-mode lands — see the plan. */}
-					<span>
-						real capture — 03-canvas.png
-						<br />
-						console · project architecture
-					</span>
+			<div className="mkt-wrap mkt-split">
+				<div>
+					<p className="mkt-tag">The receipt</p>
+					<h2 className="mkt-h2">Every apply leaves evidence.</h2>
+					<p className="mkt-lede">
+						A deterministic gate runs between plan and apply and seals the result:
+						bound to the hash of the exact plan, the catalog that judged it, and an
+						ed25519 signature. Download it and check it yourself — it verifies
+						offline, without us.
+					</p>
+				</div>
+				<div className="mkt-lift">
+					<VerifyReceipt />
 				</div>
 			</div>
 		</section>

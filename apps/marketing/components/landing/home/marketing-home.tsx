@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { getGitHubStars } from "@/lib/github-stars";
-import { Close, ConsoleBeat, KeepBeat } from "./beats";
+import { Close, KeepBeat, ReceiptBeat } from "./beats";
 import { Chrome } from "./chrome";
 import { Footer } from "./footer";
 import { Header } from "./header";
@@ -25,7 +25,7 @@ export async function MarketingHome({ homeHref = "/" }: { homeHref?: "/" | "/hom
 			<Header stars={stars} homeHref={homeHref} />
 			<main>
 				<Hero />
-				<ConsoleBeat />
+				<ReceiptBeat />
 				<KeepBeat />
 				<Close />
 			</main>

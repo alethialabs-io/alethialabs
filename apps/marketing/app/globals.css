@@ -383,6 +383,19 @@
 
 /* ---- beats ---- */
 
+/* Copy beside the artifact rather than stacked above a full-width plate: the
+   stacked version left a very large empty rectangle in the middle of the page. */
+.mkt-split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
+  gap: 64px;
+  align-items: center;
+}
+@media (max-width: 900px) {
+  .mkt-split { grid-template-columns: 1fr; gap: 40px; }
+}
+
+
 .mkt-beat { position: relative; z-index: 2; border-top: 1px solid var(--border); padding: 110px 0; }
 .mkt-beat--sunken { background: var(--surface-sunken); }
 .mkt-wrap { max-width: 1180px; margin: 0 auto; padding: 0 64px; }
