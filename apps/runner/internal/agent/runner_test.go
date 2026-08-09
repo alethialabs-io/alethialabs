@@ -229,9 +229,9 @@ func TestSnapshotToProjectConfig(t *testing.T) {
 			wantRegion: "eu-central-1",
 		},
 		{
-			// The DB-row-spread lists are excluded from the unknown-key check on purpose
-			// (dbRowSpreadSnapshotKeys) — the console spreads whole `project_*` rows into them, so
-			// their bookkeeping columns must keep decoding leniently.
+			// A PRE-#1974 snapshot, spread rows and all. The console now emits an explicit pick, but
+			// reconcile/drift/probe/reap/retry re-dispatch STORED snapshots verbatim, so these keep
+			// arriving forever and must keep decoding (legacyComponentRowKeys).
 			name: "component rows keep their DB bookkeeping columns",
 			snapshot: map[string]any{
 				"project_name":      "rowproject",
@@ -370,8 +370,105 @@ func TestSnapshotToProjectConfig_ConsoleFixtureDecodes(t *testing.T) {
 	}
 }
 
-// The W1 services fixture is the console's REAL emitted `services` wire — whole `project_services`
-// DB rows, bookkeeping columns and all. It must decode, which is what dbRowSpreadSnapshotKeys buys.
+// The component-shape fixture (#1974) — the console's REAL emitted wire for one row of every
+// component kind, frozen by apps/console/tests/e2e-fixtures/t2-config-snapshot.test.ts. This is the
+// CI-time counterpart that let the wholesale `dbRowSpreadSnapshotKeys` exemption be removed: the
+// canonical Hetzner fixture carries EMPTY component lists, so before this nothing exercised the
+// subtree, and a strict runtime check with no CI-time detector is how you ship an outage.
+func TestSnapshotToProjectConfig_ComponentFixture(t *testing.T) {
+	const fixture = "../../../../test/e2e/fixtures/config_snapshot_components.aws.json"
+	raw, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatalf("read %s: %v", fixture, err)
+	}
+	var snapshot map[string]any
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		t.Fatalf("fixture is not a JSON object: %v", err)
+	}
+
+	vc, err := snapshotToProjectConfig(snapshot)
+	if err != nil {
+		t.Fatalf("the console's own frozen component snapshot must decode: %v", err)
+	}
+	// Every list must have survived the trip — an empty list would make this test vacuous, which
+	// is exactly the hole the Hetzner fixture left.
+	if n := len(vc.Databases); n != 1 {
+		t.Errorf("databases: decoded %d, want 1", n)
+	}
+	if n := len(vc.Caches); n != 1 {
+		t.Errorf("caches: decoded %d, want 1", n)
+	}
+	if n := len(vc.Queues); n != 1 {
+		t.Errorf("queues: decoded %d, want 1", n)
+	}
+	if n := len(vc.Topics); n != 1 {
+		t.Errorf("topics: decoded %d, want 1", n)
+	}
+	if n := len(vc.NosqlTables); n != 1 {
+		t.Errorf("nosql_tables: decoded %d, want 1", n)
+	}
+	if n := len(vc.Secrets); n != 1 {
+		t.Errorf("secrets: decoded %d, want 1", n)
+	}
+	if n := len(vc.ContainerRegistries); n != 1 {
+		t.Errorf("container_registries: decoded %d, want 1", n)
+	}
+	if n := len(vc.HelmRegistries); n != 1 {
+		t.Errorf("helm_registries: decoded %d, want 1", n)
+	}
+	if n := len(vc.StorageBuckets); n != 1 {
+		t.Errorf("storage_buckets: decoded %d, want 1", n)
+	}
+	if n := len(vc.Services); n != 1 {
+		t.Errorf("services: decoded %d, want 1", n)
+	}
+	// Values the runner actually acts on, proving the pick kept them rather than merely decoding.
+	if len(vc.Services) == 1 && vc.Services[0].ResolvedImage == "" {
+		t.Error("services[0].resolved_image is empty — the manifest renderer would fall back to :latest (W2 #591)")
+	}
+	if len(vc.Databases) == 1 && vc.Databases[0].Region != "us-east-1" {
+		t.Errorf("databases[0].region = %q, want the inherited project default", vc.Databases[0].Region)
+	}
+	if len(vc.Topics) == 1 && len(vc.Topics[0].Subscriptions) != 1 {
+		t.Errorf("topics[0].subscriptions: decoded %d, want 1", len(vc.Topics[0].Subscriptions))
+	}
+	if len(vc.Services) == 1 && len(vc.Services[0].Bindings) != 1 {
+		t.Errorf("services[0].bindings: decoded %d, want 1", len(vc.Services[0].Bindings))
+	}
+}
+
+// The gate this whole change exists to install: a NEW column on a `project_*` table that reaches
+// the snapshot without a matching field on types.ProjectConfig must FAIL, not be dropped silently.
+// Before #1974 every one of these was ignored, because the list was exempted wholesale.
+func TestSnapshotToProjectConfig_UnmodelledComponentColumnFailsClosed(t *testing.T) {
+	tests := []struct {
+		list    string
+		element map[string]any
+		wantKey string
+	}{
+		{"databases", map[string]any{"name": "main", "shiny_new_column": true}, "shiny_new_column"},
+		{"services", map[string]any{"name": "web", "sidecar_policy": "strict"}, "sidecar_policy"},
+		{"storage_buckets", map[string]any{"name": "assets", "object_lock_days": 30}, "object_lock_days"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.list, func(t *testing.T) {
+			vc, err := snapshotToProjectConfig(map[string]any{
+				"project_name": "p", "region": "us-east-1",
+				tt.list: []any{tt.element},
+			})
+			if err == nil {
+				t.Fatalf("expected an error for %s.%s, got config %+v", tt.list, tt.wantKey, vc)
+			}
+			if !strings.Contains(err.Error(), tt.wantKey) {
+				t.Errorf("error must name the offending column %q, got: %v", tt.wantKey, err)
+			}
+		})
+	}
+}
+
+// The W1 services fixture is the console's REAL emitted `services` wire. It predates the explicit
+// pick, so it still carries whole `project_services` rows — a pre-pick snapshot in miniature, and
+// therefore a standing check that legacyComponentRowKeys keeps those decoding.
 func TestSnapshotToProjectConfig_W1ServicesWireDecodes(t *testing.T) {
 	const fixture = "../../../../test/e2e/fixtures/w1_services.json"
 	raw, err := os.ReadFile(fixture)

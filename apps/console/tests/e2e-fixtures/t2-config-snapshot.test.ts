@@ -41,11 +41,24 @@ import {
 	cloudIdentities,
 	jobs,
 	projectAddons,
+	projectCaches,
 	projectCluster,
+	projectContainerRegistries,
+	projectDatabases,
 	projectEnvironments,
 	projectFabrics,
+	projectHelmRegistries,
+	projectNosqlTables,
+	projectQueues,
 	projectRepositories,
+	projectSecrets,
+	projectServices,
+	projectStorageBuckets,
+	projectTopics,
 	projects,
+	serviceBindingInjections,
+	serviceBindings,
+	topicSubscriptions,
 } from "@/lib/db/schema";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +66,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = join(
 	__dirname,
 	"../../../../test/e2e/fixtures/t2_config_snapshot.hetzner.json",
+);
+// The COMPONENT-shape fixture (#1974). Deliberately a second file, and deliberately AWS: the
+// canonical fixture above is Hetzner, where hetznerDataServicesToAddOns() folds every database /
+// cache / queue into `addons[]` — and `addons` is one of the two keys the Go A0.5 comparator
+// actually compares, so seeding components there would red TestA05SeedIsFaithfulToTheConsoleFixture
+// for a reason that has nothing to do with component shape.
+const COMPONENTS_FIXTURE = join(
+	__dirname,
+	"../../../../test/e2e/fixtures/config_snapshot_components.aws.json",
 );
 
 type Rows = unknown[];
@@ -216,6 +238,345 @@ describe("T2 config_snapshot fidelity fixture (BYOC A0.5)", () => {
 		// Deep-equal against the committed fixture: any drift between buildConfigSnapshot and the
 		// shared fixture the Go harness trusts reds here (regenerate intentionally).
 		expect(JSON.parse(serialized)).toEqual(JSON.parse(readFileSync(FIXTURE, "utf8")));
+	});
+});
+
+// #1974 — the CI-time counterpart to the runner's strict decode.
+//
+// buildConfigSnapshot used to spread whole `project_*` DB rows (`...d`) into the ten component
+// lists, so every element carried its table's bookkeeping and write-back columns. The runner could
+// not enforce its unknown-key check over those subtrees, because the fixture above carries EMPTY
+// component lists — a strict runtime check with no CI-time counterpart is how you ship an outage.
+//
+// This is that counterpart. Every seeded row below carries EVERY column of its real table,
+// including the ones the pick drops — a row trimmed to the expected output would prove nothing.
+// The frozen fixture is then decoded by the Go side (TestSnapshotToProjectConfig_ComponentFixture,
+// apps/runner/internal/agent/runner_test.go) through the SAME strict path a real deploy takes, so a
+// column that enters the snapshot without a matching field on types.ProjectConfig reds a PR here
+// instead of hard-failing a deploy at runtime.
+//
+// Regenerate after an intentional shape change:
+//   UPDATE_FIXTURES=1 pnpm -F console test t2-config-snapshot
+const NOW = "2026-01-01T00:00:00.000Z";
+/** Bookkeeping every component table carries (minus estimated_monthly_cost, absent on three). */
+const BOOKKEEPING = {
+	project_id: "p1",
+	environment_id: "env-1",
+	status: "PENDING",
+	status_message: null,
+	created_at: NOW,
+	updated_at: NOW,
+} as const;
+
+/** canonicalSelect(), re-pointed at AWS and layered with one row of every component kind. */
+function componentSelect(): Map<unknown, Rows> {
+	const select = canonicalSelect();
+	select.set(cloudIdentities, [{ id: "ci-1", provider: "aws" }]);
+	select.set(projects, [
+		{
+			id: "p1",
+			user_id: "user-1",
+			org_id: "org-1",
+			cloud_identity_id: "ci-1",
+			project_name: "alethia-fixture",
+			slug: "alethia-fixture",
+			region: "us-east-1",
+			iac_version: "1.0.0",
+		},
+	]);
+	// cloud_identity_id / region are left NULL on every row on purpose: that is the inheritance
+	// path resolvePlacement() takes, and the one a pick must not break.
+	select.set(projectDatabases, [
+		{
+			id: "db-1",
+			...BOOKKEEPING,
+			name: "primary",
+			cloud_identity_id: null,
+			region: null,
+			engine_family: "postgres",
+			engine: "aurora-postgresql",
+			engine_version: "16.4",
+			instance_class: "db.serverless",
+			min_capacity: 0.5,
+			max_capacity: 4,
+			storage_gb: 100,
+			replicas: 2,
+			port: 5432,
+			backup_retention_days: 7,
+			iam_auth: true,
+			endpoint: "primary.cluster-abc.us-east-1.rds.amazonaws.com",
+			reader_endpoint: "primary.cluster-ro-abc.us-east-1.rds.amazonaws.com",
+			provider_config: { log_exports: ["postgresql"] },
+			provider_outputs: { secret_ref: "arn:aws:secretsmanager:…" },
+			estimated_monthly_cost: 120,
+		},
+	]);
+	select.set(projectCaches, [
+		{
+			id: "cache-1",
+			...BOOKKEEPING,
+			name: "sessions",
+			cloud_identity_id: null,
+			region: null,
+			engine: "redis",
+			engine_version: "7.1",
+			memory_gb: 8,
+			storage_gb: 16,
+			node_type: "cache.t4g.medium",
+			num_cache_nodes: 2,
+			multi_az: true,
+			allowed_cidr_blocks: ["10.0.0.0/16"],
+			endpoint: "sessions.abc.ng.0001.use1.cache.amazonaws.com",
+			reader_endpoint: "sessions-ro.abc.ng.0001.use1.cache.amazonaws.com",
+			estimated_monthly_cost: 45,
+		},
+	]);
+	select.set(projectQueues, [
+		{
+			id: "queue-1",
+			...BOOKKEEPING,
+			name: "jobs",
+			cloud_identity_id: null,
+			region: null,
+			ordered: true,
+			storage_gb: 8,
+			visibility_timeout: 30,
+			message_retention: 345600,
+			provider_config: { fifo_throughput_limit: "perQueue" },
+			endpoint: "https://sqs.us-east-1.amazonaws.com/1234/jobs.fifo",
+			provider_outputs: { secret_ref: "arn:aws:secretsmanager:…" },
+			estimated_monthly_cost: 3,
+		},
+	]);
+	select.set(projectTopics, [
+		{
+			id: "topic-1",
+			...BOOKKEEPING,
+			name: "events",
+			cloud_identity_id: null,
+			region: null,
+			estimated_monthly_cost: 1,
+		},
+	]);
+	select.set(topicSubscriptions, [
+		{
+			topic_id: "topic-1",
+			protocol: "https",
+			endpoint: "https://example.test/hook",
+			ordinal: 0,
+		},
+	]);
+	select.set(projectNosqlTables, [
+		{
+			id: "nosql-1",
+			...BOOKKEEPING,
+			name: "sessions",
+			cloud_identity_id: null,
+			region: null,
+			table_type: "standard",
+			partition_key: "pk",
+			partition_key_type: "S",
+			sort_key: "sk",
+			sort_key_type: "S",
+			capacity_mode: "on_demand",
+			point_in_time_recovery: true,
+			global_replicas: ["eu-west-1"],
+			provider_config: { partition_key_path: "/pk" },
+			estimated_monthly_cost: 9,
+		},
+	]);
+	select.set(projectSecrets, [
+		{
+			id: "secret-1",
+			...BOOKKEEPING,
+			name: "api-key",
+			cloud_identity_id: null,
+			region: null,
+			provider: "native",
+			generate: true,
+			length: 32,
+			special_chars: true,
+			provider_config: {},
+		},
+	]);
+	select.set(projectContainerRegistries, [
+		{
+			id: "reg-1",
+			...BOOKKEEPING,
+			name: "apps",
+			cloud_identity_id: null,
+			region: null,
+			provider: "native",
+			repository_url: "1234.dkr.ecr.us-east-1.amazonaws.com/apps",
+			immutable_tags: true,
+			vulnerability_scanning: true,
+			provider_config: {},
+		},
+	]);
+	select.set(projectHelmRegistries, [
+		{
+			id: "helm-1",
+			...BOOKKEEPING,
+			name: "charts",
+			cloud_identity_id: null,
+			region: null,
+			provider: "ghcr",
+			provider_config: { repo_url: "oci://ghcr.io/acme/charts" },
+		},
+	]);
+	select.set(projectStorageBuckets, [
+		{
+			id: "bucket-1",
+			...BOOKKEEPING,
+			name: "assets",
+			cloud_identity_id: null,
+			region: null,
+			versioning: true,
+			encryption_enabled: true,
+			public_access: false,
+			cors_origins: ["https://example.test"],
+			provider_config: {},
+			estimated_monthly_cost: 2,
+		},
+	]);
+	select.set(projectServices, [
+		{
+			id: "svc-1",
+			...BOOKKEEPING,
+			name: "web",
+			cloud_identity_id: null,
+			region: null,
+			type: "deployment",
+			source: { kind: "repo", repo_url: "https://github.com/acme/web", path: "apps/web" },
+			build: { dockerfile: "Dockerfile", context: "apps/web" },
+			env: [{ name: "LOG_LEVEL", value: "info" }],
+			ports: [{ name: "http", container_port: 8080, protocol: "TCP" }],
+			replicas: 3,
+			resources: {
+				requests: { cpu: "100m", memory: "128Mi" },
+				limits: { cpu: "500m", memory: "512Mi" },
+			},
+			probe: { type: "http", path: "/healthz", port: 8080 },
+			// The one write-back column that MUST survive the pick (W2 #591).
+			resolved_image: "1234.dkr.ecr.us-east-1.amazonaws.com/apps@sha256:deadbeef",
+			estimated_monthly_cost: 30,
+		},
+	]);
+	select.set(serviceBindings, [
+		{
+			id: "bind-1",
+			service_id: "svc-1",
+			chart_workload_id: null,
+			target_kind: "database",
+			target_name: "primary",
+			target_address: null,
+			output_endpoint: null,
+			output_port: null,
+			output_credential_secret: null,
+			ordinal: 0,
+		},
+	]);
+	select.set(serviceBindingInjections, [
+		{ binding_id: "bind-1", env: "DATABASE_URL", from_facet: "endpoint", ordinal: 0 },
+	]);
+	return select;
+}
+
+describe("component lists are an explicit pick, not a DB-row spread (#1974)", () => {
+	it("the REAL buildConfigSnapshot freezes the committed AWS component shape", async () => {
+		const snapshot = (await frozenSnapshot(componentSelect())) as Record<string, unknown>;
+
+		const serialized = `${JSON.stringify(snapshot, null, "\t")}\n`;
+		if (process.env.UPDATE_FIXTURES) {
+			mkdirSync(dirname(COMPONENTS_FIXTURE), { recursive: true });
+			writeFileSync(COMPONENTS_FIXTURE, serialized);
+		}
+		expect(
+			existsSync(COMPONENTS_FIXTURE),
+			`fixture missing — regenerate with UPDATE_FIXTURES=1`,
+		).toBe(true);
+		expect(JSON.parse(serialized)).toEqual(
+			JSON.parse(readFileSync(COMPONENTS_FIXTURE, "utf8")),
+		);
+	});
+
+	// The fixture above is a deep-equal, so it pins the shape but does not SAY what the shape means.
+	// These name the invariant directly, so a regeneration that quietly re-admits a bookkeeping
+	// column cannot pass review as "just a fixture refresh".
+	it("drops every bookkeeping and write-back column from all ten lists", async () => {
+		const snapshot = (await frozenSnapshot(componentSelect())) as Record<
+			string,
+			Array<Record<string, unknown>>
+		>;
+		const banned = [
+			"id",
+			"project_id",
+			"environment_id",
+			"status",
+			"status_message",
+			"estimated_monthly_cost",
+			"created_at",
+			"updated_at",
+			"endpoint",
+			"reader_endpoint",
+			"provider_outputs",
+			"repository_url",
+			"storage_gb",
+			"replicas",
+			"allowed_cidr_blocks",
+			"global_replicas",
+		];
+		const lists = [
+			"databases",
+			"caches",
+			"queues",
+			"topics",
+			"nosql_tables",
+			"secrets",
+			"container_registries",
+			"helm_registries",
+			"storage_buckets",
+			"services",
+		];
+		for (const key of lists) {
+			expect(snapshot[key], `${key} must be seeded, or this proves nothing`).toHaveLength(1);
+			for (const banned_key of banned) {
+				// `replicas` is a real contract field on services; it is only bookkeeping on databases.
+				if (key === "services" && banned_key === "replicas") continue;
+				expect(
+					snapshot[key][0],
+					`${key}[0] still carries the DB-row column ${banned_key}`,
+				).not.toHaveProperty(banned_key);
+			}
+		}
+	});
+
+	it("keeps the fields the runner actually reads, including the write-back it needs", async () => {
+		const snapshot = (await frozenSnapshot(componentSelect())) as Record<
+			string,
+			Array<Record<string, unknown>>
+		>;
+		// resolved_image is a write-back column, but stripping it sends every repo-sourced deploy
+		// back to `:latest` — the W2 #591 regression. It is the exception to the rule above.
+		expect(snapshot.services[0].resolved_image).toBe(
+			"1234.dkr.ecr.us-east-1.amazonaws.com/apps@sha256:deadbeef",
+		);
+		// resolvePlacement still inherits the project default through a NULL row column.
+		expect(snapshot.databases[0]).toMatchObject({
+			cloud_provider: "aws",
+			cloud_identity_id: "ci-1",
+			region: "us-east-1",
+		});
+		// The nested lists survive, and are built by the normalized readers (not row spreads).
+		expect(snapshot.topics[0].subscriptions).toEqual([
+			{ protocol: "https", endpoint: "https://example.test/hook" },
+		]);
+		expect(snapshot.services[0].bindings).toEqual([
+			{
+				target: { kind: "database", name: "primary" },
+				inject: [{ env: "DATABASE_URL", from: "endpoint" }],
+			},
+		]);
 	});
 });
 
