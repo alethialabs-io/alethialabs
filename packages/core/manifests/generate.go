@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
@@ -235,7 +236,7 @@ spec:
       {{- end }}
       containers:
         - name: {{ .Name }}
-          image: {{ .Image }}
+          image: {{ printf "%q" .Image }}
           ports:
             - containerPort: {{ .Port }}
           {{- if or .Env .SecretEnv }}
@@ -288,7 +289,7 @@ spec:
                 - ALL
         {{- range .Sidecars }}
         - name: {{ .Name }}
-          image: {{ .Image }}
+          image: {{ printf "%q" .Image }}
           {{- if .Args }}
           args:
             {{- range .Args }}
@@ -366,7 +367,7 @@ metadata:
     app.kubernetes.io/name: {{ .Name }}
 spec:
   rules:
-    - host: {{ .Host }}
+    - host: {{ printf "%q" .Host }}
       http:
         paths:
           - path: /
@@ -379,6 +380,25 @@ spec:
 {{- end }}
 `))
 
+// imageRefRe is the OCI image-reference charset: registry host (with optional :port), path
+// components, and an optional `:tag` or `@sha256:digest`. Deliberately a CHARSET-and-shape check,
+// not a full distribution-spec parser — the property that matters here is that every rune it admits
+// is inert in a YAML scalar, so no value can append keys to the container map.
+//
+// A leading rune is required so the empty string and a bare `:tag` are refused; the length cap is
+// well above any real digest URI and keeps a pathological value out of a committed manifest.
+var imageRefRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,511}$`)
+
+// isValidImageRef reports whether s is a plausible, YAML-inert container image reference.
+func isValidImageRef(s string) bool { return imageRefRe.MatchString(s) }
+
+// ingressHostRe is the RFC-1123 DNS subdomain form an Ingress rule host takes, plus the leading
+// `*.` wildcard k8s permits. Same reasoning as imageRefRe: no rune here can break a YAML scalar.
+var ingressHostRe = regexp.MustCompile(`^(\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+
+// isValidIngressHost reports whether s is a plausible, YAML-inert Ingress host.
+func isValidIngressHost(s string) bool { return len(s) <= 253 && ingressHostRe.MatchString(s) }
+
 // RenderApp renders the Deployment (+ Service + optional Ingress) YAML for one app.
 // An empty image is an ERROR, not a ":latest" default — a mutable/untagged image fails
 // the elench verify gate (IMAGE-001), so fabricating one here would ship a broken app.
@@ -386,6 +406,26 @@ func RenderApp(app App) (string, error) {
 	a := app.normalize()
 	if a.Image == "" {
 		return "", fmt.Errorf("render %s: no container image (repo-sourced services must be BUILT first — resolved_image is empty)", a.Name)
+	}
+	// FAIL CLOSED on values that cannot be what they claim to be. These reach a YAML document the
+	// runner commits to the GitOps repo and ArgoCD syncs, and the console validates App.Image with
+	// nothing but `z.string().min(1)` — no charset, no length (#2028).
+	//
+	// The template now quotes them as well, and that alone stops the injection. This is the second
+	// layer, and it is the one that gives an operator a comprehensible error instead of a Deployment
+	// that fails to sync for reasons nobody can read. It also holds if a future template edit drops
+	// a `printf "%q"` — which is exactly how these two lines came to be unquoted while the env
+	// values beside them were not.
+	if !isValidImageRef(a.Image) {
+		return "", fmt.Errorf("render %s: container image %q is not a valid image reference", a.Name, a.Image)
+	}
+	for _, s := range a.Sidecars {
+		if !isValidImageRef(s.Image) {
+			return "", fmt.Errorf("render %s: sidecar %s image %q is not a valid image reference", a.Name, s.Name, s.Image)
+		}
+	}
+	if a.Host != "" && !isValidIngressHost(a.Host) {
+		return "", fmt.Errorf("render %s: ingress host %q is not a valid hostname", a.Name, a.Host)
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, a); err != nil {
