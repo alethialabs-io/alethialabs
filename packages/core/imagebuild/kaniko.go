@@ -148,7 +148,7 @@ func RenderBuildJob(service types.ProjectServiceConfig, opts Options) (string, e
 	// The Job name and app.kubernetes.io/name label are rendered as "build-<name>", so bound the
 	// name to leave room for that prefix — otherwise a long service name overflows the 63-char
 	// DNS-1123 limit and the Job is un-appliable (#1001).
-	name := dns1123Max(service.Name, dnsLabelMaxLen-len(buildNamePrefix))
+	name := buildJobNameStem(service.Name)
 	if name == "" {
 		return "", fmt.Errorf("build: service has no usable name")
 	}
@@ -228,6 +228,27 @@ const dnsLabelMaxLen = 63
 // app.kubernetes.io/name label. It MUST match the "build-" literal in jobTmpl; RenderBuildJob
 // subtracts its length from the DNS-label budget so the rendered name never overflows 63 chars.
 const buildNamePrefix = "build-"
+
+// buildJobNameStem is the `{{ .Name }}` the template renders after the "build-" literal: the
+// sanitized service name, bounded so prefix+stem still fits a 63-char DNS label.
+func buildJobNameStem(serviceName string) string {
+	return dns1123Max(serviceName, dnsLabelMaxLen-len(buildNamePrefix))
+}
+
+// BuildJobName returns the Job name RenderBuildJob will emit for a service — the ONE derivation any
+// caller that needs to address that Job should use.
+//
+// Exported because the runner needs it: apps/runner/internal/agent/build.go re-derived the name by
+// hand for its pre-delete, `kubectl get job` watch and digest reads, and the copy sanitized without
+// applying the length budget. Past 57 sanitized characters the two answers diverged, the Job ran
+// fine, and the watcher looked for a name that does not exist — surfacing as "watch build job
+// failed", which points nowhere near the cause (#2032).
+//
+// A second hand-written copy is what created that bug, so this is a function to CALL, not a rule to
+// restate. RenderBuildJob and this share buildJobNameStem, so they cannot disagree.
+func BuildJobName(serviceName string) string {
+	return buildNamePrefix + buildJobNameStem(serviceName)
+}
 
 // dns1123 lowercases + strips a string to a valid DNS-1123 label (<=63 chars). Copied from
 // packages/core/manifests (kept local so this package owns its scope and takes no
