@@ -52,3 +52,13 @@ variable "shard_count" {
   default     = 0
   description = "Number of cluster-mode shards. 0 (the default) leaves the instance class's own topology alone."
 }
+
+# #2149. The cache allow-list, plus the VPC's own range (unioned at the root — security_ips REPLACES
+# the whitelist, so the cluster's network must stay on it). Verified as a real argument on
+# alicloud_kvstore_instance against the pinned provider rather than assumed. Empty (the default)
+# renders no argument at all, leaving the instance's existing whitelist untouched.
+variable "security_ips" {
+  type        = list(string)
+  default     = []
+  description = "IP ranges permitted to reach the instance. Empty (the default) leaves the instance's whitelist alone."
+}

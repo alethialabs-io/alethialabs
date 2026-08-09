@@ -401,6 +401,34 @@ func TestProviderTfvars_CacheAllowedCidrBlocks(t *testing.T) {
 	})
 }
 
+// The cache allow-list reaches the ApsaraDB KVStore whitelist tfvar on Alibaba
+// (`kvstore_security_ips` -> `alicloud_kvstore_instance.security_ips`, probed
+// against the pinned provider), and an unset list emits NOTHING — the template
+// then renders no security_ips argument, so an existing cache keeps whatever
+// whitelist it has (#2149, the alibaba leg of #1981).
+func TestProviderTfvars_AlibabaCacheSecurityIps(t *testing.T) {
+	t.Run("carried when set", func(t *testing.T) {
+		cfg := &types.ProjectConfig{
+			Caches: []types.ProjectCacheConfig{
+				{Name: "c", AllowedCidrBlocks: []string{"10.1.0.0/16", "192.168.0.0/24"}},
+			},
+		}
+		tf := (&alibabaProvider{}).ProviderTfvars(cfg)
+		got, _ := tf["kvstore_security_ips"].([]string)
+		if len(got) != 2 || got[0] != "10.1.0.0/16" || got[1] != "192.168.0.0/24" {
+			t.Errorf("kvstore_security_ips = %v, want the CIDRs the canvas collected", tf["kvstore_security_ips"])
+		}
+	})
+	t.Run("unset emits nothing so existing whitelists are untouched", func(t *testing.T) {
+		cfg := &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c"}}}
+		tf := (&alibabaProvider{}).ProviderTfvars(cfg)
+		if v, ok := tf["kvstore_security_ips"]; ok {
+			t.Errorf("kvstore_security_ips = %v when no list was set — emitting it would REPLACE an "+
+				"existing instance's whitelist instead of leaving it alone", v)
+		}
+	})
+}
+
 // A global table's replica regions reach the template's `replicas` entry, a
 // regional table never emits one, and unset renders the same shape as before
 // (#1982).
