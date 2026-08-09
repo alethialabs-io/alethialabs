@@ -234,9 +234,13 @@ func connStubFormTyping(t *testing.T, answers ...string) {
 	t.Cleanup(func() { runHuhForm = prev })
 }
 
-// connStubConfirm replaces the yes/no dialog with a fixed answer.
+// connStubConfirm replaces the yes/no dialog with a fixed answer. It forces the
+// interactive mode on too: a destructive command consults noInputMode before the
+// prompt, and a headless test process is never a terminal, so without this it takes
+// the "--yes is required" fatal arm and the stubbed answer is never asked for.
 func connStubConfirm(t *testing.T, answer bool) {
 	t.Helper()
+	hygCliConfirmInteractive(t)
 	prev := confirm
 	confirm = func(string, string) bool { return answer }
 	t.Cleanup(func() { confirm = prev })

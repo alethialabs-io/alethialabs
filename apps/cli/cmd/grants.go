@@ -147,6 +147,10 @@ func runGrantsAdd(c apiClient, out io.Writer, params api.AddGrantParams) error {
 	return nil
 }
 
+// grantsRemoveYes is the --yes opt-in: skip the confirmation prompt (and make the
+// command usable with --no-input).
+var grantsRemoveYes bool
+
 var grantsRemoveCmd = &cobra.Command{
 	Use:   "remove <id>",
 	Short: "Revoke an access grant",
@@ -156,7 +160,7 @@ var grantsRemoveCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		if !confirm("Revoke this grant?", "The principal loses this access. This cannot be undone.") {
+		if !confirmDestructive(grantsRemoveYes, "Revoke this grant?", "The principal loses this access. This cannot be undone.") {
 			return
 		}
 		if err := runGrantsRemove(api.NewClient(token), os.Stdout, args[0]); err != nil {
@@ -175,6 +179,7 @@ func runGrantsRemove(c apiClient, out io.Writer, id string) error {
 }
 
 func init() {
+	addYesFlag(grantsRemoveCmd, &grantsRemoveYes)
 	grantsAddCmd.Flags().StringVar(&grantPrincipalType, "principal-type", "user", "Principal kind (user or team)")
 	grantsAddCmd.Flags().StringVar(&grantPrincipalID, "principal", "", "Principal id (user or team id)")
 	grantsAddCmd.Flags().StringVar(&grantEffect, "effect", "allow", "Effect (allow or deny)")
