@@ -124,6 +124,20 @@ func transformURLToHTTPS(rawURL string) string {
 }
 
 // getAuthMethod returns the appropriate auth method for this GIT instance.
+//
+// The choice is made by TRANSPORT, not by token presence alone. go-git's HTTP transport rejects an
+// ssh.PublicKeysCallback outright with transport.ErrInvalidAuthMethod ("invalid auth method")
+// before any request is sent, so handing an SSH agent method to an https URL does not degrade — it
+// fails the clone.
+//
+// That is what killed the token-less public-clone fallback (#2035). NewGITWithToken normalizes a URL
+// to https, and the runner's build path deliberately clears the token — "No git token (%v);
+// attempting public clone." — so on any host with SSH_AUTH_SOCK set (a developer machine, the native
+// local runner, the sandbox box) getAuth SUCCEEDED with an SSH method and the anonymous clone of a
+// public repo never reached the network. Clone's error branch could not save it: that branch only
+// nils the auth out when getAuth FAILS, and here it succeeded.
+//
+// A nil AuthMethod is go-git's anonymous request, which is exactly what a public clone wants.
 func (g *GIT) getAuth() (transport.AuthMethod, error) {
 	if g.Token != "" {
 		return &githttp.BasicAuth{
@@ -131,7 +145,32 @@ func (g *GIT) getAuth() (transport.AuthMethod, error) {
 			Password: g.Token,
 		}, nil
 	}
+	if isHTTPTransport(g.RepoURL) {
+		// No token on an http(s) remote: anonymous. An SSH agent cannot authenticate this URL and
+		// attaching one is strictly worse than sending nothing.
+		return nil, nil
+	}
 	return getSSHAuthMethod()
+}
+
+// isHTTPTransport reports whether rawURL is fetched over http(s) rather than ssh.
+//
+// normalizeRepoURL has already turned a bare `host/owner/repo` into https, and an scp-style
+// `git@host:owner/repo` into ssh://, so by the time this is asked the scheme is explicit. The
+// scp-style form is still matched defensively for a RepoURL set directly on the struct rather than
+// through the constructor.
+func isHTTPTransport(rawURL string) bool {
+	u := strings.TrimSpace(rawURL)
+	switch {
+	case strings.HasPrefix(u, "https://"), strings.HasPrefix(u, "http://"):
+		return true
+	case strings.HasPrefix(u, "ssh://"), strings.HasPrefix(u, "git://"), strings.HasPrefix(u, "git@"):
+		return false
+	default:
+		// normalizeRepoURL assumes https for a bare host/path, so mirror that assumption rather than
+		// falling through to an SSH method the URL cannot use.
+		return true
+	}
 }
 
 func getSSHAuthMethod() (transport.AuthMethod, error) {
