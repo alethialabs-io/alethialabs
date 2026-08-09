@@ -133,6 +133,9 @@
 			"table_type": "standard",
 			"capacity_mode": "on_demand",
 			"point_in_time_recovery": true,
+			"global_replicas": [
+				"eu-west-1"
+			],
 			"cloud_provider": "aws",
 			"cloud_identity_id": "ci-1",
 			"region": "us-east-1"

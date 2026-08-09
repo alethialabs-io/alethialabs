@@ -400,3 +400,36 @@ func TestProviderTfvars_CacheAllowedCidrBlocks(t *testing.T) {
 		}
 	})
 }
+
+// A global table's replica regions reach the template's `replicas` entry, a
+// regional table never emits one, and unset renders the same shape as before
+// (#1982).
+func TestProviderTfvars_NosqlGlobalReplicas(t *testing.T) {
+	cfg := &types.ProjectConfig{
+		NosqlTables: []types.ProjectNosqlConfig{
+			{Name: "g", TableType: "global", PartitionKey: "pk", GlobalReplicas: []string{"eu-west-1", "us-east-1"}},
+			{Name: "r", TableType: "standard", PartitionKey: "pk", GlobalReplicas: []string{"eu-west-1"}},
+			{Name: "g2", TableType: "global", PartitionKey: "pk"},
+		},
+	}
+	tf := (&awsProvider{}).ProviderTfvars(cfg)
+
+	global, _ := tf["ddb_global_table_configuration"].([]map[string]interface{})
+	if len(global) != 2 {
+		t.Fatalf("global tables = %d, want 2", len(global))
+	}
+	reps, _ := global[0]["replicas"].([]string)
+	if len(reps) != 2 || reps[0] != "eu-west-1" || reps[1] != "us-east-1" {
+		t.Errorf("global table replicas = %v, want the regions the canvas collected", global[0]["replicas"])
+	}
+	if _, present := global[1]["replicas"]; present {
+		t.Errorf("a global table with no chosen regions must render the template default, not an empty override")
+	}
+	regional, _ := tf["ddb_table_configuration"].([]map[string]interface{})
+	if len(regional) != 1 {
+		t.Fatalf("regional tables = %d, want 1", len(regional))
+	}
+	if _, present := regional[0]["replicas"]; present {
+		t.Errorf("a regional table must never emit replicas")
+	}
+}

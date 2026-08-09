@@ -1308,11 +1308,9 @@ async function buildConfigSnapshot(
 			//  · `nosql_tables.provider_config` — no producer and no consumer. Nothing writes it
 			//    (no inspector field, no CLI field) and nosql does not route through
 			//    mergeProviderConfig, which only databases, cluster and DNS use.
-			//  · `nosql_tables.global_replicas` — user-settable in the inspector and the CLI,
-			//    but dropped on every deploy today because it has no Go field (#1982). The pick
-			//    makes the drop explicit rather than accidental, and does not change behaviour.
-			//    (`caches.allowed_cidr_blocks` was the other member of this class until #1981
-			//    gave it a field and a carrier — it is picked below.)
+			//    (`caches.allowed_cidr_blocks` and `nosql_tables.global_replicas` were members
+			//    of this class — collected but unmodelled — until #1981/#1982 gave each a Go
+			//    field and a carrier; both are picked below.)
 			databases: databases.map((d) => ({
 				name: d.name,
 				engine: d.engine,
@@ -1360,6 +1358,7 @@ async function buildConfigSnapshot(
 				table_type: n.table_type,
 				capacity_mode: n.capacity_mode,
 				point_in_time_recovery: n.point_in_time_recovery,
+				global_replicas: n.global_replicas,
 				...resolvePlacement(n),
 			})),
 			secrets: secrets.map((s) => ({

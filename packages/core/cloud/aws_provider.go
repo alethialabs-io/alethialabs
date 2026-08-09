@@ -742,6 +742,15 @@ func buildDDBTables(tables []types.ProjectNosqlConfig, tableType string) []map[s
 			"billing_mode":                  ddbCapacityMode(string(t.CapacityMode)),
 			"enable_point_in_time_recovery": t.PointInTimeRecovery,
 		}
+		// The regions the canvas collected for a global table. The template's
+		// object type takes `replicas = optional(list(string), [])` and the
+		// dynamodb module consumes it — this entry was the only missing hop, so
+		// a global table was built with the default replica set instead of the
+		// chosen one (#1982). Only a global table has replicas; unset renders
+		// the same empty default as before.
+		if tableType == "global" && len(t.GlobalReplicas) > 0 {
+			entry["replicas"] = t.GlobalReplicas
+		}
 		result = append(result, entry)
 	}
 	return result
