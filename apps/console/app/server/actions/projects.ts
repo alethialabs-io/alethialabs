@@ -81,6 +81,7 @@ import {
 	DEFAULT_K8S_VERSION,
 	getProvider,
 	keylessUnavailableReasonForCloud,
+	wafUnavailableReasonForCloud,
 } from "@/lib/cloud-providers";
 import type { NodeKind } from "@/components/design-project/canvas/graph/types";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
@@ -990,6 +991,25 @@ async function buildConfigSnapshot(
 				dbEngineFamily(db),
 			);
 			if (reason) throw keylessAuthGateError(db.name, reason);
+		}
+
+		// Fail-closed WAF gate (#1841): the DNS component asks for an application WAF on a cloud
+		// where Alethia does not provision one. Same reasoning as the keyless gate above — the
+		// canvas disables the switch with this same sentence, but the CLI (lib/cli/project-components.ts
+		// has `waf_enabled` in its editable allowlist), an AI-composed graph and rows saved before
+		// the withdrawal all reach here without passing the canvas.
+		//
+		// It THROWS rather than clearing the flag, and the message has to name the remedy, because
+		// the disabled switch gives the user no way to turn it off by hand: opening the project in
+		// the canvas normalizes it into a staged change (use-canvas-store's setGraph) that saving
+		// clears.
+		if (dns?.waf_enabled) {
+			const reason = wafUnavailableReasonForCloud(identity.provider);
+			if (reason) {
+				throw new Error(
+					`Web application firewall: ${reason} Open this project in the canvas and save the staged change to turn the WAF switch off, or move the project to a cloud where Alethia provisions one.`,
+				);
+			}
 		}
 
 		if (identity.provider === "hetzner") {

@@ -283,6 +283,21 @@ exclusions:
     reason: Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate.
     issue: "#1824"
 
+  # ── Alibaba WAF — withdrawn in #1841, and a DIFFERENT shape from Hetzner's above ────
+  # Hetzner's entry is "the product does not exist". Alibaba's exists and is good; what it cannot do
+  # is be OWNED by one project. `alicloud_wafv3_instance` takes no arguments at all — four computed
+  # attributes and a `timeouts` block — so nothing distinguishes two of them, and its create/delete
+  # are CreatePostpaidInstance/ReleaseInstance. The companion data source accepts no filter arguments
+  # either, because there is nothing to filter by. So the purchase is account-scoped AT THE API
+  # LEVEL, not by modelling preference: two projects in one account share one firewall, and
+  # destroying either releases it for both. The provider therefore carries no `WafEnabled` term and
+  # the template declares no `application_waf_enabled` variable to receive one — this cell is a
+  # no-carrier BY CONSTRUCTION, which is what makes it an exclusion rather than a gap to board.
+  - field: dns.waf_enabled
+    cloud: alibaba
+    reason: Unavailable on Alibaba Cloud. The alicloud provider models WAF 3.0 as an account-level purchase — the instance resource takes no arguments at all, so nothing distinguishes two of them, and destroying one project would release the account's firewall out from under every other project sharing it. Buy a WAF 3.0 instance in your account and put it in front of your ingress from the WAF console.
+    issue: "#1841"
+
   # ── Keyless database auth on Alibaba — settled by #1510 ─────────────────────────────
   # RAM governs ApsaraDB's control plane. `ModifyPGHbaConfig` enumerates every auth method RDS
   # PostgreSQL accepts and it is upstream Postgres's list with no cloud-identity method in it, and

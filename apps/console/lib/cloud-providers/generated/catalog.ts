@@ -3087,14 +3087,7 @@ export const WAF_OPTIONS: Record<CloudProviderSlug, WafOption[]> = {
 			}
 		],
 		"hetzner": [],
-		"alibaba": [
-			{
-				"providerConfigKey": "application_waf",
-				"label": "Alibaba Cloud WAF",
-				"description": "Web Application Firewall (WAF 3.0) for the ingress domain",
-				"cost": "usage-based"
-			}
-		]
+		"alibaba": []
 	};
 
 export interface CertOption {

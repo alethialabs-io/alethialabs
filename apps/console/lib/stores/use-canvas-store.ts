@@ -14,6 +14,7 @@ import type { ByoChartState, ChartWorkloadState } from "@/app/server/actions/byo
 import type { IacGroup } from "@/lib/canvas/iac-inventory";
 import {
 	normalizeKeylessAuth,
+	normalizeWafEnabled,
 	type CloudProviderSlug,
 } from "@/lib/cloud-providers";
 import {
@@ -265,6 +266,39 @@ function normalizeKeylessAcrossNodes(nodes: CanvasNode[]): CanvasNode[] {
 		);
 		return config === n.data.config ? n : { ...n, data: { ...n.data, config } };
 	});
+}
+
+/**
+ * Clear `waf_enabled` on the DNS node when the cloud does not offer a WAF.
+ *
+ * Same shape and same reason as `normalizeKeylessAcrossNodes` above, for the offer withdrawn on
+ * Alibaba by #1841 — without it, a project designed on AWS with the WAF on and re-placed on Alibaba
+ * carries `waf_enabled: true` into the config snapshot, the deployment payload, the clone path and
+ * env promotions, under a disabled toggle reading "off".
+ *
+ * One difference worth knowing: this one ALSO runs at load (`setGraph`), which the keyless
+ * normalizer does not. It has to. The switch renders disabled, so a user cannot toggle a stale
+ * `true` off by hand, and the deploy gate will refuse the project until it is cleared — normalizing
+ * at load is what turns that dead end into a staged change they can simply save.
+ */
+function normalizeWafAcrossNodes(nodes: CanvasNode[]): CanvasNode[] {
+	const projectProvider =
+		nodes.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ?? null;
+	let changed = false;
+	const next = nodes.map((n) => {
+		if (n.data.kind !== "dns") return n;
+		const config = normalizeWafEnabled(
+			n.data.config,
+			n.data.provider ?? projectProvider,
+		);
+		if (config === n.data.config) return n;
+		changed = true;
+		return { ...n, data: { ...n.data, config } };
+	});
+	// Returns the SAME array when nothing was coerced. `setGraph` derives `dirty` from that identity,
+	// and a `.map()` result is always a fresh array — without this, every project load would open
+	// with unsaved changes.
+	return changed ? next : nodes;
 }
 
 /** For array kinds, suffix the config's `name` so it's unique among same-kind nodes. */
@@ -520,12 +554,18 @@ export const useCanvasStore = create<CanvasStore>()(
 					seeded.find((n) => n.id === PROJECT_NODE_ID)?.data.provider ??
 					null;
 				const withRoot = applyLayout(seeded, layoutZoned(seeded, provider));
+				// A project saved before its cloud's WAF offer was withdrawn (#1841) still carries
+				// `waf_enabled: true`. Normalize the DESIRED graph but NOT the baseline below, so
+				// the coercion appears in the staged-changes bar as a pending change the user can
+				// see and save — rather than either a silent rewrite or a disabled switch they have
+				// no way to clear. `dirty` follows suit, so Save is live.
+				const normalized = normalizeWafAcrossNodes(withRoot);
 				set({
-					nodes: withRoot,
-					edges: deriveEdges(withRoot),
+					nodes: normalized,
+					edges: deriveEdges(normalized),
 					selectedIds: [],
 					inspectorNodeId: null,
-					dirty: false,
+					dirty: normalized !== withRoot,
 					past: [],
 					future: [],
 					// The loaded graph is the saved state → it becomes the diff baseline. (Chart
@@ -770,9 +810,11 @@ export const useCanvasStore = create<CanvasStore>()(
 			},
 
 			updateNodeConfig: (id, patch) => {
-				const next = normalizeKeylessAcrossNodes(
-					get().nodes.map((n) =>
-						n.id === id ? { ...n, data: withConfig(n.data, patch) } : n,
+				const next = normalizeWafAcrossNodes(
+					normalizeKeylessAcrossNodes(
+						get().nodes.map((n) =>
+							n.id === id ? { ...n, data: withConfig(n.data, patch) } : n,
+						),
 					),
 				);
 				set({ nodes: next, edges: deriveEdges(next), dirty: true });
@@ -780,11 +822,13 @@ export const useCanvasStore = create<CanvasStore>()(
 
 			setNodeIdentity: (id, cloudIdentityId, provider) => {
 				get().commit();
-				const next = normalizeKeylessAcrossNodes(
-					get().nodes.map((n) =>
-						n.id === id
-							? { ...n, data: withPlacement(n.data, cloudIdentityId, provider) }
-							: n,
+				const next = normalizeWafAcrossNodes(
+					normalizeKeylessAcrossNodes(
+						get().nodes.map((n) =>
+							n.id === id
+								? { ...n, data: withPlacement(n.data, cloudIdentityId, provider) }
+								: n,
+						),
 					),
 				);
 				set({ nodes: next, edges: deriveEdges(next), dirty: true });

@@ -535,32 +535,34 @@ func TestInfraServiceDecisions_WAFNeverOutrunsItsAttachmentSite(t *testing.T) {
 	}
 }
 
-// ALL FOUR clouds that sell a WAF now EXPORT a reference — aws, gcp and alibaba on dev, azure with
-// this lane — so what this table still checks is `wafNoACLReason`: the fixture hands every provider
-// an AWS ARN, and a cloud reading a different field sees "", which is the "you left the switch off"
-// path.
+// THREE clouds EXPORT a WAF reference — aws, gcp and azure — so what this table checks is
+// `wafNoACLReason`: the fixture hands every provider an AWS ARN, and a cloud reading a different
+// field sees "", which is the "nothing was built" path.
 //
-// Each must say WHICH of three things it is, so "we did not wire it yet" is never mistaken for
-// "this cloud cannot", nor for "you left the switch off":
+// Each must say WHICH of four things it is, so "we did not wire it yet" is never mistaken for
+// "this cloud cannot", nor for "you left the switch off", nor for "we do not offer it here":
 //
 //	· gcp     — its Cloud Armor policy is exported and ATTACHABLE (a BackendConfig binds it to the
 //	            GCLB backend service), so the only remaining reason nothing is attached is an unset
 //	            switch. Keeping "no ingress to attach it to yet" would send the operator to fix a
 //	            gap that no longer exists.
-//	· azure   — the same move, one lane later: this lane gives it the Application Gateway its
-//	            policy binds to via firewall_policy_id, so "no ingress" would now be false here too.
-//	· alibaba — exports a reference and can bind NOTHING to it, so its skip is about the BINDING
-//	            rather than the build. It has its own pair of tests below.
+//	· azure   — the same move, one lane later: the Application Gateway its policy binds to via
+//	            firewall_policy_id exists, so "no ingress" would now be false here too.
+//	· alibaba — the offer is WITHDRAWN (#1841). Its reason must describe an account-level purchase
+//	            Alethia will not make, never a switch to turn on. Its own test below pins that
+//	            negative, which this table cannot express.
 //	· hetzner — sells no managed WAF at all.
 //
-// Three lanes edited this table in sequence and each edit was independent: alibaba moved out (it
-// exports a reference), then gcp's reason moved from the ingress arm to the switch arm, then
-// azure's did. The pattern is worth naming — every ingress lane that lands makes "no ingress to
-// attach it to yet" false for its own cloud, and the row has to move with it.
+// Four lanes edited this table in sequence and each edit was independent: alibaba moved out (it
+// briefly exported a reference), then gcp's reason moved from the ingress arm to the switch arm,
+// then azure's did, then alibaba moved back in with the opposite meaning. The pattern is worth
+// naming — every ingress lane that lands makes "no ingress to attach it to yet" false for its own
+// cloud, and the row has to move with it.
 func TestInfraServiceDecisions_WAFPerCloudSkipReasons(t *testing.T) {
 	cases := map[string]string{
 		"gcp":     "no cloud armor policy was built",
 		"azure":   "no waf policy was built",
+		"alibaba": "does not provision a waf on alibaba cloud",
 		"hetzner": "sells no managed waf",
 	}
 	for provider, want := range cases {
@@ -579,52 +581,61 @@ func TestInfraServiceDecisions_WAFPerCloudSkipReasons(t *testing.T) {
 	}
 }
 
-// ── alibaba: built, billed, bound to nothing ─────────────────────────────────────
+// ── alibaba: the offer is withdrawn ──────────────────────────────────────────────
 //
-// The whole point of exporting `waf_instance_id` is that the two states below stop looking
-// identical. Before it, an Alibaba project with the WAF switch ON and one with it OFF produced
-// the same record — and the switch-on case is the one that costs money for zero filtering.
+// The template briefly bought a WAF 3.0 postpaid instance behind the canvas switch and exported
+// `waf_instance_id` so the record could say "built, billed, filtering nothing" (#1842). #1841
+// withdrew the offer instead: `alicloud_wafv3_instance` takes no arguments at all, so nothing
+// distinguishes two instances, and its create/delete are CreatePostpaidInstance/ReleaseInstance —
+// an ACCOUNT-level purchase, which a per-project state model cannot own without one project's
+// destroy releasing the firewall of every other project in the account.
+//
+// So the two states these tests used to separate no longer exist: there is no switch, no instance
+// and no reference. What must be pinned now is the opposite — that none of them come back quietly.
 
-// Switch off: no instance was bought, and the reason must say so WITHOUT promising that turning
-// it on would filter anything, because on this cloud it would not.
-func TestInfraServiceDecisions_WAFOffOnAlibaba(t *testing.T) {
+// The reason must describe a purchase Alethia will not make, and must NOT promise a switch. This is
+// the negative the per-cloud table above cannot express: a substring match would still pass if the
+// text drifted back to "turn the WAF switch on", which is a control the canvas now renders disabled.
+func TestInfraServiceDecisions_WAFWithdrawnOnAlibaba(t *testing.T) {
 	d := decisionFor(t, InfraServiceDecisions(&InfraFacts{Provider: "alibaba"}), "waf")
 	if d.Status != infraStatusSkipped {
-		t.Fatalf("alibaba waf (switch off): want skipped, got %s (%s)", d.Status, d.Reason)
+		t.Fatalf("alibaba waf: want skipped, got %s (%s)", d.Status, d.Reason)
 	}
-	if !strings.Contains(d.Reason, "no WAF instance was built") {
-		t.Errorf("alibaba waf skip reason should say no instance was built, got %q", d.Reason)
+	if !strings.Contains(strings.ToLower(d.Reason), "account-level") {
+		t.Errorf("alibaba waf skip reason should name the account-level purchase that forced the withdrawal, got %q", d.Reason)
 	}
-	if !strings.Contains(strings.ToLower(d.Reason), "filter nothing") {
-		t.Errorf("alibaba waf skip reason must not imply that turning the switch on would filter traffic, got %q", d.Reason)
-	}
-}
-
-// Switch on: the instance id reaches the decision, and the decision reports the money —
-// provisioned, billed, nothing behind it — plus the SPECIFIC provider ceiling, so an operator
-// can tell this apart from a lane that simply has not landed.
-func TestInfraServiceDecisions_WAFBuiltButUnbindableOnAlibaba(t *testing.T) {
-	f := &InfraFacts{Provider: "alibaba", AlibabaWAFInstanceID: "waf_v3prepaid_public_cn-0xldbqt0007"}
-	d := decisionFor(t, InfraServiceDecisions(f), "waf")
-	if d.Status != infraStatusSkipped {
-		t.Fatalf("alibaba waf (instance built): want skipped, got %s (%s)", d.Status, d.Reason)
-	}
-	if !strings.Contains(d.Reason, "waf_v3prepaid_public_cn-0xldbqt0007") {
-		t.Errorf("alibaba waf skip reason should carry the instance id, got %q", d.Reason)
-	}
-	for _, want := range []string{"billed", "alicloud_wafv3_domain", "cloud-native"} {
-		if !strings.Contains(d.Reason, want) {
-			t.Errorf("alibaba waf skip reason should mention %q, got %q", want, d.Reason)
+	for _, forbidden := range []string{"turn the WAF switch on", "turn the waf switch on"} {
+		if strings.Contains(d.Reason, forbidden) {
+			t.Errorf("alibaba waf skip reason must not promise a switch — the offer is withdrawn (#1841), got %q", d.Reason)
 		}
 	}
 }
 
-// THE FAIL-OPEN GUARD. A managed ArgoCD URL on Alibaba — which the ingress lanes may yet
-// deliver — must NOT flip the WAF to "attached", because nothing in the template binds the
-// instance to that ingress. Alibaba's ABSENCE from wafAttachments is what stops it, and this is
-// the test that notices if someone deletes the check because "argocdURLDecision already covers it".
+// THE FAIL-OPEN GUARD. A managed ArgoCD URL on Alibaba — which the ingress lanes may yet deliver —
+// must NOT flip the WAF to "attached". Two independent things stop it and BOTH are asserted here,
+// because either one alone would be a silent fail-open if the other were removed:
+//
+//	· wafWebACLRef exports nothing for alibaba, so there is no reference to attach. A lane that
+//	  re-added an arm here would be re-opening the withdrawn offer, and this is where that shows up.
+//	· alibaba is ABSENT from wafAttachments, so even a reference could not bind. This is the check
+//	  someone deletes because "argocdURLDecision already covers it".
 func TestInfraServiceDecisions_WAFNeverAttachesOnAlibabaEvenWithAManagedURL(t *testing.T) {
-	f := &InfraFacts{Provider: "alibaba", AlibabaWAFInstanceID: "waf_v3prepaid_public_cn-0xldbqt0007"}
+	// Every WAF-ish field the struct has, so the guard is not passing merely because the fixture
+	// is empty.
+	f := &InfraFacts{
+		Provider:            "alibaba",
+		WAFWebACLArn:        "arn:aws:wafv2:us-east-1:123:regional/webacl/app/0c4e",
+		GCPArmorPolicy:      "armor-policy",
+		AzureWAFPolicyID:    "/subscriptions/x/waf-policy",
+		AzureAppGatewayName: "agw-test",
+	}
+	if ref := wafWebACLRef(f); ref != "" {
+		t.Errorf("alibaba must export no WAF reference — the offer is withdrawn (#1841); got %q", ref)
+	}
+	if _, ok := wafAttachments["alibaba"]; ok {
+		t.Error("alibaba gained a wafAttachments entry — it has nothing to bind, and an entry here is what would let a reference report itself attached")
+	}
+
 	// Force the ingress half open the only way the table allows, so the test is about the WAF
 	// gate rather than about alibaba's current absence from argocdURLGates.
 	argocdURLGates["alibaba"] = providerDecision{installedReason: "installed (test fixture)"}
@@ -635,7 +646,7 @@ func TestInfraServiceDecisions_WAFNeverAttachesOnAlibabaEvenWithAManagedURL(t *t
 	}
 	d := decisionFor(t, InfraServiceDecisions(f), "waf")
 	if d.Status != infraStatusSkipped {
-		t.Fatalf("alibaba waf must stay skipped even with a managed ArgoCD URL — nothing binds the instance to it; got %s (%s)", d.Status, d.Reason)
+		t.Fatalf("alibaba waf must stay skipped even with a managed ArgoCD URL — nothing is built and nothing could bind it; got %s (%s)", d.Status, d.Reason)
 	}
 }
 
