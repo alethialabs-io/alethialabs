@@ -364,13 +364,22 @@
     opacity var(--dur-2) var(--ease),
     translate var(--dur-3) var(--ease-out);
 }
+/* The `/ ""` is the CSS alt text, and it is NOT decoration — it is what keeps these
+   glyphs out of the ACCESSIBLE NAME. Generated content participates in name
+   computation, so a bare `content: "["` renamed every control wearing this class from
+   "Add" to "[Add]": a screen reader announced the brackets, and
+   `getByRole("button", { name: "Add", exact: true })` stopped matching. It reached all
+   155 console call sites of @repo/ui/button at once, because the class sits on the base
+   variant. Measured in Chromium — bare content: no match; with `/ ""`: match, identical
+   to a control carrying no bracket at all. Any future ::before/::after that draws a mark
+   rather than saying a word needs the same empty alt text. */
 .vx-bracket::before {
-  content: "[";
+  content: "[" / "";
   inset-inline-start: var(--bk-inset);
   translate: var(--bk-shift) -50%;
 }
 .vx-bracket::after {
-  content: "]";
+  content: "]" / "";
   inset-inline-end: var(--bk-inset);
   translate: calc(var(--bk-shift) * -1) -50%;
 }
