@@ -113,6 +113,20 @@ func ReadDataEndpoints(addons []types.AddOnInstall, stdout, stderr io.Writer) ma
 		// `app.kubernetes.io/instance` label carries it. That label is what we match on — not a
 		// guessed chart fullname.
 		release := AddOnAppName(a.ID)
+		// Fail closed on identifiers that could not have come from the console's own resolver, for
+		// the reason addon_secrets.go states beside k8sNameRe: they arrive via the DB-persisted
+		// config snapshot, and they interpolate into a kubectl command string that
+		// utils.ExecuteCommand runs through `bash -c`. Every sibling in this package already checks
+		// this; data_endpoints.go was the one path that did not (#2020).
+		//
+		// Reported distinctly from "no Service found" below. Both end in the console showing no
+		// endpoint, but the causes are nothing alike — one is a chart that has not settled yet, the
+		// other is a snapshot that should never have reached the runner, and an operator reading
+		// "no Service found" for the latter would go looking in entirely the wrong place.
+		if !k8sNameRe.MatchString(a.Namespace) || !k8sNameRe.MatchString(release) {
+			fmt.Fprintf(stderr, "Warning: refusing to read data service %s — namespace %q / release %q is not a valid kubernetes name; skipping\n", a.ID, a.Namespace, release)
+			continue
+		}
 		ep, ok := readOneEndpoint(release, a.Namespace, stderr)
 		if !ok {
 			fmt.Fprintf(stderr, "Warning: no Service found for data service %s (namespace %s) — the console will show no endpoint\n", a.ID, a.Namespace)
@@ -127,6 +141,12 @@ func ReadDataEndpoints(addons []types.AddOnInstall, stdout, stderr io.Writer) ma
 // readOneEndpoint finds the primary (and, when present, reader) Service for one release, plus the
 // Secret the chart minted for it.
 func readOneEndpoint(release, namespace string, stderr io.Writer) (DataEndpoint, bool) {
+	// Restated rather than left to the caller: this builds a shell command, and the one thing a
+	// shell-command builder must not do is trust that somebody upstream checked. ReadDataEndpoints
+	// already refuses these, so this only fires for a future caller.
+	if !k8sNameRe.MatchString(release) || !k8sNameRe.MatchString(namespace) {
+		return DataEndpoint{}, false
+	}
 	var svcs svcList
 	cmd := fmt.Sprintf(
 		"kubectl get svc -n %s -l app.kubernetes.io/instance=%s -o json",
@@ -183,6 +203,10 @@ func readOneEndpoint(release, namespace string, stderr io.Writer) (DataEndpoint,
 // readSecretRef returns "<namespace>/<name>" of the credential Secret the chart minted for this
 // release — a REFERENCE only. Never reads or returns the Secret's data.
 func readSecretRef(release, namespace string, stderr io.Writer) string {
+	// Same restatement as readOneEndpoint, same reason.
+	if !k8sNameRe.MatchString(release) || !k8sNameRe.MatchString(namespace) {
+		return ""
+	}
 	var secrets secretList
 	cmd := fmt.Sprintf(
 		"kubectl get secret -n %s -l app.kubernetes.io/instance=%s -o json",
