@@ -27,20 +27,6 @@
   --shadow-xl: 0 30px 80px oklch(0 0 0 / 0.62);
 }
 
-/* blinking terminal caret */
-.ah-caret {
-  display: inline-block;
-  width: 7px;
-  height: 15px;
-  background: var(--text-primary);
-  vertical-align: text-bottom;
-  animation: ah-blink 1.1s steps(1) infinite;
-}
-@keyframes ah-blink {
-  0%, 50% { opacity: 1; }
-  50.01%, 100% { opacity: 0; }
-}
-
 /* hero "live" pulse dot in the badge */
 .ah-pulse {
   width: 7px;
@@ -87,115 +73,20 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ah-caret, .ah-pulse { animation: none; }
+  .ah-pulse { animation: none; }
   .ah-reveal { opacity: 1; transform: none; transition: none; }
-}
-
-/* ============================================================
-   Bespoke animated diagrams (viz-*). Restrained, geometric, monochrome motion
-   that illustrates each concept — SVG + CSS keyframes, always-alive loops, and
-   fully static (final composed frame) under prefers-reduced-motion.
-   ============================================================ */
-
-.viz {
-  width: 100%;
-  height: auto;
-  display: block;
-  overflow: visible;
-}
-.viz text {
-  font-family: var(--font-mono);
-  fill: var(--text-tertiary);
-}
-
-/* Play diagram motion only once its section scrolls into view (Reveal adds .in),
-   so draw-in animations aren't missed and off-screen loops don't burn cycles. */
-[class*="viz-"] { animation-play-state: paused; }
-.ah-reveal.in [class*="viz-"] { animation-play-state: running; }
-
-/* generic building blocks */
-@keyframes viz-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes viz-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@keyframes viz-breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
-
-/* stroke draw-in (dasharray/offset set inline on the path) */
-@keyframes viz-draw { to { stroke-dashoffset: 0; } }
-
-/* ---- connect: short-lived tokens travel hub → cloud, then dissolve ---- */
-@keyframes viz-tok-a { 0% { opacity: 0; transform: translate(0,0); } 12% { opacity: 1; } 78% { opacity: 1; transform: translate(150px,-70px); } 92%,100% { opacity: 0; transform: translate(158px,-74px); } }
-@keyframes viz-tok-b { 0% { opacity: 0; transform: translate(0,0); } 12% { opacity: 1; } 78% { opacity: 1; transform: translate(158px,0); } 92%,100% { opacity: 0; transform: translate(166px,0); } }
-@keyframes viz-tok-c { 0% { opacity: 0; transform: translate(0,0); } 12% { opacity: 1; } 78% { opacity: 1; transform: translate(150px,70px); } 92%,100% { opacity: 0; transform: translate(158px,74px); } }
-.viz-tok-a { animation: viz-tok-a 3.6s cubic-bezier(0.4,0,0.2,1) infinite; }
-.viz-tok-b { animation: viz-tok-b 3.6s cubic-bezier(0.4,0,0.2,1) infinite 0.6s; }
-.viz-tok-c { animation: viz-tok-c 3.6s cubic-bezier(0.4,0,0.2,1) infinite 1.2s; }
-.viz-hub { animation: viz-breathe 3.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
-
-/* ---- pipeline: a proof token flows repo → plan → verify → apply → cluster ---- */
-@keyframes viz-flow { 0% { transform: translateX(0); opacity: 0; } 6% { opacity: 1; } 94% { opacity: 1; } 100% { transform: translateX(360px); opacity: 0; } }
-.viz-flow { animation: viz-flow 4.4s cubic-bezier(0.65,0,0.35,1) infinite; }
-@keyframes viz-stage { 0%, 100% { opacity: 0.4; } }
-.viz-stage-1 { animation: viz-fade 4.4s ease-in-out infinite; }
-.viz-stage-2 { animation: viz-fade 4.4s ease-in-out infinite 0.9s; }
-.viz-stage-3 { animation: viz-fade 4.4s ease-in-out infinite 1.8s; }
-.viz-stage-4 { animation: viz-fade 4.4s ease-in-out infinite 2.7s; }
-.viz-stage-5 { animation: viz-fade 4.4s ease-in-out infinite 3.4s; }
-
-/* ---- canvas: the architecture graph draws itself, then holds, then loops ---- */
-.viz-edge { stroke-dasharray: 200; stroke-dashoffset: 200; animation: viz-draw 1.1s ease-out forwards; }
-.viz-node { opacity: 0; animation: viz-rise 0.6s ease-out forwards; transform-box: fill-box; }
-.viz-node-1 { animation-delay: 0.15s; } .viz-node-2 { animation-delay: 0.35s; }
-.viz-node-3 { animation-delay: 0.6s; } .viz-node-4 { animation-delay: 0.8s; } .viz-node-5 { animation-delay: 1.0s; }
-.viz-edge-1 { animation-delay: 0.3s; } .viz-edge-2 { animation-delay: 0.55s; }
-.viz-edge-3 { animation-delay: 0.8s; } .viz-edge-4 { animation-delay: 1.0s; }
-.viz-cluster-dot { animation: viz-breathe 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
-
-/* ---- verify: controls check off, a scan line sweeps, the seal stamps ---- */
-.viz-check { opacity: 0; animation: viz-fade 0.35s ease-out forwards; }
-.viz-check-1 { animation-delay: 0.4s; } .viz-check-2 { animation-delay: 0.8s; }
-.viz-check-3 { animation-delay: 1.2s; } .viz-check-4 { animation-delay: 1.6s; } .viz-check-5 { animation-delay: 2.0s; }
-@keyframes viz-scan { 0% { transform: translateY(0); opacity: 0; } 8% { opacity: 1; } 92% { opacity: 1; } 100% { transform: translateY(150px); opacity: 0; } }
-.viz-scan { animation: viz-scan 2.4s ease-in-out infinite; }
-@keyframes viz-stamp { 0%, 40% { opacity: 0; transform: scale(1.5); } 55% { opacity: 1; transform: scale(0.94); } 68%, 100% { opacity: 1; transform: scale(1); } }
-.viz-seal { opacity: 0; animation: viz-stamp 4.4s cubic-bezier(0.2,0.9,0.3,1.2) infinite; transform-box: fill-box; transform-origin: center; }
-@keyframes viz-hash { 0%, 45% { opacity: 0.25; } 60%, 100% { opacity: 1; } }
-.viz-hash { animation: viz-hash 4.4s ease-out infinite; }
-
-/* ---- fleet: warm-pool cells fill, one dies + self-heals, a rollout wave ---- */
-@keyframes viz-fill { 0%, 10% { opacity: 0.18; } 22%, 100% { opacity: 1; } }
-.viz-cell { opacity: 0.18; animation: viz-fill 5s ease-in-out infinite; }
-.viz-cell-2 { animation-delay: 0.25s; } .viz-cell-3 { animation-delay: 0.5s; }
-.viz-cell-4 { animation-delay: 0.75s; } .viz-cell-5 { animation-delay: 1s; }
-@keyframes viz-heal { 0%, 45% { opacity: 1; } 55%, 70% { opacity: 0.12; } 82%, 100% { opacity: 1; } }
-.viz-cell-heal { animation: viz-heal 5s ease-in-out infinite 1.3s; }
-@keyframes viz-wave { 0% { transform: translateX(-30px); opacity: 0; } 20% { opacity: 0.9; } 80% { opacity: 0.9; } 100% { transform: translateX(210px); opacity: 0; } }
-.viz-wave { animation: viz-wave 5s cubic-bezier(0.5,0,0.5,1) infinite; }
-
-@media (prefers-reduced-motion: reduce) {
-  .viz-tok-a, .viz-tok-b, .viz-tok-c, .viz-hub, .viz-flow, .viz-stage-1, .viz-stage-2,
-  .viz-stage-3, .viz-stage-4, .viz-stage-5, .viz-cluster-dot, .viz-scan, .viz-seal,
-  .viz-hash, .viz-cell, .viz-cell-heal, .viz-wave {
-    animation: none !important;
-  }
-  .viz-edge { stroke-dashoffset: 0 !important; animation: none !important; }
-  .viz-node, .viz-check, .viz-seal { opacity: 1 !important; animation: none !important; transform: none !important; }
-  .viz-tok-a, .viz-tok-b, .viz-tok-c, .viz-wave, .viz-flow { opacity: 0 !important; }
 }
 
 /* responsive collapse — mirrors the design's media queries */
 @media (max-width: 900px) {
   .ah-h1 { font-size: 46px !important; }
-  .ah-life { grid-template-columns: 1fr 1fr !important; }
-  .ah-cmds { grid-template-columns: 1fr 1fr !important; }
   .ah-surface, .ah-foot-grid, .ah-3col, .ah-2col { grid-template-columns: 1fr !important; }
   .ah-3col, .ah-2col { gap: 16px !important; }
-  .ah-4col { grid-template-columns: 1fr 1fr !important; gap: 16px !important; }
   .ah-foot-grid { grid-template-columns: 1fr 1fr !important; gap: 28px !important; }
   .ah-navmenu { display: none !important; }
 }
 @media (max-width: 620px) {
   .ah-h1 { font-size: 36px !important; }
-  .ah-life { grid-template-columns: 1fr !important; }
-  .ah-4col { grid-template-columns: 1fr !important; }
   .ah-hide-sm { display: none !important; }
 }
 
@@ -222,54 +113,6 @@
 }
 
 /* ============================================================
-   Motion layer (mo-*) — the frontier-rebuild motion language. Framer/three.js
-   drive the JS beats; these are the CSS-cleaner loops (marquee, shimmer). Every
-   rule here is neutralized under prefers-reduced-motion at the foot of the file.
-   ============================================================ */
-
-/* Runs-on marquee — two identical copies translate -50% for a seamless loop.
-   Pauses on hover so a reader can settle on a logo. */
-@keyframes ah-marquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-.ah-marquee-track {
-  animation: ah-marquee 46s linear infinite;
-  will-change: transform;
-}
-.ah-marquee:hover .ah-marquee-track {
-  animation-play-state: paused;
-}
-
-/* Shimmer — a single pass of light sweeping across a surface (skeletons, the
-   proof card's inner edge, "keep proving it" beats). Grayscale by construction. */
-@keyframes ah-shimmer {
-  0% { background-position: -160% 0; }
-  100% { background-position: 260% 0; }
-}
-.ah-shimmer {
-  background-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in oklch, var(--text-primary) 12%, transparent) 50%,
-    transparent 100%
-  );
-  background-size: 200% 100%;
-  background-repeat: no-repeat;
-  animation: ah-shimmer 3.2s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ah-marquee-track,
-  .ah-shimmer {
-    animation: none !important;
-  }
-  .ah-shimmer {
-    background-image: none !important;
-  }
-}
-
-/* ============================================================
    Reduced-motion safety net — the last word. Every animated beat above already
    ships a legible static fallback (the framer/three.js islands via the reduced-
    motion hook; the CSS loops via their own guards). This universal rule is
@@ -286,4 +129,377 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ============================================================
+   Homepage (mkt-*) — one screen, mono voice, a hairline instrument frame.
+   Geist Mono is the body face here and Space Grotesk appears only in the
+   headings; that inversion is what makes the page read as an instrument
+   rather than a brochure.
+   ============================================================ */
+
+.mkt-root {
+  min-height: 100vh;
+  background: var(--background);
+  color: var(--text-primary);
+  font-family: var(--font-geist-mono), ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-x: hidden;
+}
+.mkt-root ::selection { background: var(--text-primary); color: var(--background); }
+
+/* ---- fixed chrome ---- */
+
+/* A 256px noise tile at `overlay` — the cheapest thing on the page that makes a
+   flat grayscale ground look like a printed surface instead of a fill. */
+.mkt-grain {
+  position: fixed;
+  inset: 0;
+  z-index: 58;
+  pointer-events: none;
+  opacity: 0.4;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+}
+/* A real border, not an inset box-shadow: `forced-colors` resolves
+   `box-shadow` to `none` and the frame would vanish for high-contrast users. */
+.mkt-frame {
+  position: fixed;
+  inset: 10px;
+  border: 1px solid var(--border);
+  pointer-events: none;
+  z-index: 60;
+}
+.mkt-rail {
+  position: fixed;
+  left: 17px;
+  z-index: 55;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  pointer-events: none;
+}
+.mkt-rail--top { top: 104px; }
+.mkt-rail--bottom { bottom: 28px; text-transform: none; letter-spacing: 0.16em; }
+
+/* ---- shared type ---- */
+
+.mkt-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin: 0 0 26px;
+}
+.mkt-tag {
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin: 0 0 26px;
+}
+/* 64px over a 14px sub — the ~4.3x drop that carries the whole hierarchy. Stepped
+   at breakpoints rather than fluid, so the tracking stays deliberate at each size. */
+.mkt-h1 {
+  font-family: var(--font-space-grotesk), var(--font-geist-sans), sans-serif;
+  font-weight: 700;
+  font-size: 64px;
+  line-height: 0.98;
+  letter-spacing: -0.022em;
+  margin: 0 0 22px;
+  max-width: 15ch;
+  text-wrap: balance;
+}
+.mkt-h2 {
+  font-family: var(--font-space-grotesk), var(--font-geist-sans), sans-serif;
+  font-weight: 700;
+  font-size: 36px;
+  line-height: 1.05;
+  letter-spacing: -0.028em;
+  margin: 0 0 16px;
+  max-width: 19ch;
+  text-wrap: balance;
+}
+.mkt-sub {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  max-width: 52ch;
+  margin: 0 0 30px;
+}
+.mkt-sub b { color: var(--text-primary); font-weight: 400; }
+.mkt-lede {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  max-width: 50ch;
+  margin: 0 0 40px;
+}
+
+/* The headline resolves out of blur. It never animates opacity: an element at
+   `opacity: 0` is not an LCP candidate, so fading the H1 in would push LCP out
+   by the whole duration of the fade. Blur and transform are paint/composite only. */
+.mkt-h1 span {
+  display: inline-block;
+  filter: blur(10px);
+  transform: translateY(0.16em);
+  animation: mkt-focus 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.mkt-h1 span:nth-child(2) { animation-delay: 0.09s; }
+@keyframes mkt-focus {
+  to { filter: blur(0); transform: none; }
+}
+
+/* ---- buttons ---- */
+
+/* Hover inverts the fill. Nothing moves, nothing reflows — the same reason the
+   shared @repo/ui Button positions its brackets outside layout. */
+.mkt-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 20px;
+  border: 1px solid var(--text-primary);
+  background: transparent;
+  color: var(--text-primary);
+  font: 400 12px / 1 var(--font-geist-mono), ui-monospace, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    background var(--dur-1) var(--ease),
+    color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease);
+}
+.mkt-btn::before,
+.mkt-btn::after {
+  position: absolute;
+  top: 50%;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-2) var(--ease),
+    translate var(--dur-3) var(--ease-out);
+}
+.mkt-btn::before { content: "["; left: 7px; translate: 5px -50%; }
+.mkt-btn::after { content: "]"; right: 7px; translate: -5px -50%; }
+.mkt-btn:hover::before,
+.mkt-btn:hover::after,
+.mkt-btn:focus-visible::before,
+.mkt-btn:focus-visible::after { opacity: 0.55; translate: 0 -50%; }
+.mkt-btn:hover { background: var(--text-primary); color: var(--background); }
+.mkt-btn--solid { background: var(--text-primary); color: var(--background); }
+.mkt-btn--solid:hover { background: transparent; color: var(--text-primary); }
+.mkt-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 3px; }
+.mkt-acts { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 34px; }
+.mkt-acts--center { justify-content: center; margin-bottom: 0; }
+
+/* ---- hero ---- */
+
+.mkt-hero { position: relative; min-height: 100svh; overflow: hidden; }
+.mkt-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  touch-action: none;
+}
+/* The copy column lets pointer events through to the field behind it, so the
+   whole viewport stays grabbable — only the controls themselves capture. */
+.mkt-hero-in {
+  position: relative;
+  z-index: 2;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 64px 4vh;
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  /* Not centred: the lower third belongs to the pile, so the copy sits above it. */
+  justify-content: flex-start;
+  padding-top: 21vh;
+  pointer-events: none;
+}
+.mkt-hero-in a,
+.mkt-hero-in button,
+.mkt-readout { pointer-events: auto; }
+
+.mkt-readout {
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--surface) 72%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 16px 18px;
+  max-width: 530px;
+}
+.mkt-readout-hd {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin: 0 0 12px;
+}
+.mkt-readout-hd s { flex: 1; height: 1px; background: var(--border); text-decoration: none; }
+.mkt-readout-addr {
+  font-size: 13.5px;
+  color: var(--text-primary);
+  margin: 0 0 9px;
+  overflow-wrap: anywhere;
+}
+.mkt-readout-line {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+.mkt-verdict {
+  color: var(--text-primary);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 10.5px;
+  border: 1px solid var(--border);
+  padding: 2px 7px;
+}
+.mkt-readout-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin: 11px 0 0;
+}
+
+/* ---- beats ---- */
+
+/* Copy beside the artifact rather than stacked above a full-width plate: the
+   stacked version left a very large empty rectangle in the middle of the page. */
+.mkt-split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
+  gap: 64px;
+  align-items: center;
+}
+@media (max-width: 900px) {
+  .mkt-split { grid-template-columns: 1fr; gap: 40px; }
+}
+
+
+.mkt-beat { position: relative; z-index: 2; border-top: 1px solid var(--border); padding: 110px 0; }
+.mkt-beat--sunken { background: var(--surface-sunken); }
+.mkt-wrap { max-width: 1180px; margin: 0 auto; padding: 0 64px; }
+
+.mkt-plate {
+  position: relative;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mkt-plate span {
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: 0 24px;
+}
+.mkt-plate::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--border-faint) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border-faint) 1px, transparent 1px);
+  background-size: 34px 34px;
+}
+
+/* Scroll-driven, zero JS — but `animation-timeline` is not Baseline (Firefox
+   ships it behind a flag), so the `@supports not` arm below is the real
+   behaviour for a large share of visitors, not a rare edge case. */
+@media (min-width: 1024px) {
+  @supports (animation-timeline: view()) {
+    .mkt-lift {
+      view-timeline: --mkt-lift;
+      animation: mkt-lift linear both;
+      animation-timeline: --mkt-lift;
+      animation-range: entry 0% cover 46%;
+    }
+    @keyframes mkt-lift {
+      from { transform: translateY(46px); }
+      to { transform: none; }
+    }
+  }
+}
+@supports not (animation-timeline: view()) {
+  .mkt-lift { transform: none; }
+}
+
+.mkt-keep {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+}
+.mkt-keep > div { background: var(--background); padding: 20px 18px; }
+.mkt-keep-k {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin: 0;
+}
+.mkt-keep-v { margin: 8px 0 0; font-size: 13px; color: var(--text-primary); }
+
+/* ---- close ---- */
+
+.mkt-close {
+  position: relative;
+  z-index: 2;
+  border-top: 1px solid var(--border);
+  padding: 120px 28px 130px;
+  text-align: center;
+}
+.mkt-close-mark { opacity: 0.45; display: inline-block; }
+.mkt-close-h { font-size: 44px; margin: 22px auto 30px; max-width: 16ch; }
+
+/* ---- responsive ---- */
+
+@media (max-width: 1024px) {
+  .mkt-h1 { font-size: 52px; }
+}
+@media (max-width: 900px) {
+  .mkt-rail { display: none; }
+  .mkt-keep { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .mkt-h1 { font-size: 38px; }
+  .mkt-h2 { font-size: 27px; }
+  .mkt-close-h { font-size: 30px; }
+  .mkt-hero-in, .mkt-wrap { padding-left: 26px; padding-right: 26px; }
+  /* Less top offset on a phone: the lower third is the consent notice, not the pile. */
+  .mkt-hero-in { padding-top: 13vh; }
+  .mkt-beat { padding: 72px 0; }
+  .mkt-keep { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mkt-h1 span { filter: none; transform: none; animation: none; }
+  .mkt-grain { opacity: 0.2; }
 }

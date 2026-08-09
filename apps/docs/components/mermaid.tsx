@@ -5,81 +5,55 @@
 
 import { useEffect, useId, useState } from 'react';
 import { useTheme } from 'next-themes';
+import { RAMP, RAMP_THEME } from '@repo/brand/ramp-srgb';
 
 /**
- * Grayscale Mermaid theme variables. No hue, ever — matches the Alethia Labs
- * design language (neutral ink ramp, hairline borders, mono edge labels).
- * `fontFamily: inherit` pulls the page's Geist stack into the diagram.
+ * Grayscale Mermaid theme variables, derived from the real ink ramp.
+ *
+ * Mermaid cannot read CSS custom properties, so the values must be literals —
+ * but they were previously hand-transcribed, and had drifted onto Tailwind's
+ * zinc scale (`#18181b`, `#d4d4d8`, `#a1a1aa`), which is not the Alethia ramp
+ * and carries a slight blue cast. Building them from `RAMP` keeps 60 literals
+ * in sync with `packages/brand/src/tokens.css` by construction.
  */
-const GRAYSCALE_THEME = {
-  light: {
+function themeVariables(dark: boolean) {
+  const c = RAMP_THEME[dark ? 'dark' : 'light'];
+  return {
     background: 'transparent',
-    primaryColor: '#ffffff', // node fill (surface)
-    primaryBorderColor: '#d4d4d8', // hairline border (border-strong)
-    primaryTextColor: '#18181b', // text-primary
-    secondaryColor: '#f4f4f5', // surface-sunken
-    secondaryBorderColor: '#e4e4e7',
-    secondaryTextColor: '#3f3f46',
-    tertiaryColor: '#fafafa',
-    tertiaryBorderColor: '#e4e4e7',
-    tertiaryTextColor: '#52525b',
-    lineColor: '#8a8a8d', // gray-500 edges
-    textColor: '#3f3f46',
-    mainBkg: '#ffffff',
-    nodeBorder: '#d4d4d8',
-    clusterBkg: '#fafafa',
-    clusterBorder: '#e4e4e7',
-    edgeLabelBackground: '#ffffff',
-    titleColor: '#18181b',
+    // nodes
+    primaryColor: c.surface,
+    primaryBorderColor: c.borderStrong,
+    primaryTextColor: c.textPrimary,
+    secondaryColor: c.surfaceMuted,
+    secondaryBorderColor: c.border,
+    secondaryTextColor: c.textSecondary,
+    tertiaryColor: c.background,
+    tertiaryBorderColor: c.border,
+    tertiaryTextColor: c.textSecondary,
+    lineColor: dark ? RAMP.gray600 : RAMP.gray500,
+    textColor: c.textSecondary,
+    mainBkg: c.surface,
+    nodeBorder: c.borderStrong,
+    clusterBkg: c.background,
+    clusterBorder: c.border,
+    edgeLabelBackground: c.surface,
+    titleColor: c.textPrimary,
     // sequence
-    actorBkg: '#ffffff',
-    actorBorder: '#d4d4d8',
-    actorTextColor: '#18181b',
-    signalColor: '#52525b',
-    signalTextColor: '#3f3f46',
-    labelBoxBkgColor: '#fafafa',
-    labelBoxBorderColor: '#e4e4e7',
-    labelTextColor: '#3f3f46',
-    noteBkgColor: '#f4f4f5',
-    noteBorderColor: '#d4d4d8',
-    noteTextColor: '#18181b',
-    activationBkgColor: '#e4e4e7',
-    sequenceNumberColor: '#ffffff',
-  },
-  dark: {
-    background: 'transparent',
-    primaryColor: '#18181b', // surface
-    primaryBorderColor: '#3f3f46',
-    primaryTextColor: '#fafafa',
-    secondaryColor: '#0f0f11',
-    secondaryBorderColor: '#2c2c30',
-    secondaryTextColor: '#a1a1aa',
-    tertiaryColor: '#202023',
-    tertiaryBorderColor: '#2c2c30',
-    tertiaryTextColor: '#a1a1aa',
-    lineColor: '#71717a',
-    textColor: '#d4d4d8',
-    mainBkg: '#18181b',
-    nodeBorder: '#3f3f46',
-    clusterBkg: '#141416',
-    clusterBorder: '#2c2c30',
-    edgeLabelBackground: '#18181b',
-    titleColor: '#fafafa',
-    actorBkg: '#18181b',
-    actorBorder: '#3f3f46',
-    actorTextColor: '#fafafa',
-    signalColor: '#a1a1aa',
-    signalTextColor: '#d4d4d8',
-    labelBoxBkgColor: '#202023',
-    labelBoxBorderColor: '#2c2c30',
-    labelTextColor: '#d4d4d8',
-    noteBkgColor: '#202023',
-    noteBorderColor: '#3f3f46',
-    noteTextColor: '#fafafa',
-    activationBkgColor: '#2c2c30',
-    sequenceNumberColor: '#18181b',
-  },
-} as const;
+    actorBkg: c.surface,
+    actorBorder: c.borderStrong,
+    actorTextColor: c.textPrimary,
+    signalColor: c.textSecondary,
+    signalTextColor: c.textSecondary,
+    labelBoxBkgColor: c.surfaceMuted,
+    labelBoxBorderColor: c.border,
+    labelTextColor: c.textSecondary,
+    noteBkgColor: c.surfaceMuted,
+    noteBorderColor: c.borderStrong,
+    noteTextColor: c.textPrimary,
+    activationBkgColor: c.border,
+    sequenceNumberColor: c.surface,
+  };
+}
 
 /**
  * Renders a Mermaid diagram client-side with the locked grayscale Alethia theme,
@@ -96,13 +70,12 @@ export function Mermaid({ chart }: { chart: string }) {
 
     async function render() {
       const { default: mermaid } = await import('mermaid');
-      const mode = resolvedTheme === 'dark' ? 'dark' : 'light';
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: 'loose',
         fontFamily: 'inherit',
         theme: 'base',
-        themeVariables: GRAYSCALE_THEME[mode],
+        themeVariables: themeVariables(resolvedTheme === 'dark'),
         flowchart: { curve: 'basis', useMaxWidth: true, padding: 12 },
         sequence: { useMaxWidth: true, mirrorActors: false },
       });

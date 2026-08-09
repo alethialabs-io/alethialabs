@@ -32,6 +32,9 @@ const PUBLIC_DEV_ORIGINS = (() => {
 
 const nextConfig: NextConfig = {
 	output: "standalone",
+	// The dev indicator defaults to bottom-left, where it lands on the sidebar
+	// profile (avatar + name). Same reason ReactQueryDevtools moved — see providers.tsx.
+	devIndicators: { position: "bottom-right" },
 	// Don't 308-redirect a trailing slash. Without this, the PostHog reverse-proxy paths
 	// (`/ingest/e/`, `/ingest/flags/` — posthog-js sends them WITH a trailing slash) get a
 	// Next trailing-slash redirect before the rewrite runs, adding a hop to every captured
