@@ -9,6 +9,7 @@ import { Menu } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@repo/ui/sheet";
 import { ProviderIcon } from "@repo/ui/provider-icon";
+import { ThemeToggle } from "@repo/ui/theme-toggle";
 import {
   disp,
   eyebrow,
@@ -546,6 +547,8 @@ export function Header({
         </nav>
 
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {/* The only way to reach light mode on this site — see app/layout.tsx. */}
+          <ThemeToggle bare className="ah-hide-sm" />
           <GitHubLink stars={stars} />
           {nav.status === "authed" ? (
             <>

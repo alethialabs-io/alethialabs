@@ -23,7 +23,7 @@ export default function PrivacyRequestsPage() {
 				Use this channel to request access, correction, deletion, restriction,
 				portability, or objection; withdraw consent; or ask a privacy question. You
 				can change analytics and replay consent immediately with the{" "}
-				<strong>Privacy choices</strong> button at the lower-left of the site.
+				<strong>Privacy settings</strong> control in the site footer.
 			</p>
 
 			<h2>1. Send the request</h2>
