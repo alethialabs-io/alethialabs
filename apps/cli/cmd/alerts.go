@@ -118,6 +118,10 @@ func runAlertsCreate(c apiClient, out io.Writer, name string, eventPatterns, cha
 	return nil
 }
 
+// alertsDeleteYes is the --yes opt-in: skip the confirmation prompt (and make the
+// command usable with --no-input).
+var alertsDeleteYes bool
+
 var alertsDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete an alert rule",
@@ -127,7 +131,7 @@ var alertsDeleteCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		if !confirm("Delete this alert rule?", "Matching events will no longer be routed. This cannot be undone.") {
+		if !confirmDestructive(alertsDeleteYes, "Delete this alert rule?", "Matching events will no longer be routed. This cannot be undone.") {
 			return
 		}
 		if err := runAlertsDelete(api.NewClient(token), os.Stdout, args[0]); err != nil {
@@ -146,6 +150,7 @@ func runAlertsDelete(c apiClient, out io.Writer, id string) error {
 }
 
 func init() {
+	addYesFlag(alertsDeleteCmd, &alertsDeleteYes)
 	alertsCreateCmd.Flags().StringArrayVar(&alertEventPatterns, "event", nil, "Event-key pattern (repeatable, e.g. system.job.failed)")
 	alertsCreateCmd.Flags().StringArrayVar(&alertChannelIDs, "channel", nil, "Channel id to route to (repeatable)")
 	alertsCreateCmd.Flags().StringVar(&alertSeverity, "severity", "warning", "Severity (info, warning, critical)")
