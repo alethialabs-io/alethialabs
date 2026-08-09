@@ -145,6 +145,8 @@ func TestIsValidDNSDomain(t *testing.T) {
 
 	invalid := []string{
 		"",
+		".",                                      // the root zone alone: nothing is left once the root dot is trimmed
+		"..",                                     // and trimming only ONE dot still leaves an empty label
 		"example.com'; touch /tmp/PWNED; echo '", // #2013's payload
 		"example.com; rm -rf /",
 		"example.com$(id)",
