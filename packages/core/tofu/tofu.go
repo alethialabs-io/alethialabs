@@ -392,7 +392,8 @@ func cachedBinaryUsable(ctx context.Context, path string) bool {
 
 // downloadTofu fetches the OpenTofu release zip for the current OS/arch, verifies
 // its SHA256 against the release SHA256SUMS, extracts the `tofu` binary, and
-// writes it to dst (0755). (Cosign verification of the SUMS is a future hardening;
+// writes it to dst (0755) ATOMICALLY — dst either does not exist or is a complete
+// binary, never a partially-extracted one. (Cosign verification of the SUMS is a future hardening;
 // the SUMS are fetched over HTTPS from the OpenTofu releases.)
 func downloadTofu(ctx context.Context, ver, dst string) error {
 	asset := fmt.Sprintf("tofu_%s_%s_%s.zip", ver, runtime.GOOS, runtime.GOARCH)
