@@ -113,7 +113,7 @@ func TestAssertReceiptEvidenceRefuters(t *testing.T) {
 			},
 			mention: "disagrees with the evidence",
 		},
-		"a PASS verdict over a not_evaluable-only report": {
+		"a PASS verdict over a warn-only report": {
 			mutate: func(s *verify.SignedReceipt) {
 				s.Receipt.Report.Controls = []verify.ControlResult{{
 					ID: "X-1", Title: "t", Severity: verify.SeverityLow,
@@ -123,6 +123,31 @@ func TestAssertReceiptEvidenceRefuters(t *testing.T) {
 				s.Receipt.Report.Verdict = verify.StatusPass // should be warn
 				s.Receipt.Verdict = verify.StatusPass
 			},
+		},
+		// THE false-PASS, and the one the old three-branch derivation could not catch: nothing failed,
+		// nothing warned, and a control could not be judged — so `pass` is a claim to have checked
+		// something the engine says it could not see.
+		"a PASS verdict over a not_evaluable-only report": {
+			mutate: func(s *verify.SignedReceipt) {
+				s.Receipt.Report.Controls = []verify.ControlResult{{
+					ID: "X-1", Title: "t", Severity: verify.SeverityLow,
+					Status: verify.StatusNotEvaluable, Provider: "aws", Frameworks: []string{"CIS-1.1"},
+					Coverage: "policy body computed until apply",
+				}}
+				s.Receipt.Report.Summary = verify.Summary{NotEvaluable: 1}
+				s.Receipt.Report.Verdict = verify.StatusPass // should be not_evaluable
+				s.Receipt.Verdict = verify.StatusPass
+			},
+			mention: "not_evaluable",
+		},
+		"a PASS verdict where a not_evaluable rides alongside real passes": {
+			mutate: func(s *verify.SignedReceipt) {
+				s.Receipt.Report.Controls[1].Status = verify.StatusPass // was the only warn
+				s.Receipt.Report.Summary = verify.Summary{Pass: 2, NotEvaluable: 1}
+				s.Receipt.Report.Verdict = verify.StatusPass // should be not_evaluable
+				s.Receipt.Verdict = verify.StatusPass
+			},
+			mention: "disagrees with the evidence",
 		},
 		"the sealed verdict disagrees with the report's": {
 			mutate: func(s *verify.SignedReceipt) { s.Receipt.Verdict = verify.StatusPass },
@@ -152,6 +177,103 @@ func TestAssertReceiptEvidenceRefuters(t *testing.T) {
 			}
 			if c.mention != "" && !strings.Contains(err.Error(), c.mention) {
 				t.Errorf("error should mention %q so the cause is diagnosable; got %q", c.mention, err.Error())
+			}
+		})
+	}
+}
+
+// An honest not_evaluable headline is EVIDENCE, and the gate must accept it (#2156).
+//
+// These two tallies are not hypothetical — they are what the nightly produced while it was red:
+//
+//	gcp floor, run 31294893574 — the leg reached "All add-ons Healthy + Synced · Deployment
+//	completed successfully" and then died on
+//	`report verdict = "not_evaluable" but the controls tally to "pass" (fail=0 warn=0 not_evaluable=1)`.
+//
+//	aws full-bar, run 31297757420 — `verdict=not_evaluable (pass=2 fail=0 warn=0 not_evaluable=2)`.
+//
+// The old derivation consulted fail and warn only, so both computed `want = pass` and failed a run
+// that had nothing wrong with it. Both must pass now, and neither may be "fixed" by teaching the
+// engine to round not_evaluable up — the refuters above hold that door shut.
+func TestAssertReceiptEvidenceAcceptsAnHonestNotEvaluable(t *testing.T) {
+	cases := map[string]func(*verify.SignedReceipt){
+		"fail=0 warn=0 not_evaluable=1 (the gcp floor leg)": func(s *verify.SignedReceipt) {
+			s.Receipt.Report.Controls = []verify.ControlResult{{
+				ID: "SCOPE-001", Title: "Every planned resource is in a control's scope",
+				Severity: verify.SeverityMedium, Status: verify.StatusNotEvaluable, Provider: "gcp",
+				Frameworks: []string{"CIS-1.1"},
+				Coverage:   "1 resource from an unrecognized provider",
+			}}
+			s.Receipt.Report.Summary = verify.Summary{NotEvaluable: 1}
+			s.Receipt.Report.Verdict = verify.StatusNotEvaluable
+			s.Receipt.Verdict = verify.StatusNotEvaluable
+		},
+		"pass=2 not_evaluable=2 (the aws full-bar proof)": func(s *verify.SignedReceipt) {
+			s.Receipt.Report.Controls[1].Status = verify.StatusPass // was the only warn
+			s.Receipt.Report.Controls = append(s.Receipt.Report.Controls, verify.ControlResult{
+				ID: "SCOPE-001", Title: "Every planned resource is in a control's scope",
+				Severity: verify.SeverityMedium, Status: verify.StatusNotEvaluable, Provider: "aws",
+				Coverage: "1 resource from an unrecognized provider",
+			})
+			s.Receipt.Report.Summary = verify.Summary{Pass: 2, NotEvaluable: 2}
+			s.Receipt.Report.Verdict = verify.StatusNotEvaluable
+			s.Receipt.Verdict = verify.StatusNotEvaluable
+		},
+	}
+
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			sr := passingReceipt()
+			mutate(&sr)
+			if err := AssertReceiptEvidence(sr); err != nil {
+				t.Fatalf("the gate refused an honest not_evaluable receipt — it is failing runs that succeeded: %v", err)
+			}
+		})
+	}
+}
+
+// The gate must not have its own opinion about the precedence — it must be the engine's. Whatever
+// verify.VerdictFor says a tally rolls up to, a receipt carrying that verdict is consistent and a
+// receipt carrying any other verdict is not. This is what stops the two drifting apart again.
+func TestAssertReceiptEvidenceMirrorsTheEngineVerdict(t *testing.T) {
+	statuses := []verify.Status{verify.StatusPass, verify.StatusFail, verify.StatusWarn, verify.StatusNotEvaluable}
+	for _, st := range statuses {
+		t.Run(string(st), func(t *testing.T) {
+			sr := passingReceipt()
+			sr.Receipt.Report.Controls = []verify.ControlResult{{
+				ID: "X-1", Title: "t", Severity: verify.SeverityLow, Status: st, Provider: "aws",
+				Frameworks: []string{"CIS-1.1"},
+			}}
+			sum := verify.Summary{}
+			switch st {
+			case verify.StatusPass:
+				sum.Pass = 1
+			case verify.StatusFail:
+				sum.Fail = 1
+			case verify.StatusWarn:
+				sum.Warn = 1
+			case verify.StatusNotEvaluable:
+				sum.NotEvaluable = 1
+			}
+			sr.Receipt.Report.Summary = sum
+
+			want := verify.VerdictFor(sum)
+			sr.Receipt.Report.Verdict = want
+			sr.Receipt.Verdict = want
+			if err := AssertReceiptEvidence(sr); err != nil {
+				t.Fatalf("the engine rolls %v up to %q, so the gate must accept it: %v", sum, want, err)
+			}
+
+			// Every OTHER verdict over the same tally is a disagreement with the evidence.
+			for _, other := range statuses {
+				if other == want {
+					continue
+				}
+				sr.Receipt.Report.Verdict = other
+				sr.Receipt.Verdict = other
+				if err := AssertReceiptEvidence(sr); err == nil {
+					t.Errorf("verdict %q over a tally that rolls up to %q was accepted", other, want)
+				}
 			}
 		})
 	}
