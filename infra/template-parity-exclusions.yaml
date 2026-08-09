@@ -1572,3 +1572,25 @@ uniform:
   # per environment during the apply. There is nothing for the operator to supply.
   - variable: cloud_sql_app_service_account_email
     reason: GCP-only by provider ceiling. Cloud SQL instances carry no IAM policy, so cloudsql.client/instanceUser are project-scoped only and the provisioner (which holds no resourcemanager.projects.setIamPolicy) cannot write them — the account is granted once in the customer's connector bootstrap and adopted. AWS scopes the equivalent to the DB resource ARN via IRSA and Azure via an Entra admin, so neither needs an operator-supplied identity.
+
+  # ── Cluster-admin grants: one capability, per-cloud spellings (#2005) ──────────────────────────
+  # Same shape as the Secrets-envelope-encryption group above: each cloud that CAN grant
+  # cluster-scoped admin from inside the template names its own knob — aws's eks_cluster_admins and
+  # azure's aks_admin_group_object_ids are already recorded (baseline:, #2004) — and
+  # ack_cluster_admins is alibaba's. CUSTOMIZABILITY-PARITY.md once called the alibaba binding
+  # "granted outside the template via IAM", as if ACK forced it. The pinned aliyun/alicloud 1.286.0
+  # provider refutes that: alicloud_cs_kubernetes_permissions is exactly a cluster-admin binding
+  # (alibaba/cluster-admins.tf), so the template now wires it — one resource per RAM principal,
+  # duplicate uids refused at the variable, because the provider's grant is a REPLACE of the
+  # principal's entire ACK permission set, not a merge.
+  #
+  # gcp and hetzner are not debt: gcp is excluded by two NAMED invariants recorded next to the
+  # mechanism in gcp/gke.tf (project IAM needs resourcemanager.projects.setIamPolicy, stripped from
+  # the provisioner by #300; in-cluster RBAC is an in-tofu kubernetes_* resource, forbidden by
+  # scripts/check-templates-plan-safe.sh because the provider is wired from the cluster's own
+  # known-after-apply endpoint), and hetzner has no cloud IAM plane at all (Talos; access is the
+  # emitted talosconfig/kubeconfig). Neither has a variable of its own to hang a record on, which is
+  # why both ceilings live here as comments rather than as `exclusions:` records — see this file's
+  # own note at the top of `exclusions:` about a ceiling with no name to hang on.
+  - variable: ack_cluster_admins
+    reason: Alibaba's spelling of cluster-scoped admin grants — alicloud_cs_kubernetes_permissions (role_type "cluster", role_name "admin"), REPLACE-not-merge, one resource per RAM uid (alibaba/cluster-admins.tf). AWS (eks_cluster_admins) and Azure (aks_admin_group_object_ids) already carry their own spellings (baseline:, #2004). GCP and Hetzner are genuine ceilings, not debt — see gcp/gke.tf for GCP's two named invariants and CUSTOMIZABILITY-PARITY.md for Hetzner's (no cloud IAM plane).

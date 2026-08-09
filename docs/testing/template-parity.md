@@ -11,6 +11,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 
 | Variable | alibaba | aws | azure | gcp | hetzner | State | Why |
 |---|---|---|---|---|---|---|---|
+| `ack_cluster_admins` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | uniform | Alibaba's spelling of cluster-scoped admin grants — alicloud_cs_kubernetes_permissions (role_type "cluster", role_name "admin"), REPLACE-not-merge, one resource per RAM uid (alibaba/cluster-admins.tf). AWS (eks_cluster_admins) and Azure (aks_admin_group_object_ids) already carry their own spellings (baseline:, #2004). GCP and Hetzner are genuine ceilings, not debt — see gcp/gke.tf for GCP's two named invariants and CUSTOMIZABILITY-PARITY.md for Hetzner's (no cloud IAM plane). |
 | `ack_cluster_version` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `ack_disk_category` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `ack_disk_performance_level` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
