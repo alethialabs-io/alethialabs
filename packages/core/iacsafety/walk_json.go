@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
@@ -60,6 +61,10 @@ var jsonCheckSchema = &hcl.BodySchema{
 	},
 }
 
+var jsonProviderMetaSchema = &hcl.BodySchema{
+	Attributes: []hcl.AttributeSchema{{Name: "provider"}},
+}
+
 var jsonTerraformSchema = &hcl.BodySchema{
 	Blocks: []hcl.BlockHeaderSchema{
 		{Type: "required_providers"},
@@ -99,6 +104,7 @@ func (s *scanner) scanJSONFile(path, moduleDir string) {
 				if len(blk.Labels) > 0 {
 					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
 				}
+				s.recordJSONProviderMetaArg(blk.Body, rel)
 				// Only a `resource` provisions anything (see walk.go).
 				if blk.Type == "resource" && len(blk.Labels) > 1 {
 					s.recordResource(blk.Labels[0], blk.Labels[1], moduleDir)
@@ -112,6 +118,7 @@ func (s *scanner) scanJSONFile(path, moduleDir string) {
 				if len(blk.Labels) > 0 {
 					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
 				}
+				s.recordJSONProviderMetaArg(blk.Body, rel)
 			case "module":
 				s.walkJSONModuleBlock(blk, rel, moduleDir)
 			case "output":
@@ -121,8 +128,10 @@ func (s *scanner) scanJSONFile(path, moduleDir string) {
 					s.recordOutput(blk.Labels[0], moduleDir)
 				}
 			case "provider":
+				// The label IS the provider local name — record it verbatim,
+				// never via the type-prefix underscore split.
 				if len(blk.Labels) > 0 {
-					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
+					s.recordImpliedProviderRef(blk.Labels[0], rel, blk.DefRange.Start.Line)
 				}
 			case "check":
 				s.walkJSONCheckBlock(blk, rel)
@@ -149,6 +158,32 @@ func (s *scanner) walkJSONCheckBlock(blk *hcl.Block, rel string) {
 		if inner.Type == "data" && len(inner.Labels) > 0 {
 			s.recordImpliedUse(inner.Labels[0], rel, inner.DefRange.Start.Line)
 		}
+		if inner.Type == "data" {
+			s.recordJSONProviderMetaArg(inner.Body, rel)
+		}
+	}
+}
+
+// recordJSONProviderMetaArg is the JSON twin of recordProviderMetaArg. In JSON
+// syntax the meta-argument is a string ("evilprov" or "evilprov.alias"); a
+// hcl JSON string evaluated with a nil context yields its raw source, so a
+// "${evilprov.alias}" template spelling arrives verbatim and the wrapper is
+// stripped before taking the reference's root name. A non-string value is not
+// a provider reference OpenTofu would accept, so nothing can execute from it.
+func (s *scanner) recordJSONProviderMetaArg(body hcl.Body, rel string) {
+	content, _, _ := body.PartialContent(jsonProviderMetaSchema)
+	attr, ok := content.Attributes["provider"]
+	if !ok {
+		return
+	}
+	v, d := attr.Expr.Value(nil)
+	if d.HasErrors() || !v.Type().Equals(cty.String) || v.IsNull() {
+		return
+	}
+	raw := strings.TrimSpace(v.AsString())
+	raw = strings.TrimSuffix(strings.TrimPrefix(raw, "${"), "}")
+	if segs := splitDots(raw); len(segs) > 0 {
+		s.recordImpliedProviderRef(segs[0], rel, attr.Range.Start.Line)
 	}
 }
 
