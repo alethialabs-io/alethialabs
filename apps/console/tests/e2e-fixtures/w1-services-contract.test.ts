@@ -267,15 +267,49 @@ describe("W1 services contract-lock (#572)", () => {
 		const snapshot = (jobCall[1] as { config_snapshot: { services?: unknown[] } })
 			.config_snapshot;
 
-		// The snapshot wire = each row spread + its resolved placement (NULL placement inherits
-		// the project's identity/region — what the runner actually keys its cloud auth on). `bindings`
-		// is reconstructed from the service_bindings child table (JSONB dropped, #1426) — [] here since
-		// the mock seeds no binding rows, byte-identical to the pre-contract wire.
+		// The snapshot wire is an EXPLICIT PICK of each row (#1974) — the json tags of
+		// types.ProjectServiceConfig and nothing else — plus its resolved placement (NULL placement
+		// inherits the project's identity/region, what the runner actually keys its cloud auth on).
+		// `bindings` is reconstructed from the service_bindings child table (JSONB dropped, #1426) —
+		// [] here since the mock seeds no binding rows.
+		//
+		// Spelled out rather than `{ ...webRow, ... }`: a spread of the seed row would re-assert
+		// whatever the seed happens to hold, so it passed vacuously while the wire still carried
+		// eight bookkeeping columns. Naming the keys is what makes the drop visible in review.
 		const placement = { cloud_provider: "hetzner", cloud_identity_id: "ci-1", region: "nbg1" };
-		expect(snapshot.services).toEqual([
-			{ ...webRow, bindings: [], ...placement },
-			{ ...workerRow, bindings: [], ...placement },
-		]);
+		const wireOf = (row: typeof webRow | typeof workerRow) => ({
+			name: row.name,
+			type: row.type,
+			source: row.source,
+			build: row.build,
+			env: row.env,
+			bindings: [],
+			ports: row.ports,
+			replicas: row.replicas,
+			resources: row.resources,
+			probe: row.probe,
+			// The mocked rows have no resolved_image column; a REAL row does, and it must survive
+			// the pick (W2 #591). config_snapshot_components.aws.json covers the populated case.
+			resolved_image: undefined,
+			...placement,
+		});
+		expect(snapshot.services).toEqual([wireOf(webRow), wireOf(workerRow)]);
+		// The bookkeeping columns the spread used to carry are GONE — assert it directly, so a
+		// regression cannot hide inside a regenerated fixture.
+		for (const svc of snapshot.services as Array<Record<string, unknown>>) {
+			for (const k of [
+				"id",
+				"project_id",
+				"environment_id",
+				"status",
+				"status_message",
+				"estimated_monthly_cost",
+				"created_at",
+				"updated_at",
+			]) {
+				expect(svc, `services wire still carries the DB column ${k}`).not.toHaveProperty(k);
+			}
+		}
 
 		// Freeze the wire into the shared fixture the Go contract test consumes.
 		const serialized = `${JSON.stringify(snapshot.services, null, "\t")}\n`;
