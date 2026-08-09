@@ -88,9 +88,15 @@ type Summary struct {
 // PlanResult, surfaced in execution_metadata, and (Phase 1) sealed into the
 // signed evidence receipt.
 type Report struct {
-	// Verdict is the overall gate decision: fail if any control failed, else warn
-	// if any warned, else pass. not_evaluable controls never produce a pass/fail
-	// verdict on their own.
+	// Verdict is the overall gate decision, computed by VerdictFor: fail if any
+	// control failed, else warn if any warned, else NOT_EVALUABLE if any in-scope
+	// control could not be judged, else pass. A not_evaluable control does not
+	// block, but it does take the headline — it must never be rounded up into a
+	// pass, which is the false-PASS the engine exists to avoid.
+	//
+	// This comment used to end at "else pass", which read as though not_evaluable
+	// left the headline alone. The E2E receipt gate was written from it and
+	// consequently failed every honest not_evaluable run (#2156).
 	Verdict Status `json:"verdict"`
 	// CatalogVersion records which control set produced this report.
 	CatalogVersion string `json:"catalog_version"`
