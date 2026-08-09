@@ -1249,7 +1249,23 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						description: "Portable sizing — mapped to the nearest cache tier on any cloud.",
 						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
-				{ key: "num_cache_nodes", type: "number", label: "Nodes", min: 1, max: 6 },
+				{
+					key: "num_cache_nodes",
+					type: "number",
+					label: "Nodes",
+					min: 1,
+					max: 6,
+					// Withdrawn (not hidden) on Azure: Managed Redis is sized by its SKU and
+					// the service manages clustering itself, so there is no node, replica or
+					// shard count for the number to become — the old wiring only flipped the
+					// legacy tier and discarded the number (#1993). `unavailableWhen`, never
+					// `visibleWhen`: hiding would drop azure from `offeredOn` and make the
+					// recorded ceiling in infra/config-carriage-exclusions.yaml match nothing.
+					unavailableWhen: (_c, { provider }) =>
+						provider === "azure"
+							? "Azure Managed Redis is sized by its SKU and manages clustering itself — a node count has nothing to apply to. Size the cache with Memory instead."
+							: null,
+				},
 					{
 						key: "storage_gb",
 						type: "number",
