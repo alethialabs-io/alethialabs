@@ -45,11 +45,11 @@ func NewClient(authToken string) *Client {
 // GetJob/GetJobLogs poll loops, hangs with no output and no way to bound the wait (#2045).
 //
 // A client Timeout rather than a context.Context on every verb, deliberately. apps/cli has ZERO
-// context.Context in non-test code, and *Client is consumed through a 65-method interface in
-// apps/cli/cmd/client.go (with a fake behind it), so ctx parameters would rewrite the interface,
-// the fake and ~200 call sites — and every one of those call sites would pass context.Background(),
-// so no caller would gain a cancellation it could actually use. If the CLI ever grows a root
-// context the change is mechanical: thread it in and keep this as the ceiling.
+// context.Context in non-test code, and *Client is consumed through the 61-method apiClient
+// interface in apps/cli/cmd/client.go with a ~430-line fake behind it, so ctx parameters would
+// rewrite the interface, the fake and every call site — and every one of those call sites would
+// pass context.Background(), so no caller would gain a cancellation it could actually use. If the
+// CLI ever grows a root context the change is mechanical: thread it in and keep this as the ceiling.
 //
 // 60s is sized against the slowest LEGITIMATE call, not the median: ConnectProviderIdentity and
 // VerifyProviderIdentity run a cloud health probe INLINE on the server. No env knob — same shape as
