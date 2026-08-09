@@ -48,7 +48,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `alidns_managed_certificate` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `alidns_zone_name` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `allow_long_names` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
-| `application_waf_enabled` | ✅ | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
+| `application_waf_enabled` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `artifact_registry_repos` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `aws_account_id` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `aws_elasticache_user_name` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
