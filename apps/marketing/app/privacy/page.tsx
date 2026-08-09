@@ -61,7 +61,7 @@ export default function PrivacyPage() {
 				We process IP address, user agent, request timing, security events, and
 				diagnostic logs needed to deliver and protect the Service. Product
 				analytics and masked session replay are optional, disabled by default, and
-				controlled separately through <strong>Privacy choices</strong>. Analytics
+				controlled separately through <strong>Privacy settings</strong>. Analytics
 				uses internal account and organization identifiers rather than names or
 				email addresses. Prompts and model outputs are not sent to product
 				analytics.
@@ -86,7 +86,7 @@ export default function PrivacyPage() {
 				<li>
 					<strong>Consent:</strong> optional product analytics, optional session
 					replay, and any marketing communication that requires consent. Consent
-					can be withdrawn at any time through Privacy choices.
+					can be withdrawn at any time through Privacy settings.
 				</li>
 			</ul>
 

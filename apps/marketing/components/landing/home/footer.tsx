@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { LEGAL_ENTITY } from "@repo/brand/legal";
+import { PrivacySettingsButton } from "@repo/privacy/privacy-settings-button";
 import Link from "next/link";
 import { disp, eyebrow, Lockup, mono, Wrap } from "./primitives";
 
@@ -177,6 +178,9 @@ export function Footer() {
               justifyContent: "flex-end",
             }}
           >
+            <Link href="/security" style={{ ...eyebrow, fontSize: 9 }}>
+              Security
+            </Link>
             <Link href="/terms" style={{ ...eyebrow, fontSize: 9 }}>
               Terms
             </Link>
@@ -186,8 +190,24 @@ export function Footer() {
             <Link href="/cookies" style={{ ...eyebrow, fontSize: 9 }}>
               Cookies
             </Link>
+            {/* Consent must stay as easy to withdraw as it was to give. This
+                replaces the floating launcher, which covered the console's
+                sidebar profile and was removed. */}
+            <PrivacySettingsButton
+              style={{
+                ...eyebrow,
+                fontSize: 9,
+                background: "none",
+                border: 0,
+                padding: 0,
+                cursor: "pointer",
+              }}
+            />
             <Link href="/legal/dpa" style={{ ...eyebrow, fontSize: 9 }}>
               DPA
+            </Link>
+            <Link href="/acceptable-use" style={{ ...eyebrow, fontSize: 9 }}>
+              AUP
             </Link>
             <p style={{ ...eyebrow, fontSize: 10, margin: 0, ...mono }}>
               aletheia · truth, brought into focus
