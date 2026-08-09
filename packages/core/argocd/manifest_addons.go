@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -97,9 +98,27 @@ func applyManifestServerSide(manifest string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// crdNameRe is the RFC-1123 DNS SUBDOMAIN charset kubernetes enforces on a CRD's metadata.name,
+// which is always `<plural>.<group>` — `clusters.postgresql.cnpg.io`, `certificates.cert-manager.io`.
+//
+// A sibling of addon_secrets.go's k8sNameRe and validated for the identical reason stated there: the
+// value arrives via the DB-persisted config snapshot and interpolates into a kubectl command string
+// the runner executes through `bash -c`. k8sNameRe itself cannot be reused — it is the single-LABEL
+// form and rejects the dots every real CRD name contains, so pointing it at this field would refuse
+// every add-on instead of the hostile ones.
+//
+// Dots may not lead, trail or double, so no empty label can appear (#2021).
+var crdNameRe = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+
 // waitForCRDEstablished blocks until the named CRD reports condition=Established, so a CR that
 // needs its schema can't be synced against an API server that doesn't know the kind yet.
 func waitForCRDEstablished(crd string, stdout, stderr io.Writer) error {
+	// Restated even though ApplyManifestAddOns already refuses these: this function is what builds
+	// the shell command, and a shell-command builder must not assume its caller checked. Without it
+	// the outer guard could be deleted with every test above still green.
+	if !crdNameRe.MatchString(crd) {
+		return fmt.Errorf("refusing to wait on %q: not a valid CRD name", crd)
+	}
 	cmd := fmt.Sprintf(
 		"kubectl wait --for=condition=established --timeout=%ds crd/%s",
 		int(crdEstablishTimeout.Seconds()), crd,
@@ -142,6 +161,15 @@ func ApplyManifestAddOns(ctx context.Context, addons []types.AddOnInstall, stdou
 		}
 		crdErr := false
 		for _, crd := range a.CRDs {
+			// Refused BEFORE the wait, and counted as a failure for this add-on rather than
+			// skipped quietly. A CRD name that cannot be one is a snapshot that should never have
+			// reached the runner; proceeding to install CRs against a schema we could not confirm
+			// is the fail-open half of the same mistake.
+			if !crdNameRe.MatchString(crd) {
+				fmt.Fprintf(stderr, "Warning: add-on %s: refusing CRD name %q — not a valid kubernetes CRD name; skipping this add-on\n", a.ID, crd)
+				crdErr = true
+				continue
+			}
 			if err := waitForCRDEstablished(crd, stdout, stderr); err != nil {
 				fmt.Fprintf(stderr, "Warning: add-on %s: %v\n", a.ID, err)
 				crdErr = true
