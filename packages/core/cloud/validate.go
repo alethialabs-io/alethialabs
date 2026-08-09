@@ -138,9 +138,11 @@ func validateNodeDiskSize(config *types.ProjectConfig, tfvar string, floorGB int
 // pins the two clouds that deliberately have NO rule.
 const (
 	// infra/templates/project/azure/modules/vnet/main.tf:13-18 — four subnets at
-	// `cidrsubnet(var.vnet_cidr, 20 - local.vnet_prefix_length, 0..3)`. newbits >= 0 requires
-	// prefix <= 20.
-	azureMaxNetworkPrefix = 20
+	// `cidrsubnet(var.vnet_cidr, 20 - local.vnet_prefix_length, 0..3)`. cidrsubnet() also
+	// requires netnum < 2^newbits, so carving netnum 3 needs newbits >= 2, i.e. prefix <= 18.
+	// newbits >= 0 alone (prefix <= 20) admits /19 and /20, which die inside tofu with an
+	// opaque "does not accommodate a subnet numbered N" error.
+	azureMaxNetworkPrefix = 18
 	// infra/templates/project/hetzner/network.tf:11 — the node subnet is
 	// `cidrsubnet(local.network_ip_range, 24 - tonumber(split("/", …)[1]), 0)`. newbits >= 0
 	// requires prefix <= 24.
