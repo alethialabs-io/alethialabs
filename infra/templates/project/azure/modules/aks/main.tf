@@ -37,8 +37,25 @@ resource "azurerm_kubernetes_cluster" "this" {
   node_resource_group = var.node_resource_group
 
   # --- Identity -----------------------------------------------------------
+  # UserAssigned only when #2004's KMS encryption is on, because that is the only shape in which the
+  # Key Vault grant can exist BEFORE the cluster does (see secrets-encryption.tf). Otherwise the
+  # cluster keeps the system-assigned identity it has always had, so a project that turns encryption
+  # off renders exactly as it did.
   identity {
-    type = "SystemAssigned"
+    type         = var.cluster_identity_id != "" ? "UserAssigned" : "SystemAssigned"
+    identity_ids = var.cluster_identity_id != "" ? [var.cluster_identity_id] : null
+  }
+
+  # Envelope-encrypt Kubernetes Secrets in etcd (#2004). Rendered only when a key was passed:
+  # emitting the block with an empty id is not "off", it is an invalid binding.
+  dynamic "key_management_service" {
+    for_each = var.secrets_kms_key_id != "" ? [1] : []
+    content {
+      key_vault_key_id = var.secrets_kms_key_id
+      # Public: the runner reaches the vault over the internet, and a private-endpoint vault would
+      # need the cluster's VNet integrated with it — a topology this template does not build.
+      key_vault_network_access = "Public"
+    }
   }
 
   workload_identity_enabled = true

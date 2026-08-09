@@ -98,3 +98,11 @@ variable "security_group_ids" {
   default     = []
   description = "Extra security groups attached to the default node pool. Empty (the default) adds none."
 }
+
+# #2004. KMS key that envelope-encrypts Kubernetes Secrets in etcd. Empty (the default) leaves them
+# under Alibaba's default key, which is what every cluster did before this landed.
+variable "secrets_encryption_key_id" {
+  type        = string
+  default     = ""
+  description = "KMS key id for Secrets envelope encryption. Empty disables it."
+}
