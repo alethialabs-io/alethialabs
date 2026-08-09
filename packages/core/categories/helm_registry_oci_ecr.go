@@ -3,7 +3,15 @@
 
 package categories
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+// publicECRRegistryHost is the single global host ECR Public serves from. It is a constant, not a
+// provider_config input: the refresher mints the token under the CLUSTER's own IRSA, so seeding it
+// against an operator-supplied host would hand that token to a registry the customer never connected.
+const publicECRRegistryHost = "public.ecr.aws"
 
 // Amazon ECR / ECR Public as OCI Helm registries — KEYLESS. ECR authenticates with a ~12h ephemeral
 // token (`ecr get-login-password`), so no stable stored password can back a static ArgoCD repository
@@ -51,9 +59,22 @@ func init() {
 	// public-ECR token under the cluster's OWN IRSA (us-east-1), no cross-account role. The host is fixed
 	// (never taken from arbitrary provider_config) so no host-trust gap.
 	register("helm_registry", "oci-public-ecr", behavior{
+		// registry_host is not an input here — the host is pinned to publicECRRegistryHost. A
+		// provider_config that carries the key anyway is accepted only when it names that same host, and
+		// rejected loudly otherwise rather than silently ignored, so a snapshot written against a
+		// different registry never reaches the refresher.
+		//
+		// The raw map entry is read deliberately: pcString substitutes its default for a missing, null OR
+		// EXPLICITLY-EMPTY value, so a `== ""` test against a non-empty default can never be true and the
+		// guard that used to stand here was unreachable (#2087). Absent and null stay unset — that is
+		// pcString's own reading of them, and the pinned host covers it.
 		validate: func(ctx ComponentContext) error {
-			if pcString(ctx.ProviderConfig, "registry_host", "public.ecr.aws") == "" {
-				return fmt.Errorf("ECR Public (OCI Helm): registry host is empty")
+			v, set := ctx.ProviderConfig["registry_host"]
+			if !set || v == nil {
+				return nil
+			}
+			if h, isString := v.(string); !isString || strings.TrimSpace(h) != publicECRRegistryHost {
+				return fmt.Errorf("ECR Public (OCI Helm): registry host is fixed at %s (provider_config.registry_host = %#v)", publicECRRegistryHost, v)
 			}
 			return nil
 		},
@@ -61,7 +82,7 @@ func init() {
 			return KeylessHelmRepoTarget{
 				Slug:         "oci-public-ecr",
 				Provider:     "aws",
-				RegistryHost: pcString(ctx.ProviderConfig, "registry_host", "public.ecr.aws"),
+				RegistryHost: publicECRRegistryHost,
 				Region:       "us-east-1",
 				Public:       true,
 			}
