@@ -85,11 +85,13 @@ func HelmRepoCredSpecs(vc *types.ProjectConfig) ([]HelmRepoCredSpec, error) {
 			errs = append(errs, fmt.Errorf("helm_registry/%s validation failed: %w", r.Provider, err))
 			continue
 		}
-		cred, ok := p.RepoCred(ctx)
-		if !ok {
-			errs = append(errs, fmt.Errorf("helm_registry provider %q has no repo-credential mapping", r.Provider))
-			continue
-		}
+		// RepoCred's ok is `b.repoCred != nil` on the very behavior value IsHelmRegistry tested above
+		// (provider.go: IsHelmRegistry → behaviors["helm_registry/"+slug].repoCred != nil; RepoCred →
+		// p.b.repoCred == nil → false), and Get resolves that same registry entry. The two predicates are
+		// therefore equivalent here and ok is true by construction, so a `!ok` arm would be dead and its
+		// diagnostic unemittable (#2088). The live guard is the IsHelmRegistry skip above; the equivalence
+		// is pinned by TestHygCoreCategoriesHelmRegistryPredicateEquivalence so that dropping it fails loudly.
+		cred, _ := p.RepoCred(ctx)
 		name := HelmRepoCredSecretName(cred.URL)
 		if _, dup := seen[name]; dup {
 			// Same repo URL connected twice — one Secret already covers it.
