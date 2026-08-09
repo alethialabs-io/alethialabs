@@ -2,13 +2,19 @@ module "aks" {
   source = "./modules/aks"
   count  = var.provision_aks ? 1 : 0
 
-  depends_on = [module.vnet]
+  # The role assignment is a HARD dependency, not an ordering preference: AKS encrypts as its own
+  # identity, and a cluster created against a key that identity cannot yet use fails outright
+  # (#2004).
+  depends_on = [module.vnet, azurerm_role_assignment.aks_secrets_kms]
 
   location        = var.location
   environment     = var.environment
   project_name    = var.project_name
   cluster_name    = local.aks_name
   cluster_version = var.aks_cluster_version
+
+  cluster_identity_id = local.azure_secrets_encryption ? azurerm_user_assigned_identity.aks[0].id : ""
+  secrets_kms_key_id  = local.azure_secrets_encryption ? azurerm_key_vault_key.aks_secrets[0].id : ""
 
   # Derived in checks_naming.tf (NAMING-002), not left to Azure: the auto-derived
   # "MC_<resource_group>_<cluster_name>_<location>" rendered 82 characters against an 80-character

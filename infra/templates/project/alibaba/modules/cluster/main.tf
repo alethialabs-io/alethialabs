@@ -16,6 +16,10 @@ terraform {
 ################################################################################
 
 resource "alicloud_cs_managed_kubernetes" "this" {
+  # Secrets envelope encryption (#2004). null when unset, not "": ACK treats an empty string as an
+  # invalid key id rather than as "no key", so the argument has to be absent entirely.
+  encryption_provider_key = var.secrets_encryption_key_id != "" ? var.secrets_encryption_key_id : null
+
   name         = var.cluster_name
   cluster_spec = "ack.pro.small"
   version      = var.cluster_version
