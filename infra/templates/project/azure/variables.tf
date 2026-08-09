@@ -672,3 +672,12 @@ variable "external_secrets_identity_resource_group" {
   type        = string
   default     = ""
 }
+
+# ── KMS etcd encryption for AKS (#2004) ─────────────────────────────────────────────────────────
+# ON BY DEFAULT, matching what AWS has always done silently. See secrets-encryption.tf for why this
+# also changes the cluster to a user-assigned identity, and what that means for an existing cluster.
+variable "aks_secrets_encryption_enabled" {
+  type        = bool
+  default     = true
+  description = "Envelope-encrypt Kubernetes Secrets in etcd under a key in this project's Key Vault. On by default (AWS parity). Requires key_vault_purge_protection_enabled."
+}
