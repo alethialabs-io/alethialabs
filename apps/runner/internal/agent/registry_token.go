@@ -285,12 +285,31 @@ func workloadIdentityAADToken(ctx context.Context, scope string) (string, error)
 	return tok.Token, nil
 }
 
+// acrExchangeTimeout bounds one ACR /oauth2/exchange round trip. Generous for a single token
+// exchange against a regional endpoint, short against the alternative: forever.
+const acrExchangeTimeout = 30 * time.Second
+
+// acrExchangeClient is the HTTP client the ACR mint uses. NOT http.DefaultClient, for two reasons
+// (#2037):
+//
+//   - DefaultClient has NO timeout, and the ctx this path receives has no deadline either — it comes
+//     from runRegistryTokenLoop, the refresher sidecar's lifetime context. So a registry endpoint
+//     that accepts the connection and stalls hangs the refresh loop permanently. The failure is
+//     quiet and delayed: the pull secret simply stops being refreshed, and image pulls start 401ing
+//     when the current token expires, long after the request that wedged.
+//   - DefaultClient is process-wide. Setting a timeout on it to fix this would change behaviour for
+//     every other caller in the runner, so the fix has to be a client of our own.
+//
+// GAR and ECR need no equivalent: they delegate to the Google and AWS SDKs, which bring their own
+// transport bounds. ACR is the only hand-rolled HTTP exchange here.
+var acrExchangeClient = &http.Client{Timeout: acrExchangeTimeout}
+
 // mintACRDockerConfig obtains an AAD token via the pod's Azure Workload Identity, exchanges it at the
 // registry's /oauth2/exchange endpoint for an ACR refresh token (the target ACR granted this identity
 // AcrPull), and renders the dockerconfigjson. It wires the real Workload-Identity token-getter +
-// http.DefaultClient into mintACRDockerConfigWith (the DI'd core).
+// a bounded HTTP client into mintACRDockerConfigWith (the DI'd core).
 func mintACRDockerConfig(ctx context.Context, host string) (string, time.Time, error) {
-	return mintACRDockerConfigWith(ctx, workloadIdentityAADToken, http.DefaultClient, host)
+	return mintACRDockerConfigWith(ctx, workloadIdentityAADToken, acrExchangeClient, host)
 }
 
 // mintACRDockerConfigWith is the dependency-injected core of the ACR mint: it takes the AAD
