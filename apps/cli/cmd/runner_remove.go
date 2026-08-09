@@ -11,6 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// runnerRemoveYes is the --yes opt-in: skip the confirmation prompt (and make the
+// command usable with --no-input).
+var runnerRemoveYes bool
+
 var runnerRemoveCmd = &cobra.Command{
 	Use:   "remove [runner_id]",
 	Short: "Remove a runner record (no cloud teardown)",
@@ -35,7 +39,8 @@ var runnerRemoveCmd = &cobra.Command{
 			}
 		}
 
-		if !confirm(
+		if !confirmDestructive(
+			runnerRemoveYes,
 			"Remove this runner record?",
 			"This only removes the database record. Cloud resources will NOT be torn down.",
 		) {
@@ -57,5 +62,6 @@ var runnerRemoveCmd = &cobra.Command{
 }
 
 func init() {
+	addYesFlag(runnerRemoveCmd, &runnerRemoveYes)
 	runnerCmd.AddCommand(runnerRemoveCmd)
 }

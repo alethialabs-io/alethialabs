@@ -169,6 +169,10 @@ func runChannelsVerify(c apiClient, out io.Writer, id string) error {
 	return nil
 }
 
+// channelsDeleteYes is the --yes opt-in: skip the confirmation prompt (and make the
+// command usable with --no-input).
+var channelsDeleteYes bool
+
 var channelsDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a notification channel",
@@ -178,7 +182,7 @@ var channelsDeleteCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		if !confirm("Delete this channel?", "Alert rules bound to it will lose this destination. This cannot be undone.") {
+		if !confirmDestructive(channelsDeleteYes, "Delete this channel?", "Alert rules bound to it will lose this destination. This cannot be undone.") {
 			return
 		}
 		if err := runChannelsDelete(api.NewClient(token), os.Stdout, args[0]); err != nil {
@@ -197,6 +201,7 @@ func runChannelsDelete(c apiClient, out io.Writer, id string) error {
 }
 
 func init() {
+	addYesFlag(channelsDeleteCmd, &channelsDeleteYes)
 	channelsCreateCmd.Flags().StringVar(&channelType, "type", "", "Channel type (webhook, email, slack, pagerduty, …)")
 	channelsCreateCmd.Flags().StringArrayVar(&channelRecipients, "recipient", nil, "Email recipient (repeatable; email channels)")
 	channelsCreateCmd.Flags().StringVar(&channelURL, "url", "", "Destination webhook URL (slack/webhook/…)")

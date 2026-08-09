@@ -237,6 +237,10 @@ var (
 	componentRemoveName string
 )
 
+// componentRemoveYes is the --yes opt-in: skip the confirmation prompt (and make the
+// command usable with --no-input).
+var componentRemoveYes bool
+
 var projectComponentRemoveCmd = &cobra.Command{
 	Use:   "remove",
 	Short: "Remove a component from a project",
@@ -252,7 +256,7 @@ var projectComponentRemoveCmd = &cobra.Command{
 		if componentRemoveKind == "" {
 			failf("--kind is required (see `alethia project component kinds`)")
 		}
-		if !confirm("Remove this component?", "Its configuration is deleted (provisioned resources are removed on the next apply/destroy).") {
+		if !confirmDestructive(componentRemoveYes, "Remove this component?", "Its configuration is deleted (provisioned resources are removed on the next apply/destroy).") {
 			return
 		}
 		if err := runComponentRemove(api.NewClient(token), os.Stdout, project, componentRemoveKind, componentRemoveName); err != nil {
@@ -274,6 +278,7 @@ func runComponentRemove(c apiClient, out io.Writer, project, kind, name string) 
 }
 
 func init() {
+	addYesFlag(projectComponentRemoveCmd, &componentRemoveYes)
 	projectComponentCmd.PersistentFlags().String("project", "", "Project name or id")
 
 	projectComponentListCmd.Flags().StringVar(&componentListKind, "kind", "", "Filter by component kind")
