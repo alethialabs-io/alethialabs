@@ -108,6 +108,12 @@ owner-equivalent escalation path. (`secretmanager.admin` is kept predefined on p
 `secretmanager.versions.access` breaks the provider's secret-version refresh.)
 </Callout>
 
+The setup also creates a second, separate account — `alethia-appdb` — that your **application**
+workloads use to reach Cloud SQL without a password. It gets exactly two roles,
+`roles/cloudsql.client` (connect through the Auth Proxy) and `roles/cloudsql.instanceUser` (log in
+with an IAM token). Neither carries `setIamPolicy`, so it cannot escalate, and the provisioner
+account cannot use it. See [Password-free Cloud SQL](#password-free-cloud-sql) below.
+
 ## Optional APIs you enable yourself
 
 Alethia cannot turn APIs on in your project. Enabling one needs
@@ -131,6 +137,49 @@ you which API to enable. Nothing is half-applied, and no repository is created c
 scanned when it is not. Enable the API, then deploy again.
 
 Leaving the switch off needs nothing — repositories are created with scanning explicitly disabled.
+
+## Password-free Cloud SQL
+
+Alethia can run your app against Cloud SQL with **no database password**: the pod impersonates a
+Google service account through GKE Workload Identity and the Cloud SQL Auth Proxy mints a
+short-lived IAM token from it.
+
+This is **opt-in on Google Cloud**, and it needs one value from you. After running the setup, take
+the `alethia-appdb` account it created and set it in Alethia as:
+
+```
+cloud_sql_app_service_account_email = alethia-appdb@<PROJECT_ID>.iam.gserviceaccount.com
+```
+
+The Terraform module outputs it as `cloud_sql_app_service_account_email`; the shell script prints it
+at the end. Leave it unset and your apps keep using password authentication — nothing breaks, and
+turning on IAM auth without it simply warns that keyless is not wired.
+
+### Why you create this account instead of Alethia
+
+`roles/cloudsql.client` and `roles/cloudsql.instanceUser` can only be granted **on the whole
+project**. A Cloud SQL instance does not carry its own IAM policy, so there is no way to scope those
+roles to a single database instance the way Alethia scopes DNS to one zone and Secret Manager to one
+secret.
+
+Granting a project-wide role needs `resourcemanager.projects.setIamPolicy` — the permission that
+lets a principal grant itself *anything*. Alethia deliberately does not hold it. So this one grant
+is made by you, once, at setup, rather than by the provisioner on every deployment.
+
+<Callout type="warn">
+**One database identity per Google Cloud project.** Every Alethia environment in the project shares
+the `alethia-appdb` account, so an app in one environment can log in to another environment's Cloud
+SQL instance. What it may *do* inside a database is still scoped by the SQL grants Alethia issues
+per database. If you need environments isolated at the identity level, run them in **separate Google
+Cloud projects**.
+</Callout>
+
+### How this differs from AWS and Azure
+
+On AWS and Azure the equivalent identity is created per environment during deployment, because both
+let the role be scoped to the individual database — AWS through IRSA and RDS IAM auth, Azure through
+Entra. Google Cloud's IAM model does not offer that scope for Cloud SQL, so Google Cloud is the one
+provider where password-free database auth needs a setup step and shares one identity per project.
 
 ## What's Stored
 

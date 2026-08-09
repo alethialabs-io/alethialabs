@@ -47,8 +47,8 @@ output "cloud_sql_iam_user" {
 }
 
 output "cloud_sql_app_gsa_email" {
-  description = "Email of the app Cloud SQL Workload-Identity GSA — annotated onto the generated app KSA (#722)"
-  value       = local.enable_app_db_iam ? google_service_account.app_db[0].email : null
+  description = "Email of the app Cloud SQL Workload-Identity GSA — annotated onto the generated app KSA (#722). The account adopted via cloud_sql_app_service_account_email; null when keyless is not wired."
+  value       = local.enable_app_db_iam ? data.google_service_account.app_db_adopted[0].email : null
 }
 
 # Keyless bootstrap (#722 R5): the Secret Manager secret id holding the BUILT_IN admin (default user)
