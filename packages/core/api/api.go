@@ -389,7 +389,7 @@ func (c *Client) doDelete(endpoint string) error {
 // --- Repositories ---
 
 func (c *Client) GetRepositories(provider string) ([]Repository, error) {
-	endpoint := fmt.Sprintf("%s/cli/repositories/%s", c.baseURL, provider)
+	endpoint := fmt.Sprintf("%s/cli/repositories/%s", c.baseURL, url.PathEscape(provider))
 
 	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
@@ -443,7 +443,7 @@ func (c *Client) GetConfiguration(projectName string) (*types.Configuration, err
 	var successResp struct {
 		Configuration *types.Configuration `json:"configuration"`
 	}
-	endpoint := fmt.Sprintf("%s/cli/configurations/by-project-name/%s", c.baseURL, projectName)
+	endpoint := fmt.Sprintf("%s/cli/configurations/by-project-name/%s", c.baseURL, url.PathEscape(projectName))
 	if err := c.doGet(endpoint, &successResp); err != nil {
 		return nil, fmt.Errorf("failed to get configuration: %w", err)
 	}
@@ -524,7 +524,7 @@ func (c *Client) GetJobs(status string, limit, offset int) (*JobsPage, error) {
 }
 
 func (c *Client) GetJob(jobID string) (*ProvisionJob, error) {
-	endpoint := fmt.Sprintf("%s/cli/jobs/%s", c.baseURL, jobID)
+	endpoint := fmt.Sprintf("%s/cli/jobs/%s", c.baseURL, url.PathEscape(jobID))
 	var job ProvisionJob
 	if err := c.doGet(endpoint, &job); err != nil {
 		return nil, fmt.Errorf("failed to get job: %w", err)
@@ -533,7 +533,7 @@ func (c *Client) GetJob(jobID string) (*ProvisionJob, error) {
 }
 
 func (c *Client) GetJobLogs(jobID string, afterID int) ([]JobLog, error) {
-	endpoint := fmt.Sprintf("%s/cli/jobs/%s/logs", c.baseURL, jobID)
+	endpoint := fmt.Sprintf("%s/cli/jobs/%s/logs", c.baseURL, url.PathEscape(jobID))
 	if afterID > 0 {
 		endpoint = fmt.Sprintf("%s?after=%d", endpoint, afterID)
 	}
@@ -548,7 +548,7 @@ func (c *Client) GetJobLogs(jobID string, afterID int) ([]JobLog, error) {
 }
 
 func (c *Client) CancelJob(jobID string) error {
-	endpoint := fmt.Sprintf("%s/cli/jobs/%s/cancel", c.baseURL, jobID)
+	endpoint := fmt.Sprintf("%s/cli/jobs/%s/cancel", c.baseURL, url.PathEscape(jobID))
 	return c.doPost(endpoint, nil, nil)
 }
 
@@ -566,7 +566,7 @@ func (c *Client) GetRunners() ([]Runner, error) {
 }
 
 func (c *Client) RemoveRunner(runnerID string) error {
-	endpoint := fmt.Sprintf("%s/cli/runners/%s", c.baseURL, runnerID)
+	endpoint := fmt.Sprintf("%s/cli/runners/%s", c.baseURL, url.PathEscape(runnerID))
 	if err := c.doDelete(endpoint); err != nil {
 		return fmt.Errorf("failed to remove runner: %w", err)
 	}
@@ -606,7 +606,7 @@ func (c *Client) GetClusters() ([]ClusterSummary, error) {
 
 // GetCluster fetches a single cluster by its id, plus its compact ArgoCD/GitOps posture.
 func (c *Client) GetCluster(id string) (*ClusterDetail, error) {
-	endpoint := fmt.Sprintf("%s/cli/clusters/%s", c.baseURL, id)
+	endpoint := fmt.Sprintf("%s/cli/clusters/%s", c.baseURL, url.PathEscape(id))
 	var detail ClusterDetail
 	if err := c.doGet(endpoint, &detail); err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
@@ -623,7 +623,7 @@ type LogEntry struct {
 }
 
 func (c *Client) SendLog(deploymentID string, log LogEntry) error {
-	endpoint := fmt.Sprintf("%s/deployments/%s/logs", c.baseURL, deploymentID)
+	endpoint := fmt.Sprintf("%s/deployments/%s/logs", c.baseURL, url.PathEscape(deploymentID))
 	return c.doPost(endpoint, log, nil)
 }
 
@@ -647,7 +647,7 @@ func (c *Client) CreateBootstrapJob() (*BootstrapJob, error) {
 }
 
 func (c *Client) UpdateBootstrapJobStatus(jobID, status, errorMessage string) error {
-	endpoint := fmt.Sprintf("%s/cli/bootstrap-jobs/%s", c.baseURL, jobID)
+	endpoint := fmt.Sprintf("%s/cli/bootstrap-jobs/%s", c.baseURL, url.PathEscape(jobID))
 	payload := map[string]string{"status": status}
 	if errorMessage != "" {
 		payload["error_message"] = errorMessage
@@ -715,7 +715,7 @@ func (c *Client) UnregisterCluster(id, name string) error {
 }
 
 func (c *Client) SendBootstrapLog(jobID string, logChunk string, streamType string) error {
-	endpoint := fmt.Sprintf("%s/cli/bootstrap-jobs/%s/logs", c.baseURL, jobID)
+	endpoint := fmt.Sprintf("%s/cli/bootstrap-jobs/%s/logs", c.baseURL, url.PathEscape(jobID))
 	payload := map[string]string{
 		"log_chunk":   logChunk,
 		"stream_type": streamType,
@@ -773,7 +773,7 @@ type ProviderStatus struct {
 // InitProviderIdentity gets or creates the pending identity for a provider.
 // For AWS, the response includes the external_id to embed in the trust policy.
 func (c *Client) InitProviderIdentity(provider string) (*InitIdentityResponse, error) {
-	endpoint := fmt.Sprintf("%s/cli/providers/%s/init", c.baseURL, provider)
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/init", c.baseURL, url.PathEscape(provider))
 	var resp InitIdentityResponse
 	if err := c.doPost(endpoint, map[string]interface{}{}, &resp); err != nil {
 		return nil, fmt.Errorf("failed to initialize %s connection: %w", provider, err)
@@ -788,7 +788,7 @@ func (c *Client) InitProviderIdentity(provider string) (*InitIdentityResponse, e
 //   - gcp:   {"wif_config": {...}}
 //   - azure: {"tenant_id": "...", "client_id": "...", "subscription_id": "..."}
 func (c *Client) ConnectProviderIdentity(provider, identityID string, credentials map[string]interface{}) (*ConnectIdentityResponse, error) {
-	endpoint := fmt.Sprintf("%s/cli/providers/%s/connect", c.baseURL, provider)
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/connect", c.baseURL, url.PathEscape(provider))
 	payload := map[string]interface{}{
 		"identity_id": identityID,
 		"credentials": credentials,
@@ -802,7 +802,7 @@ func (c *Client) ConnectProviderIdentity(provider, identityID string, credential
 
 // DisconnectProviderIdentity resets a provider identity to its pending state.
 func (c *Client) DisconnectProviderIdentity(provider, identityID string) error {
-	endpoint := fmt.Sprintf("%s/cli/providers/%s/disconnect", c.baseURL, provider)
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/disconnect", c.baseURL, url.PathEscape(provider))
 	payload := map[string]interface{}{"identity_id": identityID}
 	if err := c.doPost(endpoint, payload, nil); err != nil {
 		return fmt.Errorf("failed to disconnect %s: %w", provider, err)
@@ -812,7 +812,7 @@ func (c *Client) DisconnectProviderIdentity(provider, identityID string) error {
 
 // GetProviderStatus returns the verified connection status for a provider.
 func (c *Client) GetProviderStatus(provider string) (*ProviderStatus, error) {
-	endpoint := fmt.Sprintf("%s/cli/providers/%s/status", c.baseURL, provider)
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/status", c.baseURL, url.PathEscape(provider))
 	var resp ProviderStatus
 	if err := c.doGet(endpoint, &resp); err != nil {
 		return nil, fmt.Errorf("failed to get %s status: %w", provider, err)
@@ -825,7 +825,7 @@ func (c *Client) GetProviderStatus(provider string) (*ProviderStatus, error) {
 // The server verifies INLINE — there is no job to poll. The identityID is the
 // connected identity (see GetProviderStatus.IdentityID).
 func (c *Client) VerifyProviderIdentity(provider, identityID string) (*ConnectIdentityResponse, error) {
-	endpoint := fmt.Sprintf("%s/cli/providers/%s/verify", c.baseURL, provider)
+	endpoint := fmt.Sprintf("%s/cli/providers/%s/verify", c.baseURL, url.PathEscape(provider))
 	payload := map[string]interface{}{"identity_id": identityID}
 	var resp ConnectIdentityResponse
 	if err := c.doPost(endpoint, payload, &resp); err != nil {
