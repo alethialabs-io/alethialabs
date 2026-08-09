@@ -91,7 +91,15 @@ func HelmRepoCredSpecs(vc *types.ProjectConfig) ([]HelmRepoCredSpec, error) {
 		// therefore equivalent here and ok is true by construction, so a `!ok` arm would be dead and its
 		// diagnostic unemittable (#2088). The live guard is the IsHelmRegistry skip above; the equivalence
 		// is pinned by TestHygCoreCategoriesHelmRegistryPredicateEquivalence so that dropping it fails loudly.
-		cred, _ := p.RepoCred(ctx)
+		//
+		// The message is what was dead, not the skip: `ok` is still honoured, silently, exactly as the
+		// four sibling shapes do (helm_keyless.go, registry_keyless.go, secrets_keyless.go,
+		// secrets_saas.go). Falling through on a false `ok` would seed the ZERO RepoCred — an ArgoCD
+		// repo-credential Secret with an empty URL — which is strictly worse than the skip it replaced.
+		cred, ok := p.RepoCred(ctx)
+		if !ok {
+			continue
+		}
 		name := HelmRepoCredSecretName(cred.URL)
 		if _, dup := seen[name]; dup {
 			// Same repo URL connected twice — one Secret already covers it.

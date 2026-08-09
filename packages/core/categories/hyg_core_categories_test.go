@@ -94,8 +94,9 @@ func TestHygCoreCategoriesPublicECRHostIsPinned(t *testing.T) {
 // TestHygCoreCategoriesHelmRegistryPredicateEquivalence pins the invariant that made the removed
 // HelmRepoCredSpecs diagnostic unemittable (#2088): IsHelmRegistry(slug) and the ok returned by
 // CategoryProvider.RepoCred are the SAME `repoCred != nil` test on the same behavior value. The
-// removed arm was dead because of it, so if a future change ever separates the two, this fails
-// rather than the fail-closed skip silently becoming a real gap.
+// diagnostic was dead because of it (the skip it guarded is kept, silently, like the sibling
+// shapes), so if a future change ever separates the two, this fails rather than the fail-closed
+// skip silently becoming a real gap.
 func TestHygCoreCategoriesHelmRegistryPredicateEquivalence(t *testing.T) {
 	var checked int
 	for key := range behaviors {
