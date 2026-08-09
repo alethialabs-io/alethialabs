@@ -176,6 +176,47 @@ describe("keyless IAM-auth gate (unavailableWhen)", () => {
 	});
 });
 
+// #1841. The WAF switch used to be offered on every cloud, including Alibaba, where the template
+// bought an ACCOUNT-level WAF 3.0 instance a project cannot safely own — destroying one project
+// would release the firewall of every other project in the account. The offer is withdrawn, and the
+// switch is gated the same way `iam_auth` is: disabled with the reason, never hidden.
+describe("application WAF gate (unavailableWhen)", () => {
+	const field = getKindConfig("dns")
+		?.sections.flatMap((s) => s.fields)
+		.find((f) => f.key === "waf_enabled");
+
+	/** Why the WAF switch can't be honored on this cloud, or null when it can. */
+	const unavailable = (provider: CloudProviderSlug | null) => {
+		expect(field).toBeDefined();
+		const config: Record<string, unknown> = {};
+		const ctx: FieldCtx = { provider, config, caps: NO_CAPABILITIES };
+		return field?.unavailableWhen?.(config, ctx) ?? null;
+	};
+
+	it("offers the WAF on every cloud whose template builds one", () => {
+		for (const provider of ["aws", "gcp", "azure"] as const) {
+			expect(unavailable(provider)).toBeNull();
+		}
+	});
+
+	it("withholds it on alibaba, naming the account-level purchase", () => {
+		expect(unavailable("alibaba")).toMatch(/account-level purchase/);
+	});
+
+	it("leaves the no-cloud-yet case to requiresProvider, so one question has one owner", () => {
+		expect(unavailable(null)).toBeNull();
+		expect(field?.requiresProvider).toBe(true);
+	});
+
+	// Load-bearing beyond the render: `visibleWhen` would drop alibaba out of `offeredOn` in the
+	// generated offer surface, and the offer-parity guard iterates `offeredOn` — so the
+	// `dns:waf_enabled` / alibaba exclusion would match nothing and the public matrix would print
+	// `·` (not offered) in place of `—` (documented exclusion).
+	it("gates rather than hides, which is what keeps the exclusion measurable", () => {
+		expect(field?.visibleWhen).toBeUndefined();
+	});
+});
+
 describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 	/** Effective visibility of `key` on `kind` for a provider (default: visible). */
 	const visible = (

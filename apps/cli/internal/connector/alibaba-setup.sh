@@ -43,8 +43,10 @@ PROVISIONING_POLICIES=(
   AliyunMNSFullAccess
   AliyunOSSFullAccess
   AliyunOTSFullAccess
-  AliyunYundunWAFFullAccess
 )
+# NO AliyunYundunWAFFullAccess: the WAF 3.0 offer is withdrawn on this cloud (#1841). The instance
+# is an account-level purchase, so a project that bought one would release the whole account's
+# firewall when it was destroyed — a connector that cannot buy one cannot make that mistake.
 
 for bin in aliyun openssl; do
   if ! command -v "$bin" >/dev/null 2>&1; then
