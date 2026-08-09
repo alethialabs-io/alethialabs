@@ -212,7 +212,12 @@ func TestEnsureBinaryUsesPathCacheThenDownload(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(cached), 0755); err != nil {
 			t.Fatalf("mkdir cache: %v", err)
 		}
-		if err := os.WriteFile(cached, []byte("cached"), 0755); err != nil {
+		// The cache probe runs the binary (a truncated image must not be blessed
+		// forever — #2047), so the fixture has to be genuinely runnable.
+		if runtime.GOOS == "windows" {
+			t.Skip("the cache probe runs the binary; the shell stub is POSIX-only")
+		}
+		if err := os.WriteFile(cached, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
 			t.Fatalf("write cache: %v", err)
 		}
 		httpGet = func(context.Context, string) ([]byte, error) {
