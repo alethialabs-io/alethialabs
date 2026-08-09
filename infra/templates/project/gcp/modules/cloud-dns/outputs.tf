@@ -9,3 +9,11 @@ output "zone_name" {
 }
 
 
+
+# The FQDN actually sent to GCP, after normalisation (#2099). Exported so the invariant is
+# assertable from a test — the zone resource itself cannot be reached from the root, and a
+# normalisation nobody can measure is one that quietly stops happening.
+output "dns_name" {
+  description = "The zone's dnsName as sent to GCP — always terminated with a dot"
+  value       = local.dns_name
+}
