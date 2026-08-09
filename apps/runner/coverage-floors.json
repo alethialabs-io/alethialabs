@@ -17,8 +17,8 @@
       "total": 93
     },
     "internal/agent": {
-      "covered": 1969,
-      "total": 3366
+      "covered": 2982,
+      "total": 3384
     },
     "internal/obs": {
       "covered": 33,
