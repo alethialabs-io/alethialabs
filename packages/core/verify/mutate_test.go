@@ -104,6 +104,19 @@ func TestMutationFlipsVerdict(t *testing.T) {
 			},
 		},
 		{
+			// #2014: the trust grants "sts:*" (strictly broader than the literal
+			// AssumeRoleWithWebIdentity) and drops the :sub condition. Before the
+			// fix the wildcard action pushed the role OUT of scope entirely and
+			// this mutation did not flip — the exact fail-open being pinned here.
+			name:      "OIDC-001/widen-action-to-wildcard-and-drop-sub",
+			base:      "aws_pass_keyless_least_priv.json",
+			controlID: "OIDC-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				m := afterOf(t, plan, "aws_iam_role.deployer")
+				m["assume_role_policy"] = `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"sts:*","Principal":{"Federated":"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"}}]}`
+			},
+		},
+		{
 			name:      "LEASTPRIV-001/widen-policy-to-admin",
 			base:      "aws_pass_keyless_least_priv.json",
 			controlID: "LEASTPRIV-001",
@@ -232,6 +245,18 @@ func TestMutationFlipsVerdict(t *testing.T) {
 			mutate: func(t *testing.T, plan *tfjson.Plan) {
 				m := afterOf(t, plan, "alicloud_ram_role.external_secrets")
 				m["assume_role_policy_document"] = `{"Version":"1","Statement":[{"Effect":"Allow","Action":"sts:AssumeRole","Principal":{"Federated":["acs:ram::1234567890123456:oidc-provider/ack-rrsa-cluster-demo"]},"Condition":{"StringEquals":{"oidc:aud":"sts.aliyuncs.com"},"StringLike":{"oidc:sub":"system:serviceaccount:*"}}}]}`
+			},
+		},
+		{
+			// #2014 twin: "sts:*" covers sts:AssumeRole and the oidc:sub condition is
+			// gone — before the fix the wildcard action dropped the role out of
+			// ALI-OIDC-001's scope and this mutation did not flip.
+			name:      "ALI-OIDC-001/widen-action-to-wildcard-and-drop-sub",
+			base:      "alibaba_pass.json",
+			controlID: "ALI-OIDC-001",
+			mutate: func(t *testing.T, plan *tfjson.Plan) {
+				m := afterOf(t, plan, "alicloud_ram_role.external_secrets")
+				m["assume_role_policy_document"] = `{"Version":"1","Statement":[{"Effect":"Allow","Action":"sts:*","Principal":{"Federated":["acs:ram::1234567890123456:oidc-provider/ack-rrsa-cluster-demo"]}}]}`
 			},
 		},
 		{

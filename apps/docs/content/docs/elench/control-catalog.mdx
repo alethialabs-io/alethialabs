@@ -7,7 +7,7 @@ description: The authored controls per cloud, what each detects, the engine's bl
 
 <Enterprise />
 
-The current catalog is **`elench-controls-0.4.0`**. `Evaluate` detects the plan's cloud and runs that
+The current catalog is **`elench-controls-0.5.0`**. `Evaluate` detects the plan's cloud and runs that
 provider's control set (a mixed or unknown plan runs all of them, so nothing is silently skipped). Every
 control records its `provider`, so a uniform posture UI can never imply coverage a control does not have.
 
@@ -16,7 +16,7 @@ control records its `provider`, so a uniform posture UI can never imply coverage
 | ID | Title | Hard-fail on |
 |----|-------|--------------|
 | `KEYLESS-001` | No static IAM access keys | creating an `aws_iam_access_key` (use OIDC federation instead) |
-| `OIDC-001` | Federated trust bound to a specific subject | a federated (`sts:AssumeRoleWithWebIdentity`) role whose trust **lacks a `:sub` condition**, or binds `sub` only with a **`StringLike` wildcard** (the "any repo can assume" footgun) |
+| `OIDC-001` | Federated trust bound to a specific subject | a federated role — trust `Action` covering `sts:AssumeRoleWithWebIdentity`, literally or via a wildcard grant (`sts:*`, `*`) — whose trust **lacks a `:sub` condition**, or binds `sub` only with a **`StringLike` wildcard** (the "any repo can assume" footgun) |
 | `LEASTPRIV-001` | No over-broad IAM grants (named patterns) | `Action:"*"` + `Resource:"*"`; `Allow` + `NotAction`; attaching `AdministratorAccess` / `PowerUserAccess` / `IAMFullAccess`. **Warns** on sensitive service wildcards (`iam:*`, `kms:*`, …) with `Resource:"*"`. **Not-evaluable** when the policy body is computed or referenced only by ARN. |
 | `ACCESS-ANALYZER-001` | No sensitive actions grantable | (opt-in) a policy AWS IAM Access Analyzer proves *could* grant any action in a sensitive denylist. |
 
@@ -41,7 +41,8 @@ control records its `provider`, so a uniform posture UI can never imply coverage
 Alibaba has a real RAM/OIDC authority surface — **RRSA** (RAM Roles for Service Accounts) is its
 workload-identity mechanism, the analogue of AWS IRSA / GCP WIF — so its control set mirrors the AWS
 one. RAM trust and policy documents share AWS IAM's statement shape; the one Alibaba-specific
-difference is the trust action (`sts:AssumeRole`, not `sts:AssumeRoleWithWebIdentity`).
+difference is the trust action (`sts:AssumeRole`, not `sts:AssumeRoleWithWebIdentity`). On both
+clouds a wildcard action grant (`sts:*`, `*`) covers the assume call and keeps the role in scope.
 
 | ID | Title | Hard-fail on |
 |----|-------|--------------|
