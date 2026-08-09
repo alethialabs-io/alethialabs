@@ -17,6 +17,8 @@ import { type CloudIdentity, cloudNetworks, cloudRegions } from "@/lib/db/schema
 import { sealSensitive, softRemoveUnseen } from "./upsert";
 
 const TIMEOUT_MS = 12_000;
+const HCLOUD_PER_PAGE = 50;
+const HCLOUD_MAX_PAGES = 200;
 
 /** (endpoint, json→region-slugs) per token cloud. */
 const REGIONS: Record<
@@ -88,6 +90,33 @@ async function tokenCloudGet(url: string, token: string): Promise<unknown> {
 }
 
 /**
+ * Paginates hcloud's `/v1/networks`, accumulating `networks` across pages (bounded by
+ * HCLOUD_MAX_PAGES, strict forward progress via `meta.pagination.next_page`).
+ *
+ * This cannot be a single unpaginated call like the regions path: hcloud returns 25 per page by
+ * default (50 max), and `syncHetznerNetworks` feeds the full listing into `softRemoveUnseen` — so
+ * an unseen page is not merely a short picker, it actively soft-removes every network past page 1
+ * on each sync (#1979). Lifted from #1912's `hcloudList` rather than re-derived.
+ */
+async function listHetznerNetworks(token: string): Promise<Record<string, unknown>[]> {
+	const out: Record<string, unknown>[] = [];
+	let page = 1;
+	for (let i = 0; i < HCLOUD_MAX_PAGES; i++) {
+		const body = asRecord(
+			await tokenCloudGet(
+				`https://api.hetzner.cloud/v1/networks?per_page=${HCLOUD_PER_PAGE}&page=${page}`,
+				token,
+			),
+		);
+		out.push(...toRecordArray(body.networks));
+		const next = asRecord(asRecord(body.meta).pagination).next_page;
+		if (typeof next !== "number" || next <= page) break;
+		page = next;
+	}
+	return out;
+}
+
+/**
  * Syncs Hetzner's private networks into cloud_networks, so the canvas's "Existing network" picker
  * has something to show. Mirrors the VPC loop in inventory/aws.ts, including sealing the CIDR into
  * the encrypted `sensitive` column rather than storing it in the clear.
@@ -96,11 +125,11 @@ async function tokenCloudGet(url: string, token: string): Promise<unknown> {
  * claiming a region here would filter it out of the picker for every other region.
  */
 async function syncHetznerNetworks(identityId: string, token: string): Promise<void> {
-	const json = await tokenCloudGet("https://api.hetzner.cloud/v1/networks", token);
+	const networks = await listHetznerNetworks(token);
 
 	const db = getServiceDb();
 	const seen: string[] = [];
-	for (const raw of toRecordArray(asRecord(json).networks)) {
+	for (const raw of networks) {
 		const net = readHcloudNetwork(raw);
 		if (!net) continue;
 		const nativeId = net.nativeId;
