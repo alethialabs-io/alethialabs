@@ -805,7 +805,7 @@ importers:
         version: 9.39.5(jiti@2.7.0)
       next:
         specifier: 16.3.0
-        version: 16.3.0(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.3))(react@19.2.3)
+        version: 16.3.0(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(react-dom@19.2.8(react@19.2.3))(react@19.2.3)
       react:
         specifier: 19.2.3
         version: 19.2.3
@@ -820,16 +820,16 @@ importers:
         version: 3.1103.0
       '@react-email/components':
         specifier: ^1.0.12
-        version: 1.0.12(react-dom@19.2.8(react@19.2.3))(react@19.2.3)
+        version: 1.0.12(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       next-runtime-env:
         specifier: ^3.3.0
-        version: 3.3.0(next@16.3.0(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.3))(react@19.2.3))(react@19.2.3)
+        version: 3.3.0(next@16.3.0(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(@types/node@20.19.43)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react@19.2.3)
       nodemailer:
         specifier: ^9.0.4
         version: 9.0.4
       resend:
         specifier: ^6.17.2
-        version: 6.18.1(@react-email/render@2.1.0(react-dom@19.2.8(react@19.2.3))(react@19.2.3))
+        version: 6.18.1(@react-email/render@2.1.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3))
     devDependencies:
       '@repo/eslint-config':
         specifier: workspace:*
@@ -852,6 +852,9 @@ importers:
       react:
         specifier: 19.2.3
         version: 19.2.3
+      react-dom:
+        specifier: 19.2.3
+        version: 19.2.3(react@19.2.3)
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -14200,16 +14203,6 @@ snapshots:
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 
-  '@react-email/render@2.1.0(react-dom@19.2.8(react@19.2.3))(react@19.2.3)':
-    dependencies:
-      entities: 4.5.0
-      html-to-text: 9.0.5
-      html5parser: 3.0.0
-      prettier: 3.9.6
-      react: 19.2.3
-      react-dom: 19.2.8(react@19.2.3)
-    optional: true
-
   '@react-email/row@0.0.13(react@19.2.3)':
     dependencies:
       react: 19.2.3
@@ -19317,11 +19310,6 @@ snapshots:
       next: 16.3.0(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(@types/node@20.19.43)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
 
-  next-runtime-env@3.3.0(next@16.3.0(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.3))(react@19.2.3))(react@19.2.3):
-    dependencies:
-      next: 16.3.0(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.3))(react@19.2.3)
-      react: 19.2.3
-
   next-themes@0.4.6(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
     dependencies:
       react: 19.2.3
@@ -19408,7 +19396,7 @@ snapshots:
       - '@types/node'
       - babel-plugin-macros
 
-  next@16.3.0(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.3))(react@19.2.3):
+  next@16.3.0(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(react-dom@19.2.8(react@19.2.3))(react@19.2.3):
     dependencies:
       '@next/env': 16.3.0
       '@swc/helpers': 0.5.15
@@ -20140,12 +20128,12 @@ snapshots:
 
   reselect@5.2.0: {}
 
-  resend@6.18.1(@react-email/render@2.1.0(react-dom@19.2.8(react@19.2.3))(react@19.2.3)):
+  resend@6.18.1(@react-email/render@2.1.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)):
     dependencies:
       postal-mime: 2.7.5
       standardwebhooks: 1.0.0
     optionalDependencies:
-      '@react-email/render': 2.1.0(react-dom@19.2.8(react@19.2.3))(react@19.2.3)
+      '@react-email/render': 2.1.0(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
 
   resolve-from@4.0.0: {}
 
