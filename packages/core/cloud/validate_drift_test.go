@@ -173,10 +173,17 @@ var networkCIDRFloorCouplings = map[string]cidrFloorCoupling{
 		why:     "the subnetwork takes network_cidr verbatim and pods/services are SECONDARY ranges",
 	},
 	"aws": {
-		kind:    cidrFloorDeferred,
-		rel:     "infra/templates/project/aws/networking.tf",
-		pattern: regexp.MustCompile(`cidrsubnet\(var\.vpc_cidr,\s*(\d+),`),
-		why:     "the /18 floor is owned by #1942 and blocked on #1936, which may still move it",
+		kind: cidrFloorDeferred,
+		rel:  "infra/templates/project/aws/networking.tf",
+		// Re-anchored by #1936. The carve still exists and is still derived from var.vpc_cidr — it
+		// just runs through `local.vpc_cidr_for_subnet_plan` (line 88, `local.vpc_cidr_is_carvable ?
+		// var.vpc_cidr : "10.0.0.0/16"`) now, because the plan moved into one declarative map so a
+		// netnum cannot be edited without also moving the span the disjointness guard checks. The
+		// old pattern named the literal `var.vpc_cidr` argument and so stopped matching, which fired
+		// this test's "close it out" branch — correctly reporting drift, wrongly diagnosing it as
+		// the carve disappearing. Anchored on the local, which is the expression that now carries it.
+		pattern: regexp.MustCompile(`cidrsubnet\(local\.vpc_cidr_for_subnet_plan,`),
+		why:     "the /18 Go-side floor is owned by #1942; #1936 has landed the template-side fail-closed guard (terraform_data.vpc_cidr_carvable_guard)",
 	},
 }
 
