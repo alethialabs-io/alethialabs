@@ -244,8 +244,7 @@ func (t *TofuCLI) Destroy(ctx context.Context, varFile string) error {
 // A single TofuCLI is used serially within one job, so swapping the writer here is safe.
 func (t *TofuCLI) Output(ctx context.Context) (map[string]interface{}, error) {
 	fmt.Println("Getting OpenTofu outputs...")
-	t.tf.SetStdout(io.Discard)
-	defer t.tf.SetStdout(t.stdout)
+	defer t.silenceStdout()()
 
 	outputMap, err := t.tf.Output(ctx)
 	if err != nil {
@@ -264,8 +263,36 @@ func (t *TofuCLI) Output(ctx context.Context) (map[string]interface{}, error) {
 	return outputs, nil
 }
 
+// silenceStdout redirects the lifecycle writer to io.Discard and returns the restore func, for the
+// duration of ONE terraform-exec subcommand that parses JSON.
+//
+// Every such subcommand goes through runTerraformCmdJSON, which tees the child's stdout into both an
+// internal parse buffer and the configured cmd.Stdout (mergeWriters, cmd.go:213-215) — so the raw
+// payload reaches whatever writer this CLI was built with. In deploy/drift that writer is the job's
+// log stream, which lands in the console job log and execution_metadata.
+//
+// Extracted rather than hand-copied a third time. Output() had this inline, ShowPlanJSON needed it
+// (#2025), and StateResources needs the same (#2026) — three copies of a security-critical two-liner
+// is how one of them silently stops matching the others. A single TofuCLI is used serially within
+// one job, so swapping the writer is safe.
+//
+// Usage: `defer t.silenceStdout()()` — the first call swaps, the deferred second restores.
+func (t *TofuCLI) silenceStdout() func() {
+	t.tf.SetStdout(io.Discard)
+	return func() { t.tf.SetStdout(t.stdout) }
+}
+
+// ShowPlanJSON decodes a saved plan file. The returned plan reaches the caller from the internal
+// parse buffer; the raw JSON never touches the lifecycle writer.
+//
+// Plan JSON carries every resource's planned attribute values in plaintext — DB passwords,
+// kubeconfigs, cloud tokens, and the decrypted connector secrets categories.Compose merges in. It
+// was being streamed to the job log on EVERY deploy (deploy.go calls this each time, drift.go too),
+// which is also why deploy.go writes the very same bytes to disk with utils.WriteSecretFile: they
+// were already published to the log before that precaution ran (#2025).
 func (t *TofuCLI) ShowPlanJSON(ctx context.Context, planFile string) (*tfjson.Plan, error) {
 	fmt.Println("Generating plan JSON...")
+	defer t.silenceStdout()()
 	return t.tf.ShowPlanFile(ctx, planFile)
 }
 
