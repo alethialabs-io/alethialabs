@@ -93,34 +93,24 @@ resource "google_service_account_iam_member" "app_db_wi" {
   depends_on = [module.gke]
 }
 
-# Migration (#722 → adoption). Destroying a google_project_iam_member ALSO calls
-# resourcemanager.projects.setIamPolicy, so an environment that somehow holds these in state would
-# turn today's apply-time 403 into a destroy-time one. The 403 means they were almost certainly
-# never created, but forgetting is free and destroying is not: drop them from state, touch nothing
-# in the cloud. The customer's bootstrap module now owns these grants.
-removed {
-  from = google_project_iam_member.app_db_client
+# MIGRATION (#722 → adoption), and why there are no `removed` blocks here.
+#
+# google_project_iam_member.app_db_client / .app_db_instance_user are simply deleted from the
+# configuration. They can never be in state to migrate: creating them is the call that 403s, so the
+# apply dies before they are recorded. The only shape that holds them is a project whose provisioner
+# WAS given setIamPolicy — and that same credential can destroy them, so the ordinary path works.
+#
+# google_service_account.app_db (the per-deployment identity) CAN be in state, since it is created
+# before the grants that fail. Deleting it from the configuration destroys it, which is right: it is
+# replaced by the adopted account, and the provisioner holds iam.serviceAccounts.delete. An
+# environment that had one switches identity; if none was adopted, keyless goes off and the app
+# falls back to the BUILT_IN password user.
+#
+# `removed { lifecycle { destroy = ... } }` would express the above more precisely, but it is NOT
+# USABLE on the engine that runs this template: OpenTofu 1.9.0 — the version the runner applies and
+# `check (gcp)` pins — rejects it with "Blocks of type `lifecycle` are not expected here"
+# (opentofu/opentofu#2556; the parser gained it later). A bare `removed` block parses on 1.9.0, but
+# OpenTofu documents no default for the omitted `destroy`, and the two possible defaults differ by
+# whether a live service account is deleted. Deleting the resources outright is the behaviour we can
+# actually name.
 
-  lifecycle {
-    destroy = false
-  }
-}
-
-removed {
-  from = google_project_iam_member.app_db_instance_user
-
-  lifecycle {
-    destroy = false
-  }
-}
-
-# The per-deploy account itself is safe to destroy — the provisioner holds iam.serviceAccounts.delete
-# — but an environment that had one switches to the adopted identity, and if none was supplied
-# keyless goes off and the app falls back to the BUILT_IN password user.
-removed {
-  from = google_service_account.app_db
-
-  lifecycle {
-    destroy = true
-  }
-}
