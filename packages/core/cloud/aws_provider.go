@@ -295,6 +295,16 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 			if cache.MultiAz != nil {
 				tfvars["redis_multi_az_enabled"] = *cache.MultiAz
 			}
+			// The template chain (variables.tf → locals.tf → elasticache.tf's
+			// security group) was fully wired and this value was hardcoded empty
+			// above — the canvas collected an allow-list and every deploy
+			// provisioned the cache without it (#1981). Empty stays empty, so an
+			// unset list builds exactly what it built before. Valkey (serverless)
+			// is security-group-only — valkey.tf consumes no CIDR input — so the
+			// list is deliberately not emitted on that engine.
+			if len(cache.AllowedCidrBlocks) > 0 {
+				tfvars["redis_allowed_cidr_blocks"] = cache.AllowedCidrBlocks
+			}
 		}
 	}
 

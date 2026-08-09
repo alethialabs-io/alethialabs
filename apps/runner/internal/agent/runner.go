@@ -1243,7 +1243,7 @@ var legacyComponentRowKeys = map[string][]string{
 	// Write-back columns (filled by finalizeDeployment AFTER a deploy) and the Hetzner-only size
 	// knobs, which reach the runner through `addons[]` rather than the component array.
 	"databases": {"storage_gb", "replicas", "endpoint", "reader_endpoint", "provider_outputs"},
-	"caches":    {"storage_gb", "allowed_cidr_blocks", "endpoint", "reader_endpoint"},
+	"caches":    {"storage_gb", "endpoint", "reader_endpoint"},
 	"queues":    {"storage_gb", "endpoint", "provider_outputs"},
 	"topics":    {},
 	// provider_config here has no producer AND no consumer (nosql does not route through

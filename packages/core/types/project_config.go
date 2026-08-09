@@ -269,6 +269,11 @@ type ProjectCacheConfig struct {
 	MemoryGB      float64 `json:"memory_gb"`
 	NumCacheNodes *int    `json:"num_cache_nodes"`
 	MultiAz       *bool   `json:"multi_az"`
+	// Extra networks permitted to reach the cache (the cluster always can).
+	// Collected by the inspector's cache-network section and the CLI; without
+	// this field json.Unmarshal dropped the value on every cloud and the cache
+	// was provisioned with the template's default access rules only (#1981).
+	AllowedCidrBlocks []string `json:"allowed_cidr_blocks"`
 }
 
 type ProjectQueueConfig struct {

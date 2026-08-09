@@ -24,7 +24,6 @@ Does `packages/core/types/project_config.go` model a `json:` key for the column?
 
 | Field | State | Note |
 |---|:---:|---|
-| `caches.allowed_cidr_blocks` | 🚫 #1981 | the product collects `allowed_cidr_blocks` (canvas + CLI) and `ProjectCacheConfig` models no `json:"allowed_cidr_blocks"` field, so `json.Unmarshal` drops it on the way to the runner. It saves cleanly, the plan is identical, and nothing anywhere reports it. |
 | `caches.storage_gb` | ☸️ | The storage you size an in-cluster cache with becomes the Valkey chart's persistent volume, falling back to the memory size when you leave it unset. |
 | `databases.replicas` | ☸️ | The instance count you set on an in-cluster Postgres becomes the CloudNativePG cluster's instance count — one primary plus replicas. |
 | `databases.storage_gb` | ☸️ | The storage you size an in-cluster Postgres with becomes the CloudNativePG cluster's persistent volume. |
@@ -39,6 +38,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 
 | Field | alibaba | aws | azure | gcp | hetzner |
 |---|:---:|:---:|:---:|:---:|:---:|
+| `allowed_cidr_blocks` | 🚫 #2149 | 🟡 | 🚫 #2148 | — | · |
 | `engine` | — | 🟡 | — | 🟡 | · |
 | `engine_version` | 🟡 | 🟡 | — | 🟡 | · |
 | `memory_gb` | ⚙️ | 🟡 | ⚙️ | 🟡 | · |
@@ -215,6 +215,7 @@ Decisions, not silence: this cloud will not honor the setting, and here is what 
 | `databases.max_capacity` | gcp | Cloud SQL runs on a machine type you choose, not on a capacity range that scales itself — there is no maximum to set. Pick a larger instance class instead. |
 | `caches.engine` | azure | Azure Managed Redis is the only cache engine offered here, and it is what gets built — there is no second engine for the choice to select between. |
 | `caches.engine` | alibaba | ApsaraDB for Redis is the only cache engine offered here, and it is what gets built — there is no second engine for the choice to select between. |
+| `caches.allowed_cidr_blocks` | gcp | Memorystore has no per-cache IP allow-list — access is granted by the VPC the cache is attached to, so manage reachability with the network's own rules instead. |
 | `nosql_tables.partition_key` | gcp | Firestore has no partition key — documents are placed by their path and every field is indexed for you, so there is no key to nominate. |
 | `nosql_tables.partition_key_type` | gcp | Firestore has no partition key, so there is no key type to declare. |
 | `nosql_tables.capacity_mode` | gcp | Firestore bills per operation and offers no provisioned-throughput mode to switch to. |
@@ -244,11 +245,12 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 
 | Field | Cloud | Now | Boarded as | Issue | What a user gets |
 |---|---|:---:|---|---|---|
-| `caches.allowed_cidr_blocks` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1981 | The network allow-list you set on a cache is not applied — the cache is created with the template's own default access rules instead. |
+| `caches.allowed_cidr_blocks` | azure | 🚫 | no-carrier (boarded as no-carrier) | #2148 | The network allow-list you set on a cache is not applied on Azure yet — the cache is created with the template's default access rules instead. |
+| `caches.allowed_cidr_blocks` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #2149 | The network allow-list you set on a cache is not applied on Alibaba Cloud yet — the cache is created with the template's default access rules instead. |
 | `nosql_tables.global_replicas` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1982 | The replica regions you choose for a table are not created — the table is provisioned in its own region only. |
 | `container_registries.vulnerability_scanning` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
 | `caches.num_cache_nodes` | azure | ⚠️ | gated-carrier (boarded as gated-carrier) | #1993 | The node count you set on a cache is not applied — asking for more than one node moves the cache to the Standard tier, and the number itself is discarded. |
 
 ---
 
-Measured this run: 370 schema columns examined, 73 of them user-settable, 161 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.
+Measured this run: 370 schema columns examined, 73 of them user-settable, 164 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.
