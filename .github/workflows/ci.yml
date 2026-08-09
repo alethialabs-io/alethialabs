@@ -784,11 +784,13 @@ jobs:
       # coverage-measured. Its ratchet is therefore an explicit step here rather than a matrix
       # entry.
       #
-      # Its floors were recorded by the determinism probe, whose test/e2e leg installs no tofu,
-      # while this leg does. That makes the recorded floor CONSERVATIVE, not wrong: extra tools
-      # can only raise coverage, so the real measurement clears the floor with margin, and if the
-      # tofu install ever breaks, coverage falls back to exactly the recorded value and still
-      # passes. It tightens on the first `--update`.
+      # Its floors WERE recorded by the determinism probe, whose test/e2e leg installs no tofu,
+      # while this leg does — a deliberately CONSERVATIVE floor that the comment here predicted
+      # would "tighten on the first `--update`". It has (#2156): the floors now carry this leg's
+      # own measurement and `"tofu": true` with it. The fingerprint has to move WITH the number,
+      # or the fallback the conservative floor bought is silently gone — a broken tofu install
+      # would drop coverage below a floor recorded as tofu-less, and F7 would find nothing
+      # "missing" to demote the failure with. Recorded tofu:true, it demotes to a warning.
       - name: Coverage ratchet — test/e2e harness
         if: matrix.module == 'packages/core'
         run: bash scripts/go-coverage.sh --module test/e2e

@@ -21,9 +21,15 @@
 // # What is asserted, and what deliberately is not
 //
 // Asserted: the digest is real hex; the control set is non-empty; the summary tallies agree with the
-// controls actually present; the verdict follows from those tallies (fail > warn > pass, with
-// not_evaluable never manufacturing a pass); every control is fully identified; the catalog version
-// is recorded; the timestamp parses.
+// controls actually present; the verdict follows from those tallies — fail > warn > not_evaluable >
+// pass, computed by `verify.VerdictFor` so this cannot drift from the engine it audits; every control
+// is fully identified; the catalog version is recorded; the timestamp parses.
+//
+// That precedence line used to read "fail > warn > pass, with not_evaluable never manufacturing a
+// pass", and the code under it derived the wanted verdict from fail and warn alone — so a report
+// that honestly said not_evaluable was failed for not saying pass (#2156). It is stated as the
+// engine's four-way order now, and derived rather than restated, because the previous shape was
+// self-contradictory in exactly the direction that costs a green nightly.
 //
 // NOT asserted here: that the digest equals the sha256 of the plan the runner actually applied.
 // Nothing in the harness holds those plan bytes, so the check would have to trust the same runner it
@@ -145,13 +151,14 @@ func AssertReceiptEvidence(sr verify.SignedReceipt) error {
 
 	// The verdict must follow from the tallies. not_evaluable must never manufacture a pass — that
 	// is the false-PASS the whole engine exists to avoid.
-	want := verify.StatusPass
-	switch {
-	case fail > 0:
-		want = verify.StatusFail
-	case warn > 0:
-		want = verify.StatusWarn
-	}
+	//
+	// Derived by the ENGINE'S OWN function rather than re-stated here. The re-statement is what went
+	// wrong (#2156): it carried three of verify.VerdictFor's five branches and never consulted
+	// notEval, so on `fail=0 warn=0 not_evaluable=1` it computed `pass` and failed the run for
+	// reporting not_evaluable honestly — the exact false-PASS rule this block exists to enforce,
+	// inverted. A gate that judges an emitter has to mirror every one of its conditions, and the only
+	// way that stays true through later changes is to call the emitter's definition.
+	want := verify.VerdictFor(verify.Summary{Pass: pass, Fail: fail, Warn: warn, NotEvaluable: notEval})
 	if rep.Verdict != want {
 		return fmt.Errorf("report verdict = %q but the controls tally to %q (fail=%d warn=%d not_evaluable=%d) — the headline disagrees with the evidence under it", rep.Verdict, want, fail, warn, notEval)
 	}
