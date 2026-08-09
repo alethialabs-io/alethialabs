@@ -34,6 +34,7 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -44,6 +45,17 @@ import (
 	"sync"
 	"time"
 )
+
+// upstreamTLSConfig builds the client TLS configuration for the upstream database hop — the real
+// server name, verified against the platform trust store, TLS 1.2 or better. Both engine halves go
+// through it.
+//
+// It is a package-level var solely so a test can substitute the TRUST ANCHOR (RootCAs) and drive the
+// legs that only run after a successful handshake — the token exchange and the splice — against a
+// stub database. Verification itself is never disabled, and nothing reassigns this outside tests.
+var upstreamTLSConfig = func(serverName string) *tls.Config {
+	return &tls.Config{ServerName: serverName, MinVersion: tls.VersionTLS12}
+}
 
 const (
 	// authProxyEnginePostgres / authProxyEngineMySQL are the two supported wire protocols.
