@@ -11,10 +11,8 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
-	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 // hygRunnerObsCollector is a stand-in OTLP/HTTP collector: it accepts any export and
@@ -52,11 +50,10 @@ func (c *hygRunnerObsCollector) hygRunnerObsGot(path string) bool {
 	return false
 }
 
-// hygRunnerObsIsolateGlobals pins the process-global tracer/meter/propagator to the API
-// no-ops for the duration of the test and restores whatever was there afterwards. Both
-// halves matter: the reset makes "Setup registered nothing for this signal" a decidable
-// question even if an earlier test left a live SDK provider behind, and the restore keeps
-// this test from leaking one into the next.
+// hygRunnerObsIsolateGlobals captures the process-global tracer/meter/propagator and puts
+// them back when the test ends, so a test that boots the real SDK cannot leak a live
+// provider into the next one — which would make "Setup registered nothing for this signal"
+// undecidable. Callers assert that precondition explicitly before calling Setup.
 func hygRunnerObsIsolateGlobals(t *testing.T) {
 	t.Helper()
 	tp, mp, prop := otel.GetTracerProvider(), otel.GetMeterProvider(), otel.GetTextMapPropagator()
@@ -65,8 +62,6 @@ func hygRunnerObsIsolateGlobals(t *testing.T) {
 		otel.SetMeterProvider(mp)
 		otel.SetTextMapPropagator(prop)
 	})
-	otel.SetTracerProvider(tracenoop.NewTracerProvider())
-	otel.SetMeterProvider(metricnoop.NewMeterProvider())
 }
 
 // hygRunnerObsPipelines reports which SDK pipelines are currently registered globally — a
