@@ -54,6 +54,15 @@ const (
 	RuleProviderImplied = "provider-implied"
 	// RuleProvisionerBlock — any provisioner block/attribute anywhere: code execution.
 	RuleProvisionerBlock = "provisioner-block"
+	// RuleExecCredentialPlugin — an `exec` credential-plugin block/attribute
+	// inside a provider configuration (hashicorp/kubernetes accepts it directly,
+	// hashicorp/helm nested under kubernetes{}): the provider runs `command`
+	// with `args` as a local subprocess while configuring its client during
+	// plan — the same execution window provisioners and data "external" are
+	// blocked for, reachable with only allowlisted providers. Scoped to
+	// provider bodies: an exec block inside a resource (e.g. a liveness-probe
+	// exec) is workload config that runs in the cluster, not on the runner.
+	RuleExecCredentialPlugin = "exec-credential-plugin"
 	// RuleExternalDataSource — data "external": code execution at plan time.
 	RuleExternalDataSource = "external-data-source"
 	// RuleHTTPDataSource — data "http": network access at plan time (warning).

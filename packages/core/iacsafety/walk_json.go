@@ -29,13 +29,18 @@ import (
 //   - ANY object key named "provisioner" is an error;
 //   - the keys "external" / "http" / "terraform_remote_state" directly under
 //     a "data" key (a data-source type position — top level, inside a check
-//     block, or anywhere else) draw the same findings as the native path.
+//     block, or anywhere else) draw the same findings as the native path;
+//   - an "exec" key anywhere under a "provider" key (the exec credential
+//     plugin: kubernetes accepts it directly, helm nested under kubernetes) —
+//     scoped to provider objects so a resource's exec (a liveness probe, say)
+//     is not flagged.
 //
 // The raw sweep is the ONLY emitter of those findings for JSON (the schema
 // walk only records implied providers), so structural and raw detection never
 // double-report. Known trade-off (fail-closed by design): a user-data map
-// that coincidentally has a "provisioner" key, or a "data" map with an
-// "external"/"http"/"terraform_remote_state" key, is flagged too.
+// that coincidentally has a "provisioner" key, a "data" map with an
+// "external"/"http"/"terraform_remote_state" key, or a "provider" map with an
+// "exec" key, is flagged too.
 
 var jsonTopSchema = &hcl.BodySchema{
 	Blocks: []hcl.BlockHeaderSchema{
@@ -312,6 +317,9 @@ func (s *scanner) sweepJSONDangerousKeys(path, rel string) {
 		case "terraform_remote_state":
 			s.addFinding(SeverityWarning, RuleRemoteStateDataSource, rel, hit.line,
 				`data "terraform_remote_state" reads arbitrary remote state during plan`)
+		case "exec":
+			s.addFinding(SeverityError, RuleExecCredentialPlugin, rel, hit.line,
+				`"exec" key in a provider configuration: the exec credential plugin runs an arbitrary command during plan`)
 		}
 	}
 }
@@ -331,10 +339,12 @@ var jsonDataSourceKeys = map[string]bool{
 }
 
 // jsonDangerousKeys streams JSON tokens and returns every dangerous object
-// key at any nesting depth: "provisioner" anywhere, and any key in
-// jsonDataSourceKeys whose enclosing container is the value of a "data" key.
-// Arrays propagate their key downward (hcl JSON treats an array of objects as
-// repeated blocks, so `"data": [{"external": …}]` must match too).
+// key at any nesting depth: "provisioner" anywhere, any key in
+// jsonDataSourceKeys whose enclosing container is the value of a "data" key,
+// and "exec" anywhere under a "provider" key (any ancestor — helm nests the
+// credential plugin one level deeper than kubernetes). Arrays propagate their
+// key downward (hcl JSON treats an array of objects as repeated blocks, so
+// `"data": [{"external": …}]` must match too).
 func jsonDangerousKeys(data []byte) ([]jsonKeyHit, error) {
 	type frame struct {
 		isObject     bool
@@ -390,7 +400,15 @@ func jsonDangerousKeys(data []byte) ([]jsonKeyHit, error) {
 		top := &stack[len(stack)-1]
 		if top.keyNext {
 			if k, ok := tok.(string); ok {
-				if k == "provisioner" || (top.containerKey == "data" && jsonDataSourceKeys[k]) {
+				underProvider := false
+				for _, f := range stack {
+					if f.containerKey == "provider" {
+						underProvider = true
+						break
+					}
+				}
+				if k == "provisioner" || (top.containerKey == "data" && jsonDataSourceKeys[k]) ||
+					(k == "exec" && underProvider) {
 					out = append(out, jsonKeyHit{key: k, line: lineAtOffset(data, dec.InputOffset())})
 				}
 				top.pendingKey = k
