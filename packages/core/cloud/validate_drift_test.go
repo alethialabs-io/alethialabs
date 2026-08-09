@@ -62,6 +62,44 @@ func scrapeInt(t *testing.T, src, rel string, re *regexp.Regexp) int {
 	return n
 }
 
+// scrapeInt2 returns the first two capture groups of re in src as integers, with the same
+// fail-hard semantics as scrapeInt.
+func scrapeInt2(t *testing.T, src, rel string, re *regexp.Regexp) (int, int) {
+	t.Helper()
+	m := re.FindStringSubmatch(src)
+	if len(m) < 3 {
+		t.Fatalf("pattern %s not found in %s (format changed? re-anchor this coupling)", re, rel)
+	}
+	a, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("captured %q from %s is not an integer: %v", m[1], rel, err)
+	}
+	b, err := strconv.Atoi(m[2])
+	if err != nil {
+		t.Fatalf("captured %q from %s is not an integer: %v", m[2], rel, err)
+	}
+	return a, b
+}
+
+// maxPrefixClearingFirstBlock returns the largest network prefix p (<= firstTarget, so the
+// first carve's newbits stay >= 0) under which `cidrsubnet(net, newbits, netnum)` is
+// well-formed and its block starts at or past the end of the network's first /firstTarget —
+// the arithmetic tofu evaluates, not a re-encoding of a conclusion. Returns -1 when no prefix
+// satisfies it (e.g. netnum 0, which IS the first block).
+func maxPrefixClearingFirstBlock(firstTarget, newbits, netnum int) int {
+	for p := firstTarget; p >= 0; p-- {
+		if p+newbits > 32 {
+			continue
+		}
+		blockStart := uint64(netnum) << uint(32-p-newbits)
+		firstBlockSize := uint64(1) << uint(32-firstTarget)
+		if blockStart >= firstBlockSize {
+			return p
+		}
+	}
+	return -1
+}
+
 // ---------------------------------------------------------------------------------------------
 // Node disk floors
 // ---------------------------------------------------------------------------------------------
@@ -131,6 +169,13 @@ const (
 	// netnums 0..3 it is N - 2. Deriving only the newbits half is how #2050 shipped a floor
 	// two too wide.
 	cidrFloorFromPrefixExpr cidrFloorKind = iota
+	// `cidrsubnet(x, N - <prefix length>, 0)` PLUS further fixed-newbits carves out of the SAME
+	// network that must each stay disjoint from that first /N block (a fail-closed template
+	// precondition). The floor is the narrowest prefix under which every carve is well-formed
+	// AND clears the /N — strictly below the scraped N whenever any carve's block slides into
+	// it. #2049: deriving only from the node carve admitted /23 and /24, whose service carve
+	// lands inside the node /24 and dies at plan.
+	cidrFloorFromPrefixExprAndDisjointCarves
 	// `cidrsubnet(x, N, …)` — the result runs past /32 once prefix + N > 32, so the floor is
 	// 32 - N.
 	cidrFloorFromFixedNewbits
@@ -144,10 +189,13 @@ const (
 type cidrFloorCoupling struct {
 	kind     cidrFloorKind
 	rel      string         // repo-relative .tf carrying the expression
-	pattern  *regexp.Regexp // must match; captures the newbits integer for the two carved kinds, plus every carved netnum for the prefix-expr kind
+	pattern  *regexp.Regexp // must match; captures the newbits integer for the carved kinds, plus every carved netnum for the prefix-expr kind
 	absent   *regexp.Regexp // for the exempt kind: a pattern that must NOT match
-	constant int            // the Go constant, for the two carved kinds
+	constant int            // the Go constant, for the carved kinds
 	why      string         // for the two non-carved kinds
+	// for the disjoint-carves kind: each pattern captures (newbits, netnum) of one further
+	// carve out of the same network that must stay disjoint from the first block.
+	carves []*regexp.Regexp
 }
 
 var networkCIDRFloorCouplings = map[string]cidrFloorCoupling{
@@ -158,10 +206,18 @@ var networkCIDRFloorCouplings = map[string]cidrFloorCoupling{
 		constant: azureMaxNetworkPrefix,
 	},
 	"hetzner": {
-		kind:     cidrFloorFromPrefixExpr,
+		kind:     cidrFloorFromPrefixExprAndDisjointCarves,
 		rel:      "infra/templates/project/hetzner/network.tf",
 		pattern:  regexp.MustCompile(`cidrsubnet\(local\.network_ip_range,\s*(\d+)\s*-\s*tonumber\(split\("/", local\.network_ip_range\)\[1\]\),\s*(\d+)\)`),
 		constant: hetznerMaxNetworkPrefix,
+		// The pod/service split — the same one hetznerProvider.ProviderTfvars emits.
+		// checks_network.tf (`cidrs_distinct`) blocks the apply fail-closed unless both stay
+		// disjoint from the node subnet, so each carve tightens the floor below the node
+		// carve's own /24.
+		carves: []*regexp.Regexp{
+			regexp.MustCompile(`pod_cidr\s*=\s*coalesce\(var\.pod_cidr,\s*cidrsubnet\(local\.network_ip_range,\s*(\d+),\s*(\d+)\)\)`),
+			regexp.MustCompile(`service_cidr\s*=\s*coalesce\(var\.service_cidr,\s*cidrsubnet\(local\.network_ip_range,\s*(\d+),\s*(\d+)\)\)`),
+		},
 	},
 	"alibaba": {
 		kind:     cidrFloorFromFixedNewbits,
@@ -245,6 +301,27 @@ func TestNetworkCIDRFloorsMatchTemplates(t *testing.T) {
 					t.Errorf("%s: %s carves %d subnet(s) at `%d - <prefix>` up to netnum %d, so the "+
 						"floor is /%d, but validate.go encodes /%d", cloudName, coupling.rel,
 						len(matches), targetPrefix, maxNetnum, want, coupling.constant)
+				}
+
+			case cidrFloorFromPrefixExprAndDisjointCarves:
+				nodeTarget := scrapeInt(t, src, coupling.rel, coupling.pattern)
+				floor := nodeTarget
+				for _, carve := range coupling.carves {
+					newbits, netnum := scrapeInt2(t, src, coupling.rel, carve)
+					p := maxPrefixClearingFirstBlock(nodeTarget, newbits, netnum)
+					if p < 0 {
+						t.Fatalf("%s: %s carve (%d, %d) can NEVER clear the first /%d — the template's "+
+							"split itself is broken, not just the floor", cloudName, coupling.rel,
+							newbits, netnum, nodeTarget)
+					}
+					if p < floor {
+						floor = p
+					}
+				}
+				if floor != coupling.constant {
+					t.Errorf("%s: %s carves a first /%d plus disjoint blocks whose derived floor is "+
+						"/%d, but validate.go encodes /%d", cloudName, coupling.rel, nodeTarget, floor,
+						coupling.constant)
 				}
 
 			case cidrFloorFromFixedNewbits:
