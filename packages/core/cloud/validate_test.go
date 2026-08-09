@@ -191,7 +191,11 @@ func TestValidateNetworkCIDR(t *testing.T) {
 	}{
 		// The default every provider substitutes.
 		{name: "azure /16", cloud: "azure", cidr: "10.0.0.0/16", provisionNetwork: true},
-		{name: "azure at the floor", cloud: "azure", cidr: "10.0.0.0/20", provisionNetwork: true},
+		{name: "azure at the floor", cloud: "azure", cidr: "10.0.0.0/18", provisionNetwork: true},
+		// /19 and /20 satisfy newbits >= 0 but not netnum < 2^newbits: the vnet module carves
+		// FOUR subnets (netnum 0..3), so subnet 2 and 3 are hard tofu errors there (#2050).
+		{name: "azure below the floor (/19 cannot carve subnet 2)", cloud: "azure", cidr: "10.0.0.0/19", provisionNetwork: true, wantErr: true},
+		{name: "azure below the floor (/20 cannot carve subnet 1)", cloud: "azure", cidr: "10.0.0.0/20", provisionNetwork: true, wantErr: true},
 		{name: "azure below the floor", cloud: "azure", cidr: "10.0.0.0/21", provisionNetwork: true, wantErr: true},
 		{name: "azure /24 (the canvas accepts it today)", cloud: "azure", cidr: "10.0.0.0/24", provisionNetwork: true, wantErr: true},
 
