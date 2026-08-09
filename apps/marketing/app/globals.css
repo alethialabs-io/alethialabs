@@ -289,8 +289,10 @@
     opacity var(--dur-2) var(--ease),
     translate var(--dur-3) var(--ease-out);
 }
-.mkt-btn::before { content: "["; left: 7px; translate: 5px -50%; }
-.mkt-btn::after { content: "]"; right: 7px; translate: -5px -50%; }
+/* `/ ""` keeps the brackets out of the accessible name — see the note on .vx-bracket in
+   packages/brand/src/tokens.css. Marketing's copy of the mark has the same hazard. */
+.mkt-btn::before { content: "[" / ""; left: 7px; translate: 5px -50%; }
+.mkt-btn::after { content: "]" / ""; right: 7px; translate: -5px -50%; }
 .mkt-btn:hover::before,
 .mkt-btn:hover::after,
 .mkt-btn:focus-visible::before,
