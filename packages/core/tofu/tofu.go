@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -350,7 +351,7 @@ func ensureBinary(ctx context.Context, tfVersion string) (string, error) {
 
 	installDir := filepath.Join(home, ".alethia", "bin")
 	cachedPath := filepath.Join(installDir, fmt.Sprintf("tofu_%s", tfVersion))
-	if _, err := os.Stat(cachedPath); err == nil {
+	if cachedBinaryUsable(ctx, cachedPath) {
 		return cachedPath, nil
 	}
 
@@ -364,6 +365,29 @@ func ensureBinary(ctx context.Context, tfVersion string) (string, error) {
 	}
 	fmt.Println("OpenTofu downloaded successfully.")
 	return cachedPath, nil
+}
+
+// cachedBinaryProbeTimeout bounds the `<cached tofu> version` liveness probe below. A
+// healthy binary answers in milliseconds; the ceiling only exists so a wedged image can
+// never hang a job at start-up.
+const cachedBinaryProbeTimeout = 30 * time.Second
+
+// cachedBinaryUsable reports whether path holds a complete, runnable `tofu` binary.
+//
+// The probe deliberately demands more than existence: a bare os.Stat blesses whatever is
+// at the cache path forever, so one interrupted extraction would brick OpenTofu on the
+// host — every later call would hand terraform-exec a truncated image and the code's own
+// recovery path (re-download) would be unreachable. It therefore requires a regular,
+// non-empty, executable file AND that the file actually runs, which is the only check a
+// truncated-but-non-empty image cannot satisfy.
+func cachedBinaryUsable(ctx context.Context, path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 || info.Mode().Perm()&0o111 == 0 {
+		return false
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, cachedBinaryProbeTimeout)
+	defer cancel()
+	return exec.CommandContext(probeCtx, path, "version").Run() == nil
 }
 
 // downloadTofu fetches the OpenTofu release zip for the current OS/arch, verifies
@@ -404,19 +428,25 @@ func downloadTofu(ctx context.Context, ver, dst string) error {
 			return err
 		}
 		defer rc.Close()
-		out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+		// Extract through a temp file in dst's OWN directory and rename it into place only
+		// after the copy, the chmod and the close have all succeeded. Streaming straight
+		// into dst leaves a TRUNCATED executable there whenever the copy dies part-way
+		// (disk full, a zip CRC mismatch, a killed process), which ensureBinary's cache
+		// probe would then hand to terraform-exec forever. The temp file must share dst's
+		// directory: os.Rename is only atomic within one filesystem.
+		tmp, err := os.CreateTemp(filepath.Dir(dst), ".tofu-download-*")
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to create temp file for %s: %w", dst, err)
 		}
-		_, copyErr := io.Copy(out, rc)
-		closeErr := out.Close()
-		if copyErr != nil {
-			return copyErr
+		tmpName := tmp.Name()
+		defer os.Remove(tmpName) // a no-op once the rename below has consumed it
+		_, copyErr := io.Copy(tmp, rc)
+		chmodErr := tmp.Chmod(0o755) // CreateTemp makes 0600; the binary must be executable
+		closeErr := tmp.Close()
+		if err := errors.Join(copyErr, chmodErr, closeErr); err != nil {
+			return fmt.Errorf("failed to extract `tofu` from %s: %w", asset, err)
 		}
-		if closeErr != nil {
-			return closeErr
-		}
-		return os.Chmod(dst, 0o755)
+		return os.Rename(tmpName, dst)
 	}
 	return fmt.Errorf("`tofu` binary not found in %s", asset)
 }
