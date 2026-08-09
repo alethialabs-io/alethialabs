@@ -8,12 +8,13 @@
 // types.ProjectServiceConfig with no silent zero-filling — the same decode the runner's
 // snapshotToProjectConfig performs for this subtree. Since #1962 that function REJECTS an unknown
 // key at the snapshot root (and inside the hand-enumerated singletons like `cluster`) unless
-// `consoleOnlySnapshotKeys` names it; the component LISTS stay lenient on purpose, because the
-// console spreads whole `project_*` DB rows into them — see dbRowSpreadSnapshotKeys in
-// apps/runner/internal/agent/runner.go for why that exclusion is deliberate and what closes it.
-// So the bookkeeping columns in this fixture (id / project_id / status / created_at / …) are still
-// ignored by design, and the runner test TestSnapshotToProjectConfig_W1ServicesWireDecodes locks
-// that in from the runner's side.
+// `consoleOnlySnapshotKeys` names it. Since #1974 it rejects one inside the component LISTS too:
+// the console now emits an explicit pick of each `project_*` row instead of spreading it, so this
+// fixture no longer carries the bookkeeping columns (id / project_id / status / created_at / …).
+// What still tolerates them is `legacyComponentRowKeys` in apps/runner/internal/agent/runner.go —
+// a CLOSED list, kept only because reconcile/drift/probe/reap/retry re-dispatch STORED pre-pick
+// snapshots verbatim. TestSnapshotToProjectConfig_W1ServicesWireDecodes locks the decode in from
+// the runner's side, and config_snapshot_components.aws.json covers all ten lists at once.
 //
 //   - Value asserts catch RENAME drift: a TS-side key rename regenerates the fixture, the Go
 //     decode zero-fills the field, and the assert here reds until the Go struct catches up.

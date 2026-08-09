@@ -1212,23 +1212,50 @@ var consoleOnlySnapshotKeys = map[string][]string{
 	},
 }
 
-// dbRowSpreadSnapshotKeys — snapshot keys whose LIST ELEMENTS are whole `project_*` DB rows.
-// `buildConfigSnapshot` spreads each row (`...d`) into its wire object, so every element carries
-// its table's bookkeeping and write-back columns (`id`, `project_id`, `environment_id`, `status`,
-// `status_message`, `estimated_monthly_cost`, `created_at`, `updated_at`) plus per-table columns
-// the runner contract does not model (`databases.storage_gb`, `caches.allowed_cidr_blocks`,
-// `nosql_tables.provider_config`, `container_registries.repository_url`, …).
+// legacyComponentBookkeepingKeys — the bookkeeping columns every `project_*` table carries.
+// (Three tables have no `estimated_monthly_cost`; naming it for all ten is harmless, because
+// trimming an absent key is a no-op, and it keeps this one list instead of ten near-copies.)
+var legacyComponentBookkeepingKeys = []string{
+	"id", "project_id", "environment_id",
+	"status", "status_message", "estimated_monthly_cost",
+	"created_at", "updated_at",
+}
+
+// legacyComponentRowKeys — per component list, the `project_*` DB-row columns that a PRE-#1974
+// console spread into every element, keyed by the list's snapshot key.
 //
-// Those drops are real and worth closing, but they have to be closed on the CONSOLE side by
-// replacing each spread with an explicit pick — the same fix #1962 makes for `...project`.
-// Enforcing here first would hard-fail every deploy that has any component today, and would turn
-// the NEXT component migration into a production outage with nothing to catch it at PR time: the
-// committed fidelity fixture carries empty component lists, so no CI test exercises this subtree.
-// A strict runtime check with no CI-time counterpart is how you ship an outage, so these subtrees
-// are excluded from the unknown-key check deliberately, with the reason written down.
-var dbRowSpreadSnapshotKeys = []string{
-	"databases", "caches", "queues", "topics", "nosql_tables", "secrets",
-	"container_registries", "helm_registries", "storage_buckets", "services",
+// Until #1974 these ten lists were exempted from the check below wholesale (by a
+// `dbRowSpreadSnapshotKeys` list), because `buildConfigSnapshot` spread whole DB rows (`...d`) into
+// them, so every element was guaranteed to carry unknown keys. The console now emits an explicit
+// pick — exactly the json tags of the matching struct in packages/core/types/project_config.go —
+// so NEW snapshots carry none of these, and DisallowUnknownFields covers the component elements.
+//
+// The list survives for the same reason the root's `created_at`/`updated_at` row does: reconcile,
+// drift, probe, reap and retry re-dispatch a STORED snapshot VERBATIM into a new job
+// (apps/console/app/server/actions/reconcile.ts, canvas-jobs.ts, jobs.ts), so every project that
+// has ever deployed has a pre-pick snapshot that keeps arriving here indefinitely. Dropping these
+// would fail those jobs on the first drift run after this ships — an outage, not a migration.
+//
+// It is deliberately a CLOSED list of columns that existed at the time of the pick, not a blanket
+// exemption: a NEW `project_*` column reaching the snapshot still fails here, which is the whole
+// point of closing the spread.
+var legacyComponentRowKeys = map[string][]string{
+	// Write-back columns (filled by finalizeDeployment AFTER a deploy) and the Hetzner-only size
+	// knobs, which reach the runner through `addons[]` rather than the component array.
+	"databases": {"storage_gb", "replicas", "endpoint", "reader_endpoint", "provider_outputs"},
+	"caches":    {"storage_gb", "allowed_cidr_blocks", "endpoint", "reader_endpoint"},
+	"queues":    {"storage_gb", "endpoint", "provider_outputs"},
+	"topics":    {},
+	// provider_config here has no producer AND no consumer (nosql does not route through
+	// mergeProviderConfig); global_replicas has a producer (inspector + CLI) but no Go field.
+	"nosql_tables": {"global_replicas", "provider_config"},
+	"secrets":      {},
+	// repository_url has no writer anywhere: the runner resolves registry URLs from the tofu
+	// output map at BUILD time.
+	"container_registries": {"repository_url"},
+	"helm_registries":      {},
+	"storage_buckets":      {},
+	"services":             {},
 }
 
 // assertNoUnknownSnapshotKeys fails when the console's config_snapshot carries a key that
@@ -1242,9 +1269,6 @@ func assertNoUnknownSnapshotKeys(snapshot map[string]any) error {
 	checked := make(map[string]any, len(snapshot))
 	for k, v := range snapshot {
 		checked[k] = v
-	}
-	for _, k := range dbRowSpreadSnapshotKeys {
-		delete(checked, k)
 	}
 	for path, keys := range consoleOnlySnapshotKeys {
 		if path == "" {
@@ -1265,6 +1289,34 @@ func assertNoUnknownSnapshotKeys(snapshot map[string]any) error {
 			delete(trimmed, k)
 		}
 		checked[path] = trimmed
+	}
+	// Component lists: trim the legacy DB-row columns off a COPY of each element, so a
+	// re-dispatched pre-pick snapshot still decodes while a NEW unmodelled column still fails.
+	for path, extra := range legacyComponentRowKeys {
+		list, ok := checked[path].([]any)
+		if !ok {
+			continue
+		}
+		trimmedList := make([]any, len(list))
+		for i, el := range list {
+			row, ok := el.(map[string]any)
+			if !ok {
+				trimmedList[i] = el
+				continue
+			}
+			trimmedRow := make(map[string]any, len(row))
+			for k, v := range row {
+				trimmedRow[k] = v
+			}
+			for _, k := range legacyComponentBookkeepingKeys {
+				delete(trimmedRow, k)
+			}
+			for _, k := range extra {
+				delete(trimmedRow, k)
+			}
+			trimmedList[i] = trimmedRow
+		}
+		checked[path] = trimmedList
 	}
 
 	data, err := json.Marshal(checked)
