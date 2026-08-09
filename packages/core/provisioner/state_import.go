@@ -120,7 +120,7 @@ func RunStateImport(ctx context.Context, params ImportParams) (*ImportResult, er
 		}
 		cloneDir := filepath.Join(tmpRoot, "clone")
 		var restore func()
-		tfDir, tfvars, restore, err = prepareByoIacWorkdir(vc, token, cloneDir, stdout, stderr)
+		tfDir, tfvars, restore, err = prepareByoIacWorkdir(ctx, vc, token, cloneDir, stdout, stderr)
 		if err != nil {
 			return nil, err
 		}

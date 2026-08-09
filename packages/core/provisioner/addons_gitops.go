@@ -83,7 +83,7 @@ func writeAddOnGitOps(ctx context.Context, vc *types.ProjectConfig, token string
 	if err := repo.AddAndCommit("chore: sync marketplace add-ons (alethia)"); err != nil {
 		return fmt.Errorf("commit add-on manifests: %w", err)
 	}
-	if err := repo.Push(); err != nil {
+	if err := repo.Push(ctx); err != nil {
 		return fmt.Errorf("push add-on manifests: %w", err)
 	}
 	fmt.Fprintf(stdout, "Synced GitOps add-ons: %d seeded, %d pruned.\n", seeded, pruned)
