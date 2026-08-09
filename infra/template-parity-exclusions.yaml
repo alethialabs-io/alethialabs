@@ -1551,3 +1551,24 @@ uniform:
     reason: Azure spelling of the same capability — a Key Vault key bound via key_management_service.
   - variable: ack_secrets_encryption_enabled
     reason: Alibaba spelling of the same capability — a KMS key bound via encryption_provider_key.
+
+  # ── Keyless app→database identity: GCP needs an input the others do not (#2099) ────
+  # ⚠️ CEILING, and the variable exists BECAUSE of it rather than in spite of it. Every cloud does
+  # password-free app→database auth; only GCP needs the operator to hand it an identity.
+  #
+  # roles/cloudsql.client and roles/cloudsql.instanceUser can only be granted at PROJECT scope: a
+  # Cloud SQL instance is not IAM-policy-bearing (the Admin API exposes no get/setIamPolicy on
+  # instances, and no google_sql_database_instance_iam_member exists in the provider), and Google's
+  # own IAM-Conditions recipe narrows to an instance by conditioning a project-level binding — the
+  # binding stays project-level. Writing one needs resourcemanager.projects.setIamPolicy, which is
+  # owner-equivalent and which the provisioner deliberately does not hold (#300). GCP also has no
+  # principal-pattern condition (no aws:PrincipalArn analogue), so the grant cannot be pre-written
+  # against a per-deployment identity either. A stable account, granted once by the customer at
+  # connect time and adopted here, is the only shape the provider leaves open.
+  #
+  # AWS and Azure need no counterpart variable: both scope the grant to the individual database —
+  # AWS via an IRSA role trusting the cluster OIDC provider with rds-db:connect on the DB resource
+  # ARN, Azure via an Entra administrator on the flexible server — so each creates its identity
+  # per environment during the apply. There is nothing for the operator to supply.
+  - variable: cloud_sql_app_service_account_email
+    reason: GCP-only by provider ceiling. Cloud SQL instances carry no IAM policy, so cloudsql.client/instanceUser are project-scoped only and the provisioner (which holds no resourcemanager.projects.setIamPolicy) cannot write them — the account is granted once in the customer's connector bootstrap and adopted. AWS scopes the equivalent to the DB resource ARN via IRSA and Azure via an Entra admin, so neither needs an operator-supplied identity.
