@@ -19,6 +19,7 @@ require (
 require (
 	github.com/aws/aws-sdk-go-v2/service/accessanalyzer v1.51.0
 	github.com/aws/aws-sdk-go-v2/service/iam v1.56.0
+	github.com/aws/smithy-go v1.27.5
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
@@ -50,7 +51,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/signin v1.5.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.33.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.0 // indirect
-	github.com/aws/smithy-go v1.27.5 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect

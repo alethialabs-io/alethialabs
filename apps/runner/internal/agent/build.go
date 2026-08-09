@@ -19,12 +19,20 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
+// kubectlTimeout bounds one kubectl invocation against the customer's API server.
+const kubectlTimeout = 60 * time.Second
+
 // Build execution bounds. A kaniko build of a normal service image completes in minutes;
 // the per-service ceiling keeps one wedged build from eating the whole 2h job deadline.
-const (
+//
+// They are package vars rather than consts purely so a test can shorten them — the same
+// reason runner.go's loop intervals are vars. At the production values, reaching the
+// watcher's poll branch costs a 10s wall-clock wait per iteration and its deadline branch
+// costs 30 minutes. Production never reassigns them, and the values are the ones the
+// watcher has always used.
+var (
 	buildWaitTimeout  = 30 * time.Minute
 	buildPollInterval = 10 * time.Second
-	kubectlTimeout    = 60 * time.Second
 )
 
 // buildResultKey is the execution_metadata key carrying the per-service digest map —
