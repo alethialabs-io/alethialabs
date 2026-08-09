@@ -338,7 +338,9 @@ func buildPubSubTopics(topics []types.ProjectTopicConfig, queues []types.Project
 		subs := []map[string]interface{}{}
 		for _, s := range t.Subscriptions {
 			subs = append(subs, map[string]interface{}{
-				"name":                    s.Endpoint,
+				// The endpoint used to be passed through raw, and GCP 400'd on an ARN's colons
+				// (#2159) — the same defect serviceBusSubscriptionName fixed for Azure (#2100).
+				"name":                    pubSubSubscriptionName(s.Endpoint),
 				"ack_deadline_seconds":    10,
 				"enable_message_ordering": false,
 			})
