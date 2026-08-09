@@ -71,7 +71,14 @@ jobs:
           # console or shared-UI change can break it. The Evidence break proves narrow is a trap —
           # a page nobody thought of as "hero-related" broke the sellable flow. Better to run the
           # hero on a console PR that turns out not to touch it than to miss the one that does.
-          if echo "$changed" | grep -qE '^(apps/console/|packages/@repo/)'; then
+          # ⚠️ `packages/@repo/` matched NOTHING and silently halved this filter. The npm SCOPE is
+          # `@repo/*`, but the DIRECTORY is `packages/<name>` — there has never been a
+          # `packages/@repo/`. So the "shared-UI" arm was dead from the day it was written, and a
+          # change confined to packages/ui or packages/brand skipped the hero gate entirely. That is
+          # exactly how the `[ ]` bracket mark reached the base button variant and renamed every
+          # control's accessible name from "Add" to "[Add]" without this job objecting. The list
+          # below is the console's own @repo dependencies, by path.
+          if echo "$changed" | grep -qE '^(apps/console/|packages/(ui|brand|assets|email|plan-catalog|platform|privacy|support)/)'; then
             echo "console=true" >> "$GITHUB_OUTPUT"
           else
             echo "console=false" >> "$GITHUB_OUTPUT"
