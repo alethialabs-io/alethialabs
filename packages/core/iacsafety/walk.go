@@ -39,6 +39,7 @@ func (s *scanner) scanNativeFile(path, moduleDir string) {
 			if len(blk.Labels) > 0 {
 				s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange().Start.Line)
 			}
+			s.recordProviderMetaArg(blk.Body, rel)
 			// Only a `resource` provisions anything, so only a resource enters the
 			// architecture inventory — an `ephemeral` block is gated, not drawn.
 			if blk.Type == "resource" && len(blk.Labels) > 1 {
@@ -53,8 +54,10 @@ func (s *scanner) scanNativeFile(path, moduleDir string) {
 				s.recordOutput(blk.Labels[0], moduleDir)
 			}
 		case "provider":
+			// A provider block's label IS the provider local name — record it
+			// verbatim, never via the type-prefix underscore split.
 			if len(blk.Labels) > 0 {
-				s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange().Start.Line)
+				s.recordImpliedProviderRef(blk.Labels[0], rel, blk.DefRange().Start.Line)
 			}
 		case "import":
 			// `import` (tofu 1.5+) pulls in the provider of the `to` address's
@@ -119,6 +122,27 @@ func (s *scanner) checkDataBlock(labels []string, rel string, line int) {
 			`data "terraform_remote_state" reads arbitrary remote state during plan`)
 	}
 	s.recordImpliedUse(labels[0], rel, line)
+}
+
+// recordProviderMetaArg gates the provider a resource/data/ephemeral block
+// pins with its `provider =` meta-argument. OpenTofu derives the block's
+// provider local name from that reference when one is present — the type
+// prefix applies only in its absence — so `provider = evilprov` on an
+// allowlisted resource type makes the module require hashicorp/evilprov,
+// which init downloads and executes (#2030). The reference is a traversal
+// (`name` or `name.alias`); its root is the local name, taken verbatim.
+func (s *scanner) recordProviderMetaArg(body *hclsyntax.Body, rel string) {
+	attr, ok := body.Attributes["provider"]
+	if !ok {
+		return
+	}
+	line := attr.SrcRange.Start.Line
+	for _, v := range attr.Expr.Variables() {
+		if segs := traversalNames(v); len(segs) > 0 {
+			s.recordImpliedProviderRef(segs[0], rel, line)
+			return
+		}
+	}
 }
 
 // checkImportBlock resolves the provider implied by an import block's `to`
@@ -218,6 +242,7 @@ func (s *scanner) sweepBody(body *hclsyntax.Body, rel string) {
 				fmt.Sprintf("provisioner%s block: provisioners execute arbitrary commands", label))
 		case "data":
 			s.checkDataBlock(blk.Labels, rel, blk.DefRange().Start.Line)
+			s.recordProviderMetaArg(blk.Body, rel)
 		}
 		s.sweepBody(blk.Body, rel)
 	}
