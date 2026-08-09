@@ -117,6 +117,9 @@ var (
 	// shutdownGracePeriod is how long a draining runner may keep finishing its current
 	// job after SIGINT/SIGTERM before the root context is force-cancelled.
 	shutdownGracePeriod = 10 * time.Minute
+	// safetyInterval is the period of claimLoop's fallback poll — the only thing that
+	// still drives a claim drain while the wake stream is down.
+	safetyInterval = 30 * time.Second
 	// wakeBackoffBase / wakeMaxBackoff bound the wake-stream reconnect backoff.
 	wakeBackoffBase = time.Second
 	wakeMaxBackoff  = 30 * time.Second
@@ -196,8 +199,6 @@ func (w *Runner) applyHeartbeatCancels(jobIDs []string) {
 // jobs. The wake stream gives sub-second pickup; the safety poll is the fallback if
 // the stream drops. Each tick drains the queue until nothing is left for this runner.
 func (w *Runner) claimLoop(ctx context.Context, draining *atomic.Bool) error {
-	const safetyInterval = 30 * time.Second
-
 	wakeCh := make(chan struct{}, 1)
 	trigger := func() {
 		select {
