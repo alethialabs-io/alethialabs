@@ -554,3 +554,28 @@ func TestCancelGracePeriod_NegativeAndHuge(t *testing.T) {
 		t.Errorf("grace = %v, want the default %v for an unset value", got, DefaultCancelGracePeriod)
 	}
 }
+
+// TestContainerRunFailsWithoutResultJSON is the #2033 regression: the runtime CLI
+// exiting 0 without the child ever writing result.json must be a FAILURE, not a
+// success — "true" stands in for an image whose entrypoint exits clean without
+// dispatching the stage (wrong ALETHIA_SANDBOX_IMAGE, an older image that ignores
+// ALETHIA_RUNNER_EXEC_STAGE). Before the fix Run returned nil and the job posted
+// COMPLETED with no tofu run, no state and no cloud resources.
+func TestContainerRunFailsWithoutResultJSON(t *testing.T) {
+	workDir := t.TempDir()
+	c := Container{Runtime: "true", Image: "img", Operator: "self"}
+	spec := Spec{
+		Kind: "deploy", JobID: "job-noresult", WorkDir: workDir,
+		Stage: &Stage{Kind: StageDeploy, Payload: []byte("{}")},
+	}
+	err := c.Run(context.Background(), spec, func(context.Context) error { return nil })
+	if _, serr := os.Stat(filepath.Join(workDir, "result.json")); serr == nil {
+		t.Fatal("precondition: result.json must not exist")
+	}
+	if err == nil {
+		t.Fatal("Run reported SUCCESS although the stage produced no result.json (nothing ran)")
+	}
+	if !strings.Contains(err.Error(), "result.json") {
+		t.Errorf("error %q should name the missing proof", err)
+	}
+}
