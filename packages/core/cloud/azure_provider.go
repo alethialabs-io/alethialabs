@@ -5,12 +5,9 @@ package cloud
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"sort"
-	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -420,68 +417,6 @@ func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interfa
 		}
 	}
 	return result
-}
-
-// serviceBusSubscriptionName derives a deterministic, Azure-VALID subscription name from a
-// subscription's endpoint.
-//
-// The endpoint used to be passed through as the name, and Azure rejected it (#2100). A subscription
-// name must match azurerm's `^[a-zA-Z0-9][a-zA-Z0-9-._]{0,48}[a-zA-Z0-9_]$` — alphanumeric at both
-// ends, only `-._` inside, 50 characters. An endpoint is a URL or an ARN, so it routinely carries
-// `:` and `/`, which are outside that alphabet: the full-bar fixture seeds
-// `arn:aws:sqs:us-east-1:000000000000:jobs` and every azure apply carrying a topic died on it.
-// (Azure prints its whole validation message, whose 50-character clause reads like a length
-// problem. It is not — it is the alphabet.)
-//
-// The name cannot simply be `s.Name`, because types.TopicSubscription HAS no name: it models a
-// protocol and an endpoint only. Adding one would be a schema change, and a migration is a heavy
-// price for a defect that does not need it — the endpoint already identifies the subscription
-// uniquely within its topic.
-//
-// Shape mirrors ackNamespaceRoleName (alibaba_tenant_identity.go): a readable, truncated stem plus a
-// short content hash of the WHOLE endpoint. Both halves are load-bearing.
-//
-//   - DETERMINISTIC. `azurerm_servicebus_subscription.name` is ForceNew, so a name that changed
-//     between runs would destroy and recreate the subscription on every apply — silently dropping
-//     whatever it had not yet delivered.
-//   - The hash is over the FULL endpoint, not the truncated stem, so two endpoints sharing a
-//     50-character prefix (routine for ARNs and URLs, which differ in their tail) still get
-//     distinct names.
-func serviceBusSubscriptionName(endpoint string) string {
-	sum := sha256.Sum256([]byte(endpoint))
-	short := hex.EncodeToString(sum[:])[:8]
-
-	// Fold everything outside the permitted alphabet to `-`, so the readable part stays recognisable
-	// rather than being dropped. `.` and `_` are legal inside the name but are folded too: they add
-	// no signal here and keep the stem's shape predictable.
-	stem := strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			return r
-		case r >= 'A' && r <= 'Z':
-			return r + ('a' - 'A')
-		default:
-			return '-'
-		}
-	}, endpoint)
-
-	// Collapse runs and trim, so `arn:aws:sqs:` does not become `arn-aws-sqs---`.
-	for strings.Contains(stem, "--") {
-		stem = strings.ReplaceAll(stem, "--", "-")
-	}
-	stem = strings.Trim(stem, "-")
-
-	// Budget: 50 total = stem + "-" + 8. Leaves 41 for the stem.
-	const maxStem = 41
-	if len(stem) > maxStem {
-		stem = strings.Trim(stem[:maxStem], "-")
-	}
-	// An endpoint made entirely of punctuation folds away to nothing, and a name must START with an
-	// alphanumeric — so fall back to a fixed prefix rather than emitting a leading `-`.
-	if stem == "" {
-		stem = "sub"
-	}
-	return stem + "-" + short
 }
 
 // buildCosmosDBCollections maps the canvas's NoSQL tables onto the Cosmos DB container shape the

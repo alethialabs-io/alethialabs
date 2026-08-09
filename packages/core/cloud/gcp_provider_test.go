@@ -466,7 +466,9 @@ func TestBuildPubSubTopics(t *testing.T) {
 	if !ok || len(evSubs) != 1 {
 		t.Fatalf("events subscriptions = %v", ev["subscriptions"])
 	}
-	if evSubs[0]["name"] != "https://x/hook" || evSubs[0]["ack_deadline_seconds"] != 10 {
+	// The endpoint is sanitised into the name (#2159), never passed through raw — a raw URL or
+	// ARN carries `:`/`/`, which GCP rejects in a subscription name.
+	if evSubs[0]["name"] != pubSubSubscriptionName("https://x/hook") || evSubs[0]["ack_deadline_seconds"] != 10 {
 		t.Errorf("events sub = %v", evSubs[0])
 	}
 
