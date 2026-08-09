@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +15,24 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/imroc/req/v3"
 )
+
+// credentialsFileMode is the permission mode of the CLI credentials file. It holds the
+// live access token, the 90-day refresh token and the raw git-provider OAuth token, so
+// it is owner read/write only — never group- or world-readable. os.Create asks for 0666
+// and leaves the result to the caller's umask (0644 under the common 022), which on a
+// shared box, a CI runner or a container layer lets any other local uid read the bearer
+// and act as the user. Matches utils.SecretFileMode and the 0600 the CLI already uses
+// for its non-secret config and the update cache.
+const credentialsFileMode os.FileMode = 0o600
+
+// userCodeAlphabet is RFC 8628 §6.1's recommended character set — upper-case consonants,
+// so it spells no words and carries no digits — minus L, which is read back as 1 as often
+// as I and O are read back as 1 and 0. No 0/O, no 1/I/L, nothing a user can mistype.
+const userCodeAlphabet = "BCDFGHJKMNPQRSTVWXZ"
+
+// userCodeLength is how many alphabet characters a user_code carries (excluding the
+// separator): 19^8 ≈ 1.7e10 combinations, short enough to read off a terminal.
+const userCodeLength = 8
 
 func getCredentialsPath() (string, error) {
 	configDir, err := os.UserConfigDir()
@@ -121,17 +140,57 @@ func refreshAccessToken(refreshToken string) (string, error) {
 		return "", fmt.Errorf("server returned %d: %s", resp.StatusCode, errMsg.Error)
 	}
 
+	// Fail closed on a 2xx that carries no token. A captive-portal 200, a content-type
+	// change or a schema drift would otherwise yield ("", nil) — and getAuthTokenInternal
+	// would take its success branch, persist the empty token over the stored credential
+	// and hand the caller an `Authorization: Bearer ` header.
+	if result.AccessToken == "" {
+		return "", fmt.Errorf("refresh succeeded (HTTP %d) but returned no access_token", resp.StatusCode)
+	}
+
 	return result.AccessToken, nil
 }
 
+// saveCredentials writes creds to path with owner-only (0600) permissions. It also
+// tightens an already-existing looser file, so a credentials.json an older CLI created
+// world-readable is repaired the first time a token refresh writes through here.
 func saveCredentials(path string, creds types.ExchangeResponse) error {
-	file, err := os.Create(path)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, credentialsFileMode)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
+	// O_CREATE applies the mode only to a file it actually creates. Best-effort chmod:
+	// on a filesystem without POSIX modes the write is what matters.
+	_ = file.Chmod(credentialsFileMode)
+
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(creds)
+}
+
+// newUserCode returns a fresh RFC 8628 user_code — eight characters from an unambiguous
+// alphabet, hyphenated in the middle so it reads back cleanly ("BCDF-GHJK"). The CLI
+// prints it next to the login URL and the browser shows the code it is about to approve,
+// so a user handed a phished device-code link can see it is not the one their terminal
+// printed and refuse.
+//
+// The modulo is very slightly biased (256 mod 19 ≠ 0). That is deliberate and harmless:
+// the user_code is a value a human compares, not the credential — the device_code is
+// still a 122-bit UUID, and the code is useless without it.
+func newUserCode() string {
+	buf := make([]byte, userCodeLength)
+	// crypto/rand.Read never returns an error — it fills the buffer entirely or panics —
+	// so there is no error arm to handle here.
+	_, _ = rand.Read(buf)
+
+	out := make([]byte, 0, userCodeLength+1)
+	for i, b := range buf {
+		if i == userCodeLength/2 {
+			out = append(out, '-')
+		}
+		out = append(out, userCodeAlphabet[int(b)%len(userCodeAlphabet)])
+	}
+	return string(out)
 }
