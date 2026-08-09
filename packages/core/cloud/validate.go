@@ -143,10 +143,25 @@ const (
 	// newbits >= 0 alone (prefix <= 20) admits /19 and /20, which die inside tofu with an
 	// opaque "does not accommodate a subnet numbered N" error.
 	azureMaxNetworkPrefix = 18
-	// infra/templates/project/hetzner/network.tf:11 — the node subnet is
-	// `cidrsubnet(local.network_ip_range, 24 - tonumber(split("/", …)[1]), 0)`. newbits >= 0
-	// requires prefix <= 24.
-	hetznerMaxNetworkPrefix = 24
+	// infra/templates/project/hetzner/network.tf — THREE carves share the network, and the
+	// floor is the narrowest prefix that keeps all of them well-formed AND mutually disjoint
+	// (checks_network.tf's `cidrs_distinct` precondition blocks the apply fail-closed
+	// otherwise):
+	//
+	//   - node subnet (line 11): `cidrsubnet(local.network_ip_range, 24 - tonumber(…), 0)` —
+	//     always the FIRST /24, and newbits >= 0 requires prefix <= 24;
+	//   - pod_cidr (line 77): `cidrsubnet(local.network_ip_range, 1, 1)` — starts halfway in,
+	//     at offset 2^(31-prefix), which stays clear of the node /24 (256 addresses) only
+	//     while prefix <= 23;
+	//   - service_cidr (line 78): `cidrsubnet(local.network_ip_range, 3, 3)` — starts at
+	//     offset 3*2^(29-prefix): 96 for a /24 and 192 for a /23, both inside the node /24;
+	//     384 for a /22, the first prefix that clears it.
+	//
+	// So the floor is the service carve's /22, not the node carve's /24 — a /23 or /24 parses,
+	// carves, and then dies at plan on the disjointness precondition.
+	// TestNetworkCIDRFloorsMatchTemplates re-derives this minimum from all three template
+	// expressions on every run.
+	hetznerMaxNetworkPrefix = 22
 	// infra/templates/project/alibaba/modules/network/main.tf:35 — vswitches are
 	// `cidrsubnet(var.network_cidr, 4, count.index)`, so prefix + 4 <= 32 requires prefix <= 28.
 	//
