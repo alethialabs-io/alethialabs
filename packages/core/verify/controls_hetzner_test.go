@@ -263,3 +263,42 @@ func TestHetznerNoConfigIsNotEvaluable(t *testing.T) {
 		t.Error("a config-less plan must not hard-block on FW-001 (honest gap, not a proven violation)")
 	}
 }
+
+// TestHetznerVarFirewallIdsIsNotEvaluable is the #2039 regression. terraform-json
+// sets ConstantValue to the UnknownConstantValue SENTINEL (not nil) whenever an
+// expression has references, so firewall_ids sourced from var.firewall_ids /
+// local.fw reported a "present constant" that was not a list — and fell into the
+// literal-empty arm: a hard FAIL that bricked correctly-firewalled plans. The
+// documented contract ("never a false brick") is not_evaluable, with the
+// unresolvable expression named in the coverage note.
+func TestHetznerVarFirewallIdsIsNotEvaluable(t *testing.T) {
+	plan := mustPlan(t, `{
+      "format_version": "1.2",
+      "resource_changes": [
+        {"address":"hcloud_server.node","mode":"managed","type":"hcloud_server","name":"node",
+         "provider_name":"registry.terraform.io/hetznercloud/hcloud",
+         "change":{"actions":["create"],"after":{"name":"node"},"after_unknown":{"firewall_ids":true}}}
+      ],
+      "configuration": {
+        "root_module": {
+          "resources": [
+            {"address":"hcloud_server.node","mode":"managed","type":"hcloud_server","name":"node",
+             "expressions":{"firewall_ids":{"references":["var.firewall_ids"]}}}
+          ]
+        }
+      }}`)
+	rep, err := Evaluate(t.Context(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw := controlByID(t, rep, "HCLOUD-FW-001")
+	if fw.Status != StatusNotEvaluable {
+		t.Fatalf("FALSE DENY: firewall_ids from var.firewall_ids gave %q findings=%+v coverage=%q; the documented contract is not_evaluable", fw.Status, fw.Findings, fw.Coverage)
+	}
+	if !strings.Contains(fw.Coverage, "var.firewall_ids") {
+		t.Errorf("coverage %q should name the unresolvable expression", fw.Coverage)
+	}
+	if rep.Blocking() {
+		t.Error("an unresolvable firewall_ids must not hard-block the apply")
+	}
+}
