@@ -80,14 +80,91 @@ func gkeNamespaceGSAEmail(projectID, accountID string) string {
 // iamPolicy / iamBinding are the slices of the IAM Policy shape this code reads+writes (getIamPolicy /
 // setIamPolicy on a service account). Only the workloadIdentityUser binding is managed; any other
 // bindings on the resource are preserved.
+// Both types round-trip LOSSLESSLY. This is a read-modify-write of somebody else's policy: every
+// field the struct fails to model is a field setIamPolicy silently deletes, and the deletion is a
+// privilege change made by an automated deploy with nothing in the logs to show for it (#2027).
+//
+// `other` carries the top-level fields not modelled here — `auditConfigs` above all, whose loss
+// would turn OFF audit logging on the GSA. Modelling only what we manage and re-marshalling was the
+// original mistake; unknown fields are now preserved rather than enumerated, so a future GCP policy
+// field cannot reintroduce this by simply existing.
 type iamPolicy struct {
-	Version  int          `json:"version,omitempty"`
-	Etag     string       `json:"etag,omitempty"`
-	Bindings []iamBinding `json:"bindings,omitempty"`
+	Version  int
+	Etag     string
+	Bindings []iamBinding
+
+	other map[string]json.RawMessage
 }
+
+// managed top-level keys — everything else round-trips through `other`.
+var iamPolicyManagedKeys = map[string]bool{"version": true, "etag": true, "bindings": true}
+
+func (p *iamPolicy) UnmarshalJSON(b []byte) error {
+	raw := map[string]json.RawMessage{}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*p = iamPolicy{other: map[string]json.RawMessage{}}
+	for k, v := range raw {
+		switch k {
+		case "version":
+			if err := json.Unmarshal(v, &p.Version); err != nil {
+				return err
+			}
+		case "etag":
+			if err := json.Unmarshal(v, &p.Etag); err != nil {
+				return err
+			}
+		case "bindings":
+			if err := json.Unmarshal(v, &p.Bindings); err != nil {
+				return err
+			}
+		default:
+			p.other[k] = v
+		}
+	}
+	return nil
+}
+
+func (p iamPolicy) MarshalJSON() ([]byte, error) {
+	out := map[string]json.RawMessage{}
+	for k, v := range p.other {
+		if !iamPolicyManagedKeys[k] {
+			out[k] = v
+		}
+	}
+	if p.Version != 0 {
+		b, err := json.Marshal(p.Version)
+		if err != nil {
+			return nil, err
+		}
+		out["version"] = b
+	}
+	if p.Etag != "" {
+		b, err := json.Marshal(p.Etag)
+		if err != nil {
+			return nil, err
+		}
+		out["etag"] = b
+	}
+	if len(p.Bindings) > 0 {
+		b, err := json.Marshal(p.Bindings)
+		if err != nil {
+			return nil, err
+		}
+		out["bindings"] = b
+	}
+	return json.Marshal(out)
+}
+
+// iamBinding models the two fields this code manages plus the condition it must NOT eat.
+//
+// Condition is json.RawMessage rather than a typed Expr: it is never read, only carried, and a
+// typed struct would drop any sub-field GCP adds later — the same defect one level down.
 type iamBinding struct {
-	Role    string   `json:"role"`
-	Members []string `json:"members"`
+	Role      string          `json:"role"`
+	Members   []string        `json:"members"`
+	Condition json.RawMessage `json:"condition,omitempty"`
 }
 
 // ProvisionGKENamespaceIdentity get-or-creates the per-namespace GSA and ensures the KSA has
@@ -181,10 +258,15 @@ func ensureWorkloadIdentityBinding(ctx context.Context, client *http.Client, tok
 	return nil
 }
 
-// iamPolicyHasMember reports whether role→member is already present.
+// iamPolicyHasMember reports whether role→member is already granted UNCONDITIONALLY.
+//
+// A member present only in a conditional binding is deliberately NOT a match: the grant this
+// function gates is unconditional, and treating a time-bounded or resource-scoped grant as
+// equivalent would make the deploy skip the write and leave workload identity broken the moment the
+// condition stopped holding.
 func iamPolicyHasMember(pol iamPolicy, role, member string) bool {
 	for _, b := range pol.Bindings {
-		if b.Role != role {
+		if b.Role != role || len(b.Condition) > 0 {
 			continue
 		}
 		for _, m := range b.Members {
@@ -196,10 +278,17 @@ func iamPolicyHasMember(pol iamPolicy, role, member string) bool {
 	return false
 }
 
-// addIAMMember adds member to role's binding (creating the binding if absent), preserving all others.
+// addIAMMember adds member to the UNCONDITIONAL binding for role, creating it if absent, and leaves
+// every other binding — including conditional ones on the same role — untouched.
+//
+// The condition is part of a binding's identity: GCP allows several bindings with the same role and
+// different conditions, and they are different grants. Matching on role alone (as this did) would
+// append the member to whichever came first, so an existing time-bounded or resource-scoped grant
+// could swallow the workload-identity binding and silently constrain it — the mirror image of #2027's
+// other half, where a condition was dropped and a grant silently widened.
 func addIAMMember(bindings []iamBinding, role, member string) []iamBinding {
 	for i := range bindings {
-		if bindings[i].Role == role {
+		if bindings[i].Role == role && len(bindings[i].Condition) == 0 {
 			bindings[i].Members = append(bindings[i].Members, member)
 			return bindings
 		}
