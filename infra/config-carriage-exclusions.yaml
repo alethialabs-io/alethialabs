@@ -239,8 +239,8 @@ exclusions:
   # ── Cache network allow-list on Google Cloud ────────────────────────────────────────
   # Memorystore sells no per-instance IP allow-list: access is bought by attaching the instance to
   # a VPC (`authorized_network`) and governed by that network's own rules — there is no instance
-  # argument for the extra CIDRs to reach, on Redis or on Valkey. AWS carries this field (#1981);
-  # azure (#2148) and alibaba (#2149) can express it and are boarded in `baseline:` below.
+  # argument for the extra CIDRs to reach, on Redis or on Valkey. AWS (#1981) and alibaba (#2149)
+  # carry this field; azure (#2148) can express it and is boarded in `baseline:` below.
   - field: caches.allowed_cidr_blocks
     cloud: gcp
     reason: Memorystore has no per-cache IP allow-list — access is granted by the VPC the cache is attached to, so manage reachability with the network's own rules instead.
@@ -409,18 +409,15 @@ baseline:
   # caches.allowed_cidr_blocks (#1981, the security-relevant one) was here as dropped-by-type.
   # FIXED at the contract and on AWS: the field is modelled and carried into
   # `redis_allowed_cidr_blocks` (the template chain was already fully wired). gcp cannot express it
-  # (excluded above). The two clouds that CAN are boarded here until their carriers exist:
-  # azure via `azurerm_redis_firewall_rule` (one start/end pair per CIDR), alibaba via
-  # `alicloud_kvstore_instance.security_ips`.
+  # (excluded above). alibaba (#2149) was boarded here and is FIXED — carried into
+  # `kvstore_security_ips` and read by `alicloud_kvstore_instance.security_ips`, probed against the
+  # pinned provider rather than assumed; unset renders no argument, so existing caches keep their
+  # whitelist. The one cloud that CAN and does not yet is boarded until its carrier exists:
+  # azure via `azurerm_redis_firewall_rule` (one start/end pair per CIDR).
   - field: caches.allowed_cidr_blocks
     cloud: azure
     reason: The network allow-list you set on a cache is not applied on Azure yet — the cache is created with the template's default access rules instead.
     issue: "#2148"
-    state: no-carrier
-  - field: caches.allowed_cidr_blocks
-    cloud: alibaba
-    reason: The network allow-list you set on a cache is not applied on Alibaba Cloud yet — the cache is created with the template's default access rules instead.
-    issue: "#2149"
     state: no-carrier
   - field: nosql_tables.global_replicas
     cloud: azure
