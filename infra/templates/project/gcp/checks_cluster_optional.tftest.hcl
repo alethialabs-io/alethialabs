@@ -101,15 +101,16 @@ run "clusterless_still_plans_with_every_cluster_identity_requested" {
     error_message = "gar-xacct without a cluster must create no pull GSA and no Workload Identity binding — the identity pool it would bind into does not exist."
   }
 
-  # The keyless Cloud SQL app identity, same shape.
+  # The keyless Cloud SQL app identity, same shape. The app GSA is now ADOPTED, not created — the
+  # project-scoped cloudsql grants moved to the customer's connector bootstrap because writing them
+  # needs resourcemanager.projects.setIamPolicy, which the provisioner does not hold. So what must be
+  # absent here is the adoption LOOKUP and the Workload Identity binding.
   assert {
     condition = alltrue([
-      length(google_service_account.app_db) == 0,
+      length(data.google_service_account.app_db_adopted) == 0,
       length(google_service_account_iam_member.app_db_wi) == 0,
-      length(google_project_iam_member.app_db_client) == 0,
-      length(google_project_iam_member.app_db_instance_user) == 0,
     ])
-    error_message = "cloud_sql_iam_auth without a cluster must create no app GSA and no Workload Identity binding."
+    error_message = "cloud_sql_iam_auth without a cluster must resolve no adopted app GSA and no Workload Identity binding."
   }
 
   # Cloud SQL itself is NOT cluster-scoped and must still be built. Without this the assertions above
@@ -138,7 +139,7 @@ run "a_bare_clusterless_project_warns_about_nothing" {
   assert {
     condition = alltrue([
       length(google_service_account.gar_pull) == 0,
-      length(google_service_account.app_db) == 0,
+      length(data.google_service_account.app_db_adopted) == 0,
       length(module.gke) == 0,
     ])
     error_message = "A cluster-less project that requested no cluster identities must create none — and warn about none."
@@ -160,7 +161,7 @@ run "a_keyless_database_without_a_cluster_plans" {
   # to. cloud-sql.tf passes app_iam_sa_email = null, so no CLOUD_IAM_SERVICE_ACCOUNT user is
   # registered for an identity that could never authenticate.
   assert {
-    condition     = length(module.cloud_sql) == 1 && length(google_service_account.app_db) == 0
+    condition     = length(module.cloud_sql) == 1 && length(data.google_service_account.app_db_adopted) == 0
     error_message = "A keyless-requested database without a cluster must still be created, with no app identity attached."
   }
 

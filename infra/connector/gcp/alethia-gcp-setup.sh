@@ -131,6 +131,40 @@ done
 echo "    Granted ${PROJECT_ID} provisioning roles."
 
 echo ""
+echo "==> Creating the keyless Cloud SQL app identity..."
+# The account your APPLICATION workloads impersonate to reach Cloud SQL without a password. Created
+# and granted HERE, by you, rather than by the provisioner: roles/cloudsql.client and
+# roles/cloudsql.instanceUser can only be granted at PROJECT scope (a Cloud SQL instance is not
+# IAM-policy-bearing), and writing a project binding needs resourcemanager.projects.setIamPolicy —
+# owner-equivalent, which the provisioner deliberately does not hold. Matches infra/connector/gcp/main.tf.
+#
+# One account per project: every Alethia environment here shares this database identity. What each
+# may DO inside a database is still scoped by the SQL GRANTs Alethia issues per database.
+APP_DB_SA_NAME="alethia-appdb"
+APP_DB_SA_EMAIL="${APP_DB_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+if gcloud iam service-accounts describe "${APP_DB_SA_EMAIL}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "    ${APP_DB_SA_EMAIL} already exists."
+else
+  gcloud iam service-accounts create "${APP_DB_SA_NAME}" \
+    --project="${PROJECT_ID}" \
+    --display-name="Alethia app → Cloud SQL (keyless)" \
+    --description="Impersonated by Alethia app workloads via GKE Workload Identity to log in to Cloud SQL with an IAM token instead of a password" \
+    --quiet >/dev/null
+  echo "    Created ${APP_DB_SA_EMAIL}."
+fi
+
+# Least-privilege: connect + IAM login only. Deliberately NOT cloudsql.admin / instanceAdmin, and
+# neither role carries setIamPolicy, so this account cannot escalate.
+for ROLE in roles/cloudsql.client roles/cloudsql.instanceUser; do
+  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="serviceAccount:${APP_DB_SA_EMAIL}" \
+    --role="${ROLE}" \
+    --condition=None \
+    --quiet >/dev/null
+done
+echo "    Granted Cloud SQL connect + IAM login."
+
+echo ""
 echo "==> Creating Workload Identity Pool..."
 if gcloud iam workload-identity-pools describe "${POOL_ID}" \
   --location="global" &>/dev/null; then
@@ -192,6 +226,12 @@ echo "  Enter these two values in the Alethia connect sheet:"
 echo ""
 echo "    Project ID:      ${PROJECT_ID}"
 echo "    Project Number:  ${PROJECT_NUMBER}"
+echo ""
+echo "  Optional — for password-free (keyless) Cloud SQL auth, also set in Alethia:"
+echo ""
+echo "    cloud_sql_app_service_account_email: ${APP_DB_SA_EMAIL}"
+echo ""
+echo "  Leave it unset and your apps keep using password authentication."
 echo ""
 echo "  (Advanced / Terraform: the full credential config is below and in ${OUTPUT_FILE}.)"
 echo ""
