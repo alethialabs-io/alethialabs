@@ -173,3 +173,51 @@ func TestReVerifyPartialFix(t *testing.T) {
 		t.Errorf("Resolved = %v, want [KEYLESS-001]", res.Resolved)
 	}
 }
+
+// TestReVerifyRefusesNotEvaluableCandidate is the #2022 regression. A candidate
+// whose controls come back not_evaluable contributed nothing to the failing
+// set, so every original failure was booked "Resolved" and Accepted came back
+// true — an LLM could "fix" a hard failure by making the offending body
+// un-inspectable (inline policy → computed data source / var) and the
+// deterministic gate signed off on infrastructure it never inspected.
+// Not_evaluable is documented as never-a-pass: the un-inspectable controls land
+// in Unproven and the candidate is refused.
+func TestReVerifyRefusesNotEvaluableCandidate(t *testing.T) {
+	original := evalFixture(t, "fail_static_key_admin.json")
+	candidate := loadPlan(t, "not_evaluable_computed_policy.json")
+
+	res, err := ReVerify(context.Background(), original, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.CandidateVerdict != StatusNotEvaluable {
+		t.Fatalf("precondition: candidate verdict = %q, want not_evaluable", res.CandidateVerdict)
+	}
+	if res.Accepted {
+		t.Fatalf("SECURITY HOLE: ReVerify ACCEPTED a candidate whose verdict is %q (resolved=%v unproven=%v) — not_evaluable was treated as a pass", res.CandidateVerdict, res.Resolved, res.Unproven)
+	}
+	// LEASTPRIV-001 went un-inspectable, not fixed — it must be Unproven, not
+	// Resolved.
+	if len(res.Unproven) != 1 || res.Unproven[0] != "LEASTPRIV-001" {
+		t.Errorf("Unproven = %v, want [LEASTPRIV-001]", res.Unproven)
+	}
+	for _, id := range res.Resolved {
+		if id == "LEASTPRIV-001" {
+			t.Errorf("LEASTPRIV-001 booked as Resolved while un-inspectable")
+		}
+	}
+}
+
+// TestRemediationLoopRefusesNotEvaluable: the loop must not report success on a
+// candidate the gate could not evaluate.
+func TestRemediationLoopRefusesNotEvaluable(t *testing.T) {
+	original := evalFixture(t, "fail_static_key_admin.json")
+	rem := &scriptedRemediator{t: t, plans: []string{"not_evaluable_computed_policy.json"}}
+	out, err := RunRemediationLoop(context.Background(), original, rem, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Succeeded {
+		t.Fatalf("SECURITY HOLE: RunRemediationLoop reported SUCCESS with candidate verdict %q", out.Final.CandidateVerdict)
+	}
+}

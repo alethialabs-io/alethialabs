@@ -240,8 +240,11 @@ The control logic is unit-tested with a fake checker; live API calls are integra
 The division of labor is strict: the **deterministic gate is the trusted verdict; an LLM may only
 propose**. `ReVerify(ctx, original, candidatePlan)` is the gate that makes an AI remediation loop
 safe — it evaluates a candidate (post-fix) plan and reports which original failures it `Resolved`,
-which are `StillFailing`, and which it made `NewlyFailing` (a regression). `Accepted` is true **only**
-when every original failure is resolved and nothing new fails. An LLM-proposed fix is offered to the
+which are `StillFailing`, which it made `NewlyFailing` (a regression), and which it made `Unproven`
+(un-inspectable where the failure was — e.g. an inline body moved into a computed data source;
+not_evaluable is never a pass, so that is a blind spot, not a fix). `Accepted` is true **only** when
+every original failure is provably resolved, nothing new fails, nothing is unproven, and the
+candidate's own verdict is not `not_evaluable`. An LLM-proposed fix is offered to the
 user only if it passes this gate — the model is never trusted to self-judge, and the loop cannot make
 the plan worse. (The LLM call itself is a higher layer; this package owns the deterministic decision.)
 
