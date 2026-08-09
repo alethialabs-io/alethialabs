@@ -528,6 +528,22 @@ func (s *scanner) recordImpliedUse(typeName, file string, line int) {
 	s.implied = append(s.implied, impliedUse{name: name, module: s.curModule, file: file, line: line})
 }
 
+// recordImpliedProviderRef queues a provider reference whose LOCAL NAME is
+// already exact — a provider block label or a `provider =` meta-argument.
+// Unlike recordImpliedUse it must NOT split at the first underscore: that rule
+// derives a provider name from a resource TYPE prefix, but here the whole name
+// IS the local name. Splitting made a `provider "foo_bar"` reference look up
+// "foo" — excusable by the wrong declaration (fail-open) and blind to the
+// right one (false positive). The builtin "terraform" provider ships with
+// OpenTofu and is exempt.
+func (s *scanner) recordImpliedProviderRef(name, file string, line int) {
+	name = strings.ToLower(name)
+	if name == "terraform" || name == "" {
+		return
+	}
+	s.implied = append(s.implied, impliedUse{name: name, module: s.curModule, file: file, line: line})
+}
+
 // checkImpliedProviders runs after all modules are scanned: any implied
 // provider with no required_providers entry in ITS OWN module AND whose
 // implied address hashicorp/<name> is not in the allowlist is an ERROR —
