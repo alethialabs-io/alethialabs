@@ -125,6 +125,10 @@ func runMembersAdd(c apiClient, out io.Writer, orgID, email, role string) error 
 	return nil
 }
 
+// membersRemoveYes is the --yes opt-in: skip the confirmation prompt (and make the
+// command usable with --no-input).
+var membersRemoveYes bool
+
 var membersRemoveCmd = &cobra.Command{
 	Use:   "remove <member_id>",
 	Short: "Remove a member from the active organization",
@@ -138,7 +142,7 @@ var membersRemoveCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		if !confirm("Remove this member?", "They will lose access to the organization.") {
+		if !confirmDestructive(membersRemoveYes, "Remove this member?", "They will lose access to the organization.") {
 			return
 		}
 		if err := runMembersRemove(api.NewClient(token), os.Stdout, orgID, args[0]); err != nil {
@@ -157,6 +161,7 @@ func runMembersRemove(c apiClient, out io.Writer, orgID, memberID string) error 
 }
 
 func init() {
+	addYesFlag(membersRemoveCmd, &membersRemoveYes)
 	membersCmd.PersistentFlags().String("org", "", "Organization id (defaults to the active org)")
 	membersAddCmd.Flags().StringVar(&membersAddRole, "role", "member", "Role for the invited member")
 	membersCmd.AddCommand(membersListCmd)

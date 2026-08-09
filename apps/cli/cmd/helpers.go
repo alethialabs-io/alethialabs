@@ -4,11 +4,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/charmbracelet/huh"
+	"github.com/spf13/cobra"
 )
 
 // exitFunc is the process-exit hook the fatal-error path calls. It is os.Exit in
@@ -40,6 +42,13 @@ func failf(format string, args ...any) {
 // command is unreachable otherwise. The default below is the real prompt, so
 // production behaviour is unchanged.
 var confirm = func(title, description string) bool {
+	// Prompting is disabled (--no-input, or stdin is not a terminal): the form can
+	// never be answered, so decline without opening it. Callers for which a silent
+	// decline would be wrong go through confirmDestructive instead.
+	if noInputMode {
+		ui.Muted("Cancelled.")
+		return false
+	}
 	var ok bool
 	err := runHuhForm(
 		huh.NewGroup(
@@ -54,4 +63,37 @@ var confirm = func(title, description string) bool {
 		return false
 	}
 	return true
+}
+
+// errConfirmRequiresYes is the fatal error a destructive command reports when
+// prompting is disabled and the caller did not opt in with --yes.
+//
+// Failing is the only safe answer here. Proceeding unprompted would make every
+// scripted invocation destructive; exiting 0 having done nothing — the behaviour
+// this replaced — let a scripted teardown silently no-op while the cloud
+// resources it was meant to destroy kept billing.
+var errConfirmRequiresYes = errors.New(
+	"this command is destructive and interactive prompts are disabled " +
+		"(--no-input, or stdin is not a terminal): pass --yes to confirm",
+)
+
+// confirmDestructive reports whether a destructive action may proceed. yes is the
+// command's --yes flag: when set the action runs unprompted. Otherwise, with
+// prompting disabled the command dies on the standard fatal path rather than
+// silently cancelling, and on an interactive terminal it asks through confirm.
+func confirmDestructive(yes bool, title, description string) bool {
+	if yes {
+		return true
+	}
+	if noInputMode {
+		fail(errConfirmRequiresYes)
+		return false
+	}
+	return confirm(title, description)
+}
+
+// addYesFlag registers the standard --yes/-y opt-in on a destructive command, so
+// every one of them spells the flag and its help text the same way.
+func addYesFlag(cmd *cobra.Command, target *bool) {
+	cmd.Flags().BoolVarP(target, "yes", "y", false, "Skip the confirmation prompt (required with --no-input)")
 }

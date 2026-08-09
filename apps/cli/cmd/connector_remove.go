@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// connectorRemoveYes is the --yes opt-in: skip the confirmation prompt (and make
+// the command usable with --no-input).
 var connectorRemoveYes bool
 
 var connectorRemoveCmd = &cobra.Command{
@@ -46,7 +48,8 @@ picker.`,
 			fail(err)
 		}
 
-		if !connectorRemoveYes && !confirm(
+		if !confirmDestructive(
+			connectorRemoveYes,
 			fmt.Sprintf("Disconnect %s?", selected.Label),
 			"Projects using this account will be orphaned.",
 		) {
@@ -101,5 +104,5 @@ func pickIdentity(identities []api.CloudIdentity, args []string) (*api.CloudIden
 
 func init() {
 	connectorCmd.AddCommand(connectorRemoveCmd)
-	connectorRemoveCmd.Flags().BoolVarP(&connectorRemoveYes, "yes", "y", false, "Skip the confirmation prompt")
+	addYesFlag(connectorRemoveCmd, &connectorRemoveYes)
 }
