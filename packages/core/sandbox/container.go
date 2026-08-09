@@ -182,6 +182,20 @@ func (c Container) Run(ctx context.Context, spec Spec, _ Job) error {
 	if runErr != nil {
 		return fmt.Errorf("container sandbox: %s run failed: %w", c.Runtime, runErr)
 	}
+	// Exit 0 alone is not proof the stage ran. Every container run carries a
+	// serialized stage (spec.Stage is required above) and the child's dispatch
+	// ALWAYS writes result.json — so its absence after a clean exit means the
+	// stage never dispatched at all: a mis-set ALETHIA_SANDBOX_IMAGE whose
+	// entrypoint exits 0, an older runner image that does not understand
+	// ALETHIA_RUNNER_EXEC_STAGE, an entrypoint that prints usage and leaves.
+	// Returning nil here posted the job COMPLETED with no tofu run, no state
+	// and no resources — fleet-wide from a single wrong image ref (#2033).
+	if _, err := os.Stat(filepath.Join(spec.WorkDir, "result.json")); err != nil {
+		return fmt.Errorf(
+			"container sandbox: %s exited 0 but stage %q wrote no result.json — the stage never ran (wrong ALETHIA_SANDBOX_IMAGE, or an image that does not dispatch ALETHIA_RUNNER_EXEC_STAGE?)",
+			c.Runtime, spec.Kind,
+		)
+	}
 	return nil
 }
 
