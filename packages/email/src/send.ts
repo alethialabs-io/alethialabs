@@ -3,16 +3,25 @@
 
 import { SendEmailCommand, SESv2Client } from "@aws-sdk/client-sesv2";
 import { render } from "@react-email/components";
+import { createTransport, type Transporter } from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer";
 import type { ReactElement } from "react";
-import { getEmailConfig, type SesConfig } from "./config";
+import { Resend } from "resend";
+import {
+	getEmailConfig,
+	type EmailConfig,
+	type SesConfig,
+	type SmtpConfig,
+} from "./config";
 
-let cachedClient: SESv2Client | undefined;
+let cachedSesClient: SESv2Client | undefined;
+let cachedResend: Resend | undefined;
+let cachedSmtp: Transporter | undefined;
 
 /** Builds (once) the SES client. Explicit creds when given, else the AWS chain. */
 function sesClient(ses: SesConfig): SESv2Client {
-	if (cachedClient) return cachedClient;
-	cachedClient = new SESv2Client({
+	if (cachedSesClient) return cachedSesClient;
+	cachedSesClient = new SESv2Client({
 		region: ses.region,
 		...(ses.accessKeyId && ses.secretAccessKey
 			? {
@@ -23,7 +32,28 @@ function sesClient(ses: SesConfig): SESv2Client {
 				}
 			: {}),
 	});
-	return cachedClient;
+	return cachedSesClient;
+}
+
+/** Builds (once) the Resend HTTP client. */
+function resendClient(apiKey: string): Resend {
+	if (cachedResend) return cachedResend;
+	cachedResend = new Resend(apiKey);
+	return cachedResend;
+}
+
+/** Builds (once) the nodemailer SMTP transport. */
+function smtpTransport(smtp: SmtpConfig): Transporter {
+	if (cachedSmtp) return cachedSmtp;
+	cachedSmtp = createTransport({
+		host: smtp.host,
+		port: smtp.port,
+		secure: smtp.secure,
+		...(smtp.user && smtp.pass
+			? { auth: { user: smtp.user, pass: smtp.pass } }
+			: {}),
+	});
+	return cachedSmtp;
 }
 
 /** A file to attach to the email (e.g. a Stripe-hosted invoice PDF). */
@@ -37,7 +67,7 @@ export interface EmailAttachment {
 }
 
 export interface SendEmailArgs {
-	/** Verified SES from-address for this stream (getEmailConfig().from.*). */
+	/** Verified from-address for this stream (getEmailConfig().from.*). */
 	from: string;
 	to: string;
 	/** Optional CC recipients (e.g. a case author's ccEmails list). */
@@ -46,20 +76,30 @@ export interface SendEmailArgs {
 	/** react-email element, rendered to HTML. */
 	react: ReactElement;
 	/** SES configuration set for this stream — attributes events to SNS and the
-	 * stream's reputation. Optional (getEmailConfig().configSet.*). */
+	 * stream's reputation. SES only; ignored by Resend/SMTP (which isolate
+	 * streams by sending subdomain). Optional (getEmailConfig().configSet.*). */
 	configurationSetName?: string;
-	/** Extra context logged in the dev (no-SES) fallback, e.g. an OTP code. */
+	/** Extra context logged in the dev (no-provider) fallback, e.g. an OTP code. */
 	devLog?: string;
 	/** Files to attach. When present the email is sent as raw MIME (multipart)
 	 * instead of the simple HTML path — used for invoice/receipt PDFs. */
 	attachments?: EmailAttachment[];
 }
 
+/** The rendered, provider-agnostic message a transport sends. */
+interface RenderedMessage {
+	from: string;
+	to: string;
+	cc?: string[];
+	subject: string;
+	html: string;
+}
+
 /**
  * Builds a full MIME message (multipart/mixed) with the rendered HTML plus any
  * attachments, using nodemailer's MailComposer. SES v2 only carries attachments
  * through `Content.Raw`, so this is the raw-MIME path; the no-attachment path
- * stays on `Content.Simple`.
+ * stays on `Content.Simple`. (Resend/SMTP take attachments natively.)
  */
 async function buildRawMime(args: {
 	from: string;
@@ -91,11 +131,116 @@ async function buildRawMime(args: {
 	});
 }
 
+/** Sends the rendered email via Resend's HTTP API. */
+async function sendViaResend(
+	config: EmailConfig,
+	msg: RenderedMessage,
+	attachments: EmailAttachment[] | undefined,
+): Promise<void> {
+	const { data, error } = await resendClient(config.resend!.apiKey).emails.send({
+		from: msg.from,
+		to: msg.to,
+		...(msg.cc?.length ? { cc: msg.cc } : {}),
+		subject: msg.subject,
+		html: msg.html,
+		...(attachments?.length
+			? {
+					attachments: attachments.map((a) => ({
+						filename: a.filename,
+						content: Buffer.from(a.content),
+						...(a.contentType ? { contentType: a.contentType } : {}),
+					})),
+				}
+			: {}),
+	});
+	// The Resend SDK resolves with an { error } shape instead of throwing.
+	if (error) throw new Error(error.message);
+	if (!data) throw new Error("Resend returned no message id");
+}
+
+/** Sends the rendered email via a generic SMTP server (nodemailer). */
+async function sendViaSmtp(
+	config: EmailConfig,
+	msg: RenderedMessage,
+	attachments: EmailAttachment[] | undefined,
+): Promise<void> {
+	await smtpTransport(config.smtp!).sendMail({
+		from: msg.from,
+		to: msg.to,
+		...(msg.cc?.length ? { cc: msg.cc } : {}),
+		subject: msg.subject,
+		html: msg.html,
+		...(attachments?.length
+			? {
+					attachments: attachments.map((a) => ({
+						filename: a.filename,
+						content: Buffer.from(a.content),
+						...(a.contentType ? { contentType: a.contentType } : {}),
+					})),
+				}
+			: {}),
+	});
+}
+
+/** Sends the rendered email via AWS SES v2 (Simple, or Raw when attachments). */
+async function sendViaSes(
+	config: EmailConfig,
+	msg: RenderedMessage,
+	configurationSetName: string | undefined,
+	attachments: EmailAttachment[] | undefined,
+): Promise<void> {
+	const { from, to, cc, subject, html } = msg;
+	// With attachments we must send raw MIME (SES Simple content can't carry
+	// files); without, the simpler Simple path keeps existing sends unchanged.
+	const command =
+		attachments && attachments.length > 0
+			? new SendEmailCommand({
+					FromEmailAddress: from,
+					Destination: {
+						ToAddresses: [to],
+						...(cc?.length ? { CcAddresses: cc } : {}),
+					},
+					...(configurationSetName
+						? { ConfigurationSetName: configurationSetName }
+						: {}),
+					Content: {
+						Raw: {
+							Data: await buildRawMime({
+								from,
+								to,
+								cc,
+								subject,
+								html,
+								attachments,
+							}),
+						},
+					},
+				})
+			: new SendEmailCommand({
+					FromEmailAddress: from,
+					Destination: {
+						ToAddresses: [to],
+						...(cc?.length ? { CcAddresses: cc } : {}),
+					},
+					...(configurationSetName
+						? { ConfigurationSetName: configurationSetName }
+						: {}),
+					Content: {
+						Simple: {
+							Subject: { Data: subject, Charset: "UTF-8" },
+							Body: { Html: { Data: html, Charset: "UTF-8" } },
+						},
+					},
+				});
+	await sesClient(config.ses!).send(command);
+}
+
 /**
- * Sends one transactional email via AWS SES, rendering the react-email template
- * to HTML. When SES is unconfigured (no region — local/dev) it logs instead of
- * sending, so a fresh self-hoster works with zero email setup. Shared by every
- * stream (auth, product) — callers pass the stream's from-address.
+ * Sends one transactional email via the configured provider (Resend, SMTP, or
+ * SES), rendering the react-email template to HTML. When no provider is
+ * configured (local/dev) it logs instead of sending, so a fresh self-hoster
+ * works with zero email setup. Shared by every stream (auth, product) — callers
+ * pass the stream's from-address.
  */
 export async function sendEmail({
 	from,
@@ -107,11 +252,11 @@ export async function sendEmail({
 	devLog,
 	attachments,
 }: SendEmailArgs): Promise<void> {
-	const { ses } = getEmailConfig();
+	const config = getEmailConfig();
 
-	if (!ses) {
+	if (!config.provider) {
 		console.warn(
-			`[email] SES not configured — "${subject}" → ${to}` +
+			`[email] no provider configured — "${subject}" → ${to}` +
 				(cc?.length ? ` [cc: ${cc.join(", ")}]` : "") +
 				(attachments?.length ? ` [+${attachments.length} attachment(s)]` : "") +
 				(devLog ? ` (${devLog})` : ""),
@@ -120,64 +265,35 @@ export async function sendEmail({
 	}
 
 	const html = await render(react);
+	const msg: RenderedMessage = { from, to, cc, subject, html };
 
 	try {
-		// With attachments we must send raw MIME (SES Simple content can't carry
-		// files); without, the simpler Simple path keeps existing sends unchanged.
-		const command =
-			attachments && attachments.length > 0
-				? new SendEmailCommand({
-						FromEmailAddress: from,
-						Destination: {
-							ToAddresses: [to],
-							...(cc?.length ? { CcAddresses: cc } : {}),
-						},
-						...(configurationSetName
-							? { ConfigurationSetName: configurationSetName }
-							: {}),
-						Content: {
-							Raw: {
-								Data: await buildRawMime({
-									from,
-									to,
-									cc,
-									subject,
-									html,
-									attachments,
-								}),
-							},
-						},
-					})
-				: new SendEmailCommand({
-						FromEmailAddress: from,
-						Destination: {
-							ToAddresses: [to],
-							...(cc?.length ? { CcAddresses: cc } : {}),
-						},
-						...(configurationSetName
-							? { ConfigurationSetName: configurationSetName }
-							: {}),
-						Content: {
-							Simple: {
-								Subject: { Data: subject, Charset: "UTF-8" },
-								Body: { Html: { Data: html, Charset: "UTF-8" } },
-							},
-						},
-					});
-		await sesClient(ses).send(command);
+		switch (config.provider) {
+			case "resend":
+				await sendViaResend(config, msg, attachments);
+				break;
+			case "smtp":
+				await sendViaSmtp(config, msg, attachments);
+				break;
+			case "ses":
+				await sendViaSes(config, msg, configurationSetName, attachments);
+				break;
+		}
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		// In dev, don't lose the email when SES fails (e.g. sandbox mode rejects
-		// unverified recipients) — log it (incl. the OTP via devLog) so the code is
-		// still retrievable from `pnpm dev:logs`. Production surfaces the error.
+		// In dev, don't lose the email when a send fails (e.g. SES sandbox rejects
+		// unverified recipients, or a bad key) — log it (incl. the OTP via devLog)
+		// so the code is still retrievable from `pnpm dev:logs`. Prod surfaces it.
 		if (process.env.NODE_ENV !== "production") {
 			console.warn(
-				`[email] SES send failed (dev) — "${subject}" → ${to}` +
+				`[email] ${config.provider} send failed (dev) — "${subject}" → ${to}` +
 					(devLog ? ` (${devLog})` : "") +
 					`: ${message}`,
 			);
 			return;
 		}
-		throw new Error(`Failed to send "${subject}" via SES: ${message}`);
+		throw new Error(
+			`Failed to send "${subject}" via ${config.provider}: ${message}`,
+		);
 	}
 }

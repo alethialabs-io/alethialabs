@@ -641,6 +641,12 @@ jobs:
             # safe default-off (needs BOTH URL + token), same "stay dark when unset" semantics as STRIPE_PRICE_AI_*.
             emit ODOO_INVOICE_URL
             emit ODOO_INVOICE_TOKEN
+            # Transactional email: hosted prod sends via Resend (AWS SES production
+            # access was denied for this account). EMAIL_PROVIDER pins the transport;
+            # RESEND_API_KEY is the [ext] vault key. The SES vars stay emitted so a
+            # self-host build with SES creds still works (provider auto-detect).
+            echo "EMAIL_PROVIDER=resend"
+            emit RESEND_API_KEY
             emit ALETHIA_SES_REGION
             emit ALETHIA_SES_ACCESS_KEY_ID
             emit ALETHIA_SES_SECRET_ACCESS_KEY
