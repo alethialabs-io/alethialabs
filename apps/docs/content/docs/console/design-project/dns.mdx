@@ -101,6 +101,11 @@ other infrastructure-service decisions.
 
 WAF protects web applications from common attacks (SQL injection, XSS, bot traffic).
 
+Alethia provisions a WAF on AWS, Google Cloud and Azure only. On Alibaba Cloud the switch is disabled and
+says why: WAF 3.0 is an account-level purchase there, so a project that owned one would release the whole
+account's firewall when it was destroyed. Buy a WAF 3.0 instance in your own account instead and put it in
+front of your ingress from the WAF console. Hetzner sells no web application firewall at all.
+
 <Tabs items={["AWS", "GCP", "Azure"]}>
   <Tab value="AWS">
     Two WAF options (can enable both):

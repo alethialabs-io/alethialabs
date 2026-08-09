@@ -89,7 +89,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 | `enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | `managed_certificate` | — | 🟡 | ☸️ | ☸️ | — |
 | `provider` | · | · | · | · | · |
-| `waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — |
+| `waf_enabled` | — | 🟡 | 🟡 | 🟡 | — |
 | `zone_id` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 
 ### `helm_registries`
@@ -221,6 +221,7 @@ Decisions, not silence: this cloud will not honor the setting, and here is what 
 | `nosql_tables.partition_key_type` | azure | A Cosmos DB partition key is a path into the document ("/id"), and Cosmos reads the value's type from the document itself — there is no key type to declare separately. The key path you choose IS applied. |
 | `nosql_tables.capacity_mode` | alibaba | Tablestore chooses capacity mode on the instance that holds your tables, not on each table, so a per-table setting has nothing to land on. |
 | `dns.managed_certificate` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate. (#1824) |
+| `dns.waf_enabled` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider models WAF 3.0 as an account-level purchase — the instance resource takes no arguments at all, so nothing distinguishes two of them, and destroying one project would release the account's firewall out from under every other project sharing it. Buy a WAF 3.0 instance in your account and put it in front of your ingress from the WAF console. (#1841) |
 | `databases.iam_auth` | alibaba | Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password. (#1510) |
 | `queues.ordered` | alibaba | Alibaba Cloud's queue service accepts a FIFO queue type but publishes no ordering guarantee behind it — no delivery order, no message key to group by, no throughput limit — so Alethia does not offer ordered delivery there. (#1812) |
 | `nosql_tables.point_in_time_recovery` | alibaba | Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do. (#1815) |
@@ -250,4 +251,4 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 
 ---
 
-Measured this run: 370 schema columns examined, 73 of them user-settable, 162 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.
+Measured this run: 370 schema columns examined, 73 of them user-settable, 161 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.

@@ -40,6 +40,11 @@ export {
 	normalizeKeylessAuth,
 } from "./keyless";
 export {
+	wafUnavailableReason,
+	wafUnavailableReasonForCloud,
+	normalizeWafEnabled,
+} from "./waf";
+export {
 	KEYLESS_CELLS,
 	type KeylessCell,
 	type KeylessCellState,
