@@ -361,3 +361,42 @@ func TestProviderTfvars_NodeShapeKnobsAbsentByDefault(t *testing.T) {
 		})
 	}
 }
+
+// The cache allow-list the canvas collects reaches the ElastiCache security
+// group's tfvar, an unset list leaves the base empty default untouched (so
+// existing deploys are unchanged), and valkey — whose serverless module
+// consumes no CIDR input — never emits it (#1981).
+func TestProviderTfvars_CacheAllowedCidrBlocks(t *testing.T) {
+	t.Run("carried when set", func(t *testing.T) {
+		cfg := &types.ProjectConfig{
+			Caches: []types.ProjectCacheConfig{
+				{Name: "c", AllowedCidrBlocks: []string{"10.1.0.0/16", "192.168.0.0/24"}},
+			},
+		}
+		tf := (&awsProvider{}).ProviderTfvars(cfg)
+		got, _ := tf["redis_allowed_cidr_blocks"].([]string)
+		if len(got) != 2 || got[0] != "10.1.0.0/16" || got[1] != "192.168.0.0/24" {
+			t.Errorf("redis_allowed_cidr_blocks = %v, want the CIDRs the canvas collected", tf["redis_allowed_cidr_blocks"])
+		}
+	})
+	t.Run("unset keeps the base empty default", func(t *testing.T) {
+		cfg := &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c"}}}
+		tf := (&awsProvider{}).ProviderTfvars(cfg)
+		got, ok := tf["redis_allowed_cidr_blocks"].([]string)
+		if !ok || len(got) != 0 {
+			t.Errorf("redis_allowed_cidr_blocks = %v, want the empty base default", tf["redis_allowed_cidr_blocks"])
+		}
+	})
+	t.Run("valkey never emits the list", func(t *testing.T) {
+		cfg := &types.ProjectConfig{
+			Caches: []types.ProjectCacheConfig{
+				{Name: "c", Engine: types.CacheEngineValkey, AllowedCidrBlocks: []string{"10.1.0.0/16"}},
+			},
+		}
+		tf := (&awsProvider{}).ProviderTfvars(cfg)
+		got, ok := tf["redis_allowed_cidr_blocks"].([]string)
+		if !ok || len(got) != 0 {
+			t.Errorf("redis_allowed_cidr_blocks = %v on valkey, want the empty base default (valkey.tf consumes no CIDR input)", tf["redis_allowed_cidr_blocks"])
+		}
+	})
+}
