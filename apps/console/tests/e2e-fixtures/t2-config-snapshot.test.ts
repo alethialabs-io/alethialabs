@@ -523,7 +523,6 @@ describe("component lists are an explicit pick, not a DB-row spread (#1974)", ()
 			"repository_url",
 			"storage_gb",
 			"replicas",
-			"global_replicas",
 		];
 		const lists = [
 			"databases",
