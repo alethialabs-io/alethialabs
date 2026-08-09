@@ -170,17 +170,19 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		// Size. `azure_cache_sku_name` is the EXACT Managed Redis sku and it wins over the legacy
 		// Basic/Standard/Premium map below (infra/templates/project/azure/azure-cache-redis.tf), so
 		// emitting it is what makes MemoryGB — the cloud-indifferent size the canvas offers — mean
-		// something on Azure. Without this, azure read no size axis at all: the only size-ish signal
-		// was NumCacheNodes>1 flipping the tier to "Standard".
+		// something on Azure.
 		if sku := resolveCacheNodeType("azure", cache); sku != "" {
 			tfvars["azure_cache_sku_name"] = sku
 		}
-		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
-			tfvars["azure_cache_sku"] = "Standard"
-		}
-		// EngineVersion is deliberately NOT emitted on Azure (#1993). Azure Managed Redis
-		// (azurerm_managed_redis, the replacement for the retired Azure Cache for Redis) exposes no
-		// engine-version knob at all — verified against the pinned provider, which rejects both
+		// NumCacheNodes is deliberately NOT read on Azure (#1993). It used to flip the legacy
+		// tier to "Standard" — a tier flip wearing a count's name: two nodes and twenty produced
+		// the same plan, and Azure Managed Redis (azurerm_managed_redis, sized by sku_name with
+		// clustering managed by the service) exposes no node/replica/shard count for the number to
+		// become. The control is withdrawn on Azure in the inspector (unavailableWhen) and the
+		// ceiling is recorded in infra/config-carriage-exclusions.yaml.
+		//
+		// EngineVersion is deliberately NOT emitted on Azure either (#1993): Managed Redis exposes
+		// no engine-version knob at all — verified against the pinned provider, which rejects both
 		// `redis_version` and a `version` inside `default_database` as unsupported arguments.
 		// Emitting it anyway would be dropped at plan time while the guards still scored the cell as
 		// carried. Recorded as a CLOUD CEILING in infra/config-carriage-exclusions.yaml instead.

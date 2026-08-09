@@ -43,7 +43,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 | `memory_gb` | ⚙️ | 🟡 | ⚙️ | 🟡 | · |
 | `multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · |
 | `node_type` | · | · | · | · | · |
-| `num_cache_nodes` | 🟡 | 🟡 | ⚠️ #1993 | 🟡 | · |
+| `num_cache_nodes` | 🟡 | 🟡 | — | 🟡 | · |
 
 ### `cluster`
 
@@ -216,6 +216,7 @@ Decisions, not silence: this cloud will not honor the setting, and here is what 
 | `caches.engine` | azure | Azure Managed Redis is the only cache engine offered here, and it is what gets built — there is no second engine for the choice to select between. |
 | `caches.engine` | alibaba | ApsaraDB for Redis is the only cache engine offered here, and it is what gets built — there is no second engine for the choice to select between. |
 | `caches.allowed_cidr_blocks` | gcp | Memorystore has no per-cache IP allow-list — access is granted by the VPC the cache is attached to, so manage reachability with the network's own rules instead. |
+| `caches.num_cache_nodes` | azure | Azure Managed Redis is sized by its SKU and manages clustering itself — there is no node count to apply. Size the cache with Memory instead. |
 | `nosql_tables.partition_key` | gcp | Firestore has no partition key — documents are placed by their path and every field is indexed for you, so there is no key to nominate. |
 | `nosql_tables.partition_key_type` | gcp | Firestore has no partition key, so there is no key type to declare. |
 | `nosql_tables.capacity_mode` | gcp | Firestore bills per operation and offers no provisioned-throughput mode to switch to. |
@@ -251,8 +252,7 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 | `caches.allowed_cidr_blocks` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #2149 | The network allow-list you set on a cache is not applied on Alibaba Cloud yet — the cache is created with the template's default access rules instead. |
 | `nosql_tables.global_replicas` | azure | 🚫 | no-carrier (boarded as no-carrier) | #2158 | The replica regions you choose for a table are not applied on Azure yet — the Cosmos account is created in its own region only. |
 | `container_registries.vulnerability_scanning` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
-| `caches.num_cache_nodes` | azure | ⚠️ | gated-carrier (boarded as gated-carrier) | #1993 | The node count you set on a cache is not applied — asking for more than one node moves the cache to the Standard tier, and the number itself is discarded. |
 
 ---
 
-Measured this run: 370 schema columns examined, 73 of them user-settable, 166 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.
+Measured this run: 370 schema columns examined, 73 of them user-settable, 165 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.
