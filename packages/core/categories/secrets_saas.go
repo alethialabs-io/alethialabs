@@ -125,6 +125,37 @@ func vaultSaaSStore(ctx ComponentContext, slug string) SecretsSaaSStore {
 	}
 }
 
+// saaSStoreSlugs is every slug whose behavior can produce a SecretsSaaSStore that
+// externalSecretsStoreTemplate actually RENDERS — the set a cleanup must be able to reap from.
+//
+// `generic` is here and is not redundant: it is a second vault-Kind store with its own StoreName
+// ("secretstore-generic"), so enumerating Kinds instead of slugs would miss it.
+//
+// 1Password is deliberately ABSENT. It is a documented runtime-read exclusion — ESO's onepassword
+// provider is Connect-server-only, which a bare Service-Account token cannot satisfy — so no branch
+// renders for it and there is never a store of that name to reap. A test proves this list against
+// the template's own branches, so if that exclusion is ever lifted the test fails rather than the
+// cleanup silently going stale.
+var saaSStoreSlugs = []string{"vault", "generic", "doppler", "infisical"}
+
+// SaaSStoreName is the ClusterSecretStore name for a pluggable SaaS secrets slug.
+func SaaSStoreName(slug string) string { return "secretstore-" + slug }
+
+// AllSaaSStoreNames returns every pluggable-SaaS ClusterSecretStore name the template can render.
+//
+// The sibling of AllXacctStoreNames, and it exists for the same reason: the cleanup in
+// argocd.CleanupSkippedInfraServices re-listed these names by hand and was missing
+// secretstore-infisical, so switching away from Infisical orphaned its store in a
+// permanently-broken state (#2038). The template never spells these names literally — it renders
+// `{{ .SecretsSaaS.StoreName }}` — which is exactly why a hand-written copy drifts unnoticed.
+func AllSaaSStoreNames() []string {
+	out := make([]string, 0, len(saaSStoreSlugs))
+	for _, slug := range saaSStoreSlugs {
+		out = append(out, SaaSStoreName(slug))
+	}
+	return out
+}
+
 // DominantSecretsSaaSStore returns the runtime-read SaaS secret store for the project's dominant
 // secrets selection, or nil when that selection is native / none, a cross-account keyless manager, or
 // a store with no first-class ESO read path on the pinned chart (1Password). Parallels
