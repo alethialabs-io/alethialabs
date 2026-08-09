@@ -550,6 +550,25 @@ func kubectlApplyManifest(manifest, label string, stdout, stderr io.Writer) erro
 	return executeCommand("kubectl apply -f "+path, ".", nil, stdout, stderr)
 }
 
+// kubectlDeleteManifest deletes the resources in a rendered manifest. `--ignore-not-found` makes it
+// idempotent: a teardown that already ran, or one whose earlier half failed, converges instead of
+// erroring. It is deliberately the mirror of kubectlApplyManifest and takes the SAME rendered manifest
+// — deleting by rendered document rather than by hand-written name is what stops the teardown's idea of
+// a resource's name from drifting away from the apply's (namespaceTenantName is derived, not stored).
+func kubectlDeleteManifest(manifest, label string, stdout, stderr io.Writer) error {
+	dir, err := os.MkdirTemp("", "alethia-ns-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "manifest.yaml")
+	if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Deleting %s...\n", label)
+	return executeCommand("kubectl delete --ignore-not-found -f "+path, ".", nil, stdout, stderr)
+}
+
 // applyNamespaceGuardrailBundle applies the namespace-agnostic guardrail bundle
 // (infra/templates/argocd/preview-guardrails/) INTO the tenant namespace with `kubectl -n <ns>`,
 // which injects the namespace into each namespaced doc: default-deny NetworkPolicy + DNS/intra-ns

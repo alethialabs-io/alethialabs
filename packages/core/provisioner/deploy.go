@@ -130,6 +130,17 @@ type DeployParams struct {
 // on failure. The deploy path then binds the handle to the KSA with the per-cloud annotation.
 type NamespaceIdentityProvisioner func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName, namespace string) (handle string, err error)
 
+// NamespaceIdentityDeprovisioner deletes the per-namespace tenant cloud identity a
+// NamespaceIdentityProvisioner created. It is the teardown counterpart and is injected by the runner for
+// the same reason: deleting a GSA / UAMI is a live keyless IAM-write whose auth SDK stays out of
+// packages/core. It takes no handle because every per-cloud identity name is DERIVED deterministically
+// from (clusterName, namespace) — teardown reconstructs it rather than depending on a handle the destroy
+// job's config snapshot does not carry.
+//
+// Idempotent by contract: an identity that is already gone is success, not an error, so a re-run of a
+// partially-failed teardown converges instead of wedging.
+type NamespaceIdentityDeprovisioner func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName, namespace string) error
+
 // KubeConnResolver resolves an EXISTING shared-Fabric cluster's control-plane connection (endpoint +
 // base64 CA) OUTPUT-FREE — by name, from the cloud API, using a keyless token the RUNNER mints. The
 // runner injects it into DeployParams so a placement (namespace/vcluster) can complete a no-tofu

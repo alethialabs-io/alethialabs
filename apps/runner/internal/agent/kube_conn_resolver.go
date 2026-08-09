@@ -82,6 +82,53 @@ func newNamespaceIdentityProvisioner() provisioner.NamespaceIdentityProvisioner 
 	}
 }
 
+// newNamespaceIdentityDeprovisioner returns the runner's provisioner.NamespaceIdentityDeprovisioner: the
+// teardown counterpart of newNamespaceIdentityProvisioner. It deletes the per-namespace tenant cloud
+// identity via the same keyless IAM-write path that created it, keeping the gcp/azure auth SDKs in the
+// runner. aws and alibaba never reach this (both deprovision in-core, mirroring how they provision), and
+// hetzner has no cloud IAM to reclaim.
+//
+// The identity name is DERIVED from (clusterName, namespace) on both sides, so teardown needs no handle
+// — which matters because a destroy job's config snapshot never carried one.
+func newNamespaceIdentityDeprovisioner() provisioner.NamespaceIdentityDeprovisioner {
+	return func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName, namespace string) error {
+		switch providerSlug {
+		case "gcp":
+			return deprovisionGKENamespaceIdentity(ctx, config, clusterName, namespace)
+		case "azure":
+			return deprovisionAKSNamespaceIdentity(ctx, config, clusterName, namespace)
+		default:
+			return fmt.Errorf("namespace identity teardown: no deprovisioner is wired for provider %q — the tenant's cloud identity may still be live", providerSlug)
+		}
+	}
+}
+
+// deprovisionAKSNamespaceIdentity mints a keyless ARM token, resolves the Fabric's resource group
+// output-free (by cluster name), then deletes the per-namespace UAMI — which removes its federated
+// credential with it. Mirrors provisionAKSNamespaceIdentity's resolution exactly, so teardown addresses
+// the identity that deploy created.
+func deprovisionAKSNamespaceIdentity(ctx context.Context, config *types.ProjectConfig, clusterName, namespace string) error {
+	token, err := workloadIdentityAADToken(ctx, azureARMScope)
+	if err != nil {
+		return fmt.Errorf("mint Azure ARM token for namespace identity teardown: %w", err)
+	}
+	rg, err := cloud.ResolveAKSResourceGroup(ctx, nil, token, config.CloudAccountID, clusterName)
+	if err != nil {
+		return err
+	}
+	return cloud.DeprovisionAKSNamespaceIdentity(ctx, nil, token, config.CloudAccountID, rg, clusterName, namespace)
+}
+
+// deprovisionGKENamespaceIdentity mints a keyless WIF token and deletes the per-namespace GSA — which
+// removes its Workload-Identity IAM binding with it. Mirrors provisionGKENamespaceIdentity.
+func deprovisionGKENamespaceIdentity(ctx context.Context, config *types.ProjectConfig, clusterName, namespace string) error {
+	token, _, err := mintGCPToken(ctx)
+	if err != nil {
+		return fmt.Errorf("mint GCP token for namespace identity teardown: %w", err)
+	}
+	return cloud.DeprovisionGKENamespaceIdentity(ctx, nil, token, config.CloudAccountID, clusterName, namespace)
+}
+
 // provisionAKSNamespaceIdentity mints a keyless ARM token, resolves the Fabric's resource group + AKS
 // OIDC issuer output-free (by cluster name), then get-or-creates the per-namespace UAMI + its federated
 // credential (cloud.ProvisionAKSNamespaceIdentity), returning the UAMI clientId. subscription =
