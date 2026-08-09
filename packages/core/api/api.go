@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,10 +32,29 @@ func NewClient(authToken string) *Client {
 		baseURL:   fmt.Sprintf("%s/api", webOrigin),
 		authToken: authToken,
 		httpClient: &http.Client{
+			Timeout:       requestTimeout,
 			CheckRedirect: refuseCrossOriginRedirect,
 		},
 	}
 }
+
+// requestTimeout bounds ONE control-plane round trip: dial, TLS handshake, request write, response
+// header and body read are all inside http.Client.Timeout. Without it a control plane that accepts
+// the TCP connection and then never answers — a half-open connection through a load balancer is the
+// usual way — blocks the calling goroutine forever, and every `alethia` command, including the
+// GetJob/GetJobLogs poll loops, hangs with no output and no way to bound the wait (#2045).
+//
+// A client Timeout rather than a context.Context on every verb, deliberately. apps/cli has ZERO
+// context.Context in non-test code, and *Client is consumed through the 61-method apiClient
+// interface in apps/cli/cmd/client.go with a ~430-line fake behind it, so ctx parameters would
+// rewrite the interface, the fake and every call site — and every one of those call sites would
+// pass context.Background(), so no caller would gain a cancellation it could actually use. If the
+// CLI ever grows a root context the change is mechanical: thread it in and keep this as the ceiling.
+//
+// 60s is sized against the slowest LEGITIMATE call, not the median: ConnectProviderIdentity and
+// VerifyProviderIdentity run a cloud health probe INLINE on the server. No env knob — same shape as
+// acrExchangeTimeout in apps/runner/internal/agent/registry_token.go.
+const requestTimeout = 60 * time.Second
 
 // maxAPIRedirects bounds the chain even when every hop stays on the control plane's own origin.
 const maxAPIRedirects = 3
@@ -265,6 +285,72 @@ func (c *Client) getProviderToken() string {
 	return creds.ProviderToken
 }
 
+// APIError is a non-success answer from the control plane. It is returned by every verb helper, so
+// a caller that needs to tell an expired token from a missing permission from a server fault can
+// reach the status code with errors.As instead of matching on a message. Callers that add their own
+// prefix wrap it with %w, so errors.As still reaches through.
+type APIError struct {
+	StatusCode int
+	Message    string
+}
+
+// Error renders the failure. It NEVER renders empty: the control plane's own explanation when there
+// is one, and the bare status code when the body carried nothing usable. Returning a non-nil error
+// whose message is "" is what produced `failed to get runners: ` with no reason (#2046).
+func (e *APIError) Error() string {
+	if e.Message == "" {
+		return fmt.Sprintf("request failed with status %d", e.StatusCode)
+	}
+	return fmt.Sprintf("%s (status %d)", e.Message, e.StatusCode)
+}
+
+// errorBodyLimit bounds how much of a failure body is read. The body is attacker- or
+// proxy-controlled and nothing obliges it to be small — a fronting proxy can stream megabytes of
+// HTML at a 502 — so it is read through an io.LimitReader, never whole.
+const errorBodyLimit = 8 << 10
+
+// errorSnippetRunes bounds the body snippet rendered into the message, in runes rather than bytes so
+// a truncation cannot split a UTF-8 sequence.
+const errorSnippetRunes = 200
+
+// responseError builds the error for a non-success response. It takes the first non-empty of the
+// `error`, `message` and `error_description` keys — a Next.js route handler emits `message`, an
+// OAuth-shaped answer emits `error_description`, and only Alethia's own handlers emit `error` — and
+// falls back to a bounded, whitespace-collapsed snippet of the body when none of them yields text.
+// The status code is always carried, so 401, 403 and 500 stay distinguishable.
+func responseError(resp *http.Response) *APIError {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyLimit))
+	apiErr := &APIError{StatusCode: resp.StatusCode}
+
+	var fields struct {
+		Error            string `json:"error"`
+		Message          string `json:"message"`
+		ErrorDescription string `json:"error_description"`
+	}
+	if err := json.Unmarshal(body, &fields); err == nil {
+		for _, candidate := range []string{fields.Error, fields.Message, fields.ErrorDescription} {
+			if text := strings.TrimSpace(candidate); text != "" {
+				apiErr.Message = text
+				return apiErr
+			}
+		}
+	}
+
+	apiErr.Message = bodySnippet(body)
+	return apiErr
+}
+
+// bodySnippet collapses every run of whitespace to a single space and truncates, so an HTML error
+// page or a stack trace becomes one readable line instead of screenfuls. An empty body yields "",
+// which APIError.Error renders as the bare status.
+func bodySnippet(body []byte) string {
+	text := strings.Join(strings.Fields(string(body)), " ")
+	if runes := []rune(text); len(runes) > errorSnippetRunes {
+		text = string(runes[:errorSnippetRunes]) + "…"
+	}
+	return text
+}
+
 func (c *Client) doGet(endpoint string, result interface{}) error {
 	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
@@ -279,13 +365,7 @@ func (c *Client) doGet(endpoint string, result interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		var errorResp struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
-			return fmt.Errorf("request failed: status code %d", resp.StatusCode)
-		}
-		return fmt.Errorf("%s", errorResp.Error)
+		return responseError(resp)
 	}
 
 	return json.NewDecoder(resp.Body).Decode(result)
@@ -311,13 +391,7 @@ func (c *Client) doPost(endpoint string, payload interface{}, result interface{}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		var errorResp struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
-			return fmt.Errorf("request failed: status code %d", resp.StatusCode)
-		}
-		return fmt.Errorf("%s", errorResp.Error)
+		return responseError(resp)
 	}
 
 	if result != nil {
@@ -346,13 +420,7 @@ func (c *Client) doPut(endpoint string, payload interface{}, result interface{})
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		var errorResp struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
-			return fmt.Errorf("request failed: status code %d", resp.StatusCode)
-		}
-		return fmt.Errorf("%s", errorResp.Error)
+		return responseError(resp)
 	}
 
 	if result != nil {
@@ -375,13 +443,7 @@ func (c *Client) doDelete(endpoint string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		var errorResp struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
-			return fmt.Errorf("request failed: status code %d", resp.StatusCode)
-		}
-		return fmt.Errorf("%s", errorResp.Error)
+		return responseError(resp)
 	}
 	return nil
 }
@@ -407,13 +469,7 @@ func (c *Client) GetRepositories(provider string) ([]Repository, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		var errorResp struct {
-			Error string `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&errorResp); err != nil {
-			return nil, fmt.Errorf("failed to get repositories: status code %d", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("failed to get repositories: %s", errorResp.Error)
+		return nil, fmt.Errorf("failed to get repositories: %w", responseError(resp))
 	}
 
 	var successResp struct {
