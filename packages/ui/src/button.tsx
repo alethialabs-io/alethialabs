@@ -8,7 +8,11 @@ import type * as React from "react"
 import { cn } from "./utils"
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-none text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  // `vx-bracket` (packages/brand/src/tokens.css) draws the `[ ]` that fades in on
+  // hover/focus. Its glyphs are absolutely positioned inside this padding box, so
+  // they are outside layout: the label never shifts and the control never reflows.
+  // Sizes below keep fixed padding for the same reason.
+  "vx-bracket inline-flex shrink-0 items-center justify-center gap-2 rounded-none text-sm font-medium whitespace-nowrap outline-none transition-[color,background-color,border-color,translate] duration-[var(--dur-2)] ease-[var(--ease)] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-[0.5px] disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-[3px] aria-invalid:ring-ring-invalid [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -19,22 +23,25 @@ const buttonVariants = cva(
         destructive:
           "border border-border bg-transparent text-foreground shadow-xs hover:border-foreground hover:bg-[var(--signal-critical-surface)] focus-visible:ring-ring/50",
         outline:
-          "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
+          "border border-input bg-input-fill shadow-xs hover:bg-input-fill-hover hover:text-accent-foreground",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost:
-          "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
-        link: "text-primary underline-offset-4 hover:underline",
+        ghost: "hover:bg-accent hover:text-accent-foreground",
+        // No box to bracket, and no press displacement on a run of text.
+        link: "vx-bracket-none active:translate-y-0 text-primary underline-offset-4 hover:underline",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",
-        xs: "h-6 gap-1 rounded-none px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
+        // Too short to carry a bracket without crowding the label.
+        xs: "vx-bracket-none h-6 gap-1 rounded-none px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
         sm: "h-8 gap-1.5 rounded-none px-3 has-[>svg]:px-2.5",
         lg: "h-10 rounded-none px-6 has-[>svg]:px-4",
-        icon: "size-9",
-        "icon-xs": "size-6 rounded-none [&_svg:not([class*='size-'])]:size-3",
-        "icon-sm": "size-8",
-        "icon-lg": "size-10",
+        // Icon buttons are square and the glyph fills them — brackets would collide.
+        icon: "vx-bracket-none size-9",
+        "icon-xs":
+          "vx-bracket-none size-6 rounded-none [&_svg:not([class*='size-'])]:size-3",
+        "icon-sm": "vx-bracket-none size-8",
+        "icon-lg": "vx-bracket-none size-10",
       },
     },
     defaultVariants: {
