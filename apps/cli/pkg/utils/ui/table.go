@@ -78,7 +78,14 @@ func NewStyledTable(columns []table.Column, rows []table.Row) table.Model {
 	)
 
 	s := table.DefaultStyles()
-	s.Header = tableHeaderStyle
+	// Compose the lane's styling onto the default header rather than replacing
+	// it: bubbles renders a header cell as Header.Render(title) and a data cell
+	// as Cell.Render(value), so dropping the default Header padding would leave
+	// every header two display columns narrower than the column beneath it, and
+	// the offset accumulates left to right. Selected is applied to the whole
+	// already-padded row, not per cell, so replacing it outright is safe.
+	top, right, bottom, left := s.Header.GetPadding()
+	s.Header = tableHeaderStyle.Padding(top, right, bottom, left)
 	s.Selected = tableSelectedStyle
 	t.SetStyles(s)
 
