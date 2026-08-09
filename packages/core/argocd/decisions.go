@@ -669,8 +669,11 @@ func wafWebACLRef(f *InfraFacts) string {
 // it is the fail-closed half of wafDecision: the next lane to export a reference before wiring its
 // attachment reports the WAF UNATTACHED here rather than inheriting another cloud's "attached"
 // claim. Deleting it would turn that lane's first deploy into a silent fail-open.
-func wafUnattachableReason(provider, ref string) string {
-	return fmt.Sprintf("a web ACL (%s) was built and nothing on %s can attach it yet — it exists, is billed, and inspects nothing.", ref, provider)
+// The provider is deliberately unnamed: withdrawing Alibaba's offer (#1841) removed the only
+// per-cloud branch this had, and the generic sentence names no cloud. The parameter stays so the
+// next lane that needs a per-cloud reason re-adds a `switch` rather than changing every call site.
+func wafUnattachableReason(_, ref string) string {
+	return fmt.Sprintf("a web ACL (%s) was built and nothing on this cloud can attach it yet — it exists, is billed, and inspects nothing.", ref)
 }
 
 // wafNoACLReason explains why there was no web ACL reference to attach, keyed on the cloud so
