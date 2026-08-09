@@ -2206,11 +2206,3 @@ func TestDep_SpineGitOpsNeedsACredentialOrAPublicRepo(t *testing.T) {
 		t.Errorf("GitopsStatus.FailedStep = %q, want %q", result.GitopsStatus.FailedStep, argocd.GitopsStepGitToken)
 	}
 }
-
-// depEcrIrsaModuleTF is depClusterModuleTF plus the pull-identity output the keyless Helm ECR
-// refresher is gated on — without it the lane fail-closes and applies nothing.
-var depEcrIrsaModuleTF = depClusterModuleTF + `
-output "helm_repo_pull_irsa_arn" {
-  value = "arn:aws:iam::123456789012:role/alethia-helm-repo-pull"
-}
-`
