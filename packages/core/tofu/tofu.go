@@ -492,6 +492,13 @@ func (t *TofuCLI) Import(ctx context.Context, address, id string) error {
 // are not in state (Unmanaged=0, UnmanagedKnown=false), which is precisely why the wedge went
 // undetected.
 func (t *TofuCLI) StateResources(ctx context.Context) ([]string, error) {
+	// Only the resource ADDRESSES are wanted, but tf.Show goes through the same runTerraformCmdJSON
+	// tee as Output and ShowPlanJSON, so the whole state document would reach the lifecycle writer
+	// as a side effect. State JSON is the least redacted artifact in the system — every resource
+	// attribute plus every output value in plaintext (kubeconfig, talosconfig, RDS passwords, cloud
+	// tokens) — and state_import.go builds this CLI with the STATE_SURGERY job's stdout (#2026).
+	defer t.silenceStdout()()
+
 	state, err := t.tf.Show(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("reading tofu state: %w", err)
