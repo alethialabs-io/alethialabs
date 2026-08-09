@@ -526,6 +526,19 @@ jobs:
           pnpm -F console gen:config-carriage
           git diff --exit-code -- docs/testing/config-carriage.md \
             || { echo "::error::docs/testing/config-carriage.md is stale — run 'pnpm -F console gen:config-carriage' and commit."; exit 1; }
+      # The third parity unit, and the one that closes a hole the first two structurally could not
+      # see: BOTH of the guards above derive their surface from the canvas — offer parity from the
+      # offer list, config carriage from user-settable columns. A capability that exists only as a
+      # TEMPLATE VARIABLE is invisible to them, so no guard could red it and no deferral about it
+      # could go stale. AWS envelope-encrypted Kubernetes Secrets for the entire life of the
+      # templates while three clouds did not, unboarded and unexcluded (#2004).
+      - name: Every asymmetric template variable is recorded (template parity)
+        run: pnpm -F console check:template-parity
+      - name: Template-parity board is in sync with the templates
+        run: |
+          pnpm -F console gen:template-parity
+          git diff --exit-code -- docs/testing/template-parity.md \
+            || { echo "::error::docs/testing/template-parity.md is stale — run 'pnpm -F console gen:template-parity' and commit."; exit 1; }
       - name: Keyless cells agree with the code that implements them
         run: pnpm -F console check:keyless-cells
       # The canvas gates the IAM-auth toggle on this table (#1510). Hand-mirroring it would only

@@ -55,6 +55,18 @@ resource "google_container_cluster" "cluster" {
   remove_default_node_pool = var.enable_autopilot ? null : true
   initial_node_count       = var.enable_autopilot ? null : 1
 
+  # Application-layer Secrets encryption (#2004). The block is rendered only when a key was passed:
+  # `database_encryption { state = "DECRYPTED" }` is the provider's own way to spell "off", but
+  # emitting it unconditionally would write that state onto clusters that never had the block, which
+  # is a no-op diff at best and a re-encrypt at worst. Absent means untouched.
+  dynamic "database_encryption" {
+    for_each = var.secrets_kms_key_id != "" ? [1] : []
+    content {
+      state    = "ENCRYPTED"
+      key_name = var.secrets_kms_key_id
+    }
+  }
+
   min_master_version = var.cluster_version
 
   network    = var.network_name
