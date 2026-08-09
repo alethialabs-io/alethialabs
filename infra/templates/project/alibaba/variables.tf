@@ -494,3 +494,23 @@ variable "ack_secrets_encryption_enabled" {
   default     = true
   description = "Envelope-encrypt Kubernetes Secrets in etcd under a customer-managed KMS key. On by default (AWS parity)."
 }
+
+# ── Cluster-admin grants on ACK (#2005) ─────────────────────────────────────────────────────────
+# CUSTOMIZABILITY-PARITY.md once recorded cluster admins as "granted outside the template" on
+# Alibaba, as if the cloud forced it. The pinned provider refutes that:
+# alicloud_cs_kubernetes_permissions is exactly a cluster-admin binding — see cluster-admins.tf,
+# including the REPLACE-not-merge constraint the description below warns about. Empty (the
+# default) grants nothing and plans byte-identically to before.
+variable "ack_cluster_admins" {
+  type = list(object({
+    uid         = string
+    is_ram_role = optional(bool, true)
+  }))
+  default     = []
+  description = "RAM principals granted cluster-scoped admin on the ACK cluster. `uid` is the RAM role id (is_ram_role = true, the default — the keyless RRSA/AssumeRole model this template already deals in) or a RAM user UID (is_ram_role = false). ⚠️ ACK's permission API REPLACES the listed principal's entire ACK permission set on every apply (see cluster-admins.tf) — list only principals whose cluster grants this template is meant to own. Empty (the default) grants nothing."
+
+  validation {
+    condition     = length(distinct([for a in var.ack_cluster_admins : a.uid])) == length(var.ack_cluster_admins)
+    error_message = "ack_cluster_admins uids must be unique — ACK's grant is a replace, not a merge, so two entries for one principal would fight over the same permission set and the last writer would silently revoke the first."
+  }
+}
