@@ -579,3 +579,81 @@ func TestContainerRunFailsWithoutResultJSON(t *testing.T) {
 		t.Errorf("error %q should name the missing proof", err)
 	}
 }
+
+// TestBuildArgsKeepsSecretValuesOffArgv is the #2041 regression: a secret-valued
+// env key must cross to the runtime as `--env KEY` (name only), never
+// `--env KEY=VALUE`, so the plaintext never lands on the world-readable process
+// table (/proc/<pid>/cmdline, ps auxww, and docker inspect for the docker runtime).
+func TestBuildArgsKeepsSecretValuesOffArgv(t *testing.T) {
+	workDir := t.TempDir()
+	parent := []string{
+		"PATH=/usr/bin",
+		"TF_HTTP_USERNAME=job-user",
+		"TF_HTTP_PASSWORD=STATE-TOKEN-CANARY",
+		"HCLOUD_TOKEN=HCLOUD-CANARY",
+		"DIGITALOCEAN_ACCESS_TOKEN=DO-CANARY",
+		"CIVO_TOKEN=CIVO-CANARY",
+		"ALETHIA_STAGE_GIT_TOKEN=GHP-CANARY",
+		"ALETHIA_STAGE_GIT_TOKENS=GHP-MAP-CANARY",
+		`ALETHIA_STAGE_ADDON_SECRETS={"a":{"k":"ADDON-PLAINTEXT-CANARY"}}`,
+		"ALETHIA_STAGE_TALOS_CONFIG=TALOS-ADMIN-CANARY",
+	}
+	childEnv := buildChildEnv(parent, workDir)
+	c := Container{Runtime: "docker", Image: "img", Operator: "self"}
+	args := c.buildArgs(Spec{Kind: "deploy", JobID: "j", WorkDir: workDir}, childEnv)
+	joined := strings.Join(args, " ")
+
+	for _, canary := range []string{
+		"STATE-TOKEN-CANARY", "HCLOUD-CANARY", "DO-CANARY", "CIVO-CANARY",
+		"GHP-CANARY", "GHP-MAP-CANARY", "ADDON-PLAINTEXT-CANARY", "TALOS-ADMIN-CANARY",
+	} {
+		if strings.Contains(joined, canary) {
+			t.Errorf("secret %q appears verbatim in the runtime argv", canary)
+		}
+	}
+	// The keys must still cross by NAME so the runtime inherits the value from cmd.Env.
+	for _, key := range []string{"TF_HTTP_PASSWORD", "HCLOUD_TOKEN", "ALETHIA_STAGE_TALOS_CONFIG"} {
+		if !argvHasEnvName(args, key) {
+			t.Errorf("secret key %q was not passed by name (--env %s) — the runtime cannot inherit it", key, key)
+		}
+	}
+	// A non-secret key keeps its value on the argv (nothing sensitive, exact value).
+	if !strings.Contains(joined, "TF_HTTP_USERNAME=job-user") {
+		t.Error("non-secret TF_HTTP_USERNAME should keep --env KEY=VALUE")
+	}
+	// The values ride on cmd.Env instead, so the runtime actually forwards them.
+	pairs := secretEnvPairs(childEnv)
+	if !containsPair(pairs, "TF_HTTP_PASSWORD=STATE-TOKEN-CANARY") {
+		t.Errorf("secretEnvPairs = %v, want the state-token pair for cmd.Env inheritance", pairs)
+	}
+	if containsPrefix(pairs, "TF_HTTP_USERNAME=") {
+		t.Error("secretEnvPairs must not carry the non-secret TF_HTTP_USERNAME")
+	}
+}
+
+func argvHasEnvName(args []string, name string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--env" && args[i+1] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPair(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsPrefix(xs []string, prefix string) bool {
+	for _, x := range xs {
+		if strings.HasPrefix(x, prefix) {
+			return true
+		}
+	}
+	return false
+}
