@@ -268,7 +268,7 @@ func prepareDestroyWorkdir(ctx context.Context, params DestroyParams) (*destroyW
 		}
 		cloneDir := filepath.Join(tmpRoot, "clone")
 		var restore func()
-		tfDir, tfvars, restore, err = prepareByoIacWorkdir(vc, token, cloneDir, out, stderr)
+		tfDir, tfvars, restore, err = prepareByoIacWorkdir(ctx, vc, token, cloneDir, out, stderr)
 		if err != nil {
 			unwind()
 			return nil, err

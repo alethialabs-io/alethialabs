@@ -250,7 +250,7 @@ func TestAddCommitAndPushLandOnTheRemote(t *testing.T) {
 	if dirty {
 		t.Fatal("IsDirty = true after committing every change")
 	}
-	if err := g.Push(); err != nil {
+	if err := g.Push(context.Background()); err != nil {
 		t.Fatalf("Push: %v", err)
 	}
 	if got := gitCmd(t, bare, "log", "-1", "--pretty=%s", branch); got != "test: add new.txt" {
@@ -258,7 +258,7 @@ func TestAddCommitAndPushLandOnTheRemote(t *testing.T) {
 	}
 
 	// A second push with nothing new must be a no-op, not an error.
-	if err := g.Push(); err != nil {
+	if err := g.Push(context.Background()); err != nil {
 		t.Fatalf("Push with nothing to send: %v", err)
 	}
 }
@@ -271,7 +271,7 @@ func TestCloneAndCheckoutCommitRefFallbacks(t *testing.T) {
 
 	t.Run("empty sha is refused", func(t *testing.T) {
 		g := &GIT{RepoURL: "file://" + repo, LocalPath: filepath.Join(t.TempDir(), "clone")}
-		err := g.CloneAndCheckoutCommit("v1.0.0", "   ", false)
+		err := g.CloneAndCheckoutCommit(context.Background(), "v1.0.0", "   ", false)
 		if err == nil || !strings.Contains(err.Error(), "commit SHA is required") {
 			t.Fatalf("CloneAndCheckoutCommit with a blank SHA = %v, want the pin guard", err)
 		}
@@ -280,7 +280,7 @@ func TestCloneAndCheckoutCommitRefFallbacks(t *testing.T) {
 	t.Run("tag ref resolves after the branch attempt fails", func(t *testing.T) {
 		cloneDir := filepath.Join(t.TempDir(), "clone")
 		g := &GIT{RepoURL: "file://" + repo, LocalPath: cloneDir}
-		if err := g.CloneAndCheckoutCommit("v1.0.0", sha1, true); err != nil {
+		if err := g.CloneAndCheckoutCommit(context.Background(), "v1.0.0", sha1, true); err != nil {
 			t.Fatalf("CloneAndCheckoutCommit(tag): %v", err)
 		}
 		body, err := os.ReadFile(filepath.Join(cloneDir, "a.txt"))
@@ -295,7 +295,7 @@ func TestCloneAndCheckoutCommitRefFallbacks(t *testing.T) {
 	t.Run("no ref clones the default branch", func(t *testing.T) {
 		cloneDir := filepath.Join(t.TempDir(), "clone")
 		g := &GIT{RepoURL: "file://" + repo, LocalPath: cloneDir}
-		if err := g.CloneAndCheckoutCommit("", sha2, true); err != nil {
+		if err := g.CloneAndCheckoutCommit(context.Background(), "", sha2, true); err != nil {
 			t.Fatalf("CloneAndCheckoutCommit(no ref): %v", err)
 		}
 		head, err := g.HeadSHA()
@@ -309,7 +309,7 @@ func TestCloneAndCheckoutCommitRefFallbacks(t *testing.T) {
 
 	t.Run("unknown ref and unknown sha fail closed", func(t *testing.T) {
 		g := &GIT{RepoURL: "file://" + repo, LocalPath: filepath.Join(t.TempDir(), "clone")}
-		err := g.CloneAndCheckoutCommit("no-such-ref", "0123456789abcdef0123456789abcdef01234567", true)
+		err := g.CloneAndCheckoutCommit(context.Background(), "no-such-ref", "0123456789abcdef0123456789abcdef01234567", true)
 		if err == nil {
 			t.Fatal("expected a fail-closed error for a commit that is not in the clone")
 		}
@@ -483,7 +483,7 @@ func TestBootstrapUpdateAndNoOpPaths(t *testing.T) {
 	configureCommitIdentity(t, cloneDir)
 
 	// First run: no main.tf yet -> clear + copy + commit + push.
-	if err := client.Bootstrap(template, filesMap, false, logger); err != nil {
+	if err := client.Bootstrap(context.Background(), template, filesMap, false, logger); err != nil {
 		t.Fatalf("Bootstrap (initial): %v", err)
 	}
 	for _, want := range []string{"main.tf", "env/prod.tfvars"} {
@@ -496,7 +496,7 @@ func TestBootstrapUpdateAndNoOpPaths(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpl, "main.tf"), []byte("v2"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.Bootstrap(template, filesMap, false, logger); err != nil {
+	if err := client.Bootstrap(context.Background(), template, filesMap, false, logger); err != nil {
 		t.Fatalf("Bootstrap (no-op): %v", err)
 	}
 	body, err := os.ReadFile(filepath.Join(cloneDir, "main.tf"))
@@ -508,7 +508,7 @@ func TestBootstrapUpdateAndNoOpPaths(t *testing.T) {
 	}
 
 	// Third run with updateRepo=true: the template overwrites what is there.
-	if err := client.Bootstrap(template, filesMap, true, logger); err != nil {
+	if err := client.Bootstrap(context.Background(), template, filesMap, true, logger); err != nil {
 		t.Fatalf("Bootstrap (update): %v", err)
 	}
 	body, err = os.ReadFile(filepath.Join(cloneDir, "main.tf"))
@@ -530,7 +530,7 @@ func TestBootstrapSurfacesTemplateErrors(t *testing.T) {
 		t.Fatalf("Clone: %v", err)
 	}
 	template := &GIT{LocalPath: filepath.Join(t.TempDir(), "missing-template")}
-	if err := client.Bootstrap(template, nil, false, utils.NewLogger(nil, "")); err == nil {
+	if err := client.Bootstrap(context.Background(), template, nil, false, utils.NewLogger(nil, "")); err == nil {
 		t.Fatal("Bootstrap with a missing template = nil, want an error")
 	}
 }

@@ -127,7 +127,7 @@ func TestCloneHeadDirtyResetAndFileExists(t *testing.T) {
 	}
 
 	dry := &GIT{RepoURL: g.RepoURL, LocalPath: cloneDir, Repo: g.Repo, DryRun: true}
-	if err := dry.Push(); err != nil {
+	if err := dry.Push(context.Background()); err != nil {
 		t.Fatalf("dry-run Push: %v", err)
 	}
 	if err := dry.AddAndCommit("noop"); err != nil {
@@ -190,7 +190,7 @@ func TestCopyFilesClearRepoContentsAndBootstrap(t *testing.T) {
 		t.Fatalf("Clone for bootstrap: %v", err)
 	}
 	template := &GIT{LocalPath: src}
-	if err := client.Bootstrap(template, map[string]string{"nested/values.tfvars": "env/prod.tfvars"}, false, utils.NewLogger(nil, "")); err != nil {
+	if err := client.Bootstrap(context.Background(), template, map[string]string{"nested/values.tfvars": "env/prod.tfvars"}, false, utils.NewLogger(nil, "")); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
 	for _, want := range []string{"main.tf", "nested/values.tfvars", "env/prod.tfvars"} {
@@ -206,7 +206,7 @@ func TestRepositoryMethodsRejectUninitializedRepo(t *testing.T) {
 		"Checkout":               g.Checkout("0123456789abcdef0123456789abcdef01234567"),
 		"HeadSHA":                func() error { _, err := g.HeadSHA(); return err }(),
 		"Pull":                   g.Pull(context.Background()),
-		"Push":                   g.Push(),
+		"Push":                   g.Push(context.Background()),
 		"AddAndCommit":           g.AddAndCommit("msg"),
 		"ResetAndRestoreChanges": g.ResetAndRestoreChanges(),
 		"IsDirty":                func() error { _, err := g.IsDirty(); return err }(),

@@ -5,6 +5,7 @@ package provisioner
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,7 +91,7 @@ func TestPrepareByoIacWorkdir_ValidModule(t *testing.T) {
 
 	var out, errBuf bytes.Buffer
 	cloneDir := filepath.Join(t.TempDir(), "clone")
-	tfDir, tfvars, restore, err := prepareByoIacWorkdir(vc, "", cloneDir, &out, &errBuf)
+	tfDir, tfvars, restore, err := prepareByoIacWorkdir(context.Background(), vc, "", cloneDir, &out, &errBuf)
 	if err != nil {
 		t.Fatalf("prepareByoIacWorkdir: %v\nstderr:%s", err, errBuf.String())
 	}
@@ -160,7 +161,7 @@ func TestPrepareByoIacWorkdir_EvilModuleBlocks(t *testing.T) {
 	}
 	var out, errBuf bytes.Buffer
 	cloneDir := filepath.Join(t.TempDir(), "clone")
-	_, _, restore, err := prepareByoIacWorkdir(vc, "", cloneDir, &out, &errBuf)
+	_, _, restore, err := prepareByoIacWorkdir(context.Background(), vc, "", cloneDir, &out, &errBuf)
 	if err == nil {
 		if restore != nil {
 			restore()
@@ -183,7 +184,7 @@ func TestPrepareByoIacWorkdir_RequiresCommitSHA(t *testing.T) {
 	vc := &types.ProjectConfig{
 		IacSource: &types.ProjectIacSourceConfig{RepoURL: "file:///x", Ref: "main"},
 	}
-	_, _, _, err := prepareByoIacWorkdir(vc, "", t.TempDir(), &bytes.Buffer{}, &bytes.Buffer{})
+	_, _, _, err := prepareByoIacWorkdir(context.Background(), vc, "", t.TempDir(), &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "commit_sha") {
 		t.Fatalf("expected a missing commit_sha error, got: %v", err)
 	}
@@ -202,7 +203,7 @@ func TestPrepareByoIacWorkdir_RejectsFileURLInProd(t *testing.T) {
 			Path:      "module",
 		},
 	}
-	_, _, _, err := prepareByoIacWorkdir(vc, "", t.TempDir(), &bytes.Buffer{}, &bytes.Buffer{})
+	_, _, _, err := prepareByoIacWorkdir(context.Background(), vc, "", t.TempDir(), &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "https or ssh") {
 		t.Fatalf("expected a file:// RepoURL to be rejected in production, got: %v", err)
 	}

@@ -554,7 +554,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// self-contained.
 		cloneDir := filepath.Join(tmpRoot, "clone")
 		var restore func()
-		tfDir, byoTfvars, restore, err = prepareByoIacWorkdir(vc, params.GitAccessToken, cloneDir, stdout, stderr)
+		tfDir, byoTfvars, restore, err = prepareByoIacWorkdir(ctx, vc, params.GitAccessToken, cloneDir, stdout, stderr)
 		if err != nil {
 			return nil, err
 		}
