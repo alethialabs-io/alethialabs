@@ -54,17 +54,38 @@ const NETWORKS = {
 	],
 };
 
-/** Records every URL fetched and answers the two Hetzner endpoints. */
-function stubFetch(urls: string[]) {
+/** A paginated `/v1/networks` answer: hcloud's real shape, `meta.pagination.next_page` included. */
+const NETWORKS_PAGED: Record<string, unknown>[] = [
+	{
+		networks: NETWORKS.networks,
+		meta: { pagination: { page: 1, next_page: 2 } },
+	},
+	{
+		networks: [{ id: 9001, name: "page-two-net", ip_range: "10.40.0.0/16" }],
+		meta: { pagination: { page: 2, next_page: null } },
+	},
+];
+
+/** Records every URL fetched and answers the two Hetzner endpoints. When `networkPages` is given,
+ *  `/v1/networks` is served page by page off its `page` query param — hcloud-style. */
+function stubFetch(urls: string[], networkPages?: Record<string, unknown>[]) {
 	vi.stubGlobal(
 		"fetch",
 		vi.fn((url: string) => {
 			urls.push(url);
-			const body = url.includes("/v1/networks")
-				? NETWORKS
-				: url.includes("/v1/locations")
-					? LOCATIONS
-					: { regions: [], data: [] };
+			let body: unknown;
+			if (url.includes("/v1/networks")) {
+				if (networkPages) {
+					const page = Number(new URL(url).searchParams.get("page") ?? "1");
+					body = networkPages[page - 1] ?? { networks: [] };
+				} else {
+					body = NETWORKS;
+				}
+			} else if (url.includes("/v1/locations")) {
+				body = LOCATIONS;
+			} else {
+				body = { regions: [], data: [] };
+			}
 			return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
 		}),
 	);
@@ -97,7 +118,9 @@ describe("syncTokenCloudInventory — Hetzner networks", () => {
 		await syncTokenCloudInventory(identity("hetzner"));
 
 		expect(urls).toContain("https://api.hetzner.cloud/v1/locations");
-		expect(urls).toContain("https://api.hetzner.cloud/v1/networks");
+		// Paginated, not a bare listing: hcloud defaults to 25/page (50 max), and an unpaginated
+		// fetch feeds a page-1-only `seen` into the soft-removal sweep (#1979).
+		expect(urls).toContain("https://api.hetzner.cloud/v1/networks?per_page=50&page=1");
 	});
 
 	it("stores the numeric hcloud id as native_id, because that is what the template reads", async () => {
@@ -133,6 +156,46 @@ describe("syncTokenCloudInventory — Hetzner networks", () => {
 
 		const sweep = softRemovals.find((s) => s.table === "cloud_networks");
 		expect(sweep?.seen).toEqual(["4242", "77"]);
+	});
+
+	it("follows meta.pagination so every page reaches cloud_networks", async () => {
+		// #1979. Two pages; the second must be fetched (via meta.pagination.next_page) and land in
+		// cloud_networks — before the fix, everything past page 1 was simply never seen.
+		const urls: string[] = [];
+		stubFetch(urls, NETWORKS_PAGED);
+
+		await syncTokenCloudInventory(identity("hetzner"));
+
+		expect(urls).toContain("https://api.hetzner.cloud/v1/networks?per_page=50&page=1");
+		expect(urls).toContain("https://api.hetzner.cloud/v1/networks?per_page=50&page=2");
+
+		const networks = networkRows();
+		expect(networks.map((n) => n.values.native_id)).toEqual(["4242", "77", "9001"]);
+	});
+
+	it("counts page-2 networks as seen, so the sweep does not soft-remove them", async () => {
+		// The sharp edge of #1979: `seen` fed only page 1 into softRemoveUnseen, so every network past
+		// the first page was actively soft-removed on each sync — including a network_id a saved
+		// project already points at.
+		stubFetch([], NETWORKS_PAGED);
+
+		await syncTokenCloudInventory(identity("hetzner"));
+
+		const sweep = softRemovals.find((s) => s.table === "cloud_networks");
+		expect(sweep?.seen).toContain("9001");
+		expect(sweep?.seen).toEqual(["4242", "77", "9001"]);
+	});
+
+	it("stops at a terminal page instead of looping", async () => {
+		// A single page whose pagination is exhausted (next_page null) must produce exactly one fetch.
+		const urls: string[] = [];
+		stubFetch(urls, [
+			{ networks: NETWORKS.networks, meta: { pagination: { page: 1, next_page: null } } },
+		]);
+
+		await syncTokenCloudInventory(identity("hetzner"));
+
+		expect(urls.filter((u) => u.includes("/v1/networks"))).toHaveLength(1);
 	});
 
 	it("leaves the other token clouds on regions only", async () => {
