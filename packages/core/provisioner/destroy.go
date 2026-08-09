@@ -44,6 +44,12 @@ type DestroyParams struct {
 	// DeployParams.KubeConn — runner-injected, keeps the gcp/azure auth SDKs out of packages/core).
 	// Nil for aws (resolved in-core from the name) and for dedicated destroys.
 	KubeConn KubeConnResolver
+	// NamespaceIdentity DEPROVISIONS the per-namespace tenant cloud identity a namespace-placement
+	// deploy minted (#957/#2016) — the teardown counterpart of DeployParams.NamespaceIdentity, and
+	// runner-injected for the same reason (deleting a GSA/UAMI is a keyless IAM-write whose auth SDK
+	// stays out of packages/core). Nil for aws and alibaba (deprovisioned in-core, mirroring how they
+	// provision), for hetzner (no cloud IAM), and for every dedicated/vcluster destroy.
+	NamespaceIdentity NamespaceIdentityDeprovisioner
 	// TalosKubeconfig mints a kubeconfig from a hetzner-talos Fabric's persisted talosconfig for a
 	// vcluster teardown that must reach the HOST to deregister the virtual cluster (same seam as
 	// DeployParams.TalosKubeconfig — runner-injected). Nil for every non-hetzner cloud and dedicated destroys.
@@ -98,10 +104,25 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 		return err
 	}
 
-	// vcluster-placement envs own NO tofu (an app on a shared Fabric): teardown is deregistering the
-	// virtual cluster + its ArgoCD Secret, not `tofu destroy`. Route it before the tofu path (#1231).
-	if vc.PlacementMode == types.PlacementModeVcluster {
+	// A PLACED env (vcluster or namespace) owns NO tofu — it is an app on a shared Fabric, and its
+	// deploy path ran none. Its teardown is deleting what that deploy created on the Fabric, so route
+	// it before the tofu path (#1231 vcluster, #2016 namespace).
+	//
+	// Falling through to `tofu destroy` is not merely useless here: the state is empty, so the destroy
+	// changes nothing and RunDestroy prints "Environment destroyed successfully!" over a namespace, a
+	// guardrail bundle, an ArgoCD Application and a live per-namespace cloud identity that are all
+	// still there. A teardown that reports success without tearing anything down is worse than one
+	// that fails.
+	switch vc.PlacementMode {
+	case types.PlacementModeVcluster:
 		return runVClusterDestroy(ctx, provider, params)
+	case types.PlacementModeNamespace:
+		return runNamespaceDestroy(ctx, provider, params)
+	case types.PlacementModeDedicated:
+		// A dedicated env OWNS its Fabric and its OpenTofu state, so it falls through to the tofu
+		// teardown below — as does an EMPTY PlacementMode, which is the legacy env=cluster spelling
+		// of dedicated and reaches no case here. Spelled out rather than left to a default arm so
+		// that adding a fourth placement mode is a compile-time decision, not a silent tofu destroy.
 	}
 
 	workspaceName := fmt.Sprintf("%s-%s", vc.ProjectName, vc.EnvironmentStage)
@@ -150,7 +171,11 @@ func RunDestroyPlan(ctx context.Context, params DestroyParams) (*tfjson.Plan, er
 	if vc == nil {
 		return nil, fmt.Errorf("ProjectConfig is required for RunDestroyPlan")
 	}
-	if vc.PlacementMode == types.PlacementModeVcluster {
+	// Both PLACED modes own no OpenTofu state, so there is no teardown to plan for either. Returning a
+	// real (empty) plan for a namespace env would be the vacuous pass ErrDestroyPlanNoTofu's own doc
+	// warns about: a day-2 gate reading "0 resources to destroy" cannot tell "this env has nothing to
+	// tear down" from "this teardown would change nothing", and the second is a finding.
+	if vc.PlacementMode == types.PlacementModeVcluster || vc.PlacementMode == types.PlacementModeNamespace {
 		return nil, ErrDestroyPlanNoTofu
 	}
 

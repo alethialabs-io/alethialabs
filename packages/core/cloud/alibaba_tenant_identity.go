@@ -176,6 +176,47 @@ func ensureACKNamespaceRole(ctx context.Context, client *http.Client, roleName, 
 	return nil
 }
 
+// DeprovisionACKNamespaceIdentity best-effort deletes the per-namespace RRSA RAM role (env/namespace
+// teardown). A missing role is NOT an error — the teardown is idempotent and a role someone already
+// removed is the state we wanted. The role name is derived the same deterministic way the provision
+// side derives it (ackNamespaceRoleName), so this needs no stored handle: teardown can reconstruct
+// what deploy created from (clusterName, namespace) alone. Zero-perm roles carry no attached policy,
+// so DeleteRole needs no detach pass. Mirrors DeprovisionGKENamespaceIdentity / aws.DeprovisionNamespaceIdentity.
+func DeprovisionACKNamespaceIdentity(ctx context.Context, region, clusterName, namespace string) error {
+	client, err := newAlibabaSigningClient(ctx, region)
+	if err != nil {
+		return fmt.Errorf("ack namespace identity teardown: build keyless signing client: %w", err)
+	}
+	return deleteACKNamespaceRole(ctx, client, ackNamespaceRoleName(clusterName, namespace))
+}
+
+// deleteACKNamespaceRole deletes the per-namespace RAM role. Idempotent: an already-absent role is
+// success, so a destroy re-run after a partial teardown converges rather than wedging on the half
+// that already succeeded. Split from the exported entrypoint for the same reason
+// ensureACKNamespaceRole is on the provision side — it takes the http.Client, so the RAM answers
+// that matter (deleted / already gone / denied) are testable without a keyless session.
+func deleteACKNamespaceRole(ctx context.Context, client *http.Client, roleName string) error {
+	params := url.Values{}
+	params.Set("RoleName", roleName)
+	if _, err := ramRPC(ctx, client, "DeleteRole", params); err != nil {
+		if isRAMNoSuchEntity(err) {
+			return nil
+		}
+		return fmt.Errorf("delete per-namespace RAM role %q: %w", roleName, err)
+	}
+	return nil
+}
+
+// isRAMNoSuchEntity reports whether err is a RAM EntityNotExist.Role — the delete counterpart of
+// isRAMAlreadyExists, and the reason a teardown can run twice without failing the second time.
+func isRAMNoSuchEntity(err error) bool {
+	var re *ramError
+	if !asRAMError(err, &re) {
+		return false
+	}
+	return strings.Contains(re.code, "EntityNotExist") || strings.Contains(re.code, "NoSuchEntity")
+}
+
 // ramRPC performs a V3-signed RAM RPC call (POST, params in the form body) and returns the decoded role
 // response. A non-2xx is wrapped as an error carrying the RAM Code (so the caller can detect
 // EntityAlreadyExists.Role). The signing http.Client sets host/date/nonce/authorization; this sets the
