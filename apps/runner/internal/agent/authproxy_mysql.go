@@ -107,6 +107,21 @@ type mysqlClientHandshake struct {
 	Database  string
 }
 
+// mysqlConnPhaseReplySeq is the sequence id of the server's reply to the client's
+// HandshakeResponse41.
+//
+// The connection phase is strictly ordered: the server sends the initial handshake as 0, the client
+// answers as 1 (mysqlAcceptClient rejects anything else), so whatever the server sends next — OK or
+// ERR — is 2. Both replies share this constant because they occupy the SAME position in the
+// exchange; the error paths used a hand-written 3 while the OK beside them used 2 (#2043).
+//
+// MySQL clients validate this strictly. go-sql-driver's readPacket compares the byte against its own
+// counter and returns ErrPktSyncMul ("commands out of sync") on a higher value, DISCARDING the packet
+// without reading its payload — so the message never reaches the application and a keyless
+// credential failure surfaces as an error about the app's own query usage. That is the exact
+// misdiagnosis the ERR packet exists to prevent.
+const mysqlConnPhaseReplySeq byte = 2
+
 // handleMySQLConn runs one app connection: local handshake, token mint, upstream TLS handshake with
 // the token as a cleartext password, then splice.
 func handleMySQLConn(ctx context.Context, cfg authProxyConfig, client net.Conn, src tokenSource) error {
@@ -117,19 +132,19 @@ func handleMySQLConn(ctx context.Context, cfg authProxyConfig, client net.Conn, 
 
 	token, err := src(ctx)
 	if err != nil {
-		mysqlWriteError(client, 3, 1045, "28000", "alethia db-authproxy could not mint a database token")
+		mysqlWriteError(client, mysqlConnPhaseReplySeq, 1045, "28000", "alethia db-authproxy could not mint a database token")
 		return err
 	}
 
 	upstream, err := mysqlDialUpstream(ctx, cfg, hs, token)
 	if err != nil {
-		mysqlWriteError(client, 3, 1045, "28000", "alethia db-authproxy could not authenticate upstream")
+		mysqlWriteError(client, mysqlConnPhaseReplySeq, 1045, "28000", "alethia db-authproxy could not authenticate upstream")
 		return fmt.Errorf("mysql: upstream: %w", err)
 	}
 	defer func() { _ = upstream.Close() }()
 
 	// Both sides are authenticated; tell the app it is in and step aside.
-	if err := mysqlWritePacket(client, 2, mysqlOKPacket()); err != nil {
+	if err := mysqlWritePacket(client, mysqlConnPhaseReplySeq, mysqlOKPacket()); err != nil {
 		return fmt.Errorf("mysql: send OK to client: %w", err)
 	}
 	spliceConns(client, upstream)
