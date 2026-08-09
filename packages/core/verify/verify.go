@@ -56,12 +56,18 @@ func (r *plannedResource) exprRefs(attr string) []string {
 
 // exprConstant returns the configuration constant value of attribute `attr`, and
 // whether one is present (a literal in the .tf source, e.g. firewall_ids = [123]).
+// terraform-json sets ConstantValue to the UnknownConstantValue SENTINEL — not
+// nil — whenever the expression has references, so a reference-only expression
+// (var.x, local.y) must report "no constant", never a present-but-weird value:
+// treating the sentinel as a literal sent HCLOUD-FW-001 down the literal-empty
+// arm and hard-failed correctly-firewalled plans (#2039).
 func (r *plannedResource) exprConstant(attr string) (any, bool) {
 	if r.configExprs == nil {
 		return nil, false
 	}
 	e := r.configExprs[attr]
-	if e == nil || e.ExpressionData == nil || e.ConstantValue == nil {
+	if e == nil || e.ExpressionData == nil || e.ConstantValue == nil ||
+		e.ConstantValue == tfjson.UnknownConstantValue {
 		return nil, false
 	}
 	return e.ConstantValue, true
