@@ -435,8 +435,16 @@ func RenderApp(app App) (string, error) {
 }
 
 // GenerateManifests renders every app to a `<name>.yaml` file map (filename → YAML). Apps are
-// rendered in name order, so which app claims the bare `<name>.yaml` — and which one takes a
-// suffix — does not depend on the order the caller happened to list them in.
+// rendered in name order, so the SET of filenames a project produces does not depend on the order
+// the caller happened to list its services in — without the sort, probing for an unclaimed name
+// hands the same apps a different filename set per input order.
+//
+// What the sort does NOT settle: two apps whose names normalize to the SAME label tie under it and
+// keep their relative input order, so which of those two claims the bare `<name>.yaml` and which
+// takes the suffix is still input-order dependent. The set of files is stable; the assignment
+// within a tie is not. Both manifests are written either way — that is the #2054 fix — but a
+// caller that needs a stable file-to-workload mapping across reorderings must give the renderer a
+// stable order itself.
 //
 // Duplicate names are suffixed to keep files unique. Duplicates are not exotic: normalize() puts
 // every name through dns1123, which collapses distinct service names onto one label ("api" and
@@ -445,6 +453,12 @@ func RenderApp(app App) (string, error) {
 // an app genuinely named "<name>-<n>" writes, and the map write would drop one workload's manifest
 // silently — WriteManifests would commit the truncated set and the service would never deploy,
 // with nothing in the skipped/warning list to say so (#2054).
+//
+// What that buys is distinct FILES, not distinct Kubernetes objects. Two apps that normalize to
+// the same label still render the same metadata.name for their Deployment and Service, so ArgoCD
+// applies both files to one object and the loser is dropped at sync time instead of at write time.
+// Catching that means rejecting or reporting the collision UPSTREAM of here, where FromServices
+// can put it in `skipped` — tracked as #2234, deliberately not done in this function.
 func GenerateManifests(apps []App) (map[string]string, error) {
 	out := map[string]string{}
 
