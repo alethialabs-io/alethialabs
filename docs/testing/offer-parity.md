@@ -90,14 +90,14 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `bucket:versioning` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `cache:multi_az` | 🟡 | 🟡 | 🟡 | ⚠️ | · | · |
 | `dns:enabled` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
-| `dns:managed_certificate` | — | 🟡 | 🟡 | 🟡 | — | · |
-| `dns:waf_enabled` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
+| `dns:managed_certificate` | — | 🟡 | ☸️ | ☸️ | — | · |
+| `dns:waf_enabled` | — | 🟡 | 🟡 | 🟡 | — | · |
 | `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `queue:ordered` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `registry:immutable_tags` | 🟡 | 🟡 | — | 🟡 | · | · |
-| `registry:vulnerability_scanning` | 🚫 #1845 | 🟡 | — | 🚫 #1844 | · | · |
+| `registry:vulnerability_scanning` | 🚫 #1845 | 🟡 | — | 🟡 | · | · |
 | `secret:generate` | 🟡 | ⚠️ | 🟡 | 🟡 | · | · |
 | `secret:special_chars` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
 
@@ -150,6 +150,22 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `cache:redis` | gcp | `google_redis_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. Switching to `valkey` crosses backing resources — a delete + create, not an in-place change. |
 | `cache:valkey` | gcp | `google_memorystore_instance` | 🟡 | replace/delete of this resource is a data-loss hazard the day-2 gate catches. Switching to `redis` crosses backing resources — a delete + create, not an in-place change. |
 
+## Carried in-cluster — honored, but not by OpenTofu
+
+A ☸️ cell means the cloud **does** honor the offer, through a component the platform installs into
+the cluster rather than through a resource in the template. The carrier grid above cannot see these:
+it checks that a tfvar is declared and read by a resource argument, and an in-cluster component
+writes no tfvar at all. That is a limit of the measurement, not of the cloud.
+
+These are not exclusions — nothing here is unavailable — and not debt. Each names the predicate that
+decides which clouds the component ships for, and the guard re-reads it on every run: if the
+predicate stops listing the cloud, the entry fails until it is corrected.
+
+| Offer | Cloud | Delivered by | Predicate re-read | What you get |
+|---|---|---|---|---|
+| `dns:managed_certificate` | azure | cert-manager | `certManagerDNS01Solvers` | Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the Application Gateway. |
+| `dns:managed_certificate` | gcp | cert-manager | `certManagerDNS01Solvers` | Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the GKE Ingress from a Kubernetes Secret. |
+
 ## Documented exclusions
 
 | Offer | Cloud | Reason |
@@ -158,6 +174,7 @@ As with day 1, **no cell goes ✅ from here.** The proof is a real apply recorde
 | `cache:valkey` | hetzner | Provisioned in-cluster by the Valkey chart, not by OpenTofu — no tfvar carries the engine. |
 | `dns:managed_certificate` | hetzner | Hetzner's managed certificate can only be presented by a Hetzner load balancer, and an Alethia Hetzner cluster takes traffic at the nodes instead — so there is no listener to attach one to, and cert-manager ships no Hetzner DNS01 solver to issue one in-cluster either. |
 | `dns:waf_enabled` | hetzner | Hetzner sells no web application firewall — the product does not exist. |
+| `dns:waf_enabled` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider models WAF 3.0 as an account-level purchase — the instance resource takes no arguments at all, so nothing distinguishes two of them, and its create/delete are CreatePostpaidInstance/ReleaseInstance. A per-project state model cannot own that safely: destroying one project would release the account's firewall out from under every other project sharing it. Buy a WAF 3.0 instance in your account and put it in front of your ingress from the WAF console. |
 | `cache:valkey` | azure | Azure Cache/Managed Redis has no Valkey engine — the product does not exist. |
 | `cache:valkey` | alibaba | ApsaraDB KVStore offers Redis or Memcache only — no Valkey engine. |
 | `database:postgres` | local | A local kind cluster has no managed services — data services run in-cluster. |
@@ -212,7 +229,6 @@ Only a cell that was measured and came out honored is asked for its entry back.
 
 | Offer | Cloud | State (measured) | Issue | What a user gets today |
 |---|---|---|---|---|
-| `registry:vulnerability_scanning` | gcp | 🚫 `no-carrier` | #1844 | Image scanning is not requested from Artifact Registry yet — repositories are created with the platform default instead of your choice. |
 | `registry:vulnerability_scanning` | alibaba | 🚫 `no-carrier` | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
 
 ---

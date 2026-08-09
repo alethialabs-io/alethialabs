@@ -11,7 +11,6 @@ locals {
   #
   # Derived HERE rather than inside the module so `tofu test` can assert on it: `assert` reads
   # `local.`, but cannot reach a module's internals without an output.
-  platform_certificate_domains = ["argocd.${trimsuffix(var.cloud_dns_domain, ".")}"]
 }
 
 module "cloud_dns" {
@@ -25,8 +24,6 @@ module "cloud_dns" {
   zone_name = var.cloud_dns_zone_name != "" ? var.cloud_dns_zone_name : local.cloud_dns_name
   domain    = var.cloud_dns_domain
 
-  managed_certificate = var.cloud_dns_managed_certificate
-  certificate_domains = local.platform_certificate_domains
 
   labels = local.gcp_default_labels
 }

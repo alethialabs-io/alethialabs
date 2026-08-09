@@ -42,11 +42,15 @@ variable "containers" {
     `versioning_enabled` is stated PER CONTAINER because that is how it is chosen, but Azure blob
     versioning is a property of the storage ACCOUNT and this module creates exactly one — see the
     aggregation in main.tf for what that means in practice.
+
+    `cors_origins` is the same shape for the same reason: CORS is `blob_properties.cors_rule` on the
+    account, so the per-container lists are unioned (#1995).
   EOT
   type = list(object({
     name               = string
     access_type        = optional(string, "private")
     versioning_enabled = optional(bool, false)
+    cors_origins       = optional(list(string), [])
   }))
   default = []
 }

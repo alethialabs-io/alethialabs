@@ -32,7 +32,7 @@ on:
     # (base provision + cluster_ready + ArgoCD Healthy, + A0.6 repos when wired).
     - cron: "17 3 * * *"
     # 05:17 UTC Sunday — the OPT-IN FULL-BAR run (P2-F, #1068): the same matrix but with
-    # ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (11 kinds + 19 add-ons — heavy/costly,
+    # ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (11 kinds + 18 add-ons — heavy/costly,
     # so weekly not nightly). Resolved from this exact cron string in "Resolve full-bar dimension".
     - cron: "17 5 * * 0"
   workflow_dispatch:
@@ -52,7 +52,7 @@ on:
         type: string
         default: ""
       full_bar:
-        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 19 add-ons) instead of the cheap green-floor smoke. Heavy + costly — uses the raised cost ceiling. Also auto-on for the weekly Sunday cron."
+        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly — uses the raised cost ceiling. Also auto-on for the weekly Sunday cron."
         type: boolean
         default: false
 
@@ -136,6 +136,16 @@ jobs:
       # skips the real work. Also read directly by the T2 runner process (HCLOUD_TOKEN
       # is the env var the hcloud/imager/talos providers authenticate from).
       HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      # Hetzner OBJECT STORAGE — a SECOND, unrelated credential pair, and the only way the `bucket`
+      # kind can be proven on hetzner. Object Storage is S3-compatible and driven through the
+      # aminueza/minio provider; HCLOUD_TOKEN does not authenticate it, and Hetzner has no API to mint
+      # these (a human generates them in the console), so they cannot be derived from anything already
+      # here. Unset is fine for a FLOOR run — no bucket is seeded, and the runner simply omits the
+      # tfvars. On a FULL-BAR run the hetzner row's credential gate (hetznerCredsPresent,
+      # test/e2e/t2_providers.go) HARD-FAILS on them before any spend, because the alternative is a
+      # full cluster provisioned and then an apply that dies at the bucket.
+      HETZNER_S3_ACCESS_KEY: ${{ secrets.HETZNER_S3_ACCESS_KEY }}
+      HETZNER_S3_SECRET_KEY: ${{ secrets.HETZNER_S3_SECRET_KEY }}
       # The AWS gate. A repo VARIABLE (not a secret — a role ARN is not sensitive), so it can
       # be read in a plain `if:`/`case`. Empty until a maintainer applies infra/aws-oidc and
       # sets it → the aws path green-skips (mirrors the HCLOUD_TOKEN gate). The role itself is
@@ -208,6 +218,15 @@ jobs:
       # the rollup can then distinguish an explicit inert leg from a job that started but failed
       # before proof capture. If the gate itself fails, this step does not run and the missing
       # current-run summary remains a hard failure.
+      #
+      # `emitted_by: "gate-off"` is this emitter declaring its own provenance (#1922). The rollup
+      # currently INFERS it — `is_gate_off_summary()` checks the directory is literally
+      # `gate-<run_id>-<attempt>` and that the payload has no `deploy_stage` — and says so itself:
+      # "The airtight fix is for the gate-off step to STAMP its own provenance
+      # (e.g. `emitted_by: \"gate-off\"`), which this rollup would then read." Without it, renaming
+      # this step's OUT path silently turns every inert leg into a false red, from a file that
+      # never mentions this one. Purely ADDITIVE: the path and every existing field are unchanged,
+      # so the existing inference keeps working until the rollup is taught to prefer the stamp.
       - name: Record gate-off proof
         if: steps.gate.outputs.run == 'false'
         env:
@@ -221,7 +240,7 @@ jobs:
             --arg provider "$PROVIDER" \
             --arg run_tag "nightly-${RUN_ID}-${RUN_ATTEMPT}" \
             --arg verdict "${PROVIDER}: SKIPPED — gate off, no secret/var wired" \
-            '{provider: $provider, run_tag: $run_tag, outcome: "skipped", verdict: $verdict}' \
+            '{provider: $provider, run_tag: $run_tag, outcome: "skipped", emitted_by: "gate-off", verdict: $verdict}' \
             > "$OUT/provision-summary.json"
 
       # ── Deterministic, unique-per-run cluster identity + region. `<project>-<env>` is the
@@ -266,7 +285,7 @@ jobs:
       #    green-floor smoke); ON for the weekly Sunday cron OR a workflow_dispatch with full_bar=true.
       #    When on, export ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (the T2 harness reads
       #    these from the process env — $GITHUB_ENV carries them into the go-test step) so the run
-      #    proves all 11 resource kinds land in tofu state AND all 19 marketplace add-ons converge.
+      #    proves all 11 resource kinds land in tofu state AND all 18 marketplace add-ons converge.
       #    E2E_FULL_BAR gates the raised cost ceiling below; E2E_DIMENSION labels the rollup's ledger
       #    row and its issue titles (full vs floor). $GITHUB_ENV is per-JOB, so neither reaches the
       #    rollup job — it calls the SAME resolve-dimension.sh rather than retyping the cron (#1755).
@@ -311,10 +330,19 @@ jobs:
       #    Hetzner keeps its proven cents/run default (no override). Per-cloud SKUs/disk floors
       #    are validated in each cloud's wave.
       #
-      #    On a FULL-BAR run the floor shape is the WRONG shape: max-config + all-add-ons need >= 3
-      #    nodes / 12 vCPU / 48 GB to schedule the 7 heavy charts + 11 kinds' controllers, which the
-      #    FT-5 guard (test/e2e/t2_providers.go) enforces before any spend. So full-bar loads the
-      #    per-provider heavy profile instead — the fixtures the guard's own error message names. ──
+      #    On a FULL-BAR run the floor shape is the WRONG shape: max-config + all-add-ons need a pool
+      #    big enough for the 7 heavy charts + the 11 kinds' controllers, which the FT-5 guard
+      #    (t2RequireMaxConfigNodeShape, test/e2e/t2_providers.go) enforces before any spend. So
+      #    full-bar loads the per-provider heavy profile instead — the fixtures the guard's own error
+      #    message names, which is the part that cannot drift: both sides name the same path.
+      #
+      #    The FLOOR NUMBERS are deliberately NOT restated here. They live in t2_providers.go
+      #    (heavyMinNodes / heavyMinMemGB, and the PER-CLOUD heavyMinVCPUFor), and this comment used
+      #    to say ">= 3 nodes / 12 vCPU / 48 GB" one line above claiming guard and workflow cannot
+      #    drift. They did: azure's e2e subscription has a 10 vCPU Total Regional quota, so its floor
+      #    was lowered to 6 and its heavy fixture is Standard_E2s_v5 x3 — a maintainer following the
+      #    prose would have built a shape azure cannot create. Read the constants; the guard prints
+      #    the exact shortfall when a profile misses. ──
       - name: Compute cluster shape
         if: steps.gate.outputs.run == 'true'
         env:
@@ -336,15 +364,16 @@ jobs:
             alibaba) SHAPE='{"instance_types":["ecs.e-c1m2.large"],"node_min_size":1,"node_max_size":2,"node_desired_size":1,"node_disk_size_gb":40}' ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
           esac
-          # FULL-BAR: swap the floor shape for the provider's heavy profile. The fixtures are the ones
-          # the FT-5 guard names in its own failure message, so guard and workflow cannot drift.
+          # FULL-BAR: swap the floor shape for the provider's heavy profile. The fixture PATH is the
+          # one the FT-5 guard names in its own failure message, so guard and workflow cannot disagree
+          # about which file is used. The floor NUMBERS are the guard's, not this file's.
           if [ "${E2E_FULL_BAR:-false}" = "true" ]; then
             HEAVY="test/e2e/fixtures/cluster_json.heavy.${PROVIDER}.json"
             if [ ! -f "$HEAVY" ]; then
               # Documented exclusion, not a silent gap (cloud-parity rule): a cloud without a heavy
               # profile cannot host the full bar, and must say so rather than trip the guard later
               # with a message about node counts.
-              echo "::error::full-bar requested for '$PROVIDER' but $HEAVY does not exist — that cloud has no heavy profile. Add the fixture (>= 3 nodes / 12 vCPU / 48 GB total) or exclude the cloud from full-bar runs."
+              echo "::error::full-bar requested for '$PROVIDER' but $HEAVY does not exist — that cloud has no heavy profile. Add the fixture sized to that cloud's floor (heavyMinNodes / heavyMinMemGB / heavyMinVCPUFor(\"$PROVIDER\") in test/e2e/t2_providers.go — the per-cloud vCPU floor differs where a quota forces it) or exclude the cloud from full-bar runs. TestMaxConfigNodeShapeGuard checks a new fixture against its own cloud's floor for free on every PR."
               exit 1
             fi
             SHAPE="$(jq -c . "$HEAVY")"
@@ -783,6 +812,44 @@ jobs:
           ALETHIA_E2E_FABRIC_DEMO_VCLUSTER: ${{ vars.E2E_FABRIC_DEMO_VCLUSTER }}
           ALETHIA_E2E_FABRIC_DEMO_TIMEOUT: ${{ vars.E2E_FABRIC_DEMO_TIMEOUT }}
           ALETHIA_E2E_FABRIC_DEMO_SUMMARY: ${{ runner.temp }}/fabric-demo-summary.json
+          # ── BRING-YOUR-OWN IaC continuous proof (#1765, the cloud-tier half of #845's BYO
+          #    bullet). The ONE leg that runs OpenTofu Alethia did not write, and it proves the
+          #    custody chain around it, not just that an apply worked:
+          #
+          #      a module at the same pinned commit declaring a NON-allowlisted provider is REFUSED
+          #      → the real customer module clones at that pinned sha → fail-closed iacsafety gate
+          #      → signed verify receipt over the CUSTOMER's plan → apply → state on ALETHIA's
+          #      proxy → a change induced OUT OF BAND with this cloud's own CLI → the posture FLIPS
+          #      to drifted → the same commit re-applies to HEAL → in-sync → DESTROY → state cleared
+          #
+          #    Inducing real drift (rather than re-proving one unchanged commit) was the call on
+          #    #1765's open question, and it is why each cloud needs its OWN module owning one
+          #    mutable resource. Each owns exactly one, chosen as the cheapest thing on that cloud
+          #    that can genuinely drift — an SSM parameter, an empty resource group, a
+          #    project-metadata item, an empty OSS bucket, an empty placement group. No cluster, no
+          #    VM, no gateway: the module emits no `cluster_name`, which is precisely what keeps the
+          #    kubeconfig → CNI → ArgoCD tail off.
+          #
+          #    The default repo is the PUBLIC github.com/alethialabs-io/enterprise-demo, cloned
+          #    ANONYMOUSLY (prepareByoIacWorkdir clones without auth when the token is empty), so
+          #    like the fabric-demo gate above this needs NO git token and NO new secret.
+          #    E2E_BYO_IAC is the only variable a maintainer must set to turn it on; the repo, ref,
+          #    module path and blocked-fixture path all default correctly and the path defaults
+          #    per-cloud to iac/drift/<provider>. UNSET ⇒ empty ⇒ a clean skip, so these lines
+          #    change nothing until then. Real-apply is main-gated, so this exercises meaningfully
+          #    only from `main`.
+          #
+          #    The out-of-band mutation shells out to that cloud's CLI, all five of which this job
+          #    already puts on PATH and authenticates: aws + az ship with the runner image, gcloud
+          #    is installed by setup-gcloud, aliyun by the Alibaba credential step, hcloud by the
+          #    teardown step. ──
+          ALETHIA_E2E_BYO_IAC: ${{ vars.E2E_BYO_IAC }}
+          ALETHIA_E2E_BYO_IAC_REPO: ${{ vars.E2E_BYO_IAC_REPO }}
+          ALETHIA_E2E_BYO_IAC_REF: ${{ vars.E2E_BYO_IAC_REF }}
+          ALETHIA_E2E_BYO_IAC_PATH: ${{ vars.E2E_BYO_IAC_PATH }}
+          ALETHIA_E2E_BYO_IAC_BLOCKED_PATH: ${{ vars.E2E_BYO_IAC_BLOCKED_PATH }}
+          ALETHIA_E2E_BYO_IAC_TIMEOUT: ${{ vars.E2E_BYO_IAC_TIMEOUT }}
+          ALETHIA_E2E_BYO_IAC_SUMMARY: ${{ runner.temp }}/byo-iac-summary.json
           # ── CROSS-ACCOUNT KEYLESS CLOUD-SM READ (#1268). Layers ON TOP of the base T2 proof: the
           #    base DEPLOY carries a *-xacct connector row AND a secret-kind binding, so the runner
           #    renders secretstore-<cloud>-xacct and the ExternalSecret that reads through it; the
@@ -842,6 +909,51 @@ jobs:
           ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE }}
           ALETHIA_E2E_KEYLESS_DB_NAMESPACE: ${{ vars.E2E_KEYLESS_DB_NAMESPACE }}
           ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
+          # ── CROSS-ACCOUNT KEYLESS REGISTRY PULL (#1047) — the last unproven link in epic #1046.
+          #
+          #    The `registry-token` MINT was proven in July 2026 against live ECR/GAR/ACR, but with
+          #    AMBIENT LOCAL credentials and no cluster. The half the product actually ships — the B4
+          #    tofu Workload-Identity pull role federating the in-cluster refresher, the refresher
+          #    minting with NO local credential and patching the <slug>-pull Secret, and a real app
+          #    pod pulling an image out of a DIFFERENT account/project/subscription through it — had
+          #    never run. It LOOKED shipped: scripts/e2e/registry-e2e.sh invoked a test function that
+          #    existed in no file, and this workflow set no variable for it at all.
+          #
+          #    Layers ON TOP of the base T2 proof, like #1268 and #1511: the base DEPLOY carries the
+          #    *-xacct registry row (which activates the pull role) and a service whose image lives in
+          #    the foreign registry, and the layer then asserts the mint, the pull, and — the control
+          #    that makes it non-vacuous — that the SAME image does NOT pull without the Secret.
+          #
+          #    All THREE managed registry clouds are runnable (unlike #1268's aws-only lane): the
+          #    grant the target account applies is a STANDING customer object, not a per-run identity.
+          #    alibaba/hetzner resolve to the documented parity exclusion and skip carrying it.
+          #
+          #    REQUIRES the A0.6 apps repo above — the refresher and the probe workload reach the
+          #    cluster only through GitOps.
+          #
+          #    All plain VARIABLES: an account id, a project, a registry host, an image reference and
+          #    an identity REFERENCE are not sensitive. Nothing here is a pull token — the token is
+          #    minted in-cluster and never leaves it. Unset ⇒ a clean skip.
+          #
+          #    NOT SET TODAY, deliberately: the target-account trust (an ECR repository policy, a
+          #    cross-project artifactregistry.reader grant, an AcrPull assignment) plus a scoped
+          #    canary image must be applied out of band first. See docs/testing/xacct-registry-parity.md. ──
+          ALETHIA_E2E_XACCT_REGISTRY: ${{ vars.E2E_XACCT_REGISTRY }}
+          ALETHIA_E2E_XACCT_REGISTRY_HOST: ${{ vars.E2E_XACCT_REGISTRY_HOST }}
+          ALETHIA_E2E_XACCT_REGISTRY_IMAGE: ${{ vars.E2E_XACCT_REGISTRY_IMAGE }}
+          ALETHIA_E2E_XACCT_REGISTRY_ACCOUNT: ${{ vars.E2E_XACCT_REGISTRY_ACCOUNT }}
+          ALETHIA_E2E_XACCT_REGISTRY_PROJECT_ID: ${{ vars.E2E_XACCT_REGISTRY_PROJECT_ID }}
+          ALETHIA_E2E_XACCT_REGISTRY_REGION: ${{ vars.E2E_XACCT_REGISTRY_REGION }}
+          ALETHIA_E2E_XACCT_REGISTRY_ROLE_ARN: ${{ vars.E2E_XACCT_REGISTRY_ROLE_ARN }}
+          ALETHIA_E2E_XACCT_REGISTRY_READER_SA: ${{ vars.E2E_XACCT_REGISTRY_READER_SA }}
+          ALETHIA_E2E_XACCT_REGISTRY_CLIENT_ID: ${{ vars.E2E_XACCT_REGISTRY_CLIENT_ID }}
+          ALETHIA_E2E_XACCT_REGISTRY_SERVICE: ${{ vars.E2E_XACCT_REGISTRY_SERVICE }}
+          ALETHIA_E2E_XACCT_REGISTRY_NAMESPACE: ${{ vars.E2E_XACCT_REGISTRY_NAMESPACE }}
+          #    The summary is written here but the nightly proof bundle does NOT fold it in yet: that
+          #    belongs in the capture step + demos/proofs/capture-proof.sh, which PR #1941 is
+          #    rewriting. Stated rather than half-wired — scripts/e2e/registry-e2e.sh points this at
+          #    its own bundle, so the verdict already has a real consumer on the recording path.
+          ALETHIA_E2E_XACCT_REGISTRY_SUMMARY: ${{ runner.temp }}/xacct-registry-summary.json
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
           #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).
@@ -868,6 +980,7 @@ jobs:
       #    the per-provider PASS/FAIL verdict to the job step summary. The runner wrote a
       #    host-usable kubeconfig to $HOME/.alethia/kubeconfig (read only on the success path). ──
       - name: Capture proof (scrubbed bundle + step-summary verdict)
+        id: capture
         if: steps.gate.outputs.run == 'true' && always()
         env:
           PROVIDER: ${{ matrix.provider }}
@@ -896,6 +1009,10 @@ jobs:
           # Fabric enterprise-demo acceptance verdict (#845), written by the T2 test at the SAME
           # path the t2 step set; folded into the bundle + step summary (absent ⇒ unchanged).
           ALETHIA_E2E_FABRIC_DEMO_SUMMARY: ${{ runner.temp }}/fabric-demo-summary.json
+          # BYO-IaC continuous-proof verdict (#1765), written by the T2 leg at the SAME path the t2
+          # step set; folded into the bundle + step summary (absent ⇒ unchanged). It carries only
+          # names, booleans, counts and a PUBLIC commit + plan digest.
+          ALETHIA_E2E_BYO_IAC_SUMMARY: ${{ runner.temp }}/byo-iac-summary.json
           # Map the GITHUB_ENV names the compute-cluster step wrote into the ALETHIA_* names
           # the capture script reads (region + the unique cluster name for the summary).
           ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
@@ -909,13 +1026,41 @@ jobs:
           fi
           ./demos/proofs/capture-proof.sh "${{ matrix.provider }}"
 
+      # GATED ON THE CAPTURE STEP (#1923). capture-proof.sh deletes a bundle that fails the secret
+      # tripwire, which covers the tripwire path — but this step used to upload whenever the gate
+      # step had merely produced an output, and that says nothing about whether the capture got as
+      # far as running the tripwire AT ALL. capture-proof.sh is `set -euo pipefail`: any earlier
+      # failure aborts it with a partially-written, never-checked bundle on disk, and `if: always()`
+      # published exactly that. Uploading is now conditional on the capture having SUCCEEDED, so
+      # "unscrubbed" and "unchecked" are both unpublishable, not just the former.
+      #
+      # Two branches, and only two: a gate-OFF leg (run == 'false') publishes the inert marker the
+      # `Record gate-off proof` step wrote — no cloud ran, no secret was in scope, nothing to scrub.
+      # A gate-ON leg publishes only if the capture step succeeded.
       - name: Upload proof artifact
-        if: always() && (steps.gate.outputs.run == 'true' || steps.gate.outputs.run == 'false')
+        if: always() && (steps.gate.outputs.run == 'false' || steps.capture.outcome == 'success')
         uses: actions/upload-artifact@v7
         with:
           name: e2e-proof-${{ matrix.provider }}-${{ github.run_id }}
           path: demos/proofs/${{ matrix.provider }}/
           if-no-files-found: warn
+          retention-days: 30
+
+      # …but a capture that ABORTED still has something worth publishing: the CAPTURE-ABORTED.txt
+      # marker capture-proof.sh leaves in place of the deleted bundle, so an empty artifact slot
+      # cannot be misread as "this cloud never ran". The step above would otherwise suppress it.
+      #
+      # Fail-closed BY CONSTRUCTION rather than by trust: the path is a glob for that one filename,
+      # so it can only ever match the marker — never a captured file that escaped the delete. The
+      # marker is written only on the path where the bundle has already been removed, and the two
+      # steps are mutually exclusive on `outcome`, so they can share one artifact name safely.
+      - name: Upload capture-abort marker
+        if: always() && steps.capture.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-proof-${{ matrix.provider }}-${{ github.run_id }}
+          path: demos/proofs/${{ matrix.provider }}/**/CAPTURE-ABORTED.txt
+          if-no-files-found: ignore
           retention-days: 30
 
       # The raw runner log carries a `tofu show -json` plan, and OpenTofu emits the root
@@ -924,6 +1069,7 @@ jobs:
       # bundle uses, and fail closed: if a secret survives, this step goes red and the upload
       # below finds nothing to publish.
       - name: Scrub the runner log before upload
+        id: scrublog
         if: steps.gate.outputs.run == 'true' && always()
         env:
           # HCLOUD_TOKEN is job-level and inherited. E2E_GIT_TOKEN is NOT — it is only ever
@@ -935,8 +1081,11 @@ jobs:
             "${{ runner.temp }}/t2-runner.log" \
             "${{ runner.temp }}/runner-log-scrubbed"
 
+      # Same gating as the proof bundle. scrub-runner-log.sh already `rm -f`s the file it refuses,
+      # so this was correct by accident; make it correct by declaration, so both upload steps state
+      # the same invariant instead of one depending on the other's side effect.
       - name: Upload runner log (scrubbed)
-        if: steps.gate.outputs.run == 'true' && always()
+        if: always() && steps.scrublog.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: t2-runner-log-${{ matrix.provider }}-${{ github.run_id }}
@@ -1074,9 +1223,21 @@ jobs:
           #    coverage. Schedule/dispatch only, same as the red-issue path below. Never fails the run:
           #    an unwired cloud is a deliberate no-op, and a red "not configured yet" nightly is how a
           #    signal gets trained into noise. ──
+          #
+          #    The dedup key is the `from:e2e-coverage` LABEL, not the title (#1958). This filer is
+          #    the only thing that applies that label, so it is an identity, and `--label` is served
+          #    live rather than from the search index — the same two reasons the red filer below
+          #    stopped using `--search` in #1755.
+          #
+          #    The title CANNOT be the key here, unlike the red path's: it carries the counts
+          #    ("1 of 5"), so it changes as coverage changes and can only ever be matched by a
+          #    pattern. A pattern over a mutable field is not an identity — #1720 was hand-edited to
+          #    "1 of 5 clouds IS not enabled" and the anchored `are` regex stopped matching it, which
+          #    sent this branch to `gh issue create` and would have filed a duplicate every night.
+          #    Under the label key a hand-edited title is now harmless: the refresh below restores it.
           if [ "$EVENT_NAME" = "schedule" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            open_cov="$(gh issue list --state open --search "e2e nightly: in:title clouds are not enabled" --json number,title \
-              --jq '[.[] | select(.title | test("^e2e nightly: [0-9]+ of [0-9]+ clouds are not enabled$"))] | .[0].number // ""' 2>/dev/null || echo "")"
+            open_cov="$(gh issue list --state open --limit 200 --label "$COV_LABEL" --json number \
+              --jq '.[0].number // ""' 2>/dev/null || echo "")"
             if [ "$SKIP_N" -eq 0 ]; then
               if [ -n "$open_cov" ]; then
                 gh issue close "$open_cov" --comment "All ${TOTAL} clouds are now enabled — every nightly leg provisions for real. Closing automatically." \
@@ -1086,9 +1247,34 @@ jobs:
               gh issue edit "$open_cov" --title "$COV_TITLE" --body-file "${OUT_DIR}/issue-body-coverage.md" \
                 && echo "::notice::refreshed coverage issue #${open_cov}." || true
             else
-              gh issue create --title "$COV_TITLE" --body-file "${OUT_DIR}/issue-body-coverage.md" \
-                && echo "::notice::filed coverage issue: ${COV_TITLE}" \
-                || echo "::warning::could not create the coverage issue (continuing)."
+              # LABEL what we file, for two distinct reasons. `from:e2e-coverage` is what the dedup
+              # above reads — an unlabelled coverage issue is invisible to it and the NEXT night
+              # files another one. The `class:`/`lane:`/`wave:` trio is what makes the unit visible
+              # to scripts/claim-work.sh; #1720 was filed bare and sat unclaimable, the same way
+              # #1259 did for nine nights before the red path was fixed.
+              #
+              # A create that lands WITHOUT the dedup label is the duplicate-every-night bug in slow
+              # motion (a missing label in the repo makes `gh issue create` drop it), so it is
+              # verified rather than assumed. `|| true` keeps a label outage from breaking the rollup;
+              # the check below turns a silent partial success into a warning naming the consequence.
+              #
+              # The verification reads the NEW ISSUE DIRECTLY rather than re-running the `--label`
+              # query above. A filtered list is index-backed and lags by seconds right after a write
+              # — measured while building this — so re-querying it here would emit a false warning on
+              # a perfectly good create. `gh issue view` is a direct object read and cannot lag.
+              # A warning nobody can trust is how this file's own comments describe a signal being
+              # trained into noise, and the fix must not reintroduce that.
+              cov_url="$(gh issue create --title "$COV_TITLE" --body-file "${OUT_DIR}/issue-body-coverage.md" \
+                --label "$COV_LABEL" --label class:backend --label lane:tests --label wave:hygiene 2>/dev/null || echo "")"
+              if [ -z "$cov_url" ]; then
+                echo "::warning::could not create the coverage issue (continuing)."
+              else
+                echo "::notice::filed coverage issue: ${COV_TITLE} (${cov_url})"
+                if ! gh issue view "$cov_url" --json labels --jq '.labels[].name' \
+                     | grep -Fxq "$COV_LABEL"; then
+                  echo "::warning::${cov_url} is NOT carrying '${COV_LABEL}' — the dedup above cannot see it, so the next run will file ANOTHER coverage issue. Create the label in the repo."
+                fi
+              fi
             fi
           fi
 

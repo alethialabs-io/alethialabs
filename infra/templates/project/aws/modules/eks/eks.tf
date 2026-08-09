@@ -74,16 +74,32 @@ module "eks" {
     }
   }
 
-  node_security_group_additional_rules = {
-    ingress_self_all = {
-      description = "Node to node all ports/protocols"
-      protocol    = "-1"
-      from_port   = 0
-      to_port     = 0
-      type        = "ingress"
-      self        = true
-    }
-  }
+  # #1987: the project's extra ingress allow-list is MERGED in rather than replacing the fixed
+  # rule, so an empty list (the default) produces a byte-identical plan. One rule, carrying every
+  # permitted CIDR — the upstream module maps `cidr_blocks` onto a single aws_security_group_rule,
+  # so listing them together avoids a rule-per-CIDR whose addresses churn when the list is reordered.
+  node_security_group_additional_rules = merge(
+    {
+      ingress_self_all = {
+        description = "Node to node all ports/protocols"
+        protocol    = "-1"
+        from_port   = 0
+        to_port     = 0
+        type        = "ingress"
+        self        = true
+      }
+    },
+    length(var.allowed_cidr_blocks) > 0 ? {
+      ingress_operator_allow_list = {
+        description = "Operator allow-list (project network allowed_cidr_blocks)"
+        protocol    = "-1"
+        from_port   = 0
+        to_port     = 0
+        type        = "ingress"
+        cidr_blocks = var.allowed_cidr_blocks
+      }
+    } : {},
+  )
 
   cluster_ip_family          = "ipv4"
   create_cni_ipv6_iam_policy = false
@@ -155,6 +171,31 @@ module "eks" {
   kms_key_enable_default_policy = var.kms_key_enable_default_policy
   kms_key_users                 = var.kms_key_users
 
+  # The EKS SERVICE — not this module — owns the cluster's primary security group, so the module
+  # tags it after creation with a separate `aws_ec2_tag` per key. That resource cannot be applied
+  # safely: its create calls Read immediately, and the provider's not-found branch is guarded by
+  # `!d.IsNewResource()` (internal/service/ec2/tag_gen.go), so a `DescribeTags` that has not yet
+  # converged returns `tfresource.NewEmptyResultError` and becomes a FATAL apply error instead of
+  # a retry. There is no read-path retry — `createTags`' 5-minute eventual-consistency retry only
+  # covers AWS `.NotFound` codes on the WRITE — and the guard is unchanged in every provider
+  # release including main, and in module v21.
+  #
+  #   Error: reading ec2 resource (sg-…) tag (Project): empty result
+  #     with module.eks[0].module.eks.aws_ec2_tag.cluster_primary_security_group["Project"]
+  #
+  # Refs hashicorp/terraform-provider-aws#36444 (open, untriaged) and
+  # terraform-aws-modules/terraform-aws-eks#3441 (closed unreproduced — same error, same key).
+  # It reddened the aws full-bar nightly (#2098) and can fail a real customer apply at random.
+  #
+  # Dropping these tags costs nothing: the two SGs OpenTofu creates (`-sg`, `-ng-sg`) carry the
+  # full set — including the `alethia:project-id` sweep handle — via the provider `default_tags`
+  # in main.tf, and no check block, cost guard, sweeper path or E2E assertion reads a tag off the
+  # primary SG. It also removes a false-RED: that SG can outlive `eks wait cluster-deleted` and
+  # be reported as a network leak by scripts/e2e/aws-cleanup.sh.
+  #
+  # A bump to module v21 renames this to `create_primary_security_group_tags`; an unknown module
+  # input is a hard error, so the rename cannot silently turn this back on.
+  create_cluster_primary_security_group_tags = false
 }
 
 data "aws_eks_addon_version" "ebs_csi" {

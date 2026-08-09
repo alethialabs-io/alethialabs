@@ -12,6 +12,7 @@
 package e2e
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -50,99 +51,84 @@ func TestMaxConfigCoversAllElevenKinds(t *testing.T) {
 		}
 	}
 	for kind := range got {
-		if !containsStr(theElevenKinds, kind) {
+		if !containsString(theElevenKinds, kind) {
 			t.Errorf("kind %q is in MaxConfigKinds but not the canonical eleven — add it to unsupported-kinds.ts reasoning or fix the table", kind)
 		}
 	}
 }
 
-// TestMaxConfigAWSEmitsEveryKind is the POSITIVE proof: with all 11 kinds populated, AWS
-// ProviderTfvars emits a meaningful signal for each.
-func TestMaxConfigAWSEmitsEveryKind(t *testing.T) {
-	tfvars := awsMaxConfigTfvars(t, "") // no skip — full surface
-
-	for _, k := range MaxConfigKinds {
-		for _, sig := range k.AWSSignals {
-			v, ok := tfvars[sig]
-			if !ok {
-				t.Errorf("kind %q: AWS tfvars missing signal %q — the kind is not wired to the template", k.Kind, sig)
-				continue
-			}
-			if !meaningful(v) {
-				t.Errorf("kind %q: AWS tfvar %q is present but not meaningful (%#v) — the kind did not populate", k.Kind, sig, v)
-			}
-		}
-	}
-}
-
-// TestMaxConfigAWSPerKindNegative is the LOUD negative: for each of the nine optional kinds, drop
-// ONLY that kind and prove its (kind-exclusive) signal goes empty — so the positive proof above has
-// teeth and can't be passing on an always-present default. Foundational kinds (network/cluster) are
-// asserted positively only; a max-config without them is nonsensical, and their teeth come from the
-// nine here.
-func TestMaxConfigAWSPerKindNegative(t *testing.T) {
-	for _, k := range MaxConfigKinds {
-		if k.Foundational {
-			continue
-		}
-		t.Run(k.Kind, func(t *testing.T) {
-			tfvars := awsMaxConfigTfvars(t, k.Kind) // every kind EXCEPT this one
-			for _, sig := range k.AWSSignals {
-				if v, ok := tfvars[sig]; ok && meaningful(v) {
-					t.Errorf("dropping kind %q left signal %q still meaningful (%#v) — the signal is not kind-exclusive, so the positive proof is vacuous", k.Kind, sig, v)
+// TestMaxConfigEmitsEveryTofuCarriedKind is the POSITIVE proof, on EVERY cloud the harness knows:
+// with the cloud's full offered surface populated, its real ProviderTfvars emits a meaningful signal
+// for each tofu-carried kind. The shape-bearing kinds (cluster/database/cache) use cloud-VALID
+// literals via the provider-aware Apply, so this also guards that a real GKE / Cloud SQL / AKS /
+// Talos / ACK apply is never fed an AWS instance type, tier or engine version.
+//
+// It loops the cloud set rather than repeating itself per cloud, and that is deliberate: the same
+// copy-per-cloud shape is how the resource table came to describe three clouds and skip two.
+// In-cluster and ceiling cells carry no tfvars by construction (MaxConfigCell.Validate enforces it),
+// so they contribute nothing here — their proof is the ArgoCD gate and the documented Why.
+func TestMaxConfigEmitsEveryTofuCarriedKind(t *testing.T) {
+	for _, provider := range maxConfigClouds() {
+		t.Run(provider, func(t *testing.T) {
+			tfvars := maxConfigTfvars(t, provider, "") // no skip — the cloud's full offered surface
+			for _, k := range MaxConfigKinds {
+				cell := maxConfigCell(t, k, provider)
+				for _, sig := range cell.Signals {
+					v, ok := tfvars[sig]
+					if !ok {
+						t.Errorf("kind %q: %s tfvars missing signal %q — the kind is not wired to the template", k.Kind, provider, sig)
+						continue
+					}
+					if !meaningful(v) {
+						t.Errorf("kind %q: %s tfvar %q is present but not meaningful (%#v) — the kind did not populate", k.Kind, provider, sig, v)
+					}
 				}
 			}
 		})
 	}
 }
 
-// TestMaxConfigGCPEmitsEveryKind is the POSITIVE proof for GCP: with all 11 kinds populated, GCP
-// ProviderTfvars emits a meaningful signal for each. The shape-bearing kinds (cluster/database/cache)
-// use GCP-valid literals via the provider-aware Apply, so this also guards that a real GCP apply
-// wouldn't be fed an AWS instance type / tier / engine version.
-func TestMaxConfigGCPEmitsEveryKind(t *testing.T) {
-	tfvars := gcpMaxConfigTfvars(t, "") // no skip — full surface
-
-	for _, k := range MaxConfigKinds {
-		for _, sig := range k.GCPSignals {
-			v, ok := tfvars[sig]
-			if !ok {
-				t.Errorf("kind %q: GCP tfvars missing signal %q — the kind is not wired to the template", k.Kind, sig)
-				continue
-			}
-			if !meaningful(v) {
-				t.Errorf("kind %q: GCP tfvar %q is present but not meaningful (%#v) — the kind did not populate", k.Kind, sig, v)
-			}
-		}
-	}
-}
-
-// TestMaxConfigGCPPerKindNegative is the LOUD negative for GCP. Seven of the nine optional kinds have
-// kind-EXCLUSIVE GCP signals (create_*), so the generic drop-and-check works. Queue and topic SHARE
-// create_pubsub + pubsub_topics (both fold into the same map), so their discriminator is the
-// pubsub_topics MAP KEY — dropping the queue removes "jobs"; dropping the topic removes "events".
-func TestMaxConfigGCPPerKindNegative(t *testing.T) {
-	for _, k := range MaxConfigKinds {
-		if k.Foundational {
-			continue
-		}
-		t.Run(k.Kind, func(t *testing.T) {
-			tfvars := gcpMaxConfigTfvars(t, k.Kind) // every kind EXCEPT this one
-			switch k.Kind {
-			case "queue":
-				if pubsubTopicsHasKey(tfvars, "jobs") {
-					t.Errorf("dropping kind %q left pubsub_topics[\"jobs\"] present — the queue is not isolable", k.Kind)
+// TestMaxConfigPerKindNegative is the LOUD negative, on every cloud: for each optional kind the cloud
+// carries in tofu, drop ONLY that kind and prove its (kind-exclusive) signal goes empty — so the
+// positive proof has teeth and cannot be passing on an always-present default.
+//
+// Foundational kinds (network/cluster) are asserted positively only; a max-config without them is
+// nonsensical, and their teeth come from the optional kinds here. Two clouds fold queue and topic
+// into ONE tfvar and need a map-key discriminator instead:
+//
+//   - GCP: create_pubsub + pubsub_topics carry both, so the key is pubsub_topics["jobs"|"events"].
+//   - Alibaba: create_mns is len(Queues)>0 || len(Topics)>0 — the same shape — but the emitted maps
+//     ARE distinct (mns_queues / mns_topics), so the plain check works and create_mns is simply not
+//     listed as a signal.
+func TestMaxConfigPerKindNegative(t *testing.T) {
+	for _, provider := range maxConfigClouds() {
+		t.Run(provider, func(t *testing.T) {
+			for _, k := range MaxConfigKinds {
+				if k.Foundational {
+					continue
 				}
-			case "topic":
-				if pubsubTopicsHasKey(tfvars, "events") {
-					t.Errorf("dropping kind %q left pubsub_topics[\"events\"] present — the topic is not isolable", k.Kind)
+				cell := maxConfigCell(t, k, provider)
+				if cell.Carriage != CarriedByTofu {
+					continue // nothing to drop: no tfvar carries an in-cluster chart or a ceiling
 				}
-			default:
-				for _, sig := range k.GCPSignals {
-					if v, ok := tfvars[sig]; ok && meaningful(v) {
-						t.Errorf("dropping kind %q left signal %q still meaningful (%#v) — the signal is not kind-exclusive, so the positive proof is vacuous", k.Kind, sig, v)
+				t.Run(k.Kind, func(t *testing.T) {
+					tfvars := maxConfigTfvars(t, provider, k.Kind) // every offered kind EXCEPT this one
+					if provider == "gcp" && (k.Kind == "queue" || k.Kind == "topic") {
+						name := maxConfigQueueName
+						if k.Kind == "topic" {
+							name = maxConfigTopicName
+						}
+						if pubsubTopicsHasKey(tfvars, name) {
+							t.Errorf("dropping kind %q left pubsub_topics[%q] present — the kind is not isolable", k.Kind, name)
+						}
+						return
 					}
-				}
+					for _, sig := range cell.Signals {
+						if v, ok := tfvars[sig]; ok && meaningful(v) {
+							t.Errorf("dropping kind %q left signal %q still meaningful (%#v) — the signal is not kind-exclusive, so the positive proof is vacuous", k.Kind, sig, v)
+						}
+					}
+				})
 			}
 		})
 	}
@@ -156,49 +142,6 @@ func pubsubTopicsHasKey(tfvars map[string]any, key string) bool {
 	}
 	_, present := m[key]
 	return present
-}
-
-// TestMaxConfigAzureEmitsEveryKind is the POSITIVE proof for Azure: with all 11 kinds populated, Azure
-// ProviderTfvars emits a meaningful signal for each. The shape-bearing kinds (cluster/database/cache)
-// use Azure-valid literals via the provider-aware Apply (Standard_D2s_v3 / B_Standard_B1ms / a Managed-
-// Redis SKU), so this also guards that a real AKS / PostgreSQL-Flexible / Managed-Redis apply wouldn't
-// be fed an AWS instance type / tier / engine version.
-func TestMaxConfigAzureEmitsEveryKind(t *testing.T) {
-	tfvars := azureMaxConfigTfvars(t, "") // no skip — full surface
-
-	for _, k := range MaxConfigKinds {
-		for _, sig := range k.AzureSignals {
-			v, ok := tfvars[sig]
-			if !ok {
-				t.Errorf("kind %q: Azure tfvars missing signal %q — the kind is not wired to the template", k.Kind, sig)
-				continue
-			}
-			if !meaningful(v) {
-				t.Errorf("kind %q: Azure tfvar %q is present but not meaningful (%#v) — the kind did not populate", k.Kind, sig, v)
-			}
-		}
-	}
-}
-
-// TestMaxConfigAzurePerKindNegative is the LOUD negative for Azure — and, unlike GCP, a PLAIN generic
-// drop-and-check for all nine optional kinds. Azure emits DISTINCT service_bus_queues and
-// service_bus_topics maps (queue and topic share only the create_service_bus bool, which is NOT a
-// signal here), and every other optional kind's signal is a kind-exclusive create_* bool / build*ed
-// map that empties when the kind is dropped — so no pubsub_topics-style map-key discriminator is needed.
-func TestMaxConfigAzurePerKindNegative(t *testing.T) {
-	for _, k := range MaxConfigKinds {
-		if k.Foundational {
-			continue
-		}
-		t.Run(k.Kind, func(t *testing.T) {
-			tfvars := azureMaxConfigTfvars(t, k.Kind) // every kind EXCEPT this one
-			for _, sig := range k.AzureSignals {
-				if v, ok := tfvars[sig]; ok && meaningful(v) {
-					t.Errorf("dropping kind %q left signal %q still meaningful (%#v) — the signal is not kind-exclusive, so the positive proof is vacuous", k.Kind, sig, v)
-				}
-			}
-		})
-	}
 }
 
 // TestMaxConfigSnapshotFailsClosed proves MaxConfigSnapshot injects all 11 kind blocks onto a base
@@ -220,60 +163,60 @@ func TestMaxConfigSnapshotInjectsEveryKind(t *testing.T) {
 	}
 }
 
-// awsMaxConfigTfvars builds the max-config ProjectConfig (optionally skipping one kind) and returns
-// the AWS tfvars. Skipping is how the negative test isolates a single kind's contribution.
-func awsMaxConfigTfvars(t *testing.T, skip string) map[string]any {
+// maxConfigClouds is the cloud set the max-config surface must describe — the harness's OWN provider
+// table (t2ProviderTable in t2_providers.go), never a hand-written list. A sixth cloud added there
+// reds every test in this file until it has a column and a verdict per kind, which is exactly the
+// drift that let hetzner and alibaba sit structurally unassertable for the table's whole life.
+func maxConfigClouds() []string {
+	names := make([]string, 0, len(t2ProviderTable))
+	for name := range t2ProviderTable {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// maxConfigCell fetches the (kind × cloud) verdict, failing the test when the cloud has no column —
+// the read-back that makes an unhandled pair loud instead of skipped.
+func maxConfigCell(t *testing.T, k MaxConfigKind, provider string) MaxConfigCell {
 	t.Helper()
-	cfg := maxConfigPCExcept("aws", skip)
-	p, err := cloud.NewCloudProvider("aws")
+	cell, ok := k.Cell(provider)
+	if !ok {
+		t.Fatalf("kind %q has no column for cloud %q — add the per-cloud column to MaxConfigKind", k.Kind, provider)
+	}
+	return cell
+}
+
+// maxConfigTfvars builds the max-config ProjectConfig for a cloud (optionally skipping one kind) and
+// returns that cloud's REAL ProviderTfvars. Skipping is how the negative test isolates a single
+// kind's contribution.
+func maxConfigTfvars(t *testing.T, provider, skip string) map[string]any {
+	t.Helper()
+	cfg := maxConfigPCExcept(provider, skip)
+	p, err := cloud.NewCloudProvider(provider)
 	if err != nil {
-		t.Fatalf("NewCloudProvider(aws): %v", err)
+		t.Fatalf("NewCloudProvider(%s): %v", provider, err)
 	}
 	return p.ProviderTfvars(cfg)
 }
 
-// gcpMaxConfigTfvars is the GCP twin of awsMaxConfigTfvars.
-func gcpMaxConfigTfvars(t *testing.T, skip string) map[string]any {
-	t.Helper()
-	cfg := maxConfigPCExcept("gcp", skip)
-	p, err := cloud.NewCloudProvider("gcp")
-	if err != nil {
-		t.Fatalf("NewCloudProvider(gcp): %v", err)
-	}
-	return p.ProviderTfvars(cfg)
-}
-
-// azureMaxConfigTfvars is the Azure twin of awsMaxConfigTfvars.
-func azureMaxConfigTfvars(t *testing.T, skip string) map[string]any {
-	t.Helper()
-	cfg := maxConfigPCExcept("azure", skip)
-	p, err := cloud.NewCloudProvider("azure")
-	if err != nil {
-		t.Fatalf("NewCloudProvider(azure): %v", err)
-	}
-	return p.ProviderTfvars(cfg)
-}
-
-// maxConfigPCExcept applies every kind except `skip` (empty = all), leaving the skipped kind's field
-// at its zero value.
+// maxConfigPCExcept applies every kind this cloud OFFERS except `skip` (empty = all), leaving the
+// skipped kind's field at its zero value. Kinds the cloud does not offer (a documented ceiling or
+// deferred debt) are never applied — the same Cell.Offered rule MaxConfigProjectConfig follows, so
+// the negative test isolates against the config the product could actually express on that cloud.
 func maxConfigPCExcept(provider, skip string) *types.ProjectConfig {
 	pc := &types.ProjectConfig{Provider: types.CloudProvider(provider)}
 	for _, k := range MaxConfigKinds {
 		if k.Kind == skip {
 			continue
 		}
+		cell, ok := k.Cell(provider)
+		if !ok || !cell.Offered() {
+			continue
+		}
 		k.Apply(pc, provider)
 	}
 	return pc
-}
-
-func containsStr(ss []string, want string) bool {
-	for _, s := range ss {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
 
 // TestMaxConfigClusterVersionTracksMatrix is the drift guard for the one value the harness must
@@ -301,7 +244,7 @@ func TestMaxConfigClusterVersionTracksMatrix(t *testing.T) {
 			if got == "" {
 				t.Fatalf("%s: max-config emitted an empty ClusterVersion", provider)
 			}
-			if !containsStr(cloudK8s.Supported, got) {
+			if !containsString(cloudK8s.Supported, got) {
 				t.Errorf("%s: max-config emits Kubernetes %q, which is NOT in the matrix window %v.\n"+
 					"A real apply is guarded fail-closed against this same matrix (COMPAT-001), so this "+
 					"would burn a full provisioning run before failing. Align maxconfig.go with "+

@@ -21,11 +21,20 @@ check "existing_vnet_id_present" {
   }
 }
 
-# When Azure DNS is enabled, both the zone name and domain must be supplied.
-check "azure_dns_fields_present_when_enabled" {
+# When Azure CREATES the zone, the domain must be supplied — it is the zone's name.
+#
+# This used to also require `azure_dns_zone_name`, which was exactly backwards once
+# `azure_dns_enabled` became the CREATE gate (#1992): that variable carries the id of a zone the
+# user ALREADY owns, so it is empty precisely when we are creating one. Requiring both meant the
+# only configuration the check accepted was the one that produced a duplicate zone.
+#
+# It was also the only thing in the template that read `azure_dns_zone_name` at all — and a `check`
+# block never blocks an apply, so the variable was declared, "checked", and then ignored while the
+# module created a second zone regardless.
+check "azure_dns_fields_present_when_creating" {
   assert {
-    condition     = !var.azure_dns_enabled || (length(trimspace(var.azure_dns_zone_name)) > 0 && length(trimspace(var.azure_dns_domain)) > 0)
-    error_message = "azure_dns_enabled is true but azure_dns_zone_name or azure_dns_domain is empty."
+    condition     = !var.azure_dns_enabled || length(trimspace(var.azure_dns_domain)) > 0
+    error_message = "azure_dns_enabled is true (creating a zone) but azure_dns_domain is empty; the domain IS the zone name."
   }
 }
 

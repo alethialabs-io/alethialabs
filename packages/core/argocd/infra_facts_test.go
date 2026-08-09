@@ -136,48 +136,99 @@ func TestBuildFromOutputs_AzureApplicationGatewayFacts(t *testing.T) {
 	}
 }
 
-// TestBuildFromOutputs_AlibabaWAFInstanceID locks the output→fact wiring for the WAF 3.0
-// instance. It is the mirror image of the AWS fact above and must never be confused with it:
-// the AWS ARN exists so the ingress can be ANNOTATED with it, while this id exists so the deploy
-// can REPORT that nothing is bound to it. The pinned alicloud provider binds a hostname only in
-// CNAME mode, whose origin is created after the cluster is up (see modules/waf/main.tf).
-func TestBuildFromOutputs_AlibabaWAFInstanceID(t *testing.T) {
+// TestBuildFromOutputs_NoCloudReadsWafInstanceID pins the ABSENCE of the WAF 3.0 output→fact wiring.
+//
+// #1842 added `waf_instance_id` so an Alibaba deploy could report "built, billed, filtering nothing"
+// instead of leaving that indistinguishable from "the switch is off". #1841 then withdrew the offer
+// outright — `alicloud_wafv3_instance` is an ACCOUNT-level purchase (no arguments at all,
+// CreatePostpaidInstance/ReleaseInstance), so no project should own one. The template exports the
+// key no longer, and nothing should read it.
+//
+// The stale key is fed in deliberately: an old state file or a hand-rolled tfvars can still produce
+// it, and the withdrawal must not be undone by whatever happens to be lying in the outputs map.
+func TestBuildFromOutputs_NoCloudReadsWafInstanceID(t *testing.T) {
 	const id = "waf_v3prepaid_public_cn-0xldbqt0007"
 
-	t.Run("alibaba reads waf_instance_id", func(t *testing.T) {
-		f := BuildFromOutputs(map[string]interface{}{"waf_instance_id": id}, &types.ProjectConfig{Provider: "alibaba"})
-		if f.AlibabaWAFInstanceID != id {
-			t.Fatalf("AlibabaWAFInstanceID = %q, want %q", f.AlibabaWAFInstanceID, id)
-		}
-		// The reference must reach the DECISION, not just the struct — that round trip is the
-		// entire reason the output was added.
-		d := decisionFor(t, InfraServiceDecisions(f), "waf")
-		if d.Status != infraStatusSkipped {
-			t.Fatalf("waf decision = %s (%s), want skipped — nothing binds the instance", d.Status, d.Reason)
-		}
-		if !strings.Contains(d.Reason, id) {
-			t.Errorf("waf decision should name the unattached instance, got %q", d.Reason)
-		}
-	})
-
-	// The switch off makes the output null; ExtractOutput yields "". Without this the "you are
-	// paying for a firewall that filters nothing" report would fire on every Alibaba project.
-	t.Run("waf off (null output) leaves the fact empty", func(t *testing.T) {
-		f := BuildFromOutputs(map[string]interface{}{"waf_instance_id": nil}, &types.ProjectConfig{Provider: "alibaba"})
-		if f.AlibabaWAFInstanceID != "" {
-			t.Fatalf("AlibabaWAFInstanceID = %q, want empty", f.AlibabaWAFInstanceID)
-		}
-		if d := decisionFor(t, InfraServiceDecisions(f), "waf"); !strings.Contains(d.Reason, "no WAF instance was built") {
-			t.Fatalf("waf decision reason = %q, want the switch-off reason", d.Reason)
-		}
-	})
-
-	t.Run("no other cloud reads the key", func(t *testing.T) {
-		for _, p := range []string{"aws", "gcp", "azure", "hetzner", "digitalocean"} {
+	for _, p := range []string{"alibaba", "aws", "gcp", "azure", "hetzner", "digitalocean"} {
+		t.Run(p, func(t *testing.T) {
 			f := BuildFromOutputs(map[string]interface{}{"waf_instance_id": id}, &types.ProjectConfig{Provider: types.CloudProvider(p)})
-			if f.AlibabaWAFInstanceID != "" {
-				t.Errorf("%s: AlibabaWAFInstanceID = %q, want empty — the key is Alibaba-only", p, f.AlibabaWAFInstanceID)
+			d := decisionFor(t, InfraServiceDecisions(f), "waf")
+			if d.Status != infraStatusSkipped {
+				t.Fatalf("%s waf = %s (%s), want skipped — a stale waf_instance_id must build nothing", p, d.Status, d.Reason)
 			}
-		}
-	})
+			if strings.Contains(d.Reason, id) {
+				t.Errorf("%s: the waf decision named a stale waf_instance_id — the output is withdrawn (#1841) and nothing should read it back, got %q", p, d.Reason)
+			}
+		})
+	}
+}
+
+// TestManagedCertificateAsk_ProviderConfigOverridesOnEveryCloud pins the escape hatch that moved
+// here from the providers (#1858).
+//
+// It moved because it BROKE silently. While every cloud's certificate came from OpenTofu, each
+// provider seeded a local from the typed field and let `provider_config` mutate the cloud's own
+// tfvar. When gcp and azure converged onto cert-manager there was no tfvar left to mutate, so the
+// key kept being accepted and changed nothing — an escape hatch that looks live and is not.
+//
+// The per-cloud spelling is the part most likely to be got wrong by a later edit: aws reads
+// `acm_certificate`, everyone else reads `managed_certificate`. Accepting one spelling everywhere
+// would silently drop the override on four clouds, which is the same failure in a new place.
+func TestManagedCertificateAsk_ProviderConfigOverridesOnEveryCloud(t *testing.T) {
+	keys := map[string]string{
+		"aws":     "acm_certificate",
+		"gcp":     "managed_certificate",
+		"azure":   "managed_certificate",
+		"alibaba": "managed_certificate",
+		"hetzner": "managed_certificate",
+	}
+
+	for cloud, key := range keys {
+		t.Run(cloud, func(t *testing.T) {
+			facts := func(ask bool, pc map[string]any) *InfraFacts {
+				return BuildFromOutputs(map[string]interface{}{}, &types.ProjectConfig{
+					Provider: types.CloudProvider(cloud),
+					DNS:      types.ProjectDNSConfig{ManagedCertificate: ask, ProviderConfig: pc},
+				})
+			}
+
+			t.Run("no override: the typed field carries", func(t *testing.T) {
+				if !facts(true, nil).ManagedCertificate {
+					t.Error("the canvas switch must reach the facts on its own")
+				}
+				if facts(false, nil).ManagedCertificate {
+					t.Error("an unset switch must stay unset")
+				}
+			})
+
+			// BOTH directions. Seeding from the typed field rather than OR-ing is what keeps the
+			// override able to turn something back OFF; an OR would make provider_config write-only.
+			t.Run("override forces on and off", func(t *testing.T) {
+				if !facts(false, map[string]any{key: true}).ManagedCertificate {
+					t.Errorf("provider_config[%q]=true must turn the ask ON", key)
+				}
+				if facts(true, map[string]any{key: false}).ManagedCertificate {
+					t.Errorf("provider_config[%q]=false must turn the ask OFF", key)
+				}
+			})
+
+			t.Run("a wrong-typed override is ignored and the typed field survives", func(t *testing.T) {
+				if !facts(true, map[string]any{key: "false"}).ManagedCertificate {
+					t.Errorf("a string under %q must be ignored, not coerced", key)
+				}
+			})
+
+			// The OTHER spelling must do nothing on this cloud, or a copy-paste in a later lane
+			// would appear to work on the cloud it was copied from and silently no-op here.
+			t.Run("the other cloud's spelling does nothing", func(t *testing.T) {
+				other := "acm_certificate"
+				if cloud == "aws" {
+					other = "managed_certificate"
+				}
+				if facts(true, map[string]any{other: false}).ManagedCertificate != true {
+					t.Errorf("%q is not %s's key — it must not override", other, cloud)
+				}
+			})
+		})
+	}
 }

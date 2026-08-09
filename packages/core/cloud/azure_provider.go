@@ -5,9 +5,12 @@ package cloud
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -22,20 +25,39 @@ func (p *azureProvider) RequiredCLIs() []string {
 	return []string{"kubectl", "helm"}
 }
 
+// ValidateConfig refuses an Azure project config the AKS templates cannot provision: the shared
+// node-pool sizing invariants, the `aks_disk_size_gb` floor (30 GB — the Azure OS-disk minimum,
+// which the canvas's single cross-cloud `min: 20` undershoots), and the VNet-CIDR floor implied
+// by the four /20 subnets the vnet module carves.
+func (p *azureProvider) ValidateConfig(config *types.ProjectConfig) error {
+	if config == nil {
+		return fmt.Errorf("ProjectConfig is required")
+	}
+	if err := validateNodeSizing(config); err != nil {
+		return err
+	}
+	if err := validateNodeDiskSize(config, "aks_disk_size_gb", azureNodeDiskFloorGB); err != nil {
+		return err
+	}
+	return validateNetworkCIDR(config, "vnet_cidr", azureMaxNetworkPrefix)
+}
+
 func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	wafEnabled := config.DNS.WafEnabled
-	managedCert := config.DNS.ManagedCertificate
 	if v, ok := config.DNS.ProviderConfig["azure_waf"]; ok {
 		if b, ok := v.(bool); ok {
 			wafEnabled = b
 		}
 	}
-	if v, ok := config.DNS.ProviderConfig["managed_certificate"]; ok {
-		if b, ok := v.(bool); ok {
-			managedCert = b
-		}
-	}
+	// No `managed_certificate` override here: Azure's certificate is issued in-cluster by
+	// cert-manager (#1825), so the template declares no certificate variable for one to act on.
+	//
+	// The escape hatch still WORKS — it moved to `managedCertificateAsk` in
+	// packages/core/argocd/infra_facts.go, which is where the decision now lives. Overriding there
+	// covers every cloud, converged or not, and is written once instead of restated per provider.
+	// Leaving a copy here would keep accepting the key and change nothing, which is the defect this
+	// programme exists to remove.
 
 	provisionVnet := config.Network.ProvisionNetwork
 	if !provisionVnet && config.Network.NetworkID == "" {
@@ -49,9 +71,10 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		"environment":     config.EnvironmentStage,
 
 		// Network
-		"provision_vnet":     provisionVnet,
-		"vnet_cidr":          orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
-		"single_nat_gateway": config.Network.SingleNatGateway,
+		"provision_vnet":           provisionVnet,
+		"vnet_cidr":                orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"single_nat_gateway":       config.Network.SingleNatGateway,
+		"vnet_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// AKS. Default resolves from the catalog SSOT (catalog.json default_k8s_version) — keep it on
 		// a version in Azure's STANDARD support window, since an AKS create rejects a version that has
@@ -60,15 +83,28 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		"aks_cluster_version": resolveK8sVersion("azure", config.Cluster.ClusterVersion),
 
 		// DNS
-		"azure_dns_enabled":   config.DNS.Enabled,
+		// CREATE the zone in-template only when DNS is on AND the caller brought no zone of their
+		// own — the same rule aws applies via `cloud_dns_enabled` (#1816). Before this, azure
+		// created a zone unconditionally, so naming a zone you already own produced a SECOND zone
+		// with different name servers: your records were not used and delegation still pointed at
+		// the old zone, so nothing resolved until you noticed and re-delegated (#1992).
+		"azure_dns_enabled":   config.DNS.Enabled && config.DNS.ZoneID == "",
 		"azure_dns_domain":    config.DNS.DomainName,
 		"azure_dns_zone_name": config.DNS.ZoneID,
 
 		// WAF
 		"azure_waf_enabled": wafEnabled,
 
-		// TLS
-		"azure_managed_certificate": managedCert,
+		// TLS — no tfvar. Azure's managed certificate is issued IN-CLUSTER by cert-manager
+		// (#1825), so nothing in the template consumes the switch and `azure_managed_certificate`
+		// is not emitted. The user's ask still reaches the runner, by the path it always used:
+		// InfraFacts.ManagedCertificate reads vc.DNS.ManagedCertificate from the config snapshot,
+		// never a tfvar or an output.
+		//
+		// Emitting it anyway would be worse than dead weight. OpenTofu drops a root variable the
+		// template does not declare, so the key would vanish at plan time while the offer-parity
+		// guard still traced the emit and scored the cell as carried — a green cell for a value
+		// that never reaches a plan.
 
 		// Service Bus
 		"create_service_bus": len(config.Queues) > 0 || len(config.Topics) > 0,
@@ -134,17 +170,22 @@ func (p *azureProvider) ProviderTfvars(config *types.ProjectConfig) map[string]i
 		// Size. `azure_cache_sku_name` is the EXACT Managed Redis sku and it wins over the legacy
 		// Basic/Standard/Premium map below (infra/templates/project/azure/azure-cache-redis.tf), so
 		// emitting it is what makes MemoryGB — the cloud-indifferent size the canvas offers — mean
-		// something on Azure. Without this, azure read no size axis at all: the only size-ish signal
-		// was NumCacheNodes>1 flipping the tier to "Standard".
+		// something on Azure.
 		if sku := resolveCacheNodeType("azure", cache); sku != "" {
 			tfvars["azure_cache_sku_name"] = sku
 		}
-		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 1 {
-			tfvars["azure_cache_sku"] = "Standard"
-		}
-		if cache.EngineVersion != "" {
-			tfvars["azure_cache_redis_version"] = cache.EngineVersion
-		}
+		// NumCacheNodes is deliberately NOT read on Azure (#1993). It used to flip the legacy
+		// tier to "Standard" — a tier flip wearing a count's name: two nodes and twenty produced
+		// the same plan, and Azure Managed Redis (azurerm_managed_redis, sized by sku_name with
+		// clustering managed by the service) exposes no node/replica/shard count for the number to
+		// become. The control is withdrawn on Azure in the inspector (unavailableWhen) and the
+		// ceiling is recorded in infra/config-carriage-exclusions.yaml.
+		//
+		// EngineVersion is deliberately NOT emitted on Azure either (#1993): Managed Redis exposes
+		// no engine-version knob at all — verified against the pinned provider, which rejects both
+		// `redis_version` and a `version` inside `default_database` as unsupported arguments.
+		// Emitting it anyway would be dropped at plan time while the guards still scored the cell as
+		// carried. Recorded as a CLOUD CEILING in infra/config-carriage-exclusions.yaml instead.
 		if cache.MultiAz != nil {
 			tfvars["azure_cache_multi_az"] = *cache.MultiAz
 		}
@@ -349,13 +390,16 @@ func buildServiceBusQueues(queues []types.ProjectQueueConfig) map[string]interfa
 		if q.MessageRetention != nil {
 			cfg["default_message_ttl"] = fmt.Sprintf("PT%dS", *q.MessageRetention)
 		}
-		if d, ok := providerInt(q.ProviderConfig, "delay_seconds"); ok {
-			cfg["forward_dead_lettered_messages_to"] = ""
-			cfg["max_delivery_count"] = 10
-			// Azure Service Bus doesn't have a direct delay_seconds equivalent,
-			// but we can pass it for scheduled enqueue support
-			cfg["delay_seconds"] = d
-		}
+		// `delay_seconds` and `forward_dead_lettered_messages_to` were emitted here and are NOT
+		// emitted any more (#1994). Both rode the same path `default_message_ttl` did — the root's
+		// map(any) accepted them and the module's typed `queues` object dropped them, silently.
+		//
+		// They are deleted rather than added to that type, because neither describes anything the
+		// resource can do. This code's own comment conceded that Service Bus "doesn't have a direct
+		// delay_seconds equivalent" — scheduled enqueue is a per-MESSAGE property a sender sets, not
+		// a queue setting tofu can provision — and forwarding was emitted as the empty string, which
+		// names no queue to forward to. Carrying them further would have satisfied the guard while
+		// the values still meant nothing, which is the defect it exists to catch, not a way past it.
 		result[q.Name] = cfg
 	}
 	return result
@@ -367,7 +411,7 @@ func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interfa
 		subs := []map[string]interface{}{}
 		for _, s := range t.Subscriptions {
 			subs = append(subs, map[string]interface{}{
-				"name":               s.Endpoint,
+				"name":               serviceBusSubscriptionName(s.Endpoint),
 				"max_delivery_count": 10,
 			})
 		}
@@ -376,6 +420,68 @@ func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interfa
 		}
 	}
 	return result
+}
+
+// serviceBusSubscriptionName derives a deterministic, Azure-VALID subscription name from a
+// subscription's endpoint.
+//
+// The endpoint used to be passed through as the name, and Azure rejected it (#2100). A subscription
+// name must match azurerm's `^[a-zA-Z0-9][a-zA-Z0-9-._]{0,48}[a-zA-Z0-9_]$` — alphanumeric at both
+// ends, only `-._` inside, 50 characters. An endpoint is a URL or an ARN, so it routinely carries
+// `:` and `/`, which are outside that alphabet: the full-bar fixture seeds
+// `arn:aws:sqs:us-east-1:000000000000:jobs` and every azure apply carrying a topic died on it.
+// (Azure prints its whole validation message, whose 50-character clause reads like a length
+// problem. It is not — it is the alphabet.)
+//
+// The name cannot simply be `s.Name`, because types.TopicSubscription HAS no name: it models a
+// protocol and an endpoint only. Adding one would be a schema change, and a migration is a heavy
+// price for a defect that does not need it — the endpoint already identifies the subscription
+// uniquely within its topic.
+//
+// Shape mirrors ackNamespaceRoleName (alibaba_tenant_identity.go): a readable, truncated stem plus a
+// short content hash of the WHOLE endpoint. Both halves are load-bearing.
+//
+//   - DETERMINISTIC. `azurerm_servicebus_subscription.name` is ForceNew, so a name that changed
+//     between runs would destroy and recreate the subscription on every apply — silently dropping
+//     whatever it had not yet delivered.
+//   - The hash is over the FULL endpoint, not the truncated stem, so two endpoints sharing a
+//     50-character prefix (routine for ARNs and URLs, which differ in their tail) still get
+//     distinct names.
+func serviceBusSubscriptionName(endpoint string) string {
+	sum := sha256.Sum256([]byte(endpoint))
+	short := hex.EncodeToString(sum[:])[:8]
+
+	// Fold everything outside the permitted alphabet to `-`, so the readable part stays recognisable
+	// rather than being dropped. `.` and `_` are legal inside the name but are folded too: they add
+	// no signal here and keep the stem's shape predictable.
+	stem := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		default:
+			return '-'
+		}
+	}, endpoint)
+
+	// Collapse runs and trim, so `arn:aws:sqs:` does not become `arn-aws-sqs---`.
+	for strings.Contains(stem, "--") {
+		stem = strings.ReplaceAll(stem, "--", "-")
+	}
+	stem = strings.Trim(stem, "-")
+
+	// Budget: 50 total = stem + "-" + 8. Leaves 41 for the stem.
+	const maxStem = 41
+	if len(stem) > maxStem {
+		stem = strings.Trim(stem[:maxStem], "-")
+	}
+	// An endpoint made entirely of punctuation folds away to nothing, and a name must START with an
+	// alphanumeric — so fall back to a fixed prefix rather than emitting a leading `-`.
+	if stem == "" {
+		stem = "sub"
+	}
+	return stem + "-" + short
 }
 
 // buildCosmosDBCollections maps the canvas's NoSQL tables onto the Cosmos DB container shape the
@@ -410,6 +516,8 @@ func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]in
 // `container_access_type` argument; sending the resource's spelling meant the value landed on a name
 // nothing read and every container was created private whatever the user chose.
 //
+// `cors_origins` rides the same rule as `versioning_enabled` below — see the note on the field.
+//
 // `versioning_enabled` is emitted PER CONTAINER even though Azure blob versioning is a property of
 // the storage ACCOUNT, and this template gives a project exactly one. Keeping the per-bucket intent
 // visible in the tfvars is what lets the template aggregate it in one place, with one comment
@@ -425,6 +533,12 @@ func buildAzureContainers(buckets []types.ProjectStorageBucketConfig) []map[stri
 			"name":               b.Name,
 			"access_type":        accessType,
 			"versioning_enabled": b.Versioning,
+			// Emitted per container for the same reason versioning_enabled is: Azure CORS is a
+			// property of the storage ACCOUNT (blob_properties.cors_rule) and a project gets one
+			// account, so N answers must collapse to one rule — but the coarsening belongs in the
+			// template, next to the comment that explains it, not hidden in this builder (#1995).
+			// Honored on the other four clouds; azure was the only one dropping it.
+			"cors_origins": ensureStringSlice(b.CorsOrigins),
 		})
 	}
 	return result

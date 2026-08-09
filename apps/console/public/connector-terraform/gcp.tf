@@ -98,6 +98,8 @@ resource "google_service_account" "alethia" {
 #       grant management verbs only (create/delete/get/list/update/[set]IamPolicy).
 # NOTE: the templates use resource-level IAM bindings (zone-scoped external-dns; per-secret accessor;
 # per-GSA workloadIdentityUser), so the provisioner needs NO resourcemanager.projectIamAdmin.
+# The one grant that CANNOT be written resource-scoped is the keyless Cloud SQL app identity's —
+# see google_service_account.alethia_app_db below — so it is made HERE, once, by you, instead.
 # secretmanager.admin is KEPT predefined on purpose: dropping secretmanager.versions.access breaks the
 # google provider's secret-version refresh (AccessSecretVersion on read) — tighten only with a real-apply.
 resource "google_project_iam_member" "alethia_provisioner" {
@@ -116,6 +118,52 @@ resource "google_project_iam_member" "alethia_provisioner" {
   project = var.project_id
   role    = each.value
   member  = "serviceAccount:${google_service_account.alethia.email}"
+}
+
+# ── Keyless Cloud SQL app identity ─────────────────────────────────────────────────────────────
+# The account your APPLICATION workloads impersonate to reach Cloud SQL without a password. It is
+# created and granted HERE, by you, rather than by the Alethia provisioner — and that split is
+# forced, not stylistic:
+#
+#   `roles/cloudsql.client` and `roles/cloudsql.instanceUser` can only be granted at PROJECT scope. A
+#   Cloud SQL instance is not IAM-policy-bearing (the Admin API exposes no get/setIamPolicy on
+#   instances, and no google_sql_database_instance_iam_member exists), so the zone-scoped and
+#   per-secret trick used everywhere else has no Cloud SQL analogue. Writing a project binding needs
+#   resourcemanager.projects.setIamPolicy — owner-equivalent, and the whole point of the note above
+#   is that the provisioner does not hold it. Granting it so the provisioner could write these two
+#   bindings would hand it the ability to grant itself anything.
+#
+#   GCP also has no principal-pattern IAM condition (no aws:PrincipalArn analogue), so the grant
+#   cannot be pre-written against a per-deployment identity either. A stable account, granted once,
+#   is the only shape left.
+#
+# TRADE-OFF worth knowing before you apply: this is ONE account for the whole project, so every
+# Alethia environment in it shares this database identity — an app in one environment could log in
+# to another environment's instance. What each may DO inside a database is still scoped by the SQL
+# GRANTs Alethia issues per database. If you need environments isolated at the identity level, run
+# them in separate Google Cloud projects.
+#
+# Pass the email this outputs (`cloud_sql_app_service_account_email`) to Alethia to turn keyless
+# Cloud SQL auth on. Leave it unset and your apps simply keep using password authentication.
+resource "google_service_account" "alethia_app_db" {
+  account_id   = "alethia-appdb"
+  display_name = "Alethia app → Cloud SQL (keyless)"
+  description  = "Impersonated by Alethia app workloads via GKE Workload Identity to log in to Cloud SQL with an IAM token instead of a password"
+
+  depends_on = [google_project_service.apis]
+}
+
+# Least-privilege: cloudsql.client (connect through the Auth Proxy) + cloudsql.instanceUser (IAM
+# login). Deliberately NOT cloudsql.admin / instanceAdmin — the app only ever CONNECTS, never
+# manages. Neither role carries setIamPolicy, so this account cannot escalate.
+resource "google_project_iam_member" "alethia_app_db" {
+  for_each = toset([
+    "roles/cloudsql.client",
+    "roles/cloudsql.instanceUser",
+  ])
+  project = var.project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.alethia_app_db.email}"
 }
 
 # ── Custom roles: management-only replacements for the data-plane-broad predefined admin roles. ──
@@ -174,8 +222,22 @@ resource "google_project_iam_custom_role" "project_reader" {
   role_id     = "alethiaProjectReader"
   project     = var.project_id
   title       = "Alethia Project Reader"
-  description = "Read project metadata for data.google_project (replaces roles/browser; no folder/org hierarchy reads)."
-  permissions = ["resourcemanager.projects.get"]
+  description = "Read project metadata and service-enablement state (replaces roles/browser; no folder/org hierarchy reads)."
+  # `serviceusage.services.get` is a READ, and the distinction is the whole point (#1844). Artifact
+  # Registry's per-repository scanning enum is INHERITED | DISABLED with no ENABLED, so the ON
+  # position only means anything when `containerscanning.googleapis.com` is enabled on the project.
+  # The template refuses that switch when the API is absent — which it can only do if it can SEE the
+  # answer.
+  #
+  # `serviceusage.services.enable` was refused (maintainer, 2026-08-03) and stays refused: it would
+  # let the provisioner turn on ANY API in the customer's project, including billable ones nobody
+  # asked for, and there is no narrower form of that verb. `get` has one: it reads a boolean about a
+  # service the customer already chose. Enabling the API remains an onboarding step the CUSTOMER
+  # performs.
+  permissions = [
+    "resourcemanager.projects.get",
+    "serviceusage.services.get",
+  ]
 }
 
 resource "google_project_iam_member" "alethia_provisioner_custom" {
@@ -242,6 +304,11 @@ output "credential_config" {
 
 output "service_account_email" {
   value = google_service_account.alethia.email
+}
+
+output "cloud_sql_app_service_account_email" {
+  description = "Keyless Cloud SQL app identity — set this as `cloud_sql_app_service_account_email` in Alethia to turn on password-free Cloud SQL auth. Leave it unset there and your apps keep using password authentication."
+  value       = google_service_account.alethia_app_db.email
 }
 
 output "project_number" {

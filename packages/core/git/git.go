@@ -244,7 +244,7 @@ func mapCloneError(repoURL string, err error) error {
 // commitSHA cannot be checked out. The caller must NEVER fall back to the moving
 // branch tip: a ref can advance after the static safety gate pins (and scans) a
 // commit (TOCTOU), so only the pinned bytes may be provisioned.
-func (g *GIT) CloneAndCheckoutCommit(ref, commitSHA string, force bool) error {
+func (g *GIT) CloneAndCheckoutCommit(ctx context.Context, ref, commitSHA string, force bool) error {
 	if strings.TrimSpace(commitSHA) == "" {
 		return fmt.Errorf("commit SHA is required for a pinned checkout of %s", g.RepoURL)
 	}
@@ -271,7 +271,7 @@ func (g *GIT) CloneAndCheckoutCommit(ref, commitSHA string, force bool) error {
 			opts.ReferenceName = refName
 			opts.SingleBranch = true
 		}
-		return gogit.PlainClone(g.LocalPath, false, opts)
+		return gogit.PlainCloneContext(ctx, g.LocalPath, false, opts)
 	}
 
 	var (
@@ -397,7 +397,14 @@ func (g *GIT) Pull(ctx context.Context) error {
 }
 
 // Push pushes local commits to the remote repository.
-func (g *GIT) Push() error {
+//
+// ctx bounds the network operation, for the reason Clone's doc records (#987): go-git's HTTP
+// transport has NO default client timeout, so a remote that accepts the TCP connection and then
+// stalls — a hung proxy, a black-holed firewall, a wedged git server — blocks forever. Push is the
+// GitOps WRITE path (addons_gitops.go, manifests_gen.go), and both callers already hold a live ctx;
+// without this the job could not be cancelled, had no deadline, and held its runner slot until the
+// process was killed (#2034).
+func (g *GIT) Push(ctx context.Context) error {
 	if g.Repo == nil {
 		return fmt.Errorf("repository not initialized")
 	}
@@ -418,7 +425,7 @@ func (g *GIT) Push() error {
 		Auth:       auth,
 	}
 
-	err = g.Repo.Push(pushOptions)
+	err = g.Repo.PushContext(ctx, pushOptions)
 	if err != nil && err != gogit.NoErrAlreadyUpToDate {
 		return fmt.Errorf("failed to push changes: %w", err)
 	}
@@ -584,8 +591,8 @@ func (g *GIT) ClearRepoContents() error {
 	return nil
 }
 
-// Bootstrap bootstraps the infrastructure-as-code repository.
-func (g *GIT) Bootstrap(templateRepo *GIT, repoFilesMap map[string]string, updateRepo bool, logger *utils.Logger) error {
+// Bootstrap bootstraps the infrastructure-as-code repository. ctx bounds the push it ends with.
+func (g *GIT) Bootstrap(ctx context.Context, templateRepo *GIT, repoFilesMap map[string]string, updateRepo bool, logger *utils.Logger) error {
 	logger.Info(fmt.Sprintf("Bootstrapping infrastructure-as-code git repository into %s...", g.LocalPath), "git")
 	changes := false
 	ignoreFiles := []string{".git", "variable-template"}
@@ -637,7 +644,7 @@ func (g *GIT) Bootstrap(templateRepo *GIT, repoFilesMap map[string]string, updat
 		if err := g.AddAndCommit("idp-installer: auto-committing changes"); err != nil {
 			return err
 		}
-		return g.Push()
+		return g.Push(ctx)
 	}
 
 	logger.Info("No changes found in client tf repository", "git")

@@ -23,7 +23,7 @@ package: **never report a pass on something we could not inspect.** Such cases a
 `not_evaluable` with a plain-language `coverage` note. A silent pass on an un-inspectable
 resource is exactly the false-PASS the verification claim must never make.
 
-## Controls (catalog `elench-controls-0.4.0`)
+## Controls (catalog `elench-controls-0.5.2`)
 
 `Evaluate` detects **every** recognized cloud present in the plan and runs the **union** of those
 providers' control sets — a single OpenTofu plan can mix clouds (an AWS EKS cluster alongside an Azure
@@ -70,7 +70,7 @@ no-controls allowlist: an Alibaba plan is genuinely inspected.
 | ID | Title | Hard-fail on |
 |----|-------|--------------|
 | `KEYLESS-001` | No static IAM access keys | creating an `aws_iam_access_key` (use OIDC federation instead) |
-| `OIDC-001` | Federated trust bound to a specific subject | a federated (`sts:AssumeRoleWithWebIdentity`) role whose trust **lacks a `:sub` condition**, or binds `sub` only with a **`StringLike` wildcard** (the "any repo can assume" footgun) |
+| `OIDC-001` | Federated trust bound to a specific subject | a federated role — trust `Action` covering `sts:AssumeRoleWithWebIdentity`, literally or via a wildcard grant (`sts:*`, `*`) — whose trust **lacks a `:sub` condition**, or binds `sub` only with a **`StringLike` wildcard** (the "any repo can assume" footgun) |
 | `LEASTPRIV-001` | No over-broad IAM grants (named patterns) | `Action:"*"` + `Resource:"*"`; `Allow` + `NotAction`; attaching `AdministratorAccess`/`PowerUserAccess`/`IAMFullAccess`. **Warns** on sensitive service wildcards (`iam:*`,`kms:*`,…) with `Resource:"*"`. **Not-evaluable** when the policy body is computed or only referenced by ARN. |
 
 **GCP**
@@ -94,7 +94,9 @@ no-controls allowlist: an Alibaba plan is genuinely inspected.
 WIF), so its controls assert keyless / bound-subject / least-privilege just like AWS. The RAM trust +
 policy documents share AWS IAM's `Effect/Action/Resource/Principal/Condition` shape (`Version:"1"`), so
 the AWS parser + `subjectIsBound` are reused — the only Alibaba difference is the trust **action**
-(`sts:AssumeRole`, not `sts:AssumeRoleWithWebIdentity`).
+(`sts:AssumeRole`, not `sts:AssumeRoleWithWebIdentity`). On both clouds the action match is
+wildcard-aware (`actionCovers`): a trust granting `sts:*` or `*` covers the assume call and stays
+in scope — it must never drop the role into the vacuous-pass arm (#2014).
 
 *Real-plan shape (verified against OpenTofu 1.12.3 + aliyun/alicloud v1.285.0; every `alibaba_*` corpus
 fixture is a real `tofu show -json` capture):* the writable trust attribute is `assume_role_policy_document`
@@ -238,8 +240,11 @@ The control logic is unit-tested with a fake checker; live API calls are integra
 The division of labor is strict: the **deterministic gate is the trusted verdict; an LLM may only
 propose**. `ReVerify(ctx, original, candidatePlan)` is the gate that makes an AI remediation loop
 safe — it evaluates a candidate (post-fix) plan and reports which original failures it `Resolved`,
-which are `StillFailing`, and which it made `NewlyFailing` (a regression). `Accepted` is true **only**
-when every original failure is resolved and nothing new fails. An LLM-proposed fix is offered to the
+which are `StillFailing`, which it made `NewlyFailing` (a regression), and which it made `Unproven`
+(un-inspectable where the failure was — e.g. an inline body moved into a computed data source;
+not_evaluable is never a pass, so that is a blind spot, not a fix). `Accepted` is true **only** when
+every original failure is provably resolved, nothing new fails, nothing is unproven, and the
+candidate's own verdict is not `not_evaluable`. An LLM-proposed fix is offered to the
 user only if it passes this gate — the model is never trusted to self-judge, and the loop cannot make
 the plan worse. (The LLM call itself is a higher layer; this package owns the deterministic decision.)
 

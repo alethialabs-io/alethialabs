@@ -33,6 +33,12 @@ regexes = [
   # deliberately not `_test.go` (the untagged pure half is used by the e2e_t2 half), so the
   # test-path allowlist below does not cover it.
   '''ALETHIA_E2E_SECRETS_XACCT[A-Z_]*''',
+  # `Aliyun_AES_256` is Alibaba KMS's ALGORITHM NAME — the value of `key_spec` on alicloud_kms_key
+  # (infra/templates/project/alibaba/secrets-encryption.tf, #2004). generic-api-key fires on it
+  # because the identifier contains "key" and the string is long and underscore-separated. It names
+  # a cipher; it carries no key material. Anchored to the exact literal rather than allowlisting
+  # `key_spec` or the file, so a real secret assigned nearby is still caught.
+  '''Aliyun_AES_256''',
   # An OpenTofu variable reference (`var.<name>`) is a reference, never a literal
   # secret. generic-api-key flags idioms like `minio_password = var.hetzner_s3_secret_key`
   # in the templates; a `var.` value is safe by construction.

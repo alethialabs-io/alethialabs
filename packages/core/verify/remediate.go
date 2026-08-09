@@ -25,8 +25,16 @@ type RemediationResult struct {
 	// NewlyFailing lists controls the candidate caused to fail that were not
 	// failing before — a remediation that breaks something else.
 	NewlyFailing []string `json:"newly_failing,omitempty"`
-	// Accepted is true only when every original failure is resolved AND nothing new
-	// fails. This is the single gate an LLM-proposed fix must pass.
+	// Unproven lists originally-failing controls the candidate made
+	// UN-INSPECTABLE (not_evaluable) rather than provably fixing — the classic
+	// dodge is moving an offending inline body into a computed data source or a
+	// var so the gate can no longer see it. Not_evaluable is never a pass, so
+	// these are not Resolved and they block acceptance.
+	Unproven []string `json:"unproven,omitempty"`
+	// Accepted is true only when every original failure is provably resolved
+	// (evaluated, not merely un-inspectable), nothing new fails, and the
+	// candidate's own verdict is not not_evaluable. This is the single gate an
+	// LLM-proposed fix must pass.
 	Accepted bool `json:"accepted"`
 	// Candidate is the full report for the candidate plan (for surfacing/evidence).
 	Candidate *Report `json:"candidate"`
@@ -43,11 +51,20 @@ func ReVerify(ctx context.Context, original *Report, candidate *tfjson.Plan) (*R
 
 	origFailing := failingSet(original)
 	candFailing := failingSet(cand)
+	candStatus := map[string]Status{}
+	for _, c := range cand.Controls {
+		candStatus[c.ID] = c.Status
+	}
 
 	for id := range origFailing {
-		if candFailing[id] {
+		switch {
+		case candFailing[id]:
 			res.StillFailing = append(res.StillFailing, id)
-		} else {
+		case candStatus[id] == StatusNotEvaluable:
+			// The gate could not SEE this control in the candidate — that is
+			// not a fix, it is a blind spot where the failure was (#2022).
+			res.Unproven = append(res.Unproven, id)
+		default:
 			res.Resolved = append(res.Resolved, id)
 		}
 	}
@@ -60,8 +77,15 @@ func ReVerify(ctx context.Context, original *Report, candidate *tfjson.Plan) (*R
 	slices.Sort(res.Resolved)
 	slices.Sort(res.StillFailing)
 	slices.Sort(res.NewlyFailing)
+	slices.Sort(res.Unproven)
 
-	res.Accepted = len(res.StillFailing) == 0 && len(res.NewlyFailing) == 0
+	// A not_evaluable candidate VERDICT is refused outright, even when the
+	// originally-failing controls themselves came back evaluable: the receipt
+	// for this plan would prove nothing, and StatusNotEvaluable is documented
+	// as never-a-pass. The per-control Unproven check alone would miss a
+	// blind spot that appeared on a control outside the original failure set.
+	res.Accepted = len(res.StillFailing) == 0 && len(res.NewlyFailing) == 0 &&
+		len(res.Unproven) == 0 && cand.Verdict != StatusNotEvaluable
 	return res, nil
 }
 

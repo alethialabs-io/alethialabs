@@ -75,6 +75,35 @@ func AllCatalogAddOns() ([]types.AddOnInstall, error) {
 	return addons, nil
 }
 
+// CatalogAddOn returns ONE add-on's install spec from the same generated fixture AllCatalogAddOns
+// reads — the runner-facing shape the console's `resolveAddOnInstall` actually emits, knob defaults
+// already merged.
+//
+// It exists so the LEAN tier stops restating what the generated artifact already holds. The lean
+// seed used to be a hand-written literal (chart coordinates plus `Values: map[string]interface{}{}`),
+// and on 2026-07-16 #643 gave reloader real knob defaults: catalog.ts, addon_catalog.json and
+// t2_config_snapshot.hetzner.json were all regenerated, the Go literal was not, and it emitted empty
+// values for ~3 weeks while claiming in its own doc comment to emit "the exact camelCase shape the
+// console's resolveAddOnInstall emits". Deriving makes that drift class UNREPRESENTABLE rather than
+// merely detectable — the same bargain the full surface already took.
+//
+// Fail-closed for the same reason AllCatalogAddOns is: an unknown id returns an error rather than a
+// zero-valued spec, because a silently empty add-on is a provisioning run that installs nothing and
+// reports green.
+func CatalogAddOn(id string) (types.AddOnInstall, error) {
+	addons, err := AllCatalogAddOns()
+	if err != nil {
+		return types.AddOnInstall{}, err
+	}
+	for _, a := range addons {
+		if a.ID == id {
+			return a, nil
+		}
+	}
+	return types.AddOnInstall{}, fmt.Errorf(
+		"add-on %q is not in the catalog fixture (regenerate: pnpm -F console export:addon-catalog)", id)
+}
+
 // expectedCatalogSize mirrors the console's B0.3 SSOT count guard (ADDON_CATALOG.length === 18).
 // A fixture with fewer entries means the export is stale or partial — fail rather than under-test.
 //

@@ -4,8 +4,6 @@
 package cmd
 
 import (
-	"os"
-
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 	"github.com/spf13/cobra"
@@ -66,7 +64,7 @@ var projectPlanCmd = &cobra.Command{
 		if projectPlanWait {
 			ui.JobQueued("PLAN", job.ID)
 			if err := waitForJob(apiClient, job.ID); err != nil {
-				os.Exit(1)
+				exitFunc(1)
 			}
 		} else {
 			ui.JobQueued("PLAN", job.ID)

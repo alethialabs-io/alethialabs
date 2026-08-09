@@ -64,7 +64,7 @@ export function CreateOrgForm() {
 	if (done) {
 		return (
 			<div className="space-y-3 rounded-lg border p-4">
-				<h2 className="text-sm font-medium text-green-600 dark:text-green-500">
+				<h2 className="text-sm font-medium text-foreground">
 					Org created
 				</h2>
 				<p className="text-sm text-muted-foreground">

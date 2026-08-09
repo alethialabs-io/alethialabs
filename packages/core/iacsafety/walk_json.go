@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/hashicorp/hcl/v2"
 	"github.com/zclconf/go-cty/cty"
@@ -28,13 +29,18 @@ import (
 //   - ANY object key named "provisioner" is an error;
 //   - the keys "external" / "http" / "terraform_remote_state" directly under
 //     a "data" key (a data-source type position — top level, inside a check
-//     block, or anywhere else) draw the same findings as the native path.
+//     block, or anywhere else) draw the same findings as the native path;
+//   - an "exec" key anywhere under a "provider" key (the exec credential
+//     plugin: kubernetes accepts it directly, helm nested under kubernetes) —
+//     scoped to provider objects so a resource's exec (a liveness probe, say)
+//     is not flagged.
 //
 // The raw sweep is the ONLY emitter of those findings for JSON (the schema
 // walk only records implied providers), so structural and raw detection never
 // double-report. Known trade-off (fail-closed by design): a user-data map
-// that coincidentally has a "provisioner" key, or a "data" map with an
-// "external"/"http"/"terraform_remote_state" key, is flagged too.
+// that coincidentally has a "provisioner" key, a "data" map with an
+// "external"/"http"/"terraform_remote_state" key, or a "provider" map with an
+// "exec" key, is flagged too.
 
 var jsonTopSchema = &hcl.BodySchema{
 	Blocks: []hcl.BlockHeaderSchema{
@@ -58,6 +64,10 @@ var jsonCheckSchema = &hcl.BodySchema{
 	Blocks: []hcl.BlockHeaderSchema{
 		{Type: "data", LabelNames: []string{"type", "name"}},
 	},
+}
+
+var jsonProviderMetaSchema = &hcl.BodySchema{
+	Attributes: []hcl.AttributeSchema{{Name: "provider"}},
 }
 
 var jsonTerraformSchema = &hcl.BodySchema{
@@ -99,6 +109,7 @@ func (s *scanner) scanJSONFile(path, moduleDir string) {
 				if len(blk.Labels) > 0 {
 					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
 				}
+				s.recordJSONProviderMetaArg(blk.Body, rel)
 				// Only a `resource` provisions anything (see walk.go).
 				if blk.Type == "resource" && len(blk.Labels) > 1 {
 					s.recordResource(blk.Labels[0], blk.Labels[1], moduleDir)
@@ -112,6 +123,7 @@ func (s *scanner) scanJSONFile(path, moduleDir string) {
 				if len(blk.Labels) > 0 {
 					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
 				}
+				s.recordJSONProviderMetaArg(blk.Body, rel)
 			case "module":
 				s.walkJSONModuleBlock(blk, rel, moduleDir)
 			case "output":
@@ -121,8 +133,10 @@ func (s *scanner) scanJSONFile(path, moduleDir string) {
 					s.recordOutput(blk.Labels[0], moduleDir)
 				}
 			case "provider":
+				// The label IS the provider local name — record it verbatim,
+				// never via the type-prefix underscore split.
 				if len(blk.Labels) > 0 {
-					s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange.Start.Line)
+					s.recordImpliedProviderRef(blk.Labels[0], rel, blk.DefRange.Start.Line)
 				}
 			case "check":
 				s.walkJSONCheckBlock(blk, rel)
@@ -149,6 +163,32 @@ func (s *scanner) walkJSONCheckBlock(blk *hcl.Block, rel string) {
 		if inner.Type == "data" && len(inner.Labels) > 0 {
 			s.recordImpliedUse(inner.Labels[0], rel, inner.DefRange.Start.Line)
 		}
+		if inner.Type == "data" {
+			s.recordJSONProviderMetaArg(inner.Body, rel)
+		}
+	}
+}
+
+// recordJSONProviderMetaArg is the JSON twin of recordProviderMetaArg. In JSON
+// syntax the meta-argument is a string ("evilprov" or "evilprov.alias"); a
+// hcl JSON string evaluated with a nil context yields its raw source, so a
+// "${evilprov.alias}" template spelling arrives verbatim and the wrapper is
+// stripped before taking the reference's root name. A non-string value is not
+// a provider reference OpenTofu would accept, so nothing can execute from it.
+func (s *scanner) recordJSONProviderMetaArg(body hcl.Body, rel string) {
+	content, _, _ := body.PartialContent(jsonProviderMetaSchema)
+	attr, ok := content.Attributes["provider"]
+	if !ok {
+		return
+	}
+	v, d := attr.Expr.Value(nil)
+	if d.HasErrors() || !v.Type().Equals(cty.String) || v.IsNull() {
+		return
+	}
+	raw := strings.TrimSpace(v.AsString())
+	raw = strings.TrimSuffix(strings.TrimPrefix(raw, "${"), "}")
+	if segs := splitDots(raw); len(segs) > 0 {
+		s.recordImpliedProviderRef(segs[0], rel, attr.Range.Start.Line)
 	}
 }
 
@@ -277,6 +317,9 @@ func (s *scanner) sweepJSONDangerousKeys(path, rel string) {
 		case "terraform_remote_state":
 			s.addFinding(SeverityWarning, RuleRemoteStateDataSource, rel, hit.line,
 				`data "terraform_remote_state" reads arbitrary remote state during plan`)
+		case "exec":
+			s.addFinding(SeverityError, RuleExecCredentialPlugin, rel, hit.line,
+				`"exec" key in a provider configuration: the exec credential plugin runs an arbitrary command during plan`)
 		}
 	}
 }
@@ -296,10 +339,12 @@ var jsonDataSourceKeys = map[string]bool{
 }
 
 // jsonDangerousKeys streams JSON tokens and returns every dangerous object
-// key at any nesting depth: "provisioner" anywhere, and any key in
-// jsonDataSourceKeys whose enclosing container is the value of a "data" key.
-// Arrays propagate their key downward (hcl JSON treats an array of objects as
-// repeated blocks, so `"data": [{"external": …}]` must match too).
+// key at any nesting depth: "provisioner" anywhere, any key in
+// jsonDataSourceKeys whose enclosing container is the value of a "data" key,
+// and "exec" anywhere under a "provider" key (any ancestor — helm nests the
+// credential plugin one level deeper than kubernetes). Arrays propagate their
+// key downward (hcl JSON treats an array of objects as repeated blocks, so
+// `"data": [{"external": …}]` must match too).
 func jsonDangerousKeys(data []byte) ([]jsonKeyHit, error) {
 	type frame struct {
 		isObject     bool
@@ -355,7 +400,15 @@ func jsonDangerousKeys(data []byte) ([]jsonKeyHit, error) {
 		top := &stack[len(stack)-1]
 		if top.keyNext {
 			if k, ok := tok.(string); ok {
-				if k == "provisioner" || (top.containerKey == "data" && jsonDataSourceKeys[k]) {
+				underProvider := false
+				for _, f := range stack {
+					if f.containerKey == "provider" {
+						underProvider = true
+						break
+					}
+				}
+				if k == "provisioner" || (top.containerKey == "data" && jsonDataSourceKeys[k]) ||
+					(k == "exec" && underProvider) {
 					out = append(out, jsonKeyHit{key: k, line: lineAtOffset(data, dec.InputOffset())})
 				}
 				top.pendingKey = k

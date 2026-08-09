@@ -432,45 +432,47 @@ var argocdURLGates = map[string]providerDecision{
 		installedReason: "installed — ArgoCD is exposed over the ALB ingress (ACM certificate present).",
 		skippedReason:   awsArgocdURLSkipReason,
 	},
-	// GCP's predicate is its own certificate: installArgoCD renders the `gce` Ingress only when the
-	// GLOBAL Google-managed SSL certificate exists, because `ingress.gcp.kubernetes.io/pre-shared-cert`
-	// is the only way to put TLS on it without a second cert-manager stack, and a GKE Ingress with no
-	// certificate would serve the ArgoCD API over plain HTTP on the public internet.
+	// GCP converged onto cert-manager (#1858), so its predicate is no longer a certificate output —
+	// there isn't one. `google_compute_managed_ssl_certificate` and the `pre-shared-cert` annotation
+	// that named it are both deleted; the GKE Ingress now carries `spec.tls` and the GCE controller
+	// reads the Secret cert-manager writes.
 	//
-	// The skip reason is SPECIFIC rather than the shared default: on GCP the missing piece is a
-	// switch the operator can turn on (the canvas certificate switch → `cloud_dns_managed_certificate`),
-	// not an absent capability, and "no managed ingress on this cloud yet" would now be a lie.
+	// ⚠️ MIRRORS THE EMITTER, EVERY TERM, same as azure below. installArgoCD renders this inside
+	// `vc.DNS.Enabled && vc.DNS.DomainName != ""` and then only when
+	// `gkeCluster != "" && certManagerWillIssue`. The cluster term is not ceremony: a deploy with DNS
+	// and cert-manager but no GKE cluster emits nothing, and a gate that skipped it would report an
+	// ingress that does not exist — #1831 on a second cloud.
 	//
-	// The DNS conjuncts are DEFENCE IN DEPTH here rather than a live fix, and are stated anyway so
-	// the AWS bug cannot be reintroduced on this cloud by a later edit: `cloud_dns_enabled` is
-	// `config.DNS.Enabled` verbatim and the certificate output is `length(module.cloud_dns) > 0 ?
-	// … : null`, so a non-empty certificate name already implies DNS was on — today.
+	// CertManagerEnabled() is CALLED, not restated. It already folds in the managed-certificate
+	// switch, DNS, the domain and the per-cloud solver.
 	"gcp": {
 		installed: func(f *InfraFacts) bool {
-			return f.DNSEnabled && f.DomainName != "" && f.GCPManagedCertName != ""
+			return f.DNSEnabled && f.DomainName != "" && f.ClusterName != "" && f.CertManagerEnabled()
 		},
-		installedReason: "installed — ArgoCD is exposed over a GKE Ingress (`gce` class) fronted by the Google-managed SSL certificate.",
+		installedReason: "installed — ArgoCD is exposed over a GKE Ingress (`gce` class), with TLS issued in-cluster by cert-manager and served from a Kubernetes Secret.",
 		skippedReason:   gcpArgocdURLSkipReason,
 	},
 	"azure": {
-		// Azure now HAS a managed ingress (AGIC + the Application Gateway) and still has no ArgoCD
-		// URL, and the blocker is TLS rather than ingress. An Application Gateway listener
-		// terminates HTTPS from a certificate on the gateway or in Key Vault, and the only
-		// certificate this template can issue today is the wrong product entirely (#1825 — a
-		// purchased App Service certificate that binds to neither AKS nor an Application Gateway).
-		// Publishing the ArgoCD ADMIN console over the plaintext :80 listener instead is not an
-		// option worth having.
+		// THE FLIP THE PREVIOUS LANE PROMISED (#1825). This was a constant-false predicate while
+		// the only certificate Azure could produce was a purchased App Service order that binds to
+		// neither AKS nor an Application Gateway. That resource is deleted; cert-manager issues the
+		// certificate in-cluster now, and AGIC lifts the Secret onto the gateway listener.
 		//
-		// So the predicate is constant-false rather than the entry being absent: a cloud absent
-		// from this table records "no managed ingress on this cloud yet", which stopped being true
-		// the moment AGIC landed and would send an operator looking for the wrong thing. It flips
-		// to a real predicate (an issued certificate reference) in the lane that closes #1825, and
-		// installedReason is written now so that flip is one line rather than a rewrite.
-		installed:       func(*InfraFacts) bool { return false },
-		installedReason: "installed — ArgoCD is exposed over the Application Gateway ingress.",
-		skippedReason: func(_ *InfraFacts) string {
-			return "an Application Gateway ingress controller is installed, but ArgoCD is not published through it: the gateway has no TLS certificate to terminate on (#1825), and the admin console is not served over plaintext HTTP — reach it with a port-forward and the admin password."
+		// ⚠️ MIRRORS THE EMITTER, EVERY TERM. installArgoCD renders this ingress inside
+		// `vc.DNS.Enabled && vc.DNS.DomainName != ""` and then only when `agwName != "" &&
+		// certManagerWillIssue`. All four are here. Checking a subset is #1831 exactly: that gate
+		// tested one of three conditions and reported "installed — exposed over the ALB ingress"
+		// for a deploy that emitted no ingress at all, and wafDecision read the lie downstream.
+		//
+		// CertManagerEnabled() is called rather than restated — the same method the emitter calls,
+		// the render template gates on, and certManagerDecision reads. It already folds in the
+		// managed-certificate switch, DNS, the domain and the per-cloud solver, so spelling those
+		// out here would be four more chances to drift.
+		installed: func(f *InfraFacts) bool {
+			return f.DNSEnabled && f.DomainName != "" && f.AzureAppGatewayName != "" && f.CertManagerEnabled()
 		},
+		installedReason: "installed — ArgoCD is exposed over the Application Gateway ingress, with TLS issued in-cluster by cert-manager and lifted onto the listener by AGIC.",
+		skippedReason:   azureArgocdURLSkipReason,
 	},
 }
 
@@ -481,8 +483,38 @@ func gcpArgocdURLSkipReason(f *InfraFacts) string {
 		return "DNS is disabled for this project — the GKE Ingress is only rendered for a DNS hostname, so no managed ArgoCD URL exists however the certificate switch is set; access ArgoCD via port-forward + the admin password."
 	case f.DomainName == "":
 		return "no domain is configured — the GKE Ingress has no hostname to serve, so no managed ArgoCD URL exists; set a DNS domain, or access ArgoCD via port-forward + the admin password."
+	case f.ClusterName == "":
+		return "no GKE cluster was provisioned for this project — there is nothing for a GKE Ingress to run on, so no managed ArgoCD URL exists."
+	case !f.CertManagerEnabled():
+		// Delegates rather than restating, so "you left the switch off" / "this cloud has no solver"
+		// / "the identity output is missing" stay one sentence each, written once. Same shape as
+		// azureArgocdURLSkipReason.
+		return "the GKE cluster is provisioned, but nothing will issue its TLS certificate: " + certManagerSkipReason(f) + " The GKE Ingress sets allow-http=false, so it would serve nothing at all rather than fall back to plaintext — use port-forward + the admin password."
 	}
-	return "no Google-managed SSL certificate was provisioned — turn the certificate switch on (with DNS and a domain) to expose ArgoCD over a GKE Ingress; until then use port-forward + the admin password."
+	return ""
+}
+
+// azureArgocdURLSkipReason names WHICH of the four terms was missing, keyed on the first failing
+// one. Azure has more distinct ways to not get a URL than the other clouds, and they need different
+// things done about them: two are settings, one is a paid opt-in, and one is a per-cloud capability
+// the operator cannot change at all. Collapsing them would tell someone to turn on a switch that is
+// already on.
+//
+// The cert-manager arm delegates to certManagerSkipReason rather than restating it, so "the switch
+// is off" / "this cloud has no solver" / "the identity output is missing" stay one sentence each,
+// written once.
+func azureArgocdURLSkipReason(f *InfraFacts) string {
+	switch {
+	case !f.DNSEnabled:
+		return "DNS is disabled for this project — the Application Gateway ingress is only rendered for a DNS hostname, so no managed ArgoCD URL exists however the certificate switch is set; access ArgoCD via port-forward + the admin password."
+	case f.DomainName == "":
+		return "no domain is configured — the Application Gateway ingress has no hostname to serve, so no managed ArgoCD URL exists; set a DNS domain, or access ArgoCD via port-forward + the admin password."
+	case f.AzureAppGatewayName == "":
+		return "no Application Gateway is provisioned for this project — a v2 gateway is a standing hourly cost, so it is opt-in (azure_application_gateway_enabled, which follows the WAF switch when unset) and needs a template-provisioned VNet to carve its dedicated subnet; until then use port-forward + the admin password."
+	case !f.CertManagerEnabled():
+		return "the Application Gateway is provisioned, but nothing will issue its TLS certificate: " + certManagerSkipReason(f) + " ArgoCD is not published over the gateway's plaintext listener, so use port-forward + the admin password."
+	}
+	return ""
 }
 
 // awsArgocdURLSkipReason names which half of the AWS gate was missing. The certificate arm
@@ -508,10 +540,11 @@ func argocdURLDecision(f *InfraFacts) InfraServiceDecision {
 }
 
 // wafDecision records whether the project's web ACL is ATTACHED to anything — the honest
-// answer to "I turned the WAF on, is traffic actually being filtered?". Every cloud's template
-// can BUILD a WAF construct behind the canvas switch (#1810), but building one and attaching
-// one are different facts, and until now nothing recorded the difference: a project could carry
-// a web ACL, a bill for it, and zero inspected requests.
+// answer to "I turned the WAF on, is traffic actually being filtered?". Three clouds' templates
+// BUILD a WAF construct behind the canvas switch (#1810) — aws, gcp and azure — but building one
+// and attaching one are different facts, and until now nothing recorded the difference: a project
+// could carry a web ACL, a bill for it, and zero inspected requests. Hetzner sells none, and
+// Alibaba's offer is withdrawn (#1841), so on both the honest answer is that nothing is built.
 //
 // On AWS the attach is the `alb.ingress.kubernetes.io/wafv2-acl-arn` annotation installArgoCD puts
 // on the ArgoCD server ingress; on GCP it is a BackendConfig whose `spec.securityPolicy.name` names
@@ -617,31 +650,30 @@ func wafWebACLRef(f *InfraFacts) string {
 		// template at apply time. The reference is exported so the deploy can REPORT the
 		// attachment honestly, not to perform it.
 		return f.AzureWAFPolicyID
-	case "alibaba":
-		// EXPORTED, DELIBERATELY UNATTACHED. The template buys a WAF 3.0 postpaid instance
-		// behind the canvas switch and can bind nothing to it (it has no `wafAttachments` entry).
-		// The reference is read anyway because the alternative is worse: with no output, "the
-		// switch is off" and "you are paying for a firewall that inspects nothing" are the same
-		// record.
-		return f.AlibabaWAFInstanceID
 	default:
-		// Only hetzner is left, and it sells no managed WAF at all — there is nothing to export.
-		// Every other cloud now exports a reference: aws and gcp attach theirs to the ingress,
-		// azure's is bound by the template, and alibaba's is bound by nothing (which is exactly
-		// why it is exported).
+		// hetzner and alibaba, for DIFFERENT reasons, both of them settled: Hetzner sells no
+		// managed WAF at all, and Alibaba's offer is withdrawn (#1841) because WAF 3.0 is an
+		// account-level purchase a per-project state model cannot own. Neither builds anything,
+		// so neither has a reference to export. The three clouds that do — aws and gcp attach
+		// theirs to the ingress, azure's is bound by the template — all carry a `wafAttachments`
+		// entry, which is why the unattachable arm below is now a backstop rather than a live path.
 		return ""
 	}
 }
 
-// wafUnattachableReason explains a built-but-unbindable WAF, keyed on the cloud so the operator
-// learns whether to wait for a lane or to stop paying for the instance.
-func wafUnattachableReason(provider, ref string) string {
-	switch provider {
-	case "alibaba":
-		return fmt.Sprintf("a WAF 3.0 instance (%s) is provisioned and billed for this project and NOTHING is behind it — the pinned alicloud provider binds a hostname only in CNAME mode (alicloud_wafv3_domain), whose origin is the ingress load balancer's address, which does not exist until after the cluster is up; it exposes no resource at all for WAF 3.0's cloud-native mode, the one that binds a load balancer directly. Turn the WAF switch off, or put the instance in front of your ingress from the WAF console.", ref)
-	default:
-		return fmt.Sprintf("a web ACL (%s) was built and nothing on this cloud can attach it yet — it exists, is billed, and inspects nothing.", ref)
-	}
+// wafUnattachableReason explains a built-but-unbindable WAF: a cloud exported a reference and has no
+// `wafAttachments` entry to bind it with.
+//
+// UNREACHABLE TODAY, ON PURPOSE. Alibaba was its only live caller and its offer is withdrawn
+// (#1841), so every cloud that now exports a reference also has an attachment site. It stays because
+// it is the fail-closed half of wafDecision: the next lane to export a reference before wiring its
+// attachment reports the WAF UNATTACHED here rather than inheriting another cloud's "attached"
+// claim. Deleting it would turn that lane's first deploy into a silent fail-open.
+// The provider is deliberately unnamed: withdrawing Alibaba's offer (#1841) removed the only
+// per-cloud branch this had, and the generic sentence names no cloud. The parameter stays so the
+// next lane that needs a per-cloud reason re-adds a `switch` rather than changing every call site.
+func wafUnattachableReason(_, ref string) string {
+	return fmt.Sprintf("a web ACL (%s) was built and nothing on this cloud can attach it yet — it exists, is billed, and inspects nothing.", ref)
 }
 
 // wafNoACLReason explains why there was no web ACL reference to attach, keyed on the cloud so
@@ -659,7 +691,13 @@ func wafNoACLReason(provider string) string {
 	case "azure":
 		return "no WAF policy was built — turn the WAF switch on for this project to create an Application Gateway WAF policy; the template then also provisions the Application Gateway it binds to."
 	case "alibaba":
-		return "no WAF instance was built — turn the WAF switch on for this project to provision Alibaba's WAF 3.0 instance. Note that nothing binds it to your traffic yet, so it would filter nothing."
+		// NOT "turn the switch on" — there is no switch to turn on any more, and promising one
+		// would send the operator looking for a control the canvas now renders disabled. The offer
+		// is withdrawn (#1841): WAF 3.0 is an account-level purchase (`alicloud_wafv3_instance`
+		// takes no arguments at all, and its create/delete are CreatePostpaidInstance /
+		// ReleaseInstance), so one project destroying it would release the firewall for every other
+		// project in the account.
+		return "Alethia does not provision a WAF on Alibaba Cloud — WAF 3.0 is an account-level purchase there, and a project that owned it would release the whole account's firewall when it was destroyed. Buy a WAF 3.0 instance in your account and put it in front of your ingress from the WAF console."
 	case "hetzner":
 		return "Hetzner sells no managed WAF — run your own edge (or an in-cluster WAF add-on) if you need request filtering."
 	default:

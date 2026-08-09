@@ -32,6 +32,17 @@ resource "alicloud_db_instance" "this" {
 
   db_instance_storage_type = "cloud_essd"
 
+  # Serverless scaling range (#1996). Rendered only when a bound was actually set — an empty block
+  # is not "no serverless", it declares the instance serverless with zero capacity, and adding one
+  # unconditionally would change every existing fixed-size instance.
+  dynamic "serverless_config" {
+    for_each = var.serverless_min_capacity > 0 || var.serverless_max_capacity > 0 ? [1] : []
+    content {
+      min_capacity = var.serverless_min_capacity
+      max_capacity = var.serverless_max_capacity
+    }
+  }
+
   tags = var.tags
 }
 

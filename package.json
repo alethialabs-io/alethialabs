@@ -55,11 +55,12 @@
     "wt:rm": "bash scripts/worktree.sh --remove",
     "wt:release": "bash scripts/worktree.sh --release",
     "wt:steal": "bash scripts/worktree.sh --steal",
+    "branch:prune": "bash scripts/branch-prune.sh",
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "devDependencies": {
     "prettier": "^3.9.6",
-    "turbo": "^2.10.7",
+    "turbo": "^2.10.8",
     "typescript": "5.9.3"
   },
   "packageManager": "pnpm@9.15.0",
@@ -70,8 +71,8 @@
     "overrides": {
       "@ai-sdk/provider": "3.0.13",
       "@ai-sdk/provider-utils": "4.0.37",
-      "react": "19.2.3",
-      "react-dom": "19.2.3",
+      "react": "19.2.8",
+      "react-dom": "19.2.8",
       "@types/react": "19.2.8",
       "@types/react-dom": "19.2.3",
       "zod": "4.4.3",

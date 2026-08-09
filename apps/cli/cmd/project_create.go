@@ -66,14 +66,14 @@ func promptRegion() (string, error) {
 		return "", err
 	}
 	var region string
-	err := ui.NewForm(
+	err := runHuhForm(
 		huh.NewGroup(
 			huh.NewInput().
 				Title("Region").
 				Description("The cloud region to provision into (e.g. eu-west-1)").
 				Value(&region),
 		),
-	).Run()
+	)
 	return strings.TrimSpace(region), err
 }
 

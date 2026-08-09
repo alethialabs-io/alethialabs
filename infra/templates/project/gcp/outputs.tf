@@ -47,8 +47,8 @@ output "cloud_sql_iam_user" {
 }
 
 output "cloud_sql_app_gsa_email" {
-  description = "Email of the app Cloud SQL Workload-Identity GSA — annotated onto the generated app KSA (#722)"
-  value       = local.enable_app_db_iam ? google_service_account.app_db[0].email : null
+  description = "Email of the app Cloud SQL Workload-Identity GSA — annotated onto the generated app KSA (#722). The account adopted via cloud_sql_app_service_account_email; null when keyless is not wired."
+  value       = local.enable_app_db_iam ? data.google_service_account.app_db_adopted[0].email : null
 }
 
 # Keyless bootstrap (#722 R5): the Secret Manager secret id holding the BUILT_IN admin (default user)
@@ -138,21 +138,7 @@ output "cloud_dns_zone_name" {
   value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].zone_name : null
 }
 
-# The Google-managed SSL certificate. The module has exported its id since it was written and the
-# root swallowed it, so the certificate was created, billed, and reachable by nothing — the runner
-# had no way to learn it existed, let alone put it on an Ingress.
-#
-# The NAME is the load-bearing one: `ingress.gcp.kubernetes.io/pre-shared-cert` takes a
-# comma-separated list of GLOBAL certificate NAMES, not ids or self links.
-output "cloud_dns_managed_certificate_name" {
-  description = "Name of the Google-managed SSL certificate — the value the platform Ingress's ingress.gcp.kubernetes.io/pre-shared-cert annotation takes. Null when no certificate was requested; the ArgoCD ingress (and therefore the managed ArgoCD URL) renders only when it is present."
-  value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].managed_certificate_name : null
-}
 
-output "cloud_dns_managed_certificate_id" {
-  description = "Fully-qualified id of the Google-managed SSL certificate, for anything that addresses it outside the cluster's own project. Null when no certificate was requested."
-  value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].managed_certificate_id : null
-}
 
 #########################################################################
 ##                     Cloud Armor Outputs                             ##

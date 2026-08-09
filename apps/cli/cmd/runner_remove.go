@@ -5,7 +5,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
@@ -32,7 +31,7 @@ var runnerRemoveCmd = &cobra.Command{
 			}
 			if runnerID == "" {
 				fmt.Println("Please select a specific runner, not 'Any available'.")
-				os.Exit(1)
+				exitFunc(1)
 			}
 		}
 

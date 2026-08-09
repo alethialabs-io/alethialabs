@@ -8,6 +8,7 @@
 
 import { Elements } from "@stripe/react-stripe-js";
 import type { StripeElementStyle, StripeElementsOptions } from "@stripe/stripe-js";
+import { RAMP_THEME } from "@repo/brand/ramp-srgb";
 import { useTheme } from "next-themes";
 import type { ReactNode } from "react";
 import { getStripePromise } from "@/lib/billing/stripe-client";
@@ -18,28 +19,30 @@ import { getStripePromise } from "@/lib/billing/stripe-client";
  * style shape (the split elements ignore the Elements-level `appearance`).
  */
 export function cardElementStyle(dark: boolean): StripeElementStyle {
+	const c = RAMP_THEME[dark ? "dark" : "light"];
 	return {
 		base: {
-			color: dark ? "#fafafa" : "#171717",
+			color: c.textPrimary,
 			fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif",
 			fontSize: "14px",
-			iconColor: dark ? "#a3a3a3" : "#737373",
-			"::placeholder": { color: dark ? "#737373" : "#a3a3a3" },
+			iconColor: c.textSecondary,
+			"::placeholder": { color: c.textTertiary },
 		},
-		invalid: { color: dark ? "#fafafa" : "#171717", iconColor: dark ? "#fafafa" : "#171717" },
+		invalid: { color: c.textPrimary, iconColor: c.textPrimary },
 	};
 }
 
 /** Grayscale + squared + Geist appearance for the Payment Element. */
 function appearanceFor(dark: boolean): StripeElementsOptions["appearance"] {
+	const c = RAMP_THEME[dark ? "dark" : "light"];
 	return {
 		theme: dark ? "night" : "stripe",
 		variables: {
-			colorPrimary: dark ? "#fafafa" : "#171717",
-			colorBackground: dark ? "#0a0a0a" : "#ffffff",
-			colorText: dark ? "#fafafa" : "#171717",
-			colorTextSecondary: dark ? "#a3a3a3" : "#737373",
-			colorDanger: dark ? "#fafafa" : "#171717",
+			colorPrimary: c.textPrimary,
+			colorBackground: c.surface,
+			colorText: c.textPrimary,
+			colorTextSecondary: c.textSecondary,
+			colorDanger: c.textPrimary,
 			borderRadius: "0px",
 			fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif",
 			fontSizeBase: "14px",
@@ -48,12 +51,12 @@ function appearanceFor(dark: boolean): StripeElementsOptions["appearance"] {
 		rules: {
 			".Input": {
 				borderRadius: "0px",
-				border: dark ? "1px solid #262626" : "1px solid #e5e5e5",
+				border: `1px solid ${c.border}`,
 				boxShadow: "none",
 			},
 			".Input:focus": {
 				boxShadow: "none",
-				border: dark ? "1px solid #fafafa" : "1px solid #171717",
+				border: `1px solid ${c.textPrimary}`,
 			},
 			".Tab, .Block, .CheckboxInput, .Label": { borderRadius: "0px" },
 		},

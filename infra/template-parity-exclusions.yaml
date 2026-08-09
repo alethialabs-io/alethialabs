@@ -1,0 +1,1574 @@
+exclusions:
+  # EMPTY, and that is a finding rather than an omission.
+  #
+  # This section is keyed on a VARIABLE NAME, and a per-cloud ceiling is the absence of one. Hetzner
+  # cannot envelope-encrypt Kubernetes Secrets — Talos holds etcd on self-managed VMs and Hetzner
+  # sells no KMS to bind a key to — but that ceiling has no variable to hang on, precisely because
+  # hetzner declares nothing for it. The first attempt to record it here named a variable that
+  # exists on no cloud, and the guard rejected the record. Correctly: a record for a phantom
+  # variable is exactly the stale-record shape the ratchet refuses.
+  #
+  # So capability-level ceilings live with their capability group in `uniform:` below, where the
+  # per-cloud names that DO exist are listed together. A ceiling keyed on a name nobody declares is
+  # unmeasurable, and an unmeasurable record is the thing this whole guard exists to stop.
+
+baseline:
+  - variable: ack_cluster_version
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ack_disk_category
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ack_disk_performance_level
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ack_disk_provisioned_iops
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ack_disk_size_gb
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ack_instance_types
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ack_node_capacity_type
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ack_node_desired_size
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ack_node_max_size
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ack_node_min_size
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ack_spot_price_limit
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: acm_certificate_enable
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: acr_sku
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: admin_kubeconfig_cert_lifetime
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_admin_group_object_ids
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_authorized_ip_ranges
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_cluster_version
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_disk_size_gb
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_enable_creator_admin
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_instance_types
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_node_desired_size
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_node_max_size
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_node_min_size
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_os_disk_type
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_spot_enabled
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_spot_eviction_policy
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_spot_max_price
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_spot_node_max_size
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aks_spot_node_min_size
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: alibaba_account
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: alidns_domain
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: alidns_enabled
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: alidns_managed_certificate
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: alidns_zone_name
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: allow_long_names
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: application_waf_enabled
+    on: "alibaba,aws"
+    off: "azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: artifact_registry_repos
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aws_account_id
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aws_elasticache_user_name
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: aws_managed_waf_rule_groups
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_application_gateway_capacity
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_application_gateway_enabled
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_cache_capacity
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_cache_family
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_cache_multi_az
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_cache_sku
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_cache_sku_name
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_allowed_cidrs
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_backup_retention_days
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_engine
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_engine_version
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_high_availability
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_iam_auth
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_port
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_sku_name
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_db_storage_mb
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_dns_domain
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_dns_enabled
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_dns_zone_name
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_waf_enabled
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: azure_waf_rules
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: bucket_configuration
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: buckets
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_armor_default_action
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_armor_enabled
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_armor_rules
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_dns_domain
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_dns_enabled
+    on: "aws,gcp,hetzner"
+    off: "alibaba,azure"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_dns_zone_name
+    on: "aws,gcp"
+    off: "alibaba,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_authorized_networks
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_backup_enabled
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_backup_retention_days
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_database_flags
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_default_username
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_disk_size
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_edition
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_engine
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_engine_version
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_high_availability
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_iam_auth
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_port
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_sql_tier
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloud_storage_buckets
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cloudfront_waf_enabled
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cluster_endpoint_public_access_cidrs
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cluster_log_retention_in_days
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: control_plane_arch
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: control_plane_count
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: control_plane_server_type
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cosmos_db_collections
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cosmos_db_consistency_level
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cosmos_db_continuous_backup_tier
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cosmos_db_kind
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cost_guard_allow_large_instances
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cost_guard_expiry_tag_keys
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cost_guard_max_disk_gb
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cost_guard_max_nodes
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cost_guard_max_rds_acu
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cost_guard_require_expiry_tag
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: cr_repos
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_azure_cache
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_azure_db
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_cloud_sql
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_cloud_storage
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_cosmos_db
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_elasticache_redis
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_elasticache_valkey
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_firestore
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_kvstore
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_memorystore
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_memorystore_valkey
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_mns
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_oss
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_ots
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_pubsub
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_rds
+    on: "alibaba,aws"
+    off: "azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_service_bus
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: create_storage_account
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: custom_iac_vars
+    on: "aws,azure,gcp"
+    off: "alibaba,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: custom_managed_waf_rule_groups
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: custom_secret_keepers
+    on: "alibaba,aws,azure,gcp"
+    off: "hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: custom_secrets
+    on: "alibaba,aws,azure,gcp"
+    off: "hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ddb_create
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ddb_global_create
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ddb_global_table_configuration
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ddb_table_configuration
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: dns_hosted_zone
+    on: "aws,hetzner"
+    off: "alibaba,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: dns_main_domain
+    on: "aws,hetzner"
+    off: "alibaba,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: dns_zone_ttl
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ec2_spot_service_role
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_create_lifecycle_policy
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_manage_registry_scanning_configuration
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_names_map
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_registry_scan_rules
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_registry_scan_type
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_repo_settings
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_repository_encryption_type
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_repository_image_scan_on_push
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_repository_image_tag_mutability
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_repository_lifecycle_policy
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_repository_read_access_arns
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_repository_read_write_access_arns
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ecr_repository_type
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_access_entries
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_ami_type
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_cluster_admins
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_cluster_version
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_disk_size
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_instance_types
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_ng_capacity_type
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_ng_desired_size
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_ng_max_size
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_ng_min_size
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_volume_iops
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: eks_volume_type
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: enable_karpenter
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: external_secrets_identity_name
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: external_secrets_identity_resource_group
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: external_secrets_service_account_email
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: firestore_database_type
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: firestore_location_id
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: firestore_point_in_time_recovery
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_cluster_version
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_disk_size_gb
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_disk_type
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_enable_autopilot
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_enable_private_endpoint
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_enable_private_nodes
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_instance_types
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_log_retention_days
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_master_authorized_cidr_blocks
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_node_desired_size
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_node_max_size
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_node_min_size
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_preemptible
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_spot
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_volume_iops
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: gke_volume_throughput
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: hcloud_token
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: helm_repo_pull_public_enabled
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: helm_repo_pull_target_role_arns
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: hetzner_s3_access_key
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: hetzner_s3_endpoint
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: hetzner_s3_region
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: hetzner_s3_secret_key
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: key_vault_purge_protection_enabled
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: kubernetes_version
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: kvstore_engine_version
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: kvstore_instance_class
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: kvstore_multi_az
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: location
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: memorystore_auth_enabled
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: memorystore_memory_size_gb
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: memorystore_redis_version
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: memorystore_tier
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: memorystore_transit_encryption_mode
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: memorystore_valkey_engine_version
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: memorystore_valkey_node_type
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: memorystore_valkey_replica_count
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: memorystore_valkey_shard_count
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: mns_queues
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: mns_topics
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: network_allowed_cidr_blocks
+    on: "alibaba,gcp,hetzner"
+    off: "aws,azure"
+    state: unreviewed
+    issue: "#2004"
+  - variable: network_cidr
+    on: "alibaba,gcp,hetzner"
+    off: "aws,azure"
+    state: unreviewed
+    issue: "#2004"
+  - variable: network_id
+    on: "alibaba,gcp,hetzner"
+    off: "aws,azure"
+    state: unreviewed
+    issue: "#2004"
+  - variable: oss_buckets
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: ots_tables
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: pod_cidr
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: pods_cidr_range
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: project_id
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_ack
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_acr
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_aks
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_artifact_registry
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_cr
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_ecr
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_eks
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_gke
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_network
+    on: "alibaba,gcp,hetzner"
+    off: "aws,azure"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_sqs
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_vnet
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: provision_vpc
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: pubsub_topics
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_allowed_cidr_blocks
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_backup_retention_days
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_backup_retention_period
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_cluster_parameters
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_config
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_default_username
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_engine
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_engine_version
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_extra_credentials
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_iam_auth_enabled
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_iam_irsa
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_instance_type
+    on: "alibaba,aws"
+    off: "azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_logs_exports
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_port
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: rds_scaling_config
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: redis_allowed_cidr_blocks
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: redis_allowed_security_group_ids
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: redis_automatic_failover_enabled
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: redis_cloudwatch_logs_enabled
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: redis_cluster_mode_enabled
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: redis_cluster_size
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: redis_engine_version
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: redis_family
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: redis_instance_type
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: redis_multi_az_enabled
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: region
+    on: "alibaba,aws,gcp,hetzner"
+    off: "azure"
+    state: unreviewed
+    issue: "#2004"
+  - variable: registry_provider
+    on: "alibaba,aws,azure,gcp"
+    off: "hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: registry_pull_provider
+    on: "alibaba,aws,azure,gcp"
+    off: "hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: registry_pull_target_role_arn
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: resources_tags
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: s3_create
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: secrets_provider
+    on: "alibaba,aws,azure,gcp"
+    off: "hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: secrets_xacct_provider
+    on: "alibaba,aws,azure,gcp"
+    off: "hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: secrets_xacct_target_role_arn
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: service_bus_queues
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: service_bus_sku
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: service_bus_topics
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: service_cidr
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: services_cidr_range
+    on: "gcp"
+    off: "alibaba,aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: single_cloud_nat
+    on: "alibaba,gcp"
+    off: "aws,azure,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: single_nat_gateway
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: sns_topics
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: sqs_iam_role_name
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: sqs_queues
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: sqs_username
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: storage_account_replication
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: storage_account_tier
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: storage_containers
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: subnet_ids
+    on: "alibaba,azure,gcp"
+    off: "aws,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: subscription_id
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: talos_version
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: valkey_create_valkey_user_and_secret
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: valkey_data_storage_max
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: valkey_ecpu_per_second_max
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: valkey_engine_version
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: valkey_snapshot_time
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vnet_allowed_cidr_blocks
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vnet_cidr
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vnet_id
+    on: "azure"
+    off: "alibaba,aws,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vpc_allowed_cidr_blocks
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vpc_cidr
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vpc_id
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vpc_private_route_table_ids
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vpc_private_subnet_ids
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vpc_public_subnet_ids
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vpc_single_nat_gateway
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: vswitch_count
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: waf_custom_rules
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: waf_default_action
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: waf_log_retention_days
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: waf_logging_enabled
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: waf_rate_limit_rules
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: waf_sampled_requests_enabled
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: waf_webacl_cloudwatch_enabled
+    on: "aws"
+    off: "alibaba,azure,gcp,hetzner"
+    state: unreviewed
+    issue: "#2004"
+  - variable: worker_arch
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: worker_count
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+  - variable: worker_server_type
+    on: "hetzner"
+    off: "alibaba,aws,azure,gcp"
+    state: unreviewed
+    issue: "#2004"
+
+uniform:
+  # ── Alibaba serverless / shard knobs (#1996) ──────────────────────────────────────
+  # Single-cloud because the CAPABILITY is, not because alibaba is ahead. min/max capacity is an
+  # Aurora Serverless v2 concept: aws wires it as rds_scaling_config, and azure and gcp provision
+  # FIXED-SIZE compute with no range to set — that ceiling is already recorded in
+  # infra/config-carriage-exclusions.yaml with the provider evidence. Alibaba was the one cloud that
+  # could express it and did not, which is why #1996 was debt rather than a ceiling.
+  #
+  # kvstore_shard_count is the same story on the cache: ApsaraDB exposes shard_count as its own
+  # argument, while azure's Managed Redis encodes topology in the SKU.
+  - variable: rds_serverless_min_capacity
+    reason: Serverless capacity range. Expressible on alibaba (serverless_config) and aws (rds_scaling_config, different name); azure and gcp provision fixed-size compute — see the ceiling in config-carriage-exclusions.yaml.
+  - variable: rds_serverless_max_capacity
+    reason: Serverless capacity range. Expressible on alibaba (serverless_config) and aws (rds_scaling_config, different name); azure and gcp provision fixed-size compute — see the ceiling in config-carriage-exclusions.yaml.
+  - variable: kvstore_shard_count
+    reason: ApsaraDB for Redis exposes shard_count as its own argument; azure's Managed Redis encodes topology in the SKU instead, so there is no equivalent knob to add there.
+
+  # #2004's own switches. Each cloud names its own — there is no shared spelling for "encrypt
+  # Secrets in etcd" — so the four are one capability under four names rather than four asymmetries.
+  # The capability itself is uniform: every cloud that CAN do it, does, by default.
+  # ── Kubernetes Secrets envelope encryption (#2004) — one capability, five answers ──
+  # ⚠️ CEILING, recorded here because it has no variable of its own: HETZNER CANNOT DO THIS. Talos
+  # holds etcd on self-managed VMs and Hetzner sells no KMS, so there is no managed key service to
+  # encrypt with. The other four all encrypt Secrets under a customer-managed key BY DEFAULT — aws
+  # through the upstream EKS module (create_kms_key), gcp/azure/alibaba as of #2004.
+  #
+  # The four names below are one capability spelled four ways, not four asymmetries.
+  - variable: eks_kms_key_users
+    reason: AWS spelling. The EKS module encrypts Secrets by default (create_kms_key); this names extra IAM principals allowed to use that key.
+  - variable: gke_secrets_encryption_enabled
+    reason: GCP spelling of the same capability — a Cloud KMS key bound via database_encryption.
+  - variable: gke_secrets_encryption_rotation_period
+    reason: GCP-only. Cloud KMS rotates on a period; the other providers' key resources express rotation differently or not at all.
+  - variable: aks_secrets_encryption_enabled
+    reason: Azure spelling of the same capability — a Key Vault key bound via key_management_service.
+  - variable: ack_secrets_encryption_enabled
+    reason: Alibaba spelling of the same capability — a KMS key bound via encryption_provider_key.
+
+  # ── Keyless app→database identity: GCP needs an input the others do not (#2099) ────
+  # ⚠️ CEILING, and the variable exists BECAUSE of it rather than in spite of it. Every cloud does
+  # password-free app→database auth; only GCP needs the operator to hand it an identity.
+  #
+  # roles/cloudsql.client and roles/cloudsql.instanceUser can only be granted at PROJECT scope: a
+  # Cloud SQL instance is not IAM-policy-bearing (the Admin API exposes no get/setIamPolicy on
+  # instances, and no google_sql_database_instance_iam_member exists in the provider), and Google's
+  # own IAM-Conditions recipe narrows to an instance by conditioning a project-level binding — the
+  # binding stays project-level. Writing one needs resourcemanager.projects.setIamPolicy, which is
+  # owner-equivalent and which the provisioner deliberately does not hold (#300). GCP also has no
+  # principal-pattern condition (no aws:PrincipalArn analogue), so the grant cannot be pre-written
+  # against a per-deployment identity either. A stable account, granted once by the customer at
+  # connect time and adopted here, is the only shape the provider leaves open.
+  #
+  # AWS and Azure need no counterpart variable: both scope the grant to the individual database —
+  # AWS via an IRSA role trusting the cluster OIDC provider with rds-db:connect on the DB resource
+  # ARN, Azure via an Entra administrator on the flexible server — so each creates its identity
+  # per environment during the apply. There is nothing for the operator to supply.
+  - variable: cloud_sql_app_service_account_email
+    reason: GCP-only by provider ceiling. Cloud SQL instances carry no IAM policy, so cloudsql.client/instanceUser are project-scoped only and the provisioner (which holds no resourcemanager.projects.setIamPolicy) cannot write them — the account is granted once in the customer's connector bootstrap and adopted. AWS scopes the equivalent to the DB resource ARN via IRSA and Azure via an Entra admin, so neither needs an operator-supplied identity.

@@ -31,6 +31,7 @@ import {
 	projectTopics,
 } from "@/lib/db/schema";
 import { appsPathSchema } from "@/lib/validations/apps-path";
+import { clusterNodeSizingBounds } from "@/lib/validations/project-form.schema";
 
 /** A component as it appears on the CLI wire — uniform across every kind. `config` is the
  * kind-specific column set as an open object (mirrors componentWire). */
@@ -94,7 +95,14 @@ const KINDS: Record<string, KindDef> = {
 	cluster: {
 		table: projectCluster,
 		singleton: true,
-		fields: createInsertSchema(projectCluster)
+		// The sizing bounds are IMPORTED, not restated. This registry builds a fresh insert
+		// schema and shares no validator with the canvas, so a bound added only there left
+		// `alethia project component set cluster node_min_size=-4` wide open — one definition,
+		// two write paths. The cross-field rule (min <= desired <= max) can't live here: it
+		// needs a `.superRefine`, and validateComponentFields introspects `.shape` to reject
+		// unknown keys, which a ZodEffects wrapper would empty out. CloudProvider.ValidateConfig
+		// is the backstop that catches it on this path.
+		fields: createInsertSchema(projectCluster, clusterNodeSizingBounds)
 			.pick({
 				cloud_identity_id: true,
 				region: true,
@@ -225,7 +233,11 @@ const KINDS: Record<string, KindDef> = {
 				cloud_identity_id: true,
 				region: true,
 				provider: true,
-				repository_url: true,
+				// `repository_url` is NOT here, and the omission is the point: it is a write-back slot
+				// the deploy fills with the registry it actually created (see the column's own comment
+				// in lib/db/schema/project-components.ts), which is why WIRE_EXCLUDE strips it from the
+				// config the runner reads. Accepting it from `--set` validated a value, stored it, and
+				// then overwrote it — input taken and discarded, with nothing to tell the caller.
 				// Typed columns since #1811, so `--set` reaches them the same way it reaches nosql's
 				// point_in_time_recovery. While they were provider_config keys the CLI could not
 				// touch them at all.

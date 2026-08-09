@@ -130,6 +130,17 @@ type DeployParams struct {
 // on failure. The deploy path then binds the handle to the KSA with the per-cloud annotation.
 type NamespaceIdentityProvisioner func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName, namespace string) (handle string, err error)
 
+// NamespaceIdentityDeprovisioner deletes the per-namespace tenant cloud identity a
+// NamespaceIdentityProvisioner created. It is the teardown counterpart and is injected by the runner for
+// the same reason: deleting a GSA / UAMI is a live keyless IAM-write whose auth SDK stays out of
+// packages/core. It takes no handle because every per-cloud identity name is DERIVED deterministically
+// from (clusterName, namespace) — teardown reconstructs it rather than depending on a handle the destroy
+// job's config snapshot does not carry.
+//
+// Idempotent by contract: an identity that is already gone is success, not an error, so a re-run of a
+// partially-failed teardown converges instead of wedging.
+type NamespaceIdentityDeprovisioner func(ctx context.Context, providerSlug string, config *types.ProjectConfig, clusterName, namespace string) error
+
 // KubeConnResolver resolves an EXISTING shared-Fabric cluster's control-plane connection (endpoint +
 // base64 CA) OUTPUT-FREE — by name, from the cloud API, using a keyless token the RUNNER mints. The
 // runner injects it into DeployParams so a placement (namespace/vcluster) can complete a no-tofu
@@ -470,6 +481,40 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		return nil, err
 	}
 
+	// Config validation — the seam ProviderTfvars never had (#1967). RunDeployV2 serves BOTH
+	// plan and apply (params.DryRun), so this one site refuses a bad value at plan time AND at
+	// apply time.
+	//
+	// It sits BELOW the placement dispatch on purpose, not beside ValidatePlacement. Every rule
+	// in cloud/validate.go is derived from a project template's own literals and may only ever
+	// refuse what that template would refuse. The dedicated path — the one this line is on — is
+	// the only one that renders those templates:
+	//
+	//   · placementNamespaceAWS deploys onto an EXISTING shared Fabric cluster by keyless
+	//     re-mint. No tofu runs, and it reads none of node_min/max/desired_size,
+	//     node_disk_size_gb or network.cidr_block. The canvas builds a cluster node for every
+	//     project regardless of placement, so those fields EXIST and can hold anything on a
+	//     namespace env — validating them there would refuse a project that deploys fine today,
+	//     against floors from a template that is never rendered.
+	//   · placementVcluster is the same story, and placementUnactivated already fails closed
+	//     with a message about the placement, which a sizing error would only obscure.
+	//
+	// BYO IaC is excluded for the reason ValidatePlacement is: a customer's own module owns its
+	// resource graph and our template floors say nothing about it.
+	//
+	// DELIBERATELY ASYMMETRIC, in the other direction too: this is the ONLY path that calls
+	// ValidateConfig. destroy.go, drift.go and state_import.go call ProviderTfvars as well, and
+	// they must NOT gain this check — a stack that was already applied carrying a bad value has
+	// to stay destroyable, or a config mistake becomes an un-teardownable stack with live cloud
+	// resources and a running bill.
+	//
+	// Neither half of that asymmetry is an oversight. Do not "complete" it later.
+	if !byoIac {
+		if err := provider.ValidateConfig(vc); err != nil {
+			return nil, err
+		}
+	}
+
 	stdout := params.Stdout
 	if stdout == nil {
 		stdout = os.Stdout
@@ -509,7 +554,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// self-contained.
 		cloneDir := filepath.Join(tmpRoot, "clone")
 		var restore func()
-		tfDir, byoTfvars, restore, err = prepareByoIacWorkdir(vc, params.GitAccessToken, cloneDir, stdout, stderr)
+		tfDir, byoTfvars, restore, err = prepareByoIacWorkdir(ctx, vc, params.GitAccessToken, cloneDir, stdout, stderr)
 		if err != nil {
 			return nil, err
 		}
@@ -1395,6 +1440,21 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 	defer os.RemoveAll(valuesDir)
 
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
+		// FAIL CLOSED on a domain that is not a domain. `vc.DNS.DomainName` is free-text project
+		// data (console `config-schema.ts` `domain_name`, type `text`, no pattern) and nothing
+		// upstream of here validates it — every provider just forwards it as a tfvar. It reaches a
+		// `bash -c` string below AND the GKE/AGW values FILES, so it is both a command-injection and
+		// a YAML-injection vector. Same treatment, and the same reason, as `ns` and `clusterName`
+		// in deploy_namespace.go: refuse it at the boundary rather than escape it at each use.
+		//
+		// Quoting below is kept as well — this is defence in depth, not belt-and-braces. The
+		// validator can only speak for the domain; `certArn` and `wafArn` arrive from tofu outputs,
+		// a different trust path this check never sees.
+		if !isValidDNSDomain(vc.DNS.DomainName) {
+			return fmt.Errorf(
+				"refusing to deploy: dns.domain_name %q is not a valid DNS domain — it reaches a shell command and a YAML values file, so it must be a plain hostname (letters, digits, hyphens and dots; each label 1-63 chars; 253 max)",
+				vc.DNS.DomainName)
+		}
 		argoHost := fmt.Sprintf("argocd.%s", vc.DNS.DomainName)
 		// Each cloud's ingress is gated on ITS OWN certificate output, and the two keys below are
 		// mutually exclusive by construction — only the aws template exports `acm_certificate_arn`,
@@ -1403,7 +1463,23 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		// certificate is the gate either way, and a provider string that failed to reach here would
 		// silently drop the AWS ingress that has worked for a year.
 		certArn := argocd.ExtractOutput(outputs, "acm_certificate_arn")
-		gkeCert := argocd.ExtractOutput(outputs, "cloud_dns_managed_certificate_name")
+		// GCP no longer has a certificate output to key on — #1858 deleted
+		// `google_compute_managed_ssl_certificate` along with the annotation that named it — so the
+		// GKE case keys on a GCP-ONLY output that still exists plus cert-manager's readiness, the
+		// same shape as Azure below. `gke_cluster_name` is exported only by the gcp template, so the
+		// three cases stay mutually exclusive without dispatching on vc.Provider.
+		gkeCluster := argocd.ExtractOutput(outputs, "gke_cluster_name")
+		// Azure exports no certificate at all (#1825 deleted the App Service order — a purchased
+		// product that bound to nothing), so its gate is the gateway plus cert-manager's own
+		// readiness. `CertManagerEnabled()` is READ, never restated: it is the same method the
+		// render template gates on (`{{- if .CertManagerEnabled }}`) and the same one
+		// certManagerDecision and EnsureCertManagerIssuer read. The ClusterSecretStore gates were
+		// restated by hand in four places and drifted twice; this is that lesson applied.
+		//
+		// BuildFromOutputs is pure — outputs plus the config — so calling it here is safe even
+		// though the pipeline's own call happens later.
+		agwName := argocd.ExtractOutput(outputs, "application_gateway_name")
+		certManagerWillIssue := argocd.BuildFromOutputs(outputs, vc).CertManagerEnabled()
 		switch {
 		case certArn != "":
 			installCmd += fmt.Sprintf(
@@ -1413,13 +1489,23 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/scheme=internet-facing'"+
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/target-type=ip'"+
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/listen-ports=[{\"HTTPS\":443}]'"+
-					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/certificate-arn=%s'"+
+					" --set %s"+
 					// argo-helm 8.x refactored the server ingress: the `hosts[]` list was replaced by a
 					// single `hostname` (+ `extraHosts` for additional records). We keep the default
 					// `controller: generic` and drive the ALB purely via the annotations + ingressClassName
 					// above, so only the host key changes across the 7.x→8.x bump (#1165).
-					" --set 'server.ingress.hostname=%s'",
-				certArn, argoHost)
+					" --set %s",
+				// The WHOLE `key=value` is quoted, not just the value: a `--set` pair has to reach helm
+				// as ONE shell word, and quoting only the value would leave the pair splittable on a
+				// space in the key's own text. The literal single quotes that used to wrap these two
+				// format verbs are gone for the same reason — ShellQuote supplies them, and nesting the
+				// two would have produced a doubly-quoted argument.
+				//
+				// The `\.` sequences survive unchanged: inside single quotes bash passes the backslash
+				// through, which is exactly what helm's --set key-escaping wants. For any input that was
+				// already a valid domain/ARN this renders byte-identical to what it replaced.
+				utils.ShellQuote("server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/certificate-arn="+certArn),
+				utils.ShellQuote("server.ingress.hostname="+argoHost))
 			// Attach the project's regional web ACL to the ALB this ingress provisions. The
 			// template has always BUILT one behind the canvas WAF switch and associated it with
 			// nothing; the annotation is what makes the switch mean something. Read straight from
@@ -1432,7 +1518,8 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 			// modules/eks/irsa.tf grants the controller wafv2:AssociateWebACL + Get*.
 			if wafArn := argocd.ExtractOutput(outputs, "waf_webacl_arn"); wafArn != "" {
 				installCmd += fmt.Sprintf(
-					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/wafv2-acl-arn=%s'", wafArn)
+					" --set %s",
+					utils.ShellQuote("server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/wafv2-acl-arn="+wafArn))
 				fmt.Fprintf(stdout, "Attaching WAF web ACL to the ArgoCD Ingress: %s\n", wafArn)
 			}
 			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s\n", argoHost)
@@ -1441,7 +1528,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 			// resolves nowhere on every other cloud.
 			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 
-		case gkeCert != "":
+		case gkeCluster != "" && certManagerWillIssue:
 			// GKE. There is no controller to install — the Ingress controller lives in the
 			// Google-managed control plane and modules/gke leaves HTTP(S) Load Balancing enabled —
 			// so the whole platform ingress is these values plus, when the WAF switch is on, one
@@ -1475,7 +1562,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 				backendConfig = argocd.GKEBackendConfigName
 				fmt.Fprintf(stdout, "Attaching Cloud Armor policy to the ArgoCD Ingress backend service: %s\n", armorPolicy)
 			}
-			values, vErr := argocd.GKEArgoServerValues(argoHost, gkeCert, backendConfig)
+			values, vErr := argocd.GKEArgoServerValues(argoHost, argocd.CertManagerIssuerName, backendConfig)
 			if vErr != nil {
 				return fmt.Errorf("failed to render the GKE ArgoCD ingress values: %w", vErr)
 			}
@@ -1487,7 +1574,36 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 				return fmt.Errorf("failed to write the GKE ArgoCD ingress values: %w", wErr)
 			}
 			installCmd += " -f " + utils.ShellQuote(valuesPath)
-			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s (GKE `gce` class, certificate %s)\n", argoHost, gkeCert)
+			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s (GKE `gce` class, TLS issued in-cluster by cert-manager)\n", argoHost)
+			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
+
+		case agwName != "" && certManagerWillIssue:
+			// Azure. Unlike the two above, this is NOT gated on a certificate that already exists —
+			// there isn't one yet. cert-manager issues asynchronously (EnsureCertManagerIssuer runs
+			// after the Applications are applied, and the ACME DNS01 challenge completes seconds
+			// after that), so the Ingress ASKS for a certificate and AGIC picks up the Secret when
+			// it lands.
+			//
+			// Both terms are load-bearing and neither is redundant:
+			//   · agwName      — AGIC reconciles onto ONE pre-provisioned gateway. No gateway, no
+			//                    ingress, whatever else is true.
+			//   · certManager  — without an issuer the `spec.tls` Secret is never created and the
+			//                    listener serves the gateway's DEFAULT certificate indefinitely.
+			//                    Publishing the ArgoCD admin console like that is worse than not
+			//                    publishing it, so it is a hard term rather than a degraded mode.
+			values, vErr := argocd.AGWArgoServerValues(argoHost, argocd.CertManagerIssuerName)
+			if vErr != nil {
+				return fmt.Errorf("failed to render the Application Gateway ArgoCD ingress values: %w", vErr)
+			}
+			valuesPath := filepath.Join(valuesDir, "argocd-agw-ingress.yaml")
+			if wErr := os.WriteFile(valuesPath, []byte(values), 0o600); wErr != nil {
+				return fmt.Errorf("failed to write the Application Gateway ArgoCD ingress values: %w", wErr)
+			}
+			installCmd += " -f " + utils.ShellQuote(valuesPath)
+			// No WAF annotation, unlike AWS. On Azure the policy is bound by the TEMPLATE
+			// (firewall_policy_id on the gateway), so it already covers every listener this Ingress
+			// creates — see wafAttachments["azure"].
+			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s (Application Gateway via AGIC, TLS issued in-cluster by cert-manager)\n", argoHost)
 			result.ArgocdURL = fmt.Sprintf("https://%s", argoHost)
 		}
 	}

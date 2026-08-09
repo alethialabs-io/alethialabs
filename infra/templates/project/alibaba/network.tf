@@ -31,6 +31,9 @@ module "network" {
 
   single_cloud_nat = var.single_cloud_nat
 
+  # #1987: the group + rules are created only when this is non-empty.
+  allowed_cidr_blocks = var.network_allowed_cidr_blocks
+
   tags = local.common_tags
 }
 

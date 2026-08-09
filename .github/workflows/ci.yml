@@ -71,7 +71,14 @@ jobs:
           # console or shared-UI change can break it. The Evidence break proves narrow is a trap —
           # a page nobody thought of as "hero-related" broke the sellable flow. Better to run the
           # hero on a console PR that turns out not to touch it than to miss the one that does.
-          if echo "$changed" | grep -qE '^(apps/console/|packages/@repo/)'; then
+          # ⚠️ `packages/@repo/` matched NOTHING and silently halved this filter. The npm SCOPE is
+          # `@repo/*`, but the DIRECTORY is `packages/<name>` — there has never been a
+          # `packages/@repo/`. So the "shared-UI" arm was dead from the day it was written, and a
+          # change confined to packages/ui or packages/brand skipped the hero gate entirely. That is
+          # exactly how the `[ ]` bracket mark reached the base button variant and renamed every
+          # control's accessible name from "Add" to "[Add]" without this job objecting. The list
+          # below is the console's own @repo dependencies, by path.
+          if echo "$changed" | grep -qE '^(apps/console/|packages/(ui|brand|assets|email|plan-catalog|platform|privacy|support)/)'; then
             echo "console=true" >> "$GITHUB_OUTPUT"
           else
             echo "console=false" >> "$GITHUB_OUTPUT"
@@ -450,9 +457,16 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add .github/badges/coverage.json
             # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
-            # commits to main; this CI-authored badge commit to main is legitimate.
+            # commits to main; this CI-authored badge commit is legitimate.
             git commit --no-verify -m "chore(ci): update coverage badge [skip ci]"
-            git push || echo "::warning::badge push skipped (branch protection?)"
+            # Publish to the unprotected orphan `badges` branch, NOT to main. `protect-main` is
+            # enforcement:active with bypass_actors:[] and a pull_request rule, so a direct push
+            # to refs/heads/main is refused with GH006 — contents:write on the token is
+            # irrelevant, the ruleset denies the ref update. See publish_badge in the Go badge
+            # job below for the full diagnosis; this badge was dead for the same reason.
+            #
+            # NO `|| true`. A push that cannot land must RED this job.
+            git push --force origin HEAD:badges
           fi
 
   guards:
@@ -508,6 +522,30 @@ jobs:
           pnpm -F console gen:offer-parity
           git diff --exit-code -- docs/testing/offer-parity.md \
             || { echo "::error::docs/testing/offer-parity.md is stale — run 'pnpm -F console gen:offer-parity' and commit."; exit 1; }
+      # The sibling of offer parity, on a different unit: offer parity asks whether a CHOICE the
+      # canvas presents is buildable, this asks whether the VALUE a user typed reaches the plan. A
+      # choice can be perfectly buildable while the number beside it is discarded — #1981 shipped a
+      # cache allow-list that saved cleanly, provisioned nothing, and left the cache open.
+      - name: Every value the product collects reaches the plan, or is documented (config carriage)
+        run: pnpm -F console check:config-carriage
+      - name: Config-carriage board is in sync with the code
+        run: |
+          pnpm -F console gen:config-carriage
+          git diff --exit-code -- docs/testing/config-carriage.md \
+            || { echo "::error::docs/testing/config-carriage.md is stale — run 'pnpm -F console gen:config-carriage' and commit."; exit 1; }
+      # The third parity unit, and the one that closes a hole the first two structurally could not
+      # see: BOTH of the guards above derive their surface from the canvas — offer parity from the
+      # offer list, config carriage from user-settable columns. A capability that exists only as a
+      # TEMPLATE VARIABLE is invisible to them, so no guard could red it and no deferral about it
+      # could go stale. AWS envelope-encrypted Kubernetes Secrets for the entire life of the
+      # templates while three clouds did not, unboarded and unexcluded (#2004).
+      - name: Every asymmetric template variable is recorded (template parity)
+        run: pnpm -F console check:template-parity
+      - name: Template-parity board is in sync with the templates
+        run: |
+          pnpm -F console gen:template-parity
+          git diff --exit-code -- docs/testing/template-parity.md \
+            || { echo "::error::docs/testing/template-parity.md is stale — run 'pnpm -F console gen:template-parity' and commit."; exit 1; }
       - name: Keyless cells agree with the code that implements them
         run: pnpm -F console check:keyless-cells
       # The canvas gates the IAM-auth toggle on this table (#1510). Hand-mirroring it would only
@@ -591,6 +629,20 @@ jobs:
         run: bash scripts/lib/wt-landed-test.sh
       - name: Board claim arbitration (earliest-lease-wins) + PR predicates
         run: bash scripts/claim-work.sh --self-test
+      # The Go coverage ratchet becomes a step inside `Go (build · vet · test · lint)`, a REQUIRED
+      # check with no path filter — so it gates every PR in the repository and a false failure
+      # stops the merge queue for everyone, not just its author. Three properties are pinned here
+      # because each is a way it could wedge the repo:
+      #   · the arithmetic is integer cross-multiplication, never a percentage. packages/core/git
+      #     is 185/291 = 63.5739% and DISPLAYS as 63.6%; comparing displayed values fails with
+      #     zero code change, forever.
+      #   · the fail-open set (unparseable floors from a hand-resolved conflict, partial profile,
+      #     unknown covermode, new/deleted package) — the gate may only fail on a real regression.
+      #   · the floors JSON layout, asserted with a real `git merge-file`: two PRs each raising a
+      #     DIFFERENT, ADJACENT package must merge clean, or every concurrent Go PR conflicts.
+      # Hermetic: no go, no network, no repo state.
+      - name: Go coverage ratchet (arithmetic · fail-open set · merge-safe layout)
+        run: bash scripts/go-coverage.sh --self-test
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
       # The capabilities-security REQUIRED check decides which changed files it inspects AT ALL, and a
@@ -613,6 +665,14 @@ jobs:
       # for weeks (#1755). Both crons are asserted here because neither is reachable from a PR.
       - name: Nightly dimension resolution (floor and full-bar never collide)
         run: bash scripts/e2e/resolve-dimension.sh --self-test
+      # The proof-bundle scrub decides what a PUBLIC repo publishes, and its only run was inside
+      # e2e-nightly.yml — a workflow no PR triggers. So the change that made the tripwire fire on
+      # every azure plan JSON could not have been caught before merge, and wasn't: azure lost its
+      # runner log on every run and published an unscrubbed 148 KB plan (#1923). The suite pins
+      # both directions — non-vacuous AND not over-broad — and is hermetic: no cloud, no secret,
+      # obviously-fake literals only.
+      - name: Proof-scrub denylist (non-vacuous, and no false positive on a tofu plan JSON)
+        run: bash demos/proofs/scrub.sh --self-test
       # Each guard proves it still BLOCKS what it must and, more importantly, still
       # ALLOWS what it must — the false positives are what get a guard disabled.
       - name: Guards self-test (runtime · compose · merge)
@@ -645,8 +705,24 @@ jobs:
       # packages/core's untagged provisioning-wiring E2E (deploy_wiring_test.go) runs a real
       # `tofu` against a provider-less module — it self-skips without tofu on PATH, which
       # would make the keystone's per-PR signal hollow. Install it so the test actually runs.
+      #
+      # apps/runner needs it for the SAME reason, and did not have it. Its chart-scan and
+      # IaC-scan suites (chart_scan_test.go, exec_stage_test.go, iac_scan_test.go) self-skip
+      # without `helm` and `tofu` on PATH. The 2026-08-04 determinism probe confirmed what
+      # ubuntu-latest actually ships: helm IS preinstalled (/usr/local/bin/helm) but **tofu is
+      # MISSING**, so those runner tests have been silently skipping in CI — passing by not
+      # running. Worth fixing on its own; it also makes the leg's coverage reproducible, which
+      # a floor depends on (the same suites measure 49.58% locally with tofu present and
+      # 47.24% without).
+      #
+      # helm is pinned rather than inherited: "happens to be on the GitHub-managed image" is an
+      # unpinned property, and the day it is pruned those tests would go quiet again.
+      - uses: azure/setup-helm@v5
+        if: matrix.module == 'apps/runner'
+        with:
+          version: v3.16.3
       - uses: opentofu/setup-opentofu@v2
-        if: matrix.module == 'packages/core'
+        if: matrix.module == 'packages/core' || matrix.module == 'apps/runner'
         with:
           tofu_version: "1.9.0"
       - name: Build · vet · test (with coverage)
@@ -655,6 +731,22 @@ jobs:
           go build ./...
           go vet ./...
           go test -coverprofile=cover.out ./...
+      # Per-package statement-coverage RATCHET: coverage may rise, never fall. Reads the cover.out
+      # written directly above — it does NOT re-run the suite.
+      #
+      # No `working-directory`: the script cd's to the repo root itself, so it is invoked
+      # identically for every module and the fix command it prints needs no cd puzzle.
+      #
+      # No `if: always()`: when the step above fails there is no usable profile, and reporting a
+      # coverage collapse on top of a test failure would misattribute the cause.
+      #
+      # This blocks a PR that lowers coverage in ANY package, including one the author does not
+      # own. That is deliberate. Every false-failure path is fail-OPEN and enumerated in the
+      # script header — the floors carry a fingerprint of the environment that recorded them, and
+      # a mismatch (including a different OS) demotes failures to warnings rather than blaming
+      # coverage for a toolchain change.
+      - name: Coverage ratchet (per package, no regressions)
+        run: bash scripts/go-coverage.sh --module ${{ matrix.module }}
       # Each Go module must be tidy STANDALONE (no go.work) — the CLI mirror + GoReleaser build
       # apps/cli outside the workspace, where go.work can't paper over a missing require. This guard
       # fails the PR instead of the (post-merge) mirror when go.mod/go.sum drift standalone.
@@ -686,7 +778,22 @@ jobs:
           GOWORK=off go vet -tags=e2e_t1 ./...
           GOWORK=off go vet -tags=e2e_t2 ./...
           GOWORK=off go vet -tags=e2e_b6 ./...
-          GOWORK=off go test ./...
+          GOWORK=off go test -coverprofile=cover.out ./...
+      # test/e2e is the FOURTH Go module and has no matrix leg of its own — it is exercised from
+      # inside the packages/core leg above, which is why its 2,193 statements have never been
+      # coverage-measured. Its ratchet is therefore an explicit step here rather than a matrix
+      # entry.
+      #
+      # Its floors WERE recorded by the determinism probe, whose test/e2e leg installs no tofu,
+      # while this leg does — a deliberately CONSERVATIVE floor that the comment here predicted
+      # would "tighten on the first `--update`". It has (#2156): the floors now carry this leg's
+      # own measurement and `"tofu": true` with it. The fingerprint has to move WITH the number,
+      # or the fallback the conservative floor bought is silently gone — a broken tofu install
+      # would drop coverage below a floor recorded as tofu-less, and F7 would find nothing
+      # "missing" to demote the failure with. Recorded tofu:true, it demotes to a warning.
+      - name: Coverage ratchet — test/e2e harness
+        if: matrix.module == 'packages/core'
+        run: bash scripts/go-coverage.sh --module test/e2e
       - name: CLI logic-scope coverage gate (≥90%)
         if: matrix.module == 'apps/cli'
         working-directory: ${{ matrix.module }}
@@ -696,6 +803,79 @@ jobs:
         with:
           version: v2.12.2
           working-directory: ${{ matrix.module }}
+
+  coverage-determinism:
+    name: Coverage determinism probe (manual)
+    # MANUAL ONLY. This exists to answer one question before the ratchet is armed: are the numbers
+    # CI produces stable, and are they the same numbers a laptop produces?
+    #
+    # They are not, and that is the whole point. Go coverage here depends on what is on PATH:
+    # measured locally, packages/core/tofu moves 51.98% -> 36.72% with `tofu` removed,
+    # packages/core/provisioner 50.73% -> 39.12%, apps/runner/internal/agent 49.58% -> 47.24%
+    # (those suites self-skip). packages/core/api moves by two statements depending on whether an
+    # alethia credentials file exists in the user's config dir — which it does on a maintainer's
+    # Mac and never in CI. Recording floors from a laptop therefore bakes numbers CI can never
+    # reach and reds EVERY PR in the repository until someone regenerates them.
+    #
+    # So: run this, read its output, and generate the floors from THESE numbers.
+    #
+    # It compares PARSED pairs, never raw profiles — block order in a coverprofile follows package
+    # completion order under `go test -p N` and is genuinely unstable run to run, so diffing or
+    # checksumming the file itself is broken on arrival.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [apps/cli, apps/runner, packages/core, test/e2e]
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      # Must mirror the `go` job's toolchain EXACTLY, or the numbers this probe prints are not
+      # the numbers the ratchet will compare against and flooring from them reds every PR.
+      - uses: azure/setup-helm@v5
+        if: matrix.module == 'apps/runner'
+        with:
+          version: v3.16.3
+      - uses: opentofu/setup-opentofu@v2
+        if: matrix.module == 'packages/core' || matrix.module == 'apps/runner'
+        with:
+          tofu_version: "1.9.0"
+      - name: Which coverage-affecting binaries does this runner image actually ship?
+        run: |
+          for b in docker git helm kubectl tofu; do
+            printf '%-10s %s\n' "$b" "$(command -v "$b" || echo MISSING)"
+          done
+      - name: Five runs, comparing parsed pairs
+        run: |
+          for i in 1 2 3 4 5; do
+            (cd ${{ matrix.module }} && GOWORK=${{ matrix.module == 'test/e2e' && 'off' || 'auto' }} \
+              go test -count=1 -coverprofile=cover.$i.out ./... >/dev/null)
+            bash scripts/go-coverage.sh --module ${{ matrix.module }} \
+              --profile ${{ matrix.module }}/cover.$i.out --print >run.$i.txt
+          done
+          echo "── per-package covered/total, run 1 ──"
+          cat run.1.txt
+          if [ "$(cat run.*.txt | sort -u | wc -l)" -eq "$(wc -l <run.1.txt)" ]; then
+            echo "✓ ${{ matrix.module }} is run-to-run deterministic across 5 runs"
+          else
+            echo "::error::${{ matrix.module }} is NONDETERMINISTIC — do NOT floor it. Differing rows:"
+            cat run.*.txt | sort | uniq -c | awk '$1 != 5'
+            exit 1
+          fi
+      - name: Floors these numbers would produce (copy into the A4 PR)
+        run: |
+          bash scripts/go-coverage.sh --module ${{ matrix.module }} \
+            --profile ${{ matrix.module }}/cover.1.out --update
+          echo "── ${{ matrix.module }}/coverage-floors.json ──"
+          cat ${{ matrix.module }}/coverage-floors.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-floors-${{ strategy.job-index }}
+          path: ${{ matrix.module }}/coverage-floors.json
 
   runner-image-arch:
     name: Runner image arch (amd64 ships x86-64 — INCIDENT 2026-07-22 guard)
@@ -848,9 +1028,26 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add .github/badges/go-coverage.json
             # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
-            # commits to main; this CI-authored badge commit to main is legitimate.
+            # commits to main; this CI-authored badge commit is legitimate.
             git commit --no-verify -m "chore(ci): update go coverage badge [skip ci]"
-            git push || echo "::warning::badge push skipped (branch protection?)"
+            # WHY NOT `git push` TO MAIN, AND WHY NO `|| true`:
+            #
+            # `protect-main` (infra/github/main.tf) is enforcement:active with bypass_actors:[]
+            # and a pull_request rule, so EVERY update to refs/heads/main must arrive via a PR.
+            # This push was refused with `GH006: Protected branch update failed … Changes must be
+            # made through a pull request`, and `|| echo "::warning::badge push skipped"` turned
+            # that hard failure into a green job. `permissions: contents: write` never mattered —
+            # the token has the permission, the ruleset denies the ref update.
+            #
+            # Consequence: this job had NEVER pushed successfully. .github/badges/go-coverage.json
+            # has exactly one commit in its history (23892e35, 2026-06-28, hand-authored); the
+            # job was added 2026-06-30 and the ruleset created 2026-07-03. The README advertised
+            # 21.6% for five weeks while the real aggregate was 61.2% — a 40-point error that the
+            # swallowed exit code hid. The TypeScript badge above was dead for the same reason.
+            #
+            # The rulesets match only refs/heads/{dev,main,staging} with empty excludes, so the
+            # orphan `badges` branch is writable with no Terraform apply and no hole in main.
+            git push --force origin HEAD:badges
           fi
 
   mutation:
@@ -907,6 +1104,29 @@ jobs:
             echo "base commit unavailable — scanning latest commit only"
             gitleaks git . --redact --log-opts="-1"
           fi
+
+  addon-charts-render:
+    name: Add-on charts render (helm template · pinned charts)
+    runs-on: ubuntu-latest
+    # Its own job because it needs helm on PATH and fetches real charts — neither belongs in the
+    # console's vitest run. It renders the DEFAULT values of every marketplace add-on against its
+    # pinned chart and requires exit 0.
+    #
+    # #2058 is why this exists: Loki's entry paired `deploymentMode: SingleBinary` with non-zero
+    # read/write/backend replicas. Both values are individually valid, the combination is rejected by
+    # the chart's own validate.yaml, and NOTHING in this repo could see it — types pass, unit tests
+    # assert what the resolver emits rather than what the chart accepts, and neither parity guard
+    # measures add-on values. It shipped, and a real cluster found it.
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.2
+      - name: Every add-on renders with its pinned chart and its own defaults
+        run: node apps/console/scripts/check-addon-charts-render.mjs
 
   docs-prose:
     name: Docs prose (Vale · Diátaxis + plain-language)

@@ -170,6 +170,14 @@ locals {
     )
   )
 
+  # The Service Bus SUBSCRIPTION is deliberately ABSENT from this file, and that absence is recorded
+  # rather than left silent (#2100). Every name budgeted here is a fixed offset off ONE stem —
+  # "<environment>-<project_name>" — which is what makes a single stem guard cover them all. A
+  # subscription's name is not: it is derived from the subscription's ENDPOINT, in
+  # packages/core/cloud/azure_provider.go (serviceBusSubscriptionName), so no arithmetic over the
+  # stem can bound it. Its constraint is enforced where it is derived, by a Go test asserting
+  # azurerm's own regex. Adding a row here would suggest this file covers it, which it cannot.
+  #
   # ── Service Bus namespace: 6-50 characters, alphanumerics and hyphens ──
   #
   # Renders 27 today. Must start with a letter and end with a letter or number; the "sb-" prefix

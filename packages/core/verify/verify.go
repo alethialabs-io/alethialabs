@@ -56,12 +56,18 @@ func (r *plannedResource) exprRefs(attr string) []string {
 
 // exprConstant returns the configuration constant value of attribute `attr`, and
 // whether one is present (a literal in the .tf source, e.g. firewall_ids = [123]).
+// terraform-json sets ConstantValue to the UnknownConstantValue SENTINEL — not
+// nil — whenever the expression has references, so a reference-only expression
+// (var.x, local.y) must report "no constant", never a present-but-weird value:
+// treating the sentinel as a literal sent HCLOUD-FW-001 down the literal-empty
+// arm and hard-failed correctly-firewalled plans (#2039).
 func (r *plannedResource) exprConstant(attr string) (any, bool) {
 	if r.configExprs == nil {
 		return nil, false
 	}
 	e := r.configExprs[attr]
-	if e == nil || e.ExpressionData == nil || e.ConstantValue == nil {
+	if e == nil || e.ExpressionData == nil || e.ConstantValue == nil ||
+		e.ConstantValue == tfjson.UnknownConstantValue {
 		return nil, false
 	}
 	return e.ConstantValue, true
@@ -551,6 +557,9 @@ func inspectPolicyDoc(address string, doc *iamDoc) (findings []Finding, failed, 
 
 // isFederatedWebIdentity reports whether a trust statement allows
 // sts:AssumeRoleWithWebIdentity for a Federated principal (an OIDC trust).
+// Wildcard grants count: an Action of "sts:*" or "*" covers the assume call
+// and is strictly MORE permissive than the literal spelling, so it must not
+// drop the role out of scope (that was the #2014 fail-open).
 func isFederatedWebIdentity(st iamStatement) bool {
 	if !strings.EqualFold(st.Effect, "Allow") {
 		return false
@@ -562,7 +571,7 @@ func isFederatedWebIdentity(st iamStatement) bool {
 		return false
 	}
 	for _, a := range st.Action {
-		if strings.EqualFold(a, "sts:AssumeRoleWithWebIdentity") {
+		if actionCovers(a, "sts:AssumeRoleWithWebIdentity") {
 			return true
 		}
 	}
@@ -640,6 +649,36 @@ func resolveStatus(c *ControlResult, failed, warned, evaluable, relevant, notEva
 	}
 }
 
+// VerdictFor derives a report's headline verdict from its control tally. It is the ONE definition
+// of that precedence.
+//
+// Precedence: a hard fail blocks; else a warn; else — and this is the honesty rule — if any in-scope
+// control could not be evaluated we report not_evaluable rather than a vacuous pass (the receipt
+// must never imply we checked something we couldn't see). Only a plan where every in-scope control
+// genuinely passed yields pass. A tally with no controls at all is not_evaluable for the same
+// reason: nothing was checked.
+//
+// Exported because a second party re-derived it and got it wrong (#2156). The E2E receipt gate
+// (test/e2e/receipt_evidence.go) asserts that a receipt's sealed verdict follows from the controls
+// under it, and its copy carried three of these five branches — it never consulted not_evaluable, so
+// it computed `pass` for an honestly-not_evaluable report and failed the run. A gate that judges an
+// emitter must mirror EVERY condition the emitter has; the only way to keep that true is to not have
+// a second copy.
+func VerdictFor(s Summary) Status {
+	switch {
+	case s.Fail > 0:
+		return StatusFail
+	case s.Warn > 0:
+		return StatusWarn
+	case s.NotEvaluable > 0:
+		return StatusNotEvaluable
+	case s.Pass > 0:
+		return StatusPass
+	default:
+		return StatusNotEvaluable
+	}
+}
+
 // finalize computes the summary tally and the overall verdict.
 func (r *Report) finalize() {
 	for _, c := range r.Controls {
@@ -654,21 +693,5 @@ func (r *Report) finalize() {
 			r.Summary.NotEvaluable++
 		}
 	}
-	// Precedence: a hard fail blocks; else a warn; else — and this is the honesty
-	// rule — if any in-scope control could not be evaluated we report
-	// not_evaluable rather than a vacuous pass (the receipt must never imply we
-	// checked something we couldn't see). Only a plan where every in-scope control
-	// genuinely passed yields pass.
-	switch {
-	case r.Summary.Fail > 0:
-		r.Verdict = StatusFail
-	case r.Summary.Warn > 0:
-		r.Verdict = StatusWarn
-	case r.Summary.NotEvaluable > 0:
-		r.Verdict = StatusNotEvaluable
-	case r.Summary.Pass > 0:
-		r.Verdict = StatusPass
-	default:
-		r.Verdict = StatusNotEvaluable
-	}
+	r.Verdict = VerdictFor(r.Summary)
 }

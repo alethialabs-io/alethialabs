@@ -25,6 +25,11 @@ resource "random_password" "generated" {
 
   length  = try(each.value.length, 32)
   special = try(each.value.special_chars, true)
+
+  # Rotation handle (parity with aws/modules/awssm-passgen, gcp/modules/secret-manager and
+  # azure/modules/key-vault). `{}` for a secret with no entry — identical to the previous,
+  # keeper-less resource, so an existing project plans unchanged.
+  keepers = lookup(var.secret_keepers, each.key, {})
 }
 
 resource "alicloud_kms_secret" "this" {

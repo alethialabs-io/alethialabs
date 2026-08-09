@@ -285,9 +285,16 @@ func runDestroyStage(ctx context.Context, p stageDestroyPayload, sec stageSecret
 		StateBackend:  &cloud.HTTPBackendConfig{ConsoleURL: p.StateConsoleURL, JobID: p.JobID, Token: sec.StateToken},
 		Stdout:        stdout,
 		Stderr:        stderr,
-		// Output-free host-conn resolver for a vcluster teardown (mirrors the deploy path); only the
-		// vcluster destroy path invokes it, and never for aws/dedicated.
+		// Output-free host-conn resolver for a vcluster/namespace teardown (mirrors the deploy path);
+		// only the placement destroy paths invoke it, and never for aws/dedicated.
 		KubeConn: newKubeConnResolver(),
+		// Per-namespace tenant identity DEPROVISIONER (#2016). Without it a namespace teardown deletes
+		// the namespace but leaves the tenant's cloud IAM principal live — the leak that made the
+		// namespace destroy path a security defect rather than a tidiness one.
+		NamespaceIdentity: newNamespaceIdentityDeprovisioner(),
+		// hetzner-talos placement kubeconfig minter: a hetzner namespace teardown has no cloud API to
+		// re-mint kube access from, so it needs the same persisted-talosconfig path the deploy used.
+		TalosKubeconfig: newTalosKubeconfigMinter(sec.TalosConfig),
 	})
 	return writeStageResult(workDir, stageResult{}, err)
 }

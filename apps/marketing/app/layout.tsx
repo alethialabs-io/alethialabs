@@ -63,12 +63,11 @@ export default function RootLayout({
 			<body
 				className={`${geistSans.variable} ${geistMono.variable} ${spaceGrotesk.variable} antialiased`}
 			>
-				<ThemeProvider
-					attribute="class"
-					defaultTheme="dark"
-					forcedTheme="dark"
-					enableSystem={false}
-				>
+				{/* Dark is the signature surface, so it stays the default — but it is no
+				    longer forced. `forcedTheme` did not merely hide a toggle, it made light
+				    mode unreachable; the CSS-var wiring underneath was always theme-correct.
+				    The switcher lives in the header. */}
+				<ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
 					<ConsentProvider>
 						{children}
 						<Toaster />

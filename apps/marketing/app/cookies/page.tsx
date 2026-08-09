@@ -25,8 +25,9 @@ export default function CookiesPage() {
 			<p>
 				Essential storage is active because the Service cannot securely operate
 				without it. Product analytics and session replay are disabled until you opt
-				in. They have separate controls. Use the <strong>Privacy choices</strong>{" "}
-				button at the lower-left of any page to change or withdraw a choice. Reject
+				in. They have separate controls. Use <strong>Privacy settings</strong> in the
+				site footer — or, in the console, the Privacy settings item in your account
+				menu — to change or withdraw a choice at any time. Reject
 				non-essential is presented alongside Accept all on first visit.
 			</p>
 
@@ -76,7 +77,7 @@ export default function CookiesPage() {
 				cookies can prevent sign-in. We honor the choices stored in the Alethia
 				consent control. Because there is not yet one universally implemented
 				technical interpretation of Global Privacy Control for all consent purposes,
-				use Privacy choices to make an explicit selection.
+				use Privacy settings to make an explicit selection.
 			</p>
 
 			<h2>6. Contact</h2>

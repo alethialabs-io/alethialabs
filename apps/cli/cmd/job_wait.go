@@ -11,8 +11,10 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 )
 
-// jobPollInterval is how often `--wait` polls a job's status.
-const jobPollInterval = 3 * time.Second
+// jobPollInterval is how often `--wait` polls a job's status. It is a variable so a
+// test can shorten it; nothing in production assigns to it, so the interval is the
+// same 3 seconds it always was.
+var jobPollInterval = 3 * time.Second
 
 func waitForJob(apiClient *api.Client, jobID string) error {
 	fmt.Printf("\n%s Waiting for job %s...\n", ui.MutedStyle.Render(ui.SymbolPoint), jobID)

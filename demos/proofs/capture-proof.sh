@@ -95,7 +95,13 @@ log_has "Destroy complete!" && destroyed=true
 #    backstop. We do NOT dump the whole log into the committable bundle (the raw log is a
 #    separate, short-retention debug artifact). ──
 if [ "$have_log" = 1 ]; then
+	# The length cap is load-bearing. `reachab` matched the word "reachable" inside a resource
+	# DESCRIPTION in the `tofu show -json` plan the harness writes to the runner log — one 148 KB
+	# line, and the only one of these ten patterns that matched it. So azure's "highlights" file
+	# WAS the entire plan (run 30882660761). A highlight is a sentence; anything longer is a
+	# payload, and the payload already has its own home in the separate runner-log artifact.
 	grep -E 'Starting deployment|Applying OpenTofu|Apply complete!|Verification (gate|override)|Evidence receipt (signed|built)|Deployment completed|ArgoCD (installed|ready)|Destroy complete!|reachab|Ready' "$runner_log" 2>/dev/null \
+		| awk 'length($0) <= 2000' \
 		| scrub_stream >"$out/summary.txt" || true
 fi
 
@@ -220,6 +226,22 @@ if [ -n "$fabric_demo_summary" ] && [ -f "$fabric_demo_summary" ]; then
 	[ -n "$fabric_demo_verdict" ] && echo "  · fabric-demo: $fabric_demo_verdict"
 fi
 
+# ── BRING-YOUR-OWN IaC continuous proof (#1765). The T2 leg writes the pinned commit it ran, the
+#    negative gate result, the receipt digest over the CUSTOMER's plan, and the three postures
+#    either side of an induced out-of-band change — names, booleans, counts and PUBLIC digests,
+#    never a secret (the customer repo is public and the module holds nothing). Fold it in
+#    (scrubbed as a backstop) and surface a one-line verdict. Absent ⇒ the leg was disabled or
+#    never reached, and the capture is unchanged. ──
+byo_iac_summary="${ALETHIA_E2E_BYO_IAC_SUMMARY:-}"
+byo_iac_verdict=""
+if [ -n "$byo_iac_summary" ] && [ -f "$byo_iac_summary" ]; then
+	scrub_stream <"$byo_iac_summary" >"$out/byo-iac-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/byo-iac-summary.json" ]; then
+		byo_iac_verdict="$(jq -r '.verdict // empty' "$out/byo-iac-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$byo_iac_verdict" ] && echo "  · byo-iac: $byo_iac_verdict"
+fi
+
 # ── Keyless database auth summary (#1511). The T2 layer writes verdicts, the mechanism it wired
 #    and the rotation dwell it actually held — booleans, names and a duration, never the canary
 #    (compared as a digest inside the test) and never a token. Fold it in (scrubbed as a backstop)
@@ -322,6 +344,7 @@ soak:      ${soak_verdict:-n/a (A0.3 soak off or not reached)}
 day2-access: ${day2_access_verdict:-n/a (P2-E day-2 access off or not reached)}
 day2offer: ${day2_offer_verdict:-n/a (day-2 offer postures off or not reached)}
 fabric-demo: ${fabric_demo_verdict:-n/a (#845 Fabric placement gate off or not reached)}
+byo-iac:   ${byo_iac_verdict:-n/a (#1765 BYO-IaC continuous proof off or not reached)}
 xacct:     ${xacct_verdict:-n/a (#1268 cross-account secrets off or not reached)}
 keyless-db: ${keyless_verdict:-n/a (#1511 keyless DB auth off or not reached)}
 EOF

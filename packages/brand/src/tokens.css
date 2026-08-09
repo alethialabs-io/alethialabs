@@ -65,6 +65,12 @@
   --color-ink-foreground: var(--ink-foreground);
   --color-border-strong: var(--border-strong);
   --color-border-faint: var(--border-faint);
+  /* Scrim behind modals/sheets, and the control fill + invalid ring. These exist
+     so no component has to hand-fork a `dark:` rule or hardcode `bg-black/50`. */
+  --color-overlay: var(--overlay);
+  --color-input-fill: var(--input-fill);
+  --color-input-fill-hover: var(--input-fill-hover);
+  --color-ring-invalid: var(--ring-invalid);
   /* Radii — squared controls (0), surfaces only a whisper of a corner */
   --radius-xs: 0;
   --radius-sm: 2px;
@@ -120,6 +126,16 @@
 
   --tracking-eyebrow: 0.16em;
 
+  /* ---- Motion — one shared vocabulary. Without these each component re-types
+     its own timings and the console and the marketing site drift apart. ---- */
+  --dur-1: 120ms;   /* colour/opacity swaps on a control */
+  --dur-2: 260ms;   /* the standard hover/enter */
+  --dur-3: 420ms;   /* a considered settle */
+  --dur-4: 900ms;   /* a page-level entrance */
+  --ease: cubic-bezier(0.2, 0, 0, 1);         /* standard */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);  /* decelerate — arrivals */
+  --ease-press: cubic-bezier(0.3, 0, 0.8, 0.15); /* accelerate — departures */
+
   /* ---- shadcn aliases (consumed across the app) ---- */
   --background:           var(--gray-50);
   --foreground:           var(--text-primary);
@@ -139,6 +155,18 @@
   --border:               var(--gray-200);
   --input:                var(--gray-200);
   --ring:                 var(--gray-950);
+
+  /* Scrim behind modals and sheets. One value, so the dialog, the sheet and the
+     cookie notice can no longer disagree (they were 50% and 70% black). */
+  --overlay:              oklch(0 0 0 / 0.45);
+  /* The fill of a bordered control. Dark needs a faint lift off the surface that
+     light does not — carrying it here is what removes `dark:bg-input/30`. The
+     dark values are exactly what that fork resolved to (`--input` is
+     `oklch(1 0 0 / 0.15)`, so /30 → 0.045 and /50 → 0.075). */
+  --input-fill:           transparent;
+  --input-fill-hover:     var(--accent);
+  /* The invalid-state focus ring, per theme — removes `dark:aria-invalid:ring-…`. */
+  --ring-invalid:         oklch(0 0 0 / 0.20);
 
   /* ---- The one deliberate non-grayscale hue: the single conversion CTA
      ("Start free trial"). Do NOT reuse elsewhere — the system is grayscale. ---- */
@@ -205,6 +233,11 @@
   --border:               oklch(1 0 0 / 0.10);
   --input:                oklch(1 0 0 / 0.15);
   --ring:                 var(--gray-400);
+
+  --overlay:              oklch(0 0 0 / 0.62);
+  --input-fill:           oklch(1 0 0 / 0.045);
+  --input-fill-hover:     oklch(1 0 0 / 0.075);
+  --ring-invalid:         oklch(1 0 0 / 0.40);
 
   /* The one sanctioned hue (see :root). Same blue on dark — legible with white text. */
   --cta:            #2563EB; /* blue-600 */
@@ -294,6 +327,85 @@
   letter-spacing: var(--tracking-eyebrow);
   text-transform: uppercase;
   color: var(--text-tertiary);
+}
+
+/* ── The bracket ─────────────────────────────────────────────────────────────
+   The `[ · ]` mark promoted from a logo to an interaction primitive: a control
+   is a subject the brackets bring into focus.
+
+   The brackets are absolutely positioned INSIDE the control's own padding box,
+   so they sit outside layout entirely — the label cannot be pushed around and
+   nothing reflows on hover. They are invisible at rest, start nudged inward,
+   and on hover/focus fade in while settling outward to their slots.
+
+   `translate` is animated directly rather than a registered `--bk` custom
+   property: registering would let us interpolate the property, but the browser
+   would then re-resolve style every frame, where `translate` is compositor-only.
+
+   `--bk-inset` is in `em`, so the geometry scales with the control's font-size
+   and no size variant needs its own rule. */
+.vx-bracket {
+  position: relative;
+  --bk-inset: 0.5em;
+  --bk-shift: 5px;
+}
+.vx-bracket::before,
+.vx-bracket::after {
+  position: absolute;
+  top: 50%;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 1em;
+  line-height: 1;
+  font-weight: 400;
+  color: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-2) var(--ease),
+    translate var(--dur-3) var(--ease-out);
+}
+/* The `/ ""` is the CSS alt text, and it is NOT decoration — it is what keeps these
+   glyphs out of the ACCESSIBLE NAME. Generated content participates in name
+   computation, so a bare `content: "["` renamed every control wearing this class from
+   "Add" to "[Add]": a screen reader announced the brackets, and
+   `getByRole("button", { name: "Add", exact: true })` stopped matching. It reached all
+   155 console call sites of @repo/ui/button at once, because the class sits on the base
+   variant. Measured in Chromium — bare content: no match; with `/ ""`: match, identical
+   to a control carrying no bracket at all. Any future ::before/::after that draws a mark
+   rather than saying a word needs the same empty alt text. */
+.vx-bracket::before {
+  content: "[" / "";
+  inset-inline-start: var(--bk-inset);
+  translate: var(--bk-shift) -50%;
+}
+.vx-bracket::after {
+  content: "]" / "";
+  inset-inline-end: var(--bk-inset);
+  translate: calc(var(--bk-shift) * -1) -50%;
+}
+.vx-bracket:hover::before,
+.vx-bracket:hover::after,
+.vx-bracket:focus-visible::before,
+.vx-bracket:focus-visible::after {
+  opacity: 0.55;
+  translate: 0 -50%;
+}
+/* A disabled control is not a subject under examination. */
+.vx-bracket:disabled::before,
+.vx-bracket:disabled::after,
+.vx-bracket[data-disabled]::before,
+.vx-bracket[data-disabled]::after,
+.vx-bracket-none::before,
+.vx-bracket-none::after {
+  content: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vx-bracket::before,
+  .vx-bracket::after {
+    transition: opacity var(--dur-1) var(--ease);
+    translate: 0 -50%;
+  }
 }
 
 /* Status indicator — state read through dot fill/shape + a mono label,

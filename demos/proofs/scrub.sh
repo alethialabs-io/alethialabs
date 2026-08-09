@@ -38,6 +38,7 @@
 scrub_literals_from_env() {
 	local v literals=""
 	for v in "${HCLOUD_TOKEN:-}" "${E2E_GIT_TOKEN:-}" "${ALETHIA_E2E_GIT_TOKEN:-}" \
+		"${HETZNER_S3_ACCESS_KEY:-}" "${HETZNER_S3_SECRET_KEY:-}" \
 		"${AWS_SECRET_ACCESS_KEY:-}" "${AWS_SESSION_TOKEN:-}" \
 		"${ALICLOUD_SECRET_KEY:-}" "${ALICLOUD_SECURITY_TOKEN:-}" "${ALICLOUD_ACCESS_KEY:-}" \
 		"${ALIBABA_CLOUD_ACCESS_KEY_SECRET:-}" "${ALIBABA_CLOUD_SECURITY_TOKEN:-}" \
@@ -54,9 +55,21 @@ scrub_literals_from_env() {
 #   3. the VALUE of any `key: value` / `key = value` / `"key": value` line whose key
 #      contains a denylisted token (kubeconfig / talosconfig / *client[_-]key /
 #      *private[_-]key / *password / *_token / *secret_value / *access_key / *manifest …).
-#   4. the same denylisted keys appearing INSIDE a JSON object mid-line, in either of the
-#      two shapes OpenTofu emits: `"key":"value"` and `"key":{"value":"…"}`.
+#   4. the same denylisted keys appearing INSIDE a JSON object mid-line, in the shapes OpenTofu
+#      emits: `"key":"value"`, `"key":{"value":"…"}`, `"key":{"constant_value":"…"}` and the
+#      array forms `"key":["…"]` / `"key":{"value":["…"]}`.
+#   4b. a DECLARATION carrying a secret — `"key":{"default":"…"}` for a variable whose name ENDS
+#      in a denylisted token, and `"source":"git::https://user:TOKEN@host/repo"` for a module.
+#   5. a denylisted BARE key mid-line — `…msg="apply failed" hcloud_token=abc…`, the shape a
+#      logfmt line has. Rule (3) is line-anchored and cannot see it.
 # The key is kept (so the proof still shows WHICH field existed) — only the value dies.
+#
+# Rules (4-`constant_value`), (4-array) and (5) close a gap that made the TRIPWIRE unsatisfiable
+# (#1923 follow-up). assert_grep_clean flags a denylisted key carrying any non-structural value —
+# correctly — but this scrubber could not redact those four shapes, so a leg carrying one had no
+# way to ever produce a bundle: red on every run, with the secret sitting in plaintext until the
+# capture deleted it. A tripwire that flags what the scrub cannot fix is a permanent outage, and
+# the honest fix is to make the scrub cover the shape, not to stop flagging it.
 #
 # Rule (4) exists because rule (3) is LINE-ANCHORED (`^`), and a tofu `show -json` plan is one
 # enormous single line. #1854: `"hcloud_token":{"value":"<live token>"}` sat mid-line in the
@@ -73,6 +86,11 @@ scrub_stream() {
 			@lits = grep { length } split /\n/, ($ENV{SCRUB_LITERALS} // "");
 			# Denylist tokens — a text mirror of output_scrub.go sensitiveOutputSubstrings.
 			$den = qr/(?:kubeconfig|kube_config|talosconfig|client[_-]?key|client[_-]?certificate|private[_-]?key|client[_-]?secret|secret[_-]?value|secret[_-]?key|access[_-]?key|password|token|manifest)/i;
+			# TERMINAL denylist (#1954) — the token must END the key name. Used only by the
+			# declaration rules (4b), which mirror assert_grep_clean check (3b) exactly: a rule
+			# that redacts LESS than the tripwire flags makes the leg red forever, and one that
+			# redacts MORE eats the evidence the artifact exists to carry. Same list as (3b).
+			$dent = qr/(?:client[_-]?key|client-key-data|private[_-]?key|talosconfig|kubeconfig|kube_config|password|secret[_-]?value|secret[_-]?key|access[_-]?key|[_-]token)/i;
 			$inkey = 0;
 		}
 		# (2) PEM private-key block: redact the whole body, not just the markers.
@@ -85,8 +103,50 @@ scrub_stream() {
 		# (4) JSON-embedded, mid-line. Wrapped form FIRST: `"key":{"value":"…"}` is what a tofu
 		#     plan JSON emits for a root variable, and the bare form would otherwise match its
 		#     inner `"value":"…"` only by luck of ordering.
-		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*\{\s*["]value["]\s*:\s*)"(?:[^"\\]|\\.)*"/$1"[REDACTED]"/g;
+		#     `constant_value` is the same hazard one section over: a secret written as a literal in
+		#     the .tf source lands in the plan JSON `configuration` block under that key, verbatim.
+		#     assert_grep_clean deliberately does NOT excuse it, so covering only `value` left the
+		#     shape most worth catching flagged-but-unredactable.
+		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*\{\s*["]value["]\s*:\s*)"(?:[^"\\]|\\.)*"/${1}"[REDACTED]"/g;
+		#     `constant_value` COLLAPSES the wrapper rather than redacting inside it. The tripwire
+		#     classifies a value by its first 24 characters, and `{"constant_value":"` is 19 of them
+		#     — leaving `[REDA`, so its "already redacted?" filter could not see our marker and the
+		#     shape stayed flagged even once scrubbed. Emitting `"key":"[REDACTED]"` puts the marker
+		#     inside the window. Verify with the round-trip assertion below if that window moves.
+		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*)\{\s*["]constant_value["]\s*:\s*"(?:[^"\\]|\\.)*"\s*\}/${1}"[REDACTED]"/g;
+		#     Array-valued, bare and inside the `{"value":…}` wrapper. The elements have no key of
+		#     their own, so the denylisted key is the only cover they get.
+		#     `${1}` is NOT optional: `$1[` interpolates as an ARRAY SUBSCRIPT, so the replacement
+		#     silently became empty and the rule DELETED the whole array instead of redacting it.
+		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*\{\s*["]value["]\s*:\s*)\[[^\]]*"[^\]]*\]/${1}["[REDACTED]"]/g;
+		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*)\[[^\]]*"[^\]]*\]/${1}["[REDACTED]"]/g;
 		s/(["][\w.\-]*$den[\w.\-]*["]\s*:\s*)"(?:[^"\\]|\\.)*"/$1"[REDACTED]"/g;
+		# (4b) DECLARATION shapes (#1954). The `configuration` section of a plan JSON DESCRIBES every
+		#      variable and module, so a denylisted NAME shows up there wrapped in a schema block
+		#      instead of carrying a value: `"admin_password":{"default":"…","description":…}`.
+		#      Nothing above matches that wrapper, so a genuinely hardcoded default was flagged by
+		#      the tripwire and unredactable here — a permanently red leg.
+		#      The denylist is the TERMINAL one, and the default must be a NON-EMPTY string (or an
+		#      array holding one): `"admin_password":{"default":""}` carries nothing, and
+		#      `"auth_token_update_strategy":{"default":"ROTATE"}` is an enum, not a credential.
+		#      Redact IN PLACE rather than collapsing the wrapper the way `constant_value` does — a
+		#      variable block continues past its default (`,"description":…`), so collapsing it
+		#      would unbalance the JSON. `{"default":"` is 12 characters, which keeps the marker
+		#      inside the 24-character window the tripwire classifies a value by.
+		s/(["][\w.\-]*$dent["]\s*:\s*\{\s*["]default["]\s*:\s*)"(?:[^"\\]|\\.)+"/${1}"[REDACTED]"/g;
+		s/(["][\w.\-]*$dent["]\s*:\s*\{\s*["]default["]\s*:\s*)\[[^\]]*"[^\]]*\]/${1}["[REDACTED]"]/g;
+		# (4c) Credentials inside a module `source` URL — `git::https://user:TOKEN@host/repo` is a
+		#      documented Terraform source form. Key-agnostic, because the module NAME carries no
+		#      signal here; the URL does. Only the userinfo dies, so the artifact still shows which
+		#      module resolved from which host — that evidence is the point of uploading it at all.
+		s/(["]source["]\s*:\s*"[^"]*:\/\/)[^"\/@]+:[^"\/@]+@/${1}\[REDACTED\]@/g;
+		# (5) BARE key mid-line: logfmt `hcloud_token=abc` inside a longer line. The lookbehind
+		#     keeps it off quoted JSON keys (rule 4 territory — a JSON key sits behind a `"`), and
+		#     the lookaheads leave structural values alone: a `{` or `[` opener, a JSON literal,
+		#     the tofu placeholders, and our own marker. Those carry no secret, and redacting them
+		#     would corrupt the plan JSON for no gain.
+		s/(?<!["\w.\-])([\w.\-]*$den[\w.\-]*\s*[:=]\s*)"(?:[^"\\]|\\.)*"/$1"[REDACTED]"/g;
+		s/(?<!["\w.\-])([\w.\-]*$den[\w.\-]*\s*[:=]\s*)(?!["\{\[])(?!true\b)(?!false\b)(?!null\b)(?!\((?:sensitive value|sensitive|known after apply)\))(?!\[REDACTED)([^\s,}\]]+)/$1\[REDACTED\]/g;
 		print;
 	'
 }
@@ -152,6 +212,34 @@ assert_grep_clean() {
 	#      b) the value is an object whose FIRST key is `sensitive`/`references`/`expression`
 	#         AND whose own value is a bool/array/object — never a string.
 	#
+	#      c) the value is an object whose FIRST key is `default` or `source` — a variable or
+	#         module DECLARATION. A plan JSON's `configuration` section describes the schema, so a
+	#         denylisted NAME appears there wrapped in a block that carries no value of its own:
+	#         `"admin_password":{"default":"","description":…}` is the variable being declared,
+	#         not a password. On its own this exclusion is a HOLE in both directions — a default
+	#         genuinely can hold a hardcoded secret, and a module source genuinely can carry
+	#         `git::https://user:TOKEN@host/repo`. It is safe ONLY because check (3b) below
+	#         positively re-flags exactly those two sub-shapes. Never widen one without the other.
+	#
+	#      d) the value is an object whose FIRST key is `type` — a variable's TYPE CONSTRAINT, and
+	#         the shape that cost the first real hetzner run its ledger row (#2062). A plan JSON's
+	#         `configuration.root_module.variables` section declares every root variable as
+	#         `"hcloud_token":{"type":"string","description":…}`. The captured 24-character window
+	#         stops at `{"type":"string"` — before any value — so the `REDACTED` filter above never
+	#         sees the marker that was in fact already there, and three correctly-scrubbed hetzner
+	#         credentials plus a DURATION (`admin_kubeconfig_cert_lifetime`) were reported as
+	#         plaintext. A type constraint is a string or an array of strings and can hold no
+	#         value, so it is metadata by construction, exactly like (b) and (c).
+	#
+	#      e) the value is an object whose FIRST key is `actions` and whose array holds only
+	#         OpenTofu's own change verbs — `"kubeconfig":{"actions":["create"]…`, the
+	#         `resource_changes[].change` shape. Anchored to the verb vocabulary rather than to
+	#         "any array", because an unanchored `actions` exclusion would swallow
+	#         `{"actions":["<secret>"]}` on its way past.
+	#
+	#    (d) and (e) are safe for the same reason (c) is: 3b below positively re-flags a hardcoded
+	#    `default`, so a variable that declares BOTH a type and a secret default is still caught.
+	#
 	#    `constant_value` is NOT on that list, deliberately: `"password":{"constant_value":"…"}`
 	#    is precisely where a hardcoded secret in a .tf shows up in the plan JSON's
 	#    `configuration` section. Excluding it would have hidden the one shape most worth
@@ -163,7 +251,10 @@ assert_grep_clean() {
 	hits="$(grep -rIhoE -- '["]?[A-Za-z0-9_.-]*(client[_-]?key|client-key-data|private[_-]?key|talosconfig|kubeconfig|kube_config|password|secret[_-]?value|secret[_-]?key|access[_-]?key|[_-]token)[A-Za-z0-9_.-]*["]?[[:space:]]*[:=][[:space:]]*[^[:space:],}]{1,24}' "$dir" 2>/dev/null |
 		grep -v 'REDACTED' |
 		grep -vE '[:=][[:space:]]*(\(sensitive|true|false|null)$' |
-		grep -vE '[:=][[:space:]]*\{["]?(sensitive|references|expression)["]?[[:space:]]*:[[:space:]]*(true|false|null|\[|\{)' || true)"
+		grep -vE '[:=][[:space:]]*\{["]?(sensitive|references|expression)["]?[[:space:]]*:[[:space:]]*(true|false|null|\[|\{)' |
+		grep -vE '[:=][[:space:]]*\{["]?(default|source)["]?[[:space:]]*:' |
+		grep -vE '[:=][[:space:]]*\{["]?type["]?[[:space:]]*:[[:space:]]*(["]|\[)' |
+		grep -vE '[:=][[:space:]]*\{["]?actions["]?[[:space:]]*:[[:space:]]*\[[[:space:]]*["](create|read|update|delete|no-op)["]' || true)"
 	if [ -n "$hits" ]; then
 		echo "::error::proof-scrub: a denylisted key still carries a plaintext value in the proof bundle ($dir):" >&2
 		# Print the KEY only. This used to print the whole matching line, which meant the tripwire
@@ -171,6 +262,36 @@ assert_grep_clean() {
 		# the scrub exists to keep clean. Found while testing the #1854 fail-closed path against a
 		# deliberately weakened scrub.
 		printf '%s\n' "$hits" | sed -E 's/[[:space:]]*[:=][[:space:]]*.*$/ = [value withheld]/' | sort -u | head -5 >&2
+		rc=1
+	fi
+	# 3b) The two sub-shapes exclusion (c) just dropped that CAN still carry a secret. Dropping a
+	#     declaration wrapper wholesale is the hole #1954 refused to open, so each is positively
+	#     re-flagged — narrowly, and by CONSTRUCTION rather than by naming survivors.
+	#
+	#     (a) a hardcoded secret DEFAULT. The denylist token must be TERMINAL in the variable name
+	#         — nothing may follow it before the closing quote — which is what makes the aws
+	#         runner log's three survivors fall out on their own shape: `admin_password` ends in
+	#         `password` and stays caught, `auth_token_update_strategy` ends in `strategy`,
+	#         `custom_secrets_password_module` ends in `module`. An EMPTY default carries nothing,
+	#         so the default must be a non-empty string, or an array holding one (the array form is
+	#         not decoration: without it, `"password_list":{"default":["…"]}` would be excluded by
+	#         (c) and re-flagged by nothing).
+	hits="$(grep -rIhoE -- '"[A-Za-z0-9_.-]*(client[_-]?key|client-key-data|private[_-]?key|talosconfig|kubeconfig|kube_config|password|secret[_-]?value|secret[_-]?key|access[_-]?key|[_-]token)"[[:space:]]*:[[:space:]]*\{[[:space:]]*"default"[[:space:]]*:[[:space:]]*("[^"]+"|\[[^]]*"[^]]*\])' "$dir" 2>/dev/null | grep -v 'REDACTED' || true)"
+	if [ -n "$hits" ]; then
+		echo "::error::proof-scrub: a variable declaration carries a hardcoded secret default ($dir):" >&2
+		# The KEY only, never the value — see the note on check (3).
+		printf '%s\n' "$hits" | sed -E 's/"[[:space:]]*:.*$/" = [default withheld]/' | sort -u | head -5 >&2
+		rc=1
+	fi
+	#     (b) credentials in a module `source`. Key-agnostic on purpose: `git::https://user:TOKEN@
+	#         host/repo` is a documented Terraform source form and it is a leak whatever the module
+	#         is called, so the module NAME carries no signal here — the URL does.
+	hits="$(grep -rIhoE -- '"source"[[:space:]]*:[[:space:]]*"[^"]*://[^"/@]+:[^"/@]+@' "$dir" 2>/dev/null | grep -v 'REDACTED' || true)"
+	if [ -n "$hits" ]; then
+		echo "::error::proof-scrub: a module source URL carries credentials ($dir):" >&2
+		# Here the userinfo IS the secret, so there is no key that can be named safely: keep the
+		# scheme (which tells the operator what kind of source it was) and withhold the rest.
+		printf '%s\n' "$hits" | sed -E 's|(://).*|\1[credentials withheld]|' | sort -u | head -5 >&2
 		rc=1
 	fi
 	# 4) The same denylisted keys nested in JSON mid-line — the shape a tofu `show -json` plan
@@ -221,6 +342,8 @@ password: FAKE-PASSWORD-should-be-redacted-by-key
 FAKE-KEY-BODY-should-never-survive
 -----END EC $pk-----
 {"format_version":"1.2","variables":{"hcloud_token":{"value":"$fake_planjson"},"region":{"value":"KEEP-ME-PLANJSON-REGION"}},"hetzner_s3_secret_key":"$fake_planjson"}
+{"configuration":{"root_module":{"resources":[{"expressions":{"admin_password":{"constant_value":"$fake_planjson"}}}]}},"registry_tokens":["$fake_planjson"],"rotation_tokens":{"value":["$fake_planjson"]},"region":{"value":"KEEP-ME-ARRAYLINE-REGION"}}
+time=2026-08-04T06:12:12Z level=error msg="apply failed" hcloud_token=$fake_planjson step=KEEP-ME-LOGFMT-STEP
 KEEP-ME-SENTINEL-non-secret-marker
 EOF
 
@@ -258,9 +381,23 @@ EOF
 		echo "SELF-TEST FAIL: the JSON rule ate a non-secret sibling value (over-broad)" >&2
 		return 1
 	fi
-	# The scrubbed bundle must pass the tripwire.
+	# Same, for the array/constant_value line and the logfmt line: redact the value, keep the line.
+	local marker
+	for marker in KEEP-ME-ARRAYLINE-REGION KEEP-ME-LOGFMT-STEP; do
+		grep -qF "$marker" "$scrubbed" && continue
+		echo "SELF-TEST FAIL: a scrub rule ate the non-secret remainder of its line ($marker)" >&2
+		return 1
+	done
+	# The scrubbed bundle must pass the tripwire. This is the assertion that keeps the scrub and
+	# the tripwire in step: assert_grep_clean flags a denylisted key carrying any non-structural
+	# value, so EVERY shape it flags must be one scrub_stream can redact. When they drifted apart
+	# — `{"constant_value":"…"}`, `["…"]`, `{"value":["…"]}` and logfmt `key=value` were flagged
+	# but unredactable — the affected leg could never produce a bundle at all. Adding a shape to
+	# the tripwire without adding it here is what that regression looks like.
 	if ! assert_grep_clean "$work/out"; then
 		echo "SELF-TEST FAIL: assert_grep_clean flagged a correctly-scrubbed bundle" >&2
+		echo "  If a NEW shape was added to the tripwire, scrub_stream has to be able to redact it," >&2
+		echo "  or the leg carrying that shape is red forever." >&2
 		return 1
 	fi
 
@@ -290,6 +427,43 @@ EOF
 		echo "SELF-TEST FAIL: assert_grep_clean passed a REAL secret sitting beside plan-JSON metadata" >&2
 		return 1
 	fi
+	# ── #2062: a variable TYPE CONSTRAINT and a resource-change ACTION LIST are metadata too. ──
+	# This is the fixture the first real hetzner run died on. Its credentials were ALREADY scrubbed
+	# to `[REDACTED]`; what the tripwire matched was the plan JSON's declaration of the same names,
+	# whose 24-character window ends at `{"type":"string"` — before the marker that would have
+	# cleared it. The run lost its ledger row to a bundle that was clean.
+	local meta_decl="$work/meta-decl"
+	mkdir -p "$meta_decl"
+	cat >"$meta_decl/plan.json" <<'EOF'
+{"configuration":{"root_module":{"variables":{"hcloud_token":{"type":"string","description":"…"},"hetzner_s3_access_key":{"type":"string"},"hetzner_s3_secret_key":{"type":"string"},"admin_kubeconfig_cert_lifetime":{"type":"string"},"password_list":{"type":["list","string"]}}}},"resource_changes":[{"change":{"kubeconfig":{"actions":["create"]},"talosconfig":{"actions":["create"]},"client_key":{"actions":["delete","create"]}}}],"variables":{"hcloud_token":{"value":"[REDACTED]"},"hetzner_s3_secret_key":{"value":"[REDACTED]"}}}
+EOF
+	if ! assert_grep_clean "$meta_decl" >/dev/null 2>&1; then
+		echo "SELF-TEST FAIL: assert_grep_clean flagged variable type constraints / change actions (over-broad — this is #2062)" >&2
+		return 1
+	fi
+	# …and the narrowing must not have opened a hole: a variable that declares a type AND carries a
+	# hardcoded secret default is still a leak, and 3b is what has to catch it.
+	local meta_decl_bad="$work/meta-decl-bad"
+	mkdir -p "$meta_decl_bad"
+	cat >"$meta_decl_bad/plan.json" <<'EOF'
+{"variables":{"admin_password":{"default":"planjson-FAKE-PLACEHOLDER-typed-default-DO-NOT-LEAK"}}}
+EOF
+	if assert_grep_clean "$meta_decl_bad" >/dev/null 2>&1; then
+		echo "SELF-TEST FAIL: the #2062 narrowing swallowed a hardcoded secret default" >&2
+		return 1
+	fi
+	# An `actions` array that is NOT a tofu change verb is not metadata — it is an array whose
+	# contents were never vetted, and the exclusion must not reach it.
+	rm -f "$meta_decl_bad/plan.json"
+	cat >"$meta_decl_bad/smuggled.json" <<'EOF'
+{"hcloud_token":{"actions":["planjson-FAKE-PLACEHOLDER-smuggled-in-an-array-DO-NOT-LEAK"]}}
+EOF
+	if assert_grep_clean "$meta_decl_bad" >/dev/null 2>&1; then
+		echo "SELF-TEST FAIL: the #2062 actions exclusion accepted a non-verb array (too wide)" >&2
+		return 1
+	fi
+	rm -f "$meta_decl_bad/smuggled.json"
+
 	# The two shapes the narrowing must NOT swallow, pinned individually because each is a hole if
 	# its exclusion is a character wider than the metadata it names:
 	#   - a hardcoded secret in the plan JSON's `configuration` section, which appears under
@@ -330,6 +504,56 @@ EOF
 		return 1
 	fi
 
+	# ── DECLARATION shapes: `{"default":…}` and `{"source":…}` (#1954). ──
+	# The aws runner log — the ONE cloud whose T2 real apply actually runs — was refused by the
+	# tripwire on three keys that were every one of them a variable or module DECLARATION:
+	# `admin_password` (an EMPTY default), `auth_token_update_strategy` and
+	# `custom_secrets_password_module`. Exclusion (c) drops the wrapper; checks (3b)(a) and (3b)(b)
+	# re-flag the two sub-shapes inside it that can genuinely carry a secret. Pin the WHOLE truth
+	# table in both directions — and, for the shapes that must trip, that scrub_stream can actually
+	# redact them, because a flagged-but-unredactable shape is a leg red forever (twice now).
+	local decl="$work/decl" row expect keep body
+	mkdir -p "$decl"
+	for row in \
+		'PASS|"default":""|{"variables":{"admin_password":{"default":"","description":"an empty default is not a password"}}}' \
+		'FAIL||{"variables":{"admin_password":{"default":"planjson-FAKE-PLACEHOLDER-hardcoded-default-DO-NOT-LEAK","description":"terminal name, real default"}}}' \
+		'PASS|ROTATE-KEEP-ME-DECL|{"variables":{"auth_token_update_strategy":{"default":"ROTATE-KEEP-ME-DECL"}}}' \
+		'PASS|./modules/awssm-passgen-KEEP-ME-DECL|{"module_calls":{"custom_secrets_password_module":{"source":"./modules/awssm-passgen-KEEP-ME-DECL"}}}' \
+		'FAIL||{"module_calls":{"custom_secrets_password_module":{"source":"git::https://u:planjson-FAKE-PLACEHOLDER-src-DO-NOT-LEAK@example.invalid/r"}}}'; do
+		IFS='|' read -r expect keep body <<<"$row"
+		rm -f "$decl"/*
+		printf '%s\n' "$body" >"$decl/plan.json"
+		if assert_grep_clean "$decl" >/dev/null 2>&1; then
+			if [ "$expect" != PASS ]; then
+				echo "SELF-TEST FAIL: the tripwire PASSED a declaration that carries a secret: ${body:0:56}…" >&2
+				return 1
+			fi
+		else
+			if [ "$expect" != FAIL ]; then
+				echo "SELF-TEST FAIL: the tripwire FLAGGED a clean declaration — this is #1954: ${body:0:56}…" >&2
+				return 1
+			fi
+		fi
+		# Whichever way it went, the scrubbed form must be clean, the seeded secret must be gone,
+		# and the non-secret part of the declaration must survive — an artifact scrubbed down to
+		# `[REDACTED]` everywhere is no more useful than one that was never uploaded.
+		scrub_stream <"$decl/plan.json" >"$decl/scrubbed.json"
+		rm -f "$decl/plan.json"
+		if ! assert_grep_clean "$decl" >/dev/null 2>&1; then
+			echo "SELF-TEST FAIL: scrub_stream cannot redact a shape the tripwire flags: ${body:0:56}…" >&2
+			return 1
+		fi
+		if grep -qF 'DO-NOT-LEAK' "$decl/scrubbed.json"; then
+			echo "SELF-TEST FAIL: a seeded declaration secret survived scrub_stream: ${body:0:56}…" >&2
+			return 1
+		fi
+		if [ -n "$keep" ] && ! grep -qF -- "$keep" "$decl/scrubbed.json"; then
+			echo "SELF-TEST FAIL: scrub_stream over-redacted a non-secret declaration ($keep)" >&2
+			return 1
+		fi
+	done
+	rm -rf "$decl"
+
 	# ── The HARVEST, not just the redaction (#1875). ──
 	# Everything above builds SCRUB_LITERALS by hand, so it proves scrub_stream redacts what it is
 	# GIVEN and says nothing about whether the run's actual credentials get into that list. That is
@@ -338,6 +562,11 @@ EOF
 	local saved_literals="${SCRUB_LITERALS:-}" name missed=""
 	local -a cred_vars=(
 		HCLOUD_TOKEN E2E_GIT_TOKEN ALETHIA_E2E_GIT_TOKEN
+		# Hetzner Object Storage: a SECOND hetzner credential pair, unrelated to HCLOUD_TOKEN and
+		# not derivable from it, that a full-bar leg holds so the `bucket` kind can be proven. Both
+		# halves are listed — an S3 access key is a credential, not an identifier, and covering one
+		# half is the #1854 shape in miniature.
+		HETZNER_S3_ACCESS_KEY HETZNER_S3_SECRET_KEY
 		AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 		# Six names, one AssumeRoleWithOIDC exchange: the alicloud OpenTofu provider and the aliyun
 		# CLI disagree about the spelling, and covering one spelling scrubs the provider's copy

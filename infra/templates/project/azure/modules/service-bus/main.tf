@@ -22,6 +22,9 @@ resource "azurerm_servicebus_queue" "this" {
   max_delivery_count = each.value.max_delivery_count
   lock_duration      = each.value.lock_duration
 
+  # How long an unconsumed message survives (#1994). null leaves Azure's default in place.
+  default_message_ttl = each.value.default_message_ttl
+
   # Ordered delivery. A session-enabled queue hands every message sharing one SessionId to a single
   # receiver, in arrival order. `requires_session` FORCES REPLACEMENT of the queue, and once it is
   # on, clients can no longer send or receive plain messages — both are day-2 hazards, which is why

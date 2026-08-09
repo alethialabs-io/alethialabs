@@ -102,6 +102,48 @@ variable "disk_size_gb" {
   default     = 50
 }
 
+variable "os_disk_type" {
+  type        = string
+  description = "OS-disk placement: \"Managed\" or \"Ephemeral\". Null omits the argument, leaving Azure's default (Managed)."
+  default     = null
+}
+
+################################################################################
+# Spot node pool (aws parity: eks_ng_capacity_type)
+################################################################################
+# A Spot pool is a SEPARATE resource, never a flag on an existing one: priority /
+# eviction_policy / spot_max_price are ForceNew, and AKS refuses a Spot default node pool.
+
+variable "spot_enabled" {
+  type        = bool
+  description = "Create a Spot node pool alongside the on-demand pools."
+  default     = false
+}
+
+variable "spot_max_price" {
+  type        = number
+  description = "Hourly ceiling (USD) for a Spot node; -1 means pay up to the on-demand price."
+  default     = -1
+}
+
+variable "spot_eviction_policy" {
+  type        = string
+  description = "Eviction policy for reclaimed Spot nodes: \"Delete\" or \"Deallocate\"."
+  default     = "Delete"
+}
+
+variable "spot_node_min_size" {
+  type        = number
+  description = "Minimum nodes in the Spot pool. 0 lets it scale to nothing."
+  default     = 0
+}
+
+variable "spot_node_max_size" {
+  type        = number
+  description = "Maximum nodes in the Spot pool."
+  default     = 3
+}
+
 ################################################################################
 # Access control (BYOC B4.1 knobs)
 ################################################################################
@@ -133,4 +175,20 @@ variable "authorized_ip_ranges" {
   type        = list(string)
   description = "CIDRs allowed to reach the AKS public API server (api_server_access_profile.authorized_ip_ranges). Empty = open to all source IPs (unchanged)."
   default     = []
+}
+
+# #2004. When set, the cluster runs as this user-assigned identity instead of a system-assigned one,
+# and envelope-encrypts Kubernetes Secrets in etcd under secrets_kms_key_id. Both are set together
+# or neither is: AKS encrypts AS the cluster identity, so a key without the identity that was
+# granted access to it cannot be used. Empty (both) is the pre-#2004 shape.
+variable "cluster_identity_id" {
+  type        = string
+  default     = ""
+  description = "User-assigned identity resource id for the cluster. Empty uses a system-assigned identity."
+}
+
+variable "secrets_kms_key_id" {
+  type        = string
+  default     = ""
+  description = "Key Vault key id for KMS etcd encryption of Kubernetes Secrets. Empty leaves Secrets under the platform key."
 }

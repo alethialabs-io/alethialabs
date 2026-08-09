@@ -70,6 +70,28 @@ func cidrSubnet(base string, newBits, netNum int) string {
 	return fmt.Sprintf("%d.%d.%d.%d/%d", out[0], out[1], out[2], out[3], newPrefix)
 }
 
+// ValidateConfig refuses a Hetzner project config the Talos template cannot provision: the
+// shared node-pool sizing invariants, plus the private-network CIDR floor implied by the /24
+// node subnet the template carves.
+//
+// There is NO disk rule: Talos nodes take the server type's own disk and the template declares
+// no disk-size variable at all (asserted, so it can't silently gain one).
+//
+// The sizing rules are applied here even though Hetzner reads only `worker_count` (from
+// desired, else min) and has no min/max variables of its own — so min/max are the one place
+// where this gate is marginally stricter than the template, which would ignore them. That is
+// intentional: a max below a min is a user error on every cloud, and today Hetzner answers it
+// by silently discarding the input.
+func (p *hetznerProvider) ValidateConfig(config *types.ProjectConfig) error {
+	if config == nil {
+		return fmt.Errorf("ProjectConfig is required")
+	}
+	if err := validateNodeSizing(config); err != nil {
+		return err
+	}
+	return validateNetworkCIDR(config, "network_cidr", hetznerMaxNetworkPrefix)
+}
+
 func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Node sizing: prefer an explicit/ resolved instance type, else a cheap, orderable
 	// amd64 default (cpx22 = 2 vCPU / 4 GB). cax11 (ARM) is capacity-unreliable and
@@ -167,6 +189,9 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"network_cidr":      networkCIDR,
 		"pod_cidr":          podCIDR,
 		"service_cidr":      serviceCIDR,
+		// Extra source ranges permitted inbound, added to hcloud_firewall.this as their own rules
+		// (#1987). Empty is the default and adds nothing.
+		"network_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// DNS. Hetzner's Cloud API grew Zones in 2025 (GA in the hcloud provider at 1.56), so DNS
 		// on Hetzner is a first-class tofu resource like Route 53 / Cloud DNS / Azure DNS — not the

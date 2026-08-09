@@ -4,15 +4,16 @@
   "private": true,
   "exports": {
     "./consent": "./src/consent.ts",
-    "./consent-provider": "./src/consent-provider.tsx"
+    "./consent-provider": "./src/consent-provider.tsx",
+    "./privacy-settings-button": "./src/privacy-settings-button.tsx"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@hookform/resolvers": "^5.5.7",
-    "react-hook-form": "^7.83.0",
+    "@hookform/resolvers": "^5.7.1",
+    "react-hook-form": "^7.84.0",
     "zod": "^4.1.13"
   },
   "peerDependencies": {
@@ -21,7 +22,7 @@
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
-    "@types/react": "19.2.17",
+    "@types/react": "19.2.18",
     "eslint": "^9.39.5",
     "react": "^19.2.8",
     "typescript": "5.9.3"

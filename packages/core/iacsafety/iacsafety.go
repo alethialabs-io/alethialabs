@@ -54,6 +54,15 @@ const (
 	RuleProviderImplied = "provider-implied"
 	// RuleProvisionerBlock — any provisioner block/attribute anywhere: code execution.
 	RuleProvisionerBlock = "provisioner-block"
+	// RuleExecCredentialPlugin — an `exec` credential-plugin block/attribute
+	// inside a provider configuration (hashicorp/kubernetes accepts it directly,
+	// hashicorp/helm nested under kubernetes{}): the provider runs `command`
+	// with `args` as a local subprocess while configuring its client during
+	// plan — the same execution window provisioners and data "external" are
+	// blocked for, reachable with only allowlisted providers. Scoped to
+	// provider bodies: an exec block inside a resource (e.g. a liveness-probe
+	// exec) is workload config that runs in the cluster, not on the runner.
+	RuleExecCredentialPlugin = "exec-credential-plugin"
 	// RuleExternalDataSource — data "external": code execution at plan time.
 	RuleExternalDataSource = "external-data-source"
 	// RuleHTTPDataSource — data "http": network access at plan time (warning).
@@ -149,9 +158,10 @@ type Report struct {
 // impliedUse records a resource/data/provider reference whose provider is
 // implied by its local name; checked once all declarations are collected.
 type impliedUse struct {
-	name string // provider local name, e.g. "aws"
-	file string
-	line int
+	name   string // provider local name, e.g. "aws"
+	module string // module directory the reference was found in
+	file   string
+	line   int
 }
 
 // scanner carries the state of one Scan invocation.
@@ -163,15 +173,21 @@ type scanner struct {
 	// providers/modules are accumulated as sets, sorted at the end.
 	providers map[string]bool
 	modules   map[string]bool
-	// declared holds provider local names seen in any required_providers block
-	// (union across scanned modules — a deliberate simplification: provider
-	// requirements inherit into child modules, so a union over the local tree
-	// only errs toward fewer provider-implied warnings, never fewer
-	// provider-not-allowlisted errors).
-	declared map[string]bool
+	// declared holds, PER MODULE DIRECTORY, the provider local names seen in
+	// that module's required_providers blocks. OpenTofu resolves provider
+	// requirements per module in BOTH directions — a child's entry does not
+	// apply to the root and the root's does not apply to a child — so an
+	// implied use may only be excused by its OWN module's declaration. A
+	// tree-wide union let two lines of required_providers in any module
+	// suppress the provider-implied ERROR everywhere else (#2029).
+	declared map[string]map[string]bool
 	implied  []impliedUse
-	visited  map[string]bool // module dirs already scanned (cycle guard)
-	queue    []string        // module dirs pending scan
+	// curModule is the module directory currently being scanned. Scanning is
+	// strictly sequential (one queue, one module at a time), so a single field
+	// is enough module context for the record/check helpers below.
+	curModule string
+	visited   map[string]bool // module dirs already scanned (cycle guard)
+	queue     []string        // module dirs pending scan
 	// resources is the declared inventory (see Resource); modulePath maps a
 	// scanned module DIRECTORY to the Terraform module path that reaches it.
 	resources  []Resource
@@ -217,7 +233,7 @@ func Scan(dir string, allowlist []string) (*Report, error) {
 		allowed:   allowed,
 		providers: map[string]bool{},
 		modules:   map[string]bool{},
-		declared:  map[string]bool{},
+		declared:  map[string]map[string]bool{},
 		visited:   map[string]bool{},
 		outputs:   map[string]bool{},
 		// The scan root IS the root module — no module path prefix.
@@ -310,6 +326,7 @@ var configSuffixes = []struct {
 // recursive file walk). Non-config extensions are inert to OpenTofu and are
 // skipped.
 func (s *scanner) scanModuleDir(dir string) error {
+	s.curModule = dir
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("iacsafety: reading module dir %q: %w", dir, err)
@@ -462,7 +479,10 @@ func (s *scanner) recordModuleSource(source, file string, line int, moduleDir, c
 // is evaluated with a nil context, which succeeds only for pure literals —
 // anything referencing variables/functions fails closed.
 func (s *scanner) checkProviderEntry(localName string, expr hcl.Expression, file string, line int) {
-	s.declared[strings.ToLower(localName)] = true
+	if s.declared[s.curModule] == nil {
+		s.declared[s.curModule] = map[string]bool{}
+	}
+	s.declared[s.curModule][strings.ToLower(localName)] = true
 
 	source := ""
 	v, diags := expr.Value(nil)
@@ -514,20 +534,39 @@ func (s *scanner) recordImpliedUse(typeName, file string, line int) {
 	if name == "terraform" || name == "" {
 		return
 	}
-	s.implied = append(s.implied, impliedUse{name: name, file: file, line: line})
+	s.implied = append(s.implied, impliedUse{name: name, module: s.curModule, file: file, line: line})
+}
+
+// recordImpliedProviderRef queues a provider reference whose LOCAL NAME is
+// already exact — a provider block label or a `provider =` meta-argument.
+// Unlike recordImpliedUse it must NOT split at the first underscore: that rule
+// derives a provider name from a resource TYPE prefix, but here the whole name
+// IS the local name. Splitting made a `provider "foo_bar"` reference look up
+// "foo" — excusable by the wrong declaration (fail-open) and blind to the
+// right one (false positive). The builtin "terraform" provider ships with
+// OpenTofu and is exempt.
+func (s *scanner) recordImpliedProviderRef(name, file string, line int) {
+	name = strings.ToLower(name)
+	if name == "terraform" || name == "" {
+		return
+	}
+	s.implied = append(s.implied, impliedUse{name: name, module: s.curModule, file: file, line: line})
 }
 
 // checkImpliedProviders runs after all modules are scanned: any implied
-// provider with no required_providers entry anywhere in the tree AND whose
+// provider with no required_providers entry in ITS OWN module AND whose
 // implied address hashicorp/<name> is not in the allowlist is an ERROR —
 // `tofu init` resolves the implied hashicorp/<name> address and downloads +
 // executes that binary, so the implied path must be gated exactly like an
-// explicit required_providers source. (Declared entries are already checked
-// by the rule-1 allowlist pass; allowlisted implied addresses are fine.)
+// explicit required_providers source. Provider requirements are per module in
+// both directions (a child's entry never applies to the root, nor the root's
+// to a child), so only the same module's declaration can excuse a use (#2029).
+// (Declared entries are already checked by the rule-1 allowlist pass;
+// allowlisted implied addresses are fine.)
 func (s *scanner) checkImpliedProviders() {
 	reported := map[string]bool{}
 	for _, u := range s.implied {
-		if s.declared[u.name] || s.allowed["hashicorp/"+u.name] {
+		if s.declared[u.module][u.name] || s.allowed["hashicorp/"+u.name] {
 			continue
 		}
 		key := u.name + "\x00" + u.file

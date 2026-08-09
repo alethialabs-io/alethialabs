@@ -14,12 +14,13 @@
 		"lint:prose": "vale content"
 	},
 	"dependencies": {
-		"fumadocs-core": "16.13.0",
+		"@repo/brand": "workspace:*",
+		"fumadocs-core": "16.14.0",
 		"fumadocs-mdx": "14.3.2",
-		"fumadocs-ui": "16.13.0",
+		"fumadocs-ui": "16.14.0",
 		"lucide-react": "^0.577.0",
-		"mermaid": "^11.16.0",
-		"next": "16.2.12",
+		"mermaid": "^11.16.1",
+		"next": "16.3.0",
 		"next-themes": "^0.4.6",
 		"react": "^19.2.8",
 		"react-dom": "^19.2.8",
@@ -29,12 +30,12 @@
 		"@tailwindcss/postcss": "^4.3.3",
 		"@types/mdx": "^2.0.14",
 		"@types/node": "^20.19.43",
-		"@types/react": "^19.2.17",
-		"@types/react-dom": "^19.2.3",
-		"postcss": "^8.5.23",
+		"@types/react": "^19.2.18",
+		"@types/react-dom": "^19.2.4",
+		"postcss": "^8.5.25",
 		"tailwindcss": "^4.3.3",
 		"typescript": "^5.9.3",
-		"eslint-config-next": "16.2.12",
+		"eslint-config-next": "16.3.0",
 		"eslint": "^9.39.5"
 	}
 }

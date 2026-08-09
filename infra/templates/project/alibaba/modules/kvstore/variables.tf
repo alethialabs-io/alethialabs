@@ -43,3 +43,12 @@ variable "tags" {
   default     = {}
   description = "Tags to apply to the instance"
 }
+
+# #1996. Cluster-mode shards — the axis a "node count" means on ApsaraDB for Redis. Verified as a
+# real argument on alicloud_kvstore_instance rather than assumed to be part of the SKU. 0 (the
+# default) leaves the instance class's own topology untouched.
+variable "shard_count" {
+  type        = number
+  default     = 0
+  description = "Number of cluster-mode shards. 0 (the default) leaves the instance class's own topology alone."
+}

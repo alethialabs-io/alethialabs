@@ -5,7 +5,7 @@
 
 Living status for **real runner provisioning** on each cloud, tracked to the maintainer's **FULLY-TESTED
 bar** (not the "provisions + ArgoCD converges" floor). The bar, per cloud, on a **real apply**: every
-supported resource kind × all 19 marketplace add-ons Healthy+Synced × BYO-IaC × BYO-IaC *with Alethia
+supported resource kind × all 18 marketplace add-ons Healthy+Synced × BYO-IaC × BYO-IaC *with Alethia
 services* × a real day-2 access path — provision → verify → **teardown as a closed loop** (never leave a
 cluster/VM running). See [[fully-tested-bar]] / `byoc-proof-program`.
 
@@ -25,22 +25,68 @@ proof nor a ledger row; a later `RETRACTED` ledger row corrects any historical c
 
 ## Parity matrix (cloud × capability)
 
-| Cloud | Provision + cluster_ready | All kinds (11) | 19 add-ons Healthy+Synced | BYO-IaC | BYO-IaC + services | Day-2 access | Teardown clean | Security-reviewed |
+| Cloud | Provision + cluster_ready | All kinds (11) | 18 add-ons Healthy+Synced | BYO-IaC | BYO-IaC + services | Day-2 access | Teardown clean | Security-reviewed |
 |-------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **AWS — EKS** | 🚫 [#1714] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
 | **GCP — GKE** | 🚫 [#1716] [#1714] [#1722] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
 | **Azure — AKS** | 🚫 [#1722] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
-| **Hetzner — Talos** | 🚫 [#1714] | — | — | — | — | — | ✅ | — | <!-- tracked by the nightly; outside this 3-cloud FULLY-TESTED program -->
-| **Alibaba — ACK** | ⏳ | — | — | — | — | — | ⏳ | — | <!-- tracked by the nightly; outside this 3-cloud FULLY-TESTED program -->
+| **Hetzner — Talos** | 🚫 [#2058] | ⏳ (7 of 11 — see below) | — | — | — | — | ✅ | — | <!-- floor tracked by the nightly; the KINDS column is fully described in maxconfig.go: 4 tofu + 3 in-cluster (now actually seeded) + 2 ceilings + 2 deferred-debt; teardown ✅ re-verified by hand on the 20260805T064043Z run — account swept to zero -->
+| **Alibaba — ACK** | ⏳ | ⏳ ⚠️ | — | — | — | — | ⏳ | — | <!-- floor tracked by the nightly; all 11 kinds are CarriedByTofu in maxconfig.go. ⚠️ = a full bar leaves a standing prepaid CR EE instance; see the All-kinds column notes -->
 
 Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
 
 - **Provision + cluster_ready** — base T2: real apply → `cluster_ready` → ArgoCD Healthy+Synced over the
   *derived* (non-empty) app set. 🟡 = the nightly's cheapest-shape floor is green, but the full-bar
   dimensions below have not been driven on that cloud.
-- **All kinds (11)** — `ALETHIA_E2E_MAX_CONFIG=1` → `AssertMaxConfigKindsInState` (all 11 kinds land in
-  tofu state). Heavy fixture `test/e2e/fixtures/cluster_json.heavy.<cloud>.json`.
-- **19 add-ons Healthy+Synced** — `ALETHIA_E2E_ALL_ADDONS=1` → `AssertArgoAppsHealthy` over all 19.
+- **All kinds (11)** — `ALETHIA_E2E_MAX_CONFIG=1` → `AssertMaxConfigKindsInState`. Heavy fixture
+  `test/e2e/fixtures/cluster_json.heavy.<cloud>.json`, which now exists for **all five** clouds.
+  Every (kind × cloud) cell in `test/e2e/maxconfig.go` carries one of three explicit verdicts
+  (`MaxConfigCarriage`) — there is no "unmapped" state any more:
+  - **`CarriedByTofu`** — the cloud's IaC creates a resource; a real apply must leave it in the
+    deploy's tofu state.
+  - **`CarriedInCluster`** — genuinely delivered, but not by cloud IaC. Hetzner's database, cache and
+    queue are in-cluster charts (CloudNativePG / Valkey / RabbitMQ, `hetzner-services.ts`), so the
+    proof is the named ArgoCD Application reaching Healthy+Synced, not a state count.
+  - **`CloudCeiling`** — the cloud genuinely does not offer the kind: no cloud service, and no chart
+    in this repo backs it either. Hetzner: `topic`, `nosql`. Alibaba has no ceilings: all 11 kinds
+    are `CarriedByTofu`.
+  - **`DeferredInProduct`** — hidden and rejected today exactly like a ceiling, but for a different
+    reason: a chart this repo already ships backs the kind and only the mapping is missing. That is
+    **debt**, and the cell must name the chart (`MaxConfigCell.Chart`, checked against the generated
+    add-on catalog on every PR). Hetzner: `secrets` (Vault) and `registry` (Harbor) — both install on
+    every full-bar run while the kind that would use them is refused.
+
+  A cloud with no column, a cell with no verdict, or a cloud with no offered kind at all is an
+  **error**, not a skip. Read back on every PR by `maxconfig_verdicts_pure_test.go`.
+
+  The two exclusions are reported in **separate** lists (`MaxConfigStateProof.Excluded` /
+  `.Deferred`), so a run says "2 kinds this cloud cannot do, 2 kinds we have not wired" rather than
+  "4 excluded". They were one shared reason string that read "no chart or cloud service backs it" and
+  then appended "(Vault is a marketplace add-on…)" — a sentence contradicting its own parenthesis,
+  and the mechanism by which two backlog items stopped being counted.
+
+  ⚠️ **An Alibaba full bar buys a standing monthly subscription.** The `registry` cell is correct —
+  `alicloud_cr_ee_repo` is the pushable resource — but reaching it forces its parent
+  `alicloud_cr_ee_instance`, which `infra/templates/project/alibaba/modules/cr/main.tf` creates with
+  `payment_type = "Subscription"`, `period = 1`. It is the **only** subscription resource in the whole
+  Alibaba module tree, and a prepaid instance is not released by `tofu destroy` the way a
+  pay-as-you-go one is. So every Alibaba full-bar run leaves a **non-cancellable monthly CR EE Basic
+  instance** behind and the teardown still reports clean. Do not drive an Alibaba full bar without
+  budgeting for that, and sweep the instances by hand afterwards.
+
+  ⚠️ **A Hetzner full bar needs a second credential pair.** `bucket` on Hetzner is real Object
+  Storage behind the `aminueza/minio` provider, which authenticates from `HETZNER_S3_ACCESS_KEY` /
+  `HETZNER_S3_SECRET_KEY` — not `HCLOUD_TOKEN`, and Hetzner has no API to mint them (a human creates
+  them in the console). The hetzner row's credential gate now requires them whenever
+  `ALETHIA_E2E_MAX_CONFIG=1`, so a full-bar run without them fails **before any spend** instead of
+  provisioning a whole cluster and dying at the bucket. Deliberately a hard prerequisite rather than
+  an "unproven bucket" escape: `CarriedByTofu` means a real apply must leave the resource in state,
+  so there is no honest verdict under which the run could report success with `bucket` unproven.
+- **18 add-ons Healthy+Synced** — `ALETHIA_E2E_ALL_ADDONS=1` → `AssertArgoAppsHealthy` over all 18.
+  18, not 19: the count is the catalog SSOT's (`expectedCatalogSize`, `test/e2e/addon_surface.go`,
+  mirroring `ADDON_CATALOG.length`), and cert-manager left the marketplace for the platform rail.
+  On Hetzner a full bar converges four MORE Applications than that — the synthesized in-cluster data
+  services — which is why the number is read from the fixture and never restated as a threshold.
 - **BYO-IaC / BYO-IaC + services** — the A0.6 `ALETHIA_E2E_ARGO_*` + `ALETHIA_E2E_GIT_TOKEN` inputs →
   `t2_argo_repos.go` (ArgoCD-with-repos + BYO-Helm + service-binding-against-BYO-outputs; pod-pull +
   managed-resources asserts).
@@ -60,15 +106,74 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
       independent convergence defects. The observed failed run tore down cleanly, but it is not a floor PASS.
 - [ ] **Azure floor (#1722)** — AKS's platform metrics-server collided with ours; the render gate now skips
       it there. The observed failed run tore down cleanly; a real run is still required for floor proof.
-- [ ] **Hetzner floor (#1714)** — provisioning and teardown are verified clean, but `addon-reloader` remains
-      OutOfSync, so the floor is blocked rather than proven.
+- [ ] **Hetzner `addons` dimension — first real run, FAIL at the ArgoCD gate**
+      ([`20260805T064043Z`](../../demos/proofs/hetzner/20260805T064043Z), 2026-08-05). This is the first
+      time `ALETHIA_E2E_ALL_ADDONS` has been driven against a real cluster on **any** cloud, and it
+      settled three open questions at once.
+
+      **Proven.** The cluster provisions and is reachable — 7 nodes `Ready` (1 control plane + 6 workers),
+      Kubernetes 1.35.6 on Talos, the signed receipt verified against the plan hash, 220 log lines shipped
+      to `job_logs`. That is further than any leg has reached before: the only prior genuine attempt (aws,
+      2026-07-22) died with a 401 from the API server. **`addon-reloader` reached Healthy+Synced**, so
+      **#1714 is verified against a real apply** rather than merely closed; the same run verifies **#1722**,
+      since `metrics-server` also converged on one of the two clouds where it still installs.
+
+      **Failed.** 12 of 20 Applications were not Healthy+Synced within the 8-minute budget. Two distinct
+      causes, and only one of them is a timeout:
+      - **`addon-loki` can never install** (#2058) — its catalog values set `deploymentMode: SingleBinary`
+        *and* non-zero `read`/`write`/`backend` replicas, which the chart's own `validate.yaml` rejects. The
+        manifest never renders (`sync=Unknown`, not `OutOfSync` — there is no target state to compare).
+      - **The rest were still converging.** `velero` was `Missing`, and `falco`, `ingress-nginx`,
+        `kube-prometheus-stack` and `vault` were all `Progressing`. Eight minutes is not a realistic budget
+        for 18 charts of this weight; the number needs deriving from the surface rather than guessing.
+
+      **Teardown swept to zero** — servers, volumes, network, load balancer, firewall and primary IPs all
+      back to the pre-run baseline, verified by hand against the account.
+
+      ⚠️ The run produced **no ledger row of its own**: the proof-scrub tripwire fired on already-redacted
+      values and its fail-closed exit discarded the record (#2062). The row was appended by hand with
+      `RECORD_ONLY`. The bundle was independently checked for the live token, certificate material and a
+      kubeconfig body — none present.
 - [ ] **Alibaba floor** — pending enablement and its first real run; no floor or teardown verdict exists.
 - [ ] **Raise the nightly (or a dispatch/weekly full-bar job) to the FULLY-TESTED dimensions** —
       `MAX_CONFIG` (11 kinds) + `ALL_ADDONS` (19) + A0.6 BYO/services + a real day-2 access assertion — per
       cloud. Because the full surface is heavy + costly, drive it as an **opt-in full-bar dimension**
       (dispatch input / weekly cron) so the cheap nightly stays the green-floor smoke.
-- [ ] **Heavy fixtures** — confirm `cluster_json.heavy.{gcp,azure}.json` exist (only `aws` may be present);
-      add the missing ones.
+- [x] **Heavy fixtures** — all five now ship (`cluster_json.heavy.{aws,gcp,azure,hetzner,alibaba}.json`),
+      so a full-bar run no longer hard-errors in the workflow's "Compute cluster shape" step. Each is
+      checked on every PR: it must clear its cloud's floor, pin an instance type
+      `packages/core/catalog/catalog.json` actually offers, and declare a `node_size` matching that
+      instance's catalogued vCPU/memory (the pair used to be self-attested, and `aws` pinned the
+      non-catalog `m5.xlarge`).
+- [x] **Hetzner's three in-cluster kinds are seeded by the harness** — `database`/`cache`/`queue` are
+      `CarriedInCluster` and asserted against the converged ArgoCD Application set, and the DEPLOY
+      snapshot now carries the charts that produce those Applications. Previously it did not: the Go
+      harness seeded add-ons from `seedAddOns`/`AllCatalogAddOns` alone, which can never hold the
+      Hetzner data services (they are synthesized per component, not chosen from a marketplace), so
+      those three cells asserted Applications that could not exist and a Hetzner full-bar run was
+      **red by construction**. That was recorded as an inherent blocker on the grounds that
+      hand-mirroring `hetznerDataServicesToAddOns` into Go is the drift this repo forbids — true, but
+      not the only option: the specs are **generated** on the same rail `addon_catalog.json` already
+      uses.
+
+      | | |
+      |---|---|
+      | SSOT | `apps/console/lib/cloud-providers/hetzner-services.ts` |
+      | generator | `pnpm -F console export:hetzner-data-services` |
+      | fixture | `test/e2e/fixtures/hetzner_data_services.json` |
+      | drift guard (TS) | `tests/lib/cloud-providers/hetzner-data-services-export.test.ts` |
+      | read-back (Go) | `TestHetznerDataServiceFixtureMatchesTheMaxConfigSurface`, `TestHetznerInClusterCellsAreCoveredBySeededSpecs` |
+
+      The fixture carries the **components** it was generated from as well as the specs, so the Go
+      read-back compares them with the real `MaxConfigProjectConfig("hetzner")` instead of trusting
+      that two lists were kept in step by hand. The seed is per-cloud: the other four clouds' add-on
+      set is untouched (asserted).
+- [ ] **Azure full-bar feasibility** — the e2e subscription has a **10 vCPU** Total Regional quota and
+      AKS renders a single pool, so the old `Standard_D4s_v5` ×3 fixture (12 vCPU) could never create.
+      The fixture is now `Standard_E2s_v5` ×3 (6 vCPU / 48 GiB) and the total-vCPU floor is per-cloud
+      (`heavyMinVCPUByCloud`). ⚠️ The `ESv5 Family vCPUs` quota is separate from Total Regional and can
+      be 0; if it is, Azure has no feasible full-bar shape and must become an explicit documented
+      exclusion rather than a quietly failing leg.
 - [ ] **Day-2 access surface** — the maintainer flagged the missing kubeconfig / ArgoCD-URL surface as the
       gap that motivated the bar (opening `:6443` returned a client-cert 401 — by design, but no access
       path is surfaced). Build + assert it.

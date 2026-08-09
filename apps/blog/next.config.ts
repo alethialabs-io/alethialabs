@@ -14,6 +14,8 @@ const config: NextConfig = {
 	// standalone bundle inside Docker.
 	outputFileTracingRoot: repoRoot,
 	reactStrictMode: true,
+	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
+	transpilePackages: ["@repo/brand", "@repo/ui"],
 };
 
 export default config;

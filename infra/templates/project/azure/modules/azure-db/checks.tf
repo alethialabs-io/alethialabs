@@ -31,9 +31,27 @@ check "server_endpoint_is_resolvable" {
 
 # MySQL rejects high availability unless storage auto-grow is on. The module forces it, so this
 # guards the coupling rather than the input.
+#
+# The condition is written to be DEGENERATE-SAFE, not merely short-circuit-safe (#1931). `||` does
+# not short-circuit on the OpenTofu the runner applies with — every disjunct is evaluated, however
+# the left ones resolve — so an INDEX into a count-0 resource is reached and kills the plan:
+#
+#   fixture: var.engine == "postgres" || !var.high_availability || azurerm_mysql…this[0].storage[0]…
+#   1.9.0   (apps/runner/Dockerfile.base TOFU_VERSION, compat matrix `tofu`) → Invalid index
+#                                                       "azurerm_mysql_flexible_server.this is empty tuple"
+#   1.10.10, 1.12.3                                                          → plans clean
+#
+# A postgres Flexible Server is the COMMON shape of this module, so on the shipped engine this took
+# the whole module down; `keyless_postgres_without_a_cluster_is_refused` reproduces it. The template
+# gate never saw it because it ran 1.10.10 — the skew this issue closes.
+#
+# A splat is safe on a zero-length tuple where an index never is: `this[*]…` yields `[]` without
+# evaluating the body, `one([])` is null, and `null == true` is plain `false`. Fail-closed meaning
+# is unchanged — an absent or renamed server yields `false`, and this check judges only the
+# mysql + HA shape, which by construction has the server.
 check "mysql_ha_requires_storage_autogrow" {
   assert {
-    condition     = var.engine == "postgres" || !var.high_availability || azurerm_mysql_flexible_server.this[0].storage[0].auto_grow_enabled
+    condition     = var.engine == "postgres" || !var.high_availability || one(azurerm_mysql_flexible_server.this[*].storage[0].auto_grow_enabled) == true
     error_message = "MySQL high availability requires storage auto-grow; the service rejects the combination otherwise."
   }
 }

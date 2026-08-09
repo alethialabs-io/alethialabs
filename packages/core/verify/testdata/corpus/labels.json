@@ -3,6 +3,7 @@
   "aws_fail_static_key_admin.json": { "verdict": "fail", "controls": ["KEYLESS-001", "LEASTPRIV-001"] },
   "aws_fail_wildcard_sub.json": { "verdict": "fail", "controls": ["OIDC-001"] },
   "aws_fail_missing_sub.json": { "verdict": "fail", "controls": ["OIDC-001"] },
+  "aws_fail_wildcard_action.json": { "verdict": "fail", "controls": ["OIDC-001"] },
   "aws_fail_notaction.json": { "verdict": "fail", "controls": ["LEASTPRIV-001"] },
   "aws_warn_sensitive_wildcard.json": { "verdict": "warn", "controls": ["LEASTPRIV-001"] },
   "aws_not_evaluable_computed_policy.json": { "verdict": "not_evaluable", "controls": ["LEASTPRIV-001"] },

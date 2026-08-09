@@ -9,9 +9,11 @@
 // cloud. See that file's header for what A0.5 closes (gap G11 / finding #4).
 //
 // Every step here is WARN-ONLY by default (a05Soft logs) and becomes a HARD failure only under
-// ALETHIA_E2E_A05_ENFORCE — the spec's warn-only → hard-fail-after-3-green-nights ramp, flippable
-// with no code change. If A0.5 setup fails (or the fixture is missing) the whole feature disables
-// itself and the base T2 proof runs exactly as before.
+// ALETHIA_E2E_A05_ENFORCE — the spec's warn-only → hard-fail-after-3-green-nights ramp. It is NOT
+// "flippable with no code change", as this comment used to say: the variable is in no workflow file,
+// so no repo variable reaches it. See the ramp note in t2_console_active.go. If A0.5 setup fails
+// (or the fixture is missing) the whole feature disables itself and the base T2 proof runs exactly
+// as before.
 package e2e
 
 import (
@@ -19,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -77,7 +80,7 @@ func setupA05(t *testing.T, ctx context.Context, cp *ControlPlane, root, project
 // (with per-run dynamic overrides) under ALETHIA_E2E_A05_REAL_SNAPSHOT. `full` clones `base` and
 // layers the A0.6 apps/BYO repo wiring + the per-cloud cluster-json override — the exact snapshot
 // the runner consumes. Cloning keeps `base` pristine so fidelity is judged on the un-mutated shape.
-func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, keyless keylessDBConfig, keylessEnabled bool, s *a05Session) (base, full map[string]any, err error) {
+func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, keyless keylessDBConfig, keylessEnabled bool, registry xacctRegistryConfig, registryEnabled bool, s *a05Session) (base, full map[string]any, err error) {
 	t.Helper()
 	if s.enabled && a05RealSnapshotEnabled() {
 		envID := ""
@@ -131,6 +134,18 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 		t.Logf("#1511: seeding the DEPLOY job with an iam_auth %s database + a database binding on service %q",
 			keyless.engine, keyless.serviceName)
 	}
+	// #1047: append the cross-account registry row + the service whose image lives in it. AFTER
+	// MaxConfigSnapshot for the same reason as #1268 — it assigns `container_registries` wholesale,
+	// so an earlier layer would be silently dropped on a full-bar run. Appending (not assigning) also
+	// leaves max-config's NATIVE registry row intact: a keyless registry sets the separate
+	// `registry_pull_provider` guard rather than `registry_provider`, so the cluster keeps its own
+	// registry and gains a foreign-account pull. On `full` ONLY (never `base`, the A0.5 fidelity
+	// target).
+	if registryEnabled {
+		registry.applyToSnapshot(full)
+		t.Logf("#1047: seeding the DEPLOY job with a %s registry row + service %q running %q",
+			registry.connectorSlug(), registry.serviceName, registry.image)
+	}
 	// Merge the per-cloud cluster shape override into the `cluster` block. Malformed JSON is a loud
 	// failure — a workflow typo must not silently provision the wrong shape.
 	if err := t2MergeClusterJSON(full); err != nil {
@@ -150,9 +165,19 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	return base, full, nil
 }
 
-// a05CheckFidelity asserts the seeded (base) snapshot is key-for-key faithful to the console
-// buildConfigSnapshot fixture — the guard against finding #4's synthetic drift. Warn-only unless
-// enforce; a no-op when A0.5 is disabled.
+// a05CheckFidelity compares the seeded (base) snapshot against the console buildConfigSnapshot
+// fixture. Warn-only unless enforce; a no-op when A0.5 is disabled.
+//
+// ⚠️ READ THE SCOPE BEFORE TRUSTING A GREEN LINE FROM THIS. The comparator is one-directional and
+// seed-driven — it examines only the keys the SEED carries, and the default seed (t2BaseSnapshot)
+// carries 6, of which 4 are dynamic-excluded. The fixture has 35. So this examines ~2 keys, and one
+// of them is `provider`, which the hetzner-only fixture makes unmatchable on the other four clouds.
+//
+// It used to log "seeded snapshot is key-for-key faithful to the console buildConfigSnapshot
+// fixture" on success — a claim about all 35 keys made after comparing two. That sentence is how a
+// warn-only check graduates into a false proof, so it now states the compared set verbatim and lets
+// the reader judge. The REAL guard is now TestA05SeedIsFaithfulToTheConsoleFixture: same comparison,
+// but untagged, hard, and on every PR instead of warn-only against a real cloud (#1965).
 func a05CheckFidelity(t *testing.T, s *a05Session, base map[string]any) {
 	t.Helper()
 	if !s.enabled {
@@ -163,13 +188,22 @@ func a05CheckFidelity(t *testing.T, s *a05Session, base map[string]any) {
 		a05Soft(t, s, fmt.Sprintf("normalize seeded snapshot: %v", err))
 		return
 	}
+	compared := make([]string, 0, len(norm))
+	for k := range norm {
+		if !a05DynamicSnapshotKeys[k] {
+			compared = append(compared, k)
+		}
+	}
+	sort.Strings(compared)
 	diffs := a05SnapshotFidelity(norm, s.fixture)
 	if len(diffs) == 0 {
-		t.Log("A0.5: seeded snapshot is key-for-key faithful to the console buildConfigSnapshot fixture")
+		t.Logf("A0.5: no divergence across the %d key(s) this compares [%s] — NOT a statement about "+
+			"the other %d fixture key(s), which the seed does not carry",
+			len(compared), strings.Join(compared, " "), len(s.fixture)-len(compared))
 		return
 	}
-	a05Soft(t, s, fmt.Sprintf("snapshot fidelity — %d divergence(s) from the console shape: %s",
-		len(diffs), strings.Join(diffs, "; ")))
+	a05Soft(t, s, fmt.Sprintf("snapshot fidelity — %d divergence(s) across the %d compared key(s) [%s]: %s",
+		len(diffs), len(compared), strings.Join(compared, " "), strings.Join(diffs, "; ")))
 }
 
 // runA05ConsoleActive replays the REAL finalizeDeployment and asserts the env reached ACTIVE with a

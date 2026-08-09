@@ -121,7 +121,7 @@ func runRegistryTokenLoop(ctx context.Context, mint registryTokenMinter, patch s
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(refreshAfter(exp, time.Now())):
+		case <-refreshTimer(refreshAfter(exp, time.Now())):
 		}
 		dcj, exp, err = mint(ctx)
 		if err != nil {

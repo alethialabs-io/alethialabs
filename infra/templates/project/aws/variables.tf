@@ -127,6 +127,22 @@ variable "eks_cluster_version" {
   default     = "1.35"
 }
 
+# #1987. ADDITIVE, never restrictive: merged into the EKS node security group's rules alongside the
+# template's own, so the empty default leaves the plan byte-identical and cannot lock the external
+# runner out of a cluster it still has to provision. Distinct from
+# cluster_endpoint_public_access_cidrs below, which gates the API ENDPOINT rather than the network.
+variable "vpc_allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to this VPC's cluster nodes, on top of the template's own rules. Empty (the default) adds nothing."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.vpc_allowed_cidr_blocks : can(cidrhost(c, 0))])
+    error_message = "vpc_allowed_cidr_blocks must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}
+
 variable "cluster_endpoint_public_access_cidrs" {
   description = "CIDRs with access to the EKS cluster. Restricted to customer and Alethia"
   type        = list(string)
@@ -789,7 +805,28 @@ variable "ddb_table_configuration" {
     enable_point_in_time_recovery = optional(bool, false)
     ttl_enabled                   = optional(bool, false)
     ttl_attribute                 = optional(string, "")
-    deletion_protection_enabled   = optional(bool, true)
+
+    # DEFAULT OFF, AND THE DEFAULT IS THE WHOLE POINT.
+    #
+    # This defaulted to `true`, and `buildDDBTables` (packages/core/cloud/aws_provider.go) has never
+    # emitted the key — so the root default was materialised into every table object of every AWS
+    # project and handed to modules/dynamodb, which passes it straight to the table. An
+    # aws_dynamodb_table with deletion protection on REFUSES DeleteTable, so `tofu destroy` errored
+    # on the table and never reached the rest of the graph: RDS and ElastiCache kept their ENIs, and
+    # the subnets and VPC behind them could not be deleted either. Any customer who added a nosql
+    # table could not destroy their own environment.
+    #
+    # `false` is not a new posture — it is the one modules/dynamodb/variables.tf already declares for
+    # the same field. The root was the outlier, and it was overriding the module toward the setting
+    # that traps the user.
+    #
+    # Nothing in the canvas collects a deletion-protection value (no column, no config-schema field,
+    # no zod entry — checked across apps/console and packages/core), so there is no user intent to
+    # carry here. When there is no control, the default has to be the one that cannot lock someone
+    # out of their own account; a customer can always re-enable protection on the table, but a
+    # customer wedged behind it has no console path out at all. `provider_config` passthrough
+    # (mergeProviderConfig) makes this field settable per table today for anyone who wants it on.
+    deletion_protection_enabled = optional(bool, false)
   }))
   description = "List of objects to pass to the module for the creation of the table."
 }
@@ -828,7 +865,11 @@ variable "ddb_global_table_configuration" {
     enable_point_in_time_recovery = optional(bool, false)
     ttl_enabled                   = optional(bool, false)
     ttl_attribute                 = optional(string, "")
-    deletion_protection_enabled   = optional(bool, true)
+
+    # Same default, same reason as ddb_table_configuration above — and it matters MORE here. A
+    # global table's replicas are torn down through the same DeleteTable call, so protection left on
+    # wedges the destroy in every replica region at once, not just the primary.
+    deletion_protection_enabled = optional(bool, false)
   }))
   description = "List of objects to pass to the module for the creation of the global table."
 }

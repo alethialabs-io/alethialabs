@@ -10,5 +10,10 @@ module "secret_manager" {
   # otherwise the same secrets double-provision (mirrors the AWS/Alibaba pattern).
   secrets = var.secrets_provider == "native" ? var.custom_secrets : []
 
+  # var.custom_secret_keepers was DECLARED on this template and read by nothing — the knob was
+  # reachable through mergeProviderConfig and reached no plan, which is the unwired-template defect
+  # rather than a parity gap. This line is the wiring, not a new offer.
+  secret_keepers = var.custom_secret_keepers
+
   labels = local.gcp_default_labels
 }

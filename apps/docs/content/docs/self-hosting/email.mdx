@@ -1,14 +1,43 @@
 ---
 title: Email
-description: Set up transactional email on AWS SES with reputation-isolated sending subdomains (auth, product, marketing).
+description: Set up transactional email via Resend, generic SMTP, or AWS SES, with reputation-isolated sending subdomains (auth, product, marketing).
 ---
 
-# Email (AWS SES)
+# Email (Resend / SMTP / SES)
 
-Alethia sends transactional email through **AWS SES** — there is no third-party
-email SaaS. Until you configure SES, sign-in codes and other emails are **logged
-to the server console** (run `docker compose logs app`), so a fresh self-host
-works with zero email setup. This page is what you do to send real email.
+Alethia sends transactional email through a **pluggable transport** — pick
+**Resend**, a **generic SMTP** server, or **AWS SES**. Until you configure one,
+sign-in codes and other emails are **logged to the server console** (run
+`docker compose logs app`), so a fresh self-host works with zero email setup.
+This page is what you do to send real email.
+
+## Choosing a provider
+
+The transport is chosen by `EMAIL_PROVIDER` (`resend` | `smtp` | `ses`) when set,
+else auto-detected from whichever provider's credentials are present, in
+precedence order **Resend → SMTP → SES**.
+
+- **Resend (recommended).** react-email templates render natively, it's an HTTP API
+  (no SMTP ports to open — friendly to containers/serverless), and domain
+  verification is self-serve. Sign up at [resend.com](https://resend.com), add your
+  domain, verify the DKIM + MAIL FROM DNS records it shows you (the same
+  reputation-isolated subdomains below apply), create an API key, and set
+  `RESEND_API_KEY`. That's the whole setup.
+- **Generic SMTP.** Bring any provider — Postmark, Mailgun, SES-SMTP, or a local
+  [Mailpit](https://github.com/axllent/mailpit) for testing. Set `SMTP_HOST`
+  (+ `SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_SECURE` as needed).
+- **AWS SES.** Powerful but its sandbox→production review frequently **denies
+  legitimate new senders** (young account / fresh domain / OTP-heavy use case), and
+  in the sandbox you can only mail *verified* addresses. If you already have SES
+  production access it works great — the full runbook is below. Otherwise prefer
+  Resend or SMTP.
+
+> The hosted alethialabs.io service runs on **Resend** for exactly this reason —
+> AWS denied SES production access for the account despite a clean, transactional-only
+> setup.
+
+The from-address / subdomain design below applies to **every** provider — verify
+the same sending subdomains with whichever one you pick.
 
 ## Why subdomains
 
@@ -26,7 +55,10 @@ reserved for your human/corporate mail and never sends app email.
 
 Swap `alethialabs.io` for your own domain throughout.
 
-## Setup steps (one-time)
+## SES setup steps (one-time)
+
+_For Resend or SMTP, follow that provider's domain-verification flow instead — the
+subdomain design above still applies. The steps below are the AWS SES path._
 
 ### 1. Verify the sending domains in SES
 

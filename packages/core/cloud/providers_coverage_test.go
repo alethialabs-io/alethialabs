@@ -81,17 +81,19 @@ func TestAlibabaProviderTfvars_FullConfig(t *testing.T) {
 
 	// Core toggles derived from presence of each resource kind.
 	for k, want := range map[string]interface{}{
-		"provision_ack":              true,
-		"create_mns":                 true,
-		"create_kvstore":             true,
-		"create_ots":                 true,
-		"create_oss":                 true,
-		"create_rds":                 true,
-		"provision_network":          true,
-		"single_cloud_nat":           true,
-		"alidns_enabled":             true,
+		"provision_ack":     true,
+		"create_mns":        true,
+		"create_kvstore":    true,
+		"create_ots":        true,
+		"create_oss":        true,
+		"create_rds":        true,
+		"provision_network": true,
+		"single_cloud_nat":  true,
+		// FALSE, and that is the fix: this fixture supplies ZoneID "zone-1", so the caller already
+		// owns a domain and the template must NOT register a second one (#1992). `alidns_enabled`
+		// is the CREATE gate, not an "is DNS on" flag. See TestExistingZoneSuppressesZoneCreation.
+		"alidns_enabled":             false,
 		"alidns_managed_certificate": true,
-		"application_waf_enabled":    true,
 		"rds_engine":                 "PostgreSQL",
 		"project_name":               "acme",
 		"alibaba_account":            "123456",
@@ -148,6 +150,13 @@ func TestAlibabaProviderTfvars_FullConfig(t *testing.T) {
 	}
 	if _, present := tf["application_waf"]; present {
 		t.Error("reserved key application_waf leaked into tfvars verbatim")
+	}
+	// …and the reserved key must not be honoured under its OWN tfvar name either. The rich config
+	// above sets `application_waf: true`, the loudest way a caller can ask for a WAF on this cloud;
+	// the offer is withdrawn (#1841), so the answer is nothing at all. See
+	// TestAlibabaProviderTfvars_CarriesNoWafSwitch for the full statement of why.
+	if _, present := tf["application_waf_enabled"]; present {
+		t.Error("alibaba emitted application_waf_enabled — the WAF offer is withdrawn on this cloud (#1841)")
 	}
 }
 
@@ -694,8 +703,16 @@ func TestAzureBuilders_ServiceBusQueues(t *testing.T) {
 	if q["default_message_ttl"] != "PT120S" {
 		t.Errorf("default_message_ttl = %v, want PT120S", q["default_message_ttl"])
 	}
-	if q["delay_seconds"] != 9 {
-		t.Errorf("delay_seconds = %v, want 9", q["delay_seconds"])
+	// delay_seconds is no longer emitted, and asserting its ABSENCE is the point (#1994). It was
+	// dropped at the module boundary on every run — the module's typed `queues` object never named
+	// it — and the builder's own comment conceded Service Bus has "no direct delay_seconds
+	// equivalent". Scheduled enqueue is a per-message property a sender sets, not a queue setting
+	// tofu can provision, so there was nothing for it to reach.
+	if _, present := q["delay_seconds"]; present {
+		t.Error("delay_seconds is emitted again — Service Bus has no queue-level setting to carry it to")
+	}
+	if _, present := q["forward_dead_lettered_messages_to"]; present {
+		t.Error("forward_dead_lettered_messages_to is emitted again — it was always the empty string, naming no queue")
 	}
 
 	// Defaults when nothing set: ISO-8601 PT1M lock, max_delivery_count 10, sessions explicitly OFF.

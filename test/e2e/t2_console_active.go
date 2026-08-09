@@ -28,8 +28,18 @@
 //     add-on health row the finalize wrote from the runner's real execution_metadata.
 //
 // Everything A0.5 adds is WARN-ONLY until it has proven itself; ALETHIA_E2E_A05_ENFORCE flips the
-// new assertions to HARD failures (per the spec: warn-only → hard-fail after 3 green nights), with
-// no code change needed to enforce.
+// new assertions to HARD failures (per the spec: warn-only → hard-fail after 3 green nights).
+//
+// ⚠️ That ramp is NOT one toggle away, and this comment used to claim it was ("with no code change
+// needed to enforce"). ALETHIA_E2E_A05_ENFORCE appears in ZERO workflow files, so `${{ vars.… }}`
+// does not resolve and a maintainer setting a repo variable changes nothing. Flipping it requires
+// editing .github/workflows/e2e-nightly.yml AND removing the allowlist row in
+// nightly_reachability_test.go — whose own stale-entry guard then fires. Nor is the flip cheap:
+// a05Soft becomes t.Fatalf, and a05CheckFidelity runs BEFORE seedT2DeployJob, so enforcing today
+// would kill the whole provisioning proof rather than just the fidelity assertion.
+//
+// Nothing computes the ramp's exit condition either — no counter, no ledger field. Treat "3 green
+// nights" as an aspiration with no owner until one exists (#1965).
 package e2e
 
 import (

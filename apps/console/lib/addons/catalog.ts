@@ -232,9 +232,18 @@ export const ADDON_CATALOG: AddOnDef[] = [
 					],
 				},
 			},
-			read: { replicas: 1 },
-			write: { replicas: 1 },
-			backend: { replicas: 1 },
+			// ZERO, and the zero is load-bearing. A non-zero replica count on any of these three
+			// ACTIVATES the chart's scalable targets, and `loki/templates/validate.yaml` then refuses
+			// to render at all against a filesystem store: "Cannot run scalable targets (backend,
+			// read, write) or distributed targets without an object storage backend." With `1` here
+			// the chart produced no manifest, so ArgoCD reported `sync=Unknown` — no target state to
+			// compare — and Loki could not install on any cloud, for any customer (#2058).
+			//
+			// Omitting the keys is NOT equivalent: the chart's own defaults are non-zero, so a
+			// deletion re-activates the scalable targets and reproduces the same failure.
+			read: { replicas: 0 },
+			write: { replicas: 0 },
+			backend: { replicas: 0 },
 		},
 		configSchema: z.object({
 			/** Log retention in days (0 = keep forever). */

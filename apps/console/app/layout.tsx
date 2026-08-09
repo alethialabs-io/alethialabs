@@ -64,11 +64,10 @@ export default function RootLayout({
 			<body
 				className={`${geistSans.variable} ${geistMono.variable} ${spaceGrotesk.variable} antialiased`}
 			>
-				<ThemeProvider
-					attribute="class"
-					defaultTheme="light"
-					enableSystem={false}
-				>
+				{/* `enableSystem` must stay on: the account menu offers a System option,
+				    and with it off picking that option silently did nothing. The default
+				    stays `light` so a first load is unchanged. */}
+				<ThemeProvider attribute="class" defaultTheme="light" enableSystem>
 					<Providers>{children}</Providers>
 					{/* Bottom-center keeps toasts clear of the bottom-right floating chrome (setup
 					    guide card + assistant button) without a brittle fixed offset. Sonner already
