@@ -204,6 +204,13 @@ func TestTail_PushFailureArms(t *testing.T) {
 	t.Run("no auth method", func(t *testing.T) {
 		tailIsolateAmbientGit(t)
 		g := tailOpenBare(t)
+		// An SSH remote is what reaches getSSHAuthMethod, which is the arm under test: with
+		// SSH_AUTH_SOCK cleared by tailIsolateAmbientGit there is no agent to talk to.
+		//
+		// This used to be driven by the helper's `file://` URL, back when getAuth returned an SSH
+		// method for ANY token-less repo. Since #2035 it chooses by transport, and a file:// remote
+		// correctly needs no auth at all — so that URL no longer exercises this path.
+		g.RepoURL = "ssh://git@github.com/acme/repo.git"
 		if err := g.Push(context.Background()); err == nil || !strings.Contains(err.Error(), "failed to get auth method") {
 			t.Fatalf("Push error = %v, want the auth failure", err)
 		}
