@@ -127,6 +127,11 @@ func (c Container) Run(ctx context.Context, spec Spec, _ Job) error {
 	cmd := exec.CommandContext(ctx, c.Runtime, args...)
 	cmd.Stdout = spec.Stdout
 	cmd.Stderr = spec.Stderr
+	// The secret-valued keys cross by name on the argv (`--env KEY`); their values ride
+	// here, on the runtime CLI's own environment, for the runtime to inherit and forward —
+	// off the world-readable process table entirely (#2041). os.Environ already holds them
+	// (buildChildEnv read them from it), but appending is explicit about the data flow.
+	cmd.Env = append(os.Environ(), secretEnvPairs(childEnv)...)
 	// New process group so a ctx cancel signals the runtime CLI + its container-monitor
 	// child as a group.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -281,12 +286,56 @@ func (c Container) buildArgs(spec Spec, childEnv []string) []string {
 		args = append(args, "-v", fmt.Sprintf("%s:%s:ro", dir, dir))
 	}
 
+	// A process command line is world-readable (/proc/<pid>/cmdline, `ps auxww`) and, with
+	// the docker runtime, is persisted by the daemon and echoed by `docker inspect`. So a
+	// secret-VALUED key crosses by NAME only — `--env KEY` tells the runtime to inherit the
+	// value from its own environment (set on cmd.Env in Run), keeping the plaintext off the
+	// argv entirely. Non-secret keys (PATH, proxy, HOME, the ALETHIA_STAGE_WORKDIR/trigger)
+	// keep `--env KEY=VALUE`: nothing sensitive, and the explicit value avoids depending on
+	// the runtime CLI's own environment for them (#2041).
 	for _, kv := range childEnv {
+		if i := strings.IndexByte(kv, '='); i > 0 && isSecretValueEnvKey(kv[:i]) {
+			args = append(args, "--env", kv[:i])
+			continue
+		}
 		args = append(args, "--env", kv)
 	}
 
 	args = append(args, c.Image)
 	return args
+}
+
+// secretValueEnvKeys are the allowlisted keys whose VALUE is sensitive: the per-job tofu
+// state-backend password, live cloud API tokens, BYO repo credentials, add-on secret
+// plaintext, and the Fabric admin talosconfig. Their values must never appear on the
+// runtime CLI's argv — buildArgs passes them by name and Run puts the value on cmd.Env for
+// the runtime to inherit. (TF_HTTP_USERNAME, the ARM_/AZURE_ client+tenant+subscription IDs
+// and the *_FILE path keys are identifiers/paths, not secrets, so they stay on argv.)
+var secretValueEnvKeys = map[string]bool{
+	"TF_HTTP_PASSWORD":            true,
+	"HCLOUD_TOKEN":                true,
+	"DIGITALOCEAN_ACCESS_TOKEN":   true,
+	"DIGITALOCEAN_TOKEN":          true,
+	"CIVO_TOKEN":                  true,
+	"ALETHIA_STAGE_GIT_TOKEN":     true,
+	"ALETHIA_STAGE_GIT_TOKENS":    true,
+	"ALETHIA_STAGE_ADDON_SECRETS": true,
+	"ALETHIA_STAGE_TALOS_CONFIG":  true,
+}
+
+func isSecretValueEnvKey(key string) bool { return secretValueEnvKeys[key] }
+
+// secretEnvPairs returns the `KEY=VALUE` entries of childEnv whose key is secret-valued —
+// the ones buildArgs passes by name. Run appends these to the runtime CLI's own environment
+// so `--env KEY` inheritance carries the value without ever placing it on the argv.
+func secretEnvPairs(childEnv []string) []string {
+	var out []string
+	for _, kv := range childEnv {
+		if i := strings.IndexByte(kv, '='); i > 0 && isSecretValueEnvKey(kv[:i]) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // credAllowKeys is the exact set of NON-ALETHIA env vars allowed into the untrusted
