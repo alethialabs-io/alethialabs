@@ -71,8 +71,8 @@
     "overrides": {
       "@ai-sdk/provider": "3.0.13",
       "@ai-sdk/provider-utils": "4.0.37",
-      "react": "19.2.3",
-      "react-dom": "19.2.3",
+      "react": "19.2.8",
+      "react-dom": "19.2.8",
       "@types/react": "19.2.8",
       "@types/react-dom": "19.2.3",
       "zod": "4.4.3",
