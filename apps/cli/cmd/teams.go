@@ -111,6 +111,10 @@ func runTeamsCreate(c apiClient, out io.Writer, orgID, name string) error {
 	return nil
 }
 
+// teamsDeleteYes is the --yes opt-in: skip the confirmation prompt (and make the
+// command usable with --no-input).
+var teamsDeleteYes bool
+
 var teamsDeleteCmd = &cobra.Command{
 	Use:   "delete <team_id>",
 	Short: "Delete a team from the active organization",
@@ -124,7 +128,7 @@ var teamsDeleteCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		if !confirm("Delete this team?", "Members will lose their team grants. This cannot be undone.") {
+		if !confirmDestructive(teamsDeleteYes, "Delete this team?", "Members will lose their team grants. This cannot be undone.") {
 			return
 		}
 		if err := runTeamsDelete(api.NewClient(token), os.Stdout, orgID, args[0]); err != nil {
@@ -143,6 +147,7 @@ func runTeamsDelete(c apiClient, out io.Writer, orgID, teamID string) error {
 }
 
 func init() {
+	addYesFlag(teamsDeleteCmd, &teamsDeleteYes)
 	teamsCmd.PersistentFlags().String("org", "", "Organization id (defaults to the active org)")
 	teamsCmd.AddCommand(teamsListCmd)
 	teamsCmd.AddCommand(teamsCreateCmd)

@@ -109,6 +109,10 @@ var (
 	fleetVersion string
 )
 
+// fleetSetYes is the --yes opt-in: skip the confirmation prompt (and make the
+// command usable with --no-input).
+var fleetSetYes bool
+
 var fleetSetCmd = &cobra.Command{
 	Use:   "set <provider>",
 	Short: "Create or update a managed-fleet warm pool",
@@ -129,7 +133,7 @@ and a release --channel are mutually exclusive (a version pin clears the channel
 		}
 		// Disabling a pool drains its runners (a capacity reduction) — confirm first.
 		if update.Enabled != nil && !*update.Enabled {
-			if !confirm("Disable this pool?", "The controller stops provisioning for it and drains its runners.") {
+			if !confirmDestructive(fleetSetYes, "Disable this pool?", "The controller stops provisioning for it and drains its runners.") {
 				return
 			}
 		}
@@ -194,6 +198,7 @@ func enabledLabel(enabled bool) string {
 }
 
 func init() {
+	addYesFlag(fleetSetCmd, &fleetSetYes)
 	fleetSetCmd.Flags().IntVar(&fleetWarmMin, "warm-min", 0, "Always-warm floor of runners")
 	fleetSetCmd.Flags().IntVar(&fleetMax, "max", 0, "Hard ceiling on instances")
 	fleetSetCmd.Flags().IntVar(&fleetSlots, "slots", 0, "Concurrent jobs per runner")
