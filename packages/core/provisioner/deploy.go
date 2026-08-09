@@ -1429,6 +1429,21 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 	defer os.RemoveAll(valuesDir)
 
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
+		// FAIL CLOSED on a domain that is not a domain. `vc.DNS.DomainName` is free-text project
+		// data (console `config-schema.ts` `domain_name`, type `text`, no pattern) and nothing
+		// upstream of here validates it — every provider just forwards it as a tfvar. It reaches a
+		// `bash -c` string below AND the GKE/AGW values FILES, so it is both a command-injection and
+		// a YAML-injection vector. Same treatment, and the same reason, as `ns` and `clusterName`
+		// in deploy_namespace.go: refuse it at the boundary rather than escape it at each use.
+		//
+		// Quoting below is kept as well — this is defence in depth, not belt-and-braces. The
+		// validator can only speak for the domain; `certArn` and `wafArn` arrive from tofu outputs,
+		// a different trust path this check never sees.
+		if !isValidDNSDomain(vc.DNS.DomainName) {
+			return fmt.Errorf(
+				"refusing to deploy: dns.domain_name %q is not a valid DNS domain — it reaches a shell command and a YAML values file, so it must be a plain hostname (letters, digits, hyphens and dots; each label 1-63 chars; 253 max)",
+				vc.DNS.DomainName)
+		}
 		argoHost := fmt.Sprintf("argocd.%s", vc.DNS.DomainName)
 		// Each cloud's ingress is gated on ITS OWN certificate output, and the two keys below are
 		// mutually exclusive by construction — only the aws template exports `acm_certificate_arn`,
@@ -1463,13 +1478,23 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/scheme=internet-facing'"+
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/target-type=ip'"+
 					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/listen-ports=[{\"HTTPS\":443}]'"+
-					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/certificate-arn=%s'"+
+					" --set %s"+
 					// argo-helm 8.x refactored the server ingress: the `hosts[]` list was replaced by a
 					// single `hostname` (+ `extraHosts` for additional records). We keep the default
 					// `controller: generic` and drive the ALB purely via the annotations + ingressClassName
 					// above, so only the host key changes across the 7.x→8.x bump (#1165).
-					" --set 'server.ingress.hostname=%s'",
-				certArn, argoHost)
+					" --set %s",
+				// The WHOLE `key=value` is quoted, not just the value: a `--set` pair has to reach helm
+				// as ONE shell word, and quoting only the value would leave the pair splittable on a
+				// space in the key's own text. The literal single quotes that used to wrap these two
+				// format verbs are gone for the same reason — ShellQuote supplies them, and nesting the
+				// two would have produced a doubly-quoted argument.
+				//
+				// The `\.` sequences survive unchanged: inside single quotes bash passes the backslash
+				// through, which is exactly what helm's --set key-escaping wants. For any input that was
+				// already a valid domain/ARN this renders byte-identical to what it replaced.
+				utils.ShellQuote("server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/certificate-arn="+certArn),
+				utils.ShellQuote("server.ingress.hostname="+argoHost))
 			// Attach the project's regional web ACL to the ALB this ingress provisions. The
 			// template has always BUILT one behind the canvas WAF switch and associated it with
 			// nothing; the annotation is what makes the switch mean something. Read straight from
@@ -1482,7 +1507,8 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 			// modules/eks/irsa.tf grants the controller wafv2:AssociateWebACL + Get*.
 			if wafArn := argocd.ExtractOutput(outputs, "waf_webacl_arn"); wafArn != "" {
 				installCmd += fmt.Sprintf(
-					" --set 'server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/wafv2-acl-arn=%s'", wafArn)
+					" --set %s",
+					utils.ShellQuote("server.ingress.annotations.alb\\.ingress\\.kubernetes\\.io/wafv2-acl-arn="+wafArn))
 				fmt.Fprintf(stdout, "Attaching WAF web ACL to the ArgoCD Ingress: %s\n", wafArn)
 			}
 			fmt.Fprintf(stdout, "Configuring ArgoCD Ingress at %s\n", argoHost)
