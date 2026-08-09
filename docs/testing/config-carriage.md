@@ -27,7 +27,6 @@ Does `packages/core/types/project_config.go` model a `json:` key for the column?
 | `caches.storage_gb` | ☸️ | The storage you size an in-cluster cache with becomes the Valkey chart's persistent volume, falling back to the memory size when you leave it unset. |
 | `databases.replicas` | ☸️ | The instance count you set on an in-cluster Postgres becomes the CloudNativePG cluster's instance count — one primary plus replicas. |
 | `databases.storage_gb` | ☸️ | The storage you size an in-cluster Postgres with becomes the CloudNativePG cluster's persistent volume. |
-| `nosql_tables.global_replicas` | 🚫 #1982 | the product collects `global_replicas` (canvas + CLI) and `ProjectNosqlConfig` models no `json:"global_replicas"` field, so `json.Unmarshal` drops it on the way to the runner. It saves cleanly, the plan is identical, and nothing anywhere reports it. |
 | `queues.storage_gb` | ☸️ | The storage you size an in-cluster queue with becomes the RabbitMQ chart's persistent volume. |
 
 ## Hop 2 + 3 · carriage, per cloud
@@ -113,6 +112,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 | Field | alibaba | aws | azure | gcp | hetzner |
 |---|:---:|:---:|:---:|:---:|:---:|
 | `capacity_mode` | — | 🟡 | 🟡 | — | · |
+| `global_replicas` | — | 🟡 | 🚫 #2158 | — | · |
 | `partition_key` | 🟡 | 🟡 | 🟡 | — | · |
 | `partition_key_type` | 🟡 | 🟡 | — | — | · |
 | `point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · |
@@ -221,6 +221,8 @@ Decisions, not silence: this cloud will not honor the setting, and here is what 
 | `nosql_tables.capacity_mode` | gcp | Firestore bills per operation and offers no provisioned-throughput mode to switch to. |
 | `nosql_tables.partition_key_type` | azure | A Cosmos DB partition key is a path into the document ("/id"), and Cosmos reads the value's type from the document itself — there is no key type to declare separately. The key path you choose IS applied. |
 | `nosql_tables.capacity_mode` | alibaba | Tablestore chooses capacity mode on the instance that holds your tables, not on each table, so a per-table setting has nothing to land on. |
+| `nosql_tables.global_replicas` | gcp | Firestore replicates by its database location — a region or one of Google's fixed multi-region pairs chosen when the database is created — so a hand-picked list of replica regions cannot be applied to a table. |
+| `nosql_tables.global_replicas` | alibaba | Tablestore keeps your tables in a single-region instance and offers backups and tunnels rather than table replicas — there is no replica-region list to apply. |
 | `dns.managed_certificate` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate. (#1824) |
 | `dns.waf_enabled` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider models WAF 3.0 as an account-level purchase — the instance resource takes no arguments at all, so nothing distinguishes two of them, and destroying one project would release the account's firewall out from under every other project sharing it. Buy a WAF 3.0 instance in your account and put it in front of your ingress from the WAF console. (#1841) |
 | `databases.iam_auth` | alibaba | Unavailable on Alibaba Cloud. RAM governs ApsaraDB's control plane only — there is no data-plane token login for a keyless connection to authenticate with. This database keeps a generated password. (#1510) |
@@ -247,10 +249,10 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 |---|---|:---:|---|---|---|
 | `caches.allowed_cidr_blocks` | azure | 🚫 | no-carrier (boarded as no-carrier) | #2148 | The network allow-list you set on a cache is not applied on Azure yet — the cache is created with the template's default access rules instead. |
 | `caches.allowed_cidr_blocks` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #2149 | The network allow-list you set on a cache is not applied on Alibaba Cloud yet — the cache is created with the template's default access rules instead. |
-| `nosql_tables.global_replicas` | * | 🚫 | dropped-by-type (boarded as dropped-by-type) | #1982 | The replica regions you choose for a table are not created — the table is provisioned in its own region only. |
+| `nosql_tables.global_replicas` | azure | 🚫 | no-carrier (boarded as no-carrier) | #2158 | The replica regions you choose for a table are not applied on Azure yet — the Cosmos account is created in its own region only. |
 | `container_registries.vulnerability_scanning` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
 | `caches.num_cache_nodes` | azure | ⚠️ | gated-carrier (boarded as gated-carrier) | #1993 | The node count you set on a cache is not applied — asking for more than one node moves the cache to the Standard tier, and the number itself is discarded. |
 
 ---
 
-Measured this run: 370 schema columns examined, 73 of them user-settable, 164 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.
+Measured this run: 370 schema columns examined, 73 of them user-settable, 166 cloud verdicts. Regenerate with `pnpm -F console gen:config-carriage`. CI runs the guard on every PR.
