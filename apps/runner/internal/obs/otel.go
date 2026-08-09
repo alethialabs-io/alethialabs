@@ -3,12 +3,16 @@
 
 // Package obs is the runner's OpenTelemetry traces + metrics bootstrap — the SDK half of
 // the telemetry layer (packages/core/telemetry is the API-only instrumentation the
-// provisioner emits through). It is STRICTLY endpoint-gated: when
-// OTEL_EXPORTER_OTLP_ENDPOINT is unset, Setup registers NOTHING, so the global
-// tracer/meter stay the OTel API's built-in no-op — the provisioner's stage spans + the
-// gate-block metric compile to no-ops that cost nothing and export nothing. Telemetry is
-// never a hard dependency of a provision and a collector outage can never block one
-// (spans batch with a bounded, drop-on-full queue; metrics export on an interval).
+// provisioner emits through). It is STRICTLY endpoint-gated, PER SIGNAL: a signal's
+// pipeline is built only when that signal has an endpoint — its own
+// OTEL_EXPORTER_OTLP_{TRACES,METRICS}_ENDPOINT, or the generic
+// OTEL_EXPORTER_OTLP_ENDPOINT that stands in for both. A signal with no endpoint
+// registers NOTHING, so its global tracer/meter stays the OTel API's built-in no-op — the
+// provisioner's stage spans + the gate-block metric compile to no-ops that cost nothing
+// and export nothing, and no exporter ever falls back to the SDK's default
+// localhost:4318. Telemetry is never a hard dependency of a provision and a collector
+// outage can never block one (spans batch with a bounded, drop-on-full queue; metrics
+// export on an interval).
 package obs
 
 import (
@@ -36,16 +40,22 @@ const serviceName = "alethia-runner"
 // tpRe matches a W3C version-00 traceparent, capturing trace-id + span-id.
 var tpRe = regexp.MustCompile(`^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$`)
 
-// Setup boots the trace + metric SDKs and returns a shutdown func — but ONLY when an
-// OTLP endpoint is configured. Unset ⇒ a complete no-op: it registers no provider and
-// returns a no-op shutdown, so the global tracer/meter stay no-op. Never fatal: an
+// Setup boots the trace and/or metric SDK and returns a shutdown func — but ONLY for the
+// signals that have an endpoint. Each signal is gated on its OWN endpoint: per the OTLP
+// spec the signal-specific OTEL_EXPORTER_OTLP_{TRACES,METRICS}_ENDPOINT wins and the
+// generic OTEL_EXPORTER_OTLP_ENDPOINT is the fallback for both, so configuring traces
+// alone must NOT boot a metric pipeline (it would have no endpoint of its own and the SDK
+// would ship to its default localhost:4318 every interval, forever). Neither signal
+// configured ⇒ a complete no-op: no provider is registered and the shutdown is a no-op.
+// The returned shutdown tears down only what was actually started. Never fatal: an
 // exporter-construction error is returned for the caller to log and continue without
 // telemetry (a provision must never fail because a collector is misconfigured).
 func Setup(ctx context.Context, version string) (func(context.Context) error, error) {
 	noop := func(context.Context) error { return nil }
-	if os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT") == "" &&
-		os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") == "" &&
-		os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == "" {
+	generic := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	tracesEnabled := os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") != "" || generic != ""
+	metricsEnabled := os.Getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") != "" || generic != ""
+	if !tracesEnabled && !metricsEnabled {
 		return noop, nil
 	}
 
@@ -59,48 +69,59 @@ func Setup(ctx context.Context, version string) (func(context.Context) error, er
 		return noop, err
 	}
 
-	// Traces: endpoint/headers come from the standard OTEL_EXPORTER_OTLP_* env. WithBatcher
-	// installs a batch processor with a bounded queue that DROPS spans when full — never
-	// blocking the provisioning path on a slow/absent collector.
-	traceExp, err := otlptracehttp.New(ctx)
-	if err != nil {
-		return noop, err
-	}
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(traceExp,
-			sdktrace.WithMaxQueueSize(2048),
-			sdktrace.WithMaxExportBatchSize(512),
-			sdktrace.WithBatchTimeout(5*time.Second),
-		),
-		sdktrace.WithResource(res),
-	)
-	otel.SetTracerProvider(tp)
-	// Register the W3C trace-context propagator so any future cross-process hop speaks the
-	// same traceparent the console minted.
-	otel.SetTextMapPropagator(propagation.TraceContext{})
-
-	// Metrics: a periodic reader batches + exports on an interval; an export failure is
-	// retried next interval and never blocks the caller.
-	metricExp, err := otlpmetrichttp.New(ctx)
-	if err != nil {
-		_ = tp.Shutdown(ctx)
-		return noop, err
-	}
-	mp := sdkmetric.NewMeterProvider(
-		sdkmetric.WithResource(res),
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp,
-			sdkmetric.WithInterval(15*time.Second))),
-	)
-	otel.SetMeterProvider(mp)
-
+	// Only the pipelines actually started get a teardown; shutdown closes over the slice,
+	// so it drains exactly what this call registered and nothing else.
+	var stops []func(context.Context) error
 	shutdown := func(c context.Context) error {
-		err1 := tp.Shutdown(c)
-		err2 := mp.Shutdown(c)
-		if err1 != nil {
-			return err1
+		var firstErr error
+		for _, stop := range stops {
+			if err := stop(c); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
-		return err2
+		return firstErr
 	}
+
+	if tracesEnabled {
+		// Traces: endpoint/headers come from the standard OTEL_EXPORTER_OTLP_* env.
+		// WithBatcher installs a batch processor with a bounded queue that DROPS spans when
+		// full — never blocking the provisioning path on a slow/absent collector.
+		traceExp, terr := otlptracehttp.New(ctx)
+		if terr != nil {
+			return noop, terr
+		}
+		tp := sdktrace.NewTracerProvider(
+			sdktrace.WithBatcher(traceExp,
+				sdktrace.WithMaxQueueSize(2048),
+				sdktrace.WithMaxExportBatchSize(512),
+				sdktrace.WithBatchTimeout(5*time.Second),
+			),
+			sdktrace.WithResource(res),
+		)
+		otel.SetTracerProvider(tp)
+		// Register the W3C trace-context propagator so any future cross-process hop speaks
+		// the same traceparent the console minted.
+		otel.SetTextMapPropagator(propagation.TraceContext{})
+		stops = append(stops, tp.Shutdown)
+	}
+
+	if metricsEnabled {
+		// Metrics: a periodic reader batches + exports on an interval; an export failure is
+		// retried next interval and never blocks the caller.
+		metricExp, merr := otlpmetrichttp.New(ctx)
+		if merr != nil {
+			_ = shutdown(ctx)
+			return noop, merr
+		}
+		mp := sdkmetric.NewMeterProvider(
+			sdkmetric.WithResource(res),
+			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExp,
+				sdkmetric.WithInterval(15*time.Second))),
+		)
+		otel.SetMeterProvider(mp)
+		stops = append(stops, mp.Shutdown)
+	}
+
 	return shutdown, nil
 }
 
