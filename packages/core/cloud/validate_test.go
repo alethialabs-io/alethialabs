@@ -199,8 +199,13 @@ func TestValidateNetworkCIDR(t *testing.T) {
 		{name: "azure below the floor", cloud: "azure", cidr: "10.0.0.0/21", provisionNetwork: true, wantErr: true},
 		{name: "azure /24 (the canvas accepts it today)", cloud: "azure", cidr: "10.0.0.0/24", provisionNetwork: true, wantErr: true},
 
-		{name: "hetzner at the floor", cloud: "hetzner", cidr: "10.0.0.0/24", provisionNetwork: true},
-		{name: "hetzner below the floor", cloud: "hetzner", cidr: "10.0.0.0/25", provisionNetwork: true, wantErr: true},
+		{name: "hetzner at the floor", cloud: "hetzner", cidr: "10.0.0.0/22", provisionNetwork: true},
+		// #2049: the node carve alone would admit /23 and /24, but the service carve
+		// (cidrsubnet(net, 3, 3)) lands inside the node /24 on both — they must be refused
+		// here, not by the template's disjointness precondition mid-provision.
+		{name: "hetzner /23 (service carve overlaps the node /24)", cloud: "hetzner", cidr: "10.0.0.0/23", provisionNetwork: true, wantErr: true},
+		{name: "hetzner /24 (pod AND service carves overlap the node /24)", cloud: "hetzner", cidr: "10.0.0.0/24", provisionNetwork: true, wantErr: true},
+		{name: "hetzner below the node carve's own floor", cloud: "hetzner", cidr: "10.0.0.0/25", provisionNetwork: true, wantErr: true},
 		// The value azure refuses is fine on hetzner — the floors are per-cloud, not shared.
 		{name: "hetzner /21", cloud: "hetzner", cidr: "10.0.0.0/21", provisionNetwork: true},
 
