@@ -4,6 +4,7 @@
 package iacsafety
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -91,5 +92,126 @@ func TestFailClosed_IacSafetyAllowsCleanModule(t *testing.T) {
 	}
 	if !rep.OK {
 		t.Fatalf("the clean control fixture was DENIED — the gate is not discriminating (findings: %+v)", rep.Findings)
+	}
+}
+
+// writeTree writes name->content under a fresh temp dir and returns it.
+func writeTree(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+// TestImpliedProviderIsGatedPerModule is the #2029 regression. OpenTofu resolves
+// provider requirements per module in BOTH directions — a child's
+// required_providers entry does not apply to the root, nor the root's to a
+// child — so an implied use may only be excused by its OWN module's
+// declaration. A tree-wide union let two lines of HCL in any module suppress
+// the provider-implied ERROR everywhere else, and `tofu init` would download
+// and execute an unvetted registry.opentofu.org/hashicorp/<name> binary while
+// the fail-closed gate reported OK (measured with `tofu providers` on exactly
+// these trees — see #2029).
+func TestImpliedProviderIsGatedPerModule(t *testing.T) {
+	cases := []struct {
+		name  string
+		files map[string]string
+		why   string
+	}{
+		{
+			name: "child declaration must not excuse the root's implied use",
+			files: map[string]string{
+				"main.tf": `module "sub" {
+  source = "./sub"
+}
+
+resource "vault_generic_secret" "x" {}
+`,
+				"sub/main.tf": `terraform {
+  required_providers {
+    vault = { source = "hashicorp/null" }
+  }
+}
+`,
+			},
+			why: "the ROOT requires hashicorp/vault (not allowlisted); the child's entry never applies to it",
+		},
+		{
+			name: "root declaration must not excuse a child's implied use",
+			files: map[string]string{
+				"main.tf": `terraform {
+  required_providers {
+    vault = { source = "hashicorp/null" }
+  }
+}
+
+module "sub" {
+  source = "./sub"
+}
+`,
+				"sub/main.tf": `resource "vault_generic_secret" "x" {}
+`,
+			},
+			why: "the CHILD requires hashicorp/vault (not allowlisted); requirements are not inherited downward",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rep, err := Scan(writeTree(t, tc.files), nil)
+			if err != nil {
+				t.Fatalf("Scan: %v", err)
+			}
+			if rep.OK {
+				t.Fatalf("SECURITY HOLE: gate returned OK=true — %s (findings=%+v)", tc.why, rep.Findings)
+			}
+			if !hasRule(rep, RuleProviderImplied) {
+				t.Errorf("denied but without rule %q (findings: %+v)", RuleProviderImplied, rep.Findings)
+			}
+		})
+	}
+}
+
+// TestImpliedProviderExcusedByOwnModule is the discrimination control for the
+// per-module gate: the SAME module declaring its provider (mapping the local
+// name to an allowlisted source) still excuses its own implied use, in the
+// root and in a child alike — per-module gating must not deny what OpenTofu
+// actually resolves through the module's own required_providers.
+func TestImpliedProviderExcusedByOwnModule(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"main.tf": `terraform {
+  required_providers {
+    vault = { source = "hashicorp/null" }
+  }
+}
+
+resource "vault_generic_secret" "x" {}
+
+module "sub" {
+  source = "./sub"
+}
+`,
+		"sub/main.tf": `terraform {
+  required_providers {
+    vault = { source = "hashicorp/null" }
+  }
+}
+
+resource "vault_generic_secret" "y" {}
+`,
+	})
+	rep, err := Scan(dir, nil)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if !rep.OK {
+		t.Fatalf("own-module declarations were not honoured — the gate over-blocks (findings: %+v)", rep.Findings)
 	}
 }
