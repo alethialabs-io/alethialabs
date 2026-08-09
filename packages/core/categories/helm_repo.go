@@ -85,9 +85,19 @@ func HelmRepoCredSpecs(vc *types.ProjectConfig) ([]HelmRepoCredSpec, error) {
 			errs = append(errs, fmt.Errorf("helm_registry/%s validation failed: %w", r.Provider, err))
 			continue
 		}
+		// RepoCred's ok is `b.repoCred != nil` on the very behavior value IsHelmRegistry tested above
+		// (provider.go: IsHelmRegistry → behaviors["helm_registry/"+slug].repoCred != nil; RepoCred →
+		// p.b.repoCred == nil → false), and Get resolves that same registry entry. The two predicates are
+		// therefore equivalent here and ok is true by construction, so a `!ok` arm would be dead and its
+		// diagnostic unemittable (#2088). The live guard is the IsHelmRegistry skip above; the equivalence
+		// is pinned by TestHygCoreCategoriesHelmRegistryPredicateEquivalence so that dropping it fails loudly.
+		//
+		// The message is what was dead, not the skip: `ok` is still honoured, silently, exactly as the
+		// four sibling shapes do (helm_keyless.go, registry_keyless.go, secrets_keyless.go,
+		// secrets_saas.go). Falling through on a false `ok` would seed the ZERO RepoCred — an ArgoCD
+		// repo-credential Secret with an empty URL — which is strictly worse than the skip it replaced.
 		cred, ok := p.RepoCred(ctx)
 		if !ok {
-			errs = append(errs, fmt.Errorf("helm_registry provider %q has no repo-credential mapping", r.Provider))
 			continue
 		}
 		name := HelmRepoCredSecretName(cred.URL)
