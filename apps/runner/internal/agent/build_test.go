@@ -130,6 +130,11 @@ func TestBuildJobName(t *testing.T) {
 		"web":       "build-web",
 		"My_API":    "build-my-api",
 		" Web App ": "build-web-app",
+		// The length budget. This table held only short names, which is why #2032 survived: the
+		// renderer caps the stem at 63-len("build-")=57 and the runner's hand-written copy did not,
+		// so past 57 chars the watcher addressed a Job that does not exist. The authoritative
+		// agreement test lives beside both derivations in packages/core/imagebuild.
+		strings.Repeat("a", 58): "build-" + strings.Repeat("a", 57),
 	}
 	for in, want := range cases {
 		if got := buildJobName(in); got != want {

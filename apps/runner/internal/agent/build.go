@@ -215,20 +215,19 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 	return dest + ":" + sha, nil
 }
 
-// buildJobName mirrors the imagebuild renderer's Job naming contract ("build-<dns1123 name>")
-// so the watcher/digest reads address the Job the rendered manifest creates.
+// buildJobName is the imagebuild renderer's Job naming contract, so the watcher/digest reads
+// address the Job the rendered manifest creates.
+//
+// It CALLS the renderer rather than mirroring it. The previous version restated the sanitization by
+// hand and omitted the length budget the renderer applies (63 minus len("build-") = 57), so any
+// service whose sanitized name ran past 57 characters produced a name that exists nowhere: the
+// kaniko Job applied and ran, `kubectl get job <name>` answered NotFound, and executeBuild failed
+// the whole BUILD with "watch build job failed" — a message pointing nowhere near the cause (#2032).
+//
+// Two derivations of one name is the defect, not the omitted cap; a second copy with the cap added
+// would drift again the next time the renderer changed.
 func buildJobName(serviceName string) string {
-	s := strings.ToLower(strings.TrimSpace(serviceName))
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '-' || r == '_' || r == '/' || r == ' ' || r == '.':
-			b.WriteRune('-')
-		}
-	}
-	return "build-" + strings.Trim(b.String(), "-")
+	return imagebuild.BuildJobName(serviceName)
 }
 
 // resolveHeadSHA pins the commit a build renders against: a shallow clone (with the job's
