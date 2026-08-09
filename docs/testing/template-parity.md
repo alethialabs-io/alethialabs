@@ -82,6 +82,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `cloud_dns_domain` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `cloud_dns_enabled` | 🚫 | ✅ | 🚫 | ✅ | ✅ | baseline |  (#2004) |
 | `cloud_dns_zone_name` | 🚫 | ✅ | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
+| `cloud_sql_app_service_account_email` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | uniform | GCP-only by provider ceiling. Cloud SQL instances carry no IAM policy, so cloudsql.client/instanceUser are project-scoped only and the provisioner (which holds no resourcemanager.projects.setIamPolicy) cannot write them — the account is granted once in the customer's connector bootstrap and adopted. AWS scopes the equivalent to the DB resource ARN via IRSA and Azure via an Entra admin, so neither needs an operator-supplied identity. |
 | `cloud_sql_authorized_networks` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `cloud_sql_backup_enabled` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
 | `cloud_sql_backup_retention_days` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |
