@@ -93,21 +93,41 @@ func Truncate(s string, max int) string {
 	return string(r) + "…"
 }
 
+// staticCell prepares a raw value for the static table. Every cursor-moving
+// control character (newline, carriage return, tab, vertical tab, form feed,
+// backspace) collapses to a space first, so the cell stays on one physical line
+// and lipgloss.Width — which reports the widest *line* of a multi-line string —
+// measures what the terminal will actually print; only then is the value capped
+// to MaxColWidth.
+func staticCell(s string) string {
+	flat := strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t', '\v', '\f', '\b':
+			return ' '
+		default:
+			return r
+		}
+	}, s)
+	return Truncate(flat, MaxColWidth)
+}
+
 // renderStaticTable writes a left-aligned, two-space-gutter grayscale table. It
 // is intentionally non-interactive so it works in pipes, CI, and tests. Cells are
-// capped to MaxColWidth so a long value never overflows the terminal.
+// flattened to a single line and capped to MaxColWidth, so one row is always one
+// output line and a long value never overflows the terminal. A failed write is
+// returned rather than swallowed, matching the json and csv branches.
 func renderStaticTable(out io.Writer, spec TableSpec) error {
 	if len(spec.Columns) == 0 {
 		return nil
 	}
 	widths := make([]int, len(spec.Columns))
 	for i, h := range spec.Columns {
-		widths[i] = lipgloss.Width(Truncate(h, MaxColWidth))
+		widths[i] = lipgloss.Width(staticCell(h))
 	}
 	for _, row := range spec.Rows {
 		for i, cell := range row {
 			if i < len(widths) {
-				if w := lipgloss.Width(Truncate(cell, MaxColWidth)); w > widths[i] {
+				if w := lipgloss.Width(staticCell(cell)); w > widths[i] {
 					widths[i] = w
 				}
 			}
@@ -116,12 +136,14 @@ func renderStaticTable(out io.Writer, spec TableSpec) error {
 
 	var b strings.Builder
 	for i, h := range spec.Columns {
-		b.WriteString(tableHeaderTextStyle.Render(padCell(Truncate(h, MaxColWidth), widths[i])))
+		b.WriteString(tableHeaderTextStyle.Render(padCell(staticCell(h), widths[i])))
 		if i < len(spec.Columns)-1 {
 			b.WriteString("  ")
 		}
 	}
-	fmt.Fprintln(out, strings.TrimRight(b.String(), " "))
+	if _, err := fmt.Fprintln(out, strings.TrimRight(b.String(), " ")); err != nil {
+		return err
+	}
 
 	for _, row := range spec.Rows {
 		b.Reset()
@@ -130,12 +152,14 @@ func renderStaticTable(out io.Writer, spec TableSpec) error {
 			if i < len(widths) {
 				w = widths[i]
 			}
-			b.WriteString(padCell(Truncate(cell, MaxColWidth), w))
+			b.WriteString(padCell(staticCell(cell), w))
 			if i < len(row)-1 {
 				b.WriteString("  ")
 			}
 		}
-		fmt.Fprintln(out, strings.TrimRight(b.String(), " "))
+		if _, err := fmt.Fprintln(out, strings.TrimRight(b.String(), " ")); err != nil {
+			return err
+		}
 	}
 	return nil
 }
