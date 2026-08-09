@@ -15,6 +15,7 @@ module "kvstore" {
   zone_id           = local.zone_ids[0]
   secondary_zone_id = length(local.zone_ids) > 1 ? local.zone_ids[1] : ""
   multi_az          = var.kvstore_multi_az
+  shard_count       = var.kvstore_shard_count
 
   tags = local.common_tags
 }

@@ -33,6 +33,11 @@ variable "repos" {
     # root's, which makes both attributes optional.
     description    = optional(string, "")
     immutable_tags = optional(bool, true)
+    # Named HERE as well as on the root's `artifact_registry_repos`, or tofu's type conversion at
+    # the module boundary drops it silently and the switch reads as configurable while doing
+    # nothing — which is the exact defect #1844 exists to close, arriving inside its own fix. The
+    # same boundary already swallowed `format` once; see the note in gcp/variables.tf.
+    vulnerability_scanning = optional(bool, false)
   }))
   default     = {}
   description = "Map of repository names to their configuration"

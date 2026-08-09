@@ -155,7 +155,7 @@ func generateAppManifests(ctx context.Context, vc *types.ProjectConfig, outputs 
 	if err := repo.AddAndCommit("chore: scaffold app manifests (alethia)"); err != nil {
 		return warnings, keyless, fmt.Errorf("commit generated manifests: %w", err)
 	}
-	if err := repo.Push(); err != nil {
+	if err := repo.Push(ctx); err != nil {
 		return warnings, keyless, fmt.Errorf("push generated manifests: %w", err)
 	}
 	fmt.Fprintf(stdout, "Scaffolded %d app manifest(s)%s%s into the GitOps repo: %s\n",

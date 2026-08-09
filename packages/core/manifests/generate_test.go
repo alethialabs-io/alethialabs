@@ -144,7 +144,8 @@ func TestRenderApp_DeploymentAndService(t *testing.T) {
 		"kind: Service",
 		"name: api",
 		"namespace: demo",
-		"image: reg.example.com/api:v1",
+		// Quoted since #2028 — the image is a YAML scalar the tenant controls.
+		`image: "reg.example.com/api:v1"`,
 		"containerPort: 8080",
 		"replicas: 3",
 		"serviceAccountName: api-sa",
@@ -194,7 +195,7 @@ func TestRenderApp_IngressWhenHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(y, "kind: Ingress") || !strings.Contains(y, "host: web.example.com") {
+	if !strings.Contains(y, "kind: Ingress") || !strings.Contains(y, `host: "web.example.com"`) {
 		t.Errorf("Ingress should render with the host:\n%s", y)
 	}
 }

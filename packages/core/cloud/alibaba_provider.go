@@ -26,6 +26,22 @@ func (p *alibabaProvider) RequiredCLIs() []string {
 	return []string{"kubectl", "helm"}
 }
 
+// ValidateConfig refuses an Alibaba project config the ACK templates cannot provision: the
+// shared node-pool sizing invariants, the `ack_disk_size_gb` floor, and the VPC-CIDR floor
+// implied by the vswitch carve.
+func (p *alibabaProvider) ValidateConfig(config *types.ProjectConfig) error {
+	if config == nil {
+		return fmt.Errorf("ProjectConfig is required")
+	}
+	if err := validateNodeSizing(config); err != nil {
+		return err
+	}
+	if err := validateNodeDiskSize(config, "ack_disk_size_gb", alibabaNodeDiskFloorGB); err != nil {
+		return err
+	}
+	return validateNetworkCIDR(config, "network_cidr", alibabaMaxNetworkPrefix)
+}
+
 func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	managedCert := config.DNS.ManagedCertificate
@@ -34,12 +50,10 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 			managedCert = b
 		}
 	}
-	wafEnabled := config.DNS.WafEnabled
-	if v, ok := config.DNS.ProviderConfig["application_waf"]; ok {
-		if b, ok := v.(bool); ok {
-			wafEnabled = b
-		}
-	}
+	// No WAF term, unlike aws/azure/gcp: the offer is WITHDRAWN on Alibaba (#1841). Carrying
+	// config.DNS.WafEnabled to a tfvar here is what would resurrect it, and the template
+	// deliberately declares no `application_waf_enabled` variable to receive it — see
+	// infra/templates/project/alibaba/variables.tf and infra/offer-exclusions.yaml.
 
 	provisionNetwork := config.Network.ProvisionNetwork
 	if !provisionNetwork && config.Network.NetworkID == "" {
@@ -53,20 +67,26 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		"alibaba_account": config.CloudAccountID,
 
 		// Network (VPC + VSwitch)
-		"provision_network": provisionNetwork,
-		"network_cidr":      orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
-		"single_cloud_nat":  config.Network.SingleNatGateway,
+		"provision_network":           provisionNetwork,
+		"network_cidr":                orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"single_cloud_nat":            config.Network.SingleNatGateway,
+		"network_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// ACK (managed Kubernetes)
 		"provision_ack":       true,
 		"ack_cluster_version": resolveK8sVersion("alibaba", config.Cluster.ClusterVersion),
 
-		// DNS (Alibaba Cloud DNS) + WAF
-		"alidns_enabled":             config.DNS.Enabled,
+		// DNS (Alibaba Cloud DNS) — no WAF term, the offer is withdrawn (#1841).
+		// Same rule as aws and azure: CREATE the domain only when the caller brought none of their
+		// own. `alicloud_alidns_domain.this` was created unconditionally, so alibaba carried the
+		// #1992 defect too — naming a domain you already own registered a SECOND one. Found by
+		// checking alibaba in the same pass, as the cloud-parity rule requires; it was not on the
+		// board, because the guard measures whether zone_id is READ, and alibaba does read it (into
+		// `group_name`, a DNS group, which is a different thing entirely).
+		"alidns_enabled":             config.DNS.Enabled && config.DNS.ZoneID == "",
 		"alidns_domain":              config.DNS.DomainName,
 		"alidns_zone_name":           config.DNS.ZoneID,
 		"alidns_managed_certificate": managedCert,
-		"application_waf_enabled":    wafEnabled,
 
 		// MNS (queues + topics)
 		"create_mns": len(config.Queues) > 0 || len(config.Topics) > 0,
@@ -126,6 +146,17 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		if db.BackupRetentionDays != nil {
 			tfvars["rds_backup_retention_days"] = *db.BackupRetentionDays
 		}
+		// Serverless capacity range (#1996). Alibaba is deliberately NOT part of the azure/gcp
+		// ceiling for these: `alicloud_db_instance` accepts a `serverless_config` block — verified
+		// against the pinned provider, not assumed — so the range is expressible here and was simply
+		// never expressed. Emitted only when the user set a bound, so a provisioned (non-serverless)
+		// instance renders exactly as it does today; the template gates the block on the same test.
+		if db.MinCapacity != nil {
+			tfvars["rds_serverless_min_capacity"] = *db.MinCapacity
+		}
+		if db.MaxCapacity != nil {
+			tfvars["rds_serverless_max_capacity"] = *db.MaxCapacity
+		}
 		// Generic passthrough — see mergeProviderConfig (aws_provider.go). No IAM-auth flag to reserve:
 		// Alibaba has no keyless DB cell (ApsaraDB exposes no data-plane token login we could find), so
 		// db.IamAuth is never emitted here and the offer-parity baseline records the gap. `log_exports`
@@ -143,6 +174,16 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		}
 		if cache.MultiAz != nil {
 			tfvars["kvstore_multi_az"] = *cache.MultiAz
+		}
+		// Node count -> shards (#1996). The issue warned this might be a ceiling, because ApsaraDB
+		// often encodes topology in the instance-class SKU; probed instead of assumed, and
+		// `alicloud_kvstore_instance` does accept `shard_count` as its own argument. (`node_type`,
+		// the read-replica axis, is deprecated from provider 1.120.1 and is NOT used.)
+		//
+		// A cluster-mode Redis spreads the keyspace across shards, so this is the axis a node count
+		// means here. Emitted only when set, so an unset count leaves the SKU's own topology alone.
+		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 0 {
+			tfvars["kvstore_shard_count"] = *cache.NumCacheNodes
 		}
 	}
 
@@ -181,6 +222,10 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	tfvars["classification_tags"] = classificationTags(config, alibabaTagStyle)
 
 	mergeProviderConfig(tfvars, config.Cluster.ProviderConfig)
+	// `application_waf` stays RESERVED even though nothing consumes it any more. The offer is
+	// withdrawn (#1841), so unreserving it would let a legacy provider_config key pass through
+	// verbatim as a tfvar the root template no longer declares — a value silently dropped at plan
+	// time, which reads to the user exactly like a switch that worked.
 	mergeProviderConfig(tfvars, config.DNS.ProviderConfig, "managed_certificate", "application_waf")
 
 	return tfvars

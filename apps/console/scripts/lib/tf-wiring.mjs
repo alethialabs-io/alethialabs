@@ -274,6 +274,14 @@ export function readTfWiring(files, rootDir) {
 		 * value nothing — the switch never reaches the plan at all.
 		 */
 		hasRootVariable: (name) => byDir.get(ROOT_DIR)?.has(name) ?? false,
+		/** Every ROOT variable name this cloud declares.
+		 *
+		 * `hasRootVariable` answers the question one name at a time, which is all the carrier guards
+		 * ever need — they start from a field and ask whether it landed. check-template-parity.mjs
+		 * asks the inverse: what does this cloud declare that another does not? That cannot be
+		 * spelled as a series of has-checks without already knowing the answer, so the names are
+		 * exposed rather than the caller re-parsing variables.tf and drifting from this reader. */
+		rootVariableNames: () => [...(byDir.get(ROOT_DIR)?.keys() ?? [])],
 		/** Is this name declared anywhere — a variable, or an attribute of an object type?
 		 *
 		 * DELIBERATELY LOOSE, and never a verdict: use `hasRootVariable` (a root tfvar) or

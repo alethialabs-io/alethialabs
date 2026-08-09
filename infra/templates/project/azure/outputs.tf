@@ -113,8 +113,17 @@ output "azure_cache_hostname" {
 #########################################################################
 
 output "azure_dns_name_servers" {
-  description = "Name servers for the Azure DNS zone"
+  description = "Name servers for the Azure DNS zone (empty when attaching to a zone you already own — its delegation is already in place)."
   value       = var.azure_dns_enabled ? module.azure_dns[0].name_servers : []
+}
+
+# The zone downstream bindings should use, resolved IDENTICALLY on both paths so a consumer never
+# has to know which one ran — the aws parity shape (outputs.tf:25, route53_zone_id). Without this
+# there was no way to name the existing zone at all: the module output only ever described a zone
+# the template had just created (#1992).
+output "azure_dns_zone_name" {
+  description = "The Azure DNS zone serving this project — created in-template when azure_dns_enabled, else the existing azure_dns_zone_name supplied by the caller."
+  value       = var.azure_dns_enabled ? module.azure_dns[0].zone_name : var.azure_dns_zone_name
 }
 
 #########################################################################

@@ -53,8 +53,56 @@ variable "disk_size_gb" {
   description = "System disk size (GB) for each node"
 }
 
+variable "disk_category" {
+  type        = string
+  default     = "cloud_essd"
+  description = "System disk category for each node. The default is the value this module hardcoded before it was configurable."
+}
+
+variable "disk_performance_level" {
+  type        = string
+  default     = null
+  description = "ESSD performance level in the API's own spelling (\"PL0\"-\"PL3\"), already resolved against disk_category by the caller. Null omits the argument."
+}
+
+variable "disk_provisioned_iops" {
+  type        = number
+  default     = null
+  description = "Provisioned IOPS for the system disk, already resolved against disk_category by the caller. Null omits the argument."
+}
+
+variable "node_capacity_type" {
+  type        = string
+  default     = "NoSpot"
+  description = "Bidding strategy for the node pool: NoSpot (on-demand), SpotWithPriceLimit, or SpotAsPriceGo."
+}
+
+variable "spot_price_limit" {
+  type = list(object({
+    instance_type = string
+    price_limit   = string
+  }))
+  default     = []
+  description = "Per-instance-type hourly bid ceilings, already emptied by the caller for any strategy but SpotWithPriceLimit. Empty renders no block."
+}
+
 variable "tags" {
   type        = map(string)
   default     = {}
   description = "Tags to apply to the cluster and node pool"
+}
+
+# #1987. Empty (the default) means the node pool keeps only its ACK-managed security group.
+variable "security_group_ids" {
+  type        = list(string)
+  default     = []
+  description = "Extra security groups attached to the default node pool. Empty (the default) adds none."
+}
+
+# #2004. KMS key that envelope-encrypts Kubernetes Secrets in etcd. Empty (the default) leaves them
+# under Alibaba's default key, which is what every cluster did before this landed.
+variable "secrets_encryption_key_id" {
+  type        = string
+  default     = ""
+  description = "KMS key id for Secrets envelope encryption. Empty disables it."
 }

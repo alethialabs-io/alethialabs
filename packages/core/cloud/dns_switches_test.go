@@ -22,6 +22,24 @@ type dnsSwitchCell struct {
 	// certKey / wafKey are the legacy provider_config keys, kept as per-cloud overrides.
 	certKey string
 	wafKey  string
+	// certInCluster marks a cloud whose managed certificate is issued IN-CLUSTER by cert-manager
+	// rather than by OpenTofu, so it emits NO certificate tfvar at all (#1825).
+	//
+	// The cell still names certVar, and the assertions below flip to demanding its ABSENCE rather
+	// than skipping. Skipping would let the tfvar quietly come back: it would reach a template that
+	// no longer declares it, OpenTofu would drop it at plan time, and the offer-parity guard would
+	// still trace the emit and score the cell as carried — a green cell for a value that never
+	// reaches a plan. Asserting absence is what makes that un-regressable.
+	certInCluster bool
+	// wafWithdrawn marks a cloud whose WAF offer is withdrawn, so it emits NO WAF tfvar at all
+	// (#1841 — Alibaba's WAF 3.0 instance is an ACCOUNT-level purchase a project cannot own).
+	//
+	// Exactly the `certInCluster` shape above, and for exactly its reason: the cell still names
+	// wafVar and the assertions flip to demanding its ABSENCE rather than skipping. Skipping would
+	// let the tfvar quietly come back — it would reach a template that no longer declares it,
+	// OpenTofu would drop it at plan time, and the offer-parity guard would still trace the emit and
+	// score the cell as carried, contradicting the documented exclusion while staying green.
+	wafWithdrawn bool
 }
 
 func dnsSwitchCells() []dnsSwitchCell {
@@ -37,30 +55,63 @@ func dnsSwitchCells() []dnsSwitchCell {
 			wafKey:  "application_waf",
 		},
 		{
-			cloud:   "gcp",
-			build:   (&gcpProvider{}).ProviderTfvars,
-			certVar: "cloud_dns_managed_certificate",
-			wafVar:  "cloud_armor_enabled",
-			certKey: "managed_certificate",
-			wafKey:  "cloud_armor",
+			cloud:         "gcp",
+			build:         (&gcpProvider{}).ProviderTfvars,
+			certVar:       "cloud_dns_managed_certificate",
+			wafVar:        "cloud_armor_enabled",
+			certKey:       "managed_certificate",
+			wafKey:        "cloud_armor",
+			certInCluster: true,
 		},
 		{
-			cloud:   "azure",
-			build:   (&azureProvider{}).ProviderTfvars,
-			certVar: "azure_managed_certificate",
-			wafVar:  "azure_waf_enabled",
-			certKey: "managed_certificate",
-			wafKey:  "azure_waf",
+			cloud:         "azure",
+			build:         (&azureProvider{}).ProviderTfvars,
+			certVar:       "azure_managed_certificate",
+			wafVar:        "azure_waf_enabled",
+			certKey:       "managed_certificate",
+			wafKey:        "azure_waf",
+			certInCluster: true,
 		},
 		{
 			cloud:   "alibaba",
 			build:   (&alibabaProvider{}).ProviderTfvars,
 			certVar: "alidns_managed_certificate",
-			wafVar:  "application_waf_enabled",
-			certKey: "managed_certificate",
-			wafKey:  "application_waf",
+			// The offer is WITHDRAWN here (#1841): WAF 3.0 is an account-level purchase, so a
+			// project cannot own one without releasing the whole account's firewall when it is
+			// destroyed. The certificate switch is unaffected and still carries, which is why the
+			// row stays in the table rather than leaving it.
+			wafVar:       "application_waf_enabled",
+			certKey:      "managed_certificate",
+			wafKey:       "application_waf",
+			wafWithdrawn: true,
 		},
 	}
+}
+
+// assertCert asserts the cloud's certificate tfvar — its VALUE on the clouds that carry one, and
+// its ABSENCE on the clouds where cert-manager issues in-cluster.
+func assertCert(t *testing.T, c dnsSwitchCell, tf map[string]interface{}, want bool) {
+	t.Helper()
+	if c.certInCluster {
+		if v, ok := tf[c.certVar]; ok {
+			t.Errorf("%s: %s = %v, want it ABSENT — this cloud issues the certificate in-cluster and its template declares no such variable", c.cloud, c.certVar, v)
+		}
+		return
+	}
+	assertEq(t, tf, c.certVar, want)
+}
+
+// assertWaf asserts the cloud's WAF tfvar — its VALUE on the clouds that carry one, and its ABSENCE
+// on the clouds whose offer is withdrawn.
+func assertWaf(t *testing.T, c dnsSwitchCell, tf map[string]interface{}, want bool) {
+	t.Helper()
+	if c.wafWithdrawn {
+		if v, ok := tf[c.wafVar]; ok {
+			t.Errorf("%s: %s = %v, want it ABSENT — the WAF offer is withdrawn on this cloud (#1841) and its template declares no such variable", c.cloud, c.wafVar, v)
+		}
+		return
+	}
+	assertEq(t, tf, c.wafVar, want)
 }
 
 // The two canvas DNS switches reach every cloud's own tfvar name (#1810).
@@ -73,24 +124,24 @@ func TestProviderTfvars_DNSSwitchesReachEveryCloud(t *testing.T) {
 		t.Run(c.cloud, func(t *testing.T) {
 			t.Run("off by default", func(t *testing.T) {
 				tf := c.build(&types.ProjectConfig{})
-				assertEq(t, tf, c.certVar, false)
-				assertEq(t, tf, c.wafVar, false)
+				assertCert(t, c, tf, false)
+				assertWaf(t, c, tf, false)
 			})
 
 			t.Run("typed fields carry", func(t *testing.T) {
 				tf := c.build(&types.ProjectConfig{
 					DNS: types.ProjectDNSConfig{ManagedCertificate: true, WafEnabled: true},
 				})
-				assertEq(t, tf, c.certVar, true)
-				assertEq(t, tf, c.wafVar, true)
+				assertCert(t, c, tf, true)
+				assertWaf(t, c, tf, true)
 			})
 
 			t.Run("each switch is independent", func(t *testing.T) {
 				tf := c.build(&types.ProjectConfig{
 					DNS: types.ProjectDNSConfig{ManagedCertificate: true},
 				})
-				assertEq(t, tf, c.certVar, true)
-				assertEq(t, tf, c.wafVar, false)
+				assertCert(t, c, tf, true)
+				assertWaf(t, c, tf, false)
 			})
 		})
 	}
@@ -103,31 +154,31 @@ func TestProviderTfvars_DNSSwitchesReachEveryCloud(t *testing.T) {
 // able to turn something back OFF — an OR would have made provider_config write-only.
 func TestProviderTfvars_DNSProviderConfigStillOverrides(t *testing.T) {
 	for _, c := range dnsSwitchCells() {
+		// The legacy provider_config keys are still set on EVERY cloud, including the ones whose
+		// offer is withdrawn or issued in-cluster. That is the point: the override is the loudest
+		// way a caller can ask, and `assertCert`/`assertWaf` demand the tfvar stay absent anyway.
+		overrides := func(cert, waf any) map[string]any {
+			return map[string]any{c.certKey: cert, c.wafKey: waf}
+		}
 		t.Run(c.cloud, func(t *testing.T) {
 			t.Run("override forces off", func(t *testing.T) {
 				tf := c.build(&types.ProjectConfig{
 					DNS: types.ProjectDNSConfig{
 						ManagedCertificate: true,
 						WafEnabled:         true,
-						ProviderConfig: map[string]any{
-							c.certKey: false,
-							c.wafKey:  false,
-						},
+						ProviderConfig:     overrides(false, false),
 					},
 				})
-				assertEq(t, tf, c.certVar, false)
-				assertEq(t, tf, c.wafVar, false)
+				assertCert(t, c, tf, false)
+				assertWaf(t, c, tf, false)
 			})
 
 			t.Run("override forces on", func(t *testing.T) {
 				tf := c.build(&types.ProjectConfig{
-					DNS: types.ProjectDNSConfig{ProviderConfig: map[string]any{
-						c.certKey: true,
-						c.wafKey:  true,
-					}},
+					DNS: types.ProjectDNSConfig{ProviderConfig: overrides(true, true)},
 				})
-				assertEq(t, tf, c.certVar, true)
-				assertEq(t, tf, c.wafVar, true)
+				assertCert(t, c, tf, true)
+				assertWaf(t, c, tf, true)
 			})
 
 			t.Run("wrong-typed override is ignored, typed field survives", func(t *testing.T) {
@@ -135,14 +186,11 @@ func TestProviderTfvars_DNSProviderConfigStillOverrides(t *testing.T) {
 					DNS: types.ProjectDNSConfig{
 						ManagedCertificate: true,
 						WafEnabled:         true,
-						ProviderConfig: map[string]any{
-							c.certKey: "true",
-							c.wafKey:  1,
-						},
+						ProviderConfig:     overrides("true", 1),
 					},
 				})
-				assertEq(t, tf, c.certVar, true)
-				assertEq(t, tf, c.wafVar, true)
+				assertCert(t, c, tf, true)
+				assertWaf(t, c, tf, true)
 			})
 		})
 	}
@@ -194,5 +242,45 @@ func TestHetznerProviderTfvars_CarriesNoCertificateOrWafSwitches(t *testing.T) {
 		if _, ok := tf[key]; ok {
 			t.Errorf("hetzner emitted %q — it has no certificate or WAF template variable to carry it to", key)
 		}
+	}
+}
+
+// Alibaba carries the CERTIFICATE switch and not the WAF one, and the asymmetry is the decision.
+//
+// `alicloud_wafv3_instance` takes no arguments at all — four computed attributes and a `timeouts`
+// block — and its create/delete are CreatePostpaidInstance/ReleaseInstance. Nothing distinguishes
+// two instances, so the purchase is ACCOUNT-scoped at the API level rather than by modelling
+// preference, and a per-project state model cannot own it: destroying one project would release the
+// account's firewall out from under every other project sharing it. The offer is withdrawn (#1841).
+//
+// If this test starts failing, the exclusion in infra/offer-exclusions.yaml has been contradicted by
+// code — and `check:offer-parity` will say so too, as a false ceiling. Both switches are fed ON,
+// including the legacy provider_config override, because the withdrawal has to hold against the
+// loudest input a caller can produce, not merely against the default.
+func TestAlibabaProviderTfvars_CarriesNoWafSwitch(t *testing.T) {
+	tf := (&alibabaProvider{}).ProviderTfvars(&types.ProjectConfig{
+		DNS: types.ProjectDNSConfig{
+			ManagedCertificate: true,
+			WafEnabled:         true,
+			ProviderConfig:     map[string]any{"application_waf": true},
+		},
+	})
+
+	// The certificate half still works — this is a WAF withdrawal, not a DNS one.
+	assertEq(t, tf, "alidns_managed_certificate", true)
+
+	for _, key := range []string{
+		"application_waf_enabled", "cloudfront_waf_enabled", "cloud_armor_enabled", "azure_waf_enabled",
+	} {
+		if _, ok := tf[key]; ok {
+			t.Errorf("alibaba emitted %q — the WAF offer is withdrawn on this cloud (#1841) and the template declares no variable to carry it to", key)
+		}
+	}
+
+	// The reserved key must not fall through verbatim either. Unreserving it would hand the root
+	// template an undeclared tfvar, which OpenTofu drops with a warning — indistinguishable, to the
+	// user, from a switch that worked.
+	if _, ok := tf["application_waf"]; ok {
+		t.Error("reserved key application_waf leaked into alibaba tfvars verbatim")
 	}
 }

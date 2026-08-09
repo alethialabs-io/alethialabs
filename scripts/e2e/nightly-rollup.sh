@@ -43,7 +43,7 @@
 # Writes into OUT_DIR:
 #   summary.md              the step-summary block (table + coverage)
 #   state.env               REDS / SKIPS / JOB_NO_SUMMARY / DIED_EARLY / ENABLED_N / SKIP_N / TOTAL
-#                           / COV_TITLE / DIMENSION / DIMENSION_LABEL
+#                           / COV_TITLE / COV_LABEL / DIMENSION / DIMENSION_LABEL
 #   issue-red-<id>.md       one body per red leg, with its title on the first `title:` line
 #   issue-body-coverage.md  the standing coverage-issue body
 #   ledger.tsv              provider<TAB>verdict<TAB>detail<TAB>bundle — one row per PASS/FAIL leg;
@@ -297,9 +297,18 @@ derive() {
 
 	# The coverage issue deliberately gets NO dimension suffix. It reports which clouds are unwired,
 	# which is a property of the repo's gate variables and identical on both crons; suffixing it would
-	# orphan the open issue and file a second one every Sunday. Its matcher in e2e-nightly.yml is
-	# anchored (`^e2e nightly: [0-9]+ of [0-9]+ clouds are not enabled$`) and must keep matching.
+	# orphan the open issue and file a second one every Sunday.
+	#
+	# The title is NOT the dedup key — `cov_label` below is (#1958). The title carries the counts, so
+	# it changes whenever coverage changes and could only ever be matched by a pattern; a pattern over
+	# a mutable, human-editable field is not an identity. It was matched by an anchored regex until
+	# #1720 was hand-edited from "clouds are not enabled" to "clouds is not enabled", at which point
+	# the filer stopped finding it and would have filed a duplicate every night.
 	local cov_title="e2e nightly: ${skip_n} of ${TOTAL} clouds are not enabled" s
+	# The dedup IDENTITY. This filer is the only thing that applies it, and `gh issue list --label` is
+	# served live rather than from the (lagging) search index — the two properties #1755 established
+	# for the red filer. Declared here so the workflow reads ONE answer instead of retyping it.
+	local cov_label="from:e2e-coverage"
 	{
 		printf '%s\n\n' "Only **${enabled_n} of ${TOTAL}** nightly legs provision anything. The rest green-skip at the gate, so the run reports success while proving nothing for them."
 		printf '%s\n\n' "Run: ${RUN_URL:-}"
@@ -369,6 +378,7 @@ derive() {
 		echo "SKIP_N='${skip_n}'"
 		echo "TOTAL='${TOTAL}'"
 		echo "COV_TITLE='${cov_title}'"
+		echo "COV_LABEL='${cov_label}'"
 		# Exported so the ledger step downstream consumes THIS answer instead of re-deriving the
 		# dimension from the trigger a third time (#1755).
 		echo "DIMENSION='${dim}'"
@@ -655,11 +665,20 @@ run_self_test() {
 	_a "full" "${DIMENSION}" "state.env carries the dimension for the ledger step"
 
 	# The COVERAGE title stays dimension-free — it reports unwired gate vars, which are identical on
-	# both crons, and e2e-nightly.yml matches it with an anchored regex. A suffix here would orphan
-	# the open coverage issue and file a duplicate every Sunday.
+	# both crons. A suffix here would orphan the open coverage issue and file a duplicate every Sunday.
 	# shellcheck disable=SC2153
 	_a "e2e nightly: 4 of 5 clouds are not enabled" "${COV_TITLE}" \
 		"the coverage issue title is NOT dimension-suffixed"
+
+	# The coverage dedup KEY (#1958). e2e-nightly.yml reads this and nothing else to find the standing
+	# issue, so it must be emitted, and it must be an identity: constant across dimensions AND across
+	# coverage counts. The title is neither — it moved from "4 of 5" to "1 of 5" as clouds came online,
+	# and a hand-edit of `are`→`is` on #1720 defeated the anchored regex that used to match it.
+	# shellcheck disable=SC2153
+	_a "from:e2e-coverage" "${COV_LABEL}" \
+		"the coverage dedup label is emitted for e2e-nightly.yml"
+	_a "from:e2e-coverage" "$(_state "$tmp/s2-died-early/out" COV_LABEL)" \
+		"the dedup label is CONSTANT — same value on a run whose coverage count differs"
 
 	if [ "$fails" -eq 0 ]; then
 		echo "self-test: all passed"

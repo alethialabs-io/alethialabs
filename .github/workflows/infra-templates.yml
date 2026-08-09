@@ -21,7 +21,42 @@ permissions:
   contents: read
 
 env:
-  TOFU_VERSION: "1.10.10"
+  # THE ENGINE THE RUNNER APPLIES WITH — not the newest OpenTofu. This gate exists to prove the
+  # project templates plan; run it on anything else and it proves that some OTHER engine can plan
+  # them. It gated with 1.10.10 for the life of these templates while the runner applied 1.9.0
+  # (#1931), and the two disagree on `||` short-circuiting: 1.9.0 evaluates every disjunct, so an
+  # index into a count-0 resource kills the plan where 1.10.10 never reaches it. That skew hid a
+  # dead gcp template (#1920) and two live azure conditions.
+  #
+  # This value is COUPLED, not typed here twice: packages/core/compat/matrix.json
+  # `static_couplings[tofu].value` is the SSOT that already binds the Go const
+  # (packages/core/tofu/tofu.go DefaultIaCVersion) to the runner image ARG
+  # (apps/runner/Dockerfile.base). `packages/core/compat/couplings_drift_test.go` now reads this
+  # env too, so editing this literal alone reds that test — which is the point. Bump the matrix.
+  TOFU_VERSION: "1.9.0"
+
+  # ── DOCUMENTED CLOUD-PARITY EXCLUSION: hetzner, `tofu test` only ─────────────────────────────
+  # OpenTofu 1.9.0 CRASHES running hetzner's suite at all — nil pointer in cty.testConformance via
+  # readDataSource, composing a mock value for data.talos_image_factory_extensions_versions.this.
+  # Root cause upstream: MockValueComposer built a cty.NilType for any schema attribute declared
+  # with a structural NestedType — opentofu/opentofu#2993, fixed by opentofu/opentofu#2994
+  # (#2599 closed as a duplicate). It is a `tofu test` MOCK bug: a real provider read never goes
+  # through MockValueComposer, so this is not something a real hetzner plan hits.
+  #
+  # So hetzner's `tofu test` runs 1.9.4: the newest patch on the runner's OWN 1.9 minor. It carries
+  # the mock fix and still does NOT short-circuit `||` (measured: `true || []{0}.x` errors on both
+  # 1.9.0 and 1.9.4, plans clean on 1.10.10), so hetzner's suite is still judged on the shipped
+  # evaluation semantics. Falling back to 1.10.x instead would restore short-circuiting and keep
+  # hiding, on hetzner alone, the exact class this coupling exists to catch.
+  #
+  # `tofu validate` — the step that actually evaluates the hetzner template — still runs on
+  # TOFU_VERSION. See the swap step below for what else the position costs.
+  #
+  # RETIRE THIS when the runner's tofu moves to >= 1.9.4 — a patch bump on the same minor, which is
+  # a far smaller decision than moving the minor. Recorded as data in matrix.json
+  # `static_couplings[tofu].workflow_exclusions`, and drift-checked against this literal.
+  TOFU_TEST_EXCLUDED_CLOUD: "hetzner"
+  TOFU_TEST_EXCLUSION_VERSION: "1.9.4"
 
 jobs:
   # The runner deploys via `tofu plan -out` → apply that saved plan. A provider configured from
@@ -54,6 +89,30 @@ jobs:
           tofu init -backend=false
           tofu validate
 
+      # The hetzner exclusion, applied. It sits HERE, after `validate` and before both `tofu test`
+      # invocations, because ./.github/actions/iac-checks runs a second `tofu test` of its own at the
+      # end — so a swap placed any later would still hand hetzner's suite to 1.9.0 and crash. The
+      # cost of the position is that hetzner's `tofu fmt -check` also runs on the exclusion version;
+      # `validate` — the step that evaluates the template — does not, and formatting is identical
+      # across 1.9.0 / 1.9.4 / 1.10.10 (measured, `fmt -check -recursive` clean on all three).
+      #
+      # Announced as a workflow warning so the departure is visible in the run, not just in a
+      # comment. See the block on TOFU_TEST_EXCLUSION_VERSION above for the upstream reference and
+      # what retires it.
+      - name: 'Exclusion: hetzner ''tofu test'' runs a different engine'
+        if: matrix.cloud == env.TOFU_TEST_EXCLUDED_CLOUD
+        run: |
+          msg="hetzner's 'tofu test' runs OpenTofu ${TOFU_TEST_EXCLUSION_VERSION}, not the runner's ${TOFU_VERSION}."
+          msg="$msg ${TOFU_VERSION} crashes composing a mock for data.talos_image_factory_extensions_versions"
+          msg="$msg (opentofu/opentofu#2993, fixed by #2994) — a tofu-test mock bug, not a plan bug."
+          msg="$msg Same 1.9 minor, same non-short-circuiting '||'; 'tofu validate' still ran on ${TOFU_VERSION}."
+          msg="$msg Retire when the runner's tofu reaches ${TOFU_TEST_EXCLUSION_VERSION}."
+          echo "::warning title=hetzner tofu test exclusion (#1931)::$msg"
+      - uses: opentofu/setup-opentofu@v2
+        if: matrix.cloud == env.TOFU_TEST_EXCLUDED_CLOUD
+        with:
+          tofu_version: ${{ env.TOFU_TEST_EXCLUSION_VERSION }}
+
       # `tofu test` runs the fail-closed guards against MOCKED providers and asserts they actually
       # refuse what they claim to refuse. `validate` cannot do this: it never evaluates a
       # precondition, so a guard that can't fail looks identical to one that works. A cloud with no
@@ -65,6 +124,7 @@ jobs:
             echo "::notice::no *.tftest.hcl for ${{ matrix.cloud }} — skipping"
             exit 0
           fi
+          tofu version
           tofu test
 
       - name: IaC checks (fmt + tflint + Trivy)

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -45,14 +44,14 @@ func promptWebOrigin() (string, error) {
 	if origin == "" {
 		origin = types.DefaultWebOrigin
 	}
-	err := ui.NewForm(
+	err := runHuhForm(
 		huh.NewGroup(
 			huh.NewInput().
 				Title("Control-plane URL").
 				Description("Use the hosted default, or your self-hosted / dev URL").
 				Value(&origin),
 		),
-	).Run()
+	)
 	if err != nil {
 		return "", err
 	}

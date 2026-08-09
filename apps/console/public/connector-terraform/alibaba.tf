@@ -123,7 +123,12 @@ locals {
       "kms:UntagResource", "kms:DescribeSecret", "kms:ListSecrets", "kms:ListSecretVersionIds",
       "kms:Describe*", "kms:List*", "kms:Get*",
     ]
-    # Container Registry + AliDNS + Message Service + WAF v3.
+    # Container Registry + AliDNS + Message Service.
+    #
+    # NO `yundun-waf:*`. It was here for the WAF 3.0 offer, withdrawn in #1841 — the instance is an
+    # ACCOUNT-level purchase, so a project that bought one would release the whole account's
+    # firewall when it was destroyed. `yundun-waf:CreateInstance`/`DeleteInstance` were exactly that
+    # purchase and release, and a connector that cannot issue them cannot make the mistake.
     EdgeReg = [
       "cr:CreateInstance", "cr:GetInstance", "cr:GetInstanceEndpoint", "cr:ListInstance",
       "cr:ListInstanceEndpoint", "cr:CreateNamespace", "cr:UpdateNamespace", "cr:DeleteNamespace",
@@ -137,9 +142,6 @@ locals {
       "mns:ListQueue", "mns:CreateTopic", "mns:DeleteTopic", "mns:SetTopicAttributes",
       "mns:GetTopicAttributes", "mns:ListTopic", "mns:TagResources", "mns:UntagResources", "mns:Get*",
       "mns:List*",
-      "yundun-waf:CreateInstance", "yundun-waf:DeleteInstance", "yundun-waf:ModifyInstance",
-      "yundun-waf:DescribeInstance", "yundun-waf:DescribeInstanceInfo", "yundun-waf:DescribeInstanceSpecInfo",
-      "yundun-waf:Describe*", "yundun-waf:Get*", "yundun-waf:List*",
     ]
   }
 }

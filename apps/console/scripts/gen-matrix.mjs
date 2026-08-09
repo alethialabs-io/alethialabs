@@ -105,7 +105,29 @@ export interface K8sRange {
 	note?: string;
 }
 
-/** A build-time version coupling (Go const ↔ Dockerfile ARG). Data only. */
+/** A CI workflow whose top-level \`env\` carries another copy of a coupled version. */
+export interface CouplingWorkflow {
+	path: string;
+	env_key: string;
+	note?: string;
+}
+
+/** One documented departure from a coupling inside a workflow (#1931). */
+export interface CouplingWorkflowExclusion {
+	id: string;
+	workflow: string;
+	env_key: string;
+	value: string;
+	scope?: string;
+	reason?: string;
+	upstream?: string;
+	upstream_fix?: string;
+	why_this_value?: string;
+	retire_when?: string;
+	issue?: number;
+}
+
+/** A build-time version coupling (Go const ↔ Dockerfile ARG ↔ CI workflow). Data only. */
 export interface StaticCoupling {
 	id: string;
 	title?: string;
@@ -113,6 +135,8 @@ export interface StaticCoupling {
 	go_const?: string;
 	dockerfile_arg?: string;
 	dockerfile?: string;
+	workflows?: CouplingWorkflow[];
+	workflow_exclusions?: CouplingWorkflowExclusion[];
 	note?: string;
 }
 

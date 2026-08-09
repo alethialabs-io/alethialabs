@@ -1,0 +1,97 @@
+{
+	"components": {
+		"databases": [
+			{
+				"name": "appdb",
+				"engine_family": "postgres",
+				"engine_version": "16"
+			}
+		],
+		"caches": [
+			{
+				"name": "sessions",
+				"num_cache_nodes": 2
+			}
+		],
+		"queues": [
+			{
+				"name": "jobs"
+			}
+		]
+	},
+	"addons": [
+		{
+			"id": "cnpg-operator",
+			"mode": "managed",
+			"chartRepo": "https://cloudnative-pg.github.io/charts",
+			"chart": "cloudnative-pg",
+			"version": "0.22.1",
+			"namespace": "cnpg-system",
+			"values": {},
+			"syncWave": 0,
+			"crds": [
+				"clusters.postgresql.cnpg.io"
+			]
+		},
+		{
+			"id": "db-appdb",
+			"mode": "managed",
+			"chartRepo": "https://cloudnative-pg.github.io/charts",
+			"chart": "cluster",
+			"version": "0.0.11",
+			"namespace": "databases",
+			"values": {
+				"cluster": {
+					"instances": 1,
+					"storage": {
+						"size": "10Gi",
+						"storageClass": "hcloud-volumes"
+					},
+					"imageName": "ghcr.io/cloudnative-pg/postgresql:16"
+				}
+			},
+			"syncWave": 1
+		},
+		{
+			"id": "cache-sessions",
+			"mode": "managed",
+			"chartRepo": "https://valkey-io.github.io/valkey-helm",
+			"chart": "valkey",
+			"version": "0.10.0",
+			"namespace": "caches",
+			"values": {
+				"dataStorage": {
+					"enabled": true,
+					"requestedSize": "8Gi",
+					"className": "hcloud-volumes"
+				},
+				"replica": {
+					"enabled": true,
+					"replicas": 1,
+					"persistence": {
+						"size": "8Gi",
+						"storageClass": "hcloud-volumes"
+					}
+				}
+			},
+			"syncWave": 1
+		},
+		{
+			"id": "queue-jobs",
+			"mode": "managed",
+			"chartRepo": "https://cloudpirates-io.github.io/helm-charts",
+			"chart": "rabbitmq",
+			"version": "0.21.9",
+			"namespace": "queues",
+			"values": {
+				"replicaCount": 1,
+				"persistence": {
+					"enabled": true,
+					"size": "8Gi",
+					"storageClass": "hcloud-volumes"
+				}
+			},
+			"syncWave": 1
+		}
+	]
+}

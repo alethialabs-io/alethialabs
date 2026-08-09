@@ -10,7 +10,7 @@ const base =
 export function Enterprise({ children }: { children?: ReactNode }) {
 	return (
 		<span
-			className={`${base} border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400`}
+			className={`${base} border-fd-border bg-fd-muted text-fd-foreground`}
 		>
 			{children ?? "Enterprise"}
 		</span>
@@ -21,7 +21,7 @@ export function Enterprise({ children }: { children?: ReactNode }) {
 export function Community({ children }: { children?: ReactNode }) {
 	return (
 		<span
-			className={`${base} border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400`}
+			className={`${base} border-fd-border border-dashed bg-transparent text-fd-muted-foreground`}
 		>
 			{children ?? "Open-source"}
 		</span>

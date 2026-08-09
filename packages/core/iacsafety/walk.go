@@ -39,6 +39,7 @@ func (s *scanner) scanNativeFile(path, moduleDir string) {
 			if len(blk.Labels) > 0 {
 				s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange().Start.Line)
 			}
+			s.recordProviderMetaArg(blk.Body, rel)
 			// Only a `resource` provisions anything, so only a resource enters the
 			// architecture inventory — an `ephemeral` block is gated, not drawn.
 			if blk.Type == "resource" && len(blk.Labels) > 1 {
@@ -53,9 +54,12 @@ func (s *scanner) scanNativeFile(path, moduleDir string) {
 				s.recordOutput(blk.Labels[0], moduleDir)
 			}
 		case "provider":
+			// A provider block's label IS the provider local name — record it
+			// verbatim, never via the type-prefix underscore split.
 			if len(blk.Labels) > 0 {
-				s.recordImpliedUse(blk.Labels[0], rel, blk.DefRange().Start.Line)
+				s.recordImpliedProviderRef(blk.Labels[0], rel, blk.DefRange().Start.Line)
 			}
+			s.sweepProviderExec(blk.Body, rel)
 		case "import":
 			// `import` (tofu 1.5+) pulls in the provider of the `to` address's
 			// resource type at init/plan, so gate the implied provider from it.
@@ -119,6 +123,52 @@ func (s *scanner) checkDataBlock(labels []string, rel string, line int) {
 			`data "terraform_remote_state" reads arbitrary remote state during plan`)
 	}
 	s.recordImpliedUse(labels[0], rel, line)
+}
+
+// sweepProviderExec recursively flags any `exec` block or attribute inside a
+// provider configuration body. The exec credential plugin runs `command` with
+// `args` as a local subprocess while the provider configures its client during
+// plan — hashicorp/kubernetes accepts it directly, hashicorp/helm nested under
+// kubernetes{}, and both are allowlisted, so this is plan-time command
+// execution reachable with zero non-allowlisted providers (#2031). Deliberately
+// scoped to provider bodies: an exec block inside a RESOURCE (a Kubernetes
+// liveness-probe exec, say) is workload configuration that runs in the
+// cluster, not on the runner, and must not be flagged.
+func (s *scanner) sweepProviderExec(body *hclsyntax.Body, rel string) {
+	for name, attr := range body.Attributes {
+		if name == "exec" {
+			s.addFinding(SeverityError, RuleExecCredentialPlugin, rel, attr.SrcRange.Start.Line,
+				"exec attribute in a provider configuration: the exec credential plugin runs an arbitrary command during plan")
+		}
+	}
+	for _, blk := range body.Blocks {
+		if blk.Type == "exec" {
+			s.addFinding(SeverityError, RuleExecCredentialPlugin, rel, blk.DefRange().Start.Line,
+				"exec block in a provider configuration: the exec credential plugin runs an arbitrary command during plan")
+		}
+		s.sweepProviderExec(blk.Body, rel)
+	}
+}
+
+// recordProviderMetaArg gates the provider a resource/data/ephemeral block
+// pins with its `provider =` meta-argument. OpenTofu derives the block's
+// provider local name from that reference when one is present — the type
+// prefix applies only in its absence — so `provider = evilprov` on an
+// allowlisted resource type makes the module require hashicorp/evilprov,
+// which init downloads and executes (#2030). The reference is a traversal
+// (`name` or `name.alias`); its root is the local name, taken verbatim.
+func (s *scanner) recordProviderMetaArg(body *hclsyntax.Body, rel string) {
+	attr, ok := body.Attributes["provider"]
+	if !ok {
+		return
+	}
+	line := attr.SrcRange.Start.Line
+	for _, v := range attr.Expr.Variables() {
+		if segs := traversalNames(v); len(segs) > 0 {
+			s.recordImpliedProviderRef(segs[0], rel, line)
+			return
+		}
+	}
 }
 
 // checkImportBlock resolves the provider implied by an import block's `to`
@@ -218,6 +268,7 @@ func (s *scanner) sweepBody(body *hclsyntax.Body, rel string) {
 				fmt.Sprintf("provisioner%s block: provisioners execute arbitrary commands", label))
 		case "data":
 			s.checkDataBlock(blk.Labels, rel, blk.DefRange().Start.Line)
+			s.recordProviderMetaArg(blk.Body, rel)
 		}
 		s.sweepBody(blk.Body, rel)
 	}

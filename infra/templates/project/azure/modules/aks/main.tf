@@ -37,8 +37,25 @@ resource "azurerm_kubernetes_cluster" "this" {
   node_resource_group = var.node_resource_group
 
   # --- Identity -----------------------------------------------------------
+  # UserAssigned only when #2004's KMS encryption is on, because that is the only shape in which the
+  # Key Vault grant can exist BEFORE the cluster does (see secrets-encryption.tf). Otherwise the
+  # cluster keeps the system-assigned identity it has always had, so a project that turns encryption
+  # off renders exactly as it did.
   identity {
-    type = "SystemAssigned"
+    type         = var.cluster_identity_id != "" ? "UserAssigned" : "SystemAssigned"
+    identity_ids = var.cluster_identity_id != "" ? [var.cluster_identity_id] : null
+  }
+
+  # Envelope-encrypt Kubernetes Secrets in etcd (#2004). Rendered only when a key was passed:
+  # emitting the block with an empty id is not "off", it is an invalid binding.
+  dynamic "key_management_service" {
+    for_each = var.secrets_kms_key_id != "" ? [1] : []
+    content {
+      key_vault_key_id = var.secrets_kms_key_id
+      # Public: the runner reaches the vault over the internet, and a private-endpoint vault would
+      # need the cluster's VNet integrated with it — a topology this template does not build.
+      key_vault_network_access = "Public"
+    }
   }
 
   workload_identity_enabled = true
@@ -71,10 +88,17 @@ resource "azurerm_kubernetes_cluster" "this" {
 
   # --- Default node pool --------------------------------------------------
   default_node_pool {
-    name                 = "default"
-    vm_size              = var.machine_types[0]
-    vnet_subnet_id       = var.vnet_subnet_id
-    os_disk_size_gb      = var.disk_size_gb
+    name           = "default"
+    vm_size        = var.machine_types[0]
+    vnet_subnet_id = var.vnet_subnet_id
+
+    os_disk_size_gb = var.disk_size_gb
+    # OS-disk PLACEMENT (Managed vs Ephemeral), not a disk SKU — AKS exposes no OS-disk SKU or IOPS
+    # at all; it derives both from vm_size. Null renders no argument, which is exactly the config
+    # this block carried before the knob existed. ForceNew: changing it on a live cluster replaces
+    # the default node pool.
+    os_disk_type = var.os_disk_type
+
     node_count           = var.node_desired_size
     min_count            = var.node_min_size
     max_count            = var.node_max_size
@@ -118,11 +142,55 @@ resource "azurerm_kubernetes_cluster_node_pool" "extra" {
   vm_size               = var.machine_types[count.index + 1]
   vnet_subnet_id        = var.vnet_subnet_id
   os_disk_size_gb       = var.disk_size_gb
+  os_disk_type          = var.os_disk_type
   node_count            = var.node_desired_size
   min_count             = var.node_min_size
   max_count             = var.node_max_size
   auto_scaling_enabled  = true
   max_pods              = 110
+
+  tags = local.common_tags
+}
+
+################################################################################
+# Spot node pool (aws parity: eks_ng_capacity_type)
+################################################################################
+# ITS OWN RESOURCE, not a flag on the pools above, and that is forced twice over:
+#
+#   · `priority`, `eviction_policy` and `spot_max_price` are ForceNew on this resource, so flipping
+#     a flag on `extra` would DESTROY AND RECREATE the customer's existing worker pool rather than
+#     add capacity beside it.
+#   · AKS refuses a Spot default node pool outright ("A Spot node pool can't be a default node
+#     pool"), so the system pool has to stay on-demand regardless.
+#
+# `count = 0` by default, so a cluster that did not ask for Spot plans exactly as it did before.
+#
+# Azure taints these nodes `kubernetes.azure.com/scalesetpriority=spot:NoSchedule` and labels them
+# `kubernetes.azure.com/scalesetpriority=spot` on its own — deliberately NOT restated here as
+# node_taints/node_labels, which are also ForceNew and would only be a second, drifting copy of
+# something the platform already guarantees.
+resource "azurerm_kubernetes_cluster_node_pool" "spot" {
+  count = var.spot_enabled ? 1 : 0
+
+  name                  = "spot"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.this.id
+  vm_size               = var.machine_types[0]
+  vnet_subnet_id        = var.vnet_subnet_id
+  os_disk_size_gb       = var.disk_size_gb
+  os_disk_type          = var.os_disk_type
+
+  priority        = "Spot"
+  eviction_policy = var.spot_eviction_policy
+  spot_max_price  = var.spot_max_price
+
+  # `min_count = 0` is the point of the pool: interruptible capacity you stop paying for when there
+  # is no work. `node_count` is deliberately the MINIMUM and not the on-demand pools' desired size —
+  # a Spot pool that starts at the on-demand headcount is a bill, not a saving.
+  auto_scaling_enabled = true
+  node_count           = var.spot_node_min_size
+  min_count            = var.spot_node_min_size
+  max_count            = var.spot_node_max_size
+  max_pods             = 110
 
   tags = local.common_tags
 }

@@ -44,3 +44,55 @@ check "gar_pull_xacct_identity_present" {
     error_message = "registry_pull_provider = gar-xacct but the cross-project GAR pull identity is incomplete: it needs provision_gke=true (the refresher runs in-cluster and impersonates the GSA via Workload Identity) and the pull service account."
   }
 }
+
+# ── Vulnerability scanning: the ON position needs a project-level API the provisioner cannot
+#    enable, so the template REFUSES it rather than landing on a no-op (#1844). ──
+#
+# `google_artifact_registry_repository.vulnerability_scanning_config.enablement_config` is
+# `INHERITED | DISABLED`. There is no `ENABLED`. OFF maps exactly onto DISABLED; ON can only mean
+# "follow the project default", and that default is on only when `containerscanning.googleapis.com`
+# is enabled on the tenant's project.
+#
+# Enabling it needs `serviceusage.services.enable`, which lets the holder turn on ANY API in the
+# customer's project — including billable ones nobody asked for — and there is no narrower version
+# of that verb. The maintainer refused it (2026-08-03), and refused the fleet-wide connector re-run
+# that would have made a late grant retroactive, on the grounds that a PARTIAL rollout is worse than
+# none: a tenant that did not re-run plans clean, greens the carrier probe, and scans nothing.
+#
+# So the API is an onboarding prerequisite the customer performs, and this refuses the switch when
+# it has not been. The connector grants only the READ verb (`serviceusage.services.get`, on the
+# alethiaProjectReader custom role) — enough to see the answer, not to change it.
+#
+# A `terraform_data` precondition, NOT a `check`: a check never blocks an apply, it only warns, and a
+# warning here reproduces exactly the failure this is meant to prevent — switch ON, nothing scanned,
+# run green.
+locals {
+  # Named as a local so the data source and the guard cannot disagree about when to run.
+  artifact_registry_scanning_requested = anytrue([
+    for _, repo in var.artifact_registry_repos : coalesce(repo.vulnerability_scanning, false)
+  ])
+}
+
+# count, so a project with the switch OFF — which is every project that has not asked for scanning —
+# never reads this and never needs the permission. The read is scoped to the one tenant that turned
+# the switch on.
+data "google_project_service" "container_scanning" {
+  count   = local.artifact_registry_scanning_requested ? 1 : 0
+  project = var.project_id
+  service = "containerscanning.googleapis.com"
+}
+
+resource "terraform_data" "artifact_registry_scanning_guard" {
+  count = local.artifact_registry_scanning_requested ? 1 : 0
+
+  lifecycle {
+    precondition {
+      # The data source sets an EMPTY id when the service is not in the project's enabled list
+      # (resource_google_project_service.go: `d.SetId("")` on the not-found branch) and the
+      # `<project>/<service>` id when it is. `try()` because OpenTofu 1.9.0 — the version the runner
+      # ships — does not short-circuit `||`/`&&`, so a guarded index is still evaluated (#1920).
+      condition     = length(try(data.google_project_service.container_scanning[0].id, "")) > 0
+      error_message = "GCP-AR-SCAN-001: a container registry asks for vulnerability scanning, but containerscanning.googleapis.com is not enabled on this project. Artifact Registry has no per-repository ENABLE — the switch can only follow the project default — so turning it on here would scan nothing. Apply blocked fail-closed. Enable the API once per project (`gcloud services enable containerscanning.googleapis.com --project <id>`); Alethia deliberately holds no permission to enable services on your behalf."
+    }
+  }
+}

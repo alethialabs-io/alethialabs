@@ -112,8 +112,32 @@ variable "disk_size_gb" {
 
 variable "disk_type" {
   type        = string
-  description = "Disk type for each node (pd-standard, pd-ssd, pd-balanced)"
+  description = "Disk type for each node (pd-standard, pd-ssd, pd-balanced, hyperdisk-balanced)"
   default     = "pd-standard"
+}
+
+variable "volume_iops" {
+  type        = number
+  description = "Provisioned IOPS for each node's boot disk. Only valid with disk_type = hyperdisk-balanced. Null leaves the boot_disk block off entirely."
+  default     = null
+}
+
+variable "volume_throughput" {
+  type        = number
+  description = "Provisioned throughput (MiB/s) for each node's boot disk. Only valid with disk_type = hyperdisk-balanced. Null leaves the boot_disk block off entirely."
+  default     = null
+}
+
+variable "spot" {
+  type        = bool
+  description = "Run the node pool on Spot VMs."
+  default     = false
+}
+
+variable "preemptible" {
+  type        = bool
+  description = "Run the node pool on the legacy preemptible tier. Mutually exclusive with spot."
+  default     = false
 }
 
 ################################################################################
@@ -140,4 +164,12 @@ variable "labels" {
   type        = map(string)
   description = "Labels to apply to all resources"
   default     = {}
+}
+
+# #2004. The Cloud KMS key that envelope-encrypts Kubernetes Secrets in etcd. Empty (the default)
+# leaves Secrets under Google's default key, which is what every cluster did before this landed.
+variable "secrets_kms_key_id" {
+  type        = string
+  default     = ""
+  description = "Cloud KMS crypto key id for application-layer Secrets encryption. Empty disables it."
 }

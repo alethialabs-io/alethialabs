@@ -47,3 +47,11 @@ variable "single_nat_gateway" {
   description = "Whether to use a single NAT gateway for all private subnets"
   default     = true
 }
+
+# #1987. ADDITIVE, never restrictive: admitted alongside the module's own rules, so the empty
+# default is behaviour-preserving. Consumed by azurerm_network_security_group.private.
+variable "allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to the private subnet, on top of the module's own rules. Empty (the default) adds nothing."
+}

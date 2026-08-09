@@ -85,13 +85,6 @@ type InfraFacts struct {
 	// it is a rename across the Azure/Alibaba lanes landing beside this one; tracked separately.
 	GCPIngressSA         string // GSA email for the ingress/gateway controller — SEE ABOVE: permanently empty
 	GCPExternalSecretsSA string // GSA email bound to the external-secrets KSA (gates secretstore-gcp)
-	// GCPManagedCertName is the GLOBAL Google-managed SSL certificate the template built for the
-	// project's certificate switch (root output `cloud_dns_managed_certificate_name`; null when the
-	// switch is off, or when a pluggable DNS connector means the zone is not ours). A NAME, because
-	// `ingress.gcp.kubernetes.io/pre-shared-cert` takes a comma-separated list of certificate names
-	// and nothing else — an id or a self link there is rejected. It gates the ArgoCD ingress on GKE
-	// exactly as ACMCertificateArn gates it on AWS: no certificate ⇒ no managed ingress ⇒ no URL.
-	GCPManagedCertName string
 	// GCPArmorPolicy is the Cloud Armor security policy the template built for the project's WAF
 	// switch (root output `cloud_armor_policy_name`, null when the switch is off). A REFERENCE, not
 	// a credential. The NAME, because a GKE BackendConfig's `spec.securityPolicy.name` resolves a
@@ -135,14 +128,9 @@ type InfraFacts struct {
 	AlibabaOIDCIssuerURL          string // ACK cluster OIDC issuer
 	AlibabaOIDCProviderArn        string // RAM OIDC provider ARN that RRSA roles trust
 	AlibabaExternalSecretsRoleArn string // RRSA RAM role for the external-secrets operator (gates secretstore-alibaba)
-	// AlibabaWAFInstanceID is the WAF 3.0 instance the template bought for the project's
-	// application WAF switch (root output `waf_instance_id`, null when the switch is off).
-	// A REFERENCE, not a credential — and, unlike AWS's web ACL, one with NOTHING BOUND TO IT:
-	// the pinned alicloud provider can only bind a hostname (alicloud_wafv3_domain, CNAME mode),
-	// which needs the ingress load balancer's address, and that does not exist at plan time.
-	// The fact exists so wafDecision can say "built and billed and filtering nothing" instead of
-	// leaving that indistinguishable from "the switch is off".
-	AlibabaWAFInstanceID string
+	// No WAF fact here, unlike AWS/GCP/Azure: the offer is withdrawn on this cloud (#1841). The
+	// template buys nothing, so there is no reference to carry — wafWebACLRef falls to its ""
+	// default and wafDecision reports the withdrawal rather than a purchase.
 
 	// ── Cross-account keyless secret manager (*-xacct) ──────────
 	// The ADDITIONAL foreign-account secret store the project selected (AWS SM / GCP SM / Azure KV /
@@ -356,7 +344,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		DNSEnabled:           vc.DNS.Enabled,
 		DNSConnector:         vc.DNS.Provider,
 		DNSCredentialPresent: dnsCredentialPresent(vc),
-		ManagedCertificate:   vc.DNS.ManagedCertificate,
+		ManagedCertificate:   managedCertificateAsk(vc),
 		EnableKarpenter:      enableKarpenter,
 		AppsDestinationRepo:  vc.Repositories.AppsDestinationRepo,
 		Labels:               cloud.ClassificationLabels(vc),
@@ -378,7 +366,6 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		// "render no ingress" / "attach nothing" signal argocdURLGates and wafWebACLRef want.
 		// The spelling is pinned from BOTH sides: checks_ingress_armor.tftest.hcl asserts the output
 		// names in the template, and TestGCPIngressFactsMatchTemplateOutputs asserts them here.
-		f.GCPManagedCertName = ExtractOutput(outputs, "cloud_dns_managed_certificate_name")
 		f.GCPArmorPolicy = ExtractOutput(outputs, "cloud_armor_policy_name")
 	case "azure":
 		f.ClusterName = ExtractOutput(outputs, "aks_cluster_name")
@@ -417,10 +404,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.AlibabaOIDCIssuerURL = ExtractOutput(outputs, "rrsa_oidc_issuer_url")
 		f.AlibabaOIDCProviderArn = ExtractOutput(outputs, "rrsa_oidc_provider_arn")
 		f.AlibabaExternalSecretsRoleArn = ExtractOutput(outputs, "external_secrets_ram_role_arn")
-		// null when application_waf_enabled is off — "" is the "nothing built" signal, the same
-		// shape as AWS's waf_webacl_arn below. Unlike AWS's, a non-empty value here does NOT mean
-		// anything is being filtered; see the field comment and modules/waf/main.tf.
-		f.AlibabaWAFInstanceID = ExtractOutput(outputs, "waf_instance_id")
+		// No `waf_instance_id` read: the template no longer exports one (#1841).
 		// The RRSA facts feed workload-identity for in-cluster components (the
 		// external-secrets store renders off the role ARN above). external-dns's
 		// alibabacloud provider does NOT
@@ -516,4 +500,41 @@ func ExtractOutput(outputs map[string]interface{}, key string) string {
 		}
 	}
 	return ""
+}
+
+// managedCertificateAsk resolves the canvas's managed-certificate switch, honouring an explicitly
+// set `provider_config` override in BOTH directions.
+//
+// It lives HERE, once, rather than in each provider, and that move is the point (#1858).
+//
+// The override used to be per-provider, seeding a local from the typed field and then mutating the
+// cloud's own tfvar. That worked while every cloud's certificate came from OpenTofu. It stopped
+// working the moment gcp and azure converged onto cert-manager: with no certificate tfvar there was
+// nothing left for the override to mutate, so the key kept being ACCEPTED and silently changed
+// nothing — an escape hatch that looks live and is not, which is the exact defect class the
+// offer-parity programme exists to remove.
+//
+// InfraFacts is where the decision now lives (CertManagerEnabled reads ManagedCertificate), so
+// overriding here covers every cloud — converged or not — and is written once instead of five times.
+//
+// ⚠️ THE KEY IS SPELLED DIFFERENTLY PER CLOUD. aws has always used `acm_certificate`; gcp, azure and
+// alibaba use `managed_certificate` (see dnsSwitchCells in packages/core/cloud/dns_switches_test.go).
+// Accepting only one spelling would silently drop the override on the other clouds — the same shape
+// of failure this function exists to fix.
+//
+// Seeded from the typed field rather than OR-ed, so the override can turn something back OFF; an OR
+// would make provider_config write-only. A wrong-typed value is ignored and the typed field
+// survives, matching what the providers did.
+func managedCertificateAsk(vc *types.ProjectConfig) bool {
+	ask := vc.DNS.ManagedCertificate
+	key := "managed_certificate"
+	if vc.Provider == "aws" {
+		key = "acm_certificate"
+	}
+	if v, ok := vc.DNS.ProviderConfig[key]; ok {
+		if b, ok := v.(bool); ok {
+			return b
+		}
+	}
+	return ask
 }

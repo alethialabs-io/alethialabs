@@ -10,9 +10,12 @@
 package e2e
 
 import (
-	"encoding/json"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 func TestA05Truthy(t *testing.T) {
@@ -28,43 +31,100 @@ func TestA05Truthy(t *testing.T) {
 	}
 }
 
-// canonicalFixture mirrors the committed console fixture's fidelity-relevant keys.
+// repoRootForTest resolves the repository root from this file's own location, so the tests below
+// read the COMMITTED fixture rather than a copy of it. Mirrors addonCatalogFixture's approach
+// (addon_surface.go) — test/e2e/<file> ⇒ ../.. is the root.
+func repoRootForTest(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	return filepath.Join(filepath.Dir(thisFile), "..", "..")
+}
+
+// canonicalFixture returns the REAL committed console fixture.
+//
+// It used to be a hand-written literal restating "the committed console fixture's fidelity-relevant
+// keys" — a third copy of data that already exists on disk twice. It drifted: it carried
+// `"values":{}` for reloader while the committed fixture carried the resolved knob defaults #643
+// introduced on 2026-07-16. So the one unit test whose job is to catch synthetic drift was asserting
+// against a snapshot of the PRE-drift world, and stayed green for three weeks while the nightly
+// reported the divergence every night. Load the file (#1965).
 func canonicalFixture(t *testing.T) map[string]any {
 	t.Helper()
-	raw := `{
-		"provider": "hetzner",
-		"region": "nbg1",
-		"project_name": "alethia-fixture",
-		"environment_stage": "fixture",
-		"cluster": {"node_desired_size": 1, "instance_types": []},
-		"addons": [{"id":"reloader","mode":"managed","chart":"reloader","version":"1.1.0","namespace":"reloader","values":{},"syncWave":1,"chartRepo":"https://stakater.github.io/stakater-charts"}]
-	}`
-	var m map[string]any
-	if err := json.Unmarshal([]byte(raw), &m); err != nil {
-		t.Fatalf("parse fixture: %v", err)
+	m, err := loadA05Fixture(repoRootForTest(t))
+	if err != nil {
+		t.Fatalf("load committed fixture: %v", err)
 	}
 	return m
 }
 
-func TestA05SnapshotFidelity_LeanSubsetIsFaithful(t *testing.T) {
+// TestA05SeedIsFaithfulToTheConsoleFixture is THE binder: the REAL lean seed the harness emits,
+// compared against the REAL committed fixture the console froze.
+//
+// Nothing bound those two before — not this suite, not the e2e_t2 path, not CI. The pure tests
+// exercised the comparator with hand-built inputs on BOTH sides (the old "lean subset" case set
+// `"addons": fixture["addons"]`, i.e. it compared the fixture to itself), and the only assertion
+// touching seedAddOns (TestSeedAddOnsPinnedToCatalog) string-greps catalog.ts for four scalar fields
+// and cannot see `values` at all. So when #643 regenerated the fixture and left the Go literal
+// behind, every gate stayed green and the drift surfaced only as a warn-only line in a nightly
+// against a real cloud — the slowest, most expensive place to learn it.
+//
+// This is that check, relocated from a warn-only nightly log to a hard unit test on every PR. Run
+// against the pre-#1965 seed it fails on `addons`, naming the empty `values`.
+func TestA05SeedIsFaithfulToTheConsoleFixture(t *testing.T) {
 	fixture := canonicalFixture(t)
-	// The lean synthetic snapshot the harness seeds by default: only a subset of keys, and its
-	// non-dynamic keys (provider, addons) MUST match the console shape. Its addons is the SAME shape
-	// seedAddOns emits (JSON round-tripped here to match the normalization the real path does).
-	lean := map[string]any{
+
+	// The shape t2BaseSnapshot builds, with the run inputs set to values that MUST be ignored: if a
+	// dynamic key ever stops being excluded, this test says so rather than a nightly three weeks later.
+	seeded := map[string]any{
 		"id":                "e2e-fixture",
-		"project_name":      "alethia-run",     // dynamic — ignored
-		"environment_stage": "run",             // dynamic — ignored
-		"region":            "hel1",            // dynamic — ignored
-		"provider":          "hetzner",         // static — must match
-		"addons":            fixture["addons"], // static — must match
+		"project_name":      "alethia-run", // dynamic — ignored
+		"environment_stage": "run",         // dynamic — ignored
+		"region":            "hel1",        // dynamic — ignored
+		"provider":          "hetzner",     // the fixture's own cloud; see the provider caveat below
+		"addons":            seedAddOns(),  // static — the REAL seed, not a copy of the fixture
 	}
-	norm, err := a05NormalizeSnapshot(lean)
+	norm, err := a05NormalizeSnapshot(seeded)
 	if err != nil {
 		t.Fatalf("normalize: %v", err)
 	}
 	if diffs := a05SnapshotFidelity(norm, fixture); len(diffs) != 0 {
-		t.Fatalf("expected no divergences for a faithful lean snapshot, got: %v", diffs)
+		t.Fatalf("the harness's seeded snapshot has drifted from the console fixture.\n"+
+			"divergences: %v\n"+
+			"the seed derives from test/e2e/fixtures/addon_catalog.json and the fixture from "+
+			"test/e2e/fixtures/t2_config_snapshot.hetzner.json — both are GENERATED, so regenerate "+
+			"whichever is stale:\n"+
+			"  pnpm -F console export:addon-catalog\n"+
+			"  UPDATE_FIXTURES=1 pnpm -F console test t2-config-snapshot", diffs)
+	}
+}
+
+// TestA05SeedCarriesResolvedAddOnValues pins the specific regression directly, so a future change
+// that reintroduces an empty `values` fails with a message naming the cause rather than a generic
+// deep-equal diff. #643 gave reloader real knob defaults; a seed that emits `{}` is claiming the
+// console produces an add-on install spec it does not produce.
+func TestA05SeedCarriesResolvedAddOnValues(t *testing.T) {
+	seeded := seedAddOns()
+	if len(seeded) == 0 {
+		t.Fatal("seedAddOns returned nothing — the lean tier would install no add-on and still report green")
+	}
+	var reloader *types.AddOnInstall
+	for i := range seeded {
+		if seeded[i].ID == "reloader" {
+			reloader = &seeded[i]
+			break
+		}
+	}
+	if reloader == nil {
+		t.Fatal("the lean seed no longer carries reloader")
+	}
+	if len(reloader.Values) == 0 {
+		t.Fatalf("reloader seeded with EMPTY values — the console resolves its catalog knob defaults "+
+			"(catalog.ts toValues) and emits {reloader:{watchGlobally,deployment:{replicas}}}. "+
+			"A hand-written literal drifted this way once (#643 → #1965); derive from "+
+			"CatalogAddOn/addon_catalog.json instead. got: %+v", reloader.Values)
 	}
 }
 

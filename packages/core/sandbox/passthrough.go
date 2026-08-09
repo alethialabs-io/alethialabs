@@ -33,7 +33,22 @@ type Passthrough struct {
 // on a platform-account runner. Trusted (non-BYO) self-runner template provisioning still
 // runs — EnforceManaged never refuses a self operator; and when EnforceManaged is false
 // (today's default) Run never refuses at all, so trusted managed provisioning is unaffected.
+//
+// A NoEgress spec is the one thing Run refuses UNCONDITIONALLY — before EnforceManaged and
+// regardless of operator. NoEgress documents a hard contract (Spec.NoEgress: "backends that
+// can't enforce it must fail closed rather than silently allow egress"), and in-process
+// execution cannot deny anything: the job would run with the runner's full host network AND
+// its environment (runner token, storage creds, signing key). A stage that demands deny-all
+// egress carries untrusted input by construction, so "self" is not a lenient case here — the
+// operator's risk boundary excuses missing isolation for trusted work, not a broken promise
+// about untrusted work (#2042).
 func (p Passthrough) Run(ctx context.Context, spec Spec, job Job) error {
+	if spec.NoEgress {
+		return fmt.Errorf(
+			"refusing to run %q job %s: the spec demands deny-all egress and PassthroughSandbox cannot enforce it (in-process, full host network + environment) — configure an isolating backend (ALETHIA_SANDBOX_BACKEND=container) to run this stage",
+			spec.Kind, spec.JobID,
+		)
+	}
 	msg := fmt.Sprintf(
 		"job isolation DISABLED (PassthroughSandbox): running %q job %s in-process with the full host environment — safe only for trusted (non-BYO) work",
 		spec.Kind, spec.JobID,

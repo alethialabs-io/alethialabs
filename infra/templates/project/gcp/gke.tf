@@ -2,7 +2,13 @@ module "gke" {
   source = "./modules/gke"
   count  = var.provision_gke ? 1 : 0
 
-  depends_on = [module.vpc_network]
+  # The IAM binding is a HARD dependency, not an ordering preference: GKE performs the envelope
+  # encryption as its own service agent, and a cluster create against a key it cannot yet use fails
+  # outright. Without this, whether the cluster comes up depends on which resource tofu happens to
+  # finish first (#2004).
+  depends_on = [module.vpc_network, google_kms_crypto_key_iam_member.gke_secrets]
+
+  secrets_kms_key_id = local.gke_secrets_encryption ? google_kms_crypto_key.gke_secrets[0].id : ""
 
   project_id  = var.project_id
   region      = var.region
@@ -24,6 +30,18 @@ module "gke" {
   node_desired_size = var.gke_node_desired_size
   disk_size_gb      = var.gke_disk_size_gb
   disk_type         = var.gke_disk_type
+
+  # Boot-disk performance (aws parity: eks_volume_iops). Both null by default; the module renders no
+  # `boot_disk` block at all in that case, so the default plan is unchanged.
+  volume_iops       = var.gke_volume_iops
+  volume_throughput = var.gke_volume_throughput
+
+  # Interruptible capacity (aws parity: eks_ng_capacity_type). gke_spot and gke_preemptible were
+  # BOTH declared and read by nothing before this line — gke_spot at `default = true`, so the
+  # template claimed Spot for every node pool it has ever built. Its default is flipped to false in
+  # the same commit (variables.tf) precisely so that wiring it changes nothing that already exists.
+  spot        = var.gke_spot
+  preemptible = var.gke_preemptible
 
   master_authorized_cidr_blocks = var.gke_master_authorized_cidr_blocks
 

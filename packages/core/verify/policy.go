@@ -5,6 +5,7 @@ package verify
 
 import (
 	"encoding/json"
+	"path"
 	"slices"
 	"strings"
 )
@@ -152,6 +153,21 @@ func asString(v any) string {
 		return s
 	}
 	return ""
+}
+
+// actionCovers reports whether a policy action grants the wanted action,
+// honouring IAM's wildcard expansion (`*` any sequence, `?` one character) in
+// the POLICY action only — `want` is always a literal. So "*", "sts:*" and
+// "sts:AssumeRole*" all cover "sts:AssumeRoleWithWebIdentity", while a literal
+// policy action must equal it (case-insensitively, as IAM matches actions).
+// The asymmetry is deliberate: a literal "sts:AssumeRole" policy action does
+// not cover "sts:AssumeRoleWithWebIdentity", and vice versa.
+func actionCovers(policyAction, want string) bool {
+	if !strings.ContainsAny(policyAction, "*?") {
+		return strings.EqualFold(policyAction, want)
+	}
+	ok, err := path.Match(strings.ToLower(policyAction), strings.ToLower(want))
+	return err == nil && ok
 }
 
 // hasWildcard reports whether any element is exactly "*".

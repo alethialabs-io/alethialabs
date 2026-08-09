@@ -53,6 +53,21 @@ variable "provision_network" {
   description = "Whether to provision a new VPC network"
 }
 
+# #1987. ADDITIVE, never restrictive: permitted IN ADDITION to the rules the template already
+# writes, so the empty default is behaviour-preserving and cannot lock the external runner out of a
+# cluster it still has to provision. Read by google_compute_firewall.operator_allow_list.
+variable "network_allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to this network, on top of the template's own rules. Empty (the default) adds nothing."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.network_allowed_cidr_blocks : can(cidrhost(c, 0))])
+    error_message = "network_allowed_cidr_blocks must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}
+
 variable "network_cidr" {
   type        = string
   default     = "10.0.0.0/16"
@@ -178,24 +193,51 @@ variable "gke_disk_size_gb" {
 variable "gke_disk_type" {
   type        = string
   default     = "pd-standard"
-  description = "Type of the disk attached to each node (pd-standard, pd-ssd, pd-balanced)"
+  description = "Type of the disk attached to each node (pd-standard, pd-ssd, pd-balanced, hyperdisk-balanced). hyperdisk-balanced is the only type that accepts gke_volume_iops / gke_volume_throughput."
 
   validation {
-    condition     = contains(["pd-standard", "pd-ssd", "pd-balanced"], var.gke_disk_type)
-    error_message = "gke_disk_type must be one of pd-standard, pd-ssd, pd-balanced."
+    # hyperdisk-balanced added alongside gke_volume_iops/gke_volume_throughput: the google provider
+    # states provisioned IOPS and throughput are "Only valid with disk type hyperdisk-balanced", so
+    # without this entry the two new knobs would be declared, reachable, and unusable on every legal
+    # value of this variable.
+    condition     = contains(["pd-standard", "pd-ssd", "pd-balanced", "hyperdisk-balanced"], var.gke_disk_type)
+    error_message = "gke_disk_type must be one of pd-standard, pd-ssd, pd-balanced, hyperdisk-balanced."
   }
+}
+
+# ── Provisioned boot-disk performance (aws parity: eks_volume_iops) ───────────────────────────
+# Both null by default, and null is not merely "the same number as before": modules/gke/main.tf
+# renders the `boot_disk` block ONLY when one of them is set, so the default plan is byte-identical
+# to the one this template produced before they existed.
+variable "gke_volume_iops" {
+  type        = number
+  default     = null
+  description = "Provisioned IOPS for each node's boot disk. Requires gke_disk_type = hyperdisk-balanced. Null (the default) leaves the disk on its type's baseline performance."
+}
+
+variable "gke_volume_throughput" {
+  type        = number
+  default     = null
+  description = "Provisioned throughput (MiB/s) for each node's boot disk. Requires gke_disk_type = hyperdisk-balanced. Null (the default) leaves the disk on its type's baseline performance."
 }
 
 variable "gke_preemptible" {
   type        = bool
   default     = false
-  description = "Whether to use preemptible VMs for the node pool"
+  description = "Whether to use preemptible VMs for the node pool. Preemptible is the LEGACY interruptible tier; prefer gke_spot. Mutually exclusive with gke_spot."
 }
 
+# ⚠️ DEFAULT DELIBERATELY FLIPPED true → false in the same commit that wires it.
+# This variable shipped `default = true` and was read by NO resource: every GCP node pool this
+# template has ever built ran on-demand while the template claimed Spot. Wiring it at `true` would
+# have converted every existing node pool to Spot VMs on the next apply — a node-pool replacement
+# plus live eviction exposure, delivered by a "parity" change nobody asked for. `false` is what the
+# template actually provisions today, so the wiring is a no-op for every project that exists and the
+# knob becomes real for anyone who sets it.
 variable "gke_spot" {
   type        = bool
-  default     = true
-  description = "Whether to use Spot VMs for the node pool"
+  default     = false
+  description = "Whether to use Spot VMs for the node pool. Mutually exclusive with gke_preemptible."
 }
 
 variable "gke_master_authorized_cidr_blocks" {
@@ -407,11 +449,17 @@ variable "firestore_location_id" {
   description = "Location for Firestore database (defaults to var.region if empty)"
 }
 
-variable "firestore_delete_protection_state" {
-  type        = string
-  default     = "DELETE_PROTECTION_ENABLED"
-  description = "Delete protection state for Firestore (DELETE_PROTECTION_ENABLED or DELETE_PROTECTION_DISABLED)"
-}
+# `firestore_delete_protection_state` used to be declared here, defaulting to
+# DELETE_PROTECTION_ENABLED. NOTHING read it — not firestore.tf, not the module, and not
+# packages/core/cloud/gcp_provider.go, which emits `firestore_point_in_time_recovery` and nothing
+# else for Firestore. modules/firestore/main.tf derives the state from `var.environment` instead.
+#
+# It is removed rather than wired because a declared-but-unread variable is worse than absent here:
+# `provider_config` passthrough (mergeProviderConfig) makes every declared root variable settable
+# from the console, so a user could set this one, see it accepted, and get a database whose delete
+# protection was decided by something else entirely. Its default also read as the template's
+# posture while the real posture — protection in production only, plus deletion_policy = ABANDON so
+# a production destroy is never REFUSED, only declined — lives in the module.
 
 variable "firestore_point_in_time_recovery" {
   type        = bool
@@ -452,11 +500,6 @@ variable "cloud_dns_domain" {
   description = "DNS domain name for the managed zone (must end with a dot)"
 }
 
-variable "cloud_dns_managed_certificate" {
-  type        = bool
-  default     = false
-  description = "Whether to create a Google-managed SSL certificate for the domain"
-}
 
 #########################################################################
 ##                   Cloud Armor Variables                             ##
@@ -550,10 +593,20 @@ variable "provision_artifact_registry" {
 # `immutable_tags` now defaults TRUE, matching the console column and the other clouds' templates:
 # it is the setting a repository built without an opinion should have, and the OFF position has to
 # be asked for explicitly rather than arrived at by omission.
+#
+# `vulnerability_scanning` defaults FALSE, unlike its sibling, and the asymmetry is deliberate
+# (#1844). Artifact Registry's per-repository enum is `INHERITED | DISABLED` — there is no
+# `ENABLED` — so ON can only mean "follow the project default", which is on only when
+# `containerscanning.googleapis.com` is enabled on the tenant's project. Enabling that API is an
+# onboarding prerequisite the customer performs (the provisioner is deliberately not a service-usage
+# admin), and checks_registry.tf REFUSES the ON position when it is absent rather than landing on
+# INHERITED and scanning nothing. A safe-by-default TRUE would therefore fail the plan of every
+# project whose tenant has not done that step, on a switch nobody set.
 variable "artifact_registry_repos" {
   type = map(object({
-    description    = optional(string, "")
-    immutable_tags = optional(bool, true)
+    description            = optional(string, "")
+    immutable_tags         = optional(bool, true)
+    vulnerability_scanning = optional(bool, false)
   }))
   default     = {}
   description = "Map of Artifact Registry repositories to create, keyed by the registry component's name"
@@ -621,6 +674,38 @@ variable "external_secrets_service_account_email" {
   }
 }
 
+# ── keyless Cloud SQL app identity adoption ────────────────────────────────────
+variable "cloud_sql_app_service_account_email" {
+  description = <<-EOT
+    OPTIONAL. Email of a PRE-EXISTING Google service account the app workload impersonates to reach
+    Cloud SQL keylessly. REQUIRED for keyless Cloud SQL auth — without it, cloud_sql_iam_auth wires
+    nothing and the app keeps using the BUILT_IN password user.
+
+    Why adoption rather than a per-deploy account: `roles/cloudsql.client` and
+    `roles/cloudsql.instanceUser` can only be granted at PROJECT scope — a Cloud SQL instance is not
+    IAM-policy-bearing, so there is no google_sql_database_instance_iam_member to scope the grant to
+    the instance. Writing a project-level binding needs resourcemanager.projects.setIamPolicy, which
+    the Alethia provisioner deliberately does NOT hold (#300 removed project-scoped IAM across this
+    template). GCP also offers no principal-pattern condition, so the grant cannot be written ahead
+    of time against a per-deploy identity whose name depends on region/environment/project_name.
+
+    So the grant is made ONCE, by the customer, in the connector bootstrap module — which runs under
+    their own admin rights — and this template adopts the resulting account. Same shape as
+    external_secrets_service_account_email.
+
+    Empty (the default) leaves keyless off. When set, the account must already exist in
+    var.project_id and the caller owns its lifecycle — this template will not create, modify or
+    destroy it.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cloud_sql_app_service_account_email == "" || can(regex("^[^@]+@[^@]+\\.iam\\.gserviceaccount\\.com$", var.cloud_sql_app_service_account_email))
+    error_message = "cloud_sql_app_service_account_email must be a full service-account email (name@project.iam.gserviceaccount.com), not a bare account id."
+  }
+}
+
 variable "create_memorystore_valkey" {
   type        = bool
   description = "Provision Memorystore for Valkey instead of Redis. Mutually exclusive with create_memorystore — the chosen cache engine sets exactly one."
@@ -649,4 +734,27 @@ variable "memorystore_valkey_replica_count" {
   type        = number
   description = "Replica nodes per Valkey shard"
   default     = 0
+}
+
+# ── Application-layer Secrets encryption (#2004) ────────────────────────────────────────────────
+# ON BY DEFAULT, matching what AWS has always done silently (the upstream EKS module defaults
+# create_kms_key = true and encrypts `secrets`). Turning it OFF for an existing cluster does not
+# decrypt anything already written — GKE keeps reading through the retained key version — so the
+# switch is not a way to undo it.
+variable "gke_secrets_encryption_enabled" {
+  type        = bool
+  default     = true
+  description = "Envelope-encrypt Kubernetes Secrets in etcd under a customer-managed Cloud KMS key. On by default (AWS parity)."
+}
+
+variable "gke_secrets_encryption_rotation_period" {
+  type        = string
+  default     = "7776000s"
+  description = "Cloud KMS rotation period for the Secrets encryption key (default 90 days). Old versions are retained, so existing Secrets stay readable."
+
+  validation {
+    # KMS takes seconds-with-suffix and refuses anything under 24h.
+    condition     = can(regex("^[0-9]+s$", var.gke_secrets_encryption_rotation_period))
+    error_message = "gke_secrets_encryption_rotation_period must be a seconds duration like \"7776000s\"."
+  }
 }

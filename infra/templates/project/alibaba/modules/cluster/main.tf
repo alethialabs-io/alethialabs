@@ -16,6 +16,10 @@ terraform {
 ################################################################################
 
 resource "alicloud_cs_managed_kubernetes" "this" {
+  # Secrets envelope encryption (#2004). null when unset, not "": ACK treats an empty string as an
+  # invalid key id rather than as "no key", so the argument has to be absent entirely.
+  encryption_provider_key = var.secrets_encryption_key_id != "" ? var.secrets_encryption_key_id : null
+
   name         = var.cluster_name
   cluster_spec = "ack.pro.small"
   version      = var.cluster_version
@@ -62,8 +66,36 @@ resource "alicloud_cs_kubernetes_node_pool" "default" {
   vswitch_ids    = var.vswitch_ids
   instance_types = var.instance_types
 
-  system_disk_category = "cloud_essd"
+  # #1987: the operator allow-list group, created by modules/network only when a list is set.
+  # Empty is the default and leaves the node pool's own ACK-managed group untouched.
+  security_group_ids = var.security_group_ids
+
+  system_disk_category = var.disk_category
   system_disk_size     = var.disk_size_gb
+
+  # Disk performance is TWO arguments on Alibaba, not aws's one number, and each belongs to a
+  # different disk category — the API accepts the one that does not match and silently drops it.
+  # Both arrive here ALREADY DECIDED (local.ack_system_disk_* in the root's locals.tf): the
+  # category coupling is a pure derivation, and a `tofu test` can read a root local while it cannot
+  # reach inside this module, so the rule that keeps a figure from being sent where it would be
+  # dropped lives where it can be proven. Null means "omit the argument".
+  system_disk_performance_level = var.disk_performance_level
+  system_disk_provisioned_iops  = var.disk_provisioned_iops
+
+  # Interruptible capacity. "NoSpot" is the API's own name for on-demand and is what an unset
+  # argument resolves to, so the default renders the node pool exactly as before.
+  spot_strategy = var.node_capacity_type
+
+  # Bid ceilings belong to SpotWithPriceLimit alone; the root has already emptied this list for any
+  # other strategy. An empty list renders NO block at all rather than an empty one, so an on-demand
+  # pool's plan is unchanged.
+  dynamic "spot_price_limit" {
+    for_each = var.spot_price_limit
+    content {
+      instance_type = spot_price_limit.value.instance_type
+      price_limit   = spot_price_limit.value.price_limit
+    }
+  }
 
   desired_size = var.node_desired_size
 

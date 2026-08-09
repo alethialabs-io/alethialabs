@@ -27,10 +27,28 @@ text-level port of the runner's A0.0 metadata denylist
 Hetzner/AWS/git tokens), PEM private-key blocks, and any denylisted `key: value` line
 (kubeconfig / talosconfig / `*client_key` / `password` / `*_token` / `*secret_value` …).
 The script then **fails closed** — an `assert_grep_clean` tripwire re-greps the finished
-bundle and exits non-zero (reddening the step, uploading nothing) if any secret survived
-(program **invariant 2**: nothing uploads unscrubbed). `scrub.sh --self-test` seeds a fake
-secret of every shape and proves the scrub + tripwire are non-vacuous; the nightly runs it
-unconditionally (no cloud/secret needed) so a denylist regression reds the workflow early.
+bundle and, if any secret survived, **deletes the bundle** and exits non-zero (program
+**invariant 2**: nothing uploads unscrubbed), leaving a `CAPTURE-ABORTED.txt` marker so an
+empty slot cannot be misread as "this cloud never ran".
+
+Three properties hold that up, and each of them failed once:
+
+- **The workflow's upload step is gated on the capture step's `outcome`.** It was not, so a
+  refused bundle was published anyway while the log said `Not uploading` (#1923). Deleting the
+  bundle covers the tripwire path; the gate additionally covers an *earlier* abort, where
+  `set -euo pipefail` kills the capture with a partially-written, never-checked bundle on disk.
+- **The tripwire classifies on the value's shape, not the key's name.** A `tofu show -json`
+  plan mentions denylisted keys constantly while holding only structural values —
+  `"kube_config":true`, `"admin_password":{"sensitive":true,…}`, `"client_key":{"references":[…]}`
+  — and treating those as leaks refused a clean azure bundle on every run.
+- **Every shape the tripwire flags is one `scrub_stream` can redact.** When the two drift, the
+  affected leg is red forever and produces no proof at all — the same outage as a false
+  positive. `constant_value`, string arrays and logfmt `key=value` were flagged but
+  unredactable; the fix is to cover the shape, never to stop flagging it.
+
+`scrub.sh --self-test` seeds a fake secret of every shape and proves the scrub + tripwire are
+non-vacuous **and** not over-broad, including that round-trip. `ci.yml` runs it on every PR (it
+needs no cloud and no secret) and the nightly runs it again before any cloud work starts.
 
 Because the T2 test tears the cluster down **in-process** (`t.Cleanup` → `RunDestroy`) when
 the go-test step ends — before the capture step — the cluster is usually already gone by

@@ -20,14 +20,15 @@ import { legalUrl } from "@/lib/legal";
 export function Providers({ children }: { children: React.ReactNode }) {
 	const queryClient = getQueryClient();
 	return (
-		<ConsentProvider
-			showPersistentTrigger={false}
-			cookieNoticeHref={legalUrl("/cookies")}
-		>
+		<ConsentProvider cookieNoticeHref={legalUrl("/cookies")}>
 			<QueryClientProvider client={queryClient}>
 				<AnalyticsProvider>{children}</AnalyticsProvider>
+				{/* Bottom-right: bottom-left sits on top of the sidebar profile. */}
 				{process.env.NODE_ENV === "development" ? (
-					<ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
+					<ReactQueryDevtools
+						initialIsOpen={false}
+						buttonPosition="bottom-right"
+					/>
 				) : null}
 			</QueryClientProvider>
 		</ConsentProvider>

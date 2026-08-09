@@ -23,6 +23,27 @@ func (p *gcpProvider) RequiredCLIs() []string {
 	return []string{"kubectl", "helm"}
 }
 
+// ValidateConfig refuses a GCP project config the GKE templates cannot provision: the shared
+// node-pool sizing invariants, plus the `gke_disk_size_gb` floor the template itself declares.
+//
+// GCP is STRUCTURALLY EXEMPT from the network-CIDR floor every other cloud carries, and that is
+// a deliberate absence rather than a gap. The other templates carve their subnets out of the
+// user's CIDR with cidrsubnet(), so a too-narrow CIDR is a hard tofu error; GCP uses
+// `var.network_cidr` VERBATIM as the subnetwork's ip_cidr_range
+// (infra/templates/project/gcp/modules/vpc-network/main.tf:53) and puts pods and services in
+// SECONDARY ranges of their own. There is nothing to carve, so there is no floor to derive.
+// TestNetworkCIDRFloorsMatchTemplates asserts that verbatim use still holds — the day GCP
+// starts carving, the exemption reds instead of quietly becoming wrong.
+func (p *gcpProvider) ValidateConfig(config *types.ProjectConfig) error {
+	if config == nil {
+		return fmt.Errorf("ProjectConfig is required")
+	}
+	if err := validateNodeSizing(config); err != nil {
+		return err
+	}
+	return validateNodeDiskSize(config, "gke_disk_size_gb", gcpNodeDiskFloorGB)
+}
+
 func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	enableAutopilot := false
 	if v, ok := config.Cluster.ProviderConfig["enable_autopilot"]; ok {
@@ -33,17 +54,15 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 
 	// Seeded by the canvas's DNS switches; an explicit provider_config key still overrides (#1810).
 	cloudArmorEnabled := config.DNS.WafEnabled
-	managedCert := config.DNS.ManagedCertificate
 	if v, ok := config.DNS.ProviderConfig["cloud_armor"]; ok {
 		if b, ok := v.(bool); ok {
 			cloudArmorEnabled = b
 		}
 	}
-	if v, ok := config.DNS.ProviderConfig["managed_certificate"]; ok {
-		if b, ok := v.(bool); ok {
-			managedCert = b
-		}
-	}
+	// No `managed_certificate` override here: GCP converged onto cert-manager (#1858), so the
+	// template declares no certificate variable for one to act on. The escape hatch still WORKS —
+	// it moved to `managedCertificateAsk` in packages/core/argocd/infra_facts.go, where the decision
+	// now lives, so it covers every cloud rather than being restated per provider.
 
 	provisionNetwork := config.Network.ProvisionNetwork
 	if !provisionNetwork && config.Network.NetworkID == "" {
@@ -72,9 +91,10 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"environment":  config.EnvironmentStage,
 
 		// Network
-		"provision_network": provisionNetwork,
-		"network_cidr":      orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
-		"single_cloud_nat":  config.Network.SingleNatGateway,
+		"provision_network":           provisionNetwork,
+		"network_cidr":                orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"single_cloud_nat":            config.Network.SingleNatGateway,
+		"network_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// GKE
 		"provision_gke":        true,
@@ -82,10 +102,15 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"gke_enable_autopilot": enableAutopilot,
 
 		// DNS
-		"cloud_dns_enabled":             config.DNS.Enabled,
-		"cloud_dns_domain":              config.DNS.DomainName,
-		"cloud_dns_zone_name":           config.DNS.ZoneID,
-		"cloud_dns_managed_certificate": managedCert,
+		"cloud_dns_enabled":   config.DNS.Enabled,
+		"cloud_dns_domain":    config.DNS.DomainName,
+		"cloud_dns_zone_name": config.DNS.ZoneID,
+		// No certificate tfvar: GCP's managed certificate is issued IN-CLUSTER by cert-manager
+		// (#1858). `google_compute_managed_ssl_certificate` and the pre-shared-cert annotation that
+		// named it are deleted, so nothing in the template consumes the switch. Emitting it anyway
+		// would be dropped at plan time (OpenTofu discards a root variable the template does not
+		// declare) while the offer-parity guard still traced the emit and scored the cell as
+		// carried — a green cell for a value that never reaches a plan.
 
 		// Cloud Armor
 		"cloud_armor_enabled": cloudArmorEnabled,
@@ -441,9 +466,22 @@ func buildArtifactRegistryRepos(config *types.ProjectConfig) map[string]interfac
 		if r.ImmutableTags != nil {
 			immutable = *r.ImmutableTags
 		}
+		// `vulnerability_scanning` reads the OPPOSITE default to immutable_tags, and for a reason
+		// that is specific to GCP (#1844). Artifact Registry's per-repository enum is
+		// INHERITED | DISABLED — there is no ENABLED — so the ON position can only mean "follow the
+		// project default", which is on only when `containerscanning.googleapis.com` is enabled.
+		// The template refuses the ON position when it is not (checks_registry.tf), so defaulting a
+		// silent field to TRUE would make every project that has not done the onboarding
+		// prerequisite fail at plan on a switch nobody set. Absent therefore reads as OFF, which
+		// maps exactly onto DISABLED and asks nothing of the tenant.
+		scanning := false
+		if r.VulnerabilityScanning != nil {
+			scanning = *r.VulnerabilityScanning
+		}
 		out[r.Name] = map[string]interface{}{
-			"description":    "Container images for " + r.Name,
-			"immutable_tags": immutable,
+			"description":            "Container images for " + r.Name,
+			"immutable_tags":         immutable,
+			"vulnerability_scanning": scanning,
 		}
 	}
 	return out

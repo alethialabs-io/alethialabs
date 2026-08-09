@@ -34,8 +34,20 @@ variable "secrets" {
   default = []
 }
 
+variable "secret_keepers" {
+  description = "Per-secret rotation keepers, keyed by secret name. Changing any value under a name re-generates that secret's password; a name absent from the map keeps its value forever. Empty is behavior-preserving."
+  type        = map(map(string))
+  default     = {}
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
+}
+
+variable "purge_protection_enabled" {
+  description = "Block purging a soft-deleted vault until the retention window expires. IRREVERSIBLE once applied — Azure refuses to disable it, so true → false fails the next apply on an existing vault. Defaults to true so no deployed environment sees a diff. See modules/key-vault/main.tf."
+  type        = bool
+  default     = true
 }

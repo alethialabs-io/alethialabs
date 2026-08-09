@@ -10,6 +10,7 @@
     "./icon": "./src/icon.tsx",
     "./apple-icon": "./src/apple-icon.tsx",
     "./opengraph-image": "./src/opengraph-image.tsx",
+    "./ramp-srgb": "./src/ramp-srgb.ts",
     "./twitter-image": "./src/twitter-image.tsx",
     "./manifest": "./src/manifest.ts",
     "./robots": "./src/robots.ts",
@@ -26,9 +27,9 @@
   "devDependencies": {
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
-    "@types/react": "19.2.17",
+    "@types/react": "19.2.18",
     "eslint": "^9.39.5",
-    "next": "16.2.12",
+    "next": "16.3.0",
     "react": "^19.2.8",
     "typescript": "5.9.3"
   }

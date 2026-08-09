@@ -4,6 +4,7 @@
 package cloud
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -169,7 +170,13 @@ func TestProviderTfvars_ParityKnobs(t *testing.T) {
 		tf := (&azureProvider{}).ProviderTfvars(cfg)
 		assertEq(t, tf, "aks_disk_size_gb", 120)
 		assertEq(t, tf, "azure_db_sku_name", "GP_Standard_D2s_v3")
-		assertEq(t, tf, "azure_cache_redis_version", "6")
+		// azure_cache_redis_version is NOT emitted any more (#1993), and asserting its absence is
+		// the point: Azure Cache for Redis is retired, so the kind runs on azurerm_managed_redis,
+		// which accepts no engine-version argument in any spelling. Emitting one would be dropped
+		// at plan time while the parity guards scored the cell as carried.
+		if _, present := tf["azure_cache_redis_version"]; present {
+			t.Error("azure_cache_redis_version is emitted again — Azure Managed Redis has no version knob to carry it to")
+		}
 	})
 }
 
@@ -222,5 +229,224 @@ func assertEq(t *testing.T, tf map[string]interface{}, key string, want interfac
 	t.Helper()
 	if tf[key] != want {
 		t.Errorf("%s = %v (%T), want %v (%T)", key, tf[key], tf[key], want, want)
+	}
+}
+
+// TestProviderTfvars_NodeShapeAndSecretKeepersAreReachable pins the ONE fact that makes a newly
+// declared template variable worth declaring: a customer can actually set it.
+//
+// Declaring a variable in variables.tf is necessary and not sufficient. The knob is reachable only
+// if `mergeProviderConfig` carries the key from the component's provider_config onto a same-named
+// tfvar, and it will NOT if the provider reserves the key (consumed above under a different tfvar
+// name) or if the component's provider_config is never passed to mergeProviderConfig at all —
+// which is the live state of ProjectContainerRegistryConfig, whose ProviderConfig field no
+// provider reads. So "the template declares it" and "a user can set it" are two claims, and this
+// test is the second one, per cloud, for every variable added by the template-parity pass.
+//
+// Every key here is checked against the tfvar name the template declares. A rename on either side
+// breaks this test, which is the point: the two halves cannot drift apart silently.
+func TestProviderTfvars_NodeShapeAndSecretKeepersAreReachable(t *testing.T) {
+	cases := []struct {
+		cloud    string
+		provider CloudProvider
+		// cluster knobs, set through the CLUSTER component's provider_config
+		clusterKeys []string
+		// secret-rotation keepers, also a cluster-scoped passthrough today
+		secretKeys []string
+	}{
+		{
+			cloud:    "gcp",
+			provider: &gcpProvider{},
+			clusterKeys: []string{
+				"gke_volume_iops", "gke_volume_throughput", "gke_spot", "gke_preemptible", "gke_disk_type",
+			},
+			secretKeys: []string{"custom_secret_keepers"},
+		},
+		{
+			cloud:    "azure",
+			provider: &azureProvider{},
+			clusterKeys: []string{
+				"aks_os_disk_type", "aks_spot_enabled", "aks_spot_max_price",
+				"aks_spot_eviction_policy", "aks_spot_node_min_size", "aks_spot_node_max_size",
+			},
+			secretKeys: []string{"custom_secret_keepers"},
+		},
+		{
+			cloud:    "alibaba",
+			provider: &alibabaProvider{},
+			clusterKeys: []string{
+				"ack_disk_category", "ack_disk_performance_level", "ack_disk_provisioned_iops",
+				"ack_node_capacity_type", "ack_spot_price_limit",
+			},
+			secretKeys: []string{"custom_secret_keepers"},
+		},
+	}
+
+	root := templateRepoRoot(t)
+
+	for _, tc := range cases {
+		t.Run(tc.cloud, func(t *testing.T) {
+			keys := append(append([]string{}, tc.clusterKeys...), tc.secretKeys...)
+
+			// HALF ONE — the template really declares the name. Re-scraped from the .tf on every
+			// run rather than asserted from memory, the way validate_drift_test.go binds the disk
+			// floors: without this the test below passes for ANY string, because the passthrough
+			// is generic and will happily carry a key no template has ever heard of. A test that
+			// green-lights an undeclared knob is the exact "green cell, dead feature" failure the
+			// offer-parity guard exists to prevent, reproduced in Go.
+			rel := "infra/templates/project/" + tc.cloud + "/variables.tf"
+			src := readTemplateSource(t, root, rel)
+			for _, k := range keys {
+				declared := regexp.MustCompile(`(?m)^variable "` + regexp.QuoteMeta(k) + `"`)
+				if !declared.MatchString(src) {
+					t.Errorf("%s: %s declares no `variable %q` — the Go side would pass this key "+
+						"through to a tfvar the template does not accept, and tofu would refuse the "+
+						"apply with an undeclared-variable error", tc.cloud, rel, k)
+				}
+			}
+
+			// HALF TWO — a customer's provider_config actually reaches that tfvar.
+			pc := map[string]any{}
+			for _, k := range keys {
+				pc[k] = "set-by-the-customer"
+			}
+			cfg := &types.ProjectConfig{
+				ProjectName: "p",
+				Cluster:     types.ProjectClusterConfig{ProviderConfig: pc},
+			}
+			tf := tc.provider.ProviderTfvars(cfg)
+			for k := range pc {
+				if tf[k] != "set-by-the-customer" {
+					t.Errorf("%s: %q is declared in the template but did NOT survive the provider_config "+
+						"passthrough (got %v) — the knob is unreachable, which is the unwired-template "+
+						"defect rather than a closed parity gap", tc.cloud, k, tf[k])
+				}
+			}
+		})
+	}
+}
+
+// The behavior-preserving half of the same change: a project that sets none of the new knobs must
+// emit none of them, so the template's own (deliberately unchanged) defaults apply and an existing
+// deploy plans byte-for-byte as before.
+func TestProviderTfvars_NodeShapeKnobsAbsentByDefault(t *testing.T) {
+	absent := map[string][]string{
+		"gcp": {"gke_volume_iops", "gke_volume_throughput", "gke_spot", "gke_preemptible", "custom_secret_keepers"},
+		"azure": {
+			"aks_os_disk_type", "aks_spot_enabled", "aks_spot_max_price",
+			"aks_spot_eviction_policy", "aks_spot_node_min_size", "aks_spot_node_max_size",
+			"custom_secret_keepers",
+		},
+		"alibaba": {
+			"ack_disk_category", "ack_disk_performance_level", "ack_disk_provisioned_iops",
+			"ack_node_capacity_type", "ack_spot_price_limit", "custom_secret_keepers",
+		},
+	}
+	providers := map[string]CloudProvider{
+		"gcp":     &gcpProvider{},
+		"azure":   &azureProvider{},
+		"alibaba": &alibabaProvider{},
+	}
+
+	for cloudName, keys := range absent {
+		t.Run(cloudName, func(t *testing.T) {
+			tf := providers[cloudName].ProviderTfvars(&types.ProjectConfig{ProjectName: "p"})
+			for _, k := range keys {
+				if _, ok := tf[k]; ok {
+					t.Errorf("%s: %q must be ABSENT when nothing asked for it (got %v) — emitting it "+
+						"would pin the template default into every project's tfvars and turn a later "+
+						"default change into a silent no-op", cloudName, k, tf[k])
+				}
+			}
+		})
+	}
+}
+
+// The cache allow-list the canvas collects reaches the ElastiCache security
+// group's tfvar, an unset list leaves the base empty default untouched (so
+// existing deploys are unchanged), and valkey — whose serverless module
+// consumes no CIDR input — never emits it (#1981).
+func TestProviderTfvars_CacheAllowedCidrBlocks(t *testing.T) {
+	t.Run("carried when set", func(t *testing.T) {
+		cfg := &types.ProjectConfig{
+			Caches: []types.ProjectCacheConfig{
+				{Name: "c", AllowedCidrBlocks: []string{"10.1.0.0/16", "192.168.0.0/24"}},
+			},
+		}
+		tf := (&awsProvider{}).ProviderTfvars(cfg)
+		got, _ := tf["redis_allowed_cidr_blocks"].([]string)
+		if len(got) != 2 || got[0] != "10.1.0.0/16" || got[1] != "192.168.0.0/24" {
+			t.Errorf("redis_allowed_cidr_blocks = %v, want the CIDRs the canvas collected", tf["redis_allowed_cidr_blocks"])
+		}
+	})
+	t.Run("unset keeps the base empty default", func(t *testing.T) {
+		cfg := &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c"}}}
+		tf := (&awsProvider{}).ProviderTfvars(cfg)
+		got, ok := tf["redis_allowed_cidr_blocks"].([]string)
+		if !ok || len(got) != 0 {
+			t.Errorf("redis_allowed_cidr_blocks = %v, want the empty base default", tf["redis_allowed_cidr_blocks"])
+		}
+	})
+	t.Run("valkey never emits the list", func(t *testing.T) {
+		cfg := &types.ProjectConfig{
+			Caches: []types.ProjectCacheConfig{
+				{Name: "c", Engine: types.CacheEngineValkey, AllowedCidrBlocks: []string{"10.1.0.0/16"}},
+			},
+		}
+		tf := (&awsProvider{}).ProviderTfvars(cfg)
+		got, ok := tf["redis_allowed_cidr_blocks"].([]string)
+		if !ok || len(got) != 0 {
+			t.Errorf("redis_allowed_cidr_blocks = %v on valkey, want the empty base default (valkey.tf consumes no CIDR input)", tf["redis_allowed_cidr_blocks"])
+		}
+	})
+}
+
+// A global table's replica regions reach the template's `replicas` entry, a
+// regional table never emits one, and unset renders the same shape as before
+// (#1982).
+func TestProviderTfvars_NosqlGlobalReplicas(t *testing.T) {
+	cfg := &types.ProjectConfig{
+		NosqlTables: []types.ProjectNosqlConfig{
+			{Name: "g", TableType: "global", PartitionKey: "pk", GlobalReplicas: []string{"eu-west-1", "us-east-1"}},
+			{Name: "r", TableType: "standard", PartitionKey: "pk", GlobalReplicas: []string{"eu-west-1"}},
+			{Name: "g2", TableType: "global", PartitionKey: "pk"},
+		},
+	}
+	tf := (&awsProvider{}).ProviderTfvars(cfg)
+
+	global, _ := tf["ddb_global_table_configuration"].([]map[string]interface{})
+	if len(global) != 2 {
+		t.Fatalf("global tables = %d, want 2", len(global))
+	}
+	reps, _ := global[0]["replicas"].([]string)
+	if len(reps) != 2 || reps[0] != "eu-west-1" || reps[1] != "us-east-1" {
+		t.Errorf("global table replicas = %v, want the regions the canvas collected", global[0]["replicas"])
+	}
+	if _, present := global[1]["replicas"]; present {
+		t.Errorf("a global table with no chosen regions must render the template default, not an empty override")
+	}
+	regional, _ := tf["ddb_table_configuration"].([]map[string]interface{})
+	if len(regional) != 1 {
+		t.Fatalf("regional tables = %d, want 1", len(regional))
+	}
+	if _, present := regional[0]["replicas"]; present {
+		t.Errorf("a regional table must never emit replicas")
+	}
+}
+
+// NumCacheNodes is withdrawn on Azure (#1993): the old wiring flipped the
+// legacy tier to "Standard" and discarded the number (two nodes and twenty
+// produced the same plan), and Azure Managed Redis has no node/replica/shard
+// count for the number to become. The withdrawn knob must emit NOTHING — a
+// tier flip wearing a count's name is exactly what the gated-carrier state
+// exists to catch.
+func TestProviderTfvars_AzureCacheNodeCountWithdrawn(t *testing.T) {
+	three := 3
+	cfg := &types.ProjectConfig{
+		Caches: []types.ProjectCacheConfig{{Name: "c", NumCacheNodes: &three}},
+	}
+	tf := (&azureProvider{}).ProviderTfvars(cfg)
+	if v, present := tf["azure_cache_sku"]; present {
+		t.Errorf("azure_cache_sku = %v — the node count flips the tier again; it must emit nothing", v)
 	}
 }

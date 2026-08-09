@@ -1,0 +1,304 @@
+{
+	"id": "p1",
+	"user_id": "user-1",
+	"org_id": "org-1",
+	"cloud_identity_id": "ci-1",
+	"project_name": "alethia-fixture",
+	"slug": "alethia-fixture",
+	"region": "us-east-1",
+	"iac_version": "1.0.0",
+	"environment_stage": "fixture",
+	"environment_id": "env-1",
+	"fabric_id": "fab-1",
+	"fabric_name": "fixture",
+	"placement_mode": "dedicated",
+	"namespace": null,
+	"provider": "aws",
+	"classification": {},
+	"network": {
+		"cloud_provider": "aws",
+		"cloud_identity_id": "ci-1",
+		"region": "us-east-1",
+		"provision_network": true,
+		"cidr_block": "10.0.0.0/16",
+		"single_nat_gateway": true
+	},
+	"cluster": {
+		"cloud_provider": "aws",
+		"cloud_identity_id": "ci-1",
+		"region": "us-east-1",
+		"cluster_version": "",
+		"cluster_name": null,
+		"cluster_endpoint": null,
+		"instance_types": [],
+		"node_min_size": 1,
+		"node_max_size": 1,
+		"node_desired_size": 1,
+		"node_disk_size_gb": null,
+		"cluster_admins": [],
+		"provider_config": {}
+	},
+	"dns": {
+		"cloud_provider": "aws",
+		"cloud_identity_id": "ci-1",
+		"region": "us-east-1",
+		"enabled": false,
+		"provider": "",
+		"provider_config": {}
+	},
+	"observability": {
+		"cloud_provider": "aws",
+		"cloud_identity_id": "ci-1",
+		"region": "us-east-1",
+		"enabled": false,
+		"provider": "",
+		"provider_config": {}
+	},
+	"repositories": {},
+	"source_repos": [],
+	"databases": [
+		{
+			"name": "primary",
+			"engine": "aurora-postgresql",
+			"engine_family": "postgres",
+			"engine_version": "16.4",
+			"instance_class": "db.serverless",
+			"min_capacity": 0.5,
+			"max_capacity": 4,
+			"port": 5432,
+			"backup_retention_days": 7,
+			"iam_auth": true,
+			"provider_config": {
+				"log_exports": [
+					"postgresql"
+				]
+			},
+			"cloud_provider": "aws",
+			"cloud_identity_id": "ci-1",
+			"region": "us-east-1"
+		}
+	],
+	"caches": [
+		{
+			"name": "sessions",
+			"engine": "redis",
+			"engine_version": "7.1",
+			"node_type": "cache.t4g.medium",
+			"memory_gb": 8,
+			"num_cache_nodes": 2,
+			"multi_az": true,
+			"allowed_cidr_blocks": [
+				"10.0.0.0/16"
+			],
+			"cloud_provider": "aws",
+			"cloud_identity_id": "ci-1",
+			"region": "us-east-1"
+		}
+	],
+	"queues": [
+		{
+			"name": "jobs",
+			"ordered": true,
+			"visibility_timeout": 30,
+			"message_retention": 345600,
+			"provider_config": {
+				"fifo_throughput_limit": "perQueue"
+			},
+			"cloud_provider": "aws",
+			"cloud_identity_id": "ci-1",
+			"region": "us-east-1"
+		}
+	],
+	"topics": [
+		{
+			"name": "events",
+			"cloud_provider": "aws",
+			"cloud_identity_id": "ci-1",
+			"region": "us-east-1",
+			"subscriptions": [
+				{
+					"protocol": "https",
+					"endpoint": "https://example.test/hook"
+				}
+			]
+		}
+	],
+	"nosql_tables": [
+		{
+			"name": "sessions",
+			"partition_key": "pk",
+			"partition_key_type": "S",
+			"sort_key": "sk",
+			"sort_key_type": "S",
+			"table_type": "standard",
+			"capacity_mode": "on_demand",
+			"point_in_time_recovery": true,
+			"global_replicas": [
+				"eu-west-1"
+			],
+			"cloud_provider": "aws",
+			"cloud_identity_id": "ci-1",
+			"region": "us-east-1"
+		}
+	],
+	"secrets": [
+		{
+			"name": "api-key",
+			"generate": true,
+			"length": 32,
+			"special_chars": true,
+			"provider": "native",
+			"provider_config": {},
+			"cloud_provider": "aws",
+			"cloud_identity_id": "ci-1",
+			"region": "us-east-1"
+		}
+	],
+	"container_registries": [
+		{
+			"name": "apps",
+			"provider": "native",
+			"immutable_tags": true,
+			"vulnerability_scanning": true,
+			"provider_config": {},
+			"cloud_provider": "aws",
+			"cloud_identity_id": "ci-1",
+			"region": "us-east-1"
+		}
+	],
+	"helm_registries": [
+		{
+			"name": "charts",
+			"provider": "ghcr",
+			"provider_config": {
+				"repo_url": "oci://ghcr.io/acme/charts"
+			},
+			"cloud_provider": "aws",
+			"cloud_identity_id": "ci-1",
+			"region": "us-east-1"
+		}
+	],
+	"storage_buckets": [
+		{
+			"name": "assets",
+			"versioning": true,
+			"encryption_enabled": true,
+			"public_access": false,
+			"cors_origins": [
+				"https://example.test"
+			],
+			"provider_config": {},
+			"cloud_provider": "aws",
+			"cloud_identity_id": "ci-1",
+			"region": "us-east-1"
+		}
+	],
+	"services": [
+		{
+			"name": "web",
+			"type": "deployment",
+			"source": {
+				"kind": "repo",
+				"repo_url": "https://github.com/acme/web",
+				"path": "apps/web"
+			},
+			"build": {
+				"dockerfile": "Dockerfile",
+				"context": "apps/web"
+			},
+			"env": [
+				{
+					"name": "LOG_LEVEL",
+					"value": "info"
+				}
+			],
+			"bindings": [
+				{
+					"target": {
+						"kind": "database",
+						"name": "primary"
+					},
+					"inject": [
+						{
+							"env": "DATABASE_URL",
+							"from": "endpoint"
+						}
+					]
+				}
+			],
+			"ports": [
+				{
+					"name": "http",
+					"container_port": 8080,
+					"protocol": "TCP"
+				}
+			],
+			"replicas": 3,
+			"resources": {
+				"requests": {
+					"cpu": "100m",
+					"memory": "128Mi"
+				},
+				"limits": {
+					"cpu": "500m",
+					"memory": "512Mi"
+				}
+			},
+			"probe": {
+				"type": "http",
+				"path": "/healthz",
+				"port": 8080
+			},
+			"resolved_image": "1234.dkr.ecr.us-east-1.amazonaws.com/apps@sha256:deadbeef",
+			"cloud_provider": "aws",
+			"cloud_identity_id": "ci-1",
+			"region": "us-east-1"
+		}
+	],
+	"addons": [
+		{
+			"id": "reloader",
+			"mode": "managed",
+			"chartRepo": "https://stakater.github.io/stakater-charts",
+			"chart": "reloader",
+			"version": "1.1.0",
+			"namespace": "reloader",
+			"values": {
+				"reloader": {
+					"watchGlobally": true,
+					"deployment": {
+						"replicas": 1
+					}
+				}
+			},
+			"syncWave": 1
+		}
+	],
+	"compat": {
+		"verdict": "not_evaluable",
+		"catalog_version": "compat-matrix-0.1.0",
+		"controls": [
+			{
+				"id": "COMPAT-K8S-CLOUD-AWS",
+				"title": "Kubernetes availability on aws",
+				"severity": "high",
+				"status": "not_evaluable",
+				"coverage": "cluster Kubernetes version is unset or unparseable"
+			},
+			{
+				"id": "COMPAT-ADDON-RELOADER",
+				"title": "add-on reloader ↔ Kubernetes",
+				"severity": "medium",
+				"status": "not_evaluable",
+				"coverage": "no Kubernetes compatibility range recorded"
+			}
+		],
+		"summary": {
+			"pass": 0,
+			"fail": 0,
+			"warn": 0,
+			"not_evaluable": 2
+		}
+	},
+	"git_access_token": ""
+}

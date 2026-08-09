@@ -129,3 +129,106 @@ run "an_illegal_repository_name_is_refused" {
 
   expect_failures = [check.artifact_registry_repo_names_valid]
 }
+
+# ── Vulnerability scanning (#1844). Three positions and a refusal. ──
+#
+# The mapping is where this switch can be carried and still mean nothing: it is a BOOL on both object
+# types and an ENUM on the resource, and the enum has no ENABLED — only INHERITED | DISABLED. So each
+# run asserts the planned enum VALUE, off the resource, and the two positions assert opposite ones.
+#
+# `override_data` on the last run is load-bearing. `mock_provider "google"` invents a non-empty id
+# for data.google_project_service, which reads as "the API is enabled" — so under plain mocks the
+# fail-closed guard can never fire and a run asserting the refusal would pass whether or not the
+# guard existed. Overriding the data source to an EMPTY id is the only way to reach the branch.
+
+run "vulnerability_scanning_on_reaches_the_repository" {
+  command = plan
+
+  variables {
+    artifact_registry_repos = {
+      apps = { description = "Container images for apps", vulnerability_scanning = true }
+    }
+  }
+
+  assert {
+    condition     = module.artifact_registry[0].repository_vulnerability_scanning["apps"] == "INHERITED"
+    error_message = "vulnerability_scanning = true must plan enablement_config = INHERITED; got ${jsonencode(module.artifact_registry[0].repository_vulnerability_scanning)}."
+  }
+}
+
+run "vulnerability_scanning_off_reaches_the_repository" {
+  command = plan
+
+  variables {
+    artifact_registry_repos = {
+      apps = { description = "Container images for apps", vulnerability_scanning = false }
+    }
+  }
+
+  assert {
+    condition     = module.artifact_registry[0].repository_vulnerability_scanning["apps"] == "DISABLED"
+    error_message = "vulnerability_scanning = false must plan enablement_config = DISABLED; got ${jsonencode(module.artifact_registry[0].repository_vulnerability_scanning)}."
+  }
+}
+
+# Omitted reads as OFF — the OPPOSITE default to immutable_tags, and deliberately so: ON requires an
+# onboarding prerequisite, so a silent field defaulting to ON would fail the plan of every project
+# whose tenant has not done it, on a switch nobody set.
+run "an_omitted_scanning_switch_defaults_to_disabled" {
+  command = plan
+
+  variables {
+    artifact_registry_repos = {
+      apps = { description = "Container images for apps" }
+    }
+  }
+
+  assert {
+    condition     = module.artifact_registry[0].repository_vulnerability_scanning["apps"] == "DISABLED"
+    error_message = "an omitted vulnerability_scanning must plan DISABLED, not INHERITED; got ${jsonencode(module.artifact_registry[0].repository_vulnerability_scanning)}."
+  }
+}
+
+# The switch is refused, at APPLY, when containerscanning.googleapis.com is not enabled — because
+# INHERITED on a project whose default is off scans nothing while planning perfectly clean.
+run "scanning_without_the_project_api_is_refused" {
+  command = plan
+
+  override_data {
+    target = data.google_project_service.container_scanning
+    values = {
+      id = ""
+    }
+  }
+
+  variables {
+    artifact_registry_repos = {
+      apps = { description = "Container images for apps", vulnerability_scanning = true }
+    }
+  }
+
+  expect_failures = [terraform_data.artifact_registry_scanning_guard]
+}
+
+# …and the guard is not merely always-on: with the API present the same request plans.
+run "scanning_with_the_project_api_is_allowed" {
+  command = plan
+
+  override_data {
+    target = data.google_project_service.container_scanning
+    values = {
+      id = "mock-project/containerscanning.googleapis.com"
+    }
+  }
+
+  variables {
+    artifact_registry_repos = {
+      apps = { description = "Container images for apps", vulnerability_scanning = true }
+    }
+  }
+
+  assert {
+    condition     = module.artifact_registry[0].repository_vulnerability_scanning["apps"] == "INHERITED"
+    error_message = "with containerscanning.googleapis.com enabled the ON position must plan INHERITED."
+  }
+}

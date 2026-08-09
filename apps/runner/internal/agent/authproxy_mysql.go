@@ -269,7 +269,7 @@ func mysqlDialUpstream(ctx context.Context, cfg authProxyConfig, hs mysqlClientH
 	if err := mysqlWritePacket(raw, 1, mysqlSSLRequest(upstreamCaps, hs)); err != nil {
 		return nil, fmt.Errorf("send SSLRequest: %w", err)
 	}
-	tlsConn := tls.Client(raw, &tls.Config{ServerName: cfg.upstreamHost(), MinVersion: tls.VersionTLS12})
+	tlsConn := tls.Client(raw, upstreamTLSConfig(cfg.upstreamHost()))
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		return nil, fmt.Errorf("upstream TLS handshake: %w", err)
 	}

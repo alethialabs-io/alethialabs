@@ -53,6 +53,21 @@ variable "provision_vnet" {
   description = "Whether to provision a new Virtual Network"
 }
 
+# #1987. ADDITIVE, never restrictive: admitted alongside the template's own NSG rules, so the empty
+# default is behaviour-preserving and cannot lock the external runner out of a cluster it still has
+# to provision. Read by modules/vnet's azurerm_network_security_group.private.
+variable "vnet_allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to this VNet's private subnet, on top of the template's own rules. Empty (the default) adds nothing."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.vnet_allowed_cidr_blocks : can(cidrhost(c, 0))])
+    error_message = "vnet_allowed_cidr_blocks must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}
+
 variable "vnet_cidr" {
   type        = string
   default     = "10.0.0.0/16"
@@ -144,6 +159,87 @@ variable "aks_disk_size_gb" {
   validation {
     condition     = var.aks_disk_size_gb >= 30
     error_message = "aks_disk_size_gb must be at least 30 GB (Azure OS-disk minimum)."
+  }
+}
+
+# ⚠️ NOT the analogue of aws's eks_volume_type, and the description says so on purpose. AKS gives no
+# OS-disk SKU and no OS-disk IOPS at all — neither azurerm 4.81.0's agent-pool schema nor the ARM
+# `agentPools` reference carries either, because AKS derives the OS disk from the VM size you pick.
+# What Azure DOES let you choose is where the disk LIVES: Managed (a durable attached disk) or
+# Ephemeral (the VM's local storage — faster, free, and lost on reimage). Calling this a disk-type
+# knob and moving on would have marked a parity cell green for a different feature.
+#
+# Null, not "Managed": the attribute is optional and NOT computed, so a null renders no argument at
+# all — byte-identical to the config that shipped before this variable existed. "Managed" is the
+# Azure default and would almost certainly plan the same, but "almost certainly" is not a claim
+# worth making about every existing cluster when null makes it by construction.
+variable "aks_os_disk_type" {
+  type        = string
+  default     = null
+  description = "Where each AKS node's OS disk lives: \"Managed\" (durable attached disk) or \"Ephemeral\" (VM-local storage — faster and free, but reset on reimage and capped by the VM size's cache). Null (the default) leaves Azure's own default, Managed."
+
+  # `coalesce` to a valid member rather than `var.x == null || contains(…)`. OpenTofu does NOT
+  # short-circuit `||` inside a validation condition, so the right-hand side is evaluated even when
+  # the left is true, and `contains(list, null)` is an "Invalid function argument" error rather than
+  # a false. The guard then fails on the DEFAULT, which is the one input it must accept.
+  validation {
+    condition     = contains(["Managed", "Ephemeral"], coalesce(var.aks_os_disk_type, "Managed"))
+    error_message = "aks_os_disk_type must be \"Managed\", \"Ephemeral\", or null."
+  }
+}
+
+# ── Spot node pool (aws parity: eks_ng_capacity_type) ────────────────────────────────────────────
+# Spot on AKS is a SEPARATE NODE POOL, never a flag on an existing one, and that is not a style
+# choice: `priority`, `eviction_policy` and `spot_max_price` are ForceNew on
+# azurerm_kubernetes_cluster_node_pool, and Microsoft's own documented limitation is that a Spot
+# pool cannot be the default node pool. Off by default, so an existing cluster's plan is unchanged.
+variable "aks_spot_enabled" {
+  type        = bool
+  default     = false
+  description = "Add a Spot node pool alongside the on-demand pools. Spot nodes are evictable at any time, so the system pool stays on-demand and workloads must tolerate the kubernetes.azure.com/scalesetpriority=spot taint Azure applies."
+}
+
+variable "aks_spot_max_price" {
+  type        = number
+  default     = -1
+  description = "Hourly ceiling (USD) for a Spot node. -1 (the default) means pay up to the on-demand price and never get evicted on price alone — only on capacity."
+
+  validation {
+    condition     = var.aks_spot_max_price == -1 || var.aks_spot_max_price > 0
+    error_message = "aks_spot_max_price must be -1 (pay up to on-demand) or a positive hourly price."
+  }
+}
+
+variable "aks_spot_eviction_policy" {
+  type        = string
+  default     = "Delete"
+  description = "What Azure does to a reclaimed Spot node: \"Delete\" (the default — the node is removed and the autoscaler replaces it) or \"Deallocate\" (the node is stopped but its quota is held)."
+
+  validation {
+    condition     = contains(["Delete", "Deallocate"], var.aks_spot_eviction_policy)
+    error_message = "aks_spot_eviction_policy must be \"Delete\" or \"Deallocate\"."
+  }
+}
+
+variable "aks_spot_node_min_size" {
+  type        = number
+  default     = 0
+  description = "Minimum nodes in the Spot pool. 0 (the default) lets the pool scale to nothing when there is no work for it, which is the point of buying interruptible capacity."
+
+  validation {
+    condition     = var.aks_spot_node_min_size >= 0
+    error_message = "aks_spot_node_min_size must be 0 or greater."
+  }
+}
+
+variable "aks_spot_node_max_size" {
+  type        = number
+  default     = 3
+  description = "Maximum nodes in the Spot pool. Only read when aks_spot_enabled is true."
+
+  validation {
+    condition     = var.aks_spot_node_max_size >= 1
+    error_message = "aks_spot_node_max_size must be at least 1."
   }
 }
 
@@ -269,11 +365,13 @@ variable "azure_cache_capacity" {
   description = "Size of the Azure Cache for Redis instance (0-6 for C family, 1-5 for P family)"
 }
 
-variable "azure_cache_redis_version" {
-  type        = string
-  default     = "6"
-  description = "Redis version for Azure Cache"
-}
+# azure_cache_redis_version was here. DELETED, not left declared (#1993): Azure Cache for Redis is
+# retired and the kind is backed by azurerm_managed_redis, which accepts NO engine-version argument
+# — neither `redis_version` on the resource nor `version` inside `default_database`. Both were
+# probed against the pinned provider and both are "Unsupported argument".
+#
+# A variable nobody can honor is worse than no variable: it reads as a setting, and it manufactures
+# a false green in the parity guards, which ask whether a tfvar is DECLARED and read.
 
 variable "azure_cache_multi_az" {
   type        = bool
@@ -382,11 +480,6 @@ variable "azure_dns_domain" {
   description = "DNS domain name for the managed zone"
 }
 
-variable "azure_managed_certificate" {
-  type        = bool
-  default     = false
-  description = "Whether to provision an Azure-managed TLS certificate via App Service Managed Certificate"
-}
 
 #########################################################################
 ##                   Azure WAF Variables                               ##
@@ -510,6 +603,26 @@ variable "custom_secrets" {
   description = "List of secrets to create in Azure Key Vault"
 }
 
+# Parity with aws (custom_secrets.tf) and gcp (secret-manager.tf): the ONLY lever random_password
+# offers for re-generating a value it has already produced. Without it an Azure project's generated
+# secrets are immutable for the life of the vault entry — rotation would mean destroying the secret.
+variable "custom_secret_keepers" {
+  type        = map(map(string))
+  default     = {}
+  description = "Per-secret rotation keepers, keyed by secret name. Changing any value under a name re-generates that secret's password; a name absent from the map keeps its value forever. Empty (the default) is behavior-preserving."
+}
+
+variable "key_vault_purge_protection_enabled" {
+  type    = bool
+  default = true
+  # DEFAULT `true` IS DELIBERATE AND IS NOT AN ENDORSEMENT. Purge protection cannot be disabled
+  # once applied, so any other default fails the next `tofu apply` on every environment that
+  # already exists. The default preserves them bit-for-bit; the variable is what makes the setting
+  # reachable at all, for a new environment or an e2e-shaped one that should not leave a vault name
+  # reserved and unpurgeable for seven days after its own teardown.
+  description = "Block purging this project's soft-deleted Key Vault until the retention window expires. IRREVERSIBLE: Azure refuses to disable purge protection once it is on, so this can only be set to false BEFORE the vault is first created. Leaving it true means a destroyed environment cannot be rebuilt under the same project + environment name for 7 days."
+}
+
 #########################################################################
 ##                   Custom Terraform Variables                        ##
 #########################################################################
@@ -558,4 +671,13 @@ variable "external_secrets_identity_resource_group" {
   description = "OPTIONAL. Resource group holding external_secrets_identity_name. Requires external_secrets_identity_name."
   type        = string
   default     = ""
+}
+
+# ── KMS etcd encryption for AKS (#2004) ─────────────────────────────────────────────────────────
+# ON BY DEFAULT, matching what AWS has always done silently. See secrets-encryption.tf for why this
+# also changes the cluster to a user-assigned identity, and what that means for an existing cluster.
+variable "aks_secrets_encryption_enabled" {
+  type        = bool
+  default     = true
+  description = "Envelope-encrypt Kubernetes Secrets in etcd under a key in this project's Key Vault. On by default (AWS parity). Requires key_vault_purge_protection_enabled."
 }

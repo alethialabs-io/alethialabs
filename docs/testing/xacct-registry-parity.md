@@ -29,15 +29,54 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
   (env-gated `ALETHIA_E2E_ECR_*` / `GAR_*` / `ACR_*`). See the ledger for the exact runs.
 - **In-cluster e2e** = the full path: B4 tofu Workload-Identity pull role → the refresher Deployment's KSA
   mints **with no local creds** → patches the Secret → a real app pod pulls the cross-account image. Vehicle:
-  the T2 harness (`test/e2e`, `-tags=e2e_t2`, `ALETHIA_E2E_XACCT_REGISTRY=1`).
+  the T2 harness (`test/e2e/t2_xacct_registry.go` + `_run_test.go`, `-tags=e2e_t2`,
+  `ALETHIA_E2E_XACCT_REGISTRY=1`), layered onto `TestT2RealCloudProvisioning` like its #1268 and #1511
+  siblings. **The harness exists as of #1047 and has NEVER RUN against a real cloud** — see below.
 - **Hetzner/DO/Civo**: explicit parity **exclusion** — token clouds with no cross-account keyless registry
   federation ([[cloud-parity-rule]]). Documented, not a silent gap.
 
+## The in-cluster e2e: the harness exists, the scenario has never run
+
+Read this before reading the ⏳ cells above as "waiting on a slot".
+
+Until **#1047** there was no harness at all. `scripts/e2e/registry-e2e.sh cluster` invoked
+`-run "TestT2XacctRegistry"`, and that function existed in **no file**: `go test` matched nothing, the
+script classified the empty run as `BLOCKED` — the same verdict a real quota block produces — and this
+board went on naming the T2 harness as the vehicle. `ALETHIA_E2E_XACCT_REGISTRY` appeared only in that
+script's comment and in this document, never in `.github/workflows/`. Nothing was ever run and nothing
+ever could be.
+
+#1047 built the harness and wired it into `e2e-nightly.yml`. What that does **not** mean:
+
+- **The scenario has never executed against a real cloud — not once, on any cloud.** No repo variable
+  enables it. The ⏳ cells are honest: unproven.
+- The harness itself is covered only by pure unit tests (`t2_xacct_registry_pure_test.go`): config
+  resolution, the catalog pin, the snapshot layering, and every `kubectl -o json` parser. None of that
+  touches a registry.
+
+**To run it, a maintainer must** (a) apply the target-account grant out of band — an ECR repository
+policy naming the cluster's pull role, a cross-project `roles/artifactregistry.reader` on the reader
+GSA, or an `AcrPull` assignment on the pull identity — and push a scoped canary image; (b) set the
+repo variables `E2E_XACCT_REGISTRY=1`, `E2E_XACCT_REGISTRY_HOST`, `E2E_XACCT_REGISTRY_IMAGE` plus the
+per-cloud target trio (aws: `_ACCOUNT`/`_REGION`/`_ROLE_ARN` · gcp: `_PROJECT_ID`/`_REGION`/`_READER_SA`
+· azure: `_ACCOUNT`/`_CLIENT_ID`); and (c) keep the A0.6 apps repo enabled — the refresher and the probe
+workload reach the cluster only through GitOps. The dark flag `ALETHIA_XACCT_REGISTRY_ENABLED` is set by
+the harness itself, wired to the scenario's own switch, so it cannot drift out of the workflow.
+
+**Known gap, stated rather than hidden:** `writeRegistryRefresher` leaves **no positive decision
+record**. Keyless DB writes `keyless_bindings` and the cross-account secret store writes an
+`infra_services` row; this feature only speaks when it REFUSES, via
+`gitops_status.manifest_warnings`. So the harness's first assertion can only prove "nothing refused",
+never "the refresher was rendered" — the positive proof is entirely cluster-side (the refresher
+Deployment, the minted Secret, the pulled image, the denied unauthenticated pull). Giving the feature
+its own decision record is a product change and is deliberately left undone rather than faked.
+
 ## What's left
 
-- [ ] **In-cluster e2e (all 3 clouds)** — the WI-federation half is unproven (**#1047**). AWS runs in `tovr`
-      (`364205735303`, cluster) pulling from `alethia` (`270587882865`, registry). GCP in `itgix-adp`. Azure
-      on the "Azure for Students" sub (AKS quota TBD — record the block if denied).
+- [ ] **In-cluster e2e (all 3 clouds)** — the WI-federation half is unproven. The harness is built and
+      wired (**#1047**); no run has happened. AWS would run in `tovr` (`364205735303`, cluster) pulling
+      from `alethia` (`270587882865`, registry). GCP in `itgix-adp`. Azure on the "Azure for Students"
+      sub (AKS quota TBD — record the block if denied).
 - [ ] **Flip `coming_soon` → `active`** on the 3 catalog rows + enable `ALETHIA_XACCT_REGISTRY_ENABLED` in
       prod — **only after** the in-cluster e2e is green on the target clouds (maintainer action).
 - [ ] **GAR full mint e2e** was run in a **client** project (`itgix-adp`) — re-run in an Alethia-owned

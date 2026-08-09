@@ -245,6 +245,58 @@ orphan_node_rgs() {
 	az group list --query "[?starts_with(name,'MC_')].name" -o tsv 2>/dev/null | grep -i -- "-${ENV}" | grep -v '^$' | sort -u || true
 }
 
+# ── Soft-deleted Key Vaults ─────────────────────────────────────────────────────────────────────
+#
+# Deleting the resource group does NOT remove this environment's Key Vault — it SOFT-deletes it.
+# The vault then survives the "successful" teardown as a proxy resource that nothing here purged and
+# nothing here verified: not a leak in the billing sense (Microsoft: an object in the deleted state
+# supports only purge/recover, "so no bill"), but a real survivor holding a real name.
+#
+# It is a NOTICE rather than a leak, and the distinction is deliberate:
+#   * It costs nothing, so failing the nightly on it would red healthy runs over zero euros.
+#   * The name it holds is per-RUN unique — the vault name derives from `<project_name>-<environment>`
+#     and `environment` is this run's ENV — so it cannot block the next nightly. It CAN block a
+#     customer rebuilding the same project + environment, which is a template problem
+#     (infra/templates/project/azure/modules/key-vault/main.tf), not a sweeper one.
+#   * And when purge protection is on it CANNOT be purged at all, by design. Reporting an
+#     unfixable condition as a failure trains people to ignore the output.
+# What it must not be is invisible, which is what it was.
+#
+# Scope: name-matched on this run's ENV, the same handle every other lookup here uses, and the
+# purge is re-gated on that match immediately before it is issued.
+deleted_key_vaults() {
+	assert_scope
+	az keyvault list-deleted --query "[].name" -o tsv 2>/dev/null | grep -i -- "-${ENV}" | grep -v '^$' | sort -u || true
+}
+
+# sweep_deleted_key_vaults — purge what CAN be purged. A vault created with purge protection on
+# refuses this until its retention window expires; that failure is expected, and is reported rather
+# than retried.
+sweep_deleted_key_vaults() {
+	assert_scope
+	local vaults v
+	vaults="$(deleted_key_vaults)"
+	if [ -z "$vaults" ]; then
+		echo "  · soft-deleted key vaults: none"
+		return 0
+	fi
+	echo "  · soft-deleted key vaults: $(printf '%s' "$vaults" | grep -c .) to purge"
+	while IFS= read -r v; do
+		[ -n "$v" ] || continue
+		# Never purge a vault whose name does not carry this run's ENV.
+		printf '%s' "$v" | grep -qi -- "-${ENV}" || continue
+		if [ "$DRY_RUN" = "1" ]; then
+			echo "      would purge key vault ${v}"
+			continue
+		fi
+		if az keyvault purge --name "$v" --no-wait >/dev/null 2>&1; then
+			echo "      purged key vault ${v}"
+		else
+			echo "      key vault ${v} cannot be purged (purge protection holds it for the retention window) — it costs nothing and ages out"
+		fi
+	done <<<"$vaults"
+}
+
 # ── Final verification: a leak must NEVER exit green. Re-list the tagged main RGs, the env-embedded
 #    node RGs, and any surviving AKS/VMSS/public-IP embedding this run's ENV. grep -i so an Azure
 #    case-normalized RG name can't hide a survivor. ──
@@ -279,6 +331,11 @@ verify_swept() {
 		echo "::error::azure cleanup INCOMPLETE — billable resources for run ${ENV} still exist and are BILLING. Investigate + remove (stay scope-locked; never subscription-wide)." >&2
 		return 1
 	fi
+	# Non-billable survivor: a soft-deleted Key Vault the RG delete left behind and purge protection
+	# will not let go of. Free, and its name is per-run unique so it blocks nothing here — but it is
+	# a survivor, and a teardown that never mentions it is claiming more than it checked.
+	x="$(deleted_key_vaults)"
+	[ -n "$x" ] && echo "::notice::azure cleanup: key vault(s) remain SOFT-DELETED for run ${ENV} (free; purge protection holds the name until the 7-day retention window expires): $(join "$x")"
 	return 0
 }
 
@@ -322,6 +379,9 @@ sweep_env() {
 	else
 		echo "  · orphan node resource groups: none"
 	fi
+
+	# After the RGs are gone: the vault they soft-deleted on the way out.
+	sweep_deleted_key_vaults
 
 	[ "$DRY_RUN" = "1" ] && return 0
 	verify_swept

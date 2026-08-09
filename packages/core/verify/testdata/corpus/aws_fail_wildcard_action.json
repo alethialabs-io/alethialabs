@@ -1,0 +1,135 @@
+{
+ "_comment": "AWS wildcard-ACTION federated trust fixture (#2014) \u2014 OpenTofu v1.12.3 + hashicorp/aws provider v6.58.0 (dummy AWS keys + skip_* flags via provider block; IAM create-plan needs no API calls). REAL 'tofu plan -out && tofu show -json' output, NOT hand-crafted. An aws_iam_role whose trust policy grants Action \"sts:*\" \u2014 strictly MORE permissive than the literal sts:AssumeRoleWithWebIdentity \u2014 to a Federated (token.actions.githubusercontent.com) principal with NO :sub condition: any GitHub Actions workflow on the internet can assume the role. Before the #2014 fix the wildcard action dropped the role out of OIDC-001's scope entirely (vacuous pass => false PASS in the signed receipt). Expect: OIDC-001 FAIL => verdict fail (blocks).",
+ "format_version": "1.2",
+ "terraform_version": "1.12.3",
+ "planned_values": {
+  "root_module": {
+   "resources": [
+    {
+     "address": "aws_iam_role.deployer",
+     "mode": "managed",
+     "type": "aws_iam_role",
+     "name": "deployer",
+     "provider_name": "registry.opentofu.org/hashicorp/aws",
+     "schema_version": 0,
+     "values": {
+      "assume_role_policy": "{\"Statement\":[{\"Action\":\"sts:*\",\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com\"}}],\"Version\":\"2012-10-17\"}",
+      "description": null,
+      "force_detach_policies": false,
+      "max_session_duration": 3600,
+      "name": "deployer",
+      "path": "/",
+      "permissions_boundary": null,
+      "tags": null
+     },
+     "sensitive_values": {
+      "inline_policy": [],
+      "managed_policy_arns": [],
+      "tags_all": {}
+     },
+     "identity": {
+      "account_id": null,
+      "name": null
+     },
+     "identity_schema_version": 0
+    }
+   ]
+  }
+ },
+ "resource_changes": [
+  {
+   "address": "aws_iam_role.deployer",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "deployer",
+   "provider_name": "registry.opentofu.org/hashicorp/aws",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "assume_role_policy": "{\"Statement\":[{\"Action\":\"sts:*\",\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com\"}}],\"Version\":\"2012-10-17\"}",
+     "description": null,
+     "force_detach_policies": false,
+     "max_session_duration": 3600,
+     "name": "deployer",
+     "path": "/",
+     "permissions_boundary": null,
+     "tags": null
+    },
+    "after_unknown": {
+     "arn": true,
+     "create_date": true,
+     "id": true,
+     "inline_policy": true,
+     "managed_policy_arns": true,
+     "name_prefix": true,
+     "tags_all": true,
+     "unique_id": true
+    },
+    "before_sensitive": false,
+    "after_sensitive": {
+     "inline_policy": [],
+     "managed_policy_arns": [],
+     "tags_all": {}
+    },
+    "after_identity": {
+     "account_id": null,
+     "name": null
+    }
+   }
+  }
+ ],
+ "configuration": {
+  "provider_config": {
+   "aws": {
+    "name": "aws",
+    "full_name": "registry.opentofu.org/hashicorp/aws",
+    "expressions": {
+     "access_key": {
+      "constant_value": "dummy"
+     },
+     "region": {
+      "constant_value": "eu-central-1"
+     },
+     "secret_key": {
+      "constant_value": "dummy"
+     },
+     "skip_credentials_validation": {
+      "constant_value": true
+     },
+     "skip_metadata_api_check": {
+      "constant_value": true
+     },
+     "skip_region_validation": {
+      "constant_value": true
+     },
+     "skip_requesting_account_id": {
+      "constant_value": true
+     }
+    }
+   }
+  },
+  "root_module": {
+   "resources": [
+    {
+     "address": "aws_iam_role.deployer",
+     "mode": "managed",
+     "type": "aws_iam_role",
+     "name": "deployer",
+     "provider_config_key": "aws",
+     "expressions": {
+      "assume_role_policy": {},
+      "name": {
+       "constant_value": "deployer"
+      }
+     },
+     "schema_version": 0
+    }
+   ]
+  }
+ },
+ "timestamp": "2026-08-09T10:25:38Z",
+ "errored": false
+}

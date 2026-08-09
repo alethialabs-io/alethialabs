@@ -320,17 +320,68 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 	}
 }
 
-// ArgoAssertTimeout is the bound for AssertArgoAppsHealthy — ALETHIA_E2E_ARGO_TIMEOUT
-// when set, else a generous 8m: add-on chart pulls + first sync on a tiny 1-node kind
-// or 2-node Talos cluster are slow, and the poll returns the moment everything is
-// green, so the default only costs time on a genuinely broken cluster.
+// Budget shape for ArgoAssertTimeout. The flat 8m these replace was set for the LEAN surface and
+// then inherited, unchanged, by the full 18-chart one — which is what killed the first real hetzner
+// run of the 18-add-on set (#2062) with velero still `Missing`. The surface is knowable at runtime,
+// so derive from it rather than picking a bigger constant and hoping.
+const (
+	// argoBudgetBase covers ArgoCD itself: repo-server clone, the first reconcile loop, and the
+	// app-of-apps landing before any add-on chart is pulled.
+	argoBudgetBase = 6 * time.Minute
+	// argoBudgetPerAddOn is per chart in the surface. Sub-minute because ArgoCD syncs applications
+	// in PARALLEL — this buys headroom for pull + CRD establish contending on a small node, not a
+	// serial install. At the lean tier it lands the total on ~8m, i.e. exactly today's behaviour.
+	argoBudgetPerAddOn = 45 * time.Second
+	// argoBudgetFloor never lets a derived value come out SHORTER than the constant it replaced,
+	// so no existing scenario gets tighter as a side effect of this change.
+	argoBudgetFloor = 8 * time.Minute
+	// argoBudgetCeiling stays under the smallest parent bound in t2_providers.go (hetzner's 25m
+	// waitTimeout). Budgeting past the timeout that CANCELS you buys nothing — the run dies at the
+	// parent instead, with a less useful message. That parent is the real ceiling, not the go-test
+	// cap, which is why this is pinned by a test rather than left as a comment.
+	argoBudgetCeiling = 20 * time.Minute
+)
+
+// ArgoAssertTimeout is the bound for AssertArgoAppsHealthy: ALETHIA_E2E_ARGO_TIMEOUT when set,
+// else a budget DERIVED from the add-on surface this run actually seeds. The poll returns the
+// moment everything is green, so a larger budget only costs time on a genuinely broken cluster —
+// but a budget smaller than the surface needs costs a real run its verdict, which is worse.
+//
+// Fail-soft on the fixture, deliberately: if the catalog cannot be read, fall back to the full
+// surface's budget rather than the lean one. Guessing SMALL here would reintroduce the exact
+// failure this derivation exists to remove.
 func ArgoAssertTimeout() time.Duration {
 	if v := strings.TrimSpace(os.Getenv("ALETHIA_E2E_ARGO_TIMEOUT")); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
 		}
 	}
-	return 8 * time.Minute
+	return argoBudgetFor(argoAddOnCount())
+}
+
+// argoAddOnCount is how many add-on charts this run expects ArgoCD to converge.
+func argoAddOnCount() int {
+	if !AllAddOnsEnabled() {
+		// The lean tier seeds a small fixed set; the base + floor already cover it.
+		return 0
+	}
+	addons, err := AllCatalogAddOns()
+	if err != nil {
+		return expectedCatalogSize
+	}
+	return len(addons)
+}
+
+// argoBudgetFor turns an add-on count into a wait budget, clamped at both ends.
+func argoBudgetFor(addOns int) time.Duration {
+	d := argoBudgetBase + time.Duration(addOns)*argoBudgetPerAddOn
+	if d < argoBudgetFloor {
+		d = argoBudgetFloor
+	}
+	if d > argoBudgetCeiling {
+		d = argoBudgetCeiling
+	}
+	return d
 }
 
 // parseArgoApps parses `kubectl get applications.argoproj.io -o json` output into a

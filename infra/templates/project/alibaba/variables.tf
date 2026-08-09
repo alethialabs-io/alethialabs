@@ -147,8 +147,76 @@ variable "ack_disk_size_gb" {
   }
 }
 
+# ── Node system disk (aws parity: eks_volume_type / eks_volume_iops) ─────────────────────────────
+# `cloud_essd` is not a chosen default — it is the value modules/cluster/main.tf hardcoded until
+# this change, so every project that exists plans unchanged.
+variable "ack_disk_category" {
+  type        = string
+  default     = "cloud_essd"
+  description = "System disk category for each ACK node. cloud_essd takes a performance level (ack_disk_performance_level); cloud_auto takes provisioned IOPS (ack_disk_provisioned_iops); the others take neither."
+
+  validation {
+    condition     = contains(["cloud_efficiency", "cloud_ssd", "cloud_essd", "cloud_auto", "cloud_essd_entry"], var.ack_disk_category)
+    error_message = "ack_disk_category must be one of cloud_efficiency, cloud_ssd, cloud_essd, cloud_auto, cloud_essd_entry."
+  }
+}
+
+# ⚠️ Alibaba does NOT have aws's single `iops` number. Disk performance is TWO mutually exclusive
+# arguments, each coupled to a different disk category, and the API silently ignores the one that
+# does not belong to the category in play. checks_cluster.tf blocks that pairing at plan time — a
+# knob that is reachable and quietly does nothing is worse than a knob that is missing.
+variable "ack_disk_performance_level" {
+  type        = number
+  default     = null
+  description = "ESSD performance level for each ACK node's system disk (0-3, rendered as PL0-PL3). Requires ack_disk_category = cloud_essd. Null (the default) leaves Alibaba's own default in place."
+
+  # `coalesce` to a valid member rather than `var.x == null || contains(…)`. OpenTofu does NOT
+  # short-circuit `||` inside a validation condition, so `contains(list, null)` is evaluated and
+  # raises "Invalid function argument" — the guard fails on the DEFAULT, the one input it must accept.
+  validation {
+    condition     = contains([0, 1, 2, 3], coalesce(var.ack_disk_performance_level, 0))
+    error_message = "ack_disk_performance_level must be 0, 1, 2 or 3 (PL0-PL3), or null."
+  }
+}
+
+variable "ack_disk_provisioned_iops" {
+  type        = number
+  default     = null
+  description = "Provisioned IOPS for each ACK node's system disk. Requires ack_disk_category = cloud_auto. Null (the default) leaves the disk on its category's baseline performance."
+
+  # Same non-short-circuit rule as above: `null > 0` is an "Operation failed" error, not a false, so
+  # the null default must be replaced before the comparison rather than guarded in front of it.
+  validation {
+    condition     = coalesce(var.ack_disk_provisioned_iops, 1) > 0
+    error_message = "ack_disk_provisioned_iops must be a positive number, or null."
+  }
+}
+
+# ── Interruptible capacity (aws parity: eks_ng_capacity_type) ────────────────────────────────────
+# "NoSpot" is the ACK API's own name for on-demand and is what the node pool provisions today with
+# the argument unset, so the default is behavior-preserving.
+variable "ack_node_capacity_type" {
+  type        = string
+  default     = "NoSpot"
+  description = "Bidding strategy for the ACK node pool. NoSpot = on-demand (the default). SpotWithPriceLimit requires ack_spot_price_limit; SpotAsPriceGo bids the market rate."
+
+  validation {
+    condition     = contains(["NoSpot", "SpotWithPriceLimit", "SpotAsPriceGo"], var.ack_node_capacity_type)
+    error_message = "ack_node_capacity_type must be one of NoSpot, SpotWithPriceLimit, SpotAsPriceGo."
+  }
+}
+
+variable "ack_spot_price_limit" {
+  type = list(object({
+    instance_type = string
+    price_limit   = string
+  }))
+  default     = []
+  description = "Per-instance-type hourly bid ceilings, required when ack_node_capacity_type = SpotWithPriceLimit and meaningless otherwise. price_limit is a decimal string, e.g. \"0.35\"."
+}
+
 #########################################################################
-##                   DNS (AliDNS) / WAF Variables                      ##
+##                     DNS (AliDNS) Variables                          ##
 #########################################################################
 
 variable "alidns_enabled" {
@@ -175,11 +243,14 @@ variable "alidns_managed_certificate" {
   description = "Whether to request a managed certificate for the AliDNS domain"
 }
 
-variable "application_waf_enabled" {
-  type        = bool
-  default     = false
-  description = "Whether to provision an Application (Web Application Firewall) domain protection"
-}
+# NO `application_waf_enabled` HERE, unlike aws/azure/gcp — the WAF offer is withdrawn on this
+# cloud (#1841), and re-adding the variable is how it would quietly come back. `alicloud_wafv3_instance`
+# takes no arguments at all, so nothing distinguishes two instances, and its create/delete are
+# CreatePostpaidInstance/ReleaseInstance: the purchase is ACCOUNT-scoped, and a per-project state
+# model cannot own it safely — destroying one project would release the account's firewall out from
+# under every other project sharing it. The decision is recorded in infra/offer-exclusions.yaml and
+# pinned by TestAlibabaProviderTfvars_CarriesNoWafSwitch, so nothing can carry a switch to a variable
+# that is deliberately absent.
 
 #########################################################################
 ##                   MNS (Message Service) Variables                   ##
@@ -308,6 +379,15 @@ variable "custom_secrets" {
   description = "List of secrets to create in KMS Secrets Manager"
 }
 
+# Parity with aws (custom_secrets.tf), gcp and azure: the ONLY lever random_password offers for
+# re-generating a value it has already produced. Without it an Alibaba project's generated secrets
+# are immutable for the life of the KMS secret — rotation would mean destroying it.
+variable "custom_secret_keepers" {
+  type        = map(map(string))
+  default     = {}
+  description = "Per-secret rotation keepers, keyed by secret name. Changing any value under a name re-generates that secret's password; a name absent from the map keeps its value forever. Empty (the default) is behavior-preserving."
+}
+
 #########################################################################
 ##                   RDS Variables                                     ##
 #########################################################################
@@ -352,4 +432,50 @@ variable "vswitch_count" {
   type        = number
   default     = 3
   description = "STATIC number of vswitches the network module creates (plan-known under the keyless RAM-OIDC provider — #621); zone assignment wraps over the discovered zones via element()."
+}
+
+# #1987. ADDITIVE, never restrictive: modules/network creates a security group for these ranges and
+# attaches it to the ACK node pool, alongside the group ACK manages itself. Empty (the default)
+# creates nothing at all, so the plan is byte-identical and the external runner keeps its access.
+variable "network_allowed_cidr_blocks" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted inbound to this VPC's cluster nodes. Empty (the default) adds nothing."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.network_allowed_cidr_blocks : can(cidrhost(c, 0))])
+    error_message = "network_allowed_cidr_blocks must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}
+
+# #1996. See modules/kvstore for why this is shards rather than replicas.
+variable "kvstore_shard_count" {
+  type        = number
+  default     = 0
+  description = "Number of cluster-mode shards for the Redis instance. 0 (the default) leaves the instance class's own topology alone."
+}
+
+# #1996. Alibaba is NOT part of the azure/gcp serverless ceiling: alicloud_db_instance accepts a
+# serverless_config block, so the range is expressible. Both default to 0, which renders no block at
+# all — a provisioned (non-serverless) instance is unaffected.
+variable "rds_serverless_min_capacity" {
+  type        = number
+  default     = 0
+  description = "Minimum serverless capacity (RCUs). 0 (the default) provisions a fixed-size instance with no serverless range."
+}
+
+variable "rds_serverless_max_capacity" {
+  type        = number
+  default     = 0
+  description = "Maximum serverless capacity (RCUs). 0 (the default) provisions a fixed-size instance with no serverless range."
+}
+
+# ── Secrets envelope encryption for ACK (#2004) ─────────────────────────────────────────────────
+# ON BY DEFAULT, matching what AWS has always done silently (the upstream EKS module defaults
+# create_kms_key = true and encrypts `secrets`).
+variable "ack_secrets_encryption_enabled" {
+  type        = bool
+  default     = true
+  description = "Envelope-encrypt Kubernetes Secrets in etcd under a customer-managed KMS key. On by default (AWS parity)."
 }

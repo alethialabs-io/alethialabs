@@ -110,8 +110,15 @@ resource "github_repository_ruleset" "main" {
       }
     }
   }
-  # No bypass_actors → admins are included (no bypass). The coverage-badge push in
-  # ci.yml already degrades gracefully when blocked.
+  # No bypass_actors → admins are included (no bypass), and that includes github-actions[bot]:
+  # the pull_request rule means EVERY update to refs/heads/main must arrive via a PR, so a direct
+  # push from CI is refused with GH006 regardless of the token's contents:write permission.
+  #
+  # This comment used to say the coverage-badge push "already degrades gracefully when blocked".
+  # It degraded so gracefully that both badge jobs failed silently from the day this ruleset was
+  # created (2026-07-03) until 2026-08-05, and the README advertised 21.6% Go coverage against a
+  # real 61.2%. The jobs now publish to the unprotected orphan `badges` branch and no longer
+  # swallow the push failure. Do not add a bypass actor here to "fix" a badge.
 }
 
 # ── staging — release candidate. PR + green CI (lighter; allows hotfix merges). ──

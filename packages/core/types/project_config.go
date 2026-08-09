@@ -146,6 +146,17 @@ type ProjectNetworkConfig struct {
 	// when non-empty; consumed per-cloud in ProviderTfvars (gcp/azure/alibaba) and in
 	// deploy.go's AWS brownfield subnet classification (#1352).
 	SubnetIDs []string `json:"subnet_ids,omitempty"`
+	// AllowedCidrBlocks are EXTRA source ranges permitted to reach resources in this
+	// network, on top of whatever the template already allows. The canvas and the CLI
+	// have collected it since the network inspector shipped; nothing modelled it, so
+	// `json.Unmarshal` dropped it here and a user could type an allow-list, save it, and
+	// be shown a setting that changed nothing (#1987).
+	//
+	// ADDITIVE by definition — "extra networks permitted", never "only these". Empty (the
+	// default) therefore means no extra rules and is bit-for-bit behaviour-preserving,
+	// which is also what keeps it from locking the external runner out of a cluster it
+	// still has to provision.
+	AllowedCidrBlocks []string `json:"allowed_cidr_blocks,omitempty"`
 }
 
 // NodeSize is a cloud-indifferent node capability; the catalog resolver maps it to the
@@ -258,6 +269,11 @@ type ProjectCacheConfig struct {
 	MemoryGB      float64 `json:"memory_gb"`
 	NumCacheNodes *int    `json:"num_cache_nodes"`
 	MultiAz       *bool   `json:"multi_az"`
+	// Extra networks permitted to reach the cache (the cluster always can).
+	// Collected by the inspector's cache-network section and the CLI; without
+	// this field json.Unmarshal dropped the value on every cloud and the cache
+	// was provisioned with the template's default access rules only (#1981).
+	AllowedCidrBlocks []string `json:"allowed_cidr_blocks"`
 }
 
 type ProjectQueueConfig struct {
@@ -290,6 +306,11 @@ type ProjectNosqlConfig struct {
 	TableType           NosqlTableType    `json:"table_type"`
 	CapacityMode        NosqlCapacityMode `json:"capacity_mode"`
 	PointInTimeRecovery bool              `json:"point_in_time_recovery"`
+	// Replica regions for a global table. Collected by the inspector's
+	// nosql-replication section and the CLI; without this field json.Unmarshal
+	// dropped the value and a global table got the template's default replica
+	// set, not the regions the user chose (#1982).
+	GlobalReplicas []string `json:"global_replicas"`
 }
 
 type ProjectSecretConfig struct {

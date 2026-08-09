@@ -68,8 +68,22 @@ variable "backup_tier" {
   type        = string
   default     = null
 
+  # Written to be degenerate-safe rather than short-circuit-safe (#1931). `||` does not
+  # short-circuit on the OpenTofu the runner applies with — 1.9.0, per
+  # apps/runner/Dockerfile.base TOFU_VERSION and compat matrix `tofu` — so the right-hand
+  # `contains()` was called with a null value even when `var.backup_tier == null` was a known
+  # `true`, and the module refused its OWN default:
+  #
+  #   Error: Invalid function argument … while calling contains(list, value) … var.backup_tier is null
+  #   1.9.0            → refused (`no_point_in_time_recovery_leaves_the_account_on_periodic_backup`)
+  #   1.10.10, 1.12.3  → accepted
+  #
+  # Note this is a `validation` block, which proves the class reaches variable validation and not
+  # only `check`. The fix guards the ARGUMENT rather than adding another disjunct: the one-element
+  # comprehension drops a null tier before `contains()` is ever reached, and `alltrue([])` is `true`,
+  # so "null is allowed" is stated by the `if` instead of by a disjunct that does not gate anything.
   validation {
-    condition     = var.backup_tier == null || contains(["Continuous7Days", "Continuous30Days"], var.backup_tier)
+    condition     = alltrue([for t in [var.backup_tier] : contains(["Continuous7Days", "Continuous30Days"], t) if t != null])
     error_message = "backup_tier must be null, Continuous7Days or Continuous30Days."
   }
 }

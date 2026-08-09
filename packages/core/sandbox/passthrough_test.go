@@ -98,3 +98,27 @@ func TestPassthroughUnknownOperatorRunsWhenNotEnforced(t *testing.T) {
 		t.Fatalf("EnforceManaged=false must run regardless of operator (ran=%v err=%v)", ran, err)
 	}
 }
+
+// TestPassthroughRefusesNoEgress is the #2042 regression: Spec.NoEgress documents
+// "backends that can't enforce it must fail closed rather than silently allow
+// egress", and in-process execution can deny nothing — the job would run with the
+// runner's full host network and environment. The refusal is UNCONDITIONAL:
+// operator "self" and EnforceManaged=false excuse missing isolation for trusted
+// work, never a deny-all-egress promise about untrusted work.
+func TestPassthroughRefusesNoEgress(t *testing.T) {
+	for _, p := range []Passthrough{
+		{Operator: "self"},
+		{Operator: "self", EnforceManaged: true},
+		{Operator: "managed"},
+		{},
+	} {
+		ran := false
+		err := p.Run(context.Background(),
+			Spec{Kind: "chart_scan", JobID: "j", NoEgress: true},
+			func(context.Context) error { ran = true; return nil },
+		)
+		if err == nil || ran {
+			t.Fatalf("Passthrough%+v silently allowed egress for a NoEgress spec (ran=%v err=%v)", p, ran, err)
+		}
+	}
+}

@@ -9,9 +9,17 @@
 // ALETHIA_E2E_VCLUSTER anywhere in e2e-nightly.yml, and the day-2 access layer had the same gap;
 // both sat silently unexecuted. That is the worst failure mode a test suite has, because coverage
 // looks like it grew.
+//
+// This file carries TWO guards, because the first one could not catch #1047. It scans the variables
+// that harness files READ — and there, the file was never written at all:
+// scripts/e2e/registry-e2e.sh invoked `-run TestT2XacctRegistry`, a function that existed in no
+// file, so it recorded BLOCKED forever while the parity board reported the vehicle as shipped. A
+// script that names a test nobody wrote is indistinguishable, from the outside, from a lane waiting
+// on a maintainer. TestScriptRunTargetsResolveToRealTests closes that.
 package e2e
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -123,4 +131,150 @@ func TestScenarioEnablesReachTheNightly(t *testing.T) {
 			t.Errorf("nightlyExemptEnv has a stale entry %q — no harness file reads it any more; remove it", v)
 		}
 	}
+}
+
+// goTestRunTarget matches a `go test … -run <target>` invocation, quoted or bare. Both forms occur in
+// scripts/e2e/*.sh, and both have to be seen: registry-e2e.sh quoted its phantom target while
+// provisioning-e2e.sh writes its real one bare.
+var goTestRunTarget = regexp.MustCompile(`-run\s+"([^"]+)"|-run\s+([^\s"'\\]+)`)
+
+// goTestFuncDecl matches a Go test function declaration in any *_test.go file, under ANY build tag.
+// Tags are deliberately ignored: the question this guard asks is whether the function EXISTS, and a
+// tag-gated harness is exactly the shape every one of these scripts invokes.
+var goTestFuncDecl = regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]*)\s*\(`)
+
+// scriptRunTargetSkipDirs are trees that hold no first-party Go and are expensive to walk.
+var scriptRunTargetSkipDirs = map[string]bool{
+	".git": true, "node_modules": true, ".next": true, ".turbo": true,
+	"dist": true, "build": true, "vendor": true, "coverage": true,
+}
+
+// TestScriptRunTargetsResolveToRealTests fails when a scripts/e2e/*.sh runner names a Go test
+// function that does not exist anywhere in the repository.
+//
+// TestScenarioEnablesReachTheNightly (above) is structurally incapable of catching this. It scans the
+// ALETHIA_E2E_* variables read by harness files that EXIST; when the harness was never written there
+// is no file to scan, so the hole is invisible to it. That is precisely what happened in #1047:
+// registry-e2e.sh ran `-run "TestT2XacctRegistry"` for months, `go test` matched no test, the script
+// classified the empty run as BLOCKED — the same verdict a real quota block produces — and
+// docs/testing/xacct-registry-parity.md went on naming the harness as the vehicle.
+//
+// The check is deliberately about EXISTENCE, not about wiring. A test that exists but is gated off is
+// a maintainer's choice; a test that does not exist is a script that can never pass.
+func TestScriptRunTargetsResolveToRealTests(t *testing.T) {
+	root := repoRootFromThisFile(t)
+
+	scripts, err := filepath.Glob(filepath.Join(root, "scripts", "e2e", "*.sh"))
+	if err != nil {
+		t.Fatalf("glob scripts/e2e: %v", err)
+	}
+	if len(scripts) == 0 {
+		t.Fatal("no scripts/e2e/*.sh found — this guard would pass vacuously, which is the failure mode it exists to prevent")
+	}
+
+	// target -> the script(s) that name it.
+	named := map[string][]string{}
+	for _, path := range scripts {
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			t.Fatalf("read %s: %v", path, rerr)
+		}
+		for _, m := range goTestRunTarget.FindAllStringSubmatch(string(src), -1) {
+			raw := m[1]
+			if raw == "" {
+				raw = m[2]
+			}
+			for _, name := range runTargetNames(raw) {
+				base := filepath.Base(path)
+				if !contains(named[name], base) {
+					named[name] = append(named[name], base)
+				}
+			}
+		}
+	}
+	if len(named) == 0 {
+		t.Fatal("no `-run` targets found in scripts/e2e/*.sh — the matcher stopped matching, so this guard is silently inert")
+	}
+
+	declared := map[string]bool{}
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // an unreadable tree is not this guard's business
+		}
+		if d.IsDir() {
+			if scriptRunTargetSkipDirs[d.Name()] {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), "_test.go") {
+			return nil
+		}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil
+		}
+		for _, m := range goTestFuncDecl.FindAllStringSubmatch(string(src), -1) {
+			declared[m[1]] = true
+		}
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatalf("walk repository: %v", walkErr)
+	}
+	if len(declared) == 0 {
+		t.Fatal("no Go test functions found in the repository — the declaration matcher is broken, so every target would look unresolved")
+	}
+
+	var unresolved []string
+	for name, from := range named {
+		if declared[name] {
+			continue
+		}
+		sort.Strings(from)
+		unresolved = append(unresolved, name+" (named by "+strings.Join(from, ", ")+")")
+	}
+	sort.Strings(unresolved)
+	if len(unresolved) > 0 {
+		t.Fatalf("these `-run` targets are invoked by scripts/e2e/*.sh but exist in NO Go test file, so those scripts can never run anything:\n  %s\n\n"+
+			"Either write the test, or point the script at the test that actually drives the scenario "+
+			"(the layered T2 scenarios all run inside TestT2RealCloudProvisioning). A script naming a test "+
+			"nobody wrote records BLOCKED forever, which reads exactly like a lane waiting on a maintainer.",
+			strings.Join(unresolved, "\n  "))
+	}
+}
+
+// runTargetNames normalizes a `-run` argument into the concrete test names it addresses.
+//
+// `-run` takes a regular expression: alternations select several tests, `/` separates subtest levels,
+// and `^`/`$` anchor. Only the top-level name matters here, and anything carrying shell interpolation
+// or genuine regex metacharacters is skipped rather than guessed at — a false accusation from this
+// guard would be worse than a miss, because the next person would learn to ignore it.
+func runTargetNames(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, "|") {
+		name := strings.TrimSpace(part)
+		name = strings.TrimPrefix(name, "^")
+		name, _, _ = strings.Cut(name, "/") // subtest path — only the top-level func exists in source
+		name = strings.TrimSuffix(name, "$")
+		if name == "" || !strings.HasPrefix(name, "Test") {
+			continue
+		}
+		// A shell variable or any regex metacharacter left over: not a literal test name.
+		if strings.ContainsAny(name, `$*+?.()[]{}\`) {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// contains reports whether s is already in list.
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

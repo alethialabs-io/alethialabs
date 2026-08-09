@@ -46,6 +46,27 @@ func (p *awsProvider) RequiredCLIs() []string {
 	return []string{"kubectl", "helm"}
 }
 
+// ValidateConfig refuses an AWS project config the EKS templates cannot provision: the shared
+// node-pool sizing invariants, plus the `eks_disk_size` floor the template itself declares.
+//
+// The VPC-CIDR floor is deliberately ABSENT. `cidrsubnet(var.vpc_cidr, 10, …)`
+// (infra/templates/project/aws/networking.tf:23-35) plus the AWS /28 subnet minimum implies a
+// /18, and that number is owned by #1942. #1936 has now landed the TEMPLATE-side gate for it
+// (terraform_data.vpc_cidr_carvable_guard blocks the plan fail-closed, with a `check` stating the
+// same violation in the plan output), so an unusable CIDR can no longer reach an apply — but the
+// Go-side rule is still #1942's, so it stays absent here rather than being half-encoded in two
+// places. The drift guard (validate_drift_test.go) pins the carve so the deferral cannot be
+// forgotten.
+func (p *awsProvider) ValidateConfig(config *types.ProjectConfig) error {
+	if config == nil {
+		return fmt.Errorf("ProjectConfig is required")
+	}
+	if err := validateNodeSizing(config); err != nil {
+		return err
+	}
+	return validateNodeDiskSize(config, "eks_disk_size", awsNodeDiskFloorGB)
+}
+
 func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {
 	enableKarpenter := false
 	if v, ok := config.Cluster.ProviderConfig["enable_karpenter"]; ok {
@@ -94,9 +115,10 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"aws_account_id": config.CloudAccountID,
 
 		// VPC
-		"provision_vpc":          provisionVPC,
-		"vpc_cidr":               orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
-		"vpc_single_nat_gateway": config.Network.SingleNatGateway,
+		"provision_vpc":           provisionVPC,
+		"vpc_cidr":                orDefault(config.Network.CIDRBlock, "10.0.0.0/16"),
+		"vpc_single_nat_gateway":  config.Network.SingleNatGateway,
+		"vpc_allowed_cidr_blocks": ensureStringSlice(config.Network.AllowedCidrBlocks),
 
 		// EKS
 		"eks_cluster_version": resolveK8sVersion("aws", config.Cluster.ClusterVersion),
@@ -272,6 +294,16 @@ func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 			}
 			if cache.MultiAz != nil {
 				tfvars["redis_multi_az_enabled"] = *cache.MultiAz
+			}
+			// The template chain (variables.tf → locals.tf → elasticache.tf's
+			// security group) was fully wired and this value was hardcoded empty
+			// above — the canvas collected an allow-list and every deploy
+			// provisioned the cache without it (#1981). Empty stays empty, so an
+			// unset list builds exactly what it built before. Valkey (serverless)
+			// is security-group-only — valkey.tf consumes no CIDR input — so the
+			// list is deliberately not emitted on that engine.
+			if len(cache.AllowedCidrBlocks) > 0 {
+				tfvars["redis_allowed_cidr_blocks"] = cache.AllowedCidrBlocks
 			}
 		}
 	}
@@ -709,6 +741,15 @@ func buildDDBTables(tables []types.ProjectNosqlConfig, tableType string) []map[s
 			"range_key_type":                orDefault(string(t.SortKeyType), "S"),
 			"billing_mode":                  ddbCapacityMode(string(t.CapacityMode)),
 			"enable_point_in_time_recovery": t.PointInTimeRecovery,
+		}
+		// The regions the canvas collected for a global table. The template's
+		// object type takes `replicas = optional(list(string), [])` and the
+		// dynamodb module consumes it — this entry was the only missing hop, so
+		// a global table was built with the default replica set instead of the
+		// chosen one (#1982). Only a global table has replicas; unset renders
+		// the same empty default as before.
+		if tableType == "global" && len(t.GlobalReplicas) > 0 {
+			entry["replicas"] = t.GlobalReplicas
 		}
 		result = append(result, entry)
 	}
