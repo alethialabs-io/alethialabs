@@ -62,11 +62,11 @@ remembered:
 
 | Template | root variables |
 |----------|----------------|
-| AWS      | 106 |
-| GCP      | 75 |
-| Azure    | 70 |
-| Alibaba  | 49 |
-| Hetzner  | 28 |
+| AWS      | 107 |
+| GCP      | 78 |
+| Azure    | 72 |
+| Alibaba  | 54 |
+| Hetzner  | 29 |
 
 AWS is the most fleshed-out because it was built first. Some of the spread below it is legitimate:
 Hetzner substitutes in-cluster OSS (CloudNativePG, Vault, Harbor, RabbitMQ, Valkey, MinIO) for
@@ -122,14 +122,31 @@ as machine-readable per-service decisions (`packages/core/argocd/decisions.go`, 
 - **`ClusterAdmins` on hetzner** — Talos has no cloud IAM plane; access is the emitted
   `talosconfig`/kubeconfig, so there is no in-template `cluster_admins` knob to wire. A genuine
   ceiling.
-- **`ClusterAdmins` on gcp / alibaba — DEBT, not a ceiling ([#2005](https://github.com/alethialabs-io/alethialabs/issues/2005))**.
-  An earlier version of this line said the binding is "granted outside the template" on both, as if
-  the provider forced it. Checking the pinned provider schemas refuted that:
-  `alicloud_cs_kubernetes_permissions` is in `aliyun/alicloud` 1.286.0 and is exactly a cluster-admin
-  binding, and on GCP `google_project_iam_member` with `roles/container.clusterAdmin` is the same
-  mechanism this template already uses two files over (`gcp/app-db-identity.tf:48`). "The binding
-  happens elsewhere" described where the work is, not where the provider put it — and a wrong
-  cloud-inherent line is worse than an open gap, because it stops anyone looking again.
+- **`ClusterAdmins` on alibaba — WIRED ([#2005](https://github.com/alethialabs-io/alethialabs/issues/2005)), no longer a skip**.
+  An earlier version of this line said the binding is "granted outside the template" (ACK via RAM),
+  as if the cloud forced it. Checking the pinned provider refuted that:
+  `alicloud_cs_kubernetes_permissions` is in `aliyun/alicloud` 1.286.0 and is exactly a
+  cluster-admin binding. The template now declares `ack_cluster_admins`
+  (`alibaba/cluster-admins.tf`, reachable through the Cluster `provider_config` passthrough and
+  pinned by `alibaba/checks_cluster_admins.tftest.hcl`) and carries the constraint that survived
+  the schema check: ACK's grant API is a **replace, not a merge** — it "overwrites the permissions
+  that have been granted to the specified RAM user" — so the template owns the full permission set
+  of every principal it touches: one resource per uid, duplicate uids refused at the variable, and
+  the knob documented as being for principals whose ACK grants the template owns.
+- **`ClusterAdmins` on gcp — excluded by this template's own invariants, not cloud-inherent
+  ([#2005](https://github.com/alethialabs-io/alethialabs/issues/2005))**. The provider does not
+  force the binding out of the template: `google_project_iam_member` with
+  `roles/container.clusterAdmin` exists, and so does `kubernetes_cluster_role_binding`
+  (`hashicorp/kubernetes` is in the lockfile). Both paths are refused by *named* invariants
+  instead. The IAM path needs `resourcemanager.projects.setIamPolicy` — the owner-equivalent
+  permission #300 deliberately stripped from the provisioner (the two #722 project bindings that
+  tried 403'd on every apply and were deleted; see `gcp/app-db-identity.tf`'s ADOPTION note). The
+  in-cluster RBAC path is an in-tofu Kubernetes-applying resource, which
+  `scripts/check-templates-plan-safe.sh` forbids because the runner's `tofu plan -out` cannot
+  resolve a provider wired from the cluster's own known-after-apply endpoint. So GKE cluster-admin
+  grants live where the adopted service accounts already live — the customer's own IAM (connector
+  bootstrap) or the runner's post-apply path. Unlike its "cloud-inherent" predecessor, this line
+  names the invariants that refuse the knob, so it goes stale loudly if either moves.
 - **external-dns on Alibaba** — the alibabacloud external-dns provider has **no RRSA support upstream**
   ([external-dns#5019](https://github.com/kubernetes-sigs/external-dns/issues/5019)); external-dns is
   skipped on Alibaba until that lands. Manage AliDNS records outside the cluster meanwhile.
@@ -156,18 +173,26 @@ as machine-readable per-service decisions (`packages/core/argocd/decisions.go`, 
   The exclusion is explicit and documented (not silent) — a store with no first-class read path on
   the pinned chart registers no `saasSecretStore` and renders no ClusterSecretStore.
 
-### One real backlog item (a genuine analogue worth adding)
+### Formerly the one real backlog item — since shipped
 
-- **Azure `ClusterAdmins` → `admin_group_object_ids`** — unlike gcp/alibaba/hetzner above, AKS **does**
-  have a native in-template analogue: AAD RBAC via `azurerm_kubernetes_cluster.azure_active_directory_role_based_access_control.admin_group_object_ids`.
-  Wiring the shared `cluster_admins` list to it would give Azure genuine cluster-admin parity. Backlog
-  (Phase A.2), not a cloud-inherent skip.
+- **Azure `ClusterAdmins` → `admin_group_object_ids` — WIRED (B4.1 + A2.2)** — unlike hetzner (no
+  IAM plane) and gcp (invariant-excluded) above, AKS has a native in-template analogue and it is
+  wired end-to-end: the shared `cluster_admins` list (each admin's `groups` holding Entra group
+  object IDs) flows through `azure_provider.go` into `aks_admin_group_object_ids`, unioned with an
+  explicit `provider_config` value, and lands on
+  `azurerm_kubernetes_cluster.azure_active_directory_role_based_access_control.admin_group_object_ids`
+  (`azure/aks.tf`, GUID-shape gated by `azure/checks_cluster.tf`). Recorded here because this page
+  listed it as backlog long after it shipped — on the very topic where a stale line cost the most
+  (#2005).
 
 ## Status
 
 - **checks.tf** invariants: added to aws/gcp/azure (done, this phase).
 - **AWS Route53 zone-create**: added (`aws/route53.tf` + `aws/modules/route53/`, wired into ACM + outputs;
   Go emits `cloud_dns_enabled`) — DNS zone-creation parity with GCP/Azure. Done, this phase.
+- **Alibaba `ack_cluster_admins`** (#2005): wired — `alicloud_cs_kubernetes_permissions`, one
+  resource per uid with the replace-not-merge constraint carried on the resource, gated fail-closed
+  (ADMINS-001) and pinned by `alibaba/checks_cluster_admins.tftest.hcl`. Done, this phase.
 - **The 10 knobs above**: backlog (Phase A.2) — declare + module-wire per cloud.
 
 ## Where these decisions are recorded, and the gap in that
@@ -180,6 +205,10 @@ depth, WAF depth, cluster-admin IAM and control-plane secret encryption are none
 they are template variables reached through `provider_config` passthrough. So no guard can red any
 cell on this page, and no deferral here can ever go stale the way a `baseline:` entry does.
 
-That is why two of the entries above carry issue numbers rather than a confident sentence. Until the
-template-variable surface has a ratchet of its own — or these knobs become first-class offers and
-inherit one — treat this page as a record of intent, not as enforcement.
+That is why entries above carry issue numbers and name the invariants they rest on rather than a
+confident sentence — #2005 is what a confident sentence costs here: a false "cloud-inherent"
+cluster-admin line stood unquestioned until the provider schema was re-checked, and the azure
+wiring sat recorded as backlog long after it shipped. The alibaba knob is now pinned by a suite
+(`alibaba/checks_cluster_admins.tftest.hcl`), but nothing reds a cell on this page itself. Until
+the template-variable surface has a ratchet of its own — or these knobs become first-class offers
+and inherit one — treat this page as a record of intent, not as enforcement.
