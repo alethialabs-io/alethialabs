@@ -185,6 +185,14 @@ func (p *alibabaProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 		if cache.NumCacheNodes != nil && *cache.NumCacheNodes > 0 {
 			tfvars["kvstore_shard_count"] = *cache.NumCacheNodes
 		}
+		// Cache allow-list -> instance whitelist (#2149, the alibaba leg of #1981). Probed against
+		// the pinned provider rather than assumed: `alicloud_kvstore_instance` accepts
+		// `security_ips`, an IP/CIDR allow-list on the instance itself. Emitted only when the user
+		// set extra ranges — the template turns an unset list into no argument at all, so an
+		// existing cache keeps whatever whitelist it has.
+		if len(cache.AllowedCidrBlocks) > 0 {
+			tfvars["kvstore_security_ips"] = cache.AllowedCidrBlocks
+		}
 	}
 
 	if inst := resolveInstanceTypes("alibaba", config.Cluster); len(inst) > 0 {

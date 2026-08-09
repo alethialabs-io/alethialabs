@@ -21,6 +21,10 @@ resource "alicloud_kvstore_instance" "this" {
   # argument entirely and the SKU decides, which is today's behaviour (#1996).
   shard_count = var.shard_count > 0 ? var.shard_count : null
 
+  # null, not [], when unset: [] would ask Alibaba to REPLACE the whitelist with an empty one. null
+  # omits the argument entirely and the existing whitelist stays, which is today's behaviour (#2149).
+  security_ips = length(var.security_ips) > 0 ? var.security_ips : null
+
   vswitch_id        = var.vswitch_id
   zone_id           = var.zone_id
   secondary_zone_id = var.multi_az && var.secondary_zone_id != "" ? var.secondary_zone_id : null
