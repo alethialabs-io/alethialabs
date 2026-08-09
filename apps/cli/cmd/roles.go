@@ -110,6 +110,10 @@ func runRolesCreate(c apiClient, out io.Writer, name string, permissionKeys []st
 	return nil
 }
 
+// rolesDeleteYes is the --yes opt-in: skip the confirmation prompt (and make the
+// command usable with --no-input).
+var rolesDeleteYes bool
+
 var rolesDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete a custom role",
@@ -119,7 +123,7 @@ var rolesDeleteCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		if !confirm("Delete this role?", "Grants referencing it are removed too. Built-in roles cannot be deleted. This cannot be undone.") {
+		if !confirmDestructive(rolesDeleteYes, "Delete this role?", "Grants referencing it are removed too. Built-in roles cannot be deleted. This cannot be undone.") {
 			return
 		}
 		if err := runRolesDelete(api.NewClient(token), os.Stdout, args[0]); err != nil {
@@ -138,6 +142,7 @@ func runRolesDelete(c apiClient, out io.Writer, id string) error {
 }
 
 func init() {
+	addYesFlag(rolesDeleteCmd, &rolesDeleteYes)
 	rolesCreateCmd.Flags().StringArrayVar(&rolePermissions, "permission", nil, "Permission key to grant (repeatable, e.g. project:deploy)")
 	rolesCmd.AddCommand(rolesListCmd)
 	rolesCmd.AddCommand(rolesCreateCmd)
