@@ -650,3 +650,41 @@ var clusterNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$`)
 
 // isValidClusterName reports whether s is a shell-safe cluster name.
 func isValidClusterName(s string) bool { return clusterNameRe.MatchString(s) }
+
+// dnsDomainLabelRe matches ONE label of a DNS domain: alphanumeric-bounded, hyphens allowed inside.
+// Deliberately the LDH grammar and nothing more — no underscores, no wildcards, no trailing dot.
+// The point is not to be a complete RFC-1035 parser; it is that every rune it admits is inert in a
+// shell string and in a YAML scalar, which is what the callers need. Case is allowed because DNS is
+// case-insensitive and the console does not normalise.
+var dnsDomainLabelRe = regexp.MustCompile(`^[A-Za-z0-9]([-A-Za-z0-9]*[A-Za-z0-9])?$`)
+
+// isValidDNSDomain reports whether s is a plain DNS domain — safe to interpolate into a `bash -c`
+// string or a YAML values file. Used to fail-closed on `dns.domain_name`, which is free-text
+// project data (#2013): it is the ArgoCD ingress hostname, so it reaches both.
+//
+// Rejects the empty string, anything over 253 chars, a leading or doubled dot (which would yield an
+// empty label), and any label that is not LDH or runs past 63 chars. A single label with no dot is
+// accepted: `localhost`-style internal names are legitimate and the grammar is what matters here,
+// not the public suffix.
+//
+// ONE trailing dot is accepted and ignored — the root label of a fully-qualified name. This is not
+// leniency for its own sake: the absolute form is a shape this codebase already takes as input, and
+// gcp/modules/cloud-dns/main.tf normalises it explicitly (`endswith(var.domain, ".") ? …`). Refusing
+// it here would turn a domain that deploys today into a failed deploy. A trailing dot is inert in
+// both a single-quoted shell word and a YAML scalar, so accepting it costs nothing.
+func isValidDNSDomain(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	// Strip at most one root dot. `example.com..` still fails, via the empty label it leaves.
+	s = strings.TrimSuffix(s, ".")
+	if s == "" {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if len(label) > 63 || !dnsDomainLabelRe.MatchString(label) {
+			return false
+		}
+	}
+	return true
+}
