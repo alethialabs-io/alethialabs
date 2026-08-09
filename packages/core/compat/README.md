@@ -39,7 +39,7 @@ pass. A version with **no recorded window** (both bounds empty) is `not_evaluabl
 `compat.Report` mirrors `verify.Report` 1:1 — `Status` (`pass` / `fail` / `warn` /
 `not_evaluable`), `Severity`, `Finding`, `ControlResult`, `Summary`, plus `Override` and
 `Report.Unwaived`. The shapes are **redeclared** here, not imported: the two engines stay
-disjoint and independently versioned (`compat-matrix-0.1.0` vs `elench-controls-0.5.0`). The
+disjoint and independently versioned (`compat-matrix-0.1.0` vs `elench-controls-0.5.1`). The
 Go type names match `verify` (`compat.Report`); the generated TS mirror is `CompatReport`
 (no package namespace).
 
