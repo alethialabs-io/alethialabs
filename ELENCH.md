@@ -60,8 +60,8 @@ research- and red-team-backed rationale.
   `provisioner.RunDeployV2`. **Fail-closed**: a hard control failure blocks apply unless an authorized
   `verify.Override` waives it. Honest `not_evaluable` for anything the plan can't show (computed bodies,
   managed-policy-by-ARN) — never a silent pass.
-- **Controls (catalog `elench-controls-0.1.0`), provider-selected:**
-  - AWS — `KEYLESS-001`, `OIDC-001` (rejects `StringLike` wildcard `sub`), `LEASTPRIV-001`.
+- **Controls (catalog `elench-controls-0.5.0`), provider-selected:**
+  - AWS — `KEYLESS-001`, `OIDC-001` (rejects missing/`StringLike`-wildcard `sub`; wildcard-aware trust-action match, so `sts:*` grants stay in scope), `LEASTPRIV-001`.
   - GCP — `GCP-KEYLESS-001`, `GCP-WIF-001`, `GCP-LEASTPRIV-001`.
   - Azure — `AZURE-KEYLESS-001`, `AZURE-FED-001`, `AZURE-LEASTPRIV-001`.
   - `ACCESS-ANALYZER-001` (opt-in) — AWS IAM Access Analyzer automated-reasoning corroboration.
