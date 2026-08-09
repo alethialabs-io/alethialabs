@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -293,6 +294,24 @@ func TestHygCliConfirm_ScriptedProjectDestroyQueuesTheJob(t *testing.T) {
 	}
 }
 
+// TestHygCliConfirm_InteractiveDeclineIsAQuietNoOp pins the arm the --no-input
+// contract must NOT swallow: on a real terminal, answering "no" still returns
+// quietly with nothing deleted and no fatal exit.
+func TestHygCliConfirm_InteractiveDeclineIsAQuietNoOp(t *testing.T) {
+	s, run := hygCliConfirmEnv(t)
+	hygCliConfirmInteractive(t)
+	prev := confirm
+	confirm = func(string, string) bool { return false }
+	t.Cleanup(func() { confirm = prev })
+
+	if got := run("alerts", "delete", "ar1", "--output", "json"); got != 0 {
+		t.Fatalf("exit code = %d, want 0 — a declined prompt is not an error", got)
+	}
+	if muts := s.mutations(); len(muts) > 0 {
+		t.Errorf("a declined delete still changed state: %v", muts)
+	}
+}
+
 // TestHygCliConfirm_ShortYesFlagWorks pins the -y shorthand, so the flag is usable
 // the way `connector remove` already advertised it.
 func TestHygCliConfirm_ShortYesFlagWorks(t *testing.T) {
@@ -361,6 +380,26 @@ func TestHygCliConfirm_ConfirmDeclinesWhenPromptsDisabled(t *testing.T) {
 	}
 	if opened != 1 {
 		t.Errorf("prompting disabled: form opened %d times, want it left untouched", opened)
+	}
+}
+
+// TestHygCliConfirm_ConfirmAcceptsAnAnsweredForm pins confirm's affirmative arm, the
+// one no stub of runHuhForm can normally reach: the answer is written through a pointer
+// huh owns, so the form has to be driven. Measured, not assumed — huh fills the bound
+// value from a key message with no terminal involved and without blocking.
+func TestHygCliConfirm_ConfirmAcceptsAnAnsweredForm(t *testing.T) {
+	prev := runHuhForm
+	runHuhForm = func(groups ...*huh.Group) error {
+		f := huh.NewForm(groups...)
+		f.Init()
+		f.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+		return nil
+	}
+	t.Cleanup(func() { runHuhForm = prev })
+
+	hygCliConfirmSetNoInput(t, false)
+	if !confirm("Destroy?", "gone forever") {
+		t.Error("confirm returned false for an affirmatively answered form")
 	}
 }
 
