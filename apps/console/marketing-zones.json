@@ -24,6 +24,7 @@
             "/brand",
             "/contact",
             "/contact/:path*",
+            "/security",
             "/terms",
             "/privacy",
             "/privacy/:path*",

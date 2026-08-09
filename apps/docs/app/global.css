@@ -6,12 +6,9 @@
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
 
-:root {
-  --console-color: oklch(0.6 0.15 150); /* Green */
-  --cli-color: oklch(0.6 0.15 280);   /* Purple */
-  --runner-color: oklch(0.6 0.15 240); /* Blue */
-  --concepts-color: oklch(0.6 0.12 60); /* Amber */
-}
+/* Four hued section tokens used to live here (green/purple/blue/amber). They were
+   referenced nowhere in the repo, and the system is zero-chroma by rule, so they
+   were dead code carrying the only hue in the docs app. */
 
 /* Minimal grayscale scrollbars — mirrors packages/brand/src/tokens.css (docs doesn't
    import the brand tokens; keyed off the fumadocs foreground var). */
