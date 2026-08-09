@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -27,10 +28,60 @@ func NewClient(authToken string) *Client {
 	// hosted CLI needs no setup and self-host/dev override it once.
 	webOrigin, _ := types.ResolveWebOrigin()
 	return &Client{
-		baseURL:    fmt.Sprintf("%s/api", webOrigin),
-		authToken:  authToken,
-		httpClient: &http.Client{},
+		baseURL:   fmt.Sprintf("%s/api", webOrigin),
+		authToken: authToken,
+		httpClient: &http.Client{
+			CheckRedirect: refuseCrossOriginRedirect,
+		},
 	}
+}
+
+// maxAPIRedirects bounds the chain even when every hop stays on the control plane's own origin.
+const maxAPIRedirects = 3
+
+// refuseCrossOriginRedirect stops a redirect that leaves the origin the request started on.
+//
+// Go strips Authorization, Www-Authenticate and Cookie when a redirect crosses to a different host,
+// and NOTHING else. Every other header is copied verbatim — including `X-Provider-Token`, the user's
+// GitHub/GitLab OAuth token attached by GetRepositories, and `X-Alethia-Org`, the tenancy boundary.
+// So a 3xx from /api/cli/repositories/* handed a token that grants repo access on the user's behalf
+// to a host that was never the control plane: an open redirect on the console, a self-hosted or dev
+// ALETHIA_WEB_ORIGIN, or a MITM on a plain-http origin (#2024).
+//
+// Refusing the hop outright rather than stripping the two headers by name is deliberate, on two
+// counts. A strip list is a denylist — it protects the secrets somebody remembered, and the next
+// header added to this client is unprotected by default, which is exactly how this bug arose from
+// Go's own (correct but partial) list. And a control-plane API call has no legitimate reason to end
+// up on another origin at all: following one would also mean parsing a foreign host's JSON as if it
+// were the control plane's answer.
+//
+// Same-origin redirects are still followed, so a trailing-slash or path normalisation on the
+// console keeps working.
+func refuseCrossOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxAPIRedirects {
+		return fmt.Errorf("stopped after %d redirects", maxAPIRedirects)
+	}
+	if origin, to := requestOrigin(via[0].URL), requestOrigin(req.URL); origin != to {
+		return fmt.Errorf("refusing redirect from the control plane %q to %q: the request carries credentials that must not leave that origin", origin, to)
+	}
+	return nil
+}
+
+// requestOrigin renders scheme://host:port, with the scheme's default port made explicit so
+// `https://example.com` and `https://example.com:443` are the same origin rather than a refusal on a
+// spelling difference. The SCHEME is part of it: an https→http hop is a downgrade that would put the
+// token on the wire in clear, and it is not the same origin.
+func requestOrigin(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		switch u.Scheme {
+		case "https":
+			port = "443"
+		case "http":
+			port = "80"
+		}
+	}
+	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Hostname()) + ":" + port
 }
 
 // --- Types ---
