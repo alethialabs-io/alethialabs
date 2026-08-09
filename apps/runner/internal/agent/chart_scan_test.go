@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/helmoci"
+	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 )
 
 // TestIsOCIChartRepo locks the routing between the two chart sources. The console stores a git URL
@@ -101,6 +102,29 @@ func TestHelmRegistriesFromSnapshot(t *testing.T) {
 	}
 }
 
+// chartScanRunner is runnerForScan plus an in-process sandbox double. Passthrough
+// refuses a NoEgress spec outright (#2042) — the right behavior in production, and
+// exactly why these tests cannot ride the default backend: they exercise
+// executeChartScan's OWN logic (credential scoping, payload, metadata), not the
+// isolation boundary, which packages/core/sandbox pins. The double still asserts
+// the stage DEMANDS deny-all egress, so a caller that quietly dropped the flag
+// fails here rather than reading as covered.
+func chartScanRunner(t *testing.T, api JobAPI) *Runner {
+	t.Helper()
+	w := runnerForScan(t, api)
+	w.sandbox = specAssertingSandbox{t: t}
+	return w
+}
+
+type specAssertingSandbox struct{ t *testing.T }
+
+func (s specAssertingSandbox) Run(ctx context.Context, spec sandbox.Spec, job sandbox.Job) error {
+	if spec.Kind == "chart_scan" && !spec.NoEgress {
+		s.t.Errorf("chart_scan spec lost NoEgress — the deny-all promise was dropped")
+	}
+	return job(ctx)
+}
+
 // TestExecuteChartScan_GitStillRequiresChartPath guards the unchanged git path: a git repo has no
 // way to say which directory holds the chart, so chart_path stays mandatory there.
 func TestExecuteChartScan_GitStillRequiresChartPath(t *testing.T) {
@@ -149,7 +173,7 @@ func TestExecuteChartScan_OCIEndToEnd(t *testing.T) {
 	reg.publishChart("1.4.0")
 
 	api := &mockAPI{}
-	w := runnerForScan(t, api)
+	w := chartScanRunner(t, api)
 	job := &Job{
 		ID:      "job-oci",
 		JobType: "CHART_SCAN",
@@ -205,7 +229,7 @@ func TestExecuteChartScan_OCIAnonymousPublicChart(t *testing.T) {
 	reg.publishChart("2.0.0")
 
 	api := &mockAPI{}
-	w := runnerForScan(t, api)
+	w := chartScanRunner(t, api)
 	job := &Job{
 		ID:      "job-oci-public",
 		JobType: "CHART_SCAN",
@@ -495,7 +519,7 @@ func TestChartScanWorkdirIsRemoved(t *testing.T) {
 
 	before := stageDirCount(t)
 	api := &mockAPI{}
-	w := runnerForScan(t, api)
+	w := chartScanRunner(t, api)
 	job := &Job{
 		ID:      "job-cleanup",
 		JobType: "CHART_SCAN",
