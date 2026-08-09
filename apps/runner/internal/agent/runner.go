@@ -1247,8 +1247,8 @@ var legacyComponentRowKeys = map[string][]string{
 	"queues":    {"storage_gb", "endpoint", "provider_outputs"},
 	"topics":    {},
 	// provider_config here has no producer AND no consumer (nosql does not route through
-	// mergeProviderConfig); global_replicas has a producer (inspector + CLI) but no Go field.
-	"nosql_tables": {"global_replicas", "provider_config"},
+	// mergeProviderConfig).
+	"nosql_tables": {"provider_config"},
 	"secrets":      {},
 	// repository_url has no writer anywhere: the runner resolves registry URLs from the tofu
 	// output map at BUILD time.
