@@ -530,12 +530,23 @@ func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
 		"secretstore-gcp":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "",
 		"secretstore-azure":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.AzureKeyVaultURI != "",
 		"secretstore-alibaba": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "",
-		// Pluggable SaaS stores (cloud-agnostic): each renders only when it is the currently-selected
-		// SaaS store, so switching the connector (e.g. vault → doppler) or de-selecting it reaps the
-		// stale store instead of orphaning it. The name gates match externalSecretsStoreTemplate.
-		"secretstore-vault":   facts.SecretsSaaS != nil && facts.SecretsSaaS.StoreName == "secretstore-vault",
-		"secretstore-doppler": facts.SecretsSaaS != nil && facts.SecretsSaaS.StoreName == "secretstore-doppler",
-		"secretstore-generic": facts.SecretsSaaS != nil && facts.SecretsSaaS.StoreName == "secretstore-generic",
+	}
+	// Pluggable SaaS stores (cloud-agnostic): exactly one can render per deploy, so enumerate every
+	// name the template knows and mark all but the current one for reaping — switching the connector
+	// (vault → doppler) or de-selecting it then reaps the stale store instead of orphaning it in a
+	// permanently-broken state.
+	//
+	// DERIVED, not re-listed. The hand-written version here named vault, doppler and generic and was
+	// missing secretstore-infisical, so an Infisical store was never reaped (#2038) — the same drift
+	// the *-xacct half below was already fixed for. It is easy to miss because the template never
+	// spells these names literally: it renders `{{ .SecretsSaaS.StoreName }}`, so grepping the
+	// template for a name finds nothing to compare this list against.
+	currentSaaS := ""
+	if facts.SecretsSaaS != nil {
+		currentSaaS = facts.SecretsSaaS.StoreName
+	}
+	for _, name := range categories.AllSaaSStoreNames() {
+		esoStores[name] = name == currentSaaS
 	}
 	// Cross-account (*-xacct) stores: exactly one can render per deploy (the store is dominant), so
 	// enumerate every name the template knows and mark all but the current one for reaping. Reading
