@@ -44,11 +44,17 @@
 # The `try()` wraps `trimspace(...)`, not just the index, because eager evaluation reaches TWO
 # different errors depending on the shape: `create_cloud_sql = false` gives "Invalid index" on the
 # empty tuple, and `create_cloud_sql = true, provision_gke = false` gives "argument must not be
-# null" from `trimspace` — the module is there, but its `app_iam_user` is null because no app GSA
-# was built. A `try()` around the index alone catches only the first.
+# null" from `trimspace` — the module is there, but its `app_iam_user` is null because no adopted
+# account was resolved. A `try()` around the index alone catches only the first.
+#
+# The account arm now reads the ADOPTION data source rather than a created GSA: this template no
+# longer creates the app identity or grants its project roles (see app-db-identity.tf). A `check`
+# block is a WARNING and never blocks an apply, which is exactly the semantics wanted — an operator
+# who turned on cloud_sql_iam_auth without supplying an account gets told, loudly, that keyless is
+# not wired and the BUILT_IN password user is still in use, and the apply still succeeds.
 check "keyless_cloud_sql_app_identity_wired" {
   assert {
-    condition     = !local.app_db_iam_requested || (var.provision_gke && length(google_service_account.app_db) == 1 && length(try(trimspace(module.cloud_sql[0].app_iam_user), "")) > 0)
-    error_message = "cloud_sql_iam_auth is on but the keyless app identity is incomplete: it needs provision_gke=true, the app GSA, and the CLOUD_IAM_SERVICE_ACCOUNT database user."
+    condition     = !local.app_db_iam_requested || (var.provision_gke && local.app_db_adopted && length(data.google_service_account.app_db_adopted) == 1 && length(try(trimspace(module.cloud_sql[0].app_iam_user), "")) > 0)
+    error_message = "cloud_sql_iam_auth is on but keyless is NOT wired — the app still uses the BUILT_IN password user. It needs provision_gke=true, cloud_sql_app_service_account_email set to an account pre-granted roles/cloudsql.client + roles/cloudsql.instanceUser by the connector bootstrap, and the CLOUD_IAM_SERVICE_ACCOUNT database user."
   }
 }

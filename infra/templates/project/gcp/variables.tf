@@ -674,6 +674,38 @@ variable "external_secrets_service_account_email" {
   }
 }
 
+# ── keyless Cloud SQL app identity adoption ────────────────────────────────────
+variable "cloud_sql_app_service_account_email" {
+  description = <<-EOT
+    OPTIONAL. Email of a PRE-EXISTING Google service account the app workload impersonates to reach
+    Cloud SQL keylessly. REQUIRED for keyless Cloud SQL auth — without it, cloud_sql_iam_auth wires
+    nothing and the app keeps using the BUILT_IN password user.
+
+    Why adoption rather than a per-deploy account: `roles/cloudsql.client` and
+    `roles/cloudsql.instanceUser` can only be granted at PROJECT scope — a Cloud SQL instance is not
+    IAM-policy-bearing, so there is no google_sql_database_instance_iam_member to scope the grant to
+    the instance. Writing a project-level binding needs resourcemanager.projects.setIamPolicy, which
+    the Alethia provisioner deliberately does NOT hold (#300 removed project-scoped IAM across this
+    template). GCP also offers no principal-pattern condition, so the grant cannot be written ahead
+    of time against a per-deploy identity whose name depends on region/environment/project_name.
+
+    So the grant is made ONCE, by the customer, in the connector bootstrap module — which runs under
+    their own admin rights — and this template adopts the resulting account. Same shape as
+    external_secrets_service_account_email.
+
+    Empty (the default) leaves keyless off. When set, the account must already exist in
+    var.project_id and the caller owns its lifecycle — this template will not create, modify or
+    destroy it.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cloud_sql_app_service_account_email == "" || can(regex("^[^@]+@[^@]+\\.iam\\.gserviceaccount\\.com$", var.cloud_sql_app_service_account_email))
+    error_message = "cloud_sql_app_service_account_email must be a full service-account email (name@project.iam.gserviceaccount.com), not a bare account id."
+  }
+}
+
 variable "create_memorystore_valkey" {
   type        = bool
   description = "Provision Memorystore for Valkey instead of Redis. Mutually exclusive with create_memorystore — the chosen cache engine sets exactly one."
