@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
@@ -39,11 +40,7 @@ func (c *EC2Client) ListRegions(ctx context.Context) ([]string, error) {
 		return nil, fmt.Errorf("failed to describe regions: %w", err)
 	}
 
-	var regions []string
-	for _, r := range output.Regions {
-		regions = append(regions, *r.RegionName)
-	}
-	return regions, nil
+	return regionNames(output.Regions), nil
 }
 
 func (c *EC2Client) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo, error) {
@@ -56,20 +53,7 @@ func (c *EC2Client) ListSubnets(ctx context.Context, vpcID string) ([]SubnetInfo
 		return nil, fmt.Errorf("failed to describe subnets: %w", err)
 	}
 
-	var subnets []SubnetInfo
-	for _, s := range output.Subnets {
-		mapPublic := false
-		if s.MapPublicIpOnLaunch != nil {
-			mapPublic = *s.MapPublicIpOnLaunch
-		}
-		subnets = append(subnets, SubnetInfo{
-			ID:                  *s.SubnetId,
-			CIDR:                *s.CidrBlock,
-			AvailabilityZone:    *s.AvailabilityZone,
-			VpcID:               *s.VpcId,
-			MapPublicIpOnLaunch: mapPublic,
-		})
-	}
+	subnets := subnetInfos(output.Subnets)
 	return subnets, nil
 }
 
@@ -89,23 +73,65 @@ func (c *EC2Client) ListVPCs(ctx context.Context) ([]VPCInfo, error) {
 		return nil, fmt.Errorf("failed to describe VPCs: %w", err)
 	}
 
-	var vpcs []VPCInfo
-	for _, vpc := range output.Vpcs {
+	vpcs := vpcInfos(output.Vpcs)
+	return vpcs, nil
+}
+
+// The mappers below are PURE so the nil-handling can be tested: EC2Client embeds *ec2.Client
+// concretely, so there is no seam to inject a fake response through — which is exactly why this
+// defect had no test (#2036).
+//
+// Every field on an EC2 API type is a POINTER, and AWS omits what it has nothing to say about.
+// MapPublicIpOnLaunch was nil-guarded while SubnetId/CidrBlock/AvailabilityZone/VpcId were
+// dereferenced raw; that inconsistency is the tell. aws.ToString / aws.ToBool are the SDK's own
+// accessors — a helper that cannot be applied to one field and forgotten on the next.
+//
+// A subnet mid-create, a partially-populated response, or a field a future API version leaves nil
+// panicked the whole runner; the zero value degrades one row instead.
+
+// subnetInfos maps DescribeSubnets output, nil-safely.
+func subnetInfos(in []ec2types.Subnet) []SubnetInfo {
+	var out []SubnetInfo
+	for _, s := range in {
+		out = append(out, SubnetInfo{
+			ID:                  aws.ToString(s.SubnetId),
+			CIDR:                aws.ToString(s.CidrBlock),
+			AvailabilityZone:    aws.ToString(s.AvailabilityZone),
+			VpcID:               aws.ToString(s.VpcId),
+			MapPublicIpOnLaunch: aws.ToBool(s.MapPublicIpOnLaunch),
+		})
+	}
+	return out
+}
+
+// vpcInfos maps DescribeVpcs output, nil-safely. This one carried MORE unguarded derefs than the
+// reported subnet case: a tag's Key and Value are pointers too, so a single nil-keyed tag panicked
+// the loop before any VPC was returned.
+func vpcInfos(in []ec2types.Vpc) []VPCInfo {
+	var out []VPCInfo
+	for _, vpc := range in {
 		name := ""
 		for _, tag := range vpc.Tags {
-			if *tag.Key == "Name" {
-				name = *tag.Value
+			if aws.ToString(tag.Key) == "Name" {
+				name = aws.ToString(tag.Value)
 				break
 			}
 		}
-
-		vpcs = append(vpcs, VPCInfo{
-			ID:        *vpc.VpcId,
-			CIDR:      *vpc.CidrBlock,
+		out = append(out, VPCInfo{
+			ID:        aws.ToString(vpc.VpcId),
+			CIDR:      aws.ToString(vpc.CidrBlock),
 			Name:      name,
-			IsDefault: *vpc.IsDefault,
+			IsDefault: aws.ToBool(vpc.IsDefault),
 		})
 	}
+	return out
+}
 
-	return vpcs, nil
+// regionNames maps DescribeRegions output, nil-safely — the same shape, one function up.
+func regionNames(in []ec2types.Region) []string {
+	var out []string
+	for _, r := range in {
+		out = append(out, aws.ToString(r.RegionName))
+	}
+	return out
 }

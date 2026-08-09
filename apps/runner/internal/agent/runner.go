@@ -23,6 +23,7 @@ import (
 	"github.com/alethialabs-io/alethialabs/packages/core/provisioner"
 	"github.com/alethialabs-io/alethialabs/packages/core/sandbox"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"github.com/alethialabs-io/alethialabs/packages/core/utils"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -1075,7 +1076,7 @@ func (w *Runner) executePlan(ctx context.Context, job *Job, provider string, ide
 
 	if result != nil && len(result.PlanFileBytes) > 0 {
 		tmpPlan := filepath.Join(os.TempDir(), fmt.Sprintf("plan-%s.out", job.ID))
-		if err := os.WriteFile(tmpPlan, result.PlanFileBytes, 0644); err == nil {
+		if err := utils.WriteSecretFile(tmpPlan, result.PlanFileBytes); err == nil {
 			if uploadErr := w.api.UploadPlanArtifact(job.ID, tmpPlan); uploadErr != nil {
 				fmt.Fprintf(stderr, "Warning: failed to upload plan artifact: %v\n", uploadErr)
 			} else {
