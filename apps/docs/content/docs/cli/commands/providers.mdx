@@ -26,7 +26,7 @@ alethia provider status gcp -o json
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `<provider>` | Yes | `aws`, `gcp`, `azure`, or `alibaba`. |
+| `<provider>` | Yes | `aws`, `gcp`, `azure`, `alibaba`, or `hetzner`. |
 
 Renders a field/value card: **status** (`connected` | `disconnected`), the **identity** id, and the
 provider-specific identity fields that are set (AWS account id / role arn, GCP project id / service
@@ -45,7 +45,7 @@ alethia provider verify aws
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `<provider>` | Yes | `aws`, `gcp`, `azure`, or `alibaba`. |
+| `<provider>` | Yes | `aws`, `gcp`, `azure`, `alibaba`, or `hetzner`. |
 
 The command resolves the connected identity via `status`, then re-verifies it and renders the
 verdict: **identity**, **status**, **verified**, and — when degraded — the **missing permissions**.
