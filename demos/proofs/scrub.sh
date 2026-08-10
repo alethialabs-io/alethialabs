@@ -164,19 +164,38 @@ scrub_file() {
 # never scrubbed) — turning a leak into a red step instead of a committed secret. It is
 # deliberately independent of scrub_stream (a second pair of eyes), and it ignores its own
 # `[REDACTED…]` placeholders.
+# ── The verdict this function reaches is UNCHANGED by #2157. What it now also records is WHY, so
+#    a caller can tell an unambiguous secret apart from a heuristic shape match:
+#
+#      SCRUB_HARD_FAIL=1        checks (1)/(2) — an exact known secret literal, or a PEM private
+#                               key. No interpretation involved: the value IS the credential.
+#      SCRUB_HEURISTIC_HITS     checks (3)/(3b)/(4) — a denylisted KEY appearing to carry a
+#                               plaintext value. These are shape matchers over log text, and the
+#                               shapes they cannot classify are open-ended by construction.
+#
+#    The split exists because the two deserve different remedies, not because one is unimportant.
+#    See scrub-runner-log.sh: a hard fail still refuses to publish anything; a heuristic hit gets
+#    its LINE elided and the rest of the log survives. Nothing here is relaxed to make that work —
+#    the regexes, the exclusions and the return code are byte-for-byte the same, because widening
+#    any of them re-opens #2070 (the fail-OPEN tripwire, where one `[REDACTED]` on a line
+#    suppressed every other finding on it).
 assert_grep_clean() {
 	local dir="$1" rc=0 lit hits
+	SCRUB_HARD_FAIL=0
+	SCRUB_HEURISTIC_HITS=""
 	# 1) Exact secret literals must not appear at all.
 	while IFS= read -r lit; do
 		[ -z "$lit" ] && continue
 		if grep -rIqF -- "$lit" "$dir" 2>/dev/null; then
 			echo "::error::proof-scrub: a secret LITERAL value survived into the proof bundle ($dir)" >&2
+			SCRUB_HARD_FAIL=1
 			rc=1
 		fi
 	done <<<"${SCRUB_LITERALS:-}"
 	# 2) No PEM private keys.
 	if grep -rIqE -- '-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----' "$dir" 2>/dev/null; then
 		echo "::error::proof-scrub: a PEM PRIVATE KEY survived into the proof bundle ($dir)" >&2
+		SCRUB_HARD_FAIL=1
 		rc=1
 	fi
 	# 3) Any denylisted key still carrying a real value — one neither WE redacted ("REDACTED")
@@ -262,6 +281,7 @@ assert_grep_clean() {
 		# the scrub exists to keep clean. Found while testing the #1854 fail-closed path against a
 		# deliberately weakened scrub.
 		printf '%s\n' "$hits" | sed -E 's/[[:space:]]*[:=][[:space:]]*.*$/ = [value withheld]/' | sort -u | head -5 >&2
+		SCRUB_HEURISTIC_HITS="${SCRUB_HEURISTIC_HITS}${hits}"$'\n'
 		rc=1
 	fi
 	# 3b) The two sub-shapes exclusion (c) just dropped that CAN still carry a secret. Dropping a
@@ -281,6 +301,7 @@ assert_grep_clean() {
 		echo "::error::proof-scrub: a variable declaration carries a hardcoded secret default ($dir):" >&2
 		# The KEY only, never the value — see the note on check (3).
 		printf '%s\n' "$hits" | sed -E 's/"[[:space:]]*:.*$/" = [default withheld]/' | sort -u | head -5 >&2
+		SCRUB_HEURISTIC_HITS="${SCRUB_HEURISTIC_HITS}${hits}"$'\n'
 		rc=1
 	fi
 	#     (b) credentials in a module `source`. Key-agnostic on purpose: `git::https://user:TOKEN@
@@ -292,6 +313,7 @@ assert_grep_clean() {
 		# Here the userinfo IS the secret, so there is no key that can be named safely: keep the
 		# scheme (which tells the operator what kind of source it was) and withhold the rest.
 		printf '%s\n' "$hits" | sed -E 's|(://).*|\1[credentials withheld]|' | sort -u | head -5 >&2
+		SCRUB_HEURISTIC_HITS="${SCRUB_HEURISTIC_HITS}${hits}"$'\n'
 		rc=1
 	fi
 	# 4) The same denylisted keys nested in JSON mid-line — the shape a tofu `show -json` plan
@@ -305,9 +327,57 @@ assert_grep_clean() {
 		# Print the KEY only — never the surviving value, or the tripwire republishes the leak
 		# into the workflow log it is meant to protect.
 		printf '%s\n' "$hits" | sed -E 's/"[[:space:]]*:.*$/"/' | sort -u | head -5 >&2
+		SCRUB_HEURISTIC_HITS="${SCRUB_HEURISTIC_HITS}${hits}"$'\n'
 		rc=1
 	fi
 	return "$rc"
+}
+
+# ── scrub_elide_heuristic_lines <file> — replace every LINE of <file> that carries a surviving
+#    heuristic hit with a marker, leaving the rest of the file intact (#2157).
+#
+#    Call ONLY after assert_grep_clean has run and ONLY when SCRUB_HARD_FAIL is 0. It consumes
+#    that function's recorded matches rather than re-deriving them, so there is exactly one
+#    definition of "what counts as a hit" — a second copy of that regex chain is precisely the
+#    drift this repo keeps paying for, and here it would drift in the direction of publishing.
+#
+#    Why elide rather than refuse: refusing destroyed the evidence for exactly the legs that got
+#    FURTHEST. aws and gcp reached `applying` and uploaded no runner log at all, while azure died
+#    at `planning` and kept its. The further a run gets, the more log it emits, the more likely
+#    some unclassifiable shape appears — so the failure mode was inverted, and #2098/#2099 were
+#    undiagnosable as a direct result. Eliding the offending LINE keeps that trade honest: the
+#    line that could not be classified is gone in full, and every other line survives.
+#
+#    The marker names the KEY only — never the value — for the same reason the tripwire's own
+#    message does: printing it would republish the leak into the artifact this exists to protect.
+scrub_elide_heuristic_lines() {
+	local file="$1" keys
+	[ -f "$file" ] || return 0
+	[ -n "${SCRUB_HEURISTIC_HITS:-}" ] || return 0
+	# The recorded hits are `-o` match text: each is a substring that appears verbatim on some
+	# line of the file. Fixed-string matching (never regex) is what keeps this exact — a hit can
+	# contain any character at all, and interpreting it would both miss lines and match wrong ones.
+	local tmp
+	tmp="$(mktemp)"
+	printf '%s\n' "$SCRUB_HEURISTIC_HITS" | grep -v '^$' | sort -u >"$tmp"
+	keys="$(sed -E 's/[[:space:]]*[:=].*$//' "$tmp" | tr -d '"' | sort -u | tr '\n' ' ')"
+	# grep -vFf removes every line containing any recorded hit; the count difference is what we
+	# report. Two passes rather than one so the operator is told how much was dropped.
+	local before after
+	before="$(wc -l <"$file" | tr -d ' ')"
+	grep -vFf "$tmp" "$file" >"${file}.elided" 2>/dev/null || cp "$file" "${file}.elided"
+	after="$(wc -l <"${file}.elided" | tr -d ' ')"
+	{
+		echo ""
+		echo "[$((before - after)) LINE(S) ELIDED BY THE PROOF-SCRUB TRIPWIRE]"
+		echo "[  a denylisted key appeared to carry a plaintext value the scrub could not redact]"
+		echo "[  key(s): ${keys}]"
+		echo "[  the whole line was removed; the value is not reproduced anywhere in this file]"
+		echo "[  see demos/proofs/scrub.sh check (3)/(3b)/(4) and issue #2157]"
+	} >>"${file}.elided"
+	mv "${file}.elided" "$file"
+	echo "  elided $((before - after)) line(s) carrying unclassifiable denylisted key(s): ${keys}" >&2
+	rm -f "$tmp"
 }
 
 # --self-test: prove the scrub is NON-VACUOUS. Seeds a fake secret of every shape, runs it
@@ -592,7 +662,66 @@ EOF
 		return 1
 	fi
 
-	echo "scrub self-test OK: seeded secrets redacted, sentinel kept, tripwire non-vacuous, ${#cred_vars[@]} credentials harvested"
+	# ── ELISION: a refused log still yields an artifact (#2157). ──
+	# The property under test is that the further-a-run-gets-the-less-survives inversion is gone:
+	# a heuristic hit must cost the OFFENDING LINE and nothing else. Every step below asserts its
+	# own precondition before the thing it is testing, because this is an absence-assertion and an
+	# absence-assertion whose setup planted nothing passes while the bug is still there.
+	local el="$work/elide"
+	mkdir -p "$el"
+	# A shape the tripwire flags and scrub_stream does NOT know how to redact — a bare logfmt-ish
+	# key whose value is JSON-ish enough to dodge the redactor but not the detector. Alongside it,
+	# a line of ordinary diagnostic text: that line is the evidence the elision exists to keep.
+	cat >"$el/t2-runner.log" <<'EOF'
+2026-08-10T04:52:01Z applying module.eks.aws_eks_cluster.this
+ELIDE-KEEP-ME-diagnostic-line-that-must-survive
+{"unclassifiable_wrapper":{"admin_password":ELIDE-FAKE-UNREDACTABLE-DO-NOT-LEAK}}
+2026-08-10T04:52:02Z apply complete
+EOF
+	SCRUB_LITERALS="" # exercise the HEURISTIC path only; a literal would be a hard fail by design
+	# Precondition 1 — the tripwire must actually fire on this fixture. If it does not, everything
+	# below is vacuous and the arm must fail rather than report success.
+	if assert_grep_clean "$el" >/dev/null 2>&1; then
+		echo "SELF-TEST FAIL: the elision fixture does not trip the tripwire — the arm would be vacuous" >&2
+		return 1
+	fi
+	# Precondition 2 — it must be a HEURISTIC finding, not a hard fail, or we are testing the
+	# wrong branch.
+	if [ "${SCRUB_HARD_FAIL:-0}" = "1" ]; then
+		echo "SELF-TEST FAIL: the elision fixture tripped the LITERAL/PEM path, not the heuristic one" >&2
+		return 1
+	fi
+	scrub_elide_heuristic_lines "$el/t2-runner.log" 2>/dev/null
+	# 1. The artifact still exists and is now clean — this is the whole point of #2157.
+	if ! assert_grep_clean "$el" >/dev/null 2>&1; then
+		echo "SELF-TEST FAIL: eliding the flagged lines did not satisfy the tripwire" >&2
+		return 1
+	fi
+	# 2. The offending value is gone.
+	if grep -qF 'ELIDE-FAKE-UNREDACTABLE-DO-NOT-LEAK' "$el/t2-runner.log"; then
+		echo "SELF-TEST FAIL: the elided value survived into the artifact" >&2
+		return 1
+	fi
+	# 3. …and the rest of the log survived. An artifact elided down to nothing is no more useful
+	#    than one that was never uploaded — the same property the declaration arm pins above.
+	if ! grep -qF 'ELIDE-KEEP-ME-diagnostic-line-that-must-survive' "$el/t2-runner.log"; then
+		echo "SELF-TEST FAIL: elision removed non-offending lines — this re-creates #2157" >&2
+		return 1
+	fi
+	if ! grep -qF 'apply complete' "$el/t2-runner.log"; then
+		echo "SELF-TEST FAIL: elision truncated the log after the offending line" >&2
+		return 1
+	fi
+	# 4. The operator is told what was dropped, by key, and never by value.
+	if ! grep -q 'ELIDED BY THE PROOF-SCRUB TRIPWIRE' "$el/t2-runner.log"; then
+		echo "SELF-TEST FAIL: elision left no marker saying lines were removed" >&2
+		return 1
+	fi
+	SCRUB_LITERALS="$saved_literals"
+	export SCRUB_LITERALS
+	rm -rf "$el"
+
+	echo "scrub self-test OK: seeded secrets redacted, sentinel kept, tripwire non-vacuous, elision keeps the log, ${#cred_vars[@]} credentials harvested"
 	return 0
 }
 
