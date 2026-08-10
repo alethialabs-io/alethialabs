@@ -38,8 +38,47 @@ locals {
   gke_secrets_encryption = var.gke_secrets_encryption_enabled && var.provision_gke
 }
 
+# ── The API this feature needs, checked at PLAN (#2262) ─────────────────────────────────────────
+#
+# #2092 shipped the KMS resources without anything asserting the API was on, and the first real
+# apply died mid-run:
+#
+#   Error: Error creating KeyRing: googleapi: Error 403: Cloud Key Management Service (KMS) API has
+#   not been used in project 432436016123 before or it is disabled
+#
+# Alethia deliberately holds no `serviceusage.services.enable` on a customer project — a maintainer
+# refused it on 2026-08-03 (#1844) precisely because it would let the holder turn on ANY API there.
+# So the template cannot fix this for an existing tenant; what it CAN do is stop finding out at
+# apply time. `cloudkms.googleapis.com` is now in the connector's enable list, so newly-connected
+# projects have it from the start; a project connected BEFORE that gets this named refusal at plan
+# instead of a 403 partway through creating a cluster.
+#
+# Same shape as the container-scanning guard in checks_registry.tf, including the `try()`: OpenTofu
+# 1.9.0 — the version the runner applies with — does not short-circuit `||`/`&&`, so a guarded
+# index is still evaluated (#1920).
+data "google_project_service" "cloudkms" {
+  count   = local.gke_secrets_encryption ? 1 : 0
+  project = var.project_id
+  service = "cloudkms.googleapis.com"
+}
+
+resource "terraform_data" "gke_secrets_encryption_api_guard" {
+  count = local.gke_secrets_encryption ? 1 : 0
+
+  lifecycle {
+    precondition {
+      # The data source sets an EMPTY id when the service is not in the project's enabled list and
+      # the `<project>/<service>` id when it is.
+      condition     = length(try(data.google_project_service.cloudkms[0].id, "")) > 0
+      error_message = "GCP-KMS-ENC-001: Kubernetes Secrets encryption is enabled (gke_secrets_encryption_enabled, on by default) but cloudkms.googleapis.com is not enabled on this project, so the encryption key cannot be created. Apply blocked fail-closed, rather than failing partway through the cluster build. Enable it once per project (`gcloud services enable cloudkms.googleapis.com --project <id>`), or set gke_secrets_encryption_enabled = false to accept the platform's default key. Alethia deliberately holds no permission to enable services on your behalf."
+    }
+  }
+}
+
 resource "google_kms_key_ring" "gke_secrets" {
   count = local.gke_secrets_encryption ? 1 : 0
+
+  depends_on = [terraform_data.gke_secrets_encryption_api_guard]
 
   name     = local.gke_kms_ring_name
   project  = var.project_id

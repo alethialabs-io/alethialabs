@@ -122,6 +122,17 @@ locals {
       "kms:UpdateSecretVersionStage", "kms:DeleteSecret", "kms:RestoreSecret", "kms:TagResource",
       "kms:UntagResource", "kms:DescribeSecret", "kms:ListSecrets", "kms:ListSecretVersionIds",
       "kms:Describe*", "kms:List*", "kms:Get*",
+      # KEY verbs, as distinct from the SECRET verbs above (#2262). ACK Secrets envelope encryption
+      # (#2092) creates `alicloud_kms_key.ack_secrets`, and every verb it needs was missing — the
+      # first real apply returned `Forbidden.NoPermission … AuthAction: kms:CreateKey …
+      # NoPermissionType: ImplicitDeny`. Deliberately enumerated rather than `kms:*`: a full KMS
+      # grant would also carry Encrypt/Decrypt against every key in the customer's account, and the
+      # provisioner only ever needs to MANAGE the key it creates, never to use it — ACK does that
+      # as its own identity.
+      "kms:CreateKey", "kms:TagResource", "kms:UntagResource",
+      "kms:ScheduleKeyDeletion", "kms:CancelKeyDeletion",
+      "kms:EnableKey", "kms:DisableKey",
+      "kms:UpdateKeyDescription", "kms:UpdateRotationPolicy", "kms:SetKeyPolicy",
     ]
     # Container Registry + AliDNS + Message Service.
     #
