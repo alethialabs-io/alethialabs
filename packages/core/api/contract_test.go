@@ -570,3 +570,19 @@ func TestContract_ByoScan(t *testing.T) {
 		t.Errorf("both fields must decode, got %+v", resp)
 	}
 }
+
+// TestContract_RunnerRegistration pins the register response. The token is the only field the CLI
+// must not lose — it is returned once and only its SHA-256 is stored — so it is asserted present
+// rather than merely decodable.
+func TestContract_RunnerRegistration(t *testing.T) {
+	var resp RunnerRegistration
+	strictDecode(t, "runner_registration.json", &resp)
+	assertNoExtraStructKeys(t, "runner_registration.json", resp)
+	if resp.RunnerToken == "" {
+		t.Error("runner_token must decode — it is returned once and cannot be re-read")
+	}
+	if resp.Runner.Provisioning != "registered" || resp.Runner.Operator != "self" {
+		t.Errorf("a registered runner is self-operated and provisioning=registered, got %q/%q",
+			resp.Runner.Operator, resp.Runner.Provisioning)
+	}
+}
