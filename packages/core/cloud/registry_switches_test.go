@@ -321,3 +321,44 @@ func TestUnsetGCPScanningReadsAsOffWhileImmutableTagsReadsAsOn(t *testing.T) {
 		t.Errorf("unset vulnerability_scanning = %v, want false — ON needs a project API the tenant may not have enabled, and the template refuses it", repo["vulnerability_scanning"])
 	}
 }
+
+// Alibaba carries `vulnerability_scanning` per repository too (#1845). On the template side ON
+// becomes a REPO-scoped `alicloud_cr_scan_rule` — a sibling resource, never an argument on the
+// Subscription-billed instance — and OFF becomes the ABSENCE of that rule, asserted by
+// checks_registry.tftest.hcl. Here we pin only that the bool reaches tfvars per repository and
+// that the two positions differ.
+func TestAlibabaCRReposCarryVulnerabilityScanning(t *testing.T) {
+	p := &alibabaProvider{}
+
+	on := p.ProviderTfvars(registryConfig(true, true))
+	repos := on["cr_repos"].(map[string]interface{})
+	if repos["apps"].(map[string]interface{})["vulnerability_scanning"] != true {
+		t.Errorf("vulnerability_scanning ON → %v, want true", repos["apps"])
+	}
+
+	off := p.ProviderTfvars(registryConfig(true, false))
+	offRepos := off["cr_repos"].(map[string]interface{})
+	if offRepos["apps"].(map[string]interface{})["vulnerability_scanning"] != false {
+		t.Errorf("vulnerability_scanning OFF → %v, want false", offRepos["apps"])
+	}
+}
+
+// The alibaba registry switches read the same OPPOSITE defaults when unset as GCP's, pinned for
+// the same reason. `immutable_tags` unset reads TRUE (the safe setting, what the module's
+// `optional(bool, true)` produces anyway). `vulnerability_scanning` unset reads FALSE, because
+// nil means "leave the template default alone" and the template's default is NO scan rule —
+// before #1845 the module created none, so an older snapshot must keep planning none.
+func TestUnsetAlibabaScanningReadsAsOffWhileImmutableTagsReadsAsOn(t *testing.T) {
+	config := &types.ProjectConfig{
+		ProjectName:         "acme",
+		ContainerRegistries: []types.ProjectContainerRegistryConfig{{Name: "apps"}},
+	}
+
+	repo := (&alibabaProvider{}).ProviderTfvars(config)["cr_repos"].(map[string]interface{})["apps"].(map[string]interface{})
+	if repo["immutable_tags"] != true {
+		t.Errorf("unset immutable_tags = %v, want true (the safe setting)", repo["immutable_tags"])
+	}
+	if repo["vulnerability_scanning"] != false {
+		t.Errorf("unset vulnerability_scanning = %v, want false — the template's own default is no scan rule, and an unset switch must not change what an existing project plans", repo["vulnerability_scanning"])
+	}
+}

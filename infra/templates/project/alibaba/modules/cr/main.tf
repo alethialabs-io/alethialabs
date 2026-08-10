@@ -54,3 +54,33 @@ resource "alicloud_cr_ee_repo" "this" {
   repo_type        = "PRIVATE"
   tag_immutability = each.value.immutable_tags
 }
+
+# Image scanning (#1845). The canvas's "Vulnerability scanning" switch. Like `tag_immutability`
+# above it never touches `alicloud_cr_ee_instance` — but here that discipline needs naming twice,
+# because the instance HAS two adjacent-looking arguments and both are traps (#1933):
+# `image_scanner` and `vpc_quota` are not ForceNew yet are absent from the provider's Update
+# function, so changing either plans a diff, applies "successfully" and does nothing — and the
+# only real change path is replacing the Subscription-billed registry (Delete = RefundInstance
+# with immediate release). Scanning is expressed instead as a SIBLING resource: one REPO-scoped
+# rule per repository whose switch is on; OFF is the ABSENCE of the rule.
+#
+# Plan-green is NOT proof a scan runs. Alibaba couples batch scanning to an instance VPC and
+# leaves the AUTO trigger's prerequisite undocumented in both languages
+# (docs/research/alibaba-cr-scan-rule-vpc.md) — the runtime proof, push an image and observe a
+# scan result, is owed by the alibaba e2e nightly (#2061/#2101).
+resource "alicloud_cr_scan_rule" "this" {
+  # `alicloud_cr_scan_rule` is in the provider since 1.265.0, inside the module's >= 1.283 floor.
+  for_each = { for name, repo in var.repos : name => repo if repo.vulnerability_scanning }
+
+  instance_id = alicloud_cr_ee_instance.this.id
+  rule_name   = "${each.key}-vul"
+  scan_scope  = "REPO"
+  namespaces  = [alicloud_cr_ee_namespace.this.name]
+  repo_names  = [each.key]
+  # Required by the provider even for REPO scope; `.*` — every tag — is the console's own default.
+  repo_tag_filter_pattern = ".*"
+  trigger_type            = "AUTO"
+  # ForceNew — pinned to VUL (vulnerability). Never thread a canvas switch through this argument:
+  # flipping it would replace the rule, and SBOM is a different product than the switch promises.
+  scan_type = "VUL"
+}
