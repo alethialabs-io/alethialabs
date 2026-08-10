@@ -128,6 +128,9 @@ type fakeClient struct {
 	disabledAddonProj string
 	disabledAddonEnv  string
 	disabledAddonID   string
+	regRunnerName     string
+	regRunnerIdentity string
+	registration      *api.RunnerRegistration
 }
 
 func (f *fakeClient) Whoami() (*api.WhoAmI, error)                   { return f.whoami, f.err }
@@ -168,7 +171,21 @@ func (f *fakeClient) DeleteTeam(orgID, teamID string) error {
 	return f.err
 }
 
-func (f *fakeClient) GetRunners() ([]api.Runner, error)          { return f.runners, f.err }
+func (f *fakeClient) GetRunners() ([]api.Runner, error) { return f.runners, f.err }
+
+func (f *fakeClient) RegisterRunner(name, cloudIdentityID string) (*api.RunnerRegistration, error) {
+	f.regRunnerName, f.regRunnerIdentity = name, cloudIdentityID
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.registration != nil {
+		return f.registration, nil
+	}
+	return &api.RunnerRegistration{
+		Runner:      api.Runner{ID: "run1", Name: name, Operator: "self", Provisioning: "registered"},
+		RunnerToken: "tok-abc123",
+	}, nil
+}
 func (f *fakeClient) GetClusters() ([]api.ClusterSummary, error) { return f.clusters, f.err }
 func (f *fakeClient) GetConfigurations() ([]types.ConfigurationSummary, error) {
 	return f.configs, f.err

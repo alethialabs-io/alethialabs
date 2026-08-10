@@ -102,6 +102,7 @@ const FIXTURES: Record<keyof typeof cliContract, string> = {
 	RunnersResponse: "runners.json",
 	ByoChartAttachResponse: "byo_attach.json",
 	ByoScanResponse: "byo_scan.json",
+	RunnerRegistrationResponse: "runner_registration.json",
 	ClustersResponse: "clusters.json",
 	ClusterDetailResponse: "cluster_detail.json",
 	CloudIdentitiesResponse: "cloud_identities.json",

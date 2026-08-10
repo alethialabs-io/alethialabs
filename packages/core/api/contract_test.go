@@ -570,3 +570,23 @@ func TestContract_ByoScan(t *testing.T) {
 		t.Errorf("both fields must decode, got %+v", resp)
 	}
 }
+
+// TestContract_RunnerRegistration pins the register response. The token is the only field the CLI
+// must not lose — it is returned once and only its SHA-256 is stored — so it is asserted present
+// rather than merely decodable.
+func TestContract_RunnerRegistration(t *testing.T) {
+	var resp RunnerRegistration
+	strictDecode(t, "runner_registration.json", &resp)
+	assertNoExtraStructKeys(t, "runner_registration.json", resp)
+	if resp.RunnerToken == "" {
+		t.Error("runner_token must decode — it is returned once and cannot be re-read")
+	}
+	// Deliberately NOT asserting operator/provisioning values here. The fixture is GENERATED from the
+	// Zod contract (scripts/gen-cli-fixtures.ts) and takes the first value of each enum, so asserting
+	// "self"/"registered" would be asserting a property of the generator's output rather than of the
+	// contract. What this file locks is the SHAPE; the values a register actually produces are pinned
+	// by the route and by TestRegisterRunner.
+	if resp.Runner.ID == "" || resp.Runner.Name == "" {
+		t.Errorf("the runner must decode, got %+v", resp.Runner)
+	}
+}

@@ -657,6 +657,31 @@ func (c *Client) RemoveRunner(runnerID string) error {
 	return nil
 }
 
+// RunnerRegistration is the response to RegisterRunner: the created runner plus its bearer token.
+// The token is returned ONCE — only its SHA-256 is stored — so a caller that discards it must
+// register a new runner.
+type RunnerRegistration struct {
+	Runner      Runner `json:"runner"`
+	RunnerToken string `json:"runner_token"`
+}
+
+// RegisterRunner registers a SELF-OPERATED runner the caller will run themselves, and returns its
+// token. Unlike DeployRunner nothing is provisioned, which is what makes it the answer for a cloud
+// other than AWS: DeployRunner renders infra/templates/runner/, and that directory has one cloud in
+// it. An empty cloudIdentityID leaves the runner unbound to a cloud account.
+func (c *Client) RegisterRunner(name, cloudIdentityID string) (*RunnerRegistration, error) {
+	endpoint := fmt.Sprintf("%s/cli/runners/register", c.baseURL)
+	payload := map[string]interface{}{"name": name}
+	if cloudIdentityID != "" {
+		payload["cloud_identity_id"] = cloudIdentityID
+	}
+	var resp RunnerRegistration
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return nil, fmt.Errorf("failed to register runner: %w", err)
+	}
+	return &resp, nil
+}
+
 func (c *Client) DeployRunner(name, cloudIdentityID, region, assignedRunnerID string) (*DeployRunnerResponse, error) {
 	endpoint := fmt.Sprintf("%s/cli/runners/deploy", c.baseURL)
 	payload := map[string]string{
