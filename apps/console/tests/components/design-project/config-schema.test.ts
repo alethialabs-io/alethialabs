@@ -323,6 +323,50 @@ describe("provider-gated field visibility (hetzner in-cluster sizing)", () => {
 	});
 });
 
+describe("per-cloud node-disk floor (#1972)", () => {
+	const field = getKindConfig("cluster")
+		?.sections.flatMap((s) => s.fields)
+		.find((f) => f.key === "node_disk_size_gb");
+	const ctx = (provider: CloudProviderSlug | null): FieldCtx => ({
+		provider,
+		config: {},
+		caps: NO_CAPABILITIES,
+	});
+	const minFor = (provider: CloudProviderSlug | null) =>
+		typeof field?.min === "function" ? field.min(ctx(provider)) : field?.min;
+	const placeholderFor = (provider: CloudProviderSlug | null) =>
+		typeof field?.placeholder === "function"
+			? field.placeholder(ctx(provider))
+			: field?.placeholder;
+
+	it("resolves each cloud's own floor — Azure's 30 GB OS-disk minimum, 20 elsewhere", () => {
+		// 30 is the number the single cross-cloud `min: 20` undershot: 24 GB on an Azure project
+		// passed the inspector, saved cleanly, and was refused at plan (#1971's backstop).
+		expect(minFor("azure")).toBe(30);
+		expect(minFor("aws")).toBe(20);
+		expect(minFor("gcp")).toBe(20);
+		expect(minFor("alibaba")).toBe(20);
+		// No provider chosen yet → the permissive 20; the Go floor still backstops the save.
+		expect(minFor(null)).toBe(20);
+	});
+
+	it("hints the cloud's template default and floor instead of a hand-written list", () => {
+		expect(placeholderFor("azure")).toBe("default 100 · min 30");
+		expect(placeholderFor("aws")).toBe("default 50 · min 20");
+		expect(placeholderFor("alibaba")).toBe("default 40 · min 20");
+		expect(placeholderFor(null)).toBe("per-cloud default");
+	});
+
+	it("does not render on hetzner — a server's disk comes with its server type", () => {
+		// A deliberate absence (visibleWhen), not an unavailable control: the carriage board's
+		// `cluster.node_disk_size_gb / hetzner` exclusion and TestNodeDiskFloorsMatchTemplates
+		// both pin that hetzner has no disk knob at all.
+		expect(field?.visibleWhen?.({}, ctx("hetzner"))).toBe(false);
+		expect(field?.visibleWhen?.({}, ctx("azure"))).toBe(true);
+		expect(field?.visibleWhen?.({}, ctx(null))).toBe(true);
+	});
+});
+
 describe("field get/set escape hatches", () => {
 	it("reads and writes the cluster instance type through the first array slot", () => {
 		const field = getKindConfig("cluster")

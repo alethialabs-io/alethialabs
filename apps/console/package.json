@@ -21,6 +21,7 @@
 		"gen:offer-surface": "tsx scripts/gen-offer-surface.ts lib/cloud-providers/generated/offer-surface.json",
     "check:keyless-cells": "node scripts/check-keyless-cells.mjs",
     "gen:keyless-cells": "node scripts/gen-keyless-cells.mjs",
+    "gen:node-disk": "node scripts/gen-node-disk.mjs",
     "gen:secrets-runtime-read": "node scripts/gen-secrets-runtime-read.mjs",
     "check:tofu-lockfiles": "node scripts/check-tofu-lockfiles.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
