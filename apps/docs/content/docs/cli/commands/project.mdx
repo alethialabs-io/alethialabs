@@ -67,8 +67,32 @@ alethia project create api-backend --region eu-west-1 --cloud-identity-id <id>
 | `--cloud-identity-id` | No | Cloud account to link (interactive picker on a TTY when omitted) |
 | `--stage` | No | Initial environment stage: `development` (default), `staging`, `production` |
 | `--iac-version` | No | OpenTofu version to pin (defaults server-side) |
+| `--placement-mode` | No | Placement of the default environment: `namespace`, `vcluster`, `dedicated` (default) |
+| `--env` | No | `name:stage[:mode[:namespace]]`, repeatable — the full environment matrix |
 
 The created project prints as a card (or the typed object with `--output json`).
+
+### Creating the whole environment matrix at once
+
+`--env` declares every environment and **how each is placed onto a Fabric**, in one command. The
+first entry is the default environment and owns the Fabric it provisions, so it defaults to
+`dedicated`; later entries default to `namespace` and share that Fabric.
+
+```bash
+alethia project create shop --region eu-west-1 --cloud-identity-id <id> \
+  --env prod:production \
+  --env dev:development:namespace:boutique-dev \
+  --env staging:staging:vcluster
+```
+
+That is **one** cluster hosting three environments. Omit `--env` and you get the default
+Production + Preview pair instead.
+
+<Callout type="warn">
+  Placement is the flag with a bill attached. Each `dedicated` environment is a separate cluster with
+  its own OpenTofu state; `namespace` and `vcluster` share the Fabric that already exists. A four-cloud
+  two-tier demo is four clusters with placement and eight without it.
+</Callout>
 
 ## `alethia project env`
 
@@ -79,14 +103,30 @@ A project owns N independently-provisionable environments. The project is named 
 # List a project's environments
 alethia project env list --project api-backend
 
-# Add an environment
-alethia project env add staging --project api-backend --stage staging --region us-east-1
+# Add an environment (shares the existing Fabric by default)
+alethia project env add staging --project api-backend --stage staging
+
+# Add one as a vcluster on a named Fabric, with its own destination namespace
+alethia project env add staging --project shop --stage staging \
+  --placement-mode vcluster --fabric shared --namespace boutique-staging
+
+# Add one that provisions its OWN cluster
+alethia project env add prod --project shop --stage production --placement-mode dedicated
 ```
 
 | Command | Flags | Description |
 |------|----------|-------------|
 | `env list` | `--project <p>` | List the project's environments (default first) |
-| `env add <name>` | `--project <p>` `--stage <s>` `--region <r>` | Add an environment (name is slugified; region inherits the project's when omitted) |
+| `env add <name>` | `--project <p>` `--stage <s>` `--region <r>` `--placement-mode <m>` `--fabric <f>` `--namespace <n>` `--lifecycle <l>` | Add an environment (name is slugified; region inherits the project's when omitted) |
+
+An **added** environment defaults to `namespace` placement on the Fabric the project's default
+environment already uses — the cheap rung, and the one that makes a second tier free. `--fabric`
+names a different Fabric to place onto; `--namespace` sets the ArgoCD destination namespace
+(otherwise derived from the environment name); `--lifecycle` is `persistent` (default) or
+`ephemeral`. `--fabric` and `--namespace` are ignored for `dedicated`, which owns a new Fabric.
+
+The success line names the placement you got, so a `dedicated` you did not intend is visible
+immediately rather than on the next apply.
 
 ## `alethia project component`
 
