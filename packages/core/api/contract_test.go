@@ -581,8 +581,12 @@ func TestContract_RunnerRegistration(t *testing.T) {
 	if resp.RunnerToken == "" {
 		t.Error("runner_token must decode — it is returned once and cannot be re-read")
 	}
-	if resp.Runner.Provisioning != "registered" || resp.Runner.Operator != "self" {
-		t.Errorf("a registered runner is self-operated and provisioning=registered, got %q/%q",
-			resp.Runner.Operator, resp.Runner.Provisioning)
+	// Deliberately NOT asserting operator/provisioning values here. The fixture is GENERATED from the
+	// Zod contract (scripts/gen-cli-fixtures.ts) and takes the first value of each enum, so asserting
+	// "self"/"registered" would be asserting a property of the generator's output rather than of the
+	// contract. What this file locks is the SHAPE; the values a register actually produces are pinned
+	// by the route and by TestRegisterRunner.
+	if resp.Runner.ID == "" || resp.Runner.Name == "" {
+		t.Errorf("the runner must decode, got %+v", resp.Runner)
 	}
 }
