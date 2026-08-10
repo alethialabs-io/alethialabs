@@ -449,8 +449,9 @@ func (c *Client) doDelete(endpoint string) error {
 }
 
 // doDeleteWithBody is doDelete for the routes that identify WHAT to delete in the body rather than
-// the path — a collection endpoint like .../byo-charts, where the chart id is a field and not a
-// segment. A DELETE carrying a body is legal and is what the console's own action shape implies here.
+// the path — a collection endpoint like .../byo-charts or .../addons, where the chart/add-on id is
+// a field and not a segment. A DELETE carrying a body is legal and is what the console's own action
+// shape implies here.
 func (c *Client) doDeleteWithBody(endpoint string, payload interface{}) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -1985,6 +1986,50 @@ func (c *Client) GetProjectAddons(project, env string) (*ProjectAddons, error) {
 		return nil, fmt.Errorf("failed to get add-ons: %w", err)
 	}
 	return &resp, nil
+}
+
+// EnableAddonParams is the payload for EnableAddon. Values is the add-on's own knob map, validated
+// server-side by that add-on's configSchema — the definition that owns them — rather than by a
+// second schema in the CLI that would drift from the catalog.
+type EnableAddonParams struct {
+	Project    string
+	Env        string
+	AddonID    string
+	Mode       string
+	Values     map[string]interface{}
+	ValuesYAML string
+}
+
+// EnableAddon enables (or reconfigures) a catalog add-on in an environment. An empty Env targets the
+// project's default environment.
+func (c *Client) EnableAddon(p EnableAddonParams) error {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/addons", c.baseURL, url.PathEscape(p.Project)), p.Env)
+	payload := map[string]interface{}{"addon_id": p.AddonID}
+	if p.Mode != "" {
+		payload["mode"] = p.Mode
+	}
+	if len(p.Values) > 0 {
+		payload["values"] = p.Values
+	}
+	if p.ValuesYAML != "" {
+		payload["values_yaml"] = p.ValuesYAML
+	}
+	var resp struct {
+		OK bool `json:"ok"`
+	}
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return fmt.Errorf("failed to enable add-on: %w", err)
+	}
+	return nil
+}
+
+// DisableAddon disables a catalog add-on in an environment.
+func (c *Client) DisableAddon(project, env, addonID string) error {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/addons", c.baseURL, url.PathEscape(project)), env)
+	if err := c.doDeleteWithBody(endpoint, map[string]interface{}{"addon_id": addonID}); err != nil {
+		return fmt.Errorf("failed to disable add-on: %w", err)
+	}
+	return nil
 }
 
 // --- BYO charts ---

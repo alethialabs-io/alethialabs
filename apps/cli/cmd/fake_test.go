@@ -77,53 +77,57 @@ type fakeClient struct {
 	err error // returned by every method when non-nil
 
 	// recorded calls
-	invitedEmail   string
-	invitedRole    string
-	removedMember  string
-	createdName    string
-	deletedTeam    string
-	createdChType  string
-	createdChCfg   map[string]interface{}
-	deletedChannel string
-	verifiedChID   string
-	createdRuleN   string
-	createdRulePat []string
-	createdRuleCh  []string
-	createdRuleSev string
-	deletedRule    string
-	activityLimit  int
-	createdRoleN   string
-	createdRoleKey []string
-	deletedRole    string
-	addedGrant     api.AddGrantParams
-	removedGrant   string
-	ssoGetID       string
-	setPoolProv    string
-	setPoolUpdate  api.FleetPoolUpdate
-	createdProjP   api.CreateProjectParams
-	envProject     string
-	addedEnvName   string
-	addedEnvStage  string
-	addedEnvRegion string
-	addedEnvParams api.AddEnvironmentParams
-	listCompProj   string
-	listCompKind   string
-	listCompEnv    string
-	addCompProj    string
-	addCompKind    string
-	addCompName    string
-	addCompEnv     string
-	addCompFields  map[string]interface{}
-	rmCompProj     string
-	rmCompKind     string
-	rmCompName     string
-	rmCompEnv      string
-	attachedChart  api.AttachChartParams
-	attachedIac    api.AttachIacParams
-	byoDetached    []string
-	byoScanned     []string
-	scanResult     *api.ByoScanResult
-	attachResult   *api.ByoAttachResult
+	invitedEmail      string
+	invitedRole       string
+	removedMember     string
+	createdName       string
+	deletedTeam       string
+	createdChType     string
+	createdChCfg      map[string]interface{}
+	deletedChannel    string
+	verifiedChID      string
+	createdRuleN      string
+	createdRulePat    []string
+	createdRuleCh     []string
+	createdRuleSev    string
+	deletedRule       string
+	activityLimit     int
+	createdRoleN      string
+	createdRoleKey    []string
+	deletedRole       string
+	addedGrant        api.AddGrantParams
+	removedGrant      string
+	ssoGetID          string
+	setPoolProv       string
+	setPoolUpdate     api.FleetPoolUpdate
+	createdProjP      api.CreateProjectParams
+	envProject        string
+	addedEnvName      string
+	addedEnvStage     string
+	addedEnvRegion    string
+	addedEnvParams    api.AddEnvironmentParams
+	listCompProj      string
+	listCompKind      string
+	listCompEnv       string
+	addCompProj       string
+	addCompKind       string
+	addCompName       string
+	addCompEnv        string
+	addCompFields     map[string]interface{}
+	rmCompProj        string
+	rmCompKind        string
+	rmCompName        string
+	rmCompEnv         string
+	attachedChart     api.AttachChartParams
+	attachedIac       api.AttachIacParams
+	byoDetached       []string
+	byoScanned        []string
+	scanResult        *api.ByoScanResult
+	attachResult      *api.ByoAttachResult
+	enabledAddon      api.EnableAddonParams
+	disabledAddonProj string
+	disabledAddonEnv  string
+	disabledAddonID   string
 }
 
 func (f *fakeClient) Whoami() (*api.WhoAmI, error)                   { return f.whoami, f.err }
@@ -447,6 +451,16 @@ func (f *fakeClient) ScanIac(project, env string) (*api.ByoScanResult, error) {
 		return f.scanResult, nil
 	}
 	return &api.ByoScanResult{OK: true, JobID: "job-2"}, nil
+}
+
+func (f *fakeClient) EnableAddon(p api.EnableAddonParams) error {
+	f.enabledAddon = p
+	return f.err
+}
+
+func (f *fakeClient) DisableAddon(project, env, addonID string) error {
+	f.disabledAddonProj, f.disabledAddonEnv, f.disabledAddonID = project, env, addonID
+	return f.err
 }
 
 func (f *fakeClient) GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error) {

@@ -453,3 +453,117 @@ func TestByoIacClient(t *testing.T) {
 		}
 	})
 }
+
+func TestEnableAddon(t *testing.T) {
+	t.Run("posts every field and carries env", func(t *testing.T) {
+		var got map[string]interface{}
+		var query, method string
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertAuth(t, r)
+			method, query = r.Method, r.URL.RawQuery
+			json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		}))
+		err := client.EnableAddon(EnableAddonParams{
+			Project: "shop", Env: "staging", AddonID: "loki", Mode: "managed",
+			Values:     map[string]interface{}{"retention_days": 7},
+			ValuesYAML: "loki:\n  auth_enabled: false\n",
+		})
+		if err != nil {
+			t.Fatalf("EnableAddon: %v", err)
+		}
+		if method != "POST" || query != "env=staging" {
+			t.Errorf("got %s ?%s", method, query)
+		}
+		if got["addon_id"] != "loki" || got["mode"] != "managed" {
+			t.Errorf("unexpected body: %+v", got)
+		}
+		if _, ok := got["values"].(map[string]interface{}); !ok {
+			t.Errorf("values missing: %+v", got)
+		}
+		if got["values_yaml"] == nil {
+			t.Errorf("values_yaml missing: %+v", got)
+		}
+	})
+
+	// The optional fields must be OMITTED when unset, so the server's own defaults apply rather than
+	// an empty string failing its enum.
+	t.Run("omits the optional fields", func(t *testing.T) {
+		var got map[string]interface{}
+		var query string
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			query = r.URL.RawQuery
+			json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		}))
+		if err := client.EnableAddon(EnableAddonParams{Project: "shop", AddonID: "loki"}); err != nil {
+			t.Fatalf("EnableAddon: %v", err)
+		}
+		if query != "" {
+			t.Errorf("an empty env must add no query, got %q", query)
+		}
+		for _, k := range []string{"mode", "values", "values_yaml"} {
+			if _, present := got[k]; present {
+				t.Errorf("%q must be omitted when unset: %+v", k, got)
+			}
+		}
+	})
+
+	t.Run("surfaces a server error", func(t *testing.T) {
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "unknown add-on"})
+		}))
+		if err := client.EnableAddon(EnableAddonParams{Project: "p", AddonID: "nope"}); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+}
+
+func TestDisableAddon(t *testing.T) {
+	t.Run("DELETEs with the id in the body", func(t *testing.T) {
+		var got map[string]interface{}
+		var method, ctype string
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertAuth(t, r)
+			method, ctype = r.Method, r.Header.Get("Content-Type")
+			json.NewDecoder(r.Body).Decode(&got)
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		}))
+		if err := client.DisableAddon("shop", "dev", "falco"); err != nil {
+			t.Fatalf("DisableAddon: %v", err)
+		}
+		if method != "DELETE" {
+			t.Errorf("method = %q", method)
+		}
+		// doDeleteWithBody must send a JSON content type, or the route's req.json() sees nothing.
+		if ctype != "application/json" {
+			t.Errorf("Content-Type = %q", ctype)
+		}
+		if got["addon_id"] != "falco" {
+			t.Errorf("unexpected body: %+v", got)
+		}
+	})
+
+	t.Run("surfaces a server error", func(t *testing.T) {
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{"error": "nope"})
+		}))
+		if err := client.DisableAddon("shop", "", "falco"); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+
+	// A transport failure must surface too — the request never reaching a server is a distinct arm
+	// from the server refusing it.
+	t.Run("surfaces a transport error", func(t *testing.T) {
+		client := NewClient("t")
+		client.baseURL = "http://127.0.0.1:1/api"
+		if err := client.DisableAddon("shop", "", "falco"); err == nil {
+			t.Fatal("expected a transport error")
+		}
+	})
+}
