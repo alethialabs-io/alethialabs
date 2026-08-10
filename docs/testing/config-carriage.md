@@ -53,7 +53,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 | `cluster_version` | 🟡 | 🟡 | 🟡 | 🟡 | — |
 | `instance_types` | · | · | · | · | · |
 | `node_desired_size` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| `node_disk_size_gb` | 🟡 | 🟡 | 🟡 | 🟡 | — |
+| `node_disk_size_gb` | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `node_max_size` | 🟡 | 🟡 | 🟡 | 🟡 | — |
 | `node_min_size` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
 | `node_size` | · | · | · | · | · |
