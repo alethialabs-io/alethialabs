@@ -921,6 +921,25 @@ jobs:
           ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE }}
           ALETHIA_E2E_KEYLESS_DB_NAMESPACE: ${{ vars.E2E_KEYLESS_DB_NAMESPACE }}
           ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
+          #    The per-cloud siblings the comment above TELLS a maintainer to use. They were missing,
+          #    and this was worse than an unwired scenario: ENGINE_VERSION and INSTANCE_CLASS have no
+          #    defaults and are REQUIRED, so a maintainer who followed the documentation and set
+          #    E2E_KEYLESS_DB_ENGINE_VERSION_GCP got a run that died in seconds insisting a required
+          #    variable was unset. t2ArgoEnvForProvider COMPOSES the name at runtime (base + "_" +
+          #    upper(provider)), so `ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION_GCP` is written in no Go
+          #    file and the literal-scanning reachability guard could never see the gap.
+          #    TestPerCloudSiblingsReachTheNightly now can. gcp + azure only, matching the A0.6 repo
+          #    wave above — alibaba/hetzner carry the product's own documented exclusion and skip.
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_GCP: ${{ vars.E2E_KEYLESS_DB_ENGINE_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION_GCP: ${{ vars.E2E_KEYLESS_DB_ENGINE_VERSION_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_INSTANCE_CLASS_GCP: ${{ vars.E2E_KEYLESS_DB_INSTANCE_CLASS_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_IMAGE_GCP: ${{ vars.E2E_KEYLESS_DB_IMAGE_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE_GCP: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_AZURE: ${{ vars.E2E_KEYLESS_DB_ENGINE_AZURE }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION_AZURE: ${{ vars.E2E_KEYLESS_DB_ENGINE_VERSION_AZURE }}
+          ALETHIA_E2E_KEYLESS_DB_INSTANCE_CLASS_AZURE: ${{ vars.E2E_KEYLESS_DB_INSTANCE_CLASS_AZURE }}
+          ALETHIA_E2E_KEYLESS_DB_IMAGE_AZURE: ${{ vars.E2E_KEYLESS_DB_IMAGE_AZURE }}
+          ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE_AZURE: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE_AZURE }}
           # ── CROSS-ACCOUNT KEYLESS REGISTRY PULL (#1047) — the last unproven link in epic #1046.
           #
           #    The `registry-token` MINT was proven in July 2026 against live ECR/GAR/ACR, but with
