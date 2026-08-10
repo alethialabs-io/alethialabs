@@ -22,3 +22,7 @@ runner_ecs_service    = "alethia-runner-dev-eu-west-1-service"
 # e2e_monthly_budget_usd = 100
 # Emails subscribed to the budget SNS topic + notified directly by the Budget.
 e2e_budget_alert_emails = ["ops@alethialabs.io"]
+# The stable public zone the nightly's ACM/cert proof validates against (#1773). Creating it is
+# only half the job: its four name servers must then be delegated at Cloudflare, which holds
+# alethialabs.io. Leave unset to create no zone at all.
+# e2e_dns_zone_name = "e2e.alethialabs.io"
