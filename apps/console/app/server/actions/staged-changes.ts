@@ -8,105 +8,14 @@ import { asRecord } from "@/lib/records";
 import { withActorScope } from "@/lib/db";
 import { projectChanges } from "@/lib/db/schema";
 import type { StagedChangePayload } from "@/types/jsonb.types";
-import type { ProjectFormData } from "@/lib/validations/project-form.schema";
+// The differ is a PURE function, so it cannot be exported from this module: `"use server"` requires
+// every export to be async. See lib/config-diff.ts.
+import { diffConfig } from "@/lib/config-diff";
 import {
 	type CreateProjectInput,
 	getProjectAsFormData,
 	updateProjectDesign,
 } from "./projects";
-
-type Op = "CREATE" | "UPDATE" | "DELETE";
-
-export interface DiffRow {
-	component_type: string;
-	component_id: string | null;
-	op: Op;
-	payload: StagedChangePayload;
-}
-
-/** True when two component configs differ (order-insensitive enough for our flat configs). */
-function changed(a: unknown, b: unknown): boolean {
-	return JSON.stringify(a) !== JSON.stringify(b);
-}
-
-/** An array component's items, each carrying a unique `name`. */
-type NamedItem = { name?: string } & Record<string, unknown>;
-
-/** Diff one array section (databases/caches/…) by `name` → CREATE/UPDATE/DELETE rows. */
-function diffArray(
-	componentType: string,
-	live: readonly NamedItem[],
-	desired: readonly NamedItem[],
-): DiffRow[] {
-	const liveByName = new Map(live.map((i) => [i.name ?? "", i]));
-	const desiredNames = new Set(desired.map((i) => i.name ?? ""));
-	const rows: DiffRow[] = [];
-	for (const item of desired) {
-		const prev = liveByName.get(item.name ?? "");
-		if (!prev)
-			rows.push({ component_type: componentType, component_id: null, op: "CREATE", payload: item });
-		else if (changed(prev, item))
-			rows.push({ component_type: componentType, component_id: null, op: "UPDATE", payload: item });
-	}
-	for (const item of live)
-		if (!desiredNames.has(item.name ?? ""))
-			rows.push({
-				component_type: componentType,
-				component_id: null,
-				op: "DELETE",
-				payload: { name: item.name },
-			});
-	return rows;
-}
-
-/** Diff a desired canvas config against the live project config → staged-change rows. */
-export function diffConfig(
-	live: ProjectFormData | null,
-	desired: CreateProjectInput,
-): DiffRow[] {
-	const rows: DiffRow[] = [];
-	// Singletons: an UPDATE when the config differs from live (or CREATE when no live yet).
-	const singletons: [string, unknown, unknown][] = [
-		["network", live?.network, desired.network],
-		["cluster", live?.cluster, desired.cluster],
-		["dns", live?.dns, desired.dns],
-		["repositories", live?.repositories, desired.repositories],
-	];
-	for (const [type, l, d] of singletons) {
-		if (changed(l, d))
-			rows.push({
-				component_type: type,
-				component_id: null,
-				op: l ? "UPDATE" : "CREATE",
-				payload: asRecord(d),
-			});
-	}
-	// Array components keyed by name.
-	rows.push(...diffArray("database", live?.databases ?? [], desired.databases ?? []));
-	rows.push(...diffArray("cache", live?.caches ?? [], desired.caches ?? []));
-	rows.push(...diffArray("queue", live?.queues ?? [], desired.queues ?? []));
-	rows.push(...diffArray("topic", live?.topics ?? [], desired.topics ?? []));
-	rows.push(...diffArray("nosql", live?.nosql_tables ?? [], desired.nosql_tables ?? []));
-	rows.push(...diffArray("secret", live?.secrets ?? [], desired.secrets ?? []));
-	rows.push(
-		...diffArray("bucket", live?.storage_buckets ?? [], desired.storage_buckets ?? []),
-	);
-	rows.push(
-		...diffArray(
-			"registry",
-			live?.container_registries ?? [],
-			desired.container_registries ?? [],
-		),
-	);
-	rows.push(
-		...diffArray(
-			"helm_registry",
-			live?.helm_registries ?? [],
-			desired.helm_registries ?? [],
-		),
-	);
-	return rows;
-}
 
 /** Scopes the staging rows to one (project, environment) — the canvas always edits the env in
  * `?environment_id=`, so each environment owns its own pending diff. */

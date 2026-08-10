@@ -19,8 +19,10 @@
 // would reject cannot be smuggled in through the CLI, and there is one definition of a valid design.
 
 import { NextResponse } from "next/server";
-import type { DiffRow } from "@/app/server/actions/staged-changes";
-import { diffConfig, stageChanges } from "@/app/server/actions/staged-changes";
+import { stageChanges } from "@/app/server/actions/staged-changes";
+// The differ comes from lib/config-diff, NOT from the actions module: `"use server"` requires every
+// export there to be async, and diffConfig is a pure synchronous function.
+import { type DiffRow, diffConfig } from "@/lib/config-diff";
 import { updateProjectDesign } from "@/app/server/actions/projects";
 import { getProjectAsFormData } from "@/app/server/actions/projects";
 import { runWithActor } from "@/lib/authz/actor-context";
