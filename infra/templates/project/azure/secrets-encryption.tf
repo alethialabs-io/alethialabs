@@ -69,10 +69,38 @@ resource "azurerm_user_assigned_identity" "aks" {
   tags = local.azure_default_tags
 }
 
+# The DEPLOYING identity's grant, which #2092 shipped without and which is why the first real apply
+# 403'd on all of gcp/azure/alibaba (#2262):
+#
+#   Error: checking for presence of existing Key "aks-secrets-encryption" …
+#   403 ForbiddenByRbac … Action: 'Microsoft.KeyVault/vaults/keys/read' … Assignment: (not found)
+#
+# `Assignment: (not found)` is Azure saying there is no role assignment AT ALL — this is not the
+# RBAC propagation race it superficially resembles, and adding a wait would not have helped. The
+# vault is `rbac_authorization_enabled = true`, so key operations are DATA-PLANE: subscription
+# Owner does not carry them. modules/key-vault grants the provisioner "Key Vault Secrets Officer"
+# for exactly this reason — but that role covers SECRETS, not KEYS, so creating the KMS key had no
+# cover. Same failure, one resource kind over.
+#
+# "Crypto Officer" rather than "Crypto User" because this identity CREATES the key; the cluster
+# identity below keeps the narrower "Crypto User", which is all it needs to wrap/unwrap.
+resource "azurerm_role_assignment" "provisioner_crypto_officer" {
+  count = local.azure_secrets_encryption ? 1 : 0
+
+  scope                = module.key_vault.vault_id
+  role_definition_name = "Key Vault Crypto Officer"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
 resource "azurerm_key_vault_key" "aks_secrets" {
   count = local.azure_secrets_encryption ? 1 : 0
 
-  depends_on = [terraform_data.aks_kms_purge_protection_guard]
+  # RBAC propagation is eventually-consistent; without the explicit edge the key creation races the
+  # role assignment and 403s — the same belt modules/key-vault puts on its secret writes.
+  depends_on = [
+    terraform_data.aks_kms_purge_protection_guard,
+    azurerm_role_assignment.provisioner_crypto_officer,
+  ]
 
   name         = "aks-secrets-encryption"
   key_vault_id = module.key_vault.vault_id
