@@ -178,7 +178,7 @@ func TestWrappers_SurfaceTheirOwnContextOnFailure(t *testing.T) {
 			return err
 		}},
 		{"AddEnvironment", "failed to add environment", func(c *Client) error {
-			_, err := c.AddEnvironment("p-1", "staging", "", "")
+			_, err := c.AddEnvironment(AddEnvironmentParams{Project: "p-1", Name: "staging"})
 			return err
 		}},
 		{"ListComponents", "failed to list components", func(c *Client) error {

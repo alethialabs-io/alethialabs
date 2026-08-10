@@ -100,7 +100,7 @@ func TestAddEnvironment_Success(t *testing.T) {
 			},
 		})
 	}))
-	env, err := client.AddEnvironment("api", "staging", "staging", "")
+	env, err := client.AddEnvironment(AddEnvironmentParams{Project: "api", Name: "staging", Stage: "staging"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

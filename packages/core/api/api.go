@@ -1619,6 +1619,27 @@ type CreateProjectParams struct {
 	CloudIdentityID string
 	Stage           string
 	IacVersion      string
+	// Placement of the default environment onto its first Fabric. Empty ⇒ the server's default
+	// (`dedicated`, which is right for a first environment: it owns the Fabric it provisions).
+	Placement string
+	// The full environment MATRIX. When set, the server fans it out into a Fabric per `dedicated`
+	// environment plus ONE shared Fabric for the `namespace`/`vcluster` ones — which is the difference
+	// between a two-tier project costing two clusters and costing one.
+	Environments []EnvironmentSpec
+}
+
+// EnvironmentSpec is one row of the environment matrix: an environment and how it is PLACED onto a
+// Fabric. Mirrors the console placement selector's own shape, and the server validates it with the
+// console form's own schema, so the CLI cannot express a matrix the front door would reject.
+type EnvironmentSpec struct {
+	Name          string `json:"name"`
+	Stage         string `json:"stage"`
+	PlacementMode string `json:"placement_mode"`
+	// Optional: the ArgoCD destination namespace for a shared placement. Empty ⇒ derived from Name.
+	Namespace string `json:"namespace,omitempty"`
+	// Optional: `persistent` (default) or `ephemeral`.
+	Lifecycle string `json:"lifecycle,omitempty"`
+	IsDefault bool   `json:"is_default,omitempty"`
 }
 
 // CreateProject creates a new project and returns it.
@@ -1636,6 +1657,12 @@ func (c *Client) CreateProject(params CreateProjectParams) (*Project, error) {
 	}
 	if params.IacVersion != "" {
 		payload["iac_version"] = params.IacVersion
+	}
+	if params.Placement != "" {
+		payload["placement_mode"] = params.Placement
+	}
+	if len(params.Environments) > 0 {
+		payload["environments"] = params.Environments
 	}
 	var successResp struct {
 		Project *Project `json:"project"`
@@ -1658,15 +1685,48 @@ func (c *Client) ListEnvironments(project string) ([]Environment, error) {
 	return successResp.Environments, nil
 }
 
+// AddEnvironmentParams is the payload for AddEnvironment. A struct rather than positional arguments
+// because placement turned this into seven fields, and seven bare strings at a call site is where a
+// stage silently ends up in the region.
+type AddEnvironmentParams struct {
+	Project string
+	Name    string
+	Stage   string
+	Region  string
+	// Placement onto a Fabric. Empty ⇒ the server's default for an ADDED environment, `namespace` —
+	// the cheap rung. Passing `dedicated` is what buys a whole new cluster, and it should be the word
+	// you typed rather than the one you got.
+	Placement string
+	// The Fabric to place onto, by name. Empty ⇒ the Fabric the project's default environment is on.
+	// Ignored for `dedicated`, which owns a new Fabric.
+	Fabric string
+	// ArgoCD destination namespace for a shared placement. Empty ⇒ derived from Name.
+	Namespace string
+	// `persistent` (default) or `ephemeral`.
+	Lifecycle string
+}
+
 // AddEnvironment adds an environment to a project. An empty region inherits the project's.
-func (c *Client) AddEnvironment(project, name, stage, region string) (*Environment, error) {
-	endpoint := fmt.Sprintf("%s/cli/projects/%s/environments", c.baseURL, url.PathEscape(project))
-	payload := map[string]interface{}{"name": name}
-	if stage != "" {
-		payload["stage"] = stage
+func (c *Client) AddEnvironment(params AddEnvironmentParams) (*Environment, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/environments", c.baseURL, url.PathEscape(params.Project))
+	payload := map[string]interface{}{"name": params.Name}
+	if params.Stage != "" {
+		payload["stage"] = params.Stage
 	}
-	if region != "" {
-		payload["region"] = region
+	if params.Region != "" {
+		payload["region"] = params.Region
+	}
+	if params.Placement != "" {
+		payload["placement_mode"] = params.Placement
+	}
+	if params.Fabric != "" {
+		payload["fabric"] = params.Fabric
+	}
+	if params.Namespace != "" {
+		payload["namespace"] = params.Namespace
+	}
+	if params.Lifecycle != "" {
+		payload["lifecycle"] = params.Lifecycle
 	}
 	var successResp struct {
 		Environment *Environment `json:"environment"`

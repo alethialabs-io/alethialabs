@@ -275,7 +275,7 @@ func TestAddEnvironment_InheritsWhenUnset(t *testing.T) {
 			var got capture
 			client := newCapturingClient(t, &got, `{"environment":{"id":"e-1","name":"staging"}}`)
 
-			env, err := client.AddEnvironment("web", "staging", tt.stage, tt.region)
+			env, err := client.AddEnvironment(AddEnvironmentParams{Project: "web", Name: "staging", Stage: tt.stage, Region: tt.region})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -509,5 +509,112 @@ func TestListActivity_LimitQuery(t *testing.T) {
 				t.Errorf("expected query %q, got %q", tt.wantQuery, got.query)
 			}
 		})
+	}
+}
+
+// TestCreateProject_PlacementAndMatrixTravel pins the two fields the CLI never sent even though the
+// create front door has always accepted them. Their absence was a COST bug, not a missing feature:
+// with no matrix every environment comes out `dedicated`, which is a cluster each.
+func TestCreateProject_PlacementAndMatrixTravel(t *testing.T) {
+	var got map[string]interface{}
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{"project": minimalProjectJSON()})
+	}))
+	if _, err := client.CreateProject(CreateProjectParams{
+		ProjectName: "shop",
+		Region:      "eu-west-1",
+		Placement:   "dedicated",
+		Environments: []EnvironmentSpec{
+			{Name: "prod", Stage: "production", PlacementMode: "dedicated", IsDefault: true},
+			{Name: "dev", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev"},
+		},
+	}); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if got["placement_mode"] != "dedicated" {
+		t.Errorf("placement_mode missing: %+v", got)
+	}
+	envs, ok := got["environments"].([]interface{})
+	if !ok || len(envs) != 2 {
+		t.Fatalf("environments missing or wrong length: %+v", got["environments"])
+	}
+	first, _ := envs[0].(map[string]interface{})
+	if first["name"] != "prod" || first["placement_mode"] != "dedicated" || first["is_default"] != true {
+		t.Errorf("first spec malformed: %+v", first)
+	}
+	second, _ := envs[1].(map[string]interface{})
+	if second["namespace"] != "boutique-dev" {
+		t.Errorf("namespace dropped: %+v", second)
+	}
+	// omitempty must keep the optional fields OUT when unset, so the server's own defaults apply
+	// rather than an empty string failing its enum.
+	if _, present := second["lifecycle"]; present {
+		t.Errorf("unset lifecycle must be omitted, got %+v", second)
+	}
+	if _, present := first["namespace"]; present {
+		t.Errorf("unset namespace must be omitted, got %+v", first)
+	}
+}
+
+// And omitting both must leave the payload byte-identical to before, so an existing script keeps the
+// legacy Production+Preview shape.
+func TestCreateProject_OmitsPlacementWhenUnset(t *testing.T) {
+	var got map[string]interface{}
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{"project": minimalProjectJSON()})
+	}))
+	if _, err := client.CreateProject(CreateProjectParams{ProjectName: "shop", Region: "eu-west-1"}); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	for _, k := range []string{"placement_mode", "environments"} {
+		if _, present := got[k]; present {
+			t.Errorf("%q must be absent when unset, got %+v", k, got)
+		}
+	}
+}
+
+// TestAddEnvironment_PlacementTravels covers the env-add side of the same gap.
+func TestAddEnvironment_PlacementTravels(t *testing.T) {
+	var got map[string]interface{}
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]any{"environment": map[string]any{
+			"id": "e1", "name": "staging", "stage": "staging", "status": "DRAFT",
+			"is_default": false, "region": nil,
+		}})
+	}))
+	if _, err := client.AddEnvironment(AddEnvironmentParams{
+		Project: "shop", Name: "staging", Stage: "staging",
+		Placement: "vcluster", Fabric: "shared", Namespace: "boutique-staging", Lifecycle: "persistent",
+	}); err != nil {
+		t.Fatalf("AddEnvironment: %v", err)
+	}
+	for k, want := range map[string]string{
+		"placement_mode": "vcluster",
+		"fabric":         "shared",
+		"namespace":      "boutique-staging",
+		"lifecycle":      "persistent",
+	} {
+		if got[k] != want {
+			t.Errorf("%s = %v, want %q (payload %+v)", k, got[k], want, got)
+		}
+	}
+}
+
+// minimalProjectJSON is the smallest project body the Project decoder accepts, for tests that care
+// only about the REQUEST payload.
+func minimalProjectJSON() map[string]any {
+	return map[string]any{
+		"id": "p1", "project_name": "shop", "slug": "shop", "region": "eu-west-1",
+		"iac_version": "1.11.4", "cloud_identity_id": nil, "cloud_provider": "",
+		"environment_stage": "development", "status": "DRAFT",
+		"estimated_monthly_cost": nil,
+		"created_at":             "2026-01-01T00:00:00.000Z",
+		"updated_at":             "2026-01-01T00:00:00.000Z",
 	}
 }
