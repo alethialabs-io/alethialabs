@@ -442,6 +442,12 @@ variable "cosmos_db_collections" {
     # backup: the canvas offers no switch for it, and nothing derives it from point_in_time_recovery
     # any more (#1838). Kept accepted so a tenant driving the tfvars directly can still ask for it.
     analytical_storage_enabled = optional(bool, false)
+    # Replica regions (#2158). Offered per table by the canvas, but Cosmos replicates per ACCOUNT
+    # (`geo_location` blocks), so the account gets the UNION of every table's list — the
+    # point_in_time_recovery shape above, one row up. A non-empty union also switches the account
+    # off serverless (single-region-only) onto provisioned throughput — see
+    # `local.cosmos_replica_regions` in cosmos-db.tf for both derivations.
+    global_replicas = optional(list(string), [])
   }))
   default     = []
   description = "List of Cosmos DB containers (collections) to create with partition keys"
