@@ -347,6 +347,9 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         env:
           PROVIDER: ${{ matrix.provider }}
+          # Read here, not only in the T2 step, because the fabric demo needs a BIGGER POOL and the
+          # shape is decided here. See the demo branch below.
+          E2E_FABRIC_DEMO: ${{ vars.E2E_FABRIC_DEMO }}
         run: |
           # NET = per-provider network-block override (t2MergeNetworkJSON → snapshot `network`).
           # AWS folds single_nat_gateway=true into the FULL snapshot (one NAT vs one-per-AZ ≈ halves
@@ -378,6 +381,27 @@ jobs:
             fi
             SHAPE="$(jq -c . "$HEAVY")"
             echo "::notice::T2 FULL-BAR heavy shape for $PROVIDER (from $HEAVY): $SHAPE"
+          elif printf '%s' "${E2E_FABRIC_DEMO:-}" | grep -qiE '^(1|true|yes|on)$'; then
+            # FABRIC DEMO (#845): the other heavy scenario, and until #2295-era it was the only one
+            # with no shape override — so it ran on the cheapest floor shape above. On gcp that is ONE
+            # e2-small (2 GiB) against a workload measured at 4.91 vCPU / 4.14 GiB (the boutique
+            # overlays placed once per tier PLUS once more inside the vcluster, whose pods schedule on
+            # the host). Those pods sit Pending, nothing recovers them, and the run burns the whole
+            # 165-minute cap on every cloud before reporting — ~11 hours of billed cluster time to
+            # learn a node size. t2RequireFabricDemoNodeShape now refuses that in seconds, and this is
+            # the shape that satisfies it.
+            #
+            # The truthiness test MATCHES THE HARNESS (t2Truthy: 1|true|yes|on) rather than the
+            # `!= ''` the job/step caps use, so E2E_FABRIC_DEMO=0 does not silently buy a big pool for
+            # a scenario that will not run.
+            DEMO="test/e2e/fixtures/cluster_json.demo.${PROVIDER}.json"
+            if [ ! -f "$DEMO" ]; then
+              # Documented exclusion, not a silent gap (cloud-parity rule) — same posture as full-bar.
+              echo "::error::fabric demo requested for '$PROVIDER' but $DEMO does not exist — that cloud has no demo profile. Add the fixture sized to clear fabricDemoNodeFloor() in test/e2e/t2_providers.go (its floor scales with the tier count, and the guard prints the shortfall), or exclude the cloud from fabric-demo runs. TestDemoProfilesSatisfyTheFabricDemoGuard checks a new fixture for free on every PR."
+              exit 1
+            fi
+            SHAPE="$(jq -c . "$DEMO")"
+            echo "::notice::T2 FABRIC-DEMO shape for $PROVIDER (from $DEMO): $SHAPE"
           elif [ -n "$SHAPE" ]; then
             echo "::notice::T2 cheapest shape for $PROVIDER: $SHAPE"
           fi

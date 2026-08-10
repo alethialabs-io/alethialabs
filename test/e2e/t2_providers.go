@@ -515,6 +515,100 @@ func t2RequireMaxConfigNodeShape(provider string, snapshot map[string]any) (fata
 	return false, ""
 }
 
+// ── Fabric-demo node floor (#845) ────────────────────────────────────────────────────────────────
+//
+// The fabric demo is the OTHER heavy scenario, and until now it was the only one with no shape guard
+// and no shape override: the heavy fixture is swapped in by e2e-nightly.yml ONLY on full-bar, and
+// t2RequireMaxConfigNodeShape above is a no-op unless BOTH heavy dimensions are on. So setting
+// ALETHIA_E2E_FABRIC_DEMO on its own ran the demo on the CHEAPEST floor shape — one e2-small (2 GiB)
+// on gcp — where it cannot schedule, cannot recover, and burns the whole 165-minute cap on four
+// clouds before saying so. That is ~11 hours of billed cluster time to discover a node size.
+//
+// Unlike the heavy floor's 12 vCPU (reverse-derived from the AWS fixture, as the comment above
+// admits), these numbers are MEASURED from the workload the scenario actually places:
+//
+//	github.com/alethialabs-io/enterprise-demo base/kubernetes-manifests.yaml is Online Boutique —
+//	12 Deployments whose `requests` sum to 1.57 vCPU / 1.34 GiB per copy. overlays/staging patches
+//	frontend to replicas: 2, which adds 0.10 vCPU / 64 MiB, so a staging copy is 1.67 / 1.40.
+//
+// The scenario places the overlays as namespaces AND re-places the vcluster tier a THIRD time inside
+// the vcluster — whose pods schedule on the HOST, so they are not free (t2_fabric_demo.go: tiers from
+// fabricDemoDefaultOverlays, plus fabricDemoDefaultVClusterTier). With the default two tiers:
+//
+//	dev 1.57 + staging 1.67 + staging-in-vcluster 1.67 = 4.91 vCPU / 4.14 GiB of workload requests
+//
+// fabricDemoPlatform* is what shares the node with it: ArgoCD (already installed by the base
+// scenario), the vcluster control plane, the platform rail (cert-manager / metrics-server / ingress),
+// and per-node kube overhead. Deliberately generous — the cost of over-reserving is a slightly bigger
+// node, and the cost of under-reserving is the 11-hour failure this guard exists to prevent.
+const (
+	fabricDemoPerCopyVCPU   = 1.7 // one boutique copy, staging's replica bump included, rounded up
+	fabricDemoPerCopyMemGB  = 1.5
+	fabricDemoPlatformVCPU  = 1.8 // ArgoCD + vcluster control plane + platform rail + kube overhead
+	fabricDemoPlatformMemGB = 3.0
+	fabricDemoMinNodes      = 2 // one node cannot be drained/rescheduled around; also pod-per-node room
+)
+
+// fabricDemoNodeFloor returns the total pool capacity the demo needs for tierCount overlay tiers.
+// copies is tierCount+1 because ONE tier is placed a second time inside the vcluster — so the floor
+// scales with the configured overlays rather than being pinned to today's two.
+func fabricDemoNodeFloor(tierCount int) (vcpu, memGB float64) {
+	copies := float64(tierCount + 1)
+	return copies*fabricDemoPerCopyVCPU + fabricDemoPlatformVCPU,
+		copies*fabricDemoPerCopyMemGB + fabricDemoPlatformMemGB
+}
+
+// t2RequireFabricDemoNodeShape fails fast, BEFORE any provisioning, when the fabric demo is requested
+// on a pool too small to schedule it. Mirrors t2RequireMaxConfigNodeShape's contract exactly: reads
+// the `cluster` block AFTER the ALETHIA_E2E_CLUSTER_JSON merge so it judges what will actually
+// provision, returns (fatal, msg), hard-fails only under ALETHIA_E2E_T2_REQUIRE, and prints the real
+// shortfall rather than restating a floor that could drift.
+//
+// A full-bar run needs no special case: the heavy profile is larger than the demo floor on every
+// cloud, so the same total-capacity comparison simply passes.
+//
+// tierCount comes from the caller's already-parsed tiers, so a misconfigured
+// ALETHIA_E2E_FABRIC_DEMO_OVERLAYS fails in fabricDemoTiers (which is fail-closed on zero) rather
+// than being silently sized here.
+func t2RequireFabricDemoNodeShape(provider string, snapshot map[string]any, tierCount int) (fatal bool, msg string) {
+	if !fabricDemoEnabled() {
+		return false, ""
+	}
+	demoFixture := fmt.Sprintf("fixtures/cluster_json.demo.%s.json", provider)
+	minVCPU, minMemGB := fabricDemoNodeFloor(tierCount)
+
+	cluster, _ := snapshot["cluster"].(map[string]any)
+	if cluster == nil {
+		return t2RequireIsHard(), fmt.Sprintf(
+			"fabric demo requested but the snapshot has no cluster block — pin the demo profile (%s) via ALETHIA_E2E_CLUSTER_JSON", demoFixture)
+	}
+	desired, _ := t2Num(cluster["node_desired_size"])
+	if int(desired) < fabricDemoMinNodes {
+		return t2RequireIsHard(), fmt.Sprintf(
+			"fabric demo needs >= %d nodes (%d overlay tiers + 1 vcluster re-placement = %d boutique copies), but cluster.node_desired_size=%v — pin the demo profile (%s) via ALETHIA_E2E_CLUSTER_JSON",
+			fabricDemoMinNodes, tierCount, tierCount+1, cluster["node_desired_size"], demoFixture)
+	}
+	ns, ok := cluster["node_size"].(map[string]any)
+	if !ok {
+		// No declared capacity means the floor cannot be enforced at all, and the default floor shape
+		// declares none — which is exactly how this scenario came to run on an e2-small. Refuse rather
+		// than degrade to a node count, the toothless-guard failure mode t2_providers.go exists to avoid.
+		return t2RequireIsHard(), fmt.Sprintf(
+			"fabric demo needs a cluster shape declaring node_size {vcpu, memory_gb} so the >= %.1f vCPU / %.1f GB floor can be enforced before any spend — the nightly's cheapest floor shape declares none, and on that shape the boutique overlays sit Pending until the job cap kills the run. Pin the demo profile (%s) via ALETHIA_E2E_CLUSTER_JSON",
+			minVCPU, minMemGB, demoFixture)
+	}
+	vcpu, _ := t2Num(ns["vcpu"])
+	mem, _ := t2Num(ns["memory_gb"])
+	totalVCPU, totalMem := vcpu*desired, mem*desired
+	if totalVCPU < minVCPU || totalMem < minMemGB {
+		return t2RequireIsHard(), fmt.Sprintf(
+			"fabric demo on %s needs >= %.1f total vCPU and >= %.1f GB across the pool (%d boutique copies at ~%.1f vCPU / %.1f GB each, plus ArgoCD + the vcluster control plane + the platform rail); node_size %.0fvCPU/%.0fGB × %d = %.0fvCPU/%.0fGB — size up the demo profile (%s)",
+			provider, minVCPU, minMemGB, tierCount+1, fabricDemoPerCopyVCPU, fabricDemoPerCopyMemGB,
+			vcpu, mem, int(desired), totalVCPU, totalMem, demoFixture)
+	}
+	return false, ""
+}
+
 // t2Num coerces a snapshot/JSON numeric (JSON numbers decode as float64; ints appear when set in Go)
 // to float64. Returns false for absent/non-numeric.
 func t2Num(v any) (float64, bool) {
