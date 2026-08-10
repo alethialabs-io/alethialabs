@@ -216,8 +216,11 @@ func TestValidateNetworkCIDR(t *testing.T) {
 		// GCP is structurally exempt: it uses the CIDR verbatim, so even a /29 is its own
 		// business, not this gate's.
 		{name: "gcp /29 is not this gate's business", cloud: "gcp", cidr: "10.0.0.0/29", provisionNetwork: true},
-		// AWS's floor is deferred to #1942 — a /24 must NOT be refused here yet.
-		{name: "aws /24 is deferred to #1942", cloud: "aws", cidr: "10.0.0.0/24", provisionNetwork: true},
+		// AWS's floor landed with #1942; the deferral is over. /18 is the template's own
+		// carvability bound (networking.tf `vpc_cidr_is_carvable`), scraped by the drift test.
+		{name: "aws at the floor", cloud: "aws", cidr: "10.0.0.0/18", provisionNetwork: true},
+		{name: "aws /19 plans clean but fails mid-apply", cloud: "aws", cidr: "10.0.0.0/19", provisionNetwork: true, wantErr: true},
+		{name: "aws /24 dies inside cidrsubnet", cloud: "aws", cidr: "10.0.0.0/24", provisionNetwork: true, wantErr: true},
 
 		// The skips. A brownfield network's CIDR is not ours to carve, and an unset CIDR means
 		// the provider substitutes 10.0.0.0/16.

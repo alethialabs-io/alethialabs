@@ -170,6 +170,16 @@ const (
 	// bound is encoded: rule 1 at the top of this file says a rule may never be wider than the
 	// template, and the API's exact minimum is not derivable from the tree.
 	alibabaMaxNetworkPrefix = 32 - 4
+	// infra/templates/project/aws/networking.tf:86 — `local.vpc_cidr_is_carvable` is
+	// `prefix >= 8 && prefix <= 18`, and 18 is the number this mirrors.
+	//
+	// NOT re-derived here, deliberately. The template owns it (#1936 computed it from the subnet
+	// plan: public subnets are 1/1024 of the VPC and AWS's minimum subnet is /28, which binds the
+	// constraint at 18), and TestNetworkCIDRFloorsMatchTemplates scrapes that bound out of the .tf
+	// on every run. #1942 warned explicitly against hand-mirroring the number, so the value is
+	// stated once and the drift test is what keeps the two honest — the same treatment the other
+	// three carved clouds get.
+	awsMaxNetworkPrefix = 18
 )
 
 // provisionsOwnNetwork mirrors — exactly — the greenfield/brownfield resolution every
