@@ -247,9 +247,6 @@ func TestComponentWrites_CarryTheEnvParam(t *testing.T) {
 	}
 }
 
-// The BYO client methods. Added with their own coverage because the packages/core ratchet sees the
-// whole api package: six methods landing untested drops it below its floor regardless of how well
-// the CLI side is covered.
 func TestByoChartClient(t *testing.T) {
 	t.Run("attach posts every field and returns the resolved id", func(t *testing.T) {
 		var got map[string]interface{}
@@ -564,6 +561,72 @@ func TestDisableAddon(t *testing.T) {
 		client.baseURL = "http://127.0.0.1:1/api"
 		if err := client.DisableAddon("shop", "", "falco"); err == nil {
 			t.Fatal("expected a transport error")
+		}
+	})
+}
+
+func TestRegisterRunner(t *testing.T) {
+	t.Run("posts the name and returns the token", func(t *testing.T) {
+		var got map[string]interface{}
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertAuth(t, r)
+			if r.Method != "POST" || r.URL.Path != "/api/cli/runners/register" {
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{
+				"runner": map[string]any{
+					"id": "r1", "name": "box", "operator": "self", "provisioning": "registered",
+					"supported_providers": nil, "status": "OFFLINE", "last_heartbeat": nil,
+					"version": "", "is_default": false, "created_at": "2026-01-01T00:00:00.000Z",
+				},
+				"runner_token": "tok-xyz",
+			})
+		}))
+		reg, err := client.RegisterRunner("box", "ci-1")
+		if err != nil {
+			t.Fatalf("RegisterRunner: %v", err)
+		}
+		if got["name"] != "box" || got["cloud_identity_id"] != "ci-1" {
+			t.Errorf("unexpected body: %+v", got)
+		}
+		if reg.RunnerToken != "tok-xyz" || reg.Runner.ID != "r1" {
+			t.Errorf("unexpected registration: %+v", reg)
+		}
+	})
+
+	// An empty identity must be OMITTED, not sent as "": the server validates the field as a uuid
+	// when present, so an empty string would turn an optional field into a 400.
+	t.Run("omits an empty cloud identity", func(t *testing.T) {
+		var got map[string]interface{}
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{
+				"runner": map[string]any{
+					"id": "r1", "name": "box", "operator": "self", "provisioning": "registered",
+					"supported_providers": nil, "status": "OFFLINE", "last_heartbeat": nil,
+					"version": "", "is_default": false, "created_at": "2026-01-01T00:00:00.000Z",
+				},
+				"runner_token": "t",
+			})
+		}))
+		if _, err := client.RegisterRunner("box", ""); err != nil {
+			t.Fatalf("RegisterRunner: %v", err)
+		}
+		if _, present := got["cloud_identity_id"]; present {
+			t.Errorf("cloud_identity_id must be omitted when empty, got %+v", got)
+		}
+	})
+
+	t.Run("surfaces a server error", func(t *testing.T) {
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{"error": "nope"})
+		}))
+		if _, err := client.RegisterRunner("box", ""); err == nil {
+			t.Fatal("expected an error")
 		}
 	})
 }

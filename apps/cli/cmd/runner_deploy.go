@@ -28,8 +28,8 @@ var runnerDeployCmd = &cobra.Command{
 	Long: fmt.Sprintf(`Creates a runner record and queues a DEPLOY_RUNNER job using the latest stable release.
 
 Deployed runners are %s only — Alethia holds runner infrastructure templates for no other
-cloud. Everywhere else, register a runner you run yourself instead (Console → Runners →
-Add runner → Register your own); it runs on any cloud. Omitting --cloud-identity-id lists
+cloud. Everywhere else, run "alethia runner register" instead: it provisions nothing, and a
+runner you operate yourself runs on any cloud. Omitting --cloud-identity-id lists
 only the accounts a runner can be built into; passing one for another cloud is rejected by
 the server before a runner or a job is created.`, runners.DeployProvidersLabel()),
 	Run: func(cmd *cobra.Command, args []string) {

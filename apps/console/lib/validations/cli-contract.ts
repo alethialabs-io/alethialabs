@@ -430,6 +430,14 @@ export const cliLatestReleaseWire = z.object({
 // --- Response envelopes (what the CLI actually decodes off the wire) ---
 
 export const cliRunnersResponse = z.object({ runners: z.array(runnerWire) });
+
+/** POST /api/cli/runners/register — the runner plus its bearer token, returned ONCE. Only the
+ *  token's SHA-256 is stored, so this response is the only opportunity to capture it; the CLI says so
+ *  where it prints it. */
+export const cliRunnerRegistrationResponse = z.object({
+	runner: runnerWire,
+	runner_token: z.string().min(1),
+});
 export const cliClustersResponse = z.object({ clusters: z.array(clusterWire) });
 export const cliCloudIdentitiesResponse = z.object({
 	cloud_identities: z.array(cloudIdentityWire),
@@ -797,6 +805,7 @@ export const cliContract = {
 	RunnersResponse: cliRunnersResponse,
 	ByoChartAttachResponse: cliByoChartAttachResponse,
 	ByoScanResponse: cliByoScanResponse,
+	RunnerRegistrationResponse: cliRunnerRegistrationResponse,
 	ClustersResponse: cliClustersResponse,
 	ClusterDetailResponse: cliClusterDetailResponse,
 	CloudIdentitiesResponse: cliCloudIdentitiesResponse,

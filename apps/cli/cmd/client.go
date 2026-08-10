@@ -21,6 +21,7 @@ type apiClient interface {
 	CreateTeam(orgID, name string) (*api.Team, error)
 	DeleteTeam(orgID, teamID string) error
 	GetRunners() ([]api.Runner, error)
+	RegisterRunner(name, cloudIdentityID string) (*api.RunnerRegistration, error)
 	GetClusters() ([]api.ClusterSummary, error)
 	GetConfigurations() ([]types.ConfigurationSummary, error)
 	ExportConfiguration(projectName, format string) (*api.ConfigurationExport, error)
