@@ -1,0 +1,65 @@
+---
+title: Enterprise demo on GCP
+description: Run the enterprise-demo tutorial on GKE, connected with Workload Identity Federation.
+---
+
+# Enterprise demo on GCP
+
+The per-cloud half of [Deploy the enterprise demo](/tutorials/enterprise-demo). Do this page's steps,
+then go back there.
+
+## Connect the project
+
+```bash
+alethia connector gcp --project my-gcp-project
+```
+
+This runs an installer inside your **Google Cloud Shell** via the local `gcloud`, creating a
+provisioner service account and a workload identity pool that trusts Alethia. **No service-account
+keys are created.** `--manual` gives you a Cloud Shell link and a command to run yourself instead.
+
+```bash
+alethia connector list   # for the --cloud-identity-id
+```
+
+<Callout type="info">
+  Alethia deliberately holds **no permission to enable APIs** in your project. Two must be on before
+  you start, or the apply stops at a named refusal rather than failing partway through building a
+  cluster:
+
+  ```bash
+  gcloud services enable container.googleapis.com cloudkms.googleapis.com --project my-gcp-project
+  ```
+
+  `cloudkms` is needed because Alethia encrypts Kubernetes Secrets under a customer-managed key by
+  default.
+</Callout>
+
+## The values to use
+
+| | |
+|---|---|
+| `--region` | `europe-west3`, or any region you prefer |
+| Cluster nodes | `e2-standard-4` — 4 vCPU / 16 GiB |
+| Time to a cluster | ~15 minutes |
+| Whole demo | **~$0.50/hour** — GKE management fee ~$0.10, two nodes ~$0.27, plus networking |
+
+<Callout type="warn">
+  New projects often have a **low NodePool or CPU quota**. If the apply fails with
+  `Error 429: Insufficient project quota`, that is a quota request to Google, not a configuration
+  problem — and approval takes days, so check before you start.
+</Callout>
+
+## Tearing down
+
+After `alethia project destroy`:
+
+```bash
+gcloud container clusters list --project my-gcp-project
+gcloud compute networks list  --project my-gcp-project
+gcloud compute addresses list --project my-gcp-project
+```
+
+Reserved static addresses and forwarding rules bill even when nothing uses them.
+
+Now go back to [step 1 of the tutorial](/tutorials/enterprise-demo#step-1--create-the-project-and-both-environments).

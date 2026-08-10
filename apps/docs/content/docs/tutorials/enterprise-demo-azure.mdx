@@ -1,0 +1,56 @@
+---
+title: Enterprise demo on Azure
+description: Run the enterprise-demo tutorial on AKS, connected with federated identity.
+---
+
+# Enterprise demo on Azure
+
+The per-cloud half of [Deploy the enterprise demo](/tutorials/enterprise-demo). Do this page's steps,
+then go back there.
+
+## Connect the subscription
+
+```bash
+alethia connector azure
+```
+
+This runs a setup script with your local `az` CLI, creating an app registration with a **federated
+credential** that trusts Alethia's issuer, plus a least-privilege role assignment. **No client secret
+is created.** `--manual` runs it in Azure Cloud Shell instead.
+
+```bash
+alethia connector list   # for the --cloud-identity-id
+```
+
+## The values to use
+
+| | |
+|---|---|
+| `--region` | `germanywestcentral`, or any region you prefer |
+| Cluster nodes | `Standard_D4s_v5` — 4 vCPU / 16 GiB |
+| Time to a cluster | ~20 minutes (AKS is the slowest of the four) |
+| Whole demo | **~$0.45/hour** — the AKS control plane is free on the Free tier, two nodes ~$0.39 |
+
+<Callout type="warn">
+  **Check your regional vCPU quota first.** A new subscription is often capped around 10 vCPU in a
+  region, and two `D4s_v5` nodes plus anything else you are running can exceed it. The failure arrives
+  as a quota error at apply time, minutes in.
+
+  Also note the VM size matters more on Azure than elsewhere: AKS refuses several older SKUs that
+  `az vm list-skus` reports as available. Stick to `v5`-generation D-series.
+</Callout>
+
+## Tearing down
+
+After `alethia project destroy`:
+
+```bash
+az aks list --output table
+az network vnet list --output table
+az group list --output table
+```
+
+Azure puts cluster infrastructure in a **second, auto-generated resource group** (`MC_…`). Check both
+that one and the one you targeted — a leftover public IP or managed disk there bills quietly.
+
+Now go back to [step 1 of the tutorial](/tutorials/enterprise-demo#step-1--create-the-project-and-both-environments).
