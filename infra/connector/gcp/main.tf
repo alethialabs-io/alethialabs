@@ -109,6 +109,21 @@ resource "google_service_account" "alethia" {
 # see google_service_account.alethia_app_db below — so it is made HERE, once, by you, instead.
 # secretmanager.admin is KEPT predefined on purpose: dropping secretmanager.versions.access breaks the
 # google provider's secret-version refresh (AccessSecretVersion on read) — tighten only with a real-apply.
+#
+# cloudkms.admin is category (1) by the rule above, and #2269 is why it is here at all. #2092 turned
+# Kubernetes Secrets envelope encryption ON BY DEFAULT (infra/templates/project/gcp/secrets-encryption.tf):
+# every new GKE cluster now creates a key ring, a crypto key, and one cryptoKeyEncrypterDecrypter
+# binding for the GKE service agent. #2269 gave the API to this connector but no KMS ROLE, so a real
+# customer passes the GCP-KMS-ENC-001 plan guard and then 403s at google_kms_key_ring — the same
+# shape #2269 closed for Azure and Alibaba, still open on GCP.
+#
+# It carries no data-plane access by Google's own split: cryptoKeys.useToEncrypt/useToDecrypt live in
+# roles/cloudkms.cryptoKeyEncrypterDecrypter, which this provisioner never holds — it WRITES that
+# binding for the GKE agent and cannot use the key itself. What it does carry that a narrower custom
+# role would omit is cryptoKeyVersions.destroy, and destroying this key makes every etcd backup
+# unreadable forever (see the lifecycle block on google_kms_crypto_key.gke_secrets). Tightening to a
+# management-only custom role is worth doing — and, exactly like secretmanager.admin above, needs a
+# real apply to prove the enumeration is complete before it ships.
 resource "google_project_iam_member" "alethia_provisioner" {
   for_each = toset([
     "roles/container.admin",                 # GKE clusters + node pools (churns per release — keep)
@@ -120,6 +135,7 @@ resource "google_project_iam_member" "alethia_provisioner" {
     "roles/dns.admin",                       # Cloud DNS managed zones (+ zone-scoped setIamPolicy)
     "roles/artifactregistry.admin",          # Artifact Registry
     "roles/secretmanager.admin",             # Secret Manager (kept — see note re: versions.access)
+    "roles/cloudkms.admin",                  # CMK for GKE Secrets encryption (#2092, on by default)
     "roles/iam.serviceAccountUser",          # actAs the node/add-on SAs
   ])
   project = var.project_id
