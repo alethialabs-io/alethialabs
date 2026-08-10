@@ -151,6 +151,30 @@ resource "azurerm_role_definition" "alethia_provisioner" {
       "Microsoft.KeyVault/vaults/keys/*",
     ]
     not_actions = []
+    # The provisioner MANAGES the KMS key it creates; it never USES it. AKS does the wrapping, as
+    # its own identity, which is why the cluster gets "Key Vault Crypto User" separately in
+    # secrets-encryption.tf.
+    #
+    # `keys/*` is granted rather than an enumerated verb list because a management verb missed here
+    # is an apply that dies on a real customer and cannot be reproduced from a plan — the rotation
+    # policy alone spans read/write sub-actions. The cryptographic USE actions are then subtracted,
+    # which is the safe direction: a too-narrow subtraction leaves a capability, a too-narrow
+    # allow-list breaks the deploy.
+    #
+    # Why it matters that these are subtracted: this role is assigned at SUBSCRIPTION scope, so
+    # without the exclusions the provisioner could decrypt with any key in any RBAC-authorized
+    # vault in the customer's subscription — including vaults Alethia never created, and keys
+    # protecting data that never touches Azure. Same reasoning as the enumerated (not `kms:*`)
+    # Alibaba key verbs in infra/connector/alibaba/main.tf.
+    not_data_actions = [
+      "Microsoft.KeyVault/vaults/keys/decrypt/action",
+      "Microsoft.KeyVault/vaults/keys/unwrapKey/action",
+      "Microsoft.KeyVault/vaults/keys/sign/action",
+      "Microsoft.KeyVault/vaults/keys/release/action",
+    ]
+    # `purge/action` is deliberately NOT subtracted. It is destructive but it is MANAGEMENT, and
+    # azurerm can attempt a purge on destroy — denying it would fail teardown rather than protect
+    # anything. These vaults run with purge protection on, so Azure refuses a purge regardless.
   }
 
   assignable_scopes = [data.azurerm_subscription.current.id]
