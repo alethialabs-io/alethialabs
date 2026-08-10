@@ -95,6 +95,8 @@ function sample(node: unknown, root: JsonSchema): unknown {
 // contract registry key → fixture filename in packages/core/api/testdata/.
 const FIXTURES: Record<keyof typeof cliContract, string> = {
 	RunnersResponse: "runners.json",
+	ByoChartAttachResponse: "byo_attach.json",
+	ByoScanResponse: "byo_scan.json",
 	ClustersResponse: "clusters.json",
 	ClusterDetailResponse: "cluster_detail.json",
 	CloudIdentitiesResponse: "cloud_identities.json",
