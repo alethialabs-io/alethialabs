@@ -30,12 +30,24 @@ import (
 
 // parseSoakDuration reads the soak window from a raw ALETHIA_E2E_SOAK value. An empty /
 // unset value ⇒ DISABLED (ok=false, no error): the soak is opt-in and its absence leaves
-// the base T2 proof unchanged. A non-empty but unparseable or non-positive value is a LOUD
-// error — a workflow typo (e.g. "10 m", "0s") must fail the run, never silently disable the
-// day-2 proof.
+// the base T2 proof unchanged. So are the explicit sentinels "off", "none" and "0", which
+// exist because the workflow's `vars.E2E_SOAK || '10m'` means an unset variable is NOT
+// unset by the time the harness sees it. A non-empty but unparseable or non-positive value
+// is still a LOUD error — a workflow typo ("10 m", "0s", "0ms") must fail the run, never
+// silently disable the day-2 proof.
 func parseSoakDuration(raw string) (d time.Duration, enabled bool, err error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
+		return 0, false, nil
+	}
+	// An EXPLICIT disable. Without this there is no way to turn the soak off from a repo variable:
+	// e2e-nightly.yml resolves `vars.E2E_SOAK || '10m'`, so clearing the variable yields 10m again,
+	// and setting it to "0" hit the non-positive error below and failed the run. The only working
+	// disable was a literal single space, which nothing documented and nobody would guess. A leg that
+	// wants its 25m of soak budget back — the fabric demo, say, which is already the widest term —
+	// should be able to say so.
+	switch strings.ToLower(raw) {
+	case "off", "none", "0":
 		return 0, false, nil
 	}
 	d, err = time.ParseDuration(raw)
