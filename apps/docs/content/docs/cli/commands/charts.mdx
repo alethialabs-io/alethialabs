@@ -33,6 +33,65 @@ Columns: **Chart** (its per-env id/release name), **Repo** (the git URL), **Path
 `done` | `failed`). Add `-o json` for the full view (the elench scan report itself is console-only);
 `-o csv` for the rows. Backing call: `GET /cli/projects/<project>/byo-charts`.
 
+## `alethia chart attach`
+
+Attach a chart from your own repository — git or OCI — to one environment.
+
+```bash
+# A chart in a git repo
+alethia chart attach api -p shop -e dev \
+  --repo https://github.com/acme/charts --chart-path charts/api --ref v1.2.3
+
+# An OCI chart (no --chart-path: the URL's last segment names it)
+alethia chart attach api -p shop --repo oci://registry.example.com/acme/api
+
+# With values
+alethia chart attach api -p shop --repo https://github.com/acme/charts \
+  --chart-path charts/api --set replicas=2 --values-file ./api-values.yaml
+```
+
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `<id>` | Yes | Your name for the chart (positional). Slugified server-side. |
+| `--repo` | Yes | Repository URL — `https://`, `git@…` or `oci://…`. |
+| `--chart-path` | git only | Path to the chart within the repo. |
+| `--ref` | No | Git ref (branch, tag or SHA). |
+| `--namespace` | No | Destination namespace. |
+| `--set key=value` | No | A chart value. Repeatable; JSON-typed when it parses. |
+| `--values-file` | No | Raw Helm values YAML override. |
+| `--git-credential-id` | No | Credential for a private repository. |
+
+Re-attaching the same id **updates** it, so this is also how you move a chart to a new ref. The
+success line echoes the id the server stored — it slugifies what you send, and that is the id the
+next command needs.
+
+## `alethia chart scan`
+
+```bash
+alethia chart scan api -p shop -e dev
+```
+
+An attached chart is **not deployable until it has been scanned**: the scan renders it and records
+the verdict the plan-time gate reads. Re-scan whenever the chart's repository moves. The printed job
+id follows with `alethia jobs logs <id> --follow`.
+
+## `alethia chart detach`
+
+```bash
+alethia chart detach api -p shop -e dev
+alethia chart detach api -p shop --yes
+```
+
+<Callout type="warn">
+  Detaching removes the chart's workloads from the cluster on the next sync. The command confirms
+  first, and requires `--yes` when it cannot prompt.
+</Callout>
+
+<Callout type="info">
+  These commands need `ALETHIA_BYO_HELM_ENABLED=true` on the instance. Without it they return **501**
+  with the variable named, rather than a permissions error you would go looking for in vain.
+</Callout>
+
 ## See also
 
 - [Add-on Commands](/cli/commands/addons) — the marketplace OSS add-ons.

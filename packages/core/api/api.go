@@ -448,6 +448,33 @@ func (c *Client) doDelete(endpoint string) error {
 	return nil
 }
 
+// doDeleteWithBody is doDelete for the routes that identify WHAT to delete in the body rather than
+// the path — a collection endpoint like .../byo-charts, where the chart id is a field and not a
+// segment. A DELETE carrying a body is legal and is what the console's own action shape implies here.
+func (c *Client) doDeleteWithBody(endpoint string, payload interface{}) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+	req, err := http.NewRequest("DELETE", endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	c.setAuthHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return responseError(resp)
+	}
+	return nil
+}
+
 // --- Repositories ---
 
 func (c *Client) GetRepositories(provider string) ([]Repository, error) {
@@ -1961,6 +1988,137 @@ func (c *Client) GetProjectAddons(project, env string) (*ProjectAddons, error) {
 }
 
 // --- BYO charts ---
+
+// AttachChartParams is the payload for AttachChart. Field validity — the repo-URL shape, the
+// git-chart-needs-a-path rule, the YAML-mapping check — is decided server-side by the same schema the
+// console form uses, so this struct carries the values and makes no rules of its own.
+type AttachChartParams struct {
+	Project    string
+	Env        string
+	ID         string
+	RepoURL    string
+	ChartPath  string
+	Ref        string
+	Namespace  string
+	ValuesYAML string
+	GitCredID  string
+	Values     map[string]interface{}
+}
+
+// ByoAttachResult is the resolved id of an attached chart or IaC source. Returned because the server
+// SLUGIFIES what you send, and a caller that wants to scan or detach it afterwards needs the id the
+// server actually stored rather than the one it guessed.
+type ByoAttachResult struct {
+	OK bool   `json:"ok"`
+	ID string `json:"id"`
+}
+
+// ByoScanResult is a queued scan job. The id is what makes the scan followable with
+// `alethia jobs logs -f` — a scan is asynchronous, and a bare ok would leave a script polling blind.
+type ByoScanResult struct {
+	OK    bool   `json:"ok"`
+	JobID string `json:"job_id"`
+}
+
+// AttachChart attaches (or updates) a BYO Helm chart in an environment.
+func (c *Client) AttachChart(p AttachChartParams) (*ByoAttachResult, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-charts", c.baseURL, url.PathEscape(p.Project)), p.Env)
+	payload := map[string]interface{}{"id": p.ID, "repo_url": p.RepoURL}
+	for k, v := range map[string]string{
+		"chart_path":        p.ChartPath,
+		"ref":               p.Ref,
+		"namespace":         p.Namespace,
+		"values_yaml":       p.ValuesYAML,
+		"git_credential_id": p.GitCredID,
+	} {
+		if v != "" {
+			payload[k] = v
+		}
+	}
+	if len(p.Values) > 0 {
+		payload["values"] = p.Values
+	}
+	var resp ByoAttachResult
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return nil, fmt.Errorf("failed to attach chart: %w", err)
+	}
+	return &resp, nil
+}
+
+// DetachChart removes a BYO Helm chart from an environment.
+func (c *Client) DetachChart(project, env, id string) error {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-charts", c.baseURL, url.PathEscape(project)), env)
+	if err := c.doDeleteWithBody(endpoint, map[string]interface{}{"id": id}); err != nil {
+		return fmt.Errorf("failed to detach chart: %w", err)
+	}
+	return nil
+}
+
+// ScanChart queues a scan of an attached BYO Helm chart and returns the job to follow.
+func (c *Client) ScanChart(project, env, id string) (*ByoScanResult, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-charts/scan", c.baseURL, url.PathEscape(project)), env)
+	var resp ByoScanResult
+	if err := c.doPost(endpoint, map[string]interface{}{"id": id}, &resp); err != nil {
+		return nil, fmt.Errorf("failed to scan chart: %w", err)
+	}
+	return &resp, nil
+}
+
+// AttachIacParams is the payload for AttachIac. VarValues is scalar-only (string/number/bool) — the
+// server refuses a nested object or an array, because tfvars are not a place for structure and never
+// a place for secrets.
+type AttachIacParams struct {
+	Project   string
+	Env       string
+	RepoURL   string
+	Ref       string
+	Path      string
+	GitCredID string
+	VarValues map[string]interface{}
+}
+
+// AttachIac attaches the environment's BYO Terraform/OpenTofu source.
+func (c *Client) AttachIac(p AttachIacParams) (*ByoAttachResult, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-iac", c.baseURL, url.PathEscape(p.Project)), p.Env)
+	payload := map[string]interface{}{"repo_url": p.RepoURL}
+	for k, v := range map[string]string{
+		"ref":               p.Ref,
+		"path":              p.Path,
+		"git_credential_id": p.GitCredID,
+	} {
+		if v != "" {
+			payload[k] = v
+		}
+	}
+	if len(p.VarValues) > 0 {
+		payload["var_values"] = p.VarValues
+	}
+	var resp ByoAttachResult
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return nil, fmt.Errorf("failed to attach IaC source: %w", err)
+	}
+	return &resp, nil
+}
+
+// DetachIac removes the environment's BYO IaC source. The environment is the whole address — it holds
+// at most one source — so there is nothing else to identify.
+func (c *Client) DetachIac(project, env string) error {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-iac", c.baseURL, url.PathEscape(project)), env)
+	if err := c.doDelete(endpoint); err != nil {
+		return fmt.Errorf("failed to detach IaC source: %w", err)
+	}
+	return nil
+}
+
+// ScanIac queues a scan of the environment's BYO IaC source and returns the job to follow.
+func (c *Client) ScanIac(project, env string) (*ByoScanResult, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-iac/scan", c.baseURL, url.PathEscape(project)), env)
+	var resp ByoScanResult
+	if err := c.doPost(endpoint, map[string]interface{}{}, &resp); err != nil {
+		return nil, fmt.Errorf("failed to scan IaC source: %w", err)
+	}
+	return &resp, nil
+}
 
 // ByoChart is one attached BYO Helm chart in an environment (scan status only, not the report).
 type ByoChart struct {

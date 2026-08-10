@@ -6,6 +6,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -244,4 +245,211 @@ func TestComponentWrites_CarryTheEnvParam(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The BYO client methods. Added with their own coverage because the packages/core ratchet sees the
+// whole api package: six methods landing untested drops it below its floor regardless of how well
+// the CLI side is covered.
+func TestByoChartClient(t *testing.T) {
+	t.Run("attach posts every field and returns the resolved id", func(t *testing.T) {
+		var got map[string]interface{}
+		var query string
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertAuth(t, r)
+			query = r.URL.RawQuery
+			json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "api"})
+		}))
+		res, err := client.AttachChart(AttachChartParams{
+			Project: "shop", Env: "dev", ID: "API!", RepoURL: "https://github.com/acme/charts",
+			ChartPath: "charts/api", Ref: "v1", Namespace: "api",
+			ValuesYAML: "a: b\n", GitCredID: "cred-1",
+			Values: map[string]interface{}{"replicas": 2},
+		})
+		if err != nil {
+			t.Fatalf("AttachChart: %v", err)
+		}
+		if query != "env=dev" {
+			t.Errorf("query = %q", query)
+		}
+		// The server slugifies, so the RESOLVED id is what a caller must get back.
+		if res.ID != "api" || !res.OK {
+			t.Errorf("unexpected result: %+v", res)
+		}
+		for k, want := range map[string]string{
+			"repo_url": "https://github.com/acme/charts", "chart_path": "charts/api",
+			"ref": "v1", "namespace": "api", "values_yaml": "a: b\n", "git_credential_id": "cred-1",
+		} {
+			if got[k] != want {
+				t.Errorf("%s = %v, want %q", k, got[k], want)
+			}
+		}
+	})
+
+	t.Run("attach omits every empty optional", func(t *testing.T) {
+		var got map[string]interface{}
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "api"})
+		}))
+		if _, err := client.AttachChart(AttachChartParams{Project: "s", ID: "api", RepoURL: "oci://r/x"}); err != nil {
+			t.Fatalf("AttachChart: %v", err)
+		}
+		for _, k := range []string{"chart_path", "ref", "namespace", "values_yaml", "git_credential_id", "values"} {
+			if _, present := got[k]; present {
+				t.Errorf("%q must be omitted when unset: %+v", k, got)
+			}
+		}
+	})
+
+	t.Run("detach DELETEs with the id in the body", func(t *testing.T) {
+		var got map[string]interface{}
+		var method string
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			method = r.Method
+			json.NewDecoder(r.Body).Decode(&got)
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		}))
+		if err := client.DetachChart("shop", "dev", "api"); err != nil {
+			t.Fatalf("DetachChart: %v", err)
+		}
+		if method != "DELETE" || got["id"] != "api" {
+			t.Errorf("got %s %+v", method, got)
+		}
+	})
+
+	t.Run("scan posts to the scan path and returns the job", func(t *testing.T) {
+		var path string
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path = r.URL.Path
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "job_id": "job-1"})
+		}))
+		res, err := client.ScanChart("shop", "", "api")
+		if err != nil {
+			t.Fatalf("ScanChart: %v", err)
+		}
+		if !strings.HasSuffix(path, "/byo-charts/scan") || res.JobID != "job-1" {
+			t.Errorf("path %q result %+v", path, res)
+		}
+	})
+
+	t.Run("all three surface a server error", func(t *testing.T) {
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotImplemented)
+			json.NewEncoder(w).Encode(map[string]string{"error": "not enabled"})
+		}))
+		if _, err := client.AttachChart(AttachChartParams{Project: "s", ID: "a", RepoURL: "https://x"}); err == nil {
+			t.Error("attach")
+		}
+		if err := client.DetachChart("s", "", "a"); err == nil {
+			t.Error("detach")
+		}
+		if _, err := client.ScanChart("s", "", "a"); err == nil {
+			t.Error("scan")
+		}
+	})
+}
+
+func TestByoIacClient(t *testing.T) {
+	t.Run("attach posts every field", func(t *testing.T) {
+		var got map[string]interface{}
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertAuth(t, r)
+			json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "iac-1"})
+		}))
+		res, err := client.AttachIac(AttachIacParams{
+			Project: "shop", Env: "dev", RepoURL: "https://github.com/acme/infra",
+			Ref: "main", Path: "iac/aws", GitCredID: "cred-1",
+			VarValues: map[string]interface{}{"region": "eu-west-1"},
+		})
+		if err != nil {
+			t.Fatalf("AttachIac: %v", err)
+		}
+		if res.ID != "iac-1" {
+			t.Errorf("unexpected result: %+v", res)
+		}
+		if got["repo_url"] == nil || got["ref"] != "main" || got["path"] != "iac/aws" {
+			t.Errorf("unexpected body: %+v", got)
+		}
+		if _, ok := got["var_values"].(map[string]interface{}); !ok {
+			t.Errorf("var_values missing: %+v", got)
+		}
+	})
+
+	t.Run("attach omits every empty optional", func(t *testing.T) {
+		var got map[string]interface{}
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewDecoder(r.Body).Decode(&got)
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "id": "i"})
+		}))
+		if _, err := client.AttachIac(AttachIacParams{Project: "s", RepoURL: "https://x"}); err != nil {
+			t.Fatalf("AttachIac: %v", err)
+		}
+		for _, k := range []string{"ref", "path", "git_credential_id", "var_values"} {
+			if _, present := got[k]; present {
+				t.Errorf("%q must be omitted when unset: %+v", k, got)
+			}
+		}
+	})
+
+	t.Run("detach DELETEs with no body", func(t *testing.T) {
+		var method string
+		var length int64
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			method, length = r.Method, r.ContentLength
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		}))
+		if err := client.DetachIac("shop", "dev"); err != nil {
+			t.Fatalf("DetachIac: %v", err)
+		}
+		// The environment is the whole address — an environment holds at most one source.
+		if method != "DELETE" || length > 0 {
+			t.Errorf("got %s with %d bytes", method, length)
+		}
+	})
+
+	t.Run("scan posts to the scan path", func(t *testing.T) {
+		var path string
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			path = r.URL.Path
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "job_id": "job-2"})
+		}))
+		res, err := client.ScanIac("shop", "dev")
+		if err != nil {
+			t.Fatalf("ScanIac: %v", err)
+		}
+		if !strings.HasSuffix(path, "/byo-iac/scan") || res.JobID != "job-2" {
+			t.Errorf("path %q result %+v", path, res)
+		}
+	})
+
+	t.Run("all three surface a server error", func(t *testing.T) {
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "template state"})
+		}))
+		if _, err := client.AttachIac(AttachIacParams{Project: "s", RepoURL: "https://x"}); err == nil {
+			t.Error("attach")
+		}
+		if err := client.DetachIac("s", ""); err == nil {
+			t.Error("detach")
+		}
+		if _, err := client.ScanIac("s", ""); err == nil {
+			t.Error("scan")
+		}
+	})
+
+	// doDeleteWithBody's transport arm, which no other test reaches.
+	t.Run("detachChart surfaces a transport error", func(t *testing.T) {
+		client := NewClient("t")
+		client.baseURL = "http://127.0.0.1:1/api"
+		if err := client.DetachChart("s", "", "a"); err == nil {
+			t.Fatal("expected a transport error")
+		}
+	})
 }

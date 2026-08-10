@@ -15,6 +15,8 @@ import {
 	cliJobsPageResponse,
 	cliRepositoriesResponse,
 	cliLatestReleaseWire,
+	cliByoChartAttachResponse,
+	cliByoScanResponse,
 	cliRunnersResponse,
 	cliUsageResponse,
 	connectIdentityWire,
@@ -41,6 +43,8 @@ function loadFixture(name: string): unknown {
 
 const cases: ReadonlyArray<[string, z.ZodType]> = [
 	["runners.json", cliRunnersResponse],
+	["byo_attach.json", cliByoChartAttachResponse],
+	["byo_scan.json", cliByoScanResponse],
 	["clusters.json", cliClustersResponse],
 	["cluster_detail.json", cliClusterDetailResponse],
 	["cloud_identities.json", cliCloudIdentitiesResponse],
