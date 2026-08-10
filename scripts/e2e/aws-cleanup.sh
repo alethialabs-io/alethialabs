@@ -652,8 +652,25 @@ sweep_managed_services() {
 		name="$(arn_id "$arn")"
 		# Never touch an AWS-managed key. The tag filter already excludes them (they carry no
 		# default_tags), but a scheduled deletion is irreversible and cheap to guard twice.
-		if [ "$(aws kms describe-key --key-id "$name" --query 'KeyMetadata.KeyManager' --output text 2>/dev/null || echo UNKNOWN)" != "CUSTOMER" ]; then
+		local meta manager state
+		meta="$(aws kms describe-key --key-id "$name" --query 'KeyMetadata.[KeyManager,KeyState]' --output text 2>/dev/null || printf 'UNKNOWN\tUNKNOWN')"
+		manager="$(printf '%s' "$meta" | cut -f1)"
+		state="$(printf '%s' "$meta" | cut -f2)"
+		if [ "$manager" != "CUSTOMER" ]; then
 			echo "      skip kms key ${name} (not customer-managed)"
+			continue
+		fi
+		# A key already in PendingDeletion cannot be scheduled again — the call fails, and
+		# retry_delete then burns all five attempts (~93s) on something that can never succeed.
+		# The comment above already states the principle ("a key sitting in PendingDeletion is as
+		# swept as a key can be") and alive_kms_keys() already honours it; only this loop did not.
+		#
+		# It is the single biggest time sink in a preflight sweep: 36 of the 37 tagged e2e keys in
+		# us-east-1 are in this state, so a full pass across the leaked environments spends the
+		# better part of an hour failing on keys that are already gone — which is a large part of
+		# how the preflight reached the 90-minute job cap (#2257).
+		if [ "$state" = "PendingDeletion" ]; then
+			echo "      skip kms key ${name} (already PendingDeletion — as swept as a key can be)"
 			continue
 		fi
 		retry_delete "kms key ${name} (schedule 7d)" aws kms schedule-key-deletion --key-id "$name" --pending-window-in-days 7
