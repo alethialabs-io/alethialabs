@@ -42,10 +42,34 @@ scrub_stream <"$raw" >"$out/t2-runner.log"
 
 # Fail-closed tripwire over what we are about to upload. Deliberately the same assertion the
 # proof bundle gets: an artifact is either scrubbed or it is not published.
+#
+# #2157: "not published" used to mean the whole log was deleted, which cost us the diagnosis for
+# every leg that reached `applying` — the ones whose evidence is worth the most. Publishing a
+# secret is still absolutely refused; what changed is that refusal is now scoped to the LINE that
+# could not be classified, when the finding is a heuristic one. Nothing about the detector moved.
 if ! assert_grep_clean "$out"; then
-	echo "::error::scrub-runner-log: refusing to upload — a secret survived the scrub of $raw" >&2
-	rm -f "$out/t2-runner.log"
-	exit 1
+	if [ "${SCRUB_HARD_FAIL:-0}" = "1" ]; then
+		# An exact known credential, or a PEM private key. There is no interpretation here — the
+		# value IS the secret, and a scrub that let one through is broken in a way that must not
+		# be papered over by dropping a line. Refuse the whole artifact, exactly as before.
+		echo "::error::scrub-runner-log: refusing to upload — a secret LITERAL or PEM key survived the scrub of $raw" >&2
+		rm -f "$out/t2-runner.log"
+		exit 1
+	fi
+	# Heuristic hit: a denylisted key that looks like it carries a value, in a shape the scrub
+	# does not know how to redact. Elide those lines and re-assert from scratch.
+	echo "::warning::scrub-runner-log: a denylisted key survived in an unrecognised shape — eliding those lines and uploading the rest (#2157)" >&2
+	scrub_elide_heuristic_lines "$out/t2-runner.log"
+	if ! assert_grep_clean "$out"; then
+		# The elision did not settle it. Do NOT loop and do NOT widen anything: an unclean
+		# artifact is never published, and a tripwire that still fires after the offending lines
+		# were removed means the finding is not line-shaped and needs a human.
+		echo "::error::scrub-runner-log: refusing to upload — the tripwire still fires after eliding the flagged lines of $raw" >&2
+		rm -f "$out/t2-runner.log"
+		exit 1
+	fi
+	echo "✓ runner log scrubbed, flagged lines elided, grep-clean: $out/t2-runner.log"
+	exit 0
 fi
 
 echo "✓ runner log scrubbed + grep-clean: $out/t2-runner.log"

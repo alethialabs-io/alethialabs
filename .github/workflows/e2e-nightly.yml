@@ -678,8 +678,20 @@ jobs:
       #    can't red an otherwise-healthy provisioning night (the always() teardown stays the
       #    fail-closed guarantee for THIS run). Same-cloud runs are serialized by the concurrency
       #    group, so any other e2e-* handle is genuinely an orphan. aws-only (its sweeper). ──
+      #
+      #    ⏱ BOUNDED (#2257). The script's own budget stops it STARTING a sweep it cannot finish,
+      #    but a single hung AWS call inside one sweep is outside its reach — so the step carries a
+      #    hard cap too, the same finer-than-the-job-cap pattern the provision step below uses.
+      #    `continue-on-error` is what keeps the posture honest: the ONLY ways this step can fail
+      #    are a timeout or a crash (preflight mode always `exit 0`s), and neither must red an
+      #    otherwise-healthy provisioning night. Without it, adding a timeout would convert the
+      #    cancellation into a failure rather than removing it. On run 31356854945 this step ran
+      #    04:52→06:22 against two unsweepable orphans and the JOB was cancelled at its 90m cap —
+      #    the aws leg provisioned nothing, and `exit 0` was never reached.
       - name: Stale-cluster preflight (sweep prior-run e2e orphans)
         if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
+        timeout-minutes: 20
+        continue-on-error: true
         env:
           PREFLIGHT: "1"
           ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
@@ -1287,16 +1299,22 @@ jobs:
             echo "::warning::red legs (${REDS}) but event=${EVENT_NAME} — skipping issue creation (schedule/dispatch only)."
             exit 0
           fi
-          # The dedup CANDIDATES come from the LABELS this filer applies, not from a full-text search
-          # of the title (#1755). `--search` is a fuzzy recall filter, and punctuation in a title can
-          # make it miss an issue that plainly exists: searching the exact open title of #1754
-          # (`fix(e2e): full-bar DNS fixture …`) returns nothing, because `fix(e2e):` parses as a
-          # qualifier. A false negative here files a DUPLICATE every night. `--label` is served live
-          # rather than from the search index, so it also cannot miss an issue filed minutes ago.
-          # The exact-title match below is still what decides — this only widens what it sees.
+          # The dedup CANDIDATES are EVERY open issue, not a label-narrowed slice (#2257). History,
+          # in two steps:
+          #   #1755 replaced `--search` with `--label` because a fuzzy search misses an issue that
+          #   plainly exists — the exact open title of #1754 (`fix(e2e): full-bar DNS fixture …`)
+          #   returns nothing, because `fix(e2e):` parses as a qualifier. That reasoning was right.
+          #   But ANDing three labels made the dedup key MUTABLE, and a mutable key is not an
+          #   identity. On 2026-08-09T09:48:26Z the open reds were re-waved `wave:hygiene` →
+          #   `wave:e2e-green` during triage; the next night's dedup could no longer see them and
+          #   refiled all three (#2059/#2060/#2061 → #2258/#2259/#2260).
+          # The title is the designed key here and — unlike the coverage filer's, which carries
+          # mutable counts — it is stable: `e2e nightly: <cloud> RED (<dimension>)`. So match it
+          # across all open issues. `--limit 200` + an exact string compare is cheap, and `gh issue
+          # list` is served live rather than from the search index, so it cannot miss an issue filed
+          # minutes ago. Nothing a triager does to labels can hide a candidate from this.
           open_reds="${RUNNER_TEMP}/open-red-issues.json"
           gh issue list --state open --limit 200 \
-            --label class:backend --label lane:tests --label wave:hygiene \
             --json title >"$open_reds" 2>/dev/null || echo '[]' >"$open_reds"
 
           for cloud in $REDS; do
@@ -1310,8 +1328,12 @@ jobs:
             # filters on class:), so a bot-filed red sat unclaimable and unworked — #1259 went nine
             # nights that way. These three exist in the repo's label set; the `||` below still keeps a
             # label problem from breaking the rollup.
+            # `from:e2e-nightly` is this filer's IDENTITY — nothing else applies it, so it stays a
+            # true marker however the wave/class labels are later re-triaged. The dedup above keys
+            # on the title across ALL open issues and does not depend on it; this is what lets
+            # tooling ask "which reds did the nightly file?" without guessing at a title shape.
             gh issue create --title "$title" --body-file "${OUT_DIR}/issue-red-${cloud}.md" \
-              --label class:backend --label lane:tests --label wave:hygiene \
+              --label class:backend --label lane:tests --label wave:hygiene --label from:e2e-nightly \
               && echo "::notice::filed tracking issue: ${title}" \
               || echo "::warning::could not create issue '${title}' (continuing)."
           done
