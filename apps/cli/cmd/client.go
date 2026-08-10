@@ -70,6 +70,8 @@ type apiClient interface {
 	AttachIac(p api.AttachIacParams) (*api.ByoAttachResult, error)
 	DetachIac(project, env string) error
 	ScanIac(project, env string) (*api.ByoScanResult, error)
+	EnableAddon(p api.EnableAddonParams) error
+	DisableAddon(project, env, addonID string) error
 	GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error)
 	GetProjectIacSource(project, env string) (*api.IacSource, error)
 	GetProjectPromotions(project, env string) ([]api.Promotion, error)
