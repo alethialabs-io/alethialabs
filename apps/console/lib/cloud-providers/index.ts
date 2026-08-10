@@ -49,6 +49,7 @@ export {
 	type KeylessCell,
 	type KeylessCellState,
 } from "./generated/keyless-cells";
+export { NODE_DISK, type NodeDiskSpec } from "./generated/node-disk";
 export { getProvider, CACHE_TTL_HOURS } from "./provider-slug";
 export { groupRegions } from "./region-groups";
 export { WAF_OPTIONS, CERT_OPTIONS } from "./dns";
