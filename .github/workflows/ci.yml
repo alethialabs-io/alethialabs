@@ -556,6 +556,15 @@ jobs:
           pnpm -F console gen:keyless-cells
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/keyless-cells.ts \
             || { echo "::error::Generated keyless-cells.ts is stale — run 'pnpm -F console gen:keyless-cells' and commit (source of truth: packages/core/manifests/keyless.go)."; exit 1; }
+      # The inspector's per-cloud node-disk floors (#1972). Same shape: the floors live in the
+      # templates' own `>= N` validations (the literals the Go constants are pinned to by
+      # TestNodeDiskFloorsMatchTemplates); the canvas reads a generated mirror of them, so a floor
+      # bump in a template that isn't regenerated here fails the build instead of drifting.
+      - name: Node-disk floors are in sync with the templates (variables.tf → node-disk.ts)
+        run: |
+          pnpm -F console gen:node-disk
+          git diff --exit-code -- apps/console/lib/cloud-providers/generated/node-disk.ts \
+            || { echo "::error::Generated node-disk.ts is stale — run 'pnpm -F console gen:node-disk' and commit (source of truth: each template's disk-size variable)."; exit 1; }
       # The offer surface — which canvas switches a user can actually see, per cloud. Derived by
       # EVALUATING the inspector schema's visibleWhen predicates, because they are closures over
       # (config, provider, capabilities) that no pattern-match can read. Checked in so the answer is

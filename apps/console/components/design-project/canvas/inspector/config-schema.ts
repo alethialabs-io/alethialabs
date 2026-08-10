@@ -17,6 +17,7 @@ import {
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
 	keylessUnavailableReason,
+	NODE_DISK,
 	NOSQL,
 	wafUnavailableReason,
 	type CloudProviderSlug,
@@ -972,11 +973,30 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "number",
 						label: "Node disk",
 						unit: "GB",
-						min: 20,
+						// Per-cloud floor from the generated NODE_DISK mirror (#1972): a single
+						// cross-cloud `min: 20` undershot Azure's 30 GB OS-disk minimum, so 24 GB
+						// saved cleanly there and failed at plan. The numbers are scraped from the
+						// templates' own `>= N` validations — the same literals the Go floors are
+						// pinned to — never hand-copied here (#1967's failure mode).
+						min: ({ provider }) =>
+							(provider && NODE_DISK[provider]?.floorGb) || 20,
 						max: 2000,
 						optional: true,
-						placeholder: "per-cloud default",
-						description: "Worker root volume. Empty uses the cloud's default (EKS 50 · GKE 50 · AKS 100).",
+						placeholder: ({ provider }) => {
+							const spec = provider ? NODE_DISK[provider] : null;
+							return spec
+								? `default ${spec.templateDefaultGb} · min ${spec.floorGb}`
+								: "per-cloud default";
+						},
+						description: "Worker root volume. Empty uses the cloud's own default.",
+						// Hetzner has no node-disk knob AT ALL — a server's disk comes with its
+						// server type, `cluster.node_disk_size_gb / hetzner` is a documented
+						// exclusion on the carriage board, and TestNodeDiskFloorsMatchTemplates
+						// pins the template's deliberate lack of a disk variable. The field is not
+						// part of the shape there, so `visibleWhen`, not `unavailableWhen` — and
+						// unlike num_cache_nodes (#1993) no offer-board entry keys this cell, so
+						// hiding it makes no recorded ceiling dangle.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
 				],
 			},
