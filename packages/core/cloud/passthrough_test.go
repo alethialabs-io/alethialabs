@@ -478,3 +478,57 @@ func TestProviderTfvars_AzureCacheNodeCountWithdrawn(t *testing.T) {
 		t.Errorf("azure_cache_sku = %v — the node count flips the tier again; it must emit nothing", v)
 	}
 }
+
+// AllowedCidrBlocks is withdrawn on Azure caches (#2148): Managed Redis — the only cache Azure
+// lets us deterministically create — has no CIDR firewall surface, in the service or in azurerm
+// 4.81.0/5.0.1, and the two look-alikes are both traps: `public_network_access` is an on/off
+// switch that discards every address typed, and NSP is not onboarded for any Microsoft.Cache type
+// (docs/research/azure-cache-cidr.md). The withdrawn list must reach NO azure tfvar under any
+// name — this walks every emitted value for the sentinel CIDR rather than guessing key names, so
+// a future carrier smuggled in under a new key fails here until the exclusions ceiling is
+// deliberately lifted.
+func TestProviderTfvars_AzureCacheAllowedCidrBlocksWithdrawn(t *testing.T) {
+	const sentinel = "203.0.113.0/24"
+	cfg := &types.ProjectConfig{
+		Caches: []types.ProjectCacheConfig{{Name: "c", AllowedCidrBlocks: []string{sentinel}}},
+	}
+	tf := (&azureProvider{}).ProviderTfvars(cfg)
+
+	var contains func(v interface{}) bool
+	contains = func(v interface{}) bool {
+		switch x := v.(type) {
+		case string:
+			return x == sentinel
+		case []string:
+			for _, s := range x {
+				if s == sentinel {
+					return true
+				}
+			}
+		case []interface{}:
+			for _, e := range x {
+				if contains(e) {
+					return true
+				}
+			}
+		case map[string]interface{}:
+			for _, e := range x {
+				if contains(e) {
+					return true
+				}
+			}
+		case []map[string]interface{}:
+			for _, e := range x {
+				if contains(e) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for key, v := range tf {
+		if contains(v) {
+			t.Errorf("tfvar %q carries the withdrawn cache CIDR %q — the control is a recorded ceiling on azure and must emit nothing", key, sentinel)
+		}
+	}
+}

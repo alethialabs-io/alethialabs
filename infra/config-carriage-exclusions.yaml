@@ -260,7 +260,22 @@ exclusions:
   #
   # So the control is WITHDRAWN on Azure in the inspector (`unavailableWhen`, never `visibleWhen`,
   # so azure stays in `offeredOn` and this entry matches something) rather than dressed up as a
-  # carrier. If Azure ever ships a firewall surface for Managed Redis, this becomes a carrier again.
+  # carrier.
+  #
+  # The #2264 research (docs/research/azure-cache-cidr.md, checked 2026-08-10) closed the two
+  # escape hatches this ceiling might otherwise be argued around:
+  #   · "switch back to classic" — classic creation is blocked PER TENANT since 2026-04-01
+  #     (new-customer tenants refused, grandfathered ones create until the 2028-09-30 retirement),
+  #     so the same plan applies in some customer subscriptions and 400s in others, and the
+  #     provisioner cannot tell which it is in. Not a product path.
+  #   · Network Security Perimeter — the one ARM mechanism whose access rules take literal CIDR
+  #     prefixes (and whose azurerm resources exist at 4.81.0/5.0.1) — has NO Microsoft.Cache type
+  #     on its GA onboarded-resources list, so an association targets an unsupported service.
+  # RE-OPEN CONDITION, the one checkable event: Microsoft.Cache/redisEnterprise appearing on the
+  # NSP onboarded list (learn.microsoft.com/azure/private-link/network-security-perimeter-concepts)
+  # — that page gaining our type is what would make a real carrier expressible again. A firewall
+  # sub-resource shipping on azurerm_managed_redis would do it too, but nothing service-side
+  # suggests one is coming.
   - field: caches.allowed_cidr_blocks
     cloud: azure
     reason: Azure Managed Redis has no CIDR firewall — the service offers only a public-access on/off switch, so reachability is governed by the network the cache sits in rather than by a per-cache allow-list.
