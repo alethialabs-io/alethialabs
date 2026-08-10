@@ -6,7 +6,9 @@ package cloud
 import (
 	"fmt"
 	"net"
+	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -221,4 +223,43 @@ func validateNetworkCIDR(config *types.ProjectConfig, tfvar string, maxPrefix in
 				"a /%d or wider network", tfvar, maxPrefix))
 	}
 	return nil
+}
+
+// validateServiceNames refuses a project whose services would render the same Kubernetes object
+// (#2234).
+//
+// Every service name goes through dns1123 before it becomes a Deployment and a Service name, and
+// that function is lossy three ways: case ("api"/"API"), separator folding ("a.b"/"a-b"/"a_b"),
+// and truncation at 63 characters. Two names that differ only in one of those ways collapse onto
+// one label, and ArgoCD then applies both manifests to one object last-write-wins — so a workload
+// is silently absent while the deploy reports SUCCESS. #2054 made both files get written, which
+// moved the harm into the GitOps repo where it is at least visible, but did not remove it.
+//
+// This is the cloud-agnostic half of the rule and runs on every provider: the collapse happens in
+// manifest rendering, which no cloud varies.
+//
+// The collision test itself is manifests.NameCollisions rather than a second copy of dns1123 here
+// — rule 2 of this file. A hand-rolled "are these the same?" would have to re-derive all three
+// kinds of lossiness, and would drift the first time one of them changed.
+func validateServiceNames(config *types.ProjectConfig) error {
+	collisions := manifests.NameCollisions(serviceNamesOf(config))
+	if len(collisions) == 0 {
+		return nil
+	}
+	c := collisions[0]
+	return configError(
+		fmt.Sprintf("services %s", strings.Join(c.Names, ", ")),
+		fmt.Sprintf("the Kubernetes object name %q", c.Label),
+		"service names must stay distinct after they are lowercased, punctuation-folded and cut to "+
+			"63 characters — otherwise they render one Deployment and one Service between them, and "+
+			"only one workload runs")
+}
+
+// serviceNamesOf lists the project's service names, un-normalized.
+func serviceNamesOf(config *types.ProjectConfig) []string {
+	out := make([]string, 0, len(config.Services))
+	for _, s := range config.Services {
+		out = append(out, s.Name)
+	}
+	return out
 }
