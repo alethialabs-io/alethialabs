@@ -64,6 +64,12 @@ type apiClient interface {
 	GetProjectProtection(project string) ([]api.ProtectionRule, error)
 	GetProjectProbes(project string) ([]api.ProbeState, error)
 	GetProjectAddons(project, env string) (*api.ProjectAddons, error)
+	AttachChart(p api.AttachChartParams) (*api.ByoAttachResult, error)
+	DetachChart(project, env, id string) error
+	ScanChart(project, env, id string) (*api.ByoScanResult, error)
+	AttachIac(p api.AttachIacParams) (*api.ByoAttachResult, error)
+	DetachIac(project, env string) error
+	ScanIac(project, env string) (*api.ByoScanResult, error)
 	GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error)
 	GetProjectIacSource(project, env string) (*api.IacSource, error)
 	GetProjectPromotions(project, env string) ([]api.Promotion, error)

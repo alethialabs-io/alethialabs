@@ -117,6 +117,12 @@ type fakeClient struct {
 	rmCompKind     string
 	rmCompName     string
 	rmCompEnv      string
+	attachedChart  api.AttachChartParams
+	attachedIac    api.AttachIacParams
+	byoDetached    []string
+	byoScanned     []string
+	scanResult     *api.ByoScanResult
+	attachResult   *api.ByoAttachResult
 }
 
 func (f *fakeClient) Whoami() (*api.WhoAmI, error)                   { return f.whoami, f.err }
@@ -388,6 +394,57 @@ func (f *fakeClient) GetProjectProbes(project string) ([]api.ProbeState, error) 
 
 func (f *fakeClient) GetProjectAddons(project, env string) (*api.ProjectAddons, error) {
 	return f.addons, f.err
+}
+
+func (f *fakeClient) AttachChart(p api.AttachChartParams) (*api.ByoAttachResult, error) {
+	f.attachedChart = p
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.attachResult != nil {
+		return f.attachResult, nil
+	}
+	return &api.ByoAttachResult{OK: true, ID: p.ID}, nil
+}
+
+func (f *fakeClient) DetachChart(project, env, id string) error {
+	f.byoDetached = append(f.byoDetached, "chart:"+project+":"+env+":"+id)
+	return f.err
+}
+
+func (f *fakeClient) ScanChart(project, env, id string) (*api.ByoScanResult, error) {
+	f.byoScanned = append(f.byoScanned, "chart:"+project+":"+env+":"+id)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.scanResult != nil {
+		return f.scanResult, nil
+	}
+	return &api.ByoScanResult{OK: true, JobID: "job-1"}, nil
+}
+
+func (f *fakeClient) AttachIac(p api.AttachIacParams) (*api.ByoAttachResult, error) {
+	f.attachedIac = p
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &api.ByoAttachResult{OK: true, ID: "iac-1"}, nil
+}
+
+func (f *fakeClient) DetachIac(project, env string) error {
+	f.byoDetached = append(f.byoDetached, "iac:"+project+":"+env)
+	return f.err
+}
+
+func (f *fakeClient) ScanIac(project, env string) (*api.ByoScanResult, error) {
+	f.byoScanned = append(f.byoScanned, "iac:"+project+":"+env)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.scanResult != nil {
+		return f.scanResult, nil
+	}
+	return &api.ByoScanResult{OK: true, JobID: "job-2"}, nil
 }
 
 func (f *fakeClient) GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error) {
