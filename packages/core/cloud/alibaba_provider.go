@@ -398,10 +398,14 @@ func otsKeyType(t string) string {
 // subscription and nothing usable. That absence is also why `registry:immutable_tags` could not be
 // wired on Alibaba: `tag_immutability` is an argument on the repository, and there was no repository.
 //
-// Only NATIVE registry components produce a repository, and the switch travels per repository — the
-// instance's own arguments are never touched by it. That matters more here than elsewhere: the CR EE
-// instance is `payment_type = "Subscription"`, so landing a canvas switch on one of its arguments
+// Only NATIVE registry components produce a repository, and the switches travel per repository — the
+// instance's own arguments are never touched by them. That matters more here than elsewhere: the CR EE
+// instance is `payment_type = "Subscription"`, so a canvas switch landing on one of its arguments
 // would put a monthly commitment behind a checkbox and, worse, could force its replacement.
+// `vulnerability_scanning` (#1845) rides the same per-repository entry; on the template side it
+// becomes a REPO-scoped `alicloud_cr_scan_rule` — a SIBLING resource, never an instance argument
+// (`image_scanner`/`vpc_quota` on the instance are the #1933 traps: not ForceNew yet absent from
+// the provider's Update function, so a change applies "cleanly" and does nothing).
 func buildCRRepos(config *types.ProjectConfig) map[string]interface{} {
 	out := map[string]interface{}{}
 	for _, r := range config.ContainerRegistries {
@@ -418,9 +422,15 @@ func buildCRRepos(config *types.ProjectConfig) map[string]interface{} {
 		if r.ImmutableTags != nil {
 			immutable = *r.ImmutableTags
 		}
+		// The OPPOSITE default from ImmutableTags, and deliberately so (the GCP pair pins the
+		// same asymmetry): nil means "leave the template default alone", and the template's
+		// default here is NO scan rule — before #1845 the module created none, so an older
+		// snapshot must keep planning none.
+		scanning := r.VulnerabilityScanning != nil && *r.VulnerabilityScanning
 		out[r.Name] = map[string]interface{}{
-			"summary":        "Container images for " + r.Name,
-			"immutable_tags": immutable,
+			"summary":                "Container images for " + r.Name,
+			"immutable_tags":         immutable,
+			"vulnerability_scanning": scanning,
 		}
 	}
 	return out
