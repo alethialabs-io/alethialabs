@@ -64,7 +64,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 |---|:---:|:---:|:---:|:---:|:---:|
 | `immutable_tags` | 🟡 | 🟡 | · | 🟡 | · |
 | `provider` | · | · | · | · | · |
-| `vulnerability_scanning` | 🚫 #1845 | 🟡 | · | 🟡 | · |
+| `vulnerability_scanning` | 🟡 | 🟡 | · | 🟡 | · |
 
 ### `databases`
 
@@ -250,7 +250,6 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 |---|---|:---:|---|---|---|
 | `caches.allowed_cidr_blocks` | azure | 🚫 | no-carrier (boarded as no-carrier) | #2148 | The network allow-list you set on a cache is not applied on Azure yet — the cache is created with the template's default access rules instead. |
 | `nosql_tables.global_replicas` | azure | 🚫 | no-carrier (boarded as no-carrier) | #2158 | The replica regions you choose for a table are not applied on Azure yet — the Cosmos account is created in its own region only. |
-| `container_registries.vulnerability_scanning` | alibaba | 🚫 | no-carrier (boarded as no-carrier) | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
 
 ---
 

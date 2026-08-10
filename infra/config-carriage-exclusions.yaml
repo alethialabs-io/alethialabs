@@ -432,17 +432,14 @@ baseline:
   # and a security group attached to the ACK node pool). Deleted rather than left behind, because
   # the guard fails on a baseline entry whose gap no longer reproduces.
 
-  # ── Container registry image scanning on Alibaba ───────────────────────────────────
-  # Alibaba sells image scanning, so this is debt rather than a ceiling — but it is not a wiring
-  # change: scanning is `alicloud_cr_scan_rule`, an instance-scoped SIBLING resource rather than an
-  # argument on the repository, and Alibaba's own guide requires a VPC on the Enterprise Edition
-  # instance, which `modules/cr` does not configure. Wiring it anyway would satisfy the guard while
-  # the ON position did nothing, which is the defect the guard exists to catch, not a way to pass it.
-  - field: container_registries.vulnerability_scanning
-    cloud: alibaba
-    reason: Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice.
-    issue: "#1845"
-    state: no-carrier
+  # container_registries.vulnerability_scanning / alibaba was here (#1845): scanning is
+  # `alicloud_cr_scan_rule`, an instance-scoped SIBLING resource rather than a repository argument,
+  # and the #1895 research left the AUTO trigger's VPC prerequisite unresolved in both languages.
+  # FIXED at the carrier: one REPO-scoped AUTO/VUL rule per repository whose switch is on, OFF as
+  # the rule's absence, and the Subscription instance's `image_scanner`/`vpc_quota` traps untouched
+  # (#1933). Plan-green is deliberately NOT the whole claim — the push-an-image-and-observe-a-scan
+  # proof is owed by the alibaba e2e nightly (#2061/#2101), and if scans never fire there the
+  # fallback is a plan-time refusal (the gcp #1844 shape), not silent green.
 
   # dns.zone_id / azure was here (#1992): declared, read only by a `check` that never blocks, and
   # then ignored while modules/azure-dns created a NEW zone unconditionally. FIXED — creation is
