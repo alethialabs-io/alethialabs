@@ -55,7 +55,7 @@ type apiClient interface {
 	SetFleetPool(provider string, update api.FleetPoolUpdate) (*api.FleetPool, error)
 	CreateProject(params api.CreateProjectParams) (*api.Project, error)
 	ListEnvironments(project string) ([]api.Environment, error)
-	AddEnvironment(project, name, stage, region string) (*api.Environment, error)
+	AddEnvironment(params api.AddEnvironmentParams) (*api.Environment, error)
 	ListComponents(project, kind, env string) ([]api.Component, error)
 	AddComponent(project, kind, name, env string, fields map[string]interface{}) (*api.Component, error)
 	RemoveComponent(project, kind, name, env string) error

@@ -105,6 +105,7 @@ type fakeClient struct {
 	addedEnvName   string
 	addedEnvStage  string
 	addedEnvRegion string
+	addedEnvParams api.AddEnvironmentParams
 	listCompProj   string
 	listCompKind   string
 	listCompEnv    string
@@ -338,15 +339,16 @@ func (f *fakeClient) ListEnvironments(project string) ([]api.Environment, error)
 	return f.environments, f.err
 }
 
-func (f *fakeClient) AddEnvironment(project, name, stage, region string) (*api.Environment, error) {
-	f.envProject, f.addedEnvName, f.addedEnvStage, f.addedEnvRegion = project, name, stage, region
+func (f *fakeClient) AddEnvironment(params api.AddEnvironmentParams) (*api.Environment, error) {
+	f.envProject, f.addedEnvName, f.addedEnvStage, f.addedEnvRegion = params.Project, params.Name, params.Stage, params.Region
+	f.addedEnvParams = params
 	if f.err != nil {
 		return nil, f.err
 	}
 	if f.createdEnv != nil {
 		return f.createdEnv, nil
 	}
-	return &api.Environment{ID: "env1", Name: name, Stage: stage, Status: "DRAFT"}, nil
+	return &api.Environment{ID: "env1", Name: params.Name, Stage: params.Stage, Status: "DRAFT"}, nil
 }
 
 func (f *fakeClient) ListComponents(project, kind, env string) ([]api.Component, error) {

@@ -150,7 +150,7 @@ func TestRunProjectEnvListError(t *testing.T) {
 func TestRunProjectEnvAdd(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runProjectEnvAdd(f, &buf, "api", "staging", "staging", "us-east-1"); err != nil {
+	if err := runProjectEnvAdd(f, &buf, api.AddEnvironmentParams{Project: "api", Name: "staging", Stage: "staging", Region: "us-east-1"}); err != nil {
 		t.Fatalf("runProjectEnvAdd: %v", err)
 	}
 	if f.addedEnvName != "staging" || f.addedEnvStage != "staging" || f.addedEnvRegion != "us-east-1" {
@@ -163,7 +163,7 @@ func TestRunProjectEnvAdd(t *testing.T) {
 
 func TestRunProjectEnvAddError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runProjectEnvAdd(&fakeClient{err: errBoom}, &buf, "api", "x", "development", ""); err == nil {
+	if err := runProjectEnvAdd(&fakeClient{err: errBoom}, &buf, api.AddEnvironmentParams{Project: "api", Name: "x", Stage: "development"}); err == nil {
 		t.Error("expected error propagated")
 	}
 }
@@ -472,6 +472,82 @@ func TestComponentEnvIsThreadedThrough(t *testing.T) {
 	})
 }
 
+// --- placement (#844 from the terminal) ---
+
+// TestParseEnvMatrix pins the parser that turns `--env name:stage[:mode[:namespace]]` into the
+// environment matrix. The matrix is what makes a two-tier project cost ONE cluster: without it the
+// server keeps the legacy shape and every environment the CLI creates comes out `dedicated`.
+func TestParseEnvMatrix(t *testing.T) {
+	t.Run("no flags means no matrix", func(t *testing.T) {
+		got, err := parseEnvMatrix(nil)
+		if err != nil || got != nil {
+			t.Fatalf("want (nil, nil) so the server keeps its legacy shape, got (%#v, %v)", got, err)
+		}
+	})
+
+	t.Run("the enterprise-demo shape", func(t *testing.T) {
+		got, err := parseEnvMatrix([]string{
+			"prod:production",
+			"dev:development:namespace:boutique-dev",
+			"staging:staging:vcluster",
+		})
+		if err != nil {
+			t.Fatalf("parseEnvMatrix: %v", err)
+		}
+		want := []api.EnvironmentSpec{
+			// First entry OWNS the Fabric, so it defaults to dedicated and is the default env.
+			{Name: "prod", Stage: "production", PlacementMode: "dedicated", IsDefault: true},
+			{Name: "dev", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev"},
+			{Name: "staging", Stage: "staging", PlacementMode: "vcluster"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("matrix mismatch:\n got %#v\nwant %#v", got, want)
+		}
+	})
+
+	t.Run("a later entry defaults to the cheap rung", func(t *testing.T) {
+		got, err := parseEnvMatrix([]string{"prod:production", "preview:development"})
+		if err != nil {
+			t.Fatalf("parseEnvMatrix: %v", err)
+		}
+		if got[1].PlacementMode != "namespace" {
+			t.Errorf("second entry should default to namespace, got %q", got[1].PlacementMode)
+		}
+		if got[1].IsDefault {
+			t.Error("only the first entry may be the default")
+		}
+	})
+
+	t.Run("an explicit mode overrides the positional default", func(t *testing.T) {
+		got, err := parseEnvMatrix([]string{"prod:production:namespace"})
+		if err != nil {
+			t.Fatalf("parseEnvMatrix: %v", err)
+		}
+		if got[0].PlacementMode != "namespace" {
+			t.Errorf("explicit mode ignored: %q", got[0].PlacementMode)
+		}
+	})
+
+	for _, bad := range []struct{ name, in string }{
+		{"no stage", "prod"},
+		{"empty name", ":production"},
+		{"empty stage", "prod:"},
+		{"too many segments", "a:b:c:d:e"},
+	} {
+		t.Run("rejects "+bad.name, func(t *testing.T) {
+			if _, err := parseEnvMatrix([]string{bad.in}); err == nil {
+				t.Errorf("parseEnvMatrix(%q) should error", bad.in)
+			}
+		})
+	}
+
+	t.Run("rejects a duplicate name", func(t *testing.T) {
+		if _, err := parseEnvMatrix([]string{"dev:development", "dev:staging"}); err == nil {
+			t.Error("a duplicate environment name must be rejected here, not by a unique violation")
+		}
+	})
+}
+
 func TestEnvSuffix(t *testing.T) {
 	if got := envSuffix(""); got != "" {
 		t.Errorf(`envSuffix("") = %q, want ""`, got)
@@ -496,5 +572,44 @@ func TestCurrentComponentEnv(t *testing.T) {
 	}
 	if got := currentComponentEnv(cmd); got != "staging" {
 		t.Errorf("expected trimmed %q, got %q", "staging", got)
+	}
+}
+
+// TestProjectEnvAddCarriesPlacement is the other half: `project env add` used to send no placement at
+// all, and project_environments.placement_mode DEFAULTS to `dedicated` — so adding an environment
+// silently provisioned a whole new cluster with its own state key.
+func TestProjectEnvAddCarriesPlacement(t *testing.T) {
+	var buf bytes.Buffer
+	f := &fakeClient{}
+	params := api.AddEnvironmentParams{
+		Project:   "shop",
+		Name:      "staging",
+		Stage:     "staging",
+		Placement: "vcluster",
+		Fabric:    "shared",
+		Namespace: "boutique-staging",
+		Lifecycle: "persistent",
+	}
+	if err := runProjectEnvAdd(f, &buf, params); err != nil {
+		t.Fatalf("runProjectEnvAdd: %v", err)
+	}
+	if !reflect.DeepEqual(f.addedEnvParams, params) {
+		t.Errorf("placement fields dropped:\n got %#v\nwant %#v", f.addedEnvParams, params)
+	}
+	// The placement is the field with a cost, so it belongs in the confirmation.
+	if !strings.Contains(buf.String(), "vcluster placement") {
+		t.Errorf("confirmation omits the placement: %q", buf.String())
+	}
+}
+
+// And when no placement is passed the confirmation must name the server's default rather than an
+// empty string — a caller reading "( , placement)" learns nothing about what they just bought.
+func TestProjectEnvAddNamesTheDefaultPlacement(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runProjectEnvAdd(&fakeClient{}, &buf, api.AddEnvironmentParams{Project: "p", Name: "e"}); err != nil {
+		t.Fatalf("runProjectEnvAdd: %v", err)
+	}
+	if !strings.Contains(buf.String(), "namespace placement") {
+		t.Errorf("confirmation should name the default placement: %q", buf.String())
 	}
 }
