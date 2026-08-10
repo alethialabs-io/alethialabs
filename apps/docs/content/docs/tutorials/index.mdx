@@ -1,0 +1,34 @@
+---
+title: Tutorials
+description: Learn Alethia by building something real, start to finish, on a cloud you own.
+---
+
+# Tutorials
+
+A tutorial is a **lesson**, not a reference. It has one path, it says what to type, and it ends with
+something running that you can look at. Where the [how-to guides](/console) answer "how do I do X"
+and the [concepts](/concepts/fabrics-and-placement) explain why the product is shaped the way it is,
+a tutorial is for the first time you use Alethia at all.
+
+Each one is written to be followed exactly. If a step does not produce what the page says it
+produces, that is a bug in the page — the commands here are the ones our own acceptance tests run.
+
+## Available tutorials
+
+**[Deploy the enterprise demo](/tutorials/enterprise-demo)** — one cluster hosting two independently
+delivered environments, a real application in each, and a signed receipt proving what was built.
+About 40 minutes, most of it waiting for a cluster. Pick a cloud when you get there; Hetzner is the
+cheapest by a wide margin.
+
+## Before any of them
+
+- The [CLI installed](/cli/installation) and `alethia login` done.
+- An account on one cloud, with permission to create clusters and networks in it.
+- A [runner](/runner) — `alethia runner register` if you will run one yourself, which works on any
+  cloud, or `alethia fleet set` for a managed one.
+
+<Callout type="warn">
+  These tutorials **provision real infrastructure and cost real money.** Every one ends with a
+  teardown step, and none of them is finished until you have run it. The per-cloud pages give a
+  cost-per-hour figure so you can decide before you start rather than after.
+</Callout>

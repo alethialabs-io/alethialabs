@@ -1,18 +1,19 @@
 {
-  "title": "Documentation",
-  "root": true,
-  "pages": [
-    "index",
-    "editions",
-    "compare",
-    "console",
-    "cli",
-    "elench",
-    "isolated-execution",
-    "runner",
-    "access-control",
-    "standards",
-    "self-hosting",
-    "concepts"
-  ]
+	"title": "Documentation",
+	"root": true,
+	"pages": [
+		"index",
+		"tutorials",
+		"editions",
+		"compare",
+		"console",
+		"cli",
+		"elench",
+		"isolated-execution",
+		"runner",
+		"access-control",
+		"standards",
+		"self-hosting",
+		"concepts"
+	]
 }

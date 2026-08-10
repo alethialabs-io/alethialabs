@@ -1,0 +1,54 @@
+---
+title: Enterprise demo on AWS
+description: Run the enterprise-demo tutorial on EKS, connected keylessly.
+---
+
+# Enterprise demo on AWS
+
+The per-cloud half of [Deploy the enterprise demo](/tutorials/enterprise-demo). Do this page's steps,
+then go back there.
+
+## Connect the account
+
+```bash
+alethia connector aws
+```
+
+This deploys a CloudFormation stack with your local `aws` CLI, creating an IAM OIDC provider that
+trusts Alethia's issuer plus a provisioner role. **No access keys exist** — Alethia assumes the role
+with a short-lived minted assertion. If you would rather not install the CLI, `--manual` prints a
+console link and a one-liner and waits for you to paste the role ARN back.
+
+```bash
+alethia connector list   # for the --cloud-identity-id
+```
+
+## The values to use
+
+| | |
+|---|---|
+| `--region` | `us-east-1`, or any region you prefer |
+| Cluster nodes | `t3.xlarge` — 4 vCPU / 16 GiB |
+| Time to a cluster | ~18 minutes (EKS control plane is the slow part) |
+| Whole demo | **~$0.60/hour** — EKS control plane ~$0.10, two nodes ~$0.33, one NAT gateway ~$0.045, plus data |
+
+<Callout type="warn">
+  The **NAT gateway** is the cost that surprises people: it bills hourly whether or not traffic flows,
+  and it is not removed by deleting the cluster alone. The teardown below is what removes it.
+</Callout>
+
+## Tearing down
+
+After `alethia project destroy`, verify in the console or:
+
+```bash
+aws ec2 describe-vpcs   --filters "Name=tag:alethia:project,Values=boutique"
+aws ec2 describe-nat-gateways
+aws elbv2 describe-load-balancers
+```
+
+VPC endpoints, NAT gateways and load balancers are the three that block a VPC delete and keep billing.
+Each region also has a **default limit of 5 VPCs**, so a leftover VPC costs you a future cluster as
+well as money.
+
+Now go back to [step 1 of the tutorial](/tutorials/enterprise-demo#step-1--create-the-project-and-both-environments).
