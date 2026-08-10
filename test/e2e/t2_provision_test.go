@@ -268,11 +268,15 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// re-prove. A malformed tier list fails LOUD here — before any provisioning spend — exactly like
 	// the soak parse error above.
 	fabricDemoBudget := time.Duration(0)
+	// Hoisted out of the block below because the node-shape guard needs it too: the demo's capacity
+	// floor scales with the tier count (each tier is a boutique copy, and one is placed twice).
+	fabricDemoTierCount := 0
 	if fabricDemoEnabled() {
 		tiers, tErr := fabricDemoTiers(env, provider)
 		if tErr != nil {
 			t.Fatalf("fabric-demo (#845): %v", tErr)
 		}
+		fabricDemoTierCount = len(tiers)
 		d := fabricDemoTimeout()
 		fabricDemoBudget = time.Duration(len(tiers))*2*d + d + vclusterTenantBudget
 	}
@@ -350,6 +354,16 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Fatalf("FT-5 node-shape guard: %s", msg)
 		}
 		t.Logf("FT-5 node-shape guard (warning): %s", msg)
+	}
+	// #845 node-shape guard: the fabric demo places the boutique overlays once per tier PLUS once more
+	// inside the vcluster, and on the nightly's cheapest floor shape those pods sit Pending until the
+	// job cap kills the run — ~11 hours of billed cluster time across four clouds to learn a node size.
+	// Same posture as FT-5 above: hard under REQUIRE, before any spend.
+	if fatal, msg := t2RequireFabricDemoNodeShape(provider, full, fabricDemoTierCount); msg != "" {
+		if fatal {
+			t.Fatalf("#845 fabric-demo node-shape guard: %s", msg)
+		}
+		t.Logf("#845 fabric-demo node-shape guard (warning): %s", msg)
 	}
 	a05CheckFidelity(t, a05, base)
 
