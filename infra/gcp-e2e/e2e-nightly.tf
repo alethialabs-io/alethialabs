@@ -52,8 +52,46 @@ locals {
     "roles/pubsub.admin",                    # Pub/Sub
     "roles/iam.serviceAccountAdmin",         # create the add-on GSAs (e.g. external-dns)
     "roles/iam.serviceAccountUser",          # actAs the node/add-on SAs
-    "roles/browser",                         # data.google_project / client-config reads
+    "roles/cloudkms.admin",                  # CMK for GKE Secrets encryption (#2092, on by default)
   ]
+}
+
+# ── Service-enablement + project-metadata reads: the connector's alethiaProjectReader, mirrored ──
+#
+# This REPLACES roles/browser, and the swap is load-bearing rather than cosmetic. #2269 added a
+# plan-time guard to the GCP template (GCP-KMS-ENC-001, infra/templates/project/gcp/secrets-encryption.tf)
+# that reads service-enablement state:
+#
+#   data "google_project_service" "cloudkms" { ... }   →   serviceusage.services.get
+#
+# roles/browser is a pure resourcemanager role (projects.get/list/getIamPolicy, folders.get/list,
+# organizations.get) and carries NO serviceusage permission. So with browser alone this leg fails at
+# PLAN, on the guard, with a serviceusage error that names nothing about KMS — a worse red than the
+# apply-time 403 it was added to prevent.
+#
+# The customer connector already solved exactly this and moved off browser for the same reason
+# (infra/connector/gcp/main.tf, google_project_iam_custom_role.project_reader, #1844). Mirroring it
+# here keeps the parity this file's header promises: the nightly proves what a real connection grants,
+# and it drops browser's folder/org hierarchy reads, which nothing in the templates ever needed.
+#
+# `serviceusage.services.enable` stays refused (maintainer, 2026-08-03, #1844): `get` reads a boolean
+# about a service the project owner already chose, `enable` would let the holder turn on any billable
+# API. apis.tf enables cloudkms.googleapis.com on this dedicated e2e project, so `get` is sufficient.
+resource "google_project_iam_custom_role" "e2e_project_reader" {
+  role_id     = "alethiaE2eProjectReader"
+  project     = var.project_id
+  title       = "Alethia e2e Project Reader"
+  description = "Read project metadata and service-enablement state (replaces roles/browser; no folder/org hierarchy reads). Mirrors the customer connector's alethiaProjectReader."
+  permissions = [
+    "resourcemanager.projects.get",
+    "serviceusage.services.get",
+  ]
+}
+
+resource "google_project_iam_member" "e2e_provisioner_custom" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.e2e_project_reader.id
+  member  = "serviceAccount:${google_service_account.e2e.email}"
 }
 
 # ── The e2e provisioner service account (federated into via WIF; never gets a key) ──

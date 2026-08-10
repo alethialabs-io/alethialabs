@@ -60,6 +60,31 @@ check "e2e_container_admin_bound" {
   }
 }
 
+# ── The CMK path (#2092) is grantable: KMS management + the service-enablement READ it plans on ──
+#
+# Two halves of one failure. #2092 turned GKE Secrets envelope encryption on by default and #2269
+# added a plan-time guard that READS whether cloudkms.googleapis.com is enabled. Dropping either the
+# KMS role (403 at google_kms_key_ring, mid-cluster-build) or the serviceusage read (a plan-time
+# error on the guard that never mentions KMS) reds this leg in a way that reads as a product bug.
+# Both are asserted here so a future tightening pass has to notice them.
+check "e2e_cmk_path_is_grantable" {
+  assert {
+    condition     = contains(local.e2e_provisioner_roles, "roles/cloudkms.admin")
+    error_message = "the e2e provisioner SA must be granted roles/cloudkms.admin — #2092 creates a customer-managed key on every GKE cluster by default, so without it the apply 403s at google_kms_key_ring after the guard has already passed."
+  }
+}
+
+check "e2e_service_enablement_is_readable" {
+  assert {
+    condition = alltrue([
+      contains(google_project_iam_custom_role.e2e_project_reader.permissions, "serviceusage.services.get"),
+      # …and never the enable verb, which was refused on 2026-08-03 (#1844) and stays refused.
+      !contains(google_project_iam_custom_role.e2e_project_reader.permissions, "serviceusage.services.enable"),
+    ])
+    error_message = "the e2e provisioner SA must be able to READ service-enablement state (serviceusage.services.get — roles/browser does not carry it, which is why alethiaE2eProjectReader replaces it) and must NEVER hold serviceusage.services.enable."
+  }
+}
+
 # ── The cost guard exists and is sanely bounded, scoped to the dedicated project ──
 check "e2e_budget_is_cost_capped" {
   assert {
