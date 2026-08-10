@@ -969,15 +969,18 @@ baseline:
   # redis_allowed_cidr_blocks (a separate baseline entry above) — the guard deliberately does not
   # try to unify the two names, per the file header. gcp is a genuine ceiling: Memorystore has no
   # per-instance allow-list at all, only VPC attachment (excluded in config-carriage-exclusions.yaml).
-  # azure CAN express this (azurerm_redis_firewall_rule) but the carrier is not wired yet — tracked
-  # debt, not a ceiling — so this stays in baseline: until #2148 ships and gives azure its own
-  # variable.
+  # azure is ALSO a ceiling, settled by #2148: the module declares azurerm_managed_redis (the classic
+  # azurerm_redis_cache is retiring and Azure now 400s on it), and Managed Redis exposes no firewall
+  # sub-resource in the pinned azurerm 4.81.0 or in 5.0.1 — azurerm_redis_firewall_rule binds to the
+  # retired type. Only public_network_access exists, which is an on/off switch and not an allow-list.
+  # This was previously recorded as tracked debt "azure can but its carrier does not exist yet"; that
+  # was wrong, and probing the pinned provider is what settled it.
   - variable: kvstore_security_ips
     on: "alibaba"
     off: "aws,azure,gcp,hetzner"
     state: no-carrier
     issue: "#2148"
-    reason: Alibaba's per-cloud spelling of the cache network allow-list capability (caches.allowed_cidr_blocks). AWS carries the same capability as redis_allowed_cidr_blocks; gcp cannot express a per-instance allow-list at all (VPC-scoped ceiling); azure can but its carrier does not exist yet (#2148) — remove this record once it does.
+    reason: Alibaba's per-cloud spelling of the cache network allow-list capability (caches.allowed_cidr_blocks). AWS carries the same capability as redis_allowed_cidr_blocks; gcp cannot express a per-instance allow-list at all (VPC-scoped ceiling); azure cannot either — Managed Redis has no firewall sub-resource, only a public-access switch (#2148), and the control is withdrawn there.
   - variable: location
     on: "azure"
     off: "alibaba,aws,gcp,hetzner"

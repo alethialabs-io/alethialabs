@@ -1318,6 +1318,24 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Allowed CIDR blocks",
 						description: "Extra networks permitted to reach the cache. The cluster always can.",
 						item: { mono: true, placeholder: "10.1.0.0/16" },
+						// Withdrawn (not hidden) on Azure, same shape and same reason as
+						// `num_cache_nodes` above (#2148). The module moved to
+						// `azurerm_managed_redis` because Azure now returns
+						// `400 … Azure Cache for Redis is retiring` for the classic type — and
+						// Managed Redis has NO firewall sub-resource: not in the pinned azurerm
+						// 4.81.0, not in 5.0.1. `azurerm_redis_firewall_rule` binds by
+						// `redis_cache_name` to the RETIRED `azurerm_redis_cache`, so aiming it at
+						// a Managed Redis name targets a different ARM type and fails at apply.
+						// The only network knob the resource exposes is `public_network_access`
+						// (Enabled/Disabled), which is not CIDR filtering — wiring the control to
+						// it would satisfy the parity probe while delivering none of the
+						// behaviour, which is exactly what the carriage guard exists to catch.
+						// `unavailableWhen`, never `visibleWhen`: hiding would drop azure from
+						// `offeredOn` and make the recorded exclusion match nothing.
+						unavailableWhen: (_c, { provider }) =>
+							provider === "azure"
+								? "Azure Managed Redis has no CIDR firewall — the service exposes only a public-access on/off switch. Reach it from inside the cluster's network, which is always permitted."
+								: null,
 					},
 				],
 			},
