@@ -547,3 +547,26 @@ func TestContract_ClassificationAssignments(t *testing.T) {
 	}
 	assertNoExtraStructKeys(t, "classification_assignments.json", resp)
 }
+
+// TestContract_ByoAttach pins the attach response. The id is the point: the server SLUGIFIES what the
+// caller sent, and a caller that wants to scan or detach afterwards needs the stored id rather than
+// the one it guessed.
+func TestContract_ByoAttach(t *testing.T) {
+	var resp ByoAttachResult
+	strictDecode(t, "byo_attach.json", &resp)
+	assertNoExtraStructKeys(t, "byo_attach.json", resp)
+	if !resp.OK || resp.ID == "" {
+		t.Errorf("both fields must decode, got %+v", resp)
+	}
+}
+
+// TestContract_ByoScan pins the scan response — the job id is what makes an asynchronous scan
+// followable instead of something a script has to poll blind.
+func TestContract_ByoScan(t *testing.T) {
+	var resp ByoScanResult
+	strictDecode(t, "byo_scan.json", &resp)
+	assertNoExtraStructKeys(t, "byo_scan.json", resp)
+	if !resp.OK || resp.JobID == "" {
+		t.Errorf("both fields must decode, got %+v", resp)
+	}
+}
