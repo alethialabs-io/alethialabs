@@ -1,0 +1,221 @@
+---
+title: Deploy the enterprise demo
+description: One cluster, two independently delivered environments, a real application in each — built from the terminal.
+---
+
+# Deploy the enterprise demo
+
+By the end of this you will have **one Kubernetes cluster** running **two separate environments**,
+each delivering its own version of a real twelve-service application, plus a signed receipt recording
+what was built.
+
+The point is the second environment. Adding it costs no new cluster, no new network, and no second
+cloud bill — it is placed onto the infrastructure the first one already owns. That is the thing to
+watch for.
+
+## What you will build
+
+<Mermaid chart={`
+flowchart TB
+  F["One Fabric — the infrastructure<br/>cluster · network · DNS"]
+  F --> D["Environment: dev<br/>namespace placement<br/>ns boutique-dev"]
+  F --> S["Environment: staging<br/>vcluster placement<br/>ns boutique-staging"]
+  D --> DA["overlays/dev<br/>12 services"]
+  S --> SA["overlays/staging<br/>12 services, frontend x2"]
+`} />
+
+A **Fabric** owns the infrastructure. An **environment** is placed onto it, and the placement decides
+how much isolation it gets: `dedicated` means its own cluster, `namespace` means a namespace on a
+shared one, `vcluster` means its own Kubernetes API server inside the shared one. See
+[Fabrics and placement](/concepts/fabrics-and-placement) for the model.
+
+The application is [enterprise-demo](https://github.com/alethialabs-io/enterprise-demo) — an
+Online-Boutique-style shop, twelve services, delivered by ArgoCD from Kustomize overlays. Two
+overlays, one per environment, so the two tiers differ in a way you can see.
+
+## Before you start
+
+- **The CLI**, logged in: [installation](/cli/installation), then `alethia login`.
+- **A cloud account**, connected. The per-cloud page for your choice covers this.
+- **A runner.** `alethia runner register my-box` prints credentials for one you run yourself, which
+  works on any cloud — see [self-hosted runners](/runner/self-hosted).
+
+Pick your cloud now, follow its page for the connector step, then come back here:
+
+| Cloud | Connector | Roughly |
+|---|---|---|
+| **[Hetzner](/tutorials/enterprise-demo-hetzner)** | paste an API token | **€0.10/hour**, ~12 min to a cluster |
+| [AWS](/tutorials/enterprise-demo-aws) | keyless, one CloudFormation stack | ~$0.60/hour, ~18 min |
+| [GCP](/tutorials/enterprise-demo-gcp) | keyless, Cloud Shell installer | ~$0.50/hour, ~15 min |
+| [Azure](/tutorials/enterprise-demo-azure) | keyless, federated identity | ~$0.45/hour, ~20 min |
+
+<Callout type="info">
+  Hetzner is the cheapest by a wide margin and the fastest to connect. If you are doing this to learn
+  the product rather than to test a specific cloud, use it.
+</Callout>
+
+## Step 1 — Create the project and both environments
+
+One command declares the whole shape: a project, and two environments with their placements.
+
+```bash
+alethia project create boutique \
+  --region <your-region> \
+  --cloud-identity-id <your-identity-id> \
+  --env dev:development:namespace:boutique-dev \
+  --env staging:staging:vcluster:boutique-staging
+```
+
+Each `--env` is `name:stage:placement:namespace`. The **first** entry owns the Fabric it provisions;
+later ones share it. So `dev` here is the tier that brings the cluster into being and `staging` joins
+it.
+
+<Callout type="warn">
+  Without `--env` you get the default Production + Preview pair, and any environment you add later
+  with no `--placement-mode` becomes `dedicated` — a **separate cluster** with its own state. That is
+  the mistake this flag exists to prevent.
+</Callout>
+
+Check what you got:
+
+```bash
+alethia project env list --project boutique
+```
+
+Both environments, one Fabric.
+
+## Step 2 — Give the cluster a shape
+
+```bash
+alethia project component add --project boutique --env dev --kind cluster \
+  --set cluster_version=1.31 \
+  --set node_desired_size=2 \
+  --set node_min_size=2 \
+  --set node_max_size=3
+```
+
+Two nodes is the floor for this demo: twelve services land three times over (once per namespace
+tier, and once more inside the vcluster, whose pods schedule on the host), which is roughly 5 vCPU
+and 4 GiB of requests before the platform's own workloads.
+
+## Step 3 — Point each environment at its overlay
+
+This is the step that makes the two tiers different, and the reason `--env` matters on
+`component add`:
+
+```bash
+alethia project component add --project boutique --env dev --kind repositories \
+  --set apps_destination_repo=https://github.com/alethialabs-io/enterprise-demo \
+  --set apps_path=overlays/dev
+
+alethia project component add --project boutique --env staging --kind repositories \
+  --set apps_destination_repo=https://github.com/alethialabs-io/enterprise-demo \
+  --set apps_path=overlays/staging
+```
+
+Same repository, different path. Each overlay stamps its own namespace — `overlays/dev` renders into
+`boutique-dev`, `overlays/staging` into `boutique-staging` — which must match the namespace you gave
+that environment in step 1. A mismatch is refused by the tenant AppProject rather than deployed into
+the wrong place.
+
+Confirm each tier separately:
+
+```bash
+alethia project component list --project boutique --env dev
+alethia project component list --project boutique --env staging
+```
+
+## Step 4 — Plan, read the receipt, apply
+
+```bash
+alethia project plan --project-id boutique --wait
+```
+
+The plan ends at a **verify gate**: Alethia reads the OpenTofu plan JSON and refuses the apply if it
+violates a control — a public database, an unencrypted volume, a security group open to the world.
+The verdict is signed, so it is evidence rather than a log line. See
+[the verification gate](/elench).
+
+Then apply:
+
+```bash
+alethia project apply --project-id boutique --plan-job-id <the-plan-job-id> --wait
+```
+
+Follow it if you want to watch:
+
+```bash
+alethia jobs logs <job-id> --follow
+```
+
+This is the long part. The cluster is created, the CNI installed, reachability probed, ArgoCD
+installed, and the platform add-ons synced.
+
+## Step 5 — Prove it
+
+```bash
+alethia cluster get boutique
+```
+
+That prints the API endpoint and the ArgoCD URL. With a kubeconfig for the cluster:
+
+```bash
+kubectl get pods -n boutique-dev
+kubectl get pods -n boutique-staging
+```
+
+Twelve services running in each. In ArgoCD you will see one Application per placement, named
+`app-boutique-boutique-dev` and `app-boutique-boutique-staging`, each pinned to its own hardened
+AppProject — `tenant-boutique-boutique-dev` and `tenant-boutique-boutique-staging`. The AppProject is
+what stops one tier's manifests from touching the other's namespace.
+
+<Callout type="info">
+  Those four object names are the ones our acceptance test asserts by name
+  (`test/e2e/t2_fabric_demo.go`). If this page and that test ever disagree, the test is right.
+</Callout>
+
+## Step 6 — The part worth noticing
+
+Look at the bill, and at `alethia cluster list`.
+
+**One cluster.** Two environments, delivered independently, with different application versions and
+namespace-level isolation between them — and one set of infrastructure underneath. The `staging` tier
+additionally has its own Kubernetes API server, so a controller installed there sees only its own
+resources, without a second control plane to pay for.
+
+Adding a third tier is another `project env add` and another `component add`:
+
+```bash
+alethia project env add qa --project boutique --stage development \
+  --placement-mode namespace --namespace boutique-qa
+```
+
+No new cluster.
+
+## Step 7 — Tear it down
+
+Not optional. This is real infrastructure and it bills by the hour.
+
+```bash
+alethia project destroy --project-id boutique --wait
+```
+
+Then confirm nothing survived:
+
+```bash
+alethia cluster list
+```
+
+Your cloud console is the final authority — check it. A destroy that reports success while leaving a
+network behind is rare but it is the failure that costs money, and the per-cloud page tells you where
+to look.
+
+## What this proved, and what it did not
+
+**Proved:** that one Fabric can carry environments at different isolation levels; that each
+environment delivers its own application version through GitOps; that the apply is gated by a signed
+verify receipt; and that the whole path is drivable from a terminal, so it is drivable from CI.
+
+**Did not prove:** anything about scale, failure behaviour, or day-2 operations. You built a demo on
+two nodes. Drift detection, promotion between environments, cost ceilings and the add-on marketplace
+are all real and all untouched here — see [Day-2 operations](/console) when you want them.
