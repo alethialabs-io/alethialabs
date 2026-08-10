@@ -1702,8 +1702,8 @@ func (c *Client) ListComponents(project, kind, env string) ([]Component, error) 
 
 // AddComponent creates a component of `kind` on a project. `name` is ignored for singleton
 // kinds; `fields` are validated server-side against the kind's drizzle-zod insert schema.
-func (c *Client) AddComponent(project, kind, name string, fields map[string]interface{}) (*Component, error) {
-	endpoint := fmt.Sprintf("%s/cli/projects/%s/components/%s", c.baseURL, url.PathEscape(project), url.PathEscape(kind))
+func (c *Client) AddComponent(project, kind, name, env string, fields map[string]interface{}) (*Component, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/components/%s", c.baseURL, url.PathEscape(project), url.PathEscape(kind)), env)
 	if fields == nil {
 		fields = map[string]interface{}{}
 	}
@@ -1722,15 +1722,27 @@ func (c *Client) AddComponent(project, kind, name string, fields map[string]inte
 
 // RemoveComponent deletes a component of `kind` from a project. `name` is ignored for
 // singleton kinds (which have at most one row per project).
-func (c *Client) RemoveComponent(project, kind, name string) error {
+func (c *Client) RemoveComponent(project, kind, name, env string) error {
 	endpoint := fmt.Sprintf("%s/cli/projects/%s/components/%s", c.baseURL, url.PathEscape(project), url.PathEscape(kind))
 	if name != "" {
 		endpoint = fmt.Sprintf("%s/%s", endpoint, url.PathEscape(name))
 	}
-	if err := c.doDelete(endpoint); err != nil {
+	if err := c.doDelete(withEnvParam(endpoint, env)); err != nil {
 		return fmt.Errorf("failed to remove component: %w", err)
 	}
 	return nil
+}
+
+// withEnvParam appends `?env=<env>` when env is non-empty, leaving the URL untouched otherwise so a
+// caller that names no environment keeps hitting the server's default-environment path byte for byte.
+// url.Values.Encode escapes the value, so an environment name is safe to pass through verbatim.
+func withEnvParam(endpoint, env string) string {
+	if strings.TrimSpace(env) == "" {
+		return endpoint
+	}
+	params := url.Values{}
+	params.Set("env", env)
+	return fmt.Sprintf("%s?%s", endpoint, params.Encode())
 }
 
 // --- Drift ---
