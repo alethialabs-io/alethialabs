@@ -128,3 +128,9 @@ variable "runner_ecs_service" {
   type        = string
   default     = "alethia-runner-dev-eu-west-1-service"
 }
+
+variable "e2e_dns_zone_name" {
+  description = "Public DNS zone the T2 nightly's ACM/cert proof validates against (#1773), e.g. \"e2e.alethialabs.io\". Long-lived and stable — see e2e-dns.tf for why it is not per-run. Empty (the default) creates no zone, so this stack stays a no-op for anyone who has not delegated one yet."
+  type        = string
+  default     = ""
+}
