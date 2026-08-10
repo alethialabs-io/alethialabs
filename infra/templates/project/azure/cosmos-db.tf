@@ -17,6 +17,21 @@ locals {
   # and defaulting to the 30-day tier would repeat the shape of that bug in a smaller way. A tenant
   # who wants 30 days sets cosmos_db_continuous_backup_tier.
   cosmos_backup_tier = local.cosmos_point_in_time_recovery ? var.cosmos_db_continuous_backup_tier : null
+
+  # Replica regions (#2158) — the point_in_time_recovery shape again: the canvas collects the list
+  # per table, Cosmos replicates per ACCOUNT (`geo_location` blocks), so the account gets the UNION
+  # of every table's list. The primary region is filtered out rather than trusted absent — it is
+  # already the priority-0 geo_location, and repeating it would collide.
+  #
+  # A non-empty union has a second, deliberate effect (human decision, 2026-08-10): serverless
+  # Cosmos accounts are single-region-only, so asking for replicas switches the account off
+  # `EnableServerless` onto provisioned throughput — a billing-model change the inspector states on
+  # the field. On an EXISTING account that flip is a REPLACEMENT (`capabilities` is create-time),
+  # which is why it keys off the user's explicit replica request and never a default.
+  cosmos_replica_regions = distinct([
+    for r in flatten([for c in var.cosmos_db_collections : c.global_replicas]) :
+    r if r != var.location
+  ])
 }
 
 module "cosmos_db" {
@@ -33,6 +48,7 @@ module "cosmos_db" {
   collections         = var.cosmos_db_collections
   backup_type         = local.cosmos_backup_type
   backup_tier         = local.cosmos_backup_tier
+  replica_regions     = local.cosmos_replica_regions
 
   tags = local.azure_default_tags
 }
