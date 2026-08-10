@@ -217,59 +217,15 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	region := resolveT2Region(p)
 	clusterName := project + "-" + env
 	t.Logf("T2 target: provider=%s region=%s cluster=%s", provider, region, clusterName)
-	// Overall bound = the deploy wait plus the ArgoCD convergence assertion, with headroom
-	// for the runner build. Derived from the provider row (hetzner 25m+8m+7m = 40m,
-	// bit-identical to the pre-table constant; managed clouds get their longer waits). When
-	// the day-2 SOAK is enabled (BYOC A0.3) we widen the ctx by the soak window plus the
-	// drift-job + PVC-bind bounds, so a mid-soak ctx cancellation can't masquerade as a
-	// cluster drop. A soak parse error is loud here too (before any provisioning spend).
-	soakBudget := time.Duration(0)
-	if soakDur, soakOn, soakErr := parseSoakDuration(os.Getenv("ALETHIA_E2E_SOAK")); soakErr != nil {
-		t.Fatalf("A0.3 soak: %v", soakErr)
-	} else if soakOn {
-		soakBudget = soakDur + 15*time.Minute // drift wait (10m) + PVC bind (5m) headroom
-	}
-	// #1268 needs its own term: the store-Ready + ExternalSecret-sync + denied-probe windows are
-	// ~10m of polling AFTER ArgoCD converges, and a ctx that expired mid-poll would look identical
-	// to a cross-account read that never worked.
-	xacctBudget := time.Duration(0)
-	if xacctOn {
-		xacctBudget = 10 * time.Minute
-	}
-	// #1511 needs a term of its own, dominated by the ROTATION DWELL — a session deliberately held
-	// open past the cloud token's lifetime. A ctx that expired mid-dwell would be indistinguishable
-	// from the connection dying with the credential it never had, which is the exact outcome under
-	// test, so the budget is the dwell plus room for the workload to converge and the probes to run.
-	keylessBudget := time.Duration(0)
-	if keylessOn {
-		keylessBudget = keyless.dwell + 20*time.Minute
-	}
-	// #1047 needs its own term for the same reason: the refresher-Available, mint, pod-pull and
-	// denied-probe windows are ~20m of polling AFTER ArgoCD converges, and a ctx that expired
-	// mid-poll would be indistinguishable from a cross-account pull that never worked.
-	registryBudget := time.Duration(0)
-	if registryOn {
-		registryBudget = 25 * time.Minute
-	}
-	// The three PLACEMENT scenarios each seed their OWN jobs onto this Fabric after the base proof,
-	// and none of them had a ctx term. An overrun therefore surfaced as "the placement never
-	// converged" — indistinguishable from a real product failure, which is the exact confusion the
-	// soak/xacct/keyless terms above were written to prevent.
-	nsTenantBudget := time.Duration(0)
-	if namespaceTenantEnabled() {
-		nsTenantBudget = namespaceTenantBudget
-	}
-	vclusterBudget := time.Duration(0)
-	if vclusterTenantEnabled() {
-		vclusterBudget = vclusterTenantBudget
-	}
-	// #845 is the widest term: one bounded placement plus one bounded convergence poll PER namespace
-	// tier, one WHOLE vcluster placement (its own deploy + app-health + destroy waits), and the drift
-	// re-prove. A malformed tier list fails LOUD here — before any provisioning spend — exactly like
-	// the soak parse error above.
-	fabricDemoBudget := time.Duration(0)
-	// Hoisted out of the block below because the node-shape guard needs it too: the demo's capacity
-	// floor scales with the tier count (each tier is a boutique copy, and one is placed twice).
+	// The whole ctx budget — every scenario's term — now lives in ResolveT2Budget (t2_budget.go),
+	// because the workflow needs the same arithmetic to set its step and go-timeout and the two used
+	// to be maintained independently. They disagreed: the workflow's prose asserted a 40m ctx (which
+	// is HETZNER's) against a 75m step cap, while a managed cloud with the default-on soak really
+	// wants 90m — so on all four managed clouds the step killed the process before the ctx could
+	// cancel, losing both the named scenario failure and the in-process teardown.
+	//
+	// The tier count is still needed here for the #845 node-shape guard below: the demo's capacity
+	// floor scales with it (each tier is a boutique copy, and one is placed twice).
 	fabricDemoTierCount := 0
 	if fabricDemoEnabled() {
 		tiers, tErr := fabricDemoTiers(env, provider)
@@ -277,12 +233,16 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Fatalf("fabric-demo (#845): %v", tErr)
 		}
 		fabricDemoTierCount = len(tiers)
-		d := fabricDemoTimeout()
-		fabricDemoBudget = time.Duration(len(tiers))*2*d + d + vclusterTenantBudget
 	}
-	ctx, cancel := context.WithTimeout(context.Background(),
-		waitTimeout+ArgoAssertTimeout()+soakBudget+xacctBudget+keylessBudget+registryBudget+
-			nsTenantBudget+vclusterBudget+fabricDemoBudget+7*time.Minute)
+	// The ctx comes from ResolveT2Budget (t2_budget.go) — the SAME function cmd/t2budget prints for
+	// the workflow's step and go-timeout, so the ladder ctx < go < step < job cannot drift from what
+	// this test actually asks for. A malformed soak or tier list fails LOUD here, before any spend.
+	budget, budgetErr := ResolveT2Budget(provider, env)
+	if budgetErr != nil {
+		t.Fatalf("resolve T2 budget: %v", budgetErr)
+	}
+	t.Logf("T2 budget — %s", budget.Describe())
+	ctx, cancel := context.WithTimeout(context.Background(), budget.Ctx)
 	defer cancel()
 
 	// ── Build the REAL runner binary (this is what makes it a spine proof, not a unit
