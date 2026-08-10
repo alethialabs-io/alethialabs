@@ -331,10 +331,14 @@ variable "provision_cr" {
 # TYPED on purpose — see the note on the module's own `repos`. Keyed by the registry component's
 # name. `immutable_tags` is the canvas's "Immutable tags" switch, defaulting to the setting the
 # repository would have been created with anyway, so an emitter that omits it downgrades nothing.
+# `vulnerability_scanning` (#1845) defaults the other way — an omitted switch plans NO scan rule,
+# the template's own pre-#1845 default — see the module's `repos` for why the asymmetry is load-
+# bearing rather than an oversight.
 variable "cr_repos" {
   type = map(object({
-    summary        = optional(string, "")
-    immutable_tags = optional(bool, true)
+    summary                = optional(string, "")
+    immutable_tags         = optional(bool, true)
+    vulnerability_scanning = optional(bool, false)
   }))
   default     = {}
   description = "Container Registry repositories to create, keyed by the registry component's name"
