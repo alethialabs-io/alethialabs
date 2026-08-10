@@ -24,13 +24,17 @@ const (
 
 var connectorCmd = &cobra.Command{
 	Use:   "connector",
-	Short: "Connect cloud provider accounts (AWS, GCP, Azure, Alibaba)",
+	Short: "Connect cloud provider accounts (AWS, GCP, Azure, Alibaba, Hetzner)",
 	Long: `Manage cloud provider connections.
 
 Connecting a cloud account lets Alethia provision infrastructure into it using
 short-lived, keyless credentials: AWS cross-account roles, GCP Workload Identity
 Federation, Azure federated identity, and Alibaba RAM AssumeRoleWithOIDC. No
-long-lived secrets are stored.`,
+long-lived secrets are stored.
+
+Hetzner is the exception, and the exception is the cloud's, not Alethia's: Hetzner
+Cloud offers no OIDC or role-assumption mechanism, so it authenticates with a scoped
+API token. The token is encrypted at rest server-side and never returned.`,
 }
 
 func init() {
