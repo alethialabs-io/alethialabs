@@ -10,7 +10,11 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { insertProjectComponent } from "@/lib/cli/project-components";
+import {
+	deleteProjectComponent,
+	insertProjectComponent,
+	listProjectComponents,
+} from "@/lib/cli/project-components";
 import { resolveDefaultEnvironmentId } from "@/lib/cli/resolve-project";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -95,5 +99,79 @@ describeIfDb("CLI project component add — environment scoping (#662)", () => {
 		expect(rows).toHaveLength(1);
 		expect(rows[0]?.node_desired_size).toBe(4);
 		expect(rows[0]?.environment_id).toBe(ENV_DEFAULT);
+	});
+
+	// The two-tier shape the CLI could not build before `--env`: the SAME singleton kind in two
+	// environments, with DIFFERENT config. This is the enterprise demo in miniature (dev and staging
+	// pointing at different overlays), and it only works because the unique is composite.
+	it("holds the same singleton kind in two environments, independently", async () => {
+		await insertProjectComponent("cluster", PROJ, ENV_OTHER, "", {
+			node_desired_size: 9,
+			instance_types: ["Standard_D2s_v3"],
+		});
+
+		const rows = await getServiceDb()
+			.select()
+			.from(projectCluster)
+			.where(eq(projectCluster.project_id, PROJ));
+		expect(rows).toHaveLength(2);
+		const byEnv = new Map(rows.map((r) => [r.environment_id, r.node_desired_size]));
+		expect(byEnv.get(ENV_DEFAULT)).toBe(4);
+		expect(byEnv.get(ENV_OTHER)).toBe(9);
+	});
+
+	// THE REGRESSION, and a mock could not catch it because the bug was the SQL predicate.
+	// deleteProjectComponent scoped a singleton delete to `project_id` ALONE, so removing the cluster
+	// from one environment silently removed it from EVERY environment. Harmless while only the default
+	// env could be written; data loss the moment per-environment authoring exists — which is the same
+	// change that introduces it. Assert the precondition (two rows) so this can never pass vacuously.
+	it("deletes from ONE environment only, leaving the sibling intact", async () => {
+		const db = getServiceDb();
+		const before = await db
+			.select()
+			.from(projectCluster)
+			.where(eq(projectCluster.project_id, PROJ));
+		expect(before).toHaveLength(2); // precondition — without it the assertion below proves nothing
+
+		expect(
+			await deleteProjectComponent("cluster", PROJ, "", ENV_OTHER),
+		).toBe(true);
+
+		const after = await db
+			.select()
+			.from(projectCluster)
+			.where(eq(projectCluster.project_id, PROJ));
+		expect(after).toHaveLength(1);
+		expect(after[0]?.environment_id).toBe(ENV_DEFAULT);
+		expect(after[0]?.node_desired_size).toBe(4);
+	});
+
+	// And a delete aimed at an environment that holds no such component must report "not found"
+	// rather than falling back to some other environment's row.
+	it("reports not-found rather than deleting another environment's row", async () => {
+		expect(
+			await deleteProjectComponent("cluster", PROJ, "", ENV_OTHER),
+		).toBe(false);
+
+		const rows = await getServiceDb()
+			.select()
+			.from(projectCluster)
+			.where(eq(projectCluster.project_id, PROJ));
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.environment_id).toBe(ENV_DEFAULT);
+	});
+
+	// listProjectComponents used to ignore its environment and flatten every environment's rows
+	// together — the same kind twice with nothing in the wire to tell them apart.
+	it("lists scoped to one environment, and unscoped lists all", async () => {
+		await insertProjectComponent("cluster", PROJ, ENV_OTHER, "", {
+			node_desired_size: 9,
+			instance_types: ["Standard_D2s_v3"],
+		});
+
+		expect(await listProjectComponents(PROJ, "cluster")).toHaveLength(2);
+		const scoped = await listProjectComponents(PROJ, "cluster", ENV_DEFAULT);
+		expect(scoped).toHaveLength(1);
+		expect(scoped[0]?.config.environment_id).toBe(ENV_DEFAULT);
 	});
 });

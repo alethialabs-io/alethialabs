@@ -186,11 +186,11 @@ func TestWrappers_SurfaceTheirOwnContextOnFailure(t *testing.T) {
 			return err
 		}},
 		{"AddComponent", "failed to add component", func(c *Client) error {
-			_, err := c.AddComponent("p-1", "database", "", nil)
+			_, err := c.AddComponent("p-1", "database", "", "", nil)
 			return err
 		}},
 		{"RemoveComponent", "failed to remove component", func(c *Client) error {
-			return c.RemoveComponent("p-1", "database", "")
+			return c.RemoveComponent("p-1", "database", "", "")
 		}},
 		{"GetProjectDrift", "failed to get drift", func(c *Client) error {
 			_, err := c.GetProjectDrift("p-1", "")

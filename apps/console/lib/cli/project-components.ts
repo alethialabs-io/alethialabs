@@ -11,6 +11,7 @@
 
 import { createInsertSchema } from "drizzle-zod";
 import { and, eq, getTableColumns } from "drizzle-orm";
+import type { AnyColumn } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { getServiceDb } from "@/lib/db";
@@ -368,10 +369,16 @@ export function validateComponentFields(
 }
 
 /** Lists a project's components — all kinds, or a single kind when `kindFilter` is set —
- * flattened into the uniform wire shape. */
+ * flattened into the uniform wire shape.
+ *
+ * `environmentId` scopes the result to one environment. Without it a two-environment project lists
+ * every row from every environment, flattened, with the same `kind` and `name` appearing twice and
+ * nothing in the table to tell them apart — the `environment_id` is only visible inside `config`.
+ * Every caller that can name an environment should pass one. */
 export async function listProjectComponents(
 	projectId: string,
 	kindFilter?: string,
+	environmentId?: string,
 ): Promise<ComponentWire[]> {
 	const db = getServiceDb();
 	const kinds = kindFilter ? [kindFilter] : COMPONENT_KINDS;
@@ -383,10 +390,22 @@ export async function listProjectComponents(
 		const rows = await db
 			.select()
 			.from(def.table)
-			.where(eq(cols.project_id, projectId));
+			.where(componentScope(cols, projectId, environmentId));
 		for (const row of rows) out.push(rowToComponentWire(kind, row));
 	}
 	return out;
+}
+
+/** `project_id` AND, when given, `environment_id`. One helper so a caller cannot scope a read one
+ * way and a delete another — which is the asymmetry that made the delete below destructive. */
+function componentScope(
+	cols: Record<string, AnyColumn>,
+	projectId: string,
+	environmentId?: string,
+) {
+	const scope = eq(cols.project_id, projectId);
+	if (!environmentId || !cols.environment_id) return scope;
+	return and(scope, eq(cols.environment_id, environmentId));
 }
 
 /** Inserts a component of `kind` on a project, scoped to `environmentId`. Singletons upsert on the
@@ -429,22 +448,29 @@ export async function insertProjectComponent(
 	return rowToComponentWire(kind, row);
 }
 
-/** Deletes a component. Singletons delete the project's single row; multi kinds delete the
- * named row. Returns whether a row was removed (false → 404). */
+/** Deletes a component within ONE environment. Singletons delete that environment's single row;
+ * multi kinds delete the named row in it. Returns whether a row was removed (false → 404).
+ *
+ * `environmentId` is REQUIRED, and that is the fix rather than a convenience. This used to scope a
+ * singleton delete to `project_id` alone, so `component remove --kind cluster` deleted the cluster
+ * row of EVERY environment — for a multi-tier project, one command silently destroying the sibling
+ * environment's design. Harmless while the insert path could only ever write the default
+ * environment; a data-loss bug the moment per-environment authoring exists, which is the same
+ * change that introduces it. Pass the environment the caller actually named. */
 export async function deleteProjectComponent(
 	kind: string,
 	projectId: string,
 	name: string,
+	environmentId: string,
 ): Promise<boolean> {
 	const def = getKindDef(kind);
 	if (!def) return false;
 	const db = getServiceDb();
 	const cols = getTableColumns(def.table);
 
+	const scope = componentScope(cols, projectId, environmentId);
 	const where =
-		def.singleton || !cols.name
-			? eq(cols.project_id, projectId)
-			: and(eq(cols.project_id, projectId), eq(cols.name, name));
+		def.singleton || !cols.name ? scope : and(scope, eq(cols.name, name));
 
 	const deleted = await db.delete(def.table).where(where).returning();
 	return deleted.length > 0;

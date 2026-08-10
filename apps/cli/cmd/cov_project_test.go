@@ -201,7 +201,7 @@ func projResetFlags() {
 	projectApplyProjectID, projectApplyRunnerID, projectApplyPlanJobID = "", "", ""
 	projectApplyEnv, projectApplyWait = "", false
 	projectDestroyProjectID, projectDestroyRunnerID, projectDestroyEnv, projectDestroyWait = "", "", "", false
-	componentListKind, componentListEnv = "", ""
+	componentListKind = ""
 	componentAddKind, componentAddName, componentAddSet = "", "", nil
 	componentRemoveKind, componentRemoveName = "", ""
 	projectCreateRegion, projectCreateIdentity = "", ""
