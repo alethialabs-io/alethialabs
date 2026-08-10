@@ -27,6 +27,10 @@ resource "google_project_service" "apis" {
     "storage.googleapis.com",
     # Cost guard
     "billingbudgets.googleapis.com",
+    # GKE application-layer Secrets encryption (#2092). Missing here is what made the first
+    # post-promotion nightly fail at `google_kms_key_ring.gke_secrets` with a 403 SERVICE_DISABLED
+    # (run 31356854945, #2262) — the code was correct and had simply never been applied for real.
+    "cloudkms.googleapis.com",
   ])
 
   project            = var.project_id

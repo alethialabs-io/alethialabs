@@ -74,6 +74,13 @@ resource "google_project_service" "apis" {
     "pubsub.googleapis.com",
     "firestore.googleapis.com",
     "storage.googleapis.com",
+    # GKE application-layer Secrets encryption (#2092) creates a KMS key ring + key. Without this
+    # the first real apply died with `Error 403: Cloud Key Management Service (KMS) API has not
+    # been used in project … before or it is disabled` (#2262) — the feature is on by default, so
+    # every GKE project needs the API on. It sits here, up-front, for the reason the comment above
+    # gives: the least-privileged provisioner has no serviceUsageAdmin and cannot turn an API on
+    # mid-apply.
+    "cloudkms.googleapis.com",
   ])
 
   service            = each.value
