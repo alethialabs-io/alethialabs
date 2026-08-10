@@ -239,11 +239,31 @@ exclusions:
   # ── Cache network allow-list on Google Cloud ────────────────────────────────────────
   # Memorystore sells no per-instance IP allow-list: access is bought by attaching the instance to
   # a VPC (`authorized_network`) and governed by that network's own rules — there is no instance
-  # argument for the extra CIDRs to reach, on Redis or on Valkey. AWS carries this field (#1981);
-  # azure (#2148) and alibaba (#2149) can express it and are boarded in `baseline:` below.
+  # argument for the extra CIDRs to reach, on Redis or on Valkey. AWS (#1981) and alibaba (#2149)
+  # carry this field; azure cannot express it either, for a different reason — immediately below.
   - field: caches.allowed_cidr_blocks
     cloud: gcp
     reason: Memorystore has no per-cache IP allow-list — access is granted by the VPC the cache is attached to, so manage reachability with the network's own rules instead.
+
+  # ── Cache CIDR allow-list on Azure — settled by #2148, the same way #1993 settled the node count ─
+  # This was boarded in `baseline:` as a carrier waiting to be built, on the belief that azure could
+  # express it via `azurerm_redis_firewall_rule`. That belief was wrong, and the row moves here.
+  #
+  # The module declares `azurerm_managed_redis` (Microsoft.Cache/redisEnterprise) — adopted because
+  # Azure now returns `400 BadRequest: Azure Cache for Redis is retiring` for the classic resource.
+  # Managed Redis has NO firewall sub-resource: not in the pinned azurerm 4.81.0, and not in 5.0.1.
+  # `azurerm_redis_firewall_rule` attaches by `redis_cache_name` to `azurerm_redis_cache` — the
+  # RETIRED type — so pointing it at a Managed Redis name targets a different ARM type and fails at
+  # apply. The resource's only network knob is `public_network_access` (Enabled/Disabled), which is
+  # not a CIDR allow-list; carrying the field into it would satisfy the parity probe's emit-and-read
+  # while delivering none of the behaviour, which is the precise failure this guard exists to catch.
+  #
+  # So the control is WITHDRAWN on Azure in the inspector (`unavailableWhen`, never `visibleWhen`,
+  # so azure stays in `offeredOn` and this entry matches something) rather than dressed up as a
+  # carrier. If Azure ever ships a firewall surface for Managed Redis, this becomes a carrier again.
+  - field: caches.allowed_cidr_blocks
+    cloud: azure
+    reason: Azure Managed Redis has no CIDR firewall — the service offers only a public-access on/off switch, so reachability is governed by the network the cache sits in rather than by a per-cache allow-list.
 
   # ── Cache node count on Azure — settled by #1993 ────────────────────────────────────
   # Was the ⚠️ gated-carrier that named the state: NumCacheNodes>1 flipped the legacy tier to
@@ -409,24 +429,22 @@ baseline:
   # caches.allowed_cidr_blocks (#1981, the security-relevant one) was here as dropped-by-type.
   # FIXED at the contract and on AWS: the field is modelled and carried into
   # `redis_allowed_cidr_blocks` (the template chain was already fully wired). gcp cannot express it
-  # (excluded above). The two clouds that CAN are boarded here until their carriers exist:
-  # azure via `azurerm_redis_firewall_rule` (one start/end pair per CIDR), alibaba via
-  # `alicloud_kvstore_instance.security_ips`.
-  - field: caches.allowed_cidr_blocks
-    cloud: azure
-    reason: The network allow-list you set on a cache is not applied on Azure yet — the cache is created with the template's default access rules instead.
-    issue: "#2148"
-    state: no-carrier
-  - field: caches.allowed_cidr_blocks
-    cloud: alibaba
-    reason: The network allow-list you set on a cache is not applied on Alibaba Cloud yet — the cache is created with the template's default access rules instead.
-    issue: "#2149"
-    state: no-carrier
-  - field: nosql_tables.global_replicas
-    cloud: azure
-    reason: The replica regions you choose for a table are not applied on Azure yet — the Cosmos account is created in its own region only.
-    issue: "#2158"
-    state: no-carrier
+  # (excluded above). alibaba (#2149) was boarded here and is FIXED — carried into
+  # `kvstore_security_ips` and read by `alicloud_kvstore_instance.security_ips`, probed against the
+  # pinned provider rather than assumed; unset renders no argument, so existing caches keep their
+  # whitelist. azure was boarded HERE on the belief that it could express this via
+  # `azurerm_redis_firewall_rule` — probing the pinned provider refuted that (Managed Redis has no
+  # firewall sub-resource at all), so it is now a permanent exclusion above rather than a pending
+  # carrier, and the control is withdrawn in the inspector. See #2148.
+
+  # nosql_tables.global_replicas / azure was here (#2158). FIXED at the carrier: the per-table
+  # lists are folded into ONE account-level union of `geo_location` blocks (Cosmos replicates per
+  # ACCOUNT — the point_in_time_recovery shape), the primary region deduplicated out. The union
+  # being non-empty also switches the account off `EnableServerless` onto provisioned throughput
+  # (human decision, 2026-08-10): serverless accounts are single-region-only, so the capability and
+  # a replica set cannot coexist — the inspector copy states the billing flip and that on an
+  # existing account it is a replacement. checks_cosmos.tftest.hcl asserts union, dedup, priorities
+  # and the serverless flip off the RESOURCE in both positions.
 
   # network.allowed_cidr_blocks was here, boarded as #1987 and the worst of the three: no variable
   # on ANY of the five templates, so a value collected in the inspector and the CLI had nowhere to
@@ -435,17 +453,14 @@ baseline:
   # and a security group attached to the ACK node pool). Deleted rather than left behind, because
   # the guard fails on a baseline entry whose gap no longer reproduces.
 
-  # ── Container registry image scanning on Alibaba ───────────────────────────────────
-  # Alibaba sells image scanning, so this is debt rather than a ceiling — but it is not a wiring
-  # change: scanning is `alicloud_cr_scan_rule`, an instance-scoped SIBLING resource rather than an
-  # argument on the repository, and Alibaba's own guide requires a VPC on the Enterprise Edition
-  # instance, which `modules/cr` does not configure. Wiring it anyway would satisfy the guard while
-  # the ON position did nothing, which is the defect the guard exists to catch, not a way to pass it.
-  - field: container_registries.vulnerability_scanning
-    cloud: alibaba
-    reason: Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice.
-    issue: "#1845"
-    state: no-carrier
+  # container_registries.vulnerability_scanning / alibaba was here (#1845): scanning is
+  # `alicloud_cr_scan_rule`, an instance-scoped SIBLING resource rather than a repository argument,
+  # and the #1895 research left the AUTO trigger's VPC prerequisite unresolved in both languages.
+  # FIXED at the carrier: one REPO-scoped AUTO/VUL rule per repository whose switch is on, OFF as
+  # the rule's absence, and the Subscription instance's `image_scanner`/`vpc_quota` traps untouched
+  # (#1933). Plan-green is deliberately NOT the whole claim — the push-an-image-and-observe-a-scan
+  # proof is owed by the alibaba e2e nightly (#2061/#2101), and if scans never fire there the
+  # fallback is a plan-time refusal (the gcp #1844 shape), not silent green.
 
   # dns.zone_id / azure was here (#1992): declared, read only by a `check` that never blocks, and
   # then ignored while modules/azure-dns created a NEW zone unconditionally. FIXED — creation is

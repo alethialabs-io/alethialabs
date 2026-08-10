@@ -434,29 +434,52 @@ func RenderApp(app App) (string, error) {
 	return strings.TrimSpace(buf.String()) + "\n", nil
 }
 
-// GenerateManifests renders every app to a `<name>.yaml` file map (filename → YAML),
-// deterministically ordered by name. Duplicate names are suffixed to keep files unique.
+// GenerateManifests renders every app to a `<name>.yaml` file map (filename → YAML). Apps are
+// rendered in name order, so the SET of filenames a project produces does not depend on the order
+// the caller happened to list its services in — without the sort, probing for an unclaimed name
+// hands the same apps a different filename set per input order.
+//
+// What the sort does NOT settle: two apps whose names normalize to the SAME label tie under it and
+// keep their relative input order, so which of those two claims the bare `<name>.yaml` and which
+// takes the suffix is still input-order dependent. The set of files is stable; the assignment
+// within a tie is not. Both manifests are written either way — that is the #2054 fix — but a
+// caller that needs a stable file-to-workload mapping across reorderings must give the renderer a
+// stable order itself.
+//
+// Duplicate names are suffixed to keep files unique. Duplicates are not exotic: normalize() puts
+// every name through dns1123, which collapses distinct service names onto one label ("api" and
+// "API" both become "api"). The suffixed candidate is therefore checked against the filenames
+// already claimed instead of being trusted: a bare `-<n>` suffix would otherwise land on the file
+// an app genuinely named "<name>-<n>" writes, and the map write would drop one workload's manifest
+// silently — WriteManifests would commit the truncated set and the service would never deploy,
+// with nothing in the skipped/warning list to say so (#2054).
+//
+// What that buys is distinct FILES, not distinct Kubernetes objects. Two apps that normalize to
+// the same label still render the same metadata.name for their Deployment and Service, so ArgoCD
+// applies both files to one object and the loser is dropped at sync time instead of at write time.
+// Catching that means rejecting or reporting the collision UPSTREAM of here, where FromServices
+// can put it in `skipped` — tracked as #2234, deliberately not done in this function.
 func GenerateManifests(apps []App) (map[string]string, error) {
 	out := map[string]string{}
-	seen := map[string]int{}
-	names := make([]string, 0, len(apps))
-	for _, app := range apps {
-		a := app.normalize()
-		names = append(names, a.Name)
-	}
-	sort.Strings(names)
 
+	ordered := make([]App, 0, len(apps))
 	for _, app := range apps {
-		a := app.normalize()
+		ordered = append(ordered, app.normalize())
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
+
+	for _, a := range ordered {
 		yaml, err := RenderApp(a)
 		if err != nil {
 			return nil, err
 		}
 		file := a.Name + ".yaml"
-		if seen[a.Name] > 0 {
-			file = fmt.Sprintf("%s-%d.yaml", a.Name, seen[a.Name]+1)
+		for n := 2; ; n++ {
+			if _, claimed := out[file]; !claimed {
+				break
+			}
+			file = fmt.Sprintf("%s-%d.yaml", a.Name, n)
 		}
-		seen[a.Name]++
 		out[file] = yaml
 	}
 	return out, nil
@@ -888,8 +911,30 @@ func resolveBindings(serviceName string, opts Options, bindings []types.ServiceB
 // would be worse than its absence.
 func FromServices(services []types.ProjectServiceConfig, opts Options) (apps []App, skipped []string, keyless []KeylessBindingDecision) {
 	apps = make([]App, 0, len(services))
+	// #2234: two services whose names normalize to one label render the same Deployment and the
+	// same Service. #2054 stopped the second one overwriting the first's FILE; both files are now
+	// written, but they still name ONE object, so ArgoCD applies both last-write-wins and a
+	// workload is silently absent while the deploy reports success.
+	//
+	// Neither is rendered. Picking a winner would be picking arbitrarily — sort order, not intent —
+	// and a user who sees one of two identically-named services deploy has no way to tell which.
+	// Refusing both, loudly, is the only outcome that cannot be misread. cloud.ValidateConfig
+	// refuses this upstream so a normal deploy never reaches here; this is the belt for any path
+	// that does.
+	collided := map[string]bool{}
+	for _, c := range NameCollisions(serviceNames(services)) {
+		for _, n := range c.Names {
+			collided[n] = true
+		}
+		skipped = append(skipped, fmt.Sprintf(
+			"%s: service names %s all normalize to the Kubernetes object name %q — they would render one Deployment and one Service between them, so none is deployed. Rename them so they differ by more than case, punctuation or their first %d characters.",
+			c.Label, strings.Join(quoteAll(c.Names), ", "), c.Label, dnsLabelMaxLen))
+	}
 	for _, s := range services {
 		name := dns1123(s.Name)
+		if collided[s.Name] {
+			continue // already reported above, as a group
+		}
 		if s.Type != "" && s.Type != "deployment" {
 			skipped = append(skipped, fmt.Sprintf("%s: workload type %q has no manifest template yet", name, s.Type))
 			continue
@@ -970,8 +1015,92 @@ func WriteManifests(dir string, apps []App) ([]string, error) {
 	return written, nil
 }
 
-// dns1123 lowercases + strips a string to a valid DNS-1123 label.
+// dnsLabelMaxLen is the RFC-1123 DNS label length limit kubernetes enforces on resource names and
+// on label values. Nothing downstream of here re-checks it: the rendered name becomes the Service
+// name and the app.kubernetes.io/name label on the Deployment, its pod template and its selector,
+// and console-side validation carries no maximum. So an over-long name used to be committed to the
+// GitOps repo and only rejected by the API server, on every sync, long after the deploy reported
+// success (#2056).
+const dnsLabelMaxLen = 63
+
+// dns1123 lowercases + strips a string to a valid DNS-1123 label (<=63 chars).
 func dns1123(s string) string {
+	return dns1123Max(s, dnsLabelMaxLen)
+}
+
+// serviceNames pulls the raw, un-normalized names out of a service list, so NameCollisions is
+// given exactly what the user typed and can name it back to them.
+func serviceNames(services []types.ProjectServiceConfig) []string {
+	out := make([]string, 0, len(services))
+	for _, s := range services {
+		out = append(out, s.Name)
+	}
+	return out
+}
+
+// quoteAll quotes each name for a message, so a name that is empty or all whitespace is still
+// visible in the sentence that refuses it.
+func quoteAll(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, fmt.Sprintf("%q", n))
+	}
+	return out
+}
+
+// NameCollision is one normalized label that two or more distinct inputs claim.
+type NameCollision struct {
+	// Label is the dns1123 result they all collapse onto.
+	Label string
+	// Names are the original inputs, in the order given, that produced it.
+	Names []string
+}
+
+// NameCollisions reports every group of inputs that dns1123 collapses onto one label.
+//
+// This exists so the collision has ONE definition (#2234). dns1123 is lossy in three separate
+// ways — case ("api"/"API"), separator folding ("a.b"/"a-b"/"a_b"), and truncation at 63
+// characters — and any caller re-deriving "do these clash?" would be re-deriving that lossiness
+// too. The rule belongs next to the function that causes it.
+//
+// Callers use it at two different altitudes, deliberately:
+//
+//   - cloud.ValidateConfig REFUSES the project before a deploy starts, naming both services. That
+//     is the fix a user can act on, and it happens before any manifest is written.
+//   - FromServices REPORTS through `skipped` and renders neither loser. That is the belt: nothing
+//     reaching the renderer by another path can silently produce two manifests for one object.
+//
+// Inputs that normalize to the empty label are grouped like any other — an all-punctuation name is
+// as unusable as a duplicate, and reporting it here is better than emitting a nameless object.
+func NameCollisions(names []string) []NameCollision {
+	order := make([]string, 0, len(names))
+	byLabel := map[string][]string{}
+	for _, n := range names {
+		l := dns1123(n)
+		if _, seen := byLabel[l]; !seen {
+			order = append(order, l)
+		}
+		byLabel[l] = append(byLabel[l], n)
+	}
+	out := make([]NameCollision, 0)
+	for _, l := range order {
+		if len(byLabel[l]) > 1 {
+			out = append(out, NameCollision{Label: l, Names: byLabel[l]})
+		}
+	}
+	return out
+}
+
+// dns1123Max is dns1123 bounded to max characters. The cap is applied BEFORE the final hyphen
+// trim, so a truncation that lands on a '-' cannot leave a trailing hyphen — itself invalid in a
+// DNS-1123 label. A caller that composes a name out of several parts (BindingSecretName,
+// BootstrapJobName) still gets the whole composed string bounded, because it passes that string
+// through dns1123 as a unit.
+//
+// Mirrors packages/core/imagebuild.dns1123Max, which is the reference implementation; the copy is
+// deliberate so each package owns its scope and neither depends on the other's internals. Change
+// both together.
+func dns1123Max(s string, max int) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	var b strings.Builder
 	for _, r := range s {
@@ -982,5 +1111,9 @@ func dns1123(s string) string {
 			b.WriteRune('-')
 		}
 	}
-	return strings.Trim(b.String(), "-")
+	out := b.String()
+	if max > 0 && len(out) > max {
+		out = out[:max]
+	}
+	return strings.Trim(out, "-")
 }

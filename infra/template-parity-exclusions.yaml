@@ -963,6 +963,24 @@ baseline:
     off: "aws,azure,gcp,hetzner"
     state: unreviewed
     issue: "#2004"
+  # #2149. Alibaba's spelling of the cache network allow-list (caches.allowed_cidr_blocks, see
+  # infra/config-carriage-exclusions.yaml): alicloud_kvstore_instance.security_ips, probed against
+  # the pinned provider and now carried. AWS carries the same capability under its own name,
+  # redis_allowed_cidr_blocks (a separate baseline entry above) — the guard deliberately does not
+  # try to unify the two names, per the file header. gcp is a genuine ceiling: Memorystore has no
+  # per-instance allow-list at all, only VPC attachment (excluded in config-carriage-exclusions.yaml).
+  # azure is ALSO a ceiling, settled by #2148: the module declares azurerm_managed_redis (the classic
+  # azurerm_redis_cache is retiring and Azure now 400s on it), and Managed Redis exposes no firewall
+  # sub-resource in the pinned azurerm 4.81.0 or in 5.0.1 — azurerm_redis_firewall_rule binds to the
+  # retired type. Only public_network_access exists, which is an on/off switch and not an allow-list.
+  # This was previously recorded as tracked debt "azure can but its carrier does not exist yet"; that
+  # was wrong, and probing the pinned provider is what settled it.
+  - variable: kvstore_security_ips
+    on: "alibaba"
+    off: "aws,azure,gcp,hetzner"
+    state: no-carrier
+    issue: "#2148"
+    reason: Alibaba's per-cloud spelling of the cache network allow-list capability (caches.allowed_cidr_blocks). AWS carries the same capability as redis_allowed_cidr_blocks; gcp cannot express a per-instance allow-list at all (VPC-scoped ceiling); azure cannot either — Managed Redis has no firewall sub-resource, only a public-access switch (#2148), and the control is withdrawn there.
   - variable: location
     on: "azure"
     off: "alibaba,aws,gcp,hetzner"
@@ -1572,3 +1590,25 @@ uniform:
   # per environment during the apply. There is nothing for the operator to supply.
   - variable: cloud_sql_app_service_account_email
     reason: GCP-only by provider ceiling. Cloud SQL instances carry no IAM policy, so cloudsql.client/instanceUser are project-scoped only and the provisioner (which holds no resourcemanager.projects.setIamPolicy) cannot write them — the account is granted once in the customer's connector bootstrap and adopted. AWS scopes the equivalent to the DB resource ARN via IRSA and Azure via an Entra admin, so neither needs an operator-supplied identity.
+
+  # ── Cluster-admin grants: one capability, per-cloud spellings (#2005) ──────────────────────────
+  # Same shape as the Secrets-envelope-encryption group above: each cloud that CAN grant
+  # cluster-scoped admin from inside the template names its own knob — aws's eks_cluster_admins and
+  # azure's aks_admin_group_object_ids are already recorded (baseline:, #2004) — and
+  # ack_cluster_admins is alibaba's. CUSTOMIZABILITY-PARITY.md once called the alibaba binding
+  # "granted outside the template via IAM", as if ACK forced it. The pinned aliyun/alicloud 1.286.0
+  # provider refutes that: alicloud_cs_kubernetes_permissions is exactly a cluster-admin binding
+  # (alibaba/cluster-admins.tf), so the template now wires it — one resource per RAM principal,
+  # duplicate uids refused at the variable, because the provider's grant is a REPLACE of the
+  # principal's entire ACK permission set, not a merge.
+  #
+  # gcp and hetzner are not debt: gcp is excluded by two NAMED invariants recorded next to the
+  # mechanism in gcp/gke.tf (project IAM needs resourcemanager.projects.setIamPolicy, stripped from
+  # the provisioner by #300; in-cluster RBAC is an in-tofu kubernetes_* resource, forbidden by
+  # scripts/check-templates-plan-safe.sh because the provider is wired from the cluster's own
+  # known-after-apply endpoint), and hetzner has no cloud IAM plane at all (Talos; access is the
+  # emitted talosconfig/kubeconfig). Neither has a variable of its own to hang a record on, which is
+  # why both ceilings live here as comments rather than as `exclusions:` records — see this file's
+  # own note at the top of `exclusions:` about a ceiling with no name to hang on.
+  - variable: ack_cluster_admins
+    reason: Alibaba's spelling of cluster-scoped admin grants — alicloud_cs_kubernetes_permissions (role_type "cluster", role_name "admin"), REPLACE-not-merge, one resource per RAM uid (alibaba/cluster-admins.tf). AWS (eks_cluster_admins) and Azure (aks_admin_group_object_ids) already carry their own spellings (baseline:, #2004). GCP and Hetzner are genuine ceilings, not debt — see gcp/gke.tf for GCP's two named invariants and CUSTOMIZABILITY-PARITY.md for Hetzner's (no cloud IAM plane).

@@ -72,7 +72,8 @@ func cidrSubnet(base string, newBits, netNum int) string {
 
 // ValidateConfig refuses a Hetzner project config the Talos template cannot provision: the
 // shared node-pool sizing invariants, plus the private-network CIDR floor implied by the /24
-// node subnet the template carves.
+// node subnet AND the pod/service split the template carves out of the same network — the
+// narrowest network whose service carve still clears the node subnet is a /22.
 //
 // There is NO disk rule: Talos nodes take the server type's own disk and the template declares
 // no disk-size variable at all (asserted, so it can't silently gain one).
@@ -85,6 +86,9 @@ func cidrSubnet(base string, newBits, netNum int) string {
 func (p *hetznerProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if config == nil {
 		return fmt.Errorf("ProjectConfig is required")
+	}
+	if err := validateServiceNames(config); err != nil {
+		return err
 	}
 	if err := validateNodeSizing(config); err != nil {
 		return err
@@ -126,7 +130,11 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// a real hel1 provision came up Ready then failed the datapath gate (a pod could not
 	// reach the API ClusterIP cross-node). Derive them from network_cidr with the same
 	// split checks.tf documents (pod = upper /17, service = /19), disjoint from the node
-	// subnet (first /24), so the invariant holds for ANY network_cidr override.
+	// subnet (first /24) — for every override ValidateConfig admits. NOT for any override:
+	// on a /23 the service carve lands at offset 192 and on a /24 both carves land inside
+	// the first /24, which is why hetznerMaxNetworkPrefix (validate.go) refuses anything
+	// narrower than a /22 up front instead of letting checks_network.tf's disjointness
+	// precondition kill the apply.
 	networkCIDR := orDefault(config.Network.CIDRBlock, "10.0.0.0/16")
 
 	// Greenfield vs brownfield network, resolved the same way aws (`provision_vpc`) and gcp

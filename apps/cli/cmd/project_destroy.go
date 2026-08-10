@@ -14,6 +14,9 @@ var (
 	projectDestroyRunnerID  string
 	projectDestroyEnv       string
 	projectDestroyWait      bool
+	// projectDestroyYes is the --yes opt-in: skip the confirmation prompt (and make
+	// the command usable with --no-input).
+	projectDestroyYes bool
 )
 
 var projectDestroyCmd = &cobra.Command{
@@ -33,14 +36,18 @@ var projectDestroyCmd = &cobra.Command{
 			}
 		}
 
-		if !confirm(
+		if !confirmDestructive(
+			projectDestroyYes,
 			"Are you sure you want to destroy this project?",
 			"This will tear down all cloud resources. It cannot be undone.",
 		) {
 			return
 		}
 
-		if projectDestroyRunnerID == "" {
+		// The runner picker cannot be answered with prompting disabled, and the
+		// assignment is optional — an empty id is the picker's own "Any available"
+		// default — so a scripted teardown simply leaves the job unassigned.
+		if projectDestroyRunnerID == "" && !noInputMode {
 			projectDestroyRunnerID, err = selectRunner(token, "")
 			if err != nil {
 				fail(err)
@@ -80,6 +87,7 @@ var projectDestroyCmd = &cobra.Command{
 }
 
 func init() {
+	addYesFlag(projectDestroyCmd, &projectDestroyYes)
 	projectCmd.AddCommand(projectDestroyCmd)
 	projectDestroyCmd.Flags().StringVar(&projectDestroyProjectID, "project-id", "", "ID of the project to destroy")
 	projectDestroyCmd.Flags().StringVar(&projectDestroyRunnerID, "runner-id", "", "Assign to a specific runner")

@@ -4,6 +4,7 @@
 package cloud
 
 import (
+	"math/bits"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -59,6 +60,44 @@ func scrapeInt(t *testing.T, src, rel string, re *regexp.Regexp) int {
 		t.Fatalf("captured %q from %s is not an integer: %v", m[1], rel, err)
 	}
 	return n
+}
+
+// scrapeInt2 returns the first two capture groups of re in src as integers, with the same
+// fail-hard semantics as scrapeInt.
+func scrapeInt2(t *testing.T, src, rel string, re *regexp.Regexp) (int, int) {
+	t.Helper()
+	m := re.FindStringSubmatch(src)
+	if len(m) < 3 {
+		t.Fatalf("pattern %s not found in %s (format changed? re-anchor this coupling)", re, rel)
+	}
+	a, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("captured %q from %s is not an integer: %v", m[1], rel, err)
+	}
+	b, err := strconv.Atoi(m[2])
+	if err != nil {
+		t.Fatalf("captured %q from %s is not an integer: %v", m[2], rel, err)
+	}
+	return a, b
+}
+
+// maxPrefixClearingFirstBlock returns the largest network prefix p (<= firstTarget, so the
+// first carve's newbits stay >= 0) under which `cidrsubnet(net, newbits, netnum)` is
+// well-formed and its block starts at or past the end of the network's first /firstTarget —
+// the arithmetic tofu evaluates, not a re-encoding of a conclusion. Returns -1 when no prefix
+// satisfies it (e.g. netnum 0, which IS the first block).
+func maxPrefixClearingFirstBlock(firstTarget, newbits, netnum int) int {
+	for p := firstTarget; p >= 0; p-- {
+		if p+newbits > 32 {
+			continue
+		}
+		blockStart := uint64(netnum) << uint(32-p-newbits)
+		firstBlockSize := uint64(1) << uint(32-firstTarget)
+		if blockStart >= firstBlockSize {
+			return p
+		}
+	}
+	return -1
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -124,9 +163,19 @@ func TestNodeDiskFloorsMatchTemplates(t *testing.T) {
 type cidrFloorKind int
 
 const (
-	// `cidrsubnet(x, N - <prefix length>, …)` — newbits >= 0 requires prefix <= N, so the floor
-	// IS the scraped N.
+	// `cidrsubnet(x, N - <prefix length>, netnum)` — cidrsubnet() needs BOTH newbits >= 0 AND
+	// netnum < 2^newbits, so the floor is N minus the bits the largest carved netnum needs:
+	// N - bits.Len(maxNetnum). With a single subnet at netnum 0 that degenerates to N; with
+	// netnums 0..3 it is N - 2. Deriving only the newbits half is how #2050 shipped a floor
+	// two too wide.
 	cidrFloorFromPrefixExpr cidrFloorKind = iota
+	// `cidrsubnet(x, N - <prefix length>, 0)` PLUS further fixed-newbits carves out of the SAME
+	// network that must each stay disjoint from that first /N block (a fail-closed template
+	// precondition). The floor is the narrowest prefix under which every carve is well-formed
+	// AND clears the /N — strictly below the scraped N whenever any carve's block slides into
+	// it. #2049: deriving only from the node carve admitted /23 and /24, whose service carve
+	// lands inside the node /24 and dies at plan.
+	cidrFloorFromPrefixExprAndDisjointCarves
 	// `cidrsubnet(x, N, …)` — the result runs past /32 once prefix + N > 32, so the floor is
 	// 32 - N.
 	cidrFloorFromFixedNewbits
@@ -134,30 +183,44 @@ const (
 	cidrFloorVerbatimExempt
 	// A carve exists, but the number is owned by another issue and is not encoded here yet.
 	cidrFloorDeferred
+	// The template states the bound directly as a carvability predicate rather than implying it
+	// from a cidrsubnet() newbits argument, so the floor is scraped from that predicate.
+	cidrFloorFromCarvableBound
 )
 
 // cidrFloorCoupling binds one Go constant (or one documented absence) to a template expression.
 type cidrFloorCoupling struct {
 	kind     cidrFloorKind
 	rel      string         // repo-relative .tf carrying the expression
-	pattern  *regexp.Regexp // must match; captures the newbits integer for the two carved kinds
+	pattern  *regexp.Regexp // must match; captures the newbits integer for the carved kinds, plus every carved netnum for the prefix-expr kind
 	absent   *regexp.Regexp // for the exempt kind: a pattern that must NOT match
-	constant int            // the Go constant, for the two carved kinds
+	constant int            // the Go constant, for the carved kinds
 	why      string         // for the two non-carved kinds
+	// for the disjoint-carves kind: each pattern captures (newbits, netnum) of one further
+	// carve out of the same network that must stay disjoint from the first block.
+	carves []*regexp.Regexp
 }
 
 var networkCIDRFloorCouplings = map[string]cidrFloorCoupling{
 	"azure": {
 		kind:     cidrFloorFromPrefixExpr,
 		rel:      "infra/templates/project/azure/modules/vnet/main.tf",
-		pattern:  regexp.MustCompile(`cidrsubnet\(var\.vnet_cidr,\s*(\d+)\s*-\s*local\.vnet_prefix_length`),
+		pattern:  regexp.MustCompile(`cidrsubnet\(var\.vnet_cidr,\s*(\d+)\s*-\s*local\.vnet_prefix_length,\s*(\d+)\)`),
 		constant: azureMaxNetworkPrefix,
 	},
 	"hetzner": {
-		kind:     cidrFloorFromPrefixExpr,
+		kind:     cidrFloorFromPrefixExprAndDisjointCarves,
 		rel:      "infra/templates/project/hetzner/network.tf",
-		pattern:  regexp.MustCompile(`cidrsubnet\(local\.network_ip_range,\s*(\d+)\s*-\s*tonumber`),
+		pattern:  regexp.MustCompile(`cidrsubnet\(local\.network_ip_range,\s*(\d+)\s*-\s*tonumber\(split\("/", local\.network_ip_range\)\[1\]\),\s*(\d+)\)`),
 		constant: hetznerMaxNetworkPrefix,
+		// The pod/service split — the same one hetznerProvider.ProviderTfvars emits.
+		// checks_network.tf (`cidrs_distinct`) blocks the apply fail-closed unless both stay
+		// disjoint from the node subnet, so each carve tightens the floor below the node
+		// carve's own /24.
+		carves: []*regexp.Regexp{
+			regexp.MustCompile(`pod_cidr\s*=\s*coalesce\(var\.pod_cidr,\s*cidrsubnet\(local\.network_ip_range,\s*(\d+),\s*(\d+)\)\)`),
+			regexp.MustCompile(`service_cidr\s*=\s*coalesce\(var\.service_cidr,\s*cidrsubnet\(local\.network_ip_range,\s*(\d+),\s*(\d+)\)\)`),
+		},
 	},
 	"alibaba": {
 		kind:     cidrFloorFromFixedNewbits,
@@ -173,24 +236,26 @@ var networkCIDRFloorCouplings = map[string]cidrFloorCoupling{
 		why:     "the subnetwork takes network_cidr verbatim and pods/services are SECONDARY ranges",
 	},
 	"aws": {
-		kind: cidrFloorDeferred,
+		kind: cidrFloorFromCarvableBound,
 		rel:  "infra/templates/project/aws/networking.tf",
-		// Re-anchored by #1936. The carve still exists and is still derived from var.vpc_cidr — it
-		// just runs through `local.vpc_cidr_for_subnet_plan` (line 88, `local.vpc_cidr_is_carvable ?
-		// var.vpc_cidr : "10.0.0.0/16"`) now, because the plan moved into one declarative map so a
-		// netnum cannot be edited without also moving the span the disjointness guard checks. The
-		// old pattern named the literal `var.vpc_cidr` argument and so stopped matching, which fired
-		// this test's "close it out" branch — correctly reporting drift, wrongly diagnosing it as
-		// the carve disappearing. Anchored on the local, which is the expression that now carries it.
-		pattern: regexp.MustCompile(`cidrsubnet\(local\.vpc_cidr_for_subnet_plan,`),
-		why:     "the /18 Go-side floor is owned by #1942; #1936 has landed the template-side fail-closed guard (terraform_data.vpc_cidr_carvable_guard)",
+		// #1936 moved the carve behind `local.vpc_cidr_for_subnet_plan` and computed the bound
+		// once, as a predicate: public subnets are 1/1024 of the VPC and AWS's minimum subnet is
+		// /28, which binds the constraint at 18. That predicate is the single source of the number,
+		// so the Go constant is scraped from it rather than re-derived from the newbits — #1942
+		// warned explicitly against hand-mirroring the /18, and a second derivation IS a second
+		// source of truth.
+		pattern:  regexp.MustCompile(`vpc_cidr_is_carvable\s*=\s*local\.vpc_cidr_prefix_length\s*>=\s*\d+\s*&&\s*local\.vpc_cidr_prefix_length\s*<=\s*(\d+)`),
+		constant: awsMaxNetworkPrefix,
 	},
 }
 
 // TestNetworkCIDRFloorsMatchTemplates re-derives every network-CIDR floor from the cidrsubnet()
-// expression that implies it, and pins the two clouds that deliberately have no rule — GCP
-// because there is nothing to carve, AWS because the number is owned elsewhere. Both are
-// asserted against the template, so neither can quietly stop being true.
+// expression that implies it, and pins the one cloud that deliberately has no rule — GCP, because
+// the subnetwork takes network_cidr verbatim and pods/services are secondary ranges. Every case is
+// asserted against the template, so none can quietly stop being true.
+//
+// AWS was `cidrFloorDeferred` until #1942 encoded its floor; it now scrapes the carvability
+// predicate #1936 introduced.
 func TestNetworkCIDRFloorsMatchTemplates(t *testing.T) {
 	root := templateRepoRoot(t)
 
@@ -207,10 +272,61 @@ func TestNetworkCIDRFloorsMatchTemplates(t *testing.T) {
 
 			switch coupling.kind {
 			case cidrFloorFromPrefixExpr:
-				got := scrapeInt(t, src, coupling.rel, coupling.pattern)
-				if got != coupling.constant {
-					t.Errorf("%s: %s carves at `%d - <prefix>`, so the floor is /%d, but validate.go "+
-						"encodes /%d", cloudName, coupling.rel, got, got, coupling.constant)
+				// EVERY carve matters, not just one: the floor is the target prefix N minus the
+				// newbits the largest carved netnum needs (netnum < 2^newbits is a hard tofu
+				// error, exactly like negative newbits). Matching a single expression here is
+				// how azure's floor shipped as /20 while the template carved four subnets
+				// (#2050) — so scrape them all, and hard-fail if the template's carves ever
+				// disagree on N.
+				matches := coupling.pattern.FindAllStringSubmatch(src, -1)
+				if matches == nil {
+					t.Fatalf("pattern %s not found in %s (format changed? re-anchor this coupling)",
+						coupling.pattern, coupling.rel)
+				}
+				targetPrefix, maxNetnum := 0, 0
+				for i, m := range matches {
+					n, err := strconv.Atoi(m[1])
+					if err != nil {
+						t.Fatalf("captured %q from %s is not an integer: %v", m[1], coupling.rel, err)
+					}
+					if i == 0 {
+						targetPrefix = n
+					} else if n != targetPrefix {
+						t.Fatalf("%s: %s carves at both `%d - <prefix>` and `%d - <prefix>` — the "+
+							"subnets no longer share one target prefix, so a single floor cannot be "+
+							"derived; re-anchor this coupling", cloudName, coupling.rel, targetPrefix, n)
+					}
+					netnum, err := strconv.Atoi(m[2])
+					if err != nil {
+						t.Fatalf("captured %q from %s is not an integer: %v", m[2], coupling.rel, err)
+					}
+					maxNetnum = max(maxNetnum, netnum)
+				}
+				if want := targetPrefix - bits.Len(uint(maxNetnum)); want != coupling.constant {
+					t.Errorf("%s: %s carves %d subnet(s) at `%d - <prefix>` up to netnum %d, so the "+
+						"floor is /%d, but validate.go encodes /%d", cloudName, coupling.rel,
+						len(matches), targetPrefix, maxNetnum, want, coupling.constant)
+				}
+
+			case cidrFloorFromPrefixExprAndDisjointCarves:
+				nodeTarget := scrapeInt(t, src, coupling.rel, coupling.pattern)
+				floor := nodeTarget
+				for _, carve := range coupling.carves {
+					newbits, netnum := scrapeInt2(t, src, coupling.rel, carve)
+					p := maxPrefixClearingFirstBlock(nodeTarget, newbits, netnum)
+					if p < 0 {
+						t.Fatalf("%s: %s carve (%d, %d) can NEVER clear the first /%d — the template's "+
+							"split itself is broken, not just the floor", cloudName, coupling.rel,
+							newbits, netnum, nodeTarget)
+					}
+					if p < floor {
+						floor = p
+					}
+				}
+				if floor != coupling.constant {
+					t.Errorf("%s: %s carves a first /%d plus disjoint blocks whose derived floor is "+
+						"/%d, but validate.go encodes /%d", cloudName, coupling.rel, nodeTarget, floor,
+						coupling.constant)
 				}
 
 			case cidrFloorFromFixedNewbits:
@@ -218,6 +334,14 @@ func TestNetworkCIDRFloorsMatchTemplates(t *testing.T) {
 				if want := 32 - newbits; want != coupling.constant {
 					t.Errorf("%s: %s carves at %d newbits, so the structural floor is /%d, but "+
 						"validate.go encodes /%d", cloudName, coupling.rel, newbits, want, coupling.constant)
+				}
+
+			case cidrFloorFromCarvableBound:
+				got := scrapeInt(t, src, coupling.rel, coupling.pattern)
+				if got != coupling.constant {
+					t.Errorf("%s: %s declares the CIDR carvable up to /%d, but validate.go encodes "+
+						"/%d — the template owns this number and the Go rule must mirror it, never "+
+						"re-derive it", cloudName, coupling.rel, got, coupling.constant)
 				}
 
 			case cidrFloorVerbatimExempt:

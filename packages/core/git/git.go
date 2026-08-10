@@ -554,11 +554,15 @@ func (g *GIT) IsDirty() (bool, error) {
 	return !s.IsClean(), nil
 }
 
-// FileExists checks if a file exists within the local repository path.
+// FileExists reports whether a usable file exists at relativePath within the local
+// repository path. It answers "is there a file here we can work with", so only a
+// successful stat is a yes: an ambiguous failure (ENOTDIR when a parent component is a
+// regular file, EACCES, ELOOP) reports false rather than being read as "already present",
+// which would let a caller skip writing to a destination it can never reach.
 func (g *GIT) FileExists(relativePath string) bool {
 	fullPath := filepath.Join(g.LocalPath, relativePath)
 	_, err := os.Stat(fullPath)
-	return !os.IsNotExist(err)
+	return err == nil
 }
 
 // CopyFiles copies files from source to destination, ignoring specified files.
@@ -609,8 +613,14 @@ func (g *GIT) CopyFiles(src, dst string, ignoreFiles []string) error {
 
 // ClearRepoContents removes all files and directories (except .git) from the local repository path.
 func (g *GIT) ClearRepoContents() error {
-	// Ensure the local path exists and is a directory
-	if info, err := os.Stat(g.LocalPath); os.IsNotExist(err) || !info.IsDir() {
+	// Ensure the local path exists and is a directory. A stat failure that is not
+	// ENOENT (ENOTDIR, EACCES, ELOOP, ENAMETOOLONG) leaves info nil, so it has to be
+	// reported before info is dereferenced.
+	info, err := os.Stat(g.LocalPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat local path %s: %w", g.LocalPath, err)
+	}
+	if err != nil || !info.IsDir() {
 		return fmt.Errorf("local path %s does not exist or is not a directory", g.LocalPath)
 	}
 

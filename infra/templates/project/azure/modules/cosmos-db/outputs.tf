@@ -35,3 +35,19 @@ output "backup_tier" {
   description = "The continuous-backup retention tier the account is planned with; null in Periodic mode."
   value       = try(one(azurerm_cosmosdb_account.this.backup).tier, null)
 }
+
+# Read off the RESOURCE, same rule as backup_mode above: echoing var.replica_regions back would
+# still pass if the dynamic geo_location block were deleted. Keyed by region because geo_location
+# is a SET — list order is not meaningful to assert on.
+output "geo_locations" {
+  description = "Map of region → failover_priority the account is planned with — the primary at 0 plus one entry per replica region."
+  value = {
+    for g in azurerm_cosmosdb_account.this.geo_location :
+    g.location => g.failover_priority
+  }
+}
+
+output "serverless" {
+  description = "Whether the account is planned with the EnableServerless capability — false once any table asked for global replicas (serverless is single-region-only)."
+  value       = contains([for c in azurerm_cosmosdb_account.this.capabilities : c.name], "EnableServerless")
+}

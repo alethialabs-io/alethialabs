@@ -47,24 +47,28 @@ func (p *awsProvider) RequiredCLIs() []string {
 }
 
 // ValidateConfig refuses an AWS project config the EKS templates cannot provision: the shared
-// node-pool sizing invariants, plus the `eks_disk_size` floor the template itself declares.
+// node-pool sizing invariants, the `eks_disk_size` floor the template declares, and the VPC-CIDR
+// floor.
 //
-// The VPC-CIDR floor is deliberately ABSENT. `cidrsubnet(var.vpc_cidr, 10, …)`
-// (infra/templates/project/aws/networking.tf:23-35) plus the AWS /28 subnet minimum implies a
-// /18, and that number is owned by #1942. #1936 has now landed the TEMPLATE-side gate for it
-// (terraform_data.vpc_cidr_carvable_guard blocks the plan fail-closed, with a `check` stating the
-// same violation in the plan output), so an unusable CIDR can no longer reach an apply — but the
-// Go-side rule is still #1942's, so it stays absent here rather than being half-encoded in two
-// places. The drift guard (validate_drift_test.go) pins the carve so the deferral cannot be
-// forgotten.
+// The CIDR rule moves the refusal to the point of entry. #1936 landed the TEMPLATE-side gate
+// (terraform_data.vpc_cidr_carvable_guard) which fails the plan closed, and that guard is correct —
+// but it fires after the customer has saved, deployed and waited. Worse, the two bad shapes fail
+// differently: a /24 dies inside cidrsubnet() naming no input at all, while a /19 PLANS CLEAN and
+// yields /29 public subnets AWS rejects mid-apply, after resources exist (#1942).
 func (p *awsProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if config == nil {
 		return fmt.Errorf("ProjectConfig is required")
 	}
+	if err := validateServiceNames(config); err != nil {
+		return err
+	}
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
-	return validateNodeDiskSize(config, "eks_disk_size", awsNodeDiskFloorGB)
+	if err := validateNodeDiskSize(config, "eks_disk_size", awsNodeDiskFloorGB); err != nil {
+		return err
+	}
+	return validateNetworkCIDR(config, "vpc_cidr", awsMaxNetworkPrefix)
 }
 
 func (p *awsProvider) ProviderTfvars(config *types.ProjectConfig) map[string]interface{} {

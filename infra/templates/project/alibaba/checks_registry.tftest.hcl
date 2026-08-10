@@ -139,3 +139,75 @@ run "an_illegal_repository_name_is_refused" {
 
   expect_failures = [check.cr_repo_names_valid]
 }
+
+# ── Vulnerability scanning (#1845). ON, OFF, and the omitted default. ──────────────────
+#
+# The switch is a SIBLING resource, not a repository argument: ON plans one REPO-scoped
+# `alicloud_cr_scan_rule` (AUTO trigger, VUL type) targeting exactly that repository; OFF and
+# omitted plan NO rule — the template's pre-#1845 status quo, so an old snapshot changes nothing.
+# The instance's own `image_scanner`/`vpc_quota` arguments stay untouched (#1933 — a change there
+# applies "cleanly" and does nothing, or replaces a Subscription-billed registry).
+#
+# Plan-green here is NOT proof a scan runs: the AUTO trigger's VPC prerequisite is undocumented
+# in both languages (docs/research/alibaba-cr-scan-rule-vpc.md). The runtime proof — push an
+# image, observe a scan result — is owed by the alibaba e2e nightly (#2061/#2101).
+
+run "vulnerability_scanning_on_plans_a_repo_scoped_auto_rule" {
+  command = plan
+
+  variables {
+    cr_repos = {
+      apps = { summary = "Container images for apps", vulnerability_scanning = true }
+    }
+  }
+
+  assert {
+    condition     = module.cr[0].repository_scan_rules["apps"].scan_scope == "REPO"
+    error_message = "vulnerability_scanning = true must plan a REPO-scoped alicloud_cr_scan_rule; got ${jsonencode(module.cr[0].repository_scan_rules)}."
+  }
+
+  assert {
+    condition     = module.cr[0].repository_scan_rules["apps"].trigger_type == "AUTO" && module.cr[0].repository_scan_rules["apps"].scan_type == "VUL"
+    error_message = "The rule must be AUTO-triggered and of type VUL — anything else looks like scanning without being what the switch promises. Got ${jsonencode(module.cr[0].repository_scan_rules)}."
+  }
+
+  assert {
+    condition     = tolist(module.cr[0].repository_scan_rules["apps"].repo_names) == tolist(["apps"])
+    error_message = "The rule must target exactly the repository whose switch is on; got ${jsonencode(module.cr[0].repository_scan_rules)}."
+  }
+}
+
+# OFF — the half that distinguishes a wired switch from a hardcoded one: the rule must be ABSENT.
+run "vulnerability_scanning_off_plans_no_rule" {
+  command = plan
+
+  variables {
+    cr_repos = {
+      apps = { summary = "Container images for apps", vulnerability_scanning = false }
+    }
+  }
+
+  assert {
+    condition     = length(module.cr[0].repository_scan_rules) == 0
+    error_message = "vulnerability_scanning = false must plan NO alicloud_cr_scan_rule at all; got ${jsonencode(module.cr[0].repository_scan_rules)}."
+  }
+}
+
+# An omitted switch keeps the template's own default — no rule. The OPPOSITE default from
+# immutable_tags, deliberately: "absent" means "leave the template default alone", and before
+# #1845 this template created no rule, so an emitter that omits the key changes nothing for a
+# project that already exists.
+run "an_omitted_scanning_switch_plans_no_rule" {
+  command = plan
+
+  variables {
+    cr_repos = {
+      apps = {}
+    }
+  }
+
+  assert {
+    condition     = length(module.cr[0].repository_scan_rules) == 0
+    error_message = "A repository configured with no vulnerability_scanning value must plan no scan rule — the template's pre-#1845 default. Got ${jsonencode(module.cr[0].repository_scan_rules)}."
+  }
+}

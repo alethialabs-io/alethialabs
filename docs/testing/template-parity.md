@@ -11,6 +11,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 
 | Variable | alibaba | aws | azure | gcp | hetzner | State | Why |
 |---|---|---|---|---|---|---|---|
+| `ack_cluster_admins` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | uniform | Alibaba's spelling of cluster-scoped admin grants — alicloud_cs_kubernetes_permissions (role_type "cluster", role_name "admin"), REPLACE-not-merge, one resource per RAM uid (alibaba/cluster-admins.tf). AWS (eks_cluster_admins) and Azure (aks_admin_group_object_ids) already carry their own spellings (baseline:, #2004). GCP and Hetzner are genuine ceilings, not debt — see gcp/gke.tf for GCP's two named invariants and CUSTOMIZABILITY-PARITY.md for Hetzner's (no cloud IAM plane). |
 | `ack_cluster_version` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `ack_disk_category` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `ack_disk_performance_level` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
@@ -207,6 +208,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `kvstore_engine_version` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `kvstore_instance_class` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `kvstore_multi_az` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
+| `kvstore_security_ips` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline | Alibaba's per-cloud spelling of the cache network allow-list capability (caches.allowed_cidr_blocks). AWS carries the same capability as redis_allowed_cidr_blocks; gcp cannot express a per-instance allow-list at all (VPC-scoped ceiling); azure cannot either — Managed Redis has no firewall sub-resource, only a public-access switch (#2148), and the control is withdrawn there. (#2148) |
 | `kvstore_shard_count` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | uniform | ApsaraDB for Redis exposes shard_count as its own argument; azure's Managed Redis encodes topology in the SKU instead, so there is no equivalent knob to add there. |
 | `location` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `memorystore_auth_enabled` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |

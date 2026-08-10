@@ -434,6 +434,8 @@ func TestMisc_ProjectFlagIsRequired(t *testing.T) {
 // rule, and delete only calls the control plane once the operator has confirmed.
 func TestMisc_AlertsCreateAndDelete(t *testing.T) {
 	run := miscEnv(t, miscFull)
+	// This test passes --yes; clear it again so it cannot pre-confirm a later test.
+	hygCliConfirmClearYes(t, alertsDeleteCmd)
 
 	if err := run("alerts", "create", "job failures",
 		"--event", "system.job.failed", "--channel", "ch1", "--severity", "critical",
@@ -441,17 +443,16 @@ func TestMisc_AlertsCreateAndDelete(t *testing.T) {
 		t.Fatalf("alerts create: %v", err)
 	}
 
-	// The real prompt cannot be answered headlessly, so the un-confirmed path returns
-	// without deleting anything.
-	if err := run("alerts", "delete", "ar1", "--output", "json", "--no-input"); err != nil {
-		t.Fatalf("alerts delete (cancelled): %v", err)
+	// The prompt cannot be answered headlessly, so a scripted delete without the
+	// explicit --yes opt-in is fatal — it must never exit 0 having deleted nothing.
+	// See hyg_cli_confirm_test.go for the contract this belongs to.
+	trapped := miscTrapExit(t, run)
+	if !trapped("alerts", "delete", "ar1", "--output", "json", "--no-input") {
+		t.Error("alerts delete without --yes: expected the fatal path")
 	}
 
-	// With the operator confirming, the delete goes through.
-	prev := confirm
-	confirm = func(title, description string) bool { return true }
-	t.Cleanup(func() { confirm = prev })
-	if err := run("alerts", "delete", "ar1", "--output", "json", "--no-input"); err != nil {
+	// With the operator opting in, the delete goes through.
+	if err := run("alerts", "delete", "ar1", "--yes", "--output", "json", "--no-input"); err != nil {
 		t.Fatalf("alerts delete (confirmed): %v", err)
 	}
 }
@@ -459,15 +460,15 @@ func TestMisc_AlertsCreateAndDelete(t *testing.T) {
 // TestMisc_AlertsMutationFailuresExit pins that a refused create/delete is fatal, not a
 // silent success.
 func TestMisc_AlertsMutationFailuresExit(t *testing.T) {
-	prev := confirm
-	confirm = func(title, description string) bool { return true }
-	t.Cleanup(func() { confirm = prev })
-
 	run := miscTrapExit(t, miscEnv(t, miscFail))
+	// This test passes --yes; clear it again so it cannot pre-confirm a later test.
+	hygCliConfirmClearYes(t, alertsDeleteCmd)
 	if !run("alerts", "create", "x", "--event", "e", "--channel", "c", "--output", "json", "--no-input") {
 		t.Error("alerts create: expected the fatal path")
 	}
-	if !run("alerts", "delete", "ar1", "--output", "json", "--no-input") {
+	// --yes carries the delete past the confirmation, so the failure under test is
+	// the refused control-plane call rather than the missing opt-in.
+	if !run("alerts", "delete", "ar1", "--yes", "--output", "json", "--no-input") {
 		t.Error("alerts delete: expected the fatal path")
 	}
 }
@@ -1129,6 +1130,9 @@ func miscJobTotal(empty bool) int {
 // pointer the huh group owns and never exposes.
 func miscAlwaysConfirm(t *testing.T, answer bool) {
 	t.Helper()
+	// A destructive command consults noInputMode before it prompts, so the stubbed
+	// answer is only reachable with the terminal seams on.
+	miscTTY(t)
 	prev := confirm
 	confirm = func(string, string) bool { return answer }
 	t.Cleanup(func() { confirm = prev })

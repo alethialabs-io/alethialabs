@@ -6,6 +6,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -42,6 +43,16 @@ var (
 	loginProgramOptions []tea.ProgramOption
 	// loginPollInterval is how long pollForToken waits between "pending" (404) polls.
 	loginPollInterval = 2 * time.Second
+	// loginPollThrottleInterval is the back-off pollForToken uses when the control plane
+	// answers 429. A throttle is not a rejection, so the poll keeps waiting — just slower.
+	loginPollThrottleInterval = 10 * time.Second
+	// loginPollTimeout bounds the WHOLE device-flow poll. req's SetTimeout is a PER-REQUEST
+	// timeout, so without a deadline the 404="pending" arm retries forever whenever the
+	// browser half is never completed — a headless CI box, a broken browser.OpenURL, a
+	// closed tab — and `alethia login` has to be killed.
+	loginPollTimeout = 10 * time.Minute
+	// loginRequestTimeout bounds a single exchange request.
+	loginRequestTimeout = 120 * time.Second
 )
 
 // resolveLogin handles the "not authenticated" branch of getAuthTokenInternal:
@@ -171,9 +182,13 @@ func (m model) View() string {
 
 // --- Polling and Token Handling ---
 
+// pollForToken polls the exchange endpoint until the browser half of the device flow is
+// approved, the control plane returns a terminal status, or loginPollTimeout elapses. The
+// client timeout is per-request; the deadline below is the overall budget.
 func pollForToken(deviceCode, exchangeURL string) tea.Cmd {
 	return func() tea.Msg {
-		client := req.C().SetTimeout(120 * time.Second) // Overall timeout for the polling
+		client := req.C().SetTimeout(loginRequestTimeout) // Per-request timeout
+		deadline := time.Now().Add(loginPollTimeout)
 		for {
 			var result types.ExchangeResponse
 			var errMsg struct {
@@ -193,12 +208,29 @@ func pollForToken(deviceCode, exchangeURL string) tea.Cmd {
 				return authSuccessMsg{response: &result}
 			}
 
-			if resp.StatusCode != 404 { // 404 is our "pending" state, any other error is fatal
+			if resp.StatusCode == http.StatusGone {
+				// Terminal: the device code expired or was already redeemed. Retrying can
+				// never succeed, so say what happened instead of spinning.
+				return authErrorMsg{err: fmt.Errorf(
+					"this login code has expired or was already used — run `alethia login` again (HTTP 410): %s",
+					errMsg.Error)}
+			}
+
+			// 404 is our "pending" state and 429 means the control plane is throttling the
+			// poll, not rejecting the login — both keep waiting, 429 with a longer back-off.
+			// Any other status is fatal.
+			wait := loginPollInterval
+			if resp.StatusCode == http.StatusTooManyRequests {
+				wait = loginPollThrottleInterval
+			} else if resp.StatusCode != http.StatusNotFound {
 				return authErrorMsg{err: fmt.Errorf("authentication failed (HTTP %d): %s", resp.StatusCode, errMsg.Error)}
 			}
 
-			// If it's a 404, just wait and try again
-			time.Sleep(loginPollInterval)
+			if time.Until(deadline) <= wait {
+				return authErrorMsg{err: fmt.Errorf(
+					"timed out after %s waiting for the login to be approved in the browser", loginPollTimeout)}
+			}
+			time.Sleep(wait)
 		}
 	}
 }
@@ -213,11 +245,17 @@ func saveTokens(tokens *types.ExchangeResponse) {
 		failf("Error creating config directory: %v", err)
 	}
 
-	file, err := os.Create(credsPath)
+	// 0600: this file holds the live access token, the 90-day refresh token and the raw
+	// git-provider OAuth token. os.Create would ask for 0666 and let the umask decide.
+	file, err := os.OpenFile(credsPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, credentialsFileMode)
 	if err != nil {
 		failf("Error creating credentials file: %v", err)
 	}
 	defer file.Close()
+
+	// O_CREATE applies the mode only to a file it actually creates; tighten an existing
+	// credentials.json an older CLI left world-readable. Best-effort (see saveCredentials).
+	_ = file.Chmod(credentialsFileMode)
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
@@ -255,12 +293,20 @@ func performLoginFlow() error {
 	}
 
 	deviceCode := uuid.New().String()
+	// RFC 8628 user_code: the browser shows the code it is about to approve and the user
+	// compares it against this line. Without it a phished /cli/login link binds the
+	// victim's account to the attacker's device code with nothing to compare against.
+	// The alphabet is URL-safe, so it needs no escaping.
+	userCode := newUserCode()
 	origin := WebOrigin()
-	loginURL := fmt.Sprintf("%s/cli/login?device_code=%s", origin, deviceCode)
+	loginURL := fmt.Sprintf("%s/cli/login?device_code=%s&user_code=%s", origin, deviceCode, userCode)
 	exchangeURL := fmt.Sprintf("%s/api/auth/cli/exchange", origin)
 
 	fmt.Println(ui.CyanStyle.Render("Please open the following URL in your browser to log in:"))
 	fmt.Println(loginURL)
+	fmt.Println()
+	fmt.Println(ui.TextStyle.Render("Approve the login only if the browser shows this code:"))
+	fmt.Println(ui.CyanStyle.Render(userCode))
 
 	if err := openBrowser(loginURL); err != nil {
 		fmt.Printf("\nCould not open browser automatically. Please open the link manually.\n")

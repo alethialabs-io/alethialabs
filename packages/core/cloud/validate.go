@@ -6,7 +6,9 @@ package cloud
 import (
 	"fmt"
 	"net"
+	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
@@ -138,13 +140,30 @@ func validateNodeDiskSize(config *types.ProjectConfig, tfvar string, floorGB int
 // pins the two clouds that deliberately have NO rule.
 const (
 	// infra/templates/project/azure/modules/vnet/main.tf:13-18 — four subnets at
-	// `cidrsubnet(var.vnet_cidr, 20 - local.vnet_prefix_length, 0..3)`. newbits >= 0 requires
-	// prefix <= 20.
-	azureMaxNetworkPrefix = 20
-	// infra/templates/project/hetzner/network.tf:11 — the node subnet is
-	// `cidrsubnet(local.network_ip_range, 24 - tonumber(split("/", …)[1]), 0)`. newbits >= 0
-	// requires prefix <= 24.
-	hetznerMaxNetworkPrefix = 24
+	// `cidrsubnet(var.vnet_cidr, 20 - local.vnet_prefix_length, 0..3)`. cidrsubnet() also
+	// requires netnum < 2^newbits, so carving netnum 3 needs newbits >= 2, i.e. prefix <= 18.
+	// newbits >= 0 alone (prefix <= 20) admits /19 and /20, which die inside tofu with an
+	// opaque "does not accommodate a subnet numbered N" error.
+	azureMaxNetworkPrefix = 18
+	// infra/templates/project/hetzner/network.tf — THREE carves share the network, and the
+	// floor is the narrowest prefix that keeps all of them well-formed AND mutually disjoint
+	// (checks_network.tf's `cidrs_distinct` precondition blocks the apply fail-closed
+	// otherwise):
+	//
+	//   - node subnet (line 11): `cidrsubnet(local.network_ip_range, 24 - tonumber(…), 0)` —
+	//     always the FIRST /24, and newbits >= 0 requires prefix <= 24;
+	//   - pod_cidr (line 77): `cidrsubnet(local.network_ip_range, 1, 1)` — starts halfway in,
+	//     at offset 2^(31-prefix), which stays clear of the node /24 (256 addresses) only
+	//     while prefix <= 23;
+	//   - service_cidr (line 78): `cidrsubnet(local.network_ip_range, 3, 3)` — starts at
+	//     offset 3*2^(29-prefix): 96 for a /24 and 192 for a /23, both inside the node /24;
+	//     384 for a /22, the first prefix that clears it.
+	//
+	// So the floor is the service carve's /22, not the node carve's /24 — a /23 or /24 parses,
+	// carves, and then dies at plan on the disjointness precondition.
+	// TestNetworkCIDRFloorsMatchTemplates re-derives this minimum from all three template
+	// expressions on every run.
+	hetznerMaxNetworkPrefix = 22
 	// infra/templates/project/alibaba/modules/network/main.tf:35 — vswitches are
 	// `cidrsubnet(var.network_cidr, 4, count.index)`, so prefix + 4 <= 32 requires prefix <= 28.
 	//
@@ -153,6 +172,16 @@ const (
 	// bound is encoded: rule 1 at the top of this file says a rule may never be wider than the
 	// template, and the API's exact minimum is not derivable from the tree.
 	alibabaMaxNetworkPrefix = 32 - 4
+	// infra/templates/project/aws/networking.tf:86 — `local.vpc_cidr_is_carvable` is
+	// `prefix >= 8 && prefix <= 18`, and 18 is the number this mirrors.
+	//
+	// NOT re-derived here, deliberately. The template owns it (#1936 computed it from the subnet
+	// plan: public subnets are 1/1024 of the VPC and AWS's minimum subnet is /28, which binds the
+	// constraint at 18), and TestNetworkCIDRFloorsMatchTemplates scrapes that bound out of the .tf
+	// on every run. #1942 warned explicitly against hand-mirroring the number, so the value is
+	// stated once and the drift test is what keeps the two honest — the same treatment the other
+	// three carved clouds get.
+	awsMaxNetworkPrefix = 18
 )
 
 // provisionsOwnNetwork mirrors — exactly — the greenfield/brownfield resolution every
@@ -194,4 +223,43 @@ func validateNetworkCIDR(config *types.ProjectConfig, tfvar string, maxPrefix in
 				"a /%d or wider network", tfvar, maxPrefix))
 	}
 	return nil
+}
+
+// validateServiceNames refuses a project whose services would render the same Kubernetes object
+// (#2234).
+//
+// Every service name goes through dns1123 before it becomes a Deployment and a Service name, and
+// that function is lossy three ways: case ("api"/"API"), separator folding ("a.b"/"a-b"/"a_b"),
+// and truncation at 63 characters. Two names that differ only in one of those ways collapse onto
+// one label, and ArgoCD then applies both manifests to one object last-write-wins — so a workload
+// is silently absent while the deploy reports SUCCESS. #2054 made both files get written, which
+// moved the harm into the GitOps repo where it is at least visible, but did not remove it.
+//
+// This is the cloud-agnostic half of the rule and runs on every provider: the collapse happens in
+// manifest rendering, which no cloud varies.
+//
+// The collision test itself is manifests.NameCollisions rather than a second copy of dns1123 here
+// — rule 2 of this file. A hand-rolled "are these the same?" would have to re-derive all three
+// kinds of lossiness, and would drift the first time one of them changed.
+func validateServiceNames(config *types.ProjectConfig) error {
+	collisions := manifests.NameCollisions(serviceNamesOf(config))
+	if len(collisions) == 0 {
+		return nil
+	}
+	c := collisions[0]
+	return configError(
+		fmt.Sprintf("services %s", strings.Join(c.Names, ", ")),
+		fmt.Sprintf("the Kubernetes object name %q", c.Label),
+		"service names must stay distinct after they are lowercased, punctuation-folded and cut to "+
+			"63 characters — otherwise they render one Deployment and one Service between them, and "+
+			"only one workload runs")
+}
+
+// serviceNamesOf lists the project's service names, un-normalized.
+func serviceNamesOf(config *types.ProjectConfig) []string {
+	out := make([]string, 0, len(config.Services))
+	for _, s := range config.Services {
+		out = append(out, s.Name)
+	}
+	return out
 }
