@@ -183,6 +183,9 @@ const (
 	cidrFloorVerbatimExempt
 	// A carve exists, but the number is owned by another issue and is not encoded here yet.
 	cidrFloorDeferred
+	// The template states the bound directly as a carvability predicate rather than implying it
+	// from a cidrsubnet() newbits argument, so the floor is scraped from that predicate.
+	cidrFloorFromCarvableBound
 )
 
 // cidrFloorCoupling binds one Go constant (or one documented absence) to a template expression.
@@ -233,24 +236,26 @@ var networkCIDRFloorCouplings = map[string]cidrFloorCoupling{
 		why:     "the subnetwork takes network_cidr verbatim and pods/services are SECONDARY ranges",
 	},
 	"aws": {
-		kind: cidrFloorDeferred,
+		kind: cidrFloorFromCarvableBound,
 		rel:  "infra/templates/project/aws/networking.tf",
-		// Re-anchored by #1936. The carve still exists and is still derived from var.vpc_cidr — it
-		// just runs through `local.vpc_cidr_for_subnet_plan` (line 88, `local.vpc_cidr_is_carvable ?
-		// var.vpc_cidr : "10.0.0.0/16"`) now, because the plan moved into one declarative map so a
-		// netnum cannot be edited without also moving the span the disjointness guard checks. The
-		// old pattern named the literal `var.vpc_cidr` argument and so stopped matching, which fired
-		// this test's "close it out" branch — correctly reporting drift, wrongly diagnosing it as
-		// the carve disappearing. Anchored on the local, which is the expression that now carries it.
-		pattern: regexp.MustCompile(`cidrsubnet\(local\.vpc_cidr_for_subnet_plan,`),
-		why:     "the /18 Go-side floor is owned by #1942; #1936 has landed the template-side fail-closed guard (terraform_data.vpc_cidr_carvable_guard)",
+		// #1936 moved the carve behind `local.vpc_cidr_for_subnet_plan` and computed the bound
+		// once, as a predicate: public subnets are 1/1024 of the VPC and AWS's minimum subnet is
+		// /28, which binds the constraint at 18. That predicate is the single source of the number,
+		// so the Go constant is scraped from it rather than re-derived from the newbits — #1942
+		// warned explicitly against hand-mirroring the /18, and a second derivation IS a second
+		// source of truth.
+		pattern:  regexp.MustCompile(`vpc_cidr_is_carvable\s*=\s*local\.vpc_cidr_prefix_length\s*>=\s*\d+\s*&&\s*local\.vpc_cidr_prefix_length\s*<=\s*(\d+)`),
+		constant: awsMaxNetworkPrefix,
 	},
 }
 
 // TestNetworkCIDRFloorsMatchTemplates re-derives every network-CIDR floor from the cidrsubnet()
-// expression that implies it, and pins the two clouds that deliberately have no rule — GCP
-// because there is nothing to carve, AWS because the number is owned elsewhere. Both are
-// asserted against the template, so neither can quietly stop being true.
+// expression that implies it, and pins the one cloud that deliberately has no rule — GCP, because
+// the subnetwork takes network_cidr verbatim and pods/services are secondary ranges. Every case is
+// asserted against the template, so none can quietly stop being true.
+//
+// AWS was `cidrFloorDeferred` until #1942 encoded its floor; it now scrapes the carvability
+// predicate #1936 introduced.
 func TestNetworkCIDRFloorsMatchTemplates(t *testing.T) {
 	root := templateRepoRoot(t)
 
@@ -329,6 +334,14 @@ func TestNetworkCIDRFloorsMatchTemplates(t *testing.T) {
 				if want := 32 - newbits; want != coupling.constant {
 					t.Errorf("%s: %s carves at %d newbits, so the structural floor is /%d, but "+
 						"validate.go encodes /%d", cloudName, coupling.rel, newbits, want, coupling.constant)
+				}
+
+			case cidrFloorFromCarvableBound:
+				got := scrapeInt(t, src, coupling.rel, coupling.pattern)
+				if got != coupling.constant {
+					t.Errorf("%s: %s declares the CIDR carvable up to /%d, but validate.go encodes "+
+						"/%d — the template owns this number and the Go rule must mirror it, never "+
+						"re-derive it", cloudName, coupling.rel, got, coupling.constant)
 				}
 
 			case cidrFloorVerbatimExempt:
