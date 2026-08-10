@@ -60,7 +60,8 @@ gcloud services enable \
   servicenetworking.googleapis.com \
   pubsub.googleapis.com \
   firestore.googleapis.com \
-  storage.googleapis.com
+  storage.googleapis.com \
+  cloudkms.googleapis.com
 
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
