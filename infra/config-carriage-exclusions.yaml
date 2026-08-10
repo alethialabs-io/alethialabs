@@ -419,11 +419,15 @@ baseline:
     reason: The network allow-list you set on a cache is not applied on Azure yet — the cache is created with the template's default access rules instead.
     issue: "#2148"
     state: no-carrier
-  - field: nosql_tables.global_replicas
-    cloud: azure
-    reason: The replica regions you choose for a table are not applied on Azure yet — the Cosmos account is created in its own region only.
-    issue: "#2158"
-    state: no-carrier
+
+  # nosql_tables.global_replicas / azure was here (#2158). FIXED at the carrier: the per-table
+  # lists are folded into ONE account-level union of `geo_location` blocks (Cosmos replicates per
+  # ACCOUNT — the point_in_time_recovery shape), the primary region deduplicated out. The union
+  # being non-empty also switches the account off `EnableServerless` onto provisioned throughput
+  # (human decision, 2026-08-10): serverless accounts are single-region-only, so the capability and
+  # a replica set cannot coexist — the inspector copy states the billing flip and that on an
+  # existing account it is a replacement. checks_cosmos.tftest.hcl asserts union, dedup, priorities
+  # and the serverless flip off the RESOURCE in both positions.
 
   # network.allowed_cidr_blocks was here, boarded as #1987 and the worst of the three: no variable
   # on ANY of the five templates, so a value collected in the inspector and the CLI had nowhere to

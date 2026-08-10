@@ -112,7 +112,7 @@ For a modelled field: does the cloud's provider turn it into a tfvars key (hop 2
 | Field | alibaba | aws | azure | gcp | hetzner |
 |---|:---:|:---:|:---:|:---:|:---:|
 | `capacity_mode` | — | 🟡 | 🟡 | — | · |
-| `global_replicas` | — | 🟡 | 🚫 #2158 | — | · |
+| `global_replicas` | — | 🟡 | 🟡 | — | · |
 | `partition_key` | 🟡 | 🟡 | 🟡 | — | · |
 | `partition_key_type` | 🟡 | 🟡 | — | — | · |
 | `point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · |
@@ -249,7 +249,6 @@ Real debt, boarded. Each row shows the state THIS RUN measured, with the state i
 | Field | Cloud | Now | Boarded as | Issue | What a user gets |
 |---|---|:---:|---|---|---|
 | `caches.allowed_cidr_blocks` | azure | 🚫 | no-carrier (boarded as no-carrier) | #2148 | The network allow-list you set on a cache is not applied on Azure yet — the cache is created with the template's default access rules instead. |
-| `nosql_tables.global_replicas` | azure | 🚫 | no-carrier (boarded as no-carrier) | #2158 | The replica regions you choose for a table are not applied on Azure yet — the Cosmos account is created in its own region only. |
 
 ---
 

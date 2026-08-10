@@ -48,8 +48,20 @@ variable "collections" {
     # backup. Read only by azurerm_cosmosdb_sql_container.analytical_storage_ttl; nothing derives it
     # from point_in_time_recovery (#1838).
     analytical_storage_enabled = optional(bool, false)
+    # Replica regions are bought per ACCOUNT (geo_location blocks), so the root folds this
+    # per-table list into `replica_regions` below rather than the module reading it per container.
+    # NAMED here even though the module never reads it: tofu silently DROPS object attributes a
+    # declared type omits (the #1994 service-bus boundary bug), and the root passes the whole
+    # collection objects through.
+    global_replicas = optional(list(string), [])
   }))
   default = []
+}
+
+variable "replica_regions" {
+  description = "Additional geo_location regions for the Cosmos account — the union of every table's global_replicas, primary excluded (derived at the root, local.cosmos_replica_regions). Non-empty switches the account off serverless onto provisioned throughput, because serverless accounts are single-region-only."
+  type        = list(string)
+  default     = []
 }
 
 variable "backup_type" {
