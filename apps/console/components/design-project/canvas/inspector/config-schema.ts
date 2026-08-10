@@ -1556,8 +1556,14 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "global_replicas",
 						type: "list",
 						label: "Global replica regions",
+						// The Azure sentences are load-bearing product copy (#2158, human decision
+						// 2026-08-10): replication is bought per Cosmos ACCOUNT, so the account gets
+						// the union of every table's list — and because serverless accounts are
+						// single-region-only, the first replica switches the account onto provisioned
+						// throughput (a billing change; on an already-deployed project, an account
+						// replacement). Say it here, before the save, not in a failed deploy.
 						description:
-							"Replicate the table to these regions. Only on clouds whose table service supports global tables.",
+							"Replicate the table to these regions. Only on clouds whose table service supports global tables. On Azure, replicas apply to the whole Cosmos account — the union of every table's list — and the first replica switches the account from serverless to provisioned billing (on an already-deployed project this replaces the account).",
 						item: { mono: true, placeholder: "us-east-1" },
 					},
 				],

@@ -434,12 +434,25 @@ func buildServiceBusTopics(topics []types.ProjectTopicConfig) map[string]interfa
 func buildCosmosDBCollections(tables []types.ProjectNosqlConfig) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(tables))
 	for _, t := range tables {
-		result = append(result, map[string]interface{}{
+		entry := map[string]interface{}{
 			"name":                   t.Name,
 			"partition_key":          orDefault(t.PartitionKey, "/id"),
 			"billing_mode":           ddbCapacityMode(string(t.CapacityMode)),
 			"point_in_time_recovery": t.PointInTimeRecovery,
-		})
+		}
+		// The regions the canvas collected for the table (#2158). Cosmos replicates at the
+		// ACCOUNT level (`geo_location` blocks), so the template folds every table's list into one
+		// account-wide union — the point_in_time_recovery shape above, and the same reason the
+		// per-table intent is still emitted per table rather than pre-aggregated here (see
+		// buildAzureContainers' versioning_enabled note). Unlike the AWS carry this deliberately
+		// does NOT consult TableType: global-vs-standard is a DynamoDB distinction that decides
+		// nothing on Cosmos — every container replicates with its account — so any table's chosen
+		// regions join the union. Unset emits nothing, so an older snapshot renders the same
+		// single-region serverless account as before.
+		if len(t.GlobalReplicas) > 0 {
+			entry["global_replicas"] = t.GlobalReplicas
+		}
+		result = append(result, entry)
 	}
 	return result
 }
