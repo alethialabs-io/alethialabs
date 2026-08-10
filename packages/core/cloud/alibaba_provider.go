@@ -33,6 +33,9 @@ func (p *alibabaProvider) ValidateConfig(config *types.ProjectConfig) error {
 	if config == nil {
 		return fmt.Errorf("ProjectConfig is required")
 	}
+	if err := validateServiceNames(config); err != nil {
+		return err
+	}
 	if err := validateNodeSizing(config); err != nil {
 		return err
 	}
