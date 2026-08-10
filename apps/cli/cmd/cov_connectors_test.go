@@ -193,6 +193,10 @@ func connResetConnectorFlags(t *testing.T) {
 		connectorAlibabaDir = ""
 		connectorAlibabaManual = false
 		connectorAlibabaTerraform = false
+		connectorHetznerToken = ""
+		connectorHetznerTokenStdin = false
+		connectorHetznerS3AccessKey = ""
+		connectorHetznerS3SecretKey = ""
 		connectorRemoveYes = false
 	}
 	reset()
@@ -1171,5 +1175,143 @@ func TestConn_RemoveDisconnectFailureIsFatal(t *testing.T) {
 	}
 	if !exited || code != 1 {
 		t.Fatalf("exited=%v code=%d, want a fatal exit(1)", exited, code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Hetzner — the one cloud that authenticates with a token, and the one the CLI
+// could not connect at all until lib/cli/providers.ts stopped 400-ing it.
+// ---------------------------------------------------------------------------
+
+// TestConn_HetznerTokenFlowConnects drives the real cobra tree end to end: init, capture the token
+// from --token, submit, verify. The token path is deliberately the simplest connector in the tree —
+// no Cloud Shell, no cloud CLI, no Terraform module — so nothing is stubbed but the control plane.
+func TestConn_HetznerTokenFlowConnects(t *testing.T) {
+	rec := &connRecorder{}
+	run := connEnv(t, connFakeAPI{rec: rec})
+	exited, code, err := connInvoke(t, run, "connector", "hetzner", "--token", strings.Repeat("h", 64))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if exited {
+		t.Fatalf("unexpected fatal exit (code %d)", code)
+	}
+	// The provider segment must be `hetzner` — the whole bug was these routes rejecting it.
+	if !rec.saw("/providers/hetzner/init") || !rec.saw("/providers/hetzner/connect") {
+		t.Errorf("expected hetzner init + connect, saw %v", rec.paths)
+	}
+}
+
+// TestConn_HetznerCarriesTheS3Pair pins the other half of the server fix: the console has always
+// passed Hetzner's Object-Storage key pair, and the CLI route silently dropped it, so a CLI-created
+// connection could never provision a bucket.
+func TestConn_HetznerCarriesTheS3Pair(t *testing.T) {
+	rec := &connRecorder{}
+	run := connEnv(t, connFakeAPI{rec: rec})
+	exited, _, err := connInvoke(t, run, "connector", "hetzner",
+		"--token", strings.Repeat("h", 64),
+		"--s3-access-key", "AKIAHETZNER",
+		"--s3-secret-key", "sekrit",
+	)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if exited {
+		t.Fatal("unexpected fatal exit")
+	}
+	if connectorHetznerS3AccessKey != "AKIAHETZNER" || connectorHetznerS3SecretKey != "sekrit" {
+		t.Errorf("S3 flags not bound: %q / %q", connectorHetznerS3AccessKey, connectorHetznerS3SecretKey)
+	}
+}
+
+// TestConn_HetznerShortTokenIsFatal keeps the local validation on the fatal path: a truncated paste
+// must fail with our message rather than as a connection-test failure that reads like Hetzner's fault.
+func TestConn_HetznerShortTokenIsFatal(t *testing.T) {
+	run := connEnv(t, connFakeAPI{})
+	exited, code, err := connInvoke(t, run, "connector", "hetzner", "--token", "tooshort")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !exited || code == 0 {
+		t.Fatalf("a short token must exit fatally, got exited=%v code=%d", exited, code)
+	}
+}
+
+// TestConn_HetznerConnectFailureIsFatal pins the unverified-connection arm.
+func TestConn_HetznerConnectFailureIsFatal(t *testing.T) {
+	run := connEnv(t, connFakeAPI{connectStatus: http.StatusBadRequest})
+	exited, code, err := connInvoke(t, run, "connector", "hetzner", "--token", strings.Repeat("h", 64))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !exited || code == 0 {
+		t.Fatalf("a failed connect must exit fatally, got exited=%v code=%d", exited, code)
+	}
+}
+
+// TestConn_HetznerInteractivePromptSubmits reaches the masked-prompt path: no --token, no
+// --token-stdin, a TTY. This is the flow a person actually uses, and the one where the token never
+// touches shell history or the process list.
+func TestConn_HetznerInteractivePromptSubmits(t *testing.T) {
+	rec := &connRecorder{}
+	run := connEnv(t, connFakeAPI{rec: rec})
+	// A headless test process is never a terminal, so the prompt arm is unreachable without this —
+	// the same reason connStubConfirm forces it.
+	hygCliConfirmInteractive(t)
+	connStubFormTyping(t, "  "+strings.Repeat("h", 64)+"  ")
+	exited, code, err := connInvoke(t, run, "connector", "hetzner")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if exited {
+		t.Fatalf("unexpected fatal exit (code %d)", code)
+	}
+	if !rec.saw("/providers/hetzner/connect") {
+		t.Errorf("the prompted token was never submitted: %v", rec.paths)
+	}
+}
+
+// TestConn_HetznerAbortedPromptIsFatal — an aborted prompt must not connect with an empty token.
+func TestConn_HetznerAbortedPromptIsFatal(t *testing.T) {
+	run := connEnv(t, connFakeAPI{})
+	hygCliConfirmInteractive(t)
+	connStubForm(t, errors.New("aborted"))
+	exited, code, err := connInvoke(t, run, "connector", "hetzner")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !exited || code == 0 {
+		t.Fatalf("an aborted prompt must exit fatally, got exited=%v code=%d", exited, code)
+	}
+}
+
+// TestConn_HetznerInitFailureIsFatal covers the init arm — the connection cannot proceed without an
+// identity to attach the token to.
+func TestConn_HetznerInitFailureIsFatal(t *testing.T) {
+	run := connEnv(t, connFakeAPI{initStatus: http.StatusServiceUnavailable})
+	exited, code, err := connInvoke(t, run, "connector", "hetzner", "--token", strings.Repeat("h", 64))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !exited || code == 0 {
+		t.Fatalf("a failed init must exit fatally, got exited=%v code=%d", exited, code)
+	}
+}
+
+// TestConn_HetznerRequiresAuth covers the getAuthToken arm.
+func TestConn_HetznerRequiresAuth(t *testing.T) {
+	connResetConnectorFlags(t)
+	isolatedHome(t) // no credentials written
+	t.Setenv("ALETHIA_NO_UPDATE_CHECK", "1")
+	run := func(args ...string) error {
+		rootCmd.SetArgs(args)
+		return rootCmd.Execute()
+	}
+	exited, code, err := connInvoke(t, run, "connector", "hetzner", "--token", strings.Repeat("h", 64))
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !exited || code == 0 {
+		t.Fatalf("an unauthenticated invocation must exit fatally, got exited=%v code=%d", exited, code)
 	}
 }
