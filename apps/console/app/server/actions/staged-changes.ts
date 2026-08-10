@@ -17,7 +17,7 @@ import {
 
 type Op = "CREATE" | "UPDATE" | "DELETE";
 
-interface DiffRow {
+export interface DiffRow {
 	component_type: string;
 	component_id: string | null;
 	op: Op;
@@ -60,7 +60,7 @@ function diffArray(
 }
 
 /** Diff a desired canvas config against the live project config → staged-change rows. */
-function diffConfig(
+export function diffConfig(
 	live: ProjectFormData | null,
 	desired: CreateProjectInput,
 ): DiffRow[] {

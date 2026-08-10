@@ -1,0 +1,11 @@
+{
+	"ok": true,
+	"mode": "applied",
+	"changes": [
+		{
+			"kind": "string",
+			"name": "string",
+			"action": "string"
+		}
+	]
+}
