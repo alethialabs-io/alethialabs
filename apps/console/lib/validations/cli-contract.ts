@@ -629,6 +629,20 @@ export const byoChartWire = z.object({
 	scan_status: z.string(),
 	scanned_at: isoNullable,
 });
+/** POST .../byo-charts — the attached chart's resolved (slugified) id, so a caller can address it
+ *  afterwards without guessing how the server normalised what they sent. */
+export const cliByoChartAttachResponse = z.object({
+	ok: z.literal(true),
+	id: z.string(),
+});
+
+/** POST .../byo-iac/scan and .../byo-charts/scan — the queued scan job, so a caller can follow it
+ *  with `alethia jobs logs -f`. */
+export const cliByoScanResponse = z.object({
+	ok: z.literal(true),
+	job_id: z.string(),
+});
+
 /** GET /api/cli/projects/:id/byo-charts result. */
 export const cliByoChartsResponse = z.object({
 	environment: z.string(),
@@ -781,6 +795,8 @@ export const cliOkResponse = z.object({ ok: z.literal(true) });
  */
 export const cliContract = {
 	RunnersResponse: cliRunnersResponse,
+	ByoChartAttachResponse: cliByoChartAttachResponse,
+	ByoScanResponse: cliByoScanResponse,
 	ClustersResponse: cliClustersResponse,
 	ClusterDetailResponse: cliClusterDetailResponse,
 	CloudIdentitiesResponse: cliCloudIdentitiesResponse,
