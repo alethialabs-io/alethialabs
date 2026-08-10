@@ -6,22 +6,34 @@ import { z } from "zod";
 import { authorizeCli } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { cloudIdentities } from "@/lib/db/schema";
-import { environmentStage } from "@/lib/db/schema/enums";
+import { environmentStage, placementMode } from "@/lib/db/schema/enums";
 import { insertProjectWithDefaultFabric } from "@/lib/queries/projects";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import { cliProjectResponse } from "@/lib/validations/cli-contract";
+import { environmentMatrixSchema } from "@/lib/validations/project-form.schema";
 
 /** Default OpenTofu version when the caller doesn't pin one (matches the console form). */
 const DEFAULT_IAC_VERSION = "1.11.4";
 
-/** Body of POST /api/cli/projects — create a project (+ its default environment). */
+/** Body of POST /api/cli/projects — create a project (+ its default environment).
+ *
+ * `placement_mode` and `environments` were the two fields the CLI never sent, even though
+ * `insertProjectWithDefaultFabric` has always accepted and validated them. The consequence was not a
+ * missing feature but a cost one: with no matrix, EVERY environment the CLI created came out
+ * `dedicated`, which is a cluster each. A four-cloud two-tier demo built from the terminal
+ * provisioned eight clusters where the product's own placement story provisions four.
+ *
+ * `environments` reuses the console form's own validator (`environmentMatrixSchema`) rather than
+ * restating it, so the shape the fan-out receives is the shape the fan-out was written against. */
 const createProjectBody = z.object({
 	project_name: z.string().min(1).max(120),
 	region: z.string().min(1),
 	cloud_identity_id: z.string().uuid().optional(),
 	stage: z.enum(environmentStage.enumValues).default("development"),
 	iac_version: z.string().min(1).default(DEFAULT_IAC_VERSION),
+	placement_mode: z.enum(placementMode.enumValues).optional(),
+	environments: environmentMatrixSchema.optional(),
 });
 
 /**
@@ -74,6 +86,10 @@ export async function POST(req: Request) {
 				cloud_identity_id: body.cloud_identity_id ?? null,
 				iac_version: body.iac_version,
 				environment_stage: body.stage,
+				// Both optional and both ignored when absent, so a caller that sends neither gets the
+				// byte-identical legacy Prod(dedicated)+Preview(namespace) shape.
+				placement_mode: body.placement_mode,
+				environments: body.environments,
 				owner: actor.userId,
 				orgId: actor.orgId,
 			}),
