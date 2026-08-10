@@ -212,3 +212,105 @@ run "one_recovering_container_covers_the_account_without_pulling_in_synapse" {
     error_message = "Exactly the container that asked for Synapse Link may have it; the recovery switch must not add another."
   }
 }
+
+################################################################################
+# 4. Global replicas (#2158) — per-table lists, one account-level union
+################################################################################
+#
+# Cosmos replicates per ACCOUNT (geo_location blocks), the canvas collects the list per table, so
+# the account gets the UNION of every table's list — the point_in_time_recovery shape again. Two
+# things earn these runs beyond the derivation: serverless is single-region-only, so replicas must
+# switch the account OFF EnableServerless (a billing-model change, and a replacement on an existing
+# account — asserted so it can never happen by accident from a default); and every assertion reads
+# the RESOURCE's own geo_location/capabilities (through outputs projected off them), because a
+# dynamic block that silently emits nothing would pass any assertion on the variable.
+
+run "global_replicas_union_reaches_the_account_and_drops_serverless" {
+  command = plan
+
+  variables {
+    cosmos_db_collections = [
+      { name = "ledger", global_replicas = ["northeurope", "francecentral"] },
+      { name = "audit", global_replicas = ["northeurope", "germanywestcentral"] },
+    ]
+  }
+
+  # The union, at the root: distinct across tables, primary region excluded.
+  assert {
+    condition     = local.cosmos_replica_regions == tolist(["northeurope", "francecentral", "germanywestcentral"])
+    error_message = "The account's replica set must be the distinct union of every table's list; got ${jsonencode(local.cosmos_replica_regions)}."
+  }
+
+  # On the resource: primary at 0, each replica present with a real failover priority.
+  assert {
+    condition = (
+      module.cosmos_db[0].geo_locations["westeurope"] == 0 &&
+      length(module.cosmos_db[0].geo_locations) == 4 &&
+      alltrue([for r in ["northeurope", "francecentral", "germanywestcentral"] : lookup(module.cosmos_db[0].geo_locations, r, -1) > 0])
+    )
+    error_message = "Every chosen replica region must be planned as a geo_location with the primary at priority 0; got ${jsonencode(module.cosmos_db[0].geo_locations)}."
+  }
+
+  # The deliberate flip: replicas ⇒ provisioned throughput, because serverless is single-region.
+  assert {
+    condition     = module.cosmos_db[0].serverless == false
+    error_message = "An account with replica regions must NOT be planned serverless — serverless Cosmos accounts are single-region-only, so the capability would make the plan unappliable."
+  }
+}
+
+# No replicas anywhere — the status quo must be byte-identical to before #2158: one region,
+# serverless capability present.
+run "no_replicas_keeps_the_single_region_serverless_account" {
+  command = plan
+
+  variables {
+    cosmos_db_collections = [
+      { name = "ledger" },
+      { name = "audit", global_replicas = [] },
+    ]
+  }
+
+  assert {
+    condition     = length(local.cosmos_replica_regions) == 0
+    error_message = "Tables with no replica request must derive an empty union; got ${jsonencode(local.cosmos_replica_regions)}."
+  }
+
+  assert {
+    condition = (
+      length(module.cosmos_db[0].geo_locations) == 1 &&
+      lookup(module.cosmos_db[0].geo_locations, "westeurope", -1) == 0
+    )
+    error_message = "With no replicas the account must keep exactly its primary region; got ${jsonencode(module.cosmos_db[0].geo_locations)}."
+  }
+
+  assert {
+    condition     = module.cosmos_db[0].serverless == true
+    error_message = "With no replicas the account must stay serverless — flipping an existing account's billing model on nobody's request is the exact surprise the human sign-off ruled out."
+  }
+}
+
+# A table naming the PRIMARY region as a replica: deduplicated, not doubled. Repeating the primary
+# as a second geo_location would collide on the region and fail at apply.
+run "a_replica_list_naming_the_primary_region_is_deduplicated" {
+  command = plan
+
+  variables {
+    cosmos_db_collections = [
+      { name = "ledger", global_replicas = ["westeurope", "northeurope"] },
+    ]
+  }
+
+  assert {
+    condition     = local.cosmos_replica_regions == tolist(["northeurope"])
+    error_message = "The primary region must be filtered out of the replica union — it is already the priority-0 geo_location; got ${jsonencode(local.cosmos_replica_regions)}."
+  }
+
+  assert {
+    condition = (
+      length(module.cosmos_db[0].geo_locations) == 2 &&
+      lookup(module.cosmos_db[0].geo_locations, "westeurope", -1) == 0 &&
+      lookup(module.cosmos_db[0].geo_locations, "northeurope", -1) == 1
+    )
+    error_message = "Primary at 0, the one real replica at 1 — nothing doubled; got ${jsonencode(module.cosmos_db[0].geo_locations)}."
+  }
+}
