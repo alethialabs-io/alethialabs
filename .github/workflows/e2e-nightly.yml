@@ -77,12 +77,19 @@ jobs:
     # cluster provisions in ~10-15m), and the soak adds a bounded ~10-25m of day-2 loops on
     # that same cheap cluster (cents/hour). The finer step timeout below kills a hang first.
     #
-    # 90→165 ONLY when the #845 acceptance gate is on. That gate places 2 namespace tiers + a whole
-    # vcluster (its own deploy + app-health + destroy waits) on top of the base proof, for a test ctx
-    # of ~135m — which the 75m step cap would kill mid-run, so an enabled gate could never finish.
     # The raise is conditional because a fabric-demo night roughly doubles the billed cluster-hours
     # per cloud; with E2E_FABRIC_DEMO unset the bound is unchanged and so is the cost.
-    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 165 || 90 }}
+    #
+    # ⚠️ THESE TWO NUMBERS ARE NOT THE LADDER — they are its outermost rung, and they are VERIFIED
+    # rather than reasoned about. `test/e2e/cmd/t2budget` computes the ladder from the harness's own
+    # arithmetic (ResolveT2Budget) at the top of the T2 step and FAILS THE STEP if this cap cannot
+    # contain it. That check exists because the previous numbers were wrong for four of five clouds:
+    # the old comment asserted a "40m base" ctx, which is HETZNER's (25m deploy wait), while every
+    # managed cloud waits 50m and the workflow turns the soak on by default (`vars.E2E_SOAK || '10m'`
+    # below) — a real ctx of 90m against a 75m step cap. The step killed the process before the ctx
+    # could cancel, which loses the named scenario failure AND skips the in-process t.Cleanup
+    # teardown, leaking the cluster to the sweeper. Do not hand-tune these; run t2budget.
+    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 210 || 120 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -725,19 +732,25 @@ jobs:
       # ── The real proof. A finer step-level timeout than the job cap so a hung apply
       #    is KILLED here (the step fails) and the always() teardown below still runs
       #    normally — rather than the whole job hitting its cap. ──
-      # 75m step / 80m go-timeout: the test's own ctx is 40m base (deploy wait 25m + the
-      # ArgoCD Healthy+Synced convergence assertion 8m + build headroom) PLUS the opt-in soak
-      # budget (window + drift/PVC bounds, BYOC A0.3), so a soak run has headroom; a non-soak
-      # run still finishes far inside this. All three exceed the ctx so the ctx cancels first.
+      # The LADDER is ctx < go-timeout < step < job, and each rung has a job:
       #
-      # With the #845 gate on the arithmetic becomes 135m ctx < 145m go-timeout < 150m step < 165m
-      # job — the SAME invariant (the ctx must always cancel first, so a failure reports as the
-      # scenario that ran long rather than as an opaque step kill), just shifted up. See the job
-      # timeout above for why the raise is conditional.
+      #   ctx  cancels first  → the scenario reports its own bounded failure, and t.Cleanup tears down
+      #   go   +5m            → if the ctx is not honored, go panics with a stack naming the test
+      #   step +5m            → if go is wedged, the step kills it and the run still reaches teardown
+      #   job  +15m           → teardown, proof capture and the scrub all run after the step is done
+      #
+      # The two inner rungs are DERIVED, not written here: the step's `run:` asks
+      # test/e2e/cmd/t2budget for the go-timeout, computed by the same ResolveT2Budget the test uses
+      # for its ctx — so they cannot disagree. The two outer rungs are `timeout-minutes` values, which
+      # GitHub evaluates before the step body runs, so they stay expressions and t2budget VERIFIES
+      # them (failing at the top of the step, ~1 minute in, rather than by a mid-scenario kill).
+      #
+      # TestT2BudgetLadderHolds proves the ordering across every cloud × all 128 scenario
+      # combinations on every PR. It is the reason there are no arithmetic claims in this comment.
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 150 || 75 }}
+        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 195 || 100 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -1022,9 +1035,25 @@ jobs:
           #    (default $600/mo) — E2E_FULL_BAR was set to `true` in $GITHUB_ENV by the resolve step. ──
           INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
           ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (env.E2E_FULL_BAR == 'true' && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || '' }}
+          # The two outer rungs, passed in so t2budget can verify them against what this leg needs.
+          # They are the SAME expressions as the step/job timeout-minutes above; if you change one,
+          # change both — and t2budget will tell you if you got it wrong, on the next run.
+          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 195 || 100 }}
+          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 210 || 120 }}
         run: |
+          # Derive the go-timeout from the harness's OWN budget arithmetic, in this step, with this
+          # step's env — so the number `go test` is given and the ctx the test builds come from one
+          # function (ResolveT2Budget) and cannot drift. It also verifies the step/job caps and fails
+          # here, before any provisioning spend, if either cannot contain the ladder.
+          # See test/e2e/cmd/t2budget for the whole story.
+          eval "$(GOWORK=off go run ./cmd/t2budget \
+            -provider "$ALETHIA_E2E_PROVIDER" \
+            -env "$ALETHIA_E2E_ENV" \
+            -step-cap-minutes "$T2_STEP_CAP_MINUTES" \
+            -job-cap-minutes "$T2_JOB_CAP_MINUTES")"
+          echo "::notice::T2 ctx ${ctx_minutes}m · go-timeout ${go_timeout} · step cap ${T2_STEP_CAP_MINUTES}m · job cap ${T2_JOB_CAP_MINUTES}m"
           GOWORK=off go test -tags=e2e_t2 ./... \
-            -run TestT2RealCloudProvisioning -count=1 -timeout ${{ vars.E2E_FABRIC_DEMO != '' && '145m' || '80m' }} -v
+            -run TestT2RealCloudProvisioning -count=1 -timeout "$go_timeout" -v
 
       # ── Proof capture v2 (BYOC A0.4). Runs on ANY t2 outcome (always()) so a RED night is
       #    debuggable, not just a green one: it builds a structured, SCRUBBED proof bundle
