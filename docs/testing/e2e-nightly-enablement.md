@@ -38,7 +38,9 @@ kill-drill. Everything else the leg needs must already be in place, because the 
    label-scoped (every resource carries `alethia:environment-id=<run_id>-<attempt>`, and each cloud's
    sweeper filters on it). Verify in the console that nothing survived, and that the budget alert
    plumbing (SNS / Pub-Sub / action group / — see each stack's budget output) is reachable.
-5. **Set the gate variable.** The cloud now runs nightly at 06:00 UTC.
+5. **Set the gate variable.** The cloud now runs on the floor cron, `17 3 * * *` — **03:17 UTC**,
+   not the 06:00 this step used to claim — plus the full bar weekly on `17 5 * * 0`. Both schedules
+   fire only on the default branch, so they run from `main`.
 
 ## Per-cloud configuration
 
