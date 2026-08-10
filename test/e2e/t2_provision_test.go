@@ -164,6 +164,26 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Logf("#1268: cross-account keyless secrets SKIPPED — set %s (+ its target vars) to enable.", envSecretsXacct)
 	}
 
+	// #1773: the ACM certificate scenario, resolved on the same terms. Two of its three outcomes are
+	// HARD FAILURES rather than skips, deliberately: a half-wired opt-in, and a collision with the
+	// full bar (this scenario BRINGS a zone id, which makes cloud_dns_enabled false, so no
+	// aws_route53_zone is created and the max-config `dns` kind would report Missing). Either one
+	// skipping quietly would read as "the certificate was proven" on a night it was not.
+	acmCert := acmCertFromEnv(provider)
+	acmCertOn, acmCertBlocked, acmCertErr := acmCert.decide()
+	if acmCertErr != nil {
+		t.Fatalf("#1773 ACM certificate: %v", acmCertErr)
+	}
+	switch {
+	case acmCertOn:
+		t.Logf("#1773: ACM certificate ENABLED — issuing for *.%s, validating in the pre-delegated zone %s",
+			acmCert.domainName, acmCert.zoneID)
+	case acmCertBlocked != "":
+		t.Logf("#1773: ACM certificate BLOCKED on %s — %s", provider, acmCertBlocked)
+	default:
+		t.Logf("#1773: ACM certificate SKIPPED — set %s (+ %s, %s) to enable.", envAcmCert, envAcmCertZoneID, envAcmCertZoneName)
+	}
+
 	// #1511: keyless DB auth, resolved on the same terms and for the same reason — a misconfigured
 	// opt-in must fail in seconds, and an EXCLUDED cell (alibaba/hetzner) resolves to "off" carrying
 	// the product's own exclusion prose rather than a silent skip.
@@ -696,6 +716,15 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//      BLOCKED with a reason. Runs BEFORE the guaranteed teardown.
 	if xacctOn {
 		runT2SecretsXacct(t, ctx, kc, secretsXacctParams{cfg: xacct, metaRaw: metaRaw})
+	}
+
+	// (11b) ACM CERTIFICATE (#1773). Opt-in via ALETHIA_E2E_ACM_CERT. Asserts, in order: that NO
+	//       hosted zone was created (the control that makes the rest mean anything — a certificate
+	//       validated against a zone we made ourselves proves nothing about delegation), that
+	//       aws_acm_certificate_validation completed, that the ARN reached execution_metadata, and
+	//       that it gated the ArgoCD ingress. Runs BEFORE the guaranteed teardown.
+	if acmCertOn {
+		runT2AcmCert(t, ctx, cp, acmCertParams{cfg: acmCert, metaRaw: metaRaw, jobID: jobID})
 	}
 
 	// (12) KEYLESS DATABASE AUTH (#1511). Opt-in via ALETHIA_E2E_KEYLESS_DB — the base DEPLOY already
