@@ -159,7 +159,7 @@ func TestAddComponent_Success(t *testing.T) {
 			},
 		})
 	}))
-	comp, err := client.AddComponent("api", "databases", "main", map[string]interface{}{"engine": "postgres"})
+	comp, err := client.AddComponent("api", "databases", "main", "", map[string]interface{}{"engine": "postgres"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestRemoveComponent_Singleton(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
-	if err := client.RemoveComponent("api", "network", ""); err != nil {
+	if err := client.RemoveComponent("api", "network", "", ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -190,7 +190,58 @@ func TestRemoveComponent_Named(t *testing.T) {
 		}
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	}))
-	if err := client.RemoveComponent("api", "databases", "main"); err != nil {
+	if err := client.RemoveComponent("api", "databases", "main", ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// The env query param is the whole point of the component write path: without it the CLI can only
+// author into the project's default environment, so a two-tier project (dev and staging pointing at
+// different overlays) cannot be expressed from the terminal at all. These pin BOTH halves — that a
+// named environment travels, and that an empty one adds no parameter, so a single-environment script
+// keeps hitting the server's default-environment path byte for byte.
+func TestComponentWrites_CarryTheEnvParam(t *testing.T) {
+	cases := []struct {
+		name      string
+		env       string
+		wantQuery string
+	}{
+		{"named environment travels", "staging", "env=staging"},
+		{"a name needing escaping is encoded", "my env/1", "env=my+env%2F1"},
+		{"empty adds no parameter", "", ""},
+		{"whitespace-only is treated as empty", "   ", ""},
+	}
+	for _, tc := range cases {
+		t.Run("add/"+tc.name, func(t *testing.T) {
+			client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.URL.RawQuery; got != tc.wantQuery {
+					t.Errorf("query = %q, want %q", got, tc.wantQuery)
+				}
+				w.WriteHeader(http.StatusCreated)
+				json.NewEncoder(w).Encode(map[string]any{"component": map[string]any{
+					"id": "c1", "kind": "databases", "name": "main", "status": "PENDING",
+					"cloud_identity_id": nil, "config": map[string]any{},
+				}})
+			}))
+			if _, err := client.AddComponent("api", "databases", "main", tc.env, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+		t.Run("remove/"+tc.name, func(t *testing.T) {
+			client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.URL.RawQuery; got != tc.wantQuery {
+					t.Errorf("query = %q, want %q", got, tc.wantQuery)
+				}
+				// The name segment must survive the query append — a naive concatenation would put
+				// the parameter before it.
+				if r.URL.Path != "/api/cli/projects/api/components/databases/main" {
+					t.Errorf("path = %q", r.URL.Path)
+				}
+				json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+			}))
+			if err := client.RemoveComponent("api", "databases", "main", tc.env); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }

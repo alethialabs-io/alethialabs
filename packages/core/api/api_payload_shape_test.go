@@ -303,7 +303,7 @@ func TestAddComponent_NilFieldsBecomeAnEmptyObject(t *testing.T) {
 	var got capture
 	client := newCapturingClient(t, &got, `{"component":{"id":"c-1","kind":"database"}}`)
 
-	component, err := client.AddComponent("web", "database", "", nil)
+	component, err := client.AddComponent("web", "database", "", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
