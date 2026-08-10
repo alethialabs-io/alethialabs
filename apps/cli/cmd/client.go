@@ -57,8 +57,8 @@ type apiClient interface {
 	ListEnvironments(project string) ([]api.Environment, error)
 	AddEnvironment(project, name, stage, region string) (*api.Environment, error)
 	ListComponents(project, kind, env string) ([]api.Component, error)
-	AddComponent(project, kind, name string, fields map[string]interface{}) (*api.Component, error)
-	RemoveComponent(project, kind, name string) error
+	AddComponent(project, kind, name, env string, fields map[string]interface{}) (*api.Component, error)
+	RemoveComponent(project, kind, name, env string) error
 	GetProjectDrift(project, env string) (*api.DriftPosture, error)
 	GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error)
 	GetProjectProtection(project string) ([]api.ProtectionRule, error)

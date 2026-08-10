@@ -111,10 +111,12 @@ type fakeClient struct {
 	addCompProj    string
 	addCompKind    string
 	addCompName    string
+	addCompEnv     string
 	addCompFields  map[string]interface{}
 	rmCompProj     string
 	rmCompKind     string
 	rmCompName     string
+	rmCompEnv      string
 }
 
 func (f *fakeClient) Whoami() (*api.WhoAmI, error)                   { return f.whoami, f.err }
@@ -352,8 +354,8 @@ func (f *fakeClient) ListComponents(project, kind, env string) ([]api.Component,
 	return f.components, f.err
 }
 
-func (f *fakeClient) AddComponent(project, kind, name string, fields map[string]interface{}) (*api.Component, error) {
-	f.addCompProj, f.addCompKind, f.addCompName, f.addCompFields = project, kind, name, fields
+func (f *fakeClient) AddComponent(project, kind, name, env string, fields map[string]interface{}) (*api.Component, error) {
+	f.addCompProj, f.addCompKind, f.addCompName, f.addCompEnv, f.addCompFields = project, kind, name, env, fields
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -363,8 +365,8 @@ func (f *fakeClient) AddComponent(project, kind, name string, fields map[string]
 	return &api.Component{ID: "comp1", Kind: kind, Name: name, Status: "PENDING"}, nil
 }
 
-func (f *fakeClient) RemoveComponent(project, kind, name string) error {
-	f.rmCompProj, f.rmCompKind, f.rmCompName = project, kind, name
+func (f *fakeClient) RemoveComponent(project, kind, name, env string) error {
+	f.rmCompProj, f.rmCompKind, f.rmCompName, f.rmCompEnv = project, kind, name, env
 	return f.err
 }
 

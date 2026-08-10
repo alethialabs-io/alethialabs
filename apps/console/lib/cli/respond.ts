@@ -3,6 +3,7 @@
 
 import { NextResponse } from "next/server";
 import type { z } from "zod";
+import type { CliEnvTarget } from "@/lib/cli/resolve-project";
 
 /**
  * Serializes a CLI response and validates it against its wire contract before
@@ -33,4 +34,29 @@ export function cliJson<S extends z.ZodType>(
 		);
 	}
 	return NextResponse.json(parsed.data, init);
+}
+
+/**
+ * Maps a failed `resolveCliWriteEnvironment` to its response. One helper so every env-scoped write
+ * answers the two failure modes the same way, and so the statuses stay distinct: a 404 naming the
+ * environment the caller asked for, versus a 400 about a project that has none. Reported the other
+ * way round, "environment not found" reads as a project problem and sends the reader to the wrong
+ * place.
+ *
+ * Narrowed on the `ok: false` arm, so adding a third failure reason is a type error here rather than
+ * a silently generic message.
+ */
+export function cliEnvironmentError(
+	target: Extract<CliEnvTarget, { ok: false }>,
+): NextResponse {
+	if (target.reason === "not-found") {
+		return NextResponse.json(
+			{ error: `Environment "${target.requested}" not found` },
+			{ status: 404 },
+		);
+	}
+	return NextResponse.json(
+		{ error: "Project has no environment to target" },
+		{ status: 400 },
+	);
 }

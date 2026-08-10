@@ -7,9 +7,12 @@ import {
 	getKindDef,
 	isSingletonKind,
 } from "@/lib/cli/project-components";
-import { resolveCliProject } from "@/lib/cli/resolve-project";
+import {
+	resolveCliProject,
+	resolveCliWriteEnvironment,
+} from "@/lib/cli/resolve-project";
 import { NextResponse } from "next/server";
-import { cliJson } from "@/lib/cli/respond";
+import { cliEnvironmentError, cliJson } from "@/lib/cli/respond";
 import { cliOkResponse } from "@/lib/validations/cli-contract";
 
 /** Deletes a named (multi) component from a project — databases/caches/queues/topics/
@@ -41,7 +44,20 @@ export async function DELETE(
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
-		const removed = await deleteProjectComponent(kind, project.id, name);
+		// `?env=` scopes the delete to one environment; without it, the project's default. A named
+		// component exists once PER environment (UNIQUE project_id, environment_id, name), so an
+		// unscoped delete would remove the sibling environment's row too.
+		const target = await resolveCliWriteEnvironment(
+			project.id,
+			new URL(req.url).searchParams.get("env"),
+		);
+		if (!target.ok) return cliEnvironmentError(target);
+		const removed = await deleteProjectComponent(
+			kind,
+			project.id,
+			name,
+			target.id,
+		);
 		if (!removed) {
 			return NextResponse.json({ error: "Component not found" }, { status: 404 });
 		}
