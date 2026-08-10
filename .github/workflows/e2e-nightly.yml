@@ -1022,6 +1022,30 @@ jobs:
           #    rewriting. Stated rather than half-wired — scripts/e2e/registry-e2e.sh points this at
           #    its own bundle, so the verdict already has a real consumer on the recording path.
           ALETHIA_E2E_XACCT_REGISTRY_SUMMARY: ${{ runner.temp }}/xacct-registry-summary.json
+
+          # ── ACM certificate against the DELEGATED zone (#1773). ────────────────────────────────
+          #    The only scenario that proves Alethia can issue a REAL, publicly-validated TLS
+          #    certificate. It brings the STABLE zone created by infra/aws-oidc/e2e-dns.tf rather
+          #    than letting the template make one, because ACM validates over the PUBLIC internet
+          #    and a zone we merely created is delegated by nobody.
+          #
+          #    ⚠️ MUTUALLY EXCLUSIVE WITH E2E_MAX_CONFIG, and the harness refuses the combination
+          #    LOUDLY rather than skipping: bringing a zone id makes cloud_dns_enabled false, so no
+          #    aws_route53_zone is created and the max-config `dns` kind reports Missing. Run this
+          #    on a floor night; the full bar proves the native-zone path.
+          #
+          #    ⚠️ PREREQUISITE OUTSIDE THIS REPO: e2e.alethialabs.io must be delegated from
+          #    Cloudflare to that zone's four name servers. Until then ACM cannot issue no matter
+          #    what is set here. `dig NS e2e.alethialabs.io` is the check.
+          #
+          #    aws-only and that is a real ceiling: GCP and Azure issue TLS in-cluster via
+          #    cert-manager (#1858 deleted GCP's managed-certificate resource), so there is no
+          #    cloud-side certificate for this to assert. UNSET ⇒ empty ⇒ a clean skip.
+          ALETHIA_E2E_ACM_CERT: ${{ vars.E2E_ACM_CERT }}
+          ALETHIA_E2E_ACM_CERT_ZONE_ID: ${{ vars.E2E_ACM_CERT_ZONE_ID }}
+          ALETHIA_E2E_ACM_CERT_ZONE_NAME: ${{ vars.E2E_ACM_CERT_ZONE_NAME }}
+          ALETHIA_E2E_ACM_CERT_TIMEOUT: ${{ vars.E2E_ACM_CERT_TIMEOUT }}
+          ALETHIA_E2E_ACM_CERT_SUMMARY: ${{ runner.temp }}/acm-cert-summary.json
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
           #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).
@@ -1093,6 +1117,7 @@ jobs:
           # Fabric enterprise-demo acceptance verdict (#845), written by the T2 test at the SAME
           # path the t2 step set; folded into the bundle + step summary (absent ⇒ unchanged).
           ALETHIA_E2E_FABRIC_DEMO_SUMMARY: ${{ runner.temp }}/fabric-demo-summary.json
+          ALETHIA_E2E_ACM_CERT_SUMMARY: ${{ runner.temp }}/acm-cert-summary.json
           # BYO-IaC continuous-proof verdict (#1765), written by the T2 leg at the SAME path the t2
           # step set; folded into the bundle + step summary (absent ⇒ unchanged). It carries only
           # names, booleans, counts and a PUBLIC commit + plan digest.
