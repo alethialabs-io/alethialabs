@@ -394,11 +394,60 @@ sweep_network() {
 		retry_delete "eni ${eni}" aws ec2 delete-network-interface --network-interface-id "$eni"
 	done <<<"$enis"
 
+	# ── VPC ENDPOINTS, before anything tries to delete the VPC ────────────────────────────────
+	# An attached endpoint blocks `delete-vpc` outright, and nothing here swept them, so the VPC
+	# failed on every retry and the environment survived teardown forever. Measured on run
+	# 29558347776-1, leaked since 2026-07-17: a Gateway endpoint (com.amazonaws.us-east-1.s3) held
+	# the VPC open, and `delete-vpc-endpoints` was all it took.
+	local vpces vpce
+	vpces="$(tagged_arns ec2:vpc-endpoint | while read -r a; do arn_id "$a"; done)"
+	while IFS= read -r vpce; do
+		[ -n "$vpce" ] || continue
+		retry_delete "vpc-endpoint ${vpce}" aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "$vpce"
+	done <<<"$vpces"
+
+	# ── SECURITY GROUPS: revoke the rules FIRST, and never touch `default` ─────────────────────
+	# The EKS module always creates a cluster SG and a node SG that reference EACH OTHER
+	# (UserIdGroupPairs). AWS refuses to delete either while the other's rule names it, so a plain
+	# delete loop deadlocks and both survive — the second half of why 29558347776-1 and
+	# 30518134684-1 stood since July. Stripping every rule first breaks the cycle; the groups then
+	# delete in any order.
+	#
+	# The VPC's `default` group is skipped for the same reason the main route table is: it cannot
+	# be deleted directly and is removed with the VPC. Attempting it fails on every retry forever.
+	# TWO PASSES, and the order is the whole point. AWS refuses to delete a group while ANY OTHER
+	# group's rule still names it — so stripping one group and deleting it immediately still fails,
+	# because its sibling's rule is what holds it. Measured: interleaving revoke+delete cleared the
+	# second group of the pair and left the first, exactly as before the fix.
+	# Pass 1 strips every rule from every group, which breaks the cycle. Pass 2 then deletes them,
+	# and by then no group references any other.
+	local sgs_deletable=""
 	sgs="$(tagged_arns ec2:security-group | while read -r a; do arn_id "$a"; done)"
 	while IFS= read -r sg; do
 		[ -n "$sg" ] || continue
-		retry_delete "security-group ${sg}" aws ec2 delete-security-group --group-id "$sg"
+		# The VPC's `default` group is skipped for the same reason the main route table is: it
+		# cannot be deleted directly and is removed with the VPC. Attempting it fails forever.
+		if [ "$(aws ec2 describe-security-groups --group-ids "$sg" --query 'SecurityGroups[0].GroupName' --output text 2>/dev/null)" = "default" ]; then
+			echo "      skip default security-group ${sg} (auto-removed with the VPC)"
+			continue
+		fi
+		sgs_deletable="${sgs_deletable}${sg}"$'\n'
+		if [ "$DRY_RUN" = "1" ]; then
+			echo "      would revoke all rules on security-group ${sg}"
+			continue
+		fi
+		local ing egr
+		ing="$(aws ec2 describe-security-groups --group-ids "$sg" --query 'SecurityGroups[0].IpPermissions' --output json 2>/dev/null || echo '[]')"
+		egr="$(aws ec2 describe-security-groups --group-ids "$sg" --query 'SecurityGroups[0].IpPermissionsEgress' --output json 2>/dev/null || echo '[]')"
+		# Best-effort: a group with no rules is already in the state we want, and a failed revoke
+		# must not stop pass 2 from attempting the delete.
+		[ "$ing" != "[]" ] && aws ec2 revoke-security-group-ingress --group-id "$sg" --ip-permissions "$ing" >/dev/null 2>&1 || true
+		[ "$egr" != "[]" ] && aws ec2 revoke-security-group-egress --group-id "$sg" --ip-permissions "$egr" >/dev/null 2>&1 || true
 	done <<<"$sgs"
+	while IFS= read -r sg; do
+		[ -n "$sg" ] || continue
+		retry_delete "security-group ${sg}" aws ec2 delete-security-group --group-id "$sg"
+	done <<<"$sgs_deletable"
 
 	subnets="$(tagged_arns ec2:subnet | while read -r a; do arn_id "$a"; done)"
 	while IFS= read -r subnet; do
@@ -603,8 +652,25 @@ sweep_managed_services() {
 		name="$(arn_id "$arn")"
 		# Never touch an AWS-managed key. The tag filter already excludes them (they carry no
 		# default_tags), but a scheduled deletion is irreversible and cheap to guard twice.
-		if [ "$(aws kms describe-key --key-id "$name" --query 'KeyMetadata.KeyManager' --output text 2>/dev/null || echo UNKNOWN)" != "CUSTOMER" ]; then
+		local meta manager state
+		meta="$(aws kms describe-key --key-id "$name" --query 'KeyMetadata.[KeyManager,KeyState]' --output text 2>/dev/null || printf 'UNKNOWN\tUNKNOWN')"
+		manager="$(printf '%s' "$meta" | cut -f1)"
+		state="$(printf '%s' "$meta" | cut -f2)"
+		if [ "$manager" != "CUSTOMER" ]; then
 			echo "      skip kms key ${name} (not customer-managed)"
+			continue
+		fi
+		# A key already in PendingDeletion cannot be scheduled again — the call fails, and
+		# retry_delete then burns all five attempts (~93s) on something that can never succeed.
+		# The comment above already states the principle ("a key sitting in PendingDeletion is as
+		# swept as a key can be") and alive_kms_keys() already honours it; only this loop did not.
+		#
+		# It is the single biggest time sink in a preflight sweep: 36 of the 37 tagged e2e keys in
+		# us-east-1 are in this state, so a full pass across the leaked environments spends the
+		# better part of an hour failing on keys that are already gone — which is a large part of
+		# how the preflight reached the 90-minute job cap (#2257).
+		if [ "$state" = "PendingDeletion" ]; then
+			echo "      skip kms key ${name} (already PendingDeletion — as swept as a key can be)"
 			continue
 		fi
 		retry_delete "kms key ${name} (schedule 7d)" aws kms schedule-key-deletion --key-id "$name" --pending-window-in-days 7
@@ -810,7 +876,14 @@ verify_swept() {
 	# ENI of any kind — are exactly the billable survivors. So the one signal that something
 	# expensive is still alive was being printed as an FYI and the step exited 0. It is also the
 	# only signal left when the billable holder is a type this script does not model at all.
-	x="$(alive_network)"; [ -n "$x" ] && leaks="${leaks}network(vpc/subnet/eni/sg/rt/igw — SOMETHING STILL HOLDS AN ENI): $(join "$x")\n"
+	#
+	# ⚠️ It does NOT say an ENI is the cause. It used to — "SOMETHING STILL HOLDS AN ENI" — and that
+	# sent the investigation of the July leak to a dead end: `describe-network-interfaces` on the
+	# surviving VPC returned NOTHING, because the real holders were a VPC endpoint and a pair of
+	# mutually-referencing security groups, neither of which is an ENI. A diagnosis the script never
+	# measured, printed as fact, is worse than no diagnosis. Name what survived; let the operator
+	# find out why.
+	x="$(alive_network)"; [ -n "$x" ] && leaks="${leaks}network(vpc/subnet/eni/sg/rt/igw — still present; check ENIs, VPC endpoints and cross-referencing SG rules): $(join "$x")\n"
 
 	if [ -n "$leaks" ]; then
 		echo "  ✗ resources still alive:" >&2
