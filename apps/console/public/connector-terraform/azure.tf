@@ -139,10 +139,42 @@ resource "azurerm_role_definition" "alethia_provisioner" {
       "Microsoft.Authorization/roleDefinitions/read",
     ]
     # Key Vault with RBAC authorization → secret writes are data-plane.
+    #
+    # `keys/*` is here for the same reason `secrets/*` is, one resource kind over (#2262). KMS etcd
+    # encryption (#2092) creates `azurerm_key_vault_key.aks_secrets`, and key operations on an
+    # RBAC-authorized vault are data-plane too — so without this the provisioner could seed the
+    # project's secrets but not create the key that encrypts them, and the feature is ON BY DEFAULT.
+    # The nightly never caught it because that identity runs as Contributor + User Access
+    # Administrator, which no real customer connection has.
     data_actions = [
       "Microsoft.KeyVault/vaults/secrets/*",
+      "Microsoft.KeyVault/vaults/keys/*",
     ]
     not_actions = []
+    # The provisioner MANAGES the KMS key it creates; it never USES it. AKS does the wrapping, as
+    # its own identity, which is why the cluster gets "Key Vault Crypto User" separately in
+    # secrets-encryption.tf.
+    #
+    # `keys/*` is granted rather than an enumerated verb list because a management verb missed here
+    # is an apply that dies on a real customer and cannot be reproduced from a plan — the rotation
+    # policy alone spans read/write sub-actions. The cryptographic USE actions are then subtracted,
+    # which is the safe direction: a too-narrow subtraction leaves a capability, a too-narrow
+    # allow-list breaks the deploy.
+    #
+    # Why it matters that these are subtracted: this role is assigned at SUBSCRIPTION scope, so
+    # without the exclusions the provisioner could decrypt with any key in any RBAC-authorized
+    # vault in the customer's subscription — including vaults Alethia never created, and keys
+    # protecting data that never touches Azure. Same reasoning as the enumerated (not `kms:*`)
+    # Alibaba key verbs in infra/connector/alibaba/main.tf.
+    not_data_actions = [
+      "Microsoft.KeyVault/vaults/keys/decrypt/action",
+      "Microsoft.KeyVault/vaults/keys/unwrapKey/action",
+      "Microsoft.KeyVault/vaults/keys/sign/action",
+      "Microsoft.KeyVault/vaults/keys/release/action",
+    ]
+    # `purge/action` is deliberately NOT subtracted. It is destructive but it is MANAGEMENT, and
+    # azurerm can attempt a purge on destroy — denying it would fail teardown rather than protect
+    # anything. These vaults run with purge protection on, so Azure refuses a purge regardless.
   }
 
   assignable_scopes = [data.azurerm_subscription.current.id]
@@ -158,6 +190,15 @@ locals {
     "4633458b-17de-408a-b874-0445c86b69e6", # Key Vault Secrets User (external-secrets workload id)
     "b86a8fe4-44ce-4948-aee5-eccb2c155cd7", # Key Vault Secrets Officer (provisioner seeds secrets)
     "b1ff04bb-8a4e-4dc4-8eb5-8693973ce19b", # Azure Kubernetes Service RBAC Cluster Admin
+    # Both added by #2262. KMS etcd encryption (#2092) creates TWO assignments the ABAC condition
+    # below would otherwise deny outright, so the feature — which is on by default — could not
+    # apply on any real customer connection:
+    #   Crypto Officer → the PROVISIONER, which creates the key (secrets-encryption.tf).
+    #   Crypto User    → the CLUSTER identity, which wraps/unwraps with it. The narrower of the two,
+    #                    and deliberately not Officer: the cluster never needs to manage the key.
+    # GUIDs verified against `az role definition list`, not recalled.
+    "14b46e9e-c2b7-41b4-b07b-48a6ebf60603", # Key Vault Crypto Officer (provisioner creates the KMS key)
+    "12338af0-0e69-4776-bea7-57ae8d297424", # Key Vault Crypto User (AKS identity wraps/unwraps)
   ])
 }
 

@@ -60,6 +60,11 @@ locals {
     "alb:*", # ALB (CCM ingress)
     "eip:*", # Elastic IP (some SDKs address EIP under its own service prefix)
     "tag:*", # teardown: tag discovery + tag/untag (scripts/e2e/alibaba-cleanup.sh)
+    # ACK Kubernetes Secrets envelope encryption (#2092). Its absence is why the first real apply
+    # failed with `Forbidden.NoPermission … AuthAction: kms:CreateKey … ImplicitDeny` on
+    # alicloud_kms_key.ack_secrets (run 31356854945, #2262). One service wildcard, matching every
+    # other entry here; the customer-facing connector gets the narrow verb list instead.
+    "kms:*",
     "ram:CreateServiceLinkedRole",
     "ram:DeleteServiceLinkedRole",
     "ram:GetServiceLinkedRoleDeletionStatus",
