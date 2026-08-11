@@ -9,7 +9,15 @@
 # Postgres-backed control plane and provisions a genuine ephemeral cluster from
 # infra/templates/project/<provider>, then asserts the same RunDeployV2 outcomes
 # (SUCCESS + cluster_ready + a signed ed25519 receipt + shipped logs + a Ready node),
-# captures a committable proof, and GUARANTEES teardown.
+# captures a committable proof, and tears down.
+#
+# TEARDOWN, PRECISELY (#2330). It is guaranteed on the SUCCESS and FAILURE paths, where the
+# `always()` sweeper gets the job's remaining budget. It is NOT guaranteed on CANCELLATION: the
+# runner kills the whole worker 4m45s after the cancel signal, and that budget is shared by every
+# remaining `always()` step and every action `post:` step. This file used to say "GUARANTEES
+# teardown" flatly; run 31459117502 left ~$105/month standing and proved the claim wrong.
+# What covers that path is `e2e-orphan-reaper.yml`, out-of-band, plus the cancellation-only sweep
+# below which wins the race in the common case without promising to.
 #
 # ─────────────────────────  Maintainer-gated (opt-in)  ─────────────────────────
 # This provisions REAL, billable infrastructure, so it is OFF until a maintainer
@@ -578,6 +586,97 @@ jobs:
             echo "ARM_SUBSCRIPTION_ID=${{ vars.E2E_AZURE_SUBSCRIPTION_ID }}"
           } >> "$GITHUB_ENV"
 
+      # ── AZURE_* + a REFRESHED federated token file — what makes the RUNNER keyless on azure.
+      #
+      #    The step above gives the azurerm OpenTofu provider a credential. It gives the RUNNER
+      #    nothing, and that is why the azure floor has never gone green.
+      #
+      #    `apps/runner/internal/agent/kube_token.go` builds a ChainedTokenCredential:
+      #    WorkloadIdentityCredential → DefaultAzureCredential (→ Environment, ManagedIdentity,
+      #    AzureCLI). The first two read AZURE_CLIENT_ID / AZURE_TENANT_ID /
+      #    AZURE_FEDERATED_TOKEN_FILE — which nothing set — so both were skipped and the chain fell
+      #    all the way through to AzureCLICredential, i.e. the `az login` session from `azure/login`.
+      #
+      #    That session's client assertion IS the GitHub OIDC token, and it is valid for FIVE
+      #    MINUTES. Observed on run 31474582109:
+      #
+      #      AADSTS700024: Client assertion is not within its valid time range.
+      #        Current time: 09:11:49Z · valid from: 08:46:08Z · expiry: 08:51:08Z
+      #
+      #    AKS provisioned correctly; the reachability probe then ran 20 minutes after the assertion
+      #    expired and the leg died as "cluster provisioned but not reachable". AKS never comes up in
+      #    under five minutes, so this failed DETERMINISTICALLY on every azure run — it was never
+      #    flaky, and it is why the leg has no green in its history.
+      #
+      #    ⚠️ EXPORTING THE VARIABLES IS NOT ENOUGH, which is the part worth reading twice.
+      #    WorkloadIdentityCredential re-reads the token file on every GetToken — it is built for
+      #    Kubernetes projected tokens, which the kubelet rotates. On a GitHub runner NOTHING rotates
+      #    it, so a probe 20 minutes later would read the same expired assertion and fail identically.
+      #    The file has to be kept fresh, hence the refresher.
+      #
+      #    Why the fix belongs HERE and not in the runner: the runner's chain is already correct for
+      #    production, where it runs inside a customer's AKS cluster with a real projected
+      #    service-account token. Teaching it to mint GitHub OIDC tokens would put CI-specific
+      #    behaviour into the product. The gap is that the HARNESS never gave it a credential.
+      #
+      #    ACTIONS_ID_TOKEN_REQUEST_URL / _TOKEN stay valid for the whole job (that is what
+      #    `id-token: write` grants), so a background loop can keep minting. It writes atomically —
+      #    a reader that catches a half-written file gets a malformed assertion and a confusing
+      #    AADSTS error instead of this comment. ──
+      - name: Export AZURE_* + start the federated-token refresher
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'azure'
+        env:
+          AZ_CLIENT_ID: ${{ vars.E2E_AZURE_CLIENT_ID }}
+          AZ_TENANT_ID: ${{ vars.E2E_AZURE_TENANT_ID }}
+        run: |
+          set -euo pipefail
+          TOKEN_FILE="${RUNNER_TEMP}/azure-federated-token"
+          MINT="${RUNNER_TEMP}/mint-azure-token.sh"
+
+          # A real script rather than an inlined function: the refresher runs detached, and a
+          # here-doc'd file is something a maintainer can read, run by hand, and reason about when a
+          # run goes wrong at 03:17.
+          cat > "$MINT" <<'MINTEOF'
+          #!/usr/bin/env bash
+          # Mint a GitHub OIDC token for the Azure federated-credential audience, atomically.
+          # A reader that catches a half-written file gets a malformed assertion and a confusing
+          # AADSTS error, so write-then-rename rather than write-in-place.
+          set -uo pipefail
+          out="$1"
+          curl -fsSL "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            | jq -r '.value' > "${out}.tmp" || exit 1
+          [ -s "${out}.tmp" ] || exit 1
+          mv "${out}.tmp" "$out"
+          MINTEOF
+          sed -i 's/^          //' "$MINT"
+          chmod +x "$MINT"
+
+          # Fail fast and loudly if the very first mint does not work: a refresher that silently
+          # never writes leaves the credential chain exactly as broken as it is today, and the next
+          # person would re-diagnose AADSTS700024 from scratch.
+          if ! "$MINT" "$TOKEN_FILE" || [ ! -s "$TOKEN_FILE" ]; then
+            echo "::error::could not mint the Azure federated token — refusing to continue; the runner would fall back to the 5-minute az session (see #2259)."
+            exit 1
+          fi
+
+          # Every 4 minutes, comfortably inside the ~5-minute assertion lifetime. Detached so it
+          # outlives this step; the job ending reaps it. Failures are tolerated per-iteration — one
+          # flaky mint must not stop the loop, and the NEXT tick repairs the file well before the
+          # current assertion expires.
+          # shellcheck disable=SC2016  # $0/$1 are the loop's OWN positional args (the two passed
+          # after the -c string), so they must NOT expand here — expanding them in this shell is
+          # exactly the bug the quoting prevents.
+          nohup bash -c 'while true; do sleep 240; "$0" "$1" || true; done' "$MINT" "$TOKEN_FILE" \
+            >/dev/null 2>&1 &
+          echo "::notice::azure federated-token refresher started (every 240s → $TOKEN_FILE)"
+
+          {
+            echo "AZURE_CLIENT_ID=${AZ_CLIENT_ID}"
+            echo "AZURE_TENANT_ID=${AZ_TENANT_ID}"
+            echo "AZURE_FEDERATED_TOKEN_FILE=${TOKEN_FILE}"
+          } >> "$GITHUB_ENV"
+
       # ── Alibaba: keyless RAM OIDC. Install aliyun-cli (release tgz, like the hcloud step) for the
       #    sweeper, then fetch a GitHub OIDC token (audience sts.aliyuncs.com) to a file and export the
       #    RAM-OIDC trio that BOTH the aliyun CLI sweeper AND the alicloud OpenTofu provider read:
@@ -1136,6 +1235,60 @@ jobs:
           echo "::notice::T2 ctx ${ctx_minutes}m · go-timeout ${go_timeout} · step cap ${T2_STEP_CAP_MINUTES}m · job cap ${T2_JOB_CAP_MINUTES}m"
           GOWORK=off go test -tags=e2e_t2 ./... \
             -run TestT2RealCloudProvisioning -count=1 -timeout "$go_timeout" -v
+
+      # ── Teardown, CANCELLATION PATH ONLY (#2330). ───────────────────────────────────────────
+      #
+      #    A cancelled job gets ONE shared budget for everything still queued — the runner arms a
+      #    single kill timer at (cancel-timeout − 15s), i.e. 4m45s by default, and kills the whole
+      #    worker when it expires (actions/runner JobDispatcher.cs). Every remaining `always()`
+      #    step AND every action `post:` step draws from that same 285 seconds.
+      #
+      #    The `Guaranteed teardown` step at the bottom of this job is therefore LAST IN LINE on
+      #    the one path where the budget is scarce: proof capture, two artifact uploads and a log
+      #    scrub all run first. On run 31459117502 it was reached with the window nearly gone,
+      #    was killed mid-sweep with an EMPTY step conclusion, and left an EKS control plane, a
+      #    NAT gateway and a VPC standing — ~$105/month, until swept by hand.
+      #
+      #    So on the cancellation path ONLY, sweep here instead: first in the queue, whole window.
+      #
+      #    WHY NOT JUST MOVE THE EXISTING STEP UP. Because `Capture proof` below reads LIVE
+      #    CLUSTER STATE through $HOME/.alethia/kubeconfig. Tearing down before it would gut the
+      #    proof bundle on every SUCCESSFUL night to fix a rare cancellation — trading the
+      #    nightly's whole committable-evidence purpose for it. `cancelled()` is false on the
+      #    success and failure paths, so this step is skipped there and the existing late teardown
+      #    runs after capture exactly as before.
+      #
+      #    `cancelled()` and NOT `!cancelled()`: GitHub's expressions page recommends the latter as
+      #    the modern replacement for `always()`, and under cancellation it evaluates FALSE — on a
+      #    teardown step that advice means it never runs at all.
+      #
+      #    This is MITIGATION, not a guarantee. A cancel arriving after this step's position, a
+      #    REST force-cancel (which bypasses conditions outright) or a runner shutdown (which skips
+      #    condition evaluation entirely) all still land on e2e-orphan-reaper.yml. Nothing that
+      #    lives inside the job it protects can cover the job dying; this only makes the common
+      #    case win the race it was previously losing. ──
+      - name: Teardown on cancellation (first in the 4m45s window)
+        if: cancelled() && steps.gate.outputs.run == 'true'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
+          ALETHIA_E2E_PROJECT: ${{ env.E2E_PROJECT }}
+        run: |
+          if [ -z "${E2E_CLUSTER:-}" ] || [ -z "${E2E_ENV:-}" ]; then
+            echo "::warning::E2E_CLUSTER/E2E_ENV unset at cancellation — nothing was provisioned yet, nothing to sweep."
+            exit 0
+          fi
+          case "$PROVIDER" in
+            hetzner) SCRIPT="./scripts/e2e/hcloud-cleanup.sh" ;;
+            aws)     SCRIPT="./scripts/e2e/aws-cleanup.sh" ;;
+            gcp)     SCRIPT="./scripts/e2e/gcp-cleanup.sh" ;;
+            azure)   SCRIPT="./scripts/e2e/azure-cleanup.sh" ;;
+            alibaba) SCRIPT="./scripts/e2e/alibaba-cleanup.sh" ;;
+            *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
+          esac
+          [ -x "$SCRIPT" ] || { echo "::error::$SCRIPT missing/not executable"; exit 1; }
+          echo "::warning::job CANCELLED — sweeping ${E2E_ENV} now, ahead of proof capture, because the window is shared and short."
+          "$SCRIPT" "$E2E_CLUSTER"
 
       # ── Proof capture v2 (BYOC A0.4). Runs on ANY t2 outcome (always()) so a RED night is
       #    debuggable, not just a green one: it builds a structured, SCRUBBED proof bundle

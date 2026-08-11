@@ -37,7 +37,86 @@ func NamespacePostMortem(namespace string) string {
 	pods := collectOut("kubectl -n " + namespace + " get pods -o wide")
 	states := collectOut("kubectl -n " + namespace + " get pods -o jsonpath='" + podStatesJSONPath + "'")
 	events := collectOut("kubectl -n " + namespace + " get events --sort-by=.lastTimestamp")
-	return namespaceEvidence(namespace, pods, podStallVerdicts(states), events)
+	nodes := collectOut("kubectl get nodes -o jsonpath='" + nodeCapacityJSONPath + "'")
+	placement := collectOut("kubectl get pods -A -o jsonpath='" + podNodeJSONPath + "'")
+	return namespaceEvidence(namespace, pods, podStallVerdicts(states), events, nodePressureVerdicts(nodes, placement))
+}
+
+// nodeCapacityJSONPath emits `name<TAB>allocatable-pods<TAB>capacity-pods` per node.
+// podNodeJSONPath emits the node each pod is placed on, one per line, across ALL namespaces —
+// the pod ceiling is a per-NODE property, so counting only this namespace's pods would understate
+// it by every add-on and kube-system pod on the box.
+//
+// Neither contains a single quote, so both survive the single-quoting they are wrapped in.
+const nodeCapacityJSONPath = `{range .items[*]}{.metadata.name}{"\t"}{.status.allocatable.pods}{"\t"}{.status.capacity.pods}{"\n"}{end}`
+
+const podNodeJSONPath = `{range .items[*]}{.spec.nodeName}{"\n"}{end}`
+
+// nodePressureVerdicts answers the one question a "pod cannot start" post-mortem could not:
+// is the NODE full, or is something below it refusing to hand out addresses?
+//
+// Run 31474579546 (#2329) is why this exists. ArgoCD's application-controller sat for ten minutes on
+//
+//	aws-cni failed (add): add cmd: failed to assign an IP address to container
+//
+// and the post-mortem faithfully reported the events — which name the symptom and not the cause.
+// Two very different failures produce that identical message:
+//
+//   - the node is at its POD CEILING. On the AWS VPC CNI that ceiling is ENIs × IPs-per-ENI, so a
+//     modest instance runs out long before its CPU or memory does, and the fix is prefix delegation
+//     (or a bigger node) — nothing to do with the subnet.
+//   - the node has room and the SUBNET is out of addresses, which is a CIDR-sizing problem and
+//     where a bigger node makes things strictly worse.
+//
+// Comparing pods-placed against allocatable separates them, and it costs two kubectl reads on a
+// path that has already failed. Without it the two are indistinguishable from the bundle and the
+// cluster is destroyed moments later, which is exactly how #2329 ended up needing a second run to
+// diagnose.
+//
+// Deliberately reports "room to spare" rather than staying silent: a section that only speaks when
+// it has bad news is one a reader cannot distinguish from a section that failed to run — the same
+// reasoning namespaceEvidence applies to its empty sections. Pure/unit-tested.
+func nodePressureVerdicts(nodeRaw, placementRaw string) string {
+	placed := map[string]int{}
+	for _, n := range strings.Split(placementRaw, "\n") {
+		if n = strings.TrimSpace(n); n != "" {
+			placed[n]++
+		}
+	}
+
+	var lines []string
+	nodes := 0
+	for _, line := range strings.Split(nodeRaw, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		if len(f) < 2 {
+			continue
+		}
+		nodes++
+		name := strings.TrimSpace(f[0])
+		alloc, err := strconv.Atoi(strings.TrimSpace(f[1]))
+		if err != nil || alloc <= 0 {
+			lines = append(lines, name+": allocatable pod count unreadable ("+strings.TrimSpace(f[1])+") — cannot tell a full node from an empty subnet")
+			continue
+		}
+		used := placed[name]
+		switch {
+		case used >= alloc:
+			lines = append(lines, name+": AT THE POD CEILING — "+strconv.Itoa(used)+"/"+strconv.Itoa(alloc)+
+				" pods. A pod that cannot get an IP here is the NODE being full, not the subnet; raise max-pods (on the AWS VPC CNI, prefix delegation) or add a node.")
+		case alloc-used <= 2:
+			lines = append(lines, name+": near the pod ceiling — "+strconv.Itoa(used)+"/"+strconv.Itoa(alloc)+" pods.")
+		default:
+			lines = append(lines, name+": room to spare — "+strconv.Itoa(used)+"/"+strconv.Itoa(alloc)+
+				" pods. A pod that cannot get an IP here is NOT the node ceiling; check the subnet's free addresses.")
+		}
+	}
+	if nodes == 0 {
+		return "(no nodes returned — the cluster was unreachable by the time the post-mortem ran)"
+	}
+	return strings.Join(lines, "\n")
 }
 
 // namespaceEvidence formats the collected post-mortem sections.
@@ -46,7 +125,7 @@ func NamespacePostMortem(namespace string) string {
 // own: "kubectl returned nothing" is itself a finding (no pods at all means the chart's manifests
 // never landed), while a silently missing section reads as if the command was never run.
 // Pure/unit-tested.
-func namespaceEvidence(namespace, pods, verdicts, events string) string {
+func namespaceEvidence(namespace, pods, verdicts, events, nodePressure string) string {
 	section := func(title, body string) string {
 		body = strings.TrimSpace(body)
 		if body == "" {
@@ -57,6 +136,7 @@ func namespaceEvidence(namespace, pods, verdicts, events string) string {
 	return "\nCollecting namespace " + namespace + " state before teardown destroys it:\n" +
 		section("kubectl get pods -o wide -n "+namespace, pods) +
 		section("stalled pods", verdicts) +
+		section("node pod-capacity pressure", nodePressure) +
 		section("kubectl get events -n "+namespace, events)
 }
 
