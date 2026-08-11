@@ -38,7 +38,7 @@ they give assurance over, and to the evidence each produces.
 | Control (TSC) | What proves it (regression test) | Evidence (audit artifact) |
 | --- | --- | --- |
 | CC7.1 Detect configuration that violates policy before it takes effect | **elench compliance corpus** — 19 labeled OpenTofu plans scored with **0 false-PASS** (`packages/core/verify/corpus_test.go`); the **mutation gate** (`mutate_test.go`) proves each control discriminates | Signed `verify.Report` receipts (PLAN + DEPLOY) attached to each job's `execution_metadata["verify_result"]` |
-| CC7.1 Detect drift from the approved baseline (keep proving it) | `packages/core/drift/drift_test.go` (turns `plan -refresh-only -json` into a `Posture`) | Per-environment drift `Posture` records |
+| CC7.1 Detect drift from the approved baseline (keep proving it) | `packages/core/drift/drift_test.go` (turns `plan -refresh-only -json` into a `Posture`) + **`normalize_test.go`'s discriminator tables**, which hold each attribute fixed and vary only the delta shape / declaredness / sensitivity, so a filter that stopped discriminating reds rather than going quiet — including a real captured 9-resource Azure false alarm (`testdata/azure_refresh_noise.json`) and a cloud-parity table asserting identical verdicts across all five providers | Per-environment drift `Posture` records, carrying both what drifted (`details`) and **what was examined and dismissed as representational, with the attribute paths and the reason** (`normalized_details`) |
 | CC7.2 Anomalies are identified and evaluated | corpus `not_evaluable` plans — the gate never silently passes an un-inspectable plan (`aws/gcp/azure_not_evaluable_*.json`) | `not_evaluable` controls with coverage notes in the receipt |
 
 ## CC8 — Change management

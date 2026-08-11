@@ -192,10 +192,22 @@ func soakDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p soakP
 	if err != nil {
 		t.Fatalf("A0.3 drift: read drift job metadata: %v", err)
 	}
+	// Details and normalized_details are decoded so a failure NAMES the resources. Without
+	// them the failure prints two integers and the addresses are structurally absent from
+	// the output — which is what made the 9-of-32 azure false alarm unreadable from CI.
 	var meta struct {
 		DriftPosture *struct {
-			InSync         bool `json:"in_sync"`
-			Drifted        int  `json:"drifted"`
+			InSync  bool `json:"in_sync"`
+			Drifted int  `json:"drifted"`
+			Details []struct {
+				Address string `json:"address"`
+				Kind    string `json:"kind"`
+			} `json:"details"`
+			Normalized        int `json:"normalized"`
+			NormalizedDetails []struct {
+				Address string `json:"address"`
+				Reason  string `json:"reason"`
+			} `json:"normalized_details"`
 			UnmanagedKnown bool `json:"unmanaged_known"`
 		} `json:"drift_posture"`
 	}
@@ -211,13 +223,24 @@ func soakDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p soakP
 	// must be false — a refresh-only plan CANNOT see unmanaged resources, and claiming it did
 	// would be dishonest.
 	if !meta.DriftPosture.InSync || meta.DriftPosture.Drifted != 0 {
-		t.Fatalf("A0.3 drift: posture is not in-sync right after a clean apply: in_sync=%t drifted=%d",
-			meta.DriftPosture.InSync, meta.DriftPosture.Drifted)
+		drifted := make([]string, 0, len(meta.DriftPosture.Details))
+		for _, d := range meta.DriftPosture.Details {
+			drifted = append(drifted, d.Address+" ("+d.Kind+")")
+		}
+		t.Fatalf("A0.3 drift: posture is not in-sync right after a clean apply: in_sync=%t drifted=%d\ndrifted: %s",
+			meta.DriftPosture.InSync, meta.DriftPosture.Drifted, strings.Join(drifted, "\n         "))
 	}
 	if meta.DriftPosture.UnmanagedKnown {
 		t.Fatal("A0.3 drift: posture claims unmanaged_known=true, but a refresh-only plan cannot see unmanaged resources — dishonest posture")
 	}
-	t.Logf("A0.3 drift: DETECT_DRIFT SUCCESS — honest in-sync posture (drifted=0) over %d real resources, %d non-empty state read(s)", resCount, reads)
+	// What was examined and dismissed is logged on the SUCCESS path too. A silently
+	// filtered delta is indistinguishable from one that never happened, and this is the
+	// evidence trail behind the CC7.1 control.
+	for _, n := range meta.DriftPosture.NormalizedDetails {
+		t.Logf("A0.3 drift: dismissed as representational (%s): %s", n.Reason, n.Address)
+	}
+	t.Logf("A0.3 drift: DETECT_DRIFT SUCCESS — honest in-sync posture (drifted=0, %d normalized) over %d real resources, %d non-empty state read(s)",
+		meta.DriftPosture.Normalized, resCount, reads)
 }
 
 // seedT2DriftJob enqueues a QUEUED DETECT_DRIFT job carrying the SAME base config_snapshot
