@@ -190,6 +190,64 @@ run "dns_outputs_survive_a_pluggable_dns_connector" {
 }
 
 ################################################################################
+# 5. Bringing a zone you already own (#2294)
+################################################################################
+
+# `cloud_dns_enabled` is the CREATE gate, and `cloud_dns_zone_name` carries a zone the caller
+# ALREADY OWNS. Before #2294 gcp conflated the two: the provider emitted `cloud_dns_enabled` flat
+# from `DNS.Enabled`, and cloud-dns.tf used the brought id as the NAME of a zone it then created. So
+# "attach to my zone" produced a SECOND managed zone with different name servers, delegation kept
+# pointing at the original, and none of the customer's records were served — a silent wrong answer,
+# on a plan that was green.
+#
+# The Go half is pinned by packages/core/cloud/dns_existing_zone_test.go. These two runs pin the
+# TEMPLATE half, which is where the naive one-line fix would have caused three new failures.
+run "a_brought_zone_is_attached_not_recreated" {
+  command = plan
+
+  variables {
+    cloud_dns_enabled   = false # what the provider now emits when a zone id is supplied
+    cloud_dns_zone_name = "customer-owned-zone"
+    cloud_dns_domain    = "example.com."
+    dns_provider        = "native"
+  }
+
+  assert {
+    condition = alltrue([
+      length(module.cloud_dns) == 0,
+      output.cloud_dns_zone_name == "customer-owned-zone",
+      local.external_dns_zone == "customer-owned-zone",
+    ])
+    error_message = "A brought zone must create nothing, and must still be the zone the project addresses. A null output here is not harmless: CertManagerSolver() fails closed without it, so every DNS01 certificate stops issuing; and an empty external_dns_zone drops the roles/dns.admin grant, leaving external-dns unable to write into the customer's own zone."
+  }
+}
+
+run "creating_a_zone_derives_its_own_name" {
+  command = plan
+
+  variables {
+    cloud_dns_enabled = true
+    cloud_dns_domain  = "example.com."
+    dns_provider      = "native"
+  }
+
+  # The exported name must be the MODULE'S name, not a re-derivation. modules/cloud-dns builds
+  # `name = "${project_name}-${environment}-${zone_name}"`, so the real zone is the prefixed form and
+  # `local.cloud_dns_name` is only its last third. An earlier draft of #2294 re-derived it here and
+  # this assertion is what caught it — a roles/dns.admin grant on a zone name that does not exist
+  # fails at apply, on the one path that previously worked.
+  assert {
+    condition = alltrue([
+      length(module.cloud_dns) == 1,
+      output.cloud_dns_zone_name == module.cloud_dns[0].zone_name,
+      local.external_dns_zone == module.cloud_dns[0].zone_name,
+      endswith(module.cloud_dns[0].zone_name, local.cloud_dns_name),
+    ])
+    error_message = "Creating a zone must export the MODULE'S zone name, and the external-dns grant must address that same name — a re-derived name points the grant at a zone that does not exist."
+  }
+}
+
+################################################################################
 # What this file does NOT prove
 ################################################################################
 #
