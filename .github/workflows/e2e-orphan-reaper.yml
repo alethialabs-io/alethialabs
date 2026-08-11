@@ -70,6 +70,7 @@ on:
           - gcp
           - azure
           - alibaba
+          - hetzner
         default: all
       dry_run:
         description: "List what WOULD be deleted, delete nothing. Default ON for a manual run — a dispatch is usually somebody investigating, and the scheduled run is the one that reclaims."
@@ -102,12 +103,14 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        # hetzner is ABSENT and that is a real, stated gap rather than an oversight:
-        # scripts/e2e/hcloud-cleanup.sh has no PREFLIGHT mode, so there is no prior-run discovery to
-        # invoke for it. It leaks nothing today (its gate, HCLOUD_TOKEN, is unwired and the leg
-        # green-skips), but the moment that secret is set it can. The step summary says so on every
-        # run, so the gap is visible daily instead of silently absent from a matrix.
-        provider: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.provider != 'all' && fromJSON(format('["{0}"]', github.event.inputs.provider)) || fromJSON('["aws","gcp","azure","alibaba"]') }}
+        # hetzner joined the matrix in #2330, when scripts/e2e/hcloud-cleanup.sh gained the
+        # PREFLIGHT discovery it had been missing — the stated reason it was excluded here.
+        #
+        # Its discovery keys on `alethia_project-id=e2e-*` (a Kubernetes-style LABEL, as the
+        # hetzner template stamps it) and reads the cluster name back off the matched resources.
+        # It deliberately does NOT key on the cluster name: that is `alethia-nl-<run_id>-<attempt>`,
+        # and `alethia-nl` is a prefix of prod's naming, not a test-only marker.
+        provider: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.provider != 'all' && fromJSON(format('["{0}"]', github.event.inputs.provider)) || fromJSON('["aws","gcp","azure","alibaba","hetzner"]') }}
     env:
       # DRY_RUN defaults ON for a dispatch and OFF for the schedule — the scheduled run is the one
       # that actually reclaims; a human dispatching is usually looking rather than deleting.
@@ -116,6 +119,9 @@ jobs:
       E2E_GCP_WIF_PROVIDER: ${{ vars.E2E_GCP_WIF_PROVIDER }}
       E2E_AZURE_CLIENT_ID: ${{ vars.E2E_AZURE_CLIENT_ID }}
       E2E_ALIBABA_ROLE_ARN: ${{ vars.E2E_ALIBABA_ROLE_ARN }}
+      # hetzner's identity is a SECRET, not a repo var — it is a static API token rather than an
+      # OIDC handle, which is also why it is the one cloud here with no federated login step.
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -132,6 +138,7 @@ jobs:
             gcp)     HANDLE="$E2E_GCP_WIF_PROVIDER"; NAME="E2E_GCP_WIF_PROVIDER" ;;
             azure)   HANDLE="$E2E_AZURE_CLIENT_ID";  NAME="E2E_AZURE_CLIENT_ID" ;;
             alibaba) HANDLE="$E2E_ALIBABA_ROLE_ARN"; NAME="E2E_ALIBABA_ROLE_ARN" ;;
+            hetzner) HANDLE="$HCLOUD_TOKEN";           NAME="HCLOUD_TOKEN" ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
           esac
           if [ -n "$HANDLE" ]; then
@@ -154,6 +161,9 @@ jobs:
             gcp)     REGION="europe-west3" ;;
             azure)   REGION="germanywestcentral" ;;
             alibaba) REGION="eu-central-1" ;;
+            # hcloud discovery is account-wide, not regional — the label selector is the scope.
+            # Set for contract symmetry with the other four; nothing filters on it.
+            hetzner) REGION="nbg1" ;;
           esac
           echo "ALETHIA_E2E_REGION=$REGION" >> "$GITHUB_ENV"
 
@@ -241,6 +251,21 @@ jobs:
             echo "ALIBABA_CLOUD_SECURITY_TOKEN=${ST}"
           } >> "$GITHUB_ENV"
 
+      # hetzner needs no federated login — HCLOUD_TOKEN is a static API token already in the job
+      # env — but it is the one cloud whose CLI the runner image does not ship. Pinned and verified
+      # exactly as the nightly does it, including the pipefail note: without it `curl | tar` reports
+      # TAR's status, so a 404 surfaces as a gzip error instead of the HTTP one.
+      - name: Install hcloud CLI
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'hetzner'
+        env:
+          HCLOUD_CLI_VERSION: v1.67.0
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/hetznercloud/cli/releases/download/${HCLOUD_CLI_VERSION}/hcloud-linux-amd64.tar.gz" \
+            | tar -xz hcloud
+          sudo mv hcloud /usr/local/bin/hcloud
+          hcloud version
+
       # ── The sweep. PREFLIGHT=1 is the EXISTING prior-run discovery; the only thing this workflow
       #    changes about it is where it runs from.
       #
@@ -285,13 +310,17 @@ jobs:
             gcp)     SCRIPT=scripts/e2e/gcp-cleanup.sh ;;
             azure)   SCRIPT=scripts/e2e/azure-cleanup.sh ;;
             alibaba) SCRIPT=scripts/e2e/alibaba-cleanup.sh ;;
+            # hcloud-cleanup.sh takes the cluster name POSITIONALLY (its scope is a label selector,
+            # not a tag filter), so the sentinel goes in $1 rather than ALETHIA_E2E_ENV. Its
+            # PREFLIGHT excludes exactly that value, which matches nothing real.
+            hetzner) SCRIPT=scripts/e2e/hcloud-cleanup.sh; SWEEP_ARG=reaper-standalone ;;
           esac
           echo "::notice::reaping $PROVIDER in ${ALETHIA_E2E_REGION} (DRY_RUN=${DRY_RUN})"
           # Tee so the summary step can count what happened WITHOUT re-running the sweep. Piping
           # would hand the step `tee`'s exit code and launder the script's, so pipefail is set and
           # the status is taken from PIPESTATUS explicitly.
           set +e
-          bash "$SCRIPT" 2>&1 | tee "${RUNNER_TEMP}/reap.log"
+          bash "$SCRIPT" ${SWEEP_ARG:+"$SWEEP_ARG"} 2>&1 | tee "${RUNNER_TEMP}/reap.log"
           status=${PIPESTATUS[0]}
           set -e
           echo "status=$status" >> "$GITHUB_OUTPUT"
@@ -331,7 +360,8 @@ jobs:
         run: |
           {
             echo
-            echo "> **Not reaped: hetzner.** \`scripts/e2e/hcloud-cleanup.sh\` has no \`PREFLIGHT\` mode,"
-            echo "> so there is no prior-run discovery to invoke. It leaks nothing while \`HCLOUD_TOKEN\`"
-            echo "> is unset and the leg green-skips — but it can the moment that secret is set."
+            echo "> **All five clouds are reaped.** hetzner joined in #2330, when \`hcloud-cleanup.sh\`"
+            echo "> gained the \`PREFLIGHT\` discovery whose absence was the stated reason it was excluded."
+            echo "> Its discovery keys on the \`alethia_project-id=e2e-*\` label, never on the cluster name —"
+            echo "> \`alethia-nl-\` is a prefix of prod's naming, not a test-only marker."
           } >> "$GITHUB_STEP_SUMMARY"
