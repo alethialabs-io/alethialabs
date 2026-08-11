@@ -21,7 +21,13 @@ module "cloud_dns" {
   environment  = var.environment
   project_name = var.project_name
 
-  zone_name = var.cloud_dns_zone_name != "" ? var.cloud_dns_zone_name : local.cloud_dns_name
+  # Always the derived name. `cloud_dns_zone_name` now means ONE thing — the zone the CALLER
+  # BROUGHT — and a brought zone leaves this module absent entirely (count 0), so the old
+  # `var.cloud_dns_zone_name != "" ? … : local.cloud_dns_name` ternary was not merely dead, it was
+  # the bug: it is how a zone id supplied to ATTACH to became the NAME of a second zone we created
+  # (#2294). Azure settled the same ambiguity the same way in #1992 — the variable carries a brought
+  # zone and nothing else.
+  zone_name = local.cloud_dns_name
   domain    = var.cloud_dns_domain
 
 
