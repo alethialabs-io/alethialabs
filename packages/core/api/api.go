@@ -555,8 +555,10 @@ func (c *Client) GetConfiguration(projectName string) (*types.Configuration, err
 }
 
 func (c *Client) ExportConfiguration(projectName, format string) (*ConfigurationExport, error) {
+	// json, not legacy-yaml. The old default named a format with NO producer anywhere — the route it
+	// asked for did not exist either, so this call 404'd for its whole life.
 	if format == "" {
-		format = "legacy-yaml"
+		format = "json"
 	}
 	endpoint := fmt.Sprintf(
 		"%s/cli/configurations/by-project-name/%s/export?format=%s",
@@ -1889,6 +1891,54 @@ func withEnvParam(endpoint, env string) string {
 	params := url.Values{}
 	params.Set("env", env)
 	return fmt.Sprintf("%s?%s", endpoint, params.Encode())
+}
+
+// DesignChange is one component the apply created, updated or deleted — or, on a dry run, would.
+type DesignChange struct {
+	Kind   string  `json:"kind"`
+	Name   *string `json:"name"`
+	Action string  `json:"action"`
+}
+
+// DesignApplyResult reports what an apply DID. Mode is an enum rather than two booleans so a caller
+// cannot read a plan as an apply: "dry-run" wrote nothing, "staged" went to the review tray, "applied"
+// went live.
+type DesignApplyResult struct {
+	OK      bool           `json:"ok"`
+	Mode    string         `json:"mode"`
+	Changes []DesignChange `json:"changes"`
+}
+
+// ApplyDesignParams is the payload for ApplyDesign. Document is the whole design document, passed
+// through verbatim — the server validates it with the console form's own schema, so the CLI does not
+// need to know its shape and cannot drift from it.
+type ApplyDesignParams struct {
+	Project  string
+	Env      string
+	Document json.RawMessage
+	DryRun   bool
+	Stage    bool
+}
+
+// ApplyDesign applies (or plans, or stages) a whole environment design document.
+func (c *Client) ApplyDesign(p ApplyDesignParams) (*DesignApplyResult, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/design", c.baseURL, url.PathEscape(p.Project)), p.Env)
+	sep := "?"
+	if strings.Contains(endpoint, "?") {
+		sep = "&"
+	}
+	if p.DryRun {
+		endpoint += sep + "dry_run=1"
+		sep = "&"
+	}
+	if p.Stage {
+		endpoint += sep + "stage=1"
+	}
+	var resp DesignApplyResult
+	if err := c.doPost(endpoint, p.Document, &resp); err != nil {
+		return nil, fmt.Errorf("failed to apply design: %w", err)
+	}
+	return &resp, nil
 }
 
 // --- Drift ---

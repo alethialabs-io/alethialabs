@@ -87,7 +87,11 @@ func unactivatedPlacementError(pm types.PlacementMode, provider string) error {
 	if pm == types.PlacementModeVcluster {
 		return fmt.Errorf("placement_mode %q is not yet activated for deploy on provider %q — vcluster placement provisions a virtual cluster on an existing shared Fabric cluster, wired for aws (EKS DescribeCluster), gcp (GKE clusters.get), azure (AKS ManagedClusters), alibaba (ACK DescribeClusterUserKubeconfig, keyless RRSA) and hetzner (Talos-API kubeconfig from the persisted talosconfig) host re-mint today. 'dedicated' provisions on every cloud", pm, provider)
 	}
-	return fmt.Errorf("placement_mode %q is not yet activated for deploy — only 'dedicated' (full cluster, every cloud), 'namespace' (aws) and 'vcluster' (aws) provision today", pm)
+	// The fallthrough is for an UNRECOGNIZED or future mode, so it must not enumerate the wired ones —
+	// it used to say "'namespace' (aws) and 'vcluster' (aws)", which was true when it was written and is
+	// contradicted by the two branches above: both modes are wired for all five clouds. A stale list in
+	// an error message is worse than no list, because the reader trusts the code more than the docs.
+	return fmt.Errorf("placement_mode %q is not a recognized placement mode — expected 'dedicated', 'namespace' or 'vcluster'", pm)
 }
 
 // namespaceRemintProviders is the allowlist of clouds whose OUTPUT-FREE keyless re-mint (resolve an
