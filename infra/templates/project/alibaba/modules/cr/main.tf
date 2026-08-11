@@ -61,7 +61,10 @@ resource "alicloud_cr_ee_repo" "this" {
 # `image_scanner` and `vpc_quota` are not ForceNew yet are absent from the provider's Update
 # function, so changing either plans a diff, applies "successfully" and does nothing — and the
 # only real change path is replacing the Subscription-billed registry (Delete = RefundInstance
-# with immediate release). Scanning is expressed instead as a SIBLING resource: one REPO-scoped
+# with immediate release — which the provider genuinely calls, though Alibaba's own ACR docs say it
+# does not release a subscription; that contradiction is unsettled and tracked in #2333, see
+# docs/research/alibaba-cr-ee-subscription-release.md. Either way, replacing this registry is not
+# something a checkbox should be able to trigger). Scanning is expressed instead as a SIBLING resource: one REPO-scoped
 # rule per repository whose switch is on; OFF is the ABSENCE of the rule.
 #
 # Plan-green is NOT proof a scan runs. Alibaba couples batch scanning to an instance VPC and
