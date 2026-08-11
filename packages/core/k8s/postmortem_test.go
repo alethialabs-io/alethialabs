@@ -116,8 +116,8 @@ func TestAllReady(t *testing.T) {
 }
 
 func TestNamespaceEvidenceLabelsEmptySections(t *testing.T) {
-	got := namespaceEvidence("argocd", "", "", "")
-	if strings.Count(got, "(nothing returned)") != 3 {
+	got := namespaceEvidence("argocd", "", "", "", "")
+	if strings.Count(got, "(nothing returned)") != 4 {
 		t.Fatalf("empty sections were dropped rather than labelled:\n%s", got)
 	}
 	if !strings.Contains(got, "argocd") {
@@ -125,10 +125,16 @@ func TestNamespaceEvidenceLabelsEmptySections(t *testing.T) {
 	}
 }
 
-// TestNamespacePostMortemIssuesTheThreeReads pins WHICH kubectl reads the post-mortem makes and
-// that they are namespace-scoped, plus the collectOut contract: a kubectl that ERRORS must report
-// itself rather than render as "(nothing returned)", which reads as a healthy empty namespace.
-func TestNamespacePostMortemIssuesTheThreeReads(t *testing.T) {
+// TestNamespacePostMortemIssuesItsReads pins WHICH kubectl reads the post-mortem makes and which
+// scope each one carries, plus the collectOut contract: a kubectl that ERRORS must report itself
+// rather than render as "(nothing returned)", which reads as a healthy empty namespace.
+//
+// The scope split is the load-bearing part. Three reads are namespace-scoped, because a stalled
+// workload is a fact about ITS namespace. Two are deliberately CLUSTER-scoped, because the pod
+// ceiling that produced #2329 is a per-NODE property and every pod on the box counts against it —
+// scoping those to the namespace would understate usage by the whole of kube-system and report a
+// full node as having room, which inverts the diagnosis the section exists to give.
+func TestNamespacePostMortemIssuesItsReads(t *testing.T) {
 	resetK8sSeams(t)
 
 	var commands []string
@@ -138,27 +144,72 @@ func TestNamespacePostMortemIssuesTheThreeReads(t *testing.T) {
 	}
 
 	got := NamespacePostMortem("argocd")
-	if len(commands) != 3 {
-		t.Fatalf("commands = %#v, want exactly three reads", commands)
+	if len(commands) != 5 {
+		t.Fatalf("commands = %#v, want exactly five reads", commands)
 	}
-	for _, want := range []string{"get pods -o wide", "-o jsonpath=", "get events --sort-by=.lastTimestamp"} {
-		found := false
+
+	namespaced := []string{"get pods -o wide", "get pods -o jsonpath=", "get events --sort-by=.lastTimestamp"}
+	clusterWide := []string{"get nodes -o jsonpath=", "get pods -A -o jsonpath="}
+
+	find := func(want string) string {
 		for _, c := range commands {
 			if strings.Contains(c, want) {
-				found = true
+				return c
 			}
 		}
-		if !found {
-			t.Fatalf("no command contained %q: %#v", want, commands)
+		t.Fatalf("no command contained %q: %#v", want, commands)
+		return ""
+	}
+	for _, want := range namespaced {
+		if c := find(want); !strings.Contains(c, "-n argocd") {
+			t.Fatalf("read %q must be namespace-scoped: %q", want, c)
 		}
 	}
-	for _, c := range commands {
-		if !strings.Contains(c, "-n argocd") {
-			t.Fatalf("command is not namespace-scoped: %q", c)
+	for _, want := range clusterWide {
+		if c := find(want); strings.Contains(c, "-n argocd") {
+			t.Fatalf("read %q must be CLUSTER-scoped — namespace-scoping it undercounts the node's pods and inverts the capacity verdict: %q", want, c)
 		}
 	}
 	if !strings.Contains(got, "command failed") {
 		t.Fatalf("a broken kubectl rendered as an empty namespace:\n%s", got)
+	}
+}
+
+// The verdict must DISCRIMINATE — that is the whole point of adding it. A section that says the
+// same thing whether the node is full or empty would have left #2329 exactly as undiagnosable.
+func TestNodePressureVerdictsSeparatesAFullNodeFromAnEmptySubnet(t *testing.T) {
+	nodes := "ip-10-0-1-5\t35\t35\nip-10-0-2-9\t35\t35\n"
+
+	// 35 pods placed on the first node, 3 on the second.
+	var placement strings.Builder
+	for i := 0; i < 35; i++ {
+		placement.WriteString("ip-10-0-1-5\n")
+	}
+	for i := 0; i < 3; i++ {
+		placement.WriteString("ip-10-0-2-9\n")
+	}
+
+	got := nodePressureVerdicts(nodes, placement.String())
+	if !strings.Contains(got, "ip-10-0-1-5: AT THE POD CEILING") {
+		t.Errorf("a node at 35/35 was not reported as full:\n%s", got)
+	}
+	if !strings.Contains(got, "ip-10-0-2-9: room to spare") {
+		t.Errorf("a node at 3/35 was not reported as having room:\n%s", got)
+	}
+	// The two verdicts must not be the same sentence, or the section discriminates nothing.
+	if strings.Contains(got, "ip-10-0-2-9: AT THE POD CEILING") {
+		t.Errorf("an empty node was reported as full:\n%s", got)
+	}
+}
+
+// Degenerate inputs must say so rather than render as a healthy cluster — the same rule
+// namespaceEvidence applies to its empty sections.
+func TestNodePressureVerdictsHandlesDegenerateInput(t *testing.T) {
+	if got := nodePressureVerdicts("", ""); !strings.Contains(got, "no nodes returned") {
+		t.Errorf("no nodes must be stated, not rendered as healthy: %q", got)
+	}
+	if got := nodePressureVerdicts("node-a\tnot-a-number\t35\n", ""); !strings.Contains(got, "unreadable") {
+		t.Errorf("an unparseable allocatable count must be stated: %q", got)
 	}
 }
 
