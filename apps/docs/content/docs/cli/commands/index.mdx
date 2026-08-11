@@ -8,7 +8,7 @@ description: Complete reference for all alethia CLI commands organized by group.
 alethia organizes its commands into groups (`connector`, `project`, `runner`, `jobs`, `cluster`,
 `org`, `members`, `teams`, `channels`, `alerts`, `roles`, `grants`, `sso`, `fleet`,
 `classification`, `ops`), a set of read-only inspection groups (`repo`, `cloud`, `agent`, `addon`,
-`chart`, `iac`, `cost`, `drift`, `probes`), plus top-level auth (`login`/`logout`/`init`), identity
+`chart`, `iac`, `cost`, `drift`, `verify`, `probes`), plus top-level auth (`login`/`logout`/`init`), identity
 (`whoami`/`config`/`open`), `billing`, `usage`, `activity`, and utility commands. All commands
 communicate with the Alethia [Console](/concepts/glossary) API — they never run
 [OpenTofu](/concepts/glossary) (the `tofu` binary) locally. Provisioning (`tofu plan`/`apply`/
@@ -75,6 +75,9 @@ alethia
 │   ├── get <job_id>
 │   ├── logs <job_id> [-f/--follow]
 │   └── cancel <job_id>
+├── verify                            # the signed evidence receipt behind a job
+│   ├── receipt -j <job_id> [--key-file <f>] [--allow-unsigned] [--allow-untrusted]
+│   └── show    -j <job_id>           # the per-control report, incl. not_evaluable + waivers
 ├── cluster                           # alias: clusters
 │   └── list
 ├── repo                              # aliases: repos, repositories — browse connected git repos

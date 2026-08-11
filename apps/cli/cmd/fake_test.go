@@ -12,58 +12,62 @@ import (
 // method returns, and the *Err fields force the error path. Mutating calls record
 // their arguments so tests can assert what was sent.
 type fakeClient struct {
-	whoami       *api.WhoAmI
-	orgs         []api.OrgSummary
-	members      []api.Member
-	teams        []api.Team
-	runners      []api.Runner
-	clusters     []api.ClusterSummary
-	configs      []types.ConfigurationSummary
-	jobsPage     *api.JobsPage
-	job          *api.ProvisionJob
-	invite       *api.Invitation
-	createdTeam  *api.Team
-	channels     []api.Channel
-	createdChan  *api.Channel
-	verifiedCh   *api.Channel
-	alertRules   []api.AlertRule
-	createdRule  *api.AlertRule
-	activity     []api.ActivityEntry
-	roles        []api.Role
-	createdRole  *api.Role
-	grants       []api.Grant
-	createdGr    *api.Grant
-	ssoProvs     []api.SsoProvider
-	ssoProv      *api.SsoProvider
-	billing      *api.Billing
-	usage        *api.Usage
-	fleetPools   []api.FleetPool
-	updatedPool  *api.FleetPool
-	createdProj  *api.Project
-	environments []api.Environment
-	createdEnv   *api.Environment
-	components   []api.Component
-	createdComp  *api.Component
-	classDims    []api.ClassificationDimension
-	classAssigns []api.ClassificationAssignment
-	configExport *api.ConfigurationExport
-	repos        []api.Repository
-	providerStat *api.ProviderStatus
-	verifyResult *api.ConnectIdentityResponse
-	drift        *api.DriftPosture
-	cost         *api.EnvironmentCost
-	protection   []api.ProtectionRule
-	probes       []api.ProbeState
-	addons       *api.ProjectAddons
-	byoCharts    *api.ProjectByoCharts
-	iacSource    *api.IacSource
-	promotions   []api.Promotion
-	promotion    *api.PromotionDetail
-	staged       *api.StagedChanges
-	cloudInv     *api.CloudInventory
-	orgSettings  *api.OrgSettings
-	agents       []api.Agent
-	agent        *api.Agent
+	whoami      *api.WhoAmI
+	orgs        []api.OrgSummary
+	members     []api.Member
+	teams       []api.Team
+	runners     []api.Runner
+	clusters    []api.ClusterSummary
+	configs     []types.ConfigurationSummary
+	jobsPage    *api.JobsPage
+	job         *api.ProvisionJob
+	signingKeys []api.SigningKey
+	// signingKeysErr is separate from err: verify-receipt's whole degradation story is a job
+	// fetch that SUCCEEDS while the trusted-key set does not, so the two must fail independently.
+	signingKeysErr error
+	invite         *api.Invitation
+	createdTeam    *api.Team
+	channels       []api.Channel
+	createdChan    *api.Channel
+	verifiedCh     *api.Channel
+	alertRules     []api.AlertRule
+	createdRule    *api.AlertRule
+	activity       []api.ActivityEntry
+	roles          []api.Role
+	createdRole    *api.Role
+	grants         []api.Grant
+	createdGr      *api.Grant
+	ssoProvs       []api.SsoProvider
+	ssoProv        *api.SsoProvider
+	billing        *api.Billing
+	usage          *api.Usage
+	fleetPools     []api.FleetPool
+	updatedPool    *api.FleetPool
+	createdProj    *api.Project
+	environments   []api.Environment
+	createdEnv     *api.Environment
+	components     []api.Component
+	createdComp    *api.Component
+	classDims      []api.ClassificationDimension
+	classAssigns   []api.ClassificationAssignment
+	configExport   *api.ConfigurationExport
+	repos          []api.Repository
+	providerStat   *api.ProviderStatus
+	verifyResult   *api.ConnectIdentityResponse
+	drift          *api.DriftPosture
+	cost           *api.EnvironmentCost
+	protection     []api.ProtectionRule
+	probes         []api.ProbeState
+	addons         *api.ProjectAddons
+	byoCharts      *api.ProjectByoCharts
+	iacSource      *api.IacSource
+	promotions     []api.Promotion
+	promotion      *api.PromotionDetail
+	staged         *api.StagedChanges
+	cloudInv       *api.CloudInventory
+	orgSettings    *api.OrgSettings
+	agents         []api.Agent
+	agent          *api.Agent
 
 	// recorded classification calls
 	assignedKind    string
@@ -210,6 +214,10 @@ func (f *fakeClient) GetJobs(status string, limit, offset int) (*api.JobsPage, e
 	return f.jobsPage, f.err
 }
 func (f *fakeClient) GetJob(jobID string) (*api.ProvisionJob, error) { return f.job, f.err }
+
+func (f *fakeClient) GetSigningKeys() ([]api.SigningKey, error) {
+	return f.signingKeys, f.signingKeysErr
+}
 
 func (f *fakeClient) ListChannels() ([]api.Channel, error) { return f.channels, f.err }
 

@@ -79,22 +79,44 @@ func TestCLIDemoCloudsAreReal(t *testing.T) {
 	}
 }
 
-// The bar today is FAILING, and this test says so out loud. It is not an aspiration test: it
-// pins the CURRENT honest answer so that closing a gap is a deliberate, visible edit to the
-// table rather than something that quietly happens. When the last gap closes, this test is the
-// one that must be updated — and updating it is the moment somebody states the bar is met.
-func TestCLIDemoBarIsNotYetMet(t *testing.T) {
+// The bar is still FAILING, and this test says so out loud — but as of #2331 it fails for a
+// materially different reason, and that distinction is the whole point of the table.
+//
+// It used to assert the receipt-verify GAP was still scored. `alethia verify receipt` shipped,
+// so that assertion is now inverted: our own debt is zero, and what is left standing is cloud
+// ceilings (DNS delegation is a registrar action on every cloud, #1773) that no amount of work
+// on this product removes.
+//
+// Both halves are load-bearing:
+//   - zero CLIGaps — a NEW gap must be a deliberate, visible edit, never a quiet regression.
+//   - not Passed() — nobody gets to declare the bar met while a ceiling still forces a human
+//     into a cloud console mid-demo.
+func TestCLIDemoBarFailsOnlyOnCloudCeilings(t *testing.T) {
 	p, err := ScoreCLIDemo("aws")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(p.Gaps) != 0 {
+		t.Errorf("aws carries %d CLI gap(s) again: %v — the CLI debt was cleared by #2331, so a gap here is "+
+			"either a regression or a newly-found one that needs an issue and a row in docs/testing/cli-demo-bar.md",
+			len(p.Gaps), gapIDs(p.Gaps))
+	}
+	if len(p.Manual) == 0 {
+		t.Fatal("aws now scores ZERO cloud ceilings. If that is real, the bar is met — delete this test and " +
+			"say so in the PR; it exists to stop the bar being declared met by accident")
+	}
 	if p.Passed() {
-		t.Fatal("aws now PASSES the CLI-only demo bar. If that is real, delete this test and say so in the PR — " +
-			"it exists to stop the bar being declared met by accident")
+		t.Fatal("aws now PASSES the CLI-only demo bar. If that is real, delete this test and say so in the PR")
 	}
-	if len(p.Gaps) == 0 {
-		t.Error("expected the receipt-verify gap to be scored for aws")
+}
+
+// gapIDs names the offending steps, so a regression says WHICH step reopened rather than a count.
+func gapIDs(steps []DemoStep) []string {
+	ids := make([]string, len(steps))
+	for i, s := range steps {
+		ids[i] = s.ID
 	}
+	return ids
 }
 
 // Hetzner carries a ceiling no other cloud does; if that stops being true the table changed and
