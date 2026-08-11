@@ -69,10 +69,23 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
   `alicloud_cr_ee_repo` is the pushable resource — but reaching it forces its parent
   `alicloud_cr_ee_instance`, which `infra/templates/project/alibaba/modules/cr/main.tf` creates with
   `payment_type = "Subscription"`, `period = 1`. It is the **only** subscription resource in the whole
-  Alibaba module tree, and a prepaid instance is not released by `tofu destroy` the way a
-  pay-as-you-go one is. So every Alibaba full-bar run leaves a **non-cancellable monthly CR EE Basic
-  instance** behind and the teardown still reports clean. Do not drive an Alibaba full bar without
-  budgeting for that, and sweep the instances by hand afterwards.
+  Alibaba module tree. Do not drive an Alibaba full bar without budgeting for a monthly CR EE Basic
+  instance, and check afterwards whether one is standing.
+
+  Whether teardown actually releases it is **unsettled, and deliberately stated as unsettled**
+  (#2333, full reconciliation in
+  [`docs/research/alibaba-cr-ee-subscription-release.md`](../research/alibaba-cr-ee-subscription-release.md)):
+  the pinned provider (1.286.0) *does* call `RefundInstance` with `ImmediatelyRelease = "1"` on
+  delete, while Alibaba's own ACR documentation states Terraform **cannot** release
+  subscription-based Container Registry instances and you must unsubscribe in the console.
+  Documentation cannot close that; a real teardown can. This entry previously asserted the
+  pessimistic reading as fact.
+
+  What HAS changed: *"the teardown still reports clean"* is no longer true. `verify_swept` in
+  `scripts/e2e/alibaba-cleanup.sh` now discovers CR EE instances scoped to the run's ENV and **fails
+  the sweep** when one survives — so the next Alibaba run answers the question rather than hiding
+  it. Find an instance ⇒ the pessimistic reading is right and this warning stands as written. Find
+  none ⇒ the refund works and the full bar can be re-admitted to the campaign.
 
   ⚠️ **A Hetzner full bar needs a second credential pair.** `bucket` on Hetzner is real Object
   Storage behind the `aminueza/minio` provider, which authenticates from `HETZNER_S3_ACCESS_KEY` /

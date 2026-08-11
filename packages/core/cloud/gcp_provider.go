@@ -104,8 +104,16 @@ func (p *gcpProvider) ProviderTfvars(config *types.ProjectConfig) map[string]int
 		"gke_cluster_version":  resolveK8sVersion("gcp", config.Cluster.ClusterVersion),
 		"gke_enable_autopilot": enableAutopilot,
 
-		// DNS
-		"cloud_dns_enabled":   config.DNS.Enabled,
+		// DNS. `cloud_dns_enabled` is the CREATE gate, not "is DNS in play" — bringing a zone you
+		// already own must SUPPRESS creation, or the template registers a second managed zone with
+		// different name servers while delegation still points at the original, and none of your
+		// records are served. Every other cloud already gated on this (#1992); gcp did not, and
+		// silently repurposed the brought zone id as the NAME of a new zone (#2294).
+		//
+		// The zone id still rides `cloud_dns_zone_name` in both cases — the root template resolves
+		// the created module's name or this value, so external-dns and cert-manager's DNS01 solver
+		// address the right zone either way.
+		"cloud_dns_enabled":   config.DNS.Enabled && config.DNS.ZoneID == "",
 		"cloud_dns_domain":    config.DNS.DomainName,
 		"cloud_dns_zone_name": config.DNS.ZoneID,
 		// No certificate tfvar: GCP's managed certificate is issued IN-CLUSTER by cert-manager

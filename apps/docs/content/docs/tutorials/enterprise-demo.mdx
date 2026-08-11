@@ -214,7 +214,9 @@ to look.
 
 **Proved:** that one Fabric can carry environments at different isolation levels; that each
 environment delivers its own application version through GitOps; that the apply is gated by a signed
-verify receipt; and that the whole path is drivable from a terminal, so it is drivable from CI.
+verify receipt — one you can check yourself with
+[`alethia verify receipt --job <id>`](/cli/commands/verify), which exits non-zero if the signature
+does not hold; and that the whole path is drivable from a terminal, so it is drivable from CI.
 
 **Did not prove:** anything about scale, failure behaviour, or day-2 operations. You built a demo on
 two nodes. Drift detection, promotion between environments, cost ceilings and the add-on marketplace
