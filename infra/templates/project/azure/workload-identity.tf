@@ -13,6 +13,7 @@ resource "azurerm_user_assigned_identity" "external_dns" {
   name                = "${local.aks_name}-extdns"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
+  tags                = local.azure_default_tags
 }
 
 resource "azurerm_federated_identity_credential" "external_dns" {
@@ -72,6 +73,7 @@ resource "azurerm_user_assigned_identity" "external_secrets" {
   name                = "${local.aks_name}-extsecrets"
   resource_group_name = azurerm_resource_group.main.name
   location            = var.location
+  tags                = local.azure_default_tags
 }
 
 # The adopted identity. Read rather than created, so a wrong/absent name fails the plan loudly
