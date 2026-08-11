@@ -1,0 +1,130 @@
+---
+title: Verify Commands
+description: Pull a job's signed evidence receipt, check its ed25519 signature against a key your control plane vouches for, and read the per-control report.
+---
+
+# Verify Commands
+
+Every `PLAN` and `DEPLOY` job carries an **elench evidence receipt**: the per-control verification
+report, sealed to the hash of the exact OpenTofu plan that was applied, and signed with ed25519.
+The `verify` group reads that receipt from the terminal.
+
+`alethia verify receipt` checks the signature and **exits non-zero when it cannot**, so you can gate
+a deployment pipeline on it. `alethia verify show` prints the report behind the verdict.
+
+<Callout type="info">
+The CLI is a client of the same Console API. Both commands call `/cli/jobs/<id>` with your
+[CLI token](/cli/authentication) and operate on the **active organization**
+(`alethia org switch`).
+</Callout>
+
+## `alethia verify receipt`
+
+Fetch a job's receipt and verify it.
+
+```bash
+alethia verify receipt --job 4f3c2b1a-...
+alethia verify receipt -j 4f3c2b1a-... -o json
+alethia verify receipt -j 4f3c2b1a-... --key-file alethia-receipts.pub
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--job`, `-j` | Yes | Job id. `alethia jobs list` prints them. |
+| `--key` | No | Verify against this base64 ed25519 public key instead of the trusted set. |
+| `--key-file` | No | Same, read from a file. |
+| `--allow-unsigned` | No | Exit zero when the receipt carries no signature. |
+| `--allow-untrusted` | No | Exit zero when the signature is self-consistent but its key is not vouched for. |
+
+```
+alethia · verify receipt
+  Signature        ✓ signature verified against your organization's own recorded key
+  Trust            org
+  Algorithm        ed25519
+  Key ID           9f2c4a1b7e5d3068
+  Verdict          pass
+  Sealed to plan   3b1f...c204
+  Control catalog  elench-controls-0.5.2
+  Controls         14 pass, 0 fail, 0 warn, 0 n/a
+```
+
+### What a green check means
+
+The signature is verified against a key **the control plane vouches for** — your organization's own
+recorded signing key, or the Alethia platform key — fetched from `GET /cli/signing-keys`.
+
+This matters more than it looks. A receipt carries the public key it was signed with, so it will
+always verify against *itself*, whoever produced it. Checking only that proves the document was not
+altered in transit; it does not prove Alethia signed it. Binding the receipt's `key_id` to a
+separately-served trusted key is what makes the difference, and a receipt signed by a key outside
+that set fails — which is exactly what a forged receipt looks like.
+
+The `Trust` field names the answer:
+
+| Trust | Meaning |
+|---|---|
+| `pinned` | verified against the key you supplied with `--key`/`--key-file` |
+| `org` | verified against your organization's own recorded signing key |
+| `platform` | verified against the Alethia platform key — attests "Alethia asserted this" |
+| `self` | only the receipt's own embedded key verified; who signed it is unestablished |
+
+For verification that depends on nothing the control plane says about itself — the posture an
+auditor or a security reviewer will want — pass the public key out of band with `--key-file`.
+
+### Exit status
+
+Exit status is part of the contract, so this can gate a pipeline:
+
+| Situation | Exit |
+|---|---|
+| Signature verified against a vouched-for or pinned key | `0` |
+| The job carries no receipt | non-zero |
+| The receipt is unsigned (`algorithm: "none"`) | non-zero, or `0` with `--allow-unsigned` |
+| The signature does not match the receipt | non-zero — **always**, no flag forgives it |
+| The signature is valid but its key is not vouched for | non-zero, or `0` with `--allow-untrusted` |
+
+A receipt that fails its own signature check has been altered since it was signed. No flag
+downgrades that.
+
+Receipts are unsigned when the runner had no `ALETHIA_RECEIPT_SIGNING_KEY` configured. That is a
+legitimate state and the receipt still renders — but it is not evidence, so it fails by default.
+
+## `alethia verify show`
+
+Print the per-control report the receipt seals.
+
+```bash
+alethia verify show --job 4f3c2b1a-...
+alethia verify show -j 4f3c2b1a-... -o json
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--job`, `-j` | Yes | Job id. |
+
+```
+Verify: pass (aws, catalog elench-controls-0.5.2) — 14 pass, 0 fail, 0 warn, 1 not evaluable
+
+Control        Status         Severity  Title
+KEYLESS-001    pass           high      No static cloud credentials
+LEASTPRIV-001  pass           high      No wildcard admin policy
+OIDC-001       not_evaluable  medium    OIDC trust is scoped
+
+▸ OIDC-001 — OIDC trust is scoped
+    coverage: no OIDC provider in the plan
+```
+
+Controls reporting `not_evaluable` are shown, never hidden. A control the engine could not inspect
+is not a control that passed, and a report that quietly dropped them would overstate what was
+checked. Any recorded waiver prints with who granted it, why, and when it expires.
+
+`verify show` exits non-zero on a blocking verdict, matching `elench-verify`.
+
+Add `-o json` for the full report object; `-o csv` emits the control rows.
+
+## See also
+
+- [Jobs Commands](/cli/commands/jobs) — `alethia jobs get` prints the one-line verdict summary.
+- [Drift Commands](/cli/commands/drift) — the other half of day-2 proof.
+- [Evidence receipts](/elench/receipts) — what a receipt binds, and the root-of-trust model.
+- [Command Reference](/cli/commands) — the full command tree and global flags.

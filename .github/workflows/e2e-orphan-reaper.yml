@@ -1,0 +1,367 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# E2E ORPHAN REAPER — the sweep that survives the job dying (#2330).
+#
+# e2e-nightly.yml opens by promising it "GUARANTEES teardown". That promise holds on the failure
+# path and breaks on ONE path: CANCELLATION. Both of the nightly's guards live inside the job they
+# protect, so both die with it —
+#
+#   * the in-process graceful `tofu destroy` (provisioner.RunDestroy via t.Cleanup): the process is
+#     killed, so t.Cleanup never runs;
+#   * the `always()` "Guaranteed teardown" step: it is SCHEDULED on cancellation, but GitHub
+#     reclaims the runner after a short grace window and a scope-locked sweep does not fit in it
+#     (EKS delete → NAT delete → a 180s NAT-drain wait → EIP → ENI/SG/subnet/RT/IGW/VPC → verify).
+#
+# Measured: run 31459117502 (2026-08-11, aws) ended `cancelled` with the T2 step `cancelled` and the
+# teardown step's conclusion EMPTY — scheduled, never finished. It left a live EKS control plane, a
+# NAT gateway, an EIP and a VPC with nine subnets standing. ~$105/month, until swept by hand.
+#
+# The nightly's own reporting was NOT at fault and needs no change here: nightly-rollup.sh
+# classifies "a job conclusion exists, no readable bundle" as FAIL (its fixture #4), and #2329 was
+# duly filed for that run. What no surface said was that resources were STILL STANDING — "aws RED
+# (floor)" reads as a provisioning failure, not as "go and sweep". So this workflow is both halves
+# of the fix: it reclaims the resources, and (below) it is the thing that says a leak happened.
+#
+# ─────────────────────────────  W H Y   T H I S   I S   S A F E  ─────────────────────────────
+#
+# The sweep itself is not new. `scripts/e2e/<cloud>-cleanup.sh PREFLIGHT=1` already exists and
+# already does exactly this: it discovers every OTHER `e2e-*` handle via
+# `resourcegroupstaggingapi get-tag-values` (and each cloud's equivalent), keeps only `e2e-`-prefixed
+# values, EXCLUDES the current run, re-validates each against the same specificity + prod/shared
+# denylist guards, and runs the identical scope-locked sweep+verify per orphan. Nothing here widens
+# a filter; this workflow only gives that code a place to run from that is not the dying job.
+#
+# ⚠️ THE ONE THING THAT WOULD MAKE IT UNSAFE, AND THE ONE LINE THAT PREVENTS IT.
+#
+# PREFLIGHT's safety argument is quoted from aws-cleanup.sh: it is safe to sweep another `e2e-*`
+# handle "because same-cloud nightly runs are SERIALIZED (the `e2e-nightly-aws` concurrency group) —
+# so any other e2e-* value is a prior-run orphan, never a concurrent sibling."
+#
+# That argument is about a group this workflow is not a member of. A reaper in its own group could
+# run WHILE a nightly leg is mid-apply and delete that live run's resources — the worst possible
+# outcome, and strictly worse than the leak it exists to fix. So the `concurrency.group` below is
+# deliberately the NIGHTLY'S group, `e2e-nightly-<provider>`, not a name of its own. GitHub then
+# queues the reaper behind any in-flight leg for that cloud, which is what makes PREFLIGHT's
+# premise true rather than merely assumed. Do not rename it to something tidier.
+#
+# The Sunday full bar makes this concrete: it starts 05:17 UTC with a 210-minute cap, so it can
+# still be running at 07:17. The schedule is chosen to usually miss it; the concurrency group is
+# what makes it not matter.
+#
+# COST: this workflow provisions nothing. It lists, deletes orphans, and verifies. A morning with
+# no leaks is a few API calls per cloud.
+
+name: E2E Orphan Reaper (post-nightly sweep)
+
+on:
+  schedule:
+    # 07:17 UTC — after the 03:17 floor nightly's 120-minute cap has expired. Off-minute, per the
+    # repo's cron convention. The concurrency group, not this time, is the actual safety property.
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Cloud to sweep, or every wired one."
+        type: choice
+        options:
+          - all
+          - aws
+          - gcp
+          - azure
+          - alibaba
+          - hetzner
+        default: all
+      dry_run:
+        description: "List what WOULD be deleted, delete nothing. Default ON for a manual run — a dispatch is usually somebody investigating, and the scheduled run is the one that reclaims."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  reap:
+    name: Reap prior-run orphans (real cloud)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Mints the GitHub OIDC token each cloud exchanges for its e2e identity. SAFE for the reason
+      # invariant 1 states and scripts/check-workflow-oidc-isolation.mjs enforces: this workflow
+      # triggers ONLY on `schedule` / `workflow_dispatch` — never `pull_request` /
+      # `pull_request_target` — so no fork or PR can reach the token.
+      id-token: write
+    # Generous, because nothing is waiting on it — but still bounded, so a wedged sweep cannot run
+    # forever against a real account.
+    timeout-minutes: 75
+    # ⚠️ THE NIGHTLY'S GROUP, ON PURPOSE. See the header. cancel-in-progress:false so an in-flight
+    # nightly finishes and tears down before this starts, rather than racing it.
+    concurrency:
+      group: e2e-nightly-${{ matrix.provider }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        # hetzner joined the matrix in #2330, when scripts/e2e/hcloud-cleanup.sh gained the
+        # PREFLIGHT discovery it had been missing — the stated reason it was excluded here.
+        #
+        # Its discovery keys on `alethia_project-id=e2e-*` (a Kubernetes-style LABEL, as the
+        # hetzner template stamps it) and reads the cluster name back off the matched resources.
+        # It deliberately does NOT key on the cluster name: that is `alethia-nl-<run_id>-<attempt>`,
+        # and `alethia-nl` is a prefix of prod's naming, not a test-only marker.
+        provider: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.provider != 'all' && fromJSON(format('["{0}"]', github.event.inputs.provider)) || fromJSON('["aws","gcp","azure","alibaba","hetzner"]') }}
+    env:
+      # DRY_RUN defaults ON for a dispatch and OFF for the schedule — the scheduled run is the one
+      # that actually reclaims; a human dispatching is usually looking rather than deleting.
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run == 'true' && '1' || '0' }}
+      E2E_AWS_ROLE_ARN: ${{ vars.E2E_AWS_ROLE_ARN }}
+      E2E_GCP_WIF_PROVIDER: ${{ vars.E2E_GCP_WIF_PROVIDER }}
+      E2E_AZURE_CLIENT_ID: ${{ vars.E2E_AZURE_CLIENT_ID }}
+      E2E_ALIBABA_ROLE_ARN: ${{ vars.E2E_ALIBABA_ROLE_ARN }}
+      # hetzner's identity is a SECRET, not a repo var — it is a static API token rather than an
+      # OIDC handle, which is also why it is the one cloud here with no federated login step.
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # Same gate as the nightly, and for the same reason: a cloud whose identity a maintainer has
+      # not wired must skip CLEANLY (green, loud) rather than fail. It also cannot have orphans —
+      # a leg that never provisioned leaves nothing behind.
+      - name: Gate on the provider's wired identity
+        id: gate
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          case "$PROVIDER" in
+            aws)     HANDLE="$E2E_AWS_ROLE_ARN";     NAME="E2E_AWS_ROLE_ARN" ;;
+            gcp)     HANDLE="$E2E_GCP_WIF_PROVIDER"; NAME="E2E_GCP_WIF_PROVIDER" ;;
+            azure)   HANDLE="$E2E_AZURE_CLIENT_ID";  NAME="E2E_AZURE_CLIENT_ID" ;;
+            alibaba) HANDLE="$E2E_ALIBABA_ROLE_ARN"; NAME="E2E_ALIBABA_ROLE_ARN" ;;
+            hetzner) HANDLE="$HCLOUD_TOKEN";           NAME="HCLOUD_TOKEN" ;;
+            *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
+          esac
+          if [ -n "$HANDLE" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::orphan reaper SKIPPED for $PROVIDER — $NAME is unset, so this cloud has never provisioned and can hold no orphans."
+          fi
+
+      # The per-provider cheap default, mirroring the nightly's own resolution. Tag discovery is
+      # REGIONAL on aws/alibaba: a wrong region lists nothing, deletes nothing, verifies nothing and
+      # exits green — the exact false-green aws-cleanup.sh's guard 3 exists to refuse.
+      - name: Resolve the region
+        if: steps.gate.outputs.run == 'true'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          case "$PROVIDER" in
+            aws)     REGION="us-east-1" ;;
+            gcp)     REGION="europe-west3" ;;
+            azure)   REGION="germanywestcentral" ;;
+            alibaba) REGION="eu-central-1" ;;
+            # hcloud discovery is account-wide, not regional — the label selector is the scope.
+            # Set for contract symmetry with the other four; nothing filters on it.
+            hetzner) REGION="nbg1" ;;
+          esac
+          echo "ALETHIA_E2E_REGION=$REGION" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'aws'
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.E2E_AWS_ROLE_ARN }}
+          aws-region: ${{ env.ALETHIA_E2E_REGION }}
+          role-duration-seconds: 7200
+
+      - name: Configure GCP credentials (WIF / OIDC)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'gcp'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.E2E_GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.E2E_GCP_SA_EMAIL }}
+      - name: Install gcloud CLI
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'gcp'
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Azure credentials (OIDC)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'azure'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.E2E_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.E2E_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.E2E_AZURE_SUBSCRIPTION_ID }}
+
+      # Keyless RAM OIDC, exchanged the same way the nightly does it — AssumeRoleWithOIDC is an
+      # anonymous API, so a plain POST performs it with no chicken-and-egg profile to configure.
+      # Timestamp is a COMMON parameter and anonymity waives only the four signature parameters
+      # (#1582); omitting it cost a whole nightly once.
+      - name: Configure Alibaba credentials (RAM OIDC)
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'alibaba'
+        env:
+          ALIYUN_CLI_VERSION: "3.0.263"
+          ROLE_ARN: ${{ vars.E2E_ALIBABA_ROLE_ARN }}
+          OIDC_PROVIDER_ARN: ${{ vars.E2E_ALIBABA_OIDC_PROVIDER_ARN }}
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/aliyun/aliyun-cli/releases/download/v${ALIYUN_CLI_VERSION}/aliyun-cli-linux-${ALIYUN_CLI_VERSION}-amd64.tgz" \
+            | tar -xz aliyun
+          sudo mv aliyun /usr/local/bin/aliyun
+
+          TOKEN_FILE="${RUNNER_TEMP}/alibaba-oidc-token"
+          curl -fsSL "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.aliyuncs.com" \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            | jq -r '.value' > "$TOKEN_FILE"
+          if [ ! -s "$TOKEN_FILE" ]; then
+            echo "::error::failed to mint the Alibaba RAM OIDC token — refusing to continue."
+            exit 1
+          fi
+
+          RESP="${RUNNER_TEMP}/alibaba-sts-response.json"
+          HTTP_CODE=$(curl -sS -o "$RESP" -w '%{http_code}' -X POST "https://sts.aliyuncs.com/" \
+            --data-urlencode "Action=AssumeRoleWithOIDC" \
+            --data-urlencode "Format=JSON" \
+            --data-urlencode "Version=2015-04-01" \
+            --data-urlencode "Timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --data-urlencode "RoleArn=${ROLE_ARN}" \
+            --data-urlencode "OIDCProviderArn=${OIDC_PROVIDER_ARN}" \
+            --data-urlencode "OIDCToken=$(cat "$TOKEN_FILE")" \
+            --data-urlencode "RoleSessionName=reaper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::AssumeRoleWithOIDC failed (HTTP ${HTTP_CODE}): $(jq -r '"\(.Code // "?"): \(.Message // "?")"' <"$RESP" 2>/dev/null || echo 'unparseable response')"
+            rm -f "$RESP"
+            exit 1
+          fi
+          AK=$(jq -r '.Credentials.AccessKeyId' <"$RESP")
+          SK=$(jq -r '.Credentials.AccessKeySecret' <"$RESP")
+          ST=$(jq -r '.Credentials.SecurityToken' <"$RESP")
+          rm -f "$RESP"
+          if [ -z "$AK" ] || [ "$AK" = "null" ]; then
+            echo "::error::AssumeRoleWithOIDC returned 200 with no credentials — refusing to continue."
+            exit 1
+          fi
+          echo "::add-mask::${AK}"; echo "::add-mask::${SK}"; echo "::add-mask::${ST}"
+          {
+            echo "ALICLOUD_ACCESS_KEY=${AK}"
+            echo "ALICLOUD_SECRET_KEY=${SK}"
+            echo "ALICLOUD_SECURITY_TOKEN=${ST}"
+            echo "ALIBABA_CLOUD_ACCESS_KEY_ID=${AK}"
+            echo "ALIBABA_CLOUD_ACCESS_KEY_SECRET=${SK}"
+            echo "ALIBABA_CLOUD_SECURITY_TOKEN=${ST}"
+          } >> "$GITHUB_ENV"
+
+      # hetzner needs no federated login — HCLOUD_TOKEN is a static API token already in the job
+      # env — but it is the one cloud whose CLI the runner image does not ship. Pinned and verified
+      # exactly as the nightly does it, including the pipefail note: without it `curl | tar` reports
+      # TAR's status, so a 404 surfaces as a gzip error instead of the HTTP one.
+      - name: Install hcloud CLI
+        if: steps.gate.outputs.run == 'true' && matrix.provider == 'hetzner'
+        env:
+          HCLOUD_CLI_VERSION: v1.67.0
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/hetznercloud/cli/releases/download/${HCLOUD_CLI_VERSION}/hcloud-linux-amd64.tar.gz" \
+            | tar -xz hcloud
+          sudo mv hcloud /usr/local/bin/hcloud
+          hcloud version
+
+      # ── The sweep. PREFLIGHT=1 is the EXISTING prior-run discovery; the only thing this workflow
+      #    changes about it is where it runs from.
+      #
+      #    ALETHIA_E2E_ENV is required by every cleanup script (guard 1: no ENV ⇒ no filter ⇒ hard
+      #    refuse) and PREFLIGHT uses it to EXCLUDE the current run. A standalone reaper has no
+      #    current run, so it passes a sentinel that matches nothing real: it satisfies the
+      #    specificity regex and the prod/shared denylist, and excludes only itself — which does not
+      #    exist. Naming it `reaper-standalone` rather than something run-shaped is deliberate: if it
+      #    ever DID collide with a real handle, the collision would silently protect that run from
+      #    being swept.
+      #
+      #    The budgets are raised from the in-nightly defaults (900s / 3 orphans). Those exist to stop
+      #    the preflight eating a provisioning run's time (#2257) — a constraint that does not apply
+      #    here, because nothing is waiting. Still bounded by timeout-minutes above.
+      #
+      #    MAX_ENVS=40 is measured, not guessed, and the number matters more than it looks. A
+      #    DRY_RUN of this exact invocation against the live aws account swept 10 handles in ~180s
+      #    and then reported TWENTY-ONE more as capped, with:
+      #
+      #      ::error::preflight left orphan(s) UNSWEPT and BILLING — bounds reached before they were reached
+      #
+      #    Every one of those 21 in fact held only a `PendingDeletion` KMS key, which AWS does not
+      #    bill — but the script cannot know that without looking, and it is right not to guess. A cap
+      #    that leaves a standing backlog therefore emits that error EVERY morning, and a daily error
+      #    about resources that are not billing is how a real one stops being read. The fix is to
+      #    drain the backlog rather than to mute the warning: the account carries ~31 historic
+      #    handles, most of them empty and quick, so 40 clears it with headroom and later mornings
+      #    have almost nothing to do.
+      - name: Sweep prior-run orphans
+        id: sweep
+        if: steps.gate.outputs.run == 'true'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          PREFLIGHT: "1"
+          ALETHIA_E2E_ENV: reaper-standalone
+          PREFLIGHT_BUDGET_SECONDS: "3000"
+          PREFLIGHT_MAX_ENVS: "40"
+        run: |
+          set -euo pipefail
+          case "$PROVIDER" in
+            aws)     SCRIPT=scripts/e2e/aws-cleanup.sh ;;
+            gcp)     SCRIPT=scripts/e2e/gcp-cleanup.sh ;;
+            azure)   SCRIPT=scripts/e2e/azure-cleanup.sh ;;
+            alibaba) SCRIPT=scripts/e2e/alibaba-cleanup.sh ;;
+            # hcloud-cleanup.sh takes the cluster name POSITIONALLY (its scope is a label selector,
+            # not a tag filter), so the sentinel goes in $1 rather than ALETHIA_E2E_ENV. Its
+            # PREFLIGHT excludes exactly that value, which matches nothing real.
+            hetzner) SCRIPT=scripts/e2e/hcloud-cleanup.sh; SWEEP_ARG=reaper-standalone ;;
+          esac
+          echo "::notice::reaping $PROVIDER in ${ALETHIA_E2E_REGION} (DRY_RUN=${DRY_RUN})"
+          # Tee so the summary step can count what happened WITHOUT re-running the sweep. Piping
+          # would hand the step `tee`'s exit code and launder the script's, so pipefail is set and
+          # the status is taken from PIPESTATUS explicitly.
+          set +e
+          bash "$SCRIPT" ${SWEEP_ARG:+"$SWEEP_ARG"} 2>&1 | tee "${RUNNER_TEMP}/reap.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      # ── The reporting half of #2330. The nightly already reports the RED correctly; what nothing
+      #    said was that resources were still standing. This is that sentence, and it is emitted from
+      #    outside the job that died — which is the only place it can be trusted from.
+      #
+      #    A sweep that reclaimed something is a WARNING, not a notice: it means a previous run's
+      #    teardown did not complete, and somebody should know that without reading a log. ──
+      - name: Report what was reclaimed
+        if: always() && steps.gate.outputs.run == 'true'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+        run: |
+          set -euo pipefail
+          LOG="${RUNNER_TEMP}/reap.log"
+          [ -f "$LOG" ] || { echo "::error::no sweep log for ${PROVIDER} — the sweep step did not run to completion."; exit 0; }
+          swept=$(grep -cE '^  *(deleted|would delete) ' "$LOG" || true)
+          orphans=$(grep -cE '^── preflight sweep: prior run ' "$LOG" || true)
+          {
+            echo "### Orphan reaper — ${PROVIDER}"
+            echo
+            echo "| region | orphan runs | resources | mode |"
+            echo "|---|---:|---:|---|"
+            echo "| \`${ALETHIA_E2E_REGION}\` | ${orphans} | ${swept} | $([ "$DRY_RUN" = "1" ] && echo 'DRY RUN' || echo 'reclaim') |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${orphans:-0}" -gt 0 ]; then
+            echo "::warning::${PROVIDER}: reclaimed ${orphans} orphaned run(s), ${swept} resource(s). A previous nightly's teardown did NOT complete — check whether that run was cancelled (#2330)."
+          fi
+
+      # Stated on EVERY run rather than in a comment nobody opens: a cloud missing from the matrix
+      # above is invisible, and an invisible exclusion reads as coverage.
+      - name: Record the coverage gap
+        if: always() && matrix.provider == 'aws'
+        run: |
+          {
+            echo
+            echo "> **All five clouds are reaped.** hetzner joined in #2330, when \`hcloud-cleanup.sh\`"
+            echo "> gained the \`PREFLIGHT\` discovery whose absence was the stated reason it was excluded."
+            echo "> Its discovery keys on the \`alethia_project-id=e2e-*\` label, never on the cluster name —"
+            echo "> \`alethia-nl-\` is a prefix of prod's naming, not a test-only marker."
+          } >> "$GITHUB_STEP_SUMMARY"

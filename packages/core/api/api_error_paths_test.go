@@ -196,6 +196,10 @@ func TestWrappers_SurfaceTheirOwnContextOnFailure(t *testing.T) {
 			_, err := c.GetProjectDrift("p-1", "")
 			return err
 		}},
+		{"GetSigningKeys", "failed to get signing keys", func(c *Client) error {
+			_, err := c.GetSigningKeys()
+			return err
+		}},
 		{"GetEnvironmentCost", "failed to get cost", func(c *Client) error {
 			_, err := c.GetEnvironmentCost("p-1", "")
 			return err

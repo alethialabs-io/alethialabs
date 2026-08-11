@@ -387,6 +387,26 @@ func TestContract_Component(t *testing.T) {
 	assertNoExtraStructKeys(t, "component.json", resp)
 }
 
+func TestContract_SigningKeys(t *testing.T) {
+	var resp SigningKeysResponse
+	strictDecode(t, "signing_keys.json", &resp)
+	if len(resp.SigningKeys) != 2 {
+		t.Fatalf("expected 2 signing keys, got %d", len(resp.SigningKeys))
+	}
+	// The platform entry is the one that matters: today's receipts are platform-signed, so a
+	// wire that carried only org keys would leave `alethia verify receipt` unable to vouch for
+	// any receipt in existence. Its provider/status arrive as JSON null and must land as empty
+	// strings, not as a decode failure.
+	platform := resp.SigningKeys[1]
+	if platform.Source != "platform" {
+		t.Fatalf("expected the second key to be the platform key, got source %q", platform.Source)
+	}
+	if platform.Provider != "" || platform.Status != "" {
+		t.Errorf("null provider/status must decode to empty, got %q/%q", platform.Provider, platform.Status)
+	}
+	assertNoExtraStructKeys(t, "signing_keys.json", resp)
+}
+
 func TestContract_Drift(t *testing.T) {
 	var resp DriftPosture
 	strictDecode(t, "drift.json", &resp)

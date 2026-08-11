@@ -41,12 +41,29 @@ Signing is off until a key is set. Provide an ed25519 key to the runner (via
 `ALETHIA_RECEIPT_SIGNING_KEY`) and every subsequent receipt is signed. Absent a key, receipts are still
 attached — just unsigned — so an apply is never blocked on signing.
 
+### Checking one yourself
+
+```bash
+alethia verify receipt --job <job-id>
+```
+
+Pulls the receipt, checks its signature, and **exits non-zero when it cannot** — so a deployment
+pipeline can gate on it. `alethia verify show --job <job-id>` prints the per-control report behind
+the verdict. See [Verify Commands](/cli/commands/verify).
+
+The signature is checked against a key the control plane **vouches for**, not against the public key
+the receipt carries about itself. That distinction is the whole point: a receipt always verifies
+under its own embedded key, whoever produced it, so checking only that would prove the document was
+not altered — never who signed it. To verify against a key you hold out of band, pass
+`--key-file <path>`.
+
 ### Root of trust
 
-A receipt signed by Alethia's own runner attests "Alethia asserted this." For auditor-grade
-non-repudiation, sign with a **customer-controlled key** and/or anchor the receipt in a **transparency
-log** (Rekor) so its existence and integrity are provable by any third party offline. Both are on the
-roadmap; the signing seam is already in place.
+A receipt signed by Alethia's own runner attests "Alethia asserted this" — `alethia verify receipt`
+reports that honestly as trust `platform`, and reports `org` when your own registered key signed it.
+For auditor-grade non-repudiation, sign with a **customer-controlled key** and/or anchor the receipt
+in a **transparency log** (Rekor) so its existence and integrity are provable by any third party
+offline. Both are on the roadmap; the signing seam is already in place.
 
 ## Waivers
 

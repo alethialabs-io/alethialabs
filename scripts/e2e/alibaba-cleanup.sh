@@ -59,6 +59,18 @@ DRY_RUN="${DRY_RUN:-0}"
 PREFLIGHT="${PREFLIGHT:-0}"
 DELETE_RETRIES="${DELETE_RETRIES:-5}"
 DETACH_TIMEOUT="${DETACH_TIMEOUT:-180}"
+# ── PREFLIGHT budget (#2257, ported from aws-cleanup.sh by #2330). The preflight's "never blocks
+# the caller" promise is carried by `exit 0` at the end of its loop — which is only reached if the
+# loop ENDS. Unbounded, it cannot promise that: on run 31459117502 the AWS equivalent consumed 86
+# of a 90-minute job cap, the job hit its cap, GitHub marked it CANCELLED, and the always()
+# teardown died mid-step leaving ~$105/mo standing. A best-effort step that can consume its caller
+# is not best-effort.
+#
+# e2e-orphan-reaper.yml already passes both bounds to all four clouds; until this port only aws
+# READ them, so the reaper's own 75-minute cap was the sole bound here — and hitting that cap is
+# the same cancel-mid-sweep failure this issue exists to fix. Two bounds, both reported:
+PREFLIGHT_BUDGET_SECONDS="${PREFLIGHT_BUDGET_SECONDS:-900}" # wall-clock for the whole sweep loop
+PREFLIGHT_MAX_ENVS="${PREFLIGHT_MAX_ENVS:-3}"               # orphans attempted per run
 
 # ── Guard 1: a specific ENV is REQUIRED. No ENV ⇒ no filter ⇒ hard refuse. ──
 if [ -z "$ENV" ]; then
@@ -465,6 +477,47 @@ alive_albs() { {
 alive_nats() { tagged_nat_gateways; }
 alive_eips() { tagged_eips; }
 
+# ── Container Registry EE — the SUBSCRIPTION-billed outlier (#2333). ──────────────────────────────
+#
+# Every other resource above is discovered by TAG. This one cannot be: `alicloud_cr_ee_instance`
+# takes no `tags` argument at all, so the tag filter the rest of this script is built on does not
+# reach it. It is therefore scoped by NAME — the same secondary-scope shape `discover_cluster` uses
+# for the ACK cluster, and bounded the same way: a name must embed THIS run's ENV, never a prefix
+# that could match another run or prod.
+#
+# Why it earns a check of its own rather than a row in the tag sweep: it is the ONLY prepaid
+# resource in the whole Alibaba module tree (`modules/cr/main.tf`: `payment_type = "Subscription"`,
+# `period = 1`). Everything else is pay-as-you-go and stops costing when it is deleted; this one is
+# a monthly commitment. Until now `verify_swept` checked seven resource classes and not this, so a
+# standing subscription could not fail the sweep and the teardown reported clean — the precise
+# failure aws-cleanup.sh's own header warns about: "a sweeper that reports clean without looking is
+# more expensive than no sweeper, because it stops anyone else looking."
+#
+# WHETHER IT SURVIVES TEARDOWN AT ALL IS GENUINELY UNSETTLED, and this check is what settles it.
+# docs/research/alibaba-cr-ee-subscription-release.md has the full reconciliation: the pinned
+# provider (1.286.0) DOES call `RefundInstance` with `ImmediatelyRelease = "1"` on delete, while
+# Alibaba's own ACR documentation states "Terraform cannot release subscription-based Container
+# Registry instances … Manually unsubscribe from the instance in the console". Documentation cannot
+# close that; a real teardown can. Find an instance ⇒ the docs are right and the parity board's
+# warning stands. Find none ⇒ the refund works and the Alibaba full bar can be re-admitted.
+#
+# ⚠️ LIMIT, STATED RATHER THAN HIDDEN. `local.cr_name` renders `cr-<project>-<environment>` and
+# falls back to `substr(...,0,22)-<sha7>` above 30 characters (checks_naming.tf, NAMING-003). The
+# digest form does NOT reliably embed the full ENV, so this discovery would not see it. That form is
+# unreachable at current lengths — the e2e fixture renders 27 of 30 — and NAMING-003 is the check
+# that keeps it so. If that budget is ever relaxed, this discovery has to be revisited with it.
+#
+# This function NEVER deletes. Refunding a subscription is a billing operation, not a sweep, and a
+# teardown script that can issue refunds has a far larger blast radius than this problem justifies.
+alive_cr_instances() {
+	assert_scope
+	# `--version` is explicit: the `cr` product carries both 2016-06-07 and 2018-12-01, and only the
+	# latter has ListInstance. Letting the CLI pick would make this silently version-dependent.
+	ali cr ListInstance --version 2018-12-01 --PageSize 100 2>/dev/null |
+		jq -r --arg env "$ENV" '.Instances[]? | select((.InstanceName // "") | contains("-" + $env)) | "\(.InstanceName)[\(.InstanceId)]"' 2>/dev/null |
+		grep -v '^$' || true
+}
+
 verify_swept() {
 	assert_scope
 	local leaks="" x
@@ -476,10 +529,22 @@ verify_swept() {
 	x="$(alive_albs)"; [ -n "$x" ] && leaks="${leaks}alb: $(join "$x")\n"
 	x="$(alive_nats)"; [ -n "$x" ] && leaks="${leaks}nat-gateway: $(join "$x")\n"
 	x="$(alive_eips)"; [ -n "$x" ] && leaks="${leaks}eip: $(join "$x")\n"
-	if [ -n "$leaks" ]; then
-		echo "  ✗ billable resources still alive:" >&2
-		printf '%b' "  $leaks" >&2
-		echo "::error::alibaba cleanup INCOMPLETE — billable resources for run ${ENV} still exist and are BILLING. Investigate + remove (stay scope-locked; never account-wide)." >&2
+	# Collected separately from the list above: this one is not merely billable, it is a monthly
+	# SUBSCRIPTION that `tofu destroy` may be unable to release, so the operator needs a different
+	# instruction ("unsubscribe in the console") rather than "investigate + remove". Merging it into
+	# the generic line would give exactly the wrong advice.
+	local cr_alive
+	cr_alive="$(alive_cr_instances)"
+	if [ -n "$leaks" ] || [ -n "$cr_alive" ]; then
+		if [ -n "$leaks" ]; then
+			echo "  ✗ billable resources still alive:" >&2
+			printf '%b' "  $leaks" >&2
+			echo "::error::alibaba cleanup INCOMPLETE — billable resources for run ${ENV} still exist and are BILLING. Investigate + remove (stay scope-locked; never account-wide)." >&2
+		fi
+		if [ -n "$cr_alive" ]; then
+			echo "  ✗ SUBSCRIPTION still alive: cr-ee-instance: $(join "$cr_alive")" >&2
+			echo "::error::alibaba cleanup INCOMPLETE — a SUBSCRIPTION-billed Container Registry EE instance for run ${ENV} is still standing: $(join "$cr_alive"). This is a MONTHLY commitment, not an hourly resource. Release it in the Container Registry console — this script deliberately will not refund a subscription. See docs/research/alibaba-cr-ee-subscription-release.md (#2333)." >&2
+		fi
 		return 1
 	fi
 	# Non-billable network residue (vswitch/SG/VPC still tagged) is a NOTICE, not a hard fail.
@@ -557,15 +622,39 @@ if [ "$PREFLIGHT" = "1" ]; then
 	fi
 	# shellcheck disable=SC2086
 	echo "  orphan run ENVs found: $(printf '%s ' $orphans)"
+	echo "  budget: ${PREFLIGHT_BUDGET_SECONDS}s wall-clock, at most ${PREFLIGHT_MAX_ENVS} orphan(s) this run"
 	residual=0
+	attempted=0
+	deadline=$(($(date +%s) + PREFLIGHT_BUDGET_SECONDS))
+	# Anything the bounds stop us from reaching is NAMED, not silently dropped — an unswept orphan
+	# is BILLING, so "we ran out of budget" has to be as visible as "we tried and failed".
+	skipped=""
 	while IFS= read -r oenv; do
 		[ -n "$oenv" ] || continue
-		echo "── preflight sweep: prior run ${oenv} ──"
+		if [ "$attempted" -ge "$PREFLIGHT_MAX_ENVS" ]; then
+			skipped="${skipped}${oenv} (cap) "
+			continue
+		fi
+		now=$(date +%s)
+		if [ "$now" -ge "$deadline" ]; then
+			skipped="${skipped}${oenv} (budget) "
+			continue
+		fi
+		attempted=$((attempted + 1))
+		echo "── preflight sweep: prior run ${oenv} (${attempted}/${PREFLIGHT_MAX_ENVS}, $((deadline - now))s budget left) ──"
 		if ! sweep_env "$oenv"; then
 			echo "::warning::preflight could not fully sweep prior-run orphan ${oenv} (still billing) — the always() teardown / next preflight will retry. NOT failing this provisioning run."
 			residual=1
 		fi
 	done <<<"$orphans"
+	if [ -n "$skipped" ]; then
+		# ::error:: (not ::warning::) because a bounded preflight that keeps deferring the SAME
+		# orphan every night is how an orphan survives long enough to eat a job cap. This is the
+		# signal that a human has to sweep it by hand; it still does not fail the step.
+		echo "::error::preflight left orphan(s) UNSWEPT and BILLING — bounds reached before they were reached: ${skipped}"
+		echo "::error::sweep by hand, scope-locked: ALETHIA_E2E_ENV=<env> ALETHIA_E2E_REGION=${REGION} ./scripts/e2e/alibaba-cleanup.sh"
+		residual=1
+	fi
 	if [ "$residual" = "1" ]; then
 		echo "⚠ preflight finished with residual orphans (see warnings above) — continuing (best-effort, non-fatal)"
 	else

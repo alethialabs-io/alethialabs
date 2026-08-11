@@ -127,6 +127,26 @@ type ConfigurationExport struct {
 // backend returns has a field here; the list endpoint additionally populates
 // ProjectName/RunnerName. Nullable columns arrive as JSON null, which Go decodes to
 // the zero value, so scalar nullables stay as plain strings.
+// SigningKey is one receipt-signing key the control plane vouches for (GET /api/cli/signing-keys).
+// Public material only. Source is "org" for a key from the org's retained rotation history, or
+// "platform" for the key the runner signs with when no customer key is in the signing path —
+// which is every receipt today, so a verifier that ignored the platform entry would trust none of
+// them. Provider and Status are empty on the platform entry, which has no org row behind it.
+type SigningKey struct {
+	KeyID     string `json:"key_id"`
+	PublicKey string `json:"public_key"`
+	Algorithm string `json:"algorithm"`
+	Source    string `json:"source"`
+	Provider  string `json:"provider"`
+	Status    string `json:"status"`
+	Active    bool   `json:"active"`
+}
+
+// SigningKeysResponse is the GET /api/cli/signing-keys envelope.
+type SigningKeysResponse struct {
+	SigningKeys []SigningKey `json:"signing_keys"`
+}
+
 type ProvisionJob struct {
 	ID                string                  `json:"id"`
 	UserID            string                  `json:"user_id"`
@@ -614,6 +634,19 @@ func (c *Client) GetJob(jobID string) (*ProvisionJob, error) {
 		return nil, fmt.Errorf("failed to get job: %w", err)
 	}
 	return &job, nil
+}
+
+// GetSigningKeys fetches the trusted-key set evidence receipts are verified against (#2331):
+// the org's retained key_id→public_key history plus the platform key the runner signs with.
+// Public key material only — the control plane never puts private or custody material on this
+// wire.
+func (c *Client) GetSigningKeys() ([]SigningKey, error) {
+	endpoint := fmt.Sprintf("%s/cli/signing-keys", c.baseURL)
+	var resp SigningKeysResponse
+	if err := c.doGet(endpoint, &resp); err != nil {
+		return nil, fmt.Errorf("failed to get signing keys: %w", err)
+	}
+	return resp.SigningKeys, nil
 }
 
 func (c *Client) GetJobLogs(jobID string, afterID int) ([]JobLog, error) {

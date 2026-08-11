@@ -44,6 +44,13 @@ DRY_RUN="${DRY_RUN:-0}"
 # so both a wait and per-item retries are required, else the sweep races the detach and leaks.
 DETACH_TIMEOUT="${DETACH_TIMEOUT:-120}" # seconds to wait for volumes to detach after server delete
 DELETE_RETRIES="${DELETE_RETRIES:-5}"   # per-resource delete attempts (exponential backoff)
+# ── PREFLIGHT (#2330). Discovery mode: sweep PRIOR-run e2e orphans rather than this run. See the
+# block above the purge sequence for what it discriminates on and why it is not the cluster name.
+# Bounded like the other four sweepers (#2257): an unbounded best-effort sweep can consume its
+# caller's job budget, which is how run 31459117502 was cancelled at its cap and leaked a stack.
+PREFLIGHT="${PREFLIGHT:-0}"
+PREFLIGHT_BUDGET_SECONDS="${PREFLIGHT_BUDGET_SECONDS:-900}" # wall-clock for the whole sweep loop
+PREFLIGHT_MAX_ENVS="${PREFLIGHT_MAX_ENVS:-3}"               # orphans attempted per run
 
 # ── Guard 1: a specific cluster name is REQUIRED. No name ⇒ we would have no filter
 #    ⇒ hard refuse (never fall through to an account-wide delete). ──
@@ -343,6 +350,112 @@ sweep_object_storage() {
 $names
 EOF
 }
+
+# ── PREFLIGHT: prior-run orphan discovery (#2330) ───────────────────────────────────────────────
+#
+# WHY THIS EXISTS. e2e-orphan-reaper.yml reclaims stacks that a cancelled nightly leaked, by
+# running each cloud's PREFLIGHT discovery out-of-band. hetzner was ABSENT from that reaper, and
+# stated as a real gap, for exactly one reason: this script had no discovery mode. It sweeps one
+# named cluster and nothing else. So a cancelled hetzner leg leaked with nothing to reclaim it.
+#
+# WHAT IT DISCRIMINATES ON, AND WHY NOT THE CLUSTER NAME. The obvious enumerator — "every
+# `cluster=` label that looks like a run handle" — would key on `alethia-nl-<run_id>-<attempt>`,
+# and `alethia-nl` is a PREFIX OF PROD's naming, not a test-only marker. A regex that has to be
+# exactly right to avoid deleting production is the wrong shape for a sweeper in a shared account.
+#
+# Instead this keys on the SAME handle the other four clouds use: `alethia_project-id=e2e-<env>`,
+# which packages/core/cloud/tags.go stamps on every resource through classification_tags, and
+# which infra/templates/project/hetzner/checks_classification.tf ASSERTS reaches every hcloud
+# resource. A resource without that label is not a nightly resource and is invisible here — which
+# is the failure direction we want.
+#
+# The cluster name to sweep is then read back off the same resources' `cluster` label rather than
+# reconstructed from the env, so the value handed to the scope-locked sweep is one hcloud itself
+# reported, never one this script assembled.
+#
+# Posture matches the other four: best-effort, loud, bounded, and `exit 0` on every path — a
+# preflight that can fail its caller is not a preflight.
+
+# list_orphan_clusters — every OTHER run's `cluster` label value that still has e2e-labelled
+# resources. Same validation and prod/shared denylist as the top-of-file guard, re-applied per
+# candidate so discovery can never widen past a genuine prior nightly.
+list_orphan_clusters() {
+	local kind rows
+	{
+		for kind in server volume network firewall primary-ip image; do
+			hcloud "$kind" list -o json 2>/dev/null |
+				jq -r '.[]? | select((.labels["alethia_project-id"] // "") | startswith("e2e-"))
+				               | .labels.cluster // empty' 2>/dev/null || true
+		done
+	} | while IFS= read -r rows; do
+		[ -n "$rows" ] || continue
+		[ "$rows" = "$CLUSTER_NAME" ] && continue # never this run — its own teardown owns it
+		printf '%s' "$rows" | grep -Eq '^[a-z0-9][a-z0-9._-]{4,62}$' || continue
+		case "$rows" in
+		prod | prod-* | production | production-* | staging | staging-* | main | alethia | alethia-data) continue ;;
+		esac
+		printf '%s\n' "$rows"
+	done | sort -u
+}
+
+if [ "$PREFLIGHT" = "1" ]; then
+	# Discovery is entirely jq-driven. Without jq every list would yield nothing, the loop would
+	# find no orphans, and this would exit 0 reporting a clean account it never looked at — the
+	# precise failure aws-cleanup.sh's header calls "more expensive than no sweeper, because it
+	# stops anyone else looking". Refuse instead. (Elsewhere in this file jq is optional because
+	# its absence degrades a sweep that ALSO has a labelled path; here there is no other path.)
+	if ! command -v jq >/dev/null 2>&1; then
+		echo "::error::hetzner preflight requires jq — refusing to report a clean account it cannot inspect." >&2
+		exit 2
+	fi
+	echo "→ hetzner STALE PREFLIGHT: sweeping prior-run e2e orphans (excludes this run ${CLUSTER_NAME})"
+	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
+	orphans="$(list_orphan_clusters || true)"
+	if [ -z "$orphans" ]; then
+		echo "✓ preflight: no prior-run e2e orphans — nothing to sweep"
+		exit 0
+	fi
+	# shellcheck disable=SC2086
+	echo "  orphan clusters found: $(printf '%s ' $orphans)"
+	echo "  budget: ${PREFLIGHT_BUDGET_SECONDS}s wall-clock, at most ${PREFLIGHT_MAX_ENVS} orphan(s) this run"
+	residual=0
+	attempted=0
+	deadline=$(($(date +%s) + PREFLIGHT_BUDGET_SECONDS))
+	skipped=""
+	while IFS= read -r ocl; do
+		[ -n "$ocl" ] || continue
+		if [ "$attempted" -ge "$PREFLIGHT_MAX_ENVS" ]; then
+			skipped="${skipped}${ocl} (cap) "
+			continue
+		fi
+		now=$(date +%s)
+		if [ "$now" -ge "$deadline" ]; then
+			skipped="${skipped}${ocl} (budget) "
+			continue
+		fi
+		attempted=$((attempted + 1))
+		echo "── preflight sweep: prior run ${ocl} (${attempted}/${PREFLIGHT_MAX_ENVS}, $((deadline - now))s budget left) ──"
+		# Re-invoke THIS script scope-locked to the orphan rather than re-entering the sweep in
+		# place: the whole file is written around one CLUSTER_NAME and one SELECTOR, computed at
+		# the top. Recomputing them mid-run is how a selector goes stale and a delete goes wide.
+		# A subshell with a fresh CLUSTER_NAME re-runs every guard from scratch for each orphan.
+		if ! PREFLIGHT=0 DRY_RUN="$DRY_RUN" "$0" "$ocl"; then
+			echo "::warning::preflight could not fully sweep prior-run orphan ${ocl} (still billing) — the always() teardown / next preflight will retry. NOT failing this run."
+			residual=1
+		fi
+	done <<<"$orphans"
+	if [ -n "$skipped" ]; then
+		echo "::error::preflight left orphan(s) UNSWEPT and BILLING — bounds reached before they were reached: ${skipped}"
+		echo "::error::sweep by hand, scope-locked: HCLOUD_TOKEN=… ./scripts/e2e/hcloud-cleanup.sh <cluster>"
+		residual=1
+	fi
+	if [ "$residual" = "1" ]; then
+		echo "⚠ preflight finished with residual orphans (see above) — continuing (best-effort, non-fatal)"
+	else
+		echo "✓ preflight complete — all prior-run e2e orphans swept"
+	fi
+	exit 0 # preflight never blocks its caller
+fi
 
 # Deletion order respects dependencies:
 #   1. servers          — free the network attachments, firewall bindings, primary IPs;

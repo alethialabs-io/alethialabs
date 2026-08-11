@@ -30,6 +30,7 @@ type apiClient interface {
 	VerifyProviderIdentity(provider, identityID string) (*api.ConnectIdentityResponse, error)
 	GetJobs(status string, limit, offset int) (*api.JobsPage, error)
 	GetJob(jobID string) (*api.ProvisionJob, error)
+	GetSigningKeys() ([]api.SigningKey, error)
 	ListChannels() ([]api.Channel, error)
 	CreateChannel(name, channelType string, config map[string]interface{}) (*api.Channel, error)
 	DeleteChannel(channelID string) error

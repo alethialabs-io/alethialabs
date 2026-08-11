@@ -133,9 +133,25 @@ output "cloud_dns_name_servers" {
   value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].name_servers : []
 }
 
+# Resolves from EITHER source, because `cloud_dns_enabled` is the CREATE gate and not "a zone
+# exists" (#2294, mirroring azure/outputs.tf:126 and aws/outputs.tf:26). A brought zone leaves the
+# module absent, and returning null here is not a harmless empty: CertManagerSolver() fails closed
+# when this output is missing — the cloudDNS solver is rendered with an explicit `hostedZoneName`
+# precisely because the zone-scoped IAM grant carries no `dns.managedZones.list` permission to find
+# the zone with. So a null here does not degrade to "cert-manager figures it out"; it means every
+# DNS01 challenge stops issuing, on a project whose DNS the customer configured correctly.
+# Reads local.external_dns_zone, which resolves the created case from the MODULE'S OWN OUTPUT and
+# the brought case from the caller's variable — see locals.tf for why re-deriving the created name
+# is wrong. One local, read by both this output and the external-dns roles/dns.admin grant, so the
+# two can never disagree about which zone the project has.
+#
+# Still null when no Cloud DNS zone serves the project: DNS off, or a pluggable DNS connector owns
+# it. On the Cloudflare connector `cloud_dns_zone_name` may well be set — the caller named their
+# Cloudflare zone — and exporting it here would make CertManagerSolver() render a cloudDNS solver
+# for a zone Cloud DNS does not serve.
 output "cloud_dns_zone_name" {
-  description = "Name of the Cloud DNS managed zone"
-  value       = length(module.cloud_dns) > 0 ? module.cloud_dns[0].zone_name : null
+  description = "The Cloud DNS zone serving this project — created in-template when cloud_dns_enabled, else the existing cloud_dns_zone_name supplied by the caller. Null when no Cloud DNS zone serves the project (DNS off, or a pluggable DNS connector owns it)."
+  value       = local.external_dns_zone != "" ? local.external_dns_zone : null
 }
 
 

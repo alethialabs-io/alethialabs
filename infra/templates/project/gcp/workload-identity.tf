@@ -18,12 +18,21 @@ resource "google_service_account" "external_dns" {
 # Least-privilege: grant external-dns dns.admin on the PROJECT'S managed zone only,
 # not project-wide. Project-wide dns.admin forced the provisioner to hold
 # resourcemanager.projectIamAdmin (owner-equivalent) to write it; the zone-scoped
-# binding needs only dns.admin on the zone the template created. When Cloud DNS
-# isn't provisioned there is no zone for external-dns to manage, so no binding.
+# binding needs only dns.admin on the one zone this project serves.
+#
+# The zone may be one we CREATED or one the caller BROUGHT (#2294). Both need the binding, and the
+# distinction is invisible from here — a zone-scoped grant addresses a zone by NAME, so the same
+# resource covers both cases once the name resolves from either source. Gating this on
+# `cloud_dns_enabled` alone was correct only while that variable meant "DNS is in play"; now that it
+# is the CREATE gate, doing so would leave a brought zone with NO binding, and external-dns and
+# cert-manager's DNS01 solver (which shares this identity) would fail to write into the customer's
+# own zone while every plan stayed green.
+#
+# Still no binding when there is no zone at all: local.external_dns_zone is "" and the count is 0.
 resource "google_dns_managed_zone_iam_member" "external_dns_dns" {
-  count        = var.provision_gke && var.cloud_dns_enabled ? 1 : 0
+  count        = var.provision_gke && local.external_dns_zone != "" ? 1 : 0
   project      = var.project_id
-  managed_zone = module.cloud_dns[0].zone_name
+  managed_zone = local.external_dns_zone
   role         = "roles/dns.admin"
   member       = "serviceAccount:${google_service_account.external_dns[0].email}"
 }

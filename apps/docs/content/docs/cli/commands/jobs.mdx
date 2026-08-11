@@ -63,6 +63,10 @@ alethia jobs get <job_id>
 
 Shows: type, status, assigned Runner, all timestamps, the elench `verify_result` summary on PLAN/DEPLOY jobs, and the error message (if failed). Add `-o json` for the full execution metadata (OpenTofu outputs, cost data).
 
+The `Verify` line here is a one-line summary — a verdict and a count. To check the receipt's
+signature, see what it is sealed to, or read the per-control report behind that verdict, use
+[`alethia verify receipt`](/cli/commands/verify) and `alethia verify show`.
+
 ## `alethia jobs logs`
 
 Stream job logs to the terminal. The job ID is a **positional argument**.
