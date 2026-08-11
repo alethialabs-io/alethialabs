@@ -1402,7 +1402,32 @@ jobs:
           #    "1 of 5 clouds IS not enabled" and the anchored `are` regex stopped matching it, which
           #    sent this branch to `gh issue create` and would have filed a duplicate every night.
           #    Under the label key a hand-edited title is now harmless: the refresh below restores it.
-          if [ "$EVENT_NAME" = "schedule" ] || [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          #
+          #    ⚠️ SCHEDULE ONLY — a DISPATCH CANNOT PRODUCE COVERAGE DATA, and used to overwrite it.
+          #
+          #    This branch previously also ran on `workflow_dispatch`. But a dispatch runs exactly ONE
+          #    cloud by design — the matrix is derived from the `provider` input, and that input is a
+          #    single choice with no "all" option. So the other four clouds have no matrix job;
+          #    `job_exists` correctly returns `no` for each; and with no bundle either they fall
+          #    through nightly-rollup.sh's final `else` to `status="SKIP"`. SKIP_N is therefore ALWAYS
+          #    4 on a dispatch, whatever the gates actually say.
+          #
+          #    The consequence was not a cosmetic count. This filer REWRITES the standing issue body
+          #    with a table of "cloud | needs <var>" rows, so dispatching one cloud republished #1720
+          #    as "4 of 5 clouds are not enabled" and listed aws/gcp/azure/alibaba as needing gate
+          #    variables that are all SET. That is the same failure the comment at
+          #    nightly-rollup.sh:105 already records once — "the coverage issue (#1720) was refreshed
+          #    with a body claiming a variable that IS set is unset" — arriving by a second route.
+          #
+          #    It matters more now than it did: driving a cloud one at a time is the documented
+          #    enablement procedure (docs/testing/e2e-nightly-enablement.md step 3, "dispatch that
+          #    cloud alone"), so the workflow corrupted the coverage board precisely when somebody was
+          #    following the instructions for fixing coverage.
+          #
+          #    The red-issue path below deliberately KEEPS `workflow_dispatch`: a red on the one cloud
+          #    that actually ran is a true statement about that cloud. Only the 5-cloud aggregate is
+          #    unknowable from a single-provider run.
+          if [ "$EVENT_NAME" = "schedule" ]; then
             open_cov="$(gh issue list --state open --limit 200 --label "$COV_LABEL" --json number \
               --jq '.[0].number // ""' 2>/dev/null || echo "")"
             if [ "$SKIP_N" -eq 0 ]; then
