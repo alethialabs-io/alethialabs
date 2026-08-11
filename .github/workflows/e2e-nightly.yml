@@ -747,6 +747,40 @@ jobs:
       #
       # TestT2BudgetLadderHolds proves the ordering across every cloud × all 128 scenario
       # combinations on every PR. It is the reason there are no arithmetic claims in this comment.
+      # ── CLI-ONLY DEMO BAR (test/e2e/t2_cli_demo.go). Deliberately its OWN step, and deliberately
+      #    BEFORE the apply, for two reasons:
+      #
+      #    1. The T2 step runs `-run TestT2RealCloudProvisioning`. A test that is not named by that
+      #       regex NEVER EXECUTES — it compiles, its unit tests pass, the board says the harness
+      #       shipped, and it runs zero times. That is the #1341 failure this repo has already paid
+      #       for once, and adding a scenario as a sibling `go test` invocation is how it is avoided
+      #       rather than re-discovered.
+      #    2. It provisions nothing and takes seconds, so a table that has gone stale reds the run
+      #       immediately instead of after a 50-minute apply. It also stays outside ResolveT2Budget,
+      #       because it consumes none of the ctx that arithmetic is protecting.
+      #
+      #    The binary: ALETHIA_E2E_CLI_BIN wins if a maintainer set it (point it at a RELEASE
+      #    artifact to prove the bar against what actually ships). Otherwise the step builds the CLI
+      #    from this checkout — and the harness logs `alethia --version`, so the proof bundle always
+      #    records WHICH binary earned the verdict. A green run against the wrong binary is the one
+      #    way this check could mislead, so it is made unambiguous rather than assumed. ──
+      - name: CLI-only demo bar (reachability — no cloud, no spend)
+        if: steps.gate.outputs.run == 'true' && vars.E2E_CLI_DEMO != ''
+        env:
+          ALETHIA_E2E_CLI_DEMO: ${{ vars.E2E_CLI_DEMO }}
+          ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}
+          ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ALETHIA_E2E_CLI_BIN:-}" ]; then
+            echo "::notice::E2E_CLI_BIN unset — building the CLI from this checkout"
+            GOWORK=off go build -C apps/cli -o "$RUNNER_TEMP/alethia" .
+            export ALETHIA_E2E_CLI_BIN="$RUNNER_TEMP/alethia"
+          fi
+          echo "::notice::CLI-only demo bar for ${ALETHIA_E2E_PROVIDER} using $ALETHIA_E2E_CLI_BIN"
+          GOWORK=off go test -C test/e2e -tags=e2e_t2 . \
+            -run TestT2CLIDemoReachability -count=1 -timeout 10m -v
+
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
@@ -1046,6 +1080,30 @@ jobs:
           ALETHIA_E2E_ACM_CERT_ZONE_NAME: ${{ vars.E2E_ACM_CERT_ZONE_NAME }}
           ALETHIA_E2E_ACM_CERT_TIMEOUT: ${{ vars.E2E_ACM_CERT_TIMEOUT }}
           ALETHIA_E2E_ACM_CERT_SUMMARY: ${{ runner.temp }}/acm-cert-summary.json
+          # ── CLI-ONLY DEMO BAR — can the whole product be driven from the terminal?
+          #
+          #    Every other layer here asks whether the PLATFORM works. This one asks whether the
+          #    PRODUCT is REACHABLE: a prospect must get from an empty account to a running,
+          #    verified, torn-down cluster using `alethia` alone, and until test/e2e/t2_cli_demo.go
+          #    existed nothing asserted it — the console-only gaps were discoverable only by trying,
+          #    one at a time, in front of an audience.
+          #
+          #    It provisions NOTHING and costs NOTHING: the question is whether each step of the
+          #    demo resolves to a real command, so the check is `alethia <cmd> --help` over the
+          #    table's 20 steps. The provisioning half is already proven by the base T2 spine;
+          #    re-driving it through the CLI would double the bill to re-prove it. That is why this
+          #    is safe to leave ON for every cloud rather than dispatching it like a spend scenario.
+          #
+          #    ALETHIA_E2E_CLI_BIN points at the binary under test. Leave it UNSET and the harness
+          #    uses whatever `alethia` is on PATH. Point it at a RELEASE artifact to prove the bar
+          #    against the binary that actually ships — which is the only run that means anything:
+          #    the released CLI was v0.4.0 while `project ... placement` (#2313) and
+          #    `connector hetzner` (#2316) existed only on dev, so a green run against a working-tree
+          #    build would have proven the wrong thing.
+          #
+          #    Both plain VARIABLES. Unset ⇒ empty ⇒ a clean skip. ──
+          ALETHIA_E2E_CLI_DEMO: ${{ vars.E2E_CLI_DEMO }}
+          ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
           #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).
