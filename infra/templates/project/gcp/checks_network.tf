@@ -43,11 +43,22 @@ check "gke_private_nodes_when_standard" {
   }
 }
 
-# When Cloud DNS is enabled, both the zone name and domain must be supplied.
+# When Cloud DNS is enabled we CREATE a zone, and the only thing the caller must supply is the
+# domain — the zone's own name is derived (local.cloud_dns_name).
+#
+# This used to also require `cloud_dns_zone_name`, which is exactly backwards once
+# `cloud_dns_enabled` is the CREATE gate (#2294): that variable carries the id of a zone the caller
+# already OWNS, and supplying it is precisely what turns creation OFF. So the old condition refused
+# the create path unless you named a zone you were not creating, and passed on the attach path only
+# because the flag it keyed off was never false there. Azure hit the identical inversion in #1992
+# and its checks_network.tf records the same correction.
+#
+# `check` never blocks an apply — it only warns — so this states an invariant rather than enforcing
+# one; the enforcement is the count on module.cloud_dns.
 check "cloud_dns_fields_present_when_enabled" {
   assert {
-    condition     = !var.cloud_dns_enabled || (length(trimspace(var.cloud_dns_zone_name)) > 0 && length(trimspace(var.cloud_dns_domain)) > 0)
-    error_message = "cloud_dns_enabled is true but cloud_dns_zone_name or cloud_dns_domain is empty."
+    condition     = !var.cloud_dns_enabled || length(trimspace(var.cloud_dns_domain)) > 0
+    error_message = "cloud_dns_enabled is true (creating a zone) but cloud_dns_domain is empty; the domain is what the created zone serves."
   }
 }
 
