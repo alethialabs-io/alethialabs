@@ -294,12 +294,20 @@ func TestMaxConfigDNSFixtureIsProvisionable(t *testing.T) {
 				}
 			}
 
-			// ACM issuance is unprovable without a delegated zone. If this ever flips back on, it
-			// must be because e2e.alethialabs.io was delegated into the e2e account — and then this
-			// assertion is the thing that should be deleted deliberately, not silently drifted past.
+			// ACM stays out of the FULL BAR permanently — not until a zone is delegated (#1773).
+			// Its validation ceiling is 72 hours and unrecoverable, its re-check cadence is
+			// undocumented, and the parent zone's negative-cache window is 30 minutes; none of that
+			// belongs on the critical path of a run that also has to prove ten other kinds. The
+			// cert is proven by its own scenario against the stable zone instead.
+			//
+			// The previous message here blamed `aws_acm_certificate_validation` blocking on public
+			// issuance for the recorded 5-minute timeout. It did not — that 5m is
+			// `certificateDNSValidationAssignmentTimeout` on `aws_acm_certificate`, hardcoded, and
+			// it never queries DNS (#2293). Kept out of the message so nobody re-derives it.
 			if acm, ok := pc.DNS.ProviderConfig["acm_certificate"].(bool); ok && acm {
-				t.Error("acm_certificate must stay false until a zone is DELEGATED to the e2e account: " +
-					"aws_acm_certificate_validation blocks on PUBLIC issuance, which a zone we merely created cannot satisfy")
+				t.Error("acm_certificate must stay false in the full-bar fixture: the cert path is " +
+					"proven by its own scenario against the stable delegated zone (#1773), because ACM's " +
+					"72-hour unrecoverable ceiling must not sit on the critical path of every run")
 			}
 		})
 	}

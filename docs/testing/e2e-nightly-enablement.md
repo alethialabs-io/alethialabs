@@ -38,7 +38,9 @@ kill-drill. Everything else the leg needs must already be in place, because the 
    label-scoped (every resource carries `alethia:environment-id=<run_id>-<attempt>`, and each cloud's
    sweeper filters on it). Verify in the console that nothing survived, and that the budget alert
    plumbing (SNS / Pub-Sub / action group / — see each stack's budget output) is reachable.
-5. **Set the gate variable.** The cloud now runs nightly at 06:00 UTC.
+5. **Set the gate variable.** The cloud now runs on the floor cron, `17 3 * * *` — **03:17 UTC**,
+   not the 06:00 this step used to claim — plus the full bar weekly on `17 5 * * 0`. Both schedules
+   fire only on the default branch, so they run from `main`.
 
 ## Per-cloud configuration
 
@@ -115,7 +117,8 @@ These are not per-cloud gates, but legs depend on them:
 | `INFRACOST_API_KEY` | secret | cost estimation during the run |
 | `E2E_AWS_COST_CEILING_USD` / `_FULL_USD` | vars | abort thresholds — floor vs full-bar dimension |
 | `E2E_ARGO_APPS_REPO`, `E2E_ARGO_BYO_CHART_*` | vars | the A0.6 BYO-IaC + services proof |
-| `E2E_ARGO_APPS_REPO_GCP` / `_AZURE`, `E2E_ARGO_BYO_CHART_*_GCP` / `_AZURE` | vars | per-cloud repo overrides so that proof runs on gcp + azure too (#1136) |
+| `E2E_ARGO_APPS_REPO_GCP` / `_AZURE`, `E2E_ARGO_BYO_CHART_REPO` and `_REVISION` with those suffixes | vars | per-cloud repo overrides so that proof runs on gcp + azure too (#1136). Only these three bases take a suffix — `_PATH` and `_NAMESPACE` describe the chart repo's own layout, which does not vary by cloud |
+| `E2E_KEYLESS_DB_ENGINE` / `_ENGINE_VERSION` / `_INSTANCE_CLASS` / `_IMAGE` / `_CLIENT_IMAGE` with `_GCP` / `_AZURE` | vars | per-cloud keyless-DB overrides — see below |
 | `E2E_NAMESPACE_TENANT`, `E2E_SOAK` | vars | opt-in namespace-placement and soak scenarios |
 | `E2E_VCLUSTER`, `E2E_DAY2_ACCESS` | vars | opt-in vcluster-placement and day-2-access scenarios (their harnesses existed but were never referenced by the workflow, so they could not run at all until #1268 wired them) |
 | `E2E_SECRETS_XACCT*` | vars | opt-in cross-account keyless secret-manager read — see below |
@@ -240,6 +243,10 @@ The version and class have **no defaults on purpose**. A value valid on RDS is r
 and by Flexible Server, and again by the same cloud's other engine, so a default would be a per-cloud
 table that fails at `tofu apply` — minutes and money into a run — instead of in the first seconds.
 Use the per-cloud siblings (`E2E_KEYLESS_DB_ENGINE_VERSION_GCP`, and so on) for a leg that differs.
+The suffixed forms exist for `_ENGINE`, `_ENGINE_VERSION`, `_INSTANCE_CLASS`, `_IMAGE` and
+`_CLIENT_IMAGE`, on `_GCP` and `_AZURE`. Set one that the workflow does not forward and it silently
+has no effect, because the harness composes the name at run time — `TestPerCloudSiblingsReachTheNightly`
+is what keeps this list and the workflow in agreement.
 
 Starting points, matching what max-config already provisions for Postgres:
 

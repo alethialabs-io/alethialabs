@@ -326,6 +326,46 @@ const componentAutoFields = {
 	estimated_monthly_cost: true,
 } as const;
 
+/**
+ * The environment MATRIX the placement selector produces (#844): one entry per environment, each
+ * naming its placement onto a Fabric. `insertProjectWithDefaultFabric` fans it out — a Fabric per
+ * `dedicated` env plus ONE shared Fabric for the `namespace`/`vcluster` envs — and enforces the rest
+ * of the invariant (exactly one default, the reserved name `shared`, at most 8).
+ *
+ * Exported, and used by `projectSchema.environments` below, because the CLI's create route needs the
+ * SAME validator. Without it the CLI could send no matrix at all, so every environment it created
+ * came out `dedicated` — a whole cluster each, four clouds × two tiers = eight clusters where the
+ * product's own story is four. Two definitions of a placement matrix would be worse than one shared
+ * one, since the fan-out enforcing the invariant only sees whatever shape reaches it.
+ */
+export const environmentMatrixSchema = z
+	.array(
+		z.object({
+			// Slug-safe (DNS-1123 label): the env name feeds the tofu state-path segment and the
+			// Fabric name, so it must never carry path separators or other unsafe characters.
+			name: z
+				.string()
+				.min(1)
+				.max(40)
+				.regex(
+					/^[a-z][a-z0-9-]*$/,
+					"Environment name must be lower-case alphanumeric or hyphen.",
+				),
+			stage: z.enum(environmentStage.enumValues),
+			placement_mode: z.enum(placementMode.enumValues),
+			lifecycle: z.enum(environmentLifecycle.enumValues).optional(),
+			// The k8s destination namespace — DNS-1123 label when present.
+			namespace: z
+				.string()
+				.max(63)
+				.regex(/^[a-z][a-z0-9-]*$/)
+				.nullish(),
+			is_default: z.boolean().optional(),
+		}),
+	)
+	// At most the four-env matrix; exactly one default is enforced in the core fan-out.
+	.max(8);
+
 const projectSchema = projectsInsert
 	.omit({
 		...autoFields,
@@ -352,34 +392,7 @@ const projectSchema = projectsInsert
 		// The full environment matrix from the placement selector (#844). When present, createProject
 		// fans it out (a Fabric per `dedicated` env + one shared Fabric for the shared placements);
 		// absent, the legacy Prod(dedicated)+Preview(namespace) shape is kept. Exactly one is_default.
-		environments: z
-			.array(
-				z.object({
-					// Slug-safe (DNS-1123 label): the env name feeds the tofu state-path segment and the
-					// Fabric name, so it must never carry path separators or other unsafe characters.
-					name: z
-						.string()
-						.min(1)
-						.max(40)
-						.regex(
-							/^[a-z][a-z0-9-]*$/,
-							"Environment name must be lower-case alphanumeric or hyphen.",
-						),
-					stage: z.enum(environmentStage.enumValues),
-					placement_mode: z.enum(placementMode.enumValues),
-					lifecycle: z.enum(environmentLifecycle.enumValues).optional(),
-					// The k8s destination namespace — DNS-1123 label when present.
-					namespace: z
-						.string()
-						.max(63)
-						.regex(/^[a-z][a-z0-9-]*$/)
-						.nullish(),
-					is_default: z.boolean().optional(),
-				}),
-			)
-			// At most the four-env matrix; exactly one default is enforced in the core fan-out.
-			.max(8)
-			.optional(),
+		environments: environmentMatrixSchema.optional(),
 	});
 
 const networkSchema = networkInsert

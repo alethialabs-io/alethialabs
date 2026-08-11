@@ -31,9 +31,47 @@ alethia runner deploy --cloud-identity-id <id> --name <name> --region <region>
   for another cloud and the server refuses the deploy before it creates a runner or a job.
 
   This limits **where the runner itself runs**, not what it provisions: a registered runner
-  provisions every cloud Alethia supports, wherever it runs. To run a runner on another cloud,
-  register one there — see [self-operated runners](/runner/self-hosted).
+  provisions every cloud Alethia supports, wherever it runs. To run a runner on another cloud, use
+  [`alethia runner register`](#alethia-runner-register) — see also
+  [self-operated runners](/runner/self-hosted).
 </Callout>
+
+## `alethia runner register`
+
+Register a runner you operate yourself. Nothing is provisioned — this is the command for every cloud
+`runner deploy` cannot reach.
+
+```bash
+alethia runner register my-hetzner-box
+
+# Bound to a cloud account, and machine-readable for a provisioning script
+alethia runner register gcp-box-1 --cloud-identity-id <id>
+```
+
+| Argument / Flag | Required | Description |
+|------|----------|-------------|
+| `<name>` | Yes* | Runner name (positional, or `--name`) |
+| `--cloud-identity-id` | No | Bind the runner to a cloud account |
+
+It prints the two values the runner process needs, as assignments you can paste straight into an env
+file or a systemd unit:
+
+```
+✓ Registered runner my-hetzner-box (7f3c…)
+
+ALETHIA_RUNNER_ID=7f3c…
+ALETHIA_RUNNER_TOKEN=9a1b…
+```
+
+<Callout type="warn">
+  **The token is shown once.** Only its SHA-256 is stored, so it cannot be re-read or recovered — a
+  leak of the runners table yields nothing usable, and a token you lose is a runner you re-register.
+  Copy it before the terminal scrolls.
+</Callout>
+
+Then start the runner with those two variables set and confirm it appears in
+`alethia runner list` with a recent heartbeat. See
+[self-hosted runners](/runner/self-hosted) for the process itself.
 
 ## `alethia runner list`
 

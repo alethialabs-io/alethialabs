@@ -150,7 +150,7 @@ func TestRunProjectEnvListError(t *testing.T) {
 func TestRunProjectEnvAdd(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runProjectEnvAdd(f, &buf, "api", "staging", "staging", "us-east-1"); err != nil {
+	if err := runProjectEnvAdd(f, &buf, api.AddEnvironmentParams{Project: "api", Name: "staging", Stage: "staging", Region: "us-east-1"}); err != nil {
 		t.Fatalf("runProjectEnvAdd: %v", err)
 	}
 	if f.addedEnvName != "staging" || f.addedEnvStage != "staging" || f.addedEnvRegion != "us-east-1" {
@@ -163,7 +163,7 @@ func TestRunProjectEnvAdd(t *testing.T) {
 
 func TestRunProjectEnvAddError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runProjectEnvAdd(&fakeClient{err: errBoom}, &buf, "api", "x", "development", ""); err == nil {
+	if err := runProjectEnvAdd(&fakeClient{err: errBoom}, &buf, api.AddEnvironmentParams{Project: "api", Name: "x", Stage: "development"}); err == nil {
 		t.Error("expected error propagated")
 	}
 }
@@ -323,7 +323,7 @@ func TestRunComponentAdd(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
 	fields := map[string]interface{}{"engine": "postgres"}
-	if err := runComponentAdd(f, &buf, "api", "databases", "main", fields); err != nil {
+	if err := runComponentAdd(f, &buf, "api", "databases", "main", "", fields); err != nil {
 		t.Fatalf("runComponentAdd: %v", err)
 	}
 	if f.addCompKind != "databases" || f.addCompName != "main" {
@@ -339,14 +339,14 @@ func TestRunComponentAdd(t *testing.T) {
 
 func TestRunComponentAddMissingKind(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runComponentAdd(&fakeClient{}, &buf, "api", "", "", nil); err == nil {
+	if err := runComponentAdd(&fakeClient{}, &buf, "api", "", "", "", nil); err == nil {
 		t.Error("expected error when kind is empty")
 	}
 }
 
 func TestRunComponentAddError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runComponentAdd(&fakeClient{err: errBoom}, &buf, "api", "databases", "main", nil); err == nil {
+	if err := runComponentAdd(&fakeClient{err: errBoom}, &buf, "api", "databases", "main", "", nil); err == nil {
 		t.Error("expected error propagated")
 	}
 }
@@ -357,7 +357,7 @@ func TestRunComponentRemoveSingleton(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
 	// A name is passed but must be cleared for a singleton kind.
-	if err := runComponentRemove(f, &buf, "api", "network", "ignored"); err != nil {
+	if err := runComponentRemove(f, &buf, "api", "network", "ignored", ""); err != nil {
 		t.Fatalf("runComponentRemove: %v", err)
 	}
 	if f.rmCompName != "" {
@@ -371,7 +371,7 @@ func TestRunComponentRemoveSingleton(t *testing.T) {
 func TestRunComponentRemoveNamed(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}
-	if err := runComponentRemove(f, &buf, "api", "databases", "main"); err != nil {
+	if err := runComponentRemove(f, &buf, "api", "databases", "main", ""); err != nil {
 		t.Fatalf("runComponentRemove: %v", err)
 	}
 	if f.rmCompName != "main" {
@@ -384,7 +384,7 @@ func TestRunComponentRemoveNamed(t *testing.T) {
 
 func TestRunComponentRemoveError(t *testing.T) {
 	var buf bytes.Buffer
-	if err := runComponentRemove(&fakeClient{err: errBoom}, &buf, "api", "databases", "main"); err == nil {
+	if err := runComponentRemove(&fakeClient{err: errBoom}, &buf, "api", "databases", "main", ""); err == nil {
 		t.Error("expected error propagated")
 	}
 }
@@ -403,5 +403,213 @@ func TestCurrentProject(t *testing.T) {
 	got, err := currentProject(c)
 	if err != nil || got != "api" {
 		t.Errorf("currentProject = %q, %v", got, err)
+	}
+}
+
+// --- per-environment component authoring (the two-tier demo) ---
+
+// TestComponentEnvIsThreadedThrough is the CLI half of the change that made a two-environment
+// project buildable from the terminal. `--env` used to exist on `list` alone, labelled "(reserved)",
+// and the server discarded it — so every component the CLI authored landed in the project's default
+// environment and a dev/staging pair pointing at different overlays was unexpressable.
+func TestComponentEnvIsThreadedThrough(t *testing.T) {
+	t.Run("add forwards the environment", func(t *testing.T) {
+		var buf bytes.Buffer
+		f := &fakeClient{}
+		if err := runComponentAdd(f, &buf, "api", "repositories", "", "staging", map[string]interface{}{"apps_path": "overlays/staging"}); err != nil {
+			t.Fatalf("runComponentAdd: %v", err)
+		}
+		if f.addCompEnv != "staging" {
+			t.Errorf("env not forwarded: %q", f.addCompEnv)
+		}
+		// The environment belongs in the confirmation: authoring the same kind into the wrong tier is
+		// otherwise silent, and the next thing to read it is a deploy.
+		if !strings.Contains(buf.String(), "in staging") {
+			t.Errorf("confirmation omits the environment: %q", buf.String())
+		}
+	})
+
+	t.Run("remove forwards the environment", func(t *testing.T) {
+		var buf bytes.Buffer
+		f := &fakeClient{}
+		if err := runComponentRemove(f, &buf, "api", "cluster", "", "dev"); err != nil {
+			t.Fatalf("runComponentRemove: %v", err)
+		}
+		if f.rmCompEnv != "dev" {
+			t.Errorf("env not forwarded: %q", f.rmCompEnv)
+		}
+		if !strings.Contains(buf.String(), "in dev") {
+			t.Errorf("confirmation omits the environment: %q", buf.String())
+		}
+	})
+
+	t.Run("list forwards the environment", func(t *testing.T) {
+		var buf bytes.Buffer
+		f := &fakeClient{components: sampleComponents()}
+		if err := runComponentList(f, &buf, "json", "api", "", "dev"); err != nil {
+			t.Fatalf("runComponentList: %v", err)
+		}
+		if f.listCompEnv != "dev" {
+			t.Errorf("env not forwarded: %q", f.listCompEnv)
+		}
+	})
+
+	// An empty environment must stay empty all the way to the client, because that is what selects
+	// the server's default-environment path. Substituting anything here would silently retarget every
+	// existing single-environment script.
+	t.Run("empty stays empty", func(t *testing.T) {
+		var buf bytes.Buffer
+		f := &fakeClient{}
+		if err := runComponentAdd(f, &buf, "api", "cluster", "", "", nil); err != nil {
+			t.Fatalf("runComponentAdd: %v", err)
+		}
+		if f.addCompEnv != "" {
+			t.Errorf("empty env became %q", f.addCompEnv)
+		}
+		if strings.Contains(buf.String(), " in ") {
+			t.Errorf("confirmation invented an environment: %q", buf.String())
+		}
+	})
+}
+
+// --- placement (#844 from the terminal) ---
+
+// TestParseEnvMatrix pins the parser that turns `--env name:stage[:mode[:namespace]]` into the
+// environment matrix. The matrix is what makes a two-tier project cost ONE cluster: without it the
+// server keeps the legacy shape and every environment the CLI creates comes out `dedicated`.
+func TestParseEnvMatrix(t *testing.T) {
+	t.Run("no flags means no matrix", func(t *testing.T) {
+		got, err := parseEnvMatrix(nil)
+		if err != nil || got != nil {
+			t.Fatalf("want (nil, nil) so the server keeps its legacy shape, got (%#v, %v)", got, err)
+		}
+	})
+
+	t.Run("the enterprise-demo shape", func(t *testing.T) {
+		got, err := parseEnvMatrix([]string{
+			"prod:production",
+			"dev:development:namespace:boutique-dev",
+			"staging:staging:vcluster",
+		})
+		if err != nil {
+			t.Fatalf("parseEnvMatrix: %v", err)
+		}
+		want := []api.EnvironmentSpec{
+			// First entry OWNS the Fabric, so it defaults to dedicated and is the default env.
+			{Name: "prod", Stage: "production", PlacementMode: "dedicated", IsDefault: true},
+			{Name: "dev", Stage: "development", PlacementMode: "namespace", Namespace: "boutique-dev"},
+			{Name: "staging", Stage: "staging", PlacementMode: "vcluster"},
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("matrix mismatch:\n got %#v\nwant %#v", got, want)
+		}
+	})
+
+	t.Run("a later entry defaults to the cheap rung", func(t *testing.T) {
+		got, err := parseEnvMatrix([]string{"prod:production", "preview:development"})
+		if err != nil {
+			t.Fatalf("parseEnvMatrix: %v", err)
+		}
+		if got[1].PlacementMode != "namespace" {
+			t.Errorf("second entry should default to namespace, got %q", got[1].PlacementMode)
+		}
+		if got[1].IsDefault {
+			t.Error("only the first entry may be the default")
+		}
+	})
+
+	t.Run("an explicit mode overrides the positional default", func(t *testing.T) {
+		got, err := parseEnvMatrix([]string{"prod:production:namespace"})
+		if err != nil {
+			t.Fatalf("parseEnvMatrix: %v", err)
+		}
+		if got[0].PlacementMode != "namespace" {
+			t.Errorf("explicit mode ignored: %q", got[0].PlacementMode)
+		}
+	})
+
+	for _, bad := range []struct{ name, in string }{
+		{"no stage", "prod"},
+		{"empty name", ":production"},
+		{"empty stage", "prod:"},
+		{"too many segments", "a:b:c:d:e"},
+	} {
+		t.Run("rejects "+bad.name, func(t *testing.T) {
+			if _, err := parseEnvMatrix([]string{bad.in}); err == nil {
+				t.Errorf("parseEnvMatrix(%q) should error", bad.in)
+			}
+		})
+	}
+
+	t.Run("rejects a duplicate name", func(t *testing.T) {
+		if _, err := parseEnvMatrix([]string{"dev:development", "dev:staging"}); err == nil {
+			t.Error("a duplicate environment name must be rejected here, not by a unique violation")
+		}
+	})
+}
+
+func TestEnvSuffix(t *testing.T) {
+	if got := envSuffix(""); got != "" {
+		t.Errorf(`envSuffix("") = %q, want ""`, got)
+	}
+	if got := envSuffix("prod"); got != " in prod" {
+		t.Errorf(`envSuffix("prod") = %q`, got)
+	}
+}
+
+func TestCurrentComponentEnv(t *testing.T) {
+	cmd := &cobra.Command{}
+	// No such flag registered → empty, never a panic.
+	if got := currentComponentEnv(cmd); got != "" {
+		t.Errorf("missing flag should yield empty, got %q", got)
+	}
+	cmd.Flags().String("env", "", "")
+	if got := currentComponentEnv(cmd); got != "" {
+		t.Errorf("unset flag should yield empty, got %q", got)
+	}
+	if err := cmd.Flags().Set("env", "  staging  "); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got := currentComponentEnv(cmd); got != "staging" {
+		t.Errorf("expected trimmed %q, got %q", "staging", got)
+	}
+}
+
+// TestProjectEnvAddCarriesPlacement is the other half: `project env add` used to send no placement at
+// all, and project_environments.placement_mode DEFAULTS to `dedicated` — so adding an environment
+// silently provisioned a whole new cluster with its own state key.
+func TestProjectEnvAddCarriesPlacement(t *testing.T) {
+	var buf bytes.Buffer
+	f := &fakeClient{}
+	params := api.AddEnvironmentParams{
+		Project:   "shop",
+		Name:      "staging",
+		Stage:     "staging",
+		Placement: "vcluster",
+		Fabric:    "shared",
+		Namespace: "boutique-staging",
+		Lifecycle: "persistent",
+	}
+	if err := runProjectEnvAdd(f, &buf, params); err != nil {
+		t.Fatalf("runProjectEnvAdd: %v", err)
+	}
+	if !reflect.DeepEqual(f.addedEnvParams, params) {
+		t.Errorf("placement fields dropped:\n got %#v\nwant %#v", f.addedEnvParams, params)
+	}
+	// The placement is the field with a cost, so it belongs in the confirmation.
+	if !strings.Contains(buf.String(), "vcluster placement") {
+		t.Errorf("confirmation omits the placement: %q", buf.String())
+	}
+}
+
+// And when no placement is passed the confirmation must name the server's default rather than an
+// empty string — a caller reading "( , placement)" learns nothing about what they just bought.
+func TestProjectEnvAddNamesTheDefaultPlacement(t *testing.T) {
+	var buf bytes.Buffer
+	if err := runProjectEnvAdd(&fakeClient{}, &buf, api.AddEnvironmentParams{Project: "p", Name: "e"}); err != nil {
+		t.Fatalf("runProjectEnvAdd: %v", err)
+	}
+	if !strings.Contains(buf.String(), "namespace placement") {
+		t.Errorf("confirmation should name the default placement: %q", buf.String())
 	}
 }

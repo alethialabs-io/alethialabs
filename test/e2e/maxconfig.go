@@ -735,18 +735,29 @@ const maxConfigDomainSuffix = "e2e.alethialabs.io"
 // harness already uses for the project/environment pair; the constant fallback keeps the fixture
 // deterministic for the pure unit tests, which run with no environment at all.
 //
-// WHY ACM IS OFF ALONGSIDE THIS. The fixture used to set acm_certificate: true, and the run's ACM
-// timeout looked downstream of the Route 53 failure. It is not, and this is the part worth not
-// assuming: modules/acm uses validation_method = "DNS" and aws_acm_certificate_validation BLOCKS
-// until the certificate is issued, which requires the validation CNAME to be resolvable on the
-// PUBLIC internet. Creating a zone is not the same as being delegated one — no infra/ stack
-// delegates a zone to the e2e account today, so ACM can never issue here no matter which domain
-// this returns. Fixing the name alone would have swapped one guaranteed 5-minute timeout for
-// another and looked like progress.
+// WHY ACM IS OFF ALONGSIDE THIS. The fixture used to set acm_certificate: true. The conclusion —
+// that a merely-created zone cannot satisfy ACM — still stands: modules/acm uses
+// validation_method = "DNS", and ACM searches for its CNAME in a PUBLICLY HOSTED zone, so being
+// delegated one is what matters, not creating one.
 //
-// So the `dns` kind is proven and the cert path is an explicit exclusion. Delegating
-// e2e.alethialabs.io (its NS records live on Cloudflare, with the control-plane stacks) into the
-// e2e account would make ACM real; that is a maintainer step, tracked separately.
+// ⚠️ But the RECORDED FAILURE does not demonstrate that, and this comment used to say it did
+// (#2293). The error names `module.acm[0].aws_acm_certificate.cf_alias` — the CERTIFICATE
+// resource, not `aws_acm_certificate_validation` — and its 5m0s is
+// `certificateDNSValidationAssignmentTimeout`, a HARDCODED, non-configurable constant that waits
+// only for ACM to ASSIGN validation records. It never queries DNS; the provider's own comment says
+// it is "unrelated to any creation or validation of those assigned DNS records". The issuance wait
+// that does block on public resolvability lives in `aws_acm_certificate_validation` and defaults to
+// 75m — that run never reached it. The true cause of the 5-minute failure is UNRESOLVED; a
+// malformed SAN in the then-current fixture is the leading candidate, given #1771 was the SAN fix.
+//
+// Two consequences worth carrying: a `timeouts` block cannot raise the 5 minutes, because
+// `aws_acm_certificate` has no such schema; and this failure is not evidence about DNS either way.
+//
+// So the `dns` kind is proven here and the cert path stays an explicit exclusion IN THE FULL BAR.
+// It is not un-pinned once a zone is delegated: ACM's ceiling is 72 hours and unrecoverable, its
+// re-check cadence is undocumented, and the parent's negative-cache window is 30 minutes — none of
+// which belongs on the critical path of a run that also has to prove ten other kinds. The stable
+// zone lands in infra/aws-oidc/e2e-dns.tf (#1773) and the cert is proven by its own scenario.
 func MaxConfigDomain() string {
 	if env := strings.TrimSpace(os.Getenv("ALETHIA_E2E_ENV")); env != "" {
 		return env + "." + maxConfigDomainSuffix

@@ -1,0 +1,11 @@
+{
+	"title": "Tutorials",
+	"pages": [
+		"index",
+		"enterprise-demo",
+		"enterprise-demo-hetzner",
+		"enterprise-demo-aws",
+		"enterprise-demo-gcp",
+		"enterprise-demo-azure"
+	]
+}

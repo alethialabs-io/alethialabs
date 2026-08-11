@@ -3,7 +3,20 @@ SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Demo readiness — live status ledger + road to a multi-cloud live demo
+# Demo readiness — HISTORICAL ledger (superseded)
+
+> **Superseded, 2026-08-10. Do not quote this file.**
+>
+> For running a demo: **[`RUNBOOK.md`](./RUNBOOK.md)** (internal — accounts, costs, talk track, abort
+> drill) and **[`/tutorials/enterprise-demo`](../apps/docs/content/docs/tutorials/enterprise-demo.mdx)**
+> (customer-facing).
+>
+> This page tracks #294–#348 against a HEAD long past #2320, and several of its statements below were
+> true when written and are not now — the product-data seeder shipped, the five-cloud T2 nightly exists
+> and runs, and `demos/proofs/` holds committed real-apply bundles. It is kept for the history of how
+> the demo got built, not as a status page.
+
+## Original heading: live status ledger + road to a multi-cloud live demo
 
 Living tracker for the **hosted, multi-cloud, live end-to-end demo** (Hetzner + AWS/Azure managed,
 template **and** BYO IaC). Companion to [`README.md`](./README.md) (the scenario pitch ledger). Update

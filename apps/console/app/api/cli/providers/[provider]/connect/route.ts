@@ -16,6 +16,13 @@ type ConnectBody = {
 		subscription_id?: string;
 		api_token?: string;
 		self_managed?: boolean;
+		/** Hetzner Object Storage (S3-compatible) key pair. Optional — a project with no buckets never
+		 *  needs it, because `infra/templates/project/hetzner/buckets.tf` is a `for_each` over an empty
+		 *  list. The console's own save has always passed these through (`saveTokenCloud` in
+		 *  extra-cloud-actions.ts) and `saveTokenCloudIdentity` has always accepted them; this route
+		 *  simply dropped them, so a CLI-created Hetzner connection could never provision a bucket. */
+		s3_access_key?: string;
+		s3_secret_key?: string;
 	};
 };
 
@@ -25,6 +32,8 @@ type ConnectBody = {
  *  - aws:   { role_arn }
  *  - gcp:   { wif_config }  (the WIF credential config object or JSON string)
  *  - azure: { tenant_id, client_id, subscription_id }
+ *  - alibaba: { role_arn }
+ *  - hetzner / digitalocean / civo: { api_token } (+ hetzner's optional s3_access_key/s3_secret_key)
  */
 export async function POST(
 	req: Request,
@@ -134,6 +143,8 @@ export async function POST(
 					identityId,
 					provider,
 					creds.api_token,
+					creds.s3_access_key,
+					creds.s3_secret_key,
 				);
 				break;
 			default:

@@ -77,44 +77,60 @@ type fakeClient struct {
 	err error // returned by every method when non-nil
 
 	// recorded calls
-	invitedEmail   string
-	invitedRole    string
-	removedMember  string
-	createdName    string
-	deletedTeam    string
-	createdChType  string
-	createdChCfg   map[string]interface{}
-	deletedChannel string
-	verifiedChID   string
-	createdRuleN   string
-	createdRulePat []string
-	createdRuleCh  []string
-	createdRuleSev string
-	deletedRule    string
-	activityLimit  int
-	createdRoleN   string
-	createdRoleKey []string
-	deletedRole    string
-	addedGrant     api.AddGrantParams
-	removedGrant   string
-	ssoGetID       string
-	setPoolProv    string
-	setPoolUpdate  api.FleetPoolUpdate
-	createdProjP   api.CreateProjectParams
-	envProject     string
-	addedEnvName   string
-	addedEnvStage  string
-	addedEnvRegion string
-	listCompProj   string
-	listCompKind   string
-	listCompEnv    string
-	addCompProj    string
-	addCompKind    string
-	addCompName    string
-	addCompFields  map[string]interface{}
-	rmCompProj     string
-	rmCompKind     string
-	rmCompName     string
+	invitedEmail      string
+	invitedRole       string
+	removedMember     string
+	createdName       string
+	deletedTeam       string
+	createdChType     string
+	createdChCfg      map[string]interface{}
+	deletedChannel    string
+	verifiedChID      string
+	createdRuleN      string
+	createdRulePat    []string
+	createdRuleCh     []string
+	createdRuleSev    string
+	deletedRule       string
+	activityLimit     int
+	createdRoleN      string
+	createdRoleKey    []string
+	deletedRole       string
+	addedGrant        api.AddGrantParams
+	removedGrant      string
+	ssoGetID          string
+	setPoolProv       string
+	setPoolUpdate     api.FleetPoolUpdate
+	createdProjP      api.CreateProjectParams
+	envProject        string
+	addedEnvName      string
+	addedEnvStage     string
+	addedEnvRegion    string
+	addedEnvParams    api.AddEnvironmentParams
+	listCompProj      string
+	listCompKind      string
+	listCompEnv       string
+	addCompProj       string
+	addCompKind       string
+	addCompName       string
+	addCompEnv        string
+	addCompFields     map[string]interface{}
+	rmCompProj        string
+	rmCompKind        string
+	rmCompName        string
+	rmCompEnv         string
+	attachedChart     api.AttachChartParams
+	attachedIac       api.AttachIacParams
+	byoDetached       []string
+	byoScanned        []string
+	scanResult        *api.ByoScanResult
+	attachResult      *api.ByoAttachResult
+	enabledAddon      api.EnableAddonParams
+	disabledAddonProj string
+	disabledAddonEnv  string
+	disabledAddonID   string
+	regRunnerName     string
+	regRunnerIdentity string
+	registration      *api.RunnerRegistration
 }
 
 func (f *fakeClient) Whoami() (*api.WhoAmI, error)                   { return f.whoami, f.err }
@@ -155,7 +171,21 @@ func (f *fakeClient) DeleteTeam(orgID, teamID string) error {
 	return f.err
 }
 
-func (f *fakeClient) GetRunners() ([]api.Runner, error)          { return f.runners, f.err }
+func (f *fakeClient) GetRunners() ([]api.Runner, error) { return f.runners, f.err }
+
+func (f *fakeClient) RegisterRunner(name, cloudIdentityID string) (*api.RunnerRegistration, error) {
+	f.regRunnerName, f.regRunnerIdentity = name, cloudIdentityID
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.registration != nil {
+		return f.registration, nil
+	}
+	return &api.RunnerRegistration{
+		Runner:      api.Runner{ID: "run1", Name: name, Operator: "self", Provisioning: "registered"},
+		RunnerToken: "tok-abc123",
+	}, nil
+}
 func (f *fakeClient) GetClusters() ([]api.ClusterSummary, error) { return f.clusters, f.err }
 func (f *fakeClient) GetConfigurations() ([]types.ConfigurationSummary, error) {
 	return f.configs, f.err
@@ -336,15 +366,16 @@ func (f *fakeClient) ListEnvironments(project string) ([]api.Environment, error)
 	return f.environments, f.err
 }
 
-func (f *fakeClient) AddEnvironment(project, name, stage, region string) (*api.Environment, error) {
-	f.envProject, f.addedEnvName, f.addedEnvStage, f.addedEnvRegion = project, name, stage, region
+func (f *fakeClient) AddEnvironment(params api.AddEnvironmentParams) (*api.Environment, error) {
+	f.envProject, f.addedEnvName, f.addedEnvStage, f.addedEnvRegion = params.Project, params.Name, params.Stage, params.Region
+	f.addedEnvParams = params
 	if f.err != nil {
 		return nil, f.err
 	}
 	if f.createdEnv != nil {
 		return f.createdEnv, nil
 	}
-	return &api.Environment{ID: "env1", Name: name, Stage: stage, Status: "DRAFT"}, nil
+	return &api.Environment{ID: "env1", Name: params.Name, Stage: params.Stage, Status: "DRAFT"}, nil
 }
 
 func (f *fakeClient) ListComponents(project, kind, env string) ([]api.Component, error) {
@@ -352,8 +383,8 @@ func (f *fakeClient) ListComponents(project, kind, env string) ([]api.Component,
 	return f.components, f.err
 }
 
-func (f *fakeClient) AddComponent(project, kind, name string, fields map[string]interface{}) (*api.Component, error) {
-	f.addCompProj, f.addCompKind, f.addCompName, f.addCompFields = project, kind, name, fields
+func (f *fakeClient) AddComponent(project, kind, name, env string, fields map[string]interface{}) (*api.Component, error) {
+	f.addCompProj, f.addCompKind, f.addCompName, f.addCompEnv, f.addCompFields = project, kind, name, env, fields
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -363,8 +394,8 @@ func (f *fakeClient) AddComponent(project, kind, name string, fields map[string]
 	return &api.Component{ID: "comp1", Kind: kind, Name: name, Status: "PENDING"}, nil
 }
 
-func (f *fakeClient) RemoveComponent(project, kind, name string) error {
-	f.rmCompProj, f.rmCompKind, f.rmCompName = project, kind, name
+func (f *fakeClient) RemoveComponent(project, kind, name, env string) error {
+	f.rmCompProj, f.rmCompKind, f.rmCompName, f.rmCompEnv = project, kind, name, env
 	return f.err
 }
 
@@ -386,6 +417,67 @@ func (f *fakeClient) GetProjectProbes(project string) ([]api.ProbeState, error) 
 
 func (f *fakeClient) GetProjectAddons(project, env string) (*api.ProjectAddons, error) {
 	return f.addons, f.err
+}
+
+func (f *fakeClient) AttachChart(p api.AttachChartParams) (*api.ByoAttachResult, error) {
+	f.attachedChart = p
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.attachResult != nil {
+		return f.attachResult, nil
+	}
+	return &api.ByoAttachResult{OK: true, ID: p.ID}, nil
+}
+
+func (f *fakeClient) DetachChart(project, env, id string) error {
+	f.byoDetached = append(f.byoDetached, "chart:"+project+":"+env+":"+id)
+	return f.err
+}
+
+func (f *fakeClient) ScanChart(project, env, id string) (*api.ByoScanResult, error) {
+	f.byoScanned = append(f.byoScanned, "chart:"+project+":"+env+":"+id)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.scanResult != nil {
+		return f.scanResult, nil
+	}
+	return &api.ByoScanResult{OK: true, JobID: "job-1"}, nil
+}
+
+func (f *fakeClient) AttachIac(p api.AttachIacParams) (*api.ByoAttachResult, error) {
+	f.attachedIac = p
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &api.ByoAttachResult{OK: true, ID: "iac-1"}, nil
+}
+
+func (f *fakeClient) DetachIac(project, env string) error {
+	f.byoDetached = append(f.byoDetached, "iac:"+project+":"+env)
+	return f.err
+}
+
+func (f *fakeClient) ScanIac(project, env string) (*api.ByoScanResult, error) {
+	f.byoScanned = append(f.byoScanned, "iac:"+project+":"+env)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.scanResult != nil {
+		return f.scanResult, nil
+	}
+	return &api.ByoScanResult{OK: true, JobID: "job-2"}, nil
+}
+
+func (f *fakeClient) EnableAddon(p api.EnableAddonParams) error {
+	f.enabledAddon = p
+	return f.err
+}
+
+func (f *fakeClient) DisableAddon(project, env, addonID string) error {
+	f.disabledAddonProj, f.disabledAddonEnv, f.disabledAddonID = project, env, addonID
+	return f.err
 }
 
 func (f *fakeClient) GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error) {

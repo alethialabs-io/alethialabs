@@ -448,6 +448,34 @@ func (c *Client) doDelete(endpoint string) error {
 	return nil
 }
 
+// doDeleteWithBody is doDelete for the routes that identify WHAT to delete in the body rather than
+// the path — a collection endpoint like .../byo-charts or .../addons, where the chart/add-on id is
+// a field and not a segment. A DELETE carrying a body is legal and is what the console's own action
+// shape implies here.
+func (c *Client) doDeleteWithBody(endpoint string, payload interface{}) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+	req, err := http.NewRequest("DELETE", endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	c.setAuthHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return responseError(resp)
+	}
+	return nil
+}
+
 // --- Repositories ---
 
 func (c *Client) GetRepositories(provider string) ([]Repository, error) {
@@ -627,6 +655,31 @@ func (c *Client) RemoveRunner(runnerID string) error {
 		return fmt.Errorf("failed to remove runner: %w", err)
 	}
 	return nil
+}
+
+// RunnerRegistration is the response to RegisterRunner: the created runner plus its bearer token.
+// The token is returned ONCE — only its SHA-256 is stored — so a caller that discards it must
+// register a new runner.
+type RunnerRegistration struct {
+	Runner      Runner `json:"runner"`
+	RunnerToken string `json:"runner_token"`
+}
+
+// RegisterRunner registers a SELF-OPERATED runner the caller will run themselves, and returns its
+// token. Unlike DeployRunner nothing is provisioned, which is what makes it the answer for a cloud
+// other than AWS: DeployRunner renders infra/templates/runner/, and that directory has one cloud in
+// it. An empty cloudIdentityID leaves the runner unbound to a cloud account.
+func (c *Client) RegisterRunner(name, cloudIdentityID string) (*RunnerRegistration, error) {
+	endpoint := fmt.Sprintf("%s/cli/runners/register", c.baseURL)
+	payload := map[string]interface{}{"name": name}
+	if cloudIdentityID != "" {
+		payload["cloud_identity_id"] = cloudIdentityID
+	}
+	var resp RunnerRegistration
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return nil, fmt.Errorf("failed to register runner: %w", err)
+	}
+	return &resp, nil
 }
 
 func (c *Client) DeployRunner(name, cloudIdentityID, region, assignedRunnerID string) (*DeployRunnerResponse, error) {
@@ -1619,6 +1672,27 @@ type CreateProjectParams struct {
 	CloudIdentityID string
 	Stage           string
 	IacVersion      string
+	// Placement of the default environment onto its first Fabric. Empty ⇒ the server's default
+	// (`dedicated`, which is right for a first environment: it owns the Fabric it provisions).
+	Placement string
+	// The full environment MATRIX. When set, the server fans it out into a Fabric per `dedicated`
+	// environment plus ONE shared Fabric for the `namespace`/`vcluster` ones — which is the difference
+	// between a two-tier project costing two clusters and costing one.
+	Environments []EnvironmentSpec
+}
+
+// EnvironmentSpec is one row of the environment matrix: an environment and how it is PLACED onto a
+// Fabric. Mirrors the console placement selector's own shape, and the server validates it with the
+// console form's own schema, so the CLI cannot express a matrix the front door would reject.
+type EnvironmentSpec struct {
+	Name          string `json:"name"`
+	Stage         string `json:"stage"`
+	PlacementMode string `json:"placement_mode"`
+	// Optional: the ArgoCD destination namespace for a shared placement. Empty ⇒ derived from Name.
+	Namespace string `json:"namespace,omitempty"`
+	// Optional: `persistent` (default) or `ephemeral`.
+	Lifecycle string `json:"lifecycle,omitempty"`
+	IsDefault bool   `json:"is_default,omitempty"`
 }
 
 // CreateProject creates a new project and returns it.
@@ -1636,6 +1710,12 @@ func (c *Client) CreateProject(params CreateProjectParams) (*Project, error) {
 	}
 	if params.IacVersion != "" {
 		payload["iac_version"] = params.IacVersion
+	}
+	if params.Placement != "" {
+		payload["placement_mode"] = params.Placement
+	}
+	if len(params.Environments) > 0 {
+		payload["environments"] = params.Environments
 	}
 	var successResp struct {
 		Project *Project `json:"project"`
@@ -1658,15 +1738,48 @@ func (c *Client) ListEnvironments(project string) ([]Environment, error) {
 	return successResp.Environments, nil
 }
 
+// AddEnvironmentParams is the payload for AddEnvironment. A struct rather than positional arguments
+// because placement turned this into seven fields, and seven bare strings at a call site is where a
+// stage silently ends up in the region.
+type AddEnvironmentParams struct {
+	Project string
+	Name    string
+	Stage   string
+	Region  string
+	// Placement onto a Fabric. Empty ⇒ the server's default for an ADDED environment, `namespace` —
+	// the cheap rung. Passing `dedicated` is what buys a whole new cluster, and it should be the word
+	// you typed rather than the one you got.
+	Placement string
+	// The Fabric to place onto, by name. Empty ⇒ the Fabric the project's default environment is on.
+	// Ignored for `dedicated`, which owns a new Fabric.
+	Fabric string
+	// ArgoCD destination namespace for a shared placement. Empty ⇒ derived from Name.
+	Namespace string
+	// `persistent` (default) or `ephemeral`.
+	Lifecycle string
+}
+
 // AddEnvironment adds an environment to a project. An empty region inherits the project's.
-func (c *Client) AddEnvironment(project, name, stage, region string) (*Environment, error) {
-	endpoint := fmt.Sprintf("%s/cli/projects/%s/environments", c.baseURL, url.PathEscape(project))
-	payload := map[string]interface{}{"name": name}
-	if stage != "" {
-		payload["stage"] = stage
+func (c *Client) AddEnvironment(params AddEnvironmentParams) (*Environment, error) {
+	endpoint := fmt.Sprintf("%s/cli/projects/%s/environments", c.baseURL, url.PathEscape(params.Project))
+	payload := map[string]interface{}{"name": params.Name}
+	if params.Stage != "" {
+		payload["stage"] = params.Stage
 	}
-	if region != "" {
-		payload["region"] = region
+	if params.Region != "" {
+		payload["region"] = params.Region
+	}
+	if params.Placement != "" {
+		payload["placement_mode"] = params.Placement
+	}
+	if params.Fabric != "" {
+		payload["fabric"] = params.Fabric
+	}
+	if params.Namespace != "" {
+		payload["namespace"] = params.Namespace
+	}
+	if params.Lifecycle != "" {
+		payload["lifecycle"] = params.Lifecycle
 	}
 	var successResp struct {
 		Environment *Environment `json:"environment"`
@@ -1702,8 +1815,8 @@ func (c *Client) ListComponents(project, kind, env string) ([]Component, error) 
 
 // AddComponent creates a component of `kind` on a project. `name` is ignored for singleton
 // kinds; `fields` are validated server-side against the kind's drizzle-zod insert schema.
-func (c *Client) AddComponent(project, kind, name string, fields map[string]interface{}) (*Component, error) {
-	endpoint := fmt.Sprintf("%s/cli/projects/%s/components/%s", c.baseURL, url.PathEscape(project), url.PathEscape(kind))
+func (c *Client) AddComponent(project, kind, name, env string, fields map[string]interface{}) (*Component, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/components/%s", c.baseURL, url.PathEscape(project), url.PathEscape(kind)), env)
 	if fields == nil {
 		fields = map[string]interface{}{}
 	}
@@ -1722,15 +1835,27 @@ func (c *Client) AddComponent(project, kind, name string, fields map[string]inte
 
 // RemoveComponent deletes a component of `kind` from a project. `name` is ignored for
 // singleton kinds (which have at most one row per project).
-func (c *Client) RemoveComponent(project, kind, name string) error {
+func (c *Client) RemoveComponent(project, kind, name, env string) error {
 	endpoint := fmt.Sprintf("%s/cli/projects/%s/components/%s", c.baseURL, url.PathEscape(project), url.PathEscape(kind))
 	if name != "" {
 		endpoint = fmt.Sprintf("%s/%s", endpoint, url.PathEscape(name))
 	}
-	if err := c.doDelete(endpoint); err != nil {
+	if err := c.doDelete(withEnvParam(endpoint, env)); err != nil {
 		return fmt.Errorf("failed to remove component: %w", err)
 	}
 	return nil
+}
+
+// withEnvParam appends `?env=<env>` when env is non-empty, leaving the URL untouched otherwise so a
+// caller that names no environment keeps hitting the server's default-environment path byte for byte.
+// url.Values.Encode escapes the value, so an environment name is safe to pass through verbatim.
+func withEnvParam(endpoint, env string) string {
+	if strings.TrimSpace(env) == "" {
+		return endpoint
+	}
+	params := url.Values{}
+	params.Set("env", env)
+	return fmt.Sprintf("%s?%s", endpoint, params.Encode())
 }
 
 // --- Drift ---
@@ -1888,7 +2013,182 @@ func (c *Client) GetProjectAddons(project, env string) (*ProjectAddons, error) {
 	return &resp, nil
 }
 
+// EnableAddonParams is the payload for EnableAddon. Values is the add-on's own knob map, validated
+// server-side by that add-on's configSchema — the definition that owns them — rather than by a
+// second schema in the CLI that would drift from the catalog.
+type EnableAddonParams struct {
+	Project    string
+	Env        string
+	AddonID    string
+	Mode       string
+	Values     map[string]interface{}
+	ValuesYAML string
+}
+
+// EnableAddon enables (or reconfigures) a catalog add-on in an environment. An empty Env targets the
+// project's default environment.
+func (c *Client) EnableAddon(p EnableAddonParams) error {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/addons", c.baseURL, url.PathEscape(p.Project)), p.Env)
+	payload := map[string]interface{}{"addon_id": p.AddonID}
+	if p.Mode != "" {
+		payload["mode"] = p.Mode
+	}
+	if len(p.Values) > 0 {
+		payload["values"] = p.Values
+	}
+	if p.ValuesYAML != "" {
+		payload["values_yaml"] = p.ValuesYAML
+	}
+	var resp struct {
+		OK bool `json:"ok"`
+	}
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return fmt.Errorf("failed to enable add-on: %w", err)
+	}
+	return nil
+}
+
+// DisableAddon disables a catalog add-on in an environment.
+func (c *Client) DisableAddon(project, env, addonID string) error {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/addons", c.baseURL, url.PathEscape(project)), env)
+	if err := c.doDeleteWithBody(endpoint, map[string]interface{}{"addon_id": addonID}); err != nil {
+		return fmt.Errorf("failed to disable add-on: %w", err)
+	}
+	return nil
+}
+
 // --- BYO charts ---
+
+// AttachChartParams is the payload for AttachChart. Field validity — the repo-URL shape, the
+// git-chart-needs-a-path rule, the YAML-mapping check — is decided server-side by the same schema the
+// console form uses, so this struct carries the values and makes no rules of its own.
+type AttachChartParams struct {
+	Project    string
+	Env        string
+	ID         string
+	RepoURL    string
+	ChartPath  string
+	Ref        string
+	Namespace  string
+	ValuesYAML string
+	GitCredID  string
+	Values     map[string]interface{}
+}
+
+// ByoAttachResult is the resolved id of an attached chart or IaC source. Returned because the server
+// SLUGIFIES what you send, and a caller that wants to scan or detach it afterwards needs the id the
+// server actually stored rather than the one it guessed.
+type ByoAttachResult struct {
+	OK bool   `json:"ok"`
+	ID string `json:"id"`
+}
+
+// ByoScanResult is a queued scan job. The id is what makes the scan followable with
+// `alethia jobs logs -f` — a scan is asynchronous, and a bare ok would leave a script polling blind.
+type ByoScanResult struct {
+	OK    bool   `json:"ok"`
+	JobID string `json:"job_id"`
+}
+
+// AttachChart attaches (or updates) a BYO Helm chart in an environment.
+func (c *Client) AttachChart(p AttachChartParams) (*ByoAttachResult, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-charts", c.baseURL, url.PathEscape(p.Project)), p.Env)
+	payload := map[string]interface{}{"id": p.ID, "repo_url": p.RepoURL}
+	for k, v := range map[string]string{
+		"chart_path":        p.ChartPath,
+		"ref":               p.Ref,
+		"namespace":         p.Namespace,
+		"values_yaml":       p.ValuesYAML,
+		"git_credential_id": p.GitCredID,
+	} {
+		if v != "" {
+			payload[k] = v
+		}
+	}
+	if len(p.Values) > 0 {
+		payload["values"] = p.Values
+	}
+	var resp ByoAttachResult
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return nil, fmt.Errorf("failed to attach chart: %w", err)
+	}
+	return &resp, nil
+}
+
+// DetachChart removes a BYO Helm chart from an environment.
+func (c *Client) DetachChart(project, env, id string) error {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-charts", c.baseURL, url.PathEscape(project)), env)
+	if err := c.doDeleteWithBody(endpoint, map[string]interface{}{"id": id}); err != nil {
+		return fmt.Errorf("failed to detach chart: %w", err)
+	}
+	return nil
+}
+
+// ScanChart queues a scan of an attached BYO Helm chart and returns the job to follow.
+func (c *Client) ScanChart(project, env, id string) (*ByoScanResult, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-charts/scan", c.baseURL, url.PathEscape(project)), env)
+	var resp ByoScanResult
+	if err := c.doPost(endpoint, map[string]interface{}{"id": id}, &resp); err != nil {
+		return nil, fmt.Errorf("failed to scan chart: %w", err)
+	}
+	return &resp, nil
+}
+
+// AttachIacParams is the payload for AttachIac. VarValues is scalar-only (string/number/bool) — the
+// server refuses a nested object or an array, because tfvars are not a place for structure and never
+// a place for secrets.
+type AttachIacParams struct {
+	Project   string
+	Env       string
+	RepoURL   string
+	Ref       string
+	Path      string
+	GitCredID string
+	VarValues map[string]interface{}
+}
+
+// AttachIac attaches the environment's BYO Terraform/OpenTofu source.
+func (c *Client) AttachIac(p AttachIacParams) (*ByoAttachResult, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-iac", c.baseURL, url.PathEscape(p.Project)), p.Env)
+	payload := map[string]interface{}{"repo_url": p.RepoURL}
+	for k, v := range map[string]string{
+		"ref":               p.Ref,
+		"path":              p.Path,
+		"git_credential_id": p.GitCredID,
+	} {
+		if v != "" {
+			payload[k] = v
+		}
+	}
+	if len(p.VarValues) > 0 {
+		payload["var_values"] = p.VarValues
+	}
+	var resp ByoAttachResult
+	if err := c.doPost(endpoint, payload, &resp); err != nil {
+		return nil, fmt.Errorf("failed to attach IaC source: %w", err)
+	}
+	return &resp, nil
+}
+
+// DetachIac removes the environment's BYO IaC source. The environment is the whole address — it holds
+// at most one source — so there is nothing else to identify.
+func (c *Client) DetachIac(project, env string) error {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-iac", c.baseURL, url.PathEscape(project)), env)
+	if err := c.doDelete(endpoint); err != nil {
+		return fmt.Errorf("failed to detach IaC source: %w", err)
+	}
+	return nil
+}
+
+// ScanIac queues a scan of the environment's BYO IaC source and returns the job to follow.
+func (c *Client) ScanIac(project, env string) (*ByoScanResult, error) {
+	endpoint := withEnvParam(fmt.Sprintf("%s/cli/projects/%s/byo-iac/scan", c.baseURL, url.PathEscape(project)), env)
+	var resp ByoScanResult
+	if err := c.doPost(endpoint, map[string]interface{}{}, &resp); err != nil {
+		return nil, fmt.Errorf("failed to scan IaC source: %w", err)
+	}
+	return &resp, nil
+}
 
 // ByoChart is one attached BYO Helm chart in an environment (scan status only, not the report).
 type ByoChart struct {

@@ -89,13 +89,17 @@ pools), Cloud SQL, Memorystore (Redis), Cloud DNS, Artifact Registry, Secret Man
 Firestore, Pub/Sub, and the workload-identity service accounts + bindings for in-cluster controllers.
 
 <Callout type="info">
-**Least-privilege by default — no `roles/editor`.** The provisioner service account gets **10 predefined
+**Least-privilege by default — no `roles/editor`.** The provisioner service account gets **11 predefined
 roles + 5 custom roles**:
 
-- **10 predefined roles** for services whose Google-maintained admin set is already tightly scoped and
+- **11 predefined roles** for services whose Google-maintained admin set is already tightly scoped and
   churns with new features (`container.admin`, `compute.networkAdmin`, `compute.securityAdmin`,
   `servicenetworking.networksAdmin`, `cloudsql.admin`, `redis.admin`, `dns.admin`, `artifactregistry.admin`,
-  `secretmanager.admin`, `iam.serviceAccountUser`) — hand-enumerating those buys nothing.
+  `secretmanager.admin`, `cloudkms.admin`, `iam.serviceAccountUser`) — hand-enumerating those buys nothing.
+  `cloudkms.admin` creates the customer-managed key that encrypts Kubernetes Secrets in etcd. It grants no
+  permission to *use* the key: `cryptoKeys.useToEncrypt` and `useToDecrypt` live in a separate role that the
+  provisioner never holds, so it writes the key's encrypt/decrypt binding for your cluster and cannot read a
+  Secret with it.
 - **5 custom roles** replacing the predefined admin roles that bundled **data-plane access** a provisioner
   must never hold, granting management verbs only: GCS bucket mgmt *without object data*, Firestore
   database/index mgmt *without entity data*, Pub/Sub topic/sub mgmt *without publish/consume*, add-on SA

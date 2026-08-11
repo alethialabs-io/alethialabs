@@ -57,6 +57,11 @@ function sample(node: unknown, root: JsonSchema): unknown {
 
 	if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
 
+	// z.literal(x) renders as {type, const: x} — the const IS the only valid value,
+	// so it must win over the type-based default (e.g. a literal `true` must not
+	// sample as the boolean default `false`).
+	if ("const" in schema) return schema.const;
+
 	const typeVal = schema.type;
 	const type = Array.isArray(typeVal)
 		? (typeVal.find((t) => t !== "null") ?? typeVal[0])
@@ -95,6 +100,9 @@ function sample(node: unknown, root: JsonSchema): unknown {
 // contract registry key → fixture filename in packages/core/api/testdata/.
 const FIXTURES: Record<keyof typeof cliContract, string> = {
 	RunnersResponse: "runners.json",
+	ByoChartAttachResponse: "byo_attach.json",
+	ByoScanResponse: "byo_scan.json",
+	RunnerRegistrationResponse: "runner_registration.json",
 	ClustersResponse: "clusters.json",
 	ClusterDetailResponse: "cluster_detail.json",
 	CloudIdentitiesResponse: "cloud_identities.json",

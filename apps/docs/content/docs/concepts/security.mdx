@@ -139,11 +139,14 @@ Registry, Secret Manager, Cloud Storage, Firestore, Pub/Sub, and the workload-id
 bindings for in-cluster controllers.
 
 <Callout type="info">
-**Least-privilege by default — no `roles/editor`.** The service account gets **10 predefined roles + 5
+**Least-privilege by default — no `roles/editor`.** The service account gets **11 predefined roles + 5
 custom roles**. The predefined roles are kept for services whose Google-maintained admin set is already
 tightly scoped and churns with new features (container / compute.network / compute.security /
-servicenetworking / cloudsql / redis / dns / artifactregistry / secretmanager, plus `iam.serviceAccountUser`)
-— hand-enumerating those buys nothing. The **5 custom roles replace the predefined admin roles that bundled
+servicenetworking / cloudsql / redis / dns / artifactregistry / secretmanager / cloudkms, plus
+`iam.serviceAccountUser`) — hand-enumerating those buys nothing. `cloudkms.admin` lets the provisioner
+create the customer-managed key that encrypts Kubernetes Secrets; it carries no permission to *use* that
+key, so the provisioner writes the key's encrypt/decrypt binding for the cluster and can never read a
+Secret with it. The **5 custom roles replace the predefined admin roles that bundled
 data-plane access a provisioner must never hold**, granting management verbs only: GCS bucket mgmt *without
 object data*, Firestore database/index mgmt *without entity data*, Pub/Sub topic/sub mgmt *without
 publish/consume*, add-on SA mgmt (dropping undelete/enable/disable), and a project-metadata reader

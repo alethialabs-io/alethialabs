@@ -12,8 +12,9 @@ import {
 } from "@/lib/cli/project-components";
 import {
 	resolveCliProject,
-	resolveDefaultEnvironmentId,
+	resolveCliWriteEnvironment,
 } from "@/lib/cli/resolve-project";
+import { cliEnvironmentError } from "@/lib/cli/respond";
 import { NextResponse } from "next/server";
 import { cliJson } from "@/lib/cli/respond";
 import {
@@ -68,17 +69,19 @@ export async function POST(
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
-		const environmentId = await resolveDefaultEnvironmentId(project.id);
-		if (!environmentId) {
-			return NextResponse.json(
-				{ error: "Project has no environment to add the component to" },
-				{ status: 400 },
-			);
-		}
+		// `?env=` names the environment to author into — id, name or stage
+		// (resolveCliEnvironment). Without it, the project's default, which is what this route
+		// used to do unconditionally: the reason a two-environment project could not be built
+		// from the CLI at all, since each environment carries its own `apps_path`.
+		const target = await resolveCliWriteEnvironment(
+			project.id,
+			new URL(req.url).searchParams.get("env"),
+		);
+		if (!target.ok) return cliEnvironmentError(target);
 		const component = await insertProjectComponent(
 			kind,
 			project.id,
-			environmentId,
+			target.id,
 			name ?? "",
 			validated.values,
 		);
@@ -117,7 +120,15 @@ export async function DELETE(
 		if (!project) {
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
-		const removed = await deleteProjectComponent(kind, project.id, "");
+		// Scoped to ONE environment. Before `?env=` existed this deleted the singleton row of
+		// every environment in the project — invisible while only the default could be written,
+		// data loss the moment two environments can be.
+		const target = await resolveCliWriteEnvironment(
+			project.id,
+			new URL(req.url).searchParams.get("env"),
+		);
+		if (!target.ok) return cliEnvironmentError(target);
+		const removed = await deleteProjectComponent(kind, project.id, "", target.id);
 		if (!removed) {
 			return NextResponse.json({ error: "Component not found" }, { status: 404 });
 		}

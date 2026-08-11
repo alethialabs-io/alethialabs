@@ -77,12 +77,19 @@ jobs:
     # cluster provisions in ~10-15m), and the soak adds a bounded ~10-25m of day-2 loops on
     # that same cheap cluster (cents/hour). The finer step timeout below kills a hang first.
     #
-    # 90→165 ONLY when the #845 acceptance gate is on. That gate places 2 namespace tiers + a whole
-    # vcluster (its own deploy + app-health + destroy waits) on top of the base proof, for a test ctx
-    # of ~135m — which the 75m step cap would kill mid-run, so an enabled gate could never finish.
     # The raise is conditional because a fabric-demo night roughly doubles the billed cluster-hours
     # per cloud; with E2E_FABRIC_DEMO unset the bound is unchanged and so is the cost.
-    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 165 || 90 }}
+    #
+    # ⚠️ THESE TWO NUMBERS ARE NOT THE LADDER — they are its outermost rung, and they are VERIFIED
+    # rather than reasoned about. `test/e2e/cmd/t2budget` computes the ladder from the harness's own
+    # arithmetic (ResolveT2Budget) at the top of the T2 step and FAILS THE STEP if this cap cannot
+    # contain it. That check exists because the previous numbers were wrong for four of five clouds:
+    # the old comment asserted a "40m base" ctx, which is HETZNER's (25m deploy wait), while every
+    # managed cloud waits 50m and the workflow turns the soak on by default (`vars.E2E_SOAK || '10m'`
+    # below) — a real ctx of 90m against a 75m step cap. The step killed the process before the ctx
+    # could cancel, which loses the named scenario failure AND skips the in-process t.Cleanup
+    # teardown, leaking the cluster to the sweeper. Do not hand-tune these; run t2budget.
+    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 210 || 120 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -347,6 +354,9 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         env:
           PROVIDER: ${{ matrix.provider }}
+          # Read here, not only in the T2 step, because the fabric demo needs a BIGGER POOL and the
+          # shape is decided here. See the demo branch below.
+          E2E_FABRIC_DEMO: ${{ vars.E2E_FABRIC_DEMO }}
         run: |
           # NET = per-provider network-block override (t2MergeNetworkJSON → snapshot `network`).
           # AWS folds single_nat_gateway=true into the FULL snapshot (one NAT vs one-per-AZ ≈ halves
@@ -378,6 +388,27 @@ jobs:
             fi
             SHAPE="$(jq -c . "$HEAVY")"
             echo "::notice::T2 FULL-BAR heavy shape for $PROVIDER (from $HEAVY): $SHAPE"
+          elif printf '%s' "${E2E_FABRIC_DEMO:-}" | grep -qiE '^(1|true|yes|on)$'; then
+            # FABRIC DEMO (#845): the other heavy scenario, and until #2295-era it was the only one
+            # with no shape override — so it ran on the cheapest floor shape above. On gcp that is ONE
+            # e2-small (2 GiB) against a workload measured at 4.91 vCPU / 4.14 GiB (the boutique
+            # overlays placed once per tier PLUS once more inside the vcluster, whose pods schedule on
+            # the host). Those pods sit Pending, nothing recovers them, and the run burns the whole
+            # 165-minute cap on every cloud before reporting — ~11 hours of billed cluster time to
+            # learn a node size. t2RequireFabricDemoNodeShape now refuses that in seconds, and this is
+            # the shape that satisfies it.
+            #
+            # The truthiness test MATCHES THE HARNESS (t2Truthy: 1|true|yes|on) rather than the
+            # `!= ''` the job/step caps use, so E2E_FABRIC_DEMO=0 does not silently buy a big pool for
+            # a scenario that will not run.
+            DEMO="test/e2e/fixtures/cluster_json.demo.${PROVIDER}.json"
+            if [ ! -f "$DEMO" ]; then
+              # Documented exclusion, not a silent gap (cloud-parity rule) — same posture as full-bar.
+              echo "::error::fabric demo requested for '$PROVIDER' but $DEMO does not exist — that cloud has no demo profile. Add the fixture sized to clear fabricDemoNodeFloor() in test/e2e/t2_providers.go (its floor scales with the tier count, and the guard prints the shortfall), or exclude the cloud from fabric-demo runs. TestDemoProfilesSatisfyTheFabricDemoGuard checks a new fixture for free on every PR."
+              exit 1
+            fi
+            SHAPE="$(jq -c . "$DEMO")"
+            echo "::notice::T2 FABRIC-DEMO shape for $PROVIDER (from $DEMO): $SHAPE"
           elif [ -n "$SHAPE" ]; then
             echo "::notice::T2 cheapest shape for $PROVIDER: $SHAPE"
           fi
@@ -701,19 +732,25 @@ jobs:
       # ── The real proof. A finer step-level timeout than the job cap so a hung apply
       #    is KILLED here (the step fails) and the always() teardown below still runs
       #    normally — rather than the whole job hitting its cap. ──
-      # 75m step / 80m go-timeout: the test's own ctx is 40m base (deploy wait 25m + the
-      # ArgoCD Healthy+Synced convergence assertion 8m + build headroom) PLUS the opt-in soak
-      # budget (window + drift/PVC bounds, BYOC A0.3), so a soak run has headroom; a non-soak
-      # run still finishes far inside this. All three exceed the ctx so the ctx cancels first.
+      # The LADDER is ctx < go-timeout < step < job, and each rung has a job:
       #
-      # With the #845 gate on the arithmetic becomes 135m ctx < 145m go-timeout < 150m step < 165m
-      # job — the SAME invariant (the ctx must always cancel first, so a failure reports as the
-      # scenario that ran long rather than as an opaque step kill), just shifted up. See the job
-      # timeout above for why the raise is conditional.
+      #   ctx  cancels first  → the scenario reports its own bounded failure, and t.Cleanup tears down
+      #   go   +5m            → if the ctx is not honored, go panics with a stack naming the test
+      #   step +5m            → if go is wedged, the step kills it and the run still reaches teardown
+      #   job  +15m           → teardown, proof capture and the scrub all run after the step is done
+      #
+      # The two inner rungs are DERIVED, not written here: the step's `run:` asks
+      # test/e2e/cmd/t2budget for the go-timeout, computed by the same ResolveT2Budget the test uses
+      # for its ctx — so they cannot disagree. The two outer rungs are `timeout-minutes` values, which
+      # GitHub evaluates before the step body runs, so they stay expressions and t2budget VERIFIES
+      # them (failing at the top of the step, ~1 minute in, rather than by a mid-scenario kill).
+      #
+      # TestT2BudgetLadderHolds proves the ordering across every cloud × all 128 scenario
+      # combinations on every PR. It is the reason there are no arithmetic claims in this comment.
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 150 || 75 }}
+        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 195 || 100 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -921,6 +958,25 @@ jobs:
           ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE }}
           ALETHIA_E2E_KEYLESS_DB_NAMESPACE: ${{ vars.E2E_KEYLESS_DB_NAMESPACE }}
           ALETHIA_E2E_KEYLESS_DB_SUMMARY: ${{ runner.temp }}/keyless-db-summary.json
+          #    The per-cloud siblings the comment above TELLS a maintainer to use. They were missing,
+          #    and this was worse than an unwired scenario: ENGINE_VERSION and INSTANCE_CLASS have no
+          #    defaults and are REQUIRED, so a maintainer who followed the documentation and set
+          #    E2E_KEYLESS_DB_ENGINE_VERSION_GCP got a run that died in seconds insisting a required
+          #    variable was unset. t2ArgoEnvForProvider COMPOSES the name at runtime (base + "_" +
+          #    upper(provider)), so `ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION_GCP` is written in no Go
+          #    file and the literal-scanning reachability guard could never see the gap.
+          #    TestPerCloudSiblingsReachTheNightly now can. gcp + azure only, matching the A0.6 repo
+          #    wave above — alibaba/hetzner carry the product's own documented exclusion and skip.
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_GCP: ${{ vars.E2E_KEYLESS_DB_ENGINE_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION_GCP: ${{ vars.E2E_KEYLESS_DB_ENGINE_VERSION_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_INSTANCE_CLASS_GCP: ${{ vars.E2E_KEYLESS_DB_INSTANCE_CLASS_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_IMAGE_GCP: ${{ vars.E2E_KEYLESS_DB_IMAGE_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE_GCP: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE_GCP }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_AZURE: ${{ vars.E2E_KEYLESS_DB_ENGINE_AZURE }}
+          ALETHIA_E2E_KEYLESS_DB_ENGINE_VERSION_AZURE: ${{ vars.E2E_KEYLESS_DB_ENGINE_VERSION_AZURE }}
+          ALETHIA_E2E_KEYLESS_DB_INSTANCE_CLASS_AZURE: ${{ vars.E2E_KEYLESS_DB_INSTANCE_CLASS_AZURE }}
+          ALETHIA_E2E_KEYLESS_DB_IMAGE_AZURE: ${{ vars.E2E_KEYLESS_DB_IMAGE_AZURE }}
+          ALETHIA_E2E_KEYLESS_DB_CLIENT_IMAGE_AZURE: ${{ vars.E2E_KEYLESS_DB_CLIENT_IMAGE_AZURE }}
           # ── CROSS-ACCOUNT KEYLESS REGISTRY PULL (#1047) — the last unproven link in epic #1046.
           #
           #    The `registry-token` MINT was proven in July 2026 against live ECR/GAR/ACR, but with
@@ -966,6 +1022,30 @@ jobs:
           #    rewriting. Stated rather than half-wired — scripts/e2e/registry-e2e.sh points this at
           #    its own bundle, so the verdict already has a real consumer on the recording path.
           ALETHIA_E2E_XACCT_REGISTRY_SUMMARY: ${{ runner.temp }}/xacct-registry-summary.json
+
+          # ── ACM certificate against the DELEGATED zone (#1773). ────────────────────────────────
+          #    The only scenario that proves Alethia can issue a REAL, publicly-validated TLS
+          #    certificate. It brings the STABLE zone created by infra/aws-oidc/e2e-dns.tf rather
+          #    than letting the template make one, because ACM validates over the PUBLIC internet
+          #    and a zone we merely created is delegated by nobody.
+          #
+          #    ⚠️ MUTUALLY EXCLUSIVE WITH E2E_MAX_CONFIG, and the harness refuses the combination
+          #    LOUDLY rather than skipping: bringing a zone id makes cloud_dns_enabled false, so no
+          #    aws_route53_zone is created and the max-config `dns` kind reports Missing. Run this
+          #    on a floor night; the full bar proves the native-zone path.
+          #
+          #    ⚠️ PREREQUISITE OUTSIDE THIS REPO: e2e.alethialabs.io must be delegated from
+          #    Cloudflare to that zone's four name servers. Until then ACM cannot issue no matter
+          #    what is set here. `dig NS e2e.alethialabs.io` is the check.
+          #
+          #    aws-only and that is a real ceiling: GCP and Azure issue TLS in-cluster via
+          #    cert-manager (#1858 deleted GCP's managed-certificate resource), so there is no
+          #    cloud-side certificate for this to assert. UNSET ⇒ empty ⇒ a clean skip.
+          ALETHIA_E2E_ACM_CERT: ${{ vars.E2E_ACM_CERT }}
+          ALETHIA_E2E_ACM_CERT_ZONE_ID: ${{ vars.E2E_ACM_CERT_ZONE_ID }}
+          ALETHIA_E2E_ACM_CERT_ZONE_NAME: ${{ vars.E2E_ACM_CERT_ZONE_NAME }}
+          ALETHIA_E2E_ACM_CERT_TIMEOUT: ${{ vars.E2E_ACM_CERT_TIMEOUT }}
+          ALETHIA_E2E_ACM_CERT_SUMMARY: ${{ runner.temp }}/acm-cert-summary.json
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
           #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).
@@ -979,9 +1059,25 @@ jobs:
           #    (default $600/mo) — E2E_FULL_BAR was set to `true` in $GITHUB_ENV by the resolve step. ──
           INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
           ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (env.E2E_FULL_BAR == 'true' && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || '' }}
+          # The two outer rungs, passed in so t2budget can verify them against what this leg needs.
+          # They are the SAME expressions as the step/job timeout-minutes above; if you change one,
+          # change both — and t2budget will tell you if you got it wrong, on the next run.
+          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 195 || 100 }}
+          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 210 || 120 }}
         run: |
+          # Derive the go-timeout from the harness's OWN budget arithmetic, in this step, with this
+          # step's env — so the number `go test` is given and the ctx the test builds come from one
+          # function (ResolveT2Budget) and cannot drift. It also verifies the step/job caps and fails
+          # here, before any provisioning spend, if either cannot contain the ladder.
+          # See test/e2e/cmd/t2budget for the whole story.
+          eval "$(GOWORK=off go run ./cmd/t2budget \
+            -provider "$ALETHIA_E2E_PROVIDER" \
+            -env "$ALETHIA_E2E_ENV" \
+            -step-cap-minutes "$T2_STEP_CAP_MINUTES" \
+            -job-cap-minutes "$T2_JOB_CAP_MINUTES")"
+          echo "::notice::T2 ctx ${ctx_minutes}m · go-timeout ${go_timeout} · step cap ${T2_STEP_CAP_MINUTES}m · job cap ${T2_JOB_CAP_MINUTES}m"
           GOWORK=off go test -tags=e2e_t2 ./... \
-            -run TestT2RealCloudProvisioning -count=1 -timeout ${{ vars.E2E_FABRIC_DEMO != '' && '145m' || '80m' }} -v
+            -run TestT2RealCloudProvisioning -count=1 -timeout "$go_timeout" -v
 
       # ── Proof capture v2 (BYOC A0.4). Runs on ANY t2 outcome (always()) so a RED night is
       #    debuggable, not just a green one: it builds a structured, SCRUBBED proof bundle
@@ -1021,6 +1117,7 @@ jobs:
           # Fabric enterprise-demo acceptance verdict (#845), written by the T2 test at the SAME
           # path the t2 step set; folded into the bundle + step summary (absent ⇒ unchanged).
           ALETHIA_E2E_FABRIC_DEMO_SUMMARY: ${{ runner.temp }}/fabric-demo-summary.json
+          ALETHIA_E2E_ACM_CERT_SUMMARY: ${{ runner.temp }}/acm-cert-summary.json
           # BYO-IaC continuous-proof verdict (#1765), written by the T2 leg at the SAME path the t2
           # step set; folded into the bundle + step summary (absent ⇒ unchanged). It carries only
           # names, booleans, counts and a PUBLIC commit + plan digest.
