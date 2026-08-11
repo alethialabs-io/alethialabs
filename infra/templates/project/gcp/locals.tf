@@ -77,6 +77,42 @@ locals {
   gke_name       = "gke-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
   cloud_dns_name = "dns-${local.gcp_regions_short[local.gcp_region_key]}-${var.environment}-${var.project_name}"
 
+  # The Cloud DNS zone this project actually serves: the one we create, or the one the caller
+  # BROUGHT — same idea as external_secrets_adopted below, and for the same reason. Everything that
+  # grants on, or points at, the zone reads THIS and never `var.cloud_dns_enabled` directly, so
+  # bringing a zone cannot be honoured in one place and missed in another.
+  #
+  # That split is exactly what #2294 was. `cloud_dns_enabled` is the CREATE gate; three separate
+  # sites read it as if it meant "a zone exists", and each would have failed differently for a
+  # brought zone — a null output that makes CertManagerSolver() fail closed, an external-dns IAM
+  # binding that never gets created, and a precondition that refuses the create path.
+  #
+  # Empty means there is genuinely no CLOUD DNS zone to address. Two distinct ways that happens, and
+  # the second is easy to get wrong:
+  #
+  #   * DNS is off entirely; or
+  #   * a PLUGGABLE DNS CONNECTOR owns the zone (`dns_provider != "native"`, e.g. Cloudflare). Then
+  #     `cloud_dns_zone_name` may well be set — the caller named their Cloudflare zone — and it is
+  #     still NOT a Cloud DNS managed zone. Granting roles/dns.admin on it would fail the apply
+  #     against a zone that does not exist in Cloud DNS, and exporting it would make
+  #     CertManagerSolver() render a cloudDNS solver for a zone Cloudflare serves. The native guard
+  #     wraps BOTH branches for that reason, not just the create branch.
+  #
+  # The created branch reads the MODULE'S OWN OUTPUT and never re-derives the name. That is not
+  # stylistic: modules/cloud-dns builds `name = "${project_name}-${environment}-${zone_name}"`, so
+  # the real zone is `alethia-nl-production-dns-ew3-production-alethia-nl` while `cloud_dns_name` is
+  # only the last third of it. A re-derivation here would have pointed the roles/dns.admin grant at
+  # a zone name that does not exist — an apply-time failure on the ONE path that previously worked.
+  # (The `tofu test` in checks_ingress_armor.tftest.hcl caught exactly that during this change.)
+  #
+  # `length(module.cloud_dns) > 0` rather than a copy of the module's count predicate, for the reason
+  # outputs.tf sets out: a duplicated predicate drifted from the count once already and planned an
+  # "Invalid index" that failed the whole apply.
+  #
+  # Derived here rather than inline so `tofu test` can assert on it, and so the output and the IAM
+  # grant read ONE value: the two cannot disagree about which zone the project has.
+  external_dns_zone = length(module.cloud_dns) > 0 ? module.cloud_dns[0].zone_name : (var.dns_provider == "native" ? var.cloud_dns_zone_name : "")
+
   # The external-secrets GSA this deploy uses: the caller's adopted one, or the one we created.
   # Everything that grants to, binds, or exports the ESO identity reads these — never the resource
   # directly — so adoption cannot be honoured in one place and missed in another. A half-adopted
