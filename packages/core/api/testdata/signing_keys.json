@@ -1,0 +1,22 @@
+{
+  "signing_keys": [
+    {
+      "key_id": "0123456789abcdef",
+      "public_key": "8j5PBZQ0lF2mQxYq0pQ4Ck0m4nBqTfKMv3vD8H1yZ2A=",
+      "algorithm": "ed25519",
+      "source": "org",
+      "provider": "aws",
+      "status": "active",
+      "active": true
+    },
+    {
+      "key_id": "fedcba9876543210",
+      "public_key": "N1mQ8kZ0pB3xVfL2wR7tYcE4uH6aS9dG1jK5nP0qM8s=",
+      "algorithm": "ed25519",
+      "source": "platform",
+      "provider": null,
+      "status": null,
+      "active": true
+    }
+  ]
+}
