@@ -113,6 +113,11 @@ resource "azurerm_key_vault_key" "aks_secrets" {
     "unwrapKey",
     "wrapKey",
   ]
+
+  # This one matters more than the identities. aks_secrets_encryption_enabled REQUIRES
+  # purge protection (the precondition above), so a key the sweeper cannot find cannot be
+  # purged either — it is the one resource here that an untagged orphan strands permanently.
+  tags = local.azure_default_tags
 }
 
 # Granted to the identity, not to the cluster — that is what makes it expressible before the cluster
