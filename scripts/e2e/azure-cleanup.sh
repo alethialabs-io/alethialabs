@@ -71,6 +71,20 @@ DELETE_RETRIES="${DELETE_RETRIES:-5}"
 # teardown is ~10-15m). We fire all deletes async, then WAIT (bounded) for them to complete so
 # verify_swept confirms a real teardown rather than false-REDing an in-flight delete.
 DELETE_WAIT_TIMEOUT="${DELETE_WAIT_TIMEOUT:-1500}" # seconds to wait for RG deletes to complete
+# ── PREFLIGHT budget (#2257, ported from aws-cleanup.sh by #2330). The preflight's "never blocks
+# the caller" promise is carried by `exit 0` at the end of its loop — which is only reached if the
+# loop ENDS. Unbounded, it cannot promise that: on run 31459117502 the AWS equivalent consumed 86
+# of a 90-minute job cap, the job hit its cap, GitHub marked it CANCELLED, and the always()
+# teardown died mid-step leaving ~$105/mo standing.
+#
+# Azure is the WORST case of the four, which is why the default budget here is larger than the
+# aws 900s but the env cap is smaller: sweep_env waits on wait_rgs_gone TWICE, each bounded by
+# DELETE_WAIT_TIMEOUT (1500s), so a single stubborn orphan can legitimately burn ~50 minutes. Two
+# such orphans exceed e2e-orphan-reaper.yml's 75-minute job cap on their own — and that cap being
+# hit is the same cancel-mid-sweep failure this issue exists to fix. Until this port the reaper
+# passed both bounds and azure silently ignored them.
+PREFLIGHT_BUDGET_SECONDS="${PREFLIGHT_BUDGET_SECONDS:-1800}" # wall-clock for the whole sweep loop
+PREFLIGHT_MAX_ENVS="${PREFLIGHT_MAX_ENVS:-2}"                # orphans attempted per run
 
 # ── Guard 1: a specific ENV is REQUIRED. No ENV ⇒ no filter ⇒ hard refuse. ──
 if [ -z "$ENV" ]; then
@@ -420,15 +434,39 @@ if [ "$PREFLIGHT" = "1" ]; then
 	fi
 	# shellcheck disable=SC2086
 	echo "  orphan run ENVs found: $(printf '%s ' $orphans)"
+	echo "  budget: ${PREFLIGHT_BUDGET_SECONDS}s wall-clock, at most ${PREFLIGHT_MAX_ENVS} orphan(s) this run"
 	residual=0
+	attempted=0
+	deadline=$(($(date +%s) + PREFLIGHT_BUDGET_SECONDS))
+	# Anything the bounds stop us from reaching is NAMED, not silently dropped — an unswept orphan
+	# is BILLING, so "we ran out of budget" has to be as visible as "we tried and failed".
+	skipped=""
 	while IFS= read -r oenv; do
 		[ -n "$oenv" ] || continue
-		echo "── preflight sweep: prior run ${oenv} ──"
+		if [ "$attempted" -ge "$PREFLIGHT_MAX_ENVS" ]; then
+			skipped="${skipped}${oenv} (cap) "
+			continue
+		fi
+		now=$(date +%s)
+		if [ "$now" -ge "$deadline" ]; then
+			skipped="${skipped}${oenv} (budget) "
+			continue
+		fi
+		attempted=$((attempted + 1))
+		echo "── preflight sweep: prior run ${oenv} (${attempted}/${PREFLIGHT_MAX_ENVS}, $((deadline - now))s budget left) ──"
 		if ! sweep_env "$oenv"; then
 			echo "::warning::preflight could not fully sweep prior-run orphan ${oenv} (still billing) — the always() teardown / next preflight will retry. NOT failing this provisioning run."
 			residual=1
 		fi
 	done <<<"$orphans"
+	if [ -n "$skipped" ]; then
+		# ::error:: (not ::warning::) because a bounded preflight that keeps deferring the SAME
+		# orphan every night is how an orphan survives long enough to eat a job cap. This is the
+		# signal that a human has to sweep it by hand; it still does not fail the step.
+		echo "::error::preflight left orphan(s) UNSWEPT and BILLING — bounds reached before they were reached: ${skipped}"
+		echo "::error::sweep by hand, scope-locked: ALETHIA_E2E_ENV=<env> ALETHIA_E2E_REGION=${REGION} ./scripts/e2e/azure-cleanup.sh"
+		residual=1
+	fi
 	if [ "$residual" = "1" ]; then
 		echo "⚠ preflight finished with residual orphans (see warnings above) — continuing (best-effort, non-fatal)"
 	else

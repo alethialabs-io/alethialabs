@@ -9,7 +9,15 @@
 # Postgres-backed control plane and provisions a genuine ephemeral cluster from
 # infra/templates/project/<provider>, then asserts the same RunDeployV2 outcomes
 # (SUCCESS + cluster_ready + a signed ed25519 receipt + shipped logs + a Ready node),
-# captures a committable proof, and GUARANTEES teardown.
+# captures a committable proof, and tears down.
+#
+# TEARDOWN, PRECISELY (#2330). It is guaranteed on the SUCCESS and FAILURE paths, where the
+# `always()` sweeper gets the job's remaining budget. It is NOT guaranteed on CANCELLATION: the
+# runner kills the whole worker 4m45s after the cancel signal, and that budget is shared by every
+# remaining `always()` step and every action `post:` step. This file used to say "GUARANTEES
+# teardown" flatly; run 31459117502 left ~$105/month standing and proved the claim wrong.
+# What covers that path is `e2e-orphan-reaper.yml`, out-of-band, plus the cancellation-only sweep
+# below which wins the race in the common case without promising to.
 #
 # ─────────────────────────  Maintainer-gated (opt-in)  ─────────────────────────
 # This provisions REAL, billable infrastructure, so it is OFF until a maintainer
@@ -1227,6 +1235,60 @@ jobs:
           echo "::notice::T2 ctx ${ctx_minutes}m · go-timeout ${go_timeout} · step cap ${T2_STEP_CAP_MINUTES}m · job cap ${T2_JOB_CAP_MINUTES}m"
           GOWORK=off go test -tags=e2e_t2 ./... \
             -run TestT2RealCloudProvisioning -count=1 -timeout "$go_timeout" -v
+
+      # ── Teardown, CANCELLATION PATH ONLY (#2330). ───────────────────────────────────────────
+      #
+      #    A cancelled job gets ONE shared budget for everything still queued — the runner arms a
+      #    single kill timer at (cancel-timeout − 15s), i.e. 4m45s by default, and kills the whole
+      #    worker when it expires (actions/runner JobDispatcher.cs). Every remaining `always()`
+      #    step AND every action `post:` step draws from that same 285 seconds.
+      #
+      #    The `Guaranteed teardown` step at the bottom of this job is therefore LAST IN LINE on
+      #    the one path where the budget is scarce: proof capture, two artifact uploads and a log
+      #    scrub all run first. On run 31459117502 it was reached with the window nearly gone,
+      #    was killed mid-sweep with an EMPTY step conclusion, and left an EKS control plane, a
+      #    NAT gateway and a VPC standing — ~$105/month, until swept by hand.
+      #
+      #    So on the cancellation path ONLY, sweep here instead: first in the queue, whole window.
+      #
+      #    WHY NOT JUST MOVE THE EXISTING STEP UP. Because `Capture proof` below reads LIVE
+      #    CLUSTER STATE through $HOME/.alethia/kubeconfig. Tearing down before it would gut the
+      #    proof bundle on every SUCCESSFUL night to fix a rare cancellation — trading the
+      #    nightly's whole committable-evidence purpose for it. `cancelled()` is false on the
+      #    success and failure paths, so this step is skipped there and the existing late teardown
+      #    runs after capture exactly as before.
+      #
+      #    `cancelled()` and NOT `!cancelled()`: GitHub's expressions page recommends the latter as
+      #    the modern replacement for `always()`, and under cancellation it evaluates FALSE — on a
+      #    teardown step that advice means it never runs at all.
+      #
+      #    This is MITIGATION, not a guarantee. A cancel arriving after this step's position, a
+      #    REST force-cancel (which bypasses conditions outright) or a runner shutdown (which skips
+      #    condition evaluation entirely) all still land on e2e-orphan-reaper.yml. Nothing that
+      #    lives inside the job it protects can cover the job dying; this only makes the common
+      #    case win the race it was previously losing. ──
+      - name: Teardown on cancellation (first in the 4m45s window)
+        if: cancelled() && steps.gate.outputs.run == 'true'
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          ALETHIA_E2E_ENV: ${{ env.E2E_ENV }}
+          ALETHIA_E2E_PROJECT: ${{ env.E2E_PROJECT }}
+        run: |
+          if [ -z "${E2E_CLUSTER:-}" ] || [ -z "${E2E_ENV:-}" ]; then
+            echo "::warning::E2E_CLUSTER/E2E_ENV unset at cancellation — nothing was provisioned yet, nothing to sweep."
+            exit 0
+          fi
+          case "$PROVIDER" in
+            hetzner) SCRIPT="./scripts/e2e/hcloud-cleanup.sh" ;;
+            aws)     SCRIPT="./scripts/e2e/aws-cleanup.sh" ;;
+            gcp)     SCRIPT="./scripts/e2e/gcp-cleanup.sh" ;;
+            azure)   SCRIPT="./scripts/e2e/azure-cleanup.sh" ;;
+            alibaba) SCRIPT="./scripts/e2e/alibaba-cleanup.sh" ;;
+            *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
+          esac
+          [ -x "$SCRIPT" ] || { echo "::error::$SCRIPT missing/not executable"; exit 1; }
+          echo "::warning::job CANCELLED — sweeping ${E2E_ENV} now, ahead of proof capture, because the window is shared and short."
+          "$SCRIPT" "$E2E_CLUSTER"
 
       # ── Proof capture v2 (BYOC A0.4). Runs on ANY t2 outcome (always()) so a RED night is
       #    debuggable, not just a green one: it builds a structured, SCRUBBED proof bundle

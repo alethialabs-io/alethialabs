@@ -63,6 +63,10 @@ TOTAL=5
 # would silently return us to "absence means never enabled" — so a jobs payload that contains jobs
 # but NONE matching this prefix is reported as a wiring break rather than quietly believed.
 PROVISION_JOB_PREFIX="${PROVISION_JOB_PREFIX:-Provision + verify + teardown}"
+# The step whose conclusion answers "was the account swept?" (#2330). Overridable for the same
+# reason PROVISION_JOB_PREFIX is: it is a DISPLAY NAME, and a rename here silently kills the
+# cross-check. teardown_outcome reports `unknown`, never `done`, when it cannot find the step.
+TEARDOWN_STEP_PREFIX="${TEARDOWN_STEP_PREFIX:-Guaranteed teardown}"
 
 # ── discovery ──────────────────────────────────────────────────────────────────────────────────
 # scan_summaries: every provision-summary.json under $PROOFS_DIR as
@@ -171,6 +175,46 @@ job_exists() {
 	fi
 }
 
+# teardown_outcome <provider> — did this leg's cloud sweep reach a conclusion? (#2330)
+#
+# Echoes one of: done | UNSWEPT | unknown.
+#
+# WHY THIS IS A SEPARATE QUESTION FROM PASS/FAIL. The rollup already reports a cancelled leg as
+# FAIL — a job conclusion with no readable bundle is fixture #4's "RAN, NO SUMMARY … FAIL, never
+# SKIP". What it could not say is whether resources are STILL STANDING. On run 31459117502 the
+# board correctly read "aws RED (floor)", which a reader interprets as a provisioning failure and
+# not as "an EKS control plane and a NAT gateway are billing right now". Nobody reading that
+# would know to go and sweep. A red leg has to distinguish:
+#
+#   * it never provisioned            → nothing to sweep, the red is the whole story
+#   * it provisioned and MAY BE STANDING → somebody has to look, today
+#
+# The fingerprint is exact and needs no new data: when the worker is killed mid-step the step
+# record carries NO conclusion at all (the runner does not finish uploading it). So an empty — or
+# explicitly `cancelled` — conclusion on the teardown step is this leak, and any other value means
+# the sweep at least ran to a verdict.
+#
+# `unknown` is deliberate and distinct from `done`: no jobs payload, no matching job, or no
+# matching step means we could not ask. Absence of evidence is not a swept account, and the caller
+# must not report it as one.
+teardown_outcome() {
+	local want="$1" concl
+	[ -n "${JOBS_JSON:-}" ] && [ -r "${JOBS_JSON:-}" ] || { echo unknown; return; }
+	concl="$(jq -r --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" --arg step "$TEARDOWN_STEP_PREFIX" '
+		[ (.jobs // [])[]
+		  | select((.name | startswith($pre)) and (.name | endswith("(" + $p + ")")))
+		  | (.steps // [])[]
+		  | select(.name | startswith($step))
+		] | first | if . == null then "missing" else (.conclusion // "") end
+	' "$JOBS_JSON" 2>/dev/null || echo missing)"
+	case "$concl" in
+	missing) echo unknown ;;
+	"" | null | cancelled) echo UNSWEPT ;;
+	# Quoted: bare `done` is a shell keyword and shellcheck reads it as a stray loop terminator.
+	*) echo "done" ;;
+	esac
+}
+
 # jobs_payload_is_broken: jobs exist but none is a provision leg ⇒ the display name moved and the
 # cross-check is dead. Loud, because a silent degrade here is the whole bug.
 jobs_payload_is_broken() {
@@ -189,6 +233,8 @@ derive() {
 	: >"$out/ledger.tsv"
 
 	local reds="" skips="" job_no_summary="" died_early="" p hit path outcome verdict detail status exists stage
+	# Legs whose cloud sweep never reached a conclusion — resources may still be BILLING (#2330).
+	local unswept=""
 
 	if jobs_payload_is_broken; then
 		echo "::warning::the jobs payload has no job starting with '${PROVISION_JOB_PREFIX}' — the existence cross-check is DEAD (was the matrix job renamed?). Falling back to proof-presence, which cannot tell a red leg from an unwired one."
@@ -246,6 +292,17 @@ derive() {
 			detail="gate off — no secret/var wired"
 			skips="$skips $p"
 		fi
+		# ── Teardown outcome (#2330). Asked for every leg that RAN, independent of pass/fail:
+		#    a green leg whose sweep was killed is still billing, and a red leg that never
+		#    provisioned has nothing to sweep. The distinction is the signal, not the verdict.
+		if [ "$exists" = "yes" ]; then
+			case "$(teardown_outcome "$p")" in
+			UNSWEPT)
+				unswept="$unswept $p"
+				detail="${detail} — ⚠️ TEARDOWN DID NOT COMPLETE, resources may still be billing"
+				;;
+			esac
+		fi
 		detail="${detail//|/\\|}"
 		echo "| ${p} | ${status} | ${detail} |" >>"$out/summary.md"
 	done
@@ -280,6 +337,19 @@ derive() {
 		if [ -n "${died_early// /}" ]; then
 			echo
 			echo "> ⚠️ Gate ON but the leg never reached the harness:${died_early} — \`outcome: skipped\` from the capture path, not the gate-off proof. Counted as FAIL, and NOT as an unwired leg (#1922)."
+		fi
+		# The money line (#2330). Deliberately separate from the PASS/FAIL table: the verdict says
+		# whether the product worked, this says whether the account is clean. Run 31459117502 was
+		# correctly red AND left ~$105/mo standing, and nothing on the board said the second part.
+		if [ -n "${unswept// /}" ]; then
+			echo
+			echo "> 💸 **TEARDOWN DID NOT COMPLETE:${unswept}** — the cloud sweep step reached no conclusion, so"
+			echo "> resources from this run MAY STILL BE BILLING. This is not the same as a red leg: a leg that"
+			echo "> never provisioned has nothing to sweep, and this one may have."
+			echo ">"
+			echo "> \`e2e-orphan-reaper.yml\` reclaims these out-of-band on its next scheduled run — but it only"
+			echo "> fires from the DEFAULT BRANCH, so confirm it is live before assuming it has been handled."
+			echo "> To sweep now: \`ALETHIA_E2E_ENV=<run_id>-<attempt> ALETHIA_E2E_REGION=<region> ./scripts/e2e/<cloud>-cleanup.sh\`"
 		fi
 	} >>"$out/summary.md"
 
@@ -374,6 +444,11 @@ derive() {
 		# Legs whose gate was ON but which died before the harness (#1922). A subset of REDS —
 		# exported separately so the ledger/notification steps can name the failure mode.
 		echo "DIED_EARLY='${died_early# }'"
+		# Legs whose cloud sweep reached NO conclusion — resources may still be billing (#2330).
+		# Orthogonal to REDS on purpose: a green leg can be UNSWEPT (its teardown was killed) and a
+		# red one can be clean (it never provisioned). Exported so the notification step can say
+		# "go and look" without re-deriving it.
+		echo "UNSWEPT='${unswept# }'"
 		echo "ENABLED_N='${enabled_n}'"
 		echo "SKIP_N='${skip_n}'"
 		echo "TOTAL='${TOTAL}'"
@@ -424,6 +499,21 @@ write_jobs() { # <file> <provider...>
 		names="${names}{\"name\":\"Provision + verify + teardown (real cloud) (${p})\",\"conclusion\":\"failure\"},"
 	done
 	printf '{"jobs":[%s{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' "$names" >"$f"
+}
+
+# write_jobs_steps — a jobs payload carrying the teardown STEP, which is what #2330 reads. The
+# third argument is the step's conclusion; pass `null` for the fingerprint of a worker killed
+# mid-step (the runner never finishes uploading a conclusion), or omit the step entirely with
+# `none` to prove teardown_outcome reports `unknown` rather than inventing `done`.
+write_jobs_steps() { # <file> <provider> <teardown-conclusion|null|none>
+	local f="$1" p="$2" concl="$3" steps=""
+	case "$concl" in
+	none) steps="" ;;
+	null) steps='{"name":"Guaranteed teardown (scope-locked cloud sweep)","conclusion":null},' ;;
+	*) steps="{\"name\":\"Guaranteed teardown (scope-locked cloud sweep)\",\"conclusion\":\"${concl}\"}," ;;
+	esac
+	printf '{"jobs":[{"name":"Provision + verify + teardown (real cloud) (%s)","conclusion":"failure","steps":[%s{"name":"Checkout","conclusion":"success"}]},{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' \
+		"$p" "$steps" >"$f"
 }
 
 run_self_test() {
@@ -699,6 +789,64 @@ run_self_test() {
 		"the coverage dedup label is emitted for e2e-nightly.yml"
 	_a "from:e2e-coverage" "$(_state "$tmp/s2-died-early/out" COV_LABEL)" \
 		"the dedup label is CONSTANT — same value on a run whose coverage count differs"
+
+	# ── Teardown outcome (#2330) ────────────────────────────────────────────────────────────────
+	# Run 31459117502 was correctly reported RED and simultaneously left ~$105/mo of EKS + NAT
+	# standing. The board said the first thing and had no way to say the second, so nobody knew to
+	# sweep. These cases pin the distinction in both directions — a signal that only ever fires is
+	# as useless as one that never does.
+
+	# (T1) The leak fingerprint: the worker is killed mid-step, so the teardown step record carries
+	#      NO conclusion at all. That empty conclusion is the whole tell.
+	c="$tmp/t1-teardown-killed"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-11T060000Z" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws null
+	_a "aws|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=failure _derive "$c")" \
+		"(T1) a killed teardown does not change the PASS/FAIL verdict — it is a separate axis"
+	_a "aws" "$(_state "$c/out" UNSWEPT)" \
+		"(T1) an EMPTY teardown conclusion is reported as UNSWEPT — the run 31459117502 fingerprint"
+	# Both placements are deliberate and both are asserted: the table cell so the leg's own row
+	# carries it, and the standalone block so it survives someone scanning only the prose.
+	_a "1" "$(grep -c '^| aws |.*TEARDOWN DID NOT COMPLETE' "$c/out/summary.md")" \
+		"(T1) the leg's OWN table row says its teardown did not complete"
+	_a "1" "$(grep -c 'reclaims these out-of-band' "$c/out/summary.md")" \
+		"(T1) and a standalone block tells the reader what to do about it"
+
+	# (T2) A teardown that RAN is silent. Without this the warning fires every night and stops
+	#      being read — the same way the capped-orphan ::error:: did.
+	c="$tmp/t2-teardown-ran"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-11T060000Z" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws success
+	_a "" "$(CASE_MATRIX=failure _derive "$c" >/dev/null; _state "$c/out" UNSWEPT)" \
+		"(T2) a teardown that reached a conclusion is NOT reported as unswept"
+	_a "0" "$(grep -c 'TEARDOWN DID NOT COMPLETE' "$c/out/summary.md")" \
+		"(T2) and the summary stays quiet — a warning that always fires is not a warning"
+
+	# (T3) An explicitly `cancelled` teardown is the same leak wearing a different label.
+	c="$tmp/t3-teardown-cancelled"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-11T060000Z" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws cancelled
+	_a "aws" "$(CASE_MATRIX=failure _derive "$c" >/dev/null; _state "$c/out" UNSWEPT)" \
+		"(T3) an explicitly cancelled teardown is UNSWEPT too, not just an empty one"
+
+	# (T4) The step is missing entirely — a rename, or a payload without steps. `unknown` must NOT
+	#      become `done`: absence of evidence is not a swept account. It reports nothing rather
+	#      than claiming the account is clean.
+	c="$tmp/t4-teardown-step-missing"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-11T060000Z" aws "nightly-777-1" failure applied
+	write_jobs_steps "$c/jobs.json" aws none
+	_a "" "$(CASE_MATRIX=failure _derive "$c" >/dev/null; _state "$c/out" UNSWEPT)" \
+		"(T4) a missing teardown step is unknown, never a false UNSWEPT alarm"
+
+	# (T5) A GREEN leg can be unswept. This is the case the PASS/FAIL table structurally cannot
+	#      express, and the reason the signal is a separate axis rather than a detail on a red.
+	c="$tmp/t5-green-but-unswept"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-11T060000Z" aws "nightly-777-1" success applied
+	write_jobs_steps "$c/jobs.json" aws null
+	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
+		"(T5) the leg still PASSES — teardown outcome does not rewrite the verdict"
+	_a "aws" "$(_state "$c/out" UNSWEPT)" \
+		"(T5) a PASSING leg whose teardown was killed is still reported as possibly billing"
 
 	if [ "$fails" -eq 0 ]; then
 		echo "self-test: all passed"
