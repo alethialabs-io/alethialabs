@@ -39,8 +39,28 @@ func NamespacePostMortem(namespace string) string {
 	events := collectOut("kubectl -n " + namespace + " get events --sort-by=.lastTimestamp")
 	nodes := collectOut("kubectl get nodes -o jsonpath='" + nodeCapacityJSONPath + "'")
 	placement := collectOut("kubectl get pods -A -o jsonpath='" + podNodeJSONPath + "'")
-	return namespaceEvidence(namespace, pods, podStallVerdicts(states), events, nodePressureVerdicts(nodes, placement))
+	cni := collectOut("kubectl -n kube-system get pods -o wide")
+	cniLogs := collectOut(cniLogCommand)
+	return namespaceEvidence(namespace, pods, podStallVerdicts(states), events,
+		nodePressureVerdicts(nodes, placement), cni+"\n"+cniLogs)
 }
+
+// cniLogCommand tails every CNI daemonset this repo's five clouds can produce, keeping whichever
+// answers. A per-provider branch here would need the provider threaded into a function that has
+// never needed it, and would go stale the moment a cloud changes its networking add-on; asking for
+// all of them and discarding the misses costs one failed kubectl per absent selector on a path that
+// has already failed.
+//
+// Bounded at 50 lines per container. The whole post-mortem is inlined into the runner log, which is
+// itself captured into the proof bundle — an unbounded log tail would blow that up, and #1854
+// already records what happens when one of these artifacts grows without a cap (an azure
+// "highlights" file that was the entire 148 KB plan).
+//
+// `2>/dev/null || true` per selector so a cluster with none of them still produces the pod list
+// above rather than an error that masks it.
+const cniLogCommand = `for sel in k8s-app=aws-node k8s-app=cilium k8s-app=calico-node ` +
+	`component=azure-cni-networkmonitor k8s-app=gke-metadata-server; do ` +
+	`kubectl -n kube-system logs -l "$sel" --tail=50 --all-containers 2>/dev/null || true; done`
 
 // nodeCapacityJSONPath emits `name<TAB>allocatable-pods<TAB>capacity-pods` per node.
 // podNodeJSONPath emits the node each pod is placed on, one per line, across ALL namespaces —
@@ -109,8 +129,17 @@ func nodePressureVerdicts(nodeRaw, placementRaw string) string {
 		case alloc-used <= 2:
 			lines = append(lines, name+": near the pod ceiling — "+strconv.Itoa(used)+"/"+strconv.Itoa(alloc)+" pods.")
 		default:
+			// Names BOTH remaining candidates, because naming one is how this verdict misled on the
+			// run that first exercised it. On 31486353053 it read "room to spare — 14/35" and sent
+			// the reader to the subnet; the private subnets are /20 (4091 usable, pinned in
+			// checks_network_subnet_plan.tftest.hcl, widened from /26 by #1919 for exactly this),
+			// so the subnet was excluded too and the real candidate — the CNI/IPAM layer — went
+			// unnamed. A verdict that excludes one hypothesis while implying only one alternative
+			// is a narrower claim than it looks.
 			lines = append(lines, name+": room to spare — "+strconv.Itoa(used)+"/"+strconv.Itoa(alloc)+
-				" pods. A pod that cannot get an IP here is NOT the node ceiling; check the subnet's free addresses.")
+				" pods. A pod that cannot get an IP here is NOT the node ceiling. Two candidates remain: "+
+				"the subnet is out of free addresses, or the CNI/IPAM itself is failing to allocate "+
+				"(daemonset unhealthy, ENI attachment refused, API throttling) — see the CNI section below.")
 		}
 	}
 	if nodes == 0 {
@@ -125,7 +154,7 @@ func nodePressureVerdicts(nodeRaw, placementRaw string) string {
 // own: "kubectl returned nothing" is itself a finding (no pods at all means the chart's manifests
 // never landed), while a silently missing section reads as if the command was never run.
 // Pure/unit-tested.
-func namespaceEvidence(namespace, pods, verdicts, events, nodePressure string) string {
+func namespaceEvidence(namespace, pods, verdicts, events, nodePressure, cni string) string {
 	section := func(title, body string) string {
 		body = strings.TrimSpace(body)
 		if body == "" {
@@ -137,6 +166,7 @@ func namespaceEvidence(namespace, pods, verdicts, events, nodePressure string) s
 		section("kubectl get pods -o wide -n "+namespace, pods) +
 		section("stalled pods", verdicts) +
 		section("node pod-capacity pressure", nodePressure) +
+		section("kube-system pods + CNI logs (why an IP could not be assigned)", cni) +
 		section("kubectl get events -n "+namespace, events)
 }
 
