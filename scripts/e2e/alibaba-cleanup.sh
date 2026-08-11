@@ -465,6 +465,47 @@ alive_albs() { {
 alive_nats() { tagged_nat_gateways; }
 alive_eips() { tagged_eips; }
 
+# ── Container Registry EE — the SUBSCRIPTION-billed outlier (#2333). ──────────────────────────────
+#
+# Every other resource above is discovered by TAG. This one cannot be: `alicloud_cr_ee_instance`
+# takes no `tags` argument at all, so the tag filter the rest of this script is built on does not
+# reach it. It is therefore scoped by NAME — the same secondary-scope shape `discover_cluster` uses
+# for the ACK cluster, and bounded the same way: a name must embed THIS run's ENV, never a prefix
+# that could match another run or prod.
+#
+# Why it earns a check of its own rather than a row in the tag sweep: it is the ONLY prepaid
+# resource in the whole Alibaba module tree (`modules/cr/main.tf`: `payment_type = "Subscription"`,
+# `period = 1`). Everything else is pay-as-you-go and stops costing when it is deleted; this one is
+# a monthly commitment. Until now `verify_swept` checked seven resource classes and not this, so a
+# standing subscription could not fail the sweep and the teardown reported clean — the precise
+# failure aws-cleanup.sh's own header warns about: "a sweeper that reports clean without looking is
+# more expensive than no sweeper, because it stops anyone else looking."
+#
+# WHETHER IT SURVIVES TEARDOWN AT ALL IS GENUINELY UNSETTLED, and this check is what settles it.
+# docs/research/alibaba-cr-ee-subscription-release.md has the full reconciliation: the pinned
+# provider (1.286.0) DOES call `RefundInstance` with `ImmediatelyRelease = "1"` on delete, while
+# Alibaba's own ACR documentation states "Terraform cannot release subscription-based Container
+# Registry instances … Manually unsubscribe from the instance in the console". Documentation cannot
+# close that; a real teardown can. Find an instance ⇒ the docs are right and the parity board's
+# warning stands. Find none ⇒ the refund works and the Alibaba full bar can be re-admitted.
+#
+# ⚠️ LIMIT, STATED RATHER THAN HIDDEN. `local.cr_name` renders `cr-<project>-<environment>` and
+# falls back to `substr(...,0,22)-<sha7>` above 30 characters (checks_naming.tf, NAMING-003). The
+# digest form does NOT reliably embed the full ENV, so this discovery would not see it. That form is
+# unreachable at current lengths — the e2e fixture renders 27 of 30 — and NAMING-003 is the check
+# that keeps it so. If that budget is ever relaxed, this discovery has to be revisited with it.
+#
+# This function NEVER deletes. Refunding a subscription is a billing operation, not a sweep, and a
+# teardown script that can issue refunds has a far larger blast radius than this problem justifies.
+alive_cr_instances() {
+	assert_scope
+	# `--version` is explicit: the `cr` product carries both 2016-06-07 and 2018-12-01, and only the
+	# latter has ListInstance. Letting the CLI pick would make this silently version-dependent.
+	ali cr ListInstance --version 2018-12-01 --PageSize 100 2>/dev/null |
+		jq -r --arg env "$ENV" '.Instances[]? | select((.InstanceName // "") | contains("-" + $env)) | "\(.InstanceName)[\(.InstanceId)]"' 2>/dev/null |
+		grep -v '^$' || true
+}
+
 verify_swept() {
 	assert_scope
 	local leaks="" x
@@ -476,10 +517,22 @@ verify_swept() {
 	x="$(alive_albs)"; [ -n "$x" ] && leaks="${leaks}alb: $(join "$x")\n"
 	x="$(alive_nats)"; [ -n "$x" ] && leaks="${leaks}nat-gateway: $(join "$x")\n"
 	x="$(alive_eips)"; [ -n "$x" ] && leaks="${leaks}eip: $(join "$x")\n"
-	if [ -n "$leaks" ]; then
-		echo "  ✗ billable resources still alive:" >&2
-		printf '%b' "  $leaks" >&2
-		echo "::error::alibaba cleanup INCOMPLETE — billable resources for run ${ENV} still exist and are BILLING. Investigate + remove (stay scope-locked; never account-wide)." >&2
+	# Collected separately from the list above: this one is not merely billable, it is a monthly
+	# SUBSCRIPTION that `tofu destroy` may be unable to release, so the operator needs a different
+	# instruction ("unsubscribe in the console") rather than "investigate + remove". Merging it into
+	# the generic line would give exactly the wrong advice.
+	local cr_alive
+	cr_alive="$(alive_cr_instances)"
+	if [ -n "$leaks" ] || [ -n "$cr_alive" ]; then
+		if [ -n "$leaks" ]; then
+			echo "  ✗ billable resources still alive:" >&2
+			printf '%b' "  $leaks" >&2
+			echo "::error::alibaba cleanup INCOMPLETE — billable resources for run ${ENV} still exist and are BILLING. Investigate + remove (stay scope-locked; never account-wide)." >&2
+		fi
+		if [ -n "$cr_alive" ]; then
+			echo "  ✗ SUBSCRIPTION still alive: cr-ee-instance: $(join "$cr_alive")" >&2
+			echo "::error::alibaba cleanup INCOMPLETE — a SUBSCRIPTION-billed Container Registry EE instance for run ${ENV} is still standing: $(join "$cr_alive"). This is a MONTHLY commitment, not an hourly resource. Release it in the Container Registry console — this script deliberately will not refund a subscription. See docs/research/alibaba-cr-ee-subscription-release.md (#2333)." >&2
+		fi
 		return 1
 	fi
 	# Non-billable network residue (vswitch/SG/VPC still tagged) is a NOTICE, not a hard fail.
