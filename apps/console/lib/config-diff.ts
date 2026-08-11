@@ -106,5 +106,9 @@ export function diffConfig(
 			desired.helm_registries ?? [],
 		),
 	);
+	rows.push(...diffArray("service", live?.services ?? [], desired.services ?? []));
+	rows.push(
+		...diffArray("source_repo", live?.source_repos ?? [], desired.source_repos ?? []),
+	);
 	return rows;
 }
