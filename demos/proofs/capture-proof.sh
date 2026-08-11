@@ -226,6 +226,21 @@ if [ -n "$fabric_demo_summary" ] && [ -f "$fabric_demo_summary" ]; then
 	[ -n "$fabric_demo_verdict" ] && echo "  · fabric-demo: $fabric_demo_verdict"
 fi
 
+# ── ACM certificate gate (#1773). The T2 layer writes the certificate ARN, the domain, and the two
+#    booleans that carry the whole claim — that NO hosted zone was created (so the certificate
+#    really did validate against the pre-delegated zone) and that issuance completed. An ARN is a
+#    public identifier, not a credential, and nothing else here is secret; scrubbed anyway as a
+#    backstop. Absent ⇒ the gate was off or never reached and the capture is unchanged. ──
+acm_cert_summary="${ALETHIA_E2E_ACM_CERT_SUMMARY:-}"
+acm_cert_verdict=""
+if [ -n "$acm_cert_summary" ] && [ -f "$acm_cert_summary" ]; then
+	scrub_stream <"$acm_cert_summary" >"$out/acm-cert-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/acm-cert-summary.json" ]; then
+		acm_cert_verdict="$(jq -r '.verdict // empty' "$out/acm-cert-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$acm_cert_verdict" ] && echo "  · acm-cert: $acm_cert_verdict"
+fi
+
 # ── BRING-YOUR-OWN IaC continuous proof (#1765). The T2 leg writes the pinned commit it ran, the
 #    negative gate result, the receipt digest over the CUSTOMER's plan, and the three postures
 #    either side of an induced out-of-band change — names, booleans, counts and PUBLIC digests,
@@ -344,6 +359,7 @@ soak:      ${soak_verdict:-n/a (A0.3 soak off or not reached)}
 day2-access: ${day2_access_verdict:-n/a (P2-E day-2 access off or not reached)}
 day2offer: ${day2_offer_verdict:-n/a (day-2 offer postures off or not reached)}
 fabric-demo: ${fabric_demo_verdict:-n/a (#845 Fabric placement gate off or not reached)}
+acm-cert: ${acm_cert_verdict:-n/a (#1773 ACM certificate gate off or not reached)}
 byo-iac:   ${byo_iac_verdict:-n/a (#1765 BYO-IaC continuous proof off or not reached)}
 xacct:     ${xacct_verdict:-n/a (#1268 cross-account secrets off or not reached)}
 keyless-db: ${keyless_verdict:-n/a (#1511 keyless DB auth off or not reached)}

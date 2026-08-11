@@ -17,6 +17,7 @@ import {
 	INSTANCE_TYPES,
 	K8S_VERSIONS,
 	keylessUnavailableReason,
+	NODE_DISK,
 	NOSQL,
 	wafUnavailableReason,
 	type CloudProviderSlug,
@@ -972,11 +973,30 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "number",
 						label: "Node disk",
 						unit: "GB",
-						min: 20,
+						// Per-cloud floor from the generated NODE_DISK mirror (#1972): a single
+						// cross-cloud `min: 20` undershot Azure's 30 GB OS-disk minimum, so 24 GB
+						// saved cleanly there and failed at plan. The numbers are scraped from the
+						// templates' own `>= N` validations — the same literals the Go floors are
+						// pinned to — never hand-copied here (#1967's failure mode).
+						min: ({ provider }) =>
+							(provider && NODE_DISK[provider]?.floorGb) || 20,
 						max: 2000,
 						optional: true,
-						placeholder: "per-cloud default",
-						description: "Worker root volume. Empty uses the cloud's default (EKS 50 · GKE 50 · AKS 100).",
+						placeholder: ({ provider }) => {
+							const spec = provider ? NODE_DISK[provider] : null;
+							return spec
+								? `default ${spec.templateDefaultGb} · min ${spec.floorGb}`
+								: "per-cloud default";
+						},
+						description: "Worker root volume. Empty uses the cloud's own default.",
+						// Hetzner has no node-disk knob AT ALL — a server's disk comes with its
+						// server type, `cluster.node_disk_size_gb / hetzner` is a documented
+						// exclusion on the carriage board, and TestNodeDiskFloorsMatchTemplates
+						// pins the template's deliberate lack of a disk variable. The field is not
+						// part of the shape there, so `visibleWhen`, not `unavailableWhen` — and
+						// unlike num_cache_nodes (#1993) no offer-board entry keys this cell, so
+						// hiding it makes no recorded ceiling dangle.
+						visibleWhen: (_c, { provider }) => provider !== "hetzner",
 					},
 				],
 			},
@@ -1298,6 +1318,24 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						label: "Allowed CIDR blocks",
 						description: "Extra networks permitted to reach the cache. The cluster always can.",
 						item: { mono: true, placeholder: "10.1.0.0/16" },
+						// Withdrawn (not hidden) on Azure, same shape and same reason as
+						// `num_cache_nodes` above (#2148). The module moved to
+						// `azurerm_managed_redis` because Azure now returns
+						// `400 … Azure Cache for Redis is retiring` for the classic type — and
+						// Managed Redis has NO firewall sub-resource: not in the pinned azurerm
+						// 4.81.0, not in 5.0.1. `azurerm_redis_firewall_rule` binds by
+						// `redis_cache_name` to the RETIRED `azurerm_redis_cache`, so aiming it at
+						// a Managed Redis name targets a different ARM type and fails at apply.
+						// The only network knob the resource exposes is `public_network_access`
+						// (Enabled/Disabled), which is not CIDR filtering — wiring the control to
+						// it would satisfy the parity probe while delivering none of the
+						// behaviour, which is exactly what the carriage guard exists to catch.
+						// `unavailableWhen`, never `visibleWhen`: hiding would drop azure from
+						// `offeredOn` and make the recorded exclusion match nothing.
+						unavailableWhen: (_c, { provider }) =>
+							provider === "azure"
+								? "Azure Managed Redis has no CIDR firewall — the service exposes only a public-access on/off switch. Reach it from inside the cluster's network, which is always permitted."
+								: null,
 					},
 				],
 			},
@@ -1556,8 +1594,14 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						key: "global_replicas",
 						type: "list",
 						label: "Global replica regions",
+						// The Azure sentences are load-bearing product copy (#2158, human decision
+						// 2026-08-10): replication is bought per Cosmos ACCOUNT, so the account gets
+						// the union of every table's list — and because serverless accounts are
+						// single-region-only, the first replica switches the account onto provisioned
+						// throughput (a billing change; on an already-deployed project, an account
+						// replacement). Say it here, before the save, not in a failed deploy.
 						description:
-							"Replicate the table to these regions. Only on clouds whose table service supports global tables.",
+							"Replicate the table to these regions. Only on clouds whose table service supports global tables. On Azure, replicas apply to the whole Cosmos account — the union of every table's list — and the first replica switches the account from serverless to provisioned billing (on an already-deployed project this replaces the account).",
 						item: { mono: true, placeholder: "us-east-1" },
 					},
 				],

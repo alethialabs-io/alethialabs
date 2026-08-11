@@ -164,6 +164,26 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Logf("#1268: cross-account keyless secrets SKIPPED — set %s (+ its target vars) to enable.", envSecretsXacct)
 	}
 
+	// #1773: the ACM certificate scenario, resolved on the same terms. Two of its three outcomes are
+	// HARD FAILURES rather than skips, deliberately: a half-wired opt-in, and a collision with the
+	// full bar (this scenario BRINGS a zone id, which makes cloud_dns_enabled false, so no
+	// aws_route53_zone is created and the max-config `dns` kind would report Missing). Either one
+	// skipping quietly would read as "the certificate was proven" on a night it was not.
+	acmCert := acmCertFromEnv(provider)
+	acmCertOn, acmCertBlocked, acmCertErr := acmCert.decide()
+	if acmCertErr != nil {
+		t.Fatalf("#1773 ACM certificate: %v", acmCertErr)
+	}
+	switch {
+	case acmCertOn:
+		t.Logf("#1773: ACM certificate ENABLED — issuing for *.%s, validating in the pre-delegated zone %s",
+			acmCert.domainName, acmCert.zoneID)
+	case acmCertBlocked != "":
+		t.Logf("#1773: ACM certificate BLOCKED on %s — %s", provider, acmCertBlocked)
+	default:
+		t.Logf("#1773: ACM certificate SKIPPED — set %s (+ %s, %s) to enable.", envAcmCert, envAcmCertZoneID, envAcmCertZoneName)
+	}
+
 	// #1511: keyless DB auth, resolved on the same terms and for the same reason — a misconfigured
 	// opt-in must fail in seconds, and an EXCLUDED cell (alibaba/hetzner) resolves to "off" carrying
 	// the product's own exclusion prose rather than a silent skip.
@@ -217,68 +237,32 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	region := resolveT2Region(p)
 	clusterName := project + "-" + env
 	t.Logf("T2 target: provider=%s region=%s cluster=%s", provider, region, clusterName)
-	// Overall bound = the deploy wait plus the ArgoCD convergence assertion, with headroom
-	// for the runner build. Derived from the provider row (hetzner 25m+8m+7m = 40m,
-	// bit-identical to the pre-table constant; managed clouds get their longer waits). When
-	// the day-2 SOAK is enabled (BYOC A0.3) we widen the ctx by the soak window plus the
-	// drift-job + PVC-bind bounds, so a mid-soak ctx cancellation can't masquerade as a
-	// cluster drop. A soak parse error is loud here too (before any provisioning spend).
-	soakBudget := time.Duration(0)
-	if soakDur, soakOn, soakErr := parseSoakDuration(os.Getenv("ALETHIA_E2E_SOAK")); soakErr != nil {
-		t.Fatalf("A0.3 soak: %v", soakErr)
-	} else if soakOn {
-		soakBudget = soakDur + 15*time.Minute // drift wait (10m) + PVC bind (5m) headroom
-	}
-	// #1268 needs its own term: the store-Ready + ExternalSecret-sync + denied-probe windows are
-	// ~10m of polling AFTER ArgoCD converges, and a ctx that expired mid-poll would look identical
-	// to a cross-account read that never worked.
-	xacctBudget := time.Duration(0)
-	if xacctOn {
-		xacctBudget = 10 * time.Minute
-	}
-	// #1511 needs a term of its own, dominated by the ROTATION DWELL — a session deliberately held
-	// open past the cloud token's lifetime. A ctx that expired mid-dwell would be indistinguishable
-	// from the connection dying with the credential it never had, which is the exact outcome under
-	// test, so the budget is the dwell plus room for the workload to converge and the probes to run.
-	keylessBudget := time.Duration(0)
-	if keylessOn {
-		keylessBudget = keyless.dwell + 20*time.Minute
-	}
-	// #1047 needs its own term for the same reason: the refresher-Available, mint, pod-pull and
-	// denied-probe windows are ~20m of polling AFTER ArgoCD converges, and a ctx that expired
-	// mid-poll would be indistinguishable from a cross-account pull that never worked.
-	registryBudget := time.Duration(0)
-	if registryOn {
-		registryBudget = 25 * time.Minute
-	}
-	// The three PLACEMENT scenarios each seed their OWN jobs onto this Fabric after the base proof,
-	// and none of them had a ctx term. An overrun therefore surfaced as "the placement never
-	// converged" — indistinguishable from a real product failure, which is the exact confusion the
-	// soak/xacct/keyless terms above were written to prevent.
-	nsTenantBudget := time.Duration(0)
-	if namespaceTenantEnabled() {
-		nsTenantBudget = namespaceTenantBudget
-	}
-	vclusterBudget := time.Duration(0)
-	if vclusterTenantEnabled() {
-		vclusterBudget = vclusterTenantBudget
-	}
-	// #845 is the widest term: one bounded placement plus one bounded convergence poll PER namespace
-	// tier, one WHOLE vcluster placement (its own deploy + app-health + destroy waits), and the drift
-	// re-prove. A malformed tier list fails LOUD here — before any provisioning spend — exactly like
-	// the soak parse error above.
-	fabricDemoBudget := time.Duration(0)
+	// The whole ctx budget — every scenario's term — now lives in ResolveT2Budget (t2_budget.go),
+	// because the workflow needs the same arithmetic to set its step and go-timeout and the two used
+	// to be maintained independently. They disagreed: the workflow's prose asserted a 40m ctx (which
+	// is HETZNER's) against a 75m step cap, while a managed cloud with the default-on soak really
+	// wants 90m — so on all four managed clouds the step killed the process before the ctx could
+	// cancel, losing both the named scenario failure and the in-process teardown.
+	//
+	// The tier count is still needed here for the #845 node-shape guard below: the demo's capacity
+	// floor scales with it (each tier is a boutique copy, and one is placed twice).
+	fabricDemoTierCount := 0
 	if fabricDemoEnabled() {
 		tiers, tErr := fabricDemoTiers(env, provider)
 		if tErr != nil {
 			t.Fatalf("fabric-demo (#845): %v", tErr)
 		}
-		d := fabricDemoTimeout()
-		fabricDemoBudget = time.Duration(len(tiers))*2*d + d + vclusterTenantBudget
+		fabricDemoTierCount = len(tiers)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(),
-		waitTimeout+ArgoAssertTimeout()+soakBudget+xacctBudget+keylessBudget+registryBudget+
-			nsTenantBudget+vclusterBudget+fabricDemoBudget+7*time.Minute)
+	// The ctx comes from ResolveT2Budget (t2_budget.go) — the SAME function cmd/t2budget prints for
+	// the workflow's step and go-timeout, so the ladder ctx < go < step < job cannot drift from what
+	// this test actually asks for. A malformed soak or tier list fails LOUD here, before any spend.
+	budget, budgetErr := ResolveT2Budget(provider, env)
+	if budgetErr != nil {
+		t.Fatalf("resolve T2 budget: %v", budgetErr)
+	}
+	t.Logf("T2 budget — %s", budget.Describe())
+	ctx, cancel := context.WithTimeout(context.Background(), budget.Ctx)
 	defer cancel()
 
 	// ── Build the REAL runner binary (this is what makes it a spine proof, not a unit
@@ -350,6 +334,16 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Fatalf("FT-5 node-shape guard: %s", msg)
 		}
 		t.Logf("FT-5 node-shape guard (warning): %s", msg)
+	}
+	// #845 node-shape guard: the fabric demo places the boutique overlays once per tier PLUS once more
+	// inside the vcluster, and on the nightly's cheapest floor shape those pods sit Pending until the
+	// job cap kills the run — ~11 hours of billed cluster time across four clouds to learn a node size.
+	// Same posture as FT-5 above: hard under REQUIRE, before any spend.
+	if fatal, msg := t2RequireFabricDemoNodeShape(provider, full, fabricDemoTierCount); msg != "" {
+		if fatal {
+			t.Fatalf("#845 fabric-demo node-shape guard: %s", msg)
+		}
+		t.Logf("#845 fabric-demo node-shape guard (warning): %s", msg)
 	}
 	a05CheckFidelity(t, a05, base)
 
@@ -722,6 +716,15 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//      BLOCKED with a reason. Runs BEFORE the guaranteed teardown.
 	if xacctOn {
 		runT2SecretsXacct(t, ctx, kc, secretsXacctParams{cfg: xacct, metaRaw: metaRaw})
+	}
+
+	// (11b) ACM CERTIFICATE (#1773). Opt-in via ALETHIA_E2E_ACM_CERT. Asserts, in order: that NO
+	//       hosted zone was created (the control that makes the rest mean anything — a certificate
+	//       validated against a zone we made ourselves proves nothing about delegation), that
+	//       aws_acm_certificate_validation completed, that the ARN reached execution_metadata, and
+	//       that it gated the ArgoCD ingress. Runs BEFORE the guaranteed teardown.
+	if acmCertOn {
+		runT2AcmCert(t, ctx, cp, acmCertParams{cfg: acmCert, metaRaw: metaRaw, jobID: jobID})
 	}
 
 	// (12) KEYLESS DATABASE AUTH (#1511). Opt-in via ALETHIA_E2E_KEYLESS_DB — the base DEPLOY already

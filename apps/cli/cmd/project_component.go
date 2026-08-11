@@ -76,10 +76,23 @@ func runComponentKinds(out io.Writer, format string) error {
 
 // --- list ---
 
-var (
-	componentListKind string
-	componentListEnv  string
-)
+var componentListKind string
+
+// currentComponentEnv reads the component group's persistent --env. Persistent so `list`, `add` and
+// `remove` name an environment the same way; before this, `--env` existed on `list` alone and was
+// documented "(reserved)" while the server dropped it, and the write paths had no way to say which
+// environment they meant at all.
+//
+// Empty is meaningful and differs per verb, which the server decides: a write with no --env targets
+// the project's DEFAULT environment (so existing single-environment scripts keep working), while a
+// list with no --env shows EVERY environment rather than silently narrowing to one.
+func currentComponentEnv(cmd *cobra.Command) string {
+	env, err := cmd.Flags().GetString("env")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(env)
+}
 
 var projectComponentListCmd = &cobra.Command{
 	Use:   "list",
@@ -97,7 +110,7 @@ var projectComponentListCmd = &cobra.Command{
 		if interactiveTable(cmd) {
 			var comps []api.Component
 			ui.RunSpinner("Fetching components...", func() {
-				comps, err = client.ListComponents(project, componentListKind, componentListEnv)
+				comps, err = client.ListComponents(project, componentListKind, currentComponentEnv(cmd))
 			})
 			if err != nil {
 				failf("Failed to list components: %v", err)
@@ -109,7 +122,7 @@ var projectComponentListCmd = &cobra.Command{
 			_ = ui.ShowTable(componentListColumns, componentRows(comps), "components")
 			return
 		}
-		if err := runComponentList(client, os.Stdout, outputFormat(cmd), project, componentListKind, componentListEnv); err != nil {
+		if err := runComponentList(client, os.Stdout, outputFormat(cmd), project, componentListKind, currentComponentEnv(cmd)); err != nil {
 			failf("Failed to list components: %v", err)
 		}
 	},
@@ -184,7 +197,7 @@ Values are parsed as JSON when possible, else taken literally:
 		if err != nil {
 			fail(err)
 		}
-		if err := runComponentAdd(api.NewClient(token), os.Stdout, project, componentAddKind, componentAddName, fields); err != nil {
+		if err := runComponentAdd(api.NewClient(token), os.Stdout, project, componentAddKind, componentAddName, currentComponentEnv(cmd), fields); err != nil {
 			failf("Failed to add component: %v", err)
 		}
 	},
@@ -217,17 +230,29 @@ func coerceSetValue(raw string) interface{} {
 	return raw
 }
 
-// runComponentAdd creates the component and confirms it.
-func runComponentAdd(c apiClient, out io.Writer, project, kind, name string, fields map[string]interface{}) error {
+// runComponentAdd creates the component and confirms it. An empty env means the project's default
+// environment, resolved server-side.
+func runComponentAdd(c apiClient, out io.Writer, project, kind, name, env string, fields map[string]interface{}) error {
 	if kind == "" {
 		return fmt.Errorf("--kind is required (see `alethia project component kinds`)")
 	}
-	comp, err := c.AddComponent(project, kind, name, fields)
+	comp, err := c.AddComponent(project, kind, name, env, fields)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Added %s component %s (%s)", comp.Kind, comp.Name, comp.ID)))
+	fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Added %s component %s (%s)%s", comp.Kind, comp.Name, comp.ID, envSuffix(env))))
 	return nil
+}
+
+// envSuffix renders " in <env>" for a confirmation line, or nothing when no environment was named.
+// The environment belongs in the confirmation because it is the thing a caller most needs to see they
+// got right: authoring the same kind into the wrong tier is silent, and the next thing that reads it
+// is a deploy.
+func envSuffix(env string) string {
+	if env == "" {
+		return ""
+	}
+	return " in " + env
 }
 
 // --- remove ---
@@ -236,6 +261,10 @@ var (
 	componentRemoveKind string
 	componentRemoveName string
 )
+
+// componentRemoveYes is the --yes opt-in: skip the confirmation prompt (and make the
+// command usable with --no-input).
+var componentRemoveYes bool
 
 var projectComponentRemoveCmd = &cobra.Command{
 	Use:   "remove",
@@ -252,32 +281,39 @@ var projectComponentRemoveCmd = &cobra.Command{
 		if componentRemoveKind == "" {
 			failf("--kind is required (see `alethia project component kinds`)")
 		}
-		if !confirm("Remove this component?", "Its configuration is deleted (provisioned resources are removed on the next apply/destroy).") {
+		if !confirmDestructive(componentRemoveYes, "Remove this component?", "Its configuration is deleted (provisioned resources are removed on the next apply/destroy).") {
 			return
 		}
-		if err := runComponentRemove(api.NewClient(token), os.Stdout, project, componentRemoveKind, componentRemoveName); err != nil {
+		if err := runComponentRemove(api.NewClient(token), os.Stdout, project, componentRemoveKind, componentRemoveName, currentComponentEnv(cmd)); err != nil {
 			failf("Failed to remove component: %v", err)
 		}
 	},
 }
 
-// runComponentRemove deletes the component and confirms it. Singleton kinds ignore the name.
-func runComponentRemove(c apiClient, out io.Writer, project, kind, name string) error {
+// runComponentRemove deletes the component and confirms it. Singleton kinds ignore the name. An empty
+// env means the project's default environment; the delete is scoped to that ONE environment either
+// way, so a sibling tier's row is never collateral.
+func runComponentRemove(c apiClient, out io.Writer, project, kind, name, env string) error {
 	if singletonKinds[kind] {
 		name = ""
 	}
-	if err := c.RemoveComponent(project, kind, name); err != nil {
+	if err := c.RemoveComponent(project, kind, name, env); err != nil {
 		return err
 	}
-	fmt.Fprintln(out, ui.FormatSuccess("Component removed"))
+	fmt.Fprintln(out, ui.FormatSuccess("Component removed"+envSuffix(env)))
 	return nil
 }
 
 func init() {
+	addYesFlag(projectComponentRemoveCmd, &componentRemoveYes)
 	projectComponentCmd.PersistentFlags().String("project", "", "Project name or id")
+	// PERSISTENT, so add/remove can name an environment too. It used to exist on `list` alone,
+	// labelled "(reserved)", and the server discarded it — so the CLI could only ever author into
+	// the default environment, which made a two-tier project (dev and staging pointing at different
+	// overlays) impossible to build from the terminal.
+	projectComponentCmd.PersistentFlags().String("env", "", "Environment id, name or stage — writes default to the project's default environment, `list` defaults to all")
 
 	projectComponentListCmd.Flags().StringVar(&componentListKind, "kind", "", "Filter by component kind")
-	projectComponentListCmd.Flags().StringVar(&componentListEnv, "env", "", "Filter by environment (reserved)")
 
 	projectComponentAddCmd.Flags().StringVar(&componentAddKind, "kind", "", "Component kind (required)")
 	projectComponentAddCmd.Flags().StringVar(&componentAddName, "name", "", "Component name (multi kinds)")

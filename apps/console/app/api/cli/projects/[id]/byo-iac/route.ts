@@ -1,14 +1,18 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// GET /api/cli/projects/:id/byo-iac — the customer's BYO Terraform/OpenTofu source attached to an
+// /api/cli/projects/:id/byo-iac — read, attach and detach the customer's BYO Terraform/OpenTofu source for an
 // environment (or null when none). Gated on project `view`; org-scoped via an explicit
 // projects.org_id filter (RLS bypassed here). Mirrors getIacSource (web) but omits the full scan
 // report — status only.
 
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { z } from "zod";
+import { attachIacSource, detachIacSource } from "@/app/server/actions/byo-iac";
+import { runWithActor } from "@/lib/authz/actor-context";
 import { authorizeCli } from "@/lib/authz/guard";
+import { byoWriteError, resolveByoScope } from "@/lib/cli/byo-write";
 import {
 	resolveCliEnvironment,
 	resolveCliProject,
@@ -17,7 +21,11 @@ import {
 import { cliJson } from "@/lib/cli/respond";
 import { getServiceDb } from "@/lib/db";
 import { projectIacSources, projects } from "@/lib/db/schema";
-import { cliIacSourceResponse } from "@/lib/validations/cli-contract";
+import {
+	cliByoChartAttachResponse,
+	cliIacSourceResponse,
+	cliOkResponse,
+} from "@/lib/validations/cli-contract";
 
 export async function GET(
 	req: Request,
@@ -101,5 +109,94 @@ export async function GET(
 	} catch (err: unknown) {
 		const message = err instanceof Error ? err.message : "Internal Server Error";
 		return NextResponse.json({ error: message }, { status: 500 });
+	}
+}
+
+/**
+ * Body of POST .../byo-iac — attach (or replace) the environment's BYO IaC source.
+ *
+ * snake_case matches `iacSourceAttachSchema`'s own field names, so this body IS that shape plus
+ * nothing. `attachIacSource` re-parses it with that schema, which is what normalises the path
+ * ("/foo/" → "foo") and enforces the scalar-only tfvars rule — a nested object or an array in
+ * `var_values` is refused there rather than being written and failing at apply.
+ */
+const attachIacBody = z.object({
+	repo_url: z.string().trim().min(1),
+	ref: z.string().trim().min(1).nullish(),
+	path: z.string().trim().optional(),
+	git_credential_id: z.string().uuid().nullish(),
+	var_values: z
+		.record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+		.optional(),
+});
+
+/** Attaches the environment's BYO IaC source. */
+export async function POST(
+	req: Request,
+	{ params }: { params: Promise<{ id: string }> },
+) {
+	const auth = await authorizeCli(req, "edit", { type: "project" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
+	const { id } = await params;
+
+	const parsed = attachIacBody.safeParse(await req.json().catch(() => null));
+	if (!parsed.success) {
+		return NextResponse.json(
+			{ error: "Invalid request body: repo_url is required" },
+			{ status: 400 },
+		);
+	}
+	const b = parsed.data;
+
+	try {
+		const scope = await resolveByoScope(actor.orgId, id, req);
+		if ("error" in scope) return scope.error;
+
+		const result = await runWithActor(actor, () =>
+			attachIacSource({
+				projectId: scope.projectId,
+				environmentId: scope.environmentId,
+				repoUrl: b.repo_url,
+				ref: b.ref ?? null,
+				path: b.path,
+				gitCredentialId: b.git_credential_id ?? null,
+				varValues: b.var_values,
+			}),
+		);
+		return cliJson(
+			cliByoChartAttachResponse,
+			{ ok: true, id: result.id },
+			{ status: 201 },
+		);
+	} catch (err: unknown) {
+		return byoWriteError(err);
+	}
+}
+
+/** Detaches the environment's BYO IaC source. The environment is the whole address — an environment
+ *  holds at most one source — so there is no body. */
+export async function DELETE(
+	req: Request,
+	{ params }: { params: Promise<{ id: string }> },
+) {
+	const auth = await authorizeCli(req, "edit", { type: "project" });
+	if ("error" in auth) return auth.error;
+	const { actor } = auth;
+	const { id } = await params;
+
+	try {
+		const scope = await resolveByoScope(actor.orgId, id, req);
+		if ("error" in scope) return scope.error;
+
+		await runWithActor(actor, () =>
+			detachIacSource({
+				projectId: scope.projectId,
+				environmentId: scope.environmentId,
+			}),
+		);
+		return cliJson(cliOkResponse, { ok: true });
+	} catch (err: unknown) {
+		return byoWriteError(err);
 	}
 }

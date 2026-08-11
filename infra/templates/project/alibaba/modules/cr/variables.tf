@@ -20,6 +20,10 @@ variable "repos" {
   type = map(object({
     summary        = optional(string, "")
     immutable_tags = optional(bool, true)
+    # The OPPOSITE default from immutable_tags, on purpose: an omitted switch means "leave the
+    # template default alone", and this template's default is NO scan rule — before #1845 it
+    # created none, so an old emitter (or a hand-written snapshot) must keep planning none.
+    vulnerability_scanning = optional(bool, false)
   }))
   default     = {}
   description = "Repositories to create inside the namespace, keyed by the registry component's name."

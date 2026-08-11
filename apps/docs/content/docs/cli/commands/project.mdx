@@ -67,8 +67,32 @@ alethia project create api-backend --region eu-west-1 --cloud-identity-id <id>
 | `--cloud-identity-id` | No | Cloud account to link (interactive picker on a TTY when omitted) |
 | `--stage` | No | Initial environment stage: `development` (default), `staging`, `production` |
 | `--iac-version` | No | OpenTofu version to pin (defaults server-side) |
+| `--placement-mode` | No | Placement of the default environment: `namespace`, `vcluster`, `dedicated` (default) |
+| `--env` | No | `name:stage[:mode[:namespace]]`, repeatable — the full environment matrix |
 
 The created project prints as a card (or the typed object with `--output json`).
+
+### Creating the whole environment matrix at once
+
+`--env` declares every environment and **how each is placed onto a Fabric**, in one command. The
+first entry is the default environment and owns the Fabric it provisions, so it defaults to
+`dedicated`; later entries default to `namespace` and share that Fabric.
+
+```bash
+alethia project create shop --region eu-west-1 --cloud-identity-id <id> \
+  --env prod:production \
+  --env dev:development:namespace:boutique-dev \
+  --env staging:staging:vcluster
+```
+
+That is **one** cluster hosting three environments. Omit `--env` and you get the default
+Production + Preview pair instead.
+
+<Callout type="warn">
+  Placement is the flag with a bill attached. Each `dedicated` environment is a separate cluster with
+  its own OpenTofu state; `namespace` and `vcluster` share the Fabric that already exists. A four-cloud
+  two-tier demo is four clusters with placement and eight without it.
+</Callout>
 
 ## `alethia project env`
 
@@ -79,29 +103,46 @@ A project owns N independently-provisionable environments. The project is named 
 # List a project's environments
 alethia project env list --project api-backend
 
-# Add an environment
-alethia project env add staging --project api-backend --stage staging --region us-east-1
+# Add an environment (shares the existing Fabric by default)
+alethia project env add staging --project api-backend --stage staging
+
+# Add one as a vcluster on a named Fabric, with its own destination namespace
+alethia project env add staging --project shop --stage staging \
+  --placement-mode vcluster --fabric shared --namespace boutique-staging
+
+# Add one that provisions its OWN cluster
+alethia project env add prod --project shop --stage production --placement-mode dedicated
 ```
 
 | Command | Flags | Description |
 |------|----------|-------------|
 | `env list` | `--project <p>` | List the project's environments (default first) |
-| `env add <name>` | `--project <p>` `--stage <s>` `--region <r>` | Add an environment (name is slugified; region inherits the project's when omitted) |
+| `env add <name>` | `--project <p>` `--stage <s>` `--region <r>` `--placement-mode <m>` `--fabric <f>` `--namespace <n>` `--lifecycle <l>` | Add an environment (name is slugified; region inherits the project's when omitted) |
+
+An **added** environment defaults to `namespace` placement on the Fabric the project's default
+environment already uses — the cheap rung, and the one that makes a second tier free. `--fabric`
+names a different Fabric to place onto; `--namespace` sets the ArgoCD destination namespace
+(otherwise derived from the environment name); `--lifecycle` is `persistent` (default) or
+`ephemeral`. `--fabric` and `--namespace` are ignored for `dedicated`, which owns a new Fabric.
+
+The success line names the placement you got, so a `dedicated` you did not intend is visible
+immediately rather than on the next apply.
 
 ## `alethia project component`
 
 One uniform group authors **all** of a project's component resources. The project is named with
-`--project`.
+`--project`, and the environment with `--env`.
 
-Supported **kinds** — singletons (one per project, name-less): `network`, `cluster`, `dns`,
-`observability`, `repositories`; and multi (named, many per project): `databases`, `caches`,
-`queues`, `topics`, `nosql_tables`, `container_registries`, `secrets`, `storage_buckets`.
+Supported **kinds** — singletons (one per project *per environment*, name-less): `network`,
+`cluster`, `dns`, `observability`, `repositories`; and multi (named, many per environment):
+`databases`, `caches`, `queues`, `topics`, `nosql_tables`, `container_registries`, `secrets`,
+`storage_buckets`.
 
 ```bash
 # List the supported kinds
 alethia project component kinds
 
-# List a project's components (optionally filter by --kind)
+# List a project's components (optionally filter by --kind and/or --env)
 alethia project component list --project api-backend --kind databases
 
 # Add a database (multi kind → --name required)
@@ -121,8 +162,38 @@ alethia project component remove --project api-backend --kind network
 |------|----------|-------------|
 | `component kinds` | — | List the supported component kinds + their cardinality |
 | `component list` | `--project <p>` `--kind <k>` `--env <e>` | List components (all kinds, or one) |
-| `component add` | `--project <p>` `--kind <k>` `--name <n>` `--set key=value`… | Create a component |
-| `component remove` | `--project <p>` `--kind <k>` `--name <n>` | Delete a component (confirms) |
+| `component add` | `--project <p>` `--kind <k>` `--name <n>` `--env <e>` `--set key=value`… | Create a component |
+| `component remove` | `--project <p>` `--kind <k>` `--name <n>` `--env <e>` | Delete a component (confirms) |
+
+### Components belong to an environment
+
+A component is scoped to one **environment**, not to the project as a whole — so two environments
+can hold the same kind with different configuration. `--env` takes an environment id, name or stage:
+
+```bash
+# dev and staging deploy DIFFERENT overlays of the same repo
+alethia project component add --project shop --env dev --kind repositories \
+  --set apps_destination_repo=https://github.com/acme/shop --set apps_path=overlays/dev
+
+alethia project component add --project shop --env staging --kind repositories \
+  --set apps_destination_repo=https://github.com/acme/shop --set apps_path=overlays/staging
+
+# Inspect one tier at a time
+alethia project component list --project shop --env staging
+```
+
+What `--env` defaults to differs by verb, deliberately:
+
+- **`add` and `remove`** default to the project's **default environment**, so a single-environment
+  script needs no `--env` at all.
+- **`list`** defaults to **every** environment. Narrowing a read silently would hide rows you did
+  not ask to hide.
+
+<Callout type="warn">
+  `remove` deletes from **one** environment — the one you named, or the default. It never touches a
+  sibling environment's copy. Confirm the tier in the success line (`Component removed in staging`)
+  before assuming which one went.
+</Callout>
 
 ### The `--set` field setter
 

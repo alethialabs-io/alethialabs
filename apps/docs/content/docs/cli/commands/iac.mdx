@@ -34,6 +34,59 @@ the last deploy applied), **status**. Prints `No BYO IaC source attached.` when 
 Add `-o json` for the full source object (the elench scan report itself is console-only). Backing
 call: `GET /cli/projects/<project>/byo-iac`.
 
+## `alethia iac attach`
+
+Attach a git repository holding your own Terraform/OpenTofu to one environment.
+
+```bash
+alethia iac attach -p shop -e dev \
+  --repo https://github.com/acme/infra --path iac/drift/aws --ref main \
+  --var region=eu-west-1
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--repo` | Yes | Git repository URL. |
+| `--path` | No | Path to the module within the repo. |
+| `--ref` | No | Git ref (branch, tag or SHA). |
+| `--var key=value` | No | A scalar tfvar. Repeatable. |
+| `--git-credential-id` | No | Credential for a private repository. |
+
+An environment holds **at most one** source, so re-attaching replaces it.
+
+<Callout type="warn">
+  `--var` takes **scalars only** — string, number or bool. The server refuses a nested object or an
+  array, and tfvars are never a place for a secret. Use the platform's secret handling for anything
+  sensitive.
+</Callout>
+
+## `alethia iac scan`
+
+```bash
+alethia iac scan -p shop -e dev
+```
+
+An attached source is **not deployable until scanned**: the scan reads the module's variables and
+records the verdict the plan-time gate reads. The printed job id follows with
+`alethia jobs logs <id> --follow`.
+
+## `alethia iac detach`
+
+```bash
+alethia iac detach -p shop -e dev --yes
+```
+
+<Callout type="warn">
+  Detaching stops Alethia managing what the source created. Resources it applied are **not
+  destroyed** — run a destroy first if that is what you want.
+</Callout>
+
+<Callout type="info">
+  These commands need `ALETHIA_BYO_IAC_ENABLED=true` on the instance, and attaching is refused with
+  **409** when the environment already holds template-provisioned state — a conflict with reality that
+  no retry will clear.
+</Callout>
+
 ## See also
 
 - [Chart Commands](/cli/commands/charts) — your BYO Helm charts.

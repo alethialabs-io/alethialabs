@@ -94,8 +94,12 @@ func runProjectEnvList(c apiClient, out io.Writer, format, project string) error
 }
 
 var (
-	projectEnvStage  string
-	projectEnvRegion string
+	projectEnvStage     string
+	projectEnvRegion    string
+	projectEnvPlacement string
+	projectEnvFabric    string
+	projectEnvNamespace string
+	projectEnvLifecycle string
 )
 
 var projectEnvAddCmd = &cobra.Command{
@@ -111,19 +115,34 @@ var projectEnvAddCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		if err := runProjectEnvAdd(api.NewClient(token), os.Stdout, project, args[0], projectEnvStage, projectEnvRegion); err != nil {
+		if err := runProjectEnvAdd(api.NewClient(token), os.Stdout, api.AddEnvironmentParams{
+			Project:   project,
+			Name:      args[0],
+			Stage:     projectEnvStage,
+			Region:    projectEnvRegion,
+			Placement: projectEnvPlacement,
+			Fabric:    projectEnvFabric,
+			Namespace: projectEnvNamespace,
+			Lifecycle: projectEnvLifecycle,
+		}); err != nil {
 			failf("Failed to add environment: %v", err)
 		}
 	},
 }
 
-// runProjectEnvAdd adds an environment and confirms it.
-func runProjectEnvAdd(c apiClient, out io.Writer, project, name, stage, region string) error {
-	env, err := c.AddEnvironment(project, name, stage, region)
+// runProjectEnvAdd adds an environment and confirms it. The confirmation names the PLACEMENT, because
+// that is the field with a cost: a `dedicated` environment is a whole new cluster with its own state
+// key, and until this flag existed every CLI-added environment silently became one.
+func runProjectEnvAdd(c apiClient, out io.Writer, params api.AddEnvironmentParams) error {
+	env, err := c.AddEnvironment(params)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Added environment %s (%s)", env.Name, env.Stage)))
+	placement := params.Placement
+	if placement == "" {
+		placement = "namespace"
+	}
+	fmt.Fprintln(out, ui.FormatSuccess(fmt.Sprintf("Added environment %s (%s, %s placement)", env.Name, env.Stage, placement)))
 	return nil
 }
 
@@ -131,6 +150,10 @@ func init() {
 	projectEnvCmd.PersistentFlags().String("project", "", "Project name or id")
 	projectEnvAddCmd.Flags().StringVar(&projectEnvStage, "stage", "development", "Environment stage (development|staging|production)")
 	projectEnvAddCmd.Flags().StringVar(&projectEnvRegion, "region", "", "Region (inherits the project's region when omitted)")
+	projectEnvAddCmd.Flags().StringVar(&projectEnvPlacement, "placement-mode", "", "Placement onto a Fabric: namespace|vcluster|dedicated (default namespace — `dedicated` provisions a NEW cluster)")
+	projectEnvAddCmd.Flags().StringVar(&projectEnvFabric, "fabric", "", "Fabric to place onto, by name (default: the Fabric the project's default environment is on)")
+	projectEnvAddCmd.Flags().StringVar(&projectEnvNamespace, "namespace", "", "ArgoCD destination namespace for a shared placement (default: derived from the name)")
+	projectEnvAddCmd.Flags().StringVar(&projectEnvLifecycle, "lifecycle", "", "persistent|ephemeral (default persistent)")
 	projectEnvCmd.AddCommand(projectEnvListCmd)
 	projectEnvCmd.AddCommand(projectEnvAddCmd)
 	projectCmd.AddCommand(projectEnvCmd)

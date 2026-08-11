@@ -401,6 +401,34 @@ func TestProviderTfvars_CacheAllowedCidrBlocks(t *testing.T) {
 	})
 }
 
+// The cache allow-list reaches the ApsaraDB KVStore whitelist tfvar on Alibaba
+// (`kvstore_security_ips` -> `alicloud_kvstore_instance.security_ips`, probed
+// against the pinned provider), and an unset list emits NOTHING — the template
+// then renders no security_ips argument, so an existing cache keeps whatever
+// whitelist it has (#2149, the alibaba leg of #1981).
+func TestProviderTfvars_AlibabaCacheSecurityIps(t *testing.T) {
+	t.Run("carried when set", func(t *testing.T) {
+		cfg := &types.ProjectConfig{
+			Caches: []types.ProjectCacheConfig{
+				{Name: "c", AllowedCidrBlocks: []string{"10.1.0.0/16", "192.168.0.0/24"}},
+			},
+		}
+		tf := (&alibabaProvider{}).ProviderTfvars(cfg)
+		got, _ := tf["kvstore_security_ips"].([]string)
+		if len(got) != 2 || got[0] != "10.1.0.0/16" || got[1] != "192.168.0.0/24" {
+			t.Errorf("kvstore_security_ips = %v, want the CIDRs the canvas collected", tf["kvstore_security_ips"])
+		}
+	})
+	t.Run("unset emits nothing so existing whitelists are untouched", func(t *testing.T) {
+		cfg := &types.ProjectConfig{Caches: []types.ProjectCacheConfig{{Name: "c"}}}
+		tf := (&alibabaProvider{}).ProviderTfvars(cfg)
+		if v, ok := tf["kvstore_security_ips"]; ok {
+			t.Errorf("kvstore_security_ips = %v when no list was set — emitting it would REPLACE an "+
+				"existing instance's whitelist instead of leaving it alone", v)
+		}
+	})
+}
+
 // A global table's replica regions reach the template's `replicas` entry, a
 // regional table never emits one, and unset renders the same shape as before
 // (#1982).
@@ -448,5 +476,59 @@ func TestProviderTfvars_AzureCacheNodeCountWithdrawn(t *testing.T) {
 	tf := (&azureProvider{}).ProviderTfvars(cfg)
 	if v, present := tf["azure_cache_sku"]; present {
 		t.Errorf("azure_cache_sku = %v — the node count flips the tier again; it must emit nothing", v)
+	}
+}
+
+// AllowedCidrBlocks is withdrawn on Azure caches (#2148): Managed Redis — the only cache Azure
+// lets us deterministically create — has no CIDR firewall surface, in the service or in azurerm
+// 4.81.0/5.0.1, and the two look-alikes are both traps: `public_network_access` is an on/off
+// switch that discards every address typed, and NSP is not onboarded for any Microsoft.Cache type
+// (docs/research/azure-cache-cidr.md). The withdrawn list must reach NO azure tfvar under any
+// name — this walks every emitted value for the sentinel CIDR rather than guessing key names, so
+// a future carrier smuggled in under a new key fails here until the exclusions ceiling is
+// deliberately lifted.
+func TestProviderTfvars_AzureCacheAllowedCidrBlocksWithdrawn(t *testing.T) {
+	const sentinel = "203.0.113.0/24"
+	cfg := &types.ProjectConfig{
+		Caches: []types.ProjectCacheConfig{{Name: "c", AllowedCidrBlocks: []string{sentinel}}},
+	}
+	tf := (&azureProvider{}).ProviderTfvars(cfg)
+
+	var contains func(v interface{}) bool
+	contains = func(v interface{}) bool {
+		switch x := v.(type) {
+		case string:
+			return x == sentinel
+		case []string:
+			for _, s := range x {
+				if s == sentinel {
+					return true
+				}
+			}
+		case []interface{}:
+			for _, e := range x {
+				if contains(e) {
+					return true
+				}
+			}
+		case map[string]interface{}:
+			for _, e := range x {
+				if contains(e) {
+					return true
+				}
+			}
+		case []map[string]interface{}:
+			for _, e := range x {
+				if contains(e) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for key, v := range tf {
+		if contains(v) {
+			t.Errorf("tfvar %q carries the withdrawn cache CIDR %q — the control is a recorded ceiling on azure and must emit nothing", key, sentinel)
+		}
 	}
 }

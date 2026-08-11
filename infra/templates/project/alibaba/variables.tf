@@ -331,10 +331,14 @@ variable "provision_cr" {
 # TYPED on purpose — see the note on the module's own `repos`. Keyed by the registry component's
 # name. `immutable_tags` is the canvas's "Immutable tags" switch, defaulting to the setting the
 # repository would have been created with anyway, so an emitter that omits it downgrades nothing.
+# `vulnerability_scanning` (#1845) defaults the other way — an omitted switch plans NO scan rule,
+# the template's own pre-#1845 default — see the module's `repos` for why the asymmetry is load-
+# bearing rather than an oversight.
 variable "cr_repos" {
   type = map(object({
-    summary        = optional(string, "")
-    immutable_tags = optional(bool, true)
+    summary                = optional(string, "")
+    immutable_tags         = optional(bool, true)
+    vulnerability_scanning = optional(bool, false)
   }))
   default     = {}
   description = "Container Registry repositories to create, keyed by the registry component's name"
@@ -456,6 +460,21 @@ variable "kvstore_shard_count" {
   description = "Number of cluster-mode shards for the Redis instance. 0 (the default) leaves the instance class's own topology alone."
 }
 
+# #2149. Extra source ranges permitted to reach the Redis instance — the cache allow-list the canvas
+# collects. Empty (the default) renders no security_ips argument at all, so an existing instance
+# keeps whatever whitelist it has.
+variable "kvstore_security_ips" {
+  type        = list(string)
+  default     = []
+  description = "Extra source CIDRs permitted to reach the Redis instance. Empty (the default) leaves the instance's whitelist alone."
+
+  validation {
+    # alltrue([]) is true, so the empty default passes without a special case.
+    condition     = alltrue([for c in var.kvstore_security_ips : can(cidrhost(c, 0))])
+    error_message = "kvstore_security_ips must all be valid CIDRs (e.g. 10.1.0.0/16)."
+  }
+}
+
 # #1996. Alibaba is NOT part of the azure/gcp serverless ceiling: alicloud_db_instance accepts a
 # serverless_config block, so the range is expressible. Both default to 0, which renders no block at
 # all — a provisioned (non-serverless) instance is unaffected.
@@ -478,4 +497,24 @@ variable "ack_secrets_encryption_enabled" {
   type        = bool
   default     = true
   description = "Envelope-encrypt Kubernetes Secrets in etcd under a customer-managed KMS key. On by default (AWS parity)."
+}
+
+# ── Cluster-admin grants on ACK (#2005) ─────────────────────────────────────────────────────────
+# CUSTOMIZABILITY-PARITY.md once recorded cluster admins as "granted outside the template" on
+# Alibaba, as if the cloud forced it. The pinned provider refutes that:
+# alicloud_cs_kubernetes_permissions is exactly a cluster-admin binding — see cluster-admins.tf,
+# including the REPLACE-not-merge constraint the description below warns about. Empty (the
+# default) grants nothing and plans byte-identically to before.
+variable "ack_cluster_admins" {
+  type = list(object({
+    uid         = string
+    is_ram_role = optional(bool, true)
+  }))
+  default     = []
+  description = "RAM principals granted cluster-scoped admin on the ACK cluster. `uid` is the RAM role id (is_ram_role = true, the default — the keyless RRSA/AssumeRole model this template already deals in) or a RAM user UID (is_ram_role = false). ⚠️ ACK's permission API REPLACES the listed principal's entire ACK permission set on every apply (see cluster-admins.tf) — list only principals whose cluster grants this template is meant to own. Empty (the default) grants nothing."
+
+  validation {
+    condition     = length(distinct([for a in var.ack_cluster_admins : a.uid])) == length(var.ack_cluster_admins)
+    error_message = "ack_cluster_admins uids must be unique — ACK's grant is a replace, not a merge, so two entries for one principal would fight over the same permission set and the last writer would silently revoke the first."
+  }
 }

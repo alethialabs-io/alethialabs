@@ -191,12 +191,21 @@ func TestValidateNetworkCIDR(t *testing.T) {
 	}{
 		// The default every provider substitutes.
 		{name: "azure /16", cloud: "azure", cidr: "10.0.0.0/16", provisionNetwork: true},
-		{name: "azure at the floor", cloud: "azure", cidr: "10.0.0.0/20", provisionNetwork: true},
+		{name: "azure at the floor", cloud: "azure", cidr: "10.0.0.0/18", provisionNetwork: true},
+		// /19 and /20 satisfy newbits >= 0 but not netnum < 2^newbits: the vnet module carves
+		// FOUR subnets (netnum 0..3), so subnet 2 and 3 are hard tofu errors there (#2050).
+		{name: "azure below the floor (/19 cannot carve subnet 2)", cloud: "azure", cidr: "10.0.0.0/19", provisionNetwork: true, wantErr: true},
+		{name: "azure below the floor (/20 cannot carve subnet 1)", cloud: "azure", cidr: "10.0.0.0/20", provisionNetwork: true, wantErr: true},
 		{name: "azure below the floor", cloud: "azure", cidr: "10.0.0.0/21", provisionNetwork: true, wantErr: true},
 		{name: "azure /24 (the canvas accepts it today)", cloud: "azure", cidr: "10.0.0.0/24", provisionNetwork: true, wantErr: true},
 
-		{name: "hetzner at the floor", cloud: "hetzner", cidr: "10.0.0.0/24", provisionNetwork: true},
-		{name: "hetzner below the floor", cloud: "hetzner", cidr: "10.0.0.0/25", provisionNetwork: true, wantErr: true},
+		{name: "hetzner at the floor", cloud: "hetzner", cidr: "10.0.0.0/22", provisionNetwork: true},
+		// #2049: the node carve alone would admit /23 and /24, but the service carve
+		// (cidrsubnet(net, 3, 3)) lands inside the node /24 on both — they must be refused
+		// here, not by the template's disjointness precondition mid-provision.
+		{name: "hetzner /23 (service carve overlaps the node /24)", cloud: "hetzner", cidr: "10.0.0.0/23", provisionNetwork: true, wantErr: true},
+		{name: "hetzner /24 (pod AND service carves overlap the node /24)", cloud: "hetzner", cidr: "10.0.0.0/24", provisionNetwork: true, wantErr: true},
+		{name: "hetzner below the node carve's own floor", cloud: "hetzner", cidr: "10.0.0.0/25", provisionNetwork: true, wantErr: true},
 		// The value azure refuses is fine on hetzner — the floors are per-cloud, not shared.
 		{name: "hetzner /21", cloud: "hetzner", cidr: "10.0.0.0/21", provisionNetwork: true},
 
@@ -207,8 +216,11 @@ func TestValidateNetworkCIDR(t *testing.T) {
 		// GCP is structurally exempt: it uses the CIDR verbatim, so even a /29 is its own
 		// business, not this gate's.
 		{name: "gcp /29 is not this gate's business", cloud: "gcp", cidr: "10.0.0.0/29", provisionNetwork: true},
-		// AWS's floor is deferred to #1942 — a /24 must NOT be refused here yet.
-		{name: "aws /24 is deferred to #1942", cloud: "aws", cidr: "10.0.0.0/24", provisionNetwork: true},
+		// AWS's floor landed with #1942; the deferral is over. /18 is the template's own
+		// carvability bound (networking.tf `vpc_cidr_is_carvable`), scraped by the drift test.
+		{name: "aws at the floor", cloud: "aws", cidr: "10.0.0.0/18", provisionNetwork: true},
+		{name: "aws /19 plans clean but fails mid-apply", cloud: "aws", cidr: "10.0.0.0/19", provisionNetwork: true, wantErr: true},
+		{name: "aws /24 dies inside cidrsubnet", cloud: "aws", cidr: "10.0.0.0/24", provisionNetwork: true, wantErr: true},
 
 		// The skips. A brownfield network's CIDR is not ours to carve, and an unset CIDR means
 		// the provider substitutes 10.0.0.0/16.

@@ -56,8 +56,13 @@ function provider(idKey: string, secretKey: string): ProviderCredentials | null 
  * NOTE: this only covers paths served by Better Auth's catch-all handler
  * (/api/auth/[...all]). The custom CLI device-code routes (/api/auth/cli/{exchange,
  * refresh,generate}) are separate Next route handlers that never pass through this
- * handler, so they are NOT rate-limited here (the exchange/refresh endpoints are
- * poll-by-design over a high-entropy client device_code — low brute-force value).
+ * handler, so nothing here applies to them. /api/auth/cli/{generate,exchange} carry
+ * their own limit instead — lib/auth/cli-device-code.ts, keyed on the trusted
+ * cf-connecting-ip and sized for the CLI's 2-second poll. That limiter is the
+ * per-process in-memory one, so it is a damper on unauthenticated DB writes, not a
+ * brute-force control; the 122-bit device_code is what makes guessing infeasible.
+ * /api/auth/cli/refresh is still unlimited (it is authenticated by a signed refresh
+ * JWT and does no write).
  */
 export function getAuthRateLimit(): NonNullable<BetterAuthOptions["rateLimit"]> {
 	return {

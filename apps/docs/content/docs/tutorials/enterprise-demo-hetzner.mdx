@@ -1,0 +1,69 @@
+---
+title: Enterprise demo on Hetzner
+description: The cheapest and fastest way to run the enterprise-demo tutorial.
+---
+
+# Enterprise demo on Hetzner
+
+The per-cloud half of [Deploy the enterprise demo](/tutorials/enterprise-demo). Do this page's steps,
+then go back there.
+
+**Why Hetzner:** roughly **€0.10/hour** for the whole demo, and the connector is one paste. Every
+other cloud is five to six times the cost and needs a CLI or a browser shell.
+
+## Connect the account
+
+```bash
+alethia connector hetzner
+```
+
+It prompts for an API token, masked. Create it in the Hetzner Cloud Console under the **project** (not
+the account): **Security → API tokens → Generate API token**, with **Read & Write**.
+
+For a script, pipe it instead so it never reaches your shell history:
+
+```bash
+echo "$HCLOUD_TOKEN" | alethia connector hetzner --token-stdin
+```
+
+<Callout type="warn">
+  A Hetzner token is scoped to **one Hetzner project**, and that project is the entire isolation
+  boundary — the token can do anything inside it. Create a project just for this demo. Hetzner is also
+  the one cloud Alethia cannot connect keylessly: it exposes no OIDC provider and no role assumption,
+  so a token is the only mechanism available. See [connector commands](/cli/commands/connector).
+</Callout>
+
+Get the identity id for the tutorial's `--cloud-identity-id`:
+
+```bash
+alethia connector list
+```
+
+## The values to use
+
+| | |
+|---|---|
+| `--region` | `nbg1` (Nuremberg). `fsn1` and `hel1` also work. |
+| Cluster nodes | `cx33` — 4 vCPU / 8 GiB, about €0.03/hour each |
+| Time to a cluster | ~12 minutes |
+| Whole demo | **~€0.10/hour** |
+
+Hetzner clusters are **Talos** rather than a managed control plane, which is why they come up fast.
+One consequence matters here: Hetzner has no cloud API to re-mint cluster access, so Alethia captures
+the Fabric's `talosconfig` at its first apply and uses that to mint short-lived kubeconfigs for the
+placed environments. It is encrypted at rest and never returned to the browser.
+
+## Tearing down
+
+After `alethia project destroy`, check the Hetzner Console for leftovers:
+
+```bash
+hcloud server list
+hcloud network list
+hcloud volume list
+hcloud load-balancer list
+```
+
+Volumes and load balancers are the two that survive a partial teardown, and both bill hourly.
+
+Now go back to [step 1 of the tutorial](/tutorials/enterprise-demo#step-1--create-the-project-and-both-environments).

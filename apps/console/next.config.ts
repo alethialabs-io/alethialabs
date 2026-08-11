@@ -123,16 +123,58 @@ const nextConfig: NextConfig = {
 // VERSION (releaseVersion falsy) no-ops the upload instead of erroring — the upload never breaks a deploy.
 const posthogApiKey = process.env.POSTHOG_API_KEY;
 const releaseVersion = process.env.NEXT_PUBLIC_APP_VERSION;
-export default posthogApiKey
-	? withPostHogConfig(nextConfig, {
-			personalApiKey: posthogApiKey,
-			projectId: process.env.POSTHOG_PROJECT_ID,
-			host: process.env.POSTHOG_API_HOST || "https://eu.posthog.com",
-			sourcemaps: {
-				enabled: Boolean(releaseVersion),
-				releaseName: "console",
-				releaseVersion,
-				deleteAfterUpload: true,
+
+/**
+ * Makes the PostHog source-map upload unable to fail `next build`.
+ *
+ * The comment above has claimed "the upload never breaks a deploy" since the releaseName break, and
+ * it was not true: the gate is on the key being PRESENT, not valid. An invalid POSTHOG_API_KEY threw
+ * out of the upload and failed every production console build for ten days (#2244) — the image was
+ * never produced, so nothing reaching `main` reached production, while the runner images built fine
+ * and the run read as a partial success.
+ *
+ * @posthog/nextjs-config installs `compiler.runAfterProductionCompile` and does not catch (its
+ * dist/config.js), and PluginConfig exposes no failOnError-style option, so the only place to make
+ * this non-fatal is here — around the hook it installed.
+ *
+ * Telemetry is not worth a release. A failed upload costs symbolicated stack traces until the key is
+ * fixed; a failed build costs every deploy.
+ */
+export function withNonFatalSourcemapUpload(config: NextConfig): NextConfig {
+	const hook = config.compiler?.runAfterProductionCompile;
+	if (!hook) return config;
+
+	return {
+		...config,
+		compiler: {
+			...config.compiler,
+			runAfterProductionCompile: async (args: Parameters<typeof hook>[0]) => {
+				try {
+					await hook(args);
+				} catch (err) {
+					// Deliberately swallowed. Loud enough to find in a build log, never fatal.
+					console.warn(
+						`[posthog] source-map upload failed; continuing the build without symbolication. ` +
+							`Stack traces will not symbolicate until this is fixed: ${err instanceof Error ? err.message : String(err)}`,
+					);
+				}
 			},
-		})
+		},
+	};
+}
+
+export default posthogApiKey
+	? withNonFatalSourcemapUpload(
+			withPostHogConfig(nextConfig, {
+				personalApiKey: posthogApiKey,
+				projectId: process.env.POSTHOG_PROJECT_ID,
+				host: process.env.POSTHOG_API_HOST || "https://eu.posthog.com",
+				sourcemaps: {
+					enabled: Boolean(releaseVersion),
+					releaseName: "console",
+					releaseVersion,
+					deleteAfterUpload: true,
+				},
+			}),
+		)
 	: nextConfig;

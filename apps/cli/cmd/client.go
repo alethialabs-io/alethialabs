@@ -21,6 +21,7 @@ type apiClient interface {
 	CreateTeam(orgID, name string) (*api.Team, error)
 	DeleteTeam(orgID, teamID string) error
 	GetRunners() ([]api.Runner, error)
+	RegisterRunner(name, cloudIdentityID string) (*api.RunnerRegistration, error)
 	GetClusters() ([]api.ClusterSummary, error)
 	GetConfigurations() ([]types.ConfigurationSummary, error)
 	ExportConfiguration(projectName, format string) (*api.ConfigurationExport, error)
@@ -55,15 +56,23 @@ type apiClient interface {
 	SetFleetPool(provider string, update api.FleetPoolUpdate) (*api.FleetPool, error)
 	CreateProject(params api.CreateProjectParams) (*api.Project, error)
 	ListEnvironments(project string) ([]api.Environment, error)
-	AddEnvironment(project, name, stage, region string) (*api.Environment, error)
+	AddEnvironment(params api.AddEnvironmentParams) (*api.Environment, error)
 	ListComponents(project, kind, env string) ([]api.Component, error)
-	AddComponent(project, kind, name string, fields map[string]interface{}) (*api.Component, error)
-	RemoveComponent(project, kind, name string) error
+	AddComponent(project, kind, name, env string, fields map[string]interface{}) (*api.Component, error)
+	RemoveComponent(project, kind, name, env string) error
 	GetProjectDrift(project, env string) (*api.DriftPosture, error)
 	GetEnvironmentCost(project, env string) (*api.EnvironmentCost, error)
 	GetProjectProtection(project string) ([]api.ProtectionRule, error)
 	GetProjectProbes(project string) ([]api.ProbeState, error)
 	GetProjectAddons(project, env string) (*api.ProjectAddons, error)
+	AttachChart(p api.AttachChartParams) (*api.ByoAttachResult, error)
+	DetachChart(project, env, id string) error
+	ScanChart(project, env, id string) (*api.ByoScanResult, error)
+	AttachIac(p api.AttachIacParams) (*api.ByoAttachResult, error)
+	DetachIac(project, env string) error
+	ScanIac(project, env string) (*api.ByoScanResult, error)
+	EnableAddon(p api.EnableAddonParams) error
+	DisableAddon(project, env, addonID string) error
 	GetProjectByoCharts(project, env string) (*api.ProjectByoCharts, error)
 	GetProjectIacSource(project, env string) (*api.IacSource, error)
 	GetProjectPromotions(project, env string) ([]api.Promotion, error)

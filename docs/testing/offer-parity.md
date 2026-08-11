@@ -97,7 +97,7 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `queue:ordered` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `registry:immutable_tags` | 🟡 | 🟡 | — | 🟡 | · | · |
-| `registry:vulnerability_scanning` | 🚫 #1845 | 🟡 | — | 🟡 | · | · |
+| `registry:vulnerability_scanning` | 🟡 | 🟡 | — | 🟡 | · | · |
 | `secret:generate` | 🟡 | ⚠️ | 🟡 | 🟡 | · | · |
 | `secret:special_chars` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
 
@@ -207,29 +207,6 @@ above with an issue; a ⚠️ cell in neither list fails the build.
 |---|---|---|
 | `cache:multi_az` | gcp | Choosing multi-AZ puts the cache on Memorystore's replicated STANDARD_HA tier, which is how zone redundancy is bought on Google Cloud. |
 | `secret:generate` | aws | Asking Alethia to generate a secret sends the length and special-character rules to AWS; supplying your own sends it as a manual value instead. |
-
-## Known gaps on the baseline
-
-Not exclusions. Each is an offer a cloud genuinely cannot honor today, already boarded, with the
-issue that tracks it. They do not fail the build; a NEW gap does. The list **ratchets**: when a cell
-is measured and comes out honored the guard fails until its entry is deleted, so it can only shrink.
-
-The **state** column is what this run MEASURED, not what the entry records — the two can disagree,
-and when they do the run is the current fact. Three readings are worth knowing:
-
-- a state on its own — the gap reproduced exactly as boarded;
-- a state with *(boarded as …)* — the gap **changed shape**. It was not fixed. 🚫 → ⚠️ is a change in
-  the wrong direction: the switch still is not shown to do what it says, and now the code does not
-  even show that the key it writes is this feature. The guard reports it and keeps the entry;
-- *not measured this run* — the guard produced no cell here, so it has **nothing to say** about
-  whether the gap is still there. Not a fix. Usually the cloud stopped being offered the switch, or
-  the generated offer surface is stale.
-
-Only a cell that was measured and came out honored is asked for its entry back.
-
-| Offer | Cloud | State (measured) | Issue | What a user gets today |
-|---|---|---|---|---|
-| `registry:vulnerability_scanning` | alibaba | 🚫 `no-carrier` | #1845 | Image scanning is not requested from Container Registry yet — repositories are created with the platform default instead of your choice. |
 
 ---
 

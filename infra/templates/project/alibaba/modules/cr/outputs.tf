@@ -38,3 +38,21 @@ output "repository_paths" {
     name => "${repo.namespace}/${repo.name}"
   }
 }
+
+# Read back off the RESOURCE, like repository_immutable_tags above, and for the same reason: it is
+# the only thing a root-level `.tftest.hcl` can address to prove the canvas's "Vulnerability
+# scanning" switch planned a real REPO-scoped rule. Keyed by the registry component's name; a
+# repository whose switch is off has NO entry — the OFF position is the absence of the rule, so
+# the test asserts emptiness rather than a value.
+output "repository_scan_rules" {
+  description = "Map of repository names to the scan rule planned on alicloud_cr_scan_rule (scope, trigger, type, targets)"
+  value = {
+    for name, rule in alicloud_cr_scan_rule.this :
+    name => {
+      scan_scope   = rule.scan_scope
+      trigger_type = rule.trigger_type
+      scan_type    = rule.scan_type
+      repo_names   = rule.repo_names
+    }
+  }
+}

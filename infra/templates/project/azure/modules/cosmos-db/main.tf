@@ -12,13 +12,33 @@ resource "azurerm_cosmosdb_account" "this" {
     consistency_level = var.consistency_level
   }
 
+  # Cross-region failover only means something once there is a second region to fail over to.
+  automatic_failover_enabled = length(var.replica_regions) > 0
+
   geo_location {
     location          = var.location
     failover_priority = 0
   }
 
-  capabilities {
-    name = "EnableServerless"
+  # Replica regions (#2158): the union of every table's global_replicas, primary excluded and
+  # deduplicated at the root. Priorities follow list order after the primary's 0.
+  dynamic "geo_location" {
+    for_each = var.replica_regions
+    content {
+      location          = geo_location.value
+      failover_priority = geo_location.key + 1
+    }
+  }
+
+  # Serverless is single-region-only, so it is CONDITIONAL on no replicas being asked for
+  # (#2158, human decision 2026-08-10): a table requesting global replicas switches the account
+  # onto provisioned throughput. `capabilities` is create-time, so on an EXISTING account this
+  # flip is a REPLACEMENT — the inspector states both consequences on the field.
+  dynamic "capabilities" {
+    for_each = length(var.replica_regions) == 0 ? ["EnableServerless"] : []
+    content {
+      name = capabilities.value
+    }
   }
 
   # Point-in-time restore. `Continuous` is what the canvas's point_in_time_recovery switch means on

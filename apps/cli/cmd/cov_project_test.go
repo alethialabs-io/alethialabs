@@ -201,7 +201,7 @@ func projResetFlags() {
 	projectApplyProjectID, projectApplyRunnerID, projectApplyPlanJobID = "", "", ""
 	projectApplyEnv, projectApplyWait = "", false
 	projectDestroyProjectID, projectDestroyRunnerID, projectDestroyEnv, projectDestroyWait = "", "", "", false
-	componentListKind, componentListEnv = "", ""
+	componentListKind = ""
 	componentAddKind, componentAddName, componentAddSet = "", "", nil
 	componentRemoveKind, componentRemoveName = "", ""
 	projectCreateRegion, projectCreateIdentity = "", ""
@@ -280,6 +280,9 @@ func projTTY(t *testing.T) {
 // runHuhForm can do this, because huh owns the pointer the answer is written through.
 func projConfirm(t *testing.T, answer bool) {
 	t.Helper()
+	// A destructive command consults noInputMode before it prompts, so the stubbed
+	// answer is only reachable with the terminal seams on.
+	projTTY(t)
 	prev := confirm
 	confirm = func(string, string) bool { return answer }
 	t.Cleanup(func() { confirm = prev })
