@@ -860,10 +860,31 @@ export interface DriftResource {
 	kind: DriftResourceKind;
 }
 
+// Why a refresh delta was dismissed as representational rather than counted as drift.
+// Mirrors the Go `drift.NormalizedReason` (packages/core/drift/normalize.go).
+export type DriftNormalizedReason = "empty_collection" | "undeclared_collection";
+
+// One resource whose every refresh delta was representational — a difference in how the
+// provider encodes a value, not a difference in the infrastructure.
+//
+// `attributes` carries attribute PATHS and never VALUES: plan JSON values are plaintext
+// secrets, and this shape reaches the job log, execution_metadata and Postgres.
+export interface DriftNormalizedResource {
+	address: string;
+	type: string;
+	attributes?: string[];
+	reason: DriftNormalizedReason;
+}
+
 export interface DriftPosture {
 	in_sync: boolean;
 	drifted: number;
 	details?: DriftResource[];
+	// What the detector examined and dismissed. Kept rather than dropped so the
+	// dismissal is auditable — "0 drifted" with no trace is a control that cannot be
+	// shown to have operated.
+	normalized?: number;
+	normalized_details?: DriftNormalizedResource[];
 	unmanaged: number;
 	unmanaged_known: boolean;
 	scanned_at?: string;
