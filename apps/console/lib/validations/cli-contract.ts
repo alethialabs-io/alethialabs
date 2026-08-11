@@ -176,6 +176,22 @@ export const providerStatusWire = z.object({
 	subscriptionId: z.string().nullable().optional(),
 });
 
+/** A receipt-signing key as a verifier may see it (GET /api/cli/signing-keys) — PUBLIC material
+ * only. `source` says who vouches for it: an `org` row from the retained key_id→public_key history,
+ * or the `platform` key the runner signs with today. `provider`/`status`/`active` are absent on the
+ * platform entry, which has no org row behind it. Hand-written: the shape is a projection of
+ * `org_signing_key` that deliberately drops `key_ref` and `backend` (custody detail, not a
+ * verifier's business) and never carries private material. */
+export const signingKeyWire = z.object({
+	key_id: z.string(),
+	public_key: z.string(),
+	algorithm: z.string(),
+	source: z.enum(["org", "platform"]),
+	provider: z.string().nullable(),
+	status: z.string().nullable(),
+	active: z.boolean(),
+});
+
 /** Pending-identity init (POST /api/cli/providers/:provider/init). */
 export const initIdentityWire = z.object({
 	identity_id: z.string(),
@@ -449,6 +465,12 @@ export const cliJobsPageResponse = z.object({
 	offset: z.number().int(),
 });
 export const cliJobResponse = z.object({ job: jobWire });
+/** GET /api/cli/signing-keys result — the trusted-key set `alethia verify receipt` binds a
+ * receipt's key_id against. One flat list so a verifier does not have to know which custody
+ * model produced a key in order to trust it. */
+export const cliSigningKeysResponse = z.object({
+	signing_keys: z.array(signingKeyWire),
+});
 export const cliJobLogsResponse = z.object({ logs: z.array(jobLogWire) });
 export const cliRepositoriesResponse = z.object({
 	repositories: z.array(repositoryWire),

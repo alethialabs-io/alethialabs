@@ -32,32 +32,44 @@ differ — the same reason `MaxConfigStateProof` keeps `.Excluded` and `.Deferre
 
 ## Status — 2026-08-11
 
-Scored against `alethia` built from `dev` at `1fbb6ad9`. Every `CLIDriven` claim below was
-**executed**, not asserted: the run half runs `alethia <cmd> --help` for each and fails on a
-non-zero exit.
+Scored against `alethia` built from `dev`. Every `CLIDriven` claim below was **executed**, not
+asserted: the run half runs `alethia <cmd> --help` for each and fails on a non-zero exit.
 
 | Cloud | CLI-driven | CLI gaps | Cloud ceilings | Console by design | Verdict |
 |---|:---:|:---:|:---:|:---:|:---:|
-| **AWS** | 18 | 1 | 1 | 1 | ❌ |
-| **GCP** | 18 | 1 | 2 | 1 | ❌ |
-| **Azure** | 18 | 1 | 1 | 1 | ❌ |
-| **Alibaba** | 18 | 1 | 2 | 1 | ❌ |
-| **Hetzner** | 18 | 1 | 2 | 1 | ❌ |
+| **AWS** | 19 | 0 | 1 | 1 | ❌ |
+| **GCP** | 19 | 0 | 2 | 1 | ❌ |
+| **Azure** | 19 | 0 | 1 | 1 | ❌ |
+| **Alibaba** | 19 | 0 | 2 | 1 | ❌ |
+| **Hetzner** | 19 | 0 | 2 | 1 | ❌ |
 
-**18 of 20 applicable steps are CLI-driven on every cloud.** The two that are not are the same two
-everywhere, plus one extra ceiling on GCP, Alibaba and Hetzner.
+**19 of 20 applicable steps are CLI-driven on every cloud, and the CLI gap column is now zero.**
+What still fails the bar is a cloud ceiling — on every cloud, DNS zone delegation — plus one extra
+ceiling on GCP, Alibaba and Hetzner.
 
-### The one CLI gap — [#2331]
+That distinction is the one worth carrying into a demo. The table is still red, but nothing red in
+it is ours: every remaining ❌ is a thing the cloud does not offer an API for, not a thing Alethia
+has not built.
 
-**`alethia verify receipt` does not exist.** `alethia jobs get` renders a one-line verdict summary
-from `execution_metadata["verify_result"]` (`apps/cli/cmd/jobs_get.go:81`). There is no way from the
-terminal to pull the receipt, check its ed25519 signature, confirm it is sealed to `PlanSHA256`, or
-read the per-control report and any `RecordedException`.
+### The CLI gap that closed — [#2331]
+
+**`alethia verify receipt` shipped.** It pulls a job's signed evidence receipt, checks its ed25519
+signature, and exits non-zero when it cannot — so a customer can gate their own pipeline on it.
+`alethia verify show` prints the per-control report behind the verdict, `not_evaluable` controls and
+any `RecordedException` included.
+
+The signature is checked against a key the control plane **vouches for** — the organization's own
+recorded signing key, or the platform key — and not merely against the public key the receipt
+carries about itself. That distinction is the entire value of the command: a receipt always
+verifies under its own embedded key, whoever made it, so self-verification would have proved only
+that the document was not altered in transit. `GET /api/cli/signing-keys` serves the trusted set,
+and `--key` / `--key-file` pin a key supplied out of band for an auditor who trusts nothing the
+control plane says about itself.
 
 Proof is a headline differentiator (#845 asks the demo to *surface the verify receipt*), and
 `docs/compliance/soc2-e2e-matrix.md` is explicit that the receipt ledger — not the test suite — is
-the operating-effectiveness record an auditor samples. Today the answer to "let me verify one" is
-"open the console".
+the operating-effectiveness record an auditor samples. The answer to "let me verify one" is now a
+command, not "open the console".
 
 ### The cloud ceilings
 
@@ -90,13 +102,21 @@ it ever stops being true it becomes a `CLIGap`, not a quietly-edited `Why`.
 
 ## The ratchet
 
-The run half asserts each gap is **still real**: `alethia verify receipt --help` must NOT resolve.
-The day somebody ships it, `TestT2CLIDemoReachability` goes red and the table has to record the win.
-A fixed gap left in the report understates the product to the exact audience the report is written
-for, so closing one is a deliberate, visible edit — never something that silently happens.
+The run half asserts every verdict in both directions. A `CLIDriven` step must resolve
+(`alethia <cmd> --help` exits 0), and a `CLIGap` step must NOT — so a gap cannot be quietly left in
+the report after somebody closes it, and a claim cannot be quietly left in after somebody renames
+the command. #2331 is the ratchet working as designed: shipping `alethia verify receipt` turned
+`TestT2CLIDemoReachability` red on purpose, and going green again required editing this table.
 
-`TestCLIDemoBarIsNotYetMet` pins the same thing from the other side: it fails if a cloud starts
-passing. Deleting it is how somebody states, on the record, that the bar is met.
+`TestCLIDemoBarFailsOnlyOnCloudCeilings` pins the same thing from the other side, and its two
+assertions are deliberately opposed:
+
+- **zero `CLIGap`s** — the CLI debt is cleared, so a new gap must be a deliberate, visible edit
+  with an issue and a row here, never a silent regression;
+- **still not `Passed()`** — nobody declares the bar met while a ceiling forces a human into a
+  cloud console mid-demo.
+
+Deleting it is how somebody states, on the record, that the bar is met.
 
 [#1773]: https://github.com/alethialabs-io/alethialabs/issues/1773
 [#1871]: https://github.com/alethialabs-io/alethialabs/issues/1871

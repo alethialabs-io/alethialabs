@@ -262,17 +262,15 @@ var CLIDemoSteps = []DemoStep{
 		Reach: CLIDriven,
 	},
 	{
-		ID:       "receipt-verify",
-		Title:    "Show the signed evidence receipt and check its signature",
-		WantArgv: []string{"verify", "receipt"},
-		Reach:    CLIGap,
-		Issue:    "#2331",
-		Why: "Proof is a headline differentiator (#845 asks the demo to SURFACE the verify receipt + drift posture), " +
-			"and it is console-only. `alethia jobs get` renders a one-line verdict summary from " +
-			"execution_metadata[\"verify_result\"] (jobs_get.go:81) — a count of passes and fails. There is no way " +
-			"from the terminal to pull the receipt, check its ed25519 signature, confirm it is sealed to the plan " +
-			"SHA, or read the per-control report. A demo that claims tamper-evident evidence and then cannot show " +
-			"the signature is making an unverifiable claim in front of the one audience most likely to ask",
+		ID:    "receipt-verify",
+		Title: "Show the signed evidence receipt and check its signature",
+		Argv:  []string{"verify", "receipt"},
+		Reach: CLIDriven,
+		Why: "Closed by #2331. `alethia verify receipt --job <id>` pulls the receipt, checks its ed25519 " +
+			"signature against a key the control plane VOUCHES for — the org's own recorded key or the " +
+			"platform key, not merely the public key the receipt carries about itself — and exits non-zero " +
+			"when it cannot, so a customer can gate their own pipeline on it. `alethia verify show` prints " +
+			"the per-control report behind the verdict, not_evaluable controls and recorded waivers included",
 	},
 	{
 		ID:    "drift",

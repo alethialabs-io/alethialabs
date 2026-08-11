@@ -19,6 +19,7 @@ import {
 	cliByoScanResponse,
 	cliRunnerRegistrationResponse,
 	cliRunnersResponse,
+	cliSigningKeysResponse,
 	cliUsageResponse,
 	connectIdentityWire,
 	deployRunnerWire,
@@ -61,6 +62,7 @@ const cases: ReadonlyArray<[string, z.ZodType]> = [
 	["init_identity.json", initIdentityWire],
 	["connect_identity.json", connectIdentityWire],
 	["usage.json", cliUsageResponse],
+	["signing_keys.json", cliSigningKeysResponse],
 ];
 
 describe("CLI wire contract ↔ fixtures", () => {
