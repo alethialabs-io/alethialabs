@@ -370,10 +370,15 @@ func fabricDemoDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p
 	if err != nil {
 		return fmt.Errorf("read drift metadata: %w", err)
 	}
+	// details is decoded so a failure NAMES the resources rather than printing two integers.
 	var meta struct {
 		DriftPosture *struct {
 			InSync  bool `json:"in_sync"`
 			Drifted int  `json:"drifted"`
+			Details []struct {
+				Address string `json:"address"`
+				Kind    string `json:"kind"`
+			} `json:"details"`
 		} `json:"drift_posture"`
 	}
 	if err := json.Unmarshal(metaRaw, &meta); err != nil {
@@ -386,8 +391,12 @@ func fabricDemoDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p
 	s.DriftInSync = meta.DriftPosture.InSync
 	s.DriftDrifted = meta.DriftPosture.Drifted
 	if !meta.DriftPosture.InSync || meta.DriftPosture.Drifted != 0 {
-		return fmt.Errorf("the Fabric is not in-sync after the placements: in_sync=%t drifted=%d — a namespace placement runs no tofu and must not move infrastructure",
-			meta.DriftPosture.InSync, meta.DriftPosture.Drifted)
+		drifted := make([]string, 0, len(meta.DriftPosture.Details))
+		for _, d := range meta.DriftPosture.Details {
+			drifted = append(drifted, d.Address+" ("+d.Kind+")")
+		}
+		return fmt.Errorf("the Fabric is not in-sync after the placements: in_sync=%t drifted=%d — a namespace placement runs no tofu and must not move infrastructure\ndrifted: %s",
+			meta.DriftPosture.InSync, meta.DriftPosture.Drifted, strings.Join(drifted, "\n         "))
 	}
 	return nil
 }
