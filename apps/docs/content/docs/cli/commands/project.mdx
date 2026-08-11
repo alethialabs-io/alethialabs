@@ -94,6 +94,53 @@ Production + Preview pair instead.
   two-tier demo is four clusters with placement and eight without it.
 </Callout>
 
+## `alethia project design apply`
+
+The declarative counterpart to `project component add`. The imperative commands are what you narrate
+one step at a time; a design document is what a repository commits and CI replays. Both write the same
+tables.
+
+```bash
+# The document, as it is now
+alethia config export -p shop --out shop.json
+
+# See what would change — writes NOTHING
+alethia project design apply -p shop -e dev -f shop.json --dry-run
+
+# Apply it
+alethia project design apply -p shop -e dev -f shop.json
+
+# Or send it to the staged-changes tray for review instead
+alethia project design apply -p shop -e dev -f shop.json --stage
+
+# From a pipe
+cat shop.json | alethia project design apply -p shop -f -
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `-f`, `--file` | Yes | Design document path, or `-` for stdin. |
+| `--project`, `-p` | Yes | Project name or id. |
+| `--env`, `-e` | No | Environment name, stage, or id. Omit for the project's default. |
+| `--dry-run` | No | Print the changes that would be made and write nothing. |
+| `--stage` | No | Stage the change for review instead of applying it. |
+
+`--dry-run` prints one row per component with the action it would take:
+
+```
+3 change(s) would be made in dev:
+  UPDATE  databases orders
+  CREATE  caches sessions
+  DELETE  storage_buckets receipts
+```
+
+`--dry-run` and `--stage` are mutually exclusive — one writes nothing, the other writes to the review
+tray — so passing both is refused rather than silently resolved to one.
+
+The document is validated by the **console form's own schema**, including its cross-field rules (the
+node min/max/desired ordering, the VPC rule). A document the form would reject cannot be smuggled in
+through the CLI, and the error names the field: `Invalid design document at cluster.node_min_size: …`.
+
 ## `alethia project env`
 
 A project owns N independently-provisionable environments. The project is named with `--project`

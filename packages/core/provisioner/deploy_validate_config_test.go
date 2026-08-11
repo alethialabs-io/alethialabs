@@ -82,10 +82,15 @@ func TestValidateConfigIsNotAppliedToNonDedicatedPlacements(t *testing.T) {
 			wantErr:  "is not yet activated for deploy",
 		},
 		{
+			// An unrecognized mode takes the FALLTHROUGH arm, whose message no longer enumerates the
+			// wired modes: it used to claim "'namespace' (aws) and 'vcluster' (aws)", which the two
+			// branches above contradict — both are wired on all five clouds. What this case actually
+			// asserts is that the failure is about the MODE, so it matches on that rather than on the
+			// old "not yet activated" wording.
 			name:     "an unrecognized placement mode fails closed on the mode",
 			mode:     types.PlacementMode("fabric-of-the-future"),
 			provider: "aws",
-			wantErr:  "is not yet activated for deploy",
+			wantErr:  "is not a recognized placement mode",
 		},
 	}
 

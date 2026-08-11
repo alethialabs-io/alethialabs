@@ -54,9 +54,15 @@ more, and costs more.
 
 <Callout type="info">
   **Maturity.** `dedicated` is generally available — it is the classic environment-owns-a-cluster
-  shape and the default for a new project's first environment. `namespace` and `vcluster` are rolling
-  out; a deploy fails closed on those modes until the runner path for them lands, so the product never
-  silently ignores the placement you chose.
+  shape and the default for a new project's first environment. `namespace` and `vcluster` are wired on
+  **all five clouds**: AWS (EKS + IRSA), GCP (GKE + Workload Identity), Azure (AKS + federated
+  identity), Alibaba (ACK + RRSA) and Hetzner (Talos-API kubeconfig re-minted from the persisted
+  talosconfig — Kubernetes-native isolation, no cloud IAM).
+
+  This callout used to say a deploy "fails closed on those modes until the runner path for them lands".
+  That stopped being true and the sentence stayed. A deploy still fails closed on a placement it cannot
+  honour — the product never silently ignores the placement you chose — but on a supported cloud it
+  honours all three.
 </Callout>
 
 ## Infrastructure and delivery split apart
