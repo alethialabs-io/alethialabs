@@ -495,6 +495,26 @@ run_self_test() {
 		"explicit gate-off summaries stay SKIP even though all matrix jobs exist (#1683)"
 	_a "0" "$(wc -l <"$c/out/ledger.tsv" | tr -d ' ')" "gate-off legs do not enter the execution ledger"
 
+	# 6. SINGLE-PROVIDER DISPATCH — the shape EVERY `workflow_dispatch` produces, and the reason the
+	#    standing coverage issue is refreshed from `schedule` only (see e2e-nightly.yml's filer).
+	#
+	#    A dispatch derives its matrix from the `provider` input, which is a single choice with no
+	#    "all" option. So four clouds have no matrix job, `job_exists` correctly says `no`, and with
+	#    no bundle either they fall to the final `else` → SKIP. That is CORRECT of this function —
+	#    it is reporting what this run observed — and it is exactly why the aggregate must not be
+	#    published: SKIP_N is 4 on every dispatch no matter what the gates say.
+	#
+	#    Pinned here rather than left as prose because the count is derived, not written down: if a
+	#    future change ever made an undispatched cloud read as something other than SKIP, the
+	#    workflow-side guard would be defending against a shape that no longer occurs, and nobody
+	#    would find out from reading either file alone.
+	c="$tmp/dispatch"
+	write_summary "$c/proofs/20260811T090000Z" aws "nightly-777-1" success
+	write_jobs "$c/jobs.json" aws
+	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
+		"a single-provider dispatch counts the four UNDISPATCHED clouds as SKIP — so the 5-cloud coverage aggregate is unknowable from it"
+	_a "1" "$(wc -l <"$c/out/ledger.tsv" | tr -d ' ')" "a dispatch ledgers ONLY the cloud it ran (the other four leave no row to mislead)"
+
 	# ── #1922 — `outcome: skipped` is TWO states and only one of them is inert. ────────────────────
 	# All five states a leg can be in, each as its own fixture. Before the provenance check every
 	# `skipped` bundle became a SKIP row, so state (2) filed NO red: on run 30882660761 alibaba's
