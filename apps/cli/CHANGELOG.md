@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.5.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.4.0...cli-v0.5.0) (2026-08-11)
+
+
+### Features
+
+* **ci:** arm the Go coverage ratchet, and revive both badges that have been dead since July ([#2001](https://github.com/alethialabs-io/alethialabs/issues/2001)) ([fa093c2](https://github.com/alethialabs-io/alethialabs/commit/fa093c2436f685b9ffa6db387130ac459de248e9))
+* **cli:** `alethia verify receipt` — the signed evidence receipt, from the terminal ([#2341](https://github.com/alethialabs-io/alethialabs/issues/2341)) ([8f4cb1b](https://github.com/alethialabs-io/alethialabs/commit/8f4cb1b36c99b470c5df0ad3d29807560c373928))
+* **cli:** addon enable / disable — the marketplace becomes scriptable ([#2319](https://github.com/alethialabs-io/alethialabs/issues/2319)) ([ed13b9a](https://github.com/alethialabs-io/alethialabs/commit/ed13b9a9aaf72309b6123c2c26e923fd295626b1))
+* **cli:** alethia connector hetzner — the one cloud you had to leave the terminal for ([#2316](https://github.com/alethialabs-io/alethialabs/issues/2316)) ([6f52901](https://github.com/alethialabs-io/alethialabs/commit/6f5290149fcc04b4c4a7bcf07e1a3d0663b846b2))
+* **cli:** alethia runner register — and harden the last route on the raw CLI seam ([#2317](https://github.com/alethialabs-io/alethialabs/issues/2317)) ([1fbb6ad](https://github.com/alethialabs-io/alethialabs/commit/1fbb6ad97c08589343ebc79f71633c6626fc89a7))
+* **cli:** attach, scan and detach your own charts and IaC from the terminal ([#2321](https://github.com/alethialabs-io/alethialabs/issues/2321)) ([f81fdb6](https://github.com/alethialabs-io/alethialabs/commit/f81fdb692de467ef38de31e5ea73d6b59d81e5d1))
+* **cli:** author components per ENVIRONMENT — and stop a remove destroying the sibling tier ([#2309](https://github.com/alethialabs-io/alethialabs/issues/2309)) ([7f96ec3](https://github.com/alethialabs-io/alethialabs/commit/7f96ec320a2f0bdededafd964ccf699cce24ed05))
+* **cli:** placement from the terminal — a two-tier project stops costing two clusters ([#2313](https://github.com/alethialabs-io/alethialabs/issues/2313)) ([b09c6ac](https://github.com/alethialabs-io/alethialabs/commit/b09c6ac1bc1f3a587a309cf223ef399d4419303d))
+
+
+### Bug Fixes
+
+* **alibaba:** withdraw the WAF offer — the WAF 3.0 instance is account-scoped and a project cannot own it ([#1841](https://github.com/alethialabs-io/alethialabs/issues/1841)) ([#1970](https://github.com/alethialabs-io/alethialabs/issues/1970)) ([675745e](https://github.com/alethialabs-io/alethialabs/commit/675745e91eac59811eadae45b878e273d5c492f5))
+* **auth:** require explicit approval for the CLI device flow, and bound, expire and secure the credential path ([#2233](https://github.com/alethialabs-io/alethialabs/issues/2233)) ([d05a1c9](https://github.com/alethialabs-io/alethialabs/commit/d05a1c958faa29474ac51c6ae4cd91f70978914c))
+* **cli:** honour --no-input in confirm() and add an explicit --yes to the destructive commands ([#2239](https://github.com/alethialabs-io/alethialabs/issues/2239)) ([f5ca7ed](https://github.com/alethialabs-io/alethialabs/commit/f5ca7ed6182b98c55edd56d9f1f03abd07b7276c))
+* **cli:** measure the coverage gate off the profile, not `go tool cover -func` ([#2275](https://github.com/alethialabs-io/alethialabs/issues/2275)) ([7a7fd4d](https://github.com/alethialabs-io/alethialabs/commit/7a7fd4db04322163ef3603d41471aeb8dea6cd4c)), closes [#1990](https://github.com/alethialabs-io/alethialabs/issues/1990)
+* **runners:** the deploy form offered clouds whose runner templates do not exist ([#1817](https://github.com/alethialabs-io/alethialabs/issues/1817)) ([b4dae57](https://github.com/alethialabs-io/alethialabs/commit/b4dae5761655838105b4b768674c1094397acf63)), closes [#1794](https://github.com/alethialabs-io/alethialabs/issues/1794)
+* **ui:** align table headers, neutralise newlines in cells, and stop swallowing write errors ([#2224](https://github.com/alethialabs-io/alethialabs/issues/2224)) ([4a77a9d](https://github.com/alethialabs-io/alethialabs/commit/4a77a9d75a11f32c3b7322f0c85937de846867d9))
+
 ## [0.4.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.3.0...cli-v0.4.0) (2026-07-30)
 
 
