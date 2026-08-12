@@ -24,10 +24,11 @@ copyright work.
 
 ## Copyright status
 
-Alethia Labs DPK is in formation. Founder-created enterprise code remains part of
-the founder's pre-incorporation works until the post-registration assignment is
-executed. External contributors retain copyright and must be covered by the
-active contribution agreement before their work is accepted.
+ALETHIA LABS EDPK is registered in Bulgaria under EIK 208913663. Founder-created
+enterprise code remains part of the founder's pre-incorporation works until the
+prepared post-registration assignment is signed. External contributors retain
+copyright and must be covered by the active contribution agreement before their
+work is accepted.
 
 ## Production use
 

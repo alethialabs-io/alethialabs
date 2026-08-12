@@ -1,13 +1,13 @@
-# DRAFT — Alethia Labs Individual Contributor License Agreement v1.1
+# Alethia Labs Individual Contributor License Agreement v1.1
 
-> **NOT ACTIVE · NOT FOR SIGNATURE.** Alethia Labs DPK is in formation and does
-> not yet have an EIK. This draft becomes signable only after registered entity
-> details are inserted, counsel approves the text, `cla/ACTIVE` identifies this
-> exact version and hash, and the repository workflow is activated.
+> **FINAL TEXT · NOT ACTIVE.** This agreement becomes signable only when
+> `cla/ACTIVE` identifies this exact version and hash and the repository signing
+> workflow is enabled.
 
 This Individual Contributor License Agreement ("Agreement") is between the
-individual accepting it ("You") and **Alethia Labs DPK, EIK [PENDING
-REGISTRATION]**, with registered office at [TO BE CONFIRMED AFTER REGISTRATION]
+individual accepting it ("You") and **ALETHIA LABS EDPK, EIK 208913663**,
+with registered office at ul. Sirak Skitnik 9, entrance A, floor 4,
+apartment 7, 1111 Sofia, Bulgaria
 ("Alethia").
 
 ## 1. Contributions
@@ -76,4 +76,4 @@ change requires acceptance of a new version for later Contributions.
 
 ---
 
-Activation record: **PENDING — this draft must not be signed.**
+Activation record: **PENDING — do not sign until `cla/ACTIVE` exists.**

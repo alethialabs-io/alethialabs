@@ -7,9 +7,8 @@ contribute and the one legal step we require.
 
 ## Contributor License Agreement (CLA)
 
-> **Formation gate:** Alethia Labs DPK has been submitted for registration but
-> does not yet have an EIK. We welcome issues and discussion, but cannot merge
-> third-party code until the registered company is identified and the
+> **CLA activation gate:** ALETHIA LABS EDPK is registered under EIK 208913663.
+> We welcome issues and discussion, but cannot merge third-party code until the
 > post-registration CLA is activated. The required `contribution-legal` check
 > enforces this automatically.
 
@@ -32,7 +31,7 @@ AGPL-only contribution would block us from shipping the commercial edition.
 ## How to contribute
 
 1. Fork the repo and create a branch from `dev` (the integration branch — see
-   *Branching & release flow* below). PRs target `dev`, not `main`.
+   _Branching & release flow_ below). PRs target `dev`, not `main`.
 2. Make your change. Add an SPDX header to every new source file:
    - Core code: `SPDX-License-Identifier: AGPL-3.0-only`
    - Code under `ee/`: `SPDX-License-Identifier: LicenseRef-Alethia-Commercial`
@@ -41,19 +40,19 @@ AGPL-only contribution would block us from shipping the commercial edition.
    `turbo build`, `turbo lint`, and `go test ./...` for Go packages.
 4. Use [Conventional Commits](https://www.conventionalcommits.org/) — releases are
    automated with release-please.
-5. Open a pull request. While formation is pending, external PRs remain
-   reviewable but cannot merge. After activation, sign the CLA when prompted.
+5. Open a pull request. Until the CLA is active, external PRs remain reviewable
+   but cannot merge. After activation, sign the CLA when prompted.
 
 ## Branching & release flow
 
 Three long-lived branches promote right-to-left; `main` is protected and only ever
 receives merges from `staging`.
 
-| Branch | Role | Merges from | Deploy |
-|---|---|---|---|
-| `dev` | integration — all feature/fix PRs land here | feature branches (non-draft PR + green CI, **via the Mergify queue**) | — (CI only) |
-| `staging` | release candidate | `dev` (PR + green CI) | — (built/tested; no deploy yet) |
-| `main` | production | `staging` **only** (PR + green CI, linear history) | auto → alethialabs.io (`deploy-console.yml`) |
+| Branch    | Role                                        | Merges from                                                           | Deploy                                       |
+| --------- | ------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------- |
+| `dev`     | integration — all feature/fix PRs land here | feature branches (non-draft PR + green CI, **via the Mergify queue**) | — (CI only)                                  |
+| `staging` | release candidate                           | `dev` (PR + green CI)                                                 | — (built/tested; no deploy yet)              |
+| `main`    | production                                  | `staging` **only** (PR + green CI, linear history)                    | auto → alethialabs.io (`deploy-console.yml`) |
 
 - **`main` is protected:** requires a PR, all CI status checks green, up-to-date branch,
   linear history; force-push/deletion blocked; admins included. No direct pushes — ever.
@@ -70,7 +69,7 @@ receives merges from `staging`.
 
   You do not need to merge anything yourself, and you must never use `--admin` (it bypasses the
   queue) or merge a red PR. The heavy real-runner and browser E2Es run as observe-only signals,
-  tracked by `scripts/merge-signal-health.sh` and the weekly *Merge-signal health* workflow.
+  tracked by `scripts/merge-signal-health.sh` and the weekly _Merge-signal health_ workflow.
 
 - **`staging` is protected too** (PR + green CI), lighter than `main`.
 - **release-please** runs on `main` and opens the release PRs (CLI + runner version

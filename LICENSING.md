@@ -6,24 +6,24 @@ not replace the licence texts.
 
 ## Repository licence map
 
-| Path | Licence | Notes |
-|---|---|---|
-| Default, including `apps/`, `infra/`, `deploy/`, `scripts/`, and most `packages/` | `AGPL-3.0-only` | Community core |
-| `ee/` | `LicenseRef-Alethia-Commercial` | Source-visible enterprise code; production use requires an executed commercial agreement |
-| `apps/legacy-cli/` | `GPL-3.0-only` | Legacy Python CLI |
-| `packages/enterprise-api/` | `Apache-2.0` | Edition-neutral registration protocol; contains no Enterprise implementation |
-| `packages/typescript-config/` | `MIT` | Permissive shared configuration |
-| Identified vendored files | Their original licence | The file-level notice and `THIRD_PARTY_NOTICES.md` control |
+| Path                                                                              | Licence                         | Notes                                                                                    |
+| --------------------------------------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
+| Default, including `apps/`, `infra/`, `deploy/`, `scripts/`, and most `packages/` | `AGPL-3.0-only`                 | Community core                                                                           |
+| `ee/`                                                                             | `LicenseRef-Alethia-Commercial` | Source-visible enterprise code; production use requires an executed commercial agreement |
+| `apps/legacy-cli/`                                                                | `GPL-3.0-only`                  | Legacy Python CLI                                                                        |
+| `packages/enterprise-api/`                                                        | `Apache-2.0`                    | Edition-neutral registration protocol; contains no Enterprise implementation             |
+| `packages/typescript-config/`                                                     | `MIT`                           | Permissive shared configuration                                                          |
+| Identified vendored files                                                         | Their original licence          | The file-level notice and `THIRD_PARTY_NOTICES.md` control                               |
 
 When a file carries its own SPDX identifier, that file-level identifier controls.
 The default AGPL licence applies only when no more specific repository exception
 or third-party notice applies.
 
-## Copyright and pre-registration status
+## Copyright and post-registration status
 
-Alethia Labs DPK is in formation and does not yet have an EIK. Founder-created
-pre-incorporation works remain owned by the founder until a written assignment
-to the registered company is completed. External contributors retain copyright
+ALETHIA LABS EDPK is registered in Bulgaria under EIK 208913663. Founder-created
+pre-incorporation works remain owned by the founder until the prepared written
+assignment to the company is signed. External contributors retain copyright
 in their contributions and grant rights under the applicable project licence and,
 after activation, the Contributor Licence Agreement.
 
@@ -78,8 +78,8 @@ does not expand the commercial licence or make enterprise files AGPL-covered.
 
 ## Contributions
 
-Third-party contributions are paused while Alethia Labs DPK is being registered.
-After registration, a versioned ICLA or CCLA must be active and the required CLA
+Third-party contributions remain paused until a versioned ICLA or CCLA is active
+for ALETHIA LABS EDPK and the required CLA
 status check must pass before outside contributions may merge. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`cla/README.md`](cla/README.md).
 

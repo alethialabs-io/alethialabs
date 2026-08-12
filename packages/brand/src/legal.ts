@@ -11,19 +11,20 @@ export const LEGAL_ENTITY = {
 	/** Stable brand name — used in SPDX headers + UI. Never carries the legal form. */
 	tradingName: "Alethia Labs",
 	/** Full current legal entity — the ONE place to edit when the entity changes. */
-	legalName: "Alethia Labs DPK",
-	/** The company has been submitted but is not a legal person until registration. */
-	formationPending: true,
-	/** Interim service operator and data controller while formation is pending. */
+	legalName: "ALETHIA LABS EDPK",
+	/** Registered in the Bulgarian Commercial Register on 11 August 2026. */
+	formationPending: false,
+	/** Retained only as the historical formation-period operator. */
 	currentOperator: "Borislav Borisov, trading as Alethia Labs",
 	jurisdiction: "Bulgaria",
 	governingLaw: "Bulgaria",
-	/** TODO: Bulgarian EIK (unified identification code) — not yet registered. */
-	registrationNumber: "",
+	/** Bulgarian EIK (unified identification code). */
+	registrationNumber: "208913663",
 	/** TODO: BG VAT number (ДДС №) — pending registration. */
 	vat: "",
-	/** Registered office (provisional). */
-	registeredAddress: "ul. Sirak Skitnik 9, Geo Milev, 1111 Sofia, Bulgaria",
+	/** Registered office. */
+	registeredAddress:
+		"ul. Sirak Skitnik 9, entrance A, floor 4, apartment 7, 1111 Sofia, Bulgaria",
 	contactEmail: "legal@alethialabs.io",
 	copyrightYears: "2026-present",
 	/** Supervisory authority for data protection in the entity's jurisdiction. */

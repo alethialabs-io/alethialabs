@@ -1,13 +1,12 @@
-# POST-REGISTRATION TEMPLATE — this file is intentionally outside
-# .github/workflows and does not run. Complete cla/README.md first, then review
-# this template with counsel and copy it into the active workflow.
+# Activated only by scripts/legal/activate-company-ip.mjs after signed founder
+# transfer evidence is verified. Never execute pull-request-head code here.
 name: CLA Assistant
 
 on:
   issue_comment:
     types: [created]
   pull_request_target:
-    types: [opened, closed, synchronize]
+    types: [opened, closed, reopened, synchronize]
 
 permissions:
   actions: write
@@ -17,19 +16,24 @@ permissions:
 
 jobs:
   cla:
+    name: cla
     if: >-
-      (github.event.comment.body == 'recheck' ||
-       github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       (github.event.comment.body == 'recheck' ||
+        github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA')) ||
       github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
       - name: Contributor License Agreement
-        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
+        # v2.6.1 is pinned because the upstream action was archived in March 2026.
+        # Reassess or replace this dependency before the next CLA version.
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PERSONAL_ACCESS_TOKEN: ${{ secrets.CLA_PAT }}
         with:
           path-to-signatures: cla/signatures/v1.1.json
           path-to-document: https://github.com/alethialabs-io/alethialabs/blob/main/cla/ICLA.md
           branch: cla-signatures
-          allowlist: bot*,dependabot[bot],renovate[bot]
+          allowlist: bobikenobi12,dependabot[bot],github-actions[bot],renovate[bot],alethia-labs-ci[bot],mergify[bot]
+          lock-pullrequest-aftermerge: true

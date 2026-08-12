@@ -1,7 +1,10 @@
 # Rename this file to ACTIVE only after every item in cla/README.md has been
 # completed. Replace every placeholder before doing so.
-entity: Alethia Labs DPK
-eik: "[PENDING]"
+entity: ALETHIA LABS EDPK
+eik: "208913663"
+registered_address: "ul. Sirak Skitnik 9, entrance A, floor 4, apartment 7, 1111 Sofia, Bulgaria"
 cla_version: "1.1"
 effective_date: "[YYYY-MM-DD]"
-board_or_founder_approval_record: "[PATH-OR-REFERENCE]"
+founder_ownership_pack: "management/legal-source/artifacts/Intellectual_Property_Licensing/Chain_of_Title/2026-08-12_AlethiaLabs_EDPK_IP_Ownership_Execution_Pack/"
+icla_sha256: "01d502437351fba4f18c497e908a4415fe1866ca6d61ddadcbaa771debbcc44a"
+ccla_sha256: "738e876ea9d1ea326a6867ac9786dc2282b0e25b04e0512a0bba246f120bdbbb"
