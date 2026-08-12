@@ -4,7 +4,7 @@
 # Cross-account keyless container registry — cloud parity & e2e board
 
 Living status for the **cross-account keyless registry** feature (`ecr-xacct` / `gar-xacct` / `acr-xacct`
-— pull an image from an ECR/GAR/ACR in a *different* account/project/subscription than the cluster, with
+— pull an image from an ECR/GAR/ACR in a _different_ account/project/subscription than the cluster, with
 **no stored key**; the pull token is minted in-cluster from a Workload Identity by `alethia registry-token`
 and patched into the `<slug>-pull` Secret). Tracking epic: **#1046**. Companion to `#925` (connectors-v2 W-B)
 and the run history in [`demos/proofs/xacct-registry-e2e-log.md`](../../demos/proofs/xacct-registry-e2e-log.md).
@@ -17,12 +17,12 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
 
 ## Parity matrix (feature × cloud)
 
-| Cloud | Catalog+model (B1) | Refresher mint (B2) | Tofu pull role (B4) | Wiring (B3) | **Real mint e2e** | **In-cluster e2e** | Security-reviewed |
-|-------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **AWS — ECR** (`ecr-xacct`) | ✅ | ✅ | ✅ | ✅ | ✅ [2026-07-22] | ⏳ | ✅ |
-| **GCP — GAR** (`gar-xacct`) | ✅ | ✅ | ✅ | ✅ | ✅ [2026-07-22] | ⏳ | ✅ |
-| **Azure — ACR** (`acr-xacct`) | ✅ | ✅ | ✅ | ✅ | ✅ [2026-07-22] (exchange) | ⏳ | ✅ |
-| Hetzner / DO / Civo | — | — | — | — | — | — | — |
+| Cloud                         | Catalog+model (B1) | Refresher mint (B2) | Tofu pull role (B4) | Wiring (B3) |     **Real mint e2e**      | **In-cluster e2e** | Security-reviewed |
+| ----------------------------- | :----------------: | :-----------------: | :-----------------: | :---------: | :------------------------: | :----------------: | :---------------: |
+| **AWS — ECR** (`ecr-xacct`)   |         ✅         |         ✅          |         ✅          |     ✅      |      ✅ [2026-07-22]       |         ⏳         |        ✅         |
+| **GCP — GAR** (`gar-xacct`)   |         ✅         |         ✅          |         ✅          |     ✅      |      ✅ [2026-07-22]       |         ⏳         |        ✅         |
+| **Azure — ACR** (`acr-xacct`) |         ✅         |         ✅          |         ✅          |     ✅      | ✅ [2026-07-22] (exchange) |         ⏳         |        ✅         |
+| Hetzner / DO / Civo           |         —          |          —          |          —          |      —      |             —              |         —          |         —         |
 
 - **Real mint e2e** = the `registry-token` mint func run against a live registry, token proven to pull an
   image (`crane`), with local ambient creds — no cluster. Vehicle: `apps/runner/internal/agent/registry_token_real_test.go`
@@ -75,13 +75,13 @@ its own decision record is a product change and is deliberately left undone rath
 
 - [ ] **In-cluster e2e (all 3 clouds)** — the WI-federation half is unproven. The harness is built and
       wired (**#1047**); no run has happened. AWS would run in `tovr` (`364205735303`, cluster) pulling
-      from `alethia` (`270587882865`, registry). GCP in `itgix-adp`. Azure on the "Azure for Students"
+      from `alethia` (`270587882865`, registry). GCP in an Alethia-owned E2E project. Azure on a test subscription
       sub (AKS quota TBD — record the block if denied).
 - [ ] **Flip `coming_soon` → `active`** on the 3 catalog rows + enable `ALETHIA_XACCT_REGISTRY_ENABLED` in
       prod — **only after** the in-cluster e2e is green on the target clouds (maintainer action).
-- [ ] **GAR full mint e2e** was run in a **client** project (`itgix-adp`) — re-run in an Alethia-owned
+- [ ] **GAR full mint e2e** was run in a legacy external project — re-run in an Alethia-owned
       billing project when one exists.
-- [ ] **ACR cross-*subscription*** not exercised (single sub available) — the same-sub exchange is proven;
+- [ ] **ACR cross-_subscription_** not exercised (single sub available) — the same-sub exchange is proven;
       the literal cross-sub hop needs a second Azure subscription.
 
 ## Flagged issues

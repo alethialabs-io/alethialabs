@@ -28,7 +28,7 @@ The repository is the implementation source of truth:
   - Control plane: `apps/console` (Next.js, React 19, Tailwind v4, Base UI/shadcn-derived primitives, Lucide).
   - Marketing: `apps/marketing`. Shared tokens and logo: `packages/brand`.
   - Public asset sources: `packages/assets/static/brand`.
-- Aesthetic reference supplied by the founder: **tovr.eu** (and `/apex`, `/fos`).
+- Aesthetic reference: the current Alethia Labs grayscale product language.
   It is a reference only; no TOVR code, assets, copy, or distinctive compositions
   may be copied. See `docs/legal/BRAND_DESIGN_PROVENANCE.md`.
 

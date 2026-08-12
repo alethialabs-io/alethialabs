@@ -1,6 +1,6 @@
 # Alethia — UI kit (platform / control plane)
 
-An interactive recreation of the **Alethia** platform — the multi-cloud Kubernetes control plane (formerly ADP at `beta.adp.itgix.com`), in the Alethia Labs grayscale language. *(Source app: `apps/trellis`.)* Composes the design-system primitives — it does **not** re-implement them.
+An interactive recreation of the **Alethia** multi-cloud Kubernetes control plane in the Alethia Labs grayscale language. *(Source app: `apps/trellis`.)* Composes the design-system primitives — it does **not** re-implement them.
 
 ## Run
 Open `index.html`. It loads `../../styles.css` + `../../_ds_bundle.js`, then the kit files.

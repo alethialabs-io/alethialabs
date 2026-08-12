@@ -611,7 +611,7 @@ func TestRunVerifyShowRendersARecordedWaiver(t *testing.T) {
 		Override: &verify.Override{
 			Controls: []string{"KEYLESS-001"},
 			Reason:   "legacy CI key, migration tracked in #1234",
-			By:       "borislav@tovr.eu",
+			By:       "reviewer@example.com",
 			Expiry:   time.Now().Add(24 * time.Hour),
 		},
 	})
@@ -624,7 +624,7 @@ func TestRunVerifyShowRendersARecordedWaiver(t *testing.T) {
 	var buf bytes.Buffer
 	_ = runVerifyShow(c, &buf, "table", "job-1") // blocking verdict; the waiver does not clear it
 	out := buf.String()
-	for _, want := range []string{"Waiver", "KEYLESS-001", "borislav@tovr.eu", "legacy CI key", "expires"} {
+	for _, want := range []string{"Waiver", "KEYLESS-001", "reviewer@example.com", "legacy CI key", "expires"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("waiver output missing %q:\n%s", want, out)
 		}
@@ -723,7 +723,7 @@ func TestReceiptRowsRenderWaiverAndAnchor(t *testing.T) {
 	sr.Receipt.Exception = &verify.RecordedException{
 		Controls: []string{"KEYLESS-001"},
 		Reason:   "legacy CI key, migration tracked in #1234",
-		By:       "borislav@tovr.eu",
+		By:       "reviewer@example.com",
 		Expiry:   "2026-09-01T00:00:00Z",
 	}
 	sr.Rekor = &verify.RekorAnchor{LogURL: "https://rekor.sigstore.dev"}
@@ -733,7 +733,7 @@ func TestReceiptRowsRenderWaiverAndAnchor(t *testing.T) {
 	for _, r := range rows {
 		flat += strings.Join(r, " ") + "\n"
 	}
-	for _, want := range []string{"Waiver", "borislav@tovr.eu", "legacy CI key", "Transparency log", "rekor.sigstore.dev"} {
+	for _, want := range []string{"Waiver", "reviewer@example.com", "legacy CI key", "Transparency log", "rekor.sigstore.dev"} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("card missing %q:\n%s", want, flat)
 		}

@@ -16,13 +16,13 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
 
 ## Parity matrix (feature × cloud)
 
-| Cloud | image arch ✓ | runner registers | connector wired | **cluster provision (T2)** | signed receipt | security-reviewed | known issues |
-|-------|:---:|:---:|:---:|:---:|:---:|:---:|:---|
-| **Hetzner** — Talos | ✅ (register) | ⏳ | ✅ token | ✅ (nightly) | ✅ | ✅ | — |
-| **AWS** — EKS (`alethialabs`) | ✅ (register) | ⏳ | ✅ keyless role | ⏳ (wired, gate off) | ✅ | ⏳ | — |
-| **GCP** — GKE (`itgix`) | ✅ (register) | ⏳ | ✅ keyless WIF | ⏳ (wired, gate off) | ✅ | ⏳ | — |
-| **Azure** — AKS (student sub) | ✅ (register) | ✅ (prod) | ✅ keyless UAMI | ⏳ (wired, gate off) | ✅ | ⏳ | AKS quota TBD |
-| Alibaba — ACK | ✅ (register) | ⏳ | ✅ keyless RAM | ⏳ (wired, gate off) | ✅ | ⏳ | — |
+| Cloud                         | image arch ✓  | runner registers | connector wired | **cluster provision (T2)** | signed receipt | security-reviewed | known issues  |
+| ----------------------------- | :-----------: | :--------------: | :-------------: | :------------------------: | :------------: | :---------------: | :------------ |
+| **Hetzner** — Talos           | ✅ (register) |        ⏳        |    ✅ token     |        ✅ (nightly)        |       ✅       |        ✅         | —             |
+| **AWS** — EKS (`alethialabs`) | ✅ (register) |        ⏳        | ✅ keyless role |    ⏳ (wired, gate off)    |       ✅       |        ⏳         | —             |
+| **GCP** — GKE (Alethia E2E)   | ✅ (register) |        ⏳        | ✅ keyless WIF  |    ⏳ (wired, gate off)    |       ✅       |        ⏳         | —             |
+| **Azure** — AKS (student sub) | ✅ (register) |    ✅ (prod)     | ✅ keyless UAMI |    ⏳ (wired, gate off)    |       ✅       |        ⏳         | AKS quota TBD |
+| Alibaba — ACK                 | ✅ (register) |        ⏳        | ✅ keyless RAM  |    ⏳ (wired, gate off)    |       ✅       |        ⏳         | —             |
 
 - **image arch ✓** = the published `runner-<cloud>:latest` **amd64** image ships a genuine x86-64 runner
   (the INCIDENT regression: an arm64 binary in the amd64 image crash-looped every x86 fleet VM). ✅ for
@@ -31,7 +31,7 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
   the same on a freshly-built `runner-base`, so a regression can't reach prod again. Re-run: `runner-e2e.sh <cloud> register`.
 - **runner registers** = a fleet VM on that image boots + self-registers (heartbeat, `runners` row).
   ✅ **azure** — a fleet VM registered live on the corrected image during the 2026-07-22 incident
-  recovery. The others stay ⏳: the `register` stage proves the image *arch*, not a live self-register
+  recovery. The others stay ⏳: the `register` stage proves the image _arch_, not a live self-register
   (that needs a booted VM — mild spend, folded into Stage 2). Gated on `image arch ✓`.
 - **cluster provision (T2)** = the real-apply harness `test/e2e/t2_provision_test.go`
   (`TestT2RealCloudProvisioning`, `-tags=e2e_t2`) → `SUCCESS` job + Ready cluster + signed receipt + ArgoCD
@@ -53,12 +53,13 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
       secret/var, dispatch `e2e-nightly.yml provider=<cloud>` (or `runner-e2e.sh <cloud> cluster`).
       **All clouds**, each enabled **deliberately** + cost-guarded (cheapest node shape, single-NAT, AWS
       cost ceiling), one at a time. Confirmed accounts + gate vars:
-  - **AWS** — `alethialabs` *or* tovr's AWS (either works) → `E2E_AWS_ROLE_ARN`
-  - **GCP** — `itgix-adp` project → `E2E_GCP_WIF_PROVIDER` + `E2E_GCP_SA_EMAIL`
+  - **AWS** — `alethialabs` _or_ tovr's AWS (either works) → `E2E_AWS_ROLE_ARN`
+  - **GCP** — Alethia-owned E2E project → `E2E_GCP_WIF_PROVIDER` + `E2E_GCP_SA_EMAIL`
   - **Azure** — student subscription → `E2E_AZURE_CLIENT_ID` (AKS quota TBD)
   - **Hetzner** — scoped API token → `HCLOUD_TOKEN`
 
 ## Flagged issues
+
 - **INCIDENT 2026-07-22 — fleet runner-churn (root cause).** Multi-arch build shipped an arm64 binary in
   the amd64 image; after #726 flipped the fleet to x86 `cpx31` VMs, every VM crash-looped (`execve`
   ENOEXEC) → never registered → the scaler reaped+recreated every ~4 min for ~8h (~100 emails). Confirmed
@@ -66,9 +67,11 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
   in #1052 + a circuit-breaker in #1056.
 
 ## Security findings
+
 - (none yet — populate as the per-cloud e2e runs + reviews land.)
 
 ## AI-caught improvements
+
 - ✅ **DONE** — the `register` ELF-arch check is now a pre-merge CI guard: `runner-image-arch` in
   `.github/workflows/ci.yml` builds `runner-base` for `linux/amd64` and asserts `/usr/local/bin/runner`
   is x86-64 (`e_machine=0x3e`), failing the PR on `0xb7` (aarch64) — the exact 2026-07-22 regression.

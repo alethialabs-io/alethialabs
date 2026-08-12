@@ -13,24 +13,24 @@ This is an engineering and provenance audit, not a legal clearance opinion.
 
 ## Repository lineage checked
 
-| Evidence | Finding |
-|---|---|
-| `packages/assets/static/brand/` history | Current logo kit first appears in founder-authored commits on 16 June 2026 and was moved into shared packages on 26 June 2026. Preserve those commits and editable vectors. |
-| `.claude/skills/alethia-design/` history | Design skill entered as the Vertex predecessor on 15 June 2026, was renamed on 16 June, and synchronized from the founder's Claude design workflow on 17 June. |
-| `packages/brand/src/tokens.css` history | Token ancestry includes Trellis/Vertex/Alethia stages in the same founder-controlled repository. |
-| Current source search | Stale `VertexDesignSystem_8c015f`, `vertex-scroll`, `vertex-blink`, and misleading “TOVR-inspired” implementation labels were removed or replaced with Alethia/provenance terminology. |
-| Founder statement | The founder identifies `bb-thesis-2026` / Vertex and the current Alethia work as independently created predecessor works. This remains subject to the university-policy check and signed founder assignment. |
+| Evidence                                 | Finding                                                                                                                                                                                |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/assets/static/brand/` history  | Current logo kit first appears in founder-authored commits on 16 June 2026 and was moved into shared packages on 26 June 2026. Preserve those commits and editable vectors.            |
+| `.claude/skills/alethia-design/` history | Design skill entered as the Vertex predecessor on 15 June 2026, was renamed on 16 June, and synchronized from the founder's Claude design workflow on 17 June.                         |
+| `packages/brand/src/tokens.css` history  | Token ancestry includes Trellis/Vertex/Alethia stages in the same founder-controlled repository.                                                                                       |
+| Current source search                    | Stale `VertexDesignSystem_8c015f`, `vertex-scroll`, `vertex-blink`, and misleading “TOVR-inspired” implementation labels were removed or replaced with Alethia/provenance terminology. |
+| Founder statement                        | The founder identifies the pre-incorporation and current Alethia work as independently created predecessor works. This remains subject to the signed founder assignment.               |
 
 ## Third-party implementation inputs
 
-| Input | Role | Control |
-|---|---|---|
-| Base UI and formerly Radix | Accessible interaction primitives | Preserve upstream package licences and local migration history. |
+| Input                             | Role                                  | Control                                                                                              |
+| --------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Base UI and formerly Radix        | Accessible interaction primitives     | Preserve upstream package licences and local migration history.                                      |
 | shadcn-derived component patterns | Component scaffolding and conventions | Preserve applicable MIT attribution and do not represent generic scaffolding as exclusive visual IP. |
-| Lucide | Interface icons | Preserve ISC notice. |
-| Space Grotesk | Display/wordmark text | Preserve OFL; convert wordmark text to outlines before a figurative filing. |
-| Geist / Geist Mono | Interface type | Preserve OFL. |
-| Noto Sans | Localization/fallback | Preserve OFL. |
+| Lucide                            | Interface icons                       | Preserve ISC notice.                                                                                 |
+| Space Grotesk                     | Display/wordmark text                 | Preserve OFL; convert wordmark text to outlines before a figurative filing.                          |
+| Geist / Geist Mono                | Interface type                        | Preserve OFL.                                                                                        |
+| Noto Sans                         | Localization/fallback                 | Preserve OFL.                                                                                        |
 
 No stock logo, traced logo, commissioned design, or AI-generated raster is
 approved as a source for the canonical mark. If that statement becomes

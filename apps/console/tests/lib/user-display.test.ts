@@ -8,51 +8,55 @@ import { describe, expect, it } from "vitest";
 import { displayName, userInitials } from "@/lib/user-display";
 
 describe("displayName", () => {
-	it("prefers the real name", () => {
-		expect(displayName({ name: "Boris Petrov", email: "b@x.io", username: "bp" })).toBe(
-			"Boris Petrov",
-		);
-	});
+  it("prefers the real name", () => {
+    expect(
+      displayName({ name: "Boris Petrov", email: "b@x.io", username: "bp" }),
+    ).toBe("Boris Petrov");
+  });
 
-	it("falls back to the username when there is no name", () => {
-		expect(displayName({ name: null, username: "bobikenobi", email: "b@x.io" })).toBe(
-			"bobikenobi",
-		);
-	});
+  it("falls back to the username when there is no name", () => {
+    expect(
+      displayName({ name: null, username: "bobikenobi", email: "b@x.io" }),
+    ).toBe("bobikenobi");
+  });
 
-	it("falls back to the email local-part when there is no name or username", () => {
-		expect(displayName({ email: "borislav@tovr.eu" })).toBe("borislav");
-	});
+  it("falls back to the email local-part when there is no name or username", () => {
+    expect(displayName({ email: "alex@example.com" })).toBe("alex");
+  });
 
-	it("trims whitespace and ignores blank values", () => {
-		expect(displayName({ name: "  ", username: "  ", email: "ada@x.io" })).toBe("ada");
-		expect(displayName({ name: "  Spaced  " })).toBe("Spaced");
-	});
+  it("trims whitespace and ignores blank values", () => {
+    expect(displayName({ name: "  ", username: "  ", email: "ada@x.io" })).toBe(
+      "ada",
+    );
+    expect(displayName({ name: "  Spaced  " })).toBe("Spaced");
+  });
 
-	it("returns 'User' when nothing is available", () => {
-		expect(displayName(null)).toBe("User");
-		expect(displayName({})).toBe("User");
-		expect(displayName({ name: null, username: null, email: null })).toBe("User");
-	});
+  it("returns 'User' when nothing is available", () => {
+    expect(displayName(null)).toBe("User");
+    expect(displayName({})).toBe("User");
+    expect(displayName({ name: null, username: null, email: null })).toBe(
+      "User",
+    );
+  });
 });
 
 describe("userInitials", () => {
-	it("uses the first letters of the first two words for a multi-word name", () => {
-		expect(userInitials({ name: "Boris Petrov" })).toBe("BP");
-	});
+  it("uses the first letters of the first two words for a multi-word name", () => {
+    expect(userInitials({ name: "Boris Petrov" })).toBe("BP");
+  });
 
-	it("splits on dots/underscores/hyphens too", () => {
-		expect(userInitials({ name: "ada-lovelace" })).toBe("AL");
-		expect(userInitials({ username: "jane.doe" })).toBe("JD");
-	});
+  it("splits on dots/underscores/hyphens too", () => {
+    expect(userInitials({ name: "ada-lovelace" })).toBe("AL");
+    expect(userInitials({ username: "jane.doe" })).toBe("JD");
+  });
 
-	it("uses the first two characters for a single token", () => {
-		expect(userInitials({ name: "Boris" })).toBe("BO");
-		expect(userInitials({ email: "borislav@tovr.eu" })).toBe("BO"); // local-part "borislav"
-	});
+  it("uses the first two characters for a single token", () => {
+    expect(userInitials({ name: "Boris" })).toBe("BO");
+    expect(userInitials({ email: "alex@example.com" })).toBe("AL"); // local-part "alex"
+  });
 
-	it("collapses the 'User' placeholder to a single 'U'", () => {
-		expect(userInitials(null)).toBe("U");
-		expect(userInitials({})).toBe("U");
-	});
+  it("collapses the 'User' placeholder to a single 'U'", () => {
+    expect(userInitials(null)).toBe("U");
+    expect(userInitials({})).toBe("U");
+  });
 });

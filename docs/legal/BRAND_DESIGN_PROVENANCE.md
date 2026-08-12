@@ -4,7 +4,7 @@
 
 Borislav Borisov states that he independently created the current Alethia
 bracket-and-dot mark, wordmark composition, and the predecessor
-`bb-thesis-2026` / Vertex product design. This statement is a provenance record,
+the founder's pre-incorporation Alethia product design. This statement is a provenance record,
 not a substitute for the signed founder IP assignment.
 
 No employer, client, university, sponsor, collaborator, stock-logo provider, or
@@ -26,13 +26,13 @@ filing.
 
 ## Third-party materials
 
-| Material | Purpose | Provenance / terms |
-|---|---|---|
-| Space Grotesk | Display and wordmark typography | SIL OFL 1.1; filing artwork must outline text |
-| Geist / Geist Mono | Interface and technical typography | SIL OFL 1.1 |
-| Noto Sans | Fallback/localized typography | SIL OFL 1.1 |
-| Lucide | Interface icons | ISC |
-| Base UI, Radix, shadcn-derived code | Component primitives | Upstream permissive licences; local modifications remain recorded in Git |
+| Material                            | Purpose                            | Provenance / terms                                                       |
+| ----------------------------------- | ---------------------------------- | ------------------------------------------------------------------------ |
+| Space Grotesk                       | Display and wordmark typography    | SIL OFL 1.1; filing artwork must outline text                            |
+| Geist / Geist Mono                  | Interface and technical typography | SIL OFL 1.1                                                              |
+| Noto Sans                           | Fallback/localized typography      | SIL OFL 1.1                                                              |
+| Lucide                              | Interface icons                    | ISC                                                                      |
+| Base UI, Radix, shadcn-derived code | Component primitives               | Upstream permissive licences; local modifications remain recorded in Git |
 
 ## Logo evidence
 

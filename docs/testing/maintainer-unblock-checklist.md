@@ -9,17 +9,17 @@ is a guaranteed future lie (this one said "nine" while listing eleven).
 It exists because the board does not distinguish "unbuilt" from "built and never run". A
 harness whose `ALETHIA_E2E_*` variable is never set is **dead but looks shipped**, and
 `test/e2e/nightly_reachability_test.go` says so in as many words — it asserts only that the
-variables are *referenced* by the workflow, never that they are enabled.
+variables are _referenced_ by the workflow, never that they are enabled.
 
 ## The one fact behind most of it
 
 **The five CLOUD GATES are wired. Every SCENARIO gate is not.** Those are different things, and
 conflating them sends you to the wrong place:
 
-| layer | state |
-|---|---|
-| cloud gate — decides whether a leg provisions at all | `E2E_AWS_ROLE_ARN`, `E2E_GCP_WIF_PROVIDER` + `E2E_GCP_SA_EMAIL`, the three `E2E_AZURE_*` + `ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID`, `E2E_ALIBABA_ROLE_ARN` + `_OIDC_PROVIDER_ARN` are all **set** (2026-08-03). Only **`HCLOUD_TOKEN`** is missing — see §1. |
-| scenario gate — decides what a provisioned leg proves | **none are set**: `E2E_FABRIC_DEMO`, `E2E_SECRETS_XACCT*`, `E2E_KEYLESS_DB`, `E2E_VCLUSTER`, `E2E_NAMESPACE_TENANT`, `E2E_DAY2_*`, `E2E_BYO_IAC*`, `E2E_ARGO_*`, and the `E2E_GIT_TOKEN` secret. |
+| layer                                                 | state                                                                                                                                                                                                                                                          |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cloud gate — decides whether a leg provisions at all  | `E2E_AWS_ROLE_ARN`, `E2E_GCP_WIF_PROVIDER` + `E2E_GCP_SA_EMAIL`, the three `E2E_AZURE_*` + `ALETHIA_E2E_AZURE_ADMIN_GROUP_OBJECT_ID`, `E2E_ALIBABA_ROLE_ARN` + `_OIDC_PROVIDER_ARN` are all **set** (2026-08-03). Only **`HCLOUD_TOKEN`** is missing — see §1. |
+| scenario gate — decides what a provisioned leg proves | **none are set**: `E2E_FABRIC_DEMO`, `E2E_SECRETS_XACCT*`, `E2E_KEYLESS_DB`, `E2E_VCLUSTER`, `E2E_NAMESPACE_TENANT`, `E2E_DAY2_*`, `E2E_BYO_IAC*`, `E2E_ARGO_*`, and the `E2E_GIT_TOKEN` secret.                                                               |
 
 So four of five clouds provision and converge every night, and the harnesses built for #845,
 #1268, #1450 and #1513 have never executed once.
@@ -73,8 +73,8 @@ ALETHIA_E2E_ENV=30518134684-1 ALETHIA_E2E_REGION=<region> ./scripts/e2e/aws-clea
 
 ## 1 · Set one secret — closes two issues
 
-| unit | action |
-|---|---|
+| unit                 | action                              |
+| -------------------- | ----------------------------------- |
 | **#1579**, **#1720** | Set the `HCLOUD_TOKEN` repo secret. |
 
 These are one issue in two places: hetzner is the only cloud whose gate is unwired, so the
@@ -95,20 +95,20 @@ it is why #2258, #2259 and #2260 are one unit.
 
 This section used to ask for three Cloud Console grants. **Two of the three were already code,
 and doing them by hand would have been worse than useless** — `google_project_iam_member` and
-`azurerm_role_assignment` are non-authoritative, so a hand grant survives an apply *silently and
-undocumented*, and `infra/gcp-e2e/checks.tf` treats the committed role list as the source of
+`azurerm_role_assignment` are non-authoritative, so a hand grant survives an apply _silently and
+undocumented_, and `infra/gcp-e2e/checks.tf` treats the committed role list as the source of
 truth. What each cloud actually needs:
 
-| cloud | what it needs | why |
-|---|---|---|
-| **azure** | **nothing but the promotion** | #2269 makes the template self-grant `azurerm_role_assignment.provisioner_crypto_officer` at vault scope, and the e2e SP already holds **User Access Administrator** (`infra/azure-e2e/roles.tf:31-36`), which carries `roleAssignments/write`. |
-| **alibaba** | `tofu apply infra/alibaba-e2e` | `kms:*` has been committed at `infra/alibaba-e2e/roles.tf:67` since #2269 — it just has not been applied. |
-| **gcp** | `tofu apply infra/gcp-e2e`, after #2295 | #2295 adds `roles/cloudkms.admin` **and** replaces `roles/browser` with `alethiaE2eProjectReader`. The second is the one that would have bitten: #2269's plan-time guard reads `data.google_project_service.cloudkms`, which needs `serviceusage.services.get`, and `roles/browser` carries no serviceusage permission at all. Without it the promotion moves the gcp red from an apply-time KMS 403 to a **plan-time `serviceusage` error that never mentions KMS**. |
+| cloud       | what it needs                           | why                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **azure**   | **nothing but the promotion**           | #2269 makes the template self-grant `azurerm_role_assignment.provisioner_crypto_officer` at vault scope, and the e2e SP already holds **User Access Administrator** (`infra/azure-e2e/roles.tf:31-36`), which carries `roleAssignments/write`.                                                                                                                                                                                                                        |
+| **alibaba** | `tofu apply infra/alibaba-e2e`          | `kms:*` has been committed at `infra/alibaba-e2e/roles.tf:67` since #2269 — it just has not been applied.                                                                                                                                                                                                                                                                                                                                                             |
+| **gcp**     | `tofu apply infra/gcp-e2e`, after #2295 | #2295 adds `roles/cloudkms.admin` **and** replaces `roles/browser` with `alethiaE2eProjectReader`. The second is the one that would have bitten: #2269's plan-time guard reads `data.google_project_service.cloudkms`, which needs `serviceusage.services.get`, and `roles/browser` carries no serviceusage permission at all. Without it the promotion moves the gcp red from an apply-time KMS 403 to a **plan-time `serviceusage` error that never mentions KMS**. |
 
-⚠️ **Ordering:** land #2295 *before* the §3 promotion, or you diagnose gcp twice.
+⚠️ **Ordering:** land #2295 _before_ the §3 promotion, or you diagnose gcp twice.
 
 ⚠️ Historical note, still true of any hand grant: **Key Vault Reader is not sufficient on Azure** —
-the failing call is a key *read* on an RBAC-authorized vault, which is data-plane, and
+the failing call is a key _read_ on an RBAC-authorized vault, which is data-plane, and
 control-plane Owner does not carry it.
 
 Then re-run the nightly and confirm the three legs get past `secrets-encryption.tf`. That real
@@ -124,7 +124,7 @@ full-bar leg dies on `Invalid resource name given (name=projects/…-arn:aws:sqs
 
 The T2 full-bar legs run from `main`, so this needs the promotion, not a fix.
 
-⚠️ Also required for #2099, and account-side: GCP **NodePool quota** on `itgix-adp`
+⚠️ Also required for #2099, and account-side: GCP **NodePool quota** on the Alethia-owned E2E project
 (`Error 429: Insufficient project quota`) and a missing `roles/cloudsql.client` IAM binding.
 
 > Worth knowing generally: the 2026-08-09 full-bar ran headSha `376fe8d9`, dated **2026-08-04**.
@@ -137,20 +137,20 @@ The T2 full-bar legs run from `main`, so this needs the promotion, not a fix.
 
 Each is built, wired, and has executed zero times.
 
-| unit | action |
-|---|---|
-| **#845** | `gh variable set E2E_FABRIC_DEMO --body 1`, then dispatch from `main` **one cloud at a time**, then **delete the variable again**. 0 of 4 clouds are proven; `demos/proofs/` holds no fabric run. Leave the companions (`_REPO`/`_OVERLAYS`/`_VCLUSTER`/`_TIMEOUT`) unset — every default is correct, and per #2301 they are deliberately flat-only. See the two warnings below. |
-| **#1268** | Apply the account-B stack, set `E2E_SECRETS_XACCT*`, dispatch aws from `main`, run `secrets-e2e.sh aws strict`, then flip the `*-xacct` catalog rows. GCP/Azure account-B stacks are not written yet. |
+| unit      | action                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **#845**  | `gh variable set E2E_FABRIC_DEMO --body 1`, then dispatch from `main` **one cloud at a time**, then **delete the variable again**. 0 of 4 clouds are proven; `demos/proofs/` holds no fabric run. Leave the companions (`_REPO`/`_OVERLAYS`/`_VCLUSTER`/`_TIMEOUT`) unset — every default is correct, and per #2301 they are deliberately flat-only. See the two warnings below.                                                                            |
+| **#1268** | Apply the account-B stack, set `E2E_SECRETS_XACCT*`, dispatch aws from `main`, run `secrets-e2e.sh aws strict`, then flip the `*-xacct` catalog rows. GCP/Azure account-B stacks are not written yet.                                                                                                                                                                                                                                                       |
 | **#1450** | Run a real Azure apply with `E2E_KEYLESS_DB=1`, `ENGINE=mysql`. Positively verify `public_network_access` is **Disabled** — nothing asserts it today. **Set the per-cloud siblings if the leg differs** — `E2E_KEYLESS_DB_ENGINE_VERSION_AZURE` and friends only started reaching the harness in #2301; before that the workflow forwarded none of them, so a variable set per the docs had no effect and the run died claiming a required value was unset. |
-| **#1513** | Six real-apply proofs gate this. Only then the default-on decision, then delete the `ALETHIA_KEYLESS_DB_AUTH_ENABLED` read at `packages/core/provisioner/manifests_gen.go:64`, the `Options.KeylessDBAuth` plumbing, the off-path tests, and the docs rollout callout. |
+| **#1513** | Six real-apply proofs gate this. Only then the default-on decision, then delete the `ALETHIA_KEYLESS_DB_AUTH_ENABLED` read at `packages/core/provisioner/manifests_gen.go:64`, the `Options.KeylessDBAuth` plumbing, the off-path tests, and the docs rollout callout.                                                                                                                                                                                      |
 
 ⚠️ **Two things about `E2E_FABRIC_DEMO` that cost real money if you get them wrong.**
 
-*It must be truthy, not merely present.* The job and step caps key on `!= ''` while the harness
+_It must be truthy, not merely present._ The job and step caps key on `!= ''` while the harness
 keys on `t2Truthy` (`1|true|yes|on`). So `E2E_FABRIC_DEMO=0` raises the cap on **all five** clouds
 and runs the scenario on none of them.
 
-*The 165→210-minute cap is global, not per-cloud.* The moment the variable is non-empty every leg
+_The 165→210-minute cap is global, not per-cloud._ The moment the variable is non-empty every leg
 inherits it, hetzner and alibaba included, whether or not the scenario runs there. A fabric-demo
 night is roughly **$6 for four proofs** and about **$180/month** if left on the cron. Dispatch it;
 do not cron it. `ALETHIA_E2E_SOAK=off` (accepted since #2305) frees 25m of the ctx if you need it.
@@ -169,11 +169,11 @@ workload measured at 4.91 vCPU / 4.14 GiB, and burned the full cap on four cloud
 
 ## 5 · The ones needing a decision, not just an action
 
-| unit | what only you can settle |
-|---|---|
-| **#1871** | The GCP budget's alerts are undeliverable. Needs an out-of-band **Cloud Console** grant to `billing-budgets@system.gserviceaccount.com`, then flip `budget_publisher_binding_enabled` to true and `tofu import` the binding. The file's own comment records that this was never attempted. |
-| **#1773** | Settle the stable-zone vs `cloud_dns_enabled` tension, then create and delegate the zone. `infra/aws-e2e` does not exist yet; `test/e2e/maxconfig.go:693` still pins `acm_certificate: false`. |
-| **#2283** | Run the probe: does an AUTO `alicloud_cr_scan_rule` scan on a **zero-VPC Basic instance**? Create the rule, push a matching tag, poll `GetRepoTagScanStatus`. Not answerable from documentation, and a green offer-parity check **cannot** substitute — a REPO-scoped rule satisfies the guard whether or not a scan runs. (This entry named **#1845**, which is closed; #2283 is the open successor — it asks for the proof, where #1845 shipped the wiring.) |
+| unit      | what only you can settle                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **#1871** | The GCP budget's alerts are undeliverable. Needs an out-of-band **Cloud Console** grant to `billing-budgets@system.gserviceaccount.com`, then flip `budget_publisher_binding_enabled` to true and `tofu import` the binding. The file's own comment records that this was never attempted.                                                                                                                                                                                                       |
+| **#1773** | Settle the stable-zone vs `cloud_dns_enabled` tension, then create and delegate the zone. `infra/aws-e2e` does not exist yet; `test/e2e/maxconfig.go:693` still pins `acm_certificate: false`.                                                                                                                                                                                                                                                                                                   |
+| **#2283** | Run the probe: does an AUTO `alicloud_cr_scan_rule` scan on a **zero-VPC Basic instance**? Create the rule, push a matching tag, poll `GetRepoTagScanStatus`. Not answerable from documentation, and a green offer-parity check **cannot** substitute — a REPO-scoped rule satisfies the guard whether or not a scan runs. (This entry named **#1845**, which is closed; #2283 is the open successor — it asks for the proof, where #1845 shipped the wiring.)                                   |
 | **#1065** | **No longer blocked — reclassify off this list.** It was blocked behind **#2058** (loki values), which is closed and whose fix is already on `origin/main`: `apps/console/lib/addons/catalog.ts` pins `read`/`write`/`backend` to `replicas: 0` with the load-bearing-zero comment. So the all-add-ons bar on gcp + azure is a `workflow_dispatch` away, gated only on the GCP NodePool quota in §3. The one real attempt, hetzner on 2026-08-05, failed 12/20 apps unhealthy — before that fix. |
 
 ---
