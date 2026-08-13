@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Mocked-boundary tests for the feedback action: stub the auth session, request headers,
-// and the SES sendEmail boundary; keep deploymentMode(), the zod schema, and the email
+// and the sendEmail boundary; keep deploymentMode(), the zod schema, and the email
 // subject/template real. Asserts the hosted-only + auth guards, the validation contract,
-// and the exact envelope (from/to/subject/devLog) handed to SES.
+// and the exact envelope (from/to/subject/devLog) handed to the configured provider.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +18,8 @@ import { sendEmail } from "@repo/email/send";
 
 const ORIGINAL_MODE = process.env.ALETHIA_DEPLOYMENT_MODE;
 const ORIGINAL_FEEDBACK = process.env.FEEDBACK_EMAIL;
+const ORIGINAL_EMAIL_PROVIDER = process.env.EMAIL_PROVIDER;
+const ORIGINAL_RESEND_API_KEY = process.env.RESEND_API_KEY;
 
 /** A well-formed submission used by the happy-path assertions. */
 const validInput = { topic: "idea", rating: 4, message: "Love the new dashboard" } as const;
@@ -25,6 +27,8 @@ const validInput = { topic: "idea", rating: 4, message: "Love the new dashboard"
 beforeEach(() => {
 	vi.clearAllMocks();
 	process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
+	process.env.EMAIL_PROVIDER = "resend";
+	process.env.RESEND_API_KEY = "test";
 	delete process.env.FEEDBACK_EMAIL;
 	vi.mocked(auth.api.getSession).mockResolvedValue({
 		user: { email: "user@acme.io" },
@@ -37,10 +41,14 @@ afterEach(() => {
 	else process.env.ALETHIA_DEPLOYMENT_MODE = ORIGINAL_MODE;
 	if (ORIGINAL_FEEDBACK === undefined) delete process.env.FEEDBACK_EMAIL;
 	else process.env.FEEDBACK_EMAIL = ORIGINAL_FEEDBACK;
+	if (ORIGINAL_EMAIL_PROVIDER === undefined) delete process.env.EMAIL_PROVIDER;
+	else process.env.EMAIL_PROVIDER = ORIGINAL_EMAIL_PROVIDER;
+	if (ORIGINAL_RESEND_API_KEY === undefined) delete process.env.RESEND_API_KEY;
+	else process.env.RESEND_API_KEY = ORIGINAL_RESEND_API_KEY;
 });
 
 describe("submitFeedback", () => {
-	it("refuses on a self-managed deployment before touching auth or SES", async () => {
+	it("refuses on a self-managed deployment before touching auth or email", async () => {
 		process.env.ALETHIA_DEPLOYMENT_MODE = "self-managed";
 		await expect(submitFeedback(validInput)).rejects.toThrow(
 			/only available on the hosted service/,

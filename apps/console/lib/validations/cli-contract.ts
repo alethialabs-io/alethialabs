@@ -454,6 +454,19 @@ export const cliRunnerRegistrationResponse = z.object({
 	runner: runnerWire,
 	runner_token: z.string().min(1),
 });
+/** POST /api/cli/projects/:id/design — what the apply DID, and on a dry run what it WOULD do. `mode`
+ *  is an enum rather than two booleans so a caller cannot read a plan as an apply. */
+export const cliDesignApplyResponse = z.object({
+	ok: z.literal(true),
+	mode: z.enum(["applied", "staged", "dry-run"]),
+	changes: z.array(
+		z.object({
+			kind: z.string(),
+			name: z.string().nullable(),
+			action: z.string(),
+		}),
+	),
+});
 export const cliClustersResponse = z.object({ clusters: z.array(clusterWire) });
 export const cliCloudIdentitiesResponse = z.object({
 	cloud_identities: z.array(cloudIdentityWire),
@@ -828,6 +841,7 @@ export const cliContract = {
 	ByoChartAttachResponse: cliByoChartAttachResponse,
 	ByoScanResponse: cliByoScanResponse,
 	RunnerRegistrationResponse: cliRunnerRegistrationResponse,
+	DesignApplyResponse: cliDesignApplyResponse,
 	ClustersResponse: cliClustersResponse,
 	ClusterDetailResponse: cliClusterDetailResponse,
 	CloudIdentitiesResponse: cliCloudIdentitiesResponse,

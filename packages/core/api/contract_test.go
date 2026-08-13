@@ -610,3 +610,23 @@ func TestContract_RunnerRegistration(t *testing.T) {
 		t.Errorf("the runner must decode, got %+v", resp.Runner)
 	}
 }
+
+// TestContract_DesignApply pins the apply response. `mode` is asserted as one of the three known
+// values, not merely present: reading a "dry-run" as an "applied" is the one misinterpretation that
+// matters here, because it would tell a caller their change went live when nothing was written.
+func TestContract_DesignApply(t *testing.T) {
+	var resp DesignApplyResult
+	strictDecode(t, "design_apply.json", &resp)
+	assertNoExtraStructKeys(t, "design_apply.json", resp)
+	switch resp.Mode {
+	case "applied", "staged", "dry-run":
+	default:
+		t.Errorf("mode %q is not one of applied|staged|dry-run", resp.Mode)
+	}
+	if len(resp.Changes) == 0 {
+		t.Fatal("the fixture must carry a change row so the row shape is pinned too")
+	}
+	if resp.Changes[0].Name == nil {
+		t.Error("the fixture's row should carry a name so the pointer field is exercised")
+	}
+}

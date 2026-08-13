@@ -7,11 +7,11 @@ contribute and the one legal step we require.
 
 ## Contributor License Agreement (CLA)
 
-> **Formation gate:** Alethia Labs DPK has been submitted for registration but
-> does not yet have an EIK. We welcome issues and discussion, but cannot merge
-> third-party code until the registered company is identified and the
-> post-registration CLA is activated. The required `contribution-legal` check
-> enforces this automatically.
+> **CLA activation gate:** ALETHIA LABS is registered as a Bulgarian single-member
+> variable capital company under EIK 208913663.
+> We welcome issues and discussion, but cannot merge third-party code until the
+> versioned post-registration CLA is activated and the required
+> `contribution-legal` check passes.
 
 After activation, every external contributor must sign the versioned Contributor
 License Agreement before a contribution can merge. The signature record is tied
@@ -41,8 +41,8 @@ AGPL-only contribution would block us from shipping the commercial edition.
    `turbo build`, `turbo lint`, and `go test ./...` for Go packages.
 4. Use [Conventional Commits](https://www.conventionalcommits.org/) — releases are
    automated with release-please.
-5. Open a pull request. While formation is pending, external PRs remain
-   reviewable but cannot merge. After activation, sign the CLA when prompted.
+5. Open a pull request. Until the CLA activation gate is complete, external PRs
+   remain reviewable but cannot merge. After activation, sign the CLA when prompted.
 
 ## Branching & release flow
 

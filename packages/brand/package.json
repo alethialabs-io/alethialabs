@@ -3,7 +3,6 @@
   "version": "0.0.0",
   "private": true,
   "exports": {
-    "./legal": "./src/legal.ts",
     "./status": "./src/brand-status.ts",
     "./alethia-logo": "./src/alethia-logo.tsx",
     "./tokens.css": "./src/tokens.css",

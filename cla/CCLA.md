@@ -1,13 +1,13 @@
 # DRAFT — Alethia Labs Corporate Contributor License Agreement v1.1
 
-> **NOT ACTIVE · NOT FOR SIGNATURE.** The recipient company is pending
-> registration and does not yet have an EIK. Complete the activation record and
-> obtain counsel approval before execution.
+> **NOT ACTIVE · NOT FOR SIGNATURE.** The recipient company is registered, but
+> counsel approval and the versioned activation record are still required before execution.
 
 This Corporate Contributor License Agreement ("Agreement") is between the
-corporation identified below ("Corporation") and **Alethia Labs DPK, EIK
-[PENDING REGISTRATION]**, with registered office at [TO BE CONFIRMED AFTER
-REGISTRATION] ("Alethia").
+corporation identified below ("Corporation") and **ALETHIA LABS**, a Bulgarian
+single-member variable capital company, EIK 208913663, with registered office at
+9 Sirak Skitnik Street, entrance A,
+floor 4, apartment 7, Slatina District, 1111 Sofia, Bulgaria ("Alethia").
 
 ## 1. Contributions and personnel
 
@@ -61,6 +61,8 @@ Authorized signatory / title: ____________________
 
 Date: ___________________________________________
 
-For Alethia Labs DPK: ____________________________
+For ALETHIA LABS: _______________________________
 
-EIK: **PENDING — do not execute**
+EIK: 208913663
+
+Activation status: **INACTIVE — do not execute**

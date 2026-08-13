@@ -1,7 +1,12 @@
 # Rename this file to ACTIVE only after every item in cla/README.md has been
 # completed. Replace every placeholder before doing so.
-entity: Alethia Labs DPK
-eik: "[PENDING]"
+entity: ALETHIA LABS
+legal_form_bg: "Еднолично дружество с променлив капитал"
+eik: "208913663"
+registered_address: "9 Sirak Skitnik Street, entrance A, floor 4, apartment 7, Slatina District, 1111 Sofia, Bulgaria"
 cla_version: "1.1"
 effective_date: "[YYYY-MM-DD]"
-board_or_founder_approval_record: "[PATH-OR-REFERENCE]"
+counsel_approval_record: "[RESTRICTED-PATH-OR-REFERENCE]"
+icla_sha256: "[SHA-256]"
+ccla_sha256: "[SHA-256]"
+signature_branch: "cla-signatures"

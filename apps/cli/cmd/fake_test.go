@@ -135,6 +135,8 @@ type fakeClient struct {
 	regRunnerName     string
 	regRunnerIdentity string
 	registration      *api.RunnerRegistration
+	appliedDesign     api.ApplyDesignParams
+	designResult      *api.DesignApplyResult
 }
 
 func (f *fakeClient) Whoami() (*api.WhoAmI, error)                   { return f.whoami, f.err }
@@ -189,6 +191,23 @@ func (f *fakeClient) RegisterRunner(name, cloudIdentityID string) (*api.RunnerRe
 		Runner:      api.Runner{ID: "run1", Name: name, Operator: "self", Provisioning: "registered"},
 		RunnerToken: "tok-abc123",
 	}, nil
+}
+
+func (f *fakeClient) ApplyDesign(p api.ApplyDesignParams) (*api.DesignApplyResult, error) {
+	f.appliedDesign = p
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.designResult != nil {
+		return f.designResult, nil
+	}
+	mode := "applied"
+	if p.DryRun {
+		mode = "dry-run"
+	} else if p.Stage {
+		mode = "staged"
+	}
+	return &api.DesignApplyResult{OK: true, Mode: mode}, nil
 }
 func (f *fakeClient) GetClusters() ([]api.ClusterSummary, error) { return f.clusters, f.err }
 func (f *fakeClient) GetConfigurations() ([]types.ConfigurationSummary, error) {

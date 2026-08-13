@@ -25,7 +25,7 @@
 	}
 
 	# Marketing-owned routes + the mkt-assets prefix (must precede the catch-all).
-	@marketing path / /home /pricing /enterprise /open-source /brand /contact /contact/* /security /terms /privacy /privacy/* /cookies /acceptable-use /legal/* /mkt-assets/* /robots.txt /sitemap.xml
+	@marketing path / /home /pricing /enterprise /open-source /brand /contact /contact/* /security /terms /imprint /privacy /privacy/* /cookies /acceptable-use /legal/* /mkt-assets/* /robots.txt /sitemap.xml
 	handle @marketing {
 		reverse_proxy marketing:3010
 	}

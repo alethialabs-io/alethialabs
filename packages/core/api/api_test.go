@@ -518,13 +518,17 @@ func TestGetConfiguration_Success(t *testing.T) {
 
 // --- ExportConfiguration ---
 
+// The default is `json`. It used to be `legacy-yaml`, and this test locked that in — which is part of
+// how the bug survived: the default named a format with NO producer anywhere in the repo, and the route
+// it was sent to did not exist, so the command 404'd for its whole life while its tests passed against
+// a fake that answered whatever it was asked.
 func TestExportConfiguration_DefaultFormat(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("format") != "legacy-yaml" {
-			t.Errorf("expected format=legacy-yaml, got %s", r.URL.Query().Get("format"))
+		if r.URL.Query().Get("format") != "json" {
+			t.Errorf("expected format=json, got %s", r.URL.Query().Get("format"))
 		}
 		json.NewEncoder(w).Encode(map[string]string{
-			"content": "yaml-content", "filename": "config.yaml", "format": "legacy-yaml",
+			"content": "{}", "filename": "config.json", "format": "json",
 		})
 	}))
 
@@ -532,8 +536,30 @@ func TestExportConfiguration_DefaultFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if export.Content != "yaml-content" {
-		t.Errorf("expected yaml-content, got %s", export.Content)
+	if export.Content != "{}" {
+		t.Errorf("expected the JSON content, got %s", export.Content)
+	}
+	if export.Format != "json" {
+		t.Errorf("expected format json, got %s", export.Format)
+	}
+}
+
+// An explicit format is still forwarded, so a caller can ask for one the server may add later — and
+// a caller who pins the old `legacy-yaml` reaches a server that refuses it BY NAME rather than one
+// that quietly returns JSON labelled as YAML.
+func TestExportConfiguration_ExplicitFormatIsForwarded(t *testing.T) {
+	var got string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query().Get("format")
+		json.NewEncoder(w).Encode(map[string]string{
+			"content": "{}", "filename": "c.json", "format": "json",
+		})
+	}))
+	if _, err := client.ExportConfiguration("my-app", "legacy-yaml"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "legacy-yaml" {
+		t.Errorf("an explicit format must be forwarded verbatim, got %q", got)
 	}
 }
 

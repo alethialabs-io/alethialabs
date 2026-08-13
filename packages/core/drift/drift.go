@@ -7,6 +7,14 @@
 // refresh-only job runs `tofu plan -refresh-only`, and this package summarises the
 // divergence between recorded state and live cloud into a Posture row.
 //
+// Not every refresh delta is drift. A provider routinely returns a value its own
+// create never recorded — an unset collection coming back as an empty one, a deprecated
+// field newly hydrated — and reporting those as drift means a clean apply is reported
+// as 28% drifted on day zero, which is how a detection feature loses its reader. Those
+// representational deltas are classified out (see normalize.go) and counted separately
+// in Normalized/NormalizedDetails, so what was examined and dismissed stays visible
+// instead of turning into silence.
+//
 // Honest scope: a refresh-only plan only sees resources Terraform/OpenTofu manages
 // (they are in state). It cannot see **unmanaged** resources that exist in the
 // cloud but not in state — detecting those needs a cloud inventory source (AWS
@@ -50,6 +58,15 @@ type Posture struct {
 	Drifted int `json:"drifted"`
 	// Details lists the drifted resources (bounded by the plan size).
 	Details []ResourceDrift `json:"details,omitempty"`
+	// Normalized counts resources whose ONLY refresh deltas were representational —
+	// a difference in how the provider encodes a value, not a difference in the
+	// infrastructure. Excluded from Drifted by construction.
+	Normalized int `json:"normalized"`
+	// NormalizedDetails records what was examined and dismissed, and why. Kept rather
+	// than dropped so the dismissal is auditable: "32 resources examined, 9 deltas
+	// found, 9 dismissed as representational, here they are" is a control that can be
+	// shown to have operated. A bare "0 drifted" is not.
+	NormalizedDetails []NormalizedResource `json:"normalized_details,omitempty"`
 	// Unmanaged is the count of cloud resources not in state. Always 0 here.
 	Unmanaged int `json:"unmanaged"`
 	// UnmanagedKnown reports whether unmanaged detection actually ran (false for a
@@ -67,6 +84,7 @@ func Analyze(plan *tfjson.Plan) *Posture {
 	if plan == nil {
 		return p
 	}
+	cfg := indexConfig(plan)
 	for _, rc := range plan.ResourceDrift {
 		if rc == nil || rc.Change == nil {
 			continue
@@ -75,17 +93,27 @@ func Analyze(plan *tfjson.Plan) *Posture {
 		if rc.Mode == tfjson.DataResourceMode {
 			continue
 		}
-		act := rc.Change.Actions
-		if act.NoOp() {
+		if rc.Change.Actions.NoOp() {
+			continue
+		}
+		v := examine(rc, cfg)
+		if !v.Drift {
+			p.NormalizedDetails = append(p.NormalizedDetails, NormalizedResource{
+				Address:    rc.Address,
+				Type:       rc.Type,
+				Attributes: v.Attributes,
+				Reason:     v.Reason,
+			})
 			continue
 		}
 		p.Details = append(p.Details, ResourceDrift{
 			Address: rc.Address,
 			Type:    rc.Type,
-			Kind:    classify(act),
+			Kind:    v.Kind,
 		})
 	}
 	p.Drifted = len(p.Details)
+	p.Normalized = len(p.NormalizedDetails)
 	p.InSync = p.Drifted == 0
 	return p
 }
@@ -108,7 +136,7 @@ func (p *Posture) Summary() string {
 		return "drift: unknown"
 	}
 	if p.InSync {
-		return "drift: in sync"
+		return "drift: in sync" + p.normalizedSuffix()
 	}
 	kinds := map[Kind]int{}
 	for _, d := range p.Details {
@@ -124,5 +152,14 @@ func (p *Posture) Summary() string {
 	if n := kinds[KindOther]; n > 0 {
 		parts = append(parts, strconv.Itoa(n)+" other")
 	}
-	return "drift: " + strconv.Itoa(p.Drifted) + " resource(s) (" + strings.Join(parts, ", ") + ")"
+	return "drift: " + strconv.Itoa(p.Drifted) + " resource(s) (" + strings.Join(parts, ", ") + ")" + p.normalizedSuffix()
+}
+
+// normalizedSuffix renders the dismissed-delta tail, and only when there is one — so
+// every existing summary string is byte-identical when nothing was dismissed.
+func (p *Posture) normalizedSuffix() string {
+	if p.Normalized == 0 {
+		return ""
+	}
+	return " [+" + strconv.Itoa(p.Normalized) + " normalized]"
 }

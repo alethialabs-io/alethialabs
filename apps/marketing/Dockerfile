@@ -5,9 +5,9 @@
 # Marketing (Next.js public site) self-host image. Build context = repo root:
 #   docker build -f apps/marketing/Dockerfile -t alethia-marketing .
 #
-# The hosted alethialabs.io site runs on Vercel (microfrontends child zone); this
-# image is the OPT-IN self-host path, stitched behind Caddy next to the console
-# (see deploy/caddy/marketing.caddy.example). Listens on :3000 to match that map.
+# The hosted alethialabs.io site runs from this image in the Hetzner production
+# Compose stack. Self-hosters can opt into the same image and stitch it behind
+# Caddy next to the console (see deploy/caddy/marketing.caddy.example).
 # Owns the bare root `/`; serves its own assets under the `/mkt-assets` prefix.
 
 FROM node:22-alpine AS base

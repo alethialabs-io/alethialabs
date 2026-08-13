@@ -18,6 +18,7 @@ export const MARKETING_SITEMAP_PATHS = [
 	"/contact/enterprise",
 	"/security",
 	"/terms",
+	"/imprint",
 	"/privacy",
 	"/privacy/requests",
 	"/cookies",

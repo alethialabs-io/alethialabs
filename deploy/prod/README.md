@@ -84,7 +84,7 @@ assumed role authenticates it). See `.env.production.example` for the vault-key 
 |---|---|
 | **Transfer repo → `alethialabs-io/alethialabs`** | do this FIRST (OIDC trust + rulesets are owner/repo-scoped) |
 | **AWS admin creds (local)** | to apply `infra/aws-oidc` + populate the vault (you already have these) |
-| **Externals into the vault** | fill `deploy/prod/secrets.local.env` (see the example) — scoped Cloudflare token (DNS:Edit + Tunnel:Edit), two Hetzner project tokens, the deploy SSH keypair, optional OAuth/Stripe/SES |
+| **Externals into the vault** | fill `deploy/prod/secrets.local.env` (see the example) — scoped Cloudflare token (DNS:Edit + Tunnel:Edit), two Hetzner project tokens, the deploy SSH keypair, Resend, the public company phone, and any approved optional integrations |
 | **GHCR packages → public** (one UI toggle, no REST API) | `console`/`console-migrate`/`docs`/`blog`/`marketing`/`runner` + `runner-{aws,gcp,azure}` — one-time, persists across re-pushes |
 
 Everything else is generated / chained / applied automatically. **No GitHub App.**
