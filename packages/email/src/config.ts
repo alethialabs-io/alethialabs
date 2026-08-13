@@ -11,8 +11,7 @@ export interface SesConfig {
 	secretAccessKey?: string;
 }
 
-/** Resend (resend.com) transport — an HTTP API key. The hosted-prod default:
- * react-email templates render natively and there are no SMTP ports to open. */
+/** Resend HTTP transport. It is temporary hosted-production infrastructure, not a permanent default. */
 export interface ResendConfig {
 	apiKey: string;
 }
@@ -126,6 +125,15 @@ export function getEmailConfig(): EmailConfig {
 		if (resend) provider = "resend";
 		else if (smtp) provider = "smtp";
 		else if (ses) provider = "ses";
+	}
+
+	// Hosted deployments must not degrade transactional mail to the development log fallback.
+	if (env("ALETHIA_DEPLOYMENT_MODE") === "hosted" && !provider) {
+		throw new Error(
+			explicit
+				? `EMAIL_PROVIDER=${explicit} is configured without matching credentials.`
+				: "Hosted deployments require an explicit, credentialed EMAIL_PROVIDER.",
+		);
 	}
 
 	cached = {

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Guard: SPDX copyright headers must be legal-form-AGNOSTIC — "Alethia Labs <legal@…>", never
-// "Alethia Labs OÜ / OU / DPK / …". The volatile legal form lives ONLY in packages/brand/src/legal.ts
+// "Alethia Labs OÜ / OU / DPK / …". The volatile legal form lives ONLY in packages/legal/src/entity.ts
 // (LEGAL_ENTITY) + NOTICE / LICENSE prose, so an entity rename never re-touches ~1,500 headers.
 // This is the tripwire that keeps that true: it fails if any legal form leaks back into a header.
 // Remediation is a one-command sweep: node scripts/normalize-copyright-headers.mjs
@@ -53,7 +53,7 @@ if (offenders.length > 0) {
 	);
 	for (const o of offenders) console.error(`   ${o}`);
 	console.error(
-		"\nThe legal form (OÜ / DPK / …) belongs only in NOTICE / LICENSE / legal.ts, never in headers.",
+		"\nThe legal form (OÜ / DPK / …) belongs only in NOTICE / LICENSE / entity.ts, never in headers.",
 	);
 	console.error("Fix with:  node scripts/normalize-copyright-headers.mjs");
 	process.exit(1);

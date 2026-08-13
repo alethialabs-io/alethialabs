@@ -12,7 +12,8 @@
 	"dependencies": {
 		"@repo/assets": "workspace:*",
 		"@repo/brand": "workspace:*",
-		"@repo/email": "workspace:*",
+    "@repo/email": "workspace:*",
+    "@repo/legal": "workspace:*",
 		"@repo/plan-catalog": "workspace:*",
 		"@repo/privacy": "workspace:*",
 		"@repo/ui": "workspace:*",

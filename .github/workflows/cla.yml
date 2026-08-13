@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Formation-period gate. This privileged pull_request_target job checks out only
+# Pre-activation gate. This privileged pull_request_target job checks out only
 # the trusted base commit and never executes pull-request-head code.
 name: Contribution legal gate
 
@@ -23,7 +23,7 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
-      - name: Enforce formation-period contribution policy
+      - name: Enforce pre-activation contribution policy
         env:
           AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
@@ -41,11 +41,11 @@ jobs:
           esac
 
           if test ! -f cla/ACTIVE; then
-            echo "::error::External merges are paused until Alethia Labs DPK is registered and the post-registration CLA is active."
+            echo "::error::External merges are paused until the ALETHIA LABS post-registration CLA is active."
             exit 1
           fi
 
-          echo "::error::cla/ACTIVE exists but the signing job has not replaced the formation gate. Fail closed."
+          echo "::error::cla/ACTIVE exists but the signing job has not replaced the pre-activation gate. Fail closed."
           exit 1
 
 # Activation template:
