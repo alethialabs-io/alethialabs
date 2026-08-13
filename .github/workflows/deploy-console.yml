@@ -466,6 +466,10 @@ jobs:
           [ -n "$HOST" ] || { echo "::error::DEPLOY_HOST not in $ASM_SECRET_ID yet — run infra-cp-hetzner (provision) first."; exit 1; }
           APP_URL="$(val PUBLIC_APP_URL)"; APP_URL="${APP_URL:-https://alethialabs.io}"
           SERVER_TYPE="$(val HCLOUD_SERVER_TYPE)"; SERVER_TYPE="${SERVER_TYPE:-cax21}"
+          PUBLIC_PHONE="$(val ALETHIA_PUBLIC_PHONE)"
+          [ -n "$PUBLIC_PHONE" ] || { echo "::error::ALETHIA_PUBLIC_PHONE is required for the production company-information surface."; exit 1; }
+          RESEND_KEY="$(val RESEND_API_KEY)"
+          [ -n "$RESEND_KEY" ] || { echo "::error::EMAIL_PROVIDER=resend requires RESEND_API_KEY."; exit 1; }
 
           # SSH private key from the vault (never touches the runner env / logs).
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
@@ -485,6 +489,7 @@ jobs:
             # (lib/billing/config.ts), which hides the feedback widget and exposes self-managed runner /
             # fleet UI to customers. Constant here — the box is always hosted.
             echo "ALETHIA_DEPLOYMENT_MODE=hosted"
+            emit ALETHIA_PUBLIC_PHONE
             emit BETTER_AUTH_SECRET
             # Stable Next.js Server Actions encryption key — shared by console/admin/marketing (one
             # .env, one env_file). Unset ⇒ random per build ⇒ "Server Action was not found" skew when
@@ -514,10 +519,6 @@ jobs:
             emit ALETHIA_STORAGE_SECRET_ACCESS_KEY
             echo "ALETHIA_STORAGE_AUTO_CREATE_BUCKETS=true"
             emit TUNNEL_TOKEN
-            # Self-hosted analytics — OpenReplay (optional OSS session replay). The console's
-            # analytics layer no-ops on any empty NEXT_PUBLIC_* value.
-            emit NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY
-            emit NEXT_PUBLIC_OPENREPLAY_INGEST
             # PostHog — the all-in-one suite (analytics + replay + web vitals). One external project key;
             # host defaults to eu.i.posthog.com. When set, the console runs PostHog (leave Umami unset).
             emit NEXT_PUBLIC_POSTHOG_KEY
@@ -531,13 +532,10 @@ jobs:
             # vault: unset ⇒ emitted empty ⇒ the code's gate treats it as disabled (like the AI keys /
             # analytics above). Without these lines the vault vars could never reach the box's .env, so
             # the whole suite would be un-enable-able in prod (the prod-env-emit-gaps trap). ---
-            # Self-hosted observability (all no-op when unset): OTel collector, Sentry/GlitchTip errors,
-            # the platform-operator org that background-loop-degraded alerts fan out to, log level.
+            # Generic OTel collector seam and first-party operational controls. Hosted production does
+            # not configure the dormant Sentry/GlitchTip adapter.
             emit OTEL_EXPORTER_OTLP_ENDPOINT
             emit OTEL_SERVICE_NAME
-            emit SENTRY_DSN
-            emit SENTRY_ENVIRONMENT
-            emit SENTRY_TRACES_SAMPLE_RATE
             emit ALETHIA_PLATFORM_ALERT_ORG_ID
             emit ALETHIA_LOG_LEVEL
             # Break-glass privileged-recovery surface — DEFAULT-OFF (404 unless ENABLED="true"): the master
@@ -641,15 +639,10 @@ jobs:
             # safe default-off (needs BOTH URL + token), same "stay dark when unset" semantics as STRIPE_PRICE_AI_*.
             emit ODOO_INVOICE_URL
             emit ODOO_INVOICE_TOKEN
-            # Transactional email: hosted prod sends via Resend (AWS SES production
-            # access was denied for this account). EMAIL_PROVIDER pins the transport;
-            # RESEND_API_KEY is the [ext] vault key. The SES vars stay emitted so a
-            # self-host build with SES creds still works (provider auto-detect).
+            # Transactional email: hosted production uses Resend while SES production
+            # access remains unavailable. Self-hosted deployments retain every adapter.
             echo "EMAIL_PROVIDER=resend"
             emit RESEND_API_KEY
-            emit ALETHIA_SES_REGION
-            emit ALETHIA_SES_ACCESS_KEY_ID
-            emit ALETHIA_SES_SECRET_ACCESS_KEY
             # Support: staff Slack ping on a new case/reply (lib/support/slack-notify.ts). Unset → no-op.
             emit SUPPORT_SLACK_WEBHOOK_URL
             # Community card link on the support page (app/(private)/[org]/~/support). Unset → "coming soon".

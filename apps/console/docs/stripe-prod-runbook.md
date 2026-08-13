@@ -1,11 +1,16 @@
-# Stripe production runbook (Alethia Labs DPK — live mode)
+# Stripe production activation runbook (inactive)
+
+> **Do not run this procedure.** No paid consumer market is active. Activation requires an approved
+> commerce launch covering terms, withdrawal/cancellation rights, pricing disclosures, tax/VAT,
+> invoicing, refund handling, and a production verification pass. This document only preserves the
+> technical seam for that later project.
 
 How to take the Stripe integration live and keep it "set-and-forget". Test and live are
 **separate datasets** in Stripe — the catalog, webhook endpoint, and env below must all be
 created again against the **live** secret key. Everything here is idempotent/re-runnable.
 
 Prereqs: the live secret key (`sk_live_…`) and publishable key (`pk_live_…`) from the
-**Alethia Labs DPK** account, and write access to the prod env vault
+**ALETHIA LABS (EIK 208913663)** account, and write access to the prod env vault
 (AWS Secrets Manager `alethia/prod/env`).
 
 ---
@@ -48,9 +53,8 @@ Set (live values):
 | `STRIPE_PRICE_METER_TEAM` | from step 1 |
 | `STRIPE_TAX_ENABLED` | `true` only once Stripe Tax origin + registrations are set up |
 
-SES (branded billing emails) must also be live — these are already documented, confirm they're set:
-`ALETHIA_SES_REGION`, `EMAIL_FROM` (general stream, e.g. `Alethia <hello@mail.alethialabs.io>`),
-and optionally `ALETHIA_SES_GENERAL_CONFIG_SET`. Billing emails send on the **general** stream.
+The approved transactional email provider must also be live. Hosted production currently uses
+Resend (`EMAIL_PROVIDER=resend`, `RESEND_API_KEY`); re-verify this at commerce activation time.
 
 Redeploy the console so it picks up the new env.
 
@@ -76,11 +80,11 @@ Customer Portal:
 
 ## 5. Staged email flip (own the customer experience)
 
-We own the billing emails via SES, but roll it out safely:
+We own the billing emails through the configured transactional provider, but roll it out safely:
 
 1. **Initially, leave Stripe's automatic customer emails ON** (Settings → Emails → "Successful
    payments", "Failed payments", etc.). Customers may briefly get both.
-2. Watch ~1 week of live events: verify our SES receipt/dunning/trial/cancel emails match reality
+2. Watch ~1 week of live events: verify our receipt/dunning/trial/cancel emails match reality
    (right recipient, amounts, PDF attached, exactly one per event — the `stripe_webhook_event`
    ledger guarantees no duplicates on Stripe retries).
 3. **Then disable Stripe's customer emails** so customers get one consistent Alethia-branded
@@ -90,6 +94,6 @@ We own the billing emails via SES, but roll it out safely:
 ## Rollback
 
 - Set `STRIPE_TAX_ENABLED=false` to drop automatic tax if registrations aren't ready.
-- Re-enable Stripe's automatic emails in the dashboard (instant) if our SES path has an issue.
+- Re-enable Stripe's automatic emails in the dashboard (instant) if our email path has an issue.
 - The webhook is fail-safe: an email error never fails the webhook (state still syncs); a handler
   error returns 500 so Stripe retries, and the event-log makes retries exactly-once.

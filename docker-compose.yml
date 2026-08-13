@@ -205,8 +205,8 @@ services:
       HOSTNAME: 0.0.0.0
     restart: unless-stopped
 
-  # Marketing (Next.js public site). OPT-IN self-host path — the hosted
-  # alethialabs.io runs on Vercel. Enable with the `marketing` profile
+  # Marketing (Next.js public site). The Alethia-hosted deployment runs this image
+  # in the Hetzner Compose bundle. Self-hosters enable it with the `marketing` profile
   # (e.g. `pnpm compose:up:site`) AND uncomment `import marketing*.caddy` in
   # deploy/caddy/Caddyfile (copy marketing.caddy.example → marketing.caddy).
   marketing:

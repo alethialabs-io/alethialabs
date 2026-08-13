@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { CURRENT_LEGAL_OPERATOR, LEGAL_ENTITY } from "@repo/brand/legal";
+import { CURRENT_LEGAL_OPERATOR, LEGAL_ENTITY } from "@repo/legal/entity";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
@@ -92,14 +92,12 @@ export default function DpaPage() {
 
 			<h2>5. International transfers</h2>
 			<p>
-				Processing is primarily in Germany. For a restricted transfer from the EEA
-				to a country without an adequacy decision, the 2021 EU Standard Contractual
-				Clauses are incorporated by reference: Module Two applies where Customer is
-				controller, Module Three where Customer is processor; the optional docking
-				clause applies; the competent supervisory authority and governing law are
-				Bulgarian; disputes are heard in Bulgaria; Annex I is completed by this DPA,
-				the agreement, and the parties’ contact details; Annex II is section 3; and
-				Annex III is the Subprocessors page.
+				Processing is primarily in Germany. Alethia will not make a restricted
+				transfer from the EEA to a country without an adequacy decision unless an
+				applicable safeguard has been made legally binding, such as the 2021 EU
+				Standard Contractual Clauses, and any required transfer assessment and
+				supplementary measures have been completed. The applicable mechanism and a
+				copy or summary of the safeguards will be provided on request.
 			</p>
 
 			<h2>6. Assistance and incidents</h2>

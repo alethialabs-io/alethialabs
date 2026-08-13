@@ -26,6 +26,7 @@ const EMAIL_KEYS = [
 	"AWS_REGION",
 	"AUTH_EMAIL_FROM",
 	"EMAIL_FROM",
+	"ALETHIA_DEPLOYMENT_MODE",
 ] as const;
 
 const saved: Record<string, string | undefined> = {};
@@ -123,6 +124,15 @@ describe("getEmailConfig — provider selection", () => {
 		process.env.RESEND_API_KEY = "re_test_key"; // ...but only Resend has creds
 		const config = await loadConfig();
 		expect(config.provider).toBeNull();
+	});
+
+	it("fails closed when hosted email credentials do not match the selected provider", async () => {
+		process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
+		process.env.EMAIL_PROVIDER = "resend";
+
+		await expect(loadConfig()).rejects.toThrow(
+			"EMAIL_PROVIDER=resend is configured without matching credentials.",
+		);
 	});
 
 	it("uses default from-addresses and lets EMAIL_FROM/AUTH_EMAIL_FROM override", async () => {

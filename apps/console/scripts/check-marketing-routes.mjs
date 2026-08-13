@@ -7,7 +7,7 @@
 // no check needed there. This guard keeps the other two encodings honest:
 //   1. every marketing app/ route is registered in microfrontends.json (so a new page
 //      can't ship unrouted / unreserved), and
-//   2. the off-Vercel Caddy mirror's @marketing path list matches microfrontends.json.
+//   2. the Caddy mirror's @marketing path list matches marketing-zones.json.
 // Plus a cheap asset-prefix consistency check across the three. Run from apps/console
 // (the `check:marketing-routes` script): cwd is apps/console.
 

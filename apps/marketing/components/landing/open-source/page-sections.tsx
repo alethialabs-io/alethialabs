@@ -52,9 +52,9 @@ function Hero({ stars }: { stars: number | null }) {
 					Run the entire control plane yourself.
 				</h1>
 				<p style={{ fontSize: 16.5, color: "var(--text-tertiary)", lineHeight: 1.6, margin: "0 0 30px", maxWidth: 600 }}>
-					Alethia is open source under the GNU AGPL. Self-host the whole platform ÃÂ¢ÃÂÃÂ console, CLI,
-					runners, multi-cloud provisioning ÃÂ¢ÃÂÃÂ on your own infrastructure, on any cloud. We host
-					nothing: the clusters are yours, and so is the control plane.
+					Alethia is open source under the GNU AGPL. Self-host the whole platform — console, CLI,
+					runners, and multi-cloud provisioning — on your own infrastructure, on any cloud. The hosted
+					service runs on Alethia-operated infrastructure; self-hosted operators control their own control plane and clusters.
 				</p>
 				<div style={{ marginBottom: 26 }}>
 					<Command>curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh | sh</Command>

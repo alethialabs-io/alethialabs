@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { LEGAL_ENTITY } from "@repo/brand/legal";
+import { LEGAL_ENTITY } from "@repo/legal/entity";
 import type { Metadata } from "next";
 import { LegalShell } from "@/components/legal/legal-shell";
 

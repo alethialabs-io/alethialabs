@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
-import { LEGAL_ENTITY } from "@repo/brand/legal";
+import { LEGAL_ENTITY } from "@repo/legal/entity";
 import type { ReactNode } from "react";
 import Link from "next/link";
 

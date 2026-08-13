@@ -38,6 +38,6 @@ With regard to the Software:
 This repository licence is not a production subscription agreement, service-level
 agreement, data-processing agreement, or warranty.
 
-Until Alethia Labs DPK is registered and the relevant rights are assigned to it,
-Borislav Borisov is the copyright holder and contracting party. For commercial
-licensing enquiries, contact legal@alethialabs.io.
+ALETHIA LABS, EIK 208913663, is registered. Until the relevant rights are assigned
+to it in writing, Borislav Borisov remains the copyright holder and licensor. For
+commercial licensing enquiries, contact legal@alethialabs.io.

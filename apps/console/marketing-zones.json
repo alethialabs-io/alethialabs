@@ -26,6 +26,7 @@
             "/contact/:path*",
             "/security",
             "/terms",
+            "/imprint",
             "/privacy",
             "/privacy/:path*",
             "/cookies",
