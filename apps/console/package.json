@@ -105,6 +105,7 @@
     "@repo/assets": "workspace:*",
     "@repo/brand": "workspace:*",
     "@repo/email": "workspace:*",
+    "@repo/legal": "workspace:*",
     "@repo/plan-catalog": "workspace:*",
     "@repo/platform": "workspace:*",
     "@repo/privacy": "workspace:*",

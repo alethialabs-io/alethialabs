@@ -16,9 +16,9 @@ responses, licensing boundaries, and accepted contributions.
 
 ## Contributions
 
-External merges are paused until Alethia Labs DPK is registered and the
-post-registration CLA is active. Afterwards, the contribution workflow in
-`CONTRIBUTING.md` applies.
+External merges remain paused until the registered company’s CLA package is
+counsel-approved, activated, and enforced by the repository workflow. Afterwards,
+the contribution workflow in `CONTRIBUTING.md` applies.
 
 ## Future governance
 

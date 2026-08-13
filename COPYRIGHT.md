@@ -2,8 +2,9 @@
 
 ## Current status
 
-Alethia Labs DPK has been submitted for registration in Bulgaria but does not yet
-have an EIK. The founder currently owns the founder-created pre-incorporation
+ALETHIA LABS is registered in Bulgaria as a single-member variable capital company
+under EIK 208913663. Registration alone did not transfer intellectual property.
+The founder currently owns the founder-created pre-incorporation
 software, documentation, logo, design system, domains, and related works, subject
 to the rights of third-party dependencies and contributors.
 
@@ -23,7 +24,8 @@ company-owned unless a separate written assignment exists.
 
 ## Required activation steps
 
-1. Confirm the exact registered legal name, form, EIK, address, and registration date.
+1. Record the exact registered legal name, form, EIK, address, and registration date
+   in the controlled legal source.
 2. Complete counsel review of the founder assignment, moral-rights language,
    consideration/tax treatment, thesis statement, and future-works arrangement.
 3. Sign the founder assignment and company acceptance documentation.
@@ -32,4 +34,4 @@ company-owned unless a separate written assignment exists.
    histories or removing contributor attribution.
 
 The evidence index is maintained under
-`management/legal-drive/Intellectual_Property_Licensing/Chain_of_Title/`.
+`management/legal-source/Intellectual_Property_Licensing/Chain_of_Title/`.

@@ -19,10 +19,11 @@ When a file carries its own SPDX identifier, that file-level identifier controls
 The default AGPL licence applies only when no more specific repository exception
 or third-party notice applies.
 
-## Copyright and pre-registration status
+## Copyright and chain-of-title status
 
-Alethia Labs DPK is in formation and does not yet have an EIK. Founder-created
-pre-incorporation works remain owned by the founder until a written assignment
+ALETHIA LABS is registered in Bulgaria as a single-member variable capital company
+under EIK 208913663. Founder-created pre-incorporation works remain owned by the
+founder until a written assignment
 to the registered company is completed. External contributors retain copyright
 in their contributions and grant rights under the applicable project licence and,
 after activation, the Contributor Licence Agreement.
@@ -78,9 +79,9 @@ does not expand the commercial licence or make enterprise files AGPL-covered.
 
 ## Contributions
 
-Third-party contributions are paused while Alethia Labs DPK is being registered.
-After registration, a versioned ICLA or CCLA must be active and the required CLA
-status check must pass before outside contributions may merge. See
+Third-party contributions remain paused until a versioned ICLA or CCLA is active,
+its exact document hash is recorded, and the required CLA status check passes.
+Company registration does not by itself activate those agreements. See
 [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`cla/README.md`](cla/README.md).
 
 ## Third-party software

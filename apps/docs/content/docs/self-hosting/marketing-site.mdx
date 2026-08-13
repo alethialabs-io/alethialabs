@@ -6,7 +6,8 @@ description: Serve the public marketing site (landing, pricing, legal pages) fro
 # Self-hosting the marketing site
 
 The open-source build ships **no marketing site** — a fresh self-host redirects
-`/` to sign-in, and the hosted `alethialabs.io` site runs on Vercel. Serving the
+`/` to sign-in. The hosted `alethialabs.io` site runs in Alethia's Hetzner
+Compose deployment. Serving the
 public marketing app (landing, `/pricing`, `/enterprise`, `/contact`, and the
 legal pages) from your own stack is an **opt-in** path with two parts: a
 `marketing` compose service and a Caddy import that routes the marketing-owned
@@ -33,9 +34,8 @@ set of root paths:
 | `/mkt-assets/*` | `marketing` — its asset prefix (avoids `/_next/*` collisions with the console) |
 | `/robots.txt`, `/sitemap.xml` | `marketing` |
 
-This mirrors `apps/console/marketing-zones.json`, the microfrontends path map the
-hosted Vercel split is derived from (and the source `RESERVED_SLUGS` is computed
-from). Keep the Caddy file and that config in sync.
+This mirrors `apps/console/marketing-zones.json`, the path map from which the
+source `RESERVED_SLUGS` is computed. Keep the Caddy file and that config in sync.
 
 ## Enable it locally
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { LEGAL_ENTITY } from "@repo/brand/legal";
+import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { PrivacySettingsButton } from "@repo/privacy/privacy-settings-button";
 import Link from "next/link";
 import { disp, eyebrow, Lockup, mono, Wrap } from "./primitives";
@@ -189,6 +189,9 @@ export function Footer() {
             </Link>
             <Link href="/cookies" style={{ ...eyebrow, fontSize: 9 }}>
               Cookies
+            </Link>
+            <Link href="/imprint" style={{ ...eyebrow, fontSize: 9 }}>
+              Company
             </Link>
             {/* Consent must stay as easy to withdraw as it was to give. This
                 replaces the floating launcher, which covered the console's

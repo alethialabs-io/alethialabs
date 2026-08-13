@@ -1,12 +1,12 @@
 # Alethia brand package
 
-This package contains shared brand and legal-identity primitives. Canonical logo
+This package contains shared brand primitives. Canonical logo
 files are maintained in `packages/assets/static/brand/`; provenance is recorded
 in `docs/legal/BRAND_DESIGN_PROVENANCE.md`.
 
 The current mark and predecessor design are founder-created
 pre-incorporation works. They remain founder-owned until the post-registration
-IP assignment to Alethia Labs DPK is executed.
+IP assignment to ALETHIA LABS (EIK 208913663) is executed.
 
 Do not add stock marks, traced artwork, AI-generated brand assets, third-party
 screen copies, or unlicensed fonts. New assets must record creator, date, source,

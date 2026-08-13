@@ -106,9 +106,10 @@ Code used by more than one app is **promoted here, never duplicated**. The npm s
 |---|---|
 | `packages/ui` | the shared shadcn/ui design system — import `@repo/ui/button` |
 | `packages/brand` | logo, `tokens.css`, and the metadata/icon/OG generators |
+| `packages/legal` | versioned company identity, legal-document metadata, and processing registry |
 | `packages/plan-catalog` | plan display catalog, shared by console billing and marketing pricing |
 | `packages/assets` | static files only, synced into each app's `public/` at dev/build |
-| `packages/email` | SES send, config, and react-email building blocks (templates stay per-app) |
+| `packages/email` | Resend, SMTP, and SES transports plus react-email building blocks (templates stay per-app) |
 | `packages/platform` | schema/enums/types **owned by `apps/admin`**, re-exported into console |
 | `packages/support` | support-case schema, storage, validations, emails |
 | `packages/eslint-config`, `packages/typescript-config` | shared presets |
@@ -121,7 +122,7 @@ turbo fan-out picks them up.
 
 - **marketing** — the hosted alethialabs.io site (landing, pricing, enterprise, contact, legal).
   The OSS console ships no marketing. Path routing is stitched by
-  `apps/console/marketing-zones.json` (hosted, Vercel microfrontends) and mirrored for Caddy in
+  `apps/console/marketing-zones.json` and mirrored for the self-hosted Caddy router in
   `deploy/caddy/marketing.caddy.example`. `apps/console/lib/marketing-zone.ts` **derives** the
   reserved root segments from that file, so no org can claim `/pricing`;
   `apps/console/scripts/check-marketing-routes.mjs` fails CI if the two encodings drift.
@@ -163,6 +164,6 @@ modules, Integration (real Postgres + RLS), Secret scan, Docs prose, Authz / ope
 guards, and capabilities-security — the fail-closed capabilities/connector/keyless gate that
 replaced the dropped CODEOWNERS review (`.github/workflows/capabilities-security.yml`).
 
-Deploys: `deploy-console.yml` builds the self-host images to GHCR and rolls the box;
-release-please drives the CLI (GoReleaser + Homebrew tap) and the runner image. Marketing
-deploys via Vercel's Git integration.
+Deploys: `deploy-console.yml` builds the self-host images to GHCR and rolls the Hetzner
+Compose deployment behind Cloudflare Tunnel; release-please drives the CLI (GoReleaser +
+Homebrew tap) and the runner image. Marketing is part of the same Compose deployment.
