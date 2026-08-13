@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.4.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.3.0...runner-v0.4.0) (2026-08-12)
+
+
+### Features
+
+* **ci:** arm the Go coverage ratchet, and revive both badges that have been dead since July ([#2001](https://github.com/alethialabs-io/alethialabs/issues/2001)) ([fa093c2](https://github.com/alethialabs-io/alethialabs/commit/fa093c2436f685b9ffa6db387130ac459de248e9))
+
+
+### Bug Fixes
+
+* **agent:** bound the ACR token exchange with its own http client ([#2203](https://github.com/alethialabs-io/alethialabs/issues/2203)) ([989e3da](https://github.com/alethialabs-io/alethialabs/commit/989e3da373c46ec60ed801cf9fadba4dd563e1c7)), closes [#2037](https://github.com/alethialabs-io/alethialabs/issues/2037)
+* **agent:** derive the build Job name from the renderer instead of re-deriving it ([#2194](https://github.com/alethialabs-io/alethialabs/issues/2194)) ([f1f836a](https://github.com/alethialabs-io/alethialabs/commit/f1f836a8eadf4b09b5a767baea3d8432cb1e454d)), closes [#2032](https://github.com/alethialabs-io/alethialabs/issues/2032)
+* **agent:** send the db-authproxy mysql error packet with sequence id 2 ([#2208](https://github.com/alethialabs-io/alethialabs/issues/2208)) ([fd299a8](https://github.com/alethialabs-io/alethialabs/commit/fd299a8e4125f37302af337d5021b4f5780ae63c)), closes [#2043](https://github.com/alethialabs-io/alethialabs/issues/2043)
+* **agent:** write the tofu plan artifact with utils.WriteSecretFile instead of a world-readable 0644 file ([#2209](https://github.com/alethialabs-io/alethialabs/issues/2209)) ([84e5ecb](https://github.com/alethialabs-io/alethialabs/commit/84e5ecb3fc81b3b9d99c4fbb5ac4b273a9cdfe9c)), closes [#2015](https://github.com/alethialabs-io/alethialabs/issues/2015)
+* **caches:** carry the allowed-CIDR list from the canvas to the deploy ([#2155](https://github.com/alethialabs-io/alethialabs/issues/2155)) ([f62cfe2](https://github.com/alethialabs-io/alethialabs/commit/f62cfe2890fd12ed91b4042c983d916dc39840f3))
+* **console:** pick the component lists explicitly, and give the subtree a CI detector before enforcing ([#1980](https://github.com/alethialabs-io/alethialabs/issues/1980)) ([a8b29de](https://github.com/alethialabs-io/alethialabs/commit/a8b29de04fe025895f1b5945727c213eca984019))
+* **nosql:** carry a global table's replica regions from the canvas to the deploy ([#2175](https://github.com/alethialabs-io/alethialabs/issues/2175)) ([0b548f1](https://github.com/alethialabs-io/alethialabs/commit/0b548f1c5a9f7a5ffbe3c86816e4e7a1ddc84c24)), closes [#1982](https://github.com/alethialabs-io/alethialabs/issues/1982)
+* **obs:** gate each OTLP signal on its own endpoint instead of OR-ing all three ([#2226](https://github.com/alethialabs-io/alethialabs/issues/2226)) ([1338b28](https://github.com/alethialabs-io/alethialabs/commit/1338b2884aee359c47f405bbd6310c48eca9f75e))
+* **provisioner:** route a namespace-placement teardown away from the full-cluster tofu destroy ([#2162](https://github.com/alethialabs-io/alethialabs/issues/2162)) ([66a556d](https://github.com/alethialabs-io/alethialabs/commit/66a556dca4e0b091e298a829d4b3a4fc26923b80))
+* **runner:** AKS token minting worked only for workload identity ([#1728](https://github.com/alethialabs-io/alethialabs/issues/1728)) ([117680b](https://github.com/alethialabs-io/alethialabs/commit/117680b7ac12de2ad386935a915485b607777eb3))
+* **runner:** delete two vacuous deploy-validation tests and give the safety poll a test seam ([#2227](https://github.com/alethialabs-io/alethialabs/issues/2227)) ([62c4dee](https://github.com/alethialabs-io/alethialabs/commit/62c4dee8d174c59cfccc4c690f8107df71ce8690))
+* **runner:** derive the runner's own image ref instead of asking an operator for it ([#1795](https://github.com/alethialabs-io/alethialabs/issues/1795)) ([1cddd19](https://github.com/alethialabs-io/alethialabs/commit/1cddd19aa6a1edcc1b96d4fc3bee13c7308acda4)), closes [#1787](https://github.com/alethialabs-io/alethialabs/issues/1787)
+* **runner:** fail closed on a config_snapshot key the contract does not model, and stop the DB-row spread that feeds it ([#1973](https://github.com/alethialabs-io/alethialabs/issues/1973)) ([44bbcf6](https://github.com/alethialabs-io/alethialabs/commit/44bbcf6452cf14e9dd7b6583b37f720116c10c2a))
+* **sandbox:** make Passthrough refuse a NoEgress spec instead of silently running it ([#2163](https://github.com/alethialabs-io/alethialabs/issues/2163)) ([f11a96a](https://github.com/alethialabs-io/alethialabs/commit/f11a96a904f8ff6a5f591693ca4473c045d7ce59)), closes [#2042](https://github.com/alethialabs-io/alethialabs/issues/2042)
+
 ## [0.3.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.2.0...runner-v0.3.0) (2026-07-30)
 
 
