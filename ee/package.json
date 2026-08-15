@@ -26,7 +26,7 @@
   "devDependencies": {
     "@alethia/enterprise-api": "workspace:*",
     "@types/node": "^20",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "jose": "^5.0.0",
     "typescript": "^5",
     "vitest": "^2.1.9"
