@@ -58,6 +58,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+const SNAPSHOT = "docs/testing/programme-snapshot.json";
 const LEDGER = "demos/proofs/provisioning-e2e-log.md";
 const SPINE = "test/e2e/generated/programme.json";
 const WORKFLOW = ".github/workflows/e2e-nightly.yml";
@@ -80,12 +81,17 @@ const END = "<!-- END GENERATED: programme-rollup -->";
 // `gateNames` is the CONCRETE list checked against the workflow — never parsed back out of `gate`,
 // which is display prose and once contained a `*` wildcard that resolved to a name nothing declares
 // and rendered a false "no".
+// `gates` entries carry HOW the gate is turned on, because the two are not interchangeable:
+//   `derived` — the workflow's resolve step exports it from the chosen DIMENSION (post-#2356's
+//               fidelity table). Always reachable via a dispatch; there is no repo variable to set,
+//               so reporting it "unwired" sends somebody hunting for a variable that cannot exist.
+//   `repo`    — a maintainer sets a repo variable or secret. THIS is what "unwired" means.
 const DIMENSIONS = [
-	{ id: "floor", label: "floor", gate: "(the cloud gate alone)", gateNames: [], what: "real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set" },
-	{ id: "maxconfig", label: "all kinds", gate: "ALETHIA_E2E_MAX_CONFIG", gateNames: ["ALETHIA_E2E_MAX_CONFIG"], what: "every kind this cloud offers lands in tofu state (or converges as its named Application)" },
-	{ id: "addons", label: "18 add-ons", gate: "ALETHIA_E2E_ALL_ADDONS", gateNames: ["ALETHIA_E2E_ALL_ADDONS"], what: "all 18 marketplace add-ons Healthy+Synced" },
-	{ id: "byo", label: "BYO-IaC", gate: "ALETHIA_E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN", gateNames: ["ALETHIA_E2E_ARGO_APPS_REPO", "E2E_GIT_TOKEN"], what: "customer IaC/charts applied, and Alethia services bound to their outputs" },
-	{ id: "day2", label: "day-2", gate: "ALETHIA_E2E_SOAK / E2E_DAY2_ACCESS", gateNames: ["ALETHIA_E2E_SOAK", "E2E_DAY2_ACCESS"], what: "a real access path beyond the soak — kubeconfig / ArgoCD surface" },
+	{ id: "floor", label: "floor", gate: "(the cloud gate alone)", gates: [], what: "real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set" },
+	{ id: "maxconfig", label: "all kinds", gate: "ALETHIA_E2E_MAX_CONFIG", gates: [{ name: "ALETHIA_E2E_MAX_CONFIG", kind: "derived" }], what: "every kind this cloud offers lands in tofu state (or converges as its named Application)" },
+	{ id: "addons", label: "18 add-ons", gate: "ALETHIA_E2E_ALL_ADDONS", gates: [{ name: "ALETHIA_E2E_ALL_ADDONS", kind: "derived" }], what: "all 18 marketplace add-ons Healthy+Synced" },
+	{ id: "byo", label: "BYO-IaC", gate: "E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN", gates: [{ name: "E2E_ARGO_APPS_REPO", kind: "repo" }, { name: "E2E_GIT_TOKEN", kind: "repo" }], what: "customer IaC/charts applied, and Alethia services bound to their outputs" },
+	{ id: "day2", label: "day-2", gate: "ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS", gates: [{ name: "ALETHIA_E2E_SOAK", kind: "derived" }, { name: "E2E_DAY2_ACCESS", kind: "repo" }], what: "a real access path beyond the soak — kubeconfig / ArgoCD surface" },
 ];
 /** The composite dimension: a PASS here is evidence for every entry in DIMENSIONS. */
 const COMPOSITE = "full";
@@ -215,6 +221,10 @@ export const STATE = {
 	failing: "failing",
 	blocked: "blocked",
 	neverRun: "never_run",
+	// The last verdict was FAIL but its cause is CLOSED — needs a re-run, not a fix. Distinct from
+	// `failing` (open work) and from `never_run` (never attempted): it has been attempted, and what it
+	// is waiting for is the cheapest possible action.
+	stale: "stale",
 	ceiling: "ceiling",
 	deferred: "deferred",
 };
@@ -224,6 +234,7 @@ const STATE_GLYPH = {
 	failing: "❌",
 	blocked: "⛔",
 	never_run: "·",
+	stale: "♻️",
 	ceiling: "—",
 	deferred: "🔶",
 };
@@ -271,8 +282,51 @@ export function deriveCell({ cloud, dimension, claims, bundleExists }) {
  * Build the whole programme view. Pure — every input is passed in, so `--self-test` drives it with
  * fixtures and the real run reads files once.
  */
-export function derive({ ledgerText, spine, workflowText, unsupportedText, bundleExists, exclusionCounts }) {
+/**
+ * The LIVE board half. `snapshot` is the committed output of scripts/programme-fetch.sh, or null when
+ * absent. Everything here is three-valued on purpose: with no snapshot the answer is `unknown`, and
+ * `unknown` never collapses to either value — a cell may not leave `never_run`, and a gate may not be
+ * called unwired, on the strength of a file nobody fetched.
+ */
+export function deriveBoard(snapshot) {
+	if (snapshot === null || snapshot === undefined) {
+		return {
+			present: false,
+			ageHours: null,
+			issueState: () => "unknown",
+			gateState: () => "unknown",
+			needsHuman: [],
+		};
+	}
+	const open = new Map((snapshot.open_issues ?? []).map((i) => [i.number, i]));
+	const closed = new Map((snapshot.closed_issues ?? []).map((i) => [i.number, i]));
+	const names = new Set([...(snapshot.variables ?? []), ...(snapshot.secrets ?? [])]);
+	const derivedAt = snapshot.derived_at ? Date.parse(snapshot.derived_at) : NaN;
+	// The snapshot carries the only timestamp in the mechanism, so "now" is read here and never
+	// rendered — a clock inside a diff-gated region would make every PR stale on arrival.
+	const ageHours = Number.isNaN(derivedAt) ? null : (Date.now() - derivedAt) / 3_600_000;
+	return {
+		present: true,
+		ageHours,
+		/** The snapshot's own timestamp, verbatim — the only form safe to RENDER (see the provenance note). */
+		derivedAt: snapshot.derived_at ?? null,
+		/** @returns {"open"|"closed"|"unknown"} */
+		issueState: (ref) => {
+			const n = Number(String(ref ?? "").replace(/^#/, ""));
+			if (!Number.isFinite(n) || n === 0) return "unknown";
+			if (open.has(n)) return "open";
+			if (closed.has(n)) return "closed";
+			return "unknown"; // beyond the fetch limit, or a different repo — never guess "open"
+		},
+		/** @returns {"wired"|"unwired"|"unknown"} */
+		gateState: (name) => (names.has(name) ? "wired" : "unwired"),
+		needsHuman: [...open.values()].filter((i) => (i.labels ?? []).includes("needs:human")),
+	};
+}
+
+export function derive({ ledgerText, spine, workflowText, unsupportedText, bundleExists, exclusionCounts, snapshot }) {
 	const failures = [];
+	const notes = [];
 	const { rows, errors } = parseLedger(ledgerText);
 	failures.push(...errors);
 	const claims = collapseLedger(rows);
@@ -334,8 +388,78 @@ export function derive({ ledgerText, spine, workflowText, unsupportedText, bundl
 	// ── the 19-kind canvas grid ──
 	const unsupported = parseUnsupportedKinds(unsupportedText);
 
+	// The live board half runs HERE, before the tally and the ranking, because it RECLASSIFIES cells
+	// to `stale` — a tally computed above it would report 2 failing / 0 stale, and the ranking would
+	// offer a fix for a cause that is already closed.
+	// ── the live board half ──
+	const board = deriveBoard(snapshot);
+
+	// Open REDs: the join a reader actually wants — which cell, which issue, is that issue still open.
+	const reds = [];
+	for (const cloud of clouds) {
+		for (const d of DIMENSIONS) {
+			const c = grid[cloud][d.id];
+			if (c.state !== STATE.failing && c.state !== STATE.blocked) continue;
+			const issue = c.row?.issue ?? "";
+			reds.push({ cloud, dimension: d.id, state: c.state, issue, issueState: board.issueState(issue), why: c.why });
+		}
+	}
+
+	// STALE — the state that turns a lint into information.
+	//
+	// A cell whose last verdict is FAIL but whose cited issue is CLOSED is not blocked on anything: its
+	// cause has been fixed and nobody has re-driven it. Rendering that as `failing` is misleading (it
+	// implies open work) and rendering it as an integrity error is wrong (the ledger is append-only —
+	// the row was TRUE when written and must not be rewritten). What it actually needs is a re-run,
+	// which is cheap, so it gets its own state and ranks at the top of the mechanical next.
+	//
+	// This is the same defect class that misled the whole programme from the other direction:
+	// provisioning-e2e-parity.md cited #1714/#1716/#1722/#2058 as OPEN floor blockers when all four
+	// were closed, sending every reader to work already done. Here the tree cannot lie about it,
+	// because the issue's state is looked up rather than remembered.
+	const staleCitations = reds.filter((r) => r.issueState === "closed");
+	for (const r of staleCitations) {
+		grid[r.cloud][r.dimension] = {
+			...grid[r.cloud][r.dimension],
+			state: STATE.stale,
+			why: `${grid[r.cloud][r.dimension].why} — but ${r.issue} is CLOSED, so the cause is fixed and this needs a fresh run, not a fix`,
+		};
+		r.state = STATE.stale;
+	}
+	// A red with NO issue at all is genuinely unowned, and unlike a closed citation that IS fixable —
+	// file one. Kept a note rather than a failure while the ledger still holds pre-convention rows.
+	for (const r of reds.filter((x) => x.issue === "")) {
+		notes.push(`\`${r.cloud}/${r.dimension}\` is ${r.state} but names no issue — an unfiled red is an unowned red.`);
+	}
+
+	// Gate reality, three-valued.
+	const gateReality = DIMENSIONS.map((d) => ({
+		...d,
+		states: d.gates.map((g) => {
+			const referenced = gates.has(g.name) || gates.has(g.name.replace(/^ALETHIA_/, ""));
+			// A gate the workflow never mentions cannot be turned on at all — `no_vehicle`, not `unwired`.
+			if (!referenced) return { ...g, state: "no_vehicle" };
+			// A dimension-derived gate needs no variable: a dispatch picks the dimension and the fidelity
+			// table exports it. Only a `repo` gate can be genuinely unwired.
+			if (g.kind === "derived") return { ...g, state: "derived" };
+			return { ...g, state: board.gateState(g.name) };
+		}),
+	}));
+
+	// The per-cloud gate that decides whether a leg provisions at all.
+	const CLOUD_GATES = { hetzner: "HCLOUD_TOKEN", aws: "E2E_AWS_ROLE_ARN", gcp: "E2E_GCP_WIF_PROVIDER", azure: "E2E_AZURE_CLIENT_ID", alibaba: "E2E_ALIBABA_ROLE_ARN" };
+	const cloudGates = clouds.map((c) => ({ cloud: c, gate: CLOUD_GATES[c] ?? "(unknown)", state: board.gateState(CLOUD_GATES[c] ?? "") }));
+
+	// Snapshot freshness. A broken cron produces NO signal, so staleness has to be an error eventually
+	// rather than a note nobody reads — but it warns first, because a quiet week should not red the repo
+	// on a Monday morning.
+	if (board.present && board.ageHours !== null && board.ageHours > 24 * 7) {
+		failures.push(`${SNAPSHOT} is ${Math.round(board.ageHours / 24)} days old — the live half is not being refreshed. Check the programme cron.`);
+	}
+
+
 	// ── tallies ──
-	const tally = { proven: 0, failing: 0, blocked: 0, never_run: 0 };
+	const tally = { proven: 0, failing: 0, blocked: 0, never_run: 0, stale: 0 };
 	for (const cloud of clouds) {
 		for (const d of DIMENSIONS) tally[grid[cloud][d.id].state]++;
 	}
@@ -344,9 +468,13 @@ export function derive({ ledgerText, spine, workflowText, unsupportedText, bundl
 	// Failing first (a red cell has a diagnosed cause and costs nothing new to re-drive), then
 	// never-run in dimension order. Ranking, never claiming — claiming is claim-work.sh's job.
 	const next = [];
-	for (const d of DIMENSIONS) {
-		for (const cloud of clouds) {
-			if (grid[cloud][d.id].state === STATE.failing) next.push({ cloud, dimension: d.id, state: STATE.failing, why: grid[cloud][d.id].why });
+	// `stale` first: its cause is already fixed, so a re-run is the cheapest action on the board and it
+	// either converts the cell to proven or produces a real, current diagnosis.
+	for (const st of [STATE.stale, STATE.failing]) {
+		for (const d of DIMENSIONS) {
+			for (const cloud of clouds) {
+				if (grid[cloud][d.id].state === st) next.push({ cloud, dimension: d.id, state: st, why: grid[cloud][d.id].why });
+			}
 		}
 	}
 	for (const d of DIMENSIONS) {
@@ -355,7 +483,7 @@ export function derive({ ledgerText, spine, workflowText, unsupportedText, bundl
 		}
 	}
 
-	return { rows, claims, clouds, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts };
+	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, gateReality, cloudGates };
 }
 
 // ───────────────────────────── rendering ─────────────────────────────
@@ -369,7 +497,8 @@ export function render(v) {
 	L.push("");
 	L.push(
 		`**${v.tally.proven} of ${total} proof cells are proven.** ` +
-			`${v.tally.failing} failing · ${v.tally.blocked} blocked · ${v.tally.never_run} never run.`,
+			`${v.tally.failing} failing · ${v.tally.stale} stale (cause fixed, needs a re-run) · ` +
+			`${v.tally.blocked} blocked · ${v.tally.never_run} never run.`,
 	);
 	L.push("");
 	L.push(
@@ -496,18 +625,76 @@ export function render(v) {
 	L.push("");
 	L.push("Whether a dimension can run at all. A gate the workflow never mentions cannot be turned on by setting a variable.");
 	L.push("");
-	L.push("| dimension | gate | referenced by the nightly? | what it proves |");
-	L.push("|---|---|:---:|---|");
-	for (const d of DIMENSIONS) {
-		const missing = d.gateNames.filter((n) => !v.gates.has(n) && !v.gates.has(n.replace(/^ALETHIA_/, "")));
-		const seen = d.gateNames.length === 0 ? "n/a" : missing.length === 0 ? "yes" : `**no** (${missing.join(", ")})`;
-		L.push(`| ${d.label} | \`${d.gate}\` | ${seen} | ${d.what} |`);
+	L.push("**Which clouds can provision at all.** A leg whose gate is unwired green-skips every night.");
+	L.push("");
+	L.push("| cloud | gate | state |");
+	L.push("|---|---|:---:|");
+	for (const g of v.cloudGates) {
+		const glyph = { wired: "✅ wired", unwired: "⛔ **unwired**", unknown: "? unknown" }[g.state];
+		L.push(`| **${g.cloud}** | \`${g.gate}\` | ${glyph} |`);
 	}
 	L.push("");
-	L.push(
-		"Whether a gate is *set* is not knowable offline, so this file never claims it. It is reported " +
-			"in the live snapshot half, and a cell may not leave `never-run` on an unknown.",
-	);
+	L.push("**Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.");
+	L.push("");
+	L.push("| dimension | gate | state | what it proves |");
+	L.push("|---|---|:---:|---|");
+	for (const d of v.gateReality) {
+		let cell;
+		if (d.gates.length === 0) {
+			cell = "n/a";
+		} else {
+			const label = { wired: "✅ wired", derived: "✅ by dimension", unwired: "⛔ **unwired**", no_vehicle: "🚧 no vehicle", unknown: "? unknown" };
+			cell = d.states.map((s) => `${label[s.state]}: \`${s.name}\``).join("<br>");
+		}
+		L.push(`| ${d.label} | \`${d.gate}\` | ${cell} | ${d.what} |`);
+	}
+	L.push("");
+	if (!v.board.present) {
+		L.push(
+			"⚠️ **No snapshot** (`" + SNAPSHOT + "` absent), so every gate state above reads `unknown`. " +
+				"It never collapses to a guess: a cell may not leave `never-run`, and a gate may not be called " +
+				"unwired, on the strength of a file nobody fetched.",
+		);
+		L.push("");
+	}
+
+	// ── the live board join ──
+	L.push("### Open REDs");
+	L.push("");
+	if (v.reds.length === 0) {
+		L.push("No cell is failing or blocked.");
+	} else {
+		L.push("| cell | state | issue | issue state |");
+		L.push("|---|---|---|:---:|");
+		for (const r of v.reds) {
+			const s = { open: "open", closed: "⛔ **CLOSED**", unknown: "?" }[r.issueState];
+			L.push(`| \`${r.cloud}/${r.dimension}\` | ${r.state} | ${r.issue || "**none**"} | ${s} |`);
+		}
+		L.push("");
+		if (v.staleCitations.length > 0) {
+			L.push(
+				`♻️ **${v.staleCitations.length} cell(s) cite a CLOSED issue**, so they are rendered \`stale\` rather ` +
+					"than `failing`: the cause is fixed and what they need is a **re-run**, not a fix. They rank first " +
+					"in the mechanical next for exactly that reason — it is the cheapest action on the board.\n\n" +
+					"The ledger row itself is not wrong and is not rewritten (it is append-only, and it was true when " +
+					"written). What was wrong was reading it as open work — the same defect that had the parity board " +
+					"citing four closed issues as live floor blockers.",
+			);
+			L.push("");
+		}
+	}
+
+	L.push("### Blocked on a human");
+	L.push("");
+	const unwiredClouds = v.cloudGates.filter((g) => g.state === "unwired");
+	if (!v.board.present) {
+		L.push("Unknown without a snapshot.");
+	} else if (unwiredClouds.length === 0 && v.board.needsHuman.length === 0) {
+		L.push("Nothing.");
+	} else {
+		for (const g of unwiredClouds) L.push(`- **\`${g.cloud}\` cannot provision** — \`${g.gate}\` is not set, so the leg green-skips.`);
+		for (const i of v.board.needsHuman) L.push(`- #${i.number} — ${i.title}`);
+	}
 	L.push("");
 
 	// ── debt ratchets ──
@@ -527,7 +714,19 @@ export function render(v) {
 	L.push("");
 	L.push("Every number above is derived from these, and from nothing else:");
 	L.push("");
-	for (const f of [SPINE, LEDGER, WORKFLOW, UNSUPPORTED_KINDS, `${PROOFS_DIR}/<cloud>/<stamp>/`]) L.push(`- \`${f}\``);
+	for (const f of [SPINE, LEDGER, WORKFLOW, UNSUPPORTED_KINDS, `${PROOFS_DIR}/<cloud>/<stamp>/`, SNAPSHOT]) L.push(`- \`${f}\``);
+	L.push("");
+	L.push(
+		v.board.present
+			? `Live board snapshot: taken **${v.board.derivedAt ?? "(no timestamp)"}** — refreshed by ` +
+					"`.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.\n\n" +
+					"The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the " +
+					"current clock, so it would drift with no change to any input and make this diff-gated region stale " +
+					"an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a " +
+					"snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped " +
+					"produces no other signal."
+			: "Live board snapshot: **absent**. Every issue state and gate state above reads `unknown`.",
+	);
 	L.push("");
 	L.push(
 		`Ledger rows read: **${v.rows.length}** · surviving claims: **${[...v.claims.values()].filter((c) => c !== null).length}** ` +
@@ -621,7 +820,9 @@ function readInputs() {
 		}
 		return fs.readFileSync(f, "utf8");
 	};
+	const snapshot = fs.existsSync(SNAPSHOT) ? JSON.parse(fs.readFileSync(SNAPSHOT, "utf8")) : null;
 	return {
+		snapshot,
 		ledgerText: need(LEDGER),
 		spine: JSON.parse(need(SPINE)),
 		workflowText: need(WORKFLOW),
@@ -788,7 +989,7 @@ function runSelfTest() {
 	ok("a gate declared as a YAML env key counts as referenced", referencedGates("        ALETHIA_E2E_ALL_ADDONS: 1").has("ALETHIA_E2E_ALL_ADDONS"));
 	ok("a gate read from vars/secrets counts as referenced", referencedGates("        FOO: ${{ secrets.E2E_GIT_TOKEN }}").has("E2E_GIT_TOKEN"));
 	ok("a gate named only in a COMMENT does not count", !referencedGates("      # ALETHIA_E2E_NEVER_WIRED is a nice idea").has("ALETHIA_E2E_NEVER_WIRED"));
-	ok("every declared gate name is a concrete name, never a wildcard", DIMENSIONS.every((d) => d.gateNames.every((n) => /^[A-Z0-9_]+$/.test(n))), JSON.stringify(DIMENSIONS.map((d) => d.gateNames)));
+	ok("every declared gate name is a concrete name, never a wildcard", DIMENSIONS.every((d) => d.gates.every((g) => /^[A-Z0-9_]+$/.test(g.name))), JSON.stringify(DIMENSIONS.map((d) => d.gates)));
 
 	// The cell arithmetic is rendered, so it must be counted rather than composed — this asserts the
 	// grid total equals kinds × clouds, which is what a `0 cells` slip broke.
@@ -797,6 +998,95 @@ function runSelfTest() {
 		const total = Object.values(r2.carriage).reduce((a, b) => a + b, 0);
 		ok("carriage cells total kinds × clouds", total === r2.kindCount * r2.clouds.length, `${total} != ${r2.kindCount} × ${r2.clouds.length}`);
 		ok("...and the rendered text says so rather than 0", render(r2).includes(`× ${r2.clouds.length} clouds = ${total} cells`), render(r2).split("\n").find((l) => l.includes("cells):")));
+	}
+
+	// ── the LIVE BOARD half ──
+	const snap = (open = [], closed = [], variables = [], secrets = []) => ({
+		derived_at: new Date(Date.now() - 3600_000).toISOString(),
+		open_issues: open.map((n) => ({ number: n, title: `t${n}`, labels: [] })),
+		closed_issues: closed.map((n) => ({ number: n, title: `t${n}`, labels: [] })),
+		variables,
+		secrets,
+	});
+	const failRow = row("2026-08-01", "aws", "floor", "FAIL", "demos/proofs/aws/x", "#1040");
+
+	// THE HEADLINE. A FAIL citing a CLOSED issue is not open work — its cause is fixed and it needs a
+	// re-run. This is the shape of the defect that had the parity board sending readers to four closed
+	// issues, and here the tree cannot lie about it because the state is looked up.
+	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: snap([], [1040]) });
+	ok("a FAIL citing a CLOSED issue becomes `stale`, not `failing`", r.grid.aws.floor.state === "stale", r.grid.aws.floor.state);
+	ok("...and the tally counts it as stale, not failing", r.tally.stale === 1 && r.tally.failing === 0, JSON.stringify(r.tally));
+	ok("...and it ranks FIRST in the mechanical next (a re-run is the cheapest action)", r.next[0]?.state === "stale", JSON.stringify(r.next[0]));
+	ok("...and the reason says the cause is fixed", /CLOSED/.test(r.grid.aws.floor.why) && /fresh run/.test(r.grid.aws.floor.why), r.grid.aws.floor.why);
+
+	// The same row with the issue still OPEN stays `failing` — the reclassification must not swallow
+	// real open work.
+	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: snap([1040], []) });
+	ok("a FAIL citing an OPEN issue stays `failing`", r.grid.aws.floor.state === "failing", r.grid.aws.floor.state);
+
+	// UNKNOWN NEVER COLLAPSES. With no snapshot, an issue's state is unknowable, so the cell must not
+	// be reclassified in either direction.
+	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: null });
+	ok("with NO snapshot a FAIL stays `failing` — unknown never becomes stale", r.grid.aws.floor.state === "failing", r.grid.aws.floor.state);
+	ok("...and the board reports itself absent", r.board.present === false);
+	ok("...and every gate reads unknown rather than unwired", r.cloudGates.every((g) => g.state === "unknown"), JSON.stringify(r.cloudGates));
+
+	// An issue beyond the fetch limit is `unknown`, NOT `open` — guessing open would hide a stale cite.
+	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: snap([9999], [8888]) });
+	ok("an issue in neither list is unknown, never assumed open", r.reds[0]?.issueState === "unknown", JSON.stringify(r.reds[0]));
+
+	// Cloud gates: wired vs unwired, from NAMES only.
+	r = derive({ ...base, ledgerText: hdr, snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"], []) });
+	ok("a cloud gate present in the snapshot reads wired", r.cloudGates.find((g) => g.cloud === "aws")?.state === "wired");
+	ok("a cloud gate absent from the snapshot reads unwired", r.cloudGates.find((g) => g.cloud === "hetzner")?.state === "unwired");
+
+	// Dimension gates: a DERIVED gate is never "unwired" — there is no variable to set. Reporting one
+	// as unwired sends somebody hunting for a repo variable that cannot exist.
+	r = derive({ ...base, ledgerText: hdr, snapshot: snap() });
+	const maxc = r.gateReality.find((d) => d.id === "maxconfig");
+	ok("a dimension-derived gate reads `derived`, never `unwired`", maxc?.states[0]?.state === "derived", JSON.stringify(maxc?.states));
+	// `unwired` requires the workflow to REFERENCE the gate; a gate it never mentions is `no_vehicle`,
+	// which is a different remedy (write the wiring, not set a variable). Both are pinned.
+	const byoNoVehicle = r.gateReality.find((d) => d.id === "byo");
+	ok("a gate the workflow never references reads `no_vehicle`, not `unwired`", byoNoVehicle?.states.every((x) => x.state === "no_vehicle"), JSON.stringify(byoNoVehicle?.states));
+	const rWired = derive({
+		...base,
+		workflowText: base.workflowText + "        FOO: ${{ vars.E2E_ARGO_APPS_REPO }}\n        BAR: ${{ secrets.E2E_GIT_TOKEN }}\n",
+		ledgerText: hdr,
+		snapshot: snap([], [], ["E2E_ARGO_APPS_REPO"], []),
+	});
+	const byoMixed = rWired.gateReality.find((d) => d.id === "byo");
+	ok(
+		"a REFERENCED maintainer-set gate reads wired/unwired from the snapshot",
+		byoMixed?.states.find((x) => x.name === "E2E_ARGO_APPS_REPO")?.state === "wired" &&
+			byoMixed?.states.find((x) => x.name === "E2E_GIT_TOKEN")?.state === "unwired",
+		JSON.stringify(byoMixed?.states),
+	);
+
+	// needs:human flows through to the blocked list.
+	r = derive({
+		...base,
+		ledgerText: hdr,
+		snapshot: { ...snap(), open_issues: [{ number: 1773, title: "delegate a zone", labels: ["needs:human"] }, { number: 1, title: "other", labels: [] }] },
+	});
+	ok("only needs:human issues reach the blocked-on-human list", r.board.needsHuman.length === 1 && r.board.needsHuman[0].number === 1773, JSON.stringify(r.board.needsHuman));
+
+	// A snapshot older than a week is an integrity failure: a broken cron otherwise produces NO signal.
+	r = derive({ ...base, ledgerText: hdr, snapshot: { ...snap(), derived_at: new Date(Date.now() - 9 * 864e5).toISOString() } });
+	ok("a snapshot older than 7 days fails", r.failures.some((f) => /days old/.test(f)), JSON.stringify(r.failures));
+	r = derive({ ...base, ledgerText: hdr, snapshot: { ...snap(), derived_at: new Date(Date.now() - 2 * 864e5).toISOString() } });
+	ok("...but a 2-day-old snapshot does not", !r.failures.some((f) => /days old/.test(f)), JSON.stringify(r.failures));
+
+	// NO CLOCK IN THE RENDERED OUTPUT. An age is computed from Date.now(), so rendering one would make
+	// this diff-gated region go stale an hour after every refresh with no input change — redding CI for
+	// everybody. Rendering the same snapshot twice must be byte-identical regardless of when.
+	{
+		const fixed = { ...snap([], [1040]), derived_at: "2026-08-01T00:00:00Z" };
+		const a = render(derive({ ...base, ledgerText: hdr + failRow, snapshot: fixed }));
+		const b = render(derive({ ...base, ledgerText: hdr + failRow, snapshot: fixed }));
+		ok("rendering is byte-identical across calls (no clock in the output)", a === b);
+		ok("the provenance prints the snapshot timestamp verbatim", a.includes("2026-08-01T00:00:00Z"), a.split("\n").find((l) => l.includes("Live board snapshot")) ?? "");
+		ok("...and never an age", !/\b(hours? old|h old|days old|under an hour)\b/.test(a), a.split("\n").find((l) => /old/.test(l)) ?? "");
 	}
 
 	// bundleKind.

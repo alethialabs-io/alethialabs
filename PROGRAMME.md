@@ -137,20 +137,35 @@ Each one is a mistake this repo has already paid for.
 - **Never turn a cloud gate on from an agent session.** Enabling real spend is the maintainer's.
   Surface it and stop.
 
-## §4 · What the generated half below does not know
+## §4 · How the live half stays honest
 
-Two things, deliberately, so that the half every PR diff-gates stays a pure function of the tree:
+Two things cannot be derived from the tree — **whether a gate variable is set**, and **whether a cited
+issue is still open**. Both now come from `docs/testing/programme-snapshot.json`, refreshed by
+`.github/workflows/programme.yml` (which opens a PR; it never pushes) and carrying variable and secret
+**names only, never values**.
 
-- **Whether a gate variable is actually set.** That needs a live query. A cell therefore never leaves
-  `never-run` on the strength of a gate whose state is unknown.
-- **Which issues are open.** So the generated half links issues but never asserts their state; the
-  guard that a board may not cite a closed issue as open lives with the board that cites it.
+The snapshot is a *committed file*, so everything downstream stays a deterministic function of the
+tree and the PR diff gate never depends on a live GitHub read. Three rules keep it from lying:
+
+- **`unknown` never collapses.** With no snapshot, a gate is not "unwired" and a red is not "stale" —
+  a cell may not be reclassified on the strength of a file nobody fetched.
+- **A closed citation is information, not a lint.** A cell whose last verdict is FAIL but whose issue
+  is closed has had its cause fixed and needs a **re-run**, so it renders `stale` and ranks first — a
+  re-run is the cheapest action available. The ledger row is append-only and is never rewritten: it
+  was true when written; what was wrong was reading it as open work.
+- **Staleness is an error eventually.** A broken refresh produces no signal at all, so the age lives
+  in the snapshot: it warns past 48 hours and **fails past 7 days**.
+
+A gate the workflow *derives from the dimension* (`ALETHIA_E2E_MAX_CONFIG`, `_ALL_ADDONS`, `_SOAK`)
+is never reported unwired — there is no variable to set, and a dispatch reaches it. Only a gate a
+maintainer must actually wire can be `unwired`, and a gate the workflow never mentions is
+`no vehicle`, which is a different remedy.
 
 <!-- BEGIN GENERATED: programme-rollup · tree-derived · DO NOT EDIT BELOW -->
 
 ## Where the programme actually is
 
-**0 of 25 proof cells are proven.** 2 failing · 0 blocked · 23 never run.
+**0 of 25 proof cells are proven.** 0 failing · 2 stale (cause fixed, needs a re-run) · 0 blocked · 23 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -158,31 +173,31 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 
 | cloud | floor | all kinds | 18 add-ons | BYO-IaC | day-2 |
 |---|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ❌ | · | · | · | · |
+| **aws** | ♻️ | · | · | · | · |
 | **gcp** | · | · | · | · | · |
 | **azure** | · | · | · | · | · |
 | **alibaba** | · | · | · | · | · |
-| **hetzner** | · | · | ❌ | · | · |
+| **hetzner** | · | · | ♻️ | · | · |
 
-Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · — ceiling · 🔶 deferred
+Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · — ceiling · 🔶 deferred
 
 <details><summary>Every cell that has any evidence at all</summary>
 
-- `aws/floor` **failing** — ledger 2026-07-22 (#1040)
-- `hetzner/addons` **failing** — ledger 2026-08-05 (#2058)
+- `aws/floor` **stale** — ledger 2026-07-22 — but #1040 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#1040)
+- `hetzner/addons` **stale** — ledger 2026-08-05 — but #2058 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#2058)
 
 </details>
 
 ### The mechanical next
 
-**`aws/floor`** — failing. ledger 2026-07-22
+**`aws/floor`** — stale. ledger 2026-07-22 — but #1040 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
 <details><summary>The next 10</summary>
 
-1. `aws/floor` — failing
-1. `hetzner/addons` — failing
+1. `aws/floor` — stale
+1. `hetzner/addons` — stale
 1. `gcp/floor` — never_run
 1. `azure/floor` — never_run
 1. `alibaba/floor` — never_run
@@ -229,15 +244,56 @@ The CLI debt is **zero** — every remaining blocker is a thing the cloud offers
 
 Whether a dimension can run at all. A gate the workflow never mentions cannot be turned on by setting a variable.
 
-| dimension | gate | referenced by the nightly? | what it proves |
+**Which clouds can provision at all.** A leg whose gate is unwired green-skips every night.
+
+| cloud | gate | state |
+|---|---|:---:|
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired |
+| **hetzner** | `HCLOUD_TOKEN` | ⛔ **unwired** |
+
+**Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
+
+| dimension | gate | state | what it proves |
 |---|---|:---:|---|
 | floor | `(the cloud gate alone)` | n/a | real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set |
-| all kinds | `ALETHIA_E2E_MAX_CONFIG` | yes | every kind this cloud offers lands in tofu state (or converges as its named Application) |
-| 18 add-ons | `ALETHIA_E2E_ALL_ADDONS` | yes | all 18 marketplace add-ons Healthy+Synced |
-| BYO-IaC | `ALETHIA_E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | yes | customer IaC/charts applied, and Alethia services bound to their outputs |
-| day-2 | `ALETHIA_E2E_SOAK / E2E_DAY2_ACCESS` | yes | a real access path beyond the soak — kubeconfig / ArgoCD surface |
+| all kinds | `ALETHIA_E2E_MAX_CONFIG` | ✅ by dimension: `ALETHIA_E2E_MAX_CONFIG` | every kind this cloud offers lands in tofu state (or converges as its named Application) |
+| 18 add-ons | `ALETHIA_E2E_ALL_ADDONS` | ✅ by dimension: `ALETHIA_E2E_ALL_ADDONS` | all 18 marketplace add-ons Healthy+Synced |
+| BYO-IaC | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ⛔ **unwired**: `E2E_ARGO_APPS_REPO`<br>⛔ **unwired**: `E2E_GIT_TOKEN` | customer IaC/charts applied, and Alethia services bound to their outputs |
+| day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>⛔ **unwired**: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
 
-Whether a gate is *set* is not knowable offline, so this file never claims it. It is reported in the live snapshot half, and a cell may not leave `never-run` on an unknown.
+### Open REDs
+
+| cell | state | issue | issue state |
+|---|---|---|:---:|
+| `aws/floor` | stale | #1040 | ⛔ **CLOSED** |
+| `hetzner/addons` | stale | #2058 | ⛔ **CLOSED** |
+
+♻️ **2 cell(s) cite a CLOSED issue**, so they are rendered `stale` rather than `failing`: the cause is fixed and what they need is a **re-run**, not a fix. They rank first in the mechanical next for exactly that reason — it is the cheapest action on the board.
+
+The ledger row itself is not wrong and is not rewritten (it is append-only, and it was true when written). What was wrong was reading it as open work — the same defect that had the parity board citing four closed issues as live floor blockers.
+
+### Blocked on a human
+
+- **`hetzner` cannot provision** — `HCLOUD_TOKEN` is not set, so the leg green-skips.
+- #2358 — fix(drift): a clean Azure apply reports 9 of 32 resources drifted — a day-zero false alarm on a CC7.1 control
+- #2332 — ceiling(hetzner): Object Storage keys have no minting API — the one manual credential in a keyless product
+- #2283 — probe(alibaba-cr): does an AUTO scan rule fire with no VPC endpoint? (#2265 shipped the wiring, not the proof)
+- #2260 — e2e nightly: alibaba RED (floor)
+- #2259 — e2e nightly: azure RED (floor)
+- #2258 — e2e nightly: gcp RED (floor)
+- #2099 — e2e nightly: gcp RED (full-bar)
+- #1871 — fix(gcp-e2e): the billing budget's alerts are undeliverable — the publisher binding cannot be created
+- #1773 — e2e: delegate a real zone so the full bar can prove the ACM/cert path
+- #1720 — e2e nightly: 1 of 5 clouds are not enabled
+- #1579 — e2e nightly: wire the hetzner gate (HCLOUD_TOKEN — no stack)
+- #1513 — feat(keyless): GA — default-on rollout and delete ALETHIA_KEYLESS_DB_AUTH_ENABLED
+- #1450 — test(e2e): azure-mysql keyless real-apply on Azure (main-gated)
+- #1268 — test(e2e): cross-account keyless cloud-SM in-cluster read — AWS/GCP/Azure/Alibaba (main-gated)
+- #1065 — feat(e2e): P2-C all-19-add-ons Healthy+Synced on GCP + Azure
+- #845 — test(fabric): W-h prove enterprise-demo on all 4 ItGix clouds (acceptance gate)
 
 ### Debt ratchets
 
@@ -256,6 +312,11 @@ Every number above is derived from these, and from nothing else:
 - `.github/workflows/e2e-nightly.yml`
 - `apps/console/lib/cloud-providers/unsupported-kinds.ts`
 - `demos/proofs/<cloud>/<stamp>/`
+- `docs/testing/programme-snapshot.json`
+
+Live board snapshot: taken **2026-08-17T09:12:03Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+
+The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
 Ledger rows read: **10** · surviving claims: **2** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
 
