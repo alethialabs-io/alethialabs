@@ -25,6 +25,16 @@ packages/core/catalog/catalog.json                 linguist-generated=true
 # ── compat matrix (pnpm gen:matrix — matrix.json is the SSOT, these are its projections) ───────
 apps/console/lib/compat/generated/matrix.ts  linguist-generated=true
 
+# ── programme ledger (pnpm gen:programme · the Go spine export) ────────────────────────────────
+# PROGRAMME.md is HALF generated, so it is not marked generated as a whole — the intent half above
+# the marker is hand-authored and belongs in review. Only the spine mirror is fully derived.
+#
+# THE RULE above applies: N sessions all touch PROGRAMME.md, and its generated half is a function of
+# the tree, so a conflict there is resolved by RE-RUNNING `pnpm gen:programme` — never by hand-picking
+# hunks. Hand-resolving can only produce a status nobody derived, which is the exact failure the
+# generated half exists to prevent.
+test/e2e/generated/programme.json  linguist-generated=true
+
 # ── Go coverage floors (scripts/go-coverage.sh --update) ──────────────────────────────────────
 # THE RULE above applies with unusual force here. These files are laid out as fixed 4-line records
 # precisely so that two PRs raising DIFFERENT packages merge cleanly; hand-resolving a conflict
