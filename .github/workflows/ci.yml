@@ -693,6 +693,26 @@ jobs:
       # obviously-fake literals only.
       - name: Proof-scrub denylist (non-vacuous, and no false positive on a tofu plan JSON)
         run: bash demos/proofs/scrub.sh --self-test
+      # PROGRAMME.md is the one file a session reads to know where the MVP programme stands, so its
+      # status half is DERIVED and diff-gated — the numbers cannot be typed. This is the guard's own
+      # guard (fixtures for RETRACTED supersession, an expiring CI run tag masquerading as a proof,
+      # the marker splice refusing a duplicated region, and a vacuity case) plus the staleness diff.
+      # The hand-maintained boards it replaces were contradicting each other IN THE TREE while
+      # passing CI: runner-xcloud-parity.md called hetzner green for cluster provision,
+      # provisioning-e2e-parity.md called it blocked, and the proof ledger said neither had evidence.
+      - name: Programme ledger derivation (a PASS with no bundle is never a proof)
+        run: node scripts/programme-rollup.mjs --self-test
+      - name: Programme ledger is in sync with the tree
+        run: node scripts/programme-rollup.mjs
+      # The spine mirror: Node cannot parse Go, so the Go tables that already OWN and validate the
+      # ceiling/debt verdicts (MaxConfigCarriage, CLIReach) are exported to JSON and diff-gated,
+      # rather than a third hand-authored list being kept in step by hand. Same shape as
+      # gen:offer-surface / gen:keyless-cells. Untagged test — no cloud, no cost.
+      - name: Programme spine mirror is in sync with the Go tables
+        run: |
+          (cd test/e2e && GOWORK=off go test -run 'TestProgrammeExport' ./...)
+          git diff --exit-code -- test/e2e/generated/programme.json \
+            || { echo "::error::test/e2e/generated/programme.json is stale — regenerate with (cd test/e2e && GOWORK=off go test -run TestProgrammeExport ./...) and commit. Source of truth: MaxConfigKinds + CLIDemoSteps."; exit 1; }
       # Each guard proves it still BLOCKS what it must and, more importantly, still
       # ALLOWS what it must — the false positives are what get a guard disabled.
       - name: Guards self-test (runtime · compose · merge)
