@@ -416,7 +416,7 @@ derive() {
 			printf '%s\n\n' "The T2 real-cloud nightly went **RED** for \`${cloud}\` on the **${dim_label}** dimension."
 			printf '%s\n\n' "Run: ${RUN_URL:-}"
 			case "$dim" in
-			full) printf '%s\n\n' "The full bar runs the weekly \`17 5 * * 0\` cron with \`ALETHIA_E2E_MAX_CONFIG=1\` + \`ALETHIA_E2E_ALL_ADDONS=1\` — it provisions the whole 11-kind surface, so it fails at stages the floor never reaches. Do NOT read it as the floor re-running." ;;
+			full) printf '%s\n\n' "The full bar runs on a \`workflow_dispatch\` with \`full_bar: true\` (no cron schedules it — the weekly one was removed as unpriced on four of five clouds, #2385) with \`ALETHIA_E2E_MAX_CONFIG=1\` + \`ALETHIA_E2E_ALL_ADDONS=1\` — it provisions the whole 11-kind surface, so it fails at stages the floor never reaches. Do NOT read it as the floor re-running." ;;
 			*) printf '%s\n\n' "The floor is the nightly \`17 3 * * *\` smoke — base provision + ArgoCD Healthy+Synced. It never provisions the max-config surface, so a full-bar failure is a separate issue with a separate title." ;;
 			esac
 			case " $job_no_summary " in
