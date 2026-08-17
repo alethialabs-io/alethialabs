@@ -18,3 +18,10 @@ e2e_github_branch = "main"
 # Optional: Alibaba regions hosting prod Alethia infra that must never be the e2e region.
 # Empty today (no prod Alibaba footprint).
 # prod_regions = []
+
+# ── Federating a workflow_dispatch from `dev` (the cadence unblock) ──
+# The scheduled nightly federates by REF (main). Set this to ALSO trust the branch-restricted
+# `e2e-dev` GitHub environment, so a dispatch can drive a real apply from `dev` without a promotion
+# to `main` (which would also ship the product). It ADDS an exact subject; it never replaces the ref.
+# Safe ONLY because `e2e-dev` has a single deployment-branch policy: `dev`.
+e2e_github_environment = "e2e-dev"

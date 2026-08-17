@@ -23,6 +23,25 @@ check "e2e_trust_is_ref_bound" {
   }
 }
 
+# ── An environment disjunct, when present, is an EXACT subject and nothing wider ───────────────
+# The condition may admit a second subject (a dispatch that declared the branch-restricted GitHub
+# environment). That widening is only acceptable while it stays an exact `assertion.sub` equality: a
+# prefix, a glob, or a bare second ref would trust every workflow on that branch instead of only the
+# environment-gated job. Vacuous by design when no environment is configured.
+check "e2e_env_subject_is_exact_when_present" {
+  assert {
+    condition = var.e2e_github_environment == "" ? !strcontains(local.e2e_attr_condition, "assertion.sub") : alltrue([
+      # the disjunct exists, keyed on the SUBJECT (not on a second ref) …
+      strcontains(local.e2e_attr_condition, "assertion.sub == \"${local.e2e_env_subject}\""),
+      # … the subject is the canonical `environment:` form, so it cannot be a ref in disguise …
+      startswith(local.e2e_env_subject, "repo:${var.github_repo}:environment:"),
+      # … and the ref clause is still there: this ADDS a subject, it never replaces the ref binding.
+      strcontains(local.e2e_attr_condition, "attribute.ref == \"${var.e2e_github_ref}\""),
+    ])
+    error_message = "with e2e_github_environment set, the attribute_condition must ADD an exact `assertion.sub == repo:<repo>:environment:<env>` disjunct while KEEPING the ref equality — got: ${local.e2e_attr_condition}."
+  }
+}
+
 # ── The provider actually carries that condition (not just the local) ─────────
 check "e2e_provider_condition_applied" {
   assert {
