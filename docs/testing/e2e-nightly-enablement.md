@@ -39,8 +39,10 @@ kill-drill. Everything else the leg needs must already be in place, because the 
    sweeper filters on it). Verify in the console that nothing survived, and that the budget alert
    plumbing (SNS / Pub-Sub / action group / — see each stack's budget output) is reachable.
 5. **Set the gate variable.** The cloud now runs on the floor cron, `17 3 * * *` — **03:17 UTC**,
-   not the 06:00 this step used to claim — plus the full bar weekly on `17 5 * * 0`. Both schedules
-   fire only on the default branch, so they run from `main`.
+   not the 06:00 this step used to claim. That is the *only* schedule: the weekly full bar on
+   `17 5 * * 0` was removed, because it fanned the 11-kind surface across all five clouds while the
+   pre-apply cost ceiling is wired for aws alone (#2385). Run a full bar by dispatch instead, one
+   cloud at a time. The floor cron fires only on the default branch, so it runs from `main`.
 
 ## Per-cloud configuration
 
@@ -126,8 +128,9 @@ These are not per-cloud gates, but legs depend on them:
 ## Dimensions and cost
 
 - **Green floor** (default): the cheap smoke — one small cluster, teardown immediately.
-- **Full bar** (`full_bar: true` on dispatch, and automatic on the Sunday cron): max-config — 11 kinds
-  and all 19 add-ons. Heavy and expensive; it uses the raised cost ceiling.
+- **Full bar** (`full_bar: true` on dispatch — **no cron fires it**, #2385): max-config — 11 kinds
+  and all 18 add-ons. Heavy and expensive. The raised cost ceiling applies on **aws only**; gcp,
+  azure, alibaba and hetzner are unpriced, so dispatch them one at a time and watch them.
 
 Region defaults per cloud when the `region` input is blank: hetzner `nbg1`, aws `us-east-1`,
 gcp `europe-west3`, azure `germanywestcentral`, alibaba `eu-central-1`.

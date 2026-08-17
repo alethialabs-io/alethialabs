@@ -674,6 +674,17 @@ jobs:
       # for weeks (#1755). Both crons are asserted here because neither is reachable from a PR.
       - name: Nightly dimension resolution (floor and full-bar never collide)
         run: bash scripts/e2e/resolve-dimension.sh --self-test
+      # A TIMER must never start an unpriced real apply. The weekly `17 5 * * 0` full-bar cron fanned
+      # the 11-kind surface across all five clouds while ALETHIA_COST_CEILING_MONTHLY_USD was wired
+      # for aws alone, and bought a standing monthly alibaba CR EE subscription each week (#2340
+      # landed the detection only on 2026-08-11). The cron is gone — but removing a cron is a
+      # one-line edit and so is adding one, so this is the tripwire on the reintroduction: a cron
+      # that resolves to `full` fails unless every matrix cloud is priced. Exemptions (a watched
+      # dispatch) deliberately do not satisfy it. Hermetic — parses two files, no gh, no cloud.
+      - name: E2E spend guard (no scheduled full bar on an unpriced cloud)
+        run: |
+          node scripts/check-e2e-spend-guard.mjs --self-test
+          node scripts/check-e2e-spend-guard.mjs
       # The proof-bundle scrub decides what a PUBLIC repo publishes, and its only run was inside
       # e2e-nightly.yml — a workflow no PR triggers. So the change that made the tripwire fire on
       # every azure plan JSON could not have been caught before merge, and wasn't: azure lost its

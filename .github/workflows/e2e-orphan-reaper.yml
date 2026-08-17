@@ -45,9 +45,11 @@
 # queues the reaper behind any in-flight leg for that cloud, which is what makes PREFLIGHT's
 # premise true rather than merely assumed. Do not rename it to something tidier.
 #
-# The Sunday full bar makes this concrete: it starts 05:17 UTC with a 210-minute cap, so it can
-# still be running at 07:17. The schedule is chosen to usually miss it; the concurrency group is
-# what makes it not matter.
+# A full-bar run makes this concrete: it carries a 210-minute cap, so it can still be applying at
+# 07:17. It used to be a Sunday cron, which at least made the overlap PREDICTABLE; it is now a
+# `workflow_dispatch` (the cron was removed as unpriced on four of five clouds — #2385), so a full
+# bar can be in flight at ANY hour and the schedule below can no longer be chosen to miss it. The
+# concurrency group is therefore not a backstop here — it is the entire safety property.
 #
 # COST: this workflow provisions nothing. It lists, deletes orphans, and verifies. A morning with
 # no leaks is a few API calls per cloud.

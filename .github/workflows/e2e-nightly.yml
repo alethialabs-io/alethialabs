@@ -39,10 +39,30 @@ on:
     # 03:17 UTC nightly (off the hour to avoid the cron stampede) — the cheap GREEN-FLOOR smoke
     # (base provision + cluster_ready + ArgoCD Healthy, + A0.6 repos when wired).
     - cron: "17 3 * * *"
-    # 05:17 UTC Sunday — the OPT-IN FULL-BAR run (P2-F, #1068): the same matrix but with
-    # ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (11 kinds + 18 add-ons — heavy/costly,
-    # so weekly not nightly). Resolved from this exact cron string in "Resolve full-bar dimension".
-    - cron: "17 5 * * 0"
+    #
+    # ── THERE IS DELIBERATELY NO FULL-BAR CRON. ──
+    #
+    # The full bar (P2-F, #1068: ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 — 11 kinds +
+    # 18 add-ons) used to run weekly on `17 5 * * 0`. It was REMOVED, because a schedule fired it
+    # across the whole matrix while the pre-apply cost ceiling below is wired for **aws only**: on
+    # gcp, azure, alibaba and hetzner a full bar provisioned the entire 11-kind surface with no
+    # spend gate whatsoever. It also bought a standing monthly resource on alibaba every week —
+    # `infra/templates/project/alibaba/modules/cr` creates `alicloud_cr_ee_instance` with
+    # `payment_type = "Subscription"`, and the sweep that even DETECTS a survivor only landed on
+    # 2026-08-11 (#2340), so earlier Sunday runs could leak one silently. Two weekly firings
+    # (2026-08-09, 2026-08-16) produced #2382/#2383/#2384 and no committed proof row.
+    #
+    # Run a full bar by DISPATCH instead — one cloud at a time, watched (`full_bar: true` below).
+    #
+    # RE-ADDING IT is a per-cloud decision, not a global one, and it is gated: that cloud needs a
+    # wired cost ceiling and a committed full-bar PASS row in demos/proofs/provisioning-e2e-log.md
+    # first. `scripts/check-e2e-spend-guard.mjs` enforces the ceiling half of that — a cron that
+    # resolves to `full` fails CI unless every provider in the matrix is priced or explicitly
+    # exempted, so this cannot be reintroduced unguarded by editing one line.
+    #
+    # `scripts/e2e/resolve-dimension.sh` still MAPS `17 5 * * 0` to `full` on purpose: re-adding
+    # the cron must work, and a cron whose dimension silently resolved to `floor` would run the
+    # cheap shape while the ledger recorded a full bar.
   workflow_dispatch:
     inputs:
       provider:
@@ -60,7 +80,7 @@ on:
         type: string
         default: ""
       full_bar:
-        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly — uses the raised cost ceiling. Also auto-on for the weekly Sunday cron."
+        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws; gcp/azure/alibaba/hetzner are unpriced, so dispatch those one at a time and watch them."
         type: boolean
         default: false
 
@@ -296,8 +316,9 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "::notice::T2 cluster for this run: $PROJECT-$ENVNAME ($PROVIDER, region $REGION)"
 
-      # ── Resolve the FULL-BAR dimension (P2-F, #1068). Off by default (the nightly stays the cheap
-      #    green-floor smoke); ON for the weekly Sunday cron OR a workflow_dispatch with full_bar=true.
+      # ── Resolve the FULL-BAR dimension (P2-F, #1068). Off by default, and no schedule turns it on
+      #    any more (see the `on.schedule` block) — a workflow_dispatch with full_bar=true is the only
+      #    live path. The cron branch in resolve-dimension.sh is kept for the day one is re-added.
       #    When on, export ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (the T2 harness reads
       #    these from the process env — $GITHUB_ENV carries them into the go-test step) so the run
       #    proves all 11 resource kinds land in tofu state AND all 18 marketplace add-ons converge.
@@ -329,7 +350,7 @@ jobs:
               echo "ALETHIA_E2E_MAX_CONFIG=1"
               echo "ALETHIA_E2E_ALL_ADDONS=1"
             } >> "$GITHUB_ENV"
-            echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (19) on this run (raised cost ceiling)."
+            echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (18) on this run (raised cost ceiling on aws; UNPRICED elsewhere)."
           else
             {
               echo "E2E_FULL_BAR=false"
