@@ -99,6 +99,30 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # ── Federating from `dev` on a DISPATCH (the cadence unblock). ──
+    #
+    # The scheduled nightly federates as `repo:<repo>:ref:refs/heads/main`, because the crons only fire
+    # on the default branch. That is correct for a timer and stays untouched: this expression is empty
+    # on `schedule`, so the SCHEDULED spend surface does not widen at all.
+    #
+    # A DISPATCH is different. Every phase of the MVP programme is a loop of dispatch → read → fix, and
+    # with a main-only subject each iteration first needs a promotion to `main` — which also ships the
+    # product, because `main` triggers release-please, the console/fleet deploys and the CLI release. So
+    # a dispatch declares the `e2e-dev` environment, whose OIDC subject is
+    # `repo:<repo>:environment:e2e-dev`, and each cloud's trust admits that subject alongside the ref.
+    #
+    # WHAT ACTUALLY RESTRICTS IT TO `dev` is the environment's own deployment-branch policy (a single
+    # custom policy, `dev`), enforced GitHub-side — not this line, and not the tofu trust, which only
+    # says "this environment". That is deliberate: the branch list becomes an auditable control that
+    # can be tightened without a `tofu apply`.
+    #
+    # THE COMPENSATING CONTROL, and the reason this is safe at all: a ruleset on `dev` requiring
+    # CODEOWNERS review for `.github/workflows/**` and `infra/**`. Widening to `dev` is only dangerous
+    # because Mergify auto-lands PRs there and CODEOWNERS is advisory off `main`/`staging`; two globs
+    # remove exactly that path — a PR editing the file that HOLDS the credential — and leave every other
+    # lane autonomous. Required *reviewers* on the environment are deliberately NOT set: that would put
+    # a human in every run, which is the thing being removed.
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'e2e-dev' || '' }}
     # Hard cost cap: even if every finer timeout failed, the job cannot bill past this.
     # Raised 60→90 to fit the opt-in day-2 SOAK window (BYOC A0.3): the base
     # deploy→ArgoCD→teardown chain still finishes well inside the old bound (a tiny Talos

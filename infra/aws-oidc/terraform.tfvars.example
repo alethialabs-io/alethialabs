@@ -26,3 +26,10 @@ e2e_budget_alert_emails = ["ops@alethialabs.io"]
 # only half the job: its four name servers must then be delegated at Cloudflare, which holds
 # alethialabs.io. Leave unset to create no zone at all.
 # e2e_dns_zone_name = "e2e.alethialabs.io"
+
+# ── Federating a workflow_dispatch from `dev` (the cadence unblock) ──
+# The scheduled nightly federates by REF (main). Set this to ALSO trust the branch-restricted
+# `e2e-dev` GitHub environment, so a dispatch can drive a real apply from `dev` without a promotion
+# to `main` (which would also ship the product). It ADDS an exact subject; it never replaces the ref.
+# Safe ONLY because `e2e-dev` has a single deployment-branch policy: `dev`.
+e2e_github_environment = "e2e-dev"

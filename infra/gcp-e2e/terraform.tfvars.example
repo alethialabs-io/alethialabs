@@ -17,3 +17,10 @@ billing_account_id = "000000-000000-000000"
 
 # Monthly cost ceiling (USD) — alerts at 50/80/100% actual + 100% forecast onto the Pub/Sub topic.
 # e2e_monthly_budget_usd = 100
+
+# ── Federating a workflow_dispatch from `dev` (the cadence unblock) ──
+# The scheduled nightly federates by REF (main). Set this to ALSO trust the branch-restricted
+# `e2e-dev` GitHub environment, so a dispatch can drive a real apply from `dev` without a promotion
+# to `main` (which would also ship the product). It ADDS an exact subject; it never replaces the ref.
+# Safe ONLY because `e2e-dev` has a single deployment-branch policy: `dev`.
+e2e_github_environment = "e2e-dev"
