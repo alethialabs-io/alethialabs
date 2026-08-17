@@ -35,6 +35,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** Docs that make operational promises. Anything here is held to the five rules. */
 const DOCS = [
 	"CLAUDE.md",
+	"PROGRAMME.md",
 	"ARCHITECTURE.md",
 	"CONTRIBUTING.md",
 	"README.md",
