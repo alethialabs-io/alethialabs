@@ -59,6 +59,85 @@ resolve() {
 	echo "floor"
 }
 
+# ── The dimension → FIDELITY mapping. One table, every consumer. ───────────────────────────────
+#
+# WHY THIS MOVED HERE (#2356). The mapping was written out twice — inline in
+# provisioning-e2e.sh's `case`, and inline in the workflow's step-level `env:` — and the two did not
+# agree. The workflow turned the A0.3 day-2 soak ON FOR EVERY RUN (`vars.E2E_SOAK || '10m'`), while
+# `floor` is documented, in three places, as "provision + cluster_ready + ArgoCD converge". The soak
+# hard-fails on its drift posture, so a cloud could satisfy the entire floor definition and still be
+# recorded a floor FAIL.
+#
+# That is not hypothetical. Run 31486339552 (azure) applied cleanly, reached Ready nodes, verified a
+# signed receipt sealed to the plan hash, converged every expected Application and tore down — and
+# was filed a floor FAIL solely on `A0.3 drift: ... in_sync=false drifted=9`. The first azure run
+# ever to clear the reachability gate is recorded as a floor failure, and the auto-filed issue sends
+# the reader to the provisioning spine, which was fine.
+#
+# So the dimension DECIDES its assertions, and there is no per-run override: an override is exactly
+# how the divergence returns. A heavier claim gets a heavier dimension — that ladder already exists.
+DIMENSIONS="floor maxconfig addons byo day2 full"
+
+# soak_window prints a POSITIVE soak window for the two dimensions whose assertion IS the soak. A
+# caller may widen or narrow it; they may not EMPTY it, because a day-2 dimension with no soak
+# asserts nothing and would report PASS having proven nothing — the vacuous proof the bar forbids.
+#
+# The refused values are exactly the sentinels parseSoakDuration honours (test/e2e/t2_soak.go: "off",
+# "none", "0", plus empty), so this cannot drift from what the harness actually treats as disabled.
+# The override is announced on stderr: silently ignoring an operator's `off` is its own surprise.
+soak_window() {
+	case "${E2E_SOAK:-}" in
+	"" | off | none | 0)
+		if [ -n "${E2E_SOAK:-}" ]; then
+			echo "resolve-dimension: E2E_SOAK='${E2E_SOAK}' would empty a soak-defined dimension; using 10m instead (pick the 'floor' dimension to run without a soak)" >&2
+		fi
+		echo "10m"
+		;;
+	*) echo "$E2E_SOAK" ;;
+	esac
+}
+
+# fidelity_env prints the `NAME=value` lines that turn one dimension's assertions on — one per line,
+# suitable for `>> "$GITHUB_ENV"` or for building an `env` array.
+#
+# `floor` is the load-bearing entry. It prints ALETHIA_E2E_SOAK=off EXPLICITLY rather than leaving it
+# unset, because "unset" is what the workflow was overriding; a positive assertion of `off` is a
+# statement the self-test below can hold it to.
+fidelity_env() { # <dimension>
+	case "${1:-}" in
+	floor)
+		echo "ALETHIA_E2E_SOAK=off"
+		;;
+	maxconfig)
+		echo "ALETHIA_E2E_SOAK=off"
+		echo "ALETHIA_E2E_MAX_CONFIG=1"
+		;;
+	addons)
+		echo "ALETHIA_E2E_SOAK=off"
+		echo "ALETHIA_E2E_ALL_ADDONS=1"
+		;;
+	byo)
+		# The A0.6 bring-your-own Helm/apps-repo proof activates from the caller's ALETHIA_E2E_ARGO_*
+		# inputs; nothing to switch on here beyond keeping the soak out of it.
+		echo "ALETHIA_E2E_SOAK=off"
+		;;
+	day2)
+		# The soak IS this dimension's vehicle. ${E2E_SOAK} lets a caller widen or narrow the window;
+		# it cannot turn it off, because a day-2 dimension with no soak asserts nothing.
+		echo "ALETHIA_E2E_SOAK=$(soak_window)"
+		;;
+	full)
+		echo "ALETHIA_E2E_SOAK=$(soak_window)"
+		echo "ALETHIA_E2E_MAX_CONFIG=1"
+		echo "ALETHIA_E2E_ALL_ADDONS=1"
+		;;
+	*)
+		echo "fidelity_env: unknown dimension '${1:-}' (want one of: $DIMENSIONS)" >&2
+		return 2
+		;;
+	esac
+}
+
 # dimension_label turns the token into the words that go in an issue TITLE. The title is the dedup
 # key, so this mapping is load-bearing: change it and every open nightly issue is orphaned and
 # re-filed under the new name.
@@ -104,6 +183,69 @@ run_self_test() {
 	_a "full-bar" "$(dimension_label full)" "the full token labels as full-bar in an issue title"
 	_a "floor" "$(dimension_label floor)" "the floor token labels as floor in an issue title"
 
+	# ── The fidelity table (#2356). These are the assertions that were missing, and their absence is
+	# why a documented definition and an asserted one could diverge for weeks. ──
+
+	_f() { (E2E_SOAK="${2:-}" fidelity_env "$1"); }
+
+	# THE REGRESSION. The floor must not run the day-2 soak, whose drift check is fatal. Asserted as
+	# an explicit `off` rather than "no SOAK line", because unset is what the workflow overrode.
+	_a "ALETHIA_E2E_SOAK=off" "$(_f floor | grep '^ALETHIA_E2E_SOAK=')" "the floor turns the day-2 soak OFF (#2356)"
+	# And a caller's E2E_SOAK must NOT be able to switch it back on — an override is how this returns.
+	_a "ALETHIA_E2E_SOAK=off" "$(_f floor 30m | grep '^ALETHIA_E2E_SOAK=')" "E2E_SOAK cannot re-enable the soak on the floor"
+
+	# The floor is the CHEAPEST rung: nothing but the soak switch.
+	_a "1" "$(_f floor | wc -l | tr -d ' ')" "the floor enables no fidelity beyond the soak switch"
+	_a "" "$(_f floor | grep -E 'MAX_CONFIG|ALL_ADDONS' || true)" "the floor enables neither max-config nor all-add-ons"
+
+	# day2 is where the soak lives, and it cannot be empty — a day-2 dimension with no soak asserts
+	# nothing, which is the vacuous-proof shape the bar forbids.
+	_a "ALETHIA_E2E_SOAK=10m" "$(_f day2 | grep '^ALETHIA_E2E_SOAK=')" "day2 turns the soak ON by default"
+	_a "ALETHIA_E2E_SOAK=45m" "$(_f day2 45m | grep '^ALETHIA_E2E_SOAK=')" "day2 honours a widened E2E_SOAK window"
+	_a "" "$(_f day2 off | grep 'SOAK=off' || true)" "day2 cannot be emptied by setting E2E_SOAK=off"
+
+	# The heavier rungs each add exactly their own switch, and keep the soak out of it.
+	_a "ALETHIA_E2E_MAX_CONFIG=1" "$(_f maxconfig | grep '^ALETHIA_E2E_MAX_CONFIG=')" "maxconfig enables the 11-kind assertion"
+	_a "ALETHIA_E2E_SOAK=off" "$(_f maxconfig | grep '^ALETHIA_E2E_SOAK=')" "maxconfig does not smuggle in the soak"
+	_a "ALETHIA_E2E_ALL_ADDONS=1" "$(_f addons | grep '^ALETHIA_E2E_ALL_ADDONS=')" "addons enables the add-on health assertion"
+	_a "ALETHIA_E2E_SOAK=off" "$(_f addons | grep '^ALETHIA_E2E_SOAK=')" "addons does not smuggle in the soak"
+
+	# `full` is the composite and must be the UNION — the FULLY-TESTED bar. If a dimension's switch is
+	# ever added without adding it here, `full` silently stops being "every dimension in one apply".
+	_a "ALETHIA_E2E_MAX_CONFIG=1" "$(_f full | grep '^ALETHIA_E2E_MAX_CONFIG=')" "full includes max-config"
+	_a "ALETHIA_E2E_ALL_ADDONS=1" "$(_f full | grep '^ALETHIA_E2E_ALL_ADDONS=')" "full includes all-add-ons"
+	_a "ALETHIA_E2E_SOAK=10m" "$(_f full | grep '^ALETHIA_E2E_SOAK=')" "full includes the day-2 soak"
+
+	# Every declared dimension must HAVE a fidelity, and an undeclared one must be refused rather than
+	# silently producing an empty env (which would run the cheapest shape while recording the heaviest
+	# claim — the #2356 failure in the opposite direction).
+	for d in $DIMENSIONS; do
+		if fidelity_env "$d" >/dev/null 2>&1; then
+			echo "ok   - dimension '$d' has a declared fidelity"
+		else
+			echo "FAIL - dimension '$d' is in DIMENSIONS but fidelity_env refuses it" >&2
+			fails=$((fails + 1))
+		fi
+	done
+	if fidelity_env teardown >/dev/null 2>&1; then
+		# `teardown` was in the ledger legend as a dimension for months while provisioning-e2e.sh
+		# rejected it: teardown is asserted on EVERY run, not chosen. Keep it un-declarable.
+		echo "FAIL - fidelity_env accepted 'teardown', which is a property of every run, not a dimension" >&2
+		fails=$((fails + 1))
+	else
+		echo "ok   - an undeclared dimension is refused, never given an empty fidelity"
+	fi
+
+	# VACUITY: the union above would also "hold" if every call returned nothing. Prove the table emits
+	# real content.
+	_a "3" "$(_f full | wc -l | tr -d ' ')" "vacuity: full emits three fidelity lines, not zero"
+	if [ "$(_f full | grep -c '=')" -eq 3 ]; then
+		echo "ok   - vacuity: every full fidelity line is a NAME=value assignment"
+	else
+		echo "FAIL - vacuity: full's fidelity lines are not all assignments" >&2
+		fails=$((fails + 1))
+	fi
+
 	if [ "$fails" -eq 0 ]; then
 		echo "self-test: all passed"
 		exit 0
@@ -121,9 +263,15 @@ fi
 case "${1:-}" in
 --self-test) run_self_test ;;
 --label) dimension_label "$(resolve)" ;;
+--dimensions) echo "$DIMENSIONS" ;;
+--fidelity)
+	# `--fidelity` with no argument resolves the dimension from the trigger first, so the workflow
+	# never has to name it twice.
+	fidelity_env "${2:-$(resolve)}"
+	;;
 "") resolve ;;
 *)
-	echo "usage: resolve-dimension.sh [--self-test|--label]" >&2
+	echo "usage: resolve-dimension.sh [--self-test|--label|--dimensions|--fidelity [dimension]]" >&2
 	exit 2
 	;;
 esac

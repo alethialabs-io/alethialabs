@@ -10,16 +10,26 @@
 # GitHub issue. Sibling of scripts/e2e/registry-e2e.sh; same mechanics (scrub + ledger sentinel + dedup).
 #
 #   cloud     : aws | gcp | azure | alibaba | hetzner
-#   dimension : floor     — base T2: provision + cluster_ready + ArgoCD Healthy+Synced (cheapest shape).
+#   dimension : floor     — base T2: provision + cluster_ready + ArgoCD Healthy+Synced (cheapest shape),
+#                           and NOTHING else. The A0.3 soak is explicitly OFF here: its drift check is
+#                           fatal, and a floor run that met every documented floor requirement was
+#                           filed a floor FAIL on it (#2356).
 #               maxconfig — + ALETHIA_E2E_MAX_CONFIG=1  (all 11 resource kinds land in tofu state).
-#               addons    — + ALETHIA_E2E_ALL_ADDONS=1  (all 19 marketplace add-ons Healthy+Synced).
+#               addons    — + ALETHIA_E2E_ALL_ADDONS=1  (all 18 marketplace add-ons Healthy+Synced;
+#                           18 not 19 — cert-manager moved to the platform rail, #1722).
 #               byo       — + the A0.6 bring-your-own HELM CHART + apps-repo ArgoCD proof (needs
 #                           ALETHIA_E2E_ARGO_* + _GIT_TOKEN). NOT bring-your-own IaC: no customer
 #                           OpenTofu runs in this dimension. It was labelled "BYO-IaC" here and in
 #                           demos/proofs/provisioning-e2e-log.md, so the ledger has been recording a
 #                           customer-tofu proof that has never run.
-#               day2      — + a day-2 access/soak assertion (ALETHIA_E2E_SOAK defaults 10m).
+#               day2      — + the A0.3 day-2 soak (liveness, drift posture, PVC). E2E_SOAK widens or
+#                           narrows the window; it cannot switch it off, because a day-2 dimension
+#                           with no soak asserts nothing.
 #               full      — every dimension above in one real apply (the FULLY-TESTED bar).
+#
+# The dimension list and the env each one switches on live in ONE place — DIMENSIONS and
+# fidelity_env in scripts/e2e/resolve-dimension.sh, which self-tests the pair. They were written out
+# both here and in the workflow's step env, and the two disagreed (#2356).
 #
 # The caller provides the cloud creds (keyless OIDC/WIF/federated, per the nightly) and the control-plane
 # DB. This engine sets the fidelity env for the chosen dimension and requires a hard verdict
@@ -45,7 +55,14 @@ stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 ledger="$root/demos/proofs/provisioning-e2e-log.md"
 
 case "$cloud" in aws|gcp|azure|alibaba|hetzner) ;; *) echo "unknown cloud $cloud" >&2; exit 2 ;; esac
-case "$dimension" in floor|maxconfig|addons|byo|day2|full) ;; *) echo "unknown dimension $dimension" >&2; exit 2 ;; esac
+
+# DIMENSIONS and fidelity_env live in resolve-dimension.sh — ONE table, so the dimension this
+# validates, the env it sets and the row it appends can never disagree. Sourced, not executed
+# (#1755, and #2356 for the fidelity half).
+# shellcheck source=scripts/e2e/resolve-dimension.sh
+. "$(dirname "${BASH_SOURCE[0]}")/resolve-dimension.sh"
+
+case " $DIMENSIONS " in *" $dimension "*) ;; *) echo "unknown dimension $dimension (want one of: $DIMENSIONS)" >&2; exit 2 ;; esac
 
 # ── append one ledger row after the sentinel (idempotent shape; awk fallback to >>) ────────────
 append_ledger() {
@@ -76,13 +93,14 @@ mkdir -p "$outdir"
 log="$outdir/run.log"
 
 # ── fidelity env for the chosen dimension (layered: full = all of them) ────────────────────────
+# From fidelity_env in resolve-dimension.sh, NOT an inline case. This used to be written out here
+# AND in the workflow's step env, and the two disagreed: the workflow turned the day-2 soak on for
+# every run, so a `floor` run asserted a fatal drift check that the floor's own definition does not
+# mention (#2356). One table, both consumers.
 declare -a dimenv=("ALETHIA_E2E_PROVIDER=$cloud" "ALETHIA_E2E_T2_REQUIRE=1")
-case "$dimension" in
-  maxconfig)        dimenv+=("ALETHIA_E2E_MAX_CONFIG=1") ;;
-  addons)           dimenv+=("ALETHIA_E2E_ALL_ADDONS=1") ;;
-  full)             dimenv+=("ALETHIA_E2E_MAX_CONFIG=1" "ALETHIA_E2E_ALL_ADDONS=1") ;;
-  # byo/day2 activate via the caller's ALETHIA_E2E_ARGO_* / ALETHIA_E2E_SOAK env (see header).
-esac
+while IFS= read -r kv; do
+  [[ -n "$kv" ]] && dimenv+=("$kv")
+done < <(fidelity_env "$dimension")
 
 # ── run (or record BLOCKED) ────────────────────────────────────────────────────────────────────
 if [[ -n "${BLOCKED:-}" ]]; then
