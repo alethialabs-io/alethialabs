@@ -29,6 +29,7 @@
     "compose:down": "docker compose down",
     "check:connector-assets": "node scripts/check-connector-assets.mjs",
     "check:docs-contract": "node scripts/check-docs-contract.mjs",
+    "check:e2e-spend-guard": "node scripts/check-e2e-spend-guard.mjs",
     "check:open-core": "node scripts/check-open-core-boundary.mjs",
 		"check:runner-self-image": "node scripts/check-runner-self-image.mjs",
     "compliance:licenses": "node scripts/license-inventory.mjs",
