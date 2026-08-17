@@ -5,10 +5,21 @@
 # resolve-dimension.sh — resolve which DIMENSION one E2E-nightly run is proving. PURE: no network,
 # no gh, no token. Trigger in, the single token `full` or `floor` out.
 #
-# E2E Nightly runs two dimensions on two crons:
-#   `17 3 * * *`  the cheap green-floor smoke   → floor
-#   `17 5 * * 0`  the weekly full bar           → full   (ALETHIA_E2E_MAX_CONFIG + _ALL_ADDONS)
+# E2E Nightly runs two dimensions:
+#   `17 3 * * *`  the cheap green-floor smoke   → floor  (the only SCHEDULED dimension)
+#   `17 5 * * 0`  the full bar                  → full   (ALETHIA_E2E_MAX_CONFIG + _ALL_ADDONS)
 # plus a manual `workflow_dispatch` whose `full_bar` input picks either.
+#
+# ⚠️ `17 5 * * 0` IS NOT CURRENTLY SCHEDULED. The weekly full-bar cron was removed from
+# e2e-nightly.yml because it fired the whole matrix while the pre-apply cost ceiling is wired for
+# aws only, and because it bought a standing monthly alibaba CR EE subscription every week. A
+# dispatch with `full_bar=true` is the only live path to `full` today.
+#
+# The mapping below is kept anyway, and that is deliberate rather than dead code: re-adding the cron
+# is a per-cloud decision we expect to make, and a re-added cron whose dimension resolved to `floor`
+# would run the cheap shape while the ledger and the issue titles recorded a full bar — the exact
+# class of silent mislabelling this file was written to end. `check-e2e-spend-guard.mjs` reads
+# FULL_BAR_CRON from here so the workflow and this script cannot disagree about which cron is which.
 #
 # WHY THIS EXISTS (#1755). That resolution used to be written out THREE times: inline in the
 # provision job, inline in the rollup job's ledger step, and not at all in the issue filer — which
