@@ -336,6 +336,11 @@ jobs:
           EVENT: ${{ github.event_name }}
           DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
           SCHEDULE: ${{ github.event.schedule }}
+          # The soak window a maintainer chose, forwarded so fidelity_env can honour it on the
+          # dimensions the soak belongs to. `vars.` is not automatically in a step's environment, so
+          # WITHOUT this line the table would silently fall back to 10m and a widened window set on
+          # the repo would be quietly ignored — a regression hidden inside a fix.
+          E2E_SOAK: ${{ vars.E2E_SOAK }}
         run: |
           # ONE deriver, every consumer (#1755). This step, the rollup's issue titles and the parity
           # ledger all read the answer from scripts/e2e/resolve-dimension.sh — which owns the
@@ -343,20 +348,28 @@ jobs:
           dim="$(bash scripts/e2e/resolve-dimension.sh)"
           full="false"
           if [ "$dim" = "full" ]; then full="true"; fi
+          {
+            echo "E2E_FULL_BAR=$full"
+            echo "E2E_DIMENSION=$dim"
+          } >> "$GITHUB_ENV"
+
+          # The dimension's FIDELITY comes from the same deriver, never from an inline list here
+          # (#2356). This step used to emit MAX_CONFIG/ALL_ADDONS itself while the go-test step's
+          # `env:` separately forced `ALETHIA_E2E_SOAK: vars.E2E_SOAK || '10m'` — so EVERY run,
+          # including the floor, ran the A0.3 day-2 soak and its FATAL drift check, which the floor's
+          # own definition ("provision + cluster_ready + ArgoCD converge") does not mention. Azure run
+          # 31486339552 applied cleanly, reached Ready nodes, verified a receipt sealed to the plan
+          # hash and tore down — and was filed a floor FAIL on `in_sync=false drifted=9` alone.
+          #
+          # A step-level `env:` key WINS over $GITHUB_ENV, which is why the soak line had to be
+          # DELETED from the go-test step rather than merely changed here.
+          bash scripts/e2e/resolve-dimension.sh --fidelity "$dim" >> "$GITHUB_ENV"
+          echo "::notice::dimension=$dim fidelity: $(bash scripts/e2e/resolve-dimension.sh --fidelity "$dim" | tr '\n' ' ')"
+
           if [ "$full" = "true" ]; then
-            {
-              echo "E2E_FULL_BAR=true"
-              echo "E2E_DIMENSION=full"
-              echo "ALETHIA_E2E_MAX_CONFIG=1"
-              echo "ALETHIA_E2E_ALL_ADDONS=1"
-            } >> "$GITHUB_ENV"
-            echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (18) on this run (raised cost ceiling on aws; UNPRICED elsewhere)."
+            echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (18) + the day-2 soak on this run (raised cost ceiling on aws; UNPRICED elsewhere)."
           else
-            {
-              echo "E2E_FULL_BAR=false"
-              echo "E2E_DIMENSION=floor"
-            } >> "$GITHUB_ENV"
-            echo "::notice::green-floor dimension (base provision + ArgoCD Healthy; + A0.6 repos when wired)."
+            echo "::notice::green-floor dimension — provision + cluster_ready + ArgoCD Healthy+Synced (+ A0.6 repos when wired). NO day-2 soak: that is the day2/full dimension (#2356)."
           fi
 
       # ── Cheapest-shape override (BYOC F4). The managed-cloud templates default to LARGE nodes
@@ -914,13 +927,18 @@ jobs:
           # for clarity). resolveT2Region reads ALETHIA_E2E_REGION for every provider.
           ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
-          # ── Day-2 SOAK window (BYOC A0.3). Opt-in: default 10m on the real-apply runs,
-          #    overridable via vars.E2E_SOAK (e.g. a longer window, or a short one to trim
-          #    cost). Unset var ⇒ 10m. Runs AFTER the readiness+ArgoCD asserts and BEFORE the
-          #    guaranteed teardown: a liveness loop, a real DETECT_DRIFT → honest posture, a
-          #    1Gi PVC → Bound → cloud-side sweep-tag hard-fail, and an add-on health re-read.
-          #    Its machine-readable summary is written for the A0.4 proof/verdict capture. ──
-          ALETHIA_E2E_SOAK: ${{ vars.E2E_SOAK || '10m' }}
+          # ── Day-2 SOAK window (BYOC A0.3). The soak's WINDOW is deliberately NOT set here.
+          #    It is exported by the "Resolve full-bar dimension" step from
+          #    scripts/e2e/resolve-dimension.sh's fidelity table, because the soak belongs to the
+          #    day2/full dimensions and not to the floor — its drift check is FATAL, and a floor run
+          #    that satisfied every documented floor requirement was filed a floor FAIL on it (#2356).
+          #    A step-level `env:` key WINS over $GITHUB_ENV, so setting the window here at all would
+          #    silently re-break that. vars.E2E_SOAK is still honoured, via the table, for the
+          #    dimensions whose assertion the soak actually is.
+          #    The soak runs AFTER the readiness+ArgoCD asserts and BEFORE the guaranteed teardown:
+          #    a liveness loop, a real DETECT_DRIFT → honest posture, a 1Gi PVC → Bound → cloud-side
+          #    sweep-tag hard-fail, and an add-on health re-read. Its machine-readable summary is
+          #    written for the A0.4 proof/verdict capture. ──
           ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
           # ── ArgoCD-WITH-REPOS + BYO Helm proof (BYOC A0.6). Opt-in, ON TOP of the base T2
           #    proof: only activates when a maintainer sets the repo VARS + the git-token SECRET.
