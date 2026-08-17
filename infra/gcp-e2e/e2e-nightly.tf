@@ -25,10 +25,21 @@ locals {
   # (The provider's attribute condition — not the subject — is what enforces the repo+ref binding.)
   e2e_subject = "repo:${var.github_repo}:ref:${var.e2e_github_ref}"
 
-  # The provider's attribute CONDITION (CEL): admit ONLY this repo AND this ref, both exact. This is
-  # the StringEquals-equivalent gate — no wildcard, no prefix. Both clauses are required (an && of two
-  # exact equalities) so a token from the right repo but the wrong branch (e.g. a PR) is rejected.
-  e2e_attr_condition = "attribute.repository == \"${var.github_repo}\" && attribute.ref == \"${var.e2e_github_ref}\""
+  # The full subject a DISPATCH federates as when it declares the branch-restricted GitHub
+  # environment. GitHub replaces the `ref:` form with `environment:` in `sub` for such a job, so this
+  # is a DIFFERENT exact string, not a relaxation of the one above.
+  e2e_env_subject = var.e2e_github_environment != "" ? "repo:${var.github_repo}:environment:${var.e2e_github_environment}" : ""
+
+  # The provider's attribute CONDITION (CEL): admit ONLY this repo, AND then only an exact ref or an
+  # exact environment subject. Still the StringEquals-equivalent gate — no wildcard, no prefix.
+  #
+  # WHY THE SUBJECT AND NOT JUST A SECOND REF. Adding `refs/heads/dev` to the ref clause would trust
+  # EVERY workflow running on dev. Keying the second disjunct on `assertion.sub` narrows it to a job
+  # that declared the environment, and the environment's own deployment-branch policy (a single custom
+  # policy, `dev`) is what pins the branch — GitHub-side, auditable, and changeable without an apply.
+  # Empty `e2e_github_environment` ⇒ the disjunct is omitted entirely and this is byte-identical to the
+  # ref-only condition, so the default posture is unchanged.
+  e2e_attr_condition = var.e2e_github_environment != "" ? "attribute.repository == \"${var.github_repo}\" && (attribute.ref == \"${var.e2e_github_ref}\" || assertion.sub == \"${local.e2e_env_subject}\")" : "attribute.repository == \"${var.github_repo}\" && attribute.ref == \"${var.e2e_github_ref}\""
 
   # The WIF principalSet the SA binding trusts: any identity from THIS repo that already passed the
   # provider's attribute condition (which pins the ref). Scoped to attribute.repository == our repo.

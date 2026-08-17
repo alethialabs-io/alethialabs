@@ -10,8 +10,33 @@
 # ── The OIDC subject is EXACT and non-wildcarded (ALI-OIDC-001 shape) ─────────
 check "e2e_subject_exact_non_wildcard" {
   assert {
-    condition     = can(regex("^repo:[^:*]+/[^:*]+:ref:refs/heads/[^:*]+$", local.e2e_sub))
-    error_message = "e2e OIDC subject must be an EXACT repo:<owner>/<repo>:ref:refs/heads/<branch> with no '*' wildcard — got '${local.e2e_sub}'."
+    # EVERY subject in the list, not just the first. The list gained a second entry (an `environment:`
+    # subject for a branch-restricted dispatch), and a check that validated only `local.e2e_sub` would
+    # have waved the new one through unexamined — the "decision must mirror the emitter" failure.
+    condition = alltrue([
+      for s in local.e2e_subs :
+      can(regex("^repo:[^:*]+/[^:*]+:(ref:refs/heads/[^:*]+|environment:[^:*]+)$", s))
+    ])
+    error_message = "every e2e OIDC subject must be an EXACT repo:<owner>/<repo>:ref:refs/heads/<branch> (or :environment:<env>) with no '*' wildcard — got ${jsonencode(local.e2e_subs)}."
+  }
+}
+
+# ── The REF subject always exists; an environment only ever ADDS ──────────────
+# The ref-bound trust is what the scheduled nightly federates as, and it must never be replaced by an
+# environment subject — that would make the cron unable to assume the role while the config still
+# looked trusted.
+check "e2e_ref_subject_is_always_present" {
+  assert {
+    condition     = contains(local.e2e_subs, local.e2e_sub)
+    error_message = "the ref-bound subject '${local.e2e_sub}' must remain in the trusted set — an environment subject ADDS, it never replaces (the scheduled nightly federates by ref)."
+  }
+}
+
+# ── No environment subject unless one was asked for ───────────────────────────
+check "e2e_env_subject_only_when_configured" {
+  assert {
+    condition     = var.e2e_github_environment != "" ? length(local.e2e_subs) == 2 : length(local.e2e_subs) == 1
+    error_message = "the trusted-subject list must hold exactly the ref subject (no environment) or the ref + environment pair — got ${jsonencode(local.e2e_subs)} for environment '${var.e2e_github_environment}'."
   }
 }
 
@@ -21,7 +46,7 @@ check "e2e_trust_uses_string_equals" {
     condition = alltrue([
       contains(keys(local.trust_document.Statement[0].Condition), "StringEquals"),
       !contains(keys(local.trust_document.Statement[0].Condition), "StringLike"),
-      lookup(local.trust_document.Statement[0].Condition.StringEquals, "oidc:sub", "") == local.e2e_sub,
+      lookup(local.trust_document.Statement[0].Condition.StringEquals, "oidc:sub", []) == local.e2e_subs,
       lookup(local.trust_document.Statement[0].Condition.StringEquals, "oidc:aud", "") == var.oidc_audience,
       lookup(local.trust_document.Statement[0].Condition.StringEquals, "oidc:iss", "") == var.github_issuer_url,
     ])
