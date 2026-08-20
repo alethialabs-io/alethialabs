@@ -1,0 +1,234 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "resource_drift": [
+    {
+      "address": "azurerm_key_vault_key.aks_secrets[0]",
+      "mode": "managed",
+      "type": "azurerm_key_vault_key",
+      "name": "aks_secrets",
+      "index": 0,
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "aks-secrets-encryption", "key_type": "RSA", "key_size": 2048, "tags": null },
+        "after": { "name": "aks-secrets-encryption", "key_type": "RSA", "key_size": 2048, "tags": {} }
+      }
+    },
+    {
+      "address": "azurerm_user_assigned_identity.external_dns[0]",
+      "mode": "managed",
+      "type": "azurerm_user_assigned_identity",
+      "name": "external_dns",
+      "index": 0,
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "aks-gwc-alethia-nl-extdns", "location": "germanywestcentral", "tags": null },
+        "after": { "name": "aks-gwc-alethia-nl-extdns", "location": "germanywestcentral", "tags": {} }
+      }
+    },
+    {
+      "address": "azurerm_user_assigned_identity.external_secrets[0]",
+      "mode": "managed",
+      "type": "azurerm_user_assigned_identity",
+      "name": "external_secrets",
+      "index": 0,
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "aks-gwc-alethia-nl-extsecrets", "location": "germanywestcentral", "tags": null },
+        "after": { "name": "aks-gwc-alethia-nl-extsecrets", "location": "germanywestcentral", "tags": {} }
+      }
+    },
+    {
+      "address": "module.aks[0].azurerm_kubernetes_cluster.this",
+      "module_address": "module.aks[0]",
+      "mode": "managed",
+      "type": "azurerm_kubernetes_cluster",
+      "name": "this",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "name": "aks-gwc-alethia-nl",
+          "custom_ca_trust_certificates_base64": null,
+          "tags": { "ManagedBy": "opentofu", "alethia:project-id": "e2e-1" },
+          "default_node_pool": [{ "name": "default", "node_count": 2, "tags": null, "zones": null }]
+        },
+        "after": {
+          "name": "aks-gwc-alethia-nl",
+          "custom_ca_trust_certificates_base64": [],
+          "tags": { "ManagedBy": "opentofu", "alethia:project-id": "e2e-1" },
+          "default_node_pool": [{ "name": "default", "node_count": 2, "tags": {}, "zones": [] }]
+        }
+      }
+    },
+    {
+      "address": "module.vnet[0].azurerm_subnet.application_gateway",
+      "module_address": "module.vnet[0]",
+      "mode": "managed",
+      "type": "azurerm_subnet",
+      "name": "application_gateway",
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "alethia-nl-appgw", "service_endpoint_policy_ids": null, "service_endpoints": null },
+        "after": { "name": "alethia-nl-appgw", "service_endpoint_policy_ids": [], "service_endpoints": [] }
+      }
+    },
+    {
+      "address": "module.vnet[0].azurerm_subnet.database",
+      "module_address": "module.vnet[0]",
+      "mode": "managed",
+      "type": "azurerm_subnet",
+      "name": "database",
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "alethia-nl-db", "service_endpoint_policy_ids": null, "service_endpoints": null },
+        "after": { "name": "alethia-nl-db", "service_endpoint_policy_ids": [], "service_endpoints": [] }
+      }
+    },
+    {
+      "address": "module.vnet[0].azurerm_subnet.private",
+      "module_address": "module.vnet[0]",
+      "mode": "managed",
+      "type": "azurerm_subnet",
+      "name": "private",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "name": "alethia-nl-private",
+          "service_endpoint_policy_ids": null,
+          "service_endpoints": ["Microsoft.KeyVault", "Microsoft.Sql", "Microsoft.Storage"]
+        },
+        "after": {
+          "name": "alethia-nl-private",
+          "service_endpoint_policy_ids": [],
+          "service_endpoints": ["Microsoft.KeyVault", "Microsoft.Sql", "Microsoft.Storage"]
+        }
+      }
+    },
+    {
+      "address": "module.vnet[0].azurerm_subnet.public",
+      "module_address": "module.vnet[0]",
+      "mode": "managed",
+      "type": "azurerm_subnet",
+      "name": "public",
+      "change": {
+        "actions": ["update"],
+        "before": { "name": "alethia-nl-public", "service_endpoint_policy_ids": null, "service_endpoints": null },
+        "after": { "name": "alethia-nl-public", "service_endpoint_policy_ids": [], "service_endpoints": [] }
+      }
+    },
+    {
+      "address": "module.vnet[0].azurerm_virtual_network.this",
+      "module_address": "module.vnet[0]",
+      "mode": "managed",
+      "type": "azurerm_virtual_network",
+      "name": "this",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "name": "alethia-nl-vnet",
+          "address_space": ["10.0.0.0/16"],
+          "tags": { "ManagedBy": "opentofu", "alethia:project-id": "e2e-1" },
+          "subnet": null
+        },
+        "after": {
+          "name": "alethia-nl-vnet",
+          "address_space": ["10.0.0.0/16"],
+          "tags": { "ManagedBy": "opentofu", "alethia:project-id": "e2e-1" },
+          "subnet": [
+            { "name": "alethia-nl-private", "address_prefixes": ["10.0.0.0/20"], "service_endpoints": ["Microsoft.KeyVault", "Microsoft.Sql", "Microsoft.Storage"] },
+            { "name": "alethia-nl-public", "address_prefixes": ["10.0.16.0/20"], "service_endpoints": [] },
+            { "name": "alethia-nl-db", "address_prefixes": ["10.0.32.0/20"], "service_endpoints": [] },
+            { "name": "alethia-nl-appgw", "address_prefixes": ["10.0.48.0/20"], "service_endpoints": [] }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "azurerm_key_vault_key.aks_secrets",
+          "mode": "managed",
+          "type": "azurerm_key_vault_key",
+          "name": "aks_secrets",
+          "expressions": {
+            "name": { "constant_value": "aks-secrets-encryption" },
+            "key_type": { "constant_value": "RSA" },
+            "key_size": { "constant_value": 2048 }
+          }
+        },
+        {
+          "address": "azurerm_user_assigned_identity.external_dns",
+          "mode": "managed",
+          "type": "azurerm_user_assigned_identity",
+          "name": "external_dns",
+          "expressions": { "name": {}, "location": {}, "resource_group_name": {} }
+        },
+        {
+          "address": "azurerm_user_assigned_identity.external_secrets",
+          "mode": "managed",
+          "type": "azurerm_user_assigned_identity",
+          "name": "external_secrets",
+          "expressions": { "name": {}, "location": {}, "resource_group_name": {} }
+        }
+      ],
+      "module_calls": {
+        "aks": {
+          "module": {
+            "resources": [
+              {
+                "address": "azurerm_kubernetes_cluster.this",
+                "mode": "managed",
+                "type": "azurerm_kubernetes_cluster",
+                "name": "this",
+                "expressions": { "name": {}, "location": {}, "tags": {}, "default_node_pool": {} }
+              }
+            ]
+          }
+        },
+        "vnet": {
+          "module": {
+            "resources": [
+              {
+                "address": "azurerm_subnet.application_gateway",
+                "mode": "managed",
+                "type": "azurerm_subnet",
+                "name": "application_gateway",
+                "expressions": { "name": {}, "address_prefixes": {} }
+              },
+              {
+                "address": "azurerm_subnet.database",
+                "mode": "managed",
+                "type": "azurerm_subnet",
+                "name": "database",
+                "expressions": { "name": {}, "address_prefixes": {}, "delegation": {} }
+              },
+              {
+                "address": "azurerm_subnet.private",
+                "mode": "managed",
+                "type": "azurerm_subnet",
+                "name": "private",
+                "expressions": { "name": {}, "address_prefixes": {}, "service_endpoints": {} }
+              },
+              {
+                "address": "azurerm_subnet.public",
+                "mode": "managed",
+                "type": "azurerm_subnet",
+                "name": "public",
+                "expressions": { "name": {}, "address_prefixes": {} }
+              },
+              {
+                "address": "azurerm_virtual_network.this",
+                "mode": "managed",
+                "type": "azurerm_virtual_network",
+                "name": "this",
+                "expressions": { "name": {}, "location": {}, "address_space": {}, "tags": {} }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -5,7 +5,7 @@ import type React from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
-import { LEGAL_ENTITY } from "@repo/brand/legal";
+import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { cn } from "@repo/ui/utils";
 import { legalUrl } from "@/lib/legal";
 

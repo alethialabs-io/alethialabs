@@ -1,8 +1,8 @@
-# Marketing zone — off-Vercel mirror of apps/console/microfrontends.json.
+# Marketing zone — Caddy mirror of apps/console/marketing-zones.json.
 #
-# The hosted site (Vercel) stitches console + marketing via microfrontends.json. This
-# file is the equivalent for self-hosting the marketing app behind Caddy. The OSS build
-# ships NO marketing, so this is an OPT-IN template:
+# The hosted site and opt-in self-hosted marketing profile stitch console and
+# marketing behind Caddy. The OSS build ships no marketing by default, so this is
+# an opt-in template:
 #
 #   1. Run a `marketing` service (the apps/marketing image) in your compose stack.
 #   2. Copy this file next to the active Caddyfile as `marketing.caddy`.
@@ -23,7 +23,7 @@ handle @authed_root {
 
 # Marketing-owned root paths + the mkt-assets asset prefix. Must appear BEFORE the
 # catch-all `handle { reverse_proxy app:3000 }` in the Caddyfile.
-@marketing path / /home /pricing /enterprise /open-source /brand /contact /contact/* /security /terms /privacy /privacy/* /cookies /acceptable-use /legal/* /mkt-assets/* /robots.txt /sitemap.xml
+@marketing path / /home /pricing /enterprise /open-source /brand /contact /contact/* /security /terms /imprint /privacy /privacy/* /cookies /acceptable-use /legal/* /mkt-assets/* /robots.txt /sitemap.xml
 handle @marketing {
 	reverse_proxy marketing:3000
 }

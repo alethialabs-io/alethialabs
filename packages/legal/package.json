@@ -1,0 +1,23 @@
+{
+	"name": "@repo/legal",
+	"version": "0.0.0",
+	"private": true,
+	"exports": {
+		".": "./src/index.ts",
+		"./documents": "./src/documents.ts",
+		"./entity": "./src/entity.ts",
+		"./processing": "./src/processing.ts"
+	},
+	"scripts": {
+		"lint": "eslint . --max-warnings 0",
+		"check-types": "tsc --noEmit",
+		"test": "vitest run"
+	},
+	"devDependencies": {
+		"@repo/eslint-config": "workspace:*",
+		"@repo/typescript-config": "workspace:*",
+		"eslint": "^9.39.5",
+		"typescript": "5.9.3",
+		"vitest": "^2.1.9"
+	}
+}

@@ -116,8 +116,8 @@ func TestAllReady(t *testing.T) {
 }
 
 func TestNamespaceEvidenceLabelsEmptySections(t *testing.T) {
-	got := namespaceEvidence("argocd", "", "", "", "")
-	if strings.Count(got, "(nothing returned)") != 4 {
+	got := namespaceEvidence("argocd", "", "", "", "", "")
+	if strings.Count(got, "(nothing returned)") != 5 {
 		t.Fatalf("empty sections were dropped rather than labelled:\n%s", got)
 	}
 	if !strings.Contains(got, "argocd") {
@@ -144,12 +144,14 @@ func TestNamespacePostMortemIssuesItsReads(t *testing.T) {
 	}
 
 	got := NamespacePostMortem("argocd")
-	if len(commands) != 5 {
-		t.Fatalf("commands = %#v, want exactly five reads", commands)
+	if len(commands) != 7 {
+		t.Fatalf("commands = %#v, want exactly seven reads", commands)
 	}
 
-	namespaced := []string{"get pods -o wide", "get pods -o jsonpath=", "get events --sort-by=.lastTimestamp"}
-	clusterWide := []string{"get nodes -o jsonpath=", "get pods -A -o jsonpath="}
+	// Anchored on "-n argocd" so a kube-system read carrying the same verb cannot satisfy
+	// them by arriving first — the matcher, not the slice order, must decide.
+	namespaced := []string{"-n argocd get pods -o wide", "-n argocd get pods -o jsonpath=", "-n argocd get events --sort-by=.lastTimestamp"}
+	clusterWide := []string{"get nodes -o jsonpath=", "get pods -A -o jsonpath=", "-n kube-system get pods -o wide", "k8s-app=aws-node"}
 
 	find := func(want string) string {
 		for _, c := range commands {
@@ -237,5 +239,25 @@ func TestNamespacePostMortemRejectsAnInvalidNamespace(t *testing.T) {
 func TestPodStatesJSONPathIsSingleQuoteSafe(t *testing.T) {
 	if strings.Contains(podStatesJSONPath, "'") {
 		t.Fatal("podStatesJSONPath contains a single quote — it would break the shell quoting")
+	}
+}
+
+// The CNI tail is inlined into the runner log, which is itself captured into the proof bundle. An
+// unbounded tail would blow that up — #1854 records an azure "highlights" file that turned out to
+// be an entire 148 KB plan. Pin the cap and the tolerate-absent behaviour rather than trusting a
+// comment to hold.
+func TestCNILogCommandIsBoundedAndToleratesAbsentSelectors(t *testing.T) {
+	if !strings.Contains(cniLogCommand, "--tail=50") {
+		t.Error("the CNI log tail is unbounded — it lands in the runner log and the proof bundle")
+	}
+	if !strings.Contains(cniLogCommand, "|| true") {
+		t.Error("a cluster without one of these CNIs must not error out the whole capture")
+	}
+	// All five clouds this repo provisions must have a selector, or the capture is silently
+	// per-cloud and the gap is invisible from here.
+	for _, sel := range []string{"aws-node", "cilium", "calico-node", "azure-cni", "gke-"} {
+		if !strings.Contains(cniLogCommand, sel) {
+			t.Errorf("no CNI selector covers %q", sel)
+		}
 	}
 }

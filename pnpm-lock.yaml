@@ -328,6 +328,9 @@ importers:
       '@repo/email':
         specifier: workspace:*
         version: link:../../packages/email
+      '@repo/legal':
+        specifier: workspace:*
+        version: link:../../packages/legal
       '@repo/plan-catalog':
         specifier: workspace:*
         version: link:../../packages/plan-catalog
@@ -676,6 +679,9 @@ importers:
       '@repo/email':
         specifier: workspace:*
         version: link:../../packages/email
+      '@repo/legal':
+        specifier: workspace:*
+        version: link:../../packages/legal
       '@repo/plan-catalog':
         specifier: workspace:*
         version: link:../../packages/plan-catalog
@@ -903,6 +909,24 @@ importers:
       typescript-eslint:
         specifier: ^8.66.0
         version: 8.66.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
+
+  packages/legal:
+    devDependencies:
+      '@repo/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      eslint:
+        specifier: ^9.39.5
+        version: 9.39.5(jiti@2.7.0)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@25.0.8)(jsdom@29.1.1(@noble/hashes@2.3.0))(lightningcss@1.32.0)(terser@5.49.2)
 
   packages/plan-catalog:
     devDependencies:

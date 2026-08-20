@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -514,6 +515,104 @@ func TestEnableAddon(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]string{"error": "unknown add-on"})
 		}))
 		if err := client.EnableAddon(EnableAddonParams{Project: "p", AddonID: "nope"}); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+}
+
+func TestApplyDesign(t *testing.T) {
+	doc := json.RawMessage(`{"project":{"project_name":"shop"}}`)
+
+	t.Run("posts the document verbatim", func(t *testing.T) {
+		var body []byte
+		var query string
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assertAuth(t, r)
+			body, _ = io.ReadAll(r.Body)
+			query = r.URL.RawQuery
+			json.NewEncoder(w).Encode(map[string]any{"ok": true, "mode": "applied", "changes": []any{}})
+		}))
+		res, err := client.ApplyDesign(ApplyDesignParams{Project: "shop", Env: "dev", Document: doc})
+		if err != nil {
+			t.Fatalf("ApplyDesign: %v", err)
+		}
+		// Verbatim: the server validates the shape with the console form's own schema, so the CLI must
+		// not reshape or re-serialize it on the way through.
+		if strings.TrimSpace(string(body)) != string(doc) {
+			t.Errorf("document altered:\n got %s\nwant %s", body, doc)
+		}
+		if query != "env=dev" || res.Mode != "applied" {
+			t.Errorf("query %q mode %q", query, res.Mode)
+		}
+	})
+
+	t.Run("the mode flags become query params", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			params ApplyDesignParams
+			want   []string
+		}{
+			{"dry run with an env", ApplyDesignParams{Project: "p", Env: "dev", Document: doc, DryRun: true}, []string{"env=dev", "dry_run=1"}},
+			{"dry run with no env", ApplyDesignParams{Project: "p", Document: doc, DryRun: true}, []string{"dry_run=1"}},
+			{"stage with no env", ApplyDesignParams{Project: "p", Document: doc, Stage: true}, []string{"stage=1"}},
+			{"both", ApplyDesignParams{Project: "p", Env: "dev", Document: doc, DryRun: true, Stage: true}, []string{"env=dev", "dry_run=1", "stage=1"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				var query string
+				client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					query = r.URL.RawQuery
+					json.NewEncoder(w).Encode(map[string]any{"ok": true, "mode": "dry-run", "changes": []any{}})
+				}))
+				if _, err := client.ApplyDesign(tc.params); err != nil {
+					t.Fatalf("ApplyDesign: %v", err)
+				}
+				for _, want := range tc.want {
+					if !strings.Contains(query, want) {
+						t.Errorf("query %q missing %q", query, want)
+					}
+				}
+				// The separators must be well-formed however many params there are — this is where a
+				// hand-built query string usually goes wrong.
+				if strings.Contains(query, "??") || strings.Contains(query, "&&") {
+					t.Errorf("malformed query: %q", query)
+				}
+			})
+		}
+	})
+
+	t.Run("decodes the plan rows", func(t *testing.T) {
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]any{
+				"ok": true, "mode": "dry-run",
+				"changes": []any{
+					map[string]any{"kind": "databases", "name": "orders", "action": "UPDATE"},
+					map[string]any{"kind": "network", "name": nil, "action": "CREATE"},
+				},
+			})
+		}))
+		res, err := client.ApplyDesign(ApplyDesignParams{Project: "p", Document: doc, DryRun: true})
+		if err != nil {
+			t.Fatalf("ApplyDesign: %v", err)
+		}
+		if len(res.Changes) != 2 {
+			t.Fatalf("expected 2 changes, got %+v", res.Changes)
+		}
+		// A nil name must stay nil, not become "": a singleton component has no name, and printing an
+		// empty one as a name would read as a component called nothing.
+		if res.Changes[0].Name == nil || *res.Changes[0].Name != "orders" {
+			t.Errorf("named change: %+v", res.Changes[0])
+		}
+		if res.Changes[1].Name != nil {
+			t.Errorf("a singleton's name must decode as nil, got %v", *res.Changes[1].Name)
+		}
+	})
+
+	t.Run("surfaces a server error", func(t *testing.T) {
+		client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid design document at cluster.node_min_size"})
+		}))
+		if _, err := client.ApplyDesign(ApplyDesignParams{Project: "p", Document: doc}); err == nil {
 			t.Fatal("expected an error")
 		}
 	})

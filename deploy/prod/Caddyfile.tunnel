@@ -1,7 +1,7 @@
 # Ingress behind a Cloudflare Tunnel. TLS terminates at Cloudflare's edge and
 # cloudflared forwards over HTTP, so Caddy is a plain-:80 internal path router (no
 # ACME, no ALETHIA_DOMAIN). It stitches the one origin the same way
-# apps/console/microfrontends.json does on Vercel — keep the marketing path map in
+# apps/console/microfrontends.json does for the stitched self-host bundle — keep the marketing path map in
 # sync with that file and deploy/caddy/marketing.caddy.example.
 :80 {
 	encode zstd gzip
@@ -42,7 +42,7 @@
 	handle @authed_root {
 		reverse_proxy app:3000
 	}
-	@marketing path / /home /pricing /enterprise /open-source /brand /contact /contact/* /security /terms /privacy /privacy/* /cookies /acceptable-use /legal/* /mkt-assets/* /robots.txt /sitemap.xml
+	@marketing path / /home /pricing /enterprise /open-source /brand /contact /contact/* /security /terms /imprint /privacy /privacy/* /cookies /acceptable-use /legal/* /mkt-assets/* /robots.txt /sitemap.xml
 	handle @marketing {
 		reverse_proxy marketing:3000
 	}
