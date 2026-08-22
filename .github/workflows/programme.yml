@@ -43,15 +43,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: dev
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: test/e2e/go.mod
           cache: false
@@ -79,7 +79,7 @@ jobs:
         run: node scripts/programme-rollup.mjs
 
       - name: Open or update the refresh PR
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           base: dev
           branch: chore/programme-ledger-refresh

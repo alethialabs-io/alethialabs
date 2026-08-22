@@ -79,7 +79,7 @@ jobs:
       AI_EXECUTOR_MODEL: anthropic/claude-haiku-4-5
       AI_ADVISOR_MODEL_PLUS: anthropic/claude-haiku-4-5
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref || 'dev' }}
       - uses: pnpm/action-setup@v6

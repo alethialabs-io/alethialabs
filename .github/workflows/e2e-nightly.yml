@@ -238,7 +238,7 @@ jobs:
       # a green skip. (The gate below decides WHETHER to run; this makes the run honest.)
       ALETHIA_E2E_T2_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       # ── Proof-scrub self-test (BYOC A0.4). Runs UNCONDITIONALLY (no cloud, no secret) so
       #    the proof-bundle secret scrub is exercised on every nightly/dispatch: it seeds a
@@ -1533,7 +1533,7 @@ jobs:
       # failure rather than an inferred skip.
       actions: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - name: Download all per-provider proof artifacts
         uses: actions/download-artifact@v8
         continue-on-error: true
