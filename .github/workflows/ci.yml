@@ -43,7 +43,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       runner: ${{ steps.filter.outputs.runner }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: filter
@@ -108,7 +108,7 @@ jobs:
     name: TypeScript (lint · types · test · docs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -185,7 +185,7 @@ jobs:
       OPENFGA_TEST_API_URL: http://localhost:8082
       ALETHIA_PDP_PARITY_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -263,7 +263,7 @@ jobs:
       # The Playwright webServer boots `next start` and tees stdout here; the OTP helper reads it.
       DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -369,7 +369,7 @@ jobs:
       # off by default and only the literal "1" engages it).
       ALETHIA_AI_MOCK: "1"
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -435,7 +435,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -473,7 +473,7 @@ jobs:
     name: Authz / open-core guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -737,7 +737,7 @@ jobs:
       matrix:
         module: [apps/cli, apps/runner, packages/core]
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
@@ -869,7 +869,7 @@ jobs:
       matrix:
         module: [apps/cli, apps/runner, packages/core, test/e2e]
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
@@ -931,7 +931,7 @@ jobs:
     if: needs.detect-changes.outputs.runner == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - name: Build runner-base for linux/amd64
         uses: docker/build-push-action@v7
@@ -991,7 +991,7 @@ jobs:
       # In the merge queue a missing prerequisite is a HARD FAIL, never a green skip.
       ALETHIA_E2E_T1_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -1045,7 +1045,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
@@ -1097,7 +1097,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -1120,7 +1120,7 @@ jobs:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # gitleaks-action@v2 requires a paid license for ORG-owned repos, so we run the
@@ -1158,7 +1158,7 @@ jobs:
     # assert what the resolver emits rather than what the chart accepts, and neither parity guard
     # measures add-on values. It shipped, and a real cluster found it.
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -1177,7 +1177,7 @@ jobs:
     # is gated per-step on the `docs` filter; the final step is the explicit no-op pass.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         if: needs.detect-changes.outputs.docs == 'true'
       - uses: actions/setup-node@v7
         if: needs.detect-changes.outputs.docs == 'true'

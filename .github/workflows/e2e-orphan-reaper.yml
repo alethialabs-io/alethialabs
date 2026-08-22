@@ -125,7 +125,7 @@ jobs:
       # OIDC handle, which is also why it is the one cloud here with no federated login step.
       HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       # Same gate as the nightly, and for the same reason: a cloud whose identity a maintainer has
       # not wired must skip CLEANLY (green, loud) rather than fail. It also cannot have orphans —
