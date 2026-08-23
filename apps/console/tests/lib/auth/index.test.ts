@@ -279,6 +279,7 @@ describe("provider-absent branch (re-imported with empty providers)", () => {
 	// directions, because "it didn't crash" is not evidence the plugin is there.
 	it("registers mcp + cimd when baseURL yields an absolute resource", async () => {
 		vi.resetModules();
+		const cfgMod = await import("@/lib/config/auth");
 		vi.mocked(cfgMod.getAuthConfig).mockReturnValue({
 			secret: "s",
 			baseURL: "https://app.test",
@@ -300,6 +301,7 @@ describe("provider-absent branch (re-imported with empty providers)", () => {
 
 	it("drops mcp rather than crashing auth when baseURL cannot form an absolute URL", async () => {
 		vi.resetModules();
+		const cfgMod = await import("@/lib/config/auth");
 		vi.mocked(cfgMod.getAuthConfig).mockReturnValue({
 			secret: "s",
 			baseURL: "/relative-only",
