@@ -167,6 +167,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.62.1",
     "@posthog/nextjs-config": "^1.9.70",
     "@stryker-mutator/core": "^9.6.1",
