@@ -14,6 +14,10 @@ const consoleLog = process.env.DEV_CONSOLE_LOG ?? "/tmp/alethia-dev-console.log"
 
 export default defineConfig({
 	testDir: "./e2e",
+	// The QA suite's persona factory. Playwright has no per-project globalSetup, so this runs for
+	// every invocation — and returns immediately unless ALETHIA_QA_E2E is set. That guard is what
+	// keeps the merge-gating `hero` and `elench-ai` runs completely unaffected by it.
+	globalSetup: "./e2e/global-setup.ts",
 	fullyParallel: true,
 	forbidOnly: isCI,
 	retries: isCI ? 2 : 0,
@@ -82,11 +86,26 @@ export default defineConfig({
 			use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
 		},
 
+		// The 307-test QA suite (e2e/flows). NOT merge-gating and deliberately not wired into any
+		// required check — it was written against a July 2026 console and has never been run against
+		// the current UI, so its pass rate is unknown. It lands addressable (`--project=qa`) rather
+		// than lost on a branch; see apps/console/docs/qa/README.md and #2417 for the triage.
+		//
+		// It needs ALETHIA_QA_E2E=1 so global-setup builds the personas it depends on.
+		{
+			name: "qa",
+			testMatch: /flows\/.*\.spec\.ts/,
+			use: { ...devices["Desktop Chrome"] },
+		},
+
 		// Everything else (the broader smoke specs) self-signs-up per test via the auth fixture, so
 		// no shared storageState here. Kept separate so `--project=hero` stays clean + fast in CI.
 		{
 			name: "chromium",
 			testIgnore: [
+				// The QA suite has its own project; without this it would be swallowed here too,
+				// because this project is a denylist and `testDir` is the whole e2e tree.
+				/flows\/.*\.spec\.ts/,
 				/fixtures\/auth\.setup\.ts/,
 				/hero-happy-path\.spec\.ts/,
 				/elench-ai\.spec\.ts/,
