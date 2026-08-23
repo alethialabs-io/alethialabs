@@ -31,6 +31,23 @@ import (
 
 var alethiaE2EVar = regexp.MustCompile(`ALETHIA_E2E_[A-Z0-9_]+`)
 
+// stripLineComments removes `#`-to-end-of-line comments from YAML/shell source, so a variable merely
+// DISCUSSED in prose cannot satisfy the reachability guard — only one that is actually wired.
+//
+// It is deliberately naive about `#` inside quotes: over-stripping can only ever make the guard
+// STRICTER (a real setter would have to be restated outside a string), and strictness is the safe
+// direction for a guard whose whole job is to refuse a claim. Under-stripping is the failure that
+// matters, and it is the one this closes.
+func stripLineComments(src string) string {
+	lines := strings.Split(src, "\n")
+	for i, ln := range lines {
+		if idx := strings.Index(ln, "#"); idx >= 0 {
+			lines[i] = ln[:idx]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // nightlyExemptEnv are the ALETHIA_E2E_* knobs the nightly is NOT expected to pass, each with the
 // reason it is exempt. Anything else the harness reads must be referenced by e2e-nightly.yml.
 //
@@ -71,13 +88,35 @@ func TestScenarioEnablesReachTheNightly(t *testing.T) {
 	}
 	dir := filepath.Dir(thisFile)
 
-	wf, err := os.ReadFile(filepath.Join(dir, "..", "..", ".github", "workflows", "e2e-nightly.yml"))
-	if err != nil {
-		t.Fatalf("read e2e-nightly.yml: %v", err)
+	// The SETTERS. A var counts as reachable if the workflow sets it, or if the dimension fidelity
+	// table does — since #2356 the workflow delegates the per-dimension env to
+	// scripts/e2e/resolve-dimension.sh (`--fidelity`) and appends its output to $GITHUB_ENV, so the
+	// table is a genuine setter and scanning only the workflow would report a wired var as dead.
+	setters := []string{
+		filepath.Join(dir, "..", "..", ".github", "workflows", "e2e-nightly.yml"),
+		filepath.Join(dir, "..", "..", "scripts", "e2e", "resolve-dimension.sh"),
 	}
 	inWorkflow := map[string]bool{}
-	for _, v := range alethiaE2EVar.FindAllString(string(wf), -1) {
-		inWorkflow[v] = true
+	for _, p := range setters {
+		src, rerr := os.ReadFile(p)
+		if rerr != nil {
+			t.Fatalf("read %s: %v", filepath.Base(p), rerr)
+		}
+		// COMMENTS DO NOT COUNT. This used to match the raw file, so a var merely NAMED in a comment
+		// satisfied the guard — and #2356 moved the real `ALETHIA_E2E_SOAK` wiring out of the
+		// workflow into the fidelity table while leaving a comment behind explaining the move. The
+		// guard stayed green for the wrong reason: prose, not wiring. A guard a comment can satisfy
+		// is a guard that has stopped asking its question.
+		//
+		// Scope, stated honestly: this asks "is the var wired ANYWHERE a setter could set it", not
+		// "does every dimension emit the right value". The second question belongs to
+		// `resolve-dimension.sh --self-test`, which asserts the table's per-dimension output directly
+		// (delete the floor's `ALETHIA_E2E_SOAK=off` and five of its checks fail). Two guards, two
+		// questions — this one would still pass on a var named only in that script's own test
+		// assertions, and that is acceptable precisely because the other guard covers the emit.
+		for _, v := range alethiaE2EVar.FindAllString(stripLineComments(string(src)), -1) {
+			inWorkflow[v] = true
+		}
 	}
 
 	entries, err := os.ReadDir(dir)

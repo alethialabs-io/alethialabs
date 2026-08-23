@@ -310,6 +310,7 @@ Every number above is derived from these, and from nothing else:
 - `test/e2e/generated/programme.json`
 - `demos/proofs/provisioning-e2e-log.md`
 - `.github/workflows/e2e-nightly.yml`
+- `scripts/e2e/resolve-dimension.sh`
 - `apps/console/lib/cloud-providers/unsupported-kinds.ts`
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
