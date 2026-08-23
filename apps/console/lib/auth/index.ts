@@ -128,35 +128,58 @@ const plugins: BetterAuthOptions["plugins"] = [
 	// exposes /jwks for resource servers to verify them. Without it mcp() has nothing
 	// to sign with.
 	jwt(),
-	// OAuth 2.1 authorization server for the MCP endpoint (B7): lets remote MCP
-	// clients (Claude / claude.ai connectors) obtain an access token that the
-	// /api/mcp route resolves into a PDP-scoped actor. No new authority — the
-	// token's user drives getActiveScope() like any other caller.
-	//
-	// 1.7 moved this plugin into @better-auth/mcp, flattened the old `oidcConfig`
-	// nesting, and made `resource` mandatory: tokens are now audience-bound to it
-	// (RFC 8707) and the RFC 9728 protected-resource metadata is published for it.
-	// Its OAuth endpoints also moved from /mcp/* to /oauth2/*.
-	//
-	// mcp() IS the OAuth provider — never also register oauthProvider() here.
-	mcp({
-		loginPage: "/login",
-		// Shown when a client requests prompt=consent (e.g. a re-auth/scope grant);
-		// clients that omit it are issued a code directly (documented MVP posture).
-		consentPage: "/auth/oauth/consent",
-		resource: `${cfg.baseURL}/api/mcp`,
-	}),
-	// Client ID Metadata Documents. 1.7 stopped allowing unauthenticated Dynamic
-	// Client Registration, which is how the connectors used to register themselves —
-	// the replacement is CIMD, and discovery only advertises
-	// `client_id_metadata_document_supported` when this plugin is loaded. Dropping it
-	// without pre-registering clients would leave remote MCP clients no way to
-	// register at all, so this is not optional in practice for us.
-	cimd({
-		fetchClientMetadataResource,
-		metadataProfile: "mcp-2026-07-28",
-	}),
 ];
+
+/**
+ * The canonical MCP resource identifier, or null when this deployment cannot form one.
+ *
+ * 1.7 makes `resource` mandatory and validates it at plugin construction: it must be an absolute
+ * URL with no query, fragment or credentials (http only on loopback). That validation runs while
+ * `betterAuth()` is being built, so a malformed baseURL would throw at MODULE LOAD and take the
+ * whole auth surface down — sign-in included — over a feature most deployments never touch.
+ *
+ * So it is computed defensively and MCP is registered only when it succeeds, the same way the
+ * social providers above are registered only when configured. A self-host with a missing or
+ * relative NEXT_PUBLIC_APP_URL loses the MCP connector and keeps its login page.
+ */
+function mcpResource(): string | null {
+	if (!cfg.baseURL) return null;
+	try {
+		const url = new URL("/api/mcp", cfg.baseURL);
+		if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+		return url.toString();
+	} catch {
+		return null;
+	}
+}
+
+// OAuth 2.1 authorization server for the MCP endpoint (B7): lets remote MCP clients (Claude /
+// claude.ai connectors) obtain an access token that the /api/mcp route resolves into a PDP-scoped
+// actor. No new authority — the token's user drives getActiveScope() like any other caller.
+//
+// 1.7 moved this plugin into @better-auth/mcp, flattened the old `oidcConfig` nesting, and made
+// `resource` mandatory: tokens are audience-bound to it (RFC 8707) and the RFC 9728
+// protected-resource metadata is published for it. Its endpoints moved from /mcp/* to /oauth2/*.
+const resource = mcpResource();
+if (resource !== null) {
+	// mcp() IS the OAuth provider — never also register oauthProvider() here.
+	plugins.push(
+		mcp({
+			loginPage: "/login",
+			// Shown when a client requests prompt=consent (e.g. a re-auth/scope grant);
+			// clients that omit it are issued a code directly (documented MVP posture).
+			consentPage: "/auth/oauth/consent",
+			resource,
+		}),
+		// Client ID Metadata Documents. 1.7 stopped allowing unauthenticated Dynamic
+		// Client Registration, which is how the connectors used to register themselves —
+		// the replacement is CIMD, and discovery only advertises
+		// `client_id_metadata_document_supported` when this plugin is loaded. Dropping it
+		// without pre-registering clients would leave remote MCP clients no way to
+		// register at all, so this is not optional in practice for us.
+		cimd({ fetchClientMetadataResource, metadataProfile: "mcp-2026-07-28" }),
+	);
+}
 if (genericOAuthConfigs.length > 0) {
 	plugins.push(genericOAuth({ config: genericOAuthConfigs }));
 }
