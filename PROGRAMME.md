@@ -278,8 +278,6 @@ The ledger row itself is not wrong and is not rewritten (it is append-only, and 
 ### Blocked on a human
 
 - **`hetzner` cannot provision** — `HCLOUD_TOKEN` is not set, so the leg green-skips.
-- #2358 — fix(drift): a clean Azure apply reports 9 of 32 resources drifted — a day-zero false alarm on a CC7.1 control
-- #2332 — ceiling(hetzner): Object Storage keys have no minting API — the one manual credential in a keyless product
 - #2283 — probe(alibaba-cr): does an AUTO scan rule fire with no VPC endpoint? (#2265 shipped the wiring, not the proof)
 - #2260 — e2e nightly: alibaba RED (floor)
 - #2259 — e2e nightly: azure RED (floor)
@@ -293,7 +291,7 @@ The ledger row itself is not wrong and is not rewritten (it is append-only, and 
 - #1450 — test(e2e): azure-mysql keyless real-apply on Azure (main-gated)
 - #1268 — test(e2e): cross-account keyless cloud-SM in-cluster read — AWS/GCP/Azure/Alibaba (main-gated)
 - #1065 — feat(e2e): P2-C all-19-add-ons Healthy+Synced on GCP + Azure
-- #845 — test(fabric): W-h prove enterprise-demo on all 4 ItGix clouds (acceptance gate)
+- #845 — test(fabric): W-h prove enterprise-demo on all 4 partner clouds (acceptance gate)
 
 ### Debt ratchets
 
@@ -315,7 +313,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-08-17T09:12:03Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-08-23T14:41:46Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 

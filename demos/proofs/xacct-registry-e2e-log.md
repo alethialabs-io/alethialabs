@@ -15,7 +15,7 @@ timeline. See the parity board: [`docs/testing/xacct-registry-parity.md`](../../
 | UTC date | git sha | cloud | stage | verdict | detail | bundle | issue |
 |----------|---------|-------|-------|---------|--------|--------|-------|
 | 2026-07-22 | 8ae396dc | aws (ecr-xacct) | mint | **PASS** | `sts:AssumeRole` alethia(270587882865)→tovr(364205735303) role, `GetAuthorizationToken`, `crane` pulled the image | manual (pre-helper) | — |
-| 2026-07-22 | 8ae396dc | gcp (gar-xacct) | mint | **PASS** | ADC OAuth token, cross-project GAR (`itgix-adp`), `crane` pulled | manual (pre-helper) | — |
+| 2026-07-22 | 8ae396dc | gcp (gar-xacct) | mint | **PASS** | ADC OAuth token, cross-project GAR (a client-owned project), `crane` pulled | manual (pre-helper) | — |
 | 2026-07-22 | 8ae396dc | azure (acr-xacct) | mint | **PASS** | AAD (`management.azure.com`) → `/oauth2/exchange` → refresh token, `crane` pulled — **confirms `acrAADScope`** | manual (pre-helper) | — |
 
 <!-- registry-e2e.sh appends new rows below this line -->
