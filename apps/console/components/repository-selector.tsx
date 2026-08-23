@@ -220,17 +220,14 @@ export function RepositorySelector({
       // Better Auth account linking — native GitHub via linkSocial (repo
       // scope); self-hosted GitLab + Bitbucket via the genericOAuth link
       // endpoint (scopes are server-configured). Redirects to the provider.
-      const { error } =
-        providerName === "github"
-          ? await authClient.linkSocial({
-              provider: providerName,
-              scopes: ["repo"],
-              callbackURL,
-            })
-          : await authClient.oauth2.link({
-              providerId: providerName,
-              callbackURL,
-            });
+      // `oauth2.link` was deleted in 1.7; generic providers link through linkSocial
+      // like any other. Only github needs an explicit scope — gitlab/bitbucket scopes
+      // stay server-configured.
+      const { error } = await authClient.linkSocial({
+        provider: providerName,
+        ...(providerName === "github" ? { scopes: ["repo"] } : {}),
+        callbackURL,
+      });
 
       if (error) throw new Error(error.message);
     } catch (err) {

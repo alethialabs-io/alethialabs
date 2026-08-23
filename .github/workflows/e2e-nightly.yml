@@ -39,10 +39,30 @@ on:
     # 03:17 UTC nightly (off the hour to avoid the cron stampede) — the cheap GREEN-FLOOR smoke
     # (base provision + cluster_ready + ArgoCD Healthy, + A0.6 repos when wired).
     - cron: "17 3 * * *"
-    # 05:17 UTC Sunday — the OPT-IN FULL-BAR run (P2-F, #1068): the same matrix but with
-    # ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (11 kinds + 18 add-ons — heavy/costly,
-    # so weekly not nightly). Resolved from this exact cron string in "Resolve full-bar dimension".
-    - cron: "17 5 * * 0"
+    #
+    # ── THERE IS DELIBERATELY NO FULL-BAR CRON. ──
+    #
+    # The full bar (P2-F, #1068: ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 — 11 kinds +
+    # 18 add-ons) used to run weekly on `17 5 * * 0`. It was REMOVED, because a schedule fired it
+    # across the whole matrix while the pre-apply cost ceiling below is wired for **aws only**: on
+    # gcp, azure, alibaba and hetzner a full bar provisioned the entire 11-kind surface with no
+    # spend gate whatsoever. It also bought a standing monthly resource on alibaba every week —
+    # `infra/templates/project/alibaba/modules/cr` creates `alicloud_cr_ee_instance` with
+    # `payment_type = "Subscription"`, and the sweep that even DETECTS a survivor only landed on
+    # 2026-08-11 (#2340), so earlier Sunday runs could leak one silently. Two weekly firings
+    # (2026-08-09, 2026-08-16) produced #2382/#2383/#2384 and no committed proof row.
+    #
+    # Run a full bar by DISPATCH instead — one cloud at a time, watched (`full_bar: true` below).
+    #
+    # RE-ADDING IT is a per-cloud decision, not a global one, and it is gated: that cloud needs a
+    # wired cost ceiling and a committed full-bar PASS row in demos/proofs/provisioning-e2e-log.md
+    # first. `scripts/check-e2e-spend-guard.mjs` enforces the ceiling half of that — a cron that
+    # resolves to `full` fails CI unless every provider in the matrix is priced or explicitly
+    # exempted, so this cannot be reintroduced unguarded by editing one line.
+    #
+    # `scripts/e2e/resolve-dimension.sh` still MAPS `17 5 * * 0` to `full` on purpose: re-adding
+    # the cron must work, and a cron whose dimension silently resolved to `floor` would run the
+    # cheap shape while the ledger recorded a full bar.
   workflow_dispatch:
     inputs:
       provider:
@@ -60,7 +80,7 @@ on:
         type: string
         default: ""
       full_bar:
-        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly — uses the raised cost ceiling. Also auto-on for the weekly Sunday cron."
+        description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws; gcp/azure/alibaba/hetzner are unpriced, so dispatch those one at a time and watch them."
         type: boolean
         default: false
 
@@ -79,6 +99,30 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    # ── Federating from `dev` on a DISPATCH (the cadence unblock). ──
+    #
+    # The scheduled nightly federates as `repo:<repo>:ref:refs/heads/main`, because the crons only fire
+    # on the default branch. That is correct for a timer and stays untouched: this expression is empty
+    # on `schedule`, so the SCHEDULED spend surface does not widen at all.
+    #
+    # A DISPATCH is different. Every phase of the MVP programme is a loop of dispatch → read → fix, and
+    # with a main-only subject each iteration first needs a promotion to `main` — which also ships the
+    # product, because `main` triggers release-please, the console/fleet deploys and the CLI release. So
+    # a dispatch declares the `e2e-dev` environment, whose OIDC subject is
+    # `repo:<repo>:environment:e2e-dev`, and each cloud's trust admits that subject alongside the ref.
+    #
+    # WHAT ACTUALLY RESTRICTS IT TO `dev` is the environment's own deployment-branch policy (a single
+    # custom policy, `dev`), enforced GitHub-side — not this line, and not the tofu trust, which only
+    # says "this environment". That is deliberate: the branch list becomes an auditable control that
+    # can be tightened without a `tofu apply`.
+    #
+    # THE COMPENSATING CONTROL, and the reason this is safe at all: a ruleset on `dev` requiring
+    # CODEOWNERS review for `.github/workflows/**` and `infra/**`. Widening to `dev` is only dangerous
+    # because Mergify auto-lands PRs there and CODEOWNERS is advisory off `main`/`staging`; two globs
+    # remove exactly that path — a PR editing the file that HOLDS the credential — and leave every other
+    # lane autonomous. Required *reviewers* on the environment are deliberately NOT set: that would put
+    # a human in every run, which is the thing being removed.
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'e2e-dev' || '' }}
     # Hard cost cap: even if every finer timeout failed, the job cannot bill past this.
     # Raised 60→90 to fit the opt-in day-2 SOAK window (BYOC A0.3): the base
     # deploy→ArgoCD→teardown chain still finishes well inside the old bound (a tiny Talos
@@ -194,7 +238,7 @@ jobs:
       # a green skip. (The gate below decides WHETHER to run; this makes the run honest.)
       ALETHIA_E2E_T2_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       # ── Proof-scrub self-test (BYOC A0.4). Runs UNCONDITIONALLY (no cloud, no secret) so
       #    the proof-bundle secret scrub is exercised on every nightly/dispatch: it seeds a
@@ -296,8 +340,9 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "::notice::T2 cluster for this run: $PROJECT-$ENVNAME ($PROVIDER, region $REGION)"
 
-      # ── Resolve the FULL-BAR dimension (P2-F, #1068). Off by default (the nightly stays the cheap
-      #    green-floor smoke); ON for the weekly Sunday cron OR a workflow_dispatch with full_bar=true.
+      # ── Resolve the FULL-BAR dimension (P2-F, #1068). Off by default, and no schedule turns it on
+      #    any more (see the `on.schedule` block) — a workflow_dispatch with full_bar=true is the only
+      #    live path. The cron branch in resolve-dimension.sh is kept for the day one is re-added.
       #    When on, export ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (the T2 harness reads
       #    these from the process env — $GITHUB_ENV carries them into the go-test step) so the run
       #    proves all 11 resource kinds land in tofu state AND all 18 marketplace add-ons converge.
@@ -315,6 +360,11 @@ jobs:
           EVENT: ${{ github.event_name }}
           DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
           SCHEDULE: ${{ github.event.schedule }}
+          # The soak window a maintainer chose, forwarded so fidelity_env can honour it on the
+          # dimensions the soak belongs to. `vars.` is not automatically in a step's environment, so
+          # WITHOUT this line the table would silently fall back to 10m and a widened window set on
+          # the repo would be quietly ignored — a regression hidden inside a fix.
+          E2E_SOAK: ${{ vars.E2E_SOAK }}
         run: |
           # ONE deriver, every consumer (#1755). This step, the rollup's issue titles and the parity
           # ledger all read the answer from scripts/e2e/resolve-dimension.sh — which owns the
@@ -322,20 +372,28 @@ jobs:
           dim="$(bash scripts/e2e/resolve-dimension.sh)"
           full="false"
           if [ "$dim" = "full" ]; then full="true"; fi
+          {
+            echo "E2E_FULL_BAR=$full"
+            echo "E2E_DIMENSION=$dim"
+          } >> "$GITHUB_ENV"
+
+          # The dimension's FIDELITY comes from the same deriver, never from an inline list here
+          # (#2356). This step used to emit MAX_CONFIG/ALL_ADDONS itself while the go-test step's
+          # `env:` separately forced `ALETHIA_E2E_SOAK: vars.E2E_SOAK || '10m'` — so EVERY run,
+          # including the floor, ran the A0.3 day-2 soak and its FATAL drift check, which the floor's
+          # own definition ("provision + cluster_ready + ArgoCD converge") does not mention. Azure run
+          # 31486339552 applied cleanly, reached Ready nodes, verified a receipt sealed to the plan
+          # hash and tore down — and was filed a floor FAIL on `in_sync=false drifted=9` alone.
+          #
+          # A step-level `env:` key WINS over $GITHUB_ENV, which is why the soak line had to be
+          # DELETED from the go-test step rather than merely changed here.
+          bash scripts/e2e/resolve-dimension.sh --fidelity "$dim" >> "$GITHUB_ENV"
+          echo "::notice::dimension=$dim fidelity: $(bash scripts/e2e/resolve-dimension.sh --fidelity "$dim" | tr '\n' ' ')"
+
           if [ "$full" = "true" ]; then
-            {
-              echo "E2E_FULL_BAR=true"
-              echo "E2E_DIMENSION=full"
-              echo "ALETHIA_E2E_MAX_CONFIG=1"
-              echo "ALETHIA_E2E_ALL_ADDONS=1"
-            } >> "$GITHUB_ENV"
-            echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (19) on this run (raised cost ceiling)."
+            echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (18) + the day-2 soak on this run (raised cost ceiling on aws; UNPRICED elsewhere)."
           else
-            {
-              echo "E2E_FULL_BAR=false"
-              echo "E2E_DIMENSION=floor"
-            } >> "$GITHUB_ENV"
-            echo "::notice::green-floor dimension (base provision + ArgoCD Healthy; + A0.6 repos when wired)."
+            echo "::notice::green-floor dimension — provision + cluster_ready + ArgoCD Healthy+Synced (+ A0.6 repos when wired). NO day-2 soak: that is the day2/full dimension (#2356)."
           fi
 
       # ── Cheapest-shape override (BYOC F4). The managed-cloud templates default to LARGE nodes
@@ -893,13 +951,18 @@ jobs:
           # for clarity). resolveT2Region reads ALETHIA_E2E_REGION for every provider.
           ALETHIA_E2E_REGION: ${{ env.E2E_REGION }}
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
-          # ── Day-2 SOAK window (BYOC A0.3). Opt-in: default 10m on the real-apply runs,
-          #    overridable via vars.E2E_SOAK (e.g. a longer window, or a short one to trim
-          #    cost). Unset var ⇒ 10m. Runs AFTER the readiness+ArgoCD asserts and BEFORE the
-          #    guaranteed teardown: a liveness loop, a real DETECT_DRIFT → honest posture, a
-          #    1Gi PVC → Bound → cloud-side sweep-tag hard-fail, and an add-on health re-read.
-          #    Its machine-readable summary is written for the A0.4 proof/verdict capture. ──
-          ALETHIA_E2E_SOAK: ${{ vars.E2E_SOAK || '10m' }}
+          # ── Day-2 SOAK window (BYOC A0.3). The soak's WINDOW is deliberately NOT set here.
+          #    It is exported by the "Resolve full-bar dimension" step from
+          #    scripts/e2e/resolve-dimension.sh's fidelity table, because the soak belongs to the
+          #    day2/full dimensions and not to the floor — its drift check is FATAL, and a floor run
+          #    that satisfied every documented floor requirement was filed a floor FAIL on it (#2356).
+          #    A step-level `env:` key WINS over $GITHUB_ENV, so setting the window here at all would
+          #    silently re-break that. vars.E2E_SOAK is still honoured, via the table, for the
+          #    dimensions whose assertion the soak actually is.
+          #    The soak runs AFTER the readiness+ArgoCD asserts and BEFORE the guaranteed teardown:
+          #    a liveness loop, a real DETECT_DRIFT → honest posture, a 1Gi PVC → Bound → cloud-side
+          #    sweep-tag hard-fail, and an add-on health re-read. Its machine-readable summary is
+          #    written for the A0.4 proof/verdict capture. ──
           ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
           # ── ArgoCD-WITH-REPOS + BYO Helm proof (BYOC A0.6). Opt-in, ON TOP of the base T2
           #    proof: only activates when a maintainer sets the repo VARS + the git-token SECRET.
@@ -1488,7 +1551,7 @@ jobs:
       # failure rather than an inferred skip.
       actions: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - name: Download all per-provider proof artifacts
         uses: actions/download-artifact@v8
         continue-on-error: true

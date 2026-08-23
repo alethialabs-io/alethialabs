@@ -1,8 +1,8 @@
 # The project that owns the secrets (B) — where this stack is applied.
 target_project_id = "alethia-e2e-secrets"
 # The project the e2e cluster runs in (A). Must differ, or the proof crosses no boundary.
-cluster_project_id = "itgix-adp"
+cluster_project_id = "alethia-e2e-project"
 # The STANDING external-secrets GSA the project template adopts. Must outlive the cluster.
-cluster_external_secrets_sa = "alethia-e2e-eso@itgix-adp.iam.gserviceaccount.com"
+cluster_external_secrets_sa = "alethia-e2e-eso@alethia-e2e-project.iam.gserviceaccount.com"
 # NEVER commit the canary value. Supply it as TF_VAR_canary_value at apply time.
 # canary_value = "..."

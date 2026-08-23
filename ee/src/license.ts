@@ -54,11 +54,16 @@ export interface InstanceLicense {
 	reason?: string;
 }
 
+// jose 6 removed the `KeyLike` alias (keys are Web Crypto `CryptoKey`s now). Deriving the type
+// from the importer rather than naming a jose export means this cannot break again the next time
+// the library renames its key type — and it is always exactly what jwtVerify will accept here.
+type VerificationKey = Awaited<ReturnType<typeof jose.importSPKI>>;
+
 /**
  * Imports the configured verification public key. Accepts either a base64-encoded SPKI PEM (the baked
  * convention, mirroring ALETHIA_OIDC_SIGNING_KEY) or a raw PEM string, so an operator can paste either.
  */
-async function importVerificationKey(raw: string): Promise<jose.KeyLike> {
+async function importVerificationKey(raw: string): Promise<VerificationKey> {
 	const trimmed = raw.trim();
 	const pem = trimmed.includes("-----BEGIN")
 		? trimmed
@@ -81,7 +86,7 @@ function readEntitlementsClaim(value: unknown): Entitlements | undefined {
  */
 export async function verifyLicense(
 	token: string,
-	publicKey: jose.KeyLike,
+	publicKey: VerificationKey,
 ): Promise<License> {
 	const { payload } = await jose.jwtVerify(token, publicKey, {
 		algorithms: [ALG],

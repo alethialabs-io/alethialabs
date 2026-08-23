@@ -38,6 +38,31 @@ variable "e2e_github_ref" {
   }
 }
 
+variable "e2e_github_environment" {
+  description = <<-EOT
+    Optional GitHub Actions environment to ADDITIONALLY trust. Adds an exact
+    `assertion.sub == repo:<repo>:environment:<this>` disjunct to the provider's attribute condition,
+    alongside — never instead of — the ref equality. Empty = ref-only (tightest), and the rendered
+    condition is then byte-identical to the previous ref-only form.
+
+    Set this ONLY when the environment is branch-restricted, because the environment's own
+    deployment-branch policy is what actually pins which branch may federate; this trust says only
+    "that environment". Keying on the SUBJECT rather than adding a second ref is deliberate: a second
+    ref would trust every workflow running on that branch, where the subject narrows it to a job that
+    declared the environment.
+
+    Used for `e2e-dev` (policy: `dev` only), so a workflow_dispatch can drive a real apply from `dev`
+    without a promotion to `main`. The scheduled nightly is unaffected — it federates by ref.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.e2e_github_environment == "" || !strcontains(var.e2e_github_environment, "*")
+    error_message = "e2e_github_environment must be a concrete environment name with no '*' wildcard."
+  }
+}
+
 # ── WIF identifiers ──────────────────────────────────────────────────────────
 variable "pool_id" {
   description = "Workload Identity Pool ID for the e2e GitHub federation."

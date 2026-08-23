@@ -476,7 +476,7 @@ sweep_network() {
 #    The fix is to scope on the LABEL the resources actually carry, exactly as the compute half
 #    (list_gke_clusters) already does, NOT to widen the name filter. Widening it is the more
 #    dangerous direction by a distance: these run against a project shared with real work
-#    (itgix-adp), and a broad name match there deletes someone else's database. The label value is
+#    (a client-owned project), and a broad name match there deletes someone else's database. The label value is
 #    unique per run and guard-validated at the top of this file; a name prefix is neither.
 #
 #    Proven present, by reading the template rather than by assumption — every root module is

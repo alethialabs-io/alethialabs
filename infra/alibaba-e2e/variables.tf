@@ -15,6 +15,29 @@ variable "e2e_github_branch" {
   default     = "main"
 }
 
+variable "e2e_github_environment" {
+  description = <<-EOT
+    Optional GitHub Actions environment to ADDITIONALLY trust. Adds a second EXACT subject,
+    `repo:<repo>:environment:<this>`, to the trust's `oidc:sub` StringEquals value list — alongside,
+    never instead of, the ref subject the scheduled nightly federates as. Empty = ref-only (tightest),
+    and the trust document is then byte-identical to the single-subject form.
+
+    Set this ONLY when the environment is branch-restricted: this trust says "that environment", and
+    what pins the BRANCH is the environment's own deployment-branch policy. An unrestricted environment
+    would therefore let any branch assume the role.
+
+    Used for `e2e-dev` (policy: `dev` only), so a workflow_dispatch can drive a real apply from `dev`
+    without a promotion to `main`.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.e2e_github_environment == "" || !strcontains(var.e2e_github_environment, "*")
+    error_message = "e2e_github_environment must be a concrete environment name with no '*' wildcard."
+  }
+}
+
 variable "github_issuer_url" {
   description = "GitHub Actions OIDC issuer. The RAM OIDC provider trusts this issuer and the trust `oidc:iss` pins it. Do not change unless GitHub changes its issuer."
   type        = string

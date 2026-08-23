@@ -136,6 +136,37 @@ describe("POST /api/auth/cli/generate", () => {
 		});
 	});
 
+	// Better Auth 1.7 changed what `accountId` MEANS: it is the local account row id now, where
+	// 1.6 matched the provider-side identifier. Passing the wrong one does not error at the
+	// boundary — it matches nothing, and the CLI silently ships without a git token. Pin the
+	// selector so that swap cannot happen unnoticed.
+	it("selects the git account by its LOCAL account.id, not by providerId", async () => {
+		vi.mocked(auth.api.listUserAccounts).mockResolvedValue([
+			{ id: "acct-row-9", providerId: "github", accountId: "gh-provider-side-42" },
+		] as never);
+		vi.mocked(auth.api.getAccessToken).mockResolvedValue({
+			accessToken: "ghp_from_row_9",
+		} as never);
+		hygDb.queue.push([], [], [{ profile_id: "victim" }]);
+
+		const res = await GENERATE(
+			hygCliAuthflowRequest("/api/auth/cli/generate", {
+				device_code: HYG_CLI_AUTHFLOW_DEVICE_CODE,
+				user_code: HYG_CLI_AUTHFLOW_USER_CODE,
+			}),
+		);
+
+		expect(res.status).toBe(200);
+		const call = vi.mocked(auth.api.getAccessToken).mock.calls[0]?.[0] as {
+			body: Record<string, unknown>;
+		};
+		expect(call.body.accountId).toBe("acct-row-9");
+		// The provider-side id is what 1.6 would have sent. It must not appear at all, and
+		// `providerId` is now rejected outright by a strict object.
+		expect(call.body.accountId).not.toBe("gh-provider-side-42");
+		expect(call.body).not.toHaveProperty("providerId");
+	});
+
 	it("refuses a device code already bound to another account", async () => {
 		// The account takeover: the attacker's device code, opened by a signed-in victim.
 		hygDb.queue.push([{ profile_id: "attacker" }]);

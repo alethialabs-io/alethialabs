@@ -269,17 +269,13 @@ export function ConnectorsPage({
 					// only surfaced on link (the origin check runs when a session cookie is present),
 					// which is why login worked but Connect didn't.
 					const callbackURL = `${window.location.origin}/${orgSlug}/~/connectors`;
-					const { error } =
-						provider === "github"
-							? await authClient.linkSocial({
-									provider,
-									scopes: ["repo"],
-									callbackURL,
-								})
-							: await authClient.oauth2.link({
-									providerId: provider,
-									callbackURL,
-								});
+					// `oauth2.link` was deleted in 1.7; generic providers link through
+					// linkSocial like any other. Only github needs an explicit scope.
+					const { error } = await authClient.linkSocial({
+						provider,
+						...(provider === "github" ? { scopes: ["repo"] } : {}),
+						callbackURL,
+					});
 					// A successful link auto-redirects (Better Auth's redirect plugin), so reaching here
 					// with an `error` — or a thrown exception — is always a failure. Hand the FULL error
 					// object to the catch so we surface + capture its real status/code/message.

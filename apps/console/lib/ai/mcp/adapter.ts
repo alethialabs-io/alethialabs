@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import "server-only";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ToolSet } from "ai";
 import { z } from "zod";
 
@@ -50,12 +50,15 @@ export function registerAiToolsOnMcp(server: McpServer, tools: ToolSet): void {
 		const tool: BridgeableTool = def;
 		const { execute } = tool;
 		if (typeof execute !== "function") continue;
-		// All our tools use z.object(...); pass its raw shape (a ZodRawShape) so MCP
-		// emits a proper object input schema and validates args before our callback.
-		const shape = tool.inputSchema instanceof z.ZodObject ? tool.inputSchema.shape : {};
+		// Pass the WHOLE z.object(), not its raw shape. SDK v2 still accepts a raw shape, but
+		// only through a deprecated overload that re-wraps it with the SDK's OWN bundled zod —
+		// and a shape authored by a different zod instance either fails at registration or
+		// silently loses every `.describe()`, because those descriptions live in the authoring
+		// zod's registry. The descriptions are how the model knows what the arguments mean.
+		const inputSchema = tool.inputSchema instanceof z.ZodObject ? tool.inputSchema : z.object({});
 		server.registerTool(
 			name,
-			{ description: tool.description ?? name, inputSchema: shape },
+			{ description: tool.description ?? name, inputSchema },
 			async (args: unknown) => {
 				try {
 					const result = await execute(args ?? {}, {

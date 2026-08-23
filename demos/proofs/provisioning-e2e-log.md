@@ -8,10 +8,19 @@ at the bottom) and writes a scrubbed proof bundle under `demos/proofs/<cloud>/<s
 audit trail; git history is the timeline. Parity board:
 [`docs/testing/provisioning-e2e-parity.md`](../../docs/testing/provisioning-e2e-parity.md).
 
-- **dimension**: `floor` (provision + cluster_ready + ArgoCD converge) · `maxconfig` (all 11 kinds) ·
-  `addons` (all 19 add-ons Healthy+Synced) · `byo` (A0.6 bring-your-own **Helm chart** + apps repo —
-  **not** bring-your-own IaC; no customer OpenTofu runs in it) · `day2` (day-2 access) ·
-  `teardown` (verify_swept to zero) · `full` (every dimension in one apply).
+- **dimension**: `floor` (provision + cluster_ready + ArgoCD converge — and **nothing else**: no
+  day-2 soak, no drift check) · `maxconfig` (all 11 kinds) · `addons` (all 18 add-ons Healthy+Synced) ·
+  `byo` (A0.6 bring-your-own **Helm chart** + apps repo — **not** bring-your-own IaC; no customer
+  OpenTofu runs in it) · `day2` (the A0.3 soak: liveness, drift posture, PVC) ·
+  `full` (every dimension in one apply).
+
+  The list above is not prose: it is `DIMENSIONS` in `scripts/e2e/resolve-dimension.sh`, which also
+  owns the env each one switches on (`fidelity_env`) and self-tests the pair. Two things this legend
+  used to get wrong, both fixed in #2356 — it claimed a **`teardown`** dimension that
+  `provisioning-e2e.sh` has always rejected (teardown is asserted on *every* run, so it is a property,
+  not a choice), and it said 19 add-ons where the catalogue SSOT says **18** (cert-manager moved to
+  the platform rail in #1722). A dimension nobody can pass and a count nobody can hit are how a
+  legend stops being read.
 - **verdict**: `PASS` · `FAIL` · `BLOCKED` (couldn't run — record why) · `RETRACTED` (an
   append-only correction of a prior record). A `RETRACTED` row must name the superseded row and
   explain the evidence that invalidates it; it never erases the original record.

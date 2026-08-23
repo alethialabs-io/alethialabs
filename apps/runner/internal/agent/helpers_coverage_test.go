@@ -72,7 +72,7 @@ func TestResolveAmbientAccountID(t *testing.T) {
 		want     string
 	}{
 		{"aws", "aws", map[string]string{"AWS_ACCOUNT_ID": "270587882865"}, "270587882865"},
-		{"gcp GOOGLE_PROJECT", "gcp", map[string]string{"GOOGLE_PROJECT": "itgix-adp"}, "itgix-adp"},
+		{"gcp GOOGLE_PROJECT", "gcp", map[string]string{"GOOGLE_PROJECT": "example-project"}, "example-project"},
 		{"gcp fallback to CLOUDSDK", "gcp", map[string]string{"CLOUDSDK_CORE_PROJECT": "proj-x"}, "proj-x"},
 		{"gcp precedence GOOGLE_PROJECT wins", "gcp", map[string]string{"GOOGLE_PROJECT": "first", "GOOGLE_CLOUD_PROJECT": "second"}, "first"},
 		{"azure", "azure", map[string]string{"ARM_SUBSCRIPTION_ID": "sub-1"}, "sub-1"},

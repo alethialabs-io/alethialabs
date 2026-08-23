@@ -26,8 +26,12 @@ vi.mock("better-auth/next-js", () => ({
 vi.mock("better-auth/plugins", () => ({
 	emailOTP: vi.fn((c: object) => ({ id: "emailOTP", ...c })),
 	genericOAuth: vi.fn((c: object) => ({ id: "genericOAuth", ...c })),
-	mcp: vi.fn((c: object) => ({ id: "mcp", ...c })),
+	// 1.7: jwt() is required by the OAuth provider; mcp() and cimd() moved out of this module.
+	jwt: vi.fn(() => ({ id: "jwt" })),
 }));
+vi.mock("@better-auth/mcp", () => ({ mcp: vi.fn((c: object) => ({ id: "mcp", ...c })) }));
+vi.mock("@better-auth/cimd", () => ({ cimd: vi.fn((c: object) => ({ id: "cimd", ...c })) }));
+vi.mock("@better-auth/cimd/node", () => ({ fetchClientMetadataResource: vi.fn() }));
 
 vi.mock("@/lib/config/auth", () => ({
 	getAuthConfig: vi.fn(() => ({
@@ -55,9 +59,14 @@ vi.mock("@/lib/db/schema", () => ({
 	account: {},
 	invitation: {},
 	member: {},
+	jwks: {},
 	oauthAccessToken: {},
-	oauthApplication: {},
+	oauthClient: {},
+	oauthClientAssertion: {},
+	oauthClientResource: {},
 	oauthConsent: {},
+	oauthRefreshToken: {},
+	oauthResource: {},
 	organization: {},
 	rateLimit: {},
 	session: {},
@@ -260,6 +269,52 @@ describe("provider-absent branch (re-imported with empty providers)", () => {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		expect(o.plugins.some((p: any) => p.id === "genericOAuth")).toBe(false);
 		// emailOTP + mcp + nextCookies still present
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect(o.plugins.some((p: any) => p.id === "emailOTP")).toBe(true);
+	});
+
+	// 1.7 validates mcp()'s `resource` while betterAuth() is being constructed, so a baseURL it
+	// cannot turn into an absolute URL would throw at MODULE LOAD — taking sign-in down with it,
+	// over a connector most deployments never use. Registration is therefore conditional. Pin both
+	// directions, because "it didn't crash" is not evidence the plugin is there.
+	it("registers mcp + cimd when baseURL yields an absolute resource", async () => {
+		vi.resetModules();
+		const cfgMod = await import("@/lib/config/auth");
+		vi.mocked(cfgMod.getAuthConfig).mockReturnValue({
+			secret: "s",
+			baseURL: "https://app.test",
+			providers: {},
+		} as never);
+		const mod = await import("@/lib/auth");
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const o = (mod.auth as any).options;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const mcpPlugin = o.plugins.find((p: any) => p.id === "mcp");
+		expect(mcpPlugin).toBeDefined();
+		expect(mcpPlugin.resource).toBe("https://app.test/api/mcp");
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect(o.plugins.some((p: any) => p.id === "cimd")).toBe(true);
+		// jwt() is what signs those tokens; without it the provider throws on the token endpoint.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect(o.plugins.some((p: any) => p.id === "jwt")).toBe(true);
+	});
+
+	it("drops mcp rather than crashing auth when baseURL cannot form an absolute URL", async () => {
+		vi.resetModules();
+		const cfgMod = await import("@/lib/config/auth");
+		vi.mocked(cfgMod.getAuthConfig).mockReturnValue({
+			secret: "s",
+			baseURL: "/relative-only",
+			providers: {},
+		} as never);
+		const mod = await import("@/lib/auth");
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const o = (mod.auth as any).options;
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect(o.plugins.some((p: any) => p.id === "mcp")).toBe(false);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		expect(o.plugins.some((p: any) => p.id === "cimd")).toBe(false);
+		// The point of the guard: sign-in survives.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		expect(o.plugins.some((p: any) => p.id === "emailOTP")).toBe(true);
 	});

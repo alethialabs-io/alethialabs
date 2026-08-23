@@ -10,7 +10,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ToolSet } from "ai";
 
 import { registerAiToolsOnMcp } from "@/lib/ai/mcp/adapter";
@@ -37,7 +37,7 @@ function fakeServer() {
 }
 
 describe("registerAiToolsOnMcp", () => {
-	it("registers an executable tool with its description and the raw zod object shape", () => {
+	it("registers an executable tool with its description and the WHOLE zod object", () => {
 		const { server, registrations, registerTool } = fakeServer();
 		const inputSchema = z.object({ id: z.string(), count: z.number() });
 		const tools = {
@@ -50,9 +50,12 @@ describe("registerAiToolsOnMcp", () => {
 		const reg = registrations[0];
 		expect(reg.name).toBe("get_thing");
 		expect(reg.config.description).toBe("Get a thing");
-		// The transform passes the ZodRawShape (the .shape), not the ZodObject itself.
-		expect(reg.config.inputSchema).toBe(inputSchema.shape);
-		expect(Object.keys(reg.config.inputSchema as object)).toEqual(["id", "count"]);
+		// SDK v2: pass the ZodObject itself, NOT its .shape. The deprecated raw-shape overload
+		// re-wraps with the SDK's own bundled zod, which drops every `.describe()` because those
+		// descriptions live in the authoring zod's registry — a silent loss of the text the model
+		// reads to understand each argument. Assert identity, not just structure.
+		expect(reg.config.inputSchema).toBe(inputSchema);
+		expect(reg.config.inputSchema).not.toBe(inputSchema.shape);
 	});
 
 	it("skips tools whose execute is not a function", () => {
@@ -83,7 +86,7 @@ describe("registerAiToolsOnMcp", () => {
 		expect(registrations[0].config.description).toBe("unnamed");
 	});
 
-	it("uses an empty shape when the inputSchema is not a ZodObject", () => {
+	it("substitutes an empty z.object() when the inputSchema is not a ZodObject", () => {
 		const { server, registrations } = fakeServer();
 		const tools = {
 			scalar: { inputSchema: z.string(), execute: vi.fn() },
@@ -91,7 +94,12 @@ describe("registerAiToolsOnMcp", () => {
 
 		registerAiToolsOnMcp(server, tools);
 
-		expect(registrations[0].config.inputSchema).toEqual({});
+		// v2 wants a schema object, so the fallback is an empty z.object() rather than a bare {}.
+		// A raw {} would hit the deprecated raw-shape overload — the path that loses descriptions.
+		expect(registrations[0].config.inputSchema).toBeInstanceOf(z.ZodObject);
+		expect(
+			Object.keys((registrations[0].config.inputSchema as z.ZodObject).shape),
+		).toEqual([]);
 	});
 
 	it("callback invokes execute with the args and bound options, wrapping the result as text", async () => {

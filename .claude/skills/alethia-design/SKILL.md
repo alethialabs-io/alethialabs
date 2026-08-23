@@ -28,6 +28,6 @@ Read `readme.md` in this skill first — the full design guide and manifest (con
 - **Structure over decoration:** hairline borders define surfaces; shadows are a whisper; the only background motif is a faint blueprint grid. No gradients.
 
 ## Names
-**Alethia Labs** = the company (alethialabs.io). **Alethia** = the product/platform (control plane + the `alethia` CLI), formerly ADP at beta.adp.itgix.com. CLI usage: `alethia login`, `alethia whoami`, `alethia deploy`.
+**Alethia Labs** = the company (alethialabs.io). **Alethia** = the product/platform (control plane + the `alethia` CLI). CLI usage: `alethia login`, `alethia whoami`, `alethia deploy`.
 
 If invoked without other guidance, ask what they want to build, ask a few focused questions, then act as an expert designer who outputs HTML artifacts *or* production code as needed.
