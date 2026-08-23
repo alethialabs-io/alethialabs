@@ -29,6 +29,18 @@ locals {
   # single exact string: no `*`, no StringLike, so no sibling repo/branch/PR/fork can match.
   e2e_sub = "repo:${var.github_repo}:ref:refs/heads/${var.e2e_github_branch}"
 
+  # A DISPATCH that declares the branch-restricted GitHub environment federates under a different
+  # exact subject — GitHub replaces the `ref:` form with `environment:` in `sub`. RAM `StringEquals`
+  # takes a VALUE LIST (the same shape infra/aws-oidc uses for local.e2e_subs), so this ADDS a second
+  # exact string rather than relaxing the first. Empty environment ⇒ the list is the single ref subject
+  # and the trust document is byte-identical to before.
+  #
+  # What pins the BRANCH is the environment's own deployment-branch policy, not this document — which
+  # says only "that environment". That is why the variable's docs refuse to be set for an
+  # unrestricted environment.
+  e2e_env_sub = var.e2e_github_environment != "" ? "repo:${var.github_repo}:environment:${var.e2e_github_environment}" : ""
+  e2e_subs    = compact([local.e2e_sub, local.e2e_env_sub])
+
   # The trust (assume-role) document. Alibaba OIDC federation uses a Federated principal + the
   # `sts:AssumeRole` action (as in alethia-alibaba-setup.sh and what isALIFederatedTrust keys on),
   # and Version "1" RAM documents.
@@ -42,7 +54,9 @@ locals {
         StringEquals = {
           "oidc:iss" = var.github_issuer_url
           "oidc:aud" = var.oidc_audience
-          "oidc:sub" = local.e2e_sub
+          # A LIST: StringEquals over a value list means "any of these exact strings", never a prefix
+          # or a wildcard. One entry when no environment is configured.
+          "oidc:sub" = local.e2e_subs
         }
       }
     }]

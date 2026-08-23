@@ -566,6 +566,14 @@ export const CATALOG: Catalog = {
 						"cost": "~$91/mo"
 					},
 					{
+						"value": "Standard_E2s_v3",
+						"label": "E2s v3 (Memory)",
+						"vcpu": 2,
+						"memory_gb": 16,
+						"family": "memory",
+						"cost": "~$111/mo"
+					},
+					{
 						"value": "Standard_NC4as_T4_v3",
 						"label": "NC4as T4 v3 (GPU)",
 						"vcpu": 4,

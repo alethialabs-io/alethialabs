@@ -22,5 +22,18 @@ versioned activation record and signing workflow are enabled.
 6. Add the resulting `cla` context to every protected branch ruleset.
 7. Test unsigned, signed, corporate, founder, and bot pull requests.
 
+Steps 3-6 are performed by one command, not by hand:
+
+```
+pnpm legal:activate-ip --evidence /path/to/SIGNED_EVIDENCE.json    # dry run, verifies only
+pnpm legal:activate-ip --evidence /path/to/SIGNED_EVIDENCE.json --apply
+```
+
+It refuses unless the sealed PDF exists, really is a PDF, and hashes to the value the manifest
+claims, and unless the manifest's entity and EIK match `packages/legal/src/entity.ts`. Doing those
+steps by hand is how a repository ends up claiming company ownership before the assignment is
+signed. `pnpm legal:check-ip-activation` runs on every PR to prove the rewrite still matches the
+current legal wording.
+
 Signature records belong on the dedicated `cla-signatures` branch and must never
 be silently edited. A material agreement change creates a new version.

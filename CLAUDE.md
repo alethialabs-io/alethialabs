@@ -160,6 +160,7 @@ real working directory, and they also check the migration chain and SPDX headers
 
 | Topic | Source |
 |---|---|
+| **The MVP programme — what is proven, what is next, what is blocked on the maintainer** | **`PROGRAMME.md`** (read it first; its status half is generated, never typed) |
 | Running the app, envs, the box | `.claude/skills/dev/SKILL.md`, `infra/sandbox/README.md` |
 | Claiming work, the board, the autonomous loop | `.claude/COORDINATION.md` |
 | DB pipeline, JSONB, drizzle-zod | `.claude/skills/db-pipeline/SKILL.md` |

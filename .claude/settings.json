@@ -96,6 +96,7 @@
       "Read(deploy/prod/secrets.local.env)"
     ],
     "allow": [
+      "Bash(aws secretsmanager get-secret-value --secret-id alethia/prod/env:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)",

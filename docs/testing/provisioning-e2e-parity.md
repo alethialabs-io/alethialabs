@@ -38,6 +38,15 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
 - **Provision + cluster_ready** — base T2: real apply → `cluster_ready` → ArgoCD Healthy+Synced over the
   *derived* (non-empty) app set. 🟡 = the nightly's cheapest-shape floor is green, but the full-bar
   dimensions below have not been driven on that cloud.
+
+  **This is the whole of the `floor` dimension, and it is now the whole of what a floor run asserts**
+  (#2356). It used to also run the A0.3 day-2 soak, whose drift check is fatal — so azure run
+  [31486339552](https://github.com/alethialabs-io/alethialabs/actions/runs/31486339552) applied
+  cleanly, reached Ready nodes, verified a receipt sealed to the plan hash, converged every expected
+  Application and tore down, and was recorded a floor **FAIL** on `in_sync=false drifted=9` alone.
+  A 🚫 in this column therefore used to mean either "the provisioning spine is broken" or "the spine
+  is fine and a day-2 assertion above it is not", which call for completely different next actions.
+  The soak now belongs to the `day2` / `full` dimensions, where the ladder already carries it.
 - **All kinds (11)** — `ALETHIA_E2E_MAX_CONFIG=1` → `AssertMaxConfigKindsInState`. Heavy fixture
   `test/e2e/fixtures/cluster_json.heavy.<cloud>.json`, which now exists for **all five** clouds.
   Every (kind × cloud) cell in `test/e2e/maxconfig.go` carries one of three explicit verdicts
@@ -181,12 +190,27 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
       read-back compares them with the real `MaxConfigProjectConfig("hetzner")` instead of trusting
       that two lists were kept in step by hand. The seed is per-cloud: the other four clouds' add-on
       set is untouched (asserted).
-- [ ] **Azure full-bar feasibility** — the e2e subscription has a **10 vCPU** Total Regional quota and
-      AKS renders a single pool, so the old `Standard_D4s_v5` ×3 fixture (12 vCPU) could never create.
-      The fixture is now `Standard_E2s_v5` ×3 (6 vCPU / 48 GiB) and the total-vCPU floor is per-cloud
-      (`heavyMinVCPUByCloud`). ⚠️ The `ESv5 Family vCPUs` quota is separate from Total Regional and can
-      be 0; if it is, Azure has no feasible full-bar shape and must become an explicit documented
-      exclusion rather than a quietly failing leg.
+- [x] **Azure full-bar feasibility — MEASURED, and it is feasible.** The e2e subscription
+      (`32f3d6ca…`) has a **10 vCPU** Total Regional quota and AKS renders
+      a single pool, so the old `Standard_D4s_v5` ×3 fixture (12 vCPU) could never create. The open
+      question was whether the separate per-family quota also blocked the replacement. It did:
+
+      | family | limit | verdict |
+      |---|:---:|---|
+      | Total Regional vCPUs | 10 | the binding cap — 3 × 2 vCPU = 6 fits |
+      | **`Standard ESv5 Family vCPUs`** | **0** | ⛔ `Standard_E2s_v5` ×3 **could never create** |
+      | `Standard ESv3 Family vCPUs` | 10 | ✅ `Standard_E2s_v3` — 2 vCPU / 16 GiB, unrestricted |
+      | `Standard EBDSv5 / EBSv5` | 10 | also viable (E2bds_v5 / E2bs_v5, same shape) |
+      | `Standard DSv3` | 10 | why the **floor** works — it pins `Standard_D2s_v3` |
+
+      Measured with `az vm list-usage --location germanywestcentral`: **100 of 228 families are at 0**,
+      and the v5 "s" families (`DSv5`, `ESv5`, `Dv5`, `Ev5`) are among them while v3/v4/v6/v7 and the
+      `EB*v5` families are at 10. So this was never "Azure has no capacity" — it was one family.
+
+      The fixture is now **`Standard_E2s_v3` ×3** (6 vCPU / 48 GiB). `heavyMinMemGB` is 48 and is
+      **not** lowered for Azure, so the SKU must be exactly 2 vCPU / 16 GiB — which is why the
+      catalogued 4 vCPU alternatives (`D4s_v5`, `D4as_v5`) do not help: ×3 exceeds the 10 vCPU cap.
+      **No support ticket is required, and Azure does not become a documented exclusion.**
 - [ ] **Day-2 access surface** — the maintainer flagged the missing kubeconfig / ArgoCD-URL surface as the
       gap that motivated the bar (opening `:6443` returned a client-cert 401 — by design, but no access
       path is surfaced). Build + assert it.

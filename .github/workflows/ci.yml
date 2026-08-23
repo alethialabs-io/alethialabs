@@ -43,7 +43,7 @@ jobs:
       docs: ${{ steps.filter.outputs.docs }}
       runner: ${{ steps.filter.outputs.runner }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: filter
@@ -108,7 +108,7 @@ jobs:
     name: TypeScript (lint · types · test · docs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -185,7 +185,7 @@ jobs:
       OPENFGA_TEST_API_URL: http://localhost:8082
       ALETHIA_PDP_PARITY_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -263,7 +263,7 @@ jobs:
       # The Playwright webServer boots `next start` and tees stdout here; the OTP helper reads it.
       DEV_CONSOLE_LOG: /tmp/alethia-e2e-console.log
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -369,7 +369,7 @@ jobs:
       # off by default and only the literal "1" engages it).
       ALETHIA_AI_MOCK: "1"
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -435,7 +435,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -473,7 +473,7 @@ jobs:
     name: Authz / open-core guards
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -624,6 +624,12 @@ jobs:
         run: node scripts/check-connector-assets.mjs
       - name: SPDX headers are legal-form-agnostic (Alethia Labs, no OÜ/DPK)
         run: node scripts/check-license-headers.mjs
+      # The IP-activation path is dormant code until the founder assignment is signed, and dormant
+      # code rots silently. It rewrites eleven exact prose markers across eight legal files; edit any
+      # of that wording and the activation would refuse at the worst possible moment. This runs the
+      # real rewrite against synthetic evidence, so the markers are proven on every PR.
+      - name: IP-activation markers still match the legal prose (#2366)
+        run: node scripts/legal/activate-company-ip.mjs --check-markers
       - name: Docs describe a repo that exists (paths · scripts · blocked commands)
         run: node scripts/check-docs-contract.mjs
       # Four hermetic suites that ran NOWHERE until now — no network, no gh, no docker.
@@ -674,6 +680,17 @@ jobs:
       # for weeks (#1755). Both crons are asserted here because neither is reachable from a PR.
       - name: Nightly dimension resolution (floor and full-bar never collide)
         run: bash scripts/e2e/resolve-dimension.sh --self-test
+      # A TIMER must never start an unpriced real apply. The weekly `17 5 * * 0` full-bar cron fanned
+      # the 11-kind surface across all five clouds while ALETHIA_COST_CEILING_MONTHLY_USD was wired
+      # for aws alone, and bought a standing monthly alibaba CR EE subscription each week (#2340
+      # landed the detection only on 2026-08-11). The cron is gone — but removing a cron is a
+      # one-line edit and so is adding one, so this is the tripwire on the reintroduction: a cron
+      # that resolves to `full` fails unless every matrix cloud is priced. Exemptions (a watched
+      # dispatch) deliberately do not satisfy it. Hermetic — parses two files, no gh, no cloud.
+      - name: E2E spend guard (no scheduled full bar on an unpriced cloud)
+        run: |
+          node scripts/check-e2e-spend-guard.mjs --self-test
+          node scripts/check-e2e-spend-guard.mjs
       # The proof-bundle scrub decides what a PUBLIC repo publishes, and its only run was inside
       # e2e-nightly.yml — a workflow no PR triggers. So the change that made the tripwire fire on
       # every azure plan JSON could not have been caught before merge, and wasn't: azure lost its
@@ -682,6 +699,26 @@ jobs:
       # obviously-fake literals only.
       - name: Proof-scrub denylist (non-vacuous, and no false positive on a tofu plan JSON)
         run: bash demos/proofs/scrub.sh --self-test
+      # PROGRAMME.md is the one file a session reads to know where the MVP programme stands, so its
+      # status half is DERIVED and diff-gated — the numbers cannot be typed. This is the guard's own
+      # guard (fixtures for RETRACTED supersession, an expiring CI run tag masquerading as a proof,
+      # the marker splice refusing a duplicated region, and a vacuity case) plus the staleness diff.
+      # The hand-maintained boards it replaces were contradicting each other IN THE TREE while
+      # passing CI: runner-xcloud-parity.md called hetzner green for cluster provision,
+      # provisioning-e2e-parity.md called it blocked, and the proof ledger said neither had evidence.
+      - name: Programme ledger derivation (a PASS with no bundle is never a proof)
+        run: node scripts/programme-rollup.mjs --self-test
+      - name: Programme ledger is in sync with the tree
+        run: node scripts/programme-rollup.mjs
+      # The spine mirror: Node cannot parse Go, so the Go tables that already OWN and validate the
+      # ceiling/debt verdicts (MaxConfigCarriage, CLIReach) are exported to JSON and diff-gated,
+      # rather than a third hand-authored list being kept in step by hand. Same shape as
+      # gen:offer-surface / gen:keyless-cells. Untagged test — no cloud, no cost.
+      - name: Programme spine mirror is in sync with the Go tables
+        run: |
+          (cd test/e2e && GOWORK=off go test -run 'TestProgrammeExport' ./...)
+          git diff --exit-code -- test/e2e/generated/programme.json \
+            || { echo "::error::test/e2e/generated/programme.json is stale — regenerate with (cd test/e2e && GOWORK=off go test -run TestProgrammeExport ./...) and commit. Source of truth: MaxConfigKinds + CLIDemoSteps."; exit 1; }
       # Each guard proves it still BLOCKS what it must and, more importantly, still
       # ALLOWS what it must — the false positives are what get a guard disabled.
       - name: Guards self-test (runtime · compose · merge)
@@ -706,7 +743,7 @@ jobs:
       matrix:
         module: [apps/cli, apps/runner, packages/core]
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
@@ -838,7 +875,7 @@ jobs:
       matrix:
         module: [apps/cli, apps/runner, packages/core, test/e2e]
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
@@ -900,7 +937,7 @@ jobs:
     if: needs.detect-changes.outputs.runner == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - name: Build runner-base for linux/amd64
         uses: docker/build-push-action@v7
@@ -960,7 +997,7 @@ jobs:
       # In the merge queue a missing prerequisite is a HARD FAIL, never a green skip.
       ALETHIA_E2E_T1_REQUIRE: "1"
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -1014,7 +1051,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.work
@@ -1066,7 +1103,7 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
         with:
           version: 9.15.0
@@ -1089,7 +1126,7 @@ jobs:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # gitleaks-action@v2 requires a paid license for ORG-owned repos, so we run the
@@ -1127,7 +1164,7 @@ jobs:
     # assert what the resolver emits rather than what the chart accepts, and neither parity guard
     # measures add-on values. It shipped, and a real cluster found it.
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -1146,7 +1183,7 @@ jobs:
     # is gated per-step on the `docs` filter; the final step is the explicit no-op pass.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
         if: needs.detect-changes.outputs.docs == 'true'
       - uses: actions/setup-node@v7
         if: needs.detect-changes.outputs.docs == 'true'

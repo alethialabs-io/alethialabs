@@ -9,10 +9,16 @@
 // "we could not check", never as a pass — a UI that quietly rounds unknown up to fine is worse than
 // no UI, because it is believed.
 
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { addonCompat } from "@/lib/compat/addon";
 import { rangeLabel } from "@/lib/compat";
 import { MATRIX } from "@/lib/compat";
+import { ADDON_CATALOG } from "@/lib/addons/catalog";
+
+/** Repo root, for the platform-rail manifest check below. */
+const REPO_ROOT = resolve(__dirname, "../../../../..");
 
 describe("addonCompat", () => {
 	it("passes when the cluster is inside the recorded window", () => {
@@ -62,6 +68,72 @@ describe("addonCompat", () => {
 				expect(addonCompat(id, "1.35").status).toBe("not_evaluable");
 			}
 		}
+	});
+});
+
+// The two add-on lists must stay ONE set, and until now nothing asserted it.
+//
+// `MATRIX.addon_k8s` (packages/core/compat/matrix.json) records the Kubernetes window per add-on;
+// `ADDON_CATALOG` (apps/console/lib/addons/catalog.ts) is the marketplace. They differ by exactly
+// one entry, deliberately — and the test above walks matrix → adapter only, so the *set* relationship
+// was unguarded in both directions:
+//
+//   · an add-on added to the marketplace with no compat window would render `not_evaluable` for
+//     every cluster forever, silently, because "no window recorded" is a legitimate state;
+//   · an add-on added to the matrix but never to the marketplace would simply never install, and the
+//     count guard in tests/lib/addons/catalog-count.test.ts would still pass at its pinned 18.
+//
+// Neither is hypothetical: the lists were 19/19 until cert-manager moved to the platform rail
+// (#1722), and the only thing recording that difference was a comment.
+describe("MATRIX.addon_k8s and ADDON_CATALOG are one set", () => {
+	/**
+	 * Add-ons that are deliberately in the compat matrix but NOT in the marketplace, each mapped to
+	 * the platform manifest that installs them instead. An entry here must prove its own premise
+	 * (the manifest still exists) — otherwise this becomes the escape hatch that hides the drift it
+	 * was written to catch.
+	 */
+	const PLATFORM_RAIL: Record<string, string> = {
+		// #1722: cert-manager needs to see the cloud, the DNS zone and the identity a DNS01
+		// ClusterIssuer requires, so it installs from the platform rail rather than the marketplace.
+		"cert-manager": "infra/templates/argocd/cert-manager.yaml",
+	};
+
+	const matrixIds = Object.keys(MATRIX.addon_k8s);
+	const catalogIds = ADDON_CATALOG.map((a) => a.id);
+
+	it("every marketplace add-on has a recorded compat entry", () => {
+		const missing = catalogIds.filter((id) => !matrixIds.includes(id));
+		// Named, not counted: a bare count tells the next author a number changed, never which one.
+		expect(missing, `marketplace add-ons with no MATRIX.addon_k8s entry: ${missing.join(", ")}`).toEqual([]);
+	});
+
+	it("every compat entry is either in the marketplace or on the platform rail", () => {
+		const orphans = matrixIds.filter((id) => !catalogIds.includes(id) && PLATFORM_RAIL[id] === undefined);
+		expect(orphans, `compat entries that nothing installs: ${orphans.join(", ")}`).toEqual([]);
+	});
+
+	it("a platform-rail exemption still has its platform manifest", () => {
+		// The decay mechanism. If cert-manager ever leaves the platform rail, this fails and forces
+		// the exemption to be re-decided rather than quietly outliving its reason.
+		for (const [id, manifest] of Object.entries(PLATFORM_RAIL)) {
+			expect(existsSync(resolve(REPO_ROOT, manifest)), `${id} is exempted as platform-rail, but ${manifest} does not exist`).toBe(true);
+		}
+	});
+
+	it("a platform-rail add-on is NOT also in the marketplace", () => {
+		// #1722's actual invariant: exactly one thing owns the cert-manager CRDs. Two owners is worse
+		// than either alone, and it is what removing it from the catalogue (rather than duplicating
+		// it) was for.
+		const doubleOwned = Object.keys(PLATFORM_RAIL).filter((id) => catalogIds.includes(id));
+		expect(doubleOwned, `installed by BOTH the platform rail and the marketplace: ${doubleOwned.join(", ")}`).toEqual([]);
+	});
+
+	it("accounts for every compat entry, so the two counts are explained rather than asserted", () => {
+		// Non-vacuity: the three assertions above are all "some list is empty", which would also hold
+		// if a list were empty for the wrong reason (a bad import, a renamed export). This pins the
+		// partition itself — matrix = marketplace ∪ platform-rail, with no overlap.
+		expect(catalogIds.length).toBeGreaterThan(0);
+		expect(matrixIds.length).toBe(catalogIds.length + Object.keys(PLATFORM_RAIL).length);
 	});
 });
 
