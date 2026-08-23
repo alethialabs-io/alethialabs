@@ -62,6 +62,10 @@ const SNAPSHOT = "docs/testing/programme-snapshot.json";
 const LEDGER = "demos/proofs/provisioning-e2e-log.md";
 const SPINE = "test/e2e/generated/programme.json";
 const WORKFLOW = ".github/workflows/e2e-nightly.yml";
+// The fidelity table moved OUT of the workflow's inline `env:` and into the resolver (#2356), so a
+// gate is now "mentioned" if EITHER file mentions it. Reading only the workflow made two live gates
+// report `no_vehicle` — the detector mirroring an emitter that had moved.
+const RESOLVER = "scripts/e2e/resolve-dimension.sh";
 const UNSUPPORTED_KINDS = "apps/console/lib/cloud-providers/unsupported-kinds.ts";
 const PROOFS_DIR = "demos/proofs";
 const TARGET = "PROGRAMME.md";
@@ -183,9 +187,9 @@ export function collapseLedger(rows) {
  * when the workflow sets them itself — a false "no" is worse than no column, because it sends
  * somebody to wire a gate that is already wired.
  */
-export function referencedGates(workflowText) {
+export function referencedGates(workflowText, resolverText = "") {
 	const names = new Set();
-	for (const line of workflowText.split("\n")) {
+	for (const line of (workflowText + "\n" + resolverText).split("\n")) {
 		if (/^\s*#/.test(line)) continue;
 		for (const m of line.matchAll(/\b(?:vars|secrets)\.([A-Z0-9_]+)\b/g)) names.add(m[1]);
 		for (const m of line.matchAll(/\b(ALETHIA_E2E_[A-Z0-9_]+|E2E_[A-Z0-9_]+)\b/g)) names.add(m[1]);
@@ -324,7 +328,7 @@ export function deriveBoard(snapshot) {
 	};
 }
 
-export function derive({ ledgerText, spine, workflowText, unsupportedText, bundleExists, exclusionCounts, snapshot }) {
+export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, exclusionCounts, snapshot }) {
 	const failures = [];
 	const notes = [];
 	const { rows, errors } = parseLedger(ledgerText);
@@ -383,7 +387,7 @@ export function derive({ ledgerText, spine, workflowText, unsupportedText, bundl
 	}
 
 	// ── gate reality: which dimension gates the workflow even MENTIONS ──
-	const gates = referencedGates(workflowText);
+	const gates = referencedGates(workflowText, resolverText);
 
 	// ── the 19-kind canvas grid ──
 	const unsupported = parseUnsupportedKinds(unsupportedText);
@@ -714,7 +718,7 @@ export function render(v) {
 	L.push("");
 	L.push("Every number above is derived from these, and from nothing else:");
 	L.push("");
-	for (const f of [SPINE, LEDGER, WORKFLOW, UNSUPPORTED_KINDS, `${PROOFS_DIR}/<cloud>/<stamp>/`, SNAPSHOT]) L.push(`- \`${f}\``);
+	for (const f of [SPINE, LEDGER, WORKFLOW, RESOLVER, UNSUPPORTED_KINDS, `${PROOFS_DIR}/<cloud>/<stamp>/`, SNAPSHOT]) L.push(`- \`${f}\``);
 	L.push("");
 	L.push(
 		v.board.present
@@ -826,6 +830,7 @@ function readInputs() {
 		ledgerText: need(LEDGER),
 		spine: JSON.parse(need(SPINE)),
 		workflowText: need(WORKFLOW),
+		resolverText: need(RESOLVER),
 		unsupportedText: need(UNSUPPORTED_KINDS),
 		bundleExists: (p) => fs.existsSync(p),
 		exclusionCounts: Object.fromEntries(
@@ -864,7 +869,11 @@ function runSelfTest() {
 	};
 	const base = {
 		spine: FIXTURE_SPINE,
-		workflowText: "        ALETHIA_E2E_MAX_CONFIG: 1\n        ALETHIA_E2E_ALL_ADDONS: 1\n",
+		// Mirrors the real tree post-#2356: the workflow no longer names the fidelity gates inline —
+		// the resolver exports them. Keeping them in workflowText here would have hidden the very
+		// regression this fixture exists to catch.
+		workflowText: "        # ALETHIA_E2E_MAX_CONFIG is exported by the resolver\n",
+		resolverText: "\t\techo \"ALETHIA_E2E_MAX_CONFIG=1\"\n\t\techo \"ALETHIA_E2E_ALL_ADDONS=1\"\n",
 		unsupportedText: 'export const UNSUPPORTED_KINDS_BY_PROVIDER = {\n\thetzner: ["topic", "nosql"],\n}\n',
 		bundleExists: () => true,
 	};
@@ -1045,6 +1054,18 @@ function runSelfTest() {
 	r = derive({ ...base, ledgerText: hdr, snapshot: snap() });
 	const maxc = r.gateReality.find((d) => d.id === "maxconfig");
 	ok("a dimension-derived gate reads `derived`, never `unwired`", maxc?.states[0]?.state === "derived", JSON.stringify(maxc?.states));
+	// The emitter moved (#2356): the fidelity table lives in the resolver, not the workflow's inline
+	// `env:`. A detector reading only the workflow reported these two as `no_vehicle` — i.e. "nothing
+	// can turn this on" — about gates a dispatch turns on every time. Pin BOTH halves: a gate only the
+	// resolver emits is still `derived`, and a gate NEITHER file mentions is still `no_vehicle`.
+	const addons = r.gateReality.find((d) => d.id === "addons");
+	ok("a gate emitted only by the resolver reads `derived`, not `no_vehicle`", addons?.states[0]?.state === "derived", JSON.stringify(addons?.states));
+	const rNoResolver = derive({ ...base, resolverText: "", ledgerText: hdr, snapshot: snap() });
+	ok(
+		"drop the resolver and the same gate falls back to `no_vehicle` — the detector reads it, not luck",
+		rNoResolver.gateReality.find((d) => d.id === "addons")?.states[0]?.state === "no_vehicle",
+		JSON.stringify(rNoResolver.gateReality.find((d) => d.id === "addons")?.states),
+	);
 	// `unwired` requires the workflow to REFERENCE the gate; a gate it never mentions is `no_vehicle`,
 	// which is a different remedy (write the wiring, not set a variable). Both are pinned.
 	const byoNoVehicle = r.gateReality.find((d) => d.id === "byo");
