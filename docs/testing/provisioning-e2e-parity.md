@@ -38,6 +38,15 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
 - **Provision + cluster_ready** — base T2: real apply → `cluster_ready` → ArgoCD Healthy+Synced over the
   *derived* (non-empty) app set. 🟡 = the nightly's cheapest-shape floor is green, but the full-bar
   dimensions below have not been driven on that cloud.
+
+  **This is the whole of the `floor` dimension, and it is now the whole of what a floor run asserts**
+  (#2356). It used to also run the A0.3 day-2 soak, whose drift check is fatal — so azure run
+  [31486339552](https://github.com/alethialabs-io/alethialabs/actions/runs/31486339552) applied
+  cleanly, reached Ready nodes, verified a receipt sealed to the plan hash, converged every expected
+  Application and tore down, and was recorded a floor **FAIL** on `in_sync=false drifted=9` alone.
+  A 🚫 in this column therefore used to mean either "the provisioning spine is broken" or "the spine
+  is fine and a day-2 assertion above it is not", which call for completely different next actions.
+  The soak now belongs to the `day2` / `full` dimensions, where the ladder already carries it.
 - **All kinds (11)** — `ALETHIA_E2E_MAX_CONFIG=1` → `AssertMaxConfigKindsInState`. Heavy fixture
   `test/e2e/fixtures/cluster_json.heavy.<cloud>.json`, which now exists for **all five** clouds.
   Every (kind × cloud) cell in `test/e2e/maxconfig.go` carries one of three explicit verdicts
