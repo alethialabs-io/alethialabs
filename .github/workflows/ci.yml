@@ -624,6 +624,12 @@ jobs:
         run: node scripts/check-connector-assets.mjs
       - name: SPDX headers are legal-form-agnostic (Alethia Labs, no OÜ/DPK)
         run: node scripts/check-license-headers.mjs
+      # The IP-activation path is dormant code until the founder assignment is signed, and dormant
+      # code rots silently. It rewrites eleven exact prose markers across eight legal files; edit any
+      # of that wording and the activation would refuse at the worst possible moment. This runs the
+      # real rewrite against synthetic evidence, so the markers are proven on every PR.
+      - name: IP-activation markers still match the legal prose (#2366)
+        run: node scripts/legal/activate-company-ip.mjs --check-markers
       - name: Docs describe a repo that exists (paths · scripts · blocked commands)
         run: node scripts/check-docs-contract.mjs
       # Four hermetic suites that ran NOWHERE until now — no network, no gh, no docker.
