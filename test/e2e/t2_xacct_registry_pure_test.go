@@ -97,11 +97,11 @@ func TestXacctRegistryDecide(t *testing.T) {
 	t.Run("gcp complete is on", func(t *testing.T) {
 		withXacctEnv(t, map[string]string{
 			envXacctRegistry:          "1",
-			envXacctRegistryProjectID: "itgix-adp",
+			envXacctRegistryProjectID: "example-registry-project",
 			envXacctRegistryRegion:    "us-central1",
-			envXacctRegistryReaderSA:  "gar-reader@itgix-adp.iam.gserviceaccount.com",
+			envXacctRegistryReaderSA:  "gar-reader@example-registry-project.iam.gserviceaccount.com",
 			envXacctRegistryHost:      "us-central1-docker.pkg.dev",
-			envXacctRegistryImage:     "us-central1-docker.pkg.dev/itgix-adp/alethia-e2e/canary:v1",
+			envXacctRegistryImage:     "us-central1-docker.pkg.dev/example-registry-project/alethia-e2e/canary:v1",
 			envArgoAppsRepo:           "https://github.com/alethialabs-io/e2e-apps.git",
 			envArgoGitToken:           "ghp_notarealtoken",
 		})
