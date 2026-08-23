@@ -23,6 +23,9 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/auth/owner", () => ({ getOwner: vi.fn() }));
 vi.mock("@/lib/authz/guard", () => ({ currentActor: vi.fn() }));
 vi.mock("@/lib/connectors/health", () => ({ markHealthy: vi.fn(), markFailed: vi.fn() }));
+// 1.7 selectors take the LOCAL account.id, so the actions resolve it first. Mocked as a
+// boundary like the auth api itself — the resolver has its own test.
+vi.mock("@/lib/auth/accounts", () => ({ resolveAccountId: vi.fn() }));
 
 import {
 	deleteProviderToken,
@@ -31,16 +34,21 @@ import {
 } from "@/app/server/actions/identities";
 import { auth } from "@/lib/auth";
 import { currentActor } from "@/lib/authz/guard";
+import { resolveAccountId } from "@/lib/auth/accounts";
 import { markFailed, markHealthy } from "@/lib/connectors/health";
 import { revalidatePath } from "next/cache";
 
 const listUserAccounts = vi.mocked(auth.api.listUserAccounts);
 const getAccessToken = vi.mocked(auth.api.getAccessToken);
 const unlinkAccount = vi.mocked(auth.api.unlinkAccount);
+const mockResolveAccountId = vi.mocked(resolveAccountId);
 
 beforeEach(() => {
 	vi.clearAllMocks();
 	vi.spyOn(console, "error").mockImplementation(() => {});
+	// Default to "the provider IS linked" so each existing case keeps exercising the branch it
+	// was written for; the no-link branch is asserted explicitly below.
+	mockResolveAccountId.mockResolvedValue("acct-row-1");
 });
 
 describe("getLinkedProviders", () => {
@@ -81,7 +89,7 @@ describe("getValidProviderToken", () => {
 
 		// Token is requested for the scoped user, scoped to the linked provider.
 		expect(getAccessToken).toHaveBeenCalledWith({
-			body: { providerId: "github", userId: "user-1" },
+			body: { accountId: "acct-row-1", userId: "user-1" },
 			headers: expect.any(Headers),
 		});
 		expect(token).toBe("ghp_abc");
@@ -145,6 +153,33 @@ describe("getValidProviderToken", () => {
 	});
 });
 
+// 1.7 removed `providerId` from the selector, so "this user has no link for this provider" is
+// now a state the caller must detect BEFORE calling the api — it can no longer be inferred from
+// an empty result. Assert the whole branch: no api call, a health failure recorded, null returned.
+// Without this the regression is invisible — getAccessToken would throw ACCOUNT_NOT_FOUND and the
+// existing catch would report it as "token refresh failed", which is a different, misleading cause.
+describe("getValidProviderToken with no linked account", () => {
+	it("skips the token call, records the real reason, and returns null", async () => {
+		vi.mocked(currentActor).mockResolvedValue({
+			userId: "user-1",
+			orgId: "org-1",
+		} as never);
+		mockResolveAccountId.mockResolvedValue(null);
+
+		const token = await getValidProviderToken("gitlab");
+
+		expect(token).toBeNull();
+		expect(getAccessToken).not.toHaveBeenCalled();
+		expect(markFailed).toHaveBeenCalledWith(
+			{ userId: "user-1", orgId: "org-1" },
+			"git",
+			"gitlab",
+			"no linked account for this provider",
+		);
+		expect(markHealthy).not.toHaveBeenCalled();
+	});
+});
+
 describe("deleteProviderToken", () => {
 	it("unlinks the provider, revalidates the connectors page, and reports success", async () => {
 		unlinkAccount.mockResolvedValue({} as never);
@@ -152,7 +187,7 @@ describe("deleteProviderToken", () => {
 		const result = await deleteProviderToken("github");
 
 		expect(unlinkAccount).toHaveBeenCalledWith({
-			body: { providerId: "github" },
+			body: { accountId: "acct-row-1" },
 			headers: expect.any(Headers),
 		});
 		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/connectors");
@@ -166,5 +201,18 @@ describe("deleteProviderToken", () => {
 
 		expect(result).toEqual({ error: "Unexpected error occurred" });
 		expect(revalidatePath).not.toHaveBeenCalled();
+	});
+
+	// Unlinking something already unlinked is the caller's intent, satisfied. Under 1.7 there is
+	// no account row to name, so calling unlinkAccount at all would throw ACCOUNT_NOT_FOUND and
+	// surface as a spurious error toast.
+	it("is idempotent: no linked account reports success without calling unlinkAccount", async () => {
+		mockResolveAccountId.mockResolvedValue(null);
+
+		const result = await deleteProviderToken("bitbucket");
+
+		expect(unlinkAccount).not.toHaveBeenCalled();
+		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/connectors");
+		expect(result).toEqual({ success: true });
 	});
 });
