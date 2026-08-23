@@ -19,6 +19,28 @@ const TEST_ENV: Record<string, string> = {
 };
 Object.assign(process.env, TEST_ENV);
 
+// ── Better Auth 1.7's MCP plugin talks to the database while `auth` is being BUILT ──
+//
+// The note above ("no real connection is made — postgres-js connects lazily") stopped being true
+// in 1.7. `mcp({ resource })` upserts that resource into `oauth_resource`, so simply importing
+// `@/lib/auth` now issues a SELECT. In a unit test there is no database behind
+// ALETHIA_DATABASE_URL, and the query is a floating promise inside the plugin — so it surfaces as
+// an UNHANDLED REJECTION (`connect ECONNREFUSED ... :5432`) that fails the whole run, in tests
+// that never meant to touch auth at all and cannot catch it.
+//
+// Stub the plugin for unit tests. This is the right layer: the DB is already absent by design
+// here, and the alternative — teaching production code to behave differently under NODE_ENV —
+// would be worse. A test that wants to assert on the real plugin config declares its own
+// `vi.mock("@better-auth/mcp", ...)`, which takes precedence over this one (see
+// tests/lib/auth/index.test.ts). Integration tests, which DO have a database, use a separate
+// config and never load this file.
+vi.mock("@better-auth/mcp", () => ({
+  mcp: () => ({ id: "mcp" }),
+  requireMcpAuth: (_auth: unknown, handler: unknown) => handler,
+}));
+vi.mock("@better-auth/cimd", () => ({ cimd: () => ({ id: "cimd" }) }));
+vi.mock("@better-auth/cimd/node", () => ({ fetchClientMetadataResource: () => undefined }));
+
 // next-runtime-env's env() throws for non-public vars in a browser (jsdom) runtime;
 // resolve straight from process.env in tests so server-only config (auth/db) loads.
 vi.mock("next-runtime-env", () => ({
