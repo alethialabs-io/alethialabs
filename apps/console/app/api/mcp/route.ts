@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { requireMcpAuth } from "@better-auth/mcp";
-import { createMcpHandler } from "mcp-handler";
+// The SDK directly, not mcp-handler. mcp-handler v2 is a thin wrapper that hardcodes
+// `legacy: "stateless"` and exposes no way to override it, so routing through it would
+// make the strict posture below unreachable. better-auth's own MCP docs and demo call the
+// SDK the same way.
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { registerAiToolsOnMcp } from "@/lib/ai/mcp/adapter";
 import { buildExternalAgentTools } from "@/lib/ai/tools";
 import { auth } from "@/lib/auth";
@@ -28,6 +32,27 @@ export const maxDuration = 300;
  * proposals, canvas tools, AND job-queuing writes (scan_repo) are excluded — the
  * external surface stays strictly read-only at launch (see the elench plan A5).
  */
+// v2 inverts the factory: it RETURNS a server rather than receiving one, and `serverInfo` moves
+// to the McpServer constructor. It runs per request, so each call still gets a fresh server.
+//
+// `legacy: "reject"` is the point of calling the SDK directly. The default, "stateless", still
+// SERVES 2025-era POSTs (it only answers GET/DELETE with 405); "reject" is what actually closes
+// the old protocol generation. POST-only below is complementary, not redundant.
+const mcpHandler = createMcpHandler(
+	() => {
+		const server = new McpServer(
+			{ name: "alethia", version: "1.0.0" },
+			{
+				instructions:
+					"Alethia control-plane tools (read-only): read the user's projects/clusters/jobs/runners, browse the service catalog, and review repo-scan results. Provisioning and repo scans are initiated in the Alethia dashboard with human approval.",
+			},
+		);
+		registerAiToolsOnMcp(server, buildExternalAgentTools());
+		return server;
+	},
+	{ legacy: "reject" },
+);
+
 // 1.7's requireMcpAuth is NOT a rename of withMcpAuth: the second argument is now the
 // verified access-token CLAIMS (a JWTPayload), not a session object. The subject claim is
 // the user id. It is typed optional, so fail closed rather than coercing — an actor
@@ -52,21 +77,9 @@ const handler = requireMcpAuth(auth, async (_req, accessTokenClaims) => {
 		);
 	}
 
-	const mcp = createMcpHandler(
-		(server) => {
-			registerAiToolsOnMcp(server, buildExternalAgentTools());
-		},
-		{
-			serverInfo: { name: "alethia", version: "1.0.0" },
-			instructions:
-				"Alethia control-plane tools (read-only): read the user's projects/clusters/jobs/runners, browse the service catalog, and review repo-scan results. Provisioning and repo scans are initiated in the Alethia dashboard with human approval.",
-		},
-		{ basePath: "/api", legacy: "reject" },
-	);
-
 	// Bind the token-derived actor for the whole request so currentActor()/
 	// requireOwner() inside the tools resolve to it instead of a (absent) session.
-	return runWithActor(actor, () => mcp(_req));
+	return runWithActor(actor, () => mcpHandler.fetch(_req));
 });
 
 // POST only. 1.7's upgrade guide requires dropping the MCP-route GET and DELETE exports
