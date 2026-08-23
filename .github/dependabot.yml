@@ -35,19 +35,6 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
-      # better-auth ships BREAKING changes in a minor. 1.7.0 carried 28+ of them: the `mcp` plugin
-      # moved to a separate @better-auth/mcp package, `withMcpAuth` became `requireMcpAuth`,
-      # `genericOAuthClient` was deleted, `providerId` was removed from every account selector, and
-      # accounts were rekeyed on (issuer, accountId) — which needs a data backfill and a changed
-      # OAuth callback path. The majors-are-ignored reasoning at the top of this file applies with
-      # full force to this package's minors, because its minors ARE majors.
-      #
-      # Held so the group stops re-proposing a bump that cannot go green. Remove this entry in the
-      # PR that performs the 1.7 migration.
-      - dependency-name: "better-auth"
-        update-types: ["version-update:semver-minor"]
-      - dependency-name: "@better-auth/*"
-        update-types: ["version-update:semver-minor"]
     groups:
       npm-minor-patch:
         update-types: [minor, patch]

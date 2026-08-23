@@ -28,7 +28,7 @@ vi.mock("@/app/server/actions/projects");
 vi.mock("@/app/server/actions/runners");
 vi.mock("@/app/server/actions/scanner");
 
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { ToolSet } from "ai";
 
 import { registerAiToolsOnMcp } from "@/lib/ai/mcp/adapter";
