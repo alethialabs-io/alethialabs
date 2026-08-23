@@ -20,8 +20,8 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
 |-------|:---:|:---:|:---:|:---:|:---:|:---:|:---|
 | **Hetzner** — Talos | ✅ (register) | ⏳ | ✅ token | ✅ (nightly) | ✅ | ✅ | — |
 | **AWS** — EKS (`alethialabs`) | ✅ (register) | ⏳ | ✅ keyless role | ⏳ (wired, gate off) | ✅ | ⏳ | — |
-| **GCP** — GKE (`itgix`) | ✅ (register) | ⏳ | ✅ keyless WIF | ⏳ (wired, gate off) | ✅ | ⏳ | — |
-| **Azure** — AKS (student sub) | ✅ (register) | ✅ (prod) | ✅ keyless UAMI | ⏳ (wired, gate off) | ✅ | ⏳ | AKS quota TBD |
+| **GCP** — GKE (Alethia E2E) | ✅ (register) | ⏳ | ✅ keyless WIF | ⏳ (wired, gate off) | ✅ | ⏳ | — |
+| **Azure** — AKS (Alethia E2E sub) | ✅ (register) | ✅ (prod) | ✅ keyless UAMI | ⏳ (wired, gate off) | ✅ | ⏳ | AKS quota TBD |
 | Alibaba — ACK | ✅ (register) | ⏳ | ✅ keyless RAM | ⏳ (wired, gate off) | ✅ | ⏳ | — |
 
 - **image arch ✓** = the published `runner-<cloud>:latest` **amd64** image ships a genuine x86-64 runner
@@ -54,8 +54,8 @@ Legend: ✅ done/green · ⏳ pending · 🚫 blocked (reason) · — n/a
       **All clouds**, each enabled **deliberately** + cost-guarded (cheapest node shape, single-NAT, AWS
       cost ceiling), one at a time. Confirmed accounts + gate vars:
   - **AWS** — `alethialabs` *or* tovr's AWS (either works) → `E2E_AWS_ROLE_ARN`
-  - **GCP** — `itgix-adp` project → `E2E_GCP_WIF_PROVIDER` + `E2E_GCP_SA_EMAIL`
-  - **Azure** — student subscription → `E2E_AZURE_CLIENT_ID` (AKS quota TBD)
+  - **GCP** — Alethia-owned E2E project → `E2E_GCP_WIF_PROVIDER` + `E2E_GCP_SA_EMAIL`
+  - **Azure** — the Alethia E2E subscription → `E2E_AZURE_CLIENT_ID` (AKS quota TBD)
   - **Hetzner** — scoped API token → `HCLOUD_TOKEN`
 
 ## Flagged issues

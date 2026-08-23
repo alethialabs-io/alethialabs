@@ -124,7 +124,7 @@ full-bar leg dies on `Invalid resource name given (name=projects/…-arn:aws:sqs
 
 The T2 full-bar legs run from `main`, so this needs the promotion, not a fix.
 
-⚠️ Also required for #2099, and account-side: GCP **NodePool quota** on `itgix-adp`
+⚠️ Also required for #2099, and account-side: GCP **NodePool quota** on the Alethia E2E project
 (`Error 429: Insufficient project quota`) and a missing `roles/cloudsql.client` IAM binding.
 
 > Worth knowing generally: the 2026-08-09 full-bar ran headSha `376fe8d9`, dated **2026-08-04**.

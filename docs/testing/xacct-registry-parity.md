@@ -75,11 +75,11 @@ its own decision record is a product change and is deliberately left undone rath
 
 - [ ] **In-cluster e2e (all 3 clouds)** — the WI-federation half is unproven. The harness is built and
       wired (**#1047**); no run has happened. AWS would run in `tovr` (`364205735303`, cluster) pulling
-      from `alethia` (`270587882865`, registry). GCP in `itgix-adp`. Azure on the "Azure for Students"
+      from `alethia` (`270587882865`, registry). GCP in the Alethia E2E project. Azure on the Alethia E2E
       sub (AKS quota TBD — record the block if denied).
 - [ ] **Flip `coming_soon` → `active`** on the 3 catalog rows + enable `ALETHIA_XACCT_REGISTRY_ENABLED` in
       prod — **only after** the in-cluster e2e is green on the target clouds (maintainer action).
-- [ ] **GAR full mint e2e** was run in a **client** project (`itgix-adp`) — re-run in an Alethia-owned
+- [ ] **GAR full mint e2e** was run in a **client** project — re-run in an Alethia-owned
       billing project when one exists.
 - [ ] **ACR cross-*subscription*** not exercised (single sub available) — the same-sub exchange is proven;
       the literal cross-sub hop needs a second Azure subscription.

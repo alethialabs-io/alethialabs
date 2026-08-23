@@ -191,7 +191,7 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
       that two lists were kept in step by hand. The seed is per-cloud: the other four clouds' add-on
       set is untouched (asserted).
 - [x] **Azure full-bar feasibility — MEASURED, and it is feasible.** The e2e subscription
-      (`32f3d6ca…`, an "Azure for Students" sub) has a **10 vCPU** Total Regional quota and AKS renders
+      (`32f3d6ca…`) has a **10 vCPU** Total Regional quota and AKS renders
       a single pool, so the old `Standard_D4s_v5` ×3 fixture (12 vCPU) could never create. The open
       question was whether the separate per-family quota also blocked the replacement. It did:
 
