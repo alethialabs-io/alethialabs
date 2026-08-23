@@ -165,20 +165,15 @@ export function AuthForm({ mode }: AuthFormProps) {
 				? `/onboarding?next=${encodeURIComponent(next)}`
 				: "/onboarding";
 		const errorCallbackURL = `${mode === "signup" ? "/signup" : "/login"}?error=oauth`;
-		const { data, error } =
-			provider === "github" || provider === "google"
-				? await authClient.signIn.social({
-						provider,
-						callbackURL,
-						newUserCallbackURL,
-						errorCallbackURL,
-					})
-				: await authClient.signIn.oauth2({
-						providerId: provider,
-						callbackURL,
-						newUserCallbackURL,
-						errorCallbackURL,
-					});
+		// 1.7 promoted the generic providers (gitlab, bitbucket) to first-class social
+		// providers and deleted `signIn.oauth2`, so the github/google split is gone —
+		// one call now covers every provider.
+		const { data, error } = await authClient.signIn.social({
+			provider,
+			callbackURL,
+			newUserCallbackURL,
+			errorCallbackURL,
+		});
 
 		if (error) {
 			setError(error.message ?? `Failed to sign in with ${provider}`);

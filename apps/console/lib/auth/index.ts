@@ -4,7 +4,10 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
-import { emailOTP, genericOAuth, mcp } from "better-auth/plugins";
+import { emailOTP, genericOAuth, jwt } from "better-auth/plugins";
+import { cimd } from "@better-auth/cimd";
+import { fetchClientMetadataResource } from "@better-auth/cimd/node";
+import { mcp } from "@better-auth/mcp";
 import type {
 	BetterAuthOptions,
 	SocialProviders,
@@ -116,19 +119,37 @@ const plugins: BetterAuthOptions["plugins"] = [
 			await sendSignInCodeEmail(email, otp);
 		},
 	}),
+	// REQUIRED by mcp(): it supplies the stable signing key for ID/access tokens and
+	// exposes /jwks for resource servers to verify them. Without it mcp() has nothing
+	// to sign with.
+	jwt(),
 	// OAuth 2.1 authorization server for the MCP endpoint (B7): lets remote MCP
-	// clients (Claude / claude.ai connectors) register dynamically and obtain an
-	// access token that the /api/mcp route resolves into a PDP-scoped actor. No new
-	// authority — the token's user drives getActiveScope() like any other caller.
+	// clients (Claude / claude.ai connectors) obtain an access token that the
+	// /api/mcp route resolves into a PDP-scoped actor. No new authority — the
+	// token's user drives getActiveScope() like any other caller.
+	//
+	// 1.7 moved this plugin into @better-auth/mcp, flattened the old `oidcConfig`
+	// nesting, and made `resource` mandatory: tokens are now audience-bound to it
+	// (RFC 8707) and the RFC 9728 protected-resource metadata is published for it.
+	// Its OAuth endpoints also moved from /mcp/* to /oauth2/*.
+	//
+	// mcp() IS the OAuth provider — never also register oauthProvider() here.
 	mcp({
 		loginPage: "/login",
-		oidcConfig: {
-			loginPage: "/login",
-			// Shown when a client requests prompt=consent (e.g. a re-auth/scope grant);
-			// clients that omit it are issued a code directly (documented MVP posture).
-			consentPage: "/auth/oauth/consent",
-			allowDynamicClientRegistration: true,
-		},
+		// Shown when a client requests prompt=consent (e.g. a re-auth/scope grant);
+		// clients that omit it are issued a code directly (documented MVP posture).
+		consentPage: "/auth/oauth/consent",
+		resource: `${cfg.baseURL}/api/mcp`,
+	}),
+	// Client ID Metadata Documents. 1.7 stopped allowing unauthenticated Dynamic
+	// Client Registration, which is how the connectors used to register themselves —
+	// the replacement is CIMD, and discovery only advertises
+	// `client_id_metadata_document_supported` when this plugin is loaded. Dropping it
+	// without pre-registering clients would leave remote MCP clients no way to
+	// register at all, so this is not optional in practice for us.
+	cimd({
+		fetchClientMetadataResource,
+		metadataProfile: "mcp-2026-07-28",
 	}),
 ];
 if (genericOAuthConfigs.length > 0) {
