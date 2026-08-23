@@ -21,9 +21,14 @@ import {
 	account,
 	invitation,
 	member,
+	jwks,
 	oauthAccessToken,
-	oauthApplication,
+	oauthClient,
+	oauthClientAssertion,
+	oauthClientResource,
 	oauthConsent,
+	oauthRefreshToken,
+	oauthResource,
 	organization,
 	rateLimit,
 	session,
@@ -181,10 +186,19 @@ export const auth = betterAuth({
 			team,
 			teamMember,
 			ssoProvider,
-			// MCP OAuth authorization-server tables (mcp() plugin → OIDC provider).
-			oauthApplication,
+			// MCP OAuth authorization-server tables. 1.7's mcp() IS oauthProvider(), whose schema
+			// is registered UNCONDITIONALLY — every model must appear here even for features we
+			// never use, or the adapter throws "the model \"x\" was not found in the schema
+			// object" the first time the plugin touches it. `jwks` belongs to jwt(), which
+			// oauth-provider requires.
+			oauthClient,
+			oauthResource,
+			oauthClientResource,
+			oauthRefreshToken,
 			oauthAccessToken,
 			oauthConsent,
+			oauthClientAssertion,
+			jwks,
 			// Built-in rate limiter's backing store (rateLimit: storage "database").
 			rateLimit,
 		},
