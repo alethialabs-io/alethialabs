@@ -86,8 +86,10 @@ export async function POST(req: Request) {
 		const accounts = await auth.api.listUserAccounts({ headers: hdrs });
 		const git = accounts.find((a) => GIT_PROVIDERS.includes(a.providerId));
 		if (git) {
+			// 1.7's selector is the LOCAL account.id. This site needs no extra lookup: the
+			// listUserAccounts row already carries `id`, which is exactly that value.
 			const at = await auth.api.getAccessToken({
-				body: { providerId: git.providerId, userId: session.user.id },
+				body: { accountId: git.id, userId: session.user.id },
 				headers: hdrs,
 			});
 			providerToken = at.accessToken ?? null;

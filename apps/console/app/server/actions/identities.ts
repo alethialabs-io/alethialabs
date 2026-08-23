@@ -8,6 +8,7 @@ import { headers } from "next/headers";
 import { currentActor } from "@/lib/authz/guard";
 import { markFailed, markHealthy } from "@/lib/connectors/health";
 import { auth } from "@/lib/auth";
+import { resolveAccountId } from "@/lib/auth/accounts";
 import { getOwner } from "@/lib/auth/owner";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
 
@@ -52,8 +53,16 @@ export async function getValidProviderToken(
 		return null;
 	}
 	try {
+		// 1.7 selectors take the LOCAL account.id, not the provider id. No link → no token,
+		// and that is an expected state (the user simply has not connected this provider),
+		// so report it the same way a missing token is reported rather than throwing.
+		const accountId = await resolveAccountId(scope.userId, provider);
+		if (accountId === null) {
+			void markFailed(scope, "git", provider, "no linked account for this provider");
+			return null;
+		}
 		const res = await auth.api.getAccessToken({
-			body: { providerId: provider, userId: scope.userId },
+			body: { accountId, userId: scope.userId },
 			headers: await headers(),
 		});
 		const token = res.accessToken ?? null;
@@ -75,8 +84,17 @@ export async function getValidProviderToken(
 /** Unlinks a git provider from the current user. */
 export async function deleteProviderToken(provider: PublicGitProvider) {
 	try {
+		// 1.7's unlinkAccount takes the local account.id. Resolving it needs the user, which
+		// the session carries — but currentActor() is the seam that already knows it.
+		const actor = await currentActor();
+		const accountId = await resolveAccountId(actor.userId, provider);
+		if (accountId === null) {
+			// Already unlinked. Idempotent: the caller's intent is satisfied.
+			revalidatePath("/dashboard/connectors");
+			return { success: true };
+		}
 		await auth.api.unlinkAccount({
-			body: { providerId: provider },
+			body: { accountId },
 			headers: await headers(),
 		});
 		revalidatePath("/dashboard/connectors");

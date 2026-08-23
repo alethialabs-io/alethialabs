@@ -4,6 +4,7 @@
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { resolveAccountId } from "@/lib/auth/accounts";
 import { getServiceDb } from "@/lib/db";
 import { jobs, projectAddons, projectRepositories } from "@/lib/db/schema";
 import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
@@ -123,8 +124,19 @@ export async function POST(
 		// "no git access token". Omitting headers makes `(ctx.request || ctx.headers)` falsy, so the
 		// explicit `userId` path runs as intended.
 		try {
+			// 1.7 changed the selector from the provider id to the LOCAL account.id, and rejects
+			// `providerId` outright. There is no server-side helper that maps one to the other, and
+			// listUserAccounts is session-authenticated — which this call deliberately is not (see
+			// the headers note above) — so resolve it straight from the account table.
+			const accountId = await resolveAccountId(job.user_id, gitProvider);
+			if (accountId === null) {
+				console.warn(
+					`git-token: job owner ${job.user_id} has no ${gitProvider} account link (repo ${repoUrl}) — a PRIVATE apps repo cannot be cloned`,
+				);
+				return NextResponse.json({ token: null });
+			}
 			const res = await auth.api.getAccessToken({
-				body: { providerId: gitProvider, userId: job.user_id },
+				body: { accountId, userId: job.user_id },
 			});
 			// A null token is the silent killer of a GitOps deploy (deploy.go's git-token gate) — so
 			// say WHY out loud instead of returning an unexplained null. The commonest cause is the
