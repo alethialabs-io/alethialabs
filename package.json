@@ -31,6 +31,8 @@
     "check:docs-contract": "node scripts/check-docs-contract.mjs",
     "check:e2e-spend-guard": "node scripts/check-e2e-spend-guard.mjs",
     "check:open-core": "node scripts/check-open-core-boundary.mjs",
+    "legal:check-ip-activation": "node scripts/legal/activate-company-ip.mjs --check-markers",
+    "legal:activate-ip": "node scripts/legal/activate-company-ip.mjs",
     "check:programme": "node scripts/programme-rollup.mjs",
     "gen:programme": "node scripts/programme-rollup.mjs --write",
 		"check:runner-self-image": "node scripts/check-runner-self-image.mjs",
