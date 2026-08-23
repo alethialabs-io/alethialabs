@@ -89,3 +89,9 @@ apps/console/e2e/.auth/
 .claude/worktrees/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# Local scratch output — reports, generated PDFs, session notes. Never a build input and never
+# something the repo should carry: what lands here is whatever a session happened to write, which
+# on this machine included a personal document. Untracked was doing the work by accident; this
+# makes it deliberate.
+/output/
