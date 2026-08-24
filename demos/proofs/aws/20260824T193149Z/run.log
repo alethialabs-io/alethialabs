@@ -1,0 +1,7 @@
+=== RUN   TestT2RealCloudProvisioning
+    t2_provision_test.go:116: T2 prerequisite missing (ALETHIA_E2E_T2_REQUIRE set): AWS credentials are not configured — set ALETHIA_E2E_AWS_READY=1 (after aws-actions/configure-aws-credentials) and ensure AWS_ACCESS_KEY_ID or AWS_ROLE_ARN is present
+--- FAIL: TestT2RealCloudProvisioning (0.00s)
+FAIL
+FAIL	github.com/alethialabs-io/alethialabs/test/e2e	0.600s
+?   	github.com/alethialabs-io/alethialabs/test/e2e/cmd/t2budget	[no test files]
+FAIL
