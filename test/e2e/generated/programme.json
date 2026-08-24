@@ -302,7 +302,7 @@
 		},
 		{
 			"kind": "registry",
-			"doc": "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none; its in-cluster substitute (Harbor) is charted but its pull credentials are not. Per-cloud gotcha: AWS emits provision_ecr as a plain boolean (the registry NAME is unused there).",
+			"doc": "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none and carries the kind in-cluster as Harbor, with a minted robot account for pulls. Per-cloud gotcha: AWS emits provision_ecr as a plain boolean (the registry NAME is unused there).",
 			"foundational": false,
 			"cells": {
 				"alibaba": {
@@ -326,10 +326,10 @@
 					"resource": "google_artifact_registry_repository"
 				},
 				"hetzner": {
-					"carriage": "deferred",
-					"offered": false,
-					"why": "Hetzner has no cloud service for this kind, but a chart in the marketplace catalog DOES back it — it is simply not mapped to the kind, so this is DEBT, not a ceiling. Today the kind is hidden on the canvas and REJECTED at deploy (unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner). #2397 wired the chart itself; what remains is a robot account minted by an in-cluster bootstrap Job, its dockerconfigjson on the EnsureRegistryPullSecret rail, and a Talos containerd mirror entry",
-					"chart": "harbor (marketplace catalog; the full-bar run already installs it)"
+					"carriage": "in_cluster",
+					"offered": true,
+					"why": "Hetzner has no managed equivalent; the console synthesizes an in-cluster chart (hetzner-services.ts) which the runner installs as an ArgoCD Application — nothing reaches tofu state (Harbor, goharbor chart; pulls authenticate with a project-scoped robot account minted in-cluster, and containerd trusts the host via a Talos mirror)",
+					"argo_app": "addon-registry-app-images"
 				}
 			}
 		},

@@ -386,3 +386,40 @@ func TestHetznerProvider_ProviderTfvars_ProvisionNetwork(t *testing.T) {
 		t.Errorf("provision_network = %v with the switch off and no network named, want true", got)
 	}
 }
+
+// The in-cluster registry hosts are what let talos.tf render a containerd mirror. Without a mirror
+// entry the kubelet refuses a plain-HTTP cluster-local host outright, and the pull failure looks
+// like a credential problem — so a dropped or misspelt host here is invisible until a real cluster.
+func TestHetznerProvider_ProviderTfvars_InClusterRegistryHosts(t *testing.T) {
+	p := &hetznerProvider{}
+	cfg := baseHetznerConfig()
+
+	// Always emitted, even empty: a registry-free cluster must still plan clean.
+	tfvars := p.ProviderTfvars(cfg)
+	hosts, ok := tfvars["incluster_registry_hosts"].([]string)
+	if !ok {
+		t.Fatalf("incluster_registry_hosts = %T, want []string", tfvars["incluster_registry_hosts"])
+	}
+	if len(hosts) != 0 {
+		t.Errorf("a registry-free project emitted %v", hosts)
+	}
+
+	cfg.ContainerRegistries = []types.ProjectContainerRegistryConfig{
+		{Name: "app-images"}, {Name: ""}, {Name: "base"},
+	}
+	hosts, _ = p.ProviderTfvars(cfg)["incluster_registry_hosts"].([]string)
+	want := []string{
+		"registry-app-images.registries.svc.cluster.local",
+		"registry-base.registries.svc.cluster.local",
+	}
+	if len(hosts) != len(want) {
+		t.Fatalf("emitted %v, want %v", hosts, want)
+	}
+	for i := range want {
+		// This string must equal the chart's externalURL host and the dockerconfigjson key —
+		// argocd.HetznerRegistries derives the same shape and a test there pins the agreement.
+		if hosts[i] != want[i] {
+			t.Errorf("host[%d] = %q, want %q", i, hosts[i], want[i])
+		}
+	}
+}
