@@ -2,32 +2,45 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 "use client";
 
-// Mounts the enabled analytics providers after the matching consent choice:
-//  - PostHog (prod suite): product analytics + optional session replay + web-vitals/performance + errors,
-//  - Umami (OSS self-host): product analytics + funnels, with the custom Web-Vitals reporter,
-//  - OpenReplay (OSS self-host): session replay.
+// Mounts the enabled analytics providers after affirmative analytics consent:
+//  - PostHog (prod suite): product analytics + web-vitals/performance + errors,
+//  - Umami (OSS self-host): product analytics + funnels, with the custom Web-Vitals reporter.
 // Consent defaults to denied. With nothing configured this renders only its children, so the open-source
 // build ships zero telemetry.
+//
+// SESSION REPLAY IS GONE (consent v2). Not defaulted off — removed: the product does not run replay,
+// and an SDK path that could start it, behind a choice nobody is offered, is a capability the privacy
+// disclosures would have to keep describing. The OpenReplay tracker mount went with it; the config
+// seam stays for self-hosters, and nothing in this app reads it.
+//
+// `analyticsAllowed` comes from the consent context, NOT from `consent.analytics`. It folds in Global
+// Privacy Control, which is an opt-out signal a stored "yes" must not override.
 
 import Script from "next/script";
 import { useEffect } from "react";
 import type React from "react";
+import { purgePostHogStorage } from "@repo/privacy/consent";
 import { useConsent } from "@repo/privacy/consent-provider";
 import { analyticsConfig } from "@/lib/analytics/config";
 import { WebVitals } from "@/components/analytics/web-vitals";
 
 export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 	const cfg = analyticsConfig();
-	const { consent } = useConsent();
-	const analyticsAllowed = consent?.analytics === true;
-	const replayAllowed = consent?.replay === true;
+	const { analyticsAllowed } = useConsent();
 
 	// PostHog — the all-in-one suite. Dynamically imported so its bundle only ships when enabled.
-	// Captures pageviews + autocapture and Core Web Vitals only after analytics consent. Session replay
-	// additionally requires replay consent; all text and inputs are masked. Sampling + billing limits are
-	// set in the PostHog project settings.
+	// Captures pageviews + autocapture and Core Web Vitals only after analytics consent. Sampling +
+	// billing limits are set in the PostHog project settings.
+	//
+	// The withdrawal branch runs BEFORE the guard: turning analytics off has to delete the identifiers
+	// already on the device, and at that point `analyticsAllowed` is false, so a plain early return
+	// would skip the cleanup entirely and leave them there forever.
 	useEffect(() => {
-		if (!cfg.posthog || !analyticsAllowed) return;
+		if (!analyticsAllowed) {
+			purgePostHogStorage();
+			return;
+		}
+		if (!cfg.posthog) return;
 		let cancelled = false;
 		let stopPosthog: (() => void) | null = null;
 		void (async () => {
@@ -47,7 +60,7 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 					autocapture: true,
 					capture_performance: { web_vitals: true },
 					// Surface unhandled errors + promise rejections in PostHog Error tracking (with the
-					// session replay attached). Replaces a separate Sentry.
+					// stack trace attached). Replaces a separate Sentry.
 					capture_exceptions: true,
 					// Drop the benign "ResizeObserver loop completed with undelivered notifications" — a
 					// browser quirk (not an app fault, never actionable) that otherwise floods Error
@@ -71,22 +84,21 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 						}
 						return cr;
 					},
-					disable_session_recording: !replayAllowed,
-					session_recording: {
-						maskAllInputs: true,
-						maskTextSelector: "*",
-					},
+					// Replay is not a choice this product offers, so the SDK is told never to start it.
+					disable_session_recording: true,
 				});
 				posthog.opt_in_capturing();
 				// Tag every event (incl. $exception) with the deploy release, so a captured stack
 				// symbolicates against the source maps uploaded for that same build (see next.config.ts).
 				if (cfg.posthog!.release) posthog.register({ release: cfg.posthog!.release });
-				if (replayAllowed) posthog.startSessionRecording();
 				window.__posthog = posthog;
 				stopPosthog = () => {
-					posthog.stopSessionRecording();
 					posthog.reset();
 					posthog.opt_out_capturing();
+					// reset() clears the distinct id but leaves PostHog's cookie and localStorage
+					// entries on the device. The requirement is that identifiers are DELETED, not
+					// that capture stops, so the storage goes too.
+					purgePostHogStorage();
 				};
 			} catch {
 				/* analytics is best-effort — never break the app */
@@ -104,48 +116,10 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
 		analyticsAllowed,
-		replayAllowed,
 		cfg.posthog?.key,
 		cfg.posthog?.host,
 		cfg.posthog?.release,
 	]);
-
-	// OpenReplay session replay — dynamically imported so its bundle only ships when enabled. Inputs
-	// are obscured by default; sensitive subtrees (billing, OTP) add data-openreplay-obscured.
-	useEffect(() => {
-		if (!cfg.openreplay || !replayAllowed) return;
-		let cancelled = false;
-		let stop: (() => void) | null = null;
-		void (async () => {
-			try {
-				const Tracker = (await import("@openreplay/tracker")).default;
-				const tracker = new Tracker({
-					projectKey: cfg.openreplay!.projectKey,
-					ingestPoint: cfg.openreplay!.ingest,
-					obscureInputEmails: true,
-					obscureInputNumbers: true,
-					obscureTextEmails: true,
-				});
-				if (cancelled) return;
-				tracker.start();
-				window.__openreplay = tracker;
-				stop = () => tracker.stop();
-			} catch {
-				/* session replay is best-effort — never break the app */
-			}
-		})();
-		return () => {
-			cancelled = true;
-			try {
-				stop?.();
-			} catch {
-				/* noop */
-			}
-			window.__openreplay = undefined;
-		};
-		// Depend on the primitive key/ingest, not the cfg object (recreated each render → would re-run).
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [replayAllowed, cfg.openreplay?.projectKey, cfg.openreplay?.ingest]);
 
 	return (
 		<>
@@ -157,10 +131,8 @@ export function AnalyticsProvider({ children }: { children: React.ReactNode }) {
 				/>
 			) : null}
 			{/* PostHog captures Web Vitals natively (capture_performance); the custom reporter is only
-			    for the OSS Umami/OpenReplay path — skip it when PostHog is active to avoid double counts. */}
-			{analyticsAllowed && (cfg.umami || cfg.openreplay) && !cfg.posthog ? (
-				<WebVitals />
-			) : null}
+			    for the OSS Umami path — skip it when PostHog is active to avoid double counts. */}
+			{analyticsAllowed && cfg.umami && !cfg.posthog ? <WebVitals /> : null}
 			{children}
 		</>
 	);

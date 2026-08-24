@@ -1,20 +1,27 @@
-# Analytics — PostHog (hosted suite) or Umami + OpenReplay (OSS self-host)
+# Analytics — PostHog (hosted suite) or Umami (OSS self-host)
 
 The console's analytics layer is **provider-agnostic** (`apps/console/lib/analytics/config.ts` →
 `track()`/`identify()`). Everything is **off by default** and an environment variable is never treated
 as consent: no `NEXT_PUBLIC_*` env means zero telemetry, while a configured provider remains unloaded
-until the visitor makes the matching choice. Analytics and session replay are separate choices.
+until the visitor makes the matching choice.
+
+**There is one optional choice: product analytics.** Consent v2 removed the session-replay choice, and
+the replay SDK paths with it (#2371) — the product does not record sessions, so it does not ask. The
+OpenReplay adapter and its `NEXT_PUBLIC_OPENREPLAY_*` env are gone rather than merely unset: an adapter
+that no consent gate can ever enable is not an option a self-hoster has, it is dead code that still
+appears in an SBOM and in a privacy review.
 
 - **PostHog** — the all-in-one suite hosted **alethialabs.io runs in prod**: consented product analytics
-  + funnels + optional **session replay** + **web-vitals/performance** + client error tracking. Setup is a single
-  project key — no infra. Set `NEXT_PUBLIC_POSTHOG_KEY` (+ optional `NEXT_PUBLIC_POSTHOG_HOST`, default
-  `https://eu.i.posthog.com`) and leave Umami/OpenReplay unset (the provider won't double-track).
+  + funnels + **web-vitals/performance** + client error tracking. Setup is a single project key — no
+  infra. Set `NEXT_PUBLIC_POSTHOG_KEY` (+ optional `NEXT_PUBLIC_POSTHOG_HOST`, default
+  `https://eu.i.posthog.com`) and leave Umami unset (the provider won't double-track).
   - **1-time setup:** create a PostHog project (EU) → copy the `phc_…` project API key; in project
-    settings enable **Session Replay**, set a **billing limit** = free tier (1M events / 5k recordings —
-    with no card PostHog hard-stops at the cap, so never a surprise bill), and a replay **sample rate**
-    to stretch recordings. Put the key in the vault (`NEXT_PUBLIC_POSTHOG_KEY`) → redeploy.
-  - Session replay requires the separate replay choice and masks all text and inputs. Web Vitals
-    populate PostHog's Web Vitals dashboard only after analytics consent.
+    settings set a **billing limit** = free tier (1M events — with no card PostHog hard-stops at the
+    cap, so never a surprise bill). Leave **Session Replay** OFF: the app pins
+    `disable_session_recording: true`, and a project with replay enabled would still be a capability
+    the privacy disclosures have to account for. Put the key in the vault
+    (`NEXT_PUBLIC_POSTHOG_KEY`) → redeploy.
+  - Web Vitals populate PostHog's Web Vitals dashboard only after analytics consent.
   - **Future — move to AWS CloudWatch RUM:** because the layer is provider-agnostic, it's a provider
     swap, not a rewrite — add a RUM provider (Cognito identity pool + app-monitor snippet) and switch
     `NEXT_PUBLIC_POSTHOG_*` for the RUM config. Considered for when the free tier is outgrown.
@@ -22,11 +29,10 @@ until the visitor makes the matching choice. Analytics and session replay are se
 The **OSS self-host** path (no third-party cloud) stays fully supported below:
 
 Open-source, self-hostable telemetry — **product analytics** (events, funnels, journeys, retention) +
-**Core Web Vitals** via **Umami**, and **session replay** via **OpenReplay**. Enabled by their own
-`NEXT_PUBLIC_*` env (`apps/console/lib/analytics/config.ts`). Both are still first-class **opt-in
-providers in the app**, but they are **no longer deployed on the hosted alethialabs.io box** — prod runs
-PostHog. If you self-host and want Umami/OpenReplay instead of PostHog, run them yourself (below) and set
-the matching `NEXT_PUBLIC_*` env.
+**Core Web Vitals** via **Umami**. Enabled by its own `NEXT_PUBLIC_*` env
+(`apps/console/lib/analytics/config.ts`). It is still a first-class **opt-in provider in the app**, but
+it is **no longer deployed on the hosted alethialabs.io box** — prod runs PostHog. If you self-host and
+want Umami instead of PostHog, run it yourself (below) and set the matching `NEXT_PUBLIC_*` env.
 
 > **Note — Umami is NOT provisioned on alethialabs.io.** The old hosted wiring (the `analytics` DNS
 > record + tunnel ingress + Cloudflare Access apps in `infra/cp-hetzner`, the `umami`/`umami-db`/
@@ -38,11 +44,13 @@ the matching `NEXT_PUBLIC_*` env.
 
 
 ## App side (already wired)
-- `packages/privacy` — versioned first-party consent state, equal accept/reject controls, granular
-  analytics/replay choices, and the persistent **Privacy choices** control.
+- `packages/privacy` — versioned first-party consent state (v2), equal accept/reject controls, the one
+  optional analytics choice, Global Privacy Control honoured as a standing opt-out, and the
+  **Privacy settings** control that reopens the dialog.
 - `apps/console/lib/analytics/{config,events,track}.ts` — provider-agnostic `track()` / `identify()`.
 - `apps/console/components/providers/analytics-provider.tsx` — imports PostHog/Umami only after
-  analytics consent and OpenReplay/recording only after replay consent. Replay masks all text and inputs.
+  analytics consent, pins `disable_session_recording`, and deletes PostHog's identifiers and browser
+  storage on withdrawal.
 - `apps/console/lib/analytics/server.ts` — deliberately no-ops third-party product/AI analytics in
   webhook and worker contexts because those contexts cannot prove the user's browser consent.
 - `apps/console/components/analytics/web-vitals.tsx` — Next `useReportWebVitals` → `web_vitals` events.
@@ -83,33 +91,18 @@ analytics consent. Pageviews + custom events (funnels, `web_vitals`) then show i
 (`UMAMI_APP_SECRET` / the DB password are Umami's own env in the compose file above — the console only
 needs the two `NEXT_PUBLIC_UMAMI_*` values.)
 
-## OpenReplay (session replay) — **default: their Cloud free tier**
-OpenReplay self-hosting is a full stack (Postgres/ClickHouse/Redis/MinIO) that needs its own ~16 GB box
-+ real ops. Their **Cloud free tier gives 1,000 session recordings/mo at $0**, so the default is Cloud —
-**no infrastructure**:
+## Session replay — removed, not disabled
 
-1. Sign up at [openreplay.com](https://openreplay.com) and pick the **EU region** (GDPR — ALETHIA LABS
-   is EU). Create a project → copy its **project key**.
-2. Set in the console prod env (the vault; the deploy assembler already emits it):
-   ```bash
-   NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY=<project-key>
-   # NEXT_PUBLIC_OPENREPLAY_INGEST is OPTIONAL — leave empty and the tracker posts to OpenReplay Cloud's
-   # default ingest; set it only for the EU-cloud ingest host or a self-hosted box.
-   ```
-The tracker remains unloaded until the visitor grants replay consent. When it starts, input and text
-masking are enabled.
+There is no replay provider and no replay consent choice. `disable_session_recording` is pinned on in
+PostHog's init, the OpenReplay adapter and its env are deleted, and `packages/legal`'s processing
+register no longer describes replay as a purpose.
 
-**Self-host later** (only once you outgrow 1,000 sessions/mo): OpenReplay's full stack
-(Postgres/ClickHouse/Redis/MinIO) needs its own ~16 GB box + real ops — follow OpenReplay's official
-self-host guide on a dedicated VM and point `NEXT_PUBLIC_OPENREPLAY_INGEST` at it. (Alethia no longer
-ships a box module for it.)
-
-Privacy (either way): replay is independently consent-gated, all PostHog text/inputs are masked, and
-OpenReplay obscures input values and email-like text. Stripe card fields are cross-origin iframes and
-are not captured. Keep `data-openreplay-obscured` on especially sensitive subtrees as defense in depth.
+Re-introducing it is a product and privacy decision, not a configuration one: it needs a consent
+choice (consent v3), a purpose in the register, a line in the cookie notice and the accountability
+record, and a masking review. Setting an env variable would not be enough, which is the point.
 
 ## Verify
-In a clean browser profile, load any console page and verify that no PostHog, Umami, or OpenReplay
+In a clean browser profile, load any console page and verify that no PostHog or Umami
 request occurs before a choice. Reject non-essential processing and verify the same. Then grant
 analytics only: PostHog/Umami may send events, but no replay begins. Grant replay separately and verify
 recordings are masked. Finally withdraw both choices from **Privacy choices** and verify a reload leaves

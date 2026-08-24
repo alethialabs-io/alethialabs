@@ -411,17 +411,29 @@ export function ContactForm({
 										onBlur={field.onBlur}
 										style={{ marginTop: 2, accentColor: "var(--text-primary)", width: 15, height: 15, flexShrink: 0 }}
 									/>
+									{/*
+									  * RESPONSE-ONLY (#2371). This used to read "I agree to receive
+									  * communications … I can withdraw consent at any time via the
+									  * unsubscribe link in any email" — and there is no marketing
+									  * list, no unsubscribe link and no email to withdraw from. A
+									  * false promise inside a consent control is worse than no
+									  * control: it is the one sentence a person is asked to rely on.
+									  *
+									  * What is collected is used to reply to this enquiry and for
+									  * nothing else, so the box acknowledges that rather than
+									  * consenting to marketing that does not exist.
+									  */}
 									<span style={{ fontSize: 11.5, color: "var(--text-tertiary)", lineHeight: 1.55 }}>
-										I agree to receive communications from Alethia Labs as
-										described in the{" "}
+										I understand Alethia Labs will use these details only to
+										reply to this enquiry, as described in the{" "}
 										<Link
 											href="/privacy"
 											style={{ color: "var(--text-secondary)", textDecoration: "underline", textUnderlineOffset: 2 }}
 										>
 											Privacy Policy
 										</Link>
-										. I can withdraw consent at any time via the unsubscribe link
-										in any email.
+										. We do not send marketing email and there is no mailing list
+										to unsubscribe from.
 									</span>
 								</label>
 								<FormMessage className="text-[11px]" />

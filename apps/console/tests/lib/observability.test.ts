@@ -133,7 +133,7 @@ describe("createLogger", () => {
 // The OTLP endpoint is unset in the test env, so startOtel() is never called → the
 // global tracer + meter stay the OTel API's built-in no-op. These assert the whole
 // telemetry surface is a SAFE no-op in that state: no throw, no error, no side effect
-// (exactly the Umami/OpenReplay analytics-gating contract — telemetry is never a hard
+// (exactly the Umami/PostHog analytics-gating contract — telemetry is never a hard
 // dependency and never backpressures a provision).
 describe("telemetry is a safe no-op when no OTLP endpoint is configured", () => {
 	it("metric record helpers do not throw with the no-op global meter", () => {
