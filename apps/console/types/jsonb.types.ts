@@ -1389,3 +1389,51 @@ export interface CostResourceLine {
 	resourceType: string;
 	monthlyCost: number;
 }
+
+// ── Contract formation and consumer rights (#2372) ───────────────────────────
+
+/**
+ * Request evidence on `legal_acceptance.evidence` — the minimum that makes an acceptance
+ * attributable to a person at a moment.
+ *
+ * Deliberately narrow. It is personal data, and every field beyond attribution is data we would
+ * have to justify holding for the life of a contract; a session id, a referrer or a device
+ * fingerprint would not make the acceptance any more provable.
+ */
+export interface LegalAcceptanceEvidence {
+	/** The submitting IP, as observed. May be null behind a proxy that strips it — recorded as null
+	 *  rather than as a placeholder, so an absent value never reads as a real one. */
+	ip: string | null;
+	userAgent: string | null;
+	/** ISO-8601, as the CLIENT reported it. Kept alongside the server's `accepted_at`: a large gap
+	 *  between the two is itself a signal, and reconciling them later needs both. */
+	clientTimestamp: string | null;
+	/** How the acceptance was presented — which surface rendered the checkbox or the order button. */
+	surface: "signup" | "console-gate" | "checkout";
+}
+
+/** A billing address as GIVEN, snapshotted on `commerce_order.billing_address`. Free-form lines
+ *  rather than a normalized shape: address formats differ by country, and normalizing would lose
+ *  what the payer actually wrote — which is the thing the record has to preserve. */
+export interface CommerceBillingAddress {
+	line1: string;
+	line2: string | null;
+	city: string;
+	postalCode: string;
+	/** Region/state/province, where the country uses one. */
+	region: string | null;
+	/** ISO 3166-1 alpha-2, upper-case. Mirrors `commerce_order.billing_country`. */
+	country: string;
+}
+
+/**
+ * The legal documents in force when an order was placed, on `commerce_order.document_versions`.
+ * Version AND hash for each, so the order names text that can still be reproduced.
+ */
+export interface CommerceDocumentVersions {
+	documents: {
+		id: string;
+		version: string;
+		hash: string;
+	}[];
+}
