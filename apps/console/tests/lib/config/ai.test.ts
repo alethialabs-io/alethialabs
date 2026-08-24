@@ -32,6 +32,9 @@ const KEYS = [
 	"ALETHIA_AI_OPENAI_TRANSFER",
 	"ALETHIA_AI_OPENAI_RETENTION",
 	"ALETHIA_AI_OPENAI_NO_TRAINING",
+	// The scripted E2E model. Cleared per test so an ambient ALETHIA_AI_MOCK=1 in a developer's
+	// shell cannot make the fail-closed gate look open — it short-circuits everything below.
+	"ALETHIA_AI_MOCK",
 ];
 
 /** Arms the four transparency values for a provider — what a configured deployment looks like. */
@@ -217,5 +220,17 @@ describe("aiDisabledReason", () => {
 	it("says why a prompt is not sent, not merely that it is not", () => {
 		process.env.ANTHROPIC_API_KEY = "sk-ant-x";
 		expect(aiDisabledReason()).toMatch(/infrastructure and code/i);
+	});
+});
+
+describe("the scripted E2E model", () => {
+	// The ONE exemption from the transparency gate, and it is exempt because it is not a provider:
+	// the scripted model sends nothing anywhere, so there is no third party to have an agreement
+	// with. Pinned because "tighten the gate, no exceptions" is a plausible-looking change that
+	// would take every AI e2e leg down with it.
+	it("is configured without an API key or any transparency evidence", () => {
+		process.env.ALETHIA_AI_MOCK = "1";
+		expect(isAiConfigured()).toBe(true);
+		expect(aiDisabledReason()).toBeNull();
 	});
 });

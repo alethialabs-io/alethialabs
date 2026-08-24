@@ -44,10 +44,19 @@ function actorFor(orgId: string): Actor {
 
 describeIfDb("agent_identities cross-tenant isolation (IDOR audit #6)", () => {
 	beforeAll(async () => {
-		// The route reaches isAiConfigured() before the 404; a dummy key makes it pass so a
-		// cross-tenant id returns 404 (isolation) rather than 503 (unconfigured). Cross-tenant
-		// requests never reach the model, so no real provider call is made.
+		// The route reaches isAiConfigured() before the 404, so the assistant has to look CONFIGURED
+		// here or a cross-tenant id returns 503 (unconfigured) and the isolation assertion passes for
+		// the wrong reason — proving nothing about tenancy. Cross-tenant requests never reach the
+		// model, so no real provider call is made.
+		//
+		// Since #2373 a key alone is not enough: the transparency evidence gates the assistant too.
+		// These are test values and are never published — the production values come from the vault
+		// and are shown at /ai-transparency.
 		process.env.ANTHROPIC_API_KEY ||= "sk-integration-test-not-used";
+		process.env.ALETHIA_AI_ANTHROPIC_DPA ||= "integration-test placeholder";
+		process.env.ALETHIA_AI_ANTHROPIC_TRANSFER ||= "integration-test placeholder";
+		process.env.ALETHIA_AI_ANTHROPIC_RETENTION ||= "integration-test placeholder";
+		process.env.ALETHIA_AI_ANTHROPIC_NO_TRAINING ||= "integration-test placeholder";
 
 		const db = getServiceDb();
 		const [a] = await db
