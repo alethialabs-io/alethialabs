@@ -273,6 +273,32 @@ cluster_lb_arns() {
 	done <<<"$arns"
 }
 
+# vpc_security_group_ids — every NON-DEFAULT security group inside this run's tagged VPC(s).
+#
+# The tag filter cannot reach these: the AWS Load Balancer Controller and the CCM create groups
+# (`k8s-ingressn-*`, `k8s-traffic-<cluster>-*`) from inside the cluster, and nothing stamps
+# `alethia:project-id` on them. They are not billable themselves — they are worse. AWS refuses to
+# delete a VPC while any non-default group remains, so the VPC survives every retry, verify_swept
+# fails forever, and the nightly preflight spends its whole budget re-walking the same orphan. That
+# is why 29558347776-1 and aws07232004 were never reached: the queue in front of them never drained.
+#
+# The scope is TIGHTER than a tag match, not looser: the VPC itself carries
+# `alethia:project-id=e2e-<ENV>`, so anything inside it is this run's by construction. `default` is
+# skipped for the usual reason — it cannot be deleted and is removed with the VPC.
+vpc_security_group_ids() {
+	assert_scope
+	local vpc out
+	out=""
+	while IFS= read -r vpc; do
+		[ -n "$vpc" ] || continue
+		out="${out}$(aws ec2 describe-security-groups \
+			--filters "Name=vpc-id,Values=${vpc}" \
+			--query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+			--output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"$'\n'
+	done <<<"$(tagged_arns ec2:vpc | while read -r a; do arn_id "$a"; done)"
+	printf '%s' "$out" | grep -v '^$' | sort -u || true
+}
+
 # cluster_volume_ids — EBS tagged kubernetes.io/cluster/<CLUSTER> (CSI fallback if extraVolumeTags
 # didn't stamp project-id — grill F5). Empty when CLUSTER unknown.
 cluster_volume_ids() {
@@ -452,7 +478,10 @@ sweep_network() {
 	# Pass 1 strips every rule from every group, which breaks the cycle. Pass 2 then deletes them,
 	# and by then no group references any other.
 	local sgs_deletable=""
-	sgs="$(tagged_arns ec2:security-group | while read -r a; do arn_id "$a"; done)"
+	# The union, not the tagged set: see vpc_security_group_ids. Both passes below then cover the
+	# cluster-created groups too, which is what finally lets `delete-vpc` succeed.
+	sgs="$( (tagged_arns ec2:security-group | while read -r a; do arn_id "$a"; done
+		vpc_security_group_ids) | grep -v '^$' | sort -u || true)"
 	while IFS= read -r sg; do
 		[ -n "$sg" ] || continue
 		# The VPC's `default` group is skipped for the same reason the main route table is: it
@@ -1056,6 +1085,30 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_case "LB tag for THIS run resolves the cluster" "eks-ue1-${ENV}-alethia-nl" "eks-ue1-${ENV}-alethia-nl"
 	st_case "LB tag for ANOTHER run is ignored" "eks-ue1-99999999-9-alethia-nl" ""
 	st_case "no LB tag at all leaves CLUSTER unset" "" ""
+
+	# The VPC-scoped security-group discovery. $ST_SGS is what the stub reports for the run's VPC;
+	# `default` must never appear in the result, or the sweep would retry an undeletable group forever.
+	aws() {
+		case "$1 ${2:-}" in
+		"resourcegroupstaggingapi get-resources") printf '%s\n' "arn:aws:ec2:us-east-1:0:vpc/vpc-0abc" ;;
+		"ec2 describe-security-groups") printf '%s\n' "$ST_SGS" ;;
+		*) : ;;
+		esac
+	}
+	st_sg_case() { # <name> <stubbed group ids> <expected, newline-joined>
+		ST_SGS="$2"
+		local got
+		got="$(vpc_security_group_ids 2>/dev/null | tr '\n' ' ')"
+		got="${got% }"
+		if [ "$got" = "$3" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected '$3', got '$got'" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_sg_case "cluster-created groups in the run's VPC are swept" "sg-k8sing sg-k8straffic" "sg-k8sing sg-k8straffic"
+	st_sg_case "a VPC with no extra groups yields nothing" "" ""
 	unset -f aws
 
 	if [ "$st_fails" -ne 0 ]; then
