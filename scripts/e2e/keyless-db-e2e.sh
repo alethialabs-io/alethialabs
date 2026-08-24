@@ -91,9 +91,24 @@ EOF
 
 # ── append the ledger (idempotent: one row per run) ──────────────────────────────────────────
 row="| $(date -u +%Y-%m-%d) | $cloud | $engine | **$verdict** | \`$sha\` | ${detail:-} \`$bundle\` |"
-if grep -q "keyless-db-e2e.sh appends new rows below this line" "$ledger" 2>/dev/null; then
-  awk -v r="$row" '/appends new rows below this line/{print;print r;next}1' "$ledger" >"$ledger.tmp" && mv "$ledger.tmp" "$ledger"
-else printf '%s\n' "$row" >>"$ledger"; fi
+# ── APPEND AT THE END, not directly beneath the sentinel. ──
+#
+# `collapseLedger` (scripts/programme-rollup.mjs) replays rows in FILE ORDER and lets the last one
+# win. This wrote each new row immediately BELOW the sentinel, i.e. newest-first. Newest-first
+# storage read as last-wins means the OLDEST row wins.
+#
+# Measured 2026-08-24: a hetzner/floor PASS was masked by the FAIL from three hours earlier, and
+# PROGRAMME.md reported "0 proven" with the proof sitting in the same file. All five ledger engines
+# have always done this. It could not bite until now only because no (cloud × dimension) pair had
+# ever had two rows below the sentinel — there was exactly one row down there. A re-run-until-green
+# cadence produces that condition immediately, and it bit on the first re-run.
+#
+# The sentinel stays as the marker for where the appended region begins; a file without one is not
+# the shape this writes into, so say so rather than appending blind.
+if ! grep -q "keyless-db-e2e.sh appends new rows below this line" "$ledger" 2>/dev/null; then
+  echo "::warning::keyless-db-e2e.sh: ledger $ledger has no append sentinel — appending at end of file anyway." >&2
+fi
+printf '%s\n' "$row" >>"$ledger"
 echo "recorded: $verdict → $bundle (ledger appended)" >&2
 
 # ── on FAIL: file/update a title-deduped GitHub issue ────────────────────────────────────────
