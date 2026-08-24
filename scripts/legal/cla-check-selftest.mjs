@@ -16,10 +16,34 @@ import { Decision, SIGN_PHRASE, TRUSTED_ACTORS, evaluate, hasSigned, isTrusted, 
 const ACTIVE = { cla_version: "1.1", icla_sha256: "a".repeat(64) };
 const STAMP = "2026-08-24T10:00:00Z";
 
-/** A pull_request_target payload from `login`/`id`. */
-const pr = (login, id) => ({
+/**
+ * A corporate agreement covering `ids`.
+ *
+ * Minimal ON PURPOSE (#2374): the organization, the version and hash of what was signed, when it
+ * took effect, the covered ids, and an OPAQUE reference to the authorization held offline. Who
+ * signed for the company and in what role is not here and must not be — this file is world-readable,
+ * and the gate only ever needs to answer "is this id covered?".
+ */
+const ccla = (organization, ids) => ({
+	organization,
+	ccla_version: "1.1",
+	document_sha256: "c".repeat(64),
+	effective_at: STAMP,
+	covered_ids: ids,
+	authorization_reference: "CCLA-2026-0001",
+});
+
+/**
+ * A pull_request_target payload from `login`/`id`.
+ *
+ * `authors` defaults to the opener alone — the common case — but is a SEPARATE input because the
+ * gate checks every commit author, not the opener (#2374). Pass it explicitly for a branch carrying
+ * somebody else's commits, and omit it entirely to exercise the fail-closed path.
+ */
+const pr = (login, id, authors) => ({
 	eventName: "pull_request_target",
 	event: { pull_request: { user: { login, id }, head: { sha: "deadbeef" } }, number: 7 },
+	authors: authors === undefined ? [{ login, id, sha: "deadbeef" }] : authors,
 });
 
 /** An issue_comment payload. `authorId` defaults to the commenter — i.e. the PR's own author. */
@@ -194,6 +218,140 @@ const cases = [
 		input: { eventName: "push", event: {}, active: ACTIVE, signatures: [] },
 		want: Decision.Ignore,
 	},
+
+	// ── EVERY COMMIT AUTHOR, not just the opener (#2374) ─────────────────────────────────────────
+	// A branch can carry commits by somebody else — a rebase of another person's work, a co-author,
+	// a fork a second person pushed to. Checking only `pull_request.user` licenses all of it on one
+	// signature from someone who did not write it.
+	{
+		name: "an UNSIGNED co-author blocks a PR opened by a signed contributor",
+		input: {
+			...pr("outsider", 4242, [
+				{ login: "outsider", id: 4242, sha: "aaaaaaaa" },
+				{ login: "ghost", id: 5555, sha: "bbbbbbbb" },
+			]),
+			active: ACTIVE,
+			signatures: signed(4242),
+		},
+		want: Decision.Blocked,
+	},
+	{
+		name: "every commit author signed → pass",
+		input: {
+			...pr("outsider", 4242, [
+				{ login: "outsider", id: 4242, sha: "aaaaaaaa" },
+				{ login: "second", id: 5555, sha: "bbbbbbbb" },
+			]),
+			active: ACTIVE,
+			signatures: [...signed(4242), ...signed(5555)],
+		},
+		want: Decision.Pass,
+	},
+	{
+		name: "a TRUSTED bot among the commit authors does not need a signature",
+		input: {
+			...pr("outsider", 4242, [
+				{ login: "outsider", id: 4242, sha: "aaaaaaaa" },
+				{ login: "dependabot[bot]", id: 49699333, sha: "bbbbbbbb" },
+			]),
+			active: ACTIVE,
+			signatures: signed(4242),
+		},
+		want: Decision.Pass,
+	},
+	{
+		name: "a commit whose author GitHub cannot resolve to an account is BLOCKED, never skipped",
+		input: {
+			...pr("outsider", 4242, [
+				{ login: "outsider", id: 4242, sha: "aaaaaaaa" },
+				{ login: undefined, id: undefined, sha: "cccccccc" },
+			]),
+			active: ACTIVE,
+			signatures: signed(4242),
+		},
+		want: Decision.Blocked,
+	},
+	{
+		name: "commit authors that could not be enumerated FAIL CLOSED",
+		// `authors: undefined` — the commits API errored or paged short. Falling back to the opener
+		// would silently narrow the check to the case this widened, while still reporting a pass.
+		input: { ...pr("outsider", 4242, undefined), authors: undefined, active: ACTIVE, signatures: signed(4242) },
+		want: Decision.Blocked,
+	},
+
+	// ── CORPORATE, REVOCATION, SUPERSESSION ──────────────────────────────────────────────────────
+	{
+		name: "a contributor covered by their employer's CCLA passes with no individual signature",
+		input: {
+			...pr("employee", 6001),
+			active: ACTIVE,
+			signatures: [],
+			corporate: [ccla("Acme GmbH", [6001])],
+		},
+		want: Decision.Pass,
+	},
+	{
+		name: "a CCLA does not cover an id it does not list",
+		input: {
+			...pr("stranger", 6002),
+			active: ACTIVE,
+			signatures: [],
+			corporate: [ccla("Acme GmbH", [6001])],
+		},
+		want: Decision.Blocked,
+	},
+	{
+		name: "a CCLA for a DIFFERENT version does not cover this one",
+		input: {
+			...pr("employee", 6001),
+			active: ACTIVE,
+			signatures: [],
+			corporate: [{ ...ccla("Acme GmbH", [6001]), ccla_version: "1.0" }],
+		},
+		want: Decision.Blocked,
+	},
+	{
+		name: "a REVOKED signature no longer covers, even though the record remains",
+		input: {
+			...pr("outsider", 4242),
+			active: ACTIVE,
+			signatures: signed(4242),
+			revoked: [{ id: 4242, cla_version: "1.1", revoked_at: STAMP, revocation_reference: "REV-1" }],
+		},
+		want: Decision.Blocked,
+	},
+	{
+		name: "revocation beats a corporate agreement too — otherwise revoking is advisory",
+		input: {
+			...pr("employee", 6001),
+			active: ACTIVE,
+			signatures: [],
+			corporate: [ccla("Acme GmbH", [6001])],
+			revoked: [{ id: 6001, cla_version: "1.1", revoked_at: STAMP, revocation_reference: "REV-2" }],
+		},
+		want: Decision.Blocked,
+	},
+	{
+		name: "a revoked contributor cannot re-sign by commenting — reinstatement is administrative",
+		input: {
+			...comment("outsider", 4242, SIGN_PHRASE),
+			active: ACTIVE,
+			signatures: signed(4242),
+			revoked: [{ id: 4242, cla_version: "1.1", revoked_at: STAMP, revocation_reference: "REV-3" }],
+		},
+		want: Decision.Blocked,
+	},
+	{
+		name: "a revocation for another VERSION does not affect this one",
+		input: {
+			...pr("outsider", 4242),
+			active: ACTIVE,
+			signatures: signed(4242),
+			revoked: [{ id: 4242, cla_version: "1.0", revoked_at: STAMP, revocation_reference: "REV-4" }],
+		},
+		want: Decision.Pass,
+	},
+
 ];
 
 let failed = 0;

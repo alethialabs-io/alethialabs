@@ -611,12 +611,29 @@ jobs:
             # GCP needs NO separate secret either — the customer WIF pool trusts the Alethia issuer
             # directly, so the console/runner mint a subject token (audience alethia-gcp-wif). Availability
             # tracks the OIDC issuer (cloud-connect-setup.ts).
-            # AI: direct-to-provider (no Vercel AI Gateway). Once the vault has ANTHROPIC_API_KEY the
-            # agent/assistant/Ask-AI features run at the **Free tier** in prod (lib/config/ai.ts
-            # isAiConfigured). OPENAI_API_KEY is only used for openai/* model overrides (emit tolerates
-            # empty). The paid AI tiers (Plus/Max) stay dark until STRIPE_PRICE_AI_* below are set.
+            # AI: direct-to-provider (no Vercel AI Gateway). OPENAI_API_KEY is only used for openai/*
+            # model overrides (emit tolerates empty). The paid AI tiers (Plus/Max) stay dark until
+            # STRIPE_PRICE_AI_* below are set.
+            #
+            # ⚠️ A KEY IS NO LONGER ENOUGH (#2373). isAiConfigured() FAILS CLOSED until each provider
+            # in use also has its DPA, transfer mechanism, retention and no-training commitment
+            # recorded — a prompt carries the customer's infrastructure and code, and it does not
+            # leave the system until what happens to it is written down. These MUST be emitted: the
+            # list is hard-coded, so a variable missing from it never reaches prod and the assistant
+            # would be dark with no vault value able to turn it on.
+            #
+            # The values are PUBLISHED on /ai-transparency, so a placeholder in the vault becomes a
+            # false public statement.
             emit ANTHROPIC_API_KEY
             emit OPENAI_API_KEY
+            emit ALETHIA_AI_ANTHROPIC_DPA
+            emit ALETHIA_AI_ANTHROPIC_TRANSFER
+            emit ALETHIA_AI_ANTHROPIC_RETENTION
+            emit ALETHIA_AI_ANTHROPIC_NO_TRAINING
+            emit ALETHIA_AI_OPENAI_DPA
+            emit ALETHIA_AI_OPENAI_TRANSFER
+            emit ALETHIA_AI_OPENAI_RETENTION
+            emit ALETHIA_AI_OPENAI_NO_TRAINING
             emit STRIPE_SECRET_KEY
             emit STRIPE_WEBHOOK_SECRET
             emit NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY

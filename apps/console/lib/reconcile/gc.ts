@@ -9,6 +9,7 @@
 
 import { sql } from "drizzle-orm";
 import type { Db } from "@/lib/db";
+import { RETENTION_DEFAULT_DAYS } from "@/lib/retention/registry";
 
 /**
  * Parse a positive-days retention window from env, falling back to `def` on missing / non-numeric /
@@ -21,24 +22,42 @@ function retentionDays(raw: string | undefined, def: number): number {
 	return Number.isFinite(n) && n >= 1 ? n : def;
 }
 
-/** Retention window (days) for job_logs before they're GC'd. Override via env; default 30d. */
+// The defaults come from lib/retention/registry.ts, which is what the privacy policy and the
+// accountability record publish (#2373). They were three literals here before, so the document could
+// say one number while the GC ran another and nothing would notice — a promise nobody enforces is
+// the one that ends up in a privacy policy. Now the published window IS the enforced window.
+
+/** Retention window (days) for job_logs before they're GC'd. Override via env. */
 const JOB_LOG_RETENTION_DAYS = retentionDays(
 	process.env.ALETHIA_JOB_LOG_RETENTION_DAYS,
-	30,
+	RETENTION_DEFAULT_DAYS.jobLogs,
 );
-/** Retention window (days) for the fleet_actions ledger. Override via env; default 90d. */
+/** Retention window (days) for the fleet_actions ledger. Override via env. */
 const FLEET_ACTION_RETENTION_DAYS = retentionDays(
 	process.env.ALETHIA_FLEET_ACTION_RETENTION_DAYS,
-	90,
+	RETENTION_DEFAULT_DAYS.fleetActions,
 );
 /**
- * Retention window (days) for the authz_activity_log governance/audit log. Override via env; default
- * 365d — a full year of enforce() decisions/denials (SOC2-friendly audit retention).
+ * Retention window (days) for the authz_activity_log governance/audit log. Override via env — a full
+ * year of enforce() decisions/denials (SOC2-friendly audit retention).
  */
 const AUTHZ_ACTIVITY_RETENTION_DAYS = retentionDays(
 	process.env.ALETHIA_AUTHZ_ACTIVITY_RETENTION_DAYS,
-	365,
+	RETENTION_DEFAULT_DAYS.authzActivity,
 );
+
+/**
+ * The window each GC is ACTUALLY running with, after env overrides.
+ *
+ * Exported for the retention health report: a deployment that overrides a window has changed a
+ * published promise, and an operator should be able to see the difference between what the register
+ * says and what this instance does — rather than discovering it from a customer.
+ */
+export const EFFECTIVE_RETENTION_DAYS: Readonly<Record<string, number>> = {
+	"job-logs": JOB_LOG_RETENTION_DAYS,
+	"fleet-actions": FLEET_ACTION_RETENTION_DAYS,
+	"authz-activity": AUTHZ_ACTIVITY_RETENTION_DAYS,
+};
 /** Max rows deleted per pass — bounds the delete so it can't lock the table. */
 const GC_BATCH_LIMIT = 5000;
 

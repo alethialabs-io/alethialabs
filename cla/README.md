@@ -74,3 +74,86 @@ The two added fields are what make the record durable:
 `id` is the numeric GitHub user id and it is the lookup key. A login can be released and
 re-registered by somebody else; an id cannot. A renamed contributor keeps their signature, and
 whoever takes over their old login does not inherit it.
+
+## Corporate agreements, revocation, and supersession
+
+The signature document carries three collections, not one. Their shapes are a superset of the
+archived action's, so the migration note above still holds.
+
+```json
+{
+  "cla_version": "1.1",
+  "signedContributors": [ /* individual signatures, as above */ ],
+  "corporateAgreements": [
+    {
+      "organization": "Acme GmbH",
+      "ccla_version": "1.1",
+      "document_sha256": "<sha256 of the CCLA that was signed>",
+      "effective_at": "2026-09-01T00:00:00Z",
+      "covered_ids": [6001, 6002],
+      "authorization_reference": "CCLA-2026-0001"
+    }
+  ],
+  "revocations": [
+    { "id": 4242, "cla_version": "1.1", "revoked_at": "2026-09-14T00:00:00Z",
+      "revocation_reference": "REV-2026-0003" }
+  ]
+}
+```
+
+**What is deliberately NOT here.** A corporate agreement records the organization, the document, the
+covered numeric ids, and an OPAQUE reference to the authorization. Who signed for the company, in
+what role, and the letter proving they could — those stay offline. This branch is world-readable, and
+a named signatory with their title and employer would be personal data published for no operational
+reason: the gate only ever needs to answer "is this id covered?".
+
+**Coverage order**, and each step is a decision somebody has to be able to defend:
+
+1. **Revocation wins**, over an individual signature and over a corporate agreement alike. Anything
+   weaker makes revoking advisory.
+2. **A corporate agreement supersedes an individual signature.** This is the supersession case that
+   actually happens: someone signs personally, later joins a company with a CCLA, and from then on
+   contributes under their employer's authority. Reporting the individual signature would name the
+   wrong instrument.
+3. **Otherwise the individual signature.**
+
+A revocation does not delete the original signature. It was true when it was given, and the
+contributions made under it were lawfully licensed; what changes is coverage from the revocation
+forward. Reinstatement is an administrative act on this branch — a revoked contributor cannot restore
+themselves by commenting the phrase again.
+
+## Every commit author, not the pull request's author
+
+The gate checks **each commit's author** by numeric GitHub id, not `pull_request.user`. A branch can
+carry commits authored by somebody else — a rebase of another person's work, a co-author, a fork a
+second person pushed to — and checking only the opener licenses all of it on one signature from
+someone who did not write it.
+
+Two consequences worth knowing before they surprise somebody:
+
+- A commit whose author email belongs to **no GitHub account** has no stable identity, so nothing can
+  cover it. It is reported, not skipped — a skipped author is an unlicensed contribution that looks
+  fine. The fix is on the contributor's side: set the commit author email to one on their account.
+- If the commit list cannot be read at all — an API error, or a pull request past GitHub's 250-commit
+  ceiling for that endpoint — the gate **fails closed**. Falling back to the opener would silently
+  narrow the check to the case this widened, while still reporting a pass.
+
+## Document seals
+
+`cla/DOCUMENTS.json` pins the SHA-256 of ICLA.md and CCLA.md, and
+`pnpm legal:check-cla-hashes` fails the build when either moves without its version being bumped
+alongside. The agreements are still drafts, and sealing them now is the point rather than a
+contradiction: the window between counsel approving the text and `pnpm legal:activate-ip` switching
+enforcement on is exactly when an unnoticed edit would be most damaging.
+
+Once `cla/ACTIVE` exists the same check asserts it agrees with the seal — same version, same hash,
+and every document marked `active` — because a signature recorded against one text while the gate
+checks another is worth nothing.
+
+## A note on what activation claims
+
+The activation rewrite says the company **owns the exclusive economic rights in** the scheduled
+works. It does not say the company owns the works. Economic rights transfer; moral rights are
+inalienable under Bulgarian copyright law and stay with the author however the instrument is worded.
+A flat ownership claim would assert something the controlling instrument does not grant — and it is
+the claim a commercial licensee would rely on.

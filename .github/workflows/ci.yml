@@ -632,6 +632,18 @@ jobs:
         run: node scripts/legal/activate-company-ip.mjs --check-markers
       - name: Docs describe a repo that exists (paths · scripts · blocked commands)
         run: node scripts/check-docs-contract.mjs
+      # A clickwrap record names a Terms VERSION. If the text behind that version can move, the
+      # record proves nothing about what the user actually agreed to — so every public legal
+      # document is pinned by the SHA-256 of its source, and editing one without re-sealing is a
+      # hard failure rather than a silent re-description of the past (#2372).
+      - name: Legal documents match their sealed content hash
+        run: node scripts/check-legal-document-hashes.mjs
+      # The contributor agreements are sealed BEFORE they are active, and that is the point: the
+      # window between counsel approving the text and activation switching enforcement on is exactly
+      # when an unnoticed edit would be most damaging. Also guards cla/ACTIVE against disagreeing
+      # with the seal once it exists (#2374).
+      - name: Contributor agreements match their sealed hash
+        run: node scripts/legal/check-cla-hashes.mjs
       # Four hermetic suites that ran NOWHERE until now — no network, no gh, no docker.
       # wt-lease-hook-test.sh replays incident #1247 (one instance committing another's
       # uncommitted work) against a real throwaway leased worktree; it is the only proof
