@@ -14,10 +14,14 @@ import {
 } from "react";
 import { useForm } from "react-hook-form";
 import {
+	analyticsAllowed,
 	CONSENT_EVENT,
+	CONSENT_LABELS,
 	consentPreferencesSchema,
 	type ConsentPreferences,
 	type ConsentRecord,
+	globalPrivacyControlEnabled,
+	purgePostHogStorage,
 	readConsent,
 	writeConsent,
 } from "./consent";
@@ -25,6 +29,13 @@ import {
 interface ConsentContextValue {
 	consent: ConsentRecord | null;
 	hasDecision: boolean;
+	/**
+	 * Whether optional analytics may actually run. Consumers read THIS, never `consent.analytics` —
+	 * it folds in Global Privacy Control, which a stored `analytics: true` must not override.
+	 */
+	analyticsAllowed: boolean;
+	/** The browser is asserting Global Privacy Control, so the optional choice is not offered. */
+	gpc: boolean;
 	openPreferences: () => void;
 	save: (preferences: ConsentPreferences) => void;
 }
@@ -60,10 +71,14 @@ export function ConsentProvider({
 }: ConsentProviderProps) {
 	const [consent, setConsent] = useState<ConsentRecord | null>(null);
 	const [ready, setReady] = useState(false);
+	const [gpc, setGpc] = useState(false);
 	const [preferencesOpen, setPreferencesOpen] = useState(false);
 
 	useEffect(() => {
 		setConsent(readConsent());
+		// Read after mount, never during render: navigator is absent server-side, and a value that
+		// differed between the server and client render would hydrate inconsistently.
+		setGpc(globalPrivacyControlEnabled());
 		setReady(true);
 
 		/** Synchronize consumers after a choice changes in this document. */
@@ -81,11 +96,16 @@ export function ConsentProvider({
 		const previous = readConsent();
 		setConsent(writeConsent(preferences));
 		setPreferencesOpen(false);
-		if (
-			previous &&
-			(previous.analytics !== preferences.analytics ||
-				previous.replay !== preferences.replay)
-		) {
+		// Withdrawal deletes the identifiers HERE, synchronously, before the reload below.
+		// Relying on the effect cleanup does not work: `save` reloads in the same tick, so React
+		// never commits the state change and the cleanup that would have called reset() is not
+		// reached. The AnalyticsProvider purges again after the reload; both are cheap and
+		// idempotent, and the failure mode of doing it once is identifiers that never go.
+		if (!preferences.analytics) purgePostHogStorage();
+		// A reload is how an already-initialised analytics SDK stops: posthog-js cannot be fully
+		// unloaded in place. The identifiers are deleted by the AnalyticsProvider, which watches the
+		// same decision — doing it here too would duplicate the rule in two files.
+		if (previous && previous.analytics !== preferences.analytics) {
 			window.location.reload();
 		}
 	}, []);
@@ -94,10 +114,12 @@ export function ConsentProvider({
 		() => ({
 			consent,
 			hasDecision: consent !== null,
+			analyticsAllowed: analyticsAllowed(consent),
+			gpc,
 			openPreferences: () => setPreferencesOpen(true),
 			save,
 		}),
-		[consent, save],
+		[consent, gpc, save],
 	);
 
 	return (
@@ -105,15 +127,20 @@ export function ConsentProvider({
 			{children}
 			{ready && consent === null ? (
 				<ConsentNotice
-					onAccept={() => save({ analytics: true, replay: true })}
-					onReject={() => save({ analytics: false, replay: false })}
+					// Under GPC the accept path still records a decision — so the notice stops
+					// reappearing — but it cannot turn analytics on. `analyticsAllowed` is what the
+					// SDKs read, and it refuses regardless of what is stored.
+					onAccept={() => save({ analytics: !gpc })}
+					onReject={() => save({ analytics: false })}
 					onCustomize={() => setPreferencesOpen(true)}
 					cookieNoticeHref={cookieNoticeHref}
+					gpc={gpc}
 				/>
 			) : null}
 			{preferencesOpen ? (
 				<ConsentPreferencesDialog
-					initial={consent ?? { analytics: false, replay: false }}
+					initial={consent ?? { analytics: false }}
+					gpc={gpc}
 					onClose={() => setPreferencesOpen(false)}
 					onSave={save}
 				/>
@@ -127,6 +154,7 @@ interface ConsentNoticeProps {
 	onReject: () => void;
 	onCustomize: () => void;
 	cookieNoticeHref: string;
+	gpc: boolean;
 }
 
 /**
@@ -141,6 +169,7 @@ function ConsentNotice({
 	onReject,
 	onCustomize,
 	cookieNoticeHref,
+	gpc,
 }: ConsentNoticeProps) {
 	return (
 		<section
@@ -156,9 +185,9 @@ function ConsentNotice({
 						Non-essential telemetry is off until you choose.
 					</h2>
 					<p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
-						Essential cookies keep the service secure. With permission, analytics
-						helps us improve Alethia and replay helps diagnose interface failures.
-						You can change either choice at any time.
+						{gpc
+							? "Essential cookies keep the service secure. Your browser is sending Global Privacy Control, so optional analytics stays off — we honour that signal and it overrides the choice below."
+							: "Essential cookies keep the service secure. With permission, product analytics helps us improve Alethia. You can change your choice at any time."}
 					</p>
 					<a
 						href={cookieNoticeHref}
@@ -167,10 +196,20 @@ function ConsentNotice({
 						Cookie notice
 					</a>
 				</div>
-				<div className="grid grid-cols-1 gap-2">
-					<ChoiceButton onClick={onAccept}>Accept all</ChoiceButton>
-					<ChoiceButton onClick={onReject}>Reject non-essential</ChoiceButton>
-					<ChoiceButton onClick={onCustomize}>Customize</ChoiceButton>
+				{/*
+				  * Accept and reject share one row, the same component and the same width, so neither
+				  * reads as the expected answer. "Equally visible" is a requirement, not a nicety:
+				  * a reject that is smaller, greyer or further down is a dark pattern, and a stacked
+				  * list makes whichever is on top the default-looking one.
+				  */}
+				<div className="grid gap-2">
+					<div className="grid grid-cols-2 gap-2">
+						<ChoiceButton onClick={onAccept}>{CONSENT_LABELS.accept}</ChoiceButton>
+						<ChoiceButton onClick={onReject}>{CONSENT_LABELS.reject}</ChoiceButton>
+					</div>
+					<ChoiceButton onClick={onCustomize}>
+						{CONSENT_LABELS.customize}
+					</ChoiceButton>
 				</div>
 			</div>
 		</section>
@@ -200,13 +239,15 @@ function ChoiceButton({
 
 interface ConsentPreferencesDialogProps {
 	initial: ConsentPreferences;
+	gpc: boolean;
 	onClose: () => void;
 	onSave: (preferences: ConsentPreferences) => void;
 }
 
-/** Modal editor for independent analytics and replay consent. */
+/** Modal editor for the one optional purpose. */
 function ConsentPreferencesDialog({
 	initial,
+	gpc,
 	onClose,
 	onSave,
 }: ConsentPreferencesDialogProps) {
@@ -248,15 +289,21 @@ function ConsentPreferencesDialog({
 						checked
 						disabled
 					/>
+					{/*
+					  * Under GPC the control is shown DISABLED and off rather than hidden. Hiding it
+					  * would leave someone unable to see why analytics is off, or that a signal they
+					  * set is being honoured at all.
+					  */}
 					<PreferenceRow
 						title="Product analytics"
-						description="Pseudonymous usage, page events, performance, and error diagnostics. No prompt or model-output content."
-						{...form.register("analytics")}
-					/>
-					<PreferenceRow
-						title="Session replay"
-						description="A masked recording used to reproduce interface failures. Inputs are obscured and replay has its own opt-in."
-						{...form.register("replay")}
+						description={
+							gpc
+								? "Off: your browser is sending Global Privacy Control, which we honour as a standing opt-out."
+								: "Pseudonymous usage, page events, performance, and error diagnostics. No prompt or model-output content."
+						}
+						{...(gpc
+							? { checked: false, disabled: true }
+							: form.register("analytics"))}
 					/>
 					<div className="flex flex-col-reverse gap-2 pt-3 sm:flex-row sm:justify-end">
 						<ChoiceButton onClick={onClose}>Cancel</ChoiceButton>

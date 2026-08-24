@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Provider-agnostic tracking entry point. Instrumentation calls track()/identify() and never names a
-// vendor; this fans out to whichever providers are live (PostHog, and/or Umami's global + OpenReplay's
-// tracker). It is SSR-safe and defensively wrapped — analytics must NEVER throw into the app.
+// vendor; this fans out to whichever providers are live (PostHog, and/or Umami's global). It is
+// SSR-safe and defensively wrapped — analytics must NEVER throw into the app.
+//
+// The OpenReplay fan-out was removed with consent v2: nothing mounts the tracker any more, so
+// `window.__openreplay` could never be set and every call through it was dead. Dead calls to a
+// session-replay SDK read as a live replay integration to anyone auditing this file — which is
+// exactly the impression the privacy work exists to remove. The config seam in lib/analytics/config.ts
+// stays for self-hosters; wiring it back means restoring a mount, not un-deleting these lines.
 
 import type { AnalyticsEvent } from "./events";
 
@@ -13,12 +19,6 @@ export type AnalyticsProps = Record<string, string | number | boolean | null | u
 interface UmamiGlobal {
 	track: (event: string, data?: AnalyticsProps) => void;
 	identify?: (id: string, data?: AnalyticsProps) => void;
-}
-
-/** The subset of the OpenReplay tracker we use (set on window by AnalyticsProvider). */
-interface OpenReplayLike {
-	event: (name: string, payload?: Record<string, unknown>) => void;
-	setUserID: (id: string) => void;
 }
 
 /** The subset of the PostHog browser SDK we use (set on window by AnalyticsProvider). */
@@ -36,7 +36,6 @@ interface PostHogLike {
 declare global {
 	interface Window {
 		umami?: UmamiGlobal;
-		__openreplay?: OpenReplayLike;
 		__posthog?: PostHogLike;
 	}
 }
@@ -51,11 +50,6 @@ export function track(event: AnalyticsEvent, props?: AnalyticsProps): void {
 	}
 	try {
 		window.umami?.track(event, props);
-	} catch {
-		/* noop */
-	}
-	try {
-		window.__openreplay?.event(event, props ?? {});
 	} catch {
 		/* noop */
 	}
@@ -74,16 +68,11 @@ export function identify(userId: string, traits?: AnalyticsProps): void {
 	} catch {
 		/* noop */
 	}
-	try {
-		window.__openreplay?.setUserID(userId);
-	} catch {
-		/* noop */
-	}
 }
 
 /**
  * Associate subsequent events with an organization group so PostHog can segment funnels/retention by
- * org (and plan). PostHog-only — Umami/OpenReplay have no group concept, so they no-op. Call after the
+ * org (and plan). PostHog-only — Umami has no group concept, so it no-ops. Call after the
  * active org is known (and again on org switch).
  */
 export function group(orgId: string, props?: AnalyticsProps): void {
