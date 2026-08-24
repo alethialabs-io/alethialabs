@@ -1169,6 +1169,23 @@ ALTER TABLE public.cli_logins ENABLE ROW LEVEL SECURITY;
 -- DEFINER session functions).
 ALTER TABLE public.runner_usage_sessions ENABLE ROW LEVEL SECURITY;
 
+-- ── Contract formation and consumer rights (#2372) ────────────────────────────────
+-- legal_acceptance and commerce_order are EVIDENCE of what a person agreed to. They are
+-- written only by the server actions through getServiceDb, and read only by those same
+-- actions and by a future export/erasure path — never by a request-scoped app-role query.
+--
+-- So: RLS enabled with NO app policy, which denies the app role outright. That is a
+-- stronger position than an owner-scoped policy would be, and it is the correct one here
+-- for a reason specific to these tables: an owner-scoped policy would let a compromised
+-- app-role session UPDATE its own acceptance rows, and a record the subject can rewrite is
+-- not evidence of anything. Same reasoning as runner_usage_sessions above.
+--
+-- Erasure (#2373) will reach them through a service-role path that records WHAT it erased,
+-- because the acceptance underpinning a live contract is retained on a legal-obligation
+-- basis rather than deleted on request.
+ALTER TABLE public.legal_acceptance ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.commerce_order ENABLE ROW LEVEL SECURITY;
+
 -- Public catalogs: readable by anyone; writes only via service role.
 ALTER TABLE public.connectors ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS connectors_read ON public.connectors;

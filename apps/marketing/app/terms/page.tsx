@@ -64,10 +64,20 @@ export default function TermsPage() {
 
 			<h2>5. Plans, billing, and taxes</h2>
 			<p>
-				The public Service does not currently accept paid subscriptions. Before
-				a paid market is activated, its price, currency, taxes, renewal,
-				cancellation, and payment terms will be shown before an order is placed
-				and these Terms will be updated before the first charge.
+				The public Service does not currently accept paid subscriptions. Paid
+				conversion is enabled per country and per payer capacity, and only where
+				the tax, payment, contractual, and consumer-rights conditions for that
+				combination are in place; where it is not enabled, no order can be
+				placed. Before any order, we show the total price payable including tax,
+				the billing period, whether the subscription renews, and how to end it.
+			</p>
+			<p>
+				Ordinary cancellation stops the next renewal and access continues to the
+				end of the period already paid for; there is no refund for the unused
+				part and we do not offer discretionary refunds. If you are a consumer,
+				this is separate from — and does not replace — your statutory right to
+				withdraw, described in section 13 and on the{" "}
+				<Link href="/consumer-rights">Consumer rights</Link> page.
 			</p>
 
 			<h2>6. Open-source and enterprise software</h2>
@@ -146,6 +156,16 @@ export default function TermsPage() {
 				competent courts in Sofia, Bulgaria have exclusive jurisdiction, except
 				where mandatory consumer law gives you another venue or right. Nothing
 				in these Terms limits mandatory rights available to consumers.
+			</p>
+			<p>
+				If you order as a consumer, you have a statutory right to withdraw from
+				the contract within 14 days without giving a reason. If you ask us to
+				begin the service during those 14 days and confirm that you understand
+				the consequence, you pay only for the part supplied before you withdraw;
+				if we did not ask you to confirm it, you owe nothing. Full details,
+				including how to withdraw and where to take a dispute, are on the{" "}
+				<Link href="/consumer-rights">Consumer rights</Link> page. We do not
+				commit to any particular alternative dispute resolution body.
 			</p>
 
 			<h2>14. General</h2>

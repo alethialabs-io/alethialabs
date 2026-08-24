@@ -28,6 +28,32 @@ vi.mock("@/lib/billing/stripe", () => ({ getStripe: vi.fn() }));
 vi.mock("@/lib/billing/sync", () => ({ syncSubscriptionToBilling: vi.fn() }));
 vi.mock("@/lib/billing/seats", () => ({ countBillableSeats: vi.fn() }));
 vi.mock("@/lib/billing/collaboration", () => ({ canOrgInvite: vi.fn() }));
+// The paid-conversion gate is MOCKED OPEN here, deliberately.
+//
+// Every conversion action now passes through it (#2372), and it refuses by default: PAID_MARKETS is
+// empty, so a real call declines before Stripe is ever reached. This file is about the STRIPE
+// ORCHESTRATION — line items, seat quantities, tax parameters — and leaving the gate live would make
+// every test here assert the gate's refusal instead, over and over.
+//
+// Two other things keep that from becoming a hole. The gate's own rules are tested against the real
+// implementation in packages/legal (commerce.test.ts) and lib/billing/eligibility; and
+// tests/billing/eligibility-coverage.test.ts asserts STRUCTURALLY that each of these actions still
+// calls it — so a mock that made the gate disappear entirely would red there, not pass quietly here.
+// The refusal is also exercised end-to-end below ("refuses a conversion the eligibility gate declines").
+vi.mock("@/lib/billing/eligibility", () => ({
+	assertOrgPaidConversionAllowed: vi.fn(async () => undefined),
+	assertPaidConversionAllowed: vi.fn(async () => undefined),
+	hasAcceptedCurrentDocuments: vi.fn(async () => true),
+	acceptanceRequiredDocuments: vi.fn(() => []),
+	paidConversionStatus: vi.fn(async () => ({ allowed: true })),
+	PaidConversionNotAllowedError: class extends Error {
+		readonly reason: string;
+		constructor(reason: string, message: string) {
+			super(message);
+			this.reason = reason;
+		}
+	},
+}));
 vi.mock("@/lib/billing/config", () => ({
 	deploymentMode: vi.fn(() => "self-managed"),
 	getStripeConfig: vi.fn(() => ({ appUrl: "https://app.test" })),
@@ -40,6 +66,7 @@ vi.mock("@/lib/billing/config", () => ({
 	RUNNER_MINUTES_METER_EVENT: "alethia_runner_minutes",
 }));
 
+import { assertOrgPaidConversionAllowed } from "@/lib/billing/eligibility";
 import {
 	attachTaxIdToCustomer,
 	cancelSubscription,
@@ -891,12 +918,36 @@ describe("createSetupIntent", () => {
 			customer: "cus_1",
 			usage: "off_session",
 			payment_method_types: ["card"],
+			// The saved card is what every future OFF-SESSION renewal charges, so authentication is
+			// requested at setup — the one moment the cardholder is present to complete it (#2372).
+			payment_method_options: {
+				card: { request_three_d_secure: "automatic" },
+			},
 		});
 	});
 
 	it("refuses the personal scope", async () => {
 		authz.mockResolvedValue({ orgId: "user-1", userId: "user-1" } as never);
 		await expect(createSetupIntent()).rejects.toThrow(/Create an organization/);
+	});
+});
+
+// ── the paid-conversion gate, un-mocked at the boundary ─────────────────────
+describe("the eligibility gate is really in the path", () => {
+	// The gate is mocked OPEN for every test above so they can assert Stripe orchestration. That is
+	// only safe while something proves the actions still consult it. The coverage test does that
+	// structurally; this does it behaviourally — when the gate refuses, the action must refuse too,
+	// and must refuse BEFORE Stripe is touched.
+	it("refuses a conversion the eligibility gate declines, without calling Stripe", async () => {
+		vi.mocked(assertOrgPaidConversionAllowed).mockRejectedValueOnce(
+			new Error("Alethia is not yet able to sell to customers in this country"),
+		);
+		orgBilling.mockResolvedValue({ stripeCustomerId: "cus_1" } as never);
+
+		await expect(createCheckoutSession("team")).rejects.toThrow(
+			/not yet able to sell/,
+		);
+		expect(stripe.checkout.sessions.create).not.toHaveBeenCalled();
 	});
 
 	it("throws when Stripe returns no setup secret", async () => {
@@ -966,6 +1017,13 @@ describe("setDefaultPaymentMethod", () => {
 		orgBilling.mockResolvedValue({
 			stripeCustomerId: "cus_1",
 			stripeSubscriptionId: "sub_1",
+			billingCountry: "BG",
+		} as never);
+		// The card must belong to this org's customer — otherwise one org could promote another's
+		// card by id (#2372).
+		stripe.paymentMethods.retrieve.mockResolvedValue({
+			customer: "cus_1",
+			billing_details: { address: { country: "BG" } },
 		} as never);
 
 		expect(await setDefaultPaymentMethod("pm_1")).toEqual({ ok: true });
@@ -981,6 +1039,11 @@ describe("setDefaultPaymentMethod", () => {
 		orgBilling.mockResolvedValue({
 			stripeCustomerId: "cus_1",
 			stripeSubscriptionId: null,
+			billingCountry: "BG",
+		} as never);
+		stripe.paymentMethods.retrieve.mockResolvedValue({
+			customer: "cus_1",
+			billing_details: { address: { country: "BG" } },
 		} as never);
 		await setDefaultPaymentMethod("pm_1");
 		expect(stripe.subscriptions.update).not.toHaveBeenCalled();

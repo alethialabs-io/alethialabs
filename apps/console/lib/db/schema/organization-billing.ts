@@ -21,7 +21,7 @@ import {
 	uuid,
 } from "drizzle-orm/pg-core";
 import type { AiTier } from "@/lib/billing/ai-plan";
-import { billingPlan, billingStatus } from "./enums";
+import { billingPlan, billingStatus, payerCapacity } from "./enums";
 import { organization } from "./organizations";
 
 export const organizationBilling = pgTable("organization_billing", {
@@ -64,6 +64,23 @@ export const organizationBilling = pgTable("organization_billing", {
 	// an admin can cap total org spend and/or bound any single member. See lib/billing/ai-plan.ts.
 	aiOrgWeeklyCapCredits: integer(),
 	aiPerUserWeeklyCapCredits: integer(),
+	// ── Who pays, declared (#2372) ────────────────────────────────────────────
+	// The two facts the paid-conversion gate needs BEFORE an order exists, so they live on the
+	// paying entity's row rather than being fished out of Stripe on every check.
+	//
+	// `payerCapacity` decides WHICH LAW applies — consumer protections attach to one value and not
+	// the other — so it is DECLARED by the payer and NULL until they do. Inferring it from whether
+	// an address looks like a company would pick the legal regime on a text field, and picking
+	// `organization` wrongly strips a real consumer of rights they cannot waive.
+	//
+	// `billingCountry` is ISO 3166-1 alpha-2. NULL means unknown, and unknown REFUSES the sale —
+	// it must never fall back to the seller's own jurisdiction, which is the plausible default that
+	// would silently enable the market we are least ready for.
+	payerCapacity: payerCapacity(),
+	billingCountry: text(),
+	// The payer's attestation that they can bind the organization, in their own words (role/title).
+	// Null for a consumer, where there is nothing to bind.
+	authorityAttestation: text(),
 	// Set the first time the org reaches a paid plan (trial or paid) — the
 	// exactly-once claim for the "welcome to your plan" email, so it never re-sends
 	// on renewals/updates (see syncSubscriptionToBilling). Null until first activation.
