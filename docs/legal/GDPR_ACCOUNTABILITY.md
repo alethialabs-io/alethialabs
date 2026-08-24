@@ -80,19 +80,72 @@ or block the release.
 
 ## Retention and deletion controls
 
+These windows are no longer prose. `apps/console/lib/retention/registry.ts` is the typed
+register they are published from, `apps/console/lib/reconcile/gc.ts` runs the same numbers,
+and `apps/console/tests/privacy/retention-registry.test.ts` fails the build when this
+document, the register and the SQL disagree — or when a new deletion job ships without an
+entry here.
+
 - `gc_job_logs`: 30 days by default.
 - `gc_fleet_actions`: 90 days by default.
 - `gc_authz_activity_log`: 365 days by default.
+- `gc_pending_identities`: 1 day by default. Abandoned connect flows leave a `pending`
+  cloud identity holding an account identifier the customer never finished authorising;
+  it is deleted rather than kept as an orphan. (This deletion has run since the connect
+  sheet shipped and was not recorded here until the register was introduced — which is
+  what the register is for.)
 - Removed inventory/capability observations: 7 days by default.
 - Record and periodically verify the configured PostHog retention for product
   analytics, error diagnostics, and operational logs; do not publish a maximum
   until each setting is evidenced.
-- Account closure and privacy deletion requests are currently handled through
-  the verified privacy-request runbook. Automated deletion must not ship until
-  it covers dependent tenant data, billing/legal holds, backups, and connected
-  vendors.
+- Account closure and privacy deletion requests are handled as recorded CASES
+  (`privacy_case`), with an append-only ledger of every step
+  (`privacy_case_event`, WORM-enforced in `programmables.sql`). The response
+  clock is stored at receipt rather than recomputed, so an extension is visible
+  as the decision it is. Nothing is disclosed or destroyed before identity is
+  verified, and a refusal cannot be recorded without its grounds.
+- What an erasure does is decided BEFORE anything is destroyed, by the register
+  in `apps/console/lib/privacy/erasure-plan.ts`: rows that are the subject's
+  alone are erased; rows another party's record depends on (a shared support
+  thread, an audit entry proving who approved what) are pseudonymized so that
+  party's data stays coherent; and rows a legal obligation requires — proof of
+  which terms were accepted, statutory accounting records — are retained, each
+  citing the obligation. The subject is told which, and why.
+- A legal hold PAUSES the destructive half. It never converts the request into
+  a refusal, and the paused scope is still enumerated so the subject can see
+  what is held.
+- Recipients are notified under art. 19 (`VENDOR_ERASURES`). A vendor with no
+  erasure API is recorded as `manual`, and the ledger records when a person did
+  it — which is more honest than an automated step that quietly does nothing.
 - Backups are protected from ordinary use and expire on the configured rotation.
-  If restored, the deletion queue must be replayed before normal operation.
+  **NOT ESTABLISHED — requires the rotation to be evidenced.** A restore
+  reinstates erased data, so every erasure writes a
+  `privacy_erasure_tombstone` that outlives it and carries no personal data (the
+  identifier is a SHA-256). A restored instance must replay every unreplayed
+  tombstone before serving traffic; `unreplayedTombstones()` is that list.
+
+## AI transparency and provider evidence
+
+The assistant is a deployer use of a general-purpose model. It is **not** an
+Annex III high-risk system: it drafts infrastructure configuration a human
+reviews and approves, and decides nothing about a person's access to services,
+employment, credit, education or justice. The art. 50 transparency duty applies
+and is discharged by `AI_SYSTEM_DISCLOSURE` (rendered in the console and at
+`/ai-transparency`). The classification is re-examined if the assistant ever
+gains the ability to apply a change without approval.
+
+A prompt can carry a customer's infrastructure, their code, and whatever they
+pasted into it. Before any of it reaches a third-party provider, four things
+must be recorded per provider — the data-processing agreement, the transfer
+mechanism, the provider's retention, and a no-training commitment — and the
+assistant **fails closed** until they are. This is enforced in
+`isAiConfigured()`, not documented as an intention: with any of them unset the
+routes return 503 and `aiDisabledReason()` names the variable to set.
+
+**NOT ESTABLISHED — requires the four values to be recorded per provider in the
+production vault** (`ALETHIA_AI_<PROVIDER>_{DPA,TRANSFER,RETENTION,NO_TRAINING}`).
+They are published verbatim at `/ai-transparency`, so a placeholder becomes a
+false public statement.
 
 ## Controls and evidence
 

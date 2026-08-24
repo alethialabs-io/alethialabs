@@ -7,6 +7,7 @@ import type { LanguageModel } from "ai";
 import { env } from "next-runtime-env";
 import type { AiTier } from "@/lib/billing/ai-plan";
 import { isAiMock, mockLanguageModel } from "./ai-mock";
+import { providerGate } from "@/lib/ai/transparency";
 
 // Direct multi-provider model registry (no Vercel AI Gateway). A model is addressed by a
 // canonical **key** `"provider/native-id"` (e.g. `anthropic/claude-haiku-4-5`); `resolveModel`
@@ -182,10 +183,44 @@ export function getAdvisorModel(
  * shows a "not configured" state. (The retired gateway's `AI_GATEWAY_API_KEY` no longer counts.)
  */
 export function isAiConfigured(): boolean {
-	// The scripted E2E model needs no API key.
+	// The scripted E2E model needs no API key — and sends nothing anywhere, which is also why it is
+	// the only thing exempt from the transparency gate below.
 	if (isAiMock()) return true;
 	const providers = configuredProviders();
 	if (providers.has("anthropic") && !env("ANTHROPIC_API_KEY")) return false;
 	if (providers.has("openai") && !env("OPENAI_API_KEY")) return false;
-	return providers.size > 0;
+	if (providers.size === 0) return false;
+	// FAIL CLOSED on transparency evidence (#2373). A prompt carries the customer's infrastructure
+	// and whatever they pasted into it; it does not leave this system until the DPA, the transfer
+	// mechanism, the provider's retention and a no-training commitment are all recorded. An API key
+	// alone used to be enough, which meant the paperwork could be "to follow" indefinitely while the
+	// feature shipped.
+	for (const provider of providers) {
+		if (!providerGate(provider).allowed) return false;
+	}
+	return true;
+}
+
+/**
+ * Why the assistant is off, for a caller that has to explain it.
+ *
+ * Returns null when it is on. Separate from `isAiConfigured` so the boolean stays a boolean and the
+ * reason is opt-in — a 503 body that says "not configured" is useless to the operator who has to
+ * fix it, and naming the missing environment variables is the difference.
+ */
+export function aiDisabledReason(): string | null {
+	if (isAiMock()) return null;
+	const providers = configuredProviders();
+	if (providers.size === 0) return "No AI model is configured.";
+	for (const provider of providers) {
+		if (provider === "anthropic" && !env("ANTHROPIC_API_KEY")) {
+			return "The AI assistant is disabled: ANTHROPIC_API_KEY is not set.";
+		}
+		if (provider === "openai" && !env("OPENAI_API_KEY")) {
+			return "The AI assistant is disabled: OPENAI_API_KEY is not set.";
+		}
+		const gate = providerGate(provider);
+		if (!gate.allowed) return gate.message;
+	}
+	return null;
 }

@@ -37,6 +37,7 @@ export * from "./oauth";
 export * from "./authz";
 export * from "./organizations";
 export * from "./legal";
+export * from "./privacy";
 export * from "./organization-billing";
 export * from "./invoices";
 export * from "./teams";
