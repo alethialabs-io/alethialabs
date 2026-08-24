@@ -17,6 +17,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+// The precondition is imported for real — not the action. The text scan asserts that
+// setDefaultPaymentMethod CALLS `hasAcceptedCurrentDocuments`; that assertion is only worth
+// something while the function it names exists, and importing the action itself would drag the whole
+// auth chain into a test that only reads text.
+import { hasAcceptedCurrentDocuments } from "@/lib/billing/eligibility";
 
 const SRC = readFileSync(
 	join(process.cwd(), "app/server/actions/billing.ts"),
@@ -32,6 +37,10 @@ function actionBody(name: string): string {
 
 describe("promoting a saved card to the default", () => {
 	const body = actionBody("setDefaultPaymentMethod");
+
+	it("the acceptance precondition it scans for actually exists", () => {
+		expect(typeof hasAcceptedCurrentDocuments).toBe("function");
+	});
 
 	it("requires current acceptance of the Terms", () => {
 		// A removal here means future off-session renewals are charged with no agreement covering them.

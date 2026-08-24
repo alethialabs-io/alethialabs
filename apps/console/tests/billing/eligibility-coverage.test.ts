@@ -17,6 +17,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+// Imported for real, not only read as text. The text scan is what makes this guard total — it is the
+// only way to say something about an action nobody has written yet — but importing the gate as well
+// means a rename or a deletion breaks this test directly, instead of leaving it scanning for a
+// string that no longer refers to anything.
+import {
+	assertOrgPaidConversionAllowed,
+	assertPaidConversionAllowed,
+} from "@/lib/billing/eligibility";
 
 const BILLING_ACTIONS = join(
 	process.cwd(),
@@ -95,6 +103,14 @@ describe("every paid conversion routes through the eligibility module", () => {
 	it("parses the action file", () => {
 		expect(actions.size).toBeGreaterThan(10);
 		expect(actions.has("createCheckoutSession")).toBe(true);
+	});
+
+	// The names the text scan looks for must still BE something. A gate that was deleted would leave
+	// every `body.includes("gatePaidConversion(")` check scanning for a string that refers to nothing,
+	// and the suite would stay green while the rule it enforces had ceased to exist.
+	it("the gate it scans for actually exists", () => {
+		expect(typeof assertPaidConversionAllowed).toBe("function");
+		expect(typeof assertOrgPaidConversionAllowed).toBe("function");
 	});
 
 	it("gates every exported action that reaches a Stripe money API", () => {

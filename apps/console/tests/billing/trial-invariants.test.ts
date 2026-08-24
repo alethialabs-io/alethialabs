@@ -20,6 +20,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+// The GATE is imported for real — not the action. What this file asserts about startProTrial is an
+// ABSENCE ("it must not call the gate"), and an absence is only meaningful while the thing being
+// absent exists: if `assertPaidConversionAllowed` were deleted, every check below would pass while
+// proving nothing. Importing the action instead would drag the whole auth chain into a test that
+// only reads text.
+import { assertPaidConversionAllowed } from "@/lib/billing/eligibility";
 
 const SRC = readFileSync(
 	join(process.cwd(), "app/server/actions/billing.ts"),
@@ -35,6 +41,10 @@ function actionBody(name: string): string {
 
 describe("the cardless Pro trial", () => {
 	const body = actionBody("startProTrial");
+
+	it("the gate this trial must stay out of actually exists", () => {
+		expect(typeof assertPaidConversionAllowed).toBe("function");
+	});
 
 	// THE regression this file exists to catch. The trial takes no money, so the paid-conversion gate
 	// must not apply to it — and the gate is new, adjacent, and looks like it belongs everywhere.
