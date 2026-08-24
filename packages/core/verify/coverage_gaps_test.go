@@ -496,21 +496,9 @@ func TestPlannedResourceWithoutConfiguration(t *testing.T) {
 	}
 }
 
-// TestBaseAddressStripsInstanceKey pins the address normalisation configuration
-// lookups depend on (configuration addresses are never instance-keyed).
-func TestBaseAddressStripsInstanceKey(t *testing.T) {
-	tests := map[string]string{
-		`hcloud_server.workers["w-1"]`: "hcloud_server.workers",
-		"hcloud_server.workers[0]":     "hcloud_server.workers",
-		"hcloud_server.single":         "hcloud_server.single",
-		"[weird":                       "[weird",
-	}
-	for in, want := range tests {
-		if got := baseAddress(in); got != want {
-			t.Errorf("baseAddress(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
+// The address normaliser these configuration lookups depend on now lives in
+// packages/core/tfaddr, and its table is TestConfigAddress there — including the
+// module-nested rows this table never had, which is why #2361 stayed invisible here.
 
 // ── Hetzner posture helpers ─────────────────────────────────────────────────
 
