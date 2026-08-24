@@ -25,13 +25,20 @@
 // plainly that a value only reachable through `toValues` is still unguarded today.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..");
 const CATALOG = join(ROOT, "test", "e2e", "fixtures", "addon_catalog.json");
+// The Hetzner in-cluster data services are NOT marketplace add-ons — they are synthesized per
+// component by hetznerDataServicesToAddOns — so nothing here ever rendered them, even though they
+// are the charts most likely to break: the mapper hand-translates a value schema per chart, and
+// hetzner-services.ts records that both the cache and the queue chart had ALREADY shipped broken
+// once (a deleted Bitnami chart version, and a 404 default image). The same generated fixture the
+// Go harness seeds is rendered here (#2397).
+const HETZNER = join(ROOT, "test", "e2e", "fixtures", "hetzner_data_services.json");
 
 /** Fail loudly with a reason, never a silent skip — a renderer that renders nothing proves nothing. */
 function die(msg) {
@@ -50,7 +57,7 @@ function requireHelm() {
 
 /** Render one add-on's pinned chart with its catalog defaults. Returns null on success, else stderr. */
 function render(addon, dir) {
-	const valuesPath = join(dir, `${addon.id}.yaml`);
+	const valuesPath = join(dir, `${addon.label ?? addon.id}.yaml`.replace(/[^a-zA-Z0-9._-]/g, "_"));
 	writeFileSync(valuesPath, JSON.stringify(addon.values ?? {}));
 	try {
 		execFileSync(
@@ -81,7 +88,7 @@ requireHelm();
 
 let catalog;
 try {
-	catalog = JSON.parse(execFileSync("cat", [CATALOG], { encoding: "utf8" }));
+	catalog = JSON.parse(readFileSync(CATALOG, "utf8"));
 } catch {
 	die(`could not read the generated catalog at ${CATALOG}. Run \`pnpm -F console export:addon-catalog\`.`);
 }
@@ -89,20 +96,42 @@ if (!Array.isArray(catalog) || catalog.length === 0) {
 	die("the generated catalog is empty — a render check over nothing reports success and means nothing.");
 }
 
+// The Hetzner specs carry REAL values (sizes, storage classes, replica counts) rather than a
+// catalog default, so unlike the marketplace half this genuinely covers the resolver's output — the
+// gap the header comment names as still unguarded.
+let hetzner;
+try {
+	const fx = JSON.parse(readFileSync(HETZNER, "utf8"));
+	// `chartedNotOffered` is where Harbor lives: #2397 wired its values but the `registry` kind is
+	// still refused at deploy, so it is not part of the seeded max-config surface. It is exactly the
+	// mapping that most needs asking, being the newest, so it is rendered here all the same.
+	hetzner = [...fx.addons, ...(fx.chartedNotOffered ?? [])];
+} catch {
+	die(`could not read the generated Hetzner specs at ${HETZNER}. Run \`pnpm -F console export:hetzner-data-services\`.`);
+}
+if (!Array.isArray(hetzner) || hetzner.length === 0) {
+	die("the generated Hetzner in-cluster spec list is empty — a render check over nothing reports success and means nothing.");
+}
+
+const specs = [
+	...catalog.map((a) => ({ ...a, label: a.id })),
+	...hetzner.map((a) => ({ ...a, label: `hetzner:${a.id}` })),
+];
+
 const dir = mkdtempSync(join(tmpdir(), "addon-render-"));
 const failures = [];
 try {
-	for (const addon of catalog) {
+	for (const addon of specs) {
 		const err = render(addon, dir);
-		process.stdout.write(err ? `  ✗ ${addon.id}\n` : `  · ${addon.id}\n`);
-		if (err) failures.push({ id: addon.id, chart: `${addon.chart}@${addon.version}`, err });
+		process.stdout.write(err ? `  ✗ ${addon.label}\n` : `  · ${addon.label}\n`);
+		if (err) failures.push({ id: addon.label, chart: `${addon.chart}@${addon.version}`, err });
 	}
 } finally {
 	rmSync(dir, { recursive: true, force: true });
 }
 
 if (failures.length > 0) {
-	console.error(`\n✗ ${failures.length} of ${catalog.length} add-on(s) do not render with their own default values:\n`);
+	console.error(`\n✗ ${failures.length} of ${specs.length} chart(s) do not render with the values this repo emits:\n`);
 	for (const f of failures) {
 		console.error(`  ${f.id}  (${f.chart})`);
 		for (const line of f.err.split("\n")) console.error(`      ${line}`);
@@ -115,4 +144,7 @@ if (failures.length > 0) {
 	process.exit(1);
 }
 
-console.log(`\n✓ all ${catalog.length} add-ons render with their pinned chart and default values.`);
+console.log(
+	`\n✓ all ${specs.length} charts render (${catalog.length} marketplace add-ons with their defaults, ` +
+		`${hetzner.length} Hetzner in-cluster specs with their RESOLVED values).`,
+);

@@ -302,7 +302,7 @@
 		},
 		{
 			"kind": "registry",
-			"doc": "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none, and its in-cluster substitute (Harbor) is unwired DEBT. Per-cloud gotcha: AWS emits provision_ecr as a plain boolean (the registry NAME is unused there).",
+			"doc": "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none; its in-cluster substitute (Harbor) is charted but its pull credentials are not. Per-cloud gotcha: AWS emits provision_ecr as a plain boolean (the registry NAME is unused there).",
 			"foundational": false,
 			"cells": {
 				"alibaba": {
@@ -328,7 +328,7 @@
 				"hetzner": {
 					"carriage": "deferred",
 					"offered": false,
-					"why": "Hetzner has no cloud service for this kind, but a chart in the marketplace catalog DOES back it — it is simply not mapped to the kind, so this is DEBT, not a ceiling. Today the kind is hidden on the canvas and REJECTED at deploy (unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner). Missing: a mapping from the `registry` kind to a Harbor project + robot account + pull-secret binding",
+					"why": "Hetzner has no cloud service for this kind, but a chart in the marketplace catalog DOES back it — it is simply not mapped to the kind, so this is DEBT, not a ceiling. Today the kind is hidden on the canvas and REJECTED at deploy (unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner). #2397 wired the chart itself; what remains is a robot account minted by an in-cluster bootstrap Job, its dockerconfigjson on the EnsureRegistryPullSecret rail, and a Talos containerd mirror entry",
 					"chart": "harbor (marketplace catalog; the full-bar run already installs it)"
 				}
 			}
