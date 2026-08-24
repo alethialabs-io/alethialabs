@@ -275,3 +275,65 @@ func TestFinalizeEmptyReportIsNotEvaluable(t *testing.T) {
 		t.Error("a not_evaluable report must not report itself as Blocking")
 	}
 }
+
+// TestGatherPlannedSeesConfigInsideACountedModule is the #2361 regression, and it pins the
+// CONSEQUENCE rather than the address helper: a resource inside a count-ed module must come
+// back with hasConfig() true and its module prefix intact.
+//
+// The old baseAddress truncated at the FIRST '[', which in a module-nested address is the
+// MODULE's instance key — so `module.vnet[0].azurerm_subnet.private` collapsed to "module.vnet",
+// matched nothing, and hasCfg stayed false. That silently degrades the two config-aware Hetzner
+// controls to not_evaluable on a gate whose whole value is that not_evaluable is never a silent
+// pass, and every module in infra/templates/project/{azure,gcp} uses count.
+//
+// The root-module row is here so the test also proves the fix did not break the case that
+// always worked.
+func TestGatherPlannedSeesConfigInsideACountedModule(t *testing.T) {
+	create := map[string]any{"name": "x"}
+	plan := &tfjson.Plan{
+		Config: &tfjson.Config{RootModule: &tfjson.ConfigModule{
+			Resources: []*tfjson.ConfigResource{{Address: "hcloud_server.root"}},
+			ModuleCalls: map[string]*tfjson.ModuleCall{
+				"vnet": {Source: "./vnet", Module: &tfjson.ConfigModule{
+					Resources: []*tfjson.ConfigResource{{Address: "azurerm_subnet.private"}},
+				}},
+			},
+		}},
+		ResourceChanges: []*tfjson.ResourceChange{
+			{
+				Address: "module.vnet[0].azurerm_subnet.private", Type: "azurerm_subnet",
+				Mode:   tfjson.ManagedResourceMode,
+				Change: &tfjson.Change{Actions: tfjson.Actions{tfjson.ActionCreate}, After: create},
+			},
+			{
+				Address: `hcloud_server.root["a"]`, Type: "hcloud_server",
+				Mode:   tfjson.ManagedResourceMode,
+				Change: &tfjson.Change{Actions: tfjson.Actions{tfjson.ActionCreate}, After: create},
+			},
+		},
+	}
+
+	byAddr := map[string]plannedResource{}
+	for _, r := range gatherPlanned(plan) {
+		byAddr[r.address] = r
+	}
+
+	nested, ok := byAddr["module.vnet[0].azurerm_subnet.private"]
+	if !ok {
+		t.Fatalf("nested resource missing from gatherPlanned (%v)", byAddr)
+	}
+	if !nested.hasConfig() {
+		t.Error("hasConfig() = false for a resource in a count-ed module — the configuration is there and the controls cannot see it (#2361)")
+	}
+	if nested.modPrefix != "module.vnet." {
+		t.Errorf("module prefix = %q, want %q — reference resolution inside the module depends on it", nested.modPrefix, "module.vnet.")
+	}
+
+	root, ok := byAddr[`hcloud_server.root["a"]`]
+	if !ok {
+		t.Fatalf("root resource missing from gatherPlanned (%v)", byAddr)
+	}
+	if !root.hasConfig() {
+		t.Error("hasConfig() = false for a for_each-ed ROOT resource — the case that always worked")
+	}
+}
