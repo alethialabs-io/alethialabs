@@ -89,6 +89,15 @@ DETACH_TIMEOUT="${DETACH_TIMEOUT:-180}"
 PREFLIGHT_BUDGET_SECONDS="${PREFLIGHT_BUDGET_SECONDS:-900}" # wall-clock for the whole sweep loop
 PREFLIGHT_MAX_ENVS="${PREFLIGHT_MAX_ENVS:-3}"               # orphans attempted per run
 
+# ── `--self-test` exercises discover_cluster against a stubbed `aws` and exits. It sets its own
+# ENV/REGION so the guards below are left exactly as they protect the real path. ──
+SELF_TEST=0
+if [ "${1:-}" = "--self-test" ]; then
+	SELF_TEST=1
+	ENV="selftest-4177-1"
+	REGION="us-east-1"
+fi
+
 # ── Guard 1: a specific ENV is REQUIRED. No ENV ⇒ no filter ⇒ hard refuse. ──
 if [ -z "$ENV" ]; then
 	echo "✗ REFUSING TO RUN: ALETHIA_E2E_ENV is unset." >&2
@@ -130,7 +139,7 @@ CLUSTER="" # discovered below (eks-<regionShort>-<env>-<project>); may be found 
 export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION" AWS_PAGER=""
 
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
-if [ "$PREFLIGHT" != "1" ]; then
+if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
 	echo "→ aws belt-and-suspenders cleanup in ${REGION}, scope alethia:project-id=${PROJECT_ID_TAG}"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 fi
@@ -197,7 +206,7 @@ retry_delete() {
 #    fall back to any EC2/LB cluster tag whose value embeds `-<ENV>-` (the eks name is
 #    eks-<short>-<ENV>-<project>). Never guessed, never broadened past this run's ENV. ──
 discover_cluster() {
-	local eks_arn cand
+	local eks_arn cand lb_arn lb_val
 	eks_arn="$(tagged_arns eks:cluster | head -n1)"
 	if [ -n "$eks_arn" ]; then
 		CLUSTER="$(arn_id "$eks_arn")"
@@ -211,6 +220,27 @@ discover_cluster() {
 			--output text 2>/dev/null | tr '\t' '\n' | sed -E 's#^kubernetes.io/cluster/##' \
 			| grep -E -- "-${ENV}-" | sort -u | head -n1 || true)"
 		[ -n "$cand" ] && CLUSTER="$cand"
+	fi
+	# Instances are the FIRST fallback, never the only one. A teardown that got far enough to delete
+	# the nodegroup AND the cluster leaves no EKS ARN and not one tagged instance — which is exactly
+	# the state a hard-killed run ends in. The k8s-created NLB outlives both, and it BILLS. Run
+	# 31929564177 left one standing for eight days because discovery stopped at the line above: the
+	# comment already promised this LB scan, only the code was missing. The leak was invisible rather
+	# than merely unswept, because `alive_lbs` in verify_swept is CLUSTER-scoped too — so the sweep
+	# exited green while the load balancer billed. Matching on `-<ENV>-` keeps it this run's, exactly
+	# as the instance branch does.
+	if [ -z "$CLUSTER" ]; then
+		while IFS= read -r lb_arn; do
+			[ -n "$lb_arn" ] || continue
+			lb_val="$(aws elbv2 describe-tags --resource-arns "$lb_arn" \
+				--query "TagDescriptions[].Tags[?Key=='elbv2.k8s.aws/cluster'].Value" \
+				--output text 2>/dev/null | tr '\t' '\n' | grep -E -- "-${ENV}-" | head -n1 || true)"
+			if [ -n "$lb_val" ]; then
+				CLUSTER="$lb_val"
+				break
+			fi
+		done <<<"$(aws elbv2 describe-load-balancers \
+			--query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
 	fi
 	if [ -n "$CLUSTER" ]; then
 		echo "  · cluster (secondary scope): ${CLUSTER}"
@@ -991,6 +1021,49 @@ if [ "$PREFLIGHT" = "1" ]; then
 		echo "✓ preflight complete — all prior-run e2e orphans in ${REGION} swept"
 	fi
 	exit 0 # preflight never blocks the provisioning run
+fi
+
+# ── Self-test. Stubs `aws` so discovery runs with no cloud and no credentials. Asserts BOTH
+# directions: an LB carrying THIS run's cluster tag resolves it, and one carrying another run's
+# does not — a one-directional test here would pass just as happily with the fallback deleted. ──
+if [ "$SELF_TEST" = "1" ]; then
+	st_fails=0
+	st_lb="arn:aws:elasticloadbalancing:us-east-1:0:loadbalancer/net/k8s-ingressn/abc"
+
+	# $ST_LB_CLUSTER is the `elbv2.k8s.aws/cluster` tag value the stub reports. Everything else
+	# answers empty — i.e. the cluster and every instance are already gone, the leak's real shape.
+	aws() {
+		case "$1 ${2:-}" in
+		"elbv2 describe-load-balancers") printf '%s\n' "$st_lb" ;;
+		"elbv2 describe-tags") printf '%s\n' "$ST_LB_CLUSTER" ;;
+		*) : ;;
+		esac
+	}
+
+	st_case() { # <name> <lb cluster tag> <expected CLUSTER>
+		CLUSTER=""
+		ST_LB_CLUSTER="$2"
+		discover_cluster >/dev/null 2>&1
+		if [ "$CLUSTER" = "$3" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected CLUSTER='$3', got '$CLUSTER'" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+
+	echo "→ aws-cleanup.sh self-test (ENV=${ENV})"
+	st_case "LB tag for THIS run resolves the cluster" "eks-ue1-${ENV}-alethia-nl" "eks-ue1-${ENV}-alethia-nl"
+	st_case "LB tag for ANOTHER run is ignored" "eks-ue1-99999999-9-alethia-nl" ""
+	st_case "no LB tag at all leaves CLUSTER unset" "" ""
+	unset -f aws
+
+	if [ "$st_fails" -ne 0 ]; then
+		echo "✗ aws-cleanup.sh self-test: ${st_fails} failure(s)" >&2
+		exit 1
+	fi
+	echo "✓ aws-cleanup.sh self-test passed"
+	exit 0
 fi
 
 # ── Orchestrate, in strict dependency order. sweep_data_services sits BEFORE the network teardown
