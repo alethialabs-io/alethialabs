@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "Immutable hashes of the contributor agreements (#2374).",
+    "",
+    "This file exists so the agreement text can be SEALED before it is active. cla/ACTIVE is what",
+    "switches enforcement on, and it must not exist until counsel has approved the text and the",
+    "founder instrument is signed — but the text itself can be pinned now, and pinning it now is the",
+    "point: it is what stops the draft being edited between approval and activation without anybody",
+    "noticing.",
+    "",
+    "scripts/legal/check-cla-hashes.mjs fails the build when a document changes without its hash and",
+    "version being updated together. At activation, `pnpm legal:activate-ip` copies these values into",
+    "cla/ACTIVE, so the hash a signature is recorded against is the one that was sealed here rather",
+    "than one computed at activation time from whatever the file said by then."
+  ],
+  "documents": [
+    {
+      "id": "icla",
+      "title": "Individual Contributor License Agreement",
+      "version": "1.1",
+      "source": "cla/ICLA.md",
+      "sha256": "b74849f6e99e900ad4b816271eef2d9e4d3569cb7d29549dfce2b0303f02ec61",
+      "status": "draft",
+      "blockedOn": "Bulgarian counsel approval of the text, and the signed founder instrument (#2368)."
+    },
+    {
+      "id": "ccla",
+      "title": "Corporate Contributor License Agreement",
+      "version": "1.1",
+      "source": "cla/CCLA.md",
+      "sha256": "13c703657fd40bcc92cfcade0094f33c15ae20d6282c37a0bc61b9df6c5bb3a4",
+      "status": "draft",
+      "blockedOn": "Bulgarian counsel approval of the text, and the signed founder instrument (#2368)."
+    }
+  ]
+}
