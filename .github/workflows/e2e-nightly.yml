@@ -921,23 +921,6 @@ jobs:
       #    from this checkout — and the harness logs `alethia --version`, so the proof bundle always
       #    records WHICH binary earned the verdict. A green run against the wrong binary is the one
       #    way this check could mislead, so it is made unambiguous rather than assumed. ──
-      - name: CLI-only demo bar (reachability — no cloud, no spend)
-        if: steps.gate.outputs.run == 'true' && vars.E2E_CLI_DEMO != ''
-        env:
-          ALETHIA_E2E_CLI_DEMO: ${{ vars.E2E_CLI_DEMO }}
-          ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}
-          ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
-        run: |
-          set -euo pipefail
-          if [ -z "${ALETHIA_E2E_CLI_BIN:-}" ]; then
-            echo "::notice::E2E_CLI_BIN unset — building the CLI from this checkout"
-            GOWORK=off go build -C apps/cli -o "$RUNNER_TEMP/alethia" .
-            export ALETHIA_E2E_CLI_BIN="$RUNNER_TEMP/alethia"
-          fi
-          echo "::notice::CLI-only demo bar for ${ALETHIA_E2E_PROVIDER} using $ALETHIA_E2E_CLI_BIN"
-          GOWORK=off go test -C test/e2e -tags=e2e_t2 . \
-            -run TestT2CLIDemoReachability -count=1 -timeout 10m -v
-
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
@@ -1353,14 +1336,6 @@ jobs:
           echo "::warning::job CANCELLED — sweeping ${E2E_ENV} now, ahead of proof capture, because the window is shared and short."
           "$SCRIPT" "$E2E_CLUSTER"
 
-      # ── Proof capture v2 (BYOC A0.4). Runs on ANY t2 outcome (always()) so a RED night is
-      #    debuggable, not just a green one: it builds a structured, SCRUBBED proof bundle
-      #    (verify receipt + provision summary + ArgoCD verdict + timings + destroy
-      #    confirmation on success; the failure stage on a fail), routes everything through the
-      #    A0.0 secret scrub, and FAILS this step if the finished bundle isn't grep-clean (so a
-      #    leak reds the run instead of being uploaded — program invariant 2). It also writes
-      #    the per-provider PASS/FAIL verdict to the job step summary. The runner wrote a
-      #    host-usable kubeconfig to $HOME/.alethia/kubeconfig (read only on the success path). ──
       - name: Capture proof (scrubbed bundle + step-summary verdict)
         id: capture
         if: steps.gate.outputs.run == 'true' && always()
@@ -1520,6 +1495,55 @@ jobs:
           # (ALETHIA_E2E_ENV / _PROJECT / _REGION) from the environment. Passing $E2E_CLUSTER is
           # harmless for the managed scripts (they ignore positional args).
           "$SCRIPT" "$E2E_CLUSTER"
+
+      # ── WHY THIS RUNS LAST, and not before the apply (where it used to sit). ──
+      #
+      # It was placed early so a STALE TABLE would red in seconds rather than after a 50-minute
+      # apply. That reasoning was sound and the placement stopped serving it: the bar also fails on
+      # a CLOUD CEILING, and `dns-delegation` (#1773) is a ceiling on every cloud, so the step
+      # failed on EVERY leg of EVERY night regardless of whether the table was stale. A gate that
+      # always fails cannot fail fast on anything.
+      #
+      # What it cost is the whole point. A failed step skips the ones after it, so T2 never ran:
+      # run 32688608048 recorded aws, gcp, azure and alibaba as `FAILED at stage 'queued'
+      # (outcome=skipped)` — four clouds reported red on a night that never touched a cloud. That is
+      # why #2382/#2383/#2384 and #2258/#2259/#2260 carry no cloud diagnosis, and why the mechanical
+      # next in PROGRAMME.md (`aws/floor` — "needs a fresh run") was unreachable: a registrar action
+      # nobody has taken was gating an unrelated proof dimension, indefinitely.
+      #
+      # THE VERDICT IS UNCHANGED. A ceiling is still a FAIL — that is the maintainer's ruling for the
+      # investor benchmark ("a prospect cannot tell whose fault the click is"), and it still reds the
+      # job from here. Nothing is widened and no ceiling is excused. Only the ORDER moves, so the
+      # provisioning proof gets to run and record a real verdict before the bar reports on itself.
+      #
+      # `always()` so a red T2 does not skip the record; after the guaranteed teardown so it can
+      # never delay a sweep. When #1773 and #2332 clear, moving this back above the apply restores
+      # the fast-fail it was written for — and then it will mean something.
+      - name: CLI-only demo bar (reachability — no cloud, no spend)
+        if: always() && steps.gate.outputs.run == 'true' && vars.E2E_CLI_DEMO != ''
+        env:
+          ALETHIA_E2E_CLI_DEMO: ${{ vars.E2E_CLI_DEMO }}
+          ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}
+          ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ALETHIA_E2E_CLI_BIN:-}" ]; then
+            echo "::notice::E2E_CLI_BIN unset — building the CLI from this checkout"
+            GOWORK=off go build -C apps/cli -o "$RUNNER_TEMP/alethia" .
+            export ALETHIA_E2E_CLI_BIN="$RUNNER_TEMP/alethia"
+          fi
+          echo "::notice::CLI-only demo bar for ${ALETHIA_E2E_PROVIDER} using $ALETHIA_E2E_CLI_BIN"
+          GOWORK=off go test -C test/e2e -tags=e2e_t2 . \
+            -run TestT2CLIDemoReachability -count=1 -timeout 10m -v
+
+      # ── Proof capture v2 (BYOC A0.4). Runs on ANY t2 outcome (always()) so a RED night is
+      #    debuggable, not just a green one: it builds a structured, SCRUBBED proof bundle
+      #    (verify receipt + provision summary + ArgoCD verdict + timings + destroy
+      #    confirmation on success; the failure stage on a fail), routes everything through the
+      #    A0.0 secret scrub, and FAILS this step if the finished bundle isn't grep-clean (so a
+      #    leak reds the run instead of being uploaded — program invariant 2). It also writes
+      #    the per-provider PASS/FAIL verdict to the job step summary. The runner wrote a
+      #    host-usable kubeconfig to $HOME/.alethia/kubeconfig (read only on the success path). ──
 
   # ── A3.2 verdict rollup. The `provision` matrix is fail-fast:false, so every cloud runs to its
   #    own verdict; this fan-in job (always()) reads each leg's uploaded proof bundle, prints ONE
