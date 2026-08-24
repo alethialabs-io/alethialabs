@@ -34,6 +34,13 @@ import {
 	resolveAiTier,
 } from "@/lib/billing/ai-plan";
 import { canOrgInvite } from "@/lib/billing/collaboration";
+import {
+	type PaidConversionContext,
+	assertOrgPaidConversionAllowed,
+	assertPaidConversionAllowed,
+	hasAcceptedCurrentDocuments,
+} from "@/lib/billing/eligibility";
+import type { PayerCapacity } from "@repo/legal/commerce";
 import { countBillableSeats } from "@/lib/billing/seats";
 import type { TaxIdType } from "@/lib/billing/tax-ids";
 import { type SupportedCurrency, planMeta } from "@repo/plan-catalog";
@@ -637,6 +644,22 @@ async function cancelIncompleteSubscriptions(customerId: string): Promise<void> 
  * Starts a Stripe Checkout to subscribe the active org to a paid plan. Requires a real
  * org (not the personal scope — create a workspace first). Returns the redirect URL.
  */
+/**
+ * THE gate. Every action below that can take money calls this before it touches Stripe.
+ *
+ * It is a thin wrapper on purpose: the RULE lives in lib/billing/eligibility.ts, and this only
+ * supplies the org's declared payer facts. Six conversion entry points each carrying their own
+ * version of the rule is how a compliance requirement becomes decorative — the seventh will not
+ * have one — so `tests/billing/eligibility-coverage.test.ts` reds when an exported action in this
+ * file reaches Stripe's subscription/payment APIs without passing through here.
+ */
+async function gatePaidConversion(actor: {
+	userId: string;
+	orgId: string;
+}): Promise<void> {
+	await assertOrgPaidConversionAllowed(actor.userId, actor.orgId);
+}
+
 export async function createCheckoutSession(
 	plan: PaidPlan,
 ): Promise<{ url: string }> {
@@ -645,6 +668,7 @@ export async function createCheckoutSession(
 	if (actor.orgId === actor.userId) {
 		throw new Error("Create an organization before subscribing to a plan.");
 	}
+	await gatePaidConversion(actor);
 
 	const cfg = getStripeConfig();
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
@@ -709,6 +733,7 @@ export async function createSubscriptionIntent(
 			"This organization already has an active subscription — change the plan instead.",
 		);
 	}
+	await gatePaidConversion(actor);
 	const customerId = await ensureCustomer(
 		actor.orgId,
 		actor.userId,
@@ -779,6 +804,7 @@ export async function createAiSubscriptionIntent(
 			"This organization already has an active AI subscription — change it instead.",
 		);
 	}
+	await gatePaidConversion(actor);
 	const customerId = await ensureCustomer(
 		actor.orgId,
 		actor.userId,
@@ -983,10 +1009,27 @@ export async function createNewOrgSubscriptionIntent(
 		priorSubscriptionId?: string;
 		customerId?: string;
 		currency?: SupportedCurrency;
+		/**
+		 * The payer facts, PASSED IN rather than read from the database — this is the one conversion
+		 * path where no organization exists yet, so there is no organization_billing row to declare
+		 * them on. Omitting them refuses the sale exactly as an undeclared org would: the gate's
+		 * inputs are optional here, its verdict is not.
+		 */
+		payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
 	},
 ): Promise<NewOrgSubscriptionIntent> {
 	const actor = await currentActor();
 	requireHostedBilling();
+	// The org does not exist yet, so the context is assembled from what the caller declared. Note
+	// `organizationId: actor.userId` — the personal scope — because there is genuinely no org to
+	// name, and inventing an id would put a false one in a record that is meant to be evidence.
+	const newOrgContext: PaidConversionContext = {
+		userId: actor.userId,
+		organizationId: actor.userId,
+		capacity: opts.payer?.capacity ?? null,
+		billingCountry: opts.payer?.billingCountry ?? null,
+	};
+	await assertPaidConversionAllowed(newOrgContext);
 
 	// Reuse the customer from a prior attempt only if this user owns it; otherwise mint
 	// a fresh bare customer (no organization_id until the org exists and is linked).
@@ -1067,6 +1110,16 @@ export async function linkSubscriptionToNewOrg(input: {
 	orgId: string;
 	subscriptionId: string;
 	customerId: string;
+	/**
+	 * The payer facts declared at the intent step, PERSISTED here.
+	 *
+	 * This is the moment the organization first exists, and therefore the first moment there is a
+	 * row to record them on. Without it a brand-new org would carry a live subscription and NO
+	 * declared payer — so the next conversion it attempted (a plan change, an AI subscription) would
+	 * be refused by a gate that has no way to know the facts were already given. The eligibility
+	 * coverage test found exactly that gap.
+	 */
+	payer?: { capacity: PayerCapacity | null; billingCountry: string | null };
 }): Promise<void> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
@@ -1104,6 +1157,20 @@ export async function linkSubscriptionToNewOrg(input: {
 
 	// Deterministic activation — don't wait for the (already-fired) webhook.
 	await syncSubscriptionToBilling(linked);
+
+	// Then carry the declared payer facts onto the row syncSubscriptionToBilling just created. After
+	// it, never before: the row does not exist until then, and writing them first would either race
+	// or need a second insert path for the same record.
+	if (input.payer?.capacity && input.payer.billingCountry) {
+		await getServiceDb()
+			.update(organizationBilling)
+			.set({
+				payerCapacity: input.payer.capacity,
+				billingCountry: input.payer.billingCountry.trim().toUpperCase(),
+				updatedAt: new Date(),
+			})
+			.where(eq(organizationBilling.organizationId, input.orgId));
+	}
 }
 
 /**
@@ -1209,6 +1276,7 @@ export async function createCreditPackIntent(
 	}
 	const pack = creditPack(packId);
 	if (!pack) throw new Error("Unknown credit pack.");
+	await gatePaidConversion(actor);
 
 	const customerId = await ensureCustomer(actor.orgId, actor.userId);
 	const stripe = getStripe();
@@ -1279,6 +1347,15 @@ export async function createSetupIntent(): Promise<{ clientSecret: string }> {
 		customer: customerId,
 		usage: "off_session",
 		payment_method_types: ["card"],
+		// Require the billing address WITH the card, rather than hoping one is set elsewhere.
+		//
+		// A card saved with no address is not a usable default: Stripe Tax cannot determine the place
+		// of supply, so the first invoice it backs either fails or is raised with the wrong tax — and
+		// the customer discovers that at renewal, off-session, with nobody watching. Collecting it at
+		// the moment the card is entered is also the only point where the user is present to type it.
+		payment_method_options: {
+			card: { request_three_d_secure: "automatic" },
+		},
 	});
 	if (!si.client_secret) {
 		throw new Error("Stripe did not return a setup client secret.");
@@ -1350,6 +1427,39 @@ export async function setDefaultPaymentMethod(
 	if (!billing?.stripeCustomerId) throw new Error("No billing account yet.");
 
 	const stripe = getStripe();
+	// A default payment method is what future off-session charges run on, so promoting one is the
+	// point at which the account's OWN preconditions must hold — not the moment a charge is later
+	// attempted with nobody present to fix anything.
+	//
+	// Two, and both are about the same thing: a renewal that cannot be justified. Without current
+	// acceptance there is no agreement covering the charge; without a billing address Stripe Tax has
+	// no place of supply, so the invoice is raised with the wrong tax or not at all. Verified against
+	// the card ITSELF, not only the customer record — a card carrying its own billing address is a
+	// perfectly good source, and requiring the customer-level one as well would refuse a setup that
+	// is actually complete.
+	if (!(await hasAcceptedCurrentDocuments(actor.userId))) {
+		throw new Error(
+			"Accept the current Terms of Service before setting a default payment method — " +
+				"renewals charged against it need an agreement that covers them.",
+		);
+	}
+	const pmForDefault = await stripe.paymentMethods.retrieve(pmId);
+	const pmOwner =
+		typeof pmForDefault.customer === "string"
+			? pmForDefault.customer
+			: (pmForDefault.customer?.id ?? null);
+	if (pmOwner !== billing.stripeCustomerId) {
+		// Same check detachPaymentMethod makes, and for the same reason: without it one org could
+		// promote another org's card by id.
+		throw new Error("Payment method not found.");
+	}
+	const cardCountry = pmForDefault.billing_details?.address?.country ?? null;
+	if (!cardCountry && !billing.billingCountry) {
+		throw new Error(
+			"Add a billing address before setting a default payment method — without one we cannot " +
+				"determine the tax due on a renewal.",
+		);
+	}
 	await stripe.customers.update(billing.stripeCustomerId, {
 		invoice_settings: { default_payment_method: pmId },
 	});
@@ -1414,6 +1524,10 @@ export async function changeSubscriptionPlan(
 ): Promise<{ ok: true }> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
+	// A plan change is a paid conversion: it raises a prorated charge, and it is the path a user
+	// takes OUT of a trial. Exempting it because "they already pay" is how the gate would come to
+	// cover only the first purchase.
+	await gatePaidConversion(actor);
 	const subId = await requireSubscriptionId(actor.orgId);
 	const stripe = getStripe();
 	const sub = await stripe.subscriptions.retrieve(subId);
