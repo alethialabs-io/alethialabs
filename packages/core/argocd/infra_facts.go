@@ -128,6 +128,12 @@ type InfraFacts struct {
 	AlibabaOIDCIssuerURL          string // ACK cluster OIDC issuer
 	AlibabaOIDCProviderArn        string // RAM OIDC provider ARN that RRSA roles trust
 	AlibabaExternalSecretsRoleArn string // RRSA RAM role for the external-secrets operator (gates secretstore-alibaba)
+
+	// HetznerInClusterVault gates secretstore-hetzner: Hetzner has no cloud secret store, so the
+	// `secret` kind is delivered by a Vault this platform installs (#2432). True only when the
+	// project actually declares a secret — a Vault nobody asked for costs volumes and an audit
+	// surface for nothing, and a store pointing at an absent Vault is worse than no store.
+	HetznerInClusterVault bool
 	// No WAF fact here, unlike AWS/GCP/Azure: the offer is withdrawn on this cloud (#1841). The
 	// template buys nothing, so there is no reference to carry — wafWebACLRef falls to its ""
 	// default and wafDecision reports the withdrawal rather than a purchase.
@@ -414,6 +420,12 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		f.ClusterName = ExtractOutput(outputs, "talos_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "talos_cluster_endpoint")
 		// No cloud IAM on Hetzner — no identity block by design.
+		//
+		// Which is exactly why this fact is derived from the SNAPSHOT and not from an output: the
+		// `secret` kind is carried by an in-cluster Vault, so nothing about it reaches tofu state.
+		// Deriving it through HetznerVaultFor keeps ONE predicate deciding whether the Vault, its
+		// bootstrap Job and its ClusterSecretStore all exist — three things that are useless apart.
+		f.HetznerInClusterVault = HetznerVaultFor(vc) != nil
 	case "aws":
 		f.ClusterName = ExtractOutput(outputs, "eks_cluster_name")
 		f.ClusterEndpoint = ExtractOutput(outputs, "eks_cluster_endpoint")

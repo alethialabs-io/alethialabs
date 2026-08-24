@@ -64,6 +64,9 @@ type hetznerDataServiceComponents struct {
 	Registries []struct {
 		Name string `json:"name"`
 	} `json:"registries"`
+	Secrets []struct {
+		Name string `json:"name"`
+	} `json:"secrets"`
 }
 
 // hetznerDataServiceFixture is the generated artifact: what was mapped, and what it mapped to.
@@ -104,20 +107,30 @@ func loadHetznerDataServiceFixture() (hetznerDataServiceFixture, error) {
 		return fx, fmt.Errorf("parse hetzner data-service fixture: %w (%s)", err, hetznerDataServicesRegenerate)
 	}
 	if len(fx.Components.Databases) == 0 || len(fx.Components.Caches) == 0 ||
-		len(fx.Components.Queues) == 0 || len(fx.Components.Registries) == 0 {
+		len(fx.Components.Queues) == 0 || len(fx.Components.Registries) == 0 ||
+		len(fx.Components.Secrets) == 0 {
 		return hetznerDataServiceFixture{}, fmt.Errorf(
-			"hetzner data-service fixture declares %d database(s), %d cache(s), %d queue(s), %d registry/ies — all four kinds are CarriedInCluster on hetzner, so a missing one makes that kind unprovable (%s)",
+			"hetzner data-service fixture declares %d database(s), %d cache(s), %d queue(s), %d registry/ies, %d secret(s) — all five kinds are CarriedInCluster on hetzner, so a missing one makes that kind unprovable (%s)",
 			len(fx.Components.Databases), len(fx.Components.Caches), len(fx.Components.Queues),
-			len(fx.Components.Registries), hetznerDataServicesRegenerate)
+			len(fx.Components.Registries), len(fx.Components.Secrets), hetznerDataServicesRegenerate)
 	}
 	// One Application per component, plus the CNPG operator that owns the Cluster CRD. Derived from
 	// the components rather than written down: a hard-coded total has to be edited by hand every
 	// time a kind joins the in-cluster set, and the edit is invisible until a real Hetzner run.
+	//
+	// `secret` is the exception and must not be counted per component: every secret node on a
+	// project is one KV v2 entry in the SAME Vault, so N secrets still render ONE release. Counting
+	// it per node would pass today (the surface declares exactly one) and start failing the moment a
+	// second secret is added — for a fixture that was perfectly correct.
+	vaultSpecs := 0
+	if len(fx.Components.Secrets) > 0 {
+		vaultSpecs = 1
+	}
 	wantSpecs := len(fx.Components.Databases) + len(fx.Components.Caches) +
-		len(fx.Components.Queues) + len(fx.Components.Registries) + 1
+		len(fx.Components.Queues) + len(fx.Components.Registries) + vaultSpecs + 1
 	if len(fx.AddOns) != wantSpecs {
 		return hetznerDataServiceFixture{}, fmt.Errorf(
-			"hetzner data-service fixture holds %d install spec(s), expected %d (one per component + the cnpg-operator) — the fixture is stale or partial (%s)",
+			"hetzner data-service fixture holds %d install spec(s), expected %d (one per component, one Vault for all secrets, + the cnpg-operator) — the fixture is stale or partial (%s)",
 			len(fx.AddOns), wantSpecs, hetznerDataServicesRegenerate)
 	}
 	for i, a := range fx.AddOns {

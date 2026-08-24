@@ -34,6 +34,7 @@ const NS = {
 	cache: "caches",
 	queue: "queues",
 	registry: "registries",
+	secret: "secrets",
 	operators: "cnpg-system",
 } as const;
 
@@ -110,6 +111,21 @@ export const HETZNER_CHARTS = {
 		chart: "harbor",
 		version: "1.15.1",
 	},
+	/**
+	 * HashiCorp Vault — the in-cluster substitute for Secrets Manager / Secret Manager / Key Vault /
+	 * KMS, ONE release per cluster serving every `secret` node. The SAME chart and pin as the `vault`
+	 * marketplace add-on (lib/addons/catalog.ts), for the reason Harbor's note above gives.
+	 *
+	 * ⚠️ It is deliberately NOT installed under the marketplace add-on's id or namespace. That
+	 * add-on is a Vault the CUSTOMER runs and operates; this one is the PLATFORM's, and Alethia
+	 * holds its unseal key. A project may reasonably want both, so they must not collide — hence
+	 * the `secrets-vault` id and the `secrets` namespace here against the add-on's `vault`/`vault`.
+	 */
+	vault: {
+		chartRepo: "https://helm.releases.hashicorp.com",
+		chart: "vault",
+		version: "0.28.1",
+	},
 } as const;
 
 /** Node kinds Hetzner supports in v1 (the canvas hides the rest for Hetzner). */
@@ -118,6 +134,7 @@ export const HETZNER_SUPPORTED_DATA_KINDS = [
 	"cache",
 	"queue",
 	"registry",
+	"secret",
 ] as const;
 
 /** Database engines available on Hetzner (Postgres only in v1 — via CloudNativePG). */
@@ -155,12 +172,18 @@ interface RegistryInput {
 	name: string;
 	storage_gb?: number | null;
 }
+/** A `secret` node. It carries no sizing of its own — every secret node on a project is one KV v2
+ *  entry in the SAME Vault, so only the presence of at least one matters to the mapper. */
+interface SecretInput {
+	name: string;
+}
 
 interface HetznerDataServices {
 	databases?: DatabaseInput[];
 	caches?: CacheInput[];
 	queues?: QueueInput[];
 	registries?: RegistryInput[];
+	secrets?: SecretInput[];
 }
 
 /** Clamp a positive integer with a default, guarding null/NaN/negatives. */
@@ -177,7 +200,8 @@ function posInt(value: number | null | undefined, fallback: number): number {
  *  - the CloudNativePG operator once (sync-wave 0) when any Postgres database is present;
  *  - one CNPG `cluster` Application per database (sync-wave 1);
  *  - one Valkey release per cache; one RabbitMQ release per queue (sync-wave 1);
- *  - one Harbor release per registry (sync-wave 2).
+ *  - one Harbor release per registry (sync-wave 2);
+ *  - ONE Vault release for the whole project when any `secret` node exists (sync-wave 0).
  * Each id is unique per node (`db-<name>` / `cache-<name>` / `queue-<name>` / `registry-<name>`) so the runner's
  * `AddOnAppName` yields a distinct ArgoCD Application, and health reads back per component.
  */
@@ -190,6 +214,23 @@ export function hetznerDataServicesToAddOns(
 	const caches = services.caches ?? [];
 	const queues = services.queues ?? [];
 	const registries = services.registries ?? [];
+	const secrets = services.secrets ?? [];
+
+	// Secrets → ONE Vault for the project (never one per node: a `secret` node is a KV entry, not a
+	// server). syncWave 0 because the ClusterSecretStore over it, and every ExternalSecret that
+	// resolves through it, are useless until Vault answers — and nothing waits on the reverse.
+	if (secrets.length > 0) {
+		specs.push({
+			id: HETZNER_VAULT_ADDON_ID,
+			mode: "managed",
+			chartRepo: HETZNER_CHARTS.vault.chartRepo,
+			chart: HETZNER_CHARTS.vault.chart,
+			version: HETZNER_CHARTS.vault.version,
+			namespace: NS.secret,
+			values: hetznerVaultValues(),
+			syncWave: 0,
+		});
+	}
 
 	// Postgres databases: install the CNPG operator once, then a Cluster per node.
 	const pgDatabases = databases.filter(
@@ -389,6 +430,68 @@ export function hetznerRegistryValues(
 				redis: supporting,
 				trivy: supporting,
 			},
+		},
+	};
+}
+
+/**
+ * The add-on id of the project's single platform Vault, and therefore — through
+ * `argocd.AddOnAppName` — the ArgoCD Application name AND the Helm release name ArgoCD syncs under.
+ *
+ * ⚠️ The release name is what the chart names its Service (`vault.fullname` is `.Release.Name`), so
+ * this id, the namespace, and `hetznerVaultReleaseHost` in packages/core/argocd/vault.go are ONE
+ * fact spelled in two languages. The Go test reads it back out of the generated fixture rather than
+ * trusting a copy: a drifted host does not error, it resolves nowhere, and the only symptom is a
+ * ClusterSecretStore that is simply never Valid.
+ */
+export const HETZNER_VAULT_ADDON_ID = "secrets-vault";
+
+/**
+ * The in-cluster address the platform Vault answers on — the bootstrap Job's api-base and ESO's
+ * `server` are both this one address.
+ *
+ * That they CAN be one address is a property of the chart, not an assumption: its Service sets
+ * `publishNotReadyAddresses: true` (verified in the rendered manifest). A sealed Vault fails its
+ * readiness probe — `vault status` exits 2 when sealed — so an ordinary Service would carry no
+ * endpoints and the bootstrap Job could never reach the very Vault it exists to unseal.
+ */
+export function hetznerVaultHost(): string {
+	return `addon-${HETZNER_VAULT_ADDON_ID}.${NS.secret}.svc.cluster.local`;
+}
+
+/**
+ * Helm values for the platform Vault, against the pinned chart's REAL schema — verified with
+ * `helm show values` + `helm template vault --version 0.28.1`, never guessed.
+ *
+ *  - `injector.enabled: false`. The Agent sidecar injector is a SECOND delivery path for the same
+ *    secrets, carrying a mutating webhook that sits in front of every pod admission in the cluster.
+ *    Secrets reach workloads through ESO here, exactly as on the other four clouds; installing a
+ *    rival path would be two answers to one question.
+ *  - `ui.enabled: false`. The UI is a login surface for a Vault whose only legitimate client is
+ *    ESO, and the platform holds the root credential — there is no human meant to log in.
+ *  - `server.standalone.enabled: true` / `server.ha.enabled: false`. Raft HA means three replicas,
+ *    three volumes and an unseal apiece; one node is what this seal model can actually operate, and
+ *    pretending otherwise would ship an HA cluster that stays two-thirds sealed.
+ *  - `server.dataStorage` is the KV store; `server.auditStorage` backs the audit device. Audit is
+ *    on deliberately: an audit log of every read is the ONLY thing this Vault buys over a plain
+ *    Kubernetes Secret (see the custody note in packages/core/argocd/vault.go), so shipping it
+ *    without one would make that claim false. Both are pinned to hcloud's StorageClass at its
+ *    10 GiB minimum — which is what the CSI driver rounds anything smaller up to anyway.
+ */
+export function hetznerVaultValues(): Record<string, unknown> {
+	const volume = {
+		enabled: true,
+		size: `${HCLOUD_MIN_VOLUME_GB}Gi`,
+		storageClass: HCLOUD_STORAGE_CLASS,
+	};
+	return {
+		injector: { enabled: false },
+		ui: { enabled: false },
+		server: {
+			standalone: { enabled: true },
+			ha: { enabled: false },
+			dataStorage: volume,
+			auditStorage: volume,
 		},
 	};
 }

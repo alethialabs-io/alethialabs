@@ -1313,6 +1313,11 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 				result.DataEndpoints = eps
 			}
 		}
+		// The in-cluster Vault that carries Hetzner's `secret` kind (#2432). It runs HERE, after the
+		// add-on stage, for a hard ordering reason: the Vault is itself an add-on Application, so
+		// before this point there is no Vault for the bootstrap to reach and no Service for the
+		// ClusterSecretStore to name. A no-op on every other cloud, which has a real secret store.
+		bootstrapInClusterVault(ctx, vc, facts, stdout, stderr)
 		// Read the cluster's Trivy-Operator vulnerability posture (L9). Best-effort +
 		// unconditional: `Scanned=false` when Trivy isn't installed, so the Evidence Security
 		// tab shows an honest "not scanned" rather than a misleading all-clear. Refreshed on
@@ -1754,5 +1759,32 @@ func credentialInClusterRegistries(ctx context.Context, vc *types.ProjectConfig,
 		if err := argocd.EnsureHarborPullCredentials(ctx, reg, selfimage.Ref(), stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: in-cluster registry %s credentials skipped: %v\n", reg.Name, err)
 		}
+	}
+}
+
+// bootstrapInClusterVault delivers Hetzner's `secret` kind: the Job that initialises, unseals and
+// seeds the platform Vault from inside the cluster, and the ESO ClusterSecretStore that reads it.
+// A no-op on every other cloud, and on a Hetzner project that declares no secret.
+//
+// Non-fatal, like the add-on, Karpenter and registry paths: the Job waits for Vault on its own for
+// fifteen minutes and retries under its backoffLimit, and the store re-reconciles once the token
+// lands — so a Vault still converging must not fail an otherwise-healthy cluster. The next deploy
+// re-runs both, which is a no-op once Vault is initialised (the bootstrap reads its state Secret
+// first and refuses to re-initialise).
+//
+// ORDER WITHIN IT MATTERS ONE WAY ONLY: the Job is applied before the store, so that on a fast
+// cluster the store's first validation can already succeed. The reverse order is not a failure —
+// just a slower first Ready — which is why neither step blocks on the other.
+func bootstrapInClusterVault(ctx context.Context, vc *types.ProjectConfig, facts *argocd.InfraFacts, stdout, stderr io.Writer) {
+	v := argocd.HetznerVaultFor(vc)
+	if v == nil {
+		return
+	}
+	if err := argocd.EnsureHetznerVault(ctx, v, selfimage.Ref(), stdout, stderr); err != nil {
+		fmt.Fprintf(stderr, "Warning: in-cluster Vault bootstrap skipped: %v\n", err)
+	}
+	if err := argocd.EnsureHetznerSecretStore(facts, stdout, stderr); err != nil {
+		fmt.Fprintf(stderr, "Warning: in-cluster Vault ClusterSecretStore not applied yet "+
+			"(will reconcile once the operator webhook is ready): %v\n", err)
 	}
 }

@@ -103,12 +103,26 @@ func TestInfraServiceDecisions_Hetzner(t *testing.T) {
 		t.Errorf("hetzner external-dns skip reason should mention the Cloud API token, got %q", edns.Reason)
 	}
 
+	// Hetzner's store decision has TWO branches since #2432, and a decision that mirrors only one of
+	// them is the failure this repo has already paid for: with no `secret` declared the platform
+	// installs no Vault and the store is honestly skipped; with one declared it installs both and the
+	// decision must say INSTALLED, or the console reports a skip while ESO is resolving secrets.
 	store := decisionFor(t, decisions, "external-secrets-store")
 	if store.Status != infraStatusSkipped {
-		t.Errorf("hetzner external-secrets-store: want skipped, got %s", store.Status)
+		t.Errorf("hetzner external-secrets-store (no secret declared): want skipped, got %s", store.Status)
 	}
-	if !strings.Contains(strings.ToLower(store.Reason), "vault connector") {
-		t.Errorf("hetzner secret-store skip reason should point at the Vault connector, got %q", store.Reason)
+	if !strings.Contains(strings.ToLower(store.Reason), "declares no secret") {
+		t.Errorf("hetzner secret-store skip reason should say WHICH of the two reasons it is, got %q", store.Reason)
+	}
+
+	withVault := decisionFor(t, InfraServiceDecisions(&InfraFacts{
+		Provider: "hetzner", HetznerInClusterVault: true,
+	}), "external-secrets-store")
+	if withVault.Status != infraStatusInstalled {
+		t.Errorf("hetzner external-secrets-store (in-cluster Vault wired): want installed, got %s (%s)", withVault.Status, withVault.Reason)
+	}
+	if !strings.Contains(strings.ToLower(withVault.Reason), "in-cluster") {
+		t.Errorf("hetzner secret-store install reason should say the Vault is in-cluster, got %q", withVault.Reason)
 	}
 
 	if d := decisionFor(t, decisions, "storage-class"); d.Status != infraStatusInstalled {

@@ -72,12 +72,16 @@ describe("NODE_REGISTRY palette metadata", () => {
 		// deploy-time guard (buildConfigSnapshot) can never diverge on what a cloud can't back.
 		expect(UNSUPPORTED_KINDS_BY_PROVIDER).toBe(SERVER_UNSUPPORTED_KINDS_BY_PROVIDER);
 		// bucket is NATIVE on Hetzner (Object Storage via the minio provider); database, cache,
-		// queue and — since #2431 — registry all run as in-cluster charts (hetzner-services.ts),
-		// so those stay addable. topic/nosql have no path, and `secret` is blocked too: Hetzner
-		// has no cloud secret store and ProviderTfvars never emits `custom_secrets`, so before
-		// the gate the component was silently dropped while the deploy reported SUCCESS.
-		// (#2432 tracks delivering `secret` as an in-cluster Vault.)
-		expect(unsupportedKindsFor("hetzner")).toEqual(["topic", "nosql", "secret"]);
+		// queue, registry (#2431) and secret (#2432, an in-cluster Vault) all run as in-cluster
+		// charts (hetzner-services.ts), so those stay addable. topic/nosql have no clean
+		// single-chart OSS equal, so they remain hidden in the palette and rejected at deploy —
+		// which is the point of the gate: before it, an unbacked component was silently dropped
+		// while the deploy still reported SUCCESS.
+		expect(unsupportedKindsFor("hetzner")).toEqual(["topic", "nosql"]);
+		// And the two that LEFT the list are addable — asserted positively, because a kind that
+		// is merely absent from an array is indistinguishable from one nobody remembered to add.
+		expect(unsupportedKindsFor("hetzner")).not.toContain("registry");
+		expect(unsupportedKindsFor("hetzner")).not.toContain("secret");
 		// A cloud with no blocked kinds (and an unknown/out-of-design slug) → empty.
 		expect(unsupportedKindsFor("aws")).toEqual([]);
 		expect(unsupportedKindsFor("digitalocean")).toEqual([]);

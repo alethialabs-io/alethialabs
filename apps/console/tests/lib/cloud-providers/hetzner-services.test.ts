@@ -9,8 +9,10 @@
 import { describe, expect, it } from "vitest";
 import {
 	HETZNER_CHARTS,
+	HETZNER_VAULT_ADDON_ID,
 	hetznerDataServicesToAddOns,
 	hetznerRegistryHost,
+	hetznerVaultHost,
 } from "@/lib/cloud-providers/hetzner-services";
 
 /**
@@ -338,5 +340,85 @@ describe("hetznerDataServicesToAddOns — registries (Harbor)", () => {
 	it("charts nothing when the project declares no registry", () => {
 		const specs = hetznerDataServicesToAddOns({ databases: [{ name: "db" }] });
 		expect(specs.some((s) => s.chart === "harbor")).toBe(false);
+	});
+});
+
+describe("hetznerDataServicesToAddOns — secrets (in-cluster Vault)", () => {
+	const vaultSpecs = (names: string[]) =>
+		hetznerDataServicesToAddOns({
+			secrets: names.map((name) => ({ name })),
+		}).filter((s) => s.chart === "vault");
+
+	// THE property that distinguishes a `secret` node from every other kind in this mapper: it is a
+	// KV entry, not a server. One release per PROJECT, however many secrets — N releases would be N
+	// Vaults, of which N-1 are unseeded, unreferenced, and each holding two 10 GiB volumes.
+	it("renders exactly ONE release however many secrets the project declares", () => {
+		expect(vaultSpecs(["api-key"])).toHaveLength(1);
+		expect(vaultSpecs(["api-key", "signing-key", "webhook-secret"])).toHaveLength(1);
+	});
+
+	it("charts nothing when the project declares no secret", () => {
+		expect(vaultSpecs([])).toHaveLength(0);
+		// A Vault nobody asked for costs two volumes and an audit surface for nothing.
+		expect(
+			hetznerDataServicesToAddOns({ databases: [{ name: "db" }] }).some(
+				(s) => s.chart === "vault",
+			),
+		).toBe(false);
+	});
+
+	// The host is DERIVED from the id and namespace, not chosen: the vault chart names its Service
+	// after the Helm release, and ArgoCD's release name is `addon-` + the spec id. Go's
+	// hetznerVaultReleaseHost must equal this, and a drift resolves nowhere rather than erroring.
+	it("derives the host from the install spec ArgoCD will actually sync", () => {
+		const [spec] = vaultSpecs(["api-key"]);
+		expect(spec.id).toBe(HETZNER_VAULT_ADDON_ID);
+		expect(hetznerVaultHost()).toBe(
+			`addon-${spec.id}.${spec.namespace}.svc.cluster.local`,
+		);
+		// NOT the marketplace add-on's id or namespace — a project may run both, and the platform's
+		// Vault is the one whose unseal key Alethia holds.
+		expect(spec.id).not.toBe("vault");
+		expect(spec.namespace).not.toBe("vault");
+	});
+
+	it("converges first, before anything that would read a secret out of it", () => {
+		expect(vaultSpecs(["api-key"])[0].syncWave).toBe(0);
+	});
+
+	it("pins the same chart as the marketplace add-on, so one cluster cannot run two versions", () => {
+		const [spec] = vaultSpecs(["api-key"]);
+		expect(spec.chartRepo).toBe(HETZNER_CHARTS.vault.chartRepo);
+		expect(spec.version).toBe(HETZNER_CHARTS.vault.version);
+	});
+
+	// Each of these is a value whose default would ship something we do not mean, verified against
+	// `helm template` rather than guessed.
+	it("disables the injector and the UI, stays standalone, and pins both volumes", () => {
+		const v = values(vaultSpecs(["api-key"])[0]);
+		// A second delivery path for the same secrets, behind a mutating webhook in front of every
+		// pod admission in the cluster. ESO is the path; there is not a second one.
+		expect(leaf(v, "injector", "enabled")).toBe(false);
+		// A login surface for a Vault whose only legitimate client is ESO.
+		expect(leaf(v, "ui", "enabled")).toBe(false);
+		// Raft HA is three replicas needing three unseals; this seal model operates one node.
+		expect(leaf(v, "server", "standalone", "enabled")).toBe(true);
+		expect(leaf(v, "server", "ha", "enabled")).toBe(false);
+		for (const store of ["dataStorage", "auditStorage"]) {
+			expect(leaf(v, "server", store, "enabled")).toBe(true);
+			// hcloud's minimum volume is 10 GiB; asking for less is silently rounded up, so the
+			// cluster would stop matching the values this repo rendered.
+			expect(leaf(v, "server", store, "size")).toBe("10Gi");
+			expect(leaf(v, "server", store, "storageClass")).toBe("hcloud-volumes");
+		}
+	});
+
+	// The audit device is the ONLY thing this Vault buys over a plain Kubernetes Secret — the unseal
+	// key lives in the same etcd either way. Shipping it with audit storage off would make the claim
+	// that justifies the whole feature false.
+	it("provisions the audit volume the custody claim depends on", () => {
+		expect(leaf(values(vaultSpecs(["api-key"])[0]), "server", "auditStorage", "enabled")).toBe(
+			true,
+		);
 	});
 });

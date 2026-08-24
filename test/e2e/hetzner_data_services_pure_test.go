@@ -82,6 +82,21 @@ func TestHetznerDataServiceFixtureMatchesTheMaxConfigSurface(t *testing.T) {
 			t.Errorf("queue[%d]: fixture name %q, max-config seeds %q (%s)", i, got.Name, want.Name, hetznerDataServicesRegenerate)
 		}
 	}
+
+	// Secrets are the one kind whose NAMES do not become an Application name — they become KV v2
+	// paths inside the single Vault, seeded by the bootstrap Job from the deploy's ProjectConfig.
+	// So the comparison here is what makes the fixture's secret list load-bearing at all: it is how
+	// we know the surface the Vault will be asked to seed is the surface the run declares.
+	if len(fx.Components.Secrets) != len(pc.Secrets) {
+		t.Fatalf("fixture declares %d secret(s), the max-config surface seeds %d (%s)",
+			len(fx.Components.Secrets), len(pc.Secrets), hetznerDataServicesRegenerate)
+	}
+	for i, want := range pc.Secrets {
+		if got := fx.Components.Secrets[i]; got.Name != want.Name {
+			t.Errorf("secret[%d]: fixture name %q, max-config seeds %q — the bootstrap seeds KV path secret/%s while the snapshot declares %s, so the ExternalSecret resolves nothing (%s)",
+				i, got.Name, want.Name, got.Name, want.Name, hetznerDataServicesRegenerate)
+		}
+	}
 }
 
 // TestHetznerInClusterCellsAreCoveredBySeededSpecs is the assertion that makes D1's fix real: EVERY
@@ -111,8 +126,8 @@ func TestHetznerInClusterCellsAreCoveredBySeededSpecs(t *testing.T) {
 				k.Kind, cell.ArgoApp, sortedKeys(rendered), hetznerDataServicesRegenerate) //nolint:gocritic // sortedKeys lives in argocd_assert_test.go
 		}
 	}
-	if checked != 4 {
-		t.Errorf("checked %d CarriedInCluster cells on hetzner, want 4 (database/cache/queue/registry) — the guard has drifted off the kinds it protects", checked)
+	if checked != 5 {
+		t.Errorf("checked %d CarriedInCluster cells on hetzner, want 5 (database/cache/queue/registry/secrets) — the guard has drifted off the kinds it protects", checked)
 	}
 }
 
@@ -145,7 +160,7 @@ func TestMaxConfigSnapshotSeedsHetznerInClusterCharts(t *testing.T) {
 		if !ids["reloader"] {
 			t.Error("the lean seed was dropped: max-config must APPEND the in-cluster charts, never replace `addons`")
 		}
-		for _, want := range []string{"cnpg-operator", "db-appdb", "cache-sessions", "queue-jobs"} {
+		for _, want := range []string{"cnpg-operator", "db-appdb", "cache-sessions", "queue-jobs", "registry-app-images", "secrets-vault"} {
 			if !ids[want] {
 				t.Errorf("hetzner max-config snapshot is missing in-cluster add-on %q — its kind can never converge", want)
 			}
