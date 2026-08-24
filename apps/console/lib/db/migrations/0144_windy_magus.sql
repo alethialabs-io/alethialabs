@@ -5,7 +5,7 @@ CREATE TYPE "public"."performance_start" AS ENUM('deferred', 'immediate');--> st
 CREATE TABLE "commerce_order" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" uuid NOT NULL,
-	"placed_by_user_id" text NOT NULL,
+	"placed_by_user_id" uuid NOT NULL,
 	"state" "commerce_order_state" DEFAULT 'placed' NOT NULL,
 	"capacity" "payer_capacity" NOT NULL,
 	"authority_attestation" text,
@@ -36,7 +36,7 @@ CREATE TABLE "commerce_order" (
 --> statement-breakpoint
 CREATE TABLE "legal_acceptance" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"user_id" text NOT NULL,
+	"user_id" uuid NOT NULL,
 	"organization_id" uuid,
 	"document_id" text NOT NULL,
 	"document_version" text NOT NULL,

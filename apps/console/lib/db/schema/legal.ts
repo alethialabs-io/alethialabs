@@ -56,7 +56,7 @@ export const legalAcceptance = pgTable(
 	"legal_acceptance",
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		userId: text()
+		userId: uuid()
 			.notNull()
 			.references(() => user.id, { onDelete: "cascade" }),
 		organizationId: uuid().references(() => organization.id, {
@@ -115,7 +115,7 @@ export const commerceOrder = pgTable(
 			.notNull()
 			.references(() => organization.id, { onDelete: "cascade" }),
 		/** The user who placed it. Retained even if they later leave the org. */
-		placedByUserId: text()
+		placedByUserId: uuid()
 			.notNull()
 			.references(() => user.id, { onDelete: "restrict" }),
 		state: commerceOrderState().default("placed").notNull(),
