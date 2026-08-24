@@ -159,7 +159,27 @@ jobs:
           SCOOP_TAP_GITHUB_TOKEN: ${{ steps.tap_token.outputs.token }}
           GORELEASER_CURRENT_TAG: ${{ env.MIRROR_TAG }}
 
+      # ── best-effort, like the step it exists to serve. ──
+      #
+      # This workflow triggers on `push: tags: ['cli-v*']`, so its OIDC subject is
+      # `repo:<repo>:ref:refs/tags/cli-vX.Y.Z`. `alethia-deploy-reader` trusts exactly two subjects —
+      # `ref:refs/heads/main` and `environment:production` — so the assume-role has never succeeded
+      # from a tag, and this step failed hard after twelve retries on EVERY release since v0.4.0.
+      #
+      # The step below already says a console blip "must not red an otherwise-successful publish",
+      # and carries `continue-on-error` to guarantee it. That guard was on the wrong step: the
+      # credential step it depends on had none, so it reddened the job anyway. GoReleaser had
+      # already published — v0.4.0 and v0.5.0 are both on alethialabs-io/alethia-cli with their full
+      # asset sets — and the release still reported FAILURE. A pipeline that is red on every
+      # successful run cannot tell anyone about an unsuccessful one.
+      #
+      # This makes the release report the truth. It does NOT make the notification work: the
+      # credentials still will not mint from a tag subject, so the console still never hears about a
+      # new CLI version. Fixing that needs either a trusted subject for the tag or a job-level
+      # `environment:` — and `production` carries a branch policy a tag push does not satisfy, so it
+      # is a real decision rather than a one-liner. Tracked separately.
       - name: Configure AWS credentials (OIDC — read the release bearer)
+        continue-on-error: true
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.DEPLOY_READER_ROLE_ARN }}
