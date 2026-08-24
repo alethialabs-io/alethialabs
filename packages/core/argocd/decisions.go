@@ -198,7 +198,15 @@ func externalSecretsStoreDecision(f *InfraFacts) InfraServiceDecision {
 		}
 		return skippedStore(d, "the external-secrets RRSA role output is not present — the ClusterSecretStore is skipped.")
 	case "hetzner":
-		return skippedStore(d, "Hetzner has no cloud secret store — use the Vault connector to source secrets.")
+		if f.HetznerInClusterVault {
+			return installedStore(d, "an in-cluster HashiCorp Vault this platform operates (KV v2 ClusterSecretStore)")
+		}
+		// Hetzner still has no CLOUD secret store; what changed in #2432 is that the platform now
+		// installs one in-cluster when the project asks for a secret. With no `secret` node declared,
+		// installing a Vault would cost two volumes and an audit surface for nothing — so the skip
+		// stays, and says which of the two reasons it is.
+		return skippedStore(d, "Hetzner has no cloud secret store, and this project declares no secret — "+
+			"the in-cluster Vault that would carry the kind is not installed. Add a secret, or connect an external Vault.")
 	default:
 		return skippedStore(d, "no cloud secret store for this provider — the ClusterSecretStore is skipped.")
 	}

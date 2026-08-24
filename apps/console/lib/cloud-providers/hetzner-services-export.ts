@@ -52,23 +52,26 @@ export const E2E_MAX_CONFIG_HETZNER_COMPONENTS = {
 	caches: [{ name: "sessions", num_cache_nodes: 2 }],
 	queues: [{ name: "jobs" }],
 	registries: [{ name: "app-images" }],
+	secrets: [{ name: "api-key" }],
 } as const;
 
 /**
  * Components the mapper CHARTS but the product does not yet OFFER on Hetzner.
  *
- * EMPTY since #2431 gave the in-cluster Harbor its pull credentials — `registry` moved into the
- * seeded surface above, where the max-config read-back guard covers it.
+ * EMPTY since #2431 gave the in-cluster Harbor its pull credentials and #2432 gave the `secret`
+ * kind its Vault — both moved into the seeded surface above, where the max-config read-back guard
+ * covers them.
  *
  * The seam is kept rather than deleted because it is the honest home for the next kind that reaches
- * "chart wired, delivery not". `secret` → Vault (#2432) is exactly that shape today, and the
- * alternative to this list is a chart whose values nothing ever renders — which is the #2058 defect
- * class the render gate exists to catch.
+ * "chart wired, delivery not"; the alternative to this list is a chart whose values nothing ever
+ * renders, which is the #2058 defect class the render gate exists to catch.
  */
 export const HETZNER_CHARTED_NOT_OFFERED: {
 	registries: { name: string }[];
+	secrets: { name: string }[];
 } = {
 	registries: [],
+	secrets: [],
 };
 
 /** The generated fixture's shape: the components that were mapped, and what they mapped to. */
@@ -79,6 +82,7 @@ export interface HetznerDataServiceFixture {
 		caches: { name: string; num_cache_nodes: number }[];
 		queues: { name: string }[];
 		registries: { name: string }[];
+		secrets: { name: string }[];
 	};
 	/** The install specs a Hetzner deploy of those components would carry. */
 	addons: AddOnInstallSpec[];
@@ -112,12 +116,16 @@ export function exportHetznerDataServiceFixture(): HetznerDataServiceFixture {
 		registries: E2E_MAX_CONFIG_HETZNER_COMPONENTS.registries.map((r) => ({
 			name: r.name,
 		})),
+		secrets: E2E_MAX_CONFIG_HETZNER_COMPONENTS.secrets.map((s) => ({
+			name: s.name,
+		})),
 	};
 	return {
 		components,
 		addons: hetznerDataServicesToAddOns(components),
 		chartedNotOffered: hetznerDataServicesToAddOns({
 			registries: [...HETZNER_CHARTED_NOT_OFFERED.registries],
+			secrets: [...HETZNER_CHARTED_NOT_OFFERED.secrets],
 		}),
 	};
 }

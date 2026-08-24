@@ -22,9 +22,49 @@
 			{
 				"name": "app-images"
 			}
+		],
+		"secrets": [
+			{
+				"name": "api-key"
+			}
 		]
 	},
 	"addons": [
+		{
+			"id": "secrets-vault",
+			"mode": "managed",
+			"chartRepo": "https://helm.releases.hashicorp.com",
+			"chart": "vault",
+			"version": "0.28.1",
+			"namespace": "secrets",
+			"values": {
+				"injector": {
+					"enabled": false
+				},
+				"ui": {
+					"enabled": false
+				},
+				"server": {
+					"standalone": {
+						"enabled": true
+					},
+					"ha": {
+						"enabled": false
+					},
+					"dataStorage": {
+						"enabled": true,
+						"size": "10Gi",
+						"storageClass": "hcloud-volumes"
+					},
+					"auditStorage": {
+						"enabled": true,
+						"size": "10Gi",
+						"storageClass": "hcloud-volumes"
+					}
+				}
+			},
+			"syncWave": 0
+		},
 		{
 			"id": "cnpg-operator",
 			"mode": "managed",
