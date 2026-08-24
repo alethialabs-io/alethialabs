@@ -4,7 +4,6 @@
 package manifests
 
 import (
-	"encoding/base64"
 	"fmt"
 	"sort"
 	"strings"
@@ -45,9 +44,10 @@ type RegistryRefresher struct {
 	PodLabels     map[string]string
 }
 
-// emptyDockerConfig is the placeholder .dockerconfigjson the Secret ships with until the refresher's
-// first mint patches in the real auth (an app pod referencing it before then simply can't pull yet).
-var emptyDockerConfig = base64.StdEncoding.EncodeToString([]byte(`{"auths":{}}`))
+// EmptyDockerConfigJSON is the placeholder payload the pull Secret is seeded with until the
+// refresher's first mint replaces it. Exported so the runner seeds exactly what this package used to
+// render, and so there is one definition of "not yet minted" rather than two.
+const EmptyDockerConfigJSON = `{"auths":{}}`
 
 // registryTokenArgs builds the `registry-token` container args for the refresher (provider-specific).
 func (r RegistryRefresher) registryTokenArgs() []string {
@@ -64,9 +64,25 @@ func (r RegistryRefresher) registryTokenArgs() []string {
 	return args
 }
 
-// RenderRegistryRefresher renders the KSA + placeholder Secret + Role/RoleBinding + Deployment as one
-// multi-document manifest. Returns an error on a missing required field (fail-closed — never a
-// half-wired refresher). Off-path callers render nothing (see the provisioner gate).
+// RenderRegistryRefresher renders the KSA + Role/RoleBinding + Deployment as one multi-document
+// manifest. Returns an error on a missing required field (fail-closed — never a half-wired
+// refresher). Off-path callers render nothing (see the provisioner gate).
+//
+// ⚠️ IT DELIBERATELY RENDERS NO SECRET. This unit is COMMITTED TO THE CUSTOMER'S APPS REPO, and the
+// Application that syncs that repo runs `automated: {prune: true, selfHeal: true}` with no
+// `ignoreDifferences` (infra/templates/argocd/user-apps.yaml). A dockerconfigjson Secret declared
+// here is therefore a TRACKED resource whose desired state in git is an empty docker config — so
+// ArgoCD heals the credential the refresher just minted straight back to `{"auths":{}}` (#2435).
+//
+// The failure mis-presents badly: the pull fails with an auth error, which reads as a wrong
+// password or a registry-side permission problem, and whether a given pull succeeds depends on
+// whether it lands between the refresher's patch and the next reconcile — so it also looks
+// load-dependent.
+//
+// The placeholder is seeded instead by argocd.EnsureRegistryPullSecret from the runner, which
+// carries the prune label but NO ArgoCD tracking metadata — "no Application owns it, so nothing
+// syncs it away" (argocd/registry_secrets.go). writeRegistryRefresher does that immediately before
+// writing this manifest; the two must stay together.
 func RenderRegistryRefresher(r RegistryRefresher) (string, error) {
 	if r.Provider == "" || r.SecretName == "" || r.RegistryHost == "" || r.RunnerImage == "" {
 		return "", fmt.Errorf("registry refresher: provider, secret, registry-host and runner image are required")
@@ -81,7 +97,6 @@ func RenderRegistryRefresher(r RegistryRefresher) (string, error) {
 	if err := registryRefresherTmpl.Execute(&b, registryRefresherView{
 		R:             r,
 		KSAName:       registryPullKSAName,
-		EmptyDocker:   emptyDockerConfig,
 		Args:          r.registryTokenArgs(),
 		SAAnnotations: sortedKV(r.SAAnnotations),
 		SALabels:      sortedKV(r.SALabels),
@@ -106,7 +121,6 @@ func sortedKV(m map[string]string) []kv {
 type registryRefresherView struct {
 	R             RegistryRefresher
 	KSAName       string
-	EmptyDocker   string
 	Args          []string
 	SAAnnotations []kv
 	SALabels      []kv
@@ -133,18 +147,6 @@ metadata:
     {{ .K }}: "{{ .V }}"
 {{- end }}
 {{- end }}
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ .R.SecretName }}
-  namespace: {{ .R.Namespace }}
-  labels:
-    app.kubernetes.io/managed-by: alethia
-    alethia.io/registry-pull: "true"
-type: kubernetes.io/dockerconfigjson
-data:
-  .dockerconfigjson: {{ .EmptyDocker }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
