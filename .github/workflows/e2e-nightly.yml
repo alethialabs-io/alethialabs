@@ -25,8 +25,12 @@
 # with a loud warning (never a false red); when the secret is present, any break is a
 # HARD FAIL (never a false green). To enable Hetzner: add the repo secret
 # `HCLOUD_TOKEN` (a scoped Hetzner Cloud API token). Cost per run is a single tiny
-# Talos cluster (1 control plane + 1 worker, cheapest cax11 ARM) up for ~15–25 min,
-# torn down at the end — on the order of a few euro-cents. See demos/proofs/README.md.
+# Talos cluster (1 control plane + 1 worker, cpx22 amd64) up for ~15–25 min,
+# torn down at the end — on the order of a few euro-cents. NOT cax11/ARM: the template
+# defaults both node types to cpx22 because "cax11 (ARM) is capacity-unreliable and cpx11 is
+# retired" (infra/templates/project/hetzner/variables.tf). This line said ARM, which also made
+# the `imager_image.amd64` in a real failure look like a bug rather than the configured path.
+# See demos/proofs/README.md.
 #
 # SAFETY: the Hetzner account is shared with prod. Teardown is guaranteed and always
 # label-scoped to THIS run's unique cluster — never an account-wide delete (see
