@@ -296,7 +296,7 @@ The ledger row itself is not wrong and is not rewritten (it is append-only, and 
 
 | board | recorded debt |
 |---|---|
-| `infra/offer-exclusions.yaml` | exclusions: 25 · baseline: 0 · wired: 2 · carried_in_cluster: 2 |
+| `infra/offer-exclusions.yaml` | exclusions: 25 · baseline: 0 · wired: 2 · carried_in_cluster: 4 |
 | `infra/config-carriage-exclusions.yaml` | exclusions: 31 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 301 · uniform: 11 |
 

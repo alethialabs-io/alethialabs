@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,6 +26,7 @@ type fakeHarbor struct {
 	probes       int //nolint:unused // read via Healthy
 	projectErr   error
 	projects     []string
+	projectOpts  []harborProjectOptions
 	credOK       bool
 	credChecked  [][2]string
 	robots       []string
@@ -36,11 +38,12 @@ func (f *fakeHarbor) Healthy(context.Context) bool {
 	return f.probes > f.healthyAfter
 }
 
-func (f *fakeHarbor) EnsureProject(_ context.Context, name string) error {
+func (f *fakeHarbor) EnsureProject(_ context.Context, name string, opts harborProjectOptions) error {
 	if f.projectErr != nil {
 		return f.projectErr
 	}
 	f.projects = append(f.projects, name)
+	f.projectOpts = append(f.projectOpts, opts)
 	return nil
 }
 
@@ -283,13 +286,24 @@ func TestHarborAPICreateRobotReadsTheIssuedNameFromTheResponse(t *testing.T) {
 }
 
 func TestHarborAPIEnsureProjectToleratesAnExistingProject(t *testing.T) {
-	for _, code := range []int{http.StatusCreated, http.StatusConflict} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(code)
+	// 201 (created) and 409 (already there) are both success — the Job runs on every deploy, so the
+	// second run must not fail merely because the first one worked.
+	for _, createCode := range []int{http.StatusCreated, http.StatusConflict} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodPost && r.URL.Path == "/api/v2.0/projects":
+				w.WriteHeader(createCode)
+			case r.Method == http.MethodPut:
+				w.WriteHeader(http.StatusOK)
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/immutabletagrules"):
+				fmt.Fprint(w, `[]`)
+			default:
+				w.WriteHeader(http.StatusOK)
+			}
 		}))
 		h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
-		if err := h.EnsureProject(context.Background(), "app-images"); err != nil {
-			t.Errorf("status %d treated as failure: %v", code, err)
+		if err := h.EnsureProject(context.Background(), "app-images", harborProjectOptions{}); err != nil {
+			t.Errorf("create status %d treated as failure: %v", createCode, err)
 		}
 		srv.Close()
 	}
@@ -301,8 +315,21 @@ func TestHarborAPIEnsureProjectFailsOnAnythingElse(t *testing.T) {
 	}))
 	defer srv.Close()
 	h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
-	if err := h.EnsureProject(context.Background(), "app-images"); err == nil {
+	if err := h.EnsureProject(context.Background(), "app-images", harborProjectOptions{}); err == nil {
 		t.Error("a 403 was treated as success")
+	}
+}
+
+// A rule listing we cannot read is not "no rules": treating it as empty would create a duplicate
+// rule on a project that already has one, on every single deploy.
+func TestHarborAPIImmutableTagRuleFailsOnAnUnreadableListing(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+	if err := h.ensureImmutableTagRule(context.Background(), "app-images", true); err == nil {
+		t.Error("an unreadable rule listing was treated as an empty one")
 	}
 }
 
@@ -498,5 +525,261 @@ func TestReadPullSecretAuthIgnoresAnotherHostsEntry(t *testing.T) {
 	user, secret, err := readPullSecretAuth(context.Background(), "default", "s", "h")
 	if err != nil || user != "" || secret != "" {
 		t.Fatalf("got (%q,%q,%v), want empty", user, secret, err)
+	}
+}
+
+// ── the two canvas switches Harbor honours natively ───────────────────────────────────────────
+
+func TestHarborBootstrapCarriesTheCanvasSwitches(t *testing.T) {
+	for _, c := range []struct{ immutable, scanning bool }{
+		{false, false}, {true, false}, {false, true}, {true, true},
+	} {
+		h := &fakeHarbor{}
+		o := testOpts()
+		o.ImmutableTags, o.VulnerabilityScanning = c.immutable, c.scanning
+		if err := harborBootstrap(context.Background(), o, h, (&recordingWriter{}).write, storedAuth("", "")); err != nil {
+			t.Fatalf("harborBootstrap: %v", err)
+		}
+		if len(h.projectOpts) != 1 {
+			t.Fatalf("ensured %d projects, want 1", len(h.projectOpts))
+		}
+		got := h.projectOpts[0]
+		if got.ImmutableTags != c.immutable || got.VulnerabilityScanning != c.scanning {
+			t.Errorf("carried %+v, want immutable=%v scanning=%v", got, c.immutable, c.scanning)
+		}
+	}
+}
+
+// auto_scan must be re-asserted on an EXISTING project, or a switch toggled after the first deploy
+// leaves the canvas and the registry permanently disagreeing — with the canvas showing the new value.
+func TestHarborAPIEnsureProjectReassertsAutoScanOnAnExistingProject(t *testing.T) {
+	var putBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v2.0/projects":
+			w.WriteHeader(http.StatusConflict) // already exists
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v2.0/projects/app-images":
+			b, _ := io.ReadAll(r.Body)
+			putBody = string(b)
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/api/v2.0/projects/app-images/immutabletagrules":
+			fmt.Fprint(w, `[]`)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer srv.Close()
+
+	h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+	if err := h.EnsureProject(context.Background(), "app-images", harborProjectOptions{VulnerabilityScanning: true}); err != nil {
+		t.Fatalf("EnsureProject: %v", err)
+	}
+	if !strings.Contains(putBody, `"auto_scan":"true"`) {
+		t.Errorf("PUT body = %q, want auto_scan re-asserted", putBody)
+	}
+}
+
+// Turning the switch OFF must actually remove the rule. On is easy to test; off is the direction
+// that silently does nothing, and a one-way switch is worse than no switch.
+func TestHarborAPIImmutableTagRuleIsTwoWay(t *testing.T) {
+	t.Run("off deletes the existing rule", func(t *testing.T) {
+		deleted := []string{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/immutabletagrules"):
+				fmt.Fprint(w, `[{"id":7,"disabled":false}]`)
+			case r.Method == http.MethodDelete:
+				deleted = append(deleted, r.URL.Path)
+				w.WriteHeader(http.StatusOK)
+			default:
+				w.WriteHeader(http.StatusOK)
+			}
+		}))
+		defer srv.Close()
+		h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+		if err := h.ensureImmutableTagRule(context.Background(), "app-images", false); err != nil {
+			t.Fatalf("ensureImmutableTagRule: %v", err)
+		}
+		if len(deleted) != 1 || !strings.HasSuffix(deleted[0], "/immutabletagrules/7") {
+			t.Errorf("deleted %v, want the existing rule", deleted)
+		}
+	})
+
+	t.Run("on is idempotent — no duplicate rule per deploy", func(t *testing.T) {
+		posts := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				fmt.Fprint(w, `[{"id":7,"disabled":false}]`) // already has one
+			case http.MethodPost:
+				posts++
+				w.WriteHeader(http.StatusCreated)
+			default:
+				w.WriteHeader(http.StatusOK)
+			}
+		}))
+		defer srv.Close()
+		h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+		if err := h.ensureImmutableTagRule(context.Background(), "app-images", true); err != nil {
+			t.Fatalf("ensureImmutableTagRule: %v", err)
+		}
+		if posts != 0 {
+			t.Errorf("created %d rules on a project that already has one — every deploy would add another", posts)
+		}
+	})
+
+	t.Run("on creates the rule when absent, over every repository and tag", func(t *testing.T) {
+		var body string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet:
+				fmt.Fprint(w, `[]`)
+			case http.MethodPost:
+				b, _ := io.ReadAll(r.Body)
+				body = string(b)
+				w.WriteHeader(http.StatusCreated)
+			default:
+				w.WriteHeader(http.StatusOK)
+			}
+		}))
+		defer srv.Close()
+		h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+		if err := h.ensureImmutableTagRule(context.Background(), "app-images", true); err != nil {
+			t.Fatalf("ensureImmutableTagRule: %v", err)
+		}
+		// "Immutable tags", not "immutable some tags" — a narrower default is a setting nobody asked for.
+		if !strings.Contains(body, `"pattern":"**"`) || !strings.Contains(body, `"disabled":false`) {
+			t.Errorf("rule body = %q, want an enabled rule over ** / **", body)
+		}
+	})
+}
+
+// ── error branches, which are the ones that must FAIL CLOSED ──────────────────────────────────
+
+// A Harbor we cannot reach is not a Harbor with no rules, no project and no robot. Every one of
+// these must surface as a failed Job so the deploy warns, rather than a "success" that leaves the
+// cluster unable to pull.
+func TestHarborAPIFailsClosedWhenHarborIsUnreachable(t *testing.T) {
+	// A closed server: every call is a transport error, not a status.
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := srv.URL
+	srv.Close()
+
+	h := &harborAPI{base: base, admin: "pw", http: &http.Client{}}
+	ctx := context.Background()
+
+	if h.Healthy(ctx) {
+		t.Error("an unreachable Harbor reported healthy")
+	}
+	if err := h.EnsureProject(ctx, "app-images", harborProjectOptions{}); err == nil {
+		t.Error("EnsureProject succeeded against an unreachable Harbor")
+	}
+	if err := h.ensureImmutableTagRule(ctx, "app-images", true); err == nil {
+		t.Error("ensureImmutableTagRule succeeded against an unreachable Harbor")
+	}
+	if _, _, err := h.CreateRobot(ctx, "app-images", "r"); err == nil {
+		t.Error("CreateRobot succeeded against an unreachable Harbor")
+	}
+	// A credential we cannot CONFIRM must read as not-working, so the caller replaces it.
+	if h.CredentialWorks(ctx, "u", "p") {
+		t.Error("an unreachable Harbor confirmed a credential")
+	}
+}
+
+func TestHarborAPICreateRobotRejectsAnUnexpectedStatusOrBody(t *testing.T) {
+	t.Run("non-201", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		defer srv.Close()
+		h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+		if _, _, err := h.CreateRobot(context.Background(), "p", "r"); err == nil {
+			t.Error("a 403 produced a robot")
+		}
+	})
+	t.Run("undecodable body", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `not json`)
+		}))
+		defer srv.Close()
+		h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+		if _, _, err := h.CreateRobot(context.Background(), "p", "r"); err == nil {
+			t.Error("an undecodable response produced a robot")
+		}
+	})
+}
+
+func TestHarborAPIImmutableTagRuleReportsACreateOrDeleteFailure(t *testing.T) {
+	t.Run("create fails", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				fmt.Fprint(w, `[]`)
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+		if err := h.ensureImmutableTagRule(context.Background(), "p", true); err == nil {
+			t.Error("a failed create was reported as success")
+		}
+	})
+	t.Run("delete fails", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet {
+				fmt.Fprint(w, `[{"id":7}]`)
+				return
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+		if err := h.ensureImmutableTagRule(context.Background(), "p", false); err == nil {
+			t.Error("a failed delete was reported as success — the switch would appear to turn off")
+		}
+	})
+	t.Run("undecodable listing", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprint(w, `not json`)
+		}))
+		defer srv.Close()
+		h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+		if err := h.ensureImmutableTagRule(context.Background(), "p", true); err == nil {
+			t.Error("an undecodable listing was treated as empty")
+		}
+	})
+}
+
+func TestHarborAPIEnsureProjectReportsAFailedAutoScanUpdate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError) // the PUT
+	}))
+	defer srv.Close()
+	h := &harborAPI{base: srv.URL, admin: "pw", http: srv.Client()}
+	if err := h.EnsureProject(context.Background(), "p", harborProjectOptions{VulnerabilityScanning: true}); err == nil {
+		t.Error("a failed auto_scan update was reported as success")
+	}
+}
+
+// A write failure must propagate: a green Job with no credential in the Secret is the worst outcome,
+// because the deploy reports success and every pull fails.
+func TestHarborBootstrapPropagatesAWriteFailure(t *testing.T) {
+	w := &recordingWriter{err: errors.New("patch refused")}
+	err := harborBootstrap(context.Background(), testOpts(), &fakeHarbor{}, w.write, storedAuth("", ""))
+	if err == nil || !strings.Contains(err.Error(), "write pull secret") {
+		t.Fatalf("error = %v, want a write failure", err)
+	}
+}
+
+func TestHarborBootstrapPropagatesAMintFailure(t *testing.T) {
+	h := &fakeHarbor{robotErr: errors.New("quota exceeded")}
+	err := harborBootstrap(context.Background(), testOpts(), h, (&recordingWriter{}).write, storedAuth("", ""))
+	if err == nil || !strings.Contains(err.Error(), "create robot") {
+		t.Fatalf("error = %v, want a mint failure", err)
 	}
 }

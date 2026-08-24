@@ -48,6 +48,22 @@ const (
 	harborBootstrapSAName = "alethia-harbor-bootstrap"
 )
 
+// harborCarriedRegistryOffers maps a cloud to the in-cluster component that honours the `registry`
+// kind's switches there. Hetzner only, and that is the whole point: every other cloud builds a real
+// registry resource in OpenTofu, so the switches ride tfvars and the carrier rule can see them.
+//
+// Harbor honours BOTH natively, which is why they are carried rather than excluded:
+//   - immutable_tags        → a project immutable-tag rule (POST /projects/{name}/immutabletagrules)
+//   - vulnerability_scanning → the project's `auto_scan` metadata, served by the Trivy the chart
+//     already installs (hetznerRegistryValues sizes its volume)
+//
+// The offer-parity guard RE-READS this map to validate the carried_in_cluster entries in
+// infra/offer-exclusions.yaml, so dropping a cloud here makes those entries go stale rather than
+// leaving a silent claim behind. It must stay a top-level map[string]… literal for that to work.
+var harborCarriedRegistryOffers = map[string]string{
+	"hetzner": "harbor",
+}
+
 // HarborRegistry is one in-cluster registry the runner must credential.
 type HarborRegistry struct {
 	// Name is the canvas `registry` node's name.
@@ -62,6 +78,11 @@ type HarborRegistry struct {
 	// PullSecretName / PullSecretNamespace locate the dockerconfigjson app pods reference.
 	PullSecretName      string
 	PullSecretNamespace string
+	// ImmutableTags and VulnerabilityScanning are the canvas switches. Harbor honours both through
+	// its API rather than through any tfvar, which is why the offer-parity guard records them as
+	// carried_in_cluster — see harborCarriedRegistryOffers.
+	ImmutableTags         bool
+	VulnerabilityScanning bool
 }
 
 // AdminSecretName is the Secret holding this registry's Harbor admin password.
@@ -230,6 +251,8 @@ spec:
             - --registry-host=%[7]s
             - --project=%[8]s
             - --robot=alethia-pull
+            - --immutable-tags=%[11]t
+            - --vulnerability-scanning=%[12]t
             - --secret-name=%[4]s
             - --secret-namespace=%[3]s
             - --admin-password-file=/harbor-admin/%[9]s
@@ -251,16 +274,18 @@ spec:
         - name: tmp
           emptyDir: {}
 `,
-		harborBootstrapSAName,   // 1
-		reg.Namespace,           // 2
-		reg.PullSecretNamespace, // 3
-		reg.PullSecretName,      // 4
-		reg.BootstrapJobName(),  // 5
-		runnerImage,             // 6
-		reg.Host,                // 7
-		reg.Name,                // 8
-		harborAdminSecretKey,    // 9
-		reg.AdminSecretName(),   // 10
+		harborBootstrapSAName,     // 1
+		reg.Namespace,             // 2
+		reg.PullSecretNamespace,   // 3
+		reg.PullSecretName,        // 4
+		reg.BootstrapJobName(),    // 5
+		runnerImage,               // 6
+		reg.Host,                  // 7
+		reg.Name,                  // 8
+		harborAdminSecretKey,      // 9
+		reg.AdminSecretName(),     // 10
+		reg.ImmutableTags,         // 11
+		reg.VulnerabilityScanning, // 12
 	), nil
 }
 
@@ -275,7 +300,10 @@ const hetznerRegistryNamespace = "registries"
 // identity, so there is nothing to seed and nothing to mint — returning a non-empty list there would
 // create Jobs against a Harbor that does not exist.
 func HetznerRegistries(vc *types.ProjectConfig) []HarborRegistry {
-	if vc == nil || string(vc.Provider) != "hetzner" {
+	// The predicate the offer-parity guard re-reads is the SAME thing that gates the code, so the
+	// two cannot disagree: drop a cloud from the map and both the derivation and the recorded
+	// carried_in_cluster entry stop being true together.
+	if vc == nil || harborCarriedRegistryOffers[string(vc.Provider)] == "" {
 		return nil
 	}
 	out := make([]HarborRegistry, 0, len(vc.ContainerRegistries))
@@ -286,6 +314,10 @@ func HetznerRegistries(vc *types.ProjectConfig) []HarborRegistry {
 		reg := HarborRegistry{
 			Name:      r.Name,
 			Namespace: hetznerRegistryNamespace,
+			// NULL means "not chosen", which is off — a switch nobody set must not silently enable
+			// a scan schedule or a tag lock on the customer's registry.
+			ImmutableTags:         r.ImmutableTags != nil && *r.ImmutableTags,
+			VulnerabilityScanning: r.VulnerabilityScanning != nil && *r.VulnerabilityScanning,
 			// MUST equal hetznerRegistryHost() in the console, which also produced the chart's
 			// externalURL, and the Talos containerd mirror entry. A test pins the shape.
 			Host:                fmt.Sprintf("registry-%s.%s.svc.cluster.local", r.Name, hetznerRegistryNamespace),

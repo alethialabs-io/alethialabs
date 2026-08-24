@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -80,8 +81,9 @@ const (
 type harborClient interface {
 	// Healthy reports whether Harbor's API is up. GET /api/v2.0/health needs no authentication.
 	Healthy(ctx context.Context) bool
-	// EnsureProject creates the project, tolerating one that already exists.
-	EnsureProject(ctx context.Context, name string) error
+	// EnsureProject creates the project, tolerating one that already exists, and applies the two
+	// canvas switches Harbor honours natively.
+	EnsureProject(ctx context.Context, name string, opts harborProjectOptions) error
 	// CredentialWorks probes an existing docker credential against the registry API.
 	CredentialWorks(ctx context.Context, username, secret string) bool
 	// CreateRobot mints a project-scoped pull robot and returns the name and secret Harbor
@@ -89,6 +91,16 @@ type harborClient interface {
 	// (robot$<project>+<name> for a project-scoped account, with a configurable prefix), so a
 	// name reconstructed from the request is a login that does not exist.
 	CreateRobot(ctx context.Context, project, name string) (login string, secret string, err error)
+}
+
+// harborProjectOptions are the canvas `registry` switches Harbor honours through its API rather than
+// through any tfvar — which is why the offer-parity guard records them as carried_in_cluster.
+type harborProjectOptions struct {
+	// ImmutableTags locks pushed tags against overwrite, via a project immutable-tag rule.
+	ImmutableTags bool
+	// VulnerabilityScanning turns on the project's auto-scan-on-push, served by the Trivy the chart
+	// already installs.
+	VulnerabilityScanning bool
 }
 
 // harborSecretWriter writes the finished dockerconfigjson into the pull Secret. Swappable so tests
@@ -110,6 +122,9 @@ type harborBootstrapOpts struct {
 	// SecretName / SecretNamespace locate the dockerconfigjson Secret to write.
 	SecretName      string
 	SecretNamespace string
+	// ImmutableTags / VulnerabilityScanning are the canvas switches.
+	ImmutableTags         bool
+	VulnerabilityScanning bool
 	// AdminPasswordFile holds Harbor's admin password, mounted from a Secret. A FILE, never a flag
 	// and never an env var: argv is world-readable via /proc and env is visible in `kubectl describe
 	// pod`.
@@ -126,6 +141,8 @@ func RunHarborBootstrap(ctx context.Context, args []string) error {
 	fs.StringVar(&o.RobotName, "robot", "", "robot account name to mint (unprefixed)")
 	fs.StringVar(&o.SecretName, "secret-name", "", "dockerconfigjson Secret to write")
 	fs.StringVar(&o.SecretNamespace, "secret-namespace", "", "namespace of that Secret")
+	fs.BoolVar(&o.ImmutableTags, "immutable-tags", false, "lock pushed tags against overwrite")
+	fs.BoolVar(&o.VulnerabilityScanning, "vulnerability-scanning", false, "scan images on push (Trivy)")
 	fs.StringVar(&o.AdminPasswordFile, "admin-password-file", "", "file holding Harbor's admin password")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -179,7 +196,10 @@ func harborBootstrap(
 	if err := waitForHarbor(ctx, client); err != nil {
 		return err
 	}
-	if err := client.EnsureProject(ctx, o.Project); err != nil {
+	if err := client.EnsureProject(ctx, o.Project, harborProjectOptions{
+		ImmutableTags:         o.ImmutableTags,
+		VulnerabilityScanning: o.VulnerabilityScanning,
+	}); err != nil {
 		return fmt.Errorf("harbor-bootstrap: ensure project %q: %w", o.Project, err)
 	}
 
@@ -311,21 +331,92 @@ func (h *harborAPI) Healthy(ctx context.Context) bool {
 	return res.StatusCode == http.StatusOK
 }
 
-// EnsureProject creates the project, treating "already exists" as success.
-func (h *harborAPI) EnsureProject(ctx context.Context, name string) error {
+// EnsureProject creates the project, treating "already exists" as success, then applies the switches.
+//
+// `auto_scan` rides the project METADATA on create, and is re-asserted on an existing project so a
+// switch toggled after the first deploy actually takes effect — a create-only setting would leave the
+// canvas and the registry permanently disagreeing.
+func (h *harborAPI) EnsureProject(ctx context.Context, name string, opts harborProjectOptions) error {
 	code, body, err := h.do(ctx, http.MethodPost, "/api/v2.0/projects", map[string]any{
 		"project_name": name,
 		"public":       false,
+		"metadata":     map[string]string{"auto_scan": strconv.FormatBool(opts.VulnerabilityScanning)},
 	})
 	if err != nil {
 		return err
 	}
 	switch code {
 	case http.StatusCreated, http.StatusConflict:
-		return nil
 	default:
 		return fmt.Errorf("unexpected status %d: %s", code, strings.TrimSpace(string(body)))
 	}
+
+	// Re-assert on every run: the create above is a no-op once the project exists.
+	if code == http.StatusConflict {
+		if c, b, mErr := h.do(ctx, http.MethodPut, "/api/v2.0/projects/"+name, map[string]any{
+			"metadata": map[string]string{"auto_scan": strconv.FormatBool(opts.VulnerabilityScanning)},
+		}); mErr != nil {
+			return mErr
+		} else if c != http.StatusOK {
+			return fmt.Errorf("set auto_scan: unexpected status %d: %s", c, strings.TrimSpace(string(b)))
+		}
+	}
+	return h.ensureImmutableTagRule(ctx, name, opts.ImmutableTags)
+}
+
+// ensureImmutableTagRule makes the project's immutable-tag rules match the switch.
+//
+// Harbor has no "set the rules to exactly this" call, so the desired state is reconciled: read what
+// exists, delete Alethia's rule when the switch is off, create it when it is on and absent. Blindly
+// POSTing would accumulate a duplicate rule per deploy, and never deleting would make the switch
+// one-way — on is easy to test, off is the direction that silently does nothing.
+func (h *harborAPI) ensureImmutableTagRule(ctx context.Context, project string, want bool) error {
+	code, body, err := h.do(ctx, http.MethodGet, "/api/v2.0/projects/"+project+"/immutabletagrules", nil)
+	if err != nil {
+		return err
+	}
+	if code != http.StatusOK {
+		return fmt.Errorf("list immutable tag rules: unexpected status %d: %s", code, strings.TrimSpace(string(body)))
+	}
+	var rules []struct {
+		ID       int  `json:"id"`
+		Disabled bool `json:"disabled"`
+	}
+	if err := json.Unmarshal(body, &rules); err != nil {
+		return fmt.Errorf("decode immutable tag rules: %w", err)
+	}
+	if !want {
+		for _, r := range rules {
+			if c, b, dErr := h.do(ctx, http.MethodDelete,
+				fmt.Sprintf("/api/v2.0/projects/%s/immutabletagrules/%d", project, r.ID), nil); dErr != nil {
+				return dErr
+			} else if c != http.StatusOK && c != http.StatusNotFound {
+				return fmt.Errorf("delete immutable tag rule %d: unexpected status %d: %s", r.ID, c, strings.TrimSpace(string(b)))
+			}
+		}
+		return nil
+	}
+	if len(rules) > 0 {
+		return nil
+	}
+	// Every tag of every repository in the project. The switch is "immutable tags", not "immutable
+	// some tags" — a narrower default would be a setting nobody asked for.
+	c, b, cErr := h.do(ctx, http.MethodPost, "/api/v2.0/projects/"+project+"/immutabletagrules", map[string]any{
+		"disabled": false,
+		"scope_selectors": map[string]any{"repository": []map[string]string{
+			{"kind": "doublestar", "decoration": "repoMatches", "pattern": "**"},
+		}},
+		"tag_selectors": []map[string]string{
+			{"kind": "doublestar", "decoration": "matches", "pattern": "**"},
+		},
+	})
+	if cErr != nil {
+		return cErr
+	}
+	if c != http.StatusCreated && c != http.StatusConflict {
+		return fmt.Errorf("create immutable tag rule: unexpected status %d: %s", c, strings.TrimSpace(string(b)))
+	}
+	return nil
 }
 
 // CredentialWorks probes the registry API with a docker credential. A 200 means the login is live;
