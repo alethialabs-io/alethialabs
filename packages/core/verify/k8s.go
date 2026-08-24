@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alethialabs-io/alethialabs/packages/core/k8s"
+	"github.com/alethialabs-io/alethialabs/packages/core/k8s/manifest"
 	tfjson "github.com/hashicorp/terraform-json"
 )
 
@@ -40,11 +40,14 @@ type k8sResource struct {
 }
 
 // decodeManifests decodes a (possibly multi-document) YAML manifest stream into the reduced
-// k8sResource the controls read. It delegates the parse to the shared k8s.Decode so the verify
+// k8sResource the controls read. It delegates the parse to the shared manifest.Decode so the verify
 // controls and the BYO chart-workload extractor can never disagree about what a manifest stream
 // contains; the mapping just projects the shared Resource onto the controls' local shape.
+//
+// The import is the k8s/manifest LEAF, never the parent k8s package: the parent constructs a live
+// EKS client, and importing it here put the whole AWS SDK into the CLI's dependency graph (#2342).
 func decodeManifests(manifests []byte) ([]k8sResource, error) {
-	rs, err := k8s.Decode(manifests)
+	rs, err := manifest.Decode(manifests)
 	if err != nil {
 		return nil, err
 	}
