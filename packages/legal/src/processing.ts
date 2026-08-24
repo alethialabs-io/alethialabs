@@ -272,6 +272,3 @@ export const DEVICE_STORAGE: readonly DeviceStorageEntry[] = [
 ];
 
 
-
-/** Paid conversion stays fail-closed until the commerce phase records evidence. */
-export const PAID_MARKETS: readonly string[] = [];

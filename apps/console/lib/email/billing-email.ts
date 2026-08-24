@@ -24,6 +24,10 @@ import { CreditPackReceiptEmail, subject as creditPackSubject } from "@/emails/c
 import { PaymentFailedEmail, subject as paymentFailedSubject } from "@/emails/payment-failed";
 import { ReceiptEmail, subject as receiptSubject } from "@/emails/receipt";
 import {
+	OrderConfirmationEmail,
+	subject as orderConfirmationSubject,
+} from "@/emails/order-confirmation";
+import {
 	SubscriptionCanceledEmail,
 	subject as canceledSubject,
 } from "@/emails/subscription-canceled";
@@ -304,5 +308,53 @@ export async function sendCreditPackReceiptEmail(
 		}),
 		attachments: pdf ? [pdf] : undefined,
 		devLog: `credit pack ${credits} credits`,
+	});
+}
+
+/**
+ * The DURABLE CONFIRMATION for one order (CRD art. 8(7)).
+ *
+ * Sent from the ORDER, not from a Stripe object, and that is the point: the confirmation has to
+ * carry facts Stripe never holds — which capacity the payer declared, which Terms version was in
+ * force, and where the withdrawal period ends. Deriving it from an invoice would produce a receipt,
+ * which is a different document with a different job.
+ *
+ * Best-effort like every other email on this path: a delivery failure must not roll back an order
+ * that was genuinely placed and paid for. It IS logged, because an undelivered confirmation is a
+ * duty unmet, not a cosmetic miss.
+ */
+export async function sendOrderConfirmationEmail(order: {
+	organizationId: string;
+	billingEmail: string | null;
+	capacity: "consumer" | "organization";
+	productLabel: string;
+	totalMinorUnits: number;
+	currency: string;
+	renewsAutomatically: boolean;
+	termsVersion: string;
+	withdrawalPeriodEndsAt: Date | null;
+	immediatePerformance: boolean;
+}): Promise<void> {
+	if (!order.billingEmail) return;
+	const config = getEmailConfig();
+	await sendGuardedEmail({
+		from: config.from.general,
+		configurationSetName: config.configSet.general,
+		to: order.billingEmail,
+		subject: orderConfirmationSubject,
+		react: OrderConfirmationEmail({
+			orgName: await orgName(order.organizationId),
+			productLabel: order.productLabel,
+			totalLabel: money(order.totalMinorUnits, order.currency),
+			capacity: order.capacity,
+			renewsAutomatically: order.renewsAutomatically,
+			termsVersion: order.termsVersion,
+			withdrawalEndsLabel:
+				order.capacity === "consumer" && order.withdrawalPeriodEndsAt
+					? fmtDate(Math.floor(order.withdrawalPeriodEndsAt.getTime() / 1000))
+					: undefined,
+			immediatePerformance: order.immediatePerformance,
+		}),
+		devLog: `order confirmation ${order.productLabel} for ${order.organizationId}`,
 	});
 }
