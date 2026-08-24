@@ -468,6 +468,14 @@ func EnsureExternalSecretsStore(facts *InfraFacts, stdout, stderr io.Writer) err
 		return nil
 	}
 	fmt.Fprintln(stdout, "Ensuring external-secrets ClusterSecretStore (waiting for the operator's CRD + webhook)...")
+	return applyStoreAwaitingOperator(manifest, stdout, stderr)
+}
+
+// applyStoreAwaitingOperator applies a ClusterSecretStore manifest, retrying ONLY the transient
+// "the external-secrets operator is not up yet" markers until it is. Shared by the per-cloud stores
+// above and by the in-cluster Vault store (vault.go), which faces exactly the same race and must not
+// grow a second, subtly-different copy of this loop.
+func applyStoreAwaitingOperator(manifest string, stdout, stderr io.Writer) error {
 	deadline := time.Now().Add(externalSecretsStoreMaxWait)
 	for attempt := 1; ; attempt++ {
 		var captured bytes.Buffer
@@ -522,41 +530,7 @@ func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
 			fmt.Fprintf(stderr, "Warning: could not remove stale cert-manager ClusterIssuer %s: %v\n", CertManagerIssuerName, err)
 		}
 	}
-	// Per-cloud ClusterSecretStores: each gate must mirror external-secrets-operator.yaml's
-	// render conditions — a store whose identity fact disappeared (or that belongs to another
-	// cloud) stops rendering and would otherwise be orphaned in a permanently-broken state.
-	esoStores := map[string]bool{
-		"secretstore-aws":     facts.Provider == "aws" && facts.IRSAExternalSecretsArn != "",
-		"secretstore-gcp":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "",
-		"secretstore-azure":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.AzureKeyVaultURI != "",
-		"secretstore-alibaba": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "",
-	}
-	// Pluggable SaaS stores (cloud-agnostic): exactly one can render per deploy, so enumerate every
-	// name the template knows and mark all but the current one for reaping — switching the connector
-	// (vault → doppler) or de-selecting it then reaps the stale store instead of orphaning it in a
-	// permanently-broken state.
-	//
-	// DERIVED, not re-listed. The hand-written version here named vault, doppler and generic and was
-	// missing secretstore-infisical, so an Infisical store was never reaped (#2038) — the same drift
-	// the *-xacct half below was already fixed for. It is easy to miss because the template never
-	// spells these names literally: it renders `{{ .SecretsSaaS.StoreName }}`, so grepping the
-	// template for a name finds nothing to compare this list against.
-	currentSaaS := ""
-	if facts.SecretsSaaS != nil {
-		currentSaaS = facts.SecretsSaaS.StoreName
-	}
-	for _, name := range categories.AllSaaSStoreNames() {
-		esoStores[name] = name == currentSaaS
-	}
-	// Cross-account (*-xacct) stores: exactly one can render per deploy (the store is dominant), so
-	// enumerate every name the template knows and mark all but the current one for reaping. Reading
-	// the render gate itself — rather than re-listing the per-cloud conditions here, as this map did
-	// until they drifted — means a new *-xacct lane cannot be added to the template and silently
-	// forgotten by the cleanup.
-	currentXacct, _ := facts.XacctSecretStore()
-	for _, name := range categories.AllXacctStoreNames() {
-		esoStores[name] = name == currentXacct
-	}
+	esoStores := clusterSecretStoreRenderSet(facts)
 	for name, renders := range esoStores {
 		if renders {
 			continue
@@ -636,4 +610,55 @@ data:
 
 	fmt.Fprintln(stdout, "ArgoCD repository credentials configured.")
 	return nil
+}
+
+// clusterSecretStoreRenderSet reports, for every ClusterSecretStore name this platform can render,
+// whether THIS deploy renders it. Everything false is reaped.
+//
+// Extracted from CleanupSkippedInfraServices so the set is testable without a cluster: the map is
+// the whole correctness of the reaper, and it has drifted twice already — an Infisical store was
+// never reaped (#2038) because the list was hand-written, and adding a store to a family without
+// adding it here leaves it orphaned in a permanently-broken state.
+func clusterSecretStoreRenderSet(facts *InfraFacts) map[string]bool {
+	// Per-cloud ClusterSecretStores: each gate must mirror external-secrets-operator.yaml's
+	// render conditions — a store whose identity fact disappeared (or that belongs to another
+	// cloud) stops rendering and would otherwise be orphaned in a permanently-broken state.
+	esoStores := map[string]bool{
+		"secretstore-aws":     facts.Provider == "aws" && facts.IRSAExternalSecretsArn != "",
+		"secretstore-gcp":     facts.Provider == "gcp" && facts.GCPExternalSecretsSA != "",
+		"secretstore-azure":   facts.Provider == "azure" && facts.AzureExternalSecretsClient != "" && facts.AzureKeyVaultURI != "",
+		"secretstore-alibaba": facts.Provider == "alibaba" && facts.AlibabaExternalSecretsRoleArn != "",
+		// The in-cluster Vault store (#2432). It belongs to THIS family, not the pluggable-SaaS one:
+		// it is Hetzner's secret store, implemented in-cluster because the cloud sells none. Naming
+		// it secretstore-vault would have put it in AllSaaSStoreNames()' reap set and had it deleted
+		// on every deploy without a vault CONNECTOR selected — see HetznerSecretStoreName.
+		HetznerSecretStoreName: facts.Provider == "hetzner" && facts.HetznerInClusterVault,
+	}
+	// Pluggable SaaS stores (cloud-agnostic): exactly one can render per deploy, so enumerate every
+	// name the template knows and mark all but the current one for reaping — switching the connector
+	// (vault → doppler) or de-selecting it then reaps the stale store instead of orphaning it in a
+	// permanently-broken state.
+	//
+	// DERIVED, not re-listed. The hand-written version here named vault, doppler and generic and was
+	// missing secretstore-infisical, so an Infisical store was never reaped (#2038) — the same drift
+	// the *-xacct half below was already fixed for. It is easy to miss because the template never
+	// spells these names literally: it renders `{{ .SecretsSaaS.StoreName }}`, so grepping the
+	// template for a name finds nothing to compare this list against.
+	currentSaaS := ""
+	if facts.SecretsSaaS != nil {
+		currentSaaS = facts.SecretsSaaS.StoreName
+	}
+	for _, name := range categories.AllSaaSStoreNames() {
+		esoStores[name] = name == currentSaaS
+	}
+	// Cross-account (*-xacct) stores: exactly one can render per deploy (the store is dominant), so
+	// enumerate every name the template knows and mark all but the current one for reaping. Reading
+	// the render gate itself — rather than re-listing the per-cloud conditions here, as this map did
+	// until they drifted — means a new *-xacct lane cannot be added to the template and silently
+	// forgotten by the cleanup.
+	currentXacct, _ := facts.XacctSecretStore()
+	for _, name := range categories.AllXacctStoreNames() {
+		esoStores[name] = name == currentXacct
+	}
+	return esoStores
 }

@@ -1672,11 +1672,13 @@ describe("planProject", () => {
 		expect(r).toEqual({ jobId: "job-1" });
 	});
 
-	// Hetzner has NO cloud secret store and `hetznerProvider.ProviderTfvars` never emits
-	// `custom_secrets` (every managed cloud does) — so before the kind gate covered `secret`,
-	// the component was SILENTLY DROPPED and the deploy still reported SUCCESS. Fail closed.
-	it("fails closed on a secret component on hetzner (no silent drop)", async () => {
-		setupDb({
+	// Hetzner has NO cloud secret store, so `secret` was gated shut here — the component would
+	// otherwise be SILENTLY DROPPED while the deploy reported SUCCESS. #2432 delivers the kind
+	// in-cluster instead, so the assertion INVERTS: the deploy must now be planned, and the snapshot
+	// must actually carry the Vault that will hold the secret. A test that only checked the throw
+	// was gone would pass just as well if the mapping had been forgotten entirely.
+	it("plans a secret component on hetzner and carries the Vault that holds it", async () => {
+		const { valuesSpy } = setupDb({
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
 					[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
@@ -1690,11 +1692,18 @@ describe("planProject", () => {
 			),
 			insert: new Map([[jobs, [{ id: "job-1" }]]]),
 		});
-		await expect(planProject("p1")).rejects.toThrow(
-			/Component "api-key" \(secret\) can't be provisioned on/,
+		const r = await planProject("p1");
+		expect(r).toEqual({ jobId: "job-1" });
+
+		const snapshot = valuesFor(valuesSpy, jobs).config_snapshot as Record<
+			string,
+			unknown
+		>;
+		const addons = Array.isArray(snapshot.addons) ? snapshot.addons : [];
+		const charts = addons.map((a) =>
+			typeof a === "object" && a !== null && "chart" in a ? a.chart : undefined,
 		);
-		// …and the message points the user at the real path (the Vault add-on), not a dead end.
-		await expect(planProject("p1")).rejects.toThrow(/Vault marketplace add-on/);
+		expect(charts).toContain("vault");
 	});
 
 	it("passes a managed cloud (aws) with topic/nosql/registry — supported there", async () => {

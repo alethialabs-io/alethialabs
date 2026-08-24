@@ -98,8 +98,8 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `queue:ordered` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `registry:immutable_tags` | 🟡 | 🟡 | — | 🟡 | ☸️ | · |
 | `registry:vulnerability_scanning` | 🟡 | 🟡 | — | 🟡 | ☸️ | · |
-| `secret:generate` | 🟡 | ⚠️ | 🟡 | 🟡 | · | · |
-| `secret:special_chars` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
+| `secret:generate` | 🟡 | ⚠️ | 🟡 | 🟡 | ☸️ | · |
+| `secret:special_chars` | 🟡 | 🟡 | 🟡 | 🟡 | ☸️ | · |
 
 ### ⚠️ Carried only as a branch guard
 
@@ -167,6 +167,8 @@ predicate stops listing the cloud, the entry fails until it is corrected.
 | `dns:managed_certificate` | gcp | cert-manager | `certManagerDNS01Solvers` | Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the GKE Ingress from a Kubernetes Secret. |
 | `registry:immutable_tags` | hetzner | harbor | `harborCarriedRegistryOffers` | Harbor enforces tag immutability with a project immutable-tag rule, applied over its API by the in-cluster bootstrap Job — there is no tofu resource on Hetzner to carry a tfvar. |
 | `registry:vulnerability_scanning` | hetzner | harbor | `harborCarriedRegistryOffers` | Harbor scans on push with the Trivy the chart installs, enabled through the project's auto_scan metadata by the in-cluster bootstrap Job — there is no tofu resource on Hetzner to carry a tfvar. |
+| `secret:generate` | hetzner | vault | `vaultCarriedSecretOffers` | The value is minted inside the cluster by the in-cluster Vault's bootstrap Job and written straight to KV v2, so it never passes through the runner — there is no tofu resource on Hetzner to carry a tfvar. Turning it off leaves the path unwritten for an operator to fill, exactly as `manual` does elsewhere. |
+| `secret:special_chars` | hetzner | vault | `vaultCarriedSecretOffers` | The generated alphabet is widened beyond alphanumerics by the in-cluster Vault's bootstrap Job, alongside the declared length — there is no tofu resource on Hetzner to carry a tfvar. |
 
 ## Documented exclusions
 

@@ -237,7 +237,7 @@
 		},
 		{
 			"kind": "secrets",
-			"doc": "a generated secret in the cloud secret store — Secrets Manager / Secret Manager / Key Vault / KMS. Hetzner has none, and its in-cluster substitute (Vault) is unwired DEBT.",
+			"doc": "a generated secret in the cloud secret store — Secrets Manager / Secret Manager / Key Vault / KMS. Hetzner has none and carries the kind in-cluster as a platform-operated Vault, read through an ESO ClusterSecretStore exactly as the other four clouds are.",
 			"foundational": false,
 			"cells": {
 				"alibaba": {
@@ -261,10 +261,10 @@
 					"resource": "google_secret_manager_secret"
 				},
 				"hetzner": {
-					"carriage": "deferred",
-					"offered": false,
-					"why": "Hetzner has no cloud service for this kind, but a chart in the marketplace catalog DOES back it — it is simply not mapped to the kind, so this is DEBT, not a ceiling. Today the kind is hidden on the canvas and REJECTED at deploy (unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner). Missing: an ESO ClusterSecretStore over the Vault backend, and the init/unseal design",
-					"chart": "vault (marketplace catalog; the full-bar run already installs it)"
+					"carriage": "in_cluster",
+					"offered": true,
+					"why": "Hetzner has no managed equivalent; the console synthesizes an in-cluster chart (hetzner-services.ts) which the runner installs as an ArgoCD Application — nothing reaches tofu state (HashiCorp Vault, hashicorp chart; one platform-operated release per project, initialised and unsealed in-cluster, read by ESO through a ClusterSecretStore)",
+					"argo_app": "addon-secrets-vault"
 				}
 			}
 		},
