@@ -4,6 +4,7 @@
 	"private": true,
 	"exports": {
 		".": "./src/index.ts",
+		"./commerce": "./src/commerce.ts",
 		"./documents": "./src/documents.ts",
 		"./entity": "./src/entity.ts",
 		"./processing": "./src/processing.ts"
