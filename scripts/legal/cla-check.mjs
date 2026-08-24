@@ -120,7 +120,7 @@ export function records(doc) {
 }
 
 /**
- * Is this contributor on record as having signed THIS version of the CLA?
+ * Is this contributor on record as having signed THIS version of the CLA individually?
  *
  * Keyed on the numeric id. `Number.isInteger` rather than a truthy check because a record whose id
  * is a string, a float or absent must not match — a loosely-typed id is how "0" or "" starts
@@ -135,6 +135,143 @@ export function hasSigned(recs, id, version) {
 }
 
 /**
+ * Corporate agreements from the signature document.
+ *
+ * A CCLA is a company saying its listed people contribute under its authority. What is recorded
+ * here is DELIBERATELY MINIMAL: the organization, the version and hash of the document signed, when
+ * it took effect, the covered numeric ids, and an opaque reference to the authorization held offline.
+ *
+ * The authorization itself — who signed for the company, in what role, and the letter proving it —
+ * is NOT in this file and must not be. The signature branch is world-readable; a named signatory
+ * with their title and employer is personal data published for no operational reason, since the gate
+ * only ever needs to answer "is this id covered?".
+ * @param {unknown} doc
+ * @returns {Array<Record<string, unknown>>}
+ */
+export function corporateAgreements(doc) {
+	if (!doc || typeof doc !== "object") return [];
+	const list = /** @type {{corporateAgreements?: unknown}} */ (doc).corporateAgreements;
+	return Array.isArray(list) ? list.filter((r) => r && typeof r === "object") : [];
+}
+
+/**
+ * Revocations from the signature document.
+ *
+ * A revocation is append-only like everything else: the original signature STAYS on record, because
+ * it was true when it was given and the contributions made under it were lawfully licensed. What
+ * changes is coverage from the revocation date forward.
+ * @param {unknown} doc
+ * @returns {Array<Record<string, unknown>>}
+ */
+export function revocations(doc) {
+	if (!doc || typeof doc !== "object") return [];
+	const list = /** @type {{revocations?: unknown}} */ (doc).revocations;
+	return Array.isArray(list) ? list.filter((r) => r && typeof r === "object") : [];
+}
+
+/**
+ * Whether this id is covered for this version, and by WHICH instrument.
+ *
+ * The order is the whole of the logic and each step is a decision somebody has to be able to defend:
+ *
+ *  1. **Revocation wins.** A revoked contributor is not covered, whatever else is on file — including
+ *     a corporate agreement. Anything weaker makes revocation advisory.
+ *  2. **A corporate agreement supersedes an individual signature.** This is the supersession case
+ *     that actually happens: someone signs personally, later joins a company that has a CCLA, and
+ *     from then on contributes under their employer's authority. Reporting the individual signature
+ *     there would name the wrong instrument in the record.
+ *  3. **Otherwise the individual signature.**
+ *
+ * @param {object} input
+ * @param {Array<Record<string, unknown>>} input.signatures
+ * @param {Array<Record<string, unknown>>} input.corporate
+ * @param {Array<Record<string, unknown>>} input.revoked
+ * @param {number} id
+ * @param {string} version
+ * @returns {{covered: boolean, via: "individual"|"corporate"|null, organization?: string, reason?: string}}
+ */
+export function coverage({ signatures, corporate, revoked }, id, version) {
+	if (!Number.isInteger(id)) {
+		return { covered: false, via: null, reason: "no stable numeric GitHub id on this commit" };
+	}
+	const rev = revoked.find(
+		(r) => r.id === id && String(r.cla_version ?? "") === version,
+	);
+	if (rev) {
+		return {
+			covered: false,
+			via: null,
+			reason: `the CLA signature for this contributor was revoked (${String(rev.revocation_reference ?? "no reference")})`,
+		};
+	}
+	const ccla = corporate.find(
+		(c) =>
+			String(c.ccla_version ?? "") === version &&
+			Array.isArray(c.covered_ids) &&
+			c.covered_ids.includes(id),
+	);
+	if (ccla) {
+		return {
+			covered: true,
+			via: "corporate",
+			organization: String(ccla.organization ?? "an organization"),
+		};
+	}
+	if (hasSigned(signatures, id, version)) return { covered: true, via: "individual" };
+	return { covered: false, via: null };
+}
+
+/**
+ * Every commit author on the pull request, checked one at a time.
+ *
+ * The PR's author is NOT the only person whose work is in it. A branch can carry commits authored by
+ * someone else — a rebase of another person's work, a pair-programming co-author, a fork a second
+ * person pushed to — and a gate that checks only `pull_request.user` licenses all of that on the
+ * strength of one signature from someone who did not write it.
+ *
+ * `authors` comes from the commits API, which reports the GitHub ACCOUNT that GitHub matched to each
+ * commit. A commit whose author GitHub cannot resolve to an account has no stable numeric identity,
+ * so it cannot be covered by anything — and that is reported as such rather than skipped, because a
+ * skipped author is an unlicensed contribution that looks fine.
+ *
+ * @param {object} input
+ * @param {Array<{login?: string, id?: number, sha?: string}>} input.authors
+ * @param {Array<Record<string, unknown>>} input.signatures
+ * @param {Array<Record<string, unknown>>} input.corporate
+ * @param {Array<Record<string, unknown>>} input.revoked
+ * @param {string} input.version
+ * @returns {{covered: boolean, uncovered: Array<{login: string, id: number|null, reason: string}>}}
+ */
+export function commitAuthorsCovered({ authors, signatures, corporate, revoked, version }) {
+	const uncovered = [];
+	const seen = new Set();
+	for (const a of authors) {
+		const login = typeof a?.login === "string" ? a.login : "";
+		const id = Number.isInteger(a?.id) ? /** @type {number} */ (a.id) : null;
+		// One entry per person, not per commit: ten commits by one unsigned author is one problem.
+		const key = id === null ? `login:${login}:${a?.sha ?? ""}` : `id:${id}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		if (isTrusted(login)) continue;
+		if (id === null) {
+			uncovered.push({
+				login: login || "(unknown)",
+				id: null,
+				reason:
+					`commit ${String(a?.sha ?? "").slice(0, 8)} has no GitHub account behind its author, so no ` +
+					`signature can cover it — set the commit's author email to one on the contributor's GitHub account`,
+			});
+			continue;
+		}
+		const c = coverage({ signatures, corporate, revoked }, id, version);
+		if (!c.covered) {
+			uncovered.push({ login: login || String(id), id, reason: c.reason ?? notSigned(version) });
+		}
+	}
+	return { covered: uncovered.length === 0, uncovered };
+}
+
+/**
  * The whole gate, as a pure function. Every I/O decision upstream of it is a lookup; everything that
  * DECIDES is here, so the fixtures below exercise the real logic rather than a re-implementation.
  *
@@ -142,10 +279,23 @@ export function hasSigned(recs, id, version) {
  * @param {string} input.eventName            - "pull_request_target" | "issue_comment" | other
  * @param {any}    input.event                - the webhook payload, verbatim
  * @param {{cla_version: string, icla_sha256?: string}|null} input.active - parsed cla/ACTIVE
- * @param {Array<Record<string, unknown>>} input.signatures - existing records
+ * @param {Array<Record<string, unknown>>} input.signatures - existing individual records
+ * @param {Array<Record<string, unknown>>} [input.corporate] - corporate agreements
+ * @param {Array<Record<string, unknown>>} [input.revoked] - revocations
+ * @param {Array<{login?: string, id?: number, sha?: string}>} [input.authors] - every commit author
+ *        on the pull request, from the commits API. Absent means the caller could not enumerate
+ *        them, which FAILS CLOSED rather than falling back to the pull request's author.
  * @returns {{decision: string, reason: string, actor?: {login: string, id: number}, record?: object}}
  */
-export function evaluate({ eventName, event, active, signatures }) {
+export function evaluate({
+	eventName,
+	event,
+	active,
+	signatures,
+	corporate = [],
+	revoked = [],
+	authors,
+}) {
 	// ── 1. Pre-activation: fail closed, exactly as the gate this replaces did. ──────────────────
 	// This is the live state today. Until counsel approves the text and `pnpm legal:activate-ip`
 	// writes cla/ACTIVE, external merges are paused and no comment can unpause them.
@@ -179,9 +329,10 @@ export function evaluate({ eventName, event, active, signatures }) {
 			return { decision: Decision.Ignore, reason: "comment is on an issue, not a pull request" };
 		}
 		if (body === RECHECK_PHRASE) {
-			return hasSigned(signatures, actor.id, version)
-				? { decision: Decision.Pass, reason: `signed CLA v${version}`, actor }
-				: { decision: Decision.Blocked, reason: notSigned(version), actor };
+			const c2 = coverage({ signatures, corporate, revoked }, actor.id, version);
+			return c2.covered
+				? { decision: Decision.Pass, reason: coveredReason(c2, version), actor }
+				: { decision: Decision.Blocked, reason: c2.reason ?? notSigned(version), actor };
 		}
 		if (body !== SIGN_PHRASE) {
 			return { decision: Decision.Ignore, reason: "comment is not a signature" };
@@ -203,8 +354,14 @@ export function evaluate({ eventName, event, active, signatures }) {
 				actor,
 			};
 		}
-		if (hasSigned(signatures, actor.id, version)) {
-			return { decision: Decision.Pass, reason: `already signed CLA v${version}`, actor };
+		const existing = coverage({ signatures, corporate, revoked }, actor.id, version);
+		if (existing.covered) {
+			return { decision: Decision.Pass, reason: coveredReason(existing, version), actor };
+		}
+		// A revoked signature cannot be restored by commenting again — reinstatement is an
+		// administrative act on the signature branch, not something the revoked party can do.
+		if (existing.reason?.includes("revoked")) {
+			return { decision: Decision.Blocked, reason: existing.reason, actor };
 		}
 		return {
 			decision: Decision.Sign,
@@ -223,15 +380,47 @@ export function evaluate({ eventName, event, active, signatures }) {
 		};
 	}
 
-	// ── 4. A pull request: a lookup, never a write. ────────────────────────────────────────────
+	// ── 4. A pull request: a lookup over EVERY commit author, never a write. ───────────────────
+	//
+	// Not `pull_request.user`. A branch can carry commits authored by somebody else — a rebase of
+	// another person's work, a co-author, a fork a second person pushed to — and checking only the
+	// opener licenses all of it on one signature from someone who did not write it.
 	if (eventName === "pull_request_target") {
-		return hasSigned(signatures, actor.id, version)
-			? { decision: Decision.Pass, reason: `signed CLA v${version}`, actor }
-			: { decision: Decision.Blocked, reason: notSigned(version), actor };
+		if (!Array.isArray(authors)) {
+			// FAIL CLOSED. The commits could not be enumerated (an API error, a truncated page), and
+			// falling back to the opener would silently narrow the check to the case this exists to
+			// widen — while still reporting a pass.
+			return {
+				decision: Decision.Blocked,
+				reason:
+					"could not read the pull request's commit authors, so the CLA cannot be checked for all of them",
+				actor,
+			};
+		}
+		const all = commitAuthorsCovered({ authors, signatures, corporate, revoked, version });
+		if (all.covered) {
+			return { decision: Decision.Pass, reason: `every commit author is covered for CLA v${version}`, actor };
+		}
+		return {
+			decision: Decision.Blocked,
+			reason:
+				all.uncovered.length === 1
+					? `${all.uncovered[0].login}: ${all.uncovered[0].reason}`
+					: `${all.uncovered.length} commit authors are not covered — ` +
+						all.uncovered.map((u) => `${u.login} (${u.reason})`).join("; "),
+			actor,
+		};
 	}
 
 	// ── 5. Anything else. An event shape nobody anticipated is not an approval. ─────────────────
 	return { decision: Decision.Ignore, reason: `unhandled event ${eventName}` };
+}
+
+/** How a covered contributor is described, naming the instrument that covers them. */
+function coveredReason(c, version) {
+	return c.via === "corporate"
+		? `covered by ${c.organization}'s corporate CLA v${version}`
+		: `signed CLA v${version}`;
 }
 
 /** The blocked message, which is also the instructions — a gate nobody can satisfy is just a wall. */
