@@ -3,6 +3,7 @@
 
 import { CURRENT_LEGAL_OPERATOR } from "@repo/legal/entity";
 import { CONSENT_COOKIE_NAME } from "@repo/legal/processing";
+import { CONSENT_LABELS } from "@repo/privacy/consent";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";

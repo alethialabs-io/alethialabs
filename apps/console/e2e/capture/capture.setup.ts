@@ -5,6 +5,7 @@
 // flow, then persists the authenticated session (with theme forced to dark) for
 // the shots project to reuse. The OTP is scraped from the console stdout log.
 
+import { CONSENT_LABELS } from "@repo/privacy/consent";
 import { expect, test as setup } from "@playwright/test";
 import { CAPTURE_STATE } from "../../playwright.capture.config";
 import { logCursor, waitForOtp } from "../helpers/otp";
@@ -15,8 +16,9 @@ setup("sign in as the seeded demo owner", async ({ page }) => {
 	const cursor = await logCursor();
 	await page.goto("/login", { waitUntil: "domcontentloaded" });
 	await page.waitForTimeout(800);
+	// The exported constant, not a literal — see the note in e2e/fixtures/auth.ts.
 	await page
-		.getByRole("button", { name: /reject non-essential/i })
+		.getByRole("button", { name: CONSENT_LABELS.reject, exact: true })
 		.click({ timeout: 5_000 });
 
 	// Step 1 is a provider grid with a "Continue with email" button that reveals the

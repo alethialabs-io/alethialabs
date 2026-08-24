@@ -22,6 +22,24 @@ export const CONSENT_EVENT = "alethia:consent";
 export const CONSENT_VERSION = 2;
 const CONSENT_MAX_AGE_SECONDS = 60 * 60 * 24 * 183;
 
+/**
+ * The consent controls' visible labels.
+ *
+ * Exported because they are LOAD-BEARING OUTSIDE THIS PACKAGE: the Playwright fixtures
+ * (`apps/console/e2e/fixtures/auth.ts` and `e2e/capture/capture.setup.ts`) locate the reject button
+ * by its accessible name to dismiss the notice before every journey. Relabelling it for consent v2
+ * broke the hero path with a 5-second locator timeout, and nothing type-checked against the literal
+ * — a copy change silently became a test-suite outage.
+ *
+ * They are constants so that the same rename is a compile error at the locator instead.
+ */
+export const CONSENT_LABELS = {
+	accept: "Accept analytics",
+	reject: "Reject analytics",
+	customize: "Customize",
+	settings: "Privacy settings",
+} as const;
+
 export const consentPreferencesSchema = z.object({
 	analytics: z.boolean(),
 });

@@ -16,6 +16,7 @@ import { useForm } from "react-hook-form";
 import {
 	analyticsAllowed,
 	CONSENT_EVENT,
+	CONSENT_LABELS,
 	consentPreferencesSchema,
 	type ConsentPreferences,
 	type ConsentRecord,
@@ -203,10 +204,12 @@ function ConsentNotice({
 				  */}
 				<div className="grid gap-2">
 					<div className="grid grid-cols-2 gap-2">
-						<ChoiceButton onClick={onAccept}>Accept analytics</ChoiceButton>
-						<ChoiceButton onClick={onReject}>Reject analytics</ChoiceButton>
+						<ChoiceButton onClick={onAccept}>{CONSENT_LABELS.accept}</ChoiceButton>
+						<ChoiceButton onClick={onReject}>{CONSENT_LABELS.reject}</ChoiceButton>
 					</div>
-					<ChoiceButton onClick={onCustomize}>Customize</ChoiceButton>
+					<ChoiceButton onClick={onCustomize}>
+						{CONSENT_LABELS.customize}
+					</ChoiceButton>
 				</div>
 			</div>
 		</section>
