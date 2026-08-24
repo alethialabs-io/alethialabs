@@ -37,8 +37,12 @@ data "aws_iam_policy_document" "vpc_cni_subnet_discovery" {
 }
 
 resource "aws_iam_policy" "vpc_cni_subnet_discovery" {
-  name        = "AmazonEKS-VPC-CNI-SubnetDiscovery-${var.eks_cluster_name}"
-  description = "ec2:DescribeSubnets for the VPC CNI's subnet discovery — absent from the pinned iam module's generated policy."
+  # `name_prefix`, not `name`, and without the cluster name in it — the same shape as the ALB
+  # controller policy below. A fixed name would collide on a replace-before-destroy, and folding a
+  # cluster name into an IAM name is the derived-length trap the repo has already paid for (#1905).
+  # The cluster is identified in the description instead, where nothing has to fit.
+  name_prefix = "AmazonEKS-VPC-CNI-SubnetDiscovery"
+  description = "ec2:DescribeSubnets for the VPC CNI's subnet discovery on ${var.eks_cluster_name} — absent from the pinned iam module's generated policy."
   policy      = data.aws_iam_policy_document.vpc_cni_subnet_discovery.json
   tags        = var.eks_tags
 }
