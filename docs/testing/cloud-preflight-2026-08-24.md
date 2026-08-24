@@ -21,8 +21,8 @@ that has not been set up.
 
 | cloud | authenticates | can provision today | what is missing |
 |---|:---:|:---:|---|
-| **aws** | ✅ `alethia-admin` (AdministratorAccess) | ✅ **yes — proven this session** | nothing |
-| **hetzner** | ✅ `alethia-infra-tests` | ⚠️ reaches the apply, image build times out | a product fix (#2458), not an account change |
+| **aws** | ✅ `alethia-admin` (AdministratorAccess) | ⚠️ cluster yes, floor no | a product fix (#2469), not an account change |
+| **hetzner** | ✅ `alethia-infra-tests` | ✅ **yes — `hetzner/floor` PASSED** | nothing |
 | **azure** | ✅ Azure for Students | ⚠️ untested — nothing structurally blocks it | a real run to settle the credit question |
 | **gcp** | ✅ `borislav1207@gmail.com` | ❌ **no** | **an open billing account** |
 | **alibaba** | ✅ RAM user `test` (AdministratorAccess) | ❌ **no** | the `AliyunCSDefaultRole` service-linked role |
@@ -30,15 +30,29 @@ that has not been set up.
 Two of five are blocked on something only the account owner can do, and neither blocker is
 described anywhere in the tree. Both are cheap to clear.
 
+The other three are blocked on **product fixes, not accounts** — which is the distinction this
+document exists to draw, and the reason "can provision today" is a different column from
+"authenticates".
+
 ---
 
-## aws — ready, and exercised
+## aws — the account is ready; the floor is not
+
+**Corrected later the same evening.** This section first read "ready, and exercised", on the
+strength of a real EKS cluster coming up. That was true and it was not the question: the cluster
+came up and the **floor still failed**, so "can provision today" is ⚠️, not ✅.
 
 - Identity `arn:aws:iam::270587882865:user/alethia-admin`, **AdministratorAccess**.
 - `us-east-1` quota: **16** Standard On-Demand vCPU, 5 Elastic IPs. The floor shape
   (`t3.large` × 1 = 2 vCPU) and the heavy full-bar profile both fit comfortably.
-- A real EKS cluster was provisioned from this Mac during this session, so this is a
-  demonstrated capability rather than an inference.
+- A real EKS cluster was provisioned from this Mac, reached `ACTIVE`, and its node reached `Ready`.
+- **Then ArgoCD's `application-controller` never got a pod sandbox**, for the whole run:
+  `aws-cni … failed to assign an IP address to container`. The VPC CNI could not call
+  `ec2:DescribeSubnets`, so it could not attach a second ENI, so the cluster hard-stopped at eleven
+  pod IPs — one short of what the floor's own workload wants. Root cause and fix: **#2469**.
+
+So nothing is missing from the *account*. What is missing is a one-line IAM grant in the template,
+which is the distinction this whole document exists to draw.
 
 **Orphans found and cleared.** `alethia:project-id`-tagged resources from ~20 prior runs were
 standing in `us-east-1`. Almost all of it was harmless — 36 KMS keys, every one already
@@ -52,7 +66,15 @@ were not harmless, and both are now gone:
 Neither was reachable by the sweeper. See *The blind spot* below — it is a product defect, fixed
 in the same session.
 
-## hetzner — the account is clean; the image build is not
+## hetzner — PROVEN
+
+**Updated later the same evening: `hetzner/floor` PASSED** on a retry — signed receipt, 2 nodes
+Ready, all 3 derived ArgoCD Applications Healthy+Synced, env ACTIVE, 18 resources destroyed, and
+the account verified empty afterwards across every resource type. It is the programme's first
+proven proof cell. Everything below stands as the record of the first attempt, and the image-build
+timeout it found is **intermittent** rather than blocking — a different bug with a different fix.
+
+## hetzner — the first attempt, and what it found
 
 - Context `alethia-infra-tests` authenticates and the project is **completely empty** — an ideal
   e2e target, with no shared-prod blast radius.
