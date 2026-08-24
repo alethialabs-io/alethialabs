@@ -618,3 +618,30 @@ carried_in_cluster:
     source: packages/core/argocd/harbor.go
     reason: Harbor scans on push with the Trivy the chart installs, enabled through the project's auto_scan metadata by the in-cluster bootstrap Job — there is no tofu resource on Hetzner to carry a tfvar.
     issue: "#2431"
+
+  # ── The secret switches on Hetzner (#2432) ────────────────────────────────────────
+  # Hetzner sells no secret store, so its `secret` kind is a KV v2 entry in a Vault the platform
+  # installs and operates, rather than a Secrets Manager / Secret Manager / Key Vault / KMS entry.
+  # The carrier rule structurally cannot see these two: it wants a tfvar declared in the template and
+  # read by a resource argument, and the value is minted by the bootstrap Job (`alethia
+  # vault-bootstrap`) inside the cluster — deliberately, so it never passes through the runner.
+  #
+  # NOT an exclusion. Both are honoured exactly as they are on the four managed clouds, from the same
+  # three ProjectSecretConfig fields buildSecrets carries there:
+  #   · generate      — `false` writes NO value, matching `manual: true` elsewhere (the secret exists
+  #                     with no version and the operator supplies one); `true` mints one in-pod.
+  #   · special_chars — widens the generated alphabet beyond alphanumerics, alongside `length`.
+  - offer: secret:generate
+    cloud: hetzner
+    by: vault
+    predicate: vaultCarriedSecretOffers
+    source: packages/core/argocd/vault.go
+    reason: The value is minted inside the cluster by the in-cluster Vault's bootstrap Job and written straight to KV v2, so it never passes through the runner — there is no tofu resource on Hetzner to carry a tfvar. Turning it off leaves the path unwritten for an operator to fill, exactly as `manual` does elsewhere.
+    issue: "#2432"
+  - offer: secret:special_chars
+    cloud: hetzner
+    by: vault
+    predicate: vaultCarriedSecretOffers
+    source: packages/core/argocd/vault.go
+    reason: The generated alphabet is widened beyond alphanumerics by the in-cluster Vault's bootstrap Job, alongside the declared length — there is no tofu resource on Hetzner to carry a tfvar.
+    issue: "#2432"

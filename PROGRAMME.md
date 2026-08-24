@@ -58,7 +58,7 @@ that went wrong before was a board asserting a state the tree disagreed with.
 | --- | --- | --- |
 | `template_parity.baseline` | 301 | grandfathered asymmetric root variables |
 | `cli_gap` | 0 | CLI debt is cleared and must stay cleared |
-| `deferred_in_product` | 1 | hetzner secret→Vault |
+| `deferred_in_product` | 0 | no kind is chart-backed-but-unwired on any cloud |
 
 ## §1 · Ordering, and why this order
 
@@ -211,18 +211,14 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 
 ### Capability surface
 
-**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 48 carried by tofu · 4 carried in-cluster · 2 cloud ceilings · **1 deferred (our debt)**.
-
-The deferred cells are the last **product** debt in the capability matrix — a chart this repo already ships backs the kind, and only the mapping is missing. They install on every full-bar run while the kind that would use them is refused:
-
-- `hetzner/secrets` → chart **vault (marketplace catalog; the full-bar run already installs it)**
+**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 48 carried by tofu · 5 carried in-cluster · 2 cloud ceilings · **0 deferred (our debt)**.
 
 Cloud ceilings (the cloud genuinely does not offer the kind — not our debt):
 
 - `hetzner/topic`
 - `hetzner/nosql`
 
-**Parity grid (19 canvas NodeKinds × 5 clouds):** hetzner refuses 3 (topic, nosql, secret); every other cloud backs all 19.
+**Parity grid (19 canvas NodeKinds × 5 clouds):** hetzner refuses 2 (topic, nosql); every other cloud backs all 19.
 
 ### Driven from the CLI
 
@@ -296,7 +292,7 @@ The ledger row itself is not wrong and is not rewritten (it is append-only, and 
 
 | board | recorded debt |
 |---|---|
-| `infra/offer-exclusions.yaml` | exclusions: 25 · baseline: 0 · wired: 2 · carried_in_cluster: 4 |
+| `infra/offer-exclusions.yaml` | exclusions: 25 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/config-carriage-exclusions.yaml` | exclusions: 31 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 301 · uniform: 11 |
 

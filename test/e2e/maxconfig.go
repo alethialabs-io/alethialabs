@@ -46,6 +46,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
 	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -116,6 +117,38 @@ type MaxConfigCell struct {
 	// CloudCeiling and DeferredInProduct: an exclusion nobody can read is indistinguishable from an
 	// oversight.
 	Why string
+	// ClusterProbe is an OPTIONAL SECOND assertion for an in-cluster cell, for the case where a
+	// converged Application does not actually prove the kind was delivered.
+	//
+	// Usually it does: `addon-db-appdb` Healthy+Synced means a CNPG Cluster exists and is running.
+	// But `secrets` on hetzner is delivered by a Vault whose Helm release is perfectly Healthy while
+	// SEALED — a sealed Vault serves nothing at all, so the Application alone would promote the cell
+	// on evidence that is compatible with the capability being entirely absent. That is exactly the
+	// "never promote a cell by asserting it" failure this table exists to prevent, so the cell names
+	// the object whose readiness DOES discriminate: the ClusterSecretStore over that Vault, which
+	// ESO marks Ready only after it has authenticated and read the mount.
+	//
+	// CarriedInCluster only, and always additive — the Application must converge too.
+	ClusterProbe *MaxConfigClusterProbe
+}
+
+// MaxConfigClusterProbe names one live object whose `Ready` condition must be True for an
+// in-cluster cell to count as delivered.
+//
+// Deliberately narrow: a resource, a name, and the reason the Application alone is not enough. It is
+// read with the same `Ready`-condition parser the cross-account secrets lane uses
+// (parseReadyCondition), because ESO states readiness the same way wherever it appears.
+type MaxConfigClusterProbe struct {
+	// Resource is the group-qualified kubectl resource, e.g. "clustersecretstores.external-secrets.io".
+	// Group-qualified so it cannot collide with a core resource of the same short name.
+	Resource string
+	// Namespace is empty for a cluster-scoped object.
+	Namespace string
+	// Name is the object's name.
+	Name string
+	// Why is what this probe proves that the converged Application does not. Required: a probe
+	// nobody can justify is a flake waiting to be deleted.
+	Why string
 }
 
 // tofuCell declares a cell the cloud's IaC provisions: the state resource type plus the tfvar
@@ -128,6 +161,13 @@ func tofuCell(resource string, signals ...string) MaxConfigCell {
 // ArgoCD Application that proves it and the reason it is not a tofu resource.
 func inClusterCell(argoApp, why string) MaxConfigCell {
 	return MaxConfigCell{Carriage: CarriedInCluster, ArgoApp: argoApp, Why: why}
+}
+
+// inClusterProbedCell is inClusterCell for a kind whose Application converging does NOT by itself
+// prove delivery — it additionally names a live object whose readiness does. See
+// MaxConfigCell.ClusterProbe.
+func inClusterProbedCell(argoApp, why string, probe MaxConfigClusterProbe) MaxConfigCell {
+	return MaxConfigCell{Carriage: CarriedInCluster, ArgoApp: argoApp, Why: why, ClusterProbe: &probe}
 }
 
 // ceilingCell declares a documented ceiling — the cloud does not offer this kind at all, and
@@ -160,6 +200,10 @@ func (c MaxConfigCell) Validate() error {
 		return fmt.Errorf("carriage %q must not name a Chart (%q) — only %q does, because only there is the chart's existence the whole claim",
 			c.Carriage, c.Chart, DeferredInProduct)
 	}
+	if c.ClusterProbe != nil && c.Carriage != CarriedInCluster {
+		return fmt.Errorf("carriage %q must not name a ClusterProbe — only %q can, because only there is a live cluster the thing being asserted",
+			c.Carriage, CarriedInCluster)
+	}
 	switch c.Carriage {
 	case CarriedByTofu:
 		if c.Resource == "" {
@@ -180,6 +224,14 @@ func (c MaxConfigCell) Validate() error {
 		}
 		if c.Why == "" {
 			return fmt.Errorf("carriage %q needs a Why — why cloud IaC does not carry it", c.Carriage)
+		}
+		if p := c.ClusterProbe; p != nil {
+			if p.Resource == "" || p.Name == "" {
+				return fmt.Errorf("carriage %q names a ClusterProbe with no Resource/Name (%+v) — it would assert nothing", c.Carriage, *p)
+			}
+			if p.Why == "" {
+				return fmt.Errorf("carriage %q names a ClusterProbe with no Why — a probe nobody can justify is a flake waiting to be deleted", c.Carriage)
+			}
 		}
 	case CloudCeiling:
 		if c.Resource != "" || c.ArgoApp != "" || len(c.Signals) > 0 {
@@ -303,6 +355,13 @@ const hetznerNoManagedService = "Hetzner has no managed equivalent; the console 
 const hetznerKindHiddenAndRejected = "hidden on the canvas and REJECTED at deploy " +
 	"(unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner)"
 
+// HetznerVaultAddOnID is the install-spec id of the platform Vault, and therefore the suffix of its
+// ArgoCD Application name. It mirrors HETZNER_VAULT_ADDON_ID in
+// apps/console/lib/cloud-providers/hetzner-services.ts — and the mirror is CHECKED, not trusted:
+// TestHetznerInClusterCellsAreCoveredBySeededSpecs resolves this cell's ArgoApp against the specs
+// the real console mapper generated into the fixture.
+const HetznerVaultAddOnID = "secrets-vault"
+
 // hetznerNoServiceNoChart is the CEILING reason — the strong claim, made only where it holds:
 // Hetzner has no such cloud service, and no chart in this repo is offered for the kind either.
 // unsupported-kinds.ts states it for exactly these two: "topic (SNS) and nosql (DynamoDB) have no
@@ -310,12 +369,15 @@ const hetznerKindHiddenAndRejected = "hidden on the canvas and REJECTED at deplo
 const hetznerNoServiceNoChart = "Hetzner has no such service, and this repo offers no chart for the kind either " +
 	"(unsupported-kinds.ts: \"no clean single-chart OSS equal\") — " + hetznerKindHiddenAndRejected
 
-// hetznerChartExistsNotWired is the DEBT reason, for the two kinds a shipped marketplace chart
-// demonstrably delivers and the product has simply not mapped. unsupported-kinds.ts says both parts
-// itself — "the Harbor marketplace add-on covers registry in-cluster", and of `secret`: "In-cluster
-// secrets (Vault add-on + an ESO ClusterSecretStore over a Vault backend) is a real feature with its
-// own init/unseal design, not a silent no-op; until it lands, reject the kind honestly." "Until it
-// lands" is the definition of debt, and it is what the old shared ceiling sentence hid.
+// hetznerChartExistsNotWired is the DEBT reason: a kind a chart this repo ALREADY SHIPS
+// demonstrably delivers, which the product has simply not mapped. "Until it lands" is the definition
+// of debt, and it is what the old shared ceiling sentence hid.
+//
+// NO CELL USES IT TODAY — #2431 wired registry→Harbor and #2432 wired secret→Vault, and those were
+// the last two. It is kept rather than deleted because it is the canonical wording the NEXT such
+// kind should reuse, and because TestMaxConfigDeferredCellsNameTheirChart's self-test builds its
+// well-formed cell from it: edit this string to drop the word DEBT and that guard reds, which is the
+// coupling that makes keeping it honest rather than decorative.
 const hetznerChartExistsNotWired = "Hetzner has no cloud service for this kind, but a chart in the marketplace catalog " +
 	"DOES back it — it is simply not mapped to the kind, so this is DEBT, not a ceiling. Today the kind is " +
 	hetznerKindHiddenAndRejected
@@ -601,7 +663,8 @@ var MaxConfigKinds = []MaxConfigKind{
 	{
 		Kind: "secrets",
 		Doc: "a generated secret in the cloud secret store — Secrets Manager / Secret Manager / " +
-			"Key Vault / KMS. Hetzner has none, and its in-cluster substitute (Vault) is unwired DEBT.",
+			"Key Vault / KMS. Hetzner has none and carries the kind in-cluster as a platform-operated " +
+			"Vault, read through an ESO ClusterSecretStore exactly as the other four clouds are.",
 		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.Secrets = []types.ProjectSecretConfig{{
 				Name: "api-key", Generate: true, Length: 32, SpecialChars: true,
@@ -612,13 +675,27 @@ var MaxConfigKinds = []MaxConfigKind{
 		GCP:       tofuCell("google_secret_manager_secret", "custom_secrets"),
 		Azure:     tofuCell("azurerm_key_vault_secret", "custom_secrets"),
 		// Hetzner has no cloud secret store and hetznerProvider.ProviderTfvars never emits
-		// custom_secrets — so far, a ceiling's shape. But Vault ships in the marketplace catalog and
-		// the full-bar run INSTALLS it (addon_catalog.json holds `vault`); what is missing is the
-		// ESO ClusterSecretStore over it, plus the init/unseal design. unsupported-kinds.ts says so in
-		// the same breath: "a real feature with its own init/unseal design … until it lands, reject
-		// the kind honestly". That is debt with a date on it, not a limit of the cloud.
-		Hetzner: deferredCell("vault (marketplace catalog; the full-bar run already installs it)",
-			hetznerChartExistsNotWired+". Missing: an ESO ClusterSecretStore over the Vault backend, and the init/unseal design"),
+		// custom_secrets, so nothing lands in tofu state. #2430 left this DEFERRED because the chart
+		// was never the missing half; #2432 built the half that was — a platform-operated Vault
+		// (hetzner-services.ts renders ONE release for all `secret` nodes), initialised, unsealed and
+		// seeded by a Job running INSIDE the cluster (argocd/vault.go, `alethia vault-bootstrap`),
+		// with a least-privilege ESO token minted and root revoked before the Job exits.
+		//
+		// ⚠️ THE PROBE IS NOT DECORATION. A SEALED Vault's Helm release is Healthy and Synced — the
+		// StatefulSet is running exactly as declared — while the Vault itself answers nothing. So the
+		// Application alone would promote this cell on evidence fully compatible with the capability
+		// being absent. The ClusterSecretStore is the discriminator: ESO marks it Ready only after it
+		// has authenticated with the minted token AND read the KV mount, neither of which a sealed
+		// Vault permits.
+		Hetzner: inClusterProbedCell("addon-"+HetznerVaultAddOnID,
+			hetznerNoManagedService+" (HashiCorp Vault, hashicorp chart; one platform-operated release per "+
+				"project, initialised and unsealed in-cluster, read by ESO through a ClusterSecretStore)",
+			MaxConfigClusterProbe{
+				Resource: "clustersecretstores.external-secrets.io",
+				Name:     argocd.HetznerSecretStoreName,
+				Why: "a sealed Vault's Helm release is Healthy and Synced while the Vault serves nothing — " +
+					"ESO marks this store Ready only after authenticating with the minted token and reading the KV mount",
+			}),
 		Alibaba: tofuCell("alicloud_kms_secret", "custom_secrets"),
 	},
 	{

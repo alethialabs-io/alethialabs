@@ -17,21 +17,30 @@ Kubernetes cluster · VPC/network · managed SQL database · managed Redis/cache
 
 ## Provider capability matrix
 
-The registry (`lib/cloud-providers/registry.ts`) maps each capability to the provider's cloud-native service. The **four managed clouds are at feature parity** across every category; **Hetzner is intentionally lean** — it provisions a cluster + private network only, and managed-service categories are covered **in-cluster** (bring-your-own via the [add-on marketplace](/console/add-ons), e.g. a Postgres/Redis/MinIO Helm chart) rather than as managed cloud services.
+The registry (`lib/cloud-providers/registry.ts`) maps each capability to the provider's cloud-native service. The **four managed clouds are at feature parity** across every category.
+
+**Hetzner is different in kind, not merely leaner.** Hetzner sells compute, private networking and object storage; it sells no database, cache, queue, registry or secret store. So Alethia provisions the cluster and the network with OpenTofu and delivers the rest as components **it installs and operates in the cluster** — CloudNativePG, Valkey, RabbitMQ, Harbor and HashiCorp Vault, one release per component, each converging as its own ArgoCD Application. You design the same canvas; what lands differs.
+
+Two consequences worth knowing before you pick Hetzner:
+
+- **You own the data plane.** A managed database is backed up, patched and failed over by the cloud. An in-cluster one is backed up, patched and failed over by you (and by the add-ons you choose for it). The canvas will not pretend otherwise.
+- **The secret store's seal is only as strong as the cluster.** Hetzner sells no KMS, so the platform Vault is Shamir-sealed and its unseal key lives in a Kubernetes Secret in the same cluster. Against a cluster-admin, an etcd backup or a volume snapshot that is no better than a plain Secret. What it does buy is real — an audit log of every read, leases, revocation, rotation, and the same ESO read path your workloads use on every other cloud — but if your threat model needs a key you hold outside the cluster, connect an external secret store instead.
+
+`topic` and `nosql` remain unoffered on Hetzner: neither has a single OSS chart that honestly stands in for SNS or DynamoDB, and the canvas rejects them at deploy rather than dropping them silently.
 
 | Capability | AWS | GCP | Azure | Alibaba | Hetzner |
 |-----------|-----|-----|-------|---------|---------|
 | Kubernetes | EKS | GKE | AKS | ACK | Talos (self-managed) |
 | Network | VPC | VPC Network | VNet | VPC | Private Network |
-| Database | Aurora | Cloud SQL | Azure Database | ApsaraDB RDS | in-cluster (BYO) |
-| Cache | ElastiCache | Memorystore | Azure Cache for Redis | ApsaraDB for Redis | in-cluster (BYO) |
-| NoSQL | DynamoDB | Firestore | Cosmos DB | Tablestore | in-cluster (BYO) |
-| Queue | SQS | Pub/Sub | Service Bus | MNS | in-cluster (BYO) |
-| Topic | SNS | Pub/Sub | Service Bus | MNS | in-cluster (BYO) |
-| Object storage | S3 | Cloud Storage | Blob Storage | OSS | in-cluster (BYO) |
-| Container registry | ECR | Artifact Registry | ACR | ACR | external |
+| Database | Aurora | Cloud SQL | Azure Database | ApsaraDB RDS | in-cluster CloudNativePG |
+| Cache | ElastiCache | Memorystore | Azure Cache for Redis | ApsaraDB for Redis | in-cluster Valkey |
+| NoSQL | DynamoDB | Firestore | Cosmos DB | Tablestore | — not offered |
+| Queue | SQS | Pub/Sub | Service Bus | MNS | in-cluster RabbitMQ |
+| Topic | SNS | Pub/Sub | Service Bus | MNS | — not offered |
+| Object storage | S3 | Cloud Storage | Blob Storage | OSS | Hetzner Object Storage |
+| Container registry | ECR | Artifact Registry | ACR | ACR | in-cluster Harbor (platform-operated) |
 | DNS | Route 53 | Cloud DNS | Azure DNS | AliDNS | external |
-| Secrets | Secrets Manager | Secret Manager | Key Vault | KMS | external |
+| Secrets | Secrets Manager | Secret Manager | Key Vault | KMS | in-cluster Vault (platform-operated) |
 | WAF | AWS WAFv2 | Cloud Armor | Azure WAF | — | — |
 | Certificate / CDN | ACM + CloudFront | Managed Certificate | App Service Certificate | Managed Certificate | — |
 
@@ -44,7 +53,7 @@ The decisions come from `argocd.InfraServiceDecisions` (`packages/core/argocd/de
 | Infra service | AWS | GCP | Azure | Alibaba | Hetzner |
 |---------------|-----|-----|-------|---------|---------|
 | external-dns | installed (Route 53, IRSA) | installed when Workload Identity SA present | installed when managed-identity present | **N/A** — alibabacloud provider has no RRSA support upstream ([external-dns#5019](https://github.com/kubernetes-sigs/external-dns/issues/5019)); manage AliDNS outside the cluster | installed (Hetzner webhook) when a Cloud API token is connected |
-| external-secrets store | installed (Secrets Manager, IRSA) | installed (Secret Manager, WI) | installed (Key Vault, WI) | installed (KMS Secrets Manager, RRSA) | **N/A** — no cloud secret store; use the [Vault connector](/concepts/connectors) |
+| external-secrets store | installed (Secrets Manager, IRSA) | installed (Secret Manager, WI) | installed (Key Vault, WI) | installed (KMS Secrets Manager, RRSA) | installed (in-cluster Vault) when the project declares a secret; otherwise skipped — connect an external [Vault](/concepts/connectors) instead |
 | ingress | installed (ALB controller) | skipped — cloud LB available; install the ingress-nginx add-on | skipped — install the ingress-nginx add-on | skipped — install the ingress-nginx add-on | skipped — install the ingress-nginx add-on |
 | storage class | installed (gp3, default) | built-in default (standard-rwo) | built-in default (managed-csi) | verify a default-annotated alicloud-disk class | installed (hcloud-volumes, default) |
 | ArgoCD URL | installed (ALB ingress, ACM cert) | skipped — no managed ingress yet; port-forward + admin password | skipped — port-forward + admin password | skipped — port-forward + admin password | skipped — port-forward + admin password |

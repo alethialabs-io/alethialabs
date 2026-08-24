@@ -24,8 +24,15 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // TestMaxConfigEveryCellCarriesAVerdict is the core read-back: 11 kinds × every cloud the harness
@@ -85,42 +92,77 @@ func TestMaxConfigNoCloudIsEntirelyExcluded(t *testing.T) {
 // So: every deferred cell must name a chart, and the name must be one the add-on catalog fixture
 // actually holds — the same generated artifact the full-bar run installs from. A deferred cell whose
 // chart is not installable is a ceiling with extra words.
+//
+// ⚠️ IT MUST NOT GO VACUOUS WHEN THE DEBT IS PAID. This guard used to end with "if we found no
+// deferred cell at all, fail" — which was correct while hetzner's secrets and registry were both
+// deferred, and became a TRAP the moment they were not: #2431 and #2432 wired the last two, so a
+// table with zero debt is now the CORRECT state and that check would red the build for succeeding.
+// Deleting it instead would leave a guard that silently asserts nothing on an empty set. So the
+// rule is extracted into a predicate, the table is checked with it, and the predicate is then
+// SELF-TESTED against synthetic cells — unconditionally, whether or not the table has any debt
+// left. The guard keeps its teeth on an empty table, which is the state we intend to stay in.
 func TestMaxConfigDeferredCellsNameTheirChart(t *testing.T) {
 	catalog, err := AllCatalogAddOns()
 	if err != nil {
 		t.Fatalf("load add-on catalog fixture: %v", err)
 	}
-	found := 0
 	for _, provider := range maxConfigClouds() {
 		for _, k := range MaxConfigKinds {
 			cell := maxConfigCell(t, k, provider)
 			if cell.Carriage != DeferredInProduct {
 				continue
 			}
-			found++
-			// The Chart field leads with the catalog id, then explains itself.
-			id, _, _ := strings.Cut(cell.Chart, " ")
-			installable := false
-			for _, a := range catalog {
-				if a.ID == id {
-					installable = true
-					break
-				}
-			}
-			if !installable {
-				t.Errorf("kind %q on %s is %s and names chart %q, but %q is in NO catalog add-on — "+
-					"the whole claim of this verdict is that a SHIPPED chart backs the kind, so an unfindable one means the cell is really a %s",
-					k.Kind, provider, DeferredInProduct, cell.Chart, id, CloudCeiling)
-			}
-			if !strings.Contains(cell.Why, "DEBT") {
-				t.Errorf("kind %q on %s is %s but its Why never says DEBT — the reason a reader takes away must be "+
-					"\"we have not wired this\", not \"the cloud cannot\": %q", k.Kind, provider, DeferredInProduct, cell.Why)
+			if verr := deferredCellNamesAShippedChart(cell, catalog); verr != nil {
+				t.Errorf("kind %q on %s: %v", k.Kind, provider, verr)
 			}
 		}
 	}
-	if found == 0 {
-		t.Error("no DeferredInProduct cell in the whole table — Hetzner's secrets (Vault) and registry (Harbor) are chart-backed but unwired, so this guard has stopped guarding anything")
+
+	// The self-test. Each case is a real way a deferred cell decays into a ceiling with extra words.
+	t.Run("the rule still rejects what it exists to reject", func(t *testing.T) {
+		// Built from the repo's OWN canonical debt reason, not a hand-written stand-in: editing
+		// hetznerChartExistsNotWired to drop the word DEBT reds this, which is what keeps that
+		// currently-unused constant honest rather than decorative.
+		good := deferredCell("vault (marketplace catalog)", hetznerChartExistsNotWired)
+		if verr := deferredCellNamesAShippedChart(good, catalog); verr != nil {
+			t.Errorf("a well-formed deferred cell was rejected: %v — the rule has drifted off the shape it is meant to admit", verr)
+		}
+		for name, bad := range map[string]MaxConfigCell{
+			"names a chart no catalog add-on ships":     deferredCell("not-a-real-chart", "no cloud service — DEBT"),
+			"a Why that never says DEBT":                deferredCell("vault (marketplace catalog)", "Hetzner has no cloud service for this kind"),
+			"names a chart that is only an explanation": deferredCell(" (see the docs)", hetznerChartExistsNotWired),
+			"no chart at all":                           {Carriage: DeferredInProduct, Why: "no cloud service — DEBT"},
+		} {
+			if verr := deferredCellNamesAShippedChart(bad, catalog); verr == nil {
+				t.Errorf("a deferred cell that %s was accepted — the guard would not catch the decay it exists to catch", name)
+			}
+		}
+	})
+}
+
+// deferredCellNamesAShippedChart reports why a DeferredInProduct cell fails to justify its verdict
+// (nil = it does). Split out of the table walk so it can be self-tested on synthetic cells, which is
+// what keeps the guard honest once the table itself holds no debt.
+func deferredCellNamesAShippedChart(cell MaxConfigCell, catalog []types.AddOnInstall) error {
+	// The Chart field leads with the catalog id, then explains itself.
+	id, _, _ := strings.Cut(cell.Chart, " ")
+	installable := false
+	for _, a := range catalog {
+		if a.ID == id {
+			installable = true
+			break
+		}
 	}
+	if !installable {
+		return fmt.Errorf("is %s and names chart %q, but %q is in NO catalog add-on — "+
+			"the whole claim of this verdict is that a SHIPPED chart backs the kind, so an unfindable one means the cell is really a %s",
+			DeferredInProduct, cell.Chart, id, CloudCeiling)
+	}
+	if !strings.Contains(cell.Why, "DEBT") {
+		return fmt.Errorf("is %s but its Why never says DEBT — the reason a reader takes away must be "+
+			"\"we have not wired this\", not \"the cloud cannot\": %q", DeferredInProduct, cell.Why)
+	}
+	return nil
 }
 
 // maxConfigResourcePrefixes are the tofu resource-type prefixes each cloud's template can actually
@@ -337,4 +379,66 @@ func maxConfigInClusterApps(t *testing.T, provider string) []string {
 		apps = append(apps, cell.ArgoApp)
 	}
 	return apps
+}
+
+// TestDeferredCellsStayUnderTheDeclaredRatchet makes PROGRAMME.md's `deferred_in_product` ceiling
+// what its own table says it is: "human-set, MACHINE-ENFORCED, may only ever decrease".
+//
+// It was neither read nor enforced by anything — the two sibling ratchets are enforced by their
+// exclusion boards and the CLI gate, and this one was a number in a markdown table. So the count it
+// bounds could rise silently, which is precisely the amnesty the ratchet exists to refuse: a new
+// chart-backed-but-unwired kind would ship as DEBT with a ceiling already claiming there is none.
+//
+// The ceiling is read from PROGRAMME.md rather than duplicated here, because a copy is a thing that
+// can disagree with the document a human edits.
+func TestDeferredCellsStayUnderTheDeclaredRatchet(t *testing.T) {
+	ceiling, err := programmeRatchetCeiling("deferred_in_product")
+	if err != nil {
+		t.Fatalf("read the declared ratchet: %v", err)
+	}
+	var deferred []string
+	for _, provider := range maxConfigClouds() {
+		for _, k := range MaxConfigKinds {
+			if maxConfigCell(t, k, provider).Carriage == DeferredInProduct {
+				deferred = append(deferred, provider+"/"+k.Kind)
+			}
+		}
+	}
+	if len(deferred) > ceiling {
+		t.Errorf("%d cell(s) are %s — %v — but PROGRAMME.md declares a ceiling of %d. "+
+			"The ratchet may only ever DECREASE: either wire the kind, or the maintainer raises the ceiling deliberately "+
+			"(which is a decision, not a side effect of landing a PR).",
+			len(deferred), DeferredInProduct, deferred, ceiling)
+	}
+}
+
+// programmeRatchetCeiling reads one row out of PROGRAMME.md's "Declared ratchet ceilings" table.
+// A missing or unreadable row is an ERROR, never a skip: a ratchet nobody can find is a ratchet
+// nobody enforces, which is the state this test was written to end.
+func programmeRatchetCeiling(name string) (int, error) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return 0, fmt.Errorf("cannot locate this file")
+	}
+	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "PROGRAMME.md")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("read PROGRAMME.md: %w", err)
+	}
+	prefix := "| `" + name + "` |"
+	for _, line := range strings.Split(string(raw), "\n") {
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		cols := strings.Split(line, "|")
+		if len(cols) < 4 {
+			return 0, fmt.Errorf("ratchet row %q is malformed: %q", name, line)
+		}
+		n, cErr := strconv.Atoi(strings.TrimSpace(cols[2]))
+		if cErr != nil {
+			return 0, fmt.Errorf("ratchet %q has an unreadable ceiling %q", name, strings.TrimSpace(cols[2]))
+		}
+		return n, nil
+	}
+	return 0, fmt.Errorf("PROGRAMME.md declares no ratchet named %q — it was renamed or removed, and this guard now enforces nothing", name)
 }
