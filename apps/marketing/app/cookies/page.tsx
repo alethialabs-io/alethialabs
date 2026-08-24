@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { CURRENT_LEGAL_OPERATOR } from "@repo/legal/entity";
+import { CONSENT_COOKIE_NAME } from "@repo/legal/processing";
+import { CONSENT_LABELS } from "@repo/privacy/consent";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LegalShell } from "@/components/legal/legal-shell";
@@ -24,12 +26,13 @@ export default function CookiesPage() {
 			<h2>1. Your control</h2>
 			<p>
 				Essential storage is active because the Service cannot securely operate
-				without it. Product analytics and session replay are disabled until you
-				opt in. They have separate controls. Use{" "}
-				<strong>Privacy settings</strong> in the site footer — or, in the
-				console, the Privacy settings item in your account menu — to change or
-				withdraw a choice at any time. Reject non-essential is presented
-				alongside Accept all on first visit.
+				without it. There is exactly one optional choice — product analytics —
+				and it is off until you turn it on. Use <strong>Privacy settings</strong>{" "}
+				in the site footer — or, in the console, the Privacy settings item in
+				your account menu — to change or withdraw it at any time. Withdrawing it
+				deletes the analytics provider’s identifiers and browser storage from
+				this device. Accept and reject are presented side by side, with the same
+				prominence, on first visit.
 			</p>
 
 			<h2>2. Essential storage</h2>
@@ -45,8 +48,8 @@ export default function CookiesPage() {
 					and redirect values used to complete a secure sign-in.
 				</li>
 				<li>
-					<code>alethia_consent_v1</code>: records analytics and replay choices,
-					the policy version, and decision time for 183 days.
+					<code>{CONSENT_COOKIE_NAME}</code>: records the analytics choice, the
+					policy version, and the decision time for 183 days.
 				</li>
 				<li>
 					Interface storage: theme, selected workspace, and local interface
@@ -68,20 +71,23 @@ export default function CookiesPage() {
 
 			<h2>4. Session replay</h2>
 			<p>
-				If you separately consent, Alethia may load PostHog Session Replay to
-				reproduce interface failures. Inputs and page text are masked. Do not
-				enter secrets in free-text fields. Replay remains off when replay
-				consent is off, even if analytics is on, and is retained only for the
-				configured diagnostic period.
+				<strong>Alethia does not record your session.</strong> There is no
+				session-replay provider, no replay choice to make, and the analytics SDK
+				is configured so that recording cannot start. An earlier version of this
+				notice described an optional masked replay; that feature was removed
+				rather than switched off.
 			</p>
 
 			<h2>5. Browser settings and signals</h2>
 			<p>
 				You can delete or block storage in browser settings, but blocking
-				essential cookies can prevent sign-in. We honor the choices stored in
-				the Alethia consent control. Because there is not yet one universally
-				implemented technical interpretation of Global Privacy Control for all
-				consent purposes, use Privacy settings to make an explicit selection.
+				essential cookies can prevent sign-in. We honour the choice stored in
+				the Alethia consent control, and we honour{" "}
+				<strong>Global Privacy Control</strong>: if your browser sends the GPC
+				signal, optional analytics stays off and the stored choice cannot
+				override it — including an acceptance made before you enabled the
+				signal. GPC is treated as a standing opt-out, not as a default you can
+				click past.
 			</p>
 
 			<h2>6. Contact</h2>

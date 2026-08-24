@@ -283,6 +283,7 @@ const (
 	maxConfigDatabaseName = "appdb"
 	maxConfigCacheName    = "sessions"
 	maxConfigQueueName    = "jobs"
+	maxConfigRegistryName = "app-images"
 	maxConfigTopicName    = "events"
 )
 
@@ -650,23 +651,36 @@ var MaxConfigKinds = []MaxConfigKind{
 	},
 	{
 		Kind: "registry",
-		Doc: "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none, " +
-			"and its in-cluster substitute (Harbor) is unwired DEBT. Per-cloud gotcha: AWS emits " +
-			"provision_ecr as a plain boolean (the registry NAME is unused there).",
+		Doc: "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none " +
+			"and carries the kind in-cluster as Harbor, with a minted robot account for pulls. " +
+			"Per-cloud gotcha: AWS emits provision_ecr as a plain boolean (the registry NAME is " +
+			"unused there).",
 		Apply: func(pc *types.ProjectConfig, provider string) {
-			pc.ContainerRegistries = []types.ProjectContainerRegistryConfig{{Name: "app-images"}}
+			pc.ContainerRegistries = []types.ProjectContainerRegistryConfig{{Name: maxConfigRegistryName}}
 		},
 		Populated: func(pc *types.ProjectConfig) bool { return len(pc.ContainerRegistries) > 0 },
 		AWS:       tofuCell("aws_ecr_repository", "provision_ecr"),
 		GCP:       tofuCell("google_artifact_registry_repository", "provision_artifact_registry"),
 		Azure:     tofuCell("azurerm_container_registry", "provision_acr"),
-		// Hetzner has no registry product — but Harbor ships in the marketplace catalog, the full-bar
-		// run installs it, and unsupported-kinds.ts states the substitution itself: "the Harbor
-		// marketplace add-on covers registry in-cluster". So the kind is rejected while the capability
-		// is running in the same cluster: what is missing is the mapping (a canvas `registry` node →
-		// a Harbor project + robot account + the pull-secret binding), not a chart. Debt, not a ceiling.
-		Hetzner: deferredCell("harbor (marketplace catalog; the full-bar run already installs it)",
-			hetznerChartExistsNotWired+". Missing: a mapping from the `registry` kind to a Harbor project + robot account + pull-secret binding"),
+		// Hetzner has no registry product, so the kind is carried in-cluster as Harbor — one release
+		// per `registry` node (hetzner-services.ts), converging as its own ArgoCD Application.
+		//
+		// #2430 wired the chart and deliberately left this cell DEFERRED, because the chart was never
+		// the missing half. #2431 delivered the half that was: on every OTHER cloud a project's own
+		// registry renders NO imagePullSecret — the nodes authenticate to ECR / Artifact Registry /
+		// ACR with their own identity (provisioner/manifests_gen.go). An in-cluster Harbor has no node
+		// identity, so delivering the kind needed all three of:
+		//   1. a project-scoped PULL robot minted by a Job running INSIDE the cluster, because
+		//      Harbor's API answers only on the cluster network (argocd/harbor.go, and the runner's
+		//      `alethia harbor-bootstrap`). It verifies before it mints: Harbor shows a robot secret
+		//      once and never stores it, so re-minting per deploy would orphan a robot each run;
+		//   2. that credential on the EnsureRegistryPullSecret rail — NOT committed to the apps repo,
+		//      where ArgoCD selfHeal would revert it (the shipped instance of that is #2435);
+		//   3. a Talos `machine.registries.mirrors` entry, without which containerd refuses a
+		//      plain-HTTP cluster-local host and the pull fails looking like a bad credential.
+		Hetzner: inClusterCell("addon-registry-"+maxConfigRegistryName,
+			hetznerNoManagedService+" (Harbor, goharbor chart; pulls authenticate with a project-scoped "+
+				"robot account minted in-cluster, and containerd trusts the host via a Talos mirror)"),
 		// Alibaba: the per-repo resource is the pushable thing — alicloud_cr_ee_instance/_namespace are
 		// the shared parents, and a project used to get a PAID EE instance with nowhere to push (#1837).
 		//

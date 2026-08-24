@@ -5,6 +5,7 @@
 
 import type { CSSProperties } from "react";
 
+import { CONSENT_LABELS } from "./consent";
 import { useConsent } from "./consent-provider";
 
 interface PrivacySettingsButtonProps {
@@ -28,7 +29,7 @@ interface PrivacySettingsButtonProps {
 export function PrivacySettingsButton({
 	className,
 	style,
-	children = "Privacy settings",
+	children = CONSENT_LABELS.settings,
 }: PrivacySettingsButtonProps) {
 	const { hasDecision, openPreferences } = useConsent();
 

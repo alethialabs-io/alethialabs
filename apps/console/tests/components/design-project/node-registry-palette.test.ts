@@ -49,8 +49,9 @@ describe("NODE_REGISTRY palette metadata", () => {
 		const hetzner = addableKindsFor("hetzner");
 		expect(hetzner).not.toContain("topic");
 		expect(hetzner).not.toContain("nosql");
-		// No native container registry on Hetzner yet (Harbor add-on covers it in-cluster).
-		expect(hetzner).not.toContain("registry");
+		// Registry IS addable since #2431: it maps to an in-cluster Harbor with a minted pull
+		// robot and a Talos containerd mirror, so the kind is delivered rather than refused.
+		expect(hetzner).toContain("registry");
 		// Bucket is NATIVE on Hetzner (Object Storage via the aminueza/minio provider).
 		expect(hetzner).toContain("bucket");
 		expect(hetzner).toContain("database");
@@ -70,17 +71,13 @@ describe("NODE_REGISTRY palette metadata", () => {
 		// node-registry re-exports the extracted server-safe module, so the palette and the
 		// deploy-time guard (buildConfigSnapshot) can never diverge on what a cloud can't back.
 		expect(UNSUPPORTED_KINDS_BY_PROVIDER).toBe(SERVER_UNSUPPORTED_KINDS_BY_PROVIDER);
-		// bucket is NATIVE on Hetzner (Object Storage via the minio provider) and
-		// database/cache/queue run as in-cluster charts (hetzner-services.ts), so those stay
-		// addable. topic/nosql/registry have no path — and `secret` is blocked too: Hetzner has
-		// no cloud secret store and ProviderTfvars never emits `custom_secrets`, so before the
-		// gate the component was silently dropped while the deploy reported SUCCESS.
-		expect(unsupportedKindsFor("hetzner")).toEqual([
-			"topic",
-			"nosql",
-			"registry",
-			"secret",
-		]);
+		// bucket is NATIVE on Hetzner (Object Storage via the minio provider); database, cache,
+		// queue and — since #2431 — registry all run as in-cluster charts (hetzner-services.ts),
+		// so those stay addable. topic/nosql have no path, and `secret` is blocked too: Hetzner
+		// has no cloud secret store and ProviderTfvars never emits `custom_secrets`, so before
+		// the gate the component was silently dropped while the deploy reported SUCCESS.
+		// (#2432 tracks delivering `secret` as an in-cluster Vault.)
+		expect(unsupportedKindsFor("hetzner")).toEqual(["topic", "nosql", "secret"]);
 		// A cloud with no blocked kinds (and an unknown/out-of-design slug) → empty.
 		expect(unsupportedKindsFor("aws")).toEqual([]);
 		expect(unsupportedKindsFor("digitalocean")).toEqual([]);

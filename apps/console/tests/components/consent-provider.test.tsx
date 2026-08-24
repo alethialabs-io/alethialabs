@@ -45,7 +45,7 @@ describe("ConsentProvider", () => {
 	// The floating launcher was removed outright — it sat on top of the sidebar
 	// profile in the console and could not be placed anywhere that suited both apps.
 	it("never renders a floating launcher, in either app", async () => {
-		writeConsent({ analytics: false, replay: false });
+		writeConsent({ analytics: false });
 
 		render(
 			<ConsentProvider>
@@ -65,7 +65,7 @@ describe("ConsentProvider", () => {
 
 	// Removing the launcher must not remove the ability to withdraw consent.
 	it("reopens preferences from an in-page control once a decision exists", async () => {
-		writeConsent({ analytics: false, replay: false });
+		writeConsent({ analytics: false });
 
 		render(
 			<ConsentProvider>
@@ -79,6 +79,48 @@ describe("ConsentProvider", () => {
 		expect(
 			await screen.findByRole("dialog", { name: "Choose what Alethia may collect." }),
 		).toBeInTheDocument();
+	});
+
+	// Consent v2 offers ONE optional purpose, so the notice must not describe or offer a second.
+	// "Accept all" was the v1 label; with one choice it overstates what is being agreed to.
+	it("offers exactly one optional choice, and never mentions replay", async () => {
+		render(
+			<ConsentProvider>
+				<div>Product</div>
+			</ConsentProvider>,
+		);
+
+		const notice = await screen.findByRole("region", { name: "Privacy choices" });
+		expect(notice.textContent ?? "").not.toMatch(/replay/i);
+		expect(
+			screen.getByRole("button", { name: "Accept analytics" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Reject analytics" }),
+		).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "Customize" }));
+		const dialog = await screen.findByRole("dialog", {
+			name: "Choose what Alethia may collect.",
+		});
+		expect(dialog.textContent ?? "").not.toMatch(/replay/i);
+		// Essential storage (disabled) + product analytics. Nothing else.
+		expect(dialog.querySelectorAll("input[type=checkbox]")).toHaveLength(2);
+	});
+
+	// Accept and reject must be equally visible: same component, same size, same emphasis. A reject
+	// that is smaller, greyer, or pushed below the fold is a dark pattern.
+	it("renders accept and reject with identical styling", async () => {
+		render(
+			<ConsentProvider>
+				<div>Product</div>
+			</ConsentProvider>,
+		);
+		await screen.findByRole("region", { name: "Privacy choices" });
+
+		const accept = screen.getByRole("button", { name: "Accept analytics" });
+		const reject = screen.getByRole("button", { name: "Reject analytics" });
+		expect(accept.className).toBe(reject.className);
 	});
 
 	it("offers no settings control before a decision has been made", async () => {

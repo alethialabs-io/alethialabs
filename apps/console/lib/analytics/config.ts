@@ -11,12 +11,14 @@ import { env } from "next-runtime-env";
 export interface AnalyticsConfig {
 	/** Umami tracker (product analytics + funnels + Core Web Vitals). Self-host / OSS option. */
 	umami: { host: string; websiteId: string } | null;
-	/** OpenReplay session replay (watch where users get stuck). Self-host / OSS option. */
-	openreplay: { projectKey: string; ingest?: string } | null;
 	/**
-	 * PostHog — the all-in-one suite (product analytics + session replay + web-vitals/performance +
-	 * error tracking + funnels). What alethialabs.io runs in prod; a single project key, no infra.
-	 * `host` defaults to PostHog Cloud EU.
+	 * PostHog — the all-in-one suite (product analytics + web-vitals/performance + error tracking +
+	 * funnels). What alethialabs.io runs in prod; a single project key, no infra. `host` defaults to
+	 * PostHog Cloud EU.
+	 *
+	 * Session replay is NOT part of it. Consent v2 offers one optional choice and replay is not it,
+	 * so `disable_session_recording` is pinned on in AnalyticsProvider and the OpenReplay seam that
+	 * used to sit beside this one is gone (#2371).
 	 */
 	posthog: { key: string; host: string; release?: string } | null;
 }
@@ -25,8 +27,6 @@ export interface AnalyticsConfig {
 export function analyticsConfig(): AnalyticsConfig {
 	const umamiHost = env("NEXT_PUBLIC_UMAMI_HOST");
 	const umamiWebsiteId = env("NEXT_PUBLIC_UMAMI_WEBSITE_ID");
-	const orProjectKey = env("NEXT_PUBLIC_OPENREPLAY_PROJECT_KEY");
-	const orIngest = env("NEXT_PUBLIC_OPENREPLAY_INGEST");
 	const phKey = env("NEXT_PUBLIC_POSTHOG_KEY");
 	const phHost = env("NEXT_PUBLIC_POSTHOG_HOST");
 
@@ -35,7 +35,6 @@ export function analyticsConfig(): AnalyticsConfig {
 			umamiHost && umamiWebsiteId
 				? { host: umamiHost.replace(/\/$/, ""), websiteId: umamiWebsiteId }
 				: null,
-		openreplay: orProjectKey ? { projectKey: orProjectKey, ingest: orIngest || undefined } : null,
 		posthog: phKey
 			? {
 					key: phKey,

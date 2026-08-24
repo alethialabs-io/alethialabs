@@ -43,6 +43,22 @@ locals {
         }
       }
       certSANs = local.cert_sans
+      # Trust the in-cluster registries over plain HTTP. containerd defaults to HTTPS for every
+      # non-localhost host, so a Harbor exposed as a ClusterIP with TLS off is unreachable to the
+      # kubelet until it is listed here — the pull fails looking like a credential problem.
+      #
+      # A `mirrors` entry (not `config.tls`) is what allows the http:// scheme; the endpoint is the
+      # same host, so this grants plain-HTTP access to that host and nothing else.
+      #
+      # This does NOT replace nodes: hcloud_server carries ignore_changes = [user_data, image], and
+      # talos_machine_configuration_apply pushes the change over the Talos API.
+      registries = length(var.incluster_registry_hosts) == 0 ? null : {
+        mirrors = {
+          for host in var.incluster_registry_hosts : host => {
+            endpoints = ["http://${host}"]
+          }
+        }
+      }
     }
   }
 

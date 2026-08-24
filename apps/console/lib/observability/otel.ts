@@ -6,7 +6,7 @@
 // it exports the SPANS + METRICS that make the enqueue→claim→…→callback trace and
 // the fleet/provision metric set visible to a self-hosted collector.
 //
-// It is STRICTLY endpoint-gated (exactly like the Umami / OpenReplay analytics
+// It is STRICTLY endpoint-gated (exactly like the Umami / PostHog analytics
 // gating): when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset we never register a provider,
 // so `trace.getTracer()` / `metrics.getMeter()` keep returning the API's built-in
 // no-op — spans/metrics compile to nothing, cost nothing, and drop nothing as an

@@ -65,9 +65,18 @@ export const contactLeadSchema = z.object({
 	companySize: z.enum(SIZES, { error: "Select a company size." }),
 	interest: z.enum(INTERESTS, { error: "Select a product interest." }),
 	message: z.string().trim().max(5000).optional(),
+	/**
+	 * Acknowledgement that the enquiry is used ONLY to reply — not consent to marketing.
+	 *
+	 * The field kept its name so nothing downstream had to change, but its meaning did: it used to
+	 * back "I agree to receive communications … withdraw via the unsubscribe link", which promised a
+	 * mailing list that does not exist and a withdrawal route that was never built (#2371). There is
+	 * no marketing basis here to consent to; the lawful basis for replying to an enquiry somebody
+	 * sent is legitimate interests, and the acknowledgement is what makes that legible.
+	 */
 	consent: z
 		.boolean()
-		.refine((v) => v === true, "Please accept to continue."),
+		.refine((v) => v === true, "Please acknowledge to continue."),
 	honeypot: z.string().optional(),
 });
 

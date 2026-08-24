@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
-	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/tfaddr"
 	tfjson "github.com/hashicorp/terraform-json"
 )
 
@@ -97,7 +97,7 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex) verdict {
 	// Fail-closed on configuration: with no config section, or an address that does not
 	// resolve to one, every attribute counts as declared and the config-aware tier never
 	// fires. Missing evidence must never widen what we dismiss.
-	declared, addrFound := cfg[configAddress(rc.Address)]
+	declared, addrFound := cfg[tfaddr.ConfigAddress(rc.Address)]
 	configKnown := cfg != nil && addrFound
 
 	// Report the WEAKEST justification used, not the strongest: a resource dismissed
@@ -354,45 +354,4 @@ func indexConfig(plan *tfjson.Plan) configIndex {
 	}
 	walk(plan.Config.RootModule, "")
 	return out
-}
-
-// configAddress strips EVERY instance key from a resource address so it matches a
-// configuration address, which is never instance-keyed:
-//
-//	module.vnet[0].azurerm_subnet.private -> module.vnet.azurerm_subnet.private
-//	aws_instance.x["a.b"]                 -> aws_instance.x
-//
-// Deliberately NOT the first-bracket truncation used by verify.baseAddress, which
-// yields "module.vnet" here and therefore never matches a count- or for_each-ed module
-// — and every module in infra/templates uses count. Bracket-depth and quote aware, so a
-// for_each key containing '.', '[' or ']' is handled rather than corrupting the address.
-func configAddress(addr string) string {
-	var sb strings.Builder
-	depth, inQuote, escaped := 0, false, false
-	for i := 0; i < len(addr); i++ {
-		c := addr[i]
-		if depth == 0 {
-			if c == '[' {
-				depth++
-				continue
-			}
-			sb.WriteByte(c)
-			continue
-		}
-		switch {
-		case escaped:
-			escaped = false
-		case c == '\\':
-			escaped = true
-		case c == '"':
-			inQuote = !inQuote
-		case inQuote:
-			// A bracket inside a quoted for_each key is literal, not structural.
-		case c == '[':
-			depth++
-		case c == ']':
-			depth--
-		}
-	}
-	return sb.String()
 }

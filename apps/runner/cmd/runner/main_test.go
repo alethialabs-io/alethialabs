@@ -4,6 +4,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"reflect"
 	"testing"
 )
@@ -83,5 +85,63 @@ func TestRunnerProviders(t *testing.T) {
 				t.Errorf("runnerProviders(%q) = %#v, want %#v", c.raw, got, c.want)
 			}
 		})
+	}
+}
+
+// The subcommand table is the only thing standing between a one-shot Job and the normal agent boot.
+// A renamed or dropped entry compiles cleanly, and the Job would silently try to register as a
+// runner instead of doing its work — with an env that carries no runner token, so it would fail
+// looking like a credential problem rather than a routing one.
+func TestSubcommandTableCoversEveryMode(t *testing.T) {
+	want := []string{
+		"kube-token", "db-token", "db-authproxy", "db-bootstrap",
+		"harbor-bootstrap", "registry-token", "helm-repo-token",
+	}
+	for _, name := range want {
+		if subcommands[name] == nil {
+			t.Errorf("subcommand %q is not dispatched — its Job would boot the agent instead", name)
+		}
+	}
+	if len(subcommands) != len(want) {
+		t.Errorf("the table has %d entries, this test knows %d — add the new one here so it stays covered",
+			len(subcommands), len(want))
+	}
+}
+
+func TestDispatchSubcommandFallsThroughToTheNormalBoot(t *testing.T) {
+	for _, args := range [][]string{nil, {}, {"--verbose"}, {"not-a-subcommand"}, {"kube-tokens"}} {
+		handled, err := dispatchSubcommand(context.Background(), args)
+		if handled {
+			t.Errorf("dispatchSubcommand(%v) claimed the args — the runner would never boot", args)
+		}
+		if err != nil {
+			t.Errorf("dispatchSubcommand(%v) errored on a fall-through: %v", args, err)
+		}
+	}
+}
+
+func TestDispatchSubcommandRunsTheNamedModeAndReportsItsError(t *testing.T) {
+	prev := subcommands
+	t.Cleanup(func() { subcommands = prev })
+
+	var gotArgs []string
+	subcommands = map[string]func(context.Context, []string) error{
+		"ok":   func(_ context.Context, a []string) error { gotArgs = a; return nil },
+		"fail": func(context.Context, []string) error { return errors.New("boom") },
+	}
+
+	handled, err := dispatchSubcommand(context.Background(), []string{"ok", "--flag", "v"})
+	if !handled || err != nil {
+		t.Fatalf("handled=%v err=%v, want handled with no error", handled, err)
+	}
+	// The subcommand's own args are passed through, with its name stripped.
+	if len(gotArgs) != 2 || gotArgs[0] != "--flag" || gotArgs[1] != "v" {
+		t.Errorf("passed %v, want [--flag v]", gotArgs)
+	}
+
+	// A failure is RETURNED, not exited on, so the caller decides — and so this is testable at all.
+	handled, err = dispatchSubcommand(context.Background(), []string{"fail"})
+	if !handled || err == nil {
+		t.Fatalf("handled=%v err=%v, want handled with an error", handled, err)
 	}
 }

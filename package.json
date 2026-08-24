@@ -32,6 +32,7 @@
     "check:e2e-spend-guard": "node scripts/check-e2e-spend-guard.mjs",
     "check:open-core": "node scripts/check-open-core-boundary.mjs",
     "legal:check-ip-activation": "node scripts/legal/activate-company-ip.mjs --check-markers",
+    "legal:check-cla-gate": "node scripts/legal/cla-check-selftest.mjs",
     "legal:activate-ip": "node scripts/legal/activate-company-ip.mjs",
     "check:programme": "node scripts/programme-rollup.mjs",
     "gen:programme": "node scripts/programme-rollup.mjs --write",

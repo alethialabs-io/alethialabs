@@ -111,8 +111,8 @@ func TestHetznerInClusterCellsAreCoveredBySeededSpecs(t *testing.T) {
 				k.Kind, cell.ArgoApp, sortedKeys(rendered), hetznerDataServicesRegenerate) //nolint:gocritic // sortedKeys lives in argocd_assert_test.go
 		}
 	}
-	if checked != 3 {
-		t.Errorf("checked %d CarriedInCluster cells on hetzner, want 3 (database/cache/queue) — the guard has drifted off the kinds it protects", checked)
+	if checked != 4 {
+		t.Errorf("checked %d CarriedInCluster cells on hetzner, want 4 (database/cache/queue/registry) — the guard has drifted off the kinds it protects", checked)
 	}
 }
 

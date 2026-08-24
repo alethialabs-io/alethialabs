@@ -590,3 +590,31 @@ carried_in_cluster:
     source: packages/core/argocd/infra_facts.go
     reason: Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the GKE Ingress from a Kubernetes Secret.
     issue: "#1858"
+
+  # ── The registry switches on Hetzner (#2431) ──────────────────────────────────────
+  # Hetzner sells no container registry, so its `registry` kind is an in-cluster Harbor rather than
+  # a tofu resource. The carrier rule structurally cannot see these two: it wants a tfvar declared in
+  # the template and read by a resource argument, and Harbor is configured over its own API by the
+  # bootstrap Job (`alethia harbor-bootstrap`), which writes no tfvar at all.
+  #
+  # NOT an exclusion. Harbor honours BOTH natively, and saying otherwise would print "this cloud
+  # cannot" under an offer the product does deliver:
+  #   · immutable_tags         — a project immutable-tag rule over ** / **, reconciled two-way so
+  #                              turning the switch OFF actually removes it;
+  #   · vulnerability_scanning — the project's `auto_scan` metadata, served by the Trivy the chart
+  #                              already installs (hetznerRegistryValues sizes its volume), and
+  #                              re-asserted on an existing project so a later toggle takes effect.
+  - offer: registry:immutable_tags
+    cloud: hetzner
+    by: harbor
+    predicate: harborCarriedRegistryOffers
+    source: packages/core/argocd/harbor.go
+    reason: Harbor enforces tag immutability with a project immutable-tag rule, applied over its API by the in-cluster bootstrap Job — there is no tofu resource on Hetzner to carry a tfvar.
+    issue: "#2431"
+  - offer: registry:vulnerability_scanning
+    cloud: hetzner
+    by: harbor
+    predicate: harborCarriedRegistryOffers
+    source: packages/core/argocd/harbor.go
+    reason: Harbor scans on push with the Trivy the chart installs, enabled through the project's auto_scan metadata by the in-cluster bootstrap Job — there is no tofu resource on Hetzner to carry a tfvar.
+    issue: "#2431"

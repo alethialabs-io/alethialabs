@@ -1617,7 +1617,14 @@ describe("planProject", () => {
 		);
 	});
 
-	it("fails closed on a Hetzner container registry, naming the Harbor alternative", async () => {
+	// #2431 turned this around: a Hetzner registry is DELIVERED as an in-cluster Harbor (a minted
+	// pull robot plus a Talos containerd mirror), so the unsupported-kind gate must no longer fire
+	// for it. The gate still fires for topic/nosql/secret — asserted above and below.
+	//
+	// This asserts the GATE, not a whole successful plan: the fixture is deliberately minimal
+	// (identity + one registry) because it used to fail fast at the gate, and completing it into a
+	// full project would be testing the planner rather than the thing that changed.
+	it("no longer refuses a Hetzner container registry — it is delivered in-cluster", async () => {
 		setupDb({
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
@@ -1629,8 +1636,8 @@ describe("planProject", () => {
 				]),
 			),
 		});
-		await expect(planProject("p1")).rejects.toThrow(
-			/Component "apps" \(registry\).*Harbor/,
+		await expect(planProject("p1")).rejects.not.toThrow(
+			/Component "apps" \(registry\) can't be provisioned on Hetzner/,
 		);
 	});
 

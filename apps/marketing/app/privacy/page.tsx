@@ -22,8 +22,7 @@ export default function PrivacyPage() {
 				(“Alethia Labs”, “we”, “us”), processes personal data for
 				alethialabs.io, the hosted Alethia control plane, the alethia CLI, and
 				support services (the “Service”). We are the controller for account,
-				website, security, and support data. If paid service is later activated,
-				this notice will be updated before payment processing begins. When
+				website, security, billing, and support data. When
 				Alethia processes infrastructure data solely on a business customer’s
 				instructions, that customer is the controller and we are its processor
 				under our <Link href="/legal/dpa">Data Processing Addendum</Link>.
@@ -51,17 +50,39 @@ export default function PrivacyPage() {
 				retain only federation configuration such as role, tenant, project,
 				audience, and issuer identifiers.{" "}
 				<strong>Alethia does not store static cloud access keys.</strong> Cloud
-				access uses short-lived, federated credentials. The public Service does
-				not currently collect payment-card details.
+				access uses short-lived, federated credentials.
+			</p>
+			<h3>Billing and payment data</h3>
+			<p>
+				Paid plans are billed through <strong>Stripe</strong>, which acts as our
+				payment processor. When you subscribe we process your billing contact
+				details, organization, plan, invoice, transaction and tax metadata.{" "}
+				<strong>
+					Card details are entered directly into Stripe and are never received
+					or stored by Alethia
+				</strong>{" "}
+				— the payment fields are Stripe-hosted, so card numbers do not pass
+				through our systems. We retain invoices and transaction records for the
+				period statutory accounting rules require. See{" "}
+				<Link href="/legal/subprocessors">Subprocessors</Link> for Stripe’s role
+				and location.
 			</p>
 			<h3>Device, security, and optional telemetry data</h3>
 			<p>
 				We process IP address, user agent, request timing, security events, and
 				diagnostic logs needed to deliver and protect the Service. Product
-				analytics, Web Vitals, client-error diagnostics, and masked session
-				replay are optional. They are disabled by default and controlled through{" "}
-				<strong>Privacy settings</strong>; replay has its own separate choice.
-				Analytics uses internal account and organization identifiers rather than
+				analytics, Web Vitals, and client-error diagnostics are optional. They
+				are disabled by default and controlled through{" "}
+				<strong>Privacy settings</strong> as a single choice.{" "}
+				<strong>
+					We do not record sessions: there is no session replay, and no choice
+					that could enable one.
+				</strong>{" "}
+				If your browser sends <strong>Global Privacy Control</strong>, we honour
+				it as a standing opt-out and optional analytics stays off — including if
+				an earlier acceptance is stored on your device. Withdrawing the choice
+				deletes the analytics provider’s identifiers and browser storage from
+				your device. Analytics uses internal account and organization identifiers rather than
 				names or email addresses. Prompts and model outputs are not sent to
 				product analytics. Separately, proportionate server and migration errors
 				and structured operational logs may be sent to PostHog to secure,
@@ -88,9 +109,8 @@ export default function PrivacyPage() {
 				</li>
 				<li>
 					<strong>Consent:</strong> optional browser product analytics, Web
-					Vitals, client-error diagnostics, separately controlled session
-					replay, and any marketing communication that requires consent. Consent
-					can be withdrawn at any time through Privacy settings.
+					Vitals, and client-error diagnostics — one choice, off until you make
+					it, and withdrawable at any time through Privacy settings.
 				</li>
 			</ul>
 
@@ -136,7 +156,7 @@ export default function PrivacyPage() {
 					law.
 				</li>
 				<li>
-					PostHog product analytics, replay, errors, and logs: for the shortest
+					PostHog product analytics, errors, and logs: for the shortest
 					period needed for the stated analysis, diagnosis, security, or
 					reliability purpose, subject to the configured provider retention and
 					quarterly review. Current configured periods are available from

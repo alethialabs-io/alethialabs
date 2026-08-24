@@ -219,12 +219,11 @@
 				"aws",
 				"gcp",
 				"azure",
-				"alibaba"
+				"alibaba",
+				"hetzner"
 			],
 			"unavailableOn": {},
-			"notOfferedOn": [
-				"hetzner"
-			]
+			"notOfferedOn": []
 		},
 		{
 			"kind": "registry",
@@ -236,12 +235,11 @@
 				"aws",
 				"gcp",
 				"azure",
-				"alibaba"
+				"alibaba",
+				"hetzner"
 			],
 			"unavailableOn": {},
-			"notOfferedOn": [
-				"hetzner"
-			]
+			"notOfferedOn": []
 		},
 		{
 			"kind": "secret",
