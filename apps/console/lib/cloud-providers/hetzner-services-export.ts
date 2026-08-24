@@ -12,7 +12,7 @@
 //   - tests/lib/cloud-providers/hetzner-data-services-export.test.ts, which reds CI if that fixture
 //     drifts from this module.
 //
-// WHY THIS EXISTS AT ALL. Hetzner's `database`/`cache`/`queue` are `CarriedInCluster` in the
+// WHY THIS EXISTS AT ALL. Hetzner's `database`/`cache`/`queue`/`registry` are `CarriedInCluster` in the
 // max-config table: nothing lands in tofu state, and the proof is the named ArgoCD Application
 // reaching Healthy+Synced. But the runner only renders an Application for an add-on that RIDES THE
 // SNAPSHOT, and the Go harness seeds add-ons from the marketplace catalog alone — which never holds
@@ -51,25 +51,22 @@ export const E2E_MAX_CONFIG_HETZNER_COMPONENTS = {
 	],
 	caches: [{ name: "sessions", num_cache_nodes: 2 }],
 	queues: [{ name: "jobs" }],
+	registries: [{ name: "app-images" }],
 } as const;
 
 /**
  * Components the mapper CHARTS but the product does not yet OFFER on Hetzner.
  *
- * `registry` is the only one: #2397 wired its Harbor release, but the kind is still refused at
- * deploy (unsupported-kinds.ts) because an in-cluster Harbor has no pull credentials yet. So the
- * max-config surface seeds no registry — `MaxConfigProjectConfig("hetzner")` only applies OFFERED
- * kinds — and these specs deliberately do NOT go in `components`, which is read back against that
- * surface and would fail, correctly.
+ * EMPTY since #2431 gave the in-cluster Harbor its pull credentials — `registry` moved into the
+ * seeded surface above, where the max-config read-back guard covers it.
  *
- * They are exported anyway, and separately, for one reason: the chart-render gate
- * (apps/console/scripts/check-addon-charts-render.mjs) must see them. Harbor's value mapping is the
- * NEWEST and least-exercised in this file, and #2058 is what happens when nothing asks the chart
- * whether the values it was handed actually render. A chart that renders nothing produces no
- * manifest, and ArgoCD reports `sync=Unknown` rather than OutOfSync.
+ * The seam is kept rather than deleted because it is the honest home for the next kind that reaches
+ * "chart wired, delivery not". `secret` → Vault (#2432) is exactly that shape today, and the
+ * alternative to this list is a chart whose values nothing ever renders — which is the #2058 defect
+ * class the render gate exists to catch.
  */
 export const HETZNER_CHARTED_NOT_OFFERED = {
-	registries: [{ name: "app-images" }],
+	registries: [] as { name: string }[],
 } as const;
 
 /** The generated fixture's shape: the components that were mapped, and what they mapped to. */
@@ -79,6 +76,7 @@ export interface HetznerDataServiceFixture {
 		databases: { name: string; engine_family: string; engine_version: string }[];
 		caches: { name: string; num_cache_nodes: number }[];
 		queues: { name: string }[];
+		registries: { name: string }[];
 	};
 	/** The install specs a Hetzner deploy of those components would carry. */
 	addons: AddOnInstallSpec[];
@@ -109,14 +107,15 @@ export function exportHetznerDataServiceFixture(): HetznerDataServiceFixture {
 			num_cache_nodes: c.num_cache_nodes,
 		})),
 		queues: E2E_MAX_CONFIG_HETZNER_COMPONENTS.queues.map((q) => ({ name: q.name })),
+		registries: E2E_MAX_CONFIG_HETZNER_COMPONENTS.registries.map((r) => ({
+			name: r.name,
+		})),
 	};
 	return {
 		components,
 		addons: hetznerDataServicesToAddOns(components),
 		chartedNotOffered: hetznerDataServicesToAddOns({
-			registries: HETZNER_CHARTED_NOT_OFFERED.registries.map((r) => ({
-				name: r.name,
-			})),
+			registries: [...HETZNER_CHARTED_NOT_OFFERED.registries],
 		}),
 	};
 }

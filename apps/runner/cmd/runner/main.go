@@ -16,77 +16,61 @@ import (
 	"github.com/alethialabs-io/alethialabs/apps/runner/internal/version"
 )
 
+// subcommands are the one-shot and sidecar modes the runner binary also serves, dispatched BEFORE
+// the normal boot.
+//
+// Every one of them must be handled before `ALETHIA_RUNNER_EXEC_STAGE` and before bootstrap
+// registration: kube-token is re-entered from inside the sandbox child (where that env var is set,
+// so falling through would recurse); the token refreshers loop until SIGTERM; and the one-shot Jobs
+// run with an allowlisted env that carries no runner token to register with.
+//
+// A TABLE rather than a chain of `if os.Args[1] == …` blocks, because a chain of eight
+// near-identical branches inside main() is untestable — a subcommand renamed or dropped compiles
+// cleanly and is only discovered when a Job silently boots the agent instead of doing its work.
+var subcommands = map[string]func(context.Context, []string) error{
+	// Kubernetes exec-credential-plugin: kubectl/helm invoke `<runner> kube-token …` from the
+	// kubeconfig the runner writes, to mint a short-lived cluster token in-process, CLI-free.
+	"kube-token": agent.RunKubeToken,
+	// Keyless DB-auth refresher (#722): a sidecar minting a short-lived DB token from the pod's
+	// Workload Identity onto a shared file the local proxy reads. Long-running.
+	"db-token": agent.RunDBToken,
+	// Keyless DB-auth PROXY (#722, epic #1500): a sidecar serving a password-free endpoint on
+	// 127.0.0.1, minting per upstream connection so nothing is ever at rest. Long-running.
+	"db-authproxy": agent.RunDBAuthProxy,
+	// Keyless DB least-privilege bootstrap (#722): a one-shot Job creating the scoped app role, the
+	// alternative to handing the app superuser/AAD-admin.
+	"db-bootstrap": agent.RunDBBootstrap,
+	// In-cluster Harbor bootstrap (#2431): a one-shot Job minting the project-scoped PULL robot for
+	// a Hetzner `registry` node and writing the dockerconfigjson. It runs IN the cluster because
+	// Harbor's API answers only on the cluster network — which also keeps the credential out of the
+	// runner process entirely.
+	"harbor-bootstrap": agent.RunHarborBootstrap,
+	// Keyless cross-account registry-pull refresher: a standalone in-cluster Deployment keeping the
+	// <slug>-pull dockerconfigjson fresh from the pod's Workload Identity. Long-running.
+	"registry-token": agent.RunRegistryToken,
+	// The helm_registry analogue of registry-token, for OCI chart repos (#1185). Long-running.
+	"helm-repo-token": agent.RunHelmRepoToken,
+}
+
+// dispatchSubcommand runs the subcommand named by args[0], if there is one.
+//
+// Returns handled=false when args name no subcommand, so main() falls through to the normal boot.
+// The error is returned rather than exited on, so the decision is testable.
+func dispatchSubcommand(ctx context.Context, args []string) (handled bool, err error) {
+	if len(args) == 0 {
+		return false, nil
+	}
+	run, ok := subcommands[args[0]]
+	if !ok {
+		return false, nil
+	}
+	return true, run(ctx, args[1:])
+}
+
 func main() {
-	// Kubernetes exec-credential-plugin mode: kubectl/helm invoke `<runner> kube-token …`
-	// (from the kubeconfig the runner writes) to mint a short-lived cluster token in-process,
-	// CLI-free. This MUST be checked before the ALETHIA_RUNNER_EXEC_STAGE branch below —
-	// inside the sandbox child that env var is set, and re-entering the stage runner here
-	// would recurse. One-shot: mint, print the ExecCredential, exit.
-	if len(os.Args) > 1 && os.Args[1] == "kube-token" {
-		if err := agent.RunKubeToken(context.Background(), os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "kube-token error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Keyless DB-auth refresher mode (#722): as a sidecar next to a workload bound to a
-	// cloud-native-auth database, mint a short-lived DB token from the pod's Workload Identity
-	// and keep it fresh on a shared file the local proxy reads. Long-running (loops until SIGTERM),
-	// so — like kube-token — it must be handled before the normal runner boot.
-	if len(os.Args) > 1 && os.Args[1] == "db-token" {
-		if err := agent.RunDBToken(context.Background(), os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "db-token error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Keyless DB-auth PROXY mode (#722, epic #1500): as a sidecar next to a workload bound to a
-	// cloud-native-auth database, serve an ordinary password-free endpoint on 127.0.0.1 and, per NEW
-	// upstream connection, mint a short-lived DB token from the pod's Workload Identity, authenticate
-	// upstream over TLS with it as a cleartext password, and splice. Replaces the pgbouncer sidecar
-	// (whose PGB_* env vars no image ever consumed) and needs no token file at all — nothing is ever
-	// at rest. Long-running (until SIGTERM), so handled before the normal runner boot.
-	if len(os.Args) > 1 && os.Args[1] == "db-authproxy" {
-		if err := agent.RunDBAuthProxy(context.Background(), os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "db-authproxy error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Keyless DB least-privilege bootstrap (#722): a one-shot Job runs this as the DB admin to create
-	// the scoped app role (the alternative to handing the app superuser/AAD-admin). Emits the SQL.
-	if len(os.Args) > 1 && os.Args[1] == "db-bootstrap" {
-		if err := agent.RunDBBootstrap(context.Background(), os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "db-bootstrap error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Keyless cross-account registry-pull refresher mode (PR B): as a standalone in-cluster Deployment,
-	// mint a short-lived registry pull token from the pod's Workload Identity (assuming the target
-	// account's role / using a target-granted SA / exchanging an AAD token) and keep the <slug>-pull
-	// dockerconfigjson Secret fresh. Long-running (loops until SIGTERM), so — like db-token — handled
-	// before the normal runner boot.
-	if len(os.Args) > 1 && os.Args[1] == "registry-token" {
-		if err := agent.RunRegistryToken(context.Background(), os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "registry-token error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Keyless cross-account OCI Helm chart-repo refresher mode (#1185): the helm_registry analogue of
-	// registry-token — as a standalone in-cluster Deployment, mint a short-lived ECR token from the pod's
-	// Workload Identity (assuming the target-account role, or reading ECR Public under the cluster's own
-	// identity) and keep the repo-helm-<hash> ArgoCD repo-cred Secret fresh. Long-running (loops until
-	// SIGTERM), so handled before the normal runner boot.
-	if len(os.Args) > 1 && os.Args[1] == "helm-repo-token" {
-		if err := agent.RunHelmRepoToken(context.Background(), os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "helm-repo-token error: %v\n", err)
+	if handled, err := dispatchSubcommand(context.Background(), os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s error: %v\n", os.Args[1], err)
 			os.Exit(1)
 		}
 		return

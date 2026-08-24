@@ -17,6 +17,11 @@
 			{
 				"name": "jobs"
 			}
+		],
+		"registries": [
+			{
+				"name": "app-images"
+			}
 		]
 	},
 	"addons": [
@@ -77,25 +82,6 @@
 			"syncWave": 1
 		},
 		{
-			"id": "queue-jobs",
-			"mode": "managed",
-			"chartRepo": "https://cloudpirates-io.github.io/helm-charts",
-			"chart": "rabbitmq",
-			"version": "0.21.9",
-			"namespace": "queues",
-			"values": {
-				"replicaCount": 1,
-				"persistence": {
-					"enabled": true,
-					"size": "8Gi",
-					"storageClass": "hcloud-volumes"
-				}
-			},
-			"syncWave": 1
-		}
-	],
-	"chartedNotOffered": [
-		{
 			"id": "registry-app-images",
 			"mode": "managed",
 			"chartRepo": "https://helm.goharbor.io",
@@ -103,6 +89,8 @@
 			"version": "1.15.1",
 			"namespace": "registries",
 			"values": {
+				"existingSecretAdminPassword": "harbor-app-images-admin",
+				"existingSecretAdminPasswordKey": "HARBOR_ADMIN_PASSWORD",
 				"expose": {
 					"type": "clusterIP",
 					"tls": {
@@ -141,6 +129,24 @@
 				}
 			},
 			"syncWave": 2
+		},
+		{
+			"id": "queue-jobs",
+			"mode": "managed",
+			"chartRepo": "https://cloudpirates-io.github.io/helm-charts",
+			"chart": "rabbitmq",
+			"version": "0.21.9",
+			"namespace": "queues",
+			"values": {
+				"replicaCount": 1,
+				"persistence": {
+					"enabled": true,
+					"size": "8Gi",
+					"storageClass": "hcloud-volumes"
+				}
+			},
+			"syncWave": 1
 		}
-	]
+	],
+	"chartedNotOffered": []
 }

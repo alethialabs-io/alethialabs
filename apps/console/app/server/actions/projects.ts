@@ -162,8 +162,6 @@ function unsupportedKindGateError(
 ): Error {
 	const cloud = getProvider(provider).name;
 	const hint: Partial<Record<NodeKind, string>> = {
-		registry:
-			"container registries have no native path — its in-cluster Harbor chart is wired but has no pull credentials yet (#2397), so deploy the Harbor marketplace add-on and reference it yourself, or move the stack to a cloud with a managed registry",
 		bucket:
 			"object storage has no native path — deploy the MinIO marketplace add-on for in-cluster S3-compatible storage, or move the stack to a cloud with managed object storage",
 		topic:
@@ -1032,11 +1030,9 @@ async function buildConfigSnapshot(
 					// registry product, so unlike ECR / Artifact Registry / ACR the kind reaches the
 					// cluster as an ArgoCD Application rather than as tofu state (#2397).
 					//
-					// DORMANT TODAY, deliberately. `registry` is still in
-					// UNSUPPORTED_KINDS_BY_PROVIDER.hetzner, so unsupportedKindGateError throws
-					// above before this line ever sees one — an in-cluster Harbor has no pull
-					// credentials yet. The mapping is wired and render-checked now so that opening
-					// the gate is a one-line change in ONE file rather than a second feature.
+					// LIVE since #2431: the runner seeds Harbor's admin password, mints a
+					// project-scoped pull robot from an in-cluster Job, and the Talos containerd
+					// mirror lets the kubelet reach the registry over the cluster network.
 					registries: containerRegistries,
 				}),
 			);
