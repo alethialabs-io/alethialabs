@@ -660,6 +660,16 @@ jobs:
         run: bash scripts/go-coverage.sh --self-test
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
+      # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
+      # by whoever opened the pull request. It is also DORMANT until `pnpm legal:activate-ip` writes
+      # cla/ACTIVE, so nothing exercises it until the day it starts gating every external
+      # contribution at once. These fixtures are what stand in for that: both directions of the
+      # trusted-actor list (the archived action's `bot*` glob trusted any registrable "bot…" login,
+      # and the shell `case` it replaced never matched the real `[bot]` logins at all), an edited
+      # signing comment, a third party signing on the author's behalf, and a signature scoped to a
+      # superseded CLA version. Hermetic — no network, no gh, no repo state.
+      - name: CLA gate decisions (spoofed bots · edited comments · version scoping)
+        run: node scripts/legal/cla-check-selftest.mjs
       # The capabilities-security REQUIRED check decides which changed files it inspects AT ALL, and a
       # file outside that set is not "passed" — it is never read and the check goes green (#1789). This
       # asserts every known-guarded path still exists AND still matches (a rename that quietly drops a

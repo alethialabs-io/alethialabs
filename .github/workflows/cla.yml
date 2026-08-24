@@ -48,9 +48,14 @@ jobs:
           echo "::error::cla/ACTIVE exists but the signing job has not replaced the pre-activation gate. Fail closed."
           exit 1
 
-# Activation template:
-# - retain trusted-base checkout and minimum permissions;
-# - pin contributor-assistant/github-action to
-#   ca4a40a7d1004f18d9960b404b97e5f30a505a08 (v2.6.1);
-# - store records on a dedicated cla-signatures branch;
-# - require the action's exact `cla` status in every branch ruleset.
+# Activation replaces this whole file with cla/cla-active-workflow.yml, which
+# `pnpm legal:activate-ip --apply` copies into place once the sealed evidence
+# verifies. That template:
+# - retains the trusted-base checkout and minimum permissions;
+# - uses NO third-party action. contributor-assistant/github-action was pinned
+#   here by immutable SHA at v2.6.1 and its upstream was archived in March 2026,
+#   so the mechanism is first-party: scripts/legal/cla-check.mjs decides and
+#   scripts/legal/cla-run.mjs does the I/O, both fixture-driven in CI (#2367);
+# - stores records on the dedicated cla-signatures branch, keyed on the signer's
+#   NUMERIC user id — a login can be released and re-registered, an id cannot;
+# - reports the exact `cla` status context every branch ruleset requires.
