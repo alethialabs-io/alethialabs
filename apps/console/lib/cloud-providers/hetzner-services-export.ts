@@ -53,6 +53,25 @@ export const E2E_MAX_CONFIG_HETZNER_COMPONENTS = {
 	queues: [{ name: "jobs" }],
 } as const;
 
+/**
+ * Components the mapper CHARTS but the product does not yet OFFER on Hetzner.
+ *
+ * `registry` is the only one: #2397 wired its Harbor release, but the kind is still refused at
+ * deploy (unsupported-kinds.ts) because an in-cluster Harbor has no pull credentials yet. So the
+ * max-config surface seeds no registry — `MaxConfigProjectConfig("hetzner")` only applies OFFERED
+ * kinds — and these specs deliberately do NOT go in `components`, which is read back against that
+ * surface and would fail, correctly.
+ *
+ * They are exported anyway, and separately, for one reason: the chart-render gate
+ * (apps/console/scripts/check-addon-charts-render.mjs) must see them. Harbor's value mapping is the
+ * NEWEST and least-exercised in this file, and #2058 is what happens when nothing asks the chart
+ * whether the values it was handed actually render. A chart that renders nothing produces no
+ * manifest, and ArgoCD reports `sync=Unknown` rather than OutOfSync.
+ */
+export const HETZNER_CHARTED_NOT_OFFERED = {
+	registries: [{ name: "app-images" }],
+} as const;
+
 /** The generated fixture's shape: the components that were mapped, and what they mapped to. */
 export interface HetznerDataServiceFixture {
 	/** The input rows — read back by the Go guard against the real max-config ProjectConfig. */
@@ -63,6 +82,9 @@ export interface HetznerDataServiceFixture {
 	};
 	/** The install specs a Hetzner deploy of those components would carry. */
 	addons: AddOnInstallSpec[];
+	/** Specs for kinds the mapper charts but the product does not yet offer — rendered by the chart
+	 *  gate, NEVER seeded by the Go harness (see HETZNER_CHARTED_NOT_OFFERED). */
+	chartedNotOffered: AddOnInstallSpec[];
 }
 
 /**
@@ -88,5 +110,13 @@ export function exportHetznerDataServiceFixture(): HetznerDataServiceFixture {
 		})),
 		queues: E2E_MAX_CONFIG_HETZNER_COMPONENTS.queues.map((q) => ({ name: q.name })),
 	};
-	return { components, addons: hetznerDataServicesToAddOns(components) };
+	return {
+		components,
+		addons: hetznerDataServicesToAddOns(components),
+		chartedNotOffered: hetznerDataServicesToAddOns({
+			registries: HETZNER_CHARTED_NOT_OFFERED.registries.map((r) => ({
+				name: r.name,
+			})),
+		}),
+	};
 }

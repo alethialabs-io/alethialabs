@@ -163,7 +163,7 @@ function unsupportedKindGateError(
 	const cloud = getProvider(provider).name;
 	const hint: Partial<Record<NodeKind, string>> = {
 		registry:
-			"container registries have no native path — deploy the Harbor marketplace add-on for an in-cluster registry, or move the stack to a cloud with a managed registry",
+			"container registries have no native path — its in-cluster Harbor chart is wired but has no pull credentials yet (#2397), so deploy the Harbor marketplace add-on and reference it yourself, or move the stack to a cloud with a managed registry",
 		bucket:
 			"object storage has no native path — deploy the MinIO marketplace add-on for in-cluster S3-compatible storage, or move the stack to a cloud with managed object storage",
 		topic:
@@ -1024,7 +1024,21 @@ async function buildConfigSnapshot(
 				}
 			}
 			addons.push(
-				...hetznerDataServicesToAddOns({ databases, caches, queues }),
+				...hetznerDataServicesToAddOns({
+					databases,
+					caches,
+					queues,
+					// A `registry` node maps to an in-cluster Harbor release: Hetzner has no
+					// registry product, so unlike ECR / Artifact Registry / ACR the kind reaches the
+					// cluster as an ArgoCD Application rather than as tofu state (#2397).
+					//
+					// DORMANT TODAY, deliberately. `registry` is still in
+					// UNSUPPORTED_KINDS_BY_PROVIDER.hetzner, so unsupportedKindGateError throws
+					// above before this line ever sees one — an in-cluster Harbor has no pull
+					// credentials yet. The mapping is wired and render-checked now so that opening
+					// the gate is a one-line change in ONE file rather than a second feature.
+					registries: containerRegistries,
+				}),
 			);
 		}
 
