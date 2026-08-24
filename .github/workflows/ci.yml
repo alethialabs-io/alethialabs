@@ -702,6 +702,15 @@ jobs:
       # for weeks (#1755). Both crons are asserted here because neither is reachable from a PR.
       - name: Nightly dimension resolution (floor and full-bar never collide)
         run: bash scripts/e2e/resolve-dimension.sh --self-test
+      # The AWS sweeper discovers this run's cluster to reach the resources tofu never owned — the
+      # NLB ingress-nginx creates, Karpenter's instances. Discovery fell back to EC2 tags alone, so a
+      # teardown that deleted the cluster AND the instances (a hard-killed run's exact end state) left
+      # CLUSTER empty, and every cluster-scoped sweep silently became a no-op. Worse, `alive_lbs` in
+      # verify_swept is CLUSTER-scoped too, so the sweep exited GREEN with a load balancer billing —
+      # run 31929564177 left one standing for eight days. Both directions are asserted: another run's
+      # LB must NOT resolve, or the fix would be a wildcard. Hermetic — `aws` is stubbed, no creds.
+      - name: AWS sweeper cluster discovery (a dead cluster still reaches its load balancer)
+        run: bash scripts/e2e/aws-cleanup.sh --self-test
       # A TIMER must never start an unpriced real apply. The weekly `17 5 * * 0` full-bar cron fanned
       # the 11-kind surface across all five clouds while ALETHIA_COST_CEILING_MONTHLY_USD was wired
       # for aws alone, and bought a standing monthly alibaba CR EE subscription each week (#2340
