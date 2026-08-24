@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/tfaddr"
 )
 
 // hetznerControls is the Hetzner (hcloud) control set.
@@ -229,7 +231,7 @@ func judgeServerFirewall(r *plannedResource, attachments []fwAttachment, applyTo
 // that references it protects it; unmappable coverage (label selectors, apply_to,
 // invisible refs) is not_evaluable; nothing at all is a hard fail.
 func judgeExternalCoverage(r *plannedResource, attachments []fwAttachment, applyToPresent bool) (fwVerdict, string) {
-	base := baseAddress(r.address)
+	base := tfaddr.ConfigAddress(r.address)
 	unmappable := false
 	for _, a := range attachments {
 		if refsInclude(a.serverRefs, base) {

@@ -181,10 +181,11 @@ func TestConfigPresentButAddressUnresolved(t *testing.T) {
 
 // ── Table C — the VNet, exactly as the failing Azure run produced it ─────────────────
 //
-// The dismissed row also pins configAddress: a verify.baseAddress-style truncation at
-// the first '[' yields "module.vnet", misses the configuration, fails closed, and this
-// row goes red. That is the behaviour we want — the address bug caught by a unit test
-// rather than by a customer.
+// The dismissed row also pins tfaddr.ConfigAddress from the CALLER's side: a
+// truncation at the first '[' yields "module.vnet", misses the configuration, fails
+// closed, and this row goes red. That is the behaviour we want — the address bug
+// (#2361, which verify carried for real) caught by a unit test rather than by a
+// customer. The normaliser's own table is TestConfigAddress in packages/core/tfaddr.
 
 func TestTableC_VirtualNetworkSubnetHydration(t *testing.T) {
 	const addr = "module.vnet[0].azurerm_virtual_network.this"
@@ -410,32 +411,6 @@ func TestSummaryCarriesNormalizedCount(t *testing.T) {
 			t.Errorf("Summary() = %q, want %q", got, want)
 		}
 	})
-}
-
-// ── configAddress ────────────────────────────────────────────────────────────────────
-
-// TestConfigAddress pins the address normaliser, including the cases that make it
-// different from verify.baseAddress (which truncates at the FIRST bracket).
-func TestConfigAddress(t *testing.T) {
-	cases := map[string]string{
-		"azurerm_subnet.private":                "azurerm_subnet.private",
-		"aws_instance.web[0]":                   "aws_instance.web",
-		"module.vnet[0].azurerm_subnet.private": "module.vnet.azurerm_subnet.private",
-		`aws_instance.x["a.b"]`:                 "aws_instance.x",
-		`module.m["k"].aws_instance.y["j"]`:     "module.m.aws_instance.y",
-		`aws_instance.x["a[b]"]`:                "aws_instance.x",
-		// Unquoted nested brackets are not a shape OpenTofu emits, but depth tracking is
-		// why a malformed address degrades to the right prefix instead of leaking a
-		// stray ']' — a single-level parser returns "aws_instance.x]" here.
-		"aws_instance.x[a[0]]":                      "aws_instance.x",
-		`aws_instance.x["a\"b"]`:                    "aws_instance.x",
-		"module.a[0].module.b[1].aws_instance.c[2]": "module.a.module.b.aws_instance.c",
-	}
-	for in, want := range cases {
-		if got := configAddress(in); got != want {
-			t.Errorf("configAddress(%q) = %q, want %q", in, got, want)
-		}
-	}
 }
 
 // TestSensitivityMaskShapes covers every mask shape. The resource is always PRESENT in
