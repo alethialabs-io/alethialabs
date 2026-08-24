@@ -38,6 +38,15 @@
 #   DRY_RUN=1 ...    # list what WOULD be deleted, delete nothing
 set -euo pipefail
 
+SELF_TEST=0
+if [ "${1:-}" = "--self-test" ]; then
+	SELF_TEST=1
+	set -- "selftest-cluster"
+	# `hcloud` is stubbed below, so nothing authenticates and nothing is called. This exists only to
+	# satisfy the token guard, and is deliberately not a plausible token.
+	HCLOUD_TOKEN="self-test-no-hcloud-call-is-made"
+	export HCLOUD_TOKEN
+fi
 CLUSTER_NAME="${1:-${ALETHIA_E2E_CLUSTER_NAME:-}}"
 DRY_RUN="${DRY_RUN:-0}"
 # A volume cannot be deleted while attached, and `hcloud server delete` detaches asynchronously —
@@ -102,7 +111,7 @@ S3_ENDPOINT="${HETZNER_S3_ENDPOINT:-${S3_REGION}.your-objectstorage.com}"
 # clean. The two are not the same answer and the final banner must not conflate them.
 UNVERIFIABLE=""
 
-echo "→ hcloud belt-and-suspenders cleanup for label ${SELECTOR}"
+[ "$SELF_TEST" = "1" ] || echo "→ hcloud belt-and-suspenders cleanup for label ${SELECTOR}"
 [ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 
 # ── Does this hcloud CLI know about DNS zones? `hcloud zone` is recent (the template gained
@@ -320,6 +329,50 @@ s3_available() {
 	return 0
 }
 
+# report_imager_helpers — the hcloud-talos/imager provider's UPLOAD HELPERS, which no selector reaches.
+#
+# `imager_image` stamps cluster=<name> on the SNAPSHOT it produces, so the snapshot is reclaimed by
+# the labelled `image` purge above. Its scaffolding is a different matter: the provider boots a
+# rescue server and registers an ssh key, both named `hcloud-upload-image-<hex>`, and neither
+# carries a label of any kind. Nothing ties them to a cluster, so there is no scope-locked way to
+# delete them from here.
+#
+# They escape the teardown too. When the build fails mid-resource — the common case, #2458 — the
+# image never lands in state, so the destroy pass has nothing to remove. A failed hetzner build
+# therefore leaves a STOPPED SERVER BILLING, and until now it left it in silence: measured
+# 2026-08-24 on an account that was empty beforehand, so attribution was certain for once.
+#
+# So: REPORT, never delete. The hcloud account is SHARED WITH PROD, `hcloud-upload-image-*` is the
+# provider's fixed prefix rather than one of ours, and a CONCURRENT run's live upload server matches
+# the same pattern — deleting one mid-build breaks that run. A human who knows this run's timing can
+# tell them apart; this script cannot, and must not guess. #2463 tracks making them labelable
+# upstream, which would let the ordinary selector reach them and retire this function.
+#
+# The two listings are account-wide, which is safe precisely because they are READS. Nothing here
+# deletes, and that is the whole design.
+report_imager_helpers() {
+	local servers keys found
+	servers="$(hcloud server list -o noheader -o columns=id,name 2>/dev/null | grep -F 'hcloud-upload-image-' || true)"
+	keys="$(hcloud ssh-key list -o noheader -o columns=id,name 2>/dev/null | grep -F 'hcloud-upload-image-' || true)"
+	found=0
+	if [ -n "$servers" ]; then
+		echo "  · imager upload servers present (NOT swept — unlabelled, may belong to another run):"
+		printf '      %s\n' "$servers"
+		found=1
+	fi
+	if [ -n "$keys" ]; then
+		echo "  · imager upload ssh-keys present (NOT swept — unlabelled, may belong to another run):"
+		printf '      %s\n' "$keys"
+		found=1
+	fi
+	if [ "$found" = "0" ]; then
+		echo "  · imager upload helpers: none present"
+		return 0
+	fi
+	echo "::warning::hcloud-upload-image-* server(s)/ssh-key(s) exist and were NOT swept. The imager provider creates them unlabelled, so this label-scoped script cannot attribute them to a run. If no image build is in flight they are leaked (a stopped server still bills) — remove them by hand. See #2463."
+	UNVERIFIABLE="${UNVERIFIABLE}imager-upload-helpers(unlabelled, cannot attribute) "
+}
+
 sweep_object_storage() {
 	assert_selector
 	s3_available || return 0
@@ -470,9 +523,54 @@ fi
 #   9. zones            — hcloud_zone (dns.tf, #1816); already labelled cluster=<name>, just never
 #                         swept. A standing zone is a small forever-charge nothing else would notice
 #  10. object storage   — a separate product; see sweep_object_storage
+#  11. imager helpers   — REPORTED, never deleted; see report_imager_helpers
 #
 # The CCM load balancer and the network it is discovered through must both go BEFORE `purge
 # network`, or the network delete fails with the LB still attached and the id we bind to is gone.
+# ── Self-test. `hcloud` is stubbed, so this touches no account and needs no token. The decision
+# under test is not the printing — it is whether UNVERIFIABLE gets set, because that is what turns
+# the final line from "verified complete" into a warning a human has to read. Asserted in both
+# directions: an empty account must NOT raise it, or every clean sweep would cry wolf and the
+# warning would stop meaning anything. ──
+if [ "$SELF_TEST" = "1" ]; then
+	st_fails=0
+	hcloud() {
+		case "$1 ${2:-}" in
+		"server list") printf '%s\n' "$ST_SERVERS" ;;
+		"ssh-key list") printf '%s\n' "$ST_KEYS" ;;
+		*) : ;;
+		esac
+	}
+	st_imager_case() { # <name> <servers> <keys> <expect UNVERIFIABLE to mention imager: yes|no>
+		UNVERIFIABLE=""
+		ST_SERVERS="$2"
+		ST_KEYS="$3"
+		report_imager_helpers >/dev/null 2>&1
+		local got=no
+		case "$UNVERIFIABLE" in *imager-upload-helpers*) got=yes ;; esac
+		if [ "$got" = "$4" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected imager-in-UNVERIFIABLE=$4, got $got" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+
+	echo "→ hcloud-cleanup.sh self-test"
+	st_imager_case "a leaked upload server is reported unverified" "163477937 hcloud-upload-image-77b49987" "" yes
+	st_imager_case "a leaked upload ssh-key alone is enough" "" "117831479 hcloud-upload-image-77b49987" yes
+	st_imager_case "an empty account raises nothing" "" "" no
+	st_imager_case "an unrelated server is not mistaken for one" "163000000 alethia-prod-web" "" no
+	unset -f hcloud
+
+	if [ "$st_fails" -ne 0 ]; then
+		echo "✗ hcloud-cleanup.sh self-test: ${st_fails} failure(s)" >&2
+		exit 1
+	fi
+	echo "✓ hcloud-cleanup.sh self-test passed"
+	exit 0
+fi
+
 purge server "servers"
 purge load-balancer "load balancers"
 sweep_unlabelled_lbs
@@ -484,6 +582,7 @@ purge primary-ip "primary IPs"
 purge image "images (talos snapshots)"
 [ "$ZONE_SUPPORTED" = "1" ] && purge zone "dns zones"
 sweep_object_storage
+report_imager_helpers
 
 # ── Final verification: a leak must NEVER exit green. ──
 # The whole point of this script is that nothing bills after the run. Previously a delete that
