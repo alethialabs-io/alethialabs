@@ -359,6 +359,35 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		}
 	}
 
+	// ── INTEGRITY: a cell's rows must not go BACKWARDS in time down the file ──
+	//
+	// `collapseLedger` replays in file order and lets the last row win. So file order IS the
+	// chronology, and a cell whose rows descend in date silently promotes the OLDEST run.
+	//
+	// That is not hypothetical. On 2026-08-24 `append_ledger` inserted each new row directly
+	// beneath the sentinel — newest-first — and a hetzner/floor PASS was masked by the FAIL from
+	// three hours earlier: PROGRAMME.md rendered "0 proven" with the proof committed in the same
+	// file. The writers now append at the end; this is the reader refusing to be lied to either
+	// way, because the invariant was carried by the writer alone and a hand-edit would restore it.
+	//
+	// Same-day rows are fine — dates here are day-granular and a cell can legitimately be
+	// re-driven twice in one day. Only a STRICT decrease is an error.
+	{
+		/** @type {Map<string, {date: string, line: number}>} */
+		const lastSeen = new Map();
+		for (const r of rows) {
+			const key = `${r.cloud}/${r.dimension}`;
+			const prev = lastSeen.get(key);
+			if (prev && r.date < prev.date) {
+				failures.push(
+					`${LEDGER}:${r.line}: ${key} row dated ${r.date} appears BELOW its ${prev.date} row (line ${prev.line}). ` +
+						`The ledger is replayed in file order, so this makes the OLDER run the surviving claim — append new rows at the END.`,
+				);
+			}
+			lastSeen.set(key, { date: r.date, line: r.line });
+		}
+	}
+
 	// ── the 11-kind carriage grid, straight from the Go mirror ──
 	const carriage = { tofu: 0, in_cluster: 0, ceiling: 0, deferred: 0 };
 	const deferredCells = [];
@@ -932,6 +961,31 @@ function runSelfTest() {
 	ok("a ledger row naming an unknown dimension is an integrity failure", r.failures.some((f) => /not one of/.test(f)), JSON.stringify(r.failures));
 	r = derive({ ...base, ledgerText: hdr + "| 2026-08-01 | abc | aws | floor | **PROBABLY** | d | `b` | — |\n" });
 	ok("an unknown verdict is an integrity failure, never a skip", r.failures.some((f) => /unknown verdict/.test(f)), JSON.stringify(r.failures));
+
+	// INTEGRITY: file order IS the chronology, because collapseLedger replays in file order.
+	// A cell whose rows descend in date promotes the OLDER run — the 2026-08-24 defect where a
+	// hetzner/floor PASS was masked by the FAIL three hours before it and the grid read 0 proven.
+	r = derive({
+		...base,
+		ledgerText: hdr + row("2026-08-24", "aws", "floor", "PASS", "demos/proofs/aws/x") + row("2026-08-01", "aws", "floor", "FAIL", "demos/proofs/aws/y", "#1"),
+	});
+	ok("a cell's rows going backwards in time is an integrity failure", r.failures.some((f) => /makes the OLDER run the surviving claim/.test(f)), JSON.stringify(r.failures));
+	ok("...and it is caught even though the older row would otherwise win", r.grid.aws.floor.state === "failing", r.grid.aws.floor.why);
+
+	// The same two rows the right way round are fine, and the newer one wins.
+	r = derive({
+		...base,
+		ledgerText: hdr + row("2026-08-01", "aws", "floor", "FAIL", "demos/proofs/aws/y", "#1") + row("2026-08-24", "aws", "floor", "PASS", "demos/proofs/aws/x"),
+	});
+	ok("chronological rows raise no ordering failure", !r.failures.some((f) => /surviving claim/.test(f)), JSON.stringify(r.failures));
+	ok("...and the newest row is the surviving claim", r.grid.aws.floor.state === "proven", r.grid.aws.floor.why);
+
+	// Two runs of the same cell on ONE day is normal — a re-run — and must not trip it.
+	r = derive({
+		...base,
+		ledgerText: hdr + row("2026-08-24", "aws", "floor", "FAIL", "demos/proofs/aws/y", "#1") + row("2026-08-24", "aws", "floor", "PASS", "demos/proofs/aws/x"),
+	});
+	ok("same-day re-runs are not an ordering failure", !r.failures.some((f) => /surviving claim/.test(f)), JSON.stringify(r.failures));
 
 	// The Go mirror carries the two exclusions apart.
 	r = derive({ ...base, ledgerText: hdr });
