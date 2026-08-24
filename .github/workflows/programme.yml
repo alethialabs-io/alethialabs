@@ -34,8 +34,22 @@ concurrency:
   group: programme-ledger
   cancel-in-progress: true
 
+# `create-pull-request` has to PUSH the refresh branch before it can open the PR against it, so
+# `contents: read` is not enough — the push came back 403 ("Permission to alethialabs-io/alethialabs
+# .git denied to github-actions[bot]") on every scheduled run, and the snapshot stopped refreshing.
+#
+# That failure is on a timer, which is the dangerous part. PROGRAMME.md's live half warns past 48
+# hours and FAILS past 7 days, deliberately — "a broken refresh produces no signal at all". So a
+# silently dead refresher does not just go stale, it reds `pnpm check:programme` for everyone about
+# a week later, and the cause is a workflow nobody was watching.
+#
+# This does NOT let it write to a protected branch. The rulesets match refs/heads/{dev,main,staging}
+# with empty excludes, so `chore/programme-ledger-refresh` is writable and the base branches are
+# not — the same shape the coverage badges use with their orphan branch. The workflow still opens a
+# PR and still never pushes to dev.
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 jobs:
   refresh:
