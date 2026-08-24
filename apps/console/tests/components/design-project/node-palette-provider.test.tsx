@@ -56,8 +56,10 @@ describe("NodePalette — per-provider kind filtering", () => {
 
 		expect(screen.queryByText("Topic")).not.toBeInTheDocument();
 		expect(screen.queryByText("NoSQL table")).not.toBeInTheDocument();
-		// registry has no native Hetzner tofu wiring yet — hidden, not "Soon".
-		expect(screen.queryByText("Container registry")).not.toBeInTheDocument();
+
+		// Registry is addable since #2431: an in-cluster Harbor with a minted pull robot and a
+		// Talos containerd mirror, so the kind is delivered rather than hidden.
+		expect(screen.getByText("Container registry")).toBeInTheDocument();
 
 		// Bucket is NATIVE on Hetzner now (Object Storage via the minio provider) — addable.
 		expect(screen.getByText("Bucket")).toBeInTheDocument();

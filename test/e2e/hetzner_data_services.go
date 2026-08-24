@@ -61,6 +61,9 @@ type hetznerDataServiceComponents struct {
 	Queues []struct {
 		Name string `json:"name"`
 	} `json:"queues"`
+	Registries []struct {
+		Name string `json:"name"`
+	} `json:"registries"`
 }
 
 // hetznerDataServiceFixture is the generated artifact: what was mapped, and what it mapped to.
@@ -100,16 +103,18 @@ func loadHetznerDataServiceFixture() (hetznerDataServiceFixture, error) {
 	if err := json.Unmarshal(raw, &fx); err != nil {
 		return fx, fmt.Errorf("parse hetzner data-service fixture: %w (%s)", err, hetznerDataServicesRegenerate)
 	}
-	if len(fx.Components.Databases) == 0 || len(fx.Components.Caches) == 0 || len(fx.Components.Queues) == 0 {
+	if len(fx.Components.Databases) == 0 || len(fx.Components.Caches) == 0 ||
+		len(fx.Components.Queues) == 0 || len(fx.Components.Registries) == 0 {
 		return hetznerDataServiceFixture{}, fmt.Errorf(
-			"hetzner data-service fixture declares %d database(s), %d cache(s), %d queue(s) — all three kinds are CarriedInCluster on hetzner, so a missing one makes that kind unprovable (%s)",
-			len(fx.Components.Databases), len(fx.Components.Caches), len(fx.Components.Queues), hetznerDataServicesRegenerate)
+			"hetzner data-service fixture declares %d database(s), %d cache(s), %d queue(s), %d registry/ies — all four kinds are CarriedInCluster on hetzner, so a missing one makes that kind unprovable (%s)",
+			len(fx.Components.Databases), len(fx.Components.Caches), len(fx.Components.Queues),
+			len(fx.Components.Registries), hetznerDataServicesRegenerate)
 	}
 	// One Application per component, plus the CNPG operator that owns the Cluster CRD. Derived from
 	// the components rather than written down: a hard-coded total has to be edited by hand every
 	// time a kind joins the in-cluster set, and the edit is invisible until a real Hetzner run.
 	wantSpecs := len(fx.Components.Databases) + len(fx.Components.Caches) +
-		len(fx.Components.Queues) + 1
+		len(fx.Components.Queues) + len(fx.Components.Registries) + 1
 	if len(fx.AddOns) != wantSpecs {
 		return hetznerDataServiceFixture{}, fmt.Errorf(
 			"hetzner data-service fixture holds %d install spec(s), expected %d (one per component + the cnpg-operator) — the fixture is stale or partial (%s)",
