@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	AI_MODELS,
+	aiDisabledReason,
 	getAdvisorModel,
 	getAiModel,
 	getExecutorModel,
@@ -21,7 +22,25 @@ const KEYS = [
 	"OPENAI_API_KEY",
 	"AI_GATEWAY_API_KEY",
 	"VERCEL_OIDC_TOKEN",
+	// The transparency evidence (#2373). Cleared per test like the keys, so a developer's own
+	// environment cannot make the fail-closed gate look open.
+	"ALETHIA_AI_ANTHROPIC_DPA",
+	"ALETHIA_AI_ANTHROPIC_TRANSFER",
+	"ALETHIA_AI_ANTHROPIC_RETENTION",
+	"ALETHIA_AI_ANTHROPIC_NO_TRAINING",
+	"ALETHIA_AI_OPENAI_DPA",
+	"ALETHIA_AI_OPENAI_TRANSFER",
+	"ALETHIA_AI_OPENAI_RETENTION",
+	"ALETHIA_AI_OPENAI_NO_TRAINING",
 ];
+
+/** Arms the four transparency values for a provider — what a configured deployment looks like. */
+function armEvidence(provider: "ANTHROPIC" | "OPENAI"): void {
+	process.env[`ALETHIA_AI_${provider}_DPA`] = "DPA in force (2026-08-01)";
+	process.env[`ALETHIA_AI_${provider}_TRANSFER`] = "EU SCCs module 2";
+	process.env[`ALETHIA_AI_${provider}_RETENTION`] = "30 days, then deleted";
+	process.env[`ALETHIA_AI_${provider}_NO_TRAINING`] = "Excluded from training by contract";
+}
 const saved: Record<string, string | undefined> = {};
 beforeEach(() => {
 	for (const k of KEYS) {
@@ -142,15 +161,61 @@ describe("isAiConfigured", () => {
 		process.env.AI_GATEWAY_API_KEY = "gw";
 		process.env.VERCEL_OIDC_TOKEN = "oidc";
 		expect(isAiConfigured()).toBe(false);
+		// A KEY IS NO LONGER ENOUGH (#2373): the transparency evidence has to be recorded too, so
+		// this stays false with a valid key and nothing else.
 		process.env.ANTHROPIC_API_KEY = "sk-ant-x";
+		expect(isAiConfigured()).toBe(false);
+		armEvidence("ANTHROPIC");
 		expect(isAiConfigured()).toBe(true);
 	});
 
 	it("also requires OPENAI_API_KEY when a role resolves to an openai/* model", () => {
 		process.env.ANTHROPIC_API_KEY = "sk-ant-x"; // advisors default to Anthropic
+		armEvidence("ANTHROPIC");
 		process.env.AI_EXECUTOR_MODEL = "openai/gpt-5-mini";
 		expect(isAiConfigured()).toBe(false); // OpenAI key missing
 		process.env.OPENAI_API_KEY = "sk-openai-x";
+		// Still false: the SECOND provider needs its own evidence. A deployment that added OpenAI
+		// without a DPA for it would otherwise inherit Anthropic's, which is exactly the leak this
+		// gate exists to prevent.
+		expect(isAiConfigured()).toBe(false);
+		armEvidence("OPENAI");
 		expect(isAiConfigured()).toBe(true);
+	});
+});
+
+describe("aiDisabledReason", () => {
+	// A 503 body that says "not configured" is useless to the operator who has to fix it. The reason
+	// names the variable, which is the difference between an outage and a task.
+	it("is null when everything is in place", () => {
+		process.env.ANTHROPIC_API_KEY = "sk-ant-x";
+		armEvidence("ANTHROPIC");
+		expect(aiDisabledReason()).toBeNull();
+	});
+
+	it("names the missing API key", () => {
+		armEvidence("ANTHROPIC");
+		expect(aiDisabledReason()).toContain("ANTHROPIC_API_KEY");
+	});
+
+	it("names each missing transparency variable, one at a time", () => {
+		process.env.ANTHROPIC_API_KEY = "sk-ant-x";
+		for (const name of [
+			"ALETHIA_AI_ANTHROPIC_DPA",
+			"ALETHIA_AI_ANTHROPIC_TRANSFER",
+			"ALETHIA_AI_ANTHROPIC_RETENTION",
+			"ALETHIA_AI_ANTHROPIC_NO_TRAINING",
+		]) {
+			armEvidence("ANTHROPIC");
+			delete process.env[name];
+			const reason = aiDisabledReason();
+			expect(reason).toContain(name);
+		}
+	});
+
+	// The explanation has to survive being read by someone who wants to skip it.
+	it("says why a prompt is not sent, not merely that it is not", () => {
+		process.env.ANTHROPIC_API_KEY = "sk-ant-x";
+		expect(aiDisabledReason()).toMatch(/infrastructure and code/i);
 	});
 });

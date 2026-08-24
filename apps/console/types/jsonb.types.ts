@@ -1437,3 +1437,72 @@ export interface CommerceDocumentVersions {
 		hash: string;
 	}[];
 }
+
+// ── Privacy operations (#2373) ───────────────────────────────────────────────
+
+/**
+ * What a privacy case covers, and what was actually done — on `privacy_case.scope` and, after the
+ * fact, on `privacy_erasure_tombstone.scope`.
+ *
+ * `pseudonymized` is separate from `erased` because they are different outcomes with different
+ * consequences. Deleting a row that other tenants' records point at (a message author, a job's
+ * actor) would break THEIR data, so the identifier is replaced instead and the record stays
+ * coherent. Recording that as "erased" would overstate what happened; omitting it would understate
+ * it. Both are wrong in a way the subject is entitled to know about.
+ */
+export interface PrivacyCaseScope {
+	/** Tables from which rows were removed outright. */
+	erased: string[];
+	/** Tables where the identifier was replaced but the row was kept, with why. */
+	pseudonymized: { table: string; reason: string }[];
+	/** Tables deliberately NOT touched, with the obligation that requires keeping them. */
+	retained: { table: string; basis: string }[];
+	/** Third parties told to erase, and whether each confirmed. */
+	vendors: { name: string; notifiedAt: string; confirmedAt: string | null }[];
+}
+
+/**
+ * Structured detail on one `privacy_case_event`.
+ *
+ * ⚠️ It must NEVER carry the subject's personal data. The ledger outlives the erasure it records, so
+ * anything copied in here is data that survived a deletion — inside the very machinery that
+ * performed it. Counts, table names and reasons; never values.
+ */
+export interface PrivacyEventDetail {
+	/** One line of what happened, safe to show the subject. */
+	summary: string;
+	/** Optional counts, e.g. `{ rows_erased: 412 }`. Numbers only. */
+	counts?: Record<string, number>;
+	/** Tables involved, when the event is about specific ones. */
+	tables?: string[];
+}
+
+/**
+ * The signed manifest that ships with an export, on `privacy_case.export_manifest`.
+ *
+ * An archive with no manifest is a bag of files the recipient has to trust. The manifest says what
+ * was included, what each part contains, and the digest of the archive it describes — so a person
+ * can verify they received what we said we sent, and we can show later what that was.
+ */
+export interface PrivacyExportManifest {
+	/** Manifest schema version, so an old export stays readable. */
+	version: 1;
+	/** ISO-8601, when the archive was produced. */
+	generatedAt: string;
+	/** SHA-256 of the archive bytes, lower-case hex. */
+	archiveSha256: string;
+	/** Byte length of the archive, so a truncated download is detectable. */
+	archiveBytes: number;
+	/** One entry per file inside, in the order they appear. */
+	parts: {
+		path: string;
+		/** What this part holds, in plain language. */
+		describes: string;
+		rows: number;
+		sha256: string;
+	}[];
+	/** Ed25519 signature over the canonical manifest body, base64. Null when signing is unavailable. */
+	signature: string | null;
+	/** The key that signed it, so the signature can be checked later. Null when unsigned. */
+	signingKeyId: string | null;
+}

@@ -31,6 +31,7 @@
             "/privacy/:path*",
             "/cookies",
             "/consumer-rights",
+            "/ai-transparency",
             "/acceptable-use",
             "/legal/:path*",
             "/mkt-assets/:path*",
