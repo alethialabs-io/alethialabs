@@ -71,14 +71,16 @@ export async function signUpWithOtp(page: Page): Promise<{ email: string; orgSlu
 	// Located by the exported constants, not literals, for the reason CONSENT_LABELS records above.
 	await acceptCurrentTerms(page);
 
-	// Onboarding hands off to /{slug} (a single path segment — not /onboarding, not /signup, and
-	// NOT /accept-terms: that one is a single segment too, so without excluding it a gated run
-	// resolves "accept-terms" as the org slug and every later step fails somewhere unrelated. That
-	// is exactly what happened when the gate first landed.)
+	// Onboarding hands off to /{slug} — a single path segment that is NOT one of the waypoints on
+	// the way there. All four exclusions are load-bearing, and two of them were learned the hard
+	// way: `/accept-terms` (the gate) and `/dashboard` (where accepting hands off to) are both
+	// single-segment paths, so a matcher that only excluded the auth routes resolved "accept-terms"
+	// or "dashboard" as the org slug — and the run then failed three steps later at `connect a
+	// cloud`, nowhere near the cause.
 	await page.waitForURL(
 		(url) =>
 			/^\/[^/]+$/.test(url.pathname) &&
-			!/^\/(signup|onboarding|login|accept-terms)$/.test(url.pathname),
+			!/^\/(signup|onboarding|login|accept-terms|dashboard)$/.test(url.pathname),
 		{ timeout: 30_000 },
 	);
 	const orgSlug = new URL(page.url()).pathname.replace(/^\//, "").replace(/\/.*$/, "");

@@ -30,6 +30,13 @@ export default async function AcceptTermsPage({
 	const userId = await getOwner();
 	if (!userId) redirect("/login");
 
+	// Where to go after accepting. The gate in (private)/layout.tsx cannot pass one — a Next layout
+	// does not receive the pathname — so the default is `/dashboard`, whose catch-all canonicalizes
+	// to the user's org (and handles the no-org and not-yet-onboarded cases on the way). The cost is
+	// that a RE-acceptance loses a deep link: an existing user who followed a URL lands on their
+	// dashboard rather than that URL. That is a wrinkle, not a defect — and the alternatives (an
+	// internal Next header, or reading Referer) are guesses about framework internals, which is a
+	// worse trade for a redirect that runs once per Terms version.
 	const { next } = await searchParams;
 	const destination = safeNext(next) ?? "/dashboard";
 

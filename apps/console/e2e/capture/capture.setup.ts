@@ -46,7 +46,7 @@ setup("sign in as the seeded demo owner", async ({ page }) => {
 	await page.waitForURL(
 		(url) =>
 			/^\/[^/]+$/.test(url.pathname) &&
-			!/^\/(login|signup|onboarding|accept-terms)$/.test(url.pathname),
+			!/^\/(login|signup|onboarding|accept-terms|dashboard)$/.test(url.pathname),
 		{ timeout: 30_000 },
 	);
 	const orgSlug = new URL(page.url()).pathname.replace(/^\//, "").replace(/\/.*$/, "");
