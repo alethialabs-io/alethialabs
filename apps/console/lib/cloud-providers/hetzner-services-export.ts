@@ -65,9 +65,11 @@ export const E2E_MAX_CONFIG_HETZNER_COMPONENTS = {
  * alternative to this list is a chart whose values nothing ever renders — which is the #2058 defect
  * class the render gate exists to catch.
  */
-export const HETZNER_CHARTED_NOT_OFFERED = {
-	registries: [] as { name: string }[],
-} as const;
+export const HETZNER_CHARTED_NOT_OFFERED: {
+	registries: { name: string }[];
+} = {
+	registries: [],
+};
 
 /** The generated fixture's shape: the components that were mapped, and what they mapped to. */
 export interface HetznerDataServiceFixture {
