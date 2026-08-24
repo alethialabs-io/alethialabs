@@ -226,6 +226,19 @@ func (p *hetznerProvider) ProviderTfvars(config *types.ProjectConfig) map[string
 	// fsn1/nbg1/hel1, so compute-only regions fall back to fsn1. The S3 keys are DISTINCT from
 	// the Cloud API token (Hetzner has no API to mint them — the customer generates them by
 	// hand); the runner exports them as HETZNER_S3_ACCESS_KEY / HETZNER_S3_SECRET_KEY at claim.
+	// In-cluster registry hosts the kubelet must be told to trust (#2431).
+	//
+	// A Hetzner `registry` node becomes a Harbor release exposed as a plain-HTTP ClusterIP. containerd
+	// tries HTTPS for any non-localhost host, so WITHOUT a mirror entry the kubelet cannot pull from
+	// it at all — no credential fixes that, and the failure looks like an auth error. Emitting the
+	// hosts lets talos.tf render `machine.registries.mirrors`.
+	//
+	// Safe to change on a live cluster: `hcloud_server` carries
+	// `lifecycle { ignore_changes = [user_data, image] }`, and the config is pushed over the Talos
+	// API by `talos_machine_configuration_apply` — so this does NOT replace nodes, which is the
+	// obvious fear and is wrong.
+	tfvars["incluster_registry_hosts"] = buildHetznerRegistryHosts(config.ContainerRegistries)
+
 	tfvars["buckets"] = buildHetznerBuckets(config.StorageBuckets)
 	s3Region := hetznerS3Region(orDefault(resolveRegion("hetzner", config.Region), "fsn1"))
 	tfvars["hetzner_s3_region"] = s3Region
@@ -355,3 +368,19 @@ func ensureStringSlice(s []string) []string {
 }
 
 var _ CloudProvider = (*hetznerProvider)(nil)
+
+// buildHetznerRegistryHosts lists the in-cluster registry hosts containerd must reach over plain
+// HTTP. The host string MUST match the one the console put in the chart's externalURL and the one
+// the runner keys the dockerconfigjson on (argocd.HetznerRegistries) — a mirror for a host nobody
+// pulls from is inert, and a pull host with no mirror cannot be reached at all. Always emitted, even
+// empty, so a registry-free cluster still plans clean.
+func buildHetznerRegistryHosts(registries []types.ProjectContainerRegistryConfig) []string {
+	out := make([]string, 0, len(registries))
+	for _, r := range registries {
+		if r.Name == "" {
+			continue
+		}
+		out = append(out, "registry-"+r.Name+".registries.svc.cluster.local")
+	}
+	return out
+}

@@ -9,6 +9,7 @@
 // Requires the console running with SES unconfigured so the OTP is logged (local: `pnpm dev:up`;
 // CI: the e2e-browser job boots `next start` and tees stdout to $DEV_CONSOLE_LOG).
 
+import { CONSENT_LABELS } from "@repo/privacy/consent";
 import path from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
 import { logCursor, waitForOtp } from "../helpers/otp";
@@ -32,8 +33,11 @@ export async function signUpWithOtp(page: Page): Promise<{ email: string; orgSlu
 	await page.goto("/signup");
 	// A fresh browser must make an explicit privacy choice before the product journey.
 	// Keep E2E telemetry off and persist the same first-party decision a user would make.
+	// Located by the exported constant, not a literal: this locator broke silently when the button
+	// was relabelled for consent v2, and a 5s timeout in the hero path was the first anyone knew.
 	const rejectTelemetry = page.getByRole("button", {
-		name: /reject non-essential/i,
+		name: CONSENT_LABELS.reject,
+		exact: true,
 	});
 	await rejectTelemetry.waitFor({ state: "visible", timeout: 5_000 });
 	await rejectTelemetry.click();

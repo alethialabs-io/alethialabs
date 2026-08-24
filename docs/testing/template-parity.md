@@ -203,6 +203,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `hetzner_s3_endpoint` | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | baseline |  (#2004) |
 | `hetzner_s3_region` | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | baseline |  (#2004) |
 | `hetzner_s3_secret_key` | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | baseline |  (#2004) |
+| `incluster_registry_hosts` | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | uniform | Hetzner has no registry product, so its `registry` kind is an in-cluster Harbor the kubelet must be told to trust over plain HTTP (a Talos machine.registries.mirrors entry). The other four provision a real cloud registry their nodes authenticate to over TLS with their own identity — there is no host to trust and no equivalent knob to add. |
 | `key_vault_purge_protection_enabled` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `kubernetes_version` | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | baseline |  (#2004) |
 | `kvstore_engine_version` | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/tfaddr"
 	tfjson "github.com/hashicorp/terraform-json"
 )
 
@@ -78,16 +79,6 @@ func (r *plannedResource) exprConstant(attr string) (any, bool) {
 // absent: a real, judgeable fact) and "we cannot see the configuration" (an
 // honest not_evaluable).
 func (r *plannedResource) hasConfig() bool { return r.hasCfg }
-
-// baseAddress strips the instance key from a resource address
-// (hcloud_server.workers["w-1"] → hcloud_server.workers) so it can be matched
-// against configuration addresses, which are never instance-keyed.
-func baseAddress(addr string) string {
-	if i := strings.IndexByte(addr, '['); i > 0 {
-		return addr[:i]
-	}
-	return addr
-}
 
 // resourceConfig pairs a configuration resource's expressions with its module
 // prefix for reference resolution.
@@ -213,7 +204,7 @@ func gatherPlanned(plan *tfjson.Plan) []plannedResource {
 			after:        after,
 			afterUnknown: rc.Change.AfterUnknown,
 		}
-		if rcfg, ok := cfg[baseAddress(rc.Address)]; ok {
+		if rcfg, ok := cfg[tfaddr.ConfigAddress(rc.Address)]; ok {
 			pr.configExprs = rcfg.exprs
 			pr.modPrefix = rcfg.modPrefix
 			pr.hasCfg = true

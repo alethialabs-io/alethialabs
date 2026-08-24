@@ -23,11 +23,17 @@ import type { AddOnInstallSpec } from "@/lib/addons/types";
 /** The block-storage StorageClass the Hetzner/Talos template makes default (CSI driver). */
 const HCLOUD_STORAGE_CLASS = "hcloud-volumes";
 
+/** hcloud's minimum Block Storage volume is 10 GiB. Asking for less does not fail — the CSI driver
+ *  rounds up — so a chart default below it produces a cluster that quietly disagrees with the
+ *  values this repo rendered. Every volume we ask for is clamped here instead. */
+const HCLOUD_MIN_VOLUME_GB = 10;
+
 /** Shared namespaces per service category (auto-created by ArgoCD `CreateNamespace=true`). */
 const NS = {
 	postgres: "databases",
 	cache: "caches",
 	queue: "queues",
+	registry: "registries",
 	operators: "cnpg-system",
 } as const;
 
@@ -88,10 +94,31 @@ export const HETZNER_CHARTS = {
 		chart: "rabbitmq",
 		version: "0.21.9",
 	},
+	/**
+	 * Harbor — the in-cluster substitute for ECR / Artifact Registry / ACR, one release per
+	 * `registry` node. The SAME chart and pin as the `harbor` marketplace add-on
+	 * (lib/addons/catalog.ts): a Hetzner project that also enables the add-on must not end up with
+	 * two different Harbor versions in one cluster.
+	 *
+	 * ⚠️ It is not one release with one volume. Harbor ships its OWN Postgres, Redis and Trivy, so
+	 * a registry node costs FIVE persistent volumes, and hcloud's minimum volume is 10 GiB — the
+	 * chart's 1Gi/1Gi/5Gi defaults for the non-registry three would each be silently rounded up by
+	 * the CSI driver. hetznerRegistryValues() asks for what it will actually get.
+	 */
+	harbor: {
+		chartRepo: "https://helm.goharbor.io",
+		chart: "harbor",
+		version: "1.15.1",
+	},
 } as const;
 
 /** Node kinds Hetzner supports in v1 (the canvas hides the rest for Hetzner). */
-export const HETZNER_SUPPORTED_DATA_KINDS = ["database", "cache", "queue"] as const;
+export const HETZNER_SUPPORTED_DATA_KINDS = [
+	"database",
+	"cache",
+	"queue",
+	"registry",
+] as const;
 
 /** Database engines available on Hetzner (Postgres only in v1 — via CloudNativePG). */
 export const HETZNER_DB_ENGINES = ["postgres"] as const;
@@ -122,11 +149,18 @@ interface QueueInput {
 	name: string;
 	storage_gb?: number | null;
 }
+/** A `registry` node. `storage_gb` sizes the IMAGE store only — Harbor's own database, Redis and
+ *  Trivy volumes are fixed at hcloud's 10 GiB minimum and are not user-tunable. */
+interface RegistryInput {
+	name: string;
+	storage_gb?: number | null;
+}
 
 interface HetznerDataServices {
 	databases?: DatabaseInput[];
 	caches?: CacheInput[];
 	queues?: QueueInput[];
+	registries?: RegistryInput[];
 }
 
 /** Clamp a positive integer with a default, guarding null/NaN/negatives. */
@@ -142,8 +176,9 @@ function posInt(value: number | null | undefined, fallback: number): number {
  * `AddOnInstallSpec[]` to append to the DEPLOY snapshot's `addons`:
  *  - the CloudNativePG operator once (sync-wave 0) when any Postgres database is present;
  *  - one CNPG `cluster` Application per database (sync-wave 1);
- *  - one Valkey release per cache; one RabbitMQ release per queue (sync-wave 1).
- * Each id is unique per node (`db-<name>` / `cache-<name>` / `queue-<name>`) so the runner's
+ *  - one Valkey release per cache; one RabbitMQ release per queue (sync-wave 1);
+ *  - one Harbor release per registry (sync-wave 2).
+ * Each id is unique per node (`db-<name>` / `cache-<name>` / `queue-<name>` / `registry-<name>`) so the runner's
  * `AddOnAppName` yields a distinct ArgoCD Application, and health reads back per component.
  */
 export function hetznerDataServicesToAddOns(
@@ -154,6 +189,7 @@ export function hetznerDataServicesToAddOns(
 	const databases = services.databases ?? [];
 	const caches = services.caches ?? [];
 	const queues = services.queues ?? [];
+	const registries = services.registries ?? [];
 
 	// Postgres databases: install the CNPG operator once, then a Cluster per node.
 	const pgDatabases = databases.filter(
@@ -215,6 +251,23 @@ export function hetznerDataServicesToAddOns(
 		});
 	}
 
+	// Registries → Harbor (one release per node). syncWave 2, after the data services: Harbor is
+	// the heaviest thing on the cluster (five volumes, its own Postgres/Redis/Trivy) and nothing
+	// else waits on it, so it converges last rather than competing for volume attachments while a
+	// database is still coming up. Matches the marketplace add-on's own wave.
+	for (const registry of registries) {
+		specs.push({
+			id: `registry-${registry.name}`,
+			mode: "managed",
+			chartRepo: HETZNER_CHARTS.harbor.chartRepo,
+			chart: HETZNER_CHARTS.harbor.chart,
+			version: HETZNER_CHARTS.harbor.version,
+			namespace: NS.registry,
+			values: hetznerRegistryValues(registry),
+			syncWave: 2,
+		});
+	}
+
 	// Queues → RabbitMQ (single node in v1).
 	for (const queue of queues) {
 		specs.push({
@@ -272,6 +325,72 @@ export function hetznerCacheValues(
 		values.image = { tag: cache.engine_version };
 	}
 	return values;
+}
+
+/**
+ * The in-cluster DNS name a `registry` node's Harbor answers on. Exported because it is the
+ * registry HOST — it goes into `externalURL`, into the dockerconfigjson the runner seeds, and into
+ * the Talos containerd mirror entry, and those three MUST agree or the pull fails in a way that
+ * looks like a credential problem.
+ */
+export function hetznerRegistryHost(name: string): string {
+	return `registry-${name}.${NS.registry}.svc.cluster.local`;
+}
+
+/**
+ * Helm values for one registry node, against the pinned Harbor chart's REAL schema — verified with
+ * `helm show values` + `helm template harbor --version 1.15.1`, never guessed. #2058 is why:
+ * self-contradictory values render NO manifest at all, and ArgoCD then reports `sync=Unknown`
+ * rather than `OutOfSync`, so the failure is invisible.
+ *
+ *  - `expose.type: clusterIP` with `tls.enabled: false`. NOT `ingress`, the chart default: an
+ *    ingress needs an ingress controller AND a resolvable host, and the chart's default host
+ *    (`core.harbor.domain`) resolves nowhere — a registry reachable at an address that does not
+ *    exist is not a registry. A canvas `registry` node carries no domain, so the cluster network
+ *    is the only address it truly has.
+ *  - `expose.clusterIP.name` fixes the Service name, so the host is derivable rather than a
+ *    function of the Helm release name.
+ *  - `externalURL` must agree with how the chart is exposed; Harbor bakes it into the tokens it
+ *    issues, so a mismatch yields a registry that authenticates and then 401s on every pull.
+ *  - all FIVE volumes are pinned to the hcloud StorageClass at >= 10 GiB. Harbor ships its own
+ *    Postgres, Redis and Trivy; the chart's 1Gi/1Gi/5Gi defaults for those are below hcloud's
+ *    minimum volume size, so the CSI driver rounds them up and the cluster's actual footprint
+ *    stops matching what this repo asked for.
+ */
+export function hetznerRegistryValues(
+	registry: RegistryInput,
+): Record<string, unknown> {
+	const host = hetznerRegistryHost(registry.name);
+	// The image store is the only user-tunable volume; hcloud's floor applies to it too.
+	const imageStore = `${Math.max(posInt(registry.storage_gb, 50), HCLOUD_MIN_VOLUME_GB)}Gi`;
+	const supporting = {
+		size: `${HCLOUD_MIN_VOLUME_GB}Gi`,
+		storageClass: HCLOUD_STORAGE_CLASS,
+	};
+	return {
+		// The admin password comes from a Secret the RUNNER seeds and never from a literal here:
+		// values are snapshot-persisted and reach the customer's cluster through a rendered
+		// manifest. Without these two keys the chart falls back to its published default
+		// (`harborAdminPassword: "Harbor12345"`) — which is what #2430 shipped, and what #2431 fixes.
+		// The names must match packages/core/argocd/harbor.go exactly; a mismatch is silent.
+		existingSecretAdminPassword: `harbor-${registry.name}-admin`,
+		existingSecretAdminPasswordKey: "HARBOR_ADMIN_PASSWORD",
+		expose: {
+			type: "clusterIP",
+			tls: { enabled: false },
+			clusterIP: { name: `registry-${registry.name}` },
+		},
+		externalURL: `http://${host}`,
+		persistence: {
+			persistentVolumeClaim: {
+				registry: { size: imageStore, storageClass: HCLOUD_STORAGE_CLASS },
+				jobservice: { jobLog: supporting },
+				database: supporting,
+				redis: supporting,
+				trivy: supporting,
+			},
+		},
+	};
 }
 
 /**

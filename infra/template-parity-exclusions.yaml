@@ -1549,6 +1549,22 @@ uniform:
   - variable: kvstore_shard_count
     reason: ApsaraDB for Redis exposes shard_count as its own argument; azure's Managed Redis encodes topology in the SKU instead, so there is no equivalent knob to add there.
 
+  # ── In-cluster container registry (#2431) ─────────────────────────────────────────
+  # Single-cloud because the SITUATION is, not because hetzner is ahead. Hetzner sells no container
+  # registry, so a `registry` node there becomes an in-cluster Harbor exposed as a plain-HTTP
+  # ClusterIP — and containerd tries HTTPS for any non-localhost host, so the kubelet must be told
+  # to trust that host or it cannot pull at all.
+  #
+  # The other four provision a REAL registry (ECR / Artifact Registry / ACR / CR EE) whose nodes
+  # authenticate with their own cloud identity over TLS. There is no host for them to trust and no
+  # variable to add: adding one would be an empty knob, not parity.
+  #
+  # Recorded here rather than on the baseline deliberately. `template_parity.baseline` is a declared
+  # ratchet ceiling that may only ever DECREASE (PROGRAMME.md §0), so a genuinely single-cloud
+  # variable must never consume a slot on it.
+  - variable: incluster_registry_hosts
+    reason: Hetzner has no registry product, so its `registry` kind is an in-cluster Harbor the kubelet must be told to trust over plain HTTP (a Talos machine.registries.mirrors entry). The other four provision a real cloud registry their nodes authenticate to over TLS with their own identity — there is no host to trust and no equivalent knob to add.
+
   # #2004's own switches. Each cloud names its own — there is no shared spelling for "encrypt
   # Secrets in etcd" — so the four are one capability under four names rather than four asymmetries.
   # The capability itself is uniform: every cloud that CAN do it, does, by default.
