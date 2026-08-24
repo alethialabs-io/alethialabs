@@ -90,7 +90,10 @@ if [ -z "${HCLOUD_TOKEN:-}" ]; then
 	exit 2
 fi
 
-if ! command -v hcloud >/dev/null 2>&1; then
+# The self-test shadows `hcloud` with a shell function, so it needs no binary — and CI runners do
+# not have one (the nightly installs it only for the hetzner leg). Requiring it here would make the
+# hermetic test unrunnable in the one place it is meant to run.
+if [ "$SELF_TEST" != "1" ] && ! command -v hcloud >/dev/null 2>&1; then
 	echo "✗ the 'hcloud' CLI is not installed." >&2
 	echo "  Install it: https://github.com/hetznercloud/cli (e.g. 'brew install hcloud')." >&2
 	exit 2
@@ -119,7 +122,9 @@ UNVERIFIABLE=""
 #    list_ids swallows that into an empty list — which reads exactly like "no zones", the
 #    report-clean-without-looking failure this whole file exists to prevent. Probe once, loudly.
 ZONE_SUPPORTED=0
-if hcloud zone list -o noheader >/dev/null 2>&1; then
+if [ "$SELF_TEST" = "1" ]; then
+	: # no CLI to probe under the self-test; the zone path is not what it exercises
+elif hcloud zone list -o noheader >/dev/null 2>&1; then
 	ZONE_SUPPORTED=1
 else
 	# Either the CLI predates `hcloud zone`, or the token cannot read zones. The probe cannot tell
