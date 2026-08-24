@@ -107,6 +107,17 @@ outdir="$root/$bundle"
 mkdir -p "$outdir"
 log="$outdir/run.log"
 
+# ── Pin the run handle BEFORE the harness runs, so this script knows what to sweep. ──
+#
+# `t2_provision_test.go` derives the cluster as `<ALETHIA_E2E_PROJECT>-<ALETHIA_E2E_ENV>`, and when
+# ALETHIA_E2E_ENV is unset it invents `local<shorthex>` at runtime. That name is what every sweeper
+# is scoped by — so leaving it to the harness means this script cannot clean up after itself, which
+# is exactly the state that leaked 140 GB of volumes on 2026-08-24.
+e2e_project="${ALETHIA_E2E_PROJECT:-alethia-nl}"
+e2e_env="${ALETHIA_E2E_ENV:-local$(date -u +%s | tail -c 7)}"
+export ALETHIA_E2E_PROJECT="$e2e_project" ALETHIA_E2E_ENV="$e2e_env"
+cluster_handle="${e2e_project}-${e2e_env}"
+
 # ── fidelity env for the chosen dimension (layered: full = all of them) ────────────────────────
 # From fidelity_env in resolve-dimension.sh, NOT an inline case. This used to be written out here
 # AND in the workflow's step env, and the two disagreed: the workflow turned the day-2 soak on for
@@ -226,6 +237,41 @@ if [[ "$verdict" == "FAIL" && -z "${NO_ISSUE:-}" ]] && command -v gh >/dev/null 
 fi
 
 append_ledger "$sha" "$verdict" "$ledger_detail" "$bundle" "$issue_ref"
+
+# ── Scope-locked sweep, because `tofu destroy` is not the whole teardown. ──
+#
+# The nightly runs the per-cloud sweeper as an `always()` step. This script — the documented way to
+# drive a run BY HAND (demos/proofs/README.md) — did not, and the difference is billable.
+#
+# Measured 2026-08-24 on a `hetzner addons` run: destroy removed 33 resources and the cluster, and
+# left NINE CSI-provisioned volumes standing, 140 GB of them. That is not a destroy bug — `pvc-*`
+# volumes are created by the CSI controller at runtime, so they were never in tofu state and destroy
+# cannot see them. The label-scoped sweeper reclaims them, and nothing was calling it.
+#
+# Scoped to THIS run's handle, which the block above pinned, so it can only ever match this run.
+# `NO_SWEEP=1` opts out — for keeping a cluster alive to inspect it, the one good reason.
+if [[ -z "${NO_SWEEP:-}" && -z "${BLOCKED:-}" ]]; then
+  case "$cloud" in
+  hetzner) sweeper="hcloud-cleanup.sh" ;;
+  *) sweeper="${cloud}-cleanup.sh" ;;
+  esac
+  if [[ -x "$root/scripts/e2e/$sweeper" ]]; then
+    echo "→ scope-locked sweep: $sweeper ${cluster_handle}" >&2
+    # hetzner takes the cluster label positionally; the managed sweepers read ALETHIA_E2E_ENV /
+    # _REGION from the environment, which is already exported. Passing the handle is harmless there.
+    #
+    # DO NOT "simplify" this by passing $cluster_handle as ALETHIA_E2E_ENV. The two sweepers carry
+    # DIFFERENT shared-infra denylists: aws-cleanup.sh refuses `alethia-*` outright, so the full
+    # `alethia-nl-<env>` handle would be REFUSED there, while hcloud-cleanup.sh denies only the exact
+    # `alethia` / `alethia-data` and accepts it. Env for the managed clouds, positional for hetzner,
+    # is the shape that satisfies both.
+    if ! "$root/scripts/e2e/$sweeper" "$cluster_handle" >&2; then
+      echo "::warning::the post-run sweep for ${cloud}/${cluster_handle} did not verify clean — check by hand, scope-locked, before running again." >&2
+    fi
+  else
+    echo "::warning::no sweeper at scripts/e2e/${sweeper} — anything the destroy could not reach is still standing." >&2
+  fi
+fi
 
 # A quarantined bundle fails the step even on a PASS verdict — the record is written, but the run
 # is not clean until a human clears the tripwire hit.
