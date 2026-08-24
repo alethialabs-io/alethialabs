@@ -1,0 +1,3 @@
+{"feature":"provisioning","cloud":"aws","dimension":"floor","verdict":"FAIL",
+ "quarantined":false,
+ "git_sha":"2fb9607d","captured_at":"20260824T193315Z","detail":"--- FAIL: TestT2RealCloudProvisioning (2418.10s)"}
