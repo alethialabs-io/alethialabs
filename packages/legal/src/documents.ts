@@ -88,3 +88,19 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentVersion[] = [
 		source: "apps/marketing/app/imprint/page.tsx",
 	},
 ];
+
+/**
+ * The exact strings the console's acceptance gate renders.
+ *
+ * Exported so the e2e fixture that walks the gate locates the control by CONSTANT rather than by a
+ * literal it keeps in step by hand. That is not a style preference — #2371 relabelled the consent
+ * buttons and the hero path's hard-coded locator broke silently, with a timeout deep in an unrelated
+ * step as the first anyone knew. `CONSENT_LABELS` exists for the same reason; this is its sibling
+ * for the clickwrap, and it must stay a plain string map so a Playwright spec can import it.
+ */
+export const ACCEPTANCE_LABELS = {
+	/** The submit button, inert until the box is ticked. */
+	submit: "Accept and continue",
+	/** The start of the checkbox label — the locator matches on this prefix. */
+	checkboxPrefix: "I have read and accept",
+} as const;

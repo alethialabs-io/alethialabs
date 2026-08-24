@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { LEGAL_DOCUMENTS } from "@repo/legal/documents";
 import { signedJob } from "@/lib/db/signed-job";
 import type { Db } from "@/lib/db";
 import {
@@ -14,6 +15,7 @@ import {
 	fleetPools,
 	jobLogs,
 	jobs,
+	legalAcceptance,
 	member,
 	organization,
 	organizationBilling,
@@ -76,13 +78,61 @@ export function fleetIds(id: (name: string) => string) {
 /** Resolves the demo owner: reuse an existing user by email, else create one. */
 export async function resolveOwner(db: Db, email: string, id: (name: string) => string): Promise<string> {
 	const existing = await db.select({ id: user.id }).from(user).where(eq(user.email, email)).limit(1);
-	if (existing.length > 0) return existing[0].id;
-	const ownerId = id("user:owner");
-	await db
-		.insert(user)
-		.values({ id: ownerId, name: DEMO.ownerName, email, emailVerified: true, onboardingCompletedAt: new Date() })
-		.onConflictDoNothing();
+	const ownerId = existing.length > 0 ? existing[0].id : id("user:owner");
+	if (existing.length === 0) {
+		await db
+			.insert(user)
+			.values({ id: ownerId, name: DEMO.ownerName, email, emailVerified: true, onboardingCompletedAt: new Date() })
+			.onConflictDoNothing();
+	}
+	await acceptDemoOwnerTerms(db, ownerId);
 	return ownerId;
+}
+
+/**
+ * Records the demo owner's acceptance of every acceptance-required document (#2372).
+ *
+ * The seeded persona is an ESTABLISHED customer, not a first-time signup — and every route under
+ * (private) redirects to the clickwrap until the current Terms are accepted. Without this the demo
+ * and the capture run both open on a legal gate instead of the product, and the screenshot job
+ * would film it.
+ *
+ * Re-runnable: acceptance is unique per (user, document, version) by construction here, so a second
+ * seed adds nothing. A NEW document version does add a row, which is correct — the persona accepts
+ * whatever is current, exactly as a real user would have to.
+ */
+async function acceptDemoOwnerTerms(db: Db, ownerId: string): Promise<void> {
+	for (const doc of LEGAL_DOCUMENTS.filter((d) => d.acceptanceRequired)) {
+		const already = await db
+			.select({ id: legalAcceptance.id })
+			.from(legalAcceptance)
+			.where(
+				and(
+					eq(legalAcceptance.userId, ownerId),
+					eq(legalAcceptance.documentId, doc.id),
+					eq(legalAcceptance.documentVersion, doc.version),
+				),
+			)
+			.limit(1);
+		if (already.length > 0) continue;
+		await db.insert(legalAcceptance).values({
+			userId: ownerId,
+			documentId: doc.id,
+			documentVersion: doc.version,
+			documentHash: doc.contentHash,
+			locale: "en",
+			context: "signup",
+			// Seeded, and says so: an `ip` of null with a `surface` of signup is what a real
+			// acceptance from a stripped proxy looks like, and this record must not be mistaken for
+			// one. The demo database is not evidence of anything.
+			evidence: {
+				ip: null,
+				userAgent: "alethia-seed",
+				clientTimestamp: null,
+				surface: "signup",
+			},
+		});
+	}
 }
 
 /** Org row (id unified with owner id), members, teams, enterprise billing. */

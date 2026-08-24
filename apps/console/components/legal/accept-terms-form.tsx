@@ -10,6 +10,7 @@ import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 import { Button } from "@repo/ui/button";
 import { Checkbox } from "@repo/ui/checkbox";
+import { ACCEPTANCE_LABELS } from "@repo/legal/documents";
 import { acceptLegalDocuments } from "@/app/server/actions/legal";
 
 /** One document awaiting acceptance, as the page resolved it. */
@@ -128,7 +129,7 @@ export function AcceptTermsForm({
 					)}
 				/>
 				<span>
-					I have read and accept the{" "}
+					{ACCEPTANCE_LABELS.checkboxPrefix} the{" "}
 					{documents.map((d) => d.title).join(" and ")}.
 				</span>
 			</label>
@@ -136,7 +137,7 @@ export function AcceptTermsForm({
 			{error && <p className="text-sm text-destructive">{error}</p>}
 
 			<Button type="submit" disabled={!isValid || isSubmitting}>
-				{isSubmitting ? "Recording…" : "Accept and continue"}
+				{isSubmitting ? "Recording…" : ACCEPTANCE_LABELS.submit}
 			</Button>
 		</form>
 	);

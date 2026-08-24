@@ -9,6 +9,7 @@
 // Requires the console running with SES unconfigured so the OTP is logged (local: `pnpm dev:up`;
 // CI: the e2e-browser job boots `next start` and tees stdout to $DEV_CONSOLE_LOG).
 
+import { ACCEPTANCE_LABELS } from "@repo/legal/documents";
 import { CONSENT_LABELS } from "@repo/privacy/consent";
 import path from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
@@ -62,14 +63,53 @@ export async function signUpWithOtp(page: Page): Promise<{ email: string; orgSlu
 	await page.locator("#org-name").fill(orgName);
 	await page.getByRole("button", { name: /create organization/i }).click();
 
-	// Onboarding hands off to /{slug} (a single path segment — not /onboarding, not /signup).
+	// The clickwrap gate (#2372). Every route under (private) redirects here until the account has
+	// accepted the CURRENT Terms, so a brand-new account meets it between onboarding and the org —
+	// and the fixture walks it exactly as a person would rather than seeding an acceptance row,
+	// which would leave the gate itself never exercised in a browser.
+	//
+	// Located by the exported constants, not literals, for the reason CONSENT_LABELS records above.
+	await acceptCurrentTerms(page);
+
+	// Onboarding hands off to /{slug} (a single path segment — not /onboarding, not /signup, and
+	// NOT /accept-terms: that one is a single segment too, so without excluding it a gated run
+	// resolves "accept-terms" as the org slug and every later step fails somewhere unrelated. That
+	// is exactly what happened when the gate first landed.)
 	await page.waitForURL(
-		(url) => /^\/[^/]+$/.test(url.pathname) && !/^\/(signup|onboarding|login)$/.test(url.pathname),
+		(url) =>
+			/^\/[^/]+$/.test(url.pathname) &&
+			!/^\/(signup|onboarding|login|accept-terms)$/.test(url.pathname),
 		{ timeout: 30_000 },
 	);
 	const orgSlug = new URL(page.url()).pathname.replace(/^\//, "").replace(/\/.*$/, "");
 	expect(orgSlug, "resolved a non-empty org slug after onboarding").toBeTruthy();
 	return { email, orgSlug };
+}
+
+/**
+ * Walks the post-auth clickwrap if it is showing, and returns once it is not.
+ *
+ * Tolerant of NOT being there on purpose: the gate only fires for an account that has not accepted
+ * the current Terms, so a run against a pre-accepted persona must not hang waiting for a form that
+ * will never appear. It waits briefly, and proceeds if the gate did not come up.
+ */
+async function acceptCurrentTerms(page: Page): Promise<void> {
+	const accept = page.getByRole("button", { name: ACCEPTANCE_LABELS.submit });
+	try {
+		await accept.waitFor({ state: "visible", timeout: 15_000 });
+	} catch {
+		return; // already accepted — nothing to walk
+	}
+	// The box starts UNTICKED and the button is inert until it is ticked; that is the whole point of
+	// a clickwrap, so the fixture asserts it rather than clicking straight through.
+	await expect(accept).toBeDisabled();
+	await page
+		.getByText(new RegExp(ACCEPTANCE_LABELS.checkboxPrefix, "i"))
+		.first()
+		.click();
+	await expect(accept).toBeEnabled();
+	await accept.click();
+	await expect(accept).toBeHidden({ timeout: 30_000 });
 }
 
 /** Fixtures: an authenticated page already inside its fresh org, plus the resolved org slug. */
