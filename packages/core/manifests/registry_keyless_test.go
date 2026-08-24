@@ -4,7 +4,6 @@
 package manifests
 
 import (
-	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -27,8 +26,6 @@ func TestRenderRegistryRefresher_AWS(t *testing.T) {
 		"kind: ServiceAccount",
 		"name: alethia-registry-pull",
 		"eks.amazonaws.com/role-arn: \"arn:aws:iam::111:role/ecr-pull\"",
-		"type: kubernetes.io/dockerconfigjson",
-		"name: ecr-xacct-pull",
 		// least-priv RBAC: get+patch on ONLY this Secret
 		"resourceNames: [\"ecr-xacct-pull\"]",
 		"verbs: [\"get\", \"patch\"]",
@@ -45,9 +42,28 @@ func TestRenderRegistryRefresher_AWS(t *testing.T) {
 			t.Errorf("aws refresher manifest missing %q:\n%s", want, y)
 		}
 	}
-	// The placeholder secret ships an empty-auths dockerconfig (no token at render time).
-	if !strings.Contains(y, ".dockerconfigjson: "+base64.StdEncoding.EncodeToString([]byte(`{"auths":{}}`))) {
-		t.Errorf("expected empty-auths placeholder secret:\n%s", y)
+	// ── THE #2435 REGRESSION ─────────────────────────────────────────────────────────────────
+	// This manifest is COMMITTED to the customer's apps repo, which ArgoCD syncs with
+	// `automated: {prune: true, selfHeal: true}` and no `ignoreDifferences`. A Secret declared here
+	// is therefore tracked with an empty docker config as its desired state, and ArgoCD heals the
+	// credential the refresher just minted straight back to `{"auths":{}}`.
+	//
+	// The goldens above assert what IS rendered; nothing asserted what must NOT be, which is why the
+	// defect shipped. The Secret is seeded by argocd.EnsureRegistryPullSecret from the runner
+	// instead — with the prune label but no ArgoCD tracking metadata.
+	for _, forbidden := range []string{
+		"kind: Secret",
+		"type: kubernetes.io/dockerconfigjson",
+		".dockerconfigjson:",
+	} {
+		if strings.Contains(y, forbidden) {
+			t.Errorf("the committed refresher unit contains %q — ArgoCD selfHeal will revert the minted "+
+				"credential to an empty docker config (#2435):\n%s", forbidden, y)
+		}
+	}
+	// The RBAC still names the Secret it patches, even though it no longer declares it.
+	if !strings.Contains(y, "resourceNames: [\"ecr-xacct-pull\"]") {
+		t.Errorf("the Role no longer scopes to the pull secret:\n%s", y)
 	}
 	// No RBAC beyond the one secret — must not grant create/list/delete or wildcard.
 	for _, forbidden := range []string{"create", "list", "delete", "\"*\""} {

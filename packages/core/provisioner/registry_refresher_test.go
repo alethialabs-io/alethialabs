@@ -45,6 +45,8 @@ func TestWriteRegistryRefresher_FlagOff(t *testing.T) {
 
 func TestWriteRegistryRefresher_On(t *testing.T) {
 	t.Setenv("ALETHIA_XACCT_REGISTRY_ENABLED", "true")
+	// The pull Secret is seeded against the CLUSTER now (#2435) — stub it, there is none here.
+	stubPullSecretSeed(t, nil)
 	t.Setenv("ALETHIA_RUNNER_IMAGE", "ghcr.io/alethialabs-io/runner:test")
 	dir := t.TempDir()
 	skips, err := writeRegistryRefresher(dir, ecrXacctProject(), map[string]string{"ecr_pull_irsa_arn": "arn:aws:iam::111:role/ecr-pull"}, io.Discard)
