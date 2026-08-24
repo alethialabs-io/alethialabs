@@ -89,7 +89,10 @@ jobs:
           body="${body}
 
           _Refreshed by \`.github/workflows/workflow-health.yml\` on $(date -u +%Y-%m-%d). Close it when the list is empty; it will reopen itself if that stops being true._"
-          existing="$(gh issue list --state open --search "\"$TITLE\" in:title" --json number -q '.[0].number' 2>/dev/null || true)"
+          # Dedup by LABEL, not by --search. GitHub's search index LAGS by minutes, and a dedup
+          # that only asks search has already filed a duplicate in this repo. `--label` is live.
+          existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
+            --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --body "$body"
             gh issue comment "$existing" --body "Still red on $(date -u +%Y-%m-%d) — see the updated body."
@@ -105,7 +108,8 @@ jobs:
           TITLE: "ci: workflows red on every recent run"
         run: |
           set -euo pipefail
-          existing="$(gh issue list --state open --search "\"$TITLE\" in:title" --json number -q '.[0].number' 2>/dev/null || true)"
+          existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
+            --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
           if [ -n "$existing" ]; then
             gh issue close "$existing" --comment "No workflow has failed its last 3 runs as of $(date -u +%Y-%m-%d). Closing; this reopens itself if that changes."
             echo "closed #$existing"
