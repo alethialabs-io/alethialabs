@@ -17,7 +17,14 @@
 //              GITHUB_SERVER_URL, CLA_SIGNATURE_BRANCH (default "cla-signatures").
 
 import { readFileSync } from "node:fs";
-import { Decision, evaluate, readActive, records } from "./cla-check.mjs";
+import {
+	corporateAgreements,
+	Decision,
+	evaluate,
+	readActive,
+	records,
+	revocations,
+} from "./cla-check.mjs";
 
 const token = required("GITHUB_TOKEN");
 const [owner, repo] = required("GITHUB_REPOSITORY").split("/");
@@ -63,15 +70,56 @@ const file = `cla/signatures/v${version}.json`;
 // starting state and not an error — but it is also NOT a pass, because hasSigned() sees an empty list.
 let sha;
 let signatures = [];
+let corporate = [];
+let revoked = [];
 if (active) {
 	const got = await gh("GET", `/repos/${owner}/${repo}/contents/${file}?ref=${branch}`, null, [404]);
 	if (!got.__status) {
 		sha = got.sha;
-		signatures = records(JSON.parse(Buffer.from(got.content, "base64").toString("utf8")));
+		const doc = JSON.parse(Buffer.from(got.content, "base64").toString("utf8"));
+		signatures = records(doc);
+		corporate = corporateAgreements(doc);
+		revoked = revocations(doc);
 	}
 }
 
-const verdict = evaluate({ eventName, event, active, signatures });
+/**
+ * Every commit author on the pull request, from the commits API.
+ *
+ * Returns `undefined` — NOT an empty array — when they cannot be enumerated. The two are opposite
+ * facts: an empty list means "no commits", which would pass trivially, while "could not read" must
+ * fail closed. Collapsing them is how this check would quietly stop checking.
+ *
+ * Paged, and capped at GitHub's own 250-commit ceiling for this endpoint. A pull request larger than
+ * that is reported as unreadable rather than partially checked — a partial answer here is an
+ * unlicensed contribution that looks fine.
+ */
+async function commitAuthors() {
+	if (eventName !== "pull_request_target") return [];
+	const number = event?.pull_request?.number ?? event?.number;
+	if (!Number.isInteger(number)) return undefined;
+	const out = [];
+	for (let page = 1; page <= 3; page++) {
+		const got = await gh(
+			"GET",
+			`/repos/${owner}/${repo}/pulls/${number}/commits?per_page=100&page=${page}`,
+			null,
+			[404, 422],
+		).catch(() => ({ __status: 599 }));
+		if (got.__status || !Array.isArray(got)) return undefined;
+		for (const c of got) {
+			// `author` is the GitHub ACCOUNT GitHub matched to the commit, and it is null when the
+			// commit's author email belongs to no account. That is exactly the case that must not be
+			// skipped, so the sha is carried through for the message.
+			out.push({ login: c.author?.login, id: c.author?.id, sha: c.sha });
+		}
+		if (got.length < 100) return out;
+	}
+	return undefined;
+}
+
+const authors = await commitAuthors();
+const verdict = evaluate({ eventName, event, active, signatures, corporate, revoked, authors });
 
 if (verdict.decision === Decision.Ignore) {
 	console.log(`cla: ignoring — ${verdict.reason}`);
