@@ -72,9 +72,24 @@ append_ledger() {
   # so neutralize it here for every caller. Also collapse newlines to keep the row on one line.
   detail="${detail//|/;}"; detail="${detail//$'\n'/ }"
   local row="| $(date -u +%Y-%m-%d) | $sha | $cloud | $dimension | **$verdict** | ${detail:-} | \`$bundle\` | ${issue:-—} |"
-  if grep -q "provisioning-e2e.sh appends new rows below this line" "$ledger" 2>/dev/null; then
-    awk -v r="$row" '/appends new rows below this line/{print;print r;next}1' "$ledger" >"$ledger.tmp" && mv "$ledger.tmp" "$ledger"
-  else printf '%s\n' "$row" >>"$ledger"; fi
+  # ── APPEND AT THE END, not directly beneath the sentinel. ──
+  #
+  # `collapseLedger` (scripts/programme-rollup.mjs) replays rows in FILE ORDER and lets the last one
+  # win. This wrote each new row immediately BELOW the sentinel, i.e. newest-first. Newest-first
+  # storage read as last-wins means the OLDEST row wins.
+  #
+  # Measured 2026-08-24: a hetzner/floor PASS was masked by the FAIL from three hours earlier, and
+  # PROGRAMME.md reported "0 proven" with the proof sitting in the same file. All five ledger engines
+  # have always done this. It could not bite until now only because no (cloud × dimension) pair had
+  # ever had two rows below the sentinel — there was exactly one row down there. A re-run-until-green
+  # cadence produces that condition immediately, and it bit on the first re-run.
+  #
+  # The sentinel stays as the marker for where the appended region begins; a file without one is not
+  # the shape this writes into, so say so rather than appending blind.
+  if ! grep -q "provisioning-e2e.sh appends new rows below this line" "$ledger" 2>/dev/null; then
+    echo "::warning::provisioning-e2e.sh: ledger $ledger has no append sentinel — appending at end of file anyway." >&2
+  fi
+  printf '%s\n' "$row" >>"$ledger"
   echo "recorded: $verdict → ${bundle} (ledger appended)" >&2
 }
 
@@ -177,21 +192,40 @@ EOF
 ledger_detail="${detail:-}"
 [[ -n "${quarantined:-}" ]] && ledger_detail="⚠ QUARANTINED (proof-scrub tripwire) — ${ledger_detail:-see bundle}"
 
-append_ledger "$sha" "$verdict" "$ledger_detail" "$bundle" "—"
-
 # ── on FAIL: file/update a title-deduped GitHub issue (mirror the e2e-nightly rollup filer) ─────
+#
+# THIS RUNS BEFORE THE LEDGER APPEND, and the order is the fix. It used to run after, so the row
+# was written with a hardcoded `—` in its issue column and nothing ever backfilled it: every FAIL
+# row in demos/proofs/provisioning-e2e-log.md cites no issue, while the issue it had just filed
+# sat one line further down the script. A reader of the ledger — which is the entry point, and what
+# PROGRAMME.md derives from — had no way to reach the diagnosis.
+#
+# `gh issue create` prints the new issue's URL, so the number is the basename. That is the only
+# reason this can be resolved before the append rather than after.
+issue_ref="—"
 if [[ "$verdict" == "FAIL" && -z "${NO_ISSUE:-}" ]] && command -v gh >/dev/null 2>&1; then
   title="e2e: provisioning ${cloud}/${dimension} FAIL"
   existing="$(gh issue list --state open --search "\"$title\" in:title" --json number -q '.[0].number' 2>/dev/null)"
   if [[ -n "$existing" ]]; then
     gh issue comment "$existing" --body "Recurred @ $sha ($stamp) — \`$bundle\`. Last line: ${detail:-see bundle}" >/dev/null 2>&1 || true
-    echo "issue updated: #$existing" >&2
+    issue_ref="#$existing"
+    echo "issue updated: $issue_ref" >&2
   else
     body="$title at \`$sha\` (${stamp}). Proof bundle: \`$bundle\`. Last line: ${detail:-see bundle}. Auto-filed by provisioning-e2e.sh; re-run to update. Board: docs/testing/provisioning-e2e-parity.md."
-    gh issue create --title "$title" --label "lane:tests" --body "$body" >/dev/null 2>&1 || true
-    echo "issue filed: $title" >&2
+    # NOT `|| true` with a success message after it. The old form printed "issue filed" whether or
+    # not the call worked — a rate limit, a missing label or no token all reported success, and the
+    # ledger row said `—` either way, so nothing anywhere recorded that the filing had been lost.
+    # A run whose evidence cannot be reached is the failure this file exists to prevent.
+    if issue_url="$(gh issue create --title "$title" --label "lane:tests" --body "$body" 2>/dev/null)"; then
+      issue_ref="#${issue_url##*/}"
+      echo "issue filed: $issue_ref $title" >&2
+    else
+      echo "::warning::could not file the tracking issue for ${cloud}/${dimension} — the ledger row will cite none. Bundle: ${bundle}" >&2
+    fi
   fi
 fi
+
+append_ledger "$sha" "$verdict" "$ledger_detail" "$bundle" "$issue_ref"
 
 # A quarantined bundle fails the step even on a PASS verdict — the record is written, but the run
 # is not clean until a human clears the tripwire hit.
