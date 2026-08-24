@@ -93,5 +93,54 @@
 			},
 			"syncWave": 1
 		}
+	],
+	"chartedNotOffered": [
+		{
+			"id": "registry-app-images",
+			"mode": "managed",
+			"chartRepo": "https://helm.goharbor.io",
+			"chart": "harbor",
+			"version": "1.15.1",
+			"namespace": "registries",
+			"values": {
+				"expose": {
+					"type": "clusterIP",
+					"tls": {
+						"enabled": false
+					},
+					"clusterIP": {
+						"name": "registry-app-images"
+					}
+				},
+				"externalURL": "http://registry-app-images.registries.svc.cluster.local",
+				"persistence": {
+					"persistentVolumeClaim": {
+						"registry": {
+							"size": "50Gi",
+							"storageClass": "hcloud-volumes"
+						},
+						"jobservice": {
+							"jobLog": {
+								"size": "10Gi",
+								"storageClass": "hcloud-volumes"
+							}
+						},
+						"database": {
+							"size": "10Gi",
+							"storageClass": "hcloud-volumes"
+						},
+						"redis": {
+							"size": "10Gi",
+							"storageClass": "hcloud-volumes"
+						},
+						"trivy": {
+							"size": "10Gi",
+							"storageClass": "hcloud-volumes"
+						}
+					}
+				}
+			},
+			"syncWave": 2
+		}
 	]
 }

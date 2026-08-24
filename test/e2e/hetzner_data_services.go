@@ -105,8 +105,11 @@ func loadHetznerDataServiceFixture() (hetznerDataServiceFixture, error) {
 			"hetzner data-service fixture declares %d database(s), %d cache(s), %d queue(s) — all three kinds are CarriedInCluster on hetzner, so a missing one makes that kind unprovable (%s)",
 			len(fx.Components.Databases), len(fx.Components.Caches), len(fx.Components.Queues), hetznerDataServicesRegenerate)
 	}
-	// One Application per component, plus the CNPG operator that owns the Cluster CRD.
-	wantSpecs := len(fx.Components.Databases) + len(fx.Components.Caches) + len(fx.Components.Queues) + 1
+	// One Application per component, plus the CNPG operator that owns the Cluster CRD. Derived from
+	// the components rather than written down: a hard-coded total has to be edited by hand every
+	// time a kind joins the in-cluster set, and the edit is invisible until a real Hetzner run.
+	wantSpecs := len(fx.Components.Databases) + len(fx.Components.Caches) +
+		len(fx.Components.Queues) + 1
 	if len(fx.AddOns) != wantSpecs {
 		return hetznerDataServiceFixture{}, fmt.Errorf(
 			"hetzner data-service fixture holds %d install spec(s), expected %d (one per component + the cnpg-operator) — the fixture is stale or partial (%s)",

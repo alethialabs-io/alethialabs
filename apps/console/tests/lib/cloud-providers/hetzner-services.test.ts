@@ -10,7 +10,33 @@ import { describe, expect, it } from "vitest";
 import {
 	HETZNER_CHARTS,
 	hetznerDataServicesToAddOns,
+	hetznerRegistryHost,
 } from "@/lib/cloud-providers/hetzner-services";
+
+/**
+ * Walks a decoded values tree by path, narrowing at every step. Used instead of chained `as` casts,
+ * which this repo's lint refuses (consistent-type-assertions) — and which would tell the compiler
+ * the shape is right rather than asking it, in a file whose whole job is to check the shape.
+ */
+function at(obj: unknown, ...path: string[]): Record<string, unknown> {
+	let cur: unknown = obj;
+	for (const key of path) {
+		if (typeof cur !== "object" || cur === null || !(key in cur)) {
+			throw new Error(`values path ${path.join(".")} stops at ${key}`);
+		}
+		cur = Object.getOwnPropertyDescriptor(cur, key)?.value;
+	}
+	if (typeof cur !== "object" || cur === null) {
+		throw new Error(`values path ${path.join(".")} is not an object`);
+	}
+	return { ...cur };
+}
+
+/** One scalar at a values path (the leaf's own key), narrowed the same way. */
+function leaf(obj: unknown, ...path: string[]): unknown {
+	const key = path[path.length - 1];
+	return at(obj, ...path.slice(0, -1))[key];
+}
 
 /** Narrow a spec's `values` for nested reads without repeating casts in every test. */
 function values(spec: { values?: Record<string, unknown> } | undefined) {
@@ -196,5 +222,121 @@ describe("hetznerDataServicesToAddOns — engine filtering (databases)", () => {
 		expect(specs.some((s) => s.id === "db-legacy")).toBe(true);
 		// The mapper drops it — buildConfigSnapshot's fail-closed gate must throw first.
 		expect(specs.some((s) => s.id === "db-my")).toBe(false);
+	});
+});
+
+describe("hetznerDataServicesToAddOns — registries (Harbor)", () => {
+	const specsFor = (registries: { name: string; storage_gb?: number }[]) =>
+		hetznerDataServicesToAddOns({ registries });
+	const specOf = (registries: { name: string; storage_gb?: number }[], id: string) =>
+		specsFor(registries).find((s) => s.id === id);
+
+	it("charts one Harbor release per registry node, at sync-wave 2", () => {
+		const harbor = specsFor([{ name: "app-images" }, { name: "base" }]).filter(
+			(s) => s.chart === "harbor",
+		);
+		expect(harbor.map((s) => s.id)).toEqual([
+			"registry-app-images",
+			"registry-base",
+		]);
+		for (const spec of harbor) {
+			expect(spec.chartRepo).toBe("https://helm.goharbor.io");
+			expect(spec.namespace).toBe("registries");
+			// After the data services: Harbor is five volumes plus its own Postgres/Redis/Trivy, and
+			// nothing else waits on it.
+			expect(spec.syncWave).toBe(2);
+		}
+	});
+
+	it("pins the SAME chart version as the harbor marketplace add-on", async () => {
+		// Two Harbor versions in one cluster is what a Hetzner project that ALSO enables the
+		// marketplace add-on would get, and nothing else in the tree would notice.
+		const { ADDON_CATALOG } = await import("@/lib/addons/catalog");
+		const marketplace = ADDON_CATALOG.find((a) => a.id === "harbor");
+		expect(marketplace).toBeDefined();
+		expect(HETZNER_CHARTS.harbor.version).toBe(marketplace?.version);
+		expect(HETZNER_CHARTS.harbor.chartRepo).toBe(marketplace?.chartRepo);
+	});
+
+	it("exposes clusterIP with TLS off — NOT the chart's default ingress", () => {
+		// The chart defaults to `expose.type: ingress` at host `core.harbor.domain`, which resolves
+		// nowhere. A canvas registry node carries no domain, so the cluster network is the only
+		// address it actually has.
+		const spec = specOf([{ name: "app-images" }], "registry-app-images");
+		expect(leaf(spec?.values, "expose", "type")).toBe("clusterIP");
+		expect(leaf(spec?.values, "expose", "tls", "enabled")).toBe(false);
+		expect(leaf(spec?.values, "expose", "clusterIP", "name")).toBe(
+			"registry-app-images",
+		);
+	});
+
+	it("agrees with hetznerRegistryHost on the externalURL", () => {
+		// Harbor bakes externalURL into the tokens it issues, so a host that disagrees with the
+		// Service name authenticates and then 401s on every pull. The runner's dockerconfigjson and
+		// the Talos containerd mirror read the same helper.
+		expect(hetznerRegistryHost("app-images")).toBe(
+			"registry-app-images.registries.svc.cluster.local",
+		);
+		const spec = specOf([{ name: "app-images" }], "registry-app-images");
+		expect(spec?.values.externalURL).toBe(
+			`http://${hetznerRegistryHost("app-images")}`,
+		);
+	});
+
+	it("pins ALL FIVE volumes to the hcloud StorageClass, never the cluster default", () => {
+		// Harbor ships its own Postgres, Redis and Trivy. Leaving four of the five unset works only
+		// while hcloud-volumes happens to be the cluster's default StorageClass.
+		const v = specOf([{ name: "app-images" }], "registry-app-images")?.values;
+		const claims = [
+			["registry"],
+			["jobservice", "jobLog"],
+			["database"],
+			["redis"],
+			["trivy"],
+		];
+		for (const claim of claims) {
+			expect(
+				leaf(v, "persistence", "persistentVolumeClaim", ...claim, "storageClass"),
+			).toBe("hcloud-volumes");
+		}
+	});
+
+	it("never asks for a volume below hcloud's 10 GiB minimum", () => {
+		// The chart defaults database/redis/jobLog to 1Gi. hcloud's minimum volume is 10 GiB, so the
+		// CSI driver rounds them up and the cluster quietly stops matching what this repo rendered —
+		// a divergence, not an error, which is why it needs a test rather than a stack trace.
+		const v = specOf([{ name: "small", storage_gb: 2 }], "registry-small")?.values;
+		for (const claim of [
+			["registry"],
+			["jobservice", "jobLog"],
+			["database"],
+			["redis"],
+			["trivy"],
+		]) {
+			const size = leaf(v, "persistence", "persistentVolumeClaim", ...claim, "size");
+			expect(Number.parseInt(String(size), 10)).toBeGreaterThanOrEqual(10);
+		}
+		// An explicit 2 GiB is CLAMPED, not honoured.
+		expect(
+			leaf(v, "persistence", "persistentVolumeClaim", "registry", "size"),
+		).toBe("10Gi");
+	});
+
+	it("defaults the image store to 50Gi and honours a storage_gb above the floor", () => {
+		const sizeOf = (name: string, storage_gb?: number) =>
+			leaf(
+				specOf([{ name, storage_gb }], `registry-${name}`)?.values,
+				"persistence",
+				"persistentVolumeClaim",
+				"registry",
+				"size",
+			);
+		expect(sizeOf("app-images")).toBe("50Gi");
+		expect(sizeOf("big", 500)).toBe("500Gi");
+	});
+
+	it("charts nothing when the project declares no registry", () => {
+		const specs = hetznerDataServicesToAddOns({ databases: [{ name: "db" }] });
+		expect(specs.some((s) => s.chart === "harbor")).toBe(false);
 	});
 });

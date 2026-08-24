@@ -283,6 +283,7 @@ const (
 	maxConfigDatabaseName = "appdb"
 	maxConfigCacheName    = "sessions"
 	maxConfigQueueName    = "jobs"
+	maxConfigRegistryName = "app-images"
 	maxConfigTopicName    = "events"
 )
 
@@ -650,23 +651,40 @@ var MaxConfigKinds = []MaxConfigKind{
 	},
 	{
 		Kind: "registry",
-		Doc: "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none, " +
-			"and its in-cluster substitute (Harbor) is unwired DEBT. Per-cloud gotcha: AWS emits " +
-			"provision_ecr as a plain boolean (the registry NAME is unused there).",
+		Doc: "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none; " +
+			"its in-cluster substitute (Harbor) is charted but its pull credentials are not. " +
+			"Per-cloud gotcha: AWS emits provision_ecr as a plain boolean (the registry NAME is " +
+			"unused there).",
 		Apply: func(pc *types.ProjectConfig, provider string) {
-			pc.ContainerRegistries = []types.ProjectContainerRegistryConfig{{Name: "app-images"}}
+			pc.ContainerRegistries = []types.ProjectContainerRegistryConfig{{Name: maxConfigRegistryName}}
 		},
 		Populated: func(pc *types.ProjectConfig) bool { return len(pc.ContainerRegistries) > 0 },
 		AWS:       tofuCell("aws_ecr_repository", "provision_ecr"),
 		GCP:       tofuCell("google_artifact_registry_repository", "provision_artifact_registry"),
 		Azure:     tofuCell("azurerm_container_registry", "provision_acr"),
-		// Hetzner has no registry product — but Harbor ships in the marketplace catalog, the full-bar
-		// run installs it, and unsupported-kinds.ts states the substitution itself: "the Harbor
-		// marketplace add-on covers registry in-cluster". So the kind is rejected while the capability
-		// is running in the same cluster: what is missing is the mapping (a canvas `registry` node →
-		// a Harbor project + robot account + the pull-secret binding), not a chart. Debt, not a ceiling.
+		// Hetzner has no registry product. Harbor ships in the marketplace catalog, the full-bar run
+		// installs it, and #2397 wired the canvas `registry` kind to its own Harbor release
+		// (hetzner-services.ts hetznerRegistryValues, one Application per node, render-checked
+		// against the pinned chart). So the CHART half is done and this cell is still DEFERRED —
+		// deliberately, because the chart was never the missing half.
+		//
+		// What is missing is credentials, and the reason there was no shape to copy: on every OTHER
+		// cloud a project's own registry renders NO imagePullSecret, because the nodes authenticate
+		// to ECR / Artifact Registry / ACR with their own identity (provisioner/manifests_gen.go —
+		// "native/none → no imagePullSecrets rendered"). An in-cluster Harbor has no node identity.
+		// Delivering the kind needs, in order:
+		//   1. a robot account minted through Harbor's API. The API answers only inside the cluster,
+		//      so the runner cannot call it — it has to be an in-cluster bootstrap Job, which also
+		//      keeps the credential from ever reaching the runner;
+		//   2. that credential as a dockerconfigjson on the existing EnsureRegistryPullSecret rail;
+		//   3. a Talos `machine.registries.mirrors` entry, or the kubelet will not pull over plain
+		//      HTTP from a cluster-local host at all.
+		// Until 1-3 land the kind stays hidden and rejected, because a chart that installs is not a
+		// registry anybody can pull from.
 		Hetzner: deferredCell("harbor (marketplace catalog; the full-bar run already installs it)",
-			hetznerChartExistsNotWired+". Missing: a mapping from the `registry` kind to a Harbor project + robot account + pull-secret binding"),
+			hetznerChartExistsNotWired+". #2397 wired the chart itself; what remains is a robot account "+
+				"minted by an in-cluster bootstrap Job, its dockerconfigjson on the EnsureRegistryPullSecret "+
+				"rail, and a Talos containerd mirror entry"),
 		// Alibaba: the per-repo resource is the pushable thing — alicloud_cr_ee_instance/_namespace are
 		// the shared parents, and a project used to get a PAID EE instance with nowhere to push (#1837).
 		//

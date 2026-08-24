@@ -16,10 +16,19 @@ import type { CloudProvider } from "@/lib/db/schema/enums";
  * cache→Valkey, queue→RabbitMQ — see lib/cloud-providers/hetzner-services.ts, which synthesizes them
  * as ArgoCD add-on Applications) and provisions buckets natively via Object Storage (the
  * aminueza/minio provider — see infra/templates/project/hetzner/buckets.tf); topic (SNS) and nosql
- * (DynamoDB) have no clean single-chart OSS equal and registry has no native Hetzner path, so those
- * stay hidden in the palette and rejected at deploy (the Harbor marketplace add-on covers registry
- * in-cluster). When a provider gains a native path for a kind, drop it from this map and BOTH the
+ * (DynamoDB) have no clean single-chart OSS equal, so those stay hidden in the palette and rejected
+ * at deploy. When a provider gains a native path for a kind, drop it from this map and BOTH the
  * palette and the deploy gate follow.
+ *
+ * `registry` is still refused, and #2397 is why it is worth saying precisely. Its Harbor chart IS
+ * now wired (hetzner-services.ts hetznerRegistryValues, one Application per registry node,
+ * render-checked against the pinned chart), so the missing half is NOT the chart — it is
+ * credentials. On every other cloud a project's own registry needs no imagePullSecret, because the
+ * nodes authenticate to ECR / Artifact Registry / ACR with their own identity; an in-cluster Harbor
+ * has no node identity, and Harbor's API answers only inside the cluster, so minting a robot account
+ * needs an in-cluster bootstrap Job plus a Talos containerd mirror entry before the kubelet will
+ * pull at all. A chart that installs is not a registry anybody can pull from, so the kind stays
+ * hidden and rejected until those land.
  *
  * `secret` is blocked on Hetzner: there is NO cloud secret store (the runner already says so —
  * argocd/decisions.go externalSecretsStoreDecision: "Hetzner has no cloud secret store — use the Vault
