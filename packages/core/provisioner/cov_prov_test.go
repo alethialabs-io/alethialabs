@@ -2051,6 +2051,9 @@ func TestProv_WriteRegistryRefresherFailsClosedPerCloud(t *testing.T) {
 func TestProv_WriteRegistryRefresherRendersEachCloudWhenWired(t *testing.T) {
 	t.Setenv("ALETHIA_XACCT_REGISTRY_ENABLED", "true")
 	t.Setenv(selfimage.EnvOverride, "ghcr.io/alethialabs-io/runner:cov")
+	// The pull Secret is seeded against the CLUSTER since #2435 rather than committed to the apps
+	// repo — stub it, there is no kubectl here.
+	stubPullSecretSeed(t, nil)
 	for _, tc := range provKeylessRegistryCases() {
 		t.Run(tc.slug, func(t *testing.T) {
 			dir := t.TempDir()
@@ -2112,6 +2115,7 @@ func TestProv_WriteRegistryRefresherReportsRenderAndWriteFailures(t *testing.T) 
 
 	t.Run("the manifest cannot be written", func(t *testing.T) {
 		t.Setenv(selfimage.EnvOverride, "ghcr.io/alethialabs-io/runner:cov")
+		stubPullSecretSeed(t, nil)
 		dir := t.TempDir()
 		blockManifestPath(t, dir, "registry-pull-refresher.yaml")
 

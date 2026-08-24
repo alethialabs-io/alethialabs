@@ -235,6 +235,11 @@ func writeBootstrapJobs(dir string, vc *types.ProjectConfig, mopts manifests.Opt
 // pull identity (per cloud). A missing pull-identity output is REPORTED + returned as a skip, never
 // fatal (fail-closed: no refresher, so the private pull just can't authenticate — surfaced, not
 // silent). Skip reasons carry no secret values (provider/output names only).
+// ensureRegistryPullSecret is a seam: writeRegistryRefresher renders into a git clone AND touches
+// the cluster, and its unit tests have neither a kubectl nor a cluster. Mirrors the
+// `var executeCommand = utils.ExecuteCommand` seam in packages/core/k8s.
+var ensureRegistryPullSecret = argocd.EnsureRegistryPullSecret
+
 func writeRegistryRefresher(dir string, vc *types.ProjectConfig, outputs map[string]string, stdout io.Writer) (skips []string, err error) {
 	if os.Getenv("ALETHIA_XACCT_REGISTRY_ENABLED") != "true" {
 		return nil, nil
@@ -300,6 +305,22 @@ func writeRegistryRefresher(dir string, vc *types.ProjectConfig, outputs map[str
 	y, rErr := manifests.RenderRegistryRefresher(ref)
 	if rErr != nil {
 		msg := fmt.Sprintf("keyless registry %s: %v — pull refresher not rendered (fail-closed)", tgt.Slug, rErr)
+		fmt.Fprintln(stdout, "Registry refresher skipped "+msg)
+		return []string{msg}, nil
+	}
+	// Seed the pull Secret from the RUNNER, never from the manifest that is about to be committed.
+	//
+	// The apps Application syncs this repo with `automated: {prune: true, selfHeal: true}` and no
+	// `ignoreDifferences`, so a Secret declared in git is a tracked resource whose desired state is
+	// an empty docker config — and ArgoCD heals the credential the refresher mints straight back to
+	// it (#2435). EnsureRegistryPullSecret writes it with the prune label but NO ArgoCD tracking
+	// metadata, which is exactly why registry_secrets.go seeds the connector's secret the same way.
+	//
+	// Before the write, so the Secret exists by the time ArgoCD syncs the Deployment that patches it.
+	if sErr := ensureRegistryPullSecret(
+		tgt.SecretName(), appNamespace, manifests.EmptyDockerConfigJSON, stdout, io.Discard,
+	); sErr != nil {
+		msg := fmt.Sprintf("keyless registry %s: %v — pull secret not seeded (fail-closed)", tgt.Slug, sErr)
 		fmt.Fprintln(stdout, "Registry refresher skipped "+msg)
 		return []string{msg}, nil
 	}
