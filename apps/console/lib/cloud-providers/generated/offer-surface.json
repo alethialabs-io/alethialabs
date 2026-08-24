@@ -251,12 +251,11 @@
 				"aws",
 				"gcp",
 				"azure",
-				"alibaba"
+				"alibaba",
+				"hetzner"
 			],
 			"unavailableOn": {},
-			"notOfferedOn": [
-				"hetzner"
-			]
+			"notOfferedOn": []
 		},
 		{
 			"kind": "secret",
@@ -268,12 +267,11 @@
 				"aws",
 				"gcp",
 				"azure",
-				"alibaba"
+				"alibaba",
+				"hetzner"
 			],
 			"unavailableOn": {},
-			"notOfferedOn": [
-				"hetzner"
-			]
+			"notOfferedOn": []
 		},
 		{
 			"kind": "service",

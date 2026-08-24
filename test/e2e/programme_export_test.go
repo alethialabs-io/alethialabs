@@ -219,20 +219,51 @@ func TestProgrammeExportIsNotVacuous(t *testing.T) {
 		}
 	}
 
-	// The two exclusion verdicts must stay DISTINGUISHABLE in the mirror. They are different facts —
-	// a ceiling is about the cloud, deferral is about us — and collapsing them is exactly how
-	// hetzner's registry→Harbor and secret→Vault debt stopped being counted. Today hetzner carries
-	// both, so the mirror can prove the distinction survived projection rather than merely assert it
-	// in a comment.
+	// The exclusion verdicts must stay DISTINGUISHABLE in the mirror. They are different facts — a
+	// ceiling is about the cloud, deferral is about us — and collapsing them is exactly how hetzner's
+	// registry→Harbor and secret→Vault debt stopped being counted.
+	//
+	// This used to be asserted by requiring one of EACH verdict somewhere in the table, which worked
+	// while hetzner carried both and became a trap when it carried neither: #2431 and #2432 wired the
+	// last two deferred cells, so the table now holds zero — the state we WANT — and the check would
+	// have failed the build for it. The verdicts still present are asserted from the table; the
+	// projection's ability to carry `deferred` at all is asserted directly, on a synthetic cell, so
+	// it keeps its teeth whether or not any real cell is deferred.
 	seen := map[string]bool{}
 	for _, k := range export.Kinds {
 		for _, c := range k.Cells {
 			seen[c.Carriage] = true
 		}
 	}
-	for _, want := range []string{string(CarriedByTofu), string(CloudCeiling), string(DeferredInProduct)} {
+	for _, want := range []string{string(CarriedByTofu), string(CarriedInCluster), string(CloudCeiling)} {
 		if !seen[want] {
 			t.Errorf("no cell exported carriage %q — either the surface changed or the projection is dropping a verdict", want)
 		}
 	}
+	if seen[string(DeferredInProduct)] {
+		// Not a failure — a NOTICE, so a reader of a red or green log knows which state the table is
+		// in. The ratchet in PROGRAMME.md is what actually bounds this (see
+		// TestDeferredCellsStayUnderTheDeclaredRatchet).
+		t.Logf("the table carries %s cells again — the projection is exercised by real data", DeferredInProduct)
+	}
+	if got := projectedCarriage(deferredCell("vault", "a shipped chart backs it — DEBT")); got != string(DeferredInProduct) {
+		t.Errorf("the projection turns a %s cell into %q — the two exclusion verdicts would be indistinguishable in the mirror",
+			DeferredInProduct, got)
+	}
+	if got := projectedCarriage(ceilingCell("the cloud has no such service")); got == projectedCarriage(deferredCell("vault", "DEBT")) {
+		t.Error("a ceiling and a deferral project to the SAME carriage — the distinction this verdict set exists for is lost in the mirror")
+	}
+}
+
+// projectedCarriage runs one cell through the SAME field mapping buildProgrammeExport uses, so the
+// synthetic check above exercises the projection rather than a restatement of it.
+func projectedCarriage(cell MaxConfigCell) string {
+	return programmeCell{
+		Carriage: string(cell.Carriage),
+		Offered:  cell.Offered(),
+		Why:      cell.Why,
+		Chart:    cell.Chart,
+		Resource: cell.Resource,
+		ArgoApp:  cell.ArgoApp,
+	}.Carriage
 }

@@ -168,8 +168,6 @@ function unsupportedKindGateError(
 			"there is no managed pub/sub service — move the stack to a cloud with managed messaging (e.g. AWS SNS)",
 		nosql:
 			"there is no managed NoSQL service — move the stack to a cloud with one (e.g. AWS DynamoDB)",
-		secret:
-			"there is no cloud secret store — deploy the Vault marketplace add-on (or connect an external secret store) and reference its secrets from your workloads, or move the stack to a cloud with a managed secret store",
 	};
 	const detail =
 		hint[kind] ?? `"${kind}" components have no provisioning path here`;
@@ -1034,6 +1032,15 @@ async function buildConfigSnapshot(
 					// project-scoped pull robot from an in-cluster Job, and the Talos containerd
 					// mirror lets the kubelet reach the registry over the cluster network.
 					registries: containerRegistries,
+					// A `secret` node maps into the platform's in-cluster Vault: Hetzner sells no
+					// secret store, so the kind reaches the cluster as one KV v2 entry rather than
+					// as tofu state. The whole list is passed, but it renders ONE release however
+					// many secrets there are — a `secret` node is an entry, not a server.
+					//
+					// LIVE since #2432: the runner applies a Job that initialises, unseals and seeds
+					// Vault from inside the cluster, mints a least-privilege ESO token, revokes root,
+					// and ESO reads it through the secretstore-hetzner ClusterSecretStore.
+					secrets,
 				}),
 			);
 		}

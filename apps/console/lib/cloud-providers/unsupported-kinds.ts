@@ -13,7 +13,7 @@ import type { CloudProvider } from "@/lib/db/schema/enums";
  * without pulling the whole canvas registry into the server bundle.
  *
  * Compute-only Hetzner runs data services as in-cluster Helm charts (Postgres→CloudNativePG,
- * cache→Valkey, queue→RabbitMQ, registry→Harbor — see lib/cloud-providers/hetzner-services.ts, which synthesizes them
+ * cache→Valkey, queue→RabbitMQ, registry→Harbor, secret→Vault — see lib/cloud-providers/hetzner-services.ts, which synthesizes them
  * as ArgoCD add-on Applications) and provisions buckets natively via Object Storage (the
  * aminueza/minio provider — see infra/templates/project/hetzner/buckets.tf); topic (SNS) and nosql
  * (DynamoDB) have no clean single-chart OSS equal, so those stay hidden in the palette and rejected
@@ -28,18 +28,25 @@ import type { CloudProvider } from "@/lib/db/schema/enums";
  * which the kubelet would not pull over plain HTTP from a cluster-local host at all. A chart that
  * installs is not a registry anybody can pull from.
  *
- * `secret` is blocked on Hetzner: there is NO cloud secret store (the runner already says so —
- * argocd/decisions.go externalSecretsStoreDecision: "Hetzner has no cloud secret store — use the Vault
- * connector"), and `hetznerProvider.ProviderTfvars` never emits `custom_secrets` (every managed cloud
- * does). Before this gate the component was SILENTLY DROPPED and the deploy still reported SUCCESS —
- * exactly the failure mode this map exists to prevent. In-cluster secrets (Vault add-on + an ESO
- * ClusterSecretStore over a Vault backend) is a real feature with its own init/unseal design, not a
- * silent no-op; until it lands, reject the kind honestly.
+ * `secret` LEFT this list in #2432, and — like `registry` — the chart was never the missing half.
+ * Hetzner still has no CLOUD secret store and `hetznerProvider.ProviderTfvars` still never emits
+ * `custom_secrets`; what changed is that the platform now OPERATES a Vault rather than expecting the
+ * customer to. One release per project (never per node: a `secret` node is a KV entry, not a server),
+ * initialised, unsealed and seeded by a Job running inside the cluster, with a least-privilege ESO
+ * token minted and root revoked before the Job exits — then read through a ClusterSecretStore exactly
+ * as the other four clouds are.
+ *
+ * The honest limit, stated where it is created: the seal is Shamir and the unseal key lives in a
+ * Kubernetes Secret in the same cluster, because Hetzner sells no KMS to seal against. Against a
+ * cluster-admin or an etcd backup that buys nothing over a plain Secret. What it does buy — an audit
+ * log of every read, leases, revocation, rotation, and one uniform ESO read path with the other four
+ * clouds — is real, and is why the kind is offered rather than still rejected. The full statement
+ * lives next to the code that creates the situation: packages/core/argocd/vault.go.
  */
 export const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
 	Record<CloudProviderSlug, readonly NodeKind[]>
 > = {
-	hetzner: ["topic", "nosql", "secret"],
+	hetzner: ["topic", "nosql"],
 };
 
 /**
