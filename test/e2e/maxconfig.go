@@ -651,8 +651,8 @@ var MaxConfigKinds = []MaxConfigKind{
 	},
 	{
 		Kind: "registry",
-		Doc: "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none; " +
-			"its in-cluster substitute (Harbor) is charted but its pull credentials are not. " +
+		Doc: "a container image registry — ECR / Artifact Registry / ACR / CR EE. Hetzner has none " +
+			"and carries the kind in-cluster as Harbor, with a minted robot account for pulls. " +
 			"Per-cloud gotcha: AWS emits provision_ecr as a plain boolean (the registry NAME is " +
 			"unused there).",
 		Apply: func(pc *types.ProjectConfig, provider string) {
@@ -662,29 +662,25 @@ var MaxConfigKinds = []MaxConfigKind{
 		AWS:       tofuCell("aws_ecr_repository", "provision_ecr"),
 		GCP:       tofuCell("google_artifact_registry_repository", "provision_artifact_registry"),
 		Azure:     tofuCell("azurerm_container_registry", "provision_acr"),
-		// Hetzner has no registry product. Harbor ships in the marketplace catalog, the full-bar run
-		// installs it, and #2397 wired the canvas `registry` kind to its own Harbor release
-		// (hetzner-services.ts hetznerRegistryValues, one Application per node, render-checked
-		// against the pinned chart). So the CHART half is done and this cell is still DEFERRED —
-		// deliberately, because the chart was never the missing half.
+		// Hetzner has no registry product, so the kind is carried in-cluster as Harbor — one release
+		// per `registry` node (hetzner-services.ts), converging as its own ArgoCD Application.
 		//
-		// What is missing is credentials, and the reason there was no shape to copy: on every OTHER
-		// cloud a project's own registry renders NO imagePullSecret, because the nodes authenticate
-		// to ECR / Artifact Registry / ACR with their own identity (provisioner/manifests_gen.go —
-		// "native/none → no imagePullSecrets rendered"). An in-cluster Harbor has no node identity.
-		// Delivering the kind needs, in order:
-		//   1. a robot account minted through Harbor's API. The API answers only inside the cluster,
-		//      so the runner cannot call it — it has to be an in-cluster bootstrap Job, which also
-		//      keeps the credential from ever reaching the runner;
-		//   2. that credential as a dockerconfigjson on the existing EnsureRegistryPullSecret rail;
-		//   3. a Talos `machine.registries.mirrors` entry, or the kubelet will not pull over plain
-		//      HTTP from a cluster-local host at all.
-		// Until 1-3 land the kind stays hidden and rejected, because a chart that installs is not a
-		// registry anybody can pull from.
-		Hetzner: deferredCell("harbor (marketplace catalog; the full-bar run already installs it)",
-			hetznerChartExistsNotWired+". #2397 wired the chart itself; what remains is a robot account "+
-				"minted by an in-cluster bootstrap Job, its dockerconfigjson on the EnsureRegistryPullSecret "+
-				"rail, and a Talos containerd mirror entry"),
+		// #2430 wired the chart and deliberately left this cell DEFERRED, because the chart was never
+		// the missing half. #2431 delivered the half that was: on every OTHER cloud a project's own
+		// registry renders NO imagePullSecret — the nodes authenticate to ECR / Artifact Registry /
+		// ACR with their own identity (provisioner/manifests_gen.go). An in-cluster Harbor has no node
+		// identity, so delivering the kind needed all three of:
+		//   1. a project-scoped PULL robot minted by a Job running INSIDE the cluster, because
+		//      Harbor's API answers only on the cluster network (argocd/harbor.go, and the runner's
+		//      `alethia harbor-bootstrap`). It verifies before it mints: Harbor shows a robot secret
+		//      once and never stores it, so re-minting per deploy would orphan a robot each run;
+		//   2. that credential on the EnsureRegistryPullSecret rail — NOT committed to the apps repo,
+		//      where ArgoCD selfHeal would revert it (the shipped instance of that is #2435);
+		//   3. a Talos `machine.registries.mirrors` entry, without which containerd refuses a
+		//      plain-HTTP cluster-local host and the pull fails looking like a bad credential.
+		Hetzner: inClusterCell("addon-registry-"+maxConfigRegistryName,
+			hetznerNoManagedService+" (Harbor, goharbor chart; pulls authenticate with a project-scoped "+
+				"robot account minted in-cluster, and containerd trusts the host via a Talos mirror)"),
 		// Alibaba: the per-repo resource is the pushable thing — alicloud_cr_ee_instance/_namespace are
 		// the shared parents, and a project used to get a PAID EE instance with nowhere to push (#1837).
 		//

@@ -1090,6 +1090,18 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// (pre-parity clusters carry a broken external-dns / a foreign-cloud secret store).
 		argocd.CleanupSkippedInfraServices(facts, stdout, stderr)
 
+		// An in-cluster Harbor (a Hetzner `registry` node) needs credentials nothing else provides:
+		// unlike ECR / Artifact Registry / ACR there is no node identity to authenticate with. Seed
+		// the admin password (once — see EnsureHarborAdminSecret), pre-create the pull Secret so the
+		// bootstrap Job needs no name-unscopable `create` right, then apply the Job that mints a
+		// project-scoped PULL robot from INSIDE the cluster, which is the only place Harbor's API
+		// answers.
+		//
+		// Non-fatal, like the add-on and Karpenter paths: a registry that has not finished converging
+		// must not fail an otherwise-healthy cluster. The Job retries on its own, and the next deploy
+		// re-runs this — which is a no-op when the credential already works.
+		credentialInClusterRegistries(ctx, vc, stdout, stderr)
+
 		// A pluggable container-registry connector's dockerconfigjson imagePullSecret is seeded
 		// HERE, post-apply, over the authenticated kubeconfig — NOT in tofu, whose kubernetes
 		// provider is host+CA-only on AWS and cannot create it. Must land before the app pods that
@@ -1728,4 +1740,19 @@ func copyDir(src, dst string) error {
 		}
 		return os.WriteFile(target, data, info.Mode())
 	})
+}
+
+// credentialInClusterRegistries gives every in-cluster Harbor its pull credentials: the admin
+// password, a pre-seeded pull Secret, and the Job that mints a project-scoped robot from inside the
+// cluster (#2431). A no-op on every cloud but Hetzner, which provisions a real registry instead.
+//
+// Non-fatal per registry, like the add-on and Karpenter paths: a registry still converging must not
+// fail an otherwise-healthy cluster. The Job retries, and the next deploy re-runs this — which is a
+// no-op once the credential works.
+func credentialInClusterRegistries(ctx context.Context, vc *types.ProjectConfig, stdout, stderr io.Writer) {
+	for _, reg := range argocd.HetznerRegistries(vc) {
+		if err := argocd.EnsureHarborPullCredentials(ctx, reg, selfimage.Ref(), stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "Warning: in-cluster registry %s credentials skipped: %v\n", reg.Name, err)
+		}
+	}
 }

@@ -273,3 +273,19 @@ variable "admin_kubeconfig_cert_lifetime" {
     error_message = "admin_kubeconfig_cert_lifetime must be a Go duration like 24h0m0s or 1h."
   }
 }
+
+# In-cluster container-registry hosts the kubelet must be able to pull from over plain HTTP.
+#
+# A Hetzner `registry` node is an in-cluster Harbor exposed as a ClusterIP with TLS off (Hetzner has
+# no registry product and a canvas node carries no domain, so the cluster network is the only address
+# it has). containerd attempts HTTPS for any non-localhost host, so without a mirror entry the
+# kubelet cannot pull from it AT ALL — and the failure surfaces as an auth error, not a TLS one.
+#
+# SINGLE-CLOUD BY NATURE: no other cloud has an in-cluster registry, because every other cloud
+# provisions a real one whose nodes authenticate with their own identity. Recorded as such in the
+# template-parity board — never by widening template_parity.baseline, which may only decrease.
+variable "incluster_registry_hosts" {
+  description = "In-cluster registry hosts (registry-<name>.registries.svc.cluster.local) to trust over plain HTTP via a containerd mirror. Empty on a cluster with no registry node."
+  type        = list(string)
+  default     = []
+}

@@ -13,22 +13,20 @@ import type { CloudProvider } from "@/lib/db/schema/enums";
  * without pulling the whole canvas registry into the server bundle.
  *
  * Compute-only Hetzner runs data services as in-cluster Helm charts (Postgres→CloudNativePG,
- * cache→Valkey, queue→RabbitMQ — see lib/cloud-providers/hetzner-services.ts, which synthesizes them
+ * cache→Valkey, queue→RabbitMQ, registry→Harbor — see lib/cloud-providers/hetzner-services.ts, which synthesizes them
  * as ArgoCD add-on Applications) and provisions buckets natively via Object Storage (the
  * aminueza/minio provider — see infra/templates/project/hetzner/buckets.tf); topic (SNS) and nosql
  * (DynamoDB) have no clean single-chart OSS equal, so those stay hidden in the palette and rejected
  * at deploy. When a provider gains a native path for a kind, drop it from this map and BOTH the
  * palette and the deploy gate follow.
  *
- * `registry` is still refused, and #2397 is why it is worth saying precisely. Its Harbor chart IS
- * now wired (hetzner-services.ts hetznerRegistryValues, one Application per registry node,
- * render-checked against the pinned chart), so the missing half is NOT the chart — it is
- * credentials. On every other cloud a project's own registry needs no imagePullSecret, because the
- * nodes authenticate to ECR / Artifact Registry / ACR with their own identity; an in-cluster Harbor
- * has no node identity, and Harbor's API answers only inside the cluster, so minting a robot account
- * needs an in-cluster bootstrap Job plus a Talos containerd mirror entry before the kubelet will
- * pull at all. A chart that installs is not a registry anybody can pull from, so the kind stays
- * hidden and rejected until those land.
+ * `registry` LEFT this list in #2431, and it took three things beyond the chart. On every other
+ * cloud a project's own registry needs no imagePullSecret because the nodes authenticate to ECR /
+ * Artifact Registry / ACR with their own identity; an in-cluster Harbor has none. So it needed a
+ * scoped robot account minted by a Job running INSIDE the cluster (Harbor's API answers nowhere
+ * else), that credential on the EnsureRegistryPullSecret rail, and a Talos containerd mirror — until
+ * which the kubelet would not pull over plain HTTP from a cluster-local host at all. A chart that
+ * installs is not a registry anybody can pull from.
  *
  * `secret` is blocked on Hetzner: there is NO cloud secret store (the runner already says so —
  * argocd/decisions.go externalSecretsStoreDecision: "Hetzner has no cloud secret store — use the Vault
@@ -41,7 +39,7 @@ import type { CloudProvider } from "@/lib/db/schema/enums";
 export const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
 	Record<CloudProviderSlug, readonly NodeKind[]>
 > = {
-	hetzner: ["topic", "nosql", "registry", "secret"],
+	hetzner: ["topic", "nosql", "secret"],
 };
 
 /**

@@ -96,8 +96,8 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
 | `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `queue:ordered` | — | 🟡 | 🟡 | 🟡 | · | · |
-| `registry:immutable_tags` | 🟡 | 🟡 | — | 🟡 | · | · |
-| `registry:vulnerability_scanning` | 🟡 | 🟡 | — | 🟡 | · | · |
+| `registry:immutable_tags` | 🟡 | 🟡 | — | 🟡 | ☸️ | · |
+| `registry:vulnerability_scanning` | 🟡 | 🟡 | — | 🟡 | ☸️ | · |
 | `secret:generate` | 🟡 | ⚠️ | 🟡 | 🟡 | · | · |
 | `secret:special_chars` | 🟡 | 🟡 | 🟡 | 🟡 | · | · |
 
@@ -165,6 +165,8 @@ predicate stops listing the cloud, the entry fails until it is corrected.
 |---|---|---|---|---|
 | `dns:managed_certificate` | azure | cert-manager | `certManagerDNS01Solvers` | Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the Application Gateway. |
 | `dns:managed_certificate` | gcp | cert-manager | `certManagerDNS01Solvers` | Issued in-cluster by cert-manager over an ACME DNS01 challenge — a free Let's Encrypt certificate that renews itself, served by the GKE Ingress from a Kubernetes Secret. |
+| `registry:immutable_tags` | hetzner | harbor | `harborCarriedRegistryOffers` | Harbor enforces tag immutability with a project immutable-tag rule, applied over its API by the in-cluster bootstrap Job — there is no tofu resource on Hetzner to carry a tfvar. |
+| `registry:vulnerability_scanning` | hetzner | harbor | `harborCarriedRegistryOffers` | Harbor scans on push with the Trivy the chart installs, enabled through the project's auto_scan metadata by the in-cluster bootstrap Job — there is no tofu resource on Hetzner to carry a tfvar. |
 
 ## Documented exclusions
 
