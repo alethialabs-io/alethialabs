@@ -5,10 +5,13 @@
 // Per-environment protection rules (Phase 2). Read/write the toggleable gates that guard promotions
 // into an environment. Evaluated by lib/promotions/gates.ts when a promotion's PLAN completes.
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
 import { environmentProtectionRules } from "@/lib/db/schema";
+// Lives outside this module on purpose: every export of a `"use server"` file is a callable server
+// action, so a security helper exported from here to make it testable would widen the RPC surface.
+import { assertEnvInProject } from "@/lib/promotions/env-ownership";
 import type { ApproverSpec } from "@/types/jsonb.types";
 
 /** The editable protection-rule fields for an environment. */
@@ -27,10 +30,18 @@ export interface ProtectionRulesInput {
 export async function getProtectionRules(projectId: string, envId: string) {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	return withActorScope(actor, async (tx) => {
+		await assertEnvInProject(tx, projectId, envId);
 		const [row] = await tx
 			.select()
 			.from(environmentProtectionRules)
-			.where(eq(environmentProtectionRules.environment_id, envId))
+			.where(
+				and(
+					eq(environmentProtectionRules.environment_id, envId),
+					// Belt and braces alongside assertEnvInProject: the row carries project_id, so
+					// the read is scoped by the same id the caller was authorized against.
+					eq(environmentProtectionRules.project_id, projectId),
+				),
+			)
 			.limit(1);
 		return row ?? null;
 	});
@@ -89,6 +100,7 @@ export async function setProtectionRules(
 		cost_delta_threshold: input.cost_delta_threshold,
 	};
 	return withActorScope(actor, async (tx) => {
+		await assertEnvInProject(tx, projectId, envId);
 		const [row] = await tx
 			.insert(environmentProtectionRules)
 			.values({
