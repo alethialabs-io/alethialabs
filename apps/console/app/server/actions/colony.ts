@@ -11,7 +11,7 @@ import {
 } from "@/lib/agent/supervisor";
 import { currentActor } from "@/lib/authz/guard";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
-import { recordAiUsage } from "@/lib/billing/ai-quota";
+import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
 
 /**
@@ -92,7 +92,7 @@ export async function runColonyTasks(
 		inputTokens,
 		outputTokens,
 		cachedInputTokens,
-	});
+	}).catch(meteringFailed(actor.orgId));
 
 	return result;
 }
