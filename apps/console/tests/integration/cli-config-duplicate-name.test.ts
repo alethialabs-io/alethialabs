@@ -107,10 +107,18 @@ describeIfDb("getCliConfig — two projects, one name", () => {
 		expect(cfg?.region).toBe("eu-central-1");
 	});
 
-	it("resolves the same project on every call", async () => {
-		// The defect was an UNDEFINED result, not a wrong-but-stable one, so a single assertion
-		// could pass by luck. Repeating it makes an unordered LIMIT 1 far likelier to be caught,
-		// and makes the intent — stability — explicit to a reader.
+	it("returns the same project on repeated calls (no per-call variation)", async () => {
+		// WHAT THIS DOES AND DOES NOT CATCH — stated precisely, because a test that overstates its
+		// strength is how the next reader concludes the ordering is covered when it is not.
+		//
+		// Five identical sequential queries in one session are the SAME draw five times, not five
+		// independent ones: Postgres will almost certainly return the same row each time even with
+		// no ORDER BY, so this loop is NOT what discriminates. The assertion that actually does is
+		// the one above — the rows are inserted in the OPPOSITE order to the expected resolution,
+		// so a result reflecting physical order fails.
+		//
+		// This case earns its place for a narrower reason: it catches per-call VARIATION — a cache
+		// or memoisation between calls returning a different row on a later invocation.
 		const ids = new Set<string>();
 		for (let i = 0; i < 5; i += 1) {
 			const cfg = await getCliConfig(getServiceDb(), {
