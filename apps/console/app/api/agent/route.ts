@@ -30,7 +30,7 @@ import { type AgentMode, buildAgentTools } from "@/lib/ai/tools";
 import { getOwner } from "@/lib/auth/owner";
 import { currentActor } from "@/lib/authz/guard";
 import { recordAgentTurnUsage } from "@/lib/billing/agent-metering";
-import { recordAiUsage } from "@/lib/billing/ai-quota";
+import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import {
 	AiBudgetError,
 	type AiHoldContext,
@@ -331,7 +331,7 @@ export async function POST(req: Request) {
 							stream: true,
 							isError: true,
 							error: error instanceof Error ? error.message : String(error),
-						});
+						}).catch(meteringFailed(actor.orgId));
 					},
 					// Client disconnect mid-stream: onFinish/onError won't fire, so RELEASE the hold here
 					// (mutually exclusive with them) — otherwise an abandoned turn leaks its ≈$0.10 hold.
