@@ -370,7 +370,7 @@ export function deriveBoard(snapshot) {
 	};
 }
 
-export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, exclusionCounts, snapshot }) {
+export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot }) {
 	const failures = [];
 	const notes = [];
 	const { rows, errors } = parseLedger(ledgerText);
@@ -409,6 +409,60 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 			failures.push(
 				`${LEDGER}:${r.line}: dimension ${JSON.stringify(r.dimension)} is not one of ${DIMENSIONS.map((d) => d.id).join(", ")}, ${COMPOSITE} — ` +
 					`a row nobody can render is a proof nobody counts`,
+			);
+		}
+	}
+
+	// ── INTEGRITY: a BLOCKED row whose own bundle says the run SPENT ──
+	//
+	// `BLOCKED` and `FAIL` are defined against one axis and one only. This file says "the harness
+	// refused before spending" and the self-test below puts it plainly: "one spent money and broke,
+	// the other refused before spending". The ledger's own legend says "couldn't run".
+	//
+	// The verdict is typed by a human. `provision-summary.json`, sitting in the SAME committed
+	// bundle, is written by the harness and already records `outcome` and `deploy_stage`. Nothing
+	// compared them, so a row could claim BLOCKED while the file beside it said
+	// `FAILED at stage 'applying'` and every gate stayed green.
+	//
+	// That is not hypothetical, and it is not a one-off. It happened TWICE on 2026-08-25, on two
+	// clouds, in two PRs: hetzner/full (#2575) reached `applying`, ran 237s and created 19 resources;
+	// azure/full (#2587) reached `applying`, ran 1724s and created 55, including a Cosmos DB account
+	// and a NAT gateway. Both were filed BLOCKED.
+	//
+	// The cost is not bookkeeping. `deriveCell` hardcodes "— refused before spending" into every
+	// BLOCKED rationale, so PROGRAMME.md asserts something the bundle contradicts; and because
+	// failing cells rank ABOVE never-run ones, ⛔ files a run that cost money BELOW cells nobody has
+	// ever attempted.
+	//
+	// ONE DIRECTION on purpose. A FAIL row on a run that never spent is a conservative mislabel — it
+	// overstates the damage, ranks the cell for attention, and costs nobody a proof. BLOCKED on a run
+	// that spent understates it, which is the direction that hides money. Only that one is refused.
+	//
+	// It does NOT check `destroyed`. That flag is captured at failure, before teardown runs, so a
+	// false `false` is expected and gating on it would refuse honest rows. Orphan detection is the
+	// sweeper's job, not the ledger's.
+	//
+	// CHECKS THE SURVIVING CLAIM ONLY, not every row. The ledger is append-only, so a corrected row
+	// is still in the file forever — #2585 superseded the hetzner/full BLOCKED row with a RETRACTED
+	// plus a FAIL re-record, and the original is still sitting at line 53. Walking `rows` fired on
+	// that corpse and failed the build on history that had already been fixed properly, which would
+	// have made this rule punish exactly the behaviour it is asking for. `claims` is the collapsed
+	// view, so a voided row is simply not in it.
+	{
+		const SPENDING_STAGE = "applying";
+		for (const r of claims.values()) {
+			if (!r || r.verdict !== "BLOCKED") continue;
+			if (bundleKind(r.bundle) !== "path") continue;
+			const summary = readBundleSummary(path.join(bundlePath(r.bundle), "provision-summary.json"));
+			if (!summary || typeof summary !== "object") continue;
+			if (summary.deploy_stage !== SPENDING_STAGE) continue;
+			const spent = summary.duration_seconds ? ` after ${summary.duration_seconds}s` : "";
+			failures.push(
+				`${LEDGER}:${r.line}: ${r.cloud}/${r.dimension} is recorded BLOCKED, but its own bundle ` +
+					`\`${r.bundle}/provision-summary.json\` says \`deploy_stage: "${summary.deploy_stage}"\`` +
+					`${summary.outcome ? ` and \`outcome: "${summary.outcome}"\`` : ""}${spent}. ` +
+					`BLOCKED means the harness refused BEFORE spending; a run that reached '${SPENDING_STAGE}' spent and broke, which is FAIL. ` +
+					`The ledger is append-only — supersede the row with a RETRACTED naming it, then re-record as FAIL.`,
 			);
 		}
 	}
@@ -916,6 +970,16 @@ function readInputs() {
 		resolverText: need(RESOLVER),
 		unsupportedText: need(UNSUPPORTED_KINDS),
 		bundleExists: (p) => fs.existsSync(p),
+		// Tolerant on purpose: an absent or unreadable summary means "cannot check", which is not the
+		// same as "checked and fine". The rule below simply does not fire, rather than inventing a
+		// verdict from a file it could not read.
+		readBundleSummary: (p) => {
+			try {
+				return JSON.parse(fs.readFileSync(p, "utf8"));
+			} catch {
+				return null;
+			}
+		},
 		exclusionCounts: Object.fromEntries(
 			[
 				["infra/offer-exclusions.yaml", countExclusions("infra/offer-exclusions.yaml")],
@@ -975,6 +1039,93 @@ function runSelfTest() {
 	// A PASS whose bundle path is absent from the tree.
 	r = derive({ ...base, bundleExists: () => false, ledgerText: hdr + row("2026-08-01", "aws", "floor", "PASS", "demos/proofs/aws/20260801T000000Z") });
 	ok("a PASS whose bundle is missing from the tree is NOT proven", r.grid.aws.floor.state === "never_run", r.grid.aws.floor.why);
+
+	// ── BLOCKED vs FAIL, reconciled against the bundle's own summary. ──
+	//
+	// Both directions, and the negative cases matter more than the positive one: a rule that fires
+	// on everything is not a check, it is a ban on the verdict.
+	{
+		const summaries = (m) => (p) => m[p] ?? null;
+		const AT = "demos/proofs/hetzner/20260825T130348Z";
+		const spent = { outcome: "failure", deploy_stage: "applying", duration_seconds: 237 };
+
+		// THE REGRESSION, twice over: #2575 and #2587 both typed this.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "BLOCKED", AT),
+			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: spent }),
+		});
+		ok(
+			"a BLOCKED row whose bundle reached 'applying' is an integrity failure",
+			r.failures.some((f) => /recorded BLOCKED, but its own bundle/.test(f)),
+			JSON.stringify(r.failures),
+		);
+		ok("...and the message names the stage it actually reached", r.failures.some((f) => /deploy_stage: "applying"/.test(f)), JSON.stringify(r.failures));
+
+		// A genuine refusal — the harness stopped at a prerequisite gate, before any apply.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "BLOCKED", AT),
+			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: { outcome: "failure", deploy_stage: "prerequisites" } }),
+		});
+		ok("a BLOCKED row that never reached 'applying' is left alone", !r.failures.some((f) => /recorded BLOCKED/.test(f)), JSON.stringify(r.failures));
+
+		// FAIL is the correct verdict for the same summary, so it must raise nothing. Without this
+		// the rule could be keyed on the summary alone and still pass the case above.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "FAIL", AT),
+			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: spent }),
+		});
+		ok("the same bundle recorded FAIL raises nothing", !r.failures.some((f) => /recorded BLOCKED/.test(f)), JSON.stringify(r.failures));
+
+		// ONE DIRECTION: a FAIL on a run that never spent overstates the damage, which costs nobody
+		// a proof. It is deliberately not refused.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "FAIL", AT),
+			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: { outcome: "failure", deploy_stage: "prerequisites" } }),
+		});
+		ok("a FAIL on a run that did not spend is NOT refused", r.failures.length === 0, JSON.stringify(r.failures));
+
+		// No summary in the bundle ⇒ cannot check. That is not the same as checked-and-fine, and it
+		// must not invent a verdict from a file it could not read.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "BLOCKED", AT),
+			readBundleSummary: () => null,
+		});
+		ok("an unreadable summary does not fire the rule", !r.failures.some((f) => /recorded BLOCKED/.test(f)), JSON.stringify(r.failures));
+
+		// THE CASE THE REAL TREE TAUGHT ME. The ledger is append-only, so a row corrected the proper
+		// way is still in the file forever: #2585 superseded hetzner/full with a RETRACTED plus a
+		// FAIL re-record, and the original BLOCKED row is still at line 53. Walking every row fired
+		// on it and failed the build on history that had already been fixed — the rule would have
+		// punished exactly the correction it asks for. It reads the collapsed claim instead.
+		r = derive({
+			...base,
+			ledgerText:
+				hdr +
+				row("2026-08-25", "hetzner", "full", "BLOCKED", AT) +
+				row("2026-08-25", "hetzner", "full", "RETRACTED", AT, "#2575") +
+				row("2026-08-25", "hetzner", "full", "FAIL", AT, "#2568"),
+			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: spent }),
+		});
+		ok(
+			"a BLOCKED row already superseded by a RETRACTED + re-record does NOT fire",
+			!r.failures.some((f) => /recorded BLOCKED/.test(f)),
+			JSON.stringify(r.failures),
+		);
+		ok("...and the re-recorded FAIL is the surviving claim", r.grid.hetzner.maxconfig.state === "failing", r.grid.hetzner.maxconfig.why);
+
+		// A run-tag bundle has no committed summary to read, so the rule cannot apply to it at all.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "BLOCKED", "nightly-32850686520"),
+			readBundleSummary: summaries({ "nightly-32850686520/provision-summary.json": spent }),
+		});
+		ok("a run-tag bundle is not reconciled", !r.failures.some((f) => /recorded BLOCKED/.test(f)), JSON.stringify(r.failures));
+	}
 
 	// RETRACTED supersession — voids the claim rather than replacing it.
 	r = derive({
