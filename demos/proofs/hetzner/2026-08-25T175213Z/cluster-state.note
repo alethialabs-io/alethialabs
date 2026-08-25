@@ -1,0 +1,1 @@
+cluster no longer reachable (torn down in-process at T2 end, or never came up) — live state skipped; proof rests on the T2 outcome + runner log + DB receipt
