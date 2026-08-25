@@ -251,14 +251,18 @@ func (c secretsXacctConfig) providerConfig() map[string]any {
 // whole keys (base[key] = decoded), so on a full-bar run this must layer ON TOP of the max-config
 // surface; assigning here would silently drop max-config's secret and report green on a run that
 // covered less than it claimed.
-func (c secretsXacctConfig) applyToSnapshot(snap map[string]any) {
+func (c secretsXacctConfig) applyToSnapshot(snap map[string]any) error {
 	secret := map[string]any{
 		"name":            c.secretName,
 		"generate":        false,
 		"provider":        c.connectorSlug(),
 		"provider_config": c.providerConfig(),
 	}
-	snap["secrets"] = append(existingList(snap, "secrets"), secret)
+	secrets, err := snapshotList(snap, "secrets")
+	if err != nil {
+		return err
+	}
+	snap["secrets"] = append(secrets, secret)
 
 	svc := map[string]any{
 		"name": c.serviceName,
@@ -267,20 +271,46 @@ func (c secretsXacctConfig) applyToSnapshot(snap map[string]any) {
 			"inject": []any{map[string]any{"env": "XACCT_CANARY", "from": "value"}},
 		}},
 	}
-	snap["services"] = append(existingList(snap, "services"), svc)
+	services, err := snapshotList(snap, "services")
+	if err != nil {
+		return err
+	}
+	snap["services"] = append(services, svc)
+	return nil
 }
 
-// existingList reads a snapshot key as a list, tolerating absent/foreign shapes (the snapshot is
-// JSON-shaped `map[string]any`, so a value may arrive as []any from a decode or as a typed slice
-// from a builder).
-func existingList(snap map[string]any, key string) []any {
+// snapshotList reads a snapshot key as a list, in EITHER shape a snapshot can legitimately hold.
+//
+// WHY THIS RETURNS AN ERROR, measured. Its predecessor's doc comment promised exactly this — "a
+// value may arrive as []any from a decode or as a typed slice from a builder" — and its `default`
+// branch then returned nil, dropping the typed-slice case it had just named. The caller appended to
+// that nil, so the whole existing list was REPLACED by the one element being added, silently.
+//
+// That is not hypothetical. `t2DeploySnapshot` builds `full` as `a05NormalizeSnapshot(base)`, which
+// is a json.Marshal/Unmarshal round trip, so `full["addons"]` is `[]any` — while `t2BaseSnapshot`
+// puts a `[]types.AddOnInstall` in `base`. Both shapes are real, at different points in the same
+// pipeline, which is precisely why "tolerating" them silently is the wrong posture: a shape this
+// function does not recognise is a bug in the caller, not a list of length zero.
+//
+// A typed slice is normalised through JSON rather than reflected over: that is the same transform
+// the snapshot itself undergoes, so the result is identical to what the round trip would have
+// produced, and anything that is not a list fails to decode and is REPORTED.
+func snapshotList(snap map[string]any, key string) ([]any, error) {
 	switch v := snap[key].(type) {
-	case []any:
-		return v
 	case nil:
-		return nil
+		return nil, nil
+	case []any:
+		return v, nil
 	default:
-		return nil
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot key %q holds a %T that cannot be encoded: %w", key, v, err)
+		}
+		var out []any
+		if err := json.Unmarshal(b, &out); err != nil {
+			return nil, fmt.Errorf("snapshot key %q holds a %T, which is not a list — refusing to treat it as empty and silently drop it: %w", key, v, err)
+		}
+		return out, nil
 	}
 }
 
@@ -428,4 +458,12 @@ type xacctSummary struct {
 func xacctSummaryJSON(s xacctSummary) ([]byte, error) {
 	s.Feature = "xacct-secrets"
 	return json.MarshalIndent(s, "", "  ")
+}
+
+// snapshotListOrNil is snapshotList for READ-ONLY probes and tests, where an unreadable shape
+// means "no entries to inspect" rather than a bug to report. Never use it on an append path: that
+// is exactly how 18 add-ons became 1.
+func snapshotListOrNil(snap map[string]any, key string) []any {
+	out, _ := snapshotList(snap, key)
+	return out
 }

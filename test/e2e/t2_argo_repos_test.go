@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // clearArgoReposEnv blanks every A0.6 env var — the shared vars, the leg-selecting provider var, and
@@ -211,7 +210,9 @@ func TestT2ArgoReposApplyToSnapshot(t *testing.T) {
 		"provider": "hetzner",
 		"addons":   seedAddOns(), // the base reloader seed
 	}
-	cfg.applyToSnapshot(snap)
+	if err := cfg.applyToSnapshot(snap); err != nil {
+		t.Fatalf("applyToSnapshot: %v", err)
+	}
 
 	// repositories.apps_destination_repo drives repo-apps credentials + the "apps" app-of-apps.
 	repos, ok := snap["repositories"].(map[string]any)
@@ -220,16 +221,19 @@ func TestT2ArgoReposApplyToSnapshot(t *testing.T) {
 	}
 
 	// The BYO add-on is APPENDED — the reloader seed (the base ArgoCD-health teeth) is preserved.
-	addons, ok := snap["addons"].([]types.AddOnInstall)
-	if !ok {
-		t.Fatalf("addons has unexpected type %T", snap["addons"])
-	}
-	if len(addons) != 2 {
-		t.Fatalf("want 2 add-ons (reloader + BYO), got %d: %+v", len(addons), addons)
+	//
+	// Read via addOnIDsInSnapshot, which tolerates BOTH shapes. Asserting
+	// `.([]types.AddOnInstall)` here is what made this test blind: production reaches
+	// applyToSnapshot through a05NormalizeSnapshot's json round trip, so the live shape is
+	// `[]any` — a shape this assertion would have called "unexpected" while the code under test
+	// silently dropped everything. See TestApplyToSnapshotPreservesRoundTrippedAddOns.
+	ids := addOnIDsInSnapshot(t, snap)
+	if len(ids) != 2 {
+		t.Fatalf("want 2 add-ons (reloader + BYO), got %d: %v", len(ids), ids)
 	}
 	var haveReloader, haveByo bool
-	for _, a := range addons {
-		switch a.ID {
+	for _, id := range ids {
+		switch id {
 		case "reloader":
 			haveReloader = true
 		case byoAddonID:
@@ -237,7 +241,7 @@ func TestT2ArgoReposApplyToSnapshot(t *testing.T) {
 		}
 	}
 	if !haveReloader || !haveByo {
-		t.Errorf("expected both reloader and %q add-ons, got %+v", byoAddonID, addons)
+		t.Errorf("expected both reloader and %q add-ons, got %v", byoAddonID, ids)
 	}
 
 	// SECURITY: the git token must NEVER appear in the persisted snapshot (it crosses only via
@@ -295,5 +299,102 @@ func TestDeriveExpectedArgoApps_AppsRepoFromDecision(t *testing.T) {
 		if a == "apps" {
 			t.Errorf("a skipped apps-repo decision must NOT derive the \"apps\" Application, got %v", appsSkip)
 		}
+	}
+}
+
+// addOnIDsInSnapshot reads add-on ids from a snapshot in EITHER shape — the typed slice a builder
+// produces, or the []any a json round trip produces. Tests must be able to read both, because
+// production sees both at different points in the same pipeline.
+func addOnIDsInSnapshot(t *testing.T, snap map[string]any) []string {
+	t.Helper()
+	raw, err := json.Marshal(snap["addons"])
+	if err != nil {
+		t.Fatalf("addons not encodable: %v", err)
+	}
+	var list []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		t.Fatalf("addons is not a list: %v", err)
+	}
+	ids := make([]string, 0, len(list))
+	for _, a := range list {
+		ids = append(ids, a.ID)
+	}
+	return ids
+}
+
+// TestApplyToSnapshotPreservesRoundTrippedAddOns is THE regression, and it is the test the previous
+// one could not be.
+//
+// `t2DeploySnapshot` builds `full` as `a05NormalizeSnapshot(base)` — a json.Marshal/Unmarshal round
+// trip — and only then calls `repos.applyToSnapshot(full)`. So the live shape of `snap["addons"]`
+// at that moment is `[]any`, never `[]types.AddOnInstall`. The old line
+//
+//	existing, _ := snap["addons"].([]types.AddOnInstall)
+//
+// therefore always failed, `_` swallowed it, `existing` was nil, and the append REPLACED every
+// seeded add-on with the single BYO chart.
+//
+// Measured on hetzner/addons: twenty Applications asserted on 2026-08-24, four on 2026-08-25, with
+// `E2E_ARGO_APPS_REPO` being set between them the only change. On aws/full the same day the expected
+// set was six. Both runs reported the "18-chart sweep".
+//
+// The axis this varies is THE SHAPE OF THE SNAPSHOT, which is the axis the bug lived on. A test
+// that only ever builds the typed shape passes against the defect — the previous one did, for weeks.
+func TestApplyToSnapshotPreservesRoundTrippedAddOns(t *testing.T) {
+	t.Setenv("ALETHIA_E2E_ALL_ADDONS", "1")
+	seeded := seedAddOns()
+	if len(seeded) < 5 {
+		t.Fatalf("full add-on surface expected; got %d — this test would be vacuous", len(seeded))
+	}
+
+	base := map[string]any{"addons": seeded}
+	// EXACTLY what t2DeploySnapshot does, and the whole point of the test.
+	full, err := a05NormalizeSnapshot(base)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	if _, isAny := full["addons"].([]any); !isAny {
+		t.Fatalf("precondition failed: after the round trip addons should be []any, got %T", full["addons"])
+	}
+
+	cfg := t2ArgoRepos{appsRepo: "https://example.com/apps", byoChartRepo: "https://example.com/chart", byoNamespace: "byo-e2e"}
+	if err := cfg.applyToSnapshot(full); err != nil {
+		t.Fatalf("applyToSnapshot: %v", err)
+	}
+
+	ids := addOnIDsInSnapshot(t, full)
+	if len(ids) != len(seeded)+1 {
+		t.Fatalf("the BYO add-on must be APPENDED, not substituted: want %d add-ons, got %d: %v",
+			len(seeded)+1, len(ids), ids)
+	}
+	// Name one that must survive, so a length-only check cannot pass on the wrong set.
+	var haveReloader, haveByo bool
+	for _, id := range ids {
+		if id == "reloader" {
+			haveReloader = true
+		}
+		if id == byoAddonID {
+			haveByo = true
+		}
+	}
+	if !haveReloader {
+		t.Error("reloader was dropped — the seeded surface did not survive the append")
+	}
+	if !haveByo {
+		t.Errorf("%q was not added", byoAddonID)
+	}
+}
+
+// TestSnapshotListRefusesANonList — the helper must REPORT a shape it cannot read, never return an
+// empty list. Returning nil is what turned a caller's append into a silent substitution.
+func TestSnapshotListRefusesANonList(t *testing.T) {
+	if _, err := snapshotList(map[string]any{"addons": "not-a-list"}, "addons"); err == nil {
+		t.Fatal("a string must be reported, not treated as an empty list")
+	}
+	got, err := snapshotList(map[string]any{}, "addons")
+	if err != nil || got != nil {
+		t.Fatalf("an ABSENT key is genuinely empty and must not error: %v / %v", got, err)
 	}
 }
