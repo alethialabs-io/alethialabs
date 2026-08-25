@@ -61,6 +61,17 @@ export function useConsent(): ConsentContextValue {
  * only a production build did. A component that may render anywhere reads consent
  * through this and degrades instead of exploding.
  */
+/**
+ * The ONE Node global this browser package touches, declared rather than pulled in.
+ *
+ * `packages/email` reaches for `@types/node` for the same identifier, but it runs on a server.
+ * This package renders in a browser, and `@types/node` would also make `fs.readFileSync` and
+ * friends typecheck inside a client component — a much bigger door than the one identifier
+ * needs. Bundlers (Next, webpack, Vite) statically replace this expression, so the `typeof`
+ * check folds and the warning below is dropped from production builds entirely.
+ */
+declare const process: { env: { NODE_ENV?: string } };
+
 /** Module-scoped so the dev warning below fires ONCE. It sits in a render body, and a missing
  * provider means every consent-reading component on the page warns on every render — under
  * StrictMode's double-invoke that is a wall of identical lines nobody reads to the end of. */
@@ -79,7 +90,12 @@ export function useOptionalConsent(): ConsentContextValue | null {
 	//
 	// So the net stays and the silence does not. Dev-only: the warning is for whoever is wiring a
 	// new host, and a production bundle should not carry it.
-	if (context === null && !warnedNoProvider && process.env.NODE_ENV !== "production") {
+	if (
+		context === null &&
+		!warnedNoProvider &&
+		typeof process !== "undefined" &&
+		process.env.NODE_ENV !== "production"
+	) {
 		warnedNoProvider = true;
 		console.warn(
 			"[@repo/privacy] useOptionalConsent: no ConsentProvider above this component. " +
