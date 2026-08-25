@@ -1,0 +1,905 @@
+runner dev
+{"time":"2026-08-25T06:16:53.85943634Z","level":"INFO","msg":"runner started","runner_id":"87d8efe5-1839-42a7-8a6b-bb00f7c3817d","operator":"self","version":"dev","alethia_url":"http://127.0.0.1:38245"}
+{"time":"2026-08-25T06:16:53.87298642Z","level":"INFO","msg":"claimed job","runner_id":"87d8efe5-1839-42a7-8a6b-bb00f7c3817d","job_id":"c7daac35-7698-43a8-9641-93ff27c1cc32","job_type":"DEPLOY"}
+▸ Job claimed — preparing workspace…
+[sandbox] job isolation DISABLED (PassthroughSandbox): running "deploy" job c7daac35-7698-43a8-9641-93ff27c1cc32 in-process with the full host environment — safe only for trusted (non-BYO) work
+Starting deployment for project: alethia-nl (provider: azure)
+Using bundled templates from project-templates/azure
+State backend: console HTTP proxy (per-job token)
+Initializing OpenTofu...
+{
+  "terraform_version": "1.9.0",
+  "platform": "linux_amd64",
+  "provider_selections": {
+    "registry.opentofu.org/hashicorp/azuread": "3.9.0",
+    "registry.opentofu.org/hashicorp/azurerm": "4.81.0",
+    "registry.opentofu.org/hashicorp/helm": "3.2.0",
+    "registry.opentofu.org/hashicorp/kubernetes": "3.2.1",
+    "registry.opentofu.org/hashicorp/random": "3.9.0"
+  }
+}
+
+Initializing the backend...
+
+Successfully configured the backend "http"! OpenTofu will automatically
+use this backend unless the backend configuration changes.
+Initializing modules...
+- acr in modules/acr
+- aks in modules/aks
+- azure_cache in modules/azure-cache-redis
+- azure_db in modules/azure-db
+- azure_dns in modules/azure-dns
+- azure_waf in modules/azure-waf
+- cosmos_db in modules/cosmos-db
+- key_vault in modules/key-vault
+- service_bus in modules/service-bus
+- storage_account in modules/storage-account
+- vnet in modules/vnet
+
+Initializing provider plugins...
+- terraform.io/builtin/terraform is built in to OpenTofu
+- Reusing previous version of hashicorp/helm from the dependency lock file
+- Reusing previous version of hashicorp/kubernetes from the dependency lock file
+- Reusing previous version of hashicorp/azurerm from the dependency lock file
+- Reusing previous version of hashicorp/azuread from the dependency lock file
+- Reusing previous version of hashicorp/random from the dependency lock file
+- Installing hashicorp/random v3.9.0...
+- Installed hashicorp/random v3.9.0 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/helm v3.2.0...
+- Installed hashicorp/helm v3.2.0 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/kubernetes v3.2.1...
+- Installed hashicorp/kubernetes v3.2.1 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/azurerm v4.81.0...
+- Installed hashicorp/azurerm v4.81.0 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/azuread v3.9.0...
+- Installed hashicorp/azuread v3.9.0 (signed, key ID 0C0AF313E5FD9F80)
+
+Providers are signed by their developers.
+If you'd like to know more about provider signing, you can read about it here:
+https://opentofu.org/docs/cli/plugins/signing/
+
+OpenTofu has been successfully initialized!
+Running OpenTofu plan...
+module.key_vault.data.azurerm_client_config.current: Reading...
+data.azurerm_client_config.current: Reading...
+module.key_vault.data.azurerm_client_config.current: Read complete after 0s [id=Y2xpZW50Q29uZmlncy9jbGllbnRJZD1lYTA0YjM5Yi1jNTcyLTQzZTgtYmJiMi1hZDc1MWU0MGU4NGY7b2JqZWN0SWQ9MTM1MWE3ZjYtNzZmOC00YTA1LWEzYjUtYmRlNzViN2FkMjQzO3N1YnNjcmlwdGlvbklkPTMyZjNkNmNhLWY5YjUtNDhmMS1iNzE0LWRjZmI5Y2M2NjFhZTt0ZW5hbnRJZD0yYjQ3MzMwMi1iNWNkLTRkNWUtODYwYy1jM2UyMDE0MWQ2ZTI=]
+data.azurerm_client_config.current: Read complete after 0s [id=Y2xpZW50Q29uZmlncy9jbGllbnRJZD1lYTA0YjM5Yi1jNTcyLTQzZTgtYmJiMi1hZDc1MWU0MGU4NGY7b2JqZWN0SWQ9MTM1MWE3ZjYtNzZmOC00YTA1LWEzYjUtYmRlNzViN2FkMjQzO3N1YnNjcmlwdGlvbklkPTMyZjNkNmNhLWY5YjUtNDhmMS1iNzE0LWRjZmI5Y2M2NjFhZTt0ZW5hbnRJZD0yYjQ3MzMwMi1iNWNkLTRkNWUtODYwYy1jM2UyMDE0MWQ2ZTI=]
+
+OpenTofu used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+ <= read (data resources)
+
+OpenTofu will perform the following actions:
+
+  # azurerm_federated_identity_credential.cert_manager[0] will be created
+  + resource "azurerm_federated_identity_credential" "cert_manager" {
+      + audience                  = [
+          + "api://AzureADTokenExchange",
+        ]
+      + id                        = (known after apply)
+      + issuer                    = (known after apply)
+      + name                      = "cert-manager"
+      + parent_id                 = (known after apply)
+      + resource_group_name       = "rg-alethia-nl-32816061207-1"
+      + subject                   = "system:serviceaccount:cert-manager:cert-manager"
+      + user_assigned_identity_id = (known after apply)
+    }
+
+  # azurerm_federated_identity_credential.external_dns[0] will be created
+  + resource "azurerm_federated_identity_credential" "external_dns" {
+      + audience                  = [
+          + "api://AzureADTokenExchange",
+        ]
+      + id                        = (known after apply)
+      + issuer                    = (known after apply)
+      + name                      = "external-dns"
+      + parent_id                 = (known after apply)
+      + resource_group_name       = "rg-alethia-nl-32816061207-1"
+      + subject                   = "system:serviceaccount:external-dns:external-dns-sa"
+      + user_assigned_identity_id = (known after apply)
+    }
+
+  # azurerm_federated_identity_credential.external_secrets[0] will be created
+  + resource "azurerm_federated_identity_credential" "external_secrets" {
+      + audience                  = [
+          + "api://AzureADTokenExchange",
+        ]
+      + id                        = (known after apply)
+      + issuer                    = (known after apply)
+      + name                      = "external-secrets"
+      + parent_id                 = (known after apply)
+      + resource_group_name       = "rg-alethia-nl-32816061207-1"
+      + subject                   = "system:serviceaccount:external-secrets-operator:external-secrets-operator-sa"
+      + user_assigned_identity_id = (known after apply)
+    }
+
+  # azurerm_key_vault_key.aks_secrets[0] will be created
+  + resource "azurerm_key_vault_key" "aks_secrets" {
+      + curve                   = (known after apply)
+      + e                       = (known after apply)
+      + id                      = (known after apply)
+      + key_opts                = [
+          + "decrypt",
+          + "encrypt",
+          + "unwrapKey",
+          + "wrapKey",
+        ]
+      + key_size                = 2048
+      + key_type                = "RSA"
+      + key_vault_id            = (known after apply)
+      + n                       = (known after apply)
+      + name                    = "aks-secrets-encryption"
+      + public_key_openssh      = (known after apply)
+      + public_key_pem          = (known after apply)
+      + resource_id             = (known after apply)
+      + resource_versionless_id = (known after apply)
+      + tags                    = {
+          + "Environment"        = "32816061207-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32816061207-1"
+        }
+      + version                 = (known after apply)
+      + versionless_id          = (known after apply)
+      + x                       = (known after apply)
+      + y                       = (known after apply)
+    }
+
+  # azurerm_resource_group.main will be created
+  + resource "azurerm_resource_group" "main" {
+      + id       = (known after apply)
+      + location = "germanywestcentral"
+      + name     = "rg-alethia-nl-32816061207-1"
+      + tags     = {
+          + "Environment"        = "32816061207-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32816061207-1"
+        }
+    }
+
+  # azurerm_role_assignment.aks_secrets_kms[0] will be created
+  + resource "azurerm_role_assignment" "aks_secrets_kms" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = (known after apply)
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "Key Vault Crypto User"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # azurerm_role_assignment.external_dns_dns[0] will be created
+  + resource "azurerm_role_assignment" "external_dns_dns" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = (known after apply)
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "DNS Zone Contributor"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # azurerm_role_assignment.external_secrets_kv[0] will be created
+  + resource "azurerm_role_assignment" "external_secrets_kv" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = (known after apply)
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "Key Vault Secrets User"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # azurerm_role_assignment.provisioner_crypto_officer[0] will be created
+  + resource "azurerm_role_assignment" "provisioner_crypto_officer" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = "1351a7f6-76f8-4a05-a3b5-bde75b7ad243"
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "Key Vault Crypto Officer"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # azurerm_user_assigned_identity.aks[0] will be created
+  + resource "azurerm_user_assigned_identity" "aks" {
+      + client_id           = (known after apply)
+      + id                  = (known after apply)
+      + location            = "germanywestcentral"
+      + name                = "aks-gwc-32816061207-1-alethia-nl-identity"
+      + principal_id        = (known after apply)
+      + resource_group_name = "rg-alethia-nl-32816061207-1"
+      + tags                = {
+          + "Environment"        = "32816061207-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32816061207-1"
+        }
+      + tenant_id           = (known after apply)
+    }
+
+  # azurerm_user_assigned_identity.external_dns[0] will be created
+  + resource "azurerm_user_assigned_identity" "external_dns" {
+      + client_id           = (known after apply)
+      + id                  = (known after apply)
+      + location            = "germanywestcentral"
+      + name                = "aks-gwc-32816061207-1-alethia-nl-extdns"
+      + principal_id        = (known after apply)
+      + resource_group_name = "rg-alethia-nl-32816061207-1"
+      + tags                = {
+          + "Environment"        = "32816061207-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32816061207-1"
+        }
+      + tenant_id           = (known after apply)
+    }
+
+  # azurerm_user_assigned_identity.external_secrets[0] will be created
+  + resource "azurerm_user_assigned_identity" "external_secrets" {
+      + client_id           = (known after apply)
+      + id                  = (known after apply)
+      + location            = "germanywestcentral"
+      + name                = "aks-gwc-32816061207-1-alethia-nl-extsecrets"
+      + principal_id        = (known after apply)
+      + resource_group_name = "rg-alethia-nl-32816061207-1"
+      + tags                = {
+          + "Environment"        = "32816061207-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32816061207-1"
+        }
+      + tenant_id           = (known after apply)
+    }
+
+  # terraform_data.aks_kms_purge_protection_guard[0] will be created
+  + resource "terraform_data" "aks_kms_purge_protection_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.aks_spot_guard will be created
+  + resource "terraform_data" "aks_spot_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.application_gateway_subnet_guard will be created
+  + resource "terraform_data" "application_gateway_subnet_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.brownfield_subnet_guard will be created
+  + resource "terraform_data" "brownfield_subnet_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.compat_k8s_guard will be created
+  + resource "terraform_data" "compat_k8s_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.service_bus_session_sku_guard will be created
+  + resource "terraform_data" "service_bus_session_sku_guard" {
+      + id = (known after apply)
+    }
+
+  # module.aks[0].data.azurerm_client_config.current will be read during apply
+  # (depends on a resource or a module with changes pending)
+ <= data "azurerm_client_config" "current" {
+      + client_id       = (known after apply)
+      + id              = (known after apply)
+      + object_id       = (known after apply)
+      + subscription_id = (known after apply)
+      + tenant_id       = (known after apply)
+    }
+
+  # module.aks[0].azurerm_kubernetes_cluster.this will be created
+  + resource "azurerm_kubernetes_cluster" "this" {
+      + ai_toolchain_operator_enabled       = false
+      + current_kubernetes_version          = (known after apply)
+      + dns_prefix                          = "aks-gwc-32816061207-1-alethia-nl"
+      + fqdn                                = (known after apply)
+      + http_application_routing_zone_name  = (known after apply)
+      + id                                  = (known after apply)
+      + kube_admin_config                   = (sensitive value)
+      + kube_admin_config_raw               = (sensitive value)
+      + kube_config                         = (sensitive value)
+      + kube_config_raw                     = (sensitive value)
+      + kubernetes_version                  = "1.35"
+      + location                            = "germanywestcentral"
+      + name                                = "aks-gwc-32816061207-1-alethia-nl"
+      + node_os_upgrade_channel             = "NodeImage"
+      + node_resource_group                 = "MC_rg-alethia-nl-32816061207-1_aks-gwc-32816061207-1-alethia-nl_germanyw_e4ad491"
+      + node_resource_group_id              = (known after apply)
+      + oidc_issuer_enabled                 = true
+      + oidc_issuer_url                     = (known after apply)
+      + portal_fqdn                         = (known after apply)
+      + private_cluster_enabled             = false
+      + private_cluster_public_fqdn_enabled = false
+      + private_dns_zone_id                 = (known after apply)
+      + private_fqdn                        = (known after apply)
+      + resource_group_name                 = "rg-alethia-nl-32816061207-1"
+      + role_based_access_control_enabled   = true
+      + run_command_enabled                 = true
+      + sku_tier                            = "Free"
+      + support_plan                        = "KubernetesOfficial"
+      + tags                                = {
+          + "Environment"        = "32816061207-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32816061207-1"
+        }
+      + workload_identity_enabled           = true
+
+      + auto_scaler_profile (known after apply)
+
+      + azure_active_directory_role_based_access_control {
+          + admin_group_object_ids = [
+              + "49fc55ff-a797-41d6-94cb-aa19bebc92fa",
+            ]
+          + azure_rbac_enabled     = true
+          + tenant_id              = (known after apply)
+        }
+
+      + bootstrap_profile (known after apply)
+
+      + default_node_pool {
+          + auto_scaling_enabled = true
+          + kubelet_disk_type    = (known after apply)
+          + max_count            = 2
+          + max_pods             = 110
+          + min_count            = 1
+          + name                 = "default"
+          + node_count           = 1
+          + node_labels          = (known after apply)
+          + orchestrator_version = (known after apply)
+          + os_disk_size_gb      = 32
+          + os_disk_type         = "Managed"
+          + os_sku               = (known after apply)
+          + scale_down_mode      = "Delete"
+          + type                 = "VirtualMachineScaleSets"
+          + ultra_ssd_enabled    = false
+          + vm_size              = "Standard_D2s_v3"
+          + vnet_subnet_id       = (known after apply)
+          + workload_runtime     = (known after apply)
+
+          + upgrade_settings {
+              + max_surge = "10%"
+            }
+        }
+
+      + identity {
+          + identity_ids = (known after apply)
+          + principal_id = (known after apply)
+          + tenant_id    = (known after apply)
+          + type         = (known after apply)
+        }
+
+      + key_management_service (known after apply)
+
+      + kubelet_identity (known after apply)
+
+      + network_profile {
+          + dns_service_ip     = "172.16.0.10"
+          + ip_versions        = (known after apply)
+          + load_balancer_sku  = "standard"
+          + network_data_plane = "azure"
+          + network_mode       = (known after apply)
+          + network_plugin     = "azure"
+          + network_policy     = "calico"
+          + outbound_type      = "loadBalancer"
+          + pod_cidr           = (known after apply)
+          + pod_cidrs          = (known after apply)
+          + service_cidr       = "172.16.0.0/16"
+          + service_cidrs      = (known after apply)
+
+          + load_balancer_profile (known after apply)
+
+          + nat_gateway_profile (known after apply)
+        }
+
+      + node_provisioning_profile (known after apply)
+
+      + windows_profile (known after apply)
+    }
+
+  # module.aks[0].azurerm_role_assignment.runner_cluster_admin[0] will be created
+  + resource "azurerm_role_assignment" "runner_cluster_admin" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = (known after apply)
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "Azure Kubernetes Service RBAC Cluster Admin"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # module.key_vault.azurerm_key_vault.this will be created
+  + resource "azurerm_key_vault" "this" {
+      + access_policy                 = (known after apply)
+      + enable_rbac_authorization     = (known after apply)
+      + id                            = (known after apply)
+      + location                      = "germanywestcentral"
+      + name                          = "alethia-nl-32816-1fb3f18"
+      + public_network_access_enabled = true
+      + purge_protection_enabled      = true
+      + rbac_authorization_enabled    = true
+      + resource_group_name           = "rg-alethia-nl-32816061207-1"
+      + sku_name                      = "standard"
+      + soft_delete_retention_days    = 7
+      + tags                          = {
+          + "Environment"        = "32816061207-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32816061207-1"
+        }
+      + tenant_id                     = "2b473302-b5cd-4d5e-860c-c3e20141d6e2"
+      + vault_uri                     = (known after apply)
+
+      + contact (known after apply)
+
+      + network_acls (known after apply)
+    }
+
+  # module.key_vault.azurerm_role_assignment.provisioner_secrets_officer will be created
+  + resource "azurerm_role_assignment" "provisioner_secrets_officer" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = "1351a7f6-76f8-4a05-a3b5-bde75b7ad243"
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "Key Vault Secrets Officer"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # module.vnet[0].azurerm_network_security_group.private will be created
+  + resource "azurerm_network_security_group" "private" {
+      + id                  = (known after apply)
+      + location            = "germanywestcentral"
+      + name                = "alethia-nl-32816061207-1-private-nsg"
+      + resource_group_name = "rg-alethia-nl-32816061207-1"
+      + security_rule       = [
+          + {
+              + access                                     = "Allow"
+              + description                                = ""
+              + destination_address_prefix                 = "VirtualNetwork"
+              + destination_address_prefixes               = []
+              + destination_application_security_group_ids = []
+              + destination_port_range                     = "*"
+              + destination_port_ranges                    = []
+              + direction                                  = "Inbound"
+              + name                                       = "AllowVNetInbound"
+              + priority                                   = 100
+              + protocol                                   = "*"
+              + source_address_prefix                      = "VirtualNetwork"
+              + source_address_prefixes                    = []
+              + source_application_security_group_ids      = []
+              + source_port_range                          = "*"
+              + source_port_ranges                         = []
+            },
+          + {
+              + access                                     = "Deny"
+              + description                                = ""
+              + destination_address_prefix                 = "*"
+              + destination_address_prefixes               = []
+              + destination_application_security_group_ids = []
+              + destination_port_range                     = "*"
+              + destination_port_ranges                    = []
+              + direction                                  = "Inbound"
+              + name                                       = "DenyInternetInbound"
+              + priority                                   = 4096
+              + protocol                                   = "*"
+              + source_address_prefix                      = "Internet"
+              + source_address_prefixes                    = []
+              + source_application_security_group_ids      = []
+              + source_port_range                          = "*"
+              + source_port_ranges                         = []
+            },
+        ]
+      + tags                = {
+          + "Environment"        = "32816061207-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32816061207-1"
+        }
+    }
+
+  # module.vnet[0].azurerm_subnet.application_gateway will be created
+  + resource "azurerm_subnet" "application_gateway" {
+      + address_prefixes                              = [
+          + "10.0.48.0/20",
+        ]
+      + default_outbound_access_enabled               = true
+      + id                                            = (known after apply)
+      + name                                          = "alethia-nl-32816061207-1-appgw"
+      + private_endpoint_network_policies             = "Disabled"
+      + private_link_service_network_policies_enabled = true
+      + resource_group_name                           = "rg-alethia-nl-32816061207-1"
+      + virtual_network_name                          = "alethia-nl-32816061207-1-vnet"
+    }
+
+  # module.vnet[0].azurerm_subnet.database will be created
+  + resource "azurerm_subnet" "database" {
+      + address_prefixes                              = [
+          + "10.0.32.0/20",
+        ]
+      + default_outbound_access_enabled               = true
+      + id                                            = (known after apply)
+      + name                                          = "alethia-nl-32816061207-1-db"
+      + private_endpoint_network_policies             = "Disabled"
+      + private_link_service_network_policies_enabled = true
+      + resource_group_name                           = "rg-alethia-nl-32816061207-1"
+      + virtual_network_name                          = "alethia-nl-32816061207-1-vnet"
+
+      + delegation {
+          + name = "postgres-flexible-server"
+
+          + service_delegation {
+              + actions = [
+                  + "Microsoft.Network/virtualNetworks/subnets/join/action",
+                ]
+              + name    = "Microsoft.DBforPostgreSQL/flexibleServers"
+            }
+        }
+    }
+
+  # module.vnet[0].azurerm_subnet.private will be created
+  + resource "azurerm_subnet" "private" {
+      + address_prefixes                              = [
+          + "10.0.0.0/20",
+        ]
+      + default_outbound_access_enabled               = true
+      + id                                            = (known after apply)
+      + name                                          = "alethia-nl-32816061207-1-private"
+      + private_endpoint_network_policies             = "Disabled"
+      + private_link_service_network_policies_enabled = true
+      + resource_group_name                           = "rg-alethia-nl-32816061207-1"
+      + service_endpoints                             = [
+          + "Microsoft.KeyVault",
+          + "Microsoft.Sql",
+          + "Microsoft.Storage",
+        ]
+      + virtual_network_name                          = "alethia-nl-32816061207-1-vnet"
+    }
+
+  # module.vnet[0].azurerm_subnet.public will be created
+  + resource "azurerm_subnet" "public" {
+      + address_prefixes                              = [
+          + "10.0.16.0/20",
+        ]
+      + default_outbound_access_enabled               = true
+      + id                                            = (known after apply)
+      + name                                          = "alethia-nl-32816061207-1-public"
+      + private_endpoint_network_policies             = "Disabled"
+      + private_link_service_network_policies_enabled = true
+      + resource_group_name                           = "rg-alethia-nl-32816061207-1"
+      + virtual_network_name                          = "alethia-nl-32816061207-1-vnet"
+    }
+
+  # module.vnet[0].azurerm_subnet_network_security_group_association.private will be created
+  + resource "azurerm_subnet_network_security_group_association" "private" {
+      + id                        = (known after apply)
+      + network_security_group_id = (known after apply)
+      + subnet_id                 = (known after apply)
+    }
+
+  # module.vnet[0].azurerm_virtual_network.this will be created
+  + resource "azurerm_virtual_network" "this" {
+      + address_space                  = [
+          + "10.0.0.0/16",
+        ]
+      + dns_servers                    = (known after apply)
+      + guid                           = (known after apply)
+      + id                             = (known after apply)
+      + location                       = "germanywestcentral"
+      + name                           = "alethia-nl-32816061207-1-vnet"
+      + private_endpoint_vnet_policies = "Disabled"
+      + resource_group_name            = "rg-alethia-nl-32816061207-1"
+      + subnet                         = (known after apply)
+      + tags                           = {
+          + "Environment"        = "32816061207-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32816061207-1"
+        }
+    }
+
+Plan: 29 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + acr_pull_client_id                      = ""
+  + aks_cluster_ca_certificate              = (sensitive value)
+  + aks_cluster_endpoint                    = (sensitive value)
+  + aks_cluster_name                        = "aks-gwc-32816061207-1-alethia-nl"
+  + azure_dns_name_servers                  = []
+  + azure_dns_zone_name                     = ""
+  + azure_subscription_id                   = "32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae"
+  + azure_tenant_id                         = "2b473302-b5cd-4d5e-860c-c3e20141d6e2"
+  + custom_secret_ids                       = {}
+  + external_dns_client_id                  = (known after apply)
+  + external_secrets_client_id              = (known after apply)
+  + key_vault_uri                           = (known after apply)
+  + location_short                          = "gwc"
+  + resource_group_name                     = "rg-alethia-nl-32816061207-1"
+  + storage_container_access_types          = {}
+
+Warning: Check block assertion known after apply
+
+  on checks_secrets.tf line 12, in check "external_secrets_identity_present":
+  12:     condition     = !var.provision_aks || (length(trimspace(try(azurerm_user_assigned_identity.external_secrets[0].client_id, ""))) > 0 && startswith(module.key_vault.vault_uri, "https://"))
+    ├────────────────
+    │ azurerm_user_assigned_identity.external_secrets[0].client_id is a string
+    │ module.key_vault.vault_uri is a string
+    │ var.provision_aks is true
+
+The condition could not be evaluated at this time, a result will be known
+when this plan is applied.
+
+Warning: Check block assertion known after apply
+
+  on checks_secrets.tf line 31, in check "external_secrets_identity_resolved":
+  31:     condition     = !var.provision_aks || local.external_secrets_client_id != ""
+    ├────────────────
+    │ local.external_secrets_client_id is a string
+    │ var.provision_aks is true
+
+The condition could not be evaluated at this time, a result will be known
+when this plan is applied.
+
+Warning: Argument is deprecated
+
+  with azurerm_federated_identity_credential.external_dns[0],
+  on workload-identity.tf line 22, in resource "azurerm_federated_identity_credential" "external_dns":
+  22:   resource_group_name = azurerm_resource_group.main.name
+
+This field is no longer used and will be removed in the next major version of
+the Azure Provider
+
+(and 2 more similar warnings elsewhere)
+Generating plan JSON...
+Verification gate: verdict=not_evaluable (pass=3 fail=0 warn=0 not_evaluable=1, catalog elench-controls-0.5.2)
+  [AZURE-FED-001] coverage: no resources in scope for this control in this plan
+  [SCOPE-001] coverage: terraform_data.aks_kms_purge_protection_guard[0]: unrecognized provider terraform; terraform_data.aks_spot_guard: unrecognized provider terraform; terraform_data.application_gateway_subnet_guard: unrecognized provider terraform; terraform_data.brownfield_subnet_guard: unrecognized provider terraform; terraform_data.compat_k8s_guard: unrecognized provider terraform; terraform_data.service_bus_session_sku_guard: unrecognized provider terraform
+Compatibility gate: verdict=not_evaluable (pass=0 fail=0 warn=0 not_evaluable=2, catalog compat-matrix-0.1.0)
+  [COMPAT-K8S-CLOUD-AZURE] coverage: cluster Kubernetes version is unset or unparseable
+  [COMPAT-ADDON-RELOADER] coverage: no Kubernetes compatibility range recorded
+Evidence receipt signed (key 8e720d330ff4b580, plan sha256 f2e0f35d5b57…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+terraform_data.service_bus_session_sku_guard: Creating...
+terraform_data.compat_k8s_guard: Creating...
+terraform_data.compat_k8s_guard: Creation complete after 0s [id=2a6d892e-76f7-d1ca-4c21-c37891454e42]
+terraform_data.service_bus_session_sku_guard: Creation complete after 0s [id=deaa2eea-3f3a-5bb6-1b90-311e5cd3df46]
+terraform_data.application_gateway_subnet_guard: Creating...
+terraform_data.aks_kms_purge_protection_guard[0]: Creating...
+terraform_data.application_gateway_subnet_guard: Creation complete after 0s [id=6e9b2997-5a5e-9a78-517a-9a9f4b595522]
+terraform_data.aks_spot_guard: Creating...
+terraform_data.aks_kms_purge_protection_guard[0]: Creation complete after 0s [id=cc7ab8f0-19fb-dd86-83a2-b3cc46b3141c]
+terraform_data.aks_spot_guard: Creation complete after 0s [id=c71780eb-7904-a2af-afbe-7950ffcc99d9]
+terraform_data.brownfield_subnet_guard: Creating...
+terraform_data.brownfield_subnet_guard: Creation complete after 0s [id=c6a82968-59f1-9239-c67f-a7c8e7257c01]
+azurerm_resource_group.main: Creating...
+azurerm_resource_group.main: Still creating... [10s elapsed]
+azurerm_resource_group.main: Still creating... [20s elapsed]
+azurerm_resource_group.main: Creation complete after 26s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1]
+azurerm_user_assigned_identity.external_dns[0]: Creating...
+module.key_vault.azurerm_key_vault.this: Creating...
+azurerm_user_assigned_identity.aks[0]: Creating...
+azurerm_user_assigned_identity.external_secrets[0]: Creating...
+module.vnet[0].azurerm_virtual_network.this: Creating...
+module.vnet[0].azurerm_network_security_group.private: Creating...
+azurerm_user_assigned_identity.external_secrets[0]: Creation complete after 3s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-gwc-32816061207-1-alethia-nl-extsecrets]
+azurerm_user_assigned_identity.aks[0]: Creation complete after 4s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-gwc-32816061207-1-alethia-nl-identity]
+azurerm_user_assigned_identity.external_dns[0]: Creation complete after 4s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-gwc-32816061207-1-alethia-nl-extdns]
+azurerm_role_assignment.external_dns_dns[0]: Creating...
+module.vnet[0].azurerm_network_security_group.private: Creation complete after 4s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.Network/networkSecurityGroups/alethia-nl-32816061207-1-private-nsg]
+module.vnet[0].azurerm_virtual_network.this: Creation complete after 7s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32816061207-1-vnet]
+module.vnet[0].azurerm_subnet.public: Creating...
+module.vnet[0].azurerm_subnet.application_gateway: Creating...
+module.vnet[0].azurerm_subnet.private: Creating...
+module.vnet[0].azurerm_subnet.database: Creating...
+module.key_vault.azurerm_key_vault.this: Still creating... [10s elapsed]
+azurerm_role_assignment.external_dns_dns[0]: Still creating... [10s elapsed]
+module.vnet[0].azurerm_subnet.private: Creation complete after 7s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32816061207-1-vnet/subnets/alethia-nl-32816061207-1-private]
+module.vnet[0].azurerm_subnet_network_security_group_association.private: Creating...
+module.vnet[0].azurerm_subnet.public: Still creating... [10s elapsed]
+module.vnet[0].azurerm_subnet.application_gateway: Still creating... [10s elapsed]
+module.vnet[0].azurerm_subnet.database: Still creating... [10s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [20s elapsed]
+module.vnet[0].azurerm_subnet.database: Creation complete after 13s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32816061207-1-vnet/subnets/alethia-nl-32816061207-1-db]
+azurerm_role_assignment.external_dns_dns[0]: Still creating... [20s elapsed]
+module.vnet[0].azurerm_subnet_network_security_group_association.private: Still creating... [10s elapsed]
+module.vnet[0].azurerm_subnet.public: Creation complete after 19s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32816061207-1-vnet/subnets/alethia-nl-32816061207-1-public]
+module.vnet[0].azurerm_subnet.application_gateway: Still creating... [20s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [30s elapsed]
+module.vnet[0].azurerm_subnet.application_gateway: Creation complete after 24s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32816061207-1-vnet/subnets/alethia-nl-32816061207-1-appgw]
+azurerm_role_assignment.external_dns_dns[0]: Still creating... [30s elapsed]
+module.vnet[0].azurerm_subnet_network_security_group_association.private: Still creating... [20s elapsed]
+azurerm_role_assignment.external_dns_dns[0]: Creation complete after 30s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.Authorization/roleAssignments/38913cc7-3bba-ba6b-9b77-341b1b8b97d5]
+module.vnet[0].azurerm_subnet_network_security_group_association.private: Creation complete after 24s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32816061207-1-vnet/subnets/alethia-nl-32816061207-1-private]
+module.key_vault.azurerm_key_vault.this: Still creating... [40s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [50s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m0s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m10s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m20s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m30s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m40s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m50s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [2m0s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [2m10s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [2m20s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [2m30s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [2m40s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [2m50s elapsed]
+module.key_vault.azurerm_key_vault.this: Creation complete after 2m51s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.KeyVault/vaults/alethia-nl-32816-1fb3f18]
+module.key_vault.azurerm_role_assignment.provisioner_secrets_officer: Creating...
+azurerm_role_assignment.external_secrets_kv[0]: Creating...
+azurerm_role_assignment.provisioner_crypto_officer[0]: Creating...
+azurerm_role_assignment.aks_secrets_kms[0]: Creating...
+azurerm_role_assignment.provisioner_crypto_officer[0]: Still creating... [10s elapsed]
+azurerm_role_assignment.external_secrets_kv[0]: Still creating... [10s elapsed]
+module.key_vault.azurerm_role_assignment.provisioner_secrets_officer: Still creating... [10s elapsed]
+azurerm_role_assignment.aks_secrets_kms[0]: Still creating... [10s elapsed]
+module.key_vault.azurerm_role_assignment.provisioner_secrets_officer: Still creating... [20s elapsed]
+azurerm_role_assignment.external_secrets_kv[0]: Still creating... [20s elapsed]
+azurerm_role_assignment.provisioner_crypto_officer[0]: Still creating... [20s elapsed]
+azurerm_role_assignment.aks_secrets_kms[0]: Still creating... [20s elapsed]
+module.key_vault.azurerm_role_assignment.provisioner_secrets_officer: Creation complete after 27s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.KeyVault/vaults/alethia-nl-32816-1fb3f18/providers/Microsoft.Authorization/roleAssignments/255fd75f-96a0-48cf-2a97-727a69a78fee]
+azurerm_role_assignment.external_secrets_kv[0]: Creation complete after 28s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.KeyVault/vaults/alethia-nl-32816-1fb3f18/providers/Microsoft.Authorization/roleAssignments/6f670a43-5bf2-adf0-1688-0f13e496304a]
+azurerm_role_assignment.provisioner_crypto_officer[0]: Creation complete after 28s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.KeyVault/vaults/alethia-nl-32816-1fb3f18/providers/Microsoft.Authorization/roleAssignments/09536aea-36fa-eeff-d9b0-8fe50d089fcb]
+azurerm_key_vault_key.aks_secrets[0]: Creating...
+azurerm_role_assignment.aks_secrets_kms[0]: Creation complete after 29s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.KeyVault/vaults/alethia-nl-32816-1fb3f18/providers/Microsoft.Authorization/roleAssignments/b1492aa4-84ce-c3e1-29b1-4758286abf47]
+module.aks[0].data.azurerm_client_config.current: Reading...
+module.aks[0].data.azurerm_client_config.current: Read complete after 0s [id=Y2xpZW50Q29uZmlncy9jbGllbnRJZD1lYTA0YjM5Yi1jNTcyLTQzZTgtYmJiMi1hZDc1MWU0MGU4NGY7b2JqZWN0SWQ9MTM1MWE3ZjYtNzZmOC00YTA1LWEzYjUtYmRlNzViN2FkMjQzO3N1YnNjcmlwdGlvbklkPTMyZjNkNmNhLWY5YjUtNDhmMS1iNzE0LWRjZmI5Y2M2NjFhZTt0ZW5hbnRJZD0yYjQ3MzMwMi1iNWNkLTRkNWUtODYwYy1jM2UyMDE0MWQ2ZTI=]
+azurerm_key_vault_key.aks_secrets[0]: Creation complete after 5s [id=https://alethia-nl-32816-1fb3f18.vault.azure.net/keys/aks-secrets-encryption/640901d96b9e40bcbcdac6509f6e2e24]
+module.aks[0].azurerm_kubernetes_cluster.this: Creating...
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [10s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [20s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [30s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [40s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [50s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m0s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m10s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m20s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m30s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m40s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m50s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m0s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m10s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m20s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m30s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m40s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m50s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m0s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m10s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m20s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m30s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m40s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m50s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [4m0s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Creation complete after 4m1s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.ContainerService/managedClusters/aks-gwc-32816061207-1-alethia-nl]
+azurerm_federated_identity_credential.external_secrets[0]: Creating...
+azurerm_federated_identity_credential.external_dns[0]: Creating...
+azurerm_federated_identity_credential.cert_manager[0]: Creating...
+module.aks[0].azurerm_role_assignment.runner_cluster_admin[0]: Creating...
+azurerm_federated_identity_credential.external_secrets[0]: Creation complete after 2s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-gwc-32816061207-1-alethia-nl-extsecrets/federatedIdentityCredentials/external-secrets]
+azurerm_federated_identity_credential.cert_manager[0]: Creation complete after 2s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-gwc-32816061207-1-alethia-nl-extdns/federatedIdentityCredentials/cert-manager]
+azurerm_federated_identity_credential.external_dns[0]: Creation complete after 3s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-gwc-32816061207-1-alethia-nl-extdns/federatedIdentityCredentials/external-dns]
+module.aks[0].azurerm_role_assignment.runner_cluster_admin[0]: Still creating... [10s elapsed]
+module.aks[0].azurerm_role_assignment.runner_cluster_admin[0]: Still creating... [20s elapsed]
+module.aks[0].azurerm_role_assignment.runner_cluster_admin[0]: Creation complete after 28s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32816061207-1/providers/Microsoft.ContainerService/managedClusters/aks-gwc-32816061207-1-alethia-nl/providers/Microsoft.Authorization/roleAssignments/7b4a4d48-7b89-bee8-4322-ed99ab95fdaa]
+
+Warning: Argument is deprecated
+
+  with azurerm_federated_identity_credential.external_dns[0],
+  on workload-identity.tf line 22, in resource "azurerm_federated_identity_credential" "external_dns":
+  22:   resource_group_name = azurerm_resource_group.main.name
+
+This field is no longer used and will be removed in the next major version of
+the Azure Provider
+
+(and 5 more similar warnings elsewhere)
+
+Apply complete! Resources: 29 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+acr_pull_client_id = ""
+aks_cluster_ca_certificate = <sensitive>
+aks_cluster_endpoint = <sensitive>
+aks_cluster_name = "aks-gwc-32816061207-1-alethia-nl"
+azure_dns_name_servers = []
+azure_dns_zone_name = ""
+azure_subscription_id = "32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae"
+azure_tenant_id = "2b473302-b5cd-4d5e-860c-c3e20141d6e2"
+custom_secret_ids = {}
+external_dns_client_id = "943b716a-5aba-4246-a58f-84f097042a67"
+external_secrets_client_id = "9a02cea1-cfe7-4161-910e-103928ecfb08"
+key_vault_uri = "https://alethia-nl-32816-1fb3f18.vault.azure.net/"
+location_short = "gwc"
+resource_group_name = "rg-alethia-nl-32816061207-1"
+storage_container_access_types = {}
+Getting OpenTofu outputs...
+Configuring kubeconfig for AKS cluster aks-gwc-32816061207-1-alethia-nl...
+Kubeconfig written to /home/runner/.alethia/kubeconfig (exec-plugin auth: /tmp/TestT2RealCloudProvisioning2064589653/001/alethia-runner [kube-token --provider azure])
+Waiting for the cluster to become reachable (timeout 15m0s)...
+Cluster API server is reachable.
+1/1 nodes Ready.
+Verifying a pod can reach the API server (ClusterIP 172.16.0.1:443) across the cluster network...
+A pod reached the API server across the cluster network — pod datapath is healthy.
+Installing ArgoCD...
+"argo" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "argo" chart repository
+Update Complete. ⎈Happy Helming!⎈
+namespace/argocd created
+secret/argocd-redis created
+Pre-seeded argocd-redis secret (avoids the chart's flaky redis-secret-init hook).
+Release "argo-cd" does not exist. Installing it now.
+NAME: argo-cd
+LAST DEPLOYED: Tue Aug 25 06:26:15 2026
+NAMESPACE: argocd
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+In order to access the server UI you have the following options:
+
+1. kubectl port-forward service/argo-cd-argocd-server -n argocd 8080:443
+
+    and then open the browser on http://localhost:8080 and accept the certificate
+
+2. enable ingress in the values file `server.ingress.enabled` and either
+      - Add the annotation for ssl passthrough: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-1-ssl-passthrough
+      - Set the `configs.params."server.insecure"` in the values file and terminate SSL at your ingress: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-2-multiple-ingress-objects-and-hosts
+
+
+After reaching the UI the first time you can login with username: admin and the random password generated during the installation. You can find the password by running:
+
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
+(You should delete the initial secret afterwards as suggested by the Getting Started Guide: https://argo-cd.readthedocs.io/en/stable/getting_started/#4-login-using-the-cli)
+ArgoCD installed.
+ArgoCD ready (no ingress on this cloud yet — access via port-forward; retrieve the admin password on-demand from argocd-initial-admin-secret).
+Applying ArgoCD infrastructure applications...
+Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+application.argoproj.io/external-secrets-operator created
+appproject.argoproj.io/infra created
+ArgoCD infrastructure applications applied.
+Ensuring external-secrets ClusterSecretStore (waiting for the operator's CRD + webhook)...
+error: resource mapping not found for name: "secretstore-azure" namespace: "" from "/tmp/alethia-addon-manifest-4204215627/manifest.yaml": no matches for kind "ClusterSecretStore" in version "external-secrets.io/v1beta1"
+ensure CRDs are installed first
+  external-secrets operator (CRD/webhook) isn't ready yet (attempt 1) — waiting 15s for ArgoCD to finish installing it...
+Error from server (InternalError): Internal error occurred: failed calling webhook "validate.clustersecretstore.external-secrets.io": failed to call webhook: Post "https://external-secrets-operator-webhook.external-secrets-operator.svc:443/validate-external-secrets-io-v1beta1-clustersecretstore?timeout=5s": no endpoints available for service "external-secrets-operator-webhook"
+  external-secrets operator (CRD/webhook) isn't ready yet (attempt 2) — waiting 15s for ArgoCD to finish installing it...
+Error from server (InternalError): Internal error occurred: failed calling webhook "validate.clustersecretstore.external-secrets.io": failed to call webhook: Post "https://external-secrets-operator-webhook.external-secrets-operator.svc:443/validate-external-secrets-io-v1beta1-clustersecretstore?timeout=5s": no endpoints available for service "external-secrets-operator-webhook"
+  external-secrets operator (CRD/webhook) isn't ready yet (attempt 3) — waiting 15s for ArgoCD to finish installing it...
+clustersecretstore.external-secrets.io/secretstore-azure serverside-applied
+ClusterSecretStore applied.
+external-dns is not rendered for this configuration — removing any stale install...
+error: the server doesn't have a resource type "clusterissuer"
+Warning: could not remove stale cert-manager ClusterIssuer letsencrypt-prod: command returned non-zero exit code: exit status 1
+Applying add-on wave 1 (1 application(s))...
+Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+application.argoproj.io/addon-reloader created
+Waiting up to 10m0s for 1 add-on(s) to converge...
+All add-ons Healthy + Synced.
+Security posture: Trivy-Operator not installed or no reports yet.
+Deployment completed successfully.
+{"time":"2026-08-25T06:28:51.021960127Z","level":"INFO","msg":"job completed successfully","runner_id":"87d8efe5-1839-42a7-8a6b-bb00f7c3817d","job_id":"c7daac35-7698-43a8-9641-93ff27c1cc32"}
