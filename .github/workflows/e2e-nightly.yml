@@ -83,6 +83,18 @@ on:
         description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, gcp europe-west3, azure westeurope, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1."
         type: string
         default: ""
+      dimension:
+        description: "Which DIMENSION to prove. Blank keeps the old floor/full_bar behaviour. The four middle values (maxconfig/addons/byo/day2) were previously reachable ONLY from a laptop — a boolean cannot express them — so a cell whose cause had been fixed could sit stale with no way to re-drive it from CI. Costs scale with the dimension, not with this input: addons and maxconfig are heavy, byo and day2 are near-floor."
+        type: choice
+        options:
+          - ""
+          - floor
+          - maxconfig
+          - addons
+          - byo
+          - day2
+          - full
+        default: ""
       full_bar:
         description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws; gcp/azure/alibaba/hetzner are unpriced, so dispatch those one at a time and watch them."
         type: boolean
@@ -363,6 +375,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
+          DISPATCH_DIMENSION: ${{ github.event.inputs.dimension }}
           SCHEDULE: ${{ github.event.schedule }}
           # The soak window a maintainer chose, forwarded so fidelity_env can honour it on the
           # dimensions the soak belongs to. `vars.` is not automatically in a step's environment, so
@@ -1614,6 +1627,7 @@ jobs:
           # re-resolved here from the SAME script rather than a second copy of the cron comparison.
           EVENT: ${{ github.event_name }}
           DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
+          DISPATCH_DIMENSION: ${{ github.event.inputs.dimension }}
           SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail
