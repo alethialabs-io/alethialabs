@@ -139,8 +139,22 @@ describeIfDb("protection rules — environment must belong to the authorized pro
 		// change what the fix is protecting against.
 		const db = getServiceDb();
 		// `rejects.toThrow()` on its own would pass on ANY error — an import failure, a null
-		// column, a typo in a table name — so it is matched on the constraint by name. A repro
-		// that accepts any throw is a repro that can pass without reaching the defect.
+		// column, a typo in a table name — so the assertion names the constraint. But it has to
+		// name it in the right PLACE:
+		//
+		// `toThrow(regex)` matches `error.message` and does NOT traverse `cause`. What rejects
+		// here is a DrizzleQueryError whose message is composed from the SQL —
+		// `Failed query: insert into "environment_protection_rules" …` — so NEITHER the constraint
+		// name nor the phrase "duplicate key" appears in it. Both live on the postgres.js error
+		// hanging off `.cause`. A message regex aimed at either string can never match, which is
+		// how this assertion was wrong twice.
+		//
+		// `rejects.toMatchObject` asserts against the rejection VALUE, so it reaches `cause`, and
+		// `constraint_name` is a declared field on postgres@3.4.9 (types/index.d.ts:221) rather
+		// than a string parsed out of prose. That is also strictly stronger than the regex: an
+		// import failure, a null column or a typo'd table name has no `cause.constraint_name` at
+		// all, whereas a message regex could in principle be satisfied by an unrelated error that
+		// happens to quote the constraint.
 		await expect(
 			db.insert(environmentProtectionRules).values({
 				project_id: PROJ_ALLOWED, // a DIFFERENT project…
@@ -149,7 +163,9 @@ describeIfDb("protection rules — environment must belong to the authorized pro
 				org_id: ORG,
 				require_approval: false,
 			}),
-		).rejects.toThrow(/environment_protection_rules_env_key|duplicate key/i);
+		).rejects.toMatchObject({
+			cause: { constraint_name: "environment_protection_rules_env_key" },
+		});
 	});
 
 	it("setWhere makes the WRITE structurally unable to cross projects", async () => {
