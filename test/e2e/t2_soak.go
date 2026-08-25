@@ -171,6 +171,19 @@ func hcloudGetVolume(ctx context.Context, token, volumeID string) (*hcloudVolume
 	return parseHcloudVolumeResponse(body)
 }
 
+// SoakDriftResource is one resource the drift posture counted as drifted, as recorded in
+// the committed soak summary. It mirrors drift.ResourceDrift's public shape; it is declared
+// here rather than imported so the e2e module keeps no dependency on packages/core just to
+// name three strings.
+type SoakDriftResource struct {
+	Address string `json:"address"`
+	Kind    string `json:"kind"`
+	// Attributes are the leaf paths that differed, sorted. EMPTY IS NOT "no attributes
+	// differed" — the emitter omits them when the verdict was reached before the leaves
+	// could be computed, so a reader must not take absence for a clean diff.
+	Attributes []string `json:"attributes,omitempty"`
+}
+
 // SoakSummary is the machine-readable result of the day-2 soak window (BYOC A0.3), written
 // to ALETHIA_E2E_SOAK_SUMMARY so the proof/verdict capture (A0.4) can fold a soak line into
 // the per-provider step summary.
@@ -185,12 +198,22 @@ type SoakSummary struct {
 	DriftDrifted        int    `json:"drift_drifted"`
 	DriftStateResources int    `json:"drift_state_resources"`
 	DriftStateReads     int    `json:"drift_state_reads"`
-	PVCChecked          bool   `json:"pvc_checked"`
-	PVCBound            bool   `json:"pvc_bound"`
-	PVCVolumeID         string `json:"pvc_volume_id"`
-	PVCSweepTagOK       bool   `json:"pvc_sweep_tag_ok"`
-	AddonReReadOK       bool   `json:"addon_reread_ok"`
-	Verdict             string `json:"verdict"`
+	// DriftDetails names the resources the posture counted as drifted, and the leaf
+	// paths that differed. Carried into the COMMITTED proof bundle, not only the job
+	// log, because a run's log expires and the ledger row it justifies does not: the
+	// 2026-08-24 hetzner/day2 FAIL named five resources with no attributes, and
+	// answering "is this provider hydration or real drift?" needed a second cluster.
+	//
+	// Empty on an in-sync posture. Paths only, never values — the same boundary
+	// drift.NormalizedResource.Attributes documents: plan-JSON attribute VALUES are
+	// plaintext secrets, and this summary is committed to the repo.
+	DriftDetails  []SoakDriftResource `json:"drift_details,omitempty"`
+	PVCChecked    bool                `json:"pvc_checked"`
+	PVCBound      bool                `json:"pvc_bound"`
+	PVCVolumeID   string              `json:"pvc_volume_id"`
+	PVCSweepTagOK bool                `json:"pvc_sweep_tag_ok"`
+	AddonReReadOK bool                `json:"addon_reread_ok"`
+	Verdict       string              `json:"verdict"`
 }
 
 // soakVerdictPass reports whether every soak check that RAN passed non-vacuously. The PVC

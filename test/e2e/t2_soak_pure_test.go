@@ -9,6 +9,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -167,5 +169,78 @@ func TestSoakVerdictPass(t *testing.T) {
 	noPVC.PVCSweepTagOK = false
 	if !soakVerdictPass(noPVC) {
 		t.Fatal("with PVCChecked=false the PVC fields must not gate the verdict")
+	}
+}
+
+// TestSoakSummaryCarriesDriftAttributes pins the #2503 consumer half: the drift emitter has
+// carried the differing leaf paths since drift.ResourceDrift grew Attributes, and the soak's
+// summary must carry them into the COMMITTED proof bundle rather than only into a job log
+// that expires. The 2026-08-24 hetzner/day2 FAIL named five resources and no attributes, and
+// deciding whether those were provider hydration or real drift needed a second cluster.
+//
+// It also pins the boundary that keeps this safe to commit: attribute PATHS travel, attribute
+// VALUES never do. Plan-JSON values are plaintext secrets (kubeconfigs, DB passwords, cloud
+// tokens) and this summary is written into the repository.
+func TestSoakSummaryCarriesDriftAttributes(t *testing.T) {
+	s := SoakSummary{
+		Enabled:  true,
+		Provider: "hetzner",
+		DriftDetails: []SoakDriftResource{
+			{Address: "hcloud_firewall.this", Kind: "modified", Attributes: []string{"labels", "rule[0].description"}},
+			// Attribute-less on purpose: several drift verdicts are reached before the leaves
+			// are computed at all. That case must stay REPRESENTABLE and distinguishable from
+			// "no attributes differed" — reading absence as a clean diff is the mistake.
+			{Address: "talos_machine_secrets.this", Kind: "other"},
+		},
+	}
+
+	raw, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal soak summary: %v", err)
+	}
+	got := string(raw)
+
+	for _, want := range []string{
+		`"address":"hcloud_firewall.this"`,
+		`"labels"`,
+		`"rule[0].description"`,
+		`"address":"talos_machine_secrets.this"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("committed summary is missing %s — the evidence #2503 needs\ngot: %s", want, got)
+		}
+	}
+
+	// The attribute-less entry must NOT carry an empty `attributes` key: `omitempty` is what
+	// keeps "not recorded" distinguishable from "recorded as empty".
+	var back struct {
+		DriftDetails []struct {
+			Address    string   `json:"address"`
+			Attributes []string `json:"attributes"`
+		} `json:"drift_details"`
+	}
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("round-trip: %v", err)
+	}
+	if len(back.DriftDetails) != 2 {
+		t.Fatalf("want 2 drift details, got %d", len(back.DriftDetails))
+	}
+	if len(back.DriftDetails[0].Attributes) != 2 {
+		t.Errorf("first entry lost its attribute paths: %#v", back.DriftDetails[0])
+	}
+	if len(back.DriftDetails[1].Attributes) != 0 {
+		t.Errorf("attribute-less entry gained attributes: %#v", back.DriftDetails[1])
+	}
+}
+
+// TestSoakSummaryOmitsDriftDetailsWhenInSync keeps the in-sync summary byte-identical to what
+// it was before this field existed — an empty slice must vanish, not serialize as `[]`.
+func TestSoakSummaryOmitsDriftDetailsWhenInSync(t *testing.T) {
+	raw, err := json.Marshal(SoakSummary{Enabled: true, Provider: "aws", DriftInSync: true, DriftDetails: []SoakDriftResource{}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "drift_details") {
+		t.Errorf("an in-sync posture must not emit drift_details at all\ngot: %s", raw)
 	}
 }
