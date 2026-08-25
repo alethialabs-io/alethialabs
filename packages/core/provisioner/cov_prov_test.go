@@ -2487,25 +2487,37 @@ func TestProv_ProbeSynthesizesTheClusterNameWhenTheOutputIsAbsent(t *testing.T) 
 
 // ─────────────────────────── BYO chart binding + project edges ───────────────────────────
 
-// TestProv_PrepareByoChartsWarnsWhenTheAppProjectCannotRender pins the best-effort posture at the
-// render step: a namespace that produces an unparseable AppProject is warned about and the deploy
-// continues. The charts then fail closed (no project ⇒ nothing syncs) rather than failing a cluster.
-func TestProv_PrepareByoChartsWarnsWhenTheAppProjectCannotRender(t *testing.T) {
+// TestProv_PrepareByoChartsRefusesAnInvalidNamespace replaces a test that pinned the OPPOSITE
+// posture, and the swap is the substance of #2540.
+//
+// It used to assert that a namespace of `a"b` — chosen precisely because "an embedded quote makes
+// the rendered AppProject unparseable" — was WARNED about while the deploy continued. That is the
+// fail-soft branch that let the validator added in #2576 gate nothing: the namespace renderer
+// refused the value, the warning was printed, and ten lines later RenderByoAppProject received the
+// same slice and interpolated it raw. Continuing past a REFUSAL is what made the injection
+// reachable; continuing past a namespace we merely failed to CREATE is still right, and unchanged.
+//
+// Fail-closed is preserved, which is what the old comment actually cared about: the scan loop has
+// already pinned each Application to `byo-<slug>`, and refusing here means that AppProject is never
+// created — so nothing syncs, rather than syncing into the wide-open default project.
+func TestProv_PrepareByoChartsRefusesAnInvalidNamespace(t *testing.T) {
 	provStubTool(t, "kubectl", "#!/bin/sh\nexit 0\n")
 
 	vc := &types.ProjectConfig{
 		ProjectName: "Acme Corp",
 		AddOns: []types.AddOnInstall{
-			// The namespace is emitted into a quoted YAML scalar; an embedded quote makes the
-			// rendered AppProject unparseable, which the label injector reports.
 			{ID: "api", Source: "git", ChartRepo: "https://github.com/acme/charts.git", Path: "charts/api", Namespace: `a"b`},
 		},
 	}
 	var errOut strings.Builder
-	if !prepareByoCharts(vc, "tok", nil, map[string]string{"alethia.io/environment-id": "env-1"}, io.Discard, &errOut) {
-		t.Fatal("prepareByoCharts did not report the BYO chart")
+	if prepareByoCharts(vc, "tok", nil, map[string]string{"alethia.io/environment-id": "env-1"}, io.Discard, &errOut) {
+		t.Fatal("a namespace Kubernetes would reject must REFUSE the stage, not configure it")
 	}
-	if !strings.Contains(errOut.String(), "could not render BYO AppProject") {
-		t.Errorf("the failed render must be warned about, got:\n%s", errOut.String())
+	if !strings.Contains(errOut.String(), "refusing to configure BYO charts") {
+		t.Errorf("the refusal must say so, got:\n%s", errOut.String())
+	}
+	// Fail-closed: the Application is still pinned to a project that will not exist.
+	if got := vc.AddOns[0].Project; got != "byo-acme-corp" {
+		t.Errorf("AddOns[0].Project = %q, want it pinned to the hardened project so nothing syncs", got)
 	}
 }
