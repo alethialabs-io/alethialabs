@@ -75,6 +75,13 @@ jobs:
     if: ${{ needs.changes.outputs.apps == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     strategy:
+      # Every leg runs to completion. These matrices build INDEPENDENT images, so cancelling the
+      # siblings of the first red one hides the other failures instead of saving anything useful.
+      # That masking is why the 2026-07-30 console outage took 26 days: `console` and
+      # `console-migrate` share the Dockerfile's `build` stage, so both always failed, but
+      # fail-fast cancelled whichever lost the race — so each run surfaced exactly ONE cause, and
+      # #2485 was closed on the PostHog key while the TS2307 underneath it stayed invisible.
+      fail-fast: false
       matrix:
         include:
           - image: console
@@ -245,6 +252,8 @@ jobs:
     if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     strategy:
+      # See build-amd64: one red leg must not cancel the others, or it hides the rest.
+      fail-fast: false
       matrix:
         include:
           - { image: runner-aws, file: apps/runner/Dockerfile.aws }
@@ -283,6 +292,8 @@ jobs:
     if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04-arm
     strategy:
+      # See build-amd64: one red leg must not cancel the others, or it hides the rest.
+      fail-fast: false
       matrix:
         include:
           - { image: runner-aws, file: apps/runner/Dockerfile.aws }
@@ -322,6 +333,8 @@ jobs:
     if: ${{ needs.changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     strategy:
+      # See build-amd64: one red leg must not cancel the others, or it hides the rest.
+      fail-fast: false
       matrix:
         image: [runner-aws, runner-gcp, runner-azure, runner-alibaba, runner-hetzner]
     steps:
@@ -437,6 +450,11 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' && (needs.changes.outputs.apps != 'true' || needs.changes.outputs.runner != 'true') }}
     runs-on: ubuntu-latest
     steps:
+      # Full history: the staleness guard below asks git what changed between the commit an image
+      # was built from and this one, which needs both commits present.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: docker/setup-buildx-action@v4
       - name: Login to GHCR
         uses: docker/login-action@v4
@@ -451,7 +469,41 @@ jobs:
           RUNNER_CHANGED: ${{ needs.changes.outputs.runner }}
         run: |
           set -euo pipefail
-          retag() { echo "retag $1: latest -> ${SHA}"; docker buildx imagetools create -t "${IMAGE_PREFIX}/$1:${SHA}" "${IMAGE_PREFIX}/$1:latest"; }
+
+          # Retagging is only honest when `latest` really was built from code equivalent to this
+          # commit for the paths this group covers. It is NOT a fallback for a group whose build
+          # failed — and on 2026-08-13 it silently became one: `apps/**` was unchanged in that push,
+          # so this job faithfully retagged a `console:latest` that was 14 days and 13 failed builds
+          # old onto the new SHA, `deploy` shipped it, and the run reported success. Production ran
+          # 2026-07-30 code for 26 days while `:${sha}` on the box named a commit it did not contain.
+          #
+          # So: read the commit the candidate image was actually built from (ALETHIA_SOURCE_COMMIT,
+          # set from VERSION in the Dockerfile) and refuse to retag if real code moved since.
+          stale_check() {
+            local img="$1" ref="${IMAGE_PREFIX}/$1:latest" built
+            built="$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' 2>/dev/null \
+              | jq -r '.. | .Env? // empty | .[]? | select(startswith("ALETHIA_SOURCE_COMMIT=")) | sub("^ALETHIA_SOURCE_COMMIT=";"")' \
+              | head -n1)"
+            if [ -z "$built" ] || [ "$built" = dev ]; then
+              echo "::warning::$img:latest carries no usable ALETHIA_SOURCE_COMMIT — cannot prove it is current; retagging anyway."
+              return 0
+            fi
+            if ! git cat-file -e "${built}^{commit}" 2>/dev/null; then
+              echo "::warning::$img:latest names commit ${built}, which is not in this repository's history; retagging anyway."
+              return 0
+            fi
+            if ! git diff --quiet "${built}" "${SHA}" -- apps/ packages/ ee/ pnpm-lock.yaml; then
+              echo "::error::REFUSING to retag ${img}: its latest was built from ${built}, and apps/, packages/, ee/ or the lockfile have changed between that commit and ${SHA}."
+              echo "::error::That means the last build of this group FAILED and latest is stale. Retagging it would ship old code under a new SHA — fix the build instead."
+              return 1
+            fi
+          }
+
+          retag() {
+            stale_check "$1" || return 1
+            echo "retag $1: latest -> ${SHA}"
+            docker buildx imagetools create -t "${IMAGE_PREFIX}/$1:${SHA}" "${IMAGE_PREFIX}/$1:latest"
+          }
           if [ "${APPS_CHANGED}" != "true" ]; then
             for img in console console-migrate docs blog marketing admin; do retag "$img"; done
           fi
@@ -766,3 +818,71 @@ jobs:
           docker compose $cf exec -T caddy caddy validate --config /etc/caddy/Caddyfile
           docker image prune -f
           REMOTE
+
+  # A red production deploy must never again be discovered by someone happening to read a buildx log.
+  # It has happened three times: #2244 (ten days), #2485 (closed on half the diagnosis), and the
+  # TS2307 underneath it that nothing ever named while main shipped nothing for 26 days.
+  #
+  # `failure() || cancelled()` deliberately, NOT `always()` and NOT bare `failure()`: fail-fast used to
+  # cancel the sibling console leg, so a run whose only signal is a CANCELLED job is exactly the case
+  # that must still report. `always()` would also fire on a clean skip, which is not a problem.
+  #
+  # This complements workflow-health.yml (a daily cron that catches a workflow red across several runs)
+  # by reporting on THIS push, the same minute, instead of the next morning.
+  report-failure:
+    needs: [changes, build-amd64, runner-base-amd64, runner-base-arm64, merge-runner-base,
+            build-runner-amd64, build-runner-arm64, merge-runner-images, runner-amd64,
+            runner-arm64, merge-runner, retag-unchanged, deploy]
+    if: ${{ (failure() || cancelled()) && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the deploy-broken issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          TITLE="prod: Deploy Console is red on main — production is not receiving new code"
+
+          # Name the jobs that actually failed, so the issue body is a diagnosis rather than a link.
+          jobs_json="$(gh api "repos/${REPO}/actions/runs/${GITHUB_RUN_ID}/jobs?per_page=100" --paginate 2>/dev/null || echo '{"jobs":[]}')"
+          bad="$(printf '%s' "$jobs_json" | jq -r '.jobs[]? | select(.conclusion=="failure" or .conclusion=="cancelled") | "- `\(.name)` — \(.conclusion)"' | head -40)"
+          [ -n "$bad" ] || bad="- (could not enumerate jobs — see the run)"
+
+          # Static Markdown comes from QUOTED heredocs (backticks stay literal, nothing expands);
+          # dynamic values are printf'd in between with plain %s formats. Keeping the two apart is
+          # what lets the body carry backticks without shellcheck reading them as substitutions.
+          # The heredoc bodies sit at this block's indent on purpose: YAML strips it, so the closing
+          # MD lands at column 0 for the shell.
+          {
+            cat <<'MD'
+          `Deploy Console` failed on `main` at commit:
+          MD
+            printf '%s\n\n' "$SHA"
+            cat <<'MD'
+          **The `deploy` job is gated `!cancelled() && !failure()`, so production did NOT receive this commit.**
+          
+          Failing jobs:
+          MD
+            printf '%s\n\n' "$bad"
+            printf 'Run: %s\n\n' "$RUN_URL"
+            cat <<'MD'
+          Do not close this until a `Deploy Console` run on main reaches `deploy: success`. A green run is
+          not sufficient on its own — `retag-unchanged` can report success while shipping a stale image, so
+          confirm the deployed `ALETHIA_SOURCE_COMMIT` matches the promoted SHA.
+          MD
+          } > /tmp/deploy-failure-body.md
+
+          existing="$(gh issue list --repo "$REPO" --state open --search "in:title \"$TITLE\"" --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "Updating existing issue #${existing}"
+            gh issue comment "$existing" --repo "$REPO" --body-file /tmp/deploy-failure-body.md
+          else
+            echo "Opening a new issue"
+            gh issue create --repo "$REPO" --title "$TITLE" --body-file /tmp/deploy-failure-body.md
+          fi

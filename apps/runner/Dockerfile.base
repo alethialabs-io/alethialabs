@@ -30,7 +30,20 @@ COPY apps/cli/go.mod apps/cli/go.sum apps/cli/
 COPY test/e2e/go.mod test/e2e/go.sum test/e2e/
 # Copy runner module
 COPY apps/runner/go.mod apps/runner/go.sum apps/runner/
-RUN cd apps/runner && go mod download
+# Retried: `go mod download` verifies each go.mod against the checksum database, and a transient
+# HTTP/2 stream error from sum.golang.org is enough to red the whole build — it took out the
+# 2026-08-24 production deploy with
+#   go: github.com/bwesterb/go-ristretto@v1.2.3: verifying go.mod: reading
+#   https://sum.golang.org/tile/8/0/x064/291: stream error: INTERNAL_ERROR; received from peer
+# Fixed here rather than in each caller so every workflow that builds this image (deploy-console,
+# validate-runner, release-runner, deploy-fleet-aws) gets it. A genuine resolution error still
+# fails: all three attempts have to fail before the RUN does.
+RUN cd apps/runner && for attempt in 1 2 3; do \
+      go mod download && break; \
+      if [ "$attempt" = 3 ]; then echo 'go mod download failed after 3 attempts' >&2; exit 1; fi; \
+      echo "go mod download attempt $attempt failed (likely a transient sum.golang.org error); retrying..." >&2; \
+      sleep $((attempt * 5)); \
+    done
 
 COPY apps/runner/ apps/runner/
 
@@ -99,6 +112,14 @@ COPY --from=builder /runner /usr/local/bin/runner
 # Runtime user + shared plugin-cache dir + the cloud-agnostic templates. The per-cloud PROJECT template and
 # `tofu init` (arch/cloud-specific provider+module cache) stay in each downstream image.
 RUN adduser -D -u 1000 runner
+# Which commit these bytes were built from, readable from the image config without running it.
+# deploy-console.yml's retag-unchanged guard reads this to refuse to retag a STALE `latest` onto a
+# new SHA — without it that guard cannot prove anything about the runner group and falls back to a
+# warning, i.e. it would be inert for half the images it is supposed to protect.
+# Re-declared after the final FROM because ARGs do not cross stage boundaries.
+ARG VERSION=dev
+ENV ALETHIA_SOURCE_COMMIT=$VERSION
+
 ENV TF_PLUGIN_CACHE_DIR=/home/runner/.terraform.d/plugin-cache
 RUN mkdir -p "${TF_PLUGIN_CACHE_DIR}" && chown -R runner:runner /home/runner/.terraform.d
 
