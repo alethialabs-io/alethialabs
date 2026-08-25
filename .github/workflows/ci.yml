@@ -491,8 +491,15 @@ jobs:
           # this job.
           if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
             git fetch --depth=1 origin badges
-            git checkout FETCH_HEAD -- .github/badges/go-coverage.json 2>/dev/null \
-              || echo "::notice::no go-coverage.json on \`badges\` yet — nothing to carry forward"
+            # `checkout … || echo` would swallow EVERY failure of that command, not only the one
+            # absence we mean to tolerate: a wrong FETCH_HEAD, a moved path or a locked index would
+            # all print the same notice and then force-push the sibling away, green. So the
+            # tolerated case is tested for explicitly and the checkout itself is strict.
+            if git cat-file -e "FETCH_HEAD:.github/badges/go-coverage.json" 2>/dev/null; then
+              git checkout FETCH_HEAD -- .github/badges/go-coverage.json
+            else
+              echo "::notice::no go-coverage.json on \`badges\` yet — nothing to carry forward"
+            fi
           else
             echo "::notice::\`badges\` does not exist yet — first publish, nothing to carry forward"
           fi
@@ -1150,13 +1157,23 @@ jobs:
     runs-on: ubuntu-latest
     # Push-to-main only: aggregate the three Go modules' coverage into one badge JSON the README
     # renders, and commit it. `[skip ci]` avoids a run loop.
-    if: github.ref == 'refs/heads/main'
-    # SERIALISED behind the TypeScript badge job, deliberately. Both jobs force-push their own
-    # tree to the `badges` branch, and each now restores the other's badge file first so the push
-    # is additive. Run concurrently, they would both restore from the SAME base and the second to
-    # push would silently revert the first's fresh number — a lost update, with both jobs green.
-    # `needs:` removes the race instead of narrowing it. Both carry the same `if:`, so this adds
-    # no skip coupling; it only orders them on the pushes where both actually run.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    # SERIALISED behind the TypeScript badge job. Both jobs force-push their own tree to `badges`,
+    # and each restores the other's badge first so the push is additive. Run concurrently they
+    # would both restore from the SAME base, and the second to push would silently revert the
+    # first's fresh number — a lost update, with both jobs green. `needs:` removes that race
+    # rather than narrowing it.
+    #
+    # BUT `needs:` CARRIES AN IMPLICIT success() ON THE UPSTREAM JOB, and a matching `if:` does not
+    # cancel it — only a status function does. Left bare, a failure anywhere in `coverage-badge`
+    # (its install, its suites, its push) would SKIP this job entirely, so a TypeScript-side
+    # problem would cost BOTH badges instead of one, and the Go badge would be skipped rather than
+    # red. That is the same "a failure vetoes an unrelated unit downstream of it" shape this PR is
+    # fixing elsewhere, so it must not be reintroduced here.
+    #
+    # `!cancelled()` degrades `needs:` to pure ORDERING: the job still runs after its predecessor,
+    # whatever that predecessor's outcome, and a TypeScript failure leaves one stale badge instead
+    # of two frozen ones.
     needs: coverage-badge
     permissions:
       contents: write
@@ -1206,8 +1223,15 @@ jobs:
           # this job.
           if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
             git fetch --depth=1 origin badges
-            git checkout FETCH_HEAD -- .github/badges/coverage.json 2>/dev/null \
-              || echo "::notice::no coverage.json on \`badges\` yet — nothing to carry forward"
+            # `checkout … || echo` would swallow EVERY failure of that command, not only the one
+            # absence we mean to tolerate: a wrong FETCH_HEAD, a moved path or a locked index would
+            # all print the same notice and then force-push the sibling away, green. So the
+            # tolerated case is tested for explicitly and the checkout itself is strict.
+            if git cat-file -e "FETCH_HEAD:.github/badges/coverage.json" 2>/dev/null; then
+              git checkout FETCH_HEAD -- .github/badges/coverage.json
+            else
+              echo "::notice::no coverage.json on \`badges\` yet — nothing to carry forward"
+            fi
           else
             echo "::notice::\`badges\` does not exist yet — first publish, nothing to carry forward"
           fi
