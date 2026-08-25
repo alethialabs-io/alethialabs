@@ -345,6 +345,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		}
 		t.Logf("#845 fabric-demo node-shape guard (warning): %s", msg)
 	}
+	// PRE-SPEND capacity preflight: the two guards above ask whether the shape is big enough
+	// for what this run asserts; this one asks whether the cloud will sell us that shape HERE.
+	// On 2026-08-25 two hetzner runs died five minutes into a paid apply because cx33 has
+	// capacity in no datacenter Hetzner operates — a fact one free GET answers. Hard under
+	// REQUIRE on a definite refusal; NEVER fatal on UNKNOWN, which is a probe that did not get
+	// an answer rather than an answer of "no".
+	if fatal, msg := t2RequireCapacityPreflight(ctx, provider, region, full); msg != "" {
+		if fatal {
+			t.Fatalf("pre-spend capacity preflight: %s", msg)
+		}
+		t.Logf("pre-spend %s", msg)
+	}
 	a05CheckFidelity(t, a05, base)
 
 	jobID, err := seedT2DeployJob(ctx, cp, full, a05.jobGraph(), owner)
