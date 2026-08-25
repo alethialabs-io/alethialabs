@@ -1,0 +1,22 @@
+{
+  "provider": "hetzner",
+  "region": "nbg1",
+  "cluster": "alethia-nl-32850686520-1",
+  "run_tag": "nightly-32850686520-1",
+  "outcome": "failure",
+  "deploy_stage": "applying",
+  "git_sha": "7050809",
+  "captured_at": "2026-08-25T130348Z",
+  "resources_added": null,
+  "resources_destroyed": null,
+  "cluster_live_at_capture": false,
+  "nodes_ready": 0,
+  "argocd_total": 0,
+  "argocd_healthy_synced": 0,
+  "argocd_verdict": "not reached",
+  "receipt_signed": true,
+  "receipt_plan_sha256": "230f458e3bd5",
+  "destroyed": false,
+  "duration_seconds": 237,
+  "verdict": "hetzner: ❌ FAILED at stage 'applying' (outcome=failure)"
+}
