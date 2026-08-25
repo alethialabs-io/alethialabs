@@ -698,3 +698,34 @@ func t2AmbientAccountID(provider string) string {
 	}
 	return ""
 }
+
+// t2SweeperName maps a provider to the cleanup script the WORKFLOW runs as the teardown
+// guarantee, for use in messages.
+//
+// It exists because the in-test teardown failure line hardcoded `hcloud-cleanup` and printed it on
+// every cloud — so an aws run whose destroy was interrupted told the reader to look at hetzner's
+// sweeper. The workflow's own per-provider `case` was always correct; only the message lied, and
+// only to someone already diagnosing a failure, which is the worst moment to be misdirected.
+//
+// The names are a TABLE, not a formatting rule. `scripts/e2e/` holds alibaba-, aws-, azure-,
+// gcp- and hcloud-cleanup.sh: hetzner's is named after the API (hcloud), not the provider, so
+// deriving `<provider>-cleanup.sh` would print `hetzner-cleanup.sh` — a file that does not exist.
+// Replacing one wrong filename with a different wrong filename is not a fix.
+//
+// An unknown provider gets a name that is obviously not a path, rather than a plausible guess: a
+// reader who is already diagnosing a failed teardown must not be sent to a script that might
+// exist for some other cloud.
+var t2SweeperScripts = map[string]string{
+	"hetzner": "hcloud-cleanup.sh",
+	"aws":     "aws-cleanup.sh",
+	"gcp":     "gcp-cleanup.sh",
+	"azure":   "azure-cleanup.sh",
+	"alibaba": "alibaba-cleanup.sh",
+}
+
+func t2SweeperName(provider string) string {
+	if s, ok := t2SweeperScripts[strings.TrimSpace(provider)]; ok {
+		return s
+	}
+	return fmt.Sprintf("(no sweeper mapped for provider %q)", provider)
+}

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The real nbg1 answer, read from the live API on 2026-08-25. cx33 is absent; it is the type
@@ -471,6 +472,10 @@ func TestAWSCapacityPreflightUnpinnedTypeSaysSo(t *testing.T) {
 // The real payload, verbatim from `az vm list-skus`.
 var azureZoneRestrictedSKU = azureSKU{
 	Name: "Standard_D2s_v3",
+	LocationInfo: []struct {
+		Location string   `json:"location"`
+		Zones    []string `json:"zones"`
+	}{{Location: "westeurope", Zones: []string{"1", "2", "3"}}},
 	Restrictions: []azureSKURestriction{{
 		Type:       "Zone",
 		ReasonCode: "NotAvailableForSubscription",
@@ -570,4 +575,65 @@ func TestAzurePreflightTimeoutExceedsMeasuredFloor(t *testing.T) {
 	if azurePreflightTimeout <= preflightTimeout {
 		t.Errorf("azure needs its own, larger bound; sharing %s is what made it inert", preflightTimeout)
 	}
+}
+
+// TestAzureSKURestrictedInEveryZone is the seventh case, from review on #2716.
+//
+// The first version accumulated `zonesExcluded` and returned usable regardless of how many there
+// were, so "restricted in 1, 2 and 3" read identically to "restricted in 1". The aws sibling in
+// this file already refuses the equivalent state, so azure was inconsistent with its own file.
+//
+// The six existing cases all still pass against that bug, which is the point of adding this one:
+// they vary the restriction's TYPE and the region, and this varies its BREADTH.
+func TestAzureSKURestrictedInEveryZone(t *testing.T) {
+	zoneRestricted := func(offered, excluded []string) azureSKU {
+		return azureSKU{
+			Name: "Standard_D2s_v3",
+			LocationInfo: []struct {
+				Location string   `json:"location"`
+				Zones    []string `json:"zones"`
+			}{{Location: "westeurope", Zones: offered}},
+			Restrictions: []azureSKURestriction{{
+				Type: "Zone", ReasonCode: "NotAvailableForSubscription",
+				RestrictionInfo: struct {
+					Locations []string `json:"locations"`
+					Zones     []string `json:"zones"`
+				}{Locations: []string{"westeurope"}, Zones: excluded},
+			}},
+		}
+	}
+
+	t.Run("every offered zone restricted is a REFUSAL", func(t *testing.T) {
+		ok, why, _ := azureSKUUsable(zoneRestricted([]string{"1", "2", "3"}, []string{"1", "2", "3"}), "westeurope")
+		if ok {
+			t.Fatal("a zone restriction covering every offered zone leaves nowhere to place the SKU")
+		}
+		if !strings.Contains(why, "EVERY zone") {
+			t.Errorf("the reason must say the restriction was total, got %q", why)
+		}
+	})
+
+	t.Run("some zones left is still usable — the #2716 regression", func(t *testing.T) {
+		// The real payload: offered in 1,2,3 and restricted in 1,3. Zone 2 remains, and the run
+		// that used this SKU passed.
+		if ok, why, _ := azureSKUUsable(zoneRestricted([]string{"1", "2", "3"}, []string{"1", "3"}), "westeurope"); !ok {
+			t.Fatalf("zone 2 remains, so this must stay usable: %s", why)
+		}
+	})
+
+	t.Run("a NON-ZONAL SKU is not refused by a zone restriction", func(t *testing.T) {
+		// offered == nil. Treating "no zones offered" as "no zones left" would refuse every SKU
+		// in a region that has no availability zones — a false refusal of exactly the kind this
+		// function was written to remove.
+		sku := zoneRestricted(nil, []string{"1"})
+		if ok, why, _ := azureSKUUsable(sku, "westeurope"); !ok {
+			t.Fatalf("a SKU with no zonal offer cannot be zoned out of existence: %s", why)
+		}
+	})
+
+	t.Run("restrictions naming zones the SKU does not offer do not refuse it", func(t *testing.T) {
+		if ok, why, _ := azureSKUUsable(zoneRestricted([]string{"1", "2"}, []string{"3"}), "westeurope"); !ok {
+			t.Fatalf("zones 1 and 2 remain untouched: %s", why)
+		}
+	})
 }

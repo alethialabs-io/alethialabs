@@ -469,8 +469,27 @@ type azureSKURestriction struct {
 
 // azureSKU is the subset of `az vm list-skus` the preflight reads.
 type azureSKU struct {
-	Name         string                `json:"name"`
+	Name string `json:"name"`
+	// LocationInfo says which zones the SKU is OFFERED in, per location. Without it a zone
+	// restriction cannot be judged: "restricted in zones 1 and 3" is harmless when the SKU is
+	// offered in 1, 2 and 3, and total when it is offered only in 1 and 3.
+	LocationInfo []struct {
+		Location string   `json:"location"`
+		Zones    []string `json:"zones"`
+	} `json:"locationInfo"`
 	Restrictions []azureSKURestriction `json:"restrictions"`
+}
+
+// azureOfferedZones returns the zones a SKU is offered in for one location, or nil when the SKU
+// is not zonal there. Nil is meaningful: a non-zonal SKU cannot be zone-restricted out of
+// existence, so the caller must not treat "no zones offered" as "no zones left".
+func azureOfferedZones(sku azureSKU, region string) []string {
+	for _, li := range sku.LocationInfo {
+		if strings.EqualFold(li.Location, region) {
+			return li.Zones
+		}
+	}
+	return nil
 }
 
 // azureSKUUsable reports whether a SKU can be deployed in the target region at all, and why not
@@ -509,6 +528,33 @@ func azureSKUUsable(sku azureSKU, region string) (usable bool, why string, zones
 			// "we do not understand this restriction" as "there is no restriction" is the same
 			// mistake in the opposite direction from the one this function was written to fix.
 			return false, fmt.Sprintf("unrecognised restriction type %q (%s) — refusing to guess whether it blocks this region", r.Type, r.ReasonCode), nil
+		}
+	}
+	// A Zone restriction covering EVERY zone the SKU is offered in leaves nowhere to place it,
+	// and must refuse. Reported by review on #2716: the first version accumulated the excluded
+	// zones and returned usable regardless of how many there were, so "restricted in 1, 2 and 3"
+	// read the same as "restricted in 1". The aws sibling in this file already refuses the
+	// equivalent (`len(zones) == 0` after filtering), and this brings azure into line with it.
+	//
+	// STRICTLY GUARDED, because a false refusal is the bug this whole function exists to fix. It
+	// refuses ONLY when the SKU is genuinely zonal in this region (offered != nil and non-empty)
+	// AND every offered zone appears in the excluded set. A non-zonal SKU — offered == nil — is
+	// left usable: it cannot be zoned out of existence, and treating an empty offer list as "no
+	// zones left" would refuse every SKU in a region without availability zones.
+	if offered := azureOfferedZones(sku, region); len(offered) > 0 && len(zonesExcluded) > 0 {
+		excluded := make(map[string]struct{}, len(zonesExcluded))
+		for _, z := range zonesExcluded {
+			excluded[z] = struct{}{}
+		}
+		remaining := 0
+		for _, z := range offered {
+			if _, gone := excluded[z]; !gone {
+				remaining++
+			}
+		}
+		if remaining == 0 {
+			return false, fmt.Sprintf("restricted in EVERY zone it is offered in (%s in %s) — a zone restriction this wide leaves nowhere to place it",
+				strings.Join(offered, ", "), region), zonesExcluded
 		}
 	}
 	return true, "", zonesExcluded
