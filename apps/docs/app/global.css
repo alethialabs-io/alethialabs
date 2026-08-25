@@ -5,6 +5,34 @@
 @import 'tailwindcss';
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
+@import '@repo/brand/tokens.css';
+
+@source '../../../packages/brand/src';
+
+/* fumadocs ships its own palette and its own font stack. Both are overridden onto
+   the brand ink ramp here rather than page by page, so the docs sit on exactly the
+   same greys and the same three faces as the site and the console. The docs used to
+   import no brand tokens at all — the comment that used to live in this file said so
+   outright. Only the mapping lives here; no MDX content is touched. */
+:root,
+.dark {
+  --color-fd-background: var(--background);
+  --color-fd-foreground: var(--foreground);
+  --color-fd-muted: var(--surface-muted);
+  --color-fd-muted-foreground: var(--text-tertiary);
+  --color-fd-popover: var(--surface-raised);
+  --color-fd-popover-foreground: var(--text-primary);
+  --color-fd-card: var(--surface);
+  --color-fd-card-foreground: var(--text-primary);
+  --color-fd-border: var(--border);
+  --color-fd-primary: var(--ink);
+  --color-fd-primary-foreground: var(--ink-foreground);
+  --color-fd-secondary: var(--surface-sunken);
+  --color-fd-secondary-foreground: var(--text-primary);
+  --color-fd-accent: var(--surface-muted);
+  --color-fd-accent-foreground: var(--text-primary);
+  --color-fd-ring: var(--ring);
+}
 
 /* Four hued section tokens used to live here (green/purple/blue/amber). They were
    referenced nowhere in the repo, and the system is zero-chroma by rule, so they

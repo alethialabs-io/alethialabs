@@ -51,6 +51,20 @@ export function useConsent(): ConsentContextValue {
 	return context;
 }
 
+/**
+ * The same value, or `null` where no provider is mounted.
+ *
+ * Shared chrome cannot assume its host mounted a specific provider. The site
+ * footer carries the consent control, and the moment that footer was shared with
+ * `apps/blog` — which had no `ConsentProvider` — the strict hook threw during
+ * prerender and took the whole build down. Neither tsc nor eslint can see that;
+ * only a production build did. A component that may render anywhere reads consent
+ * through this and degrades instead of exploding.
+ */
+export function useOptionalConsent(): ConsentContextValue | null {
+	return useContext(ConsentContext);
+}
+
 interface ConsentProviderProps {
 	children: ReactNode;
 	/** Deployment-aware destination for the cookie notice. */
