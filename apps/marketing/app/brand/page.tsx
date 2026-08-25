@@ -16,11 +16,13 @@ export const metadata: Metadata = {
 		"The Alethia Labs identity, mark construction, typography, color, spacing, and interface principles.",
 };
 
+// Read from the ramp, never copied. A brand reference that hard-codes its own
+// hexes is the one page guaranteed not to notice when a token moves.
 const GRAYS = [
 	["Paper", "var(--gray-0)"],
-	["Mist", "#EDEDED"],
-	["Graphite", "#737373"],
-	["Carbon", "#2A2A2A"],
+	["Mist", "var(--gray-100)"],
+	["Graphite", "var(--gray-600)"],
+	["Carbon", "var(--gray-900)"],
 	["Ink", "var(--gray-1050)"],
 ] as const;
 
@@ -125,8 +127,8 @@ export default async function BrandPage() {
 							</div>
 						</LogoField>
 						<LogoField label="App icon · dark-only tile">
-							<div className="grid size-32 place-items-center rounded-[28px] bg-[#1A1A1A]">
-								<AlethiaLogo className="size-20 text-[#FAFAFA]" />
+							<div className="grid size-32 place-items-center rounded-[28px] bg-[var(--gray-1000)]">
+								<AlethiaLogo className="size-20 text-[var(--gray-0)]" />
 							</div>
 						</LogoField>
 					</div>
@@ -160,8 +162,14 @@ export default async function BrandPage() {
 					</div>
 				</BrandSection>
 
-				<BrandSection eyebrow="04 · Color" title="Neutral by default. Blue once.">
-					<div className="grid grid-cols-2 border-t border-l border-border sm:grid-cols-5">
+				<BrandSection eyebrow="04 · Color" title="No colour. Structure instead.">
+					<p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+						A sixteen-step neutral ramp, zero chroma, carries the entire system.
+						There is no accent and no palette. Emphasis comes from weight, fill and
+						hairline structure; state comes from a dot&rsquo;s fill and shape plus a
+						mono label, never from hue.
+					</p>
+					<div className="mt-10 grid grid-cols-2 border-t border-l border-border sm:grid-cols-5">
 						{GRAYS.map(([name, color]) => (
 							<div key={name} className="border-r border-b border-border">
 								<div className="aspect-square" style={{ background: color }} />
@@ -174,16 +182,19 @@ export default async function BrandPage() {
 							</div>
 						))}
 					</div>
-					<div className="mt-6 grid border border-border md:grid-cols-[180px_1fr]">
-						<div className="min-h-36 bg-[#2563EB]" />
-						<div className="p-6 sm:p-8">
-							<p className="vx-eyebrow">Conversion blue · #2563EB</p>
-							<p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-								Reserved for one primary conversion action per view. It is not a
-								brand-mark color, status color, chart palette, or decorative accent.
-								Third-party provider marks may retain their own colors.
-							</p>
-						</div>
+					<div className="mt-6 border border-border p-6 sm:p-8">
+						<p className="vx-eyebrow">The one exception</p>
+						<p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+							Third-party provider and integration marks keep their own colours —
+							AWS, GCP, Azure, GitHub. They are someone else&rsquo;s identity, not
+							our palette, and recolouring them would misrepresent them.
+						</p>
+						<p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+							A single blue used to sit here, reserved for one conversion button. It
+							was retired: it was the only thing on the site that broke the rule
+							everything else is built on, and on a dark surface it read as a foreign
+							element rather than as emphasis.
+						</p>
 					</div>
 				</BrandSection>
 
@@ -388,7 +399,7 @@ function LogoField({
 	return (
 		<div
 			className={`relative grid min-h-72 place-items-center border border-border p-10 ${
-				dark ? "bg-[#0A0A0A]" : "bg-[#FAFAFA]"
+				dark ? "bg-[var(--gray-1050)]" : "bg-[var(--gray-0)]"
 			}`}
 		>
 			<p

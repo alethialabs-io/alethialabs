@@ -6,18 +6,21 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@repo/ui/button";
 import { Badge } from "@repo/ui/badge";
+import { Card } from "@repo/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui/table";
+import { Accordion, AccordionContent, AccordionHeader, AccordionItem, AccordionTrigger } from "@repo/ui/accordion";
+import { SegmentedControl } from "@repo/ui/segmented-control";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { cn } from "@repo/ui/utils";
 import {
 	disp,
 	eyebrow,
-	HeroRail,
 	Icon,
 	Mark,
 	mono,
-	SecMark,
 	Wrap,
 } from "@repo/brand/site-primitives";
+import { PageCTA, PageHero, SectionMark } from "@repo/brand/site-sections";
 import {
 	PLAN_CATALOG,
 	type PlanId,
@@ -29,7 +32,7 @@ const SALES = "/contact/sales";
 interface Cta {
 	label: string;
 	href: string;
-	variant: "default" | "outline" | "cta";
+	variant: "default" | "outline";
 }
 
 /**
@@ -43,14 +46,16 @@ function ctasFor(plan: PlanId): Cta[] {
 		case "team":
 			return [
 				{
+					// Solid ink, not the retired blue. Emphasis comes from the card —
+					// raised surface, stronger border, shadow and the POPULAR badge.
 					label: "Start free trial",
 					href: "/signup?next=%2Fstart%3Fplan%3Dteam%26trial%3D1",
-					variant: "cta",
+					variant: "default",
 				},
 			];
 		case "enterprise":
 			return [
-				{ label: "Get a demo", href: SALES, variant: "default" },
+				{ label: "Get a demo", href: SALES, variant: "outline" },
 				{ label: "Request trial", href: "/contact/enterprise", variant: "outline" },
 			];
 		default:
@@ -59,29 +64,24 @@ function ctasFor(plan: PlanId): Cta[] {
 }
 
 /* ============ Hero ============ */
-/** Pricing hero — grid backdrop, headline, dual CTAs. */
+/** Pricing hero. The composition lives in @repo/brand — /enterprise and this page
+ *  were building the identical hero by hand, down to the letter-spacing. */
 function PricingHero() {
 	return (
-		<section style={{ position: "relative", paddingTop: 96, paddingBottom: 28, overflow: "hidden" }}>
-			<div className="ah-grid-bg" />
-			<Wrap style={{ position: "relative", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center" }}>
-				<HeroRail kicker="alethia · pricing" status="open core" maxWidth={560} />
-				<h1 className="ah-h1" style={{ ...disp, fontSize: 56, fontWeight: 600, letterSpacing: "-0.045em", lineHeight: 1.04, margin: 0, maxWidth: 820, color: "var(--text-primary)" }}>
-					Own your infrastructure.<br />
-					<span style={{ color: "var(--text-tertiary)" }}>Pay for the convenience.</span>
-				</h1>
-				<p style={{ fontSize: 17.5, color: "var(--text-secondary)", maxWidth: 600, margin: "22px 0 30px", lineHeight: 1.55 }}>
-					The core is open source and free to self-host. Hosted plans add organizations, governance, and SSO — billed for the convenience, never for the cloud you already pay for.
-				</p>
-				<div style={{ display: "flex", alignItems: "center", gap: 13, flexWrap: "wrap", justifyContent: "center" }}>
-					<Link href="/signup"><Button>Get started <Icon k="arrow" size={15} /></Button></Link>
-					<Link href="/docs"><Button variant="outline"><Icon k="book" size={15} />Read the docs</Button></Link>
-				</div>
-				<p style={{ ...mono, fontSize: 11, color: "var(--text-disabled)", letterSpacing: "0.04em", margin: "20px 0 0" }}>
-					Self-hosting the open-source core is free forever
-				</p>
-			</Wrap>
-		</section>
+		<PageHero
+			kicker="alethia · pricing"
+			status="open core"
+			headline={{ lead: "Own your infrastructure.", muted: "Pay for the convenience." }}
+			lede="The core is open source and free to self-host. Hosted plans add organizations, governance, and SSO — billed for the convenience, never for the cloud you already pay for."
+			ledeMaxWidth={600}
+			ctas={[
+				{ label: "Get started", href: "/signup", icon: "arrow" },
+				{ label: "Read the docs", href: "/docs", variant: "outline", icon: "book", iconBefore: true },
+			]}
+			footnote="Self-hosting the open-source core is free forever"
+			paddingTop={96}
+			paddingBottom={28}
+		/>
 	);
 }
 
@@ -97,23 +97,16 @@ function PlanCard({ plan, priceLabel }: { plan: (typeof PLAN_CATALOG)[number]; p
 		: undefined;
 	const featuresLead = inheritsName ? `Everything in ${inheritsName}, plus:` : "Includes:";
 	return (
-		<div
-			style={{
-				position: "relative",
-				display: "flex",
-				flexDirection: "column",
-				height: "100%",
-				border: "1px solid " + (popular ? "var(--border-strong)" : "var(--border)"),
-				borderRadius: "var(--radius-lg)",
-				background: popular ? "var(--surface-raised)" : "var(--surface)",
-				boxShadow: popular ? "var(--shadow-md)" : "none",
-				padding: "22px 20px",
-			}}
+		<Card
+			className={cn(
+				"relative h-full gap-0 rounded-lg px-5 py-[22px]",
+				popular ? "border-border-strong bg-surface-raised shadow-md" : "border-border bg-surface shadow-none",
+			)}
 		>
 			<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
 				<span style={{ ...disp, fontSize: 17, fontWeight: 600, color: "var(--text-primary)" }}>{plan.name}</span>
 				{popular && (
-					<Badge variant="outline" className="rounded-sm font-mono text-[10px] uppercase tracking-wider text-text-tertiary">
+					<Badge variant="outline" className="vx-badge-mono">
 						Popular
 					</Badge>
 				)}
@@ -140,7 +133,7 @@ function PlanCard({ plan, priceLabel }: { plan: (typeof PLAN_CATALOG)[number]; p
 					</Button>
 				))}
 			</div>
-		</div>
+		</Card>
 	);
 }
 
@@ -213,7 +206,6 @@ const MATRIX: MatrixGroup[] = [
 	},
 ];
 
-const MATRIX_COLS = "minmax(200px, 1.6fr) repeat(3, 1fr)";
 const POP_COL = 1; // Team, 0-based among the 3 plans
 
 /** One matrix cell — check / dash / text. */
@@ -235,51 +227,76 @@ function MatrixCell({ value, head }: { value: MatrixValue; head: boolean }) {
 	);
 }
 
-/** Vercel-style plan comparison table; the Team column is tinted as popular. */
+/**
+ * Plan comparison, as a real table.
+ *
+ * It was a stack of nested `display:grid` divs — no `<table>`, no `<th scope>`, no
+ * row/column association — so a screen reader was handed an undifferentiated run of
+ * text with no way to tell which cell belonged to which plan. There was not a single
+ * `<table>` element in the whole marketing app. The Team column stays tinted, and the
+ * group headers keep their spacer cells so the tint runs unbroken down the column.
+ */
 function Matrix({ teamPriceLabel }: { teamPriceLabel: string }) {
-	const colBg = (i: number): string => (i === POP_COL ? "var(--surface-muted)" : "transparent");
+	const colClass = (i: number): string => (i === POP_COL ? "bg-surface-muted" : "");
 	const priceFor = (id: PlanId, fallback: string): string => (id === "team" ? teamPriceLabel : fallback);
 	return (
 		<section style={{ padding: "72px 0", borderTop: "1px solid var(--border)" }}>
 			<Wrap>
-				<SecMark n="—" label="Compare plans" />
+				<SectionMark n="—" label="Compare plans" />
 				<h2 style={{ ...disp, fontSize: 32, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 28px", color: "var(--text-primary)" }}>
 					Every plan, side by side.
 				</h2>
-				<div style={{ overflowX: "auto" }}>
-					<div style={{ minWidth: 720, border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden", background: "var(--surface)" }}>
-						{/* header */}
-						<div style={{ display: "grid", gridTemplateColumns: MATRIX_COLS, borderBottom: "1px solid var(--border)", background: "var(--surface-muted)" }}>
-							<div style={{ padding: "16px 18px" }}><span style={{ ...eyebrow, fontSize: 9 }}>Plan</span></div>
-							{PLAN_CATALOG.map((p, i) => (
-								<div key={p.id} style={{ padding: "14px 12px", textAlign: "center", background: colBg(i), borderLeft: "1px solid var(--border-faint)" }}>
-									<div style={{ ...disp, fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{p.name}</div>
-									<div style={{ ...mono, fontSize: 10, color: "var(--text-tertiary)", marginTop: 3 }}>{priceFor(p.id, p.priceLabel)}</div>
-								</div>
-							))}
-						</div>
-						{/* groups */}
-						{MATRIX.map((group, gi) => (
-							<div key={group.label}>
-								<div style={{ display: "grid", gridTemplateColumns: MATRIX_COLS, background: "var(--surface-sunken)", borderBottom: "1px solid var(--border-faint)", borderTop: gi ? "1px solid var(--border)" : "none" }}>
-									<div style={{ padding: "10px 18px" }}><span style={{ ...eyebrow, fontSize: 9 }}>{group.label}</span></div>
-									{PLAN_CATALOG.map((p, i) => (
-										<div key={p.id} style={{ background: colBg(i), borderLeft: "1px solid var(--border-faint)" }} />
-									))}
-								</div>
-								{group.rows.map((row, ri) => (
-									<div key={row[0]} style={{ display: "grid", gridTemplateColumns: MATRIX_COLS, alignItems: "center", borderBottom: ri < group.rows.length - 1 ? "1px solid var(--border-faint)" : "none" }}>
-										<div style={{ padding: "11px 18px", fontSize: 12.5, color: "var(--text-secondary)" }}>{row[0]}</div>
-										{[1, 2, 3].map((c) => (
-											<div key={c} style={{ padding: "11px 12px", background: colBg(c - 1), borderLeft: "1px solid var(--border-faint)", alignSelf: "stretch", display: "flex", alignItems: "center", justifyContent: "center" }}>
-												<MatrixCell value={row[c as 1 | 2 | 3]} head={c - 1 === POP_COL} />
-											</div>
-										))}
-									</div>
+				<div className="overflow-hidden rounded-lg border border-border bg-surface">
+					<Table className="min-w-[720px]">
+						<caption className="sr-only">
+							Alethia plan comparison — features by plan
+						</caption>
+						<TableHeader>
+							<TableRow className="border-border bg-surface-muted hover:bg-surface-muted">
+								<TableHead scope="col" className="px-[18px] py-4">
+									<span style={{ ...eyebrow, fontSize: 9 }}>Plan</span>
+								</TableHead>
+								{PLAN_CATALOG.map((p, i) => (
+									<TableHead
+										key={p.id}
+										scope="col"
+										className={cn("border-l border-border-faint px-3 py-3.5 text-center", colClass(i))}
+									>
+										<span style={{ ...disp, fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{p.name}</span>
+										<span style={{ ...mono, fontSize: 10, color: "var(--text-tertiary)", display: "block", marginTop: 3 }}>
+											{priceFor(p.id, p.priceLabel)}
+										</span>
+									</TableHead>
 								))}
-							</div>
+							</TableRow>
+						</TableHeader>
+						{MATRIX.map((group) => (
+							<TableBody key={group.label}>
+								<TableRow className="border-border-faint bg-surface-sunken hover:bg-surface-sunken">
+									<TableHead scope="colgroup" className="px-[18px] py-2.5">
+										<span style={{ ...eyebrow, fontSize: 9 }}>{group.label}</span>
+									</TableHead>
+									{/* Spacer cells, not a colspan: the popular column's tint has to
+									    run through the group header or it breaks into stripes. */}
+									{PLAN_CATALOG.map((p, i) => (
+										<td key={p.id} className={cn("border-l border-border-faint", colClass(i))} />
+									))}
+								</TableRow>
+								{group.rows.map((row) => (
+									<TableRow key={row[0]} className="border-border-faint">
+										<TableHead scope="row" className="px-[18px] py-[11px] text-[12.5px] font-normal text-text-secondary">
+											{row[0]}
+										</TableHead>
+										{[1, 2, 3].map((c) => (
+											<TableCell key={c} className={cn("border-l border-border-faint px-3 py-[11px]", colClass(c - 1))}>
+												<MatrixCell value={row[c as 1 | 2 | 3]} head={c - 1 === POP_COL} />
+											</TableCell>
+										))}
+									</TableRow>
+								))}
+							</TableBody>
 						))}
-					</div>
+					</Table>
 				</div>
 			</Wrap>
 		</section>
@@ -326,48 +343,61 @@ const FAQ: { q: string; a: string }[] = [
 	{ q: "Do you store my cloud credentials?", a: "No. Every cloud connects through short-lived federated identity; no access keys are written to disk or held in our database, on any plan." },
 ];
 
-/** Pricing FAQ — verifiable answers only. */
+/**
+ * Pricing FAQ.
+ *
+ * Was a static two-column grid with every answer always open — not a disclosure at
+ * all, despite reading as one. It is a real accordion now, with the first question
+ * open so the section still says something at a glance. The trigger holds its clamp
+ * while its panel is open, straight off base-ui's `data-panel-open`.
+ */
 function Faq() {
 	return (
 		<section style={{ padding: "72px 0", borderTop: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
 			<Wrap>
-				<SecMark n="—" label="FAQ" />
+				<SectionMark n="—" label="FAQ" />
 				<h2 style={{ ...disp, fontSize: 32, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 28px", color: "var(--text-primary)" }}>
 					Questions, answered.
 				</h2>
-				<div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden", background: "var(--surface)" }}>
-					{FAQ.map((item, i) => (
-						<div key={item.q} style={{ display: "grid", gridTemplateColumns: "minmax(220px, 0.9fr) 1.6fr", gap: 24, padding: "20px 22px", borderBottom: i < FAQ.length - 1 ? "1px solid var(--border-faint)" : "none" }} className="ah-2col">
-							<h3 style={{ ...disp, fontSize: 15, fontWeight: 600, margin: 0, color: "var(--text-primary)" }}>{item.q}</h3>
-							<p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: 0, lineHeight: 1.6 }}>{item.a}</p>
-						</div>
+				<Accordion
+					defaultValue={[FAQ[0]?.q ?? ""]}
+					className="overflow-hidden rounded-lg border border-border bg-surface"
+				>
+					{FAQ.map((item) => (
+						<AccordionItem key={item.q} value={item.q} className="border-b border-border-faint last:border-b-0">
+							<AccordionHeader>
+								<AccordionTrigger className="group flex w-full items-center justify-between gap-6 px-[22px] py-5 text-left">
+									<span style={{ ...disp, fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>{item.q}</span>
+									<span className="shrink-0 text-text-tertiary transition-transform duration-[var(--dur-2)] ease-[var(--ease)] group-data-[panel-open]:rotate-180">
+										<Icon k="chev" size={15} />
+									</span>
+								</AccordionTrigger>
+							</AccordionHeader>
+							<AccordionContent>
+								<p style={{ fontSize: 13.5, color: "var(--text-tertiary)", margin: 0, padding: "0 22px 20px", lineHeight: 1.6, maxWidth: 720 }}>
+									{item.a}
+								</p>
+							</AccordionContent>
+						</AccordionItem>
 					))}
-				</div>
+				</Accordion>
 			</Wrap>
 		</section>
 	);
 }
 
 /* ============ CTA ============ */
-/** Closing CTA — grid backdrop + dual actions. */
+/** Closing CTA. The composition is shared — three pages were building it by hand. */
 function PricingCTA() {
 	return (
-		<section style={{ padding: "92px 0", borderTop: "1px solid var(--border)", position: "relative", overflow: "hidden" }}>
-			<div className="ah-grid-bg ah-grid-cta" />
-			<Wrap style={{ position: "relative", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center" }}>
-				<span style={{ color: "var(--text-primary)" }}><Mark size={32} /></span>
-				<h2 style={{ ...disp, fontSize: 40, fontWeight: 600, letterSpacing: "-0.04em", margin: "20px 0 14px", maxWidth: 600, color: "var(--text-primary)", lineHeight: 1.06 }}>
-					Start free. Upgrade when your team does.
-				</h2>
-				<p style={{ fontSize: 16.5, color: "var(--text-secondary)", maxWidth: 500, margin: "0 0 30px", lineHeight: 1.55 }}>
-					Self-host the open core today, or spin up a hosted organization in minutes.
-				</p>
-				<div style={{ display: "flex", gap: 13, alignItems: "center", flexWrap: "wrap", justifyContent: "center" }}>
-					<Link href="/signup"><Button>Get started <Icon k="arrow" size={15} /></Button></Link>
-					<Link href={SALES}><Button variant="outline">Contact sales</Button></Link>
-				</div>
-			</Wrap>
-		</section>
+		<PageCTA
+			headline="Start free. Upgrade when your team does."
+			lede="Self-host the open core today, or spin up a hosted organization in minutes."
+			ctas={[
+				{ label: "Get started", href: "/signup", icon: "arrow" },
+				{ label: "Contact sales", href: SALES, variant: "outline" },
+			]}
+		/>
 	);
 }
 
@@ -379,40 +409,6 @@ interface PricingProps {
 }
 
 /** A small USD/EUR segmented toggle for the pricing page. */
-function CurrencyToggle({
-	value,
-	onChange,
-}: {
-	value: SupportedCurrency;
-	onChange: (c: SupportedCurrency) => void;
-}) {
-	return (
-		<div
-			role="group"
-			aria-label="Currency"
-			className="inline-flex items-center rounded-md border border-border bg-surface-sunken p-0.5"
-			style={mono}
-		>
-			{(["usd", "eur"] as const).map((c) => (
-				<button
-					key={c}
-					type="button"
-					aria-pressed={value === c}
-					onClick={() => onChange(c)}
-					className={cn(
-						"rounded px-2.5 py-1 text-[11px] uppercase tracking-wide transition-colors",
-						value === c
-							? "bg-surface text-text-primary shadow-sm"
-							: "text-text-secondary hover:text-text-primary",
-					)}
-				>
-					{c}
-				</button>
-			))}
-		</div>
-	);
-}
-
 /**
  * Public pricing page body (between Header/Footer). Tiers come from PLAN_CATALOG — the
  * same source of truth as the in-app billing picker — so marketing never drifts from the
@@ -426,7 +422,16 @@ export function Pricing({ teamPrice, initialCurrency }: PricingProps) {
 		<div id="pricing">
 			<PricingHero />
 			<div className="mx-auto flex w-full max-w-6xl justify-end px-6">
-				<CurrencyToggle value={currency} onChange={setCurrency} />
+				<SegmentedControl
+					label="Currency"
+					mono
+					options={[
+						{ value: "usd" as SupportedCurrency, label: "usd" },
+						{ value: "eur" as SupportedCurrency, label: "eur" },
+					]}
+					value={currency}
+					onChange={setCurrency}
+				/>
 			</div>
 			<PlanCards teamPriceLabel={teamPriceLabel} />
 			<Matrix teamPriceLabel={teamPriceLabel} />
