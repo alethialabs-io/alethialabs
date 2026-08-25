@@ -48,6 +48,28 @@ FULL_BAR_CRON="17 5 * * 0"
 # provisioning-e2e.sh's dimension names, so a row it appends and a title the filer renders always
 # name the same thing.
 resolve() {
+	# An EXPLICIT dispatch dimension wins, and it is the only way to reach the four dimensions a
+	# boolean cannot express. `full_bar` could only ever say floor-or-full, so `maxconfig`, `addons`,
+	# `byo` and `day2` were drivable from a laptop and from nowhere else — which is how a cell whose
+	# cause had been FIXED (hetzner/addons, #2490) could sit stale with no way to re-drive it from CI
+	# at all. The dimension vocabulary already existed in DIMENSIONS below; only the door was missing.
+	#
+	# Validated against that same list rather than trusted: a typo'd dispatch input must not silently
+	# resolve to `floor` and record a cheap run under an expensive name.
+	if [ "${EVENT:-}" = "workflow_dispatch" ] && [ -n "${DISPATCH_DIMENSION:-}" ]; then
+		case " $DIMENSIONS " in
+		*" $DISPATCH_DIMENSION "*)
+			echo "$DISPATCH_DIMENSION"
+			return 0
+			;;
+		*)
+			echo "resolve: unknown dispatch dimension '${DISPATCH_DIMENSION}' (want one of: $DIMENSIONS)" >&2
+			return 2
+			;;
+		esac
+	fi
+	# `full_bar` stays honoured for back-compat: it is the input every existing runbook, issue and
+	# muscle-memory dispatch still uses, and removing it would break them for no gain.
 	if [ "${EVENT:-}" = "workflow_dispatch" ] && [ "${DISPATCH_FULL:-}" = "true" ]; then
 		echo "full"
 		return 0
@@ -141,9 +163,15 @@ fidelity_env() { # <dimension>
 # dimension_label turns the token into the words that go in an issue TITLE. The title is the dedup
 # key, so this mapping is load-bearing: change it and every open nightly issue is orphaned and
 # re-filed under the new name.
+# The `floor` fallback is for the UNSET/unknown token only. Every real dimension names itself, because
+# a run that proved add-ons and filed an issue titled "floor" is the exact mislabelling this function
+# was written to end — and with a dispatchable dimension there are now four more tokens that could
+# hit it. `full` keeps its "full-bar" wording: the title is the dedup key, so changing THAT one would
+# orphan every open nightly issue and re-file it under a new name.
 dimension_label() { # <token>
 	case "${1:-}" in
 	full) echo "full-bar" ;;
+	maxconfig | addons | byo | day2) echo "$1" ;;
 	*) echo "floor" ;;
 	esac
 }
@@ -179,6 +207,38 @@ run_self_test() {
 	# A near-miss cron is NOT the full bar. Retyping this string in a second place is exactly the
 	# drift this file exists to prevent.
 	_a "floor" "$(_r schedule '' '17 5 * * 1')" "a Monday 05:17 cron is not the full bar"
+
+	# ── The dispatchable dimension (the four a boolean could not reach). ──
+	_rd() { # <event> <dimension>
+		(EVENT="$1" DISPATCH_DIMENSION="$2" DISPATCH_FULL="" SCHEDULE="" resolve)
+	}
+	_a "addons" "$(_rd workflow_dispatch addons)" "a dispatch naming addons resolves addons"
+	_a "maxconfig" "$(_rd workflow_dispatch maxconfig)" "a dispatch naming maxconfig resolves maxconfig"
+	_a "day2" "$(_rd workflow_dispatch day2)" "a dispatch naming day2 resolves day2"
+	_a "byo" "$(_rd workflow_dispatch byo)" "a dispatch naming byo resolves byo"
+	_a "floor" "$(_rd workflow_dispatch floor)" "a dispatch naming floor still resolves floor"
+	_a "full" "$(_rd workflow_dispatch full)" "a dispatch naming full resolves full"
+
+	# A typo must be REFUSED, never silently downgraded — resolving `addonz` to `floor` would record
+	# a cheap run under whatever name the operator thought they asked for.
+	_a "2" "$(_rd workflow_dispatch addonz >/dev/null 2>&1; echo $?)" "an unknown dispatch dimension exits non-zero"
+	_a "" "$(_rd workflow_dispatch addonz 2>/dev/null)" "...and prints no dimension at all"
+
+	# The dimension input is dispatch-only: a SCHEDULE carrying one must still be decided by its cron,
+	# so a stray repository variable can never widen what a timer spends.
+	_a "floor" "$(EVENT=schedule DISPATCH_DIMENSION=full SCHEDULE='17 3 * * *' resolve)" "a schedule ignores DISPATCH_DIMENSION — the cron decides"
+
+	# Back-compat: the boolean every existing runbook uses still works, and the explicit dimension
+	# wins when both are present.
+	_a "full" "$(EVENT=workflow_dispatch DISPATCH_FULL=true DISPATCH_DIMENSION='' SCHEDULE='' resolve)" "full_bar=true still resolves full"
+	_a "addons" "$(EVENT=workflow_dispatch DISPATCH_FULL=true DISPATCH_DIMENSION=addons SCHEDULE='' resolve)" "an explicit dimension beats full_bar"
+
+	# Every real dimension names ITSELF in an issue title. A run that proved add-ons and filed an
+	# issue titled "floor" is the mislabelling dimension_label exists to prevent.
+	_a "addons" "$(dimension_label addons)" "addons labels as addons, not floor"
+	_a "maxconfig" "$(dimension_label maxconfig)" "maxconfig labels as maxconfig, not floor"
+	_a "day2" "$(dimension_label day2)" "day2 labels as day2, not floor"
+	_a "byo" "$(dimension_label byo)" "byo labels as byo, not floor"
 
 	_a "full-bar" "$(dimension_label full)" "the full token labels as full-bar in an issue title"
 	_a "floor" "$(dimension_label floor)" "the floor token labels as floor in an issue title"
