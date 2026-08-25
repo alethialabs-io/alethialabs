@@ -208,6 +208,24 @@ jobs:
         # cause. `!cancelled()` keeps it off a cancelled run.
         if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         run: node scripts/ts-coverage.mjs --project packages/plan-catalog
+      # apps/marketing and ee join the gate here. Both emitted NO coverage at all until now — they
+      # ran `vitest run` with no `--coverage`, so there was no artefact and nothing for the ratchet
+      # to hold. `ee/` is the LICENSED tier: the code customers pay for was the least measured
+      # surface in the repository.
+      #
+      # Both land INERT: no floors file yet, so F1 fires and each exits 0. Arming follows once the
+      # determinism probe has recorded numbers from CI. Same two-step bootstrap the other three
+      # projects used, for the same reason — floors recorded on a laptop are not comparable to CI.
+      #
+      # These steps are not optional bookkeeping: `--self-test` FAILS while a project declares a
+      # coverage block and has no step here, which is exactly how this change was caught mid-edit
+      # ("no coverage-emitting vitest project lacks a ratchet step in ci.yml — apps/marketing, ee").
+      - name: Coverage ratchet — apps/marketing
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project apps/marketing
+      - name: Coverage ratchet — ee
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project ee
       # Build smoke for the split-affected apps — catches transpilePackages /
       # standalone breakage on PRs. Build-only placeholder env so the console's
       # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
