@@ -152,6 +152,12 @@ export async function POST(
 					tools: toolNames,
 					stopReason: finishReason,
 					stream: true,
+				}).catch((err: unknown) => {
+					// Metering must never break an AI call — that is why it is fire-and-forget. But
+					// recordAiUsage has no internal try/catch, so without this a failed write is an
+					// UNHANDLED rejection AND silently strands the provisional hold this turn reserved,
+					// which assertAiAllowed's own contract says must never leak. Logged, not swallowed.
+					console.error("[ai-quota] metering write failed; a budget hold may be stranded", err);
 				});
 			},
 			onError: ({ error }) => {
@@ -172,6 +178,12 @@ export async function POST(
 					stream: true,
 					isError: true,
 					error: error instanceof Error ? error.message : String(error),
+				}).catch((err: unknown) => {
+					// Metering must never break an AI call — that is why it is fire-and-forget. But
+					// recordAiUsage has no internal try/catch, so without this a failed write is an
+					// UNHANDLED rejection AND silently strands the provisional hold this turn reserved,
+					// which assertAiAllowed's own contract says must never leak. Logged, not swallowed.
+					console.error("[ai-quota] metering write failed; a budget hold may be stranded", err);
 				});
 			},
 			// Client disconnect mid-stream: onFinish/onError won't fire, so RELEASE the hold here
