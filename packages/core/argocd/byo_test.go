@@ -155,3 +155,88 @@ func TestRenderAddOnApplication_HelmDefault(t *testing.T) {
 		t.Errorf("Helm-source Application must not set a git `path:`:\n%s", out)
 	}
 }
+
+// TestRenderByoNamespaces_RendersOneNamespacePerDestination pins the fix for the BYO-IaC sync
+// failure found on gcp's first real run: the chart's Application carries CreateNamespace=true, but
+// the hardened AppProject forbids cluster-scoped resources, so ArgoCD could never create it and
+// every BYO sync died with `namespaces "<ns>" not found`.
+func TestRenderByoNamespaces_RendersOneNamespacePerDestination(t *testing.T) {
+	out, err := RenderByoNamespaces([]string{"byo-e2e", "payments"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{"kind: Namespace", "name: byo-e2e", "name: payments", "\n---\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered namespaces missing %q:\n%s", want, out)
+		}
+	}
+	if got := strings.Count(out, "kind: Namespace"); got != 2 {
+		t.Errorf("want 2 Namespace documents, got %d:\n%s", got, out)
+	}
+}
+
+// TestRenderByoNamespaces_DedupesAndDropsBlanks — two charts sharing a namespace must not render it
+// twice (a duplicate document makes the multi-doc apply non-idempotent), and a blank namespace must
+// not render a nameless Namespace, which the API server would reject and take the whole apply with it.
+func TestRenderByoNamespaces_DedupesAndDropsBlanks(t *testing.T) {
+	out, err := RenderByoNamespaces([]string{"shared", "", "shared", "other"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.Count(out, "kind: Namespace"); got != 2 {
+		t.Errorf("want 2 deduped Namespace documents, got %d:\n%s", got, out)
+	}
+	if strings.Contains(out, "name: \n") || strings.Contains(out, "name:\n") {
+		t.Errorf("a blank namespace rendered a nameless Namespace:\n%s", out)
+	}
+}
+
+// TestRenderByoNamespaces_EmptyIsEmptyNotAnError — no BYO charts must yield nothing to apply, and
+// specifically NOT an error: a project with no git-source add-ons is the common case, and an error
+// there would print a warning on every ordinary deploy.
+func TestRenderByoNamespaces_EmptyIsEmptyNotAnError(t *testing.T) {
+	for _, in := range [][]string{nil, {}, {""}, {"", ""}} {
+		out, err := RenderByoNamespaces(in, nil)
+		if err != nil {
+			t.Errorf("RenderByoNamespaces(%q) errored: %v", in, err)
+		}
+		if out != "" {
+			t.Errorf("RenderByoNamespaces(%q) = %q, want empty", in, out)
+		}
+	}
+}
+
+// TestRenderByoNamespaces_CarriesCommonLabels — the sweep/classification labels (BYOC B1.4) must
+// land on the namespace too. A namespace the runner created but the sweeper cannot recognise is an
+// orphan by construction, which is the leak shape this repo has already paid for twice.
+func TestRenderByoNamespaces_CarriesCommonLabels(t *testing.T) {
+	out, err := RenderByoNamespaces([]string{"byo-e2e"}, map[string]string{"alethia.io/project-id": "p-123"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "alethia.io/project-id: p-123") {
+		t.Errorf("common labels not injected into the namespace:\n%s", out)
+	}
+	if !strings.Contains(out, "alethia.io/managed-by: byo-charts") {
+		t.Errorf("namespace lost its managed-by label:\n%s", out)
+	}
+}
+
+// TestByoAppProjectStillForbidsClusterResources is the OTHER direction, and the one that matters
+// most. The bug is fixable two ways: create the namespace as the trusted runner (what we did), or
+// let the untrusted chart create it by whitelisting Namespace on the AppProject (what we must never
+// do). This test fails if anyone ever takes the second route, so the fix cannot be "corrected" into
+// a hole in the trust boundary later.
+func TestByoAppProjectStillForbidsClusterResources(t *testing.T) {
+	out, err := RenderByoAppProject("byo-p", []string{"https://example.com/r"}, []string{"byo-e2e"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "clusterResourceWhitelist: []") {
+		t.Errorf("the hardened BYO AppProject must keep an EMPTY clusterResourceWhitelist — the "+
+			"namespace is created by the runner, never by the chart:\n%s", out)
+	}
+	if strings.Contains(out, "kind: Namespace") {
+		t.Errorf("the AppProject must not whitelist Namespace:\n%s", out)
+	}
+}
