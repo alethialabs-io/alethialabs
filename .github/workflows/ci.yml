@@ -134,6 +134,7 @@ jobs:
       - name: Type-check + lint (all workspace projects)
         run: pnpm exec turbo run check-types lint
       - name: Unit tests
+        id: unit
         run: pnpm exec turbo run test
       # Coverage is merged into the self-hosted README badge by the `coverage-badge` job
       # (push-to-main); no third-party service. See scripts/coverage-badge.mjs + TESTING.md.
@@ -184,10 +185,28 @@ jobs:
       # maintainer's machine after the local dev bring-up builds it. A mismatch DEMOTES failures
       # to warnings rather than blaming coverage for a scope change.
       - name: Coverage ratchet — apps/console
+        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
+        # rather than inheriting the implicit success() that would let one project's ratchet hide
+        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
+        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
+        # cause. `!cancelled()` keeps it off a cancelled run.
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         run: node scripts/ts-coverage.mjs --project apps/console
       - name: Coverage ratchet — packages/ui
+        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
+        # rather than inheriting the implicit success() that would let one project's ratchet hide
+        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
+        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
+        # cause. `!cancelled()` keeps it off a cancelled run.
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         run: node scripts/ts-coverage.mjs --project packages/ui
       - name: Coverage ratchet — packages/plan-catalog
+        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
+        # rather than inheriting the implicit success() that would let one project's ratchet hide
+        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
+        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
+        # cause. `!cancelled()` keeps it off a cancelled run.
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         run: node scripts/ts-coverage.mjs --project packages/plan-catalog
       # Build smoke for the split-affected apps — catches transpilePackages /
       # standalone breakage on PRs. Build-only placeholder env so the console's
