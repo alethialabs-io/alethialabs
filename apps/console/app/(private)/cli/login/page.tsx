@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
-import { AlethiaLogo } from '@repo/brand/alethia-logo'
+import { AuthCard, AuthShell } from "@/components/auth/auth-shell"
 import { Button } from '@repo/ui/button'
 import { useSearchParams } from 'next/navigation'
 import { Suspense, useState } from 'react'
@@ -164,30 +164,34 @@ function CliLoginContent() {
   )
 }
 
+/**
+ * What `alethia login` opens in the browser — the CLI's device-approval screen.
+ *
+ * It drew its own chrome: an unlinked logo at `top-6 left-6`, a `rounded-xl`
+ * `bg-card` panel with `border-border/50`, and no footer. It is one of the most
+ * marketing-visible auth surfaces there is, so it wears the same shell as the
+ * login page now. It stays under `(private)` deliberately — an anonymous visitor
+ * should be bounced to `/login?next=…` rather than shown an approval prompt.
+ */
 export default function CliLoginPage() {
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
-      <div className="absolute top-6 left-6">
-        <AlethiaLogo withText className="h-6 w-auto text-foreground" />
-      </div>
-
-      <div className="flex-1 flex items-center justify-center">
-        <div className="w-full max-w-sm border border-border/50 rounded-xl bg-card p-8">
-          <div className="text-center mb-6">
-            <h1 className="text-lg font-semibold tracking-tight text-foreground">
-              CLI Authentication
-            </h1>
-          </div>
-          <Suspense fallback={
-            <div className="flex flex-col items-center justify-center gap-4">
-              <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
-              <p className="text-xs text-muted-foreground">Loading…</p>
-            </div>
-          }>
-            <CliLoginContent />
-          </Suspense>
+    <AuthShell>
+      <AuthCard>
+        <div className="mb-6 text-center">
+          <p className="vx-eyebrow">Device authorization</p>
+          <h1 className="mt-2 font-grotesk text-[22px] font-semibold tracking-[-0.03em] text-text-primary">
+            CLI Authentication
+          </h1>
         </div>
-      </div>
-    </div>
+        <Suspense fallback={
+          <div className="flex flex-col items-center justify-center gap-4">
+            <Loader2 className="h-10 w-10 animate-spin text-text-tertiary" />
+            <p className="text-xs text-text-tertiary">Loading…</p>
+          </div>
+        }>
+          <CliLoginContent />
+        </Suspense>
+      </AuthCard>
+    </AuthShell>
   )
 }

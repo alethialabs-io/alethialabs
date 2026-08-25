@@ -50,7 +50,7 @@ export function ErrorState({
 			)}
 			<h1
 				className={cn(
-					"font-display font-semibold tracking-[-0.02em] text-text-primary",
+					"font-grotesk font-semibold tracking-[-0.02em] text-text-primary",
 					fullPage ? "text-[22px]" : "text-[17px]",
 				)}
 			>

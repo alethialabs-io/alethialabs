@@ -17,3 +17,15 @@ export function legalUrl(path: `/${string}`): string {
 	const base = env("NEXT_PUBLIC_LEGAL_URL") ?? DEFAULT_LEGAL_BASE;
 	return `${base}${path}`;
 }
+
+// The status page is hosted-brand content too, and it was hard-coded into the auth
+// shell. A self-hosted console has no alethialabs.io status page to point at, and
+// linking one asserts an uptime commitment that operator never made.
+const DEFAULT_STATUS_URL = "https://status.alethialabs.io";
+
+/** Public status page, honoring NEXT_PUBLIC_STATUS_URL. Empty disables the link. */
+export function statusUrl(): string | null {
+	const configured = env("NEXT_PUBLIC_STATUS_URL");
+	if (configured === "") return null;
+	return configured ?? DEFAULT_STATUS_URL;
+}

@@ -1,13 +1,23 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/* Rendered from server pages (login, signup, onboarding, accept-terms) AND from a
+   client one (`/cli/login`, which needs useSearchParams). A module reached from both
+   graphs without a declared boundary is exactly what threw
+   "Element type is invalid … got: undefined" twice during this rollout, so the
+   boundary is declared here rather than inferred. It renders Button and
+   PrivacySettingsButton, both client components, so it was one already. */
+"use client";
+
 import type React from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
 import { LEGAL_ENTITY } from "@repo/legal/entity";
+import { PrivacySettingsButton } from "@repo/privacy/privacy-settings-button";
+import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
-import { legalUrl } from "@/lib/legal";
+import { legalUrl, statusUrl } from "@/lib/legal";
 
 /** Width of the centered card; widens for the onboarding plan step. "fluid"
  *  hands width control to the child (the wizard animates it per step). */
@@ -33,9 +43,18 @@ interface AuthShellProps {
 }
 
 /**
- * Shared chrome for the auth + onboarding screens (login / signup / onboarding):
- * a topbar with the Alethia Labs lockup and an optional sign-in/sign-up switch,
- * the centered card area, and the legal + status footer, over a plain background.
+ * The shell every public console screen wears.
+ *
+ * It used to cover four of the seven routes under `(public)`; `/auth/oauth/consent`,
+ * `/invites/accept` and `/cli/login` each drew a near-miss copy of its logo and
+ * centring, with different offsets and a different card. They all use this now, so
+ * the front door of the product is one surface however you arrive at it.
+ *
+ * The blueprint grid backdrop is the same one the marketing hero uses — it became
+ * shareable when `.ah-grid-bg` moved into `@repo/brand`. So did `.ah-pulse`, which
+ * this footer had always referenced but which was only ever defined in the
+ * marketing app's stylesheet: the status dot below rendered as a zero-size empty
+ * span and had never once been visible.
  */
 export function AuthShell({
   switchPrompt,
@@ -44,16 +63,19 @@ export function AuthShell({
   cardWidth = "default",
   children,
 }: AuthShellProps) {
+  const status = statusUrl();
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-background">
+      <div className="ah-grid-bg" aria-hidden="true" />
+
       {/* top bar */}
       <header className="relative z-30 flex items-center justify-between px-8 py-6">
         <Link
           href="/"
           aria-label="Alethia Labs — home"
-          className="inline-flex items-center transition-opacity hover:opacity-80"
+          className="vx-clamp vx-clamp--tight inline-flex items-center transition-opacity hover:opacity-80"
         >
-          <AlethiaLogo withText className="h-6 w-auto text-foreground" />
+          <AlethiaLogo withText className="h-6 w-auto text-text-primary" />
         </Link>
 
         {switchPrompt && switchHref && switchLabel ? (
@@ -61,13 +83,15 @@ export function AuthShell({
             <span className="hidden text-[13px] text-text-tertiary sm:inline">
               {switchPrompt}
             </span>
-            <Link
-              href={switchHref}
-              className="inline-flex h-[34px] items-center gap-[7px] rounded-sm border border-border-strong px-3.5 text-[13px] font-medium text-text-primary transition-colors hover:border-ring hover:bg-surface-muted"
+            <Button
+              variant="outline"
+              size="sm"
+              nativeButton={false}
+              render={<Link href={switchHref} />}
             >
               {switchLabel}
               <ArrowRight className="size-3.5 opacity-70" />
-            </Link>
+            </Button>
           </div>
         ) : null}
       </header>
@@ -86,47 +110,47 @@ export function AuthShell({
 
       {/* footer */}
       <footer className="relative z-30 flex flex-wrap items-center justify-between gap-4 px-8 pb-7 pt-5">
-        <div className="flex items-center gap-4 font-mono text-[10.5px] tracking-[0.06em] text-text-tertiary">
-          <span>© 2026 {LEGAL_ENTITY.tradingName}</span>
-          <a
-            href={legalUrl("/terms")}
-            className="transition-colors hover:text-text-primary"
-          >
+        <div className="flex flex-wrap items-center gap-4 font-mono text-[10.5px] tracking-[0.06em] text-text-tertiary">
+          {/* The year was hard-coded and would have quietly gone stale. */}
+          <span>© {new Date().getFullYear()} {LEGAL_ENTITY.tradingName}</span>
+          <a href={legalUrl("/terms")} className="vx-clamp vx-clamp--tight transition-colors hover:text-text-primary">
             Terms
           </a>
-          <a
-            href={legalUrl("/privacy")}
-            className="transition-colors hover:text-text-primary"
-          >
+          <a href={legalUrl("/privacy")} className="vx-clamp vx-clamp--tight transition-colors hover:text-text-primary">
             Privacy
           </a>
-          <a
-            href={legalUrl("/legal/source")}
-            className="transition-colors hover:text-text-primary"
-          >
+          <a href={legalUrl("/legal/source")} className="vx-clamp vx-clamp--tight transition-colors hover:text-text-primary">
             Source
           </a>
+          {/* Consent was withdrawable from the signed-in account menu and from
+              nowhere on the public pages — where the choice is actually made. */}
+          <PrivacySettingsButton className="vx-clamp vx-clamp--tight cursor-pointer transition-colors hover:text-text-primary" />
         </div>
-        <a
-          href="https://status.alethialabs.io"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-2"
-        >
-          <span className="ah-pulse" />
-          <span className="font-mono text-[10.5px] tracking-[0.06em] text-text-tertiary transition-colors hover:text-text-primary">
-            All systems operational
-          </span>
-        </a>
+
+        {status ? (
+          <a
+            href={status}
+            target="_blank"
+            rel="noreferrer"
+            className="vx-clamp vx-clamp--tight inline-flex items-center gap-2"
+          >
+            <span className="ah-pulse" />
+            <span className="font-mono text-[10.5px] tracking-[0.06em] text-text-tertiary transition-colors hover:text-text-primary">
+              All systems operational
+            </span>
+          </a>
+        ) : null}
       </footer>
     </div>
   );
 }
 
 /**
- * The card surface that wraps a single auth/onboarding step. Mirrors the
- * design's `.panel` (whisper-cornered surface, hairline + soft shadow) and
- * plays the entrance animation on mount/step-change.
+ * The card surface that wraps a single auth/onboarding step.
+ *
+ * Was `rounded-xl` over a heavy `--shadow-lg`, which is a different surface from
+ * every card on the rest of the site: elevation there reads from a hairline border,
+ * not from drop-shadow. Squared and quiet now, and it keeps the entrance animation.
  */
 export function AuthCard({
   className,
@@ -138,7 +162,7 @@ export function AuthCard({
   return (
     <div
       className={cn(
-        "auth-pane-in rounded-xl border border-border bg-[color-mix(in_oklab,var(--surface)_92%,transparent)] px-9 pb-8 pt-9 shadow-[0_1px_0_0_var(--border-faint),var(--shadow-lg)]",
+        "auth-pane-in rounded-lg border border-border bg-surface px-9 pb-8 pt-9 shadow-sm",
         className,
       )}
     >
