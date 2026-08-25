@@ -149,13 +149,25 @@ data "helm_template" "hcloud_ccm" {
     value = data.hcloud_location.selected.name
   }
 
-  # Reach backends over the private network when there is one. The nodes' public interfaces are
-  # firewalled to the cluster's own rules, so a public-path Load Balancer would have to be granted
-  # its own way in; the private path is both the cheaper and the tighter default. With no private
-  # network provisioned there is nothing to route over, so this must be false rather than absent —
-  # the chart's own default is false, and stating it keeps the two branches symmetrical.
+  # Reach backends over the PRIVATE network. Unconditional, because there is always one (#2549).
+  #
+  # This was keyed off `provision_network`, with the rationale "with no private network there is
+  # nothing to route over". Both halves were wrong: `provision_network = false` does not mean "no
+  # private network", it means BRING YOUR OWN. On that path `network_id` is mandatory
+  # (checks_network.tf), `hcloud_network_subnet.nodes` is created either way — it carries no `count`
+  # — `local.network_id` resolves from the data source, and talos.tf always writes the `network` key
+  # into the `hcloud` Secret with `networking.enabled = "true"` hardcoded.
+  #
+  # So the BYO-network path yielded "false" and the CCM targeted the nodes' PUBLIC IPs, which
+  # `hcloud_firewall.this` admits only on 50000/50001/6443. The Load Balancer's health checks would
+  # never pass, ArgoCD would still mark the Service Healthy because an ingress IP had been assigned,
+  # and no traffic would reach nginx. Silent, in exactly the way #2490 was silent — which is the
+  # whole reason that bug survived long enough to be misdiagnosed as a race.
+  #
+  # The question this wants to ask is "is there a private network", not "did we create it". The
+  # answer here is always yes.
   set {
     name  = "env.HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP.value"
-    value = var.provision_network ? "true" : "false"
+    value = "true"
   }
 }

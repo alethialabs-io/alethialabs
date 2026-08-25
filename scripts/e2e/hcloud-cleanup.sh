@@ -277,6 +277,34 @@ sweep_unlabelled_lbs() {
 		UNVERIFIABLE="${UNVERIFIABLE}ccm-load-balancers(no jq) "
 		return 0
 	fi
+	# "none" must mean NONE, not "could not look" (#2549).
+	#
+	# unlabelled_lb_ids binds an LB to this run through its private-network attachment, and that is
+	# the only binding a CCM-created LB has — it carries no label and cannot be made to. But on the
+	# graceful path `tofu destroy` deletes hcloud_network.this FIRST, so by the time the sweep runs
+	# the network is gone, cluster_network_id() is empty, and the lookup returns nothing. Printing
+	# "none" there reports a clean account while an ingress Load Balancer bills on, which is the same
+	# shape as the aws sweeper's own warning: a sweeper that reports clean without looking is more
+	# expensive than no sweeper, because it stops anyone else looking.
+	#
+	# So when the binding cannot be resolved, ask the cheaper question that CAN be answered — does
+	# this project hold any Load Balancer at all? A read, never a delete: widening to an account-wide
+	# purge is precisely what scope-locking forbids. Zero means "none" honestly; anything else is
+	# reported UNVERIFIABLE so verify_swept gates and a human looks.
+	local net_for_lbs
+	net_for_lbs="$(cluster_network_id)"
+	if ! printf '%s' "$net_for_lbs" | grep -Eq '^[0-9]+$'; then
+		local lb_total
+		lb_total="$(hcloud load-balancer list -o noheader -o columns=id 2>/dev/null | grep -c . || true)"
+		if [ "${lb_total:-0}" -eq 0 ]; then
+			echo "  · unlabelled (CCM) load balancers: none (project holds no load balancer at all)"
+			return 0
+		fi
+		echo "::warning::the run's private network is already gone, so a CCM-created ingress load balancer for ${SELECTOR} cannot be bound to this run — and this project holds ${lb_total}. NOT swept and NOT verified; check load balancers by hand (#2549)." >&2
+		UNVERIFIABLE="${UNVERIFIABLE}ccm-load-balancers(network-already-destroyed) "
+		return 0
+	fi
+
 	ids="$(unlabelled_lb_ids)"
 	if [ -z "$ids" ]; then
 		echo "  · unlabelled (CCM) load balancers on this run's network: none"
@@ -543,6 +571,8 @@ if [ "$SELF_TEST" = "1" ]; then
 		case "$1 ${2:-}" in
 		"server list") printf '%s\n' "$ST_SERVERS" ;;
 		"ssh-key list") printf '%s\n' "$ST_KEYS" ;;
+		"network list") printf '%s\n' "$ST_NETWORK" ;;
+		"load-balancer list") printf '%s\n' "$ST_LBS" ;;
 		*) : ;;
 		esac
 	}
@@ -566,6 +596,30 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_imager_case "a leaked upload ssh-key alone is enough" "" "117831479 hcloud-upload-image-77b49987" yes
 	st_imager_case "an empty account raises nothing" "" "" no
 	st_imager_case "an unrelated server is not mistaken for one" "163000000 alethia-prod-web" "" no
+
+	# #2549: "none" must mean NONE, not "could not look". A CCM load balancer is bound to a run ONLY
+	# through its private-network attachment, and `tofu destroy` deletes that network FIRST — so the
+	# lookup that finds it is already impossible by the time the sweep runs, and it used to print
+	# "none" over a load balancer that was still billing.
+	st_lb_case() { # <name> <network list> <load-balancer list> <expect UNVERIFIABLE to mention ccm-load-balancers: yes|no>
+		UNVERIFIABLE=""
+		ST_NETWORK="$2"
+		ST_LBS="$3"
+		sweep_unlabelled_lbs >/dev/null 2>&1
+		local got=no
+		case "$UNVERIFIABLE" in *ccm-load-balancers*) got=yes ;; esac
+		if [ "$got" = "$4" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected ccm-load-balancers-in-UNVERIFIABLE=$4, got $got" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+
+	st_lb_case "network gone + a load balancer present is UNVERIFIABLE, not 'none'" "" "4711" yes
+	st_lb_case "network gone + no load balancer at all is honestly none" "" "" no
+	st_lb_case "network still present resolves normally, raising nothing" "12345" "" no
+
 	unset -f hcloud
 
 	if [ "$st_fails" -ne 0 ]; then
