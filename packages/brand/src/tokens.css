@@ -41,10 +41,6 @@
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
-  /* The one sanctioned hue — the single conversion CTA. See --cta below. */
-  --color-cta: var(--cta);
-  --color-cta-foreground: var(--cta-foreground);
-  --color-cta-hover: var(--cta-hover);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
@@ -168,11 +164,14 @@
   /* The invalid-state focus ring, per theme — removes `dark:aria-invalid:ring-…`. */
   --ring-invalid:         oklch(0 0 0 / 0.20);
 
-  /* ---- The one deliberate non-grayscale hue: the single conversion CTA
-     ("Start free trial"). Do NOT reuse elsewhere — the system is grayscale. ---- */
-  --cta:            #2563EB; /* blue-600 */
-  --cta-hover:      #1D4ED8; /* blue-700 */
-  --cta-foreground: var(--gray-0); /* white */
+  /* There was one deliberate non-grayscale hue here — a blue for the single
+     "Start free trial" conversion button. It is gone. It was the only thing on
+     the site that broke the rule the rest of the system is built on, and on a
+     dark surface it read as a foreign element rather than as emphasis. The
+     trial button is solid ink now; it already sits in a card carrying
+     --surface-raised, --shadow-md, --border-strong and a POPULAR badge, so it
+     is still the loudest thing in the row. Provider and integration marks keep
+     their own colours — they are third-party logos, not our palette. */
 
   /* ---- Charts — distinct grayscale luminance steps (read by lightness) ---- */
   --chart-1: var(--gray-950);
@@ -238,11 +237,6 @@
   --input-fill:           oklch(1 0 0 / 0.045);
   --input-fill-hover:     oklch(1 0 0 / 0.075);
   --ring-invalid:         oklch(1 0 0 / 0.40);
-
-  /* The one sanctioned hue (see :root). Same blue on dark — legible with white text. */
-  --cta:            #2563EB; /* blue-600 */
-  --cta-hover:      #1D4ED8; /* blue-700 */
-  --cta-foreground: var(--gray-0); /* white */
 
   /* charts — grayscale luminance steps (inverted for dark) */
   --chart-1: var(--gray-50);
@@ -452,6 +446,163 @@
   }
   .vx-clamp--live::before { animation: none; }
 }
+
+/* The mono-uppercase label pill. It had been re-derived four separate times —
+   twice inline in the marketing primitives and header, once as `MonoBadge` in the
+   enterprise sections, and once in Tailwind on the pricing page — each with
+   slightly different tracking. Pair it with `<Badge variant="outline">`. */
+.vx-badge-mono {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  border-color: var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Prose ───────────────────────────────────────────────────────────────────
+   One treatment for bare semantic HTML, wherever it comes from: the legal
+   documents, the security page, and blog posts.
+
+   The same job was being solved twice in two syntaxes with different values — a
+   Tailwind arbitrary-variant blob inside `LegalShell` (`[&_h2]:…`) and a
+   hand-rolled `.prose` block in the blog's own CSS. The blog's was the more
+   complete of the two (it covered `pre`, `blockquote`, `ol` and tables, which the
+   legal one did not) and used `font-weight: 800`, which nothing else in the system
+   uses. Merged here at the system's own weights. */
+.vx-prose {
+  line-height: 1.7;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+.vx-prose > * + * { margin-top: 1.1rem; }
+.vx-prose h2 {
+  margin-top: 2.5rem;
+  margin-bottom: 0.75rem;
+  font-family: var(--font-grotesk), var(--font-sans);
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+.vx-prose h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.vx-prose a {
+  color: var(--text-primary);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.vx-prose a:hover { opacity: 0.8; }
+.vx-prose ul, .vx-prose ol { padding-left: 1.25rem; margin-block: 0.75rem; }
+.vx-prose ul { list-style: disc; }
+.vx-prose ol { list-style: decimal; }
+.vx-prose li + li { margin-top: 0.5rem; }
+.vx-prose strong { color: var(--text-primary); font-weight: 500; }
+.vx-prose code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.8em;
+  color: var(--text-primary);
+}
+.vx-prose pre {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  overflow-x: auto;
+  font-size: 0.8rem;
+}
+.vx-prose pre code { background: transparent; border: 0; padding: 0; }
+.vx-prose blockquote {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 1rem;
+  color: var(--text-tertiary);
+}
+.vx-prose mark {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+}
+.vx-prose table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+.vx-prose th, .vx-prose td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0.7rem;
+  text-align: left;
+  vertical-align: top;
+}
+.vx-prose th {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+/* ── Shared surface classes ──────────────────────────────────────────────────
+   Promoted out of the marketing app so every surface can use them. `.ah-pulse`
+   in particular was REFERENCED by the console's auth shell but defined only in
+   apps/marketing/app/globals.css, so the "All systems operational" dot on the
+   login page was a zero-size empty span — it had never rendered. A class used
+   across apps has to live where every app already imports from. */
+/* hero "live" pulse dot in the badge */
+.ah-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text-primary);
+  box-shadow: 0 0 0 0 color-mix(in oklch, var(--text-primary) 50%, transparent);
+  animation: ah-pulse 2s ease-out infinite;
+}
+@keyframes ah-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--text-primary) 45%, transparent); }
+  70% { box-shadow: 0 0 0 7px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* blueprint grid backdrop */
+.ah-grid-bg {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--border-faint) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border-faint) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 0%, #000 38%, transparent 76%);
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 0%, #000 38%, transparent 76%);
+  pointer-events: none;
+}
+.ah-grid-cta {
+  -webkit-mask-image: radial-gradient(ellipse 60% 80% at 50% 50%, #000 30%, transparent 72%);
+  mask-image: radial-gradient(ellipse 60% 80% at 50% 50%, #000 30%, transparent 72%);
+}
+
+/* scroll reveal */
+.ah-reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  transition:
+    opacity 0.6s cubic-bezier(0.2, 0, 0, 1),
+    transform 0.6s cubic-bezier(0.2, 0, 0, 1);
+}
+.ah-reveal.in {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ah-pulse { animation: none; }
+  .ah-reveal { opacity: 1; transform: none; transition: none; }
+}
+
 
 /* ── Page chrome ─────────────────────────────────────────────────────────────
    The hairline frame inset from the viewport and the two vertical edge rails.

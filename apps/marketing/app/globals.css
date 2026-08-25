@@ -27,56 +27,6 @@
   --shadow-xl: 0 30px 80px oklch(0 0 0 / 0.62);
 }
 
-/* hero "live" pulse dot in the badge */
-.ah-pulse {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--text-primary);
-  box-shadow: 0 0 0 0 color-mix(in oklch, var(--text-primary) 50%, transparent);
-  animation: ah-pulse 2s ease-out infinite;
-}
-@keyframes ah-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--text-primary) 45%, transparent); }
-  70% { box-shadow: 0 0 0 7px transparent; }
-  100% { box-shadow: 0 0 0 0 transparent; }
-}
-
-/* blueprint grid backdrop */
-.ah-grid-bg {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(var(--border-faint) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border-faint) 1px, transparent 1px);
-  background-size: 44px 44px;
-  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 0%, #000 38%, transparent 76%);
-  mask-image: radial-gradient(ellipse 75% 65% at 50% 0%, #000 38%, transparent 76%);
-  pointer-events: none;
-}
-.ah-grid-cta {
-  -webkit-mask-image: radial-gradient(ellipse 60% 80% at 50% 50%, #000 30%, transparent 72%);
-  mask-image: radial-gradient(ellipse 60% 80% at 50% 50%, #000 30%, transparent 72%);
-}
-
-/* scroll reveal */
-.ah-reveal {
-  opacity: 0;
-  transform: translateY(16px);
-  transition:
-    opacity 0.6s cubic-bezier(0.2, 0, 0, 1),
-    transform 0.6s cubic-bezier(0.2, 0, 0, 1);
-}
-.ah-reveal.in {
-  opacity: 1;
-  transform: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ah-pulse { animation: none; }
-  .ah-reveal { opacity: 1; transform: none; transition: none; }
-}
-
 /* responsive collapse — mirrors the design's media queries */
 @media (max-width: 900px) {
   .ah-h1 { font-size: 46px !important; }

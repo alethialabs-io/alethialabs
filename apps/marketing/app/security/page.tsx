@@ -4,7 +4,9 @@
 import { CURRENT_LEGAL_OPERATOR } from "@repo/legal/entity";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { LegalShell } from "@/components/legal/legal-shell";
+import { SiteShell } from "@repo/brand/site-shell";
+import { PageCTA, PageHero } from "@repo/brand/site-sections";
+import { Wrap } from "@repo/brand/site-primitives";
 
 export const metadata: Metadata = {
 	title: "Security · Alethia",
@@ -20,10 +22,31 @@ export const metadata: Metadata = {
  * a reader can go and confirm any of it rather than take our word for it. That
  * is the honest version of a trust page for a product whose entire argument is
  * "don't trust us, verify."
+ *
+ * It used to render through `LegalShell` — a trust page wearing legal-document
+ * chrome, with no nav and no way back into the site. It is a marketing surface and
+ * now wears the same composition as /pricing and /enterprise. Every one of the ten
+ * sections below is unchanged; only the frame around them moved.
  */
-export default function SecurityPage() {
+export default async function SecurityPage() {
 	return (
-		<LegalShell title="Security" lastUpdated="August 5, 2026">
+		<SiteShell>
+			<PageHero
+				kicker="alethia · security"
+				status="no keys held"
+				headline={{ lead: "The credentials we", muted: "deliberately never hold." }}
+				lede="Alethia provisions into your cloud account using short-lived federated identity. There is no access key to leak, because there is no access key. Every claim on this page is architectural and checkable against an AGPL codebase."
+				ctas={[
+					{ label: "Read the architecture", href: "/docs/architecture", icon: "arrow" },
+					{ label: "Report a vulnerability", href: "mailto:security@alethialabs.io", variant: "outline", icon: "shield", iconBefore: true },
+				]}
+				footnote="Last updated · August 5, 2026"
+				paddingBottom={24}
+			/>
+
+			<section style={{ padding: "8px 0 96px" }}>
+				<Wrap>
+					<div className="vx-prose mx-auto max-w-2xl">
 			<p>
 				Alethia provisions infrastructure into <strong>your</strong> cloud account.
 				That makes the most valuable thing we could lose the one thing we
@@ -177,6 +200,18 @@ export default function SecurityPage() {
 				architecture, not a warranty; the binding commitments are in the{" "}
 				<Link href="/terms">Terms</Link> and the DPA.
 			</p>
-		</LegalShell>
+					</div>
+				</Wrap>
+			</section>
+
+			<PageCTA
+				headline="Verify it yourself."
+				lede="The control plane is open source. Read the federation code, run it in your own account, and check the receipt offline."
+				ctas={[
+					{ label: "Read the docs", href: "/docs", icon: "arrow" },
+					{ label: "Self-host it", href: "/open-source", variant: "outline" },
+				]}
+			/>
+		</SiteShell>
 	);
 }
