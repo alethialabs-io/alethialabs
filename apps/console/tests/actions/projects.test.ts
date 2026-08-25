@@ -1143,6 +1143,75 @@ describe("buildConfigSnapshot — DNS switches (#1810)", () => {
 	});
 });
 
+// #2568: the cluster cloud's own DNS may refuse the TLD outright — hetzner answers a `.io` zone
+// create with "unsupported tld" (422). #2570 added the gate; these are the two conditions it has
+// to get right, neither of which had a test.
+describe("buildConfigSnapshot - the hetzner TLD gate (#2568)", () => {
+	/** snapshotSelect with a hetzner cloud identity and one DNS row. */
+	function hetznerWithDns(row: Record<string, unknown>) {
+		return snapshotSelect(
+			new Map<unknown, RowsResolver>([
+				[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+				[projectDns, [row]],
+			]),
+		);
+	}
+
+	it("refuses a .io zone hetzner would answer with a 422, and names the remedy", async () => {
+		setupDb({
+			select: hetznerWithDns({ enabled: true, domain_name: "app.example.io" }),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await expect(planProject("p1")).rejects.toThrow(/will not host a \.io zone/);
+		expect(notifyScaler).not.toHaveBeenCalled();
+	});
+
+	// MIRRORS THE EMITTER. `hcloud_zone.this` counts on `cloud_dns_enabled && dns_provider ==
+	// "native"`, and the runner emits `cloud_dns_enabled = DNS.Enabled && DNS.ZoneID == ""`
+	// (hetzner_provider.go:209). A project that BRINGS a zone id therefore creates no zone at all,
+	// so the 422 is unreachable and refusing it would block a config that applies cleanly.
+	it("allows the same domain when an existing zone id means no zone is ever created", async () => {
+		const { valuesSpy } = setupDb({
+			select: hetznerWithDns({
+				enabled: true,
+				domain_name: "app.example.io",
+				zone_id: "zone-abc",
+			}),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await planProject("p1");
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "PLAN" });
+	});
+
+	// A connected provider hosts the zone instead, so the cloud's own restriction never applies.
+	it("allows it when a connected DNS provider hosts the zone", async () => {
+		const { valuesSpy } = setupDb({
+			select: hetznerWithDns({
+				enabled: true,
+				domain_name: "app.example.io",
+				provider: "cloudflare",
+			}),
+			insert: new Map([[jobs, [{ id: "job-1" }]]]),
+		});
+		await planProject("p1");
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "PLAN" });
+	});
+
+	// ONLY ON THE PATHS THAT CREATE. The `.io`-on-hetzner project that produced #2568 already
+	// exists, half-applied — it is the reason the gate was written. Throwing on the shared
+	// `buildConfigSnapshot` would leave its owner holding cloud resources they cannot tear down
+	// from the console. Refusing to create MORE of a broken config is the point; refusing to
+	// remove one is not.
+	it("does NOT block the teardown of a project already broken this way", async () => {
+		const { valuesSpy } = setupDb({
+			select: hetznerWithDns({ enabled: true, domain_name: "app.example.io" }),
+			insert: new Map([[jobs, [{ id: "job-9" }]]]),
+		});
+		await destroyProject("p1");
+		expect(valuesFor(valuesSpy, jobs)).toMatchObject({ job_type: "DESTROY" });
+	});
+});
+
 describe("planProject", () => {
 	it("freezes a config snapshot, queues a PLAN job, flips the env to QUEUED, and notifies the scaler", async () => {
 		const { valuesSpy, executeSpy } = setupDb({

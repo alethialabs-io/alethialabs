@@ -1016,7 +1016,28 @@ async function buildConfigSnapshot(
 		// THROWS rather than clearing the domain, like the WAF gate above and for the same reason:
 		// silently dropping the zone would deploy a cluster whose ingress resolves nowhere, which is
 		// a worse outcome than a refusal that names the remedy.
-		if (dns?.enabled && (!dns.provider || dns.provider === "native")) {
+		// MIRRORS THE EMITTER EXACTLY, INCLUDING zone_id. `hcloud_zone.this` counts on
+		// `var.cloud_dns_enabled && var.dns_provider == "native"`, and the runner emits
+		// `cloud_dns_enabled = config.DNS.Enabled && config.DNS.ZoneID == ""`
+		// (packages/core/cloud/hetzner_provider.go:209). A project that BRINGS a zone id therefore
+		// creates no zone at all — the apply never calls zone-create and the 422 is unreachable — so
+		// refusing it would block a config that applies cleanly. A gate that reports an emitter has to
+		// mirror every one of its conditions, not just the ones that were easy to see.
+		//
+		// AND ONLY ON THE PATHS THAT CREATE. `buildConfigSnapshot` is shared by planProject,
+		// buildProject, provisionProject, destroyProject, queueDriftDetection and detectDrift. Throwing
+		// on all six wedges exactly the projects this gate exists for: the `.io`-on-hetzner project
+		// that produced #2568 already exists, half-applied, and would hit this on Destroy — leaving a
+		// user holding cloud resources they cannot tear down from the console. Teardown and drift must
+		// stay reachable for a config that is already broken; refusing to CREATE more of it is the
+		// whole point.
+		const dnsGateApplies = jobKind === "plan" || jobKind === "deploy";
+		if (
+			dnsGateApplies &&
+			dns?.enabled &&
+			!dns.zone_id &&
+			(!dns.provider || dns.provider === "native")
+		) {
 			const reason = dnsTldUnsupportedReasonForCloud(
 				identity.provider,
 				dns.domain_name,
