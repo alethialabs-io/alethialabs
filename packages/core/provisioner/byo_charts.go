@@ -128,8 +128,14 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[stri
 	//
 	// Fail-soft like everything else in this stage: a namespace we could not create surfaces as an
 	// unhealthy Application in the console, which is honest, rather than failing a good cluster.
+	// NOT fail-soft, unlike everything else in this stage (#2540). A namespace we could not CREATE
+	// still leaves a legible unhealthy Application, so warning is right there. A namespace the
+	// renderer REFUSES is a different thing: the configuration itself is rejected, and falling
+	// through applied the hardened AppProject built from the very value we just declined — which is
+	// how the validator added in #2576 came to gate nothing. Refuse the stage instead.
 	if ns, err := argocd.RenderByoNamespaces(namespaces, commonLabels); err != nil {
-		fmt.Fprintf(stderr, "Warning: could not render BYO namespaces: %v\n", err)
+		fmt.Fprintf(stderr, "Error: refusing to configure BYO charts: %v\n", err)
+		return false
 	} else if ns != "" {
 		if err := argocd.ApplyManifest(ns, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not create BYO namespace(s) %s — a chart targeting one will fail its sync with `namespaces not found`: %v\n",
