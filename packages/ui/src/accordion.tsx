@@ -5,6 +5,8 @@
 import type * as React from "react";
 import { Accordion as AccordionPrimitive } from "@base-ui-components/react/accordion";
 
+import { cn } from "./utils";
+
 /** base-ui Accordion root. base-ui's `multiple` defaults to `true`; pass `multiple={false}` with a
  *  controlled array `value` for an auto-closing accordion (opening one section closes the others).
  *  base-ui renames Radix's `Content` part to `Panel`; the `AccordionContent` export name is kept so
@@ -28,10 +30,17 @@ function AccordionHeader({
 }
 
 function AccordionTrigger({
+  className,
   ...props
 }: React.ComponentProps<typeof AccordionPrimitive.Trigger>) {
   return (
-    <AccordionPrimitive.Trigger data-slot="accordion-trigger" {...props} />
+    <AccordionPrimitive.Trigger
+      data-slot="accordion-trigger"
+      /* `data-panel-open` is base-ui's open attribute and the clamp reads it directly,
+         so an open section stays clamped without a second source of truth. */
+      className={cn("vx-clamp vx-clamp--tight", className)}
+      {...props}
+    />
   );
 }
 

@@ -10,7 +10,7 @@ import {
 	type VerifyStatus,
 	SAMPLE_RECEIPT,
 } from "@/lib/proof/verify-receipt-sample";
-import { mono } from "./primitives";
+import { mono } from "@repo/brand/site-primitives";
 
 /** Verdict/status → grayscale Badge variant (no color; fail is solid, pass is outline). */
 function statusBadgeVariant(s: VerifyStatus): "default" | "outline" | "secondary" {
@@ -31,7 +31,7 @@ const card: CSSProperties = {
 	maxWidth: 720,
 	textAlign: "left",
 	border: "1px solid var(--border-strong)",
-	borderRadius: "var(--radius-2xl)",
+	borderRadius: "var(--radius-xl)",
 	background: "var(--surface)",
 	boxShadow: "var(--shadow-xl)",
 	overflow: "hidden",

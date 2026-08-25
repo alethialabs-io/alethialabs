@@ -4,6 +4,7 @@
 "use client";
 
 import Link from "next/link";
+import { Button } from "@repo/ui/button";
 import { useState } from "react";
 
 import { FIELD_CATALOG, FIELD_KEY_ID } from "@/lib/proof/plan-field";
@@ -40,19 +41,19 @@ export function Hero() {
 				</p>
 
 				<div className="mkt-acts">
-					<Link className="mkt-btn mkt-btn--solid" href="/signup">
+					<Button render={<Link href="/signup" />} nativeButton={false} size="lg">
 						Start free →
-					</Link>
-					<Link className="mkt-btn" href="/docs">
+					</Button>
+					<Button render={<Link href="/docs" />} nativeButton={false} size="lg" variant="outline">
 						Read the docs →
-					</Link>
+					</Button>
 				</div>
 
 				{/* The field is decorative and aria-hidden; this is where its output
 				    becomes real, announced text. */}
 				<div className="mkt-readout" aria-live="polite">
 					<p className="mkt-readout-hd">
-						<span>{subject ? "Verdict" : "Drag a resource into the gate"}</span>
+						<span>{subject ? "Verdict" : "The gate runs between plan and apply"}</span>
 						<s aria-hidden="true" />
 						<span>{FIELD_CATALOG}</span>
 					</p>
@@ -68,13 +69,13 @@ export function Hero() {
 								? subject.controlId
 									? `${subject.controlId} — ${subject.note}`
 									: subject.note
-								: "the gate runs between plan and apply"}
+								: "every resource is examined before it is applied"}
 						</span>
 					</p>
 
 					<p className="mkt-readout-hint">
 						{!subject
-							? "They fall, they collide, they pile up. Throw them around."
+							? "Watch one go through — or drag a resource in yourself."
 							: subject.status === "pass"
 								? `Sealed into the receipt with the plan hash, signed ed25519 ${FIELD_KEY_ID}.`
 								: "Never a silent pass — the gate reports what it could not see."}

@@ -138,53 +138,15 @@
    rather than a brochure.
    ============================================================ */
 
-.mkt-root {
-  min-height: 100vh;
-  background: var(--background);
-  color: var(--text-primary);
-  font-family: var(--font-geist-mono), ui-monospace, Menlo, monospace;
-  font-size: 13px;
-  line-height: 1.65;
-  overflow-x: hidden;
-}
-.mkt-root ::selection { background: var(--text-primary); color: var(--background); }
+/* `.mkt-root` lived here: it set Geist Mono as the BODY face at 13px for the
+   home page alone — the inverse of every other page and of the console, and
+   most of why the home page read as a different product. The wrapper is gone;
+   mono is back to its brand role (eyebrows, data, terminal). */
 
 /* ---- fixed chrome ---- */
 
 /* A 256px noise tile at `overlay` — the cheapest thing on the page that makes a
    flat grayscale ground look like a printed surface instead of a fill. */
-.mkt-grain {
-  position: fixed;
-  inset: 0;
-  z-index: 58;
-  pointer-events: none;
-  opacity: 0.4;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
-}
-/* A real border, not an inset box-shadow: `forced-colors` resolves
-   `box-shadow` to `none` and the frame would vanish for high-contrast users. */
-.mkt-frame {
-  position: fixed;
-  inset: 10px;
-  border: 1px solid var(--border);
-  pointer-events: none;
-  z-index: 60;
-}
-.mkt-rail {
-  position: fixed;
-  left: 17px;
-  z-index: 55;
-  font-size: 10px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  pointer-events: none;
-}
-.mkt-rail--top { top: 104px; }
-.mkt-rail--bottom { bottom: 28px; text-transform: none; letter-spacing: 0.16em; }
 
 /* ---- shared type ---- */
 
@@ -255,52 +217,10 @@
 
 /* ---- buttons ---- */
 
-/* Hover inverts the fill. Nothing moves, nothing reflows — the same reason the
-   shared @repo/ui Button positions its brackets outside layout. */
-.mkt-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 11px 20px;
-  border: 1px solid var(--text-primary);
-  background: transparent;
-  color: var(--text-primary);
-  font: 400 12px / 1 var(--font-geist-mono), ui-monospace, monospace;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  cursor: pointer;
-  text-decoration: none;
-  transition:
-    background var(--dur-1) var(--ease),
-    color var(--dur-1) var(--ease),
-    border-color var(--dur-1) var(--ease);
-}
-.mkt-btn::before,
-.mkt-btn::after {
-  position: absolute;
-  top: 50%;
-  font-size: 13px;
-  line-height: 1;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity var(--dur-2) var(--ease),
-    translate var(--dur-3) var(--ease-out);
-}
-/* `/ ""` keeps the brackets out of the accessible name — see the note on .vx-bracket in
-   packages/brand/src/tokens.css. Marketing's copy of the mark has the same hazard. */
-.mkt-btn::before { content: "[" / ""; left: 7px; translate: 5px -50%; }
-.mkt-btn::after { content: "]" / ""; right: 7px; translate: -5px -50%; }
-.mkt-btn:hover::before,
-.mkt-btn:hover::after,
-.mkt-btn:focus-visible::before,
-.mkt-btn:focus-visible::after { opacity: 0.55; translate: 0 -50%; }
-.mkt-btn:hover { background: var(--text-primary); color: var(--background); }
-.mkt-btn--solid { background: var(--text-primary); color: var(--background); }
-.mkt-btn--solid:hover { background: transparent; color: var(--text-primary); }
-.mkt-btn:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 3px; }
+/* `.mkt-btn` lived here: marketing's hand-duplicated copy of the bracket device,
+   with its own px geometry that had already drifted from the shared one. Both
+   copies are now the single `.vx-clamp` primitive in @repo/brand, and the home
+   page uses @repo/ui/button like every other page. */
 .mkt-acts { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 34px; }
 .mkt-acts--center { justify-content: center; margin-bottom: 0; }
 
@@ -487,7 +407,7 @@
   .mkt-h1 { font-size: 52px; }
 }
 @media (max-width: 900px) {
-  .mkt-rail { display: none; }
+  .vx-rail { display: none; }
   .mkt-keep { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
@@ -503,5 +423,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .mkt-h1 span { filter: none; transform: none; animation: none; }
-  .mkt-grain { opacity: 0.2; }
+  .vx-grain { opacity: 0.2; }
 }

@@ -1,7 +1,19 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/* These beats are static markup, but they render `@repo/ui/button` and so does the
+   hero — and the hero is a client component. `@repo/ui/button` carries no "use
+   client" of its own (it leans on base-ui's Button for that), so with these left as
+   server components the same module was pulled into BOTH graphs on this one page and
+   the render threw "Element type is invalid … got: undefined". No other page mixes
+   the two, which is why only `/` failed. Declaring the boundary here keeps every
+   Button on this page in one graph; the alternative — putting "use client" on
+   @repo/ui/button itself — would turn `buttonVariants` into a client reference and
+   break the server components in apps/docs that CALL it. */
+"use client";
+
 import Link from "next/link";
+import { Button } from "@repo/ui/button";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
 
 import { VerifyReceipt } from "./verify-receipt";
@@ -81,12 +93,17 @@ export function Close() {
 			<AlethiaLogo width={30} height={30} className="mkt-close-mark" />
 			<h2 className="mkt-h2 mkt-close-h">Provision it. Prove it.</h2>
 			<div className="mkt-acts mkt-acts--center">
-				<Link className="mkt-btn mkt-btn--solid" href="/signup">
+				<Button render={<Link href="/signup" />} nativeButton={false} size="lg">
 					Start free →
-				</Link>
-				<Link className="mkt-btn" href="/contact/enterprise">
+				</Button>
+				<Button
+					render={<Link href="/contact/enterprise" />}
+					nativeButton={false}
+					size="lg"
+					variant="outline"
+				>
 					Book a demo →
-				</Link>
+				</Button>
 			</div>
 		</section>
 	);

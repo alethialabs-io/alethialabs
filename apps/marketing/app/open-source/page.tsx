@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { Metadata } from "next";
-import { Header } from "@/components/landing/home/header";
-import { Footer } from "@/components/landing/home/footer";
+import { SiteShell } from "@repo/brand/site-shell";
+import { getGitHubStars } from "@repo/brand/github-stars";
 import { Reveal } from "@/components/landing/home/reveal";
 import { OpenSourceSections } from "@/components/landing/open-source/page-sections";
-import { getGitHubStars } from "@/lib/github-stars";
 
 export const metadata: Metadata = {
 	title: "Open source · Alethia",
@@ -20,14 +19,14 @@ export const metadata: Metadata = {
  * scroll-reveal wrapper. Served at /open-source by the marketing zone.
  */
 export default async function OpenSourcePage() {
+	// Fetched again for the section body; Next's fetch cache dedupes it with the
+	// call SiteShell makes for the header.
 	const stars = await getGitHubStars();
 	return (
-		<div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
-			<Header stars={stars} />
+		<SiteShell>
 			<Reveal>
 				<OpenSourceSections stars={stars} />
 			</Reveal>
-			<Footer />
-		</div>
+		</SiteShell>
 	);
 }

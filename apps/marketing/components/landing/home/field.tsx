@@ -58,6 +58,12 @@ const SCAN_FRAMES = 22;
 /** The pile rests this far above the viewport floor. Resting on the floor itself put
  * the chips half off-screen, which made the one interactive thing on the page invisible. */
 const FLOOR_INSET = 132;
+/** Frames before the field first demonstrates itself — long enough to read the headline. */
+const DEMO_FIRST_DELAY = 72;
+/** Frames between demonstrations once the first has run. */
+const DEMO_REPEAT_DELAY = 360;
+/** Frames a demonstrated chip takes to travel into the gate. */
+const DEMO_CARRY_FRAMES = 46;
 
 export interface FieldVerdict {
 	subject: FieldSubject;
@@ -105,6 +111,18 @@ export function Field({ onVerdict }: FieldProps) {
 		let held: Body | null = null;
 		let scan = -1;
 		let seq = 0;
+		/* The attract loop. The field always worked — it just never PERFORMED:
+		   the gate only ever ruled on a chip if a visitor happened to drag one
+		   in, so the one interactive thing on the page read as an empty box next
+		   to a heap of debris. This drives a chip through the gate on its own,
+		   using the same code path a real drag takes (`dragging` is skipped by
+		   `integrate`, so a carried chip ignores gravity either way). It stops
+		   for good the moment a real pointer arrives. */
+		let demoOff = false;
+		let demoBody: Body | null = null;
+		let demoFrom = { x: 0, y: 0 };
+		let demoT = 0;
+		let demoWait = DEMO_FIRST_DELAY;
 		let running = true;
 		let frame = 0;
 
@@ -140,20 +158,6 @@ export function Field({ onVerdict }: FieldProps) {
 			page = pick("--background", fallback.background);
 		};
 
-		const cursorFor = (closed: boolean) => {
-			const glyph = closed
-				? "<path d='M13 8H9v16h4'/><path d='M23 8h4v16h-4'/>"
-				: "<path d='M10 7H5v18h5'/><path d='M26 7h5v18h-5'/>";
-			const dot = closed
-				? `<circle cx='16' cy='16' r='2.4' fill='${ink}' stroke='none'/>`
-				: "";
-			const svg =
-				`<svg xmlns='http://www.w3.org/2000/svg' width='36' height='32'>` +
-				`<g fill='none' stroke='${ink}' stroke-width='2.2' stroke-linecap='square'>` +
-				`${glyph}${dot}</g></svg>`;
-			return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 18 16, grab`;
-		};
-
 		const layout = () => {
 			const rect = canvas.getBoundingClientRect();
 			width = rect.width;
@@ -161,7 +165,7 @@ export function Field({ onVerdict }: FieldProps) {
 			canvas.width = Math.round(width * dpr);
 			canvas.height = Math.round(height * dpr);
 			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-			showGate = width >= 900;
+			showGate = width >= 760;
 			const w = Math.min(300, Math.max(180, width * 0.26));
 			const h = Math.min(190, Math.max(130, height * 0.24));
 			// Upper right. It cannot sit above the pile where the drag would be shortest:
@@ -409,6 +413,60 @@ export function Field({ onVerdict }: FieldProps) {
 			verdictRef.current({ subject, seq });
 		};
 
+		/** Advances the attract loop by one frame. No-op once a visitor takes over. */
+		const demoStep = () => {
+			if (demoOff || !showGate) return;
+
+			if (demoBody) {
+				demoT += 1;
+				// Decelerating arrival — the chip is placed, not dropped.
+				const p = Math.min(1, demoT / DEMO_CARRY_FRAMES);
+				const e = 1 - (1 - p) ** 3;
+				const tx = gate.x + gate.w / 2;
+				const ty = gate.y + gate.h / 2;
+				demoBody.x = demoFrom.x + (tx - demoFrom.x) * e;
+				demoBody.y = demoFrom.y + (ty - demoFrom.y) * e;
+				demoBody.a *= 0.88;
+				if (p >= 1) {
+					const body = demoBody;
+					demoBody = null;
+					dragging = null;
+					body.vx = 0;
+					body.vy = 0;
+					body.va = 0;
+					body.a = 0;
+					held = body;
+					scan = 0;
+					demoWait = DEMO_REPEAT_DELAY;
+				}
+				return;
+			}
+
+			// Never start a second run while the gate is still ruling on the first.
+			if (scan >= 0 || held) return;
+			demoWait -= 1;
+			if (demoWait > 0) return;
+
+			const candidate = bodies.find((b) => b.subject && !b.stamp && b !== dragging);
+			if (!candidate) {
+				demoWait = DEMO_REPEAT_DELAY;
+				return;
+			}
+			demoBody = candidate;
+			dragging = candidate;
+			demoFrom = { x: candidate.x, y: candidate.y };
+			demoT = 0;
+		};
+
+		/** A real pointer ends the demonstration permanently — it must never fight the visitor. */
+		const cancelDemo = () => {
+			demoOff = true;
+			if (demoBody) {
+				dragging = null;
+				demoBody = null;
+			}
+		};
+
 		const hits = (b: Body, x: number, y: number) =>
 			b.glyph
 				? Math.hypot(x - b.x, y - b.y) < b.r * 1.1
@@ -420,6 +478,7 @@ export function Field({ onVerdict }: FieldProps) {
 		};
 
 		const onDown = (event: PointerEvent) => {
+			cancelDemo();
 			const { x, y } = point(event);
 			for (let i = bodies.length - 1; i >= 0; i--) {
 				const b = bodies[i];
@@ -431,7 +490,7 @@ export function Field({ onVerdict }: FieldProps) {
 				lastY = y;
 				b.va = 0;
 				canvas.setPointerCapture(event.pointerId);
-				canvas.style.cursor = cursorFor(true);
+				canvas.style.cursor = "grabbing";
 				return;
 			}
 		};
@@ -439,7 +498,7 @@ export function Field({ onVerdict }: FieldProps) {
 		const onMove = (event: PointerEvent) => {
 			const { x, y } = point(event);
 			if (!dragging) {
-				canvas.style.cursor = cursorFor(bodies.some((b) => hits(b, x, y)));
+				canvas.style.cursor = bodies.some((b) => hits(b, x, y)) ? "grab" : "default";
 				return;
 			}
 			throwX = x - lastX;
@@ -453,7 +512,7 @@ export function Field({ onVerdict }: FieldProps) {
 		const onUp = () => {
 			const body = dragging;
 			dragging = null;
-			canvas.style.cursor = cursorFor(false);
+			canvas.style.cursor = "default";
 			if (!body) return;
 			body.vx = Math.max(-26, Math.min(26, throwX));
 			body.vy = Math.max(-26, Math.min(26, throwY));
@@ -479,6 +538,7 @@ export function Field({ onVerdict }: FieldProps) {
 
 		const loop = () => {
 			if (running) {
+				demoStep();
 				integrate();
 				render();
 			}
@@ -488,14 +548,12 @@ export function Field({ onVerdict }: FieldProps) {
 		readTheme();
 		layout();
 		seed();
-		canvas.style.cursor = cursorFor(false);
 
 		const onResize = () => {
 			layout();
 		};
 		const themeObserver = new MutationObserver(() => {
 			readTheme();
-			canvas.style.cursor = cursorFor(false);
 		});
 		themeObserver.observe(document.documentElement, {
 			attributes: true,
@@ -517,8 +575,24 @@ export function Field({ onVerdict }: FieldProps) {
 		canvas.addEventListener("pointercancel", onUp);
 
 		if (reduced) {
-			// Settle the pile off-screen, then hold one static, legible frame.
+			// Settle the pile, then hold one static, legible frame. The gate is
+			// shown having already ruled: an empty gate is the failure mode this
+			// whole field exists to avoid, and with no animation nothing would
+			// ever put a chip in it.
+			demoOff = true;
 			for (let i = 0; i < 420; i++) integrate();
+			const subject = bodies.find((b) => b.subject);
+			if (showGate && subject?.subject) {
+				subject.x = gate.x + gate.w / 2;
+				subject.y = gate.y + gate.h / 2;
+				subject.a = 0;
+				subject.stamp =
+					subject.subject.status === "pass"
+						? `✓ ${subject.subject.controlId} · pass`
+						: "— not evaluable";
+				seq += 1;
+				verdictRef.current({ subject: subject.subject, seq });
+			}
 			render();
 		} else {
 			loop();

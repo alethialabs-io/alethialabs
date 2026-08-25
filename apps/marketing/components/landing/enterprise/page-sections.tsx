@@ -17,7 +17,7 @@ import {
 	Prov,
 	type ProviderId,
 	Wrap,
-} from "@/components/landing/home/primitives";
+} from "@repo/brand/site-primitives";
 
 /* ---------- CTA destinations ---------- */
 const SALES = "/contact/sales"; // matches the site header's "Get a demo"

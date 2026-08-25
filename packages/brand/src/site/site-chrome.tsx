@@ -12,12 +12,12 @@
 export function Chrome() {
 	return (
 		<>
-			<div className="mkt-grain" aria-hidden="true" />
-			<div className="mkt-frame" aria-hidden="true" />
-			<div className="mkt-rail mkt-rail--top" aria-hidden="true">
+			<div className="vx-grain" aria-hidden="true" />
+			<div className="vx-frame" aria-hidden="true" />
+			<div className="vx-rail vx-rail--top" aria-hidden="true">
 				Alethia Labs
 			</div>
-			<div className="mkt-rail mkt-rail--bottom" aria-hidden="true">
+			<div className="vx-rail vx-rail--bottom" aria-hidden="true">
 				ἀλήθεια
 			</div>
 		</>

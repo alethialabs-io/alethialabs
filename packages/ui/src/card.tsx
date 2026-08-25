@@ -5,12 +5,21 @@ import * as React from "react"
 
 import { cn } from "./utils"
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
+/** `interactive` marks a card the reader can act on: it takes the clamp on hover
+ * and firms its border. It is opt-in on purpose — a static content card that
+ * reacts to the pointer promises an affordance it does not have. */
+function Card({
+  className,
+  interactive = false,
+  ...props
+}: React.ComponentProps<"div"> & { interactive?: boolean }) {
   return (
     <div
       data-slot="card"
       className={cn(
         "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm",
+        interactive &&
+          "vx-clamp cursor-pointer transition-colors duration-[var(--dur-1)] ease-[var(--ease)] hover:border-input",
         className
       )}
       {...props}
