@@ -547,6 +547,40 @@ sweep_network() {
 	done <<<"$vpcs"
 }
 
+# ── 6.5 ACM certificates (tagged). NEW: until #2561 wired the ACM scenario into t2DeploySnapshot
+#    the fixture requested no certificate, so there was nothing here to leak — and this file said so,
+#    in a comment four hundred lines down that went stale the same morning. The first run with the
+#    scenario live left
+#
+#      arn:aws:acm:us-east-1:…:certificate/5db9d00b-…   *.32853963536-1.e2e.alethialabs.io
+#
+#    standing after the step reported teardown success, and verify_swept reported clean over it
+#    because it did not look. `aws acm list-certificates` had no coverage anywhere in this script.
+#
+#    AFTER the load-balancer sweep, deliberately: ACM refuses to delete a certificate that is still
+#    associated with a listener (ResourceInUseException), so an ACM sweep placed before step 2 would
+#    fail on exactly the runs that had got far enough to serve traffic — the ones most likely to
+#    leak. By here every ELB is gone.
+#
+#    An ACM certificate carries no cost. That is not the reason to leave one: a per-run wildcard
+#    certificate that nothing reclaims accumulates against the account's quota (a soft limit that is
+#    raised by a support ticket, not a flag), and a sweeper that reports "clean" over a resource it
+#    never queried is the failure mode this file exists to end.
+sweep_acm() {
+	assert_scope
+	local arns arn
+	arns="$(tagged_arns acm:certificate)"
+	[ -z "$arns" ] && {
+		echo "  · acm certificates: none"
+		return 0
+	}
+	echo "  · acm certificates: $(printf '%s' "$arns" | grep -c .) to delete"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		retry_delete "acm certificate ${arn}" aws acm delete-certificate --certificate-arn "$arn"
+	done <<<"$arns"
+}
+
 # ── 7. Route 53 hosted zones (tagged). NEW with #1754: until then the max-config `dns` fixture
 #    used example.com, which AWS RESERVES, so the zone could never be created and there was
 #    nothing here to leak. Now that the fixture uses a real name, a hard-killed run leaves a
@@ -558,9 +592,13 @@ sweep_network() {
 #    other sweep uses, and assert_scope refuses to proceed without it.
 #
 #    A zone only deletes once it holds nothing but its own NS + SOA. tofu owns any other record,
-#    so on the graceful path this finds nothing; on the hard-kill path the zone is typically bare
-#    (the fixture no longer requests an ACM validation record). Anything else is removed first
-#    rather than letting the delete fail — a leak that "failed loudly" is still a leak.
+#    so on the graceful path this finds nothing. Anything else is removed first rather than letting
+#    the delete fail — a leak that "failed loudly" is still a leak.
+#
+#    ⚠️ This comment used to assert "the fixture no longer requests an ACM validation record". That
+#    stopped being true the morning #2561 wired the ACM scenario into t2DeploySnapshot, and nothing
+#    connected the two: the sweeper's assumption was invalidated by the change that enabled the
+#    scenario. See sweep_acm (step 6.5), which is what actually reclaims the certificate.
 sweep_route53() {
 	assert_scope
 	local zones zone rrs
@@ -792,6 +830,19 @@ alive_eks() { [ -n "$CLUSTER" ] && aws eks describe-cluster --name "$CLUSTER" --
 # false-green already covered by the next run's sweep), never invent one.
 alive_zones() { tagged_arns route53:hostedzone | while read -r a; do arn_id "$a"; done; }
 
+# ACM has no terminal "deleting" state to filter — delete-certificate either succeeds or refuses —
+# so a certificate that still DESCRIBES is alive, full stop. Confirmed with a per-service describe
+# like every other probe here: the tagging API can lag a delete, and a lagging list on its own would
+# false-RED a clean run.
+alive_acm_certs() {
+	local arn
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		aws acm describe-certificate --certificate-arn "$arn" \
+			--query 'Certificate.DomainName' --output text 2>/dev/null | grep -v '^$' || true
+	done <<<"$(tagged_arns acm:certificate)"
+}
+
 # ── The eight types that were swept by nothing and verified by nothing. Each takes the tagged ARN
 #    list and then CONFIRMS the resource with an authoritative per-service describe, the same
 #    posture the compute probes use: the tagging API can lag behind a delete, and a lagging list on
@@ -997,6 +1048,7 @@ verify_swept() {
 	x="$(alive_lbs)"; [ -n "$x" ] && leaks="${leaks}load-balancer: $(join "$x")\n"
 	x="$(alive_eks)"; [ -n "$x" ] && leaks="${leaks}eks-cluster: ${x}\n"
 	x="$(alive_zones)"; [ -n "$x" ] && leaks="${leaks}route53-hosted-zone: $(join "$x")\n"
+	x="$(alive_acm_certs)"; [ -n "$x" ] && leaks="${leaks}acm-certificate: $(join "$x")\n"
 	# The data + managed services. Aurora is the single most expensive survivor a killed run can
 	# leave, and until this change nothing here was looked at even once.
 	x="$(alive_rds_clusters)"; [ -n "$x" ] && leaks="${leaks}rds-cluster: $(join "$x")\n"
@@ -1053,6 +1105,7 @@ sweep_env() {
 	sweep_volumes
 	sweep_network
 	sweep_managed_services
+	sweep_acm
 	sweep_route53
 	sweep_litter
 	[ "$DRY_RUN" = "1" ] && return 0
@@ -1095,6 +1148,16 @@ classify_arn() {
 		;;
 	iam:policy | iam:role | iam:oidc-provider | iam:instance-profile) printf 'FREE\n' ;;
 	ec2:launch-template | rds:subgrp | events:rule) printf 'FREE\n' ;;
+	# A PUBLIC ACM certificate is $0 — AWS charges nothing to issue, validate or renew one; only
+	# ACM Private CA costs money, and this template requests no private CA. Priced before it was
+	# classified, because the failure this list exists to prevent is the opposite one: #2485 spent
+	# ten weeks calling 28 free resources "UNSWEPT and BILLING".
+	#
+	# FREE does NOT mean "leave it". sweep_acm reclaims it and verify_swept confirms it is gone —
+	# a per-run wildcard certificate that nothing reclaims still accumulates against the account
+	# quota. This entry decides only whether the PREFLIGHT raises a cost alarm about another run's
+	# leftovers, and raising one over $0 is how a real alarm stops being read.
+	acm:certificate) printf 'FREE\n' ;;
 	logs:log-group)
 		# Storage is the only charge; an empty group is free. Bytes unreadable ⇒ assume billing.
 		bytes="$(aws logs describe-log-groups --region "$REGION" \
@@ -1311,6 +1374,8 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_cls_case "a launch template is free" "arn:aws:ec2:us-east-1:0:launch-template/lt-071e8f31193797f9e" "FREE"
 	st_cls_case "an RDS subnet group is free" "arn:aws:rds:us-east-1:0:subgrp:vpc-ue1-x-alethia-common" "FREE"
 	st_cls_case "an EventBridge rule is free" "arn:aws:events:us-east-1:0:rule/alethia-x" "FREE"
+	st_cls_case "a public ACM certificate is free (priced, not assumed)" \
+		"arn:aws:acm:us-east-1:0:certificate/5db9d00b-0000-0000-0000-000000000000" "FREE"
 
 	ST_LOG_BYTES="0"
 	st_cls_case "an empty log group is free" "arn:aws:logs:us-east-1:0:log-group:/aws/eks/x/cluster" "FREE"
@@ -1346,6 +1411,7 @@ sweep_nat_and_eips
 sweep_volumes
 sweep_network
 sweep_managed_services
+sweep_acm
 sweep_route53
 # Last: the free leftovers. Nothing depends on them, and removing them is what stops a finished
 # run being rediscovered as an orphan for the rest of the account's life.
