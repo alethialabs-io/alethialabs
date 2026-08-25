@@ -1,0 +1,1167 @@
+runner dev
+{"time":"2026-08-25T13:02:19.972448511Z","level":"INFO","msg":"runner started","runner_id":"205c576c-ce1e-4f63-ae60-28c9ecd33308","operator":"self","version":"dev","alethia_url":"http://127.0.0.1:36803"}
+{"time":"2026-08-25T13:02:19.986502011Z","level":"INFO","msg":"claimed job","runner_id":"205c576c-ce1e-4f63-ae60-28c9ecd33308","job_id":"c45ea211-dddb-4c55-8b65-602bee578a2b","job_type":"DEPLOY"}
+▸ Job claimed — preparing workspace…
+[sandbox] job isolation DISABLED (PassthroughSandbox): running "deploy" job c45ea211-dddb-4c55-8b65-602bee578a2b in-process with the full host environment — safe only for trusted (non-BYO) work
+Starting deployment for project: alethia-nl (provider: hetzner)
+Using bundled templates from project-templates/hetzner
+State backend: console HTTP proxy (per-job token)
+Initializing OpenTofu...
+{
+  "terraform_version": "1.9.0",
+  "platform": "linux_amd64",
+  "provider_selections": {
+    "registry.opentofu.org/aminueza/minio": "3.38.5",
+    "registry.opentofu.org/hashicorp/helm": "2.17.0",
+    "registry.opentofu.org/hcloud-talos/imager": "1.0.18",
+    "registry.opentofu.org/hetznercloud/hcloud": "1.67.0",
+    "registry.opentofu.org/siderolabs/talos": "0.11.0"
+  }
+}
+
+Initializing the backend...
+
+Successfully configured the backend "http"! OpenTofu will automatically
+use this backend unless the backend configuration changes.
+
+Initializing provider plugins...
+- terraform.io/builtin/terraform is built in to OpenTofu
+- Reusing previous version of hetznercloud/hcloud from the dependency lock file
+- Reusing previous version of siderolabs/talos from the dependency lock file
+- Reusing previous version of hcloud-talos/imager from the dependency lock file
+- Reusing previous version of hashicorp/helm from the dependency lock file
+- Reusing previous version of aminueza/minio from the dependency lock file
+- Installing hetznercloud/hcloud v1.67.0...
+- Installed hetznercloud/hcloud v1.67.0 (signed, key ID 5219EACB3A77198B)
+- Installing siderolabs/talos v0.11.0...
+- Installed siderolabs/talos v0.11.0 (signed, key ID AF0815C7E2EC16A8)
+- Installing hcloud-talos/imager v1.0.18...
+- Installed hcloud-talos/imager v1.0.18. Signature validation was skipped due to the registry not containing GPG keys for this provider
+- Installing hashicorp/helm v2.17.0...
+- Installed hashicorp/helm v2.17.0 (signed, key ID 0C0AF313E5FD9F80)
+- Installing aminueza/minio v3.38.5...
+- Installed aminueza/minio v3.38.5. Signature validation was skipped due to the registry not containing GPG keys for this provider
+
+Providers are signed by their developers.
+If you'd like to know more about provider signing, you can read about it here:
+https://opentofu.org/docs/cli/plugins/signing/
+
+OpenTofu has been successfully initialized!
+Running OpenTofu plan...
+data.helm_template.hcloud_csi: Reading...
+data.talos_image_factory_extensions_versions.this: Reading...
+data.helm_template.cilium: Reading...
+data.hcloud_location.selected: Reading...
+data.helm_template.hcloud_csi: Read complete after 1s [id=hcloud-csi]
+data.talos_image_factory_extensions_versions.this: Read complete after 1s [id=extensions_info]
+data.hcloud_location.selected: Read complete after 1s [name=nbg1]
+data.helm_template.hcloud_ccm: Reading...
+data.helm_template.cilium: Read complete after 1s [id=cilium]
+data.helm_template.hcloud_ccm: Read complete after 0s [id=hcloud-cloud-controller-manager]
+
+OpenTofu used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+ <= read (data resources)
+
+OpenTofu will perform the following actions:
+
+  # data.talos_client_configuration.this will be read during apply
+  # (config refers to values not yet known)
+ <= data "talos_client_configuration" "this" {
+      + client_configuration = (known after apply)
+      + cluster_name         = "alethia-nl-32850686520-1"
+      + endpoints            = [
+          + (known after apply),
+        ]
+      + id                   = (known after apply)
+      + talos_config         = (sensitive value)
+    }
+
+  # data.talos_image_factory_urls.amd64[0] will be read during apply
+  # (config refers to values not yet known)
+ <= data "talos_image_factory_urls" "amd64" {
+      + architecture  = "amd64"
+      + id            = (known after apply)
+      + platform      = "hcloud"
+      + schematic_id  = (known after apply)
+      + talos_version = "v1.13.6"
+      + urls          = (known after apply)
+    }
+
+  # data.talos_machine_configuration.control_plane will be read during apply
+  # (config refers to values not yet known)
+ <= data "talos_machine_configuration" "control_plane" {
+      + cluster_endpoint      = (known after apply)
+      + cluster_name          = "alethia-nl-32850686520-1"
+      + config_patches        = [
+          + (known after apply),
+          + <<-EOT
+                "cluster":
+                  "adminKubeconfig":
+                    "certLifetime": "24h0m0s"
+                  "network":
+                    "cni":
+                      "name": "none"
+                    "podSubnets":
+                    - "10.0.128.0/17"
+                    "serviceSubnets":
+                    - "10.0.96.0/19"
+                  "proxy":
+                    "disabled": true
+            EOT,
+        ]
+      + docs                  = false
+      + examples              = false
+      + id                    = (known after apply)
+      + kubernetes_version    = "1.35.6"
+      + machine_configuration = (sensitive value)
+      + machine_secrets       = (known after apply)
+      + machine_type          = "controlplane"
+      + talos_version         = "v1.13.6"
+    }
+
+  # data.talos_machine_configuration.worker will be read during apply
+  # (config refers to values not yet known)
+ <= data "talos_machine_configuration" "worker" {
+      + cluster_endpoint      = (known after apply)
+      + cluster_name          = "alethia-nl-32850686520-1"
+      + config_patches        = [
+          + (known after apply),
+          + <<-EOT
+                "cluster":
+                  "adminKubeconfig":
+                    "certLifetime": "24h0m0s"
+                  "network":
+                    "cni":
+                      "name": "none"
+                    "podSubnets":
+                    - "10.0.128.0/17"
+                    "serviceSubnets":
+                    - "10.0.96.0/19"
+                  "proxy":
+                    "disabled": true
+            EOT,
+        ]
+      + docs                  = false
+      + examples              = false
+      + id                    = (known after apply)
+      + kubernetes_version    = "1.35.6"
+      + machine_configuration = (sensitive value)
+      + machine_secrets       = (known after apply)
+      + machine_type          = "worker"
+      + talos_version         = "v1.13.6"
+    }
+
+  # hcloud_firewall.this will be created
+  + resource "hcloud_firewall" "this" {
+      + id     = (known after apply)
+      + labels = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+        }
+      + name   = "alethia-nl-32850686520-1"
+
+      + rule {
+          + description     = "Intra-cluster ICMP (private network)"
+          + destination_ips = []
+          + direction       = "in"
+          + protocol        = "icmp"
+          + source_ips      = [
+              + "10.0.0.0/16",
+            ]
+        }
+      + rule {
+          + description     = "Intra-cluster TCP (private network)"
+          + destination_ips = []
+          + direction       = "in"
+          + port            = "any"
+          + protocol        = "tcp"
+          + source_ips      = [
+              + "10.0.0.0/16",
+            ]
+        }
+      + rule {
+          + description     = "Intra-cluster UDP (private network)"
+          + destination_ips = []
+          + direction       = "in"
+          + port            = "any"
+          + protocol        = "udp"
+          + source_ips      = [
+              + "10.0.0.0/16",
+            ]
+        }
+      + rule {
+          + description     = "Kubernetes API server"
+          + destination_ips = []
+          + direction       = "in"
+          + port            = "6443"
+          + protocol        = "tcp"
+          + source_ips      = [
+              + "0.0.0.0/0",
+              + "::/0",
+            ]
+        }
+      + rule {
+          + description     = "Talos apid (trustd)"
+          + destination_ips = []
+          + direction       = "in"
+          + port            = "50001"
+          + protocol        = "tcp"
+          + source_ips      = [
+              + "0.0.0.0/0",
+              + "::/0",
+            ]
+        }
+      + rule {
+          + description     = "Talos apid"
+          + destination_ips = []
+          + direction       = "in"
+          + port            = "50000"
+          + protocol        = "tcp"
+          + source_ips      = [
+              + "0.0.0.0/0",
+              + "::/0",
+            ]
+        }
+    }
+
+  # hcloud_network.this[0] will be created
+  + resource "hcloud_network" "this" {
+      + delete_protection        = false
+      + expose_routes_to_vswitch = false
+      + id                       = (known after apply)
+      + ip_range                 = "10.0.0.0/16"
+      + labels                   = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+        }
+      + name                     = "alethia-nl-32850686520-1"
+    }
+
+  # hcloud_network_subnet.nodes will be created
+  + resource "hcloud_network_subnet" "nodes" {
+      + gateway      = (known after apply)
+      + id           = (known after apply)
+      + ip_range     = "10.0.0.0/24"
+      + network_id   = (known after apply)
+      + network_zone = "eu-central"
+      + type         = "cloud"
+    }
+
+  # hcloud_primary_ip.control_plane_ipv4[0] will be created
+  + resource "hcloud_primary_ip" "control_plane_ipv4" {
+      + assignee_id       = (known after apply)
+      + assignee_type     = (known after apply)
+      + auto_delete       = false
+      + datacenter        = (known after apply)
+      + delete_protection = false
+      + id                = (known after apply)
+      + ip_address        = (known after apply)
+      + ip_network        = (known after apply)
+      + labels            = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "control-plane"
+        }
+      + location          = "nbg1"
+      + name              = "alethia-nl-32850686520-1-cp-1-ipv4"
+      + type              = "ipv4"
+    }
+
+  # hcloud_primary_ip.worker_ipv4[0] will be created
+  + resource "hcloud_primary_ip" "worker_ipv4" {
+      + assignee_id       = (known after apply)
+      + assignee_type     = (known after apply)
+      + auto_delete       = false
+      + datacenter        = (known after apply)
+      + delete_protection = false
+      + id                = (known after apply)
+      + ip_address        = (known after apply)
+      + ip_network        = (known after apply)
+      + labels            = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location          = "nbg1"
+      + name              = "alethia-nl-32850686520-1-worker-1-ipv4"
+      + type              = "ipv4"
+    }
+
+  # hcloud_primary_ip.worker_ipv4[1] will be created
+  + resource "hcloud_primary_ip" "worker_ipv4" {
+      + assignee_id       = (known after apply)
+      + assignee_type     = (known after apply)
+      + auto_delete       = false
+      + datacenter        = (known after apply)
+      + delete_protection = false
+      + id                = (known after apply)
+      + ip_address        = (known after apply)
+      + ip_network        = (known after apply)
+      + labels            = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location          = "nbg1"
+      + name              = "alethia-nl-32850686520-1-worker-2-ipv4"
+      + type              = "ipv4"
+    }
+
+  # hcloud_primary_ip.worker_ipv4[2] will be created
+  + resource "hcloud_primary_ip" "worker_ipv4" {
+      + assignee_id       = (known after apply)
+      + assignee_type     = (known after apply)
+      + auto_delete       = false
+      + datacenter        = (known after apply)
+      + delete_protection = false
+      + id                = (known after apply)
+      + ip_address        = (known after apply)
+      + ip_network        = (known after apply)
+      + labels            = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location          = "nbg1"
+      + name              = "alethia-nl-32850686520-1-worker-3-ipv4"
+      + type              = "ipv4"
+    }
+
+  # hcloud_primary_ip.worker_ipv4[3] will be created
+  + resource "hcloud_primary_ip" "worker_ipv4" {
+      + assignee_id       = (known after apply)
+      + assignee_type     = (known after apply)
+      + auto_delete       = false
+      + datacenter        = (known after apply)
+      + delete_protection = false
+      + id                = (known after apply)
+      + ip_address        = (known after apply)
+      + ip_network        = (known after apply)
+      + labels            = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location          = "nbg1"
+      + name              = "alethia-nl-32850686520-1-worker-4-ipv4"
+      + type              = "ipv4"
+    }
+
+  # hcloud_primary_ip.worker_ipv4[4] will be created
+  + resource "hcloud_primary_ip" "worker_ipv4" {
+      + assignee_id       = (known after apply)
+      + assignee_type     = (known after apply)
+      + auto_delete       = false
+      + datacenter        = (known after apply)
+      + delete_protection = false
+      + id                = (known after apply)
+      + ip_address        = (known after apply)
+      + ip_network        = (known after apply)
+      + labels            = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location          = "nbg1"
+      + name              = "alethia-nl-32850686520-1-worker-5-ipv4"
+      + type              = "ipv4"
+    }
+
+  # hcloud_primary_ip.worker_ipv4[5] will be created
+  + resource "hcloud_primary_ip" "worker_ipv4" {
+      + assignee_id       = (known after apply)
+      + assignee_type     = (known after apply)
+      + auto_delete       = false
+      + datacenter        = (known after apply)
+      + delete_protection = false
+      + id                = (known after apply)
+      + ip_address        = (known after apply)
+      + ip_network        = (known after apply)
+      + labels            = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location          = "nbg1"
+      + name              = "alethia-nl-32850686520-1-worker-6-ipv4"
+      + type              = "ipv4"
+    }
+
+  # hcloud_server.control_planes["alethia-nl-32850686520-1-cp-1"] will be created
+  + resource "hcloud_server" "control_planes" {
+      + backup_window              = (known after apply)
+      + backups                    = false
+      + datacenter                 = (known after apply)
+      + delete_protection          = false
+      + firewall_ids               = (known after apply)
+      + id                         = (known after apply)
+      + ignore_remote_firewall_ids = false
+      + image                      = (known after apply)
+      + ipv4_address               = (known after apply)
+      + ipv6_address               = (known after apply)
+      + ipv6_network               = (known after apply)
+      + keep_disk                  = false
+      + labels                     = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "control-plane"
+        }
+      + location                   = "nbg1"
+      + name                       = "alethia-nl-32850686520-1-cp-1"
+      + primary_disk_size          = (known after apply)
+      + rebuild_protection         = false
+      + server_type                = "cx33"
+      + shutdown_before_deletion   = false
+      + status                     = (known after apply)
+      + user_data                  = (sensitive value)
+
+      + network {
+          + alias_ips   = (known after apply)
+          + ip          = "10.0.0.101"
+          + mac_address = (known after apply)
+          + network_id  = (known after apply)
+          + subnet_id   = (known after apply)
+        }
+
+      + public_net {
+          + ipv4         = (known after apply)
+          + ipv4_enabled = true
+          + ipv6         = (known after apply)
+          + ipv6_enabled = true
+        }
+    }
+
+  # hcloud_server.workers["alethia-nl-32850686520-1-worker-1"] will be created
+  + resource "hcloud_server" "workers" {
+      + backup_window              = (known after apply)
+      + backups                    = false
+      + datacenter                 = (known after apply)
+      + delete_protection          = false
+      + firewall_ids               = (known after apply)
+      + id                         = (known after apply)
+      + ignore_remote_firewall_ids = false
+      + image                      = (known after apply)
+      + ipv4_address               = (known after apply)
+      + ipv6_address               = (known after apply)
+      + ipv6_network               = (known after apply)
+      + keep_disk                  = false
+      + labels                     = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location                   = "nbg1"
+      + name                       = "alethia-nl-32850686520-1-worker-1"
+      + primary_disk_size          = (known after apply)
+      + rebuild_protection         = false
+      + server_type                = "cx33"
+      + shutdown_before_deletion   = false
+      + status                     = (known after apply)
+      + user_data                  = (sensitive value)
+
+      + network {
+          + alias_ips   = (known after apply)
+          + ip          = "10.0.0.201"
+          + mac_address = (known after apply)
+          + network_id  = (known after apply)
+          + subnet_id   = (known after apply)
+        }
+
+      + public_net {
+          + ipv4         = (known after apply)
+          + ipv4_enabled = true
+          + ipv6         = (known after apply)
+          + ipv6_enabled = true
+        }
+    }
+
+  # hcloud_server.workers["alethia-nl-32850686520-1-worker-2"] will be created
+  + resource "hcloud_server" "workers" {
+      + backup_window              = (known after apply)
+      + backups                    = false
+      + datacenter                 = (known after apply)
+      + delete_protection          = false
+      + firewall_ids               = (known after apply)
+      + id                         = (known after apply)
+      + ignore_remote_firewall_ids = false
+      + image                      = (known after apply)
+      + ipv4_address               = (known after apply)
+      + ipv6_address               = (known after apply)
+      + ipv6_network               = (known after apply)
+      + keep_disk                  = false
+      + labels                     = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location                   = "nbg1"
+      + name                       = "alethia-nl-32850686520-1-worker-2"
+      + primary_disk_size          = (known after apply)
+      + rebuild_protection         = false
+      + server_type                = "cx33"
+      + shutdown_before_deletion   = false
+      + status                     = (known after apply)
+      + user_data                  = (sensitive value)
+
+      + network {
+          + alias_ips   = (known after apply)
+          + ip          = "10.0.0.202"
+          + mac_address = (known after apply)
+          + network_id  = (known after apply)
+          + subnet_id   = (known after apply)
+        }
+
+      + public_net {
+          + ipv4         = (known after apply)
+          + ipv4_enabled = true
+          + ipv6         = (known after apply)
+          + ipv6_enabled = true
+        }
+    }
+
+  # hcloud_server.workers["alethia-nl-32850686520-1-worker-3"] will be created
+  + resource "hcloud_server" "workers" {
+      + backup_window              = (known after apply)
+      + backups                    = false
+      + datacenter                 = (known after apply)
+      + delete_protection          = false
+      + firewall_ids               = (known after apply)
+      + id                         = (known after apply)
+      + ignore_remote_firewall_ids = false
+      + image                      = (known after apply)
+      + ipv4_address               = (known after apply)
+      + ipv6_address               = (known after apply)
+      + ipv6_network               = (known after apply)
+      + keep_disk                  = false
+      + labels                     = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location                   = "nbg1"
+      + name                       = "alethia-nl-32850686520-1-worker-3"
+      + primary_disk_size          = (known after apply)
+      + rebuild_protection         = false
+      + server_type                = "cx33"
+      + shutdown_before_deletion   = false
+      + status                     = (known after apply)
+      + user_data                  = (sensitive value)
+
+      + network {
+          + alias_ips   = (known after apply)
+          + ip          = "10.0.0.203"
+          + mac_address = (known after apply)
+          + network_id  = (known after apply)
+          + subnet_id   = (known after apply)
+        }
+
+      + public_net {
+          + ipv4         = (known after apply)
+          + ipv4_enabled = true
+          + ipv6         = (known after apply)
+          + ipv6_enabled = true
+        }
+    }
+
+  # hcloud_server.workers["alethia-nl-32850686520-1-worker-4"] will be created
+  + resource "hcloud_server" "workers" {
+      + backup_window              = (known after apply)
+      + backups                    = false
+      + datacenter                 = (known after apply)
+      + delete_protection          = false
+      + firewall_ids               = (known after apply)
+      + id                         = (known after apply)
+      + ignore_remote_firewall_ids = false
+      + image                      = (known after apply)
+      + ipv4_address               = (known after apply)
+      + ipv6_address               = (known after apply)
+      + ipv6_network               = (known after apply)
+      + keep_disk                  = false
+      + labels                     = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location                   = "nbg1"
+      + name                       = "alethia-nl-32850686520-1-worker-4"
+      + primary_disk_size          = (known after apply)
+      + rebuild_protection         = false
+      + server_type                = "cx33"
+      + shutdown_before_deletion   = false
+      + status                     = (known after apply)
+      + user_data                  = (sensitive value)
+
+      + network {
+          + alias_ips   = (known after apply)
+          + ip          = "10.0.0.204"
+          + mac_address = (known after apply)
+          + network_id  = (known after apply)
+          + subnet_id   = (known after apply)
+        }
+
+      + public_net {
+          + ipv4         = (known after apply)
+          + ipv4_enabled = true
+          + ipv6         = (known after apply)
+          + ipv6_enabled = true
+        }
+    }
+
+  # hcloud_server.workers["alethia-nl-32850686520-1-worker-5"] will be created
+  + resource "hcloud_server" "workers" {
+      + backup_window              = (known after apply)
+      + backups                    = false
+      + datacenter                 = (known after apply)
+      + delete_protection          = false
+      + firewall_ids               = (known after apply)
+      + id                         = (known after apply)
+      + ignore_remote_firewall_ids = false
+      + image                      = (known after apply)
+      + ipv4_address               = (known after apply)
+      + ipv6_address               = (known after apply)
+      + ipv6_network               = (known after apply)
+      + keep_disk                  = false
+      + labels                     = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location                   = "nbg1"
+      + name                       = "alethia-nl-32850686520-1-worker-5"
+      + primary_disk_size          = (known after apply)
+      + rebuild_protection         = false
+      + server_type                = "cx33"
+      + shutdown_before_deletion   = false
+      + status                     = (known after apply)
+      + user_data                  = (sensitive value)
+
+      + network {
+          + alias_ips   = (known after apply)
+          + ip          = "10.0.0.205"
+          + mac_address = (known after apply)
+          + network_id  = (known after apply)
+          + subnet_id   = (known after apply)
+        }
+
+      + public_net {
+          + ipv4         = (known after apply)
+          + ipv4_enabled = true
+          + ipv6         = (known after apply)
+          + ipv6_enabled = true
+        }
+    }
+
+  # hcloud_server.workers["alethia-nl-32850686520-1-worker-6"] will be created
+  + resource "hcloud_server" "workers" {
+      + backup_window              = (known after apply)
+      + backups                    = false
+      + datacenter                 = (known after apply)
+      + delete_protection          = false
+      + firewall_ids               = (known after apply)
+      + id                         = (known after apply)
+      + ignore_remote_firewall_ids = false
+      + image                      = (known after apply)
+      + ipv4_address               = (known after apply)
+      + ipv6_address               = (known after apply)
+      + ipv6_network               = (known after apply)
+      + keep_disk                  = false
+      + labels                     = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "role"               = "worker"
+        }
+      + location                   = "nbg1"
+      + name                       = "alethia-nl-32850686520-1-worker-6"
+      + primary_disk_size          = (known after apply)
+      + rebuild_protection         = false
+      + server_type                = "cx33"
+      + shutdown_before_deletion   = false
+      + status                     = (known after apply)
+      + user_data                  = (sensitive value)
+
+      + network {
+          + alias_ips   = (known after apply)
+          + ip          = "10.0.0.206"
+          + mac_address = (known after apply)
+          + network_id  = (known after apply)
+          + subnet_id   = (known after apply)
+        }
+
+      + public_net {
+          + ipv4         = (known after apply)
+          + ipv4_enabled = true
+          + ipv6         = (known after apply)
+          + ipv6_enabled = true
+        }
+    }
+
+  # hcloud_zone.this[0] will be created
+  + resource "hcloud_zone" "this" {
+      + authoritative_nameservers = (known after apply)
+      + delete_protection         = (known after apply)
+      + id                        = (known after apply)
+      + labels                    = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+        }
+      + mode                      = "primary"
+      + name                      = "32850686520-1.e2e.alethialabs.io"
+      + primary_nameservers       = (known after apply)
+      + registrar                 = (known after apply)
+      + ttl                       = 3600
+    }
+
+  # imager_image.amd64[0] will be created
+  + resource "imager_image" "amd64" {
+      + architecture       = "x86"
+      + debug_skip_cleanup = false
+      + description        = "alethia-nl-32850686520-1-talos-v1.13.6-amd64"
+      + effective_labels   = (known after apply)
+      + id                 = (known after apply)
+      + image_id           = (known after apply)
+      + image_url          = (known after apply)
+      + labels             = {
+          + "alethia_project-id" = "e2e-32850686520-1"
+          + "cluster"            = "alethia-nl-32850686520-1"
+          + "os"                 = "talos"
+        }
+      + location           = "nbg1"
+
+      + timeouts {
+          + create = "15m"
+          + delete = "10m"
+        }
+    }
+
+  # minio_s3_bucket.bucket["assets"] will be created
+  + resource "minio_s3_bucket" "bucket" {
+      + acl                = "private"
+      + arn                = (known after apply)
+      + bucket             = "alethia-nl-32850686520-1-assets"
+      + bucket_domain_name = (known after apply)
+      + bucket_prefix      = (known after apply)
+      + force_destroy      = true
+      + id                 = (known after apply)
+      + object_locking     = false
+      + tags               = (known after apply)
+    }
+
+  # minio_s3_bucket_versioning.bucket["assets"] will be created
+  + resource "minio_s3_bucket_versioning" "bucket" {
+      + bucket = "alethia-nl-32850686520-1-assets"
+      + id     = (known after apply)
+
+      + versioning_configuration {
+          + status = "Enabled"
+        }
+    }
+
+  # talos_cluster_kubeconfig.this will be created
+  + resource "talos_cluster_kubeconfig" "this" {
+      + certificate_renewal_duration    = "720h"
+      + client_configuration            = (known after apply)
+      + endpoint                        = (known after apply)
+      + id                              = (known after apply)
+      + kubeconfig_raw                  = (sensitive value)
+      + kubernetes_client_configuration = (known after apply)
+      + node                            = (known after apply)
+    }
+
+  # talos_image_factory_schematic.this will be created
+  + resource "talos_image_factory_schematic" "this" {
+      + id        = (known after apply)
+      + schematic = <<-EOT
+            "customization":
+              "systemExtensions":
+                "officialExtensions":
+                - "siderolabs/qemu-guest-agent"
+        EOT
+    }
+
+  # talos_machine_bootstrap.this will be created
+  + resource "talos_machine_bootstrap" "this" {
+      + client_configuration = (known after apply)
+      + endpoint             = (known after apply)
+      + id                   = (known after apply)
+      + node                 = (known after apply)
+    }
+
+  # talos_machine_configuration_apply.control_plane["alethia-nl-32850686520-1-cp-1"] will be created
+  + resource "talos_machine_configuration_apply" "control_plane" {
+      + apply_mode                  = "auto"
+      + client_configuration        = (known after apply)
+      + endpoint                    = (known after apply)
+      + id                          = (known after apply)
+      + machine_configuration       = (sensitive value)
+      + machine_configuration_hash  = (known after apply)
+      + machine_configuration_input = (sensitive value)
+      + node                        = (known after apply)
+      + resolved_apply_mode         = (known after apply)
+    }
+
+  # talos_machine_configuration_apply.worker["alethia-nl-32850686520-1-worker-1"] will be created
+  + resource "talos_machine_configuration_apply" "worker" {
+      + apply_mode                  = "auto"
+      + client_configuration        = (known after apply)
+      + endpoint                    = (known after apply)
+      + id                          = (known after apply)
+      + machine_configuration       = (sensitive value)
+      + machine_configuration_hash  = (known after apply)
+      + machine_configuration_input = (sensitive value)
+      + node                        = (known after apply)
+      + resolved_apply_mode         = (known after apply)
+    }
+
+  # talos_machine_configuration_apply.worker["alethia-nl-32850686520-1-worker-2"] will be created
+  + resource "talos_machine_configuration_apply" "worker" {
+      + apply_mode                  = "auto"
+      + client_configuration        = (known after apply)
+      + endpoint                    = (known after apply)
+      + id                          = (known after apply)
+      + machine_configuration       = (sensitive value)
+      + machine_configuration_hash  = (known after apply)
+      + machine_configuration_input = (sensitive value)
+      + node                        = (known after apply)
+      + resolved_apply_mode         = (known after apply)
+    }
+
+  # talos_machine_configuration_apply.worker["alethia-nl-32850686520-1-worker-3"] will be created
+  + resource "talos_machine_configuration_apply" "worker" {
+      + apply_mode                  = "auto"
+      + client_configuration        = (known after apply)
+      + endpoint                    = (known after apply)
+      + id                          = (known after apply)
+      + machine_configuration       = (sensitive value)
+      + machine_configuration_hash  = (known after apply)
+      + machine_configuration_input = (sensitive value)
+      + node                        = (known after apply)
+      + resolved_apply_mode         = (known after apply)
+    }
+
+  # talos_machine_configuration_apply.worker["alethia-nl-32850686520-1-worker-4"] will be created
+  + resource "talos_machine_configuration_apply" "worker" {
+      + apply_mode                  = "auto"
+      + client_configuration        = (known after apply)
+      + endpoint                    = (known after apply)
+      + id                          = (known after apply)
+      + machine_configuration       = (sensitive value)
+      + machine_configuration_hash  = (known after apply)
+      + machine_configuration_input = (sensitive value)
+      + node                        = (known after apply)
+      + resolved_apply_mode         = (known after apply)
+    }
+
+  # talos_machine_configuration_apply.worker["alethia-nl-32850686520-1-worker-5"] will be created
+  + resource "talos_machine_configuration_apply" "worker" {
+      + apply_mode                  = "auto"
+      + client_configuration        = (known after apply)
+      + endpoint                    = (known after apply)
+      + id                          = (known after apply)
+      + machine_configuration       = (sensitive value)
+      + machine_configuration_hash  = (known after apply)
+      + machine_configuration_input = (sensitive value)
+      + node                        = (known after apply)
+      + resolved_apply_mode         = (known after apply)
+    }
+
+  # talos_machine_configuration_apply.worker["alethia-nl-32850686520-1-worker-6"] will be created
+  + resource "talos_machine_configuration_apply" "worker" {
+      + apply_mode                  = "auto"
+      + client_configuration        = (known after apply)
+      + endpoint                    = (known after apply)
+      + id                          = (known after apply)
+      + machine_configuration       = (sensitive value)
+      + machine_configuration_hash  = (known after apply)
+      + machine_configuration_input = (sensitive value)
+      + node                        = (known after apply)
+      + resolved_apply_mode         = (known after apply)
+    }
+
+  # talos_machine_secrets.this will be created
+  + resource "talos_machine_secrets" "this" {
+      + client_configuration = (known after apply)
+      + id                   = (known after apply)
+      + machine_secrets      = (known after apply)
+      + talos_version        = "v1.13.6"
+    }
+
+  # terraform_data.byo_network_guard will be created
+  + resource "terraform_data" "byo_network_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.compat_k8s_guard will be created
+  + resource "terraform_data" "compat_k8s_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.csi_volume_label_guard will be created
+  + resource "terraform_data" "csi_volume_label_guard" {
+      + id     = (known after apply)
+      + input  = "2.22.0"
+      + output = (known after apply)
+    }
+
+  # terraform_data.dns_zone_guard will be created
+  + resource "terraform_data" "dns_zone_guard" {
+      + id = (known after apply)
+    }
+
+Plan: 36 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + bootstrap_manifests    = (sensitive value)
+  + bucket_endpoints       = {
+      + assets = "https://nbg1.your-objectstorage.com/alethia-nl-32850686520-1-assets"
+    }
+  + bucket_names           = [
+      + "alethia-nl-32850686520-1-assets",
+    ]
+  + dns_name_servers       = (known after apply)
+  + dns_zone_id            = (known after apply)
+  + kubeconfig             = (sensitive value)
+  + network_id             = (known after apply)
+  + talos_cluster_endpoint = (known after apply)
+  + talos_cluster_name     = "alethia-nl-32850686520-1"
+  + talosconfig            = (sensitive value)
+
+Warning: Value for undeclared variable
+
+The root module does not declare a variable named "secrets_provider" but a
+value was found in file
+"/tmp/alethia-deploy-2598578520/work/tofu.tfvars.json". If you meant to use
+this value, add a "variable" block to the configuration.
+
+To silence these warnings, use TF_VAR_... environment variables to provide
+certain "global" settings to all configurations in your organization. To
+reduce the verbosity of these warnings, use the -compact-warnings option.
+
+Warning: Value for undeclared variable
+
+The root module does not declare a variable named "registry_provider" but a
+value was found in file
+"/tmp/alethia-deploy-2598578520/work/tofu.tfvars.json". If you meant to use
+this value, add a "variable" block to the configuration.
+
+To silence these warnings, use TF_VAR_... environment variables to provide
+certain "global" settings to all configurations in your organization. To
+reduce the verbosity of these warnings, use the -compact-warnings option.
+
+Warning: Values for undeclared variables
+
+In addition to the other similar warnings shown, 2 other variable(s) defined
+without being declared.
+Generating plan JSON...
+Verification gate: verdict=warn (pass=1 fail=0 warn=1 not_evaluable=1, catalog elench-controls-0.5.2)
+  [HCLOUD-FW-001] coverage: hcloud_server.control_planes["alethia-nl-32850686520-1-cp-1"]: firewall_ids computed until apply; configuration references hcloud_firewall.this.id; hcloud_server.workers["alethia-nl-32850686520-1-worker-1"]: firewall_ids computed until apply; configuration references hcloud_firewall.this.id; hcloud_server.workers["alethia-nl-32850686520-1-worker-2"]: firewall_ids computed until apply; configuration references hcloud_firewall.this.id; hcloud_server.workers["alethia-nl-32850686520-1-worker-3"]: firewall_ids computed until apply; configuration references hcloud_firewall.this.id; hcloud_server.workers["alethia-nl-32850686520-1-worker-4"]: firewall_ids computed until apply; configuration references hcloud_firewall.this.id; hcloud_server.workers["alethia-nl-32850686520-1-worker-5"]: firewall_ids computed until apply; configuration references hcloud_firewall.this.id; hcloud_server.workers["alethia-nl-32850686520-1-worker-6"]: firewall_ids computed until apply; configuration references hcloud_firewall.this.id
+  [HCLOUD-NET-001/warn] hcloud_firewall.this.rule[3]: world-open management port tcp/6443 (Kubernetes API / Talos apid) — open to the internet BY DESIGN today (runner reaches the API/apid externally; K8s mTLS + Talos machine identity is the auth layer). Recorded as posture, not blocked
+  [HCLOUD-NET-001/warn] hcloud_firewall.this.rule[4]: world-open management port tcp/50001 (Kubernetes API / Talos apid) — open to the internet BY DESIGN today (runner reaches the API/apid externally; K8s mTLS + Talos machine identity is the auth layer). Recorded as posture, not blocked
+  [HCLOUD-NET-001/warn] hcloud_firewall.this.rule[5]: world-open management port tcp/50000 (Kubernetes API / Talos apid) — open to the internet BY DESIGN today (runner reaches the API/apid externally; K8s mTLS + Talos machine identity is the auth layer). Recorded as posture, not blocked
+  [SCOPE-001] coverage: terraform_data.byo_network_guard: unrecognized provider terraform; terraform_data.compat_k8s_guard: unrecognized provider terraform; terraform_data.csi_volume_label_guard: unrecognized provider terraform; terraform_data.dns_zone_guard: unrecognized provider terraform
+Compatibility gate: verdict=not_evaluable (pass=1 fail=0 warn=0 not_evaluable=1, catalog compat-matrix-0.1.0)
+  [COMPAT-ADDON-BYO-E2E] coverage: add-on "byo-e2e" is not in the compatibility matrix
+Evidence receipt signed (key af4f03f9d056e7a6, plan sha256 230f458e3bd5…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+terraform_data.dns_zone_guard: Creating...
+terraform_data.dns_zone_guard: Creation complete after 0s [id=910b6ff4-41cc-4882-44aa-67ae8419fffc]
+terraform_data.compat_k8s_guard: Creating...
+terraform_data.compat_k8s_guard: Creation complete after 0s [id=1cf269d4-0d27-c88f-03ad-e323a22cf9f8]
+talos_machine_secrets.this: Creating...
+talos_image_factory_schematic.this: Creating...
+hcloud_network.this[0]: Creating...
+hcloud_primary_ip.worker_ipv4[0]: Creating...
+hcloud_primary_ip.control_plane_ipv4[0]: Creating...
+hcloud_primary_ip.worker_ipv4[2]: Creating...
+hcloud_primary_ip.worker_ipv4[5]: Creating...
+hcloud_primary_ip.worker_ipv4[3]: Creating...
+hcloud_primary_ip.worker_ipv4[4]: Creating...
+hcloud_zone.this[0]: Creating...
+talos_image_factory_schematic.this: Creation complete after 1s [id=ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d67c7515]
+hcloud_primary_ip.worker_ipv4[1]: Creating...
+hcloud_primary_ip.worker_ipv4[1]: Creation complete after 0s [name=alethia-nl-32850686520-1-worker-2-ipv4]
+hcloud_primary_ip.worker_ipv4[0]: Creation complete after 0s [name=alethia-nl-32850686520-1-worker-1-ipv4]
+minio_s3_bucket.bucket["assets"]: Creating...
+hcloud_primary_ip.control_plane_ipv4[0]: Creation complete after 0s [name=alethia-nl-32850686520-1-cp-1-ipv4]
+data.talos_image_factory_urls.amd64[0]: Reading...
+terraform_data.csi_volume_label_guard: Creating...
+terraform_data.csi_volume_label_guard: Creation complete after 0s [id=2c654f4c-c28b-bdb3-ea13-cbd10a60c68e]
+data.talos_image_factory_urls.amd64[0]: Read complete after 0s
+terraform_data.byo_network_guard: Creating...
+terraform_data.byo_network_guard: Creation complete after 0s [id=ed604c36-0dc9-ab43-f2bb-80379f3fa26f]
+hcloud_firewall.this: Creating...
+imager_image.amd64[0]: Creating...
+hcloud_network.this[0]: Creation complete after 0s [id=12579024]
+hcloud_primary_ip.worker_ipv4[3]: Creation complete after 0s [name=alethia-nl-32850686520-1-worker-4-ipv4]
+hcloud_primary_ip.worker_ipv4[4]: Creation complete after 0s [name=alethia-nl-32850686520-1-worker-5-ipv4]
+hcloud_network_subnet.nodes: Creating...
+hcloud_primary_ip.worker_ipv4[2]: Creation complete after 0s [name=alethia-nl-32850686520-1-worker-3-ipv4]
+hcloud_primary_ip.worker_ipv4[5]: Creation complete after 0s [name=alethia-nl-32850686520-1-worker-6-ipv4]
+talos_machine_secrets.this: Creation complete after 1s [id=machine_secrets]
+data.talos_client_configuration.this: Reading...
+data.talos_machine_configuration.control_plane: Reading...
+data.talos_client_configuration.this: Read complete after 0s [id=alethia-nl-32850686520-1]
+data.talos_machine_configuration.worker: Reading...
+data.talos_machine_configuration.worker: Read complete after 0s [id=alethia-nl-32850686520-1]
+data.talos_machine_configuration.control_plane: Read complete after 0s [id=alethia-nl-32850686520-1]
+hcloud_network_subnet.nodes: Creation complete after 0s [id=12579024-10.0.0.0/24]
+hcloud_firewall.this: Creation complete after 0s [id=11517044]
+minio_s3_bucket.bucket["assets"]: Creation complete after 2s [id=alethia-nl-32850686520-1-assets]
+minio_s3_bucket_versioning.bucket["assets"]: Creating...
+minio_s3_bucket_versioning.bucket["assets"]: Creation complete after 1s [id=alethia-nl-32850686520-1-assets]
+imager_image.amd64[0]: Still creating... [10s elapsed]
+imager_image.amd64[0]: Still creating... [20s elapsed]
+imager_image.amd64[0]: Still creating... [30s elapsed]
+imager_image.amd64[0]: Still creating... [40s elapsed]
+imager_image.amd64[0]: Still creating... [50s elapsed]
+imager_image.amd64[0]: Still creating... [1m0s elapsed]
+imager_image.amd64[0]: Still creating... [1m10s elapsed]
+imager_image.amd64[0]: Creation complete after 1m12s [id=424175073]
+hcloud_server.workers["alethia-nl-32850686520-1-worker-4"]: Creating...
+hcloud_server.workers["alethia-nl-32850686520-1-worker-5"]: Creating...
+hcloud_server.workers["alethia-nl-32850686520-1-worker-1"]: Creating...
+hcloud_server.control_planes["alethia-nl-32850686520-1-cp-1"]: Creating...
+hcloud_server.workers["alethia-nl-32850686520-1-worker-2"]: Creating...
+hcloud_server.workers["alethia-nl-32850686520-1-worker-3"]: Creating...
+hcloud_server.workers["alethia-nl-32850686520-1-worker-6"]: Creating...
+
+Error: Invalid field in API request
+
+  with hcloud_zone.this[0],
+  on dns.tf line 18, in resource "hcloud_zone" "this":
+  18: resource "hcloud_zone" "this" {
+
+An invalid field was encountered during an API request. The field might not
+map 1:1 to your terraform resource.
+
+unsupported tld (invalid_input, 54872517c64eb774677c0dec1f3974cd)
+
+Field: name
+Messages:
+ - unsupported tld
+Error code: invalid_input
+Status code: 422
+
+
+Error: error during placement (resource_unavailable, 014f122acf4ffffa429ac2f716b2e067)
+
+  with hcloud_server.control_planes["alethia-nl-32850686520-1-cp-1"],
+  on servers.tf line 27, in resource "hcloud_server" "control_planes":
+  27: resource "hcloud_server" "control_planes" {
+
+
+Error: error during placement (resource_unavailable, 687ba515f3c6c2d782c302a4d34589a5)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-4"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+Error: error during placement (resource_unavailable, 60d3cc389a5812969e232ce1479b700f)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-3"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+Error: error during placement (resource_unavailable, ca15ef05d457fb83db79eaddd3f4062b)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-1"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+Error: error during placement (resource_unavailable, ef2144cd73e492d1bce6fd8af2c82f56)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-6"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+Error: error during placement (resource_unavailable, 9d5ab86651439ff847a94c31a6d494d3)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-5"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+Error: error during placement (resource_unavailable, 033ca94184ebd7b354a4fb271deec84b)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-2"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+::error::OpenTofu exited with code 1.
+{"time":"2026-08-25T13:03:42.546119846Z","level":"ERROR","msg":"job execution failed","runner_id":"205c576c-ce1e-4f63-ae60-28c9ecd33308","job_id":"c45ea211-dddb-4c55-8b65-602bee578a2b","job_type":"DEPLOY","err":"tofu apply failed: exit status 1\n\nError: Invalid field in API request\n\n  with hcloud_zone.this[0],\n  on dns.tf line 18, in resource \"hcloud_zone\" \"this\":\n  18: resource \"hcloud_zone\" \"this\" {\n\nAn invalid field was encountered during an API request. The field might not\nmap 1:1 to your terraform resource.\n\nunsupported tld (invalid_input, 54872517c64eb774677c0dec1f3974cd)\n\nField: name\nMessages:\n - unsupported tld\nError code: invalid_input\nStatus code: 422\n\n\nError: error during placement (resource_unavailable, 014f122acf4ffffa429ac2f716b2e067)\n\n  with hcloud_server.control_planes[\"alethia-nl-32850686520-1-cp-1\"],\n  on servers.tf line 27, in resource \"hcloud_server\" \"control_planes\":\n  27: resource \"hcloud_server\" \"control_planes\" {\n\n\nError: error during placement (resource_unavailable, 687ba515f3c6c2d782c302a4d34589a5)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-4\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n\nError: error during placement (resource_unavailable, 60d3cc389a5812969e232ce1479b700f)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-3\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n\nError: error during placement (resource_unavailable, ca15ef05d457fb83db79eaddd3f4062b)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-1\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n\nError: error during placement (resource_unavailable, ef2144cd73e492d1bce6fd8af2c82f56)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-6\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n\nError: error during placement (resource_unavailable, 9d5ab86651439ff847a94c31a6d494d3)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-5\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n\nError: error during placement (resource_unavailable, 033ca94184ebd7b354a4fb271deec84b)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-2\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n"}
+Error: tofu apply failed: exit status 1
+
+Error: Invalid field in API request
+
+  with hcloud_zone.this[0],
+  on dns.tf line 18, in resource "hcloud_zone" "this":
+  18: resource "hcloud_zone" "this" {
+
+An invalid field was encountered during an API request. The field might not
+map 1:1 to your terraform resource.
+
+unsupported tld (invalid_input, 54872517c64eb774677c0dec1f3974cd)
+
+Field: name
+Messages:
+ - unsupported tld
+Error code: invalid_input
+Status code: 422
+
+
+Error: error during placement (resource_unavailable, 014f122acf4ffffa429ac2f716b2e067)
+
+  with hcloud_server.control_planes["alethia-nl-32850686520-1-cp-1"],
+  on servers.tf line 27, in resource "hcloud_server" "control_planes":
+  27: resource "hcloud_server" "control_planes" {
+
+
+Error: error during placement (resource_unavailable, 687ba515f3c6c2d782c302a4d34589a5)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-4"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+Error: error during placement (resource_unavailable, 60d3cc389a5812969e232ce1479b700f)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-3"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+Error: error during placement (resource_unavailable, ca15ef05d457fb83db79eaddd3f4062b)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-1"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+Error: error during placement (resource_unavailable, ef2144cd73e492d1bce6fd8af2c82f56)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-6"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+Error: error during placement (resource_unavailable, 9d5ab86651439ff847a94c31a6d494d3)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-5"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+Error: error during placement (resource_unavailable, 033ca94184ebd7b354a4fb271deec84b)
+
+  with hcloud_server.workers["alethia-nl-32850686520-1-worker-2"],
+  on servers.tf line 59, in resource "hcloud_server" "workers":
+  59: resource "hcloud_server" "workers" {
+
+
+{"time":"2026-08-25T13:03:42.549326886Z","level":"ERROR","msg":"job failed","runner_id":"205c576c-ce1e-4f63-ae60-28c9ecd33308","job_id":"c45ea211-dddb-4c55-8b65-602bee578a2b","err":"tofu apply failed: exit status 1\n\nError: Invalid field in API request\n\n  with hcloud_zone.this[0],\n  on dns.tf line 18, in resource \"hcloud_zone\" \"this\":\n  18: resource \"hcloud_zone\" \"this\" {\n\nAn invalid field was encountered during an API request. The field might not\nmap 1:1 to your terraform resource.\n\nunsupported tld (invalid_input, 54872517c64eb774677c0dec1f3974cd)\n\nField: name\nMessages:\n - unsupported tld\nError code: invalid_input\nStatus code: 422\n\n\nError: error during placement (resource_unavailable, 014f122acf4ffffa429ac2f716b2e067)\n\n  with hcloud_server.control_planes[\"alethia-nl-32850686520-1-cp-1\"],\n  on servers.tf line 27, in resource \"hcloud_server\" \"control_planes\":\n  27: resource \"hcloud_server\" \"control_planes\" {\n\n\nError: error during placement (resource_unavailable, 687ba515f3c6c2d782c302a4d34589a5)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-4\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n\nError: error during placement (resource_unavailable, 60d3cc389a5812969e232ce1479b700f)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-3\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n\nError: error during placement (resource_unavailable, ca15ef05d457fb83db79eaddd3f4062b)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-1\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n\nError: error during placement (resource_unavailable, ef2144cd73e492d1bce6fd8af2c82f56)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-6\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n\nError: error during placement (resource_unavailable, 9d5ab86651439ff847a94c31a6d494d3)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-5\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n\nError: error during placement (resource_unavailable, 033ca94184ebd7b354a4fb271deec84b)\n\n  with hcloud_server.workers[\"alethia-nl-32850686520-1-worker-2\"],\n  on servers.tf line 59, in resource \"hcloud_server\" \"workers\":\n  59: resource \"hcloud_server\" \"workers\" {\n\n"}
