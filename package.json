@@ -31,6 +31,7 @@
     "check:docs-contract": "node scripts/check-docs-contract.mjs",
     "check:legal-hashes": "node scripts/check-legal-document-hashes.mjs",
     "check:e2e-spend-guard": "node scripts/check-e2e-spend-guard.mjs",
+    "check:hetzner-lb-location": "node scripts/check-hetzner-lb-location.mjs",
     "check:open-core": "node scripts/check-open-core-boundary.mjs",
     "legal:check-ip-activation": "node scripts/legal/activate-company-ip.mjs --check-markers",
     "legal:check-cla-gate": "node scripts/legal/cla-check-selftest.mjs",
