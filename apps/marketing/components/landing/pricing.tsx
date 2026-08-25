@@ -17,7 +17,7 @@ import {
 	mono,
 	SecMark,
 	Wrap,
-} from "@/components/landing/home/primitives";
+} from "@repo/brand/site-primitives";
 import {
 	PLAN_CATALOG,
 	type PlanId,

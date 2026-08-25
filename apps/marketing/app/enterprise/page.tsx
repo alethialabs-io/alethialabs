@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { Metadata } from "next";
-import { Header } from "@/components/landing/home/header";
-import { Footer } from "@/components/landing/home/footer";
+import { SiteShell } from "@repo/brand/site-shell";
 import { Reveal } from "@/components/landing/home/reveal";
 import { EnterpriseSections } from "@/components/landing/enterprise/page-sections";
-import { getGitHubStars } from "@/lib/github-stars";
 
 export const metadata: Metadata = {
 	title: "Enterprise · Alethia",
@@ -21,14 +19,11 @@ export const metadata: Metadata = {
  * scroll-reveal wrapper. Served at /enterprise inside the console app.
  */
 export default async function EnterprisePage() {
-	const stars = await getGitHubStars();
 	return (
-		<div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
-			<Header stars={stars} />
+		<SiteShell>
 			<Reveal>
 				<EnterpriseSections />
 			</Reveal>
-			<Footer />
-		</div>
+		</SiteShell>
 	);
 }
