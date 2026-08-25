@@ -201,3 +201,51 @@ scripts/e2e/hcloud-cleanup.sh "$ALETHIA_E2E_PROJECT-$ALETHIA_E2E_ENV"
 Without `HCLOUD_TOKEN`/tools it **skips** (a dev laptop is never forced to hold a token);
 set `ALETHIA_E2E_T2_REQUIRE=1` to make a missing prerequisite a hard fail, as the nightly
 does.
+
+### Four things that cost a run each, 2026-08-24
+
+These are not hypotheses. Each one produced a wasted run or a wrong ledger row on the night the
+local path was first driven end to end for all of hetzner and aws.
+
+**1. Pin `tofu` to 1.9.0.** CI (`e2e-nightly.yml`) and the runner image
+(`apps/runner/Dockerfile.base`) both pin it. A laptop is likely on something newer — 1.12.3 at the
+time of writing — and a bundle produced on a different major does not prove what CI runs. Put the
+pinned binary first on `PATH` for the run.
+
+**2. Managed-cloud credentials must be in the ENVIRONMENT, not just a profile.** `credsPresent()`
+in `t2_providers.go` checks for `AWS_ACCESS_KEY_ID` or `AWS_ROLE_ARN` as environment variables. A
+working `~/.aws/credentials` is invisible to it, and the run stops at the prerequisite gate in
+0.00s having touched nothing:
+
+```
+T2 prerequisite missing (ALETHIA_E2E_T2_REQUIRE set): AWS credentials are not configured
+```
+
+Under `ALETHIA_E2E_T2_REQUIRE=1` that is recorded as a **FAIL**, and a FAIL that describes the
+operator rather than the cloud has to be superseded with a `RETRACTED` row. Export them first:
+
+```bash
+eval "$(aws configure export-credentials --format env-no-export | sed 's/^/export /')"
+export ALETHIA_E2E_AWS_READY=1
+export AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+```
+
+**3. Heavy dimensions need their heavy profile passed explicitly.** The workflow swaps in
+`test/e2e/fixtures/cluster_json.heavy.<cloud>.json` **only for full-bar**. Driving `addons` (or
+`maxconfig`) by hand at the default shape gives a cluster too small to converge, and you find out
+~35 minutes later:
+
+```bash
+export ALETHIA_E2E_CLUSTER_JSON="$(tr -d '\n ' < test/e2e/fixtures/cluster_json.heavy.hetzner.json)"
+```
+
+**4. A killed run leaks what the destroy never owned.** `t.Cleanup`'s destroy does not run on
+SIGKILL, and even a *clean* destroy cannot reclaim CSI-provisioned `pvc-*` volumes — they are
+created by the controller at runtime and were never in tofu state. A `hetzner addons` run left nine
+of them (140 GB) behind a destroy that reported success.
+
+`provisioning-e2e.sh` now runs the scope-locked sweeper itself, so the recipe at the top of this
+section is safe by default. If you drive `go test` directly, sweep by hand afterwards. On hetzner a
+killed run also leaves the imager provider's `hcloud-upload-image-*` server and SSH key, which no
+selector can reach — remove those manually.
+

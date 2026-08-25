@@ -506,6 +506,83 @@ export type TopicSubscriptionProtocol =
 	(typeof topicSubscriptionProtocol.enumValues)[number];
 export type ChartWorkloadKind = (typeof chartWorkloadKind.enumValues)[number];
 export type LogStreamType = (typeof logStreamType.enumValues)[number];
+// ── Privacy operations (#2373) ──────────────────────────────────────────────
+
+/** The data-subject right being exercised. A closed set — each carries a different duty and a
+ *  different deadline, and a free-text "kind" would let a request be mis-handled silently. */
+export const privacyCaseKind = pgEnum("privacy_case_kind", [
+	"access",
+	"export",
+	"rectification",
+	"erasure",
+	"restriction",
+	"objection",
+	"portability",
+]);
+
+/** Where a case is. `refused` is a real outcome with its own duties (reasons, and the right to
+ *  complain), which is why it is a state and not an absence of one. */
+export const privacyCaseState = pgEnum("privacy_case_state", [
+	"received",
+	"identity_pending",
+	"in_review",
+	"fulfilled",
+	"refused",
+	"withdrawn",
+]);
+
+/** What happened on a case. Append-only: the ledger records events, it never edits them. */
+export const privacyCaseEventKind = pgEnum("privacy_case_event_kind", [
+	"received",
+	"identity_verified",
+	"identity_rejected",
+	"review_started",
+	"legal_hold_applied",
+	"legal_hold_cleared",
+	"export_generated",
+	"export_downloaded",
+	"erasure_performed",
+	"pseudonymized",
+	"vendor_notified",
+	"fulfilled",
+	"refused",
+	"withdrawn",
+	"note",
+]);
+
+// ── Commerce & contract formation (#2372) ───────────────────────────────────
+
+/** WHO is paying, which decides WHICH law applies. Captured, never inferred — guessing would
+ *  decide the applicable legal regime on a text field. Mirrors @repo/legal's PayerCapacity. */
+export const payerCapacity = pgEnum("payer_capacity", [
+	"consumer",
+	"organization",
+]);
+
+/** Whether a consumer asked for the service to start inside the 14-day withdrawal period. */
+export const performanceStart = pgEnum("performance_start", [
+	"deferred",
+	"immediate",
+]);
+
+/** Why a legal document was accepted — a signup gate, or a specific paid order. */
+export const legalAcceptanceContext = pgEnum("legal_acceptance_context", [
+	"signup",
+	"paid_conversion",
+	"reacceptance",
+]);
+
+/** Lifecycle of one paid order. `withdrawn` is the STATUTORY right (proportional accounting);
+ *  `cancelled` is ordinary cancellation (access to period end, no refund). They are different
+ *  facts with different money attached, so they are different states. */
+export const commerceOrderState = pgEnum("commerce_order_state", [
+	"placed",
+	"active",
+	"cancelled",
+	"withdrawn",
+	"refunded",
+]);
+
 export type BillingPlan = (typeof billingPlan.enumValues)[number];
 export type BillingStatus = (typeof billingStatus.enumValues)[number];
 export type InvoiceStatus = (typeof invoiceStatus.enumValues)[number];
@@ -529,5 +606,15 @@ export type ResourceKind = (typeof resourceKind.enumValues)[number];
 export type BreakglassAction = (typeof breakglassAction.enumValues)[number];
 export type BreakglassBlastRadius =
 	(typeof breakglassBlastRadius.enumValues)[number];
+export type PrivacyCaseKind = (typeof privacyCaseKind.enumValues)[number];
+export type PrivacyCaseState = (typeof privacyCaseState.enumValues)[number];
+export type PrivacyCaseEventKind =
+	(typeof privacyCaseEventKind.enumValues)[number];
+export type PayerCapacityValue = (typeof payerCapacity.enumValues)[number];
+export type PerformanceStartValue =
+	(typeof performanceStart.enumValues)[number];
+export type LegalAcceptanceContext =
+	(typeof legalAcceptanceContext.enumValues)[number];
+export type CommerceOrderState = (typeof commerceOrderState.enumValues)[number];
 // SupportCase* / SupportAuthorType / SupportAbuseCategory unions come via the
 // `export * from "@repo/support/enums"` re-export above.

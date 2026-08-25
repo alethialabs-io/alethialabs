@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import fs from "node:fs/promises";
 import path from "node:path";
 import { withPostHogConfig } from "@posthog/nextjs-config";
 import type { NextConfig } from "next";
@@ -125,6 +126,134 @@ const posthogApiKey = process.env.POSTHOG_API_KEY;
 const releaseVersion = process.env.NEXT_PUBLIC_APP_VERSION;
 
 /**
+ * Marks a `runAfterProductionCompile` hook that {@link withNonFatalSourcemapUpload} has wrapped.
+ *
+ * Exists so the guard's attachment is *observable*. The bug below was invisible precisely because a
+ * wrapped hook and an unwrapped one were indistinguishable from the outside.
+ */
+const NON_FATAL_SOURCEMAP_UPLOAD: unique symbol = Symbol.for(
+	"alethia.posthog.nonFatalSourcemapUpload",
+);
+
+/** The metadata Next hands `runAfterProductionCompile` (next/dist/server/config-shared). */
+interface CompileMeta {
+	projectDir: string;
+	distDir: string;
+}
+
+/**
+ * A Next config, or the config *function* Next also accepts — which is what `withPostHogConfig`
+ * actually returns, whatever its type declaration says. See {@link withNonFatalSourcemapUpload}.
+ */
+export type NextConfigInput =
+	| NextConfig
+	| ((
+			phase: string,
+			ctx: { defaultConfig: NextConfig },
+	  ) => NextConfig | Promise<NextConfig>);
+
+/** Options for {@link withNonFatalSourcemapUpload}. */
+interface NonFatalOptions {
+	/**
+	 * Whether a source-map upload hook is expected to be present. True when sourcemaps are enabled.
+	 * Finding none while this is true means the guard is attached to nothing, which is reported
+	 * rather than passed over in silence.
+	 */
+	expectHook?: boolean;
+}
+
+/** True when `hook` is a hook this module has made non-fatal. */
+export function isNonFatalSourcemapHook(hook: unknown): boolean {
+	return typeof hook === "function" && NON_FATAL_SOURCEMAP_UPLOAD in hook;
+}
+
+/**
+ * Deletes every `.map` left under the build output, returning how many went.
+ *
+ * A missing directory is not an error — there is simply nothing to remove.
+ */
+async function deleteSourceMaps(meta: CompileMeta): Promise<number> {
+	const root = path.resolve(meta.projectDir ?? process.cwd(), meta.distDir ?? ".next");
+	let removed = 0;
+
+	const walk = async (dir: string): Promise<void> => {
+		const entries = await fs.readdir(dir, { withFileTypes: true });
+		for (const entry of entries) {
+			const full = path.join(dir, entry.name);
+			if (entry.isDirectory()) {
+				await walk(full);
+			} else if (entry.name.endsWith(".map")) {
+				await fs.rm(full, { force: true });
+				removed += 1;
+			}
+		}
+	};
+
+	try {
+		await walk(root);
+	} catch (err) {
+		if (err instanceof Error && "code" in err && err.code === "ENOENT") return removed;
+		throw err;
+	}
+	return removed;
+}
+
+/**
+ * Wraps an already-resolved config so its source-map upload hook cannot fail the build.
+ *
+ * Split out from {@link withNonFatalSourcemapUpload} because the hook only exists *after* the
+ * PostHog config function has been invoked by Next.
+ */
+function wrapResolved(config: NextConfig, expectHook: boolean): NextConfig {
+	const hook = config.compiler?.runAfterProductionCompile;
+	if (!hook) {
+		// Not silence. "Nothing to guard" and "guarding" must never read the same, which is the
+		// mistake that let this ship twice.
+		if (expectHook) {
+			console.error(
+				"[posthog] INERT GUARD: source-map upload is enabled but no runAfterProductionCompile " +
+					"hook was found to wrap. A failing upload can now fail this build. See #2485.",
+			);
+		}
+		return config;
+	}
+
+	const wrapped = Object.assign(
+		async (meta: CompileMeta): Promise<void> => {
+			try {
+				await hook(meta);
+			} catch (err) {
+				// Deliberately swallowed. Loud enough to find in a build log, never fatal.
+				console.warn(
+					`[posthog] source-map upload failed; continuing the build without symbolication. ` +
+						`Stack traces will not symbolicate until this is fixed: ${err instanceof Error ? err.message : String(err)}`,
+				);
+
+				// posthog-cli is passed `--delete-after`, so the maps are removed as part of a
+				// SUCCESSFUL upload — and the plugin's own strip step runs after the call that just
+				// threw. Both are therefore skipped on this path, while turbopack has already set
+				// productionBrowserSourceMaps and the Dockerfile copies .next/static into the runtime
+				// image. Swallowing without this would publish the console's source at /_next/static.
+				//
+				// A cleanup failure IS fatal, unlike the upload: the choice there is between not
+				// deploying and publishing our own source, and telemetry being expendable does not
+				// make source disclosure expendable.
+				const removed = await deleteSourceMaps(meta);
+				console.warn(
+					`[posthog] removed ${removed} un-uploaded source map(s) so the image does not ship them.`,
+				);
+			}
+		},
+		{ [NON_FATAL_SOURCEMAP_UPLOAD]: true },
+	);
+
+	return {
+		...config,
+		compiler: { ...config.compiler, runAfterProductionCompile: wrapped },
+	};
+}
+
+/**
  * Makes the PostHog source-map upload unable to fail `next build`.
  *
  * The comment above has claimed "the upload never breaks a deploy" since the releaseName break, and
@@ -133,34 +262,39 @@ const releaseVersion = process.env.NEXT_PUBLIC_APP_VERSION;
  * never produced, so nothing reaching `main` reached production, while the runner images built fine
  * and the run read as a partial success.
  *
- * @posthog/nextjs-config installs `compiler.runAfterProductionCompile` and does not catch (its
- * dist/config.js), and PluginConfig exposes no failOnError-style option, so the only place to make
- * this non-fatal is here — around the hook it installed.
+ * The fix for that (#2246) then failed the same way for another ten days (#2485), because it looked
+ * for the hook on the WRONG OBJECT. `withPostHogConfig` is declared `(…) => NextConfig` but returns
+ * an async config FUNCTION, installing `compiler.runAfterProductionCompile` inside it. Reading
+ * `.compiler` off a function yields undefined, so the guard's `if (!hook) return config` early
+ * return fired on every build and handed back the config unwrapped. TypeScript could not catch it:
+ * the package's own .d.ts states the return type that is not returned.
+ *
+ * So resolve first, wrap second — and never assume the shape, check it.
  *
  * Telemetry is not worth a release. A failed upload costs symbolicated stack traces until the key is
  * fixed; a failed build costs every deploy.
  */
-export function withNonFatalSourcemapUpload(config: NextConfig): NextConfig {
-	const hook = config.compiler?.runAfterProductionCompile;
-	if (!hook) return config;
+export function withNonFatalSourcemapUpload(
+	config: NextConfig,
+	options?: NonFatalOptions,
+): NextConfig;
+export function withNonFatalSourcemapUpload(
+	config: (
+		phase: string,
+		ctx: { defaultConfig: NextConfig },
+	) => NextConfig | Promise<NextConfig>,
+	options?: NonFatalOptions,
+): (phase: string, ctx: { defaultConfig: NextConfig }) => Promise<NextConfig>;
+export function withNonFatalSourcemapUpload(
+	config: NextConfigInput,
+	options: NonFatalOptions = {},
+): NextConfigInput {
+	const expectHook = options.expectHook ?? false;
 
-	return {
-		...config,
-		compiler: {
-			...config.compiler,
-			runAfterProductionCompile: async (args: Parameters<typeof hook>[0]) => {
-				try {
-					await hook(args);
-				} catch (err) {
-					// Deliberately swallowed. Loud enough to find in a build log, never fatal.
-					console.warn(
-						`[posthog] source-map upload failed; continuing the build without symbolication. ` +
-							`Stack traces will not symbolicate until this is fixed: ${err instanceof Error ? err.message : String(err)}`,
-					);
-				}
-			},
-		},
-	};
+	if (typeof config === "function") {
+		return async (phase, ctx) => wrapResolved(await config(phase, ctx), expectHook);
+	}
+	return wrapResolved(config, expectHook);
 }
 
 export default posthogApiKey
@@ -176,5 +310,6 @@ export default posthogApiKey
 					deleteAfterUpload: true,
 				},
 			}),
+			{ expectHook: Boolean(releaseVersion) },
 		)
 	: nextConfig;

@@ -37,8 +37,16 @@ setup("sign in as the seeded demo owner", async ({ page }) => {
 	await page.locator("input[data-input-otp]").first().fill(code);
 
 	// An already-onboarded user lands straight on /{orgSlug}.
+	//
+	// `accept-terms` is excluded for the same reason it is in e2e/fixtures/auth.ts: it is a single
+	// path segment too, so a persona that has NOT accepted the current Terms would resolve
+	// "accept-terms" as its org slug and every later step would fail somewhere unrelated. The seeded
+	// demo owner accepts at seed time (lib/seed/builders.ts), so reaching here means the seed is
+	// stale — failing on the timeout says that far more clearly than a wrong slug would.
 	await page.waitForURL(
-		(url) => /^\/[^/]+$/.test(url.pathname) && !/^\/(login|signup|onboarding)$/.test(url.pathname),
+		(url) =>
+			/^\/[^/]+$/.test(url.pathname) &&
+			!/^\/(login|signup|onboarding|accept-terms|dashboard)$/.test(url.pathname),
 		{ timeout: 30_000 },
 	);
 	const orgSlug = new URL(page.url()).pathname.replace(/^\//, "").replace(/\/.*$/, "");

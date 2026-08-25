@@ -1169,6 +1169,97 @@ ALTER TABLE public.cli_logins ENABLE ROW LEVEL SECURITY;
 -- DEFINER session functions).
 ALTER TABLE public.runner_usage_sessions ENABLE ROW LEVEL SECURITY;
 
+-- ── Contract formation and consumer rights (#2372) ────────────────────────────────
+-- legal_acceptance and commerce_order are EVIDENCE of what a person agreed to. They are
+-- written only by the server actions through getServiceDb, and read only by those same
+-- actions and by a future export/erasure path — never by a request-scoped app-role query.
+--
+-- So: RLS enabled with NO app policy, which denies the app role outright. That is a
+-- stronger position than an owner-scoped policy would be, and it is the correct one here
+-- for a reason specific to these tables: an owner-scoped policy would let a compromised
+-- app-role session UPDATE its own acceptance rows, and a record the subject can rewrite is
+-- not evidence of anything. Same reasoning as runner_usage_sessions above.
+--
+-- Erasure (#2373) will reach them through a service-role path that records WHAT it erased,
+-- because the acceptance underpinning a live contract is retained on a legal-obligation
+-- basis rather than deleted on request.
+ALTER TABLE public.legal_acceptance ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.commerce_order ENABLE ROW LEVEL SECURITY;
+
+-- ── Privacy operations (#2373) ────────────────────────────────────────────────────
+-- privacy_case / privacy_case_event / privacy_erasure_tombstone hold the record of who
+-- exercised a right and what was done about it. Service-role only: RLS enabled with NO
+-- app policy denies the app role outright.
+--
+-- That is stricter than owner-scoping, and deliberately so for a reason specific to these
+-- tables. A privacy case may concern a person who is in NO organization, or one who has
+-- left; an owner-scoped policy would either leak those rows to whichever tenant last held
+-- them, or hide a person's own case from the only path that can answer it. Neither is
+-- acceptable, so the app role reads none of it and every access goes through the reviewed
+-- server actions.
+ALTER TABLE public.privacy_case ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.privacy_case_event ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.privacy_erasure_tombstone ENABLE ROW LEVEL SECURITY;
+
+-- privacy_case_event is APPEND-ONLY, absolutely.
+--
+-- Unlike authz_activity_log there is no legitimate deleter: the ledger is the evidence that
+-- a legal process was followed, and it has no retention window to prune against — a case's
+-- history outlives the data the case was about, precisely so the erasure can be proven
+-- afterwards. So UPDATE, DELETE and TRUNCATE are all rejected, with no GC escape hatch.
+-- Rows go when the case does, by the ON DELETE CASCADE from privacy_case, which is a
+-- deliberate act on the parent rather than an edit to the history.
+CREATE OR REPLACE FUNCTION public.privacy_case_event_worm()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION
+    'privacy_case_event is append-only: % is not permitted. The ledger is the evidence that a data-subject request was handled lawfully; an editable history evidences nothing.', TG_OP
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS privacy_case_event_no_mutate ON public.privacy_case_event;
+CREATE TRIGGER privacy_case_event_no_mutate
+  BEFORE UPDATE OR DELETE ON public.privacy_case_event
+  FOR EACH ROW EXECUTE FUNCTION public.privacy_case_event_worm();
+
+DROP TRIGGER IF EXISTS privacy_case_event_no_truncate ON public.privacy_case_event;
+CREATE TRIGGER privacy_case_event_no_truncate
+  BEFORE TRUNCATE ON public.privacy_case_event
+  FOR EACH STATEMENT EXECUTE FUNCTION public.privacy_case_event_worm();
+
+-- The tombstone is the thing left behind. It must survive the erasure it records, so it is
+-- append-only too — and it carries no personal data (the identifier is a SHA-256), which is
+-- what makes keeping it forever the safe choice rather than the risky one.
+CREATE OR REPLACE FUNCTION public.privacy_tombstone_worm()
+RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+  -- One field is legitimately mutable: replayed_at, stamped when a restore re-applies the
+  -- erasure. Everything else about a tombstone is history.
+  IF TG_OP = 'UPDATE'
+     AND NEW.subject_email_sha256 IS NOT DISTINCT FROM OLD.subject_email_sha256
+     AND NEW.erased_user_id       IS NOT DISTINCT FROM OLD.erased_user_id
+     AND NEW.case_reference       IS NOT DISTINCT FROM OLD.case_reference
+     AND NEW.erased_at            IS NOT DISTINCT FROM OLD.erased_at
+     AND NEW.scope::text          IS NOT DISTINCT FROM OLD.scope::text THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION
+    'privacy_erasure_tombstone is append-only except for replayed_at: % is not permitted. A tombstone that can be removed lets a backup restore silently reinstate erased data.', TG_OP
+    USING ERRCODE = 'restrict_violation';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS privacy_tombstone_no_mutate ON public.privacy_erasure_tombstone;
+CREATE TRIGGER privacy_tombstone_no_mutate
+  BEFORE UPDATE OR DELETE ON public.privacy_erasure_tombstone
+  FOR EACH ROW EXECUTE FUNCTION public.privacy_tombstone_worm();
+
+DROP TRIGGER IF EXISTS privacy_tombstone_no_truncate ON public.privacy_erasure_tombstone;
+CREATE TRIGGER privacy_tombstone_no_truncate
+  BEFORE TRUNCATE ON public.privacy_erasure_tombstone
+  FOR EACH STATEMENT EXECUTE FUNCTION public.privacy_tombstone_worm();
+
 -- Public catalogs: readable by anyone; writes only via service role.
 ALTER TABLE public.connectors ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS connectors_read ON public.connectors;

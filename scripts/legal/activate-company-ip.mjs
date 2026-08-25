@@ -1,7 +1,14 @@
 #!/usr/bin/env node
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
-// The one-command, evidence-gated switch from founder ownership to company ownership.
+// The one-command, evidence-gated switch from founder ownership to the company's exclusive economic
+// rights.
+//
+// The distinction is not pedantry (#2374). The controlling instrument transfers ECONOMIC rights;
+// moral rights are inalienable under Bulgarian copyright law and remain with the author however the
+// assignment is worded. So every marker this script writes says "owns the exclusive economic rights
+// in" rather than "owns" — a flat ownership claim asserts something the instrument does not grant,
+// and it is exactly the claim a commercial licensee would rely on.
 //
 // Registering the company did NOT transfer the intellectual property. Until the founder assignment
 // is signed, every ownership notice in this repository must keep saying so — and #2366 exists
@@ -226,9 +233,15 @@ under EIK 208913663, but registration did not transfer founder-created works.
 Until the relevant rights are assigned in writing, Borislav Borisov is the
 copyright holder and commercial licensing party. For commercial
 licensing enquiries, contact legal@alethialabs.io.`,
-		`${entity.legalName}, EIK ${entity.registrationNumber}, owns and commercially licenses the
-scheduled founder-authored Enterprise code under the assignment effective ${on}. For commercial
-licensing enquiries, contact legal@alethialabs.io.`,
+		// "owns the exclusive economic rights in", not "owns the code" (#2374). The controlling
+		// instrument transfers ECONOMIC rights; moral rights are inalienable under Bulgarian
+		// copyright law and stay with the author whatever the assignment says. A flat claim of
+		// ownership over the work therefore states something the instrument does not grant — and it
+		// is the claim a licensee would rely on. Every other marker already uses this formulation;
+		// this one did not.
+		`${entity.legalName}, EIK ${entity.registrationNumber}, owns the exclusive economic rights in the
+scheduled founder-authored Enterprise code under the assignment effective ${on}, and licenses it
+commercially on that basis. For commercial licensing enquiries, contact legal@alethialabs.io.`,
 	),
 	replaceExactly(
 		"ee/README.md",
