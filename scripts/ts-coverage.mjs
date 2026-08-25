@@ -420,6 +420,122 @@ function runPrint(project) {
 	for (const [dir, v] of measured.entries()) process.stdout.write(`${dir} ${v.covered} ${v.total}\n`);
 }
 
+/**
+ * Strip `//` and block comments from TypeScript source, IGNORING both inside string literals.
+ *
+ * Not decoration. The first version of the exclusion check extracted every quoted string inside the
+ * coverage block and promptly "found" five stale paths that were prose — quoted phrases inside the
+ * block's own explanatory comments, including one that quoted an import path. That is the same
+ * defect closed in #2549, where a guard was satisfied by a comment the very same PR had added:
+ * match the rendered SHAPE, never a substring of the raw text.
+ *
+ * String-awareness matters in the other direction too — stripping a `//` out of a value would
+ * leave an unbalanced quote and desynchronise everything after it.
+ *
+ * @param {string} src
+ * @returns {string} src with comments replaced by spaces (offsets preserved)
+ */
+export function stripTsComments(src) {
+	let out = "";
+	let inStr = /** @type {false|string} */ (false);
+	let inLine = false;
+	let inBlock = false;
+	for (let i = 0; i < src.length; i += 1) {
+		const c = src[i];
+		const n = src[i + 1];
+		if (inLine) {
+			if (c === "\n") {
+				inLine = false;
+				out += c;
+			} else out += " ";
+			continue;
+		}
+		if (inBlock) {
+			if (c === "*" && n === "/") {
+				inBlock = false;
+				out += "  ";
+				i += 1;
+			} else out += c === "\n" ? c : " ";
+			continue;
+		}
+		if (inStr) {
+			out += c;
+			if (c === "\\") {
+				out += src[i + 1] ?? "";
+				i += 1;
+			} else if (c === inStr) inStr = false;
+			continue;
+		}
+		if (c === '"' || c === "'" || c === "`") {
+			inStr = c;
+			out += c;
+			continue;
+		}
+		if (c === "/" && n === "/") {
+			inLine = true;
+			out += "  ";
+			i += 1;
+			continue;
+		}
+		if (c === "/" && n === "*") {
+			inBlock = true;
+			out += "  ";
+			i += 1;
+			continue;
+		}
+		out += c;
+	}
+	return out;
+}
+
+/**
+ * Extract the `exclude: [...]` entries from a vitest config's COVERAGE block.
+ *
+ * Deliberately parses the coverage block only. `test.exclude` and `coverage.exclude` are different
+ * keys with different meanings, and a regex that finds "the first exclude array" reads the wrong
+ * one — `apps/console/vitest.config.ts` has both, and the test one comes first.
+ *
+ * Hand-rolled rather than via the TypeScript AST because this must run in a DE-HYDRATED worktree
+ * with no node_modules — that is where the guard is cheapest to run and most likely to be run. It
+ * returns null when it cannot find the block, and the caller treats null as a FAILURE rather than
+ * as "no exclusions", because a parser that silently reports nothing is the vacuity this guard
+ * exists to catch.
+ *
+ * @param {string} src the config file's source
+ * @returns {string[]|null} the quoted entries, or null when the coverage/exclude block is absent
+ */
+export function coverageExcludes(rawSrc) {
+	// Comments first — see stripTsComments. A quoted phrase in prose is not an exclusion.
+	const src = stripTsComments(rawSrc);
+	const covAt = src.indexOf("coverage: {");
+	if (covAt === -1) return null;
+	// Brace-match to the end of the coverage block so a later `exclude:` cannot be picked up.
+	let depth = 0;
+	let covEnd = -1;
+	for (let i = src.indexOf("{", covAt); i < src.length; i += 1) {
+		if (src[i] === "{") depth += 1;
+		else if (src[i] === "}") {
+			depth -= 1;
+			if (depth === 0) {
+				covEnd = i;
+				break;
+			}
+		}
+	}
+	if (covEnd === -1) return null;
+	const block = src.slice(covAt, covEnd);
+	const exAt = block.indexOf("exclude: [");
+	if (exAt === -1) return [];
+	const close = block.indexOf("]", exAt);
+	if (close === -1) return null;
+	return [...block.slice(exAt, close).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+}
+
+/** A path with no glob metacharacter — the kind that can silently stop matching anything. */
+function isLiteralPath(entry) {
+	return !/[*?{}[\]!]/.test(entry);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // SELF-TEST — hermetic. No suites, no network, no node_modules, no repo state.
 //
@@ -539,6 +655,56 @@ function runSelfTest() {
 			if (!ci.includes(`--project ${proj}`)) ungated.push(proj);
 		}
 		check("no coverage-emitting vitest project lacks a ratchet step in ci.yml", ungated.length === 0, ungated.join(", "));
+
+		// ── every LITERAL coverage exclusion must still name a file that exists ──
+		//
+		// A glob cannot go stale: `lib/queries/**` matching nothing is indistinguishable from a
+		// directory that emptied, and either way it excludes nothing and misleads nobody. A LITERAL
+		// path is different — it becomes a lie the moment its file is renamed, and it reads exactly
+		// like a live one.
+		//
+		// This has already cost eight weeks: `app/server/actions/{specs,zones}.ts` sat in the
+		// console's exclude list long after both files were deleted (#2656), found by somebody
+		// happening to look rather than by anything catching it. #2700 then replaced one glob with
+		// six literal paths, which is the right call for checkability but triples the number of
+		// entries that can rot.
+		/** @type {string[]} */
+		const stale = [];
+		let literals = 0;
+		/** @type {string[]} */
+		const unparsed = [];
+		// Re-derived from `configs` rather than reusing the loop above's list, so this block stands
+		// on its own and does not couple to how the sweep happens to be written.
+		for (const cfg of configs) {
+			const src = readFileSync(path.join(ROOT, cfg), "utf8");
+			if (!/\bcoverage\s*:\s*\{/.test(src)) continue;
+			const entries = coverageExcludes(src);
+			// null means the parser could not find the block it was told to read. Treated as a
+			// FAILURE, never as "no exclusions" — a parser that silently reports nothing is exactly
+			// the vacuity this section exists to close.
+			if (entries === null) {
+				unparsed.push(cfg);
+				continue;
+			}
+			for (const entry of entries) {
+				if (!isLiteralPath(entry)) continue;
+				literals += 1;
+				if (!existsSync(path.join(ROOT, path.dirname(cfg), entry))) stale.push(`${path.dirname(cfg)}/${entry}`);
+			}
+		}
+		check("every vitest coverage block parsed", unparsed.length === 0, unparsed.join(", "));
+		// The denominator, for the same reason as the sweep above: a run that examined zero literal
+		// paths would report "none stale" and mean nothing.
+		// The floor is 10 against 11 literal entries on dev today — one below, so a single
+		// legitimate deletion does not red the repo, while a parser that collapsed to a handful
+		// still does. It is a vacuity tripwire, NOT a target: nothing here wants more exclusions.
+		// (#2700 replaces one glob with six literals, taking the count to 17; this floor holds.)
+		check(
+			"the exclusion sweep actually examined literal paths (>= 10)",
+			literals >= 10,
+			`examined ${literals}`,
+		);
+		check("every literal coverage exclusion still names a real file", stale.length === 0, stale.join(", "));
 	} catch (err) {
 		check("scope check could run", false, err.message);
 	}
