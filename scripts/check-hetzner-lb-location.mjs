@@ -135,9 +135,43 @@ function escapeRe(s) {
 	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Every `set` block in the CCM whose name targets a container env var's `.value`, with the env key
+ * and whether that block declares `type = "string"`.
+ *
+ * WHY THIS IS PART OF THE SAME GUARD. A Kubernetes container env `value` is a STRING, and helm's
+ * `--set` TYPE-INFERS: `--set env.X.value=true` stores a boolean, the chart renders `value: true`,
+ * and server-side apply refuses the whole object —
+ *
+ *   .spec…env[name="HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP"].value: expected string, got true
+ *
+ * The bootstrap manifest is ONE apply, so the CCM taking that object down takes Cilium with it: no
+ * CNI, nodes NotReady forever, every Hetzner deploy dead. Measured on run 32873754809, four minutes
+ * after a full cluster had been paid for.
+ *
+ * It belongs here because it is the same block and the same silence: HCL's `value = "true"` LOOKS
+ * like a string, `tofu fmt` is happy, `tofu validate` is happy, and nothing says otherwise until an
+ * apiserver rejects the object on a real cluster.
+ *
+ * Matched on the SHAPE of a setting, like the location rule above, and over COMMENT-STRIPPED text —
+ * so the `type = "string"` that satisfies it cannot be one written in prose.
+ * @returns {{key: string, typed: boolean}[]}
+ */
+export function envValueSettings(block) {
+	const out = [];
+	// Each `set { … }` body, non-greedy: these blocks never nest.
+	for (const m of block.matchAll(/set\s*\{([^{}]*)\}/g)) {
+		const body = m[1];
+		const name = /name\s*=\s*"env\.([A-Za-z0-9_.-]+)\.value"/.exec(body);
+		if (!name) continue;
+		out.push({ key: name[1], typed: /type\s*=\s*"string"/.test(body) });
+	}
+	return out;
+}
+
 export function analyse(tf) {
 	const block = extractCcmBlock(stripComments(tf));
-	if (block === null) return { found: [], block: null };
+	if (block === null) return { found: [], block: null, untyped: [] };
 	const found = LOCATION_KEYS.filter((k) =>
 		// The rendered shape of a real setting, not the key appearing somewhere. The key is ESCAPED
 		// before interpolation: today's two are letters and underscores, but a future key carrying a
@@ -145,7 +179,10 @@ export function analyse(tf) {
 		// it means is the same defect as one that matches a comment.
 		new RegExp(`name\\s*=\\s*"env\\.${escapeRe(k)}\\.value"`).test(block),
 	);
-	return { found, block };
+	const untyped = envValueSettings(block)
+		.filter((e) => !e.typed)
+		.map((e) => e.key);
+	return { found, block, untyped };
 }
 
 function main() {
@@ -160,7 +197,7 @@ function main() {
 		process.exit(1);
 	}
 
-	const { found, block } = analyse(tf);
+	const { found, block, untyped } = analyse(tf);
 
 	if (block === null) {
 		console.error(
@@ -183,7 +220,24 @@ function main() {
 		process.exit(1);
 	}
 
-	console.log(`✓ check-hetzner-lb-location: the hcloud CCM sets ${found.join(" + ")} — Load Balancers have a home.`);
+	if (untyped.length > 0) {
+		console.error(
+			`::error::check-hetzner-lb-location: the hcloud CCM sets ${untyped.join(", ")} without \`type = "string"\`. ` +
+				`A Kubernetes container env \`value\` must be a STRING, and helm's \`--set\` TYPE-INFERS — ` +
+				`\`value = "true"\` in HCL becomes a BOOLEAN in the rendered chart, and server-side apply refuses the ` +
+				`whole Deployment: "expected string, got true". The bootstrap manifest is one apply, so the CCM taking ` +
+				`that object down takes Cilium with it: no CNI, nodes NotReady, every Hetzner deploy dead about four ` +
+				`minutes after paying for a cluster (run 32873754809). Add \`type = "string"\` — it is \`--set-string\`. ` +
+				`See ${CCM_FILE}.`,
+		);
+		process.exit(1);
+	}
+
+	const typedCount = envValueSettings(block).length;
+	console.log(
+		`✓ check-hetzner-lb-location: the hcloud CCM sets ${found.join(" + ")} — Load Balancers have a home; ` +
+			`all ${typedCount} env-var setting(s) are string-typed.`,
+	);
 }
 
 // ── self-test ─────────────────────────────────────────────────────────────────────────────────
@@ -247,6 +301,52 @@ data "helm_template" "hcloud_ccm" {
   set { name = "securityContext.capabilities.drop" value = "{CHOWN,KILL,NET_RAW}" }
   set { name = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value" value = "nbg1" }
 }`;
+
+	// ── The env-var STRING-TYPING rule. Both directions, and the axis that matters is the TYPE
+	//    declaration — not the key, not the value. `value = "true"` is a string in HCL and a boolean
+	//    by the time helm renders it, which is the whole trap.
+	const typedEnv = `
+data "helm_template" "hcloud_ccm" {
+  set { name = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value" value = "nbg1" type = "string" }
+  set { name = "env.HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP.value" value = "true" type = "string" }
+}`;
+	// THE REGRESSION, exactly as it shipped in #2536: an env value with no type declaration.
+	const untypedEnv = `
+data "helm_template" "hcloud_ccm" {
+  set { name = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value" value = "nbg1" type = "string" }
+  set { name = "env.HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP.value" value = "true" }
+}`;
+	// `type = "auto"` is helm's DEFAULT — the inference itself. It must not satisfy the rule.
+	const autoTypedEnv = `
+data "helm_template" "hcloud_ccm" {
+  set { name = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value" value = "nbg1" type = "auto" }
+}`;
+	// A type written in PROSE must not satisfy it — the #2549 lesson, applied to the new rule.
+	const typeOnlyInAComment = `
+data "helm_template" "hcloud_ccm" {
+  # these are all type = "string" settings
+  set { name = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value" value = "nbg1" }
+}`;
+	// A NON-env setting is not subject to the rule: `networking.enabled` is a chart conditional and
+	// a real boolean is what it wants. A guard that demanded strings everywhere would break the chart.
+	const nonEnvBoolean = `
+data "helm_template" "hcloud_ccm" {
+  set { name = "networking.enabled" value = "true" }
+  set { name = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value" value = "nbg1" type = "string" }
+}`;
+
+	ok("string-typed env settings pass", analyse(typedEnv).untyped.length === 0);
+	ok("...and both of them were actually examined", envValueSettings(analyse(typedEnv).block).length === 2);
+	ok("THE REGRESSION: an untyped env value FAILS", analyse(untypedEnv).untyped.length === 1);
+	ok(
+		"...and it names the key that is wrong, not the one that is right",
+		analyse(untypedEnv).untyped[0] === "HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP",
+	);
+	ok('type = "auto" does NOT satisfy the rule — it IS the inference', analyse(autoTypedEnv).untyped.length === 1);
+	ok("a type named only in a COMMENT does not satisfy it", analyse(typeOnlyInAComment).untyped.length === 1);
+	ok("a non-env setting is not required to be string-typed", analyse(nonEnvBoolean).untyped.length === 0);
+	ok("...and the non-env setting was not silently counted as an env one", envValueSettings(analyse(nonEnvBoolean).block).length === 1);
+	ok("a block with no env settings at all reports none untyped", analyse(theBug).untyped.length === 0);
 
 	ok("a configured LOCATION passes", analyse(withLocation).found.length === 1);
 	ok("a configured NETWORK_ZONE passes", analyse(withZone).found.length === 1);

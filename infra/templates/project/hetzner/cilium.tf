@@ -147,6 +147,11 @@ data "helm_template" "hcloud_ccm" {
   set {
     name  = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value"
     value = data.hcloud_location.selected.name
+    # A Kubernetes container env `value` is a STRING, and helm's `--set` TYPE-INFERS. See the
+    # USE_PRIVATE_IP block below for what that cost. This one has never rendered wrong — no Hetzner
+    # location is spelled `true` or `3` — but the rule is uniform on purpose: an exception here is
+    # an exception the guard has to carry, and the next value put in this block would inherit it.
+    type = "string"
   }
 
   # Reach backends over the PRIVATE network. Unconditional, because there is always one (#2549).
@@ -169,5 +174,22 @@ data "helm_template" "hcloud_ccm" {
   set {
     name  = "env.HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP.value"
     value = "true"
+    # WITHOUT THIS, NO HETZNER CLUSTER COMES UP AT ALL.
+    #
+    # `value = "true"` is a string in HCL and stops being one in helm: `--set x=true` TYPE-INFERS a
+    # boolean, so the chart rendered `value: true` into a container env var, and a Kubernetes env
+    # `value` must be a string. Server-side apply refuses the object outright:
+    #
+    #   failed to create typed patch object (kube-system/hcloud-cloud-controller-manager):
+    #     .spec…env[name="HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP"].value:
+    #     expected string, got &value.valueUnstructured{Value:true}
+    #
+    # The whole bootstrap manifest is one apply, so the CCM taking the object down took Cilium with
+    # it: CNI never installs, nodes stay NotReady (Talos ships CNI=none), all four retries fail
+    # identically, and the deploy dies ~4 minutes in having provisioned a full cluster. Measured on
+    # run 32873754809.
+    #
+    # `type = "string"` is `--set-string`. LOCATION escaped only because "nbg1" is not boolean-like.
+    type = "string"
   }
 }
