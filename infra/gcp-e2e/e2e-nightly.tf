@@ -88,6 +88,29 @@ locals {
 # `serviceusage.services.enable` stays refused (maintainer, 2026-08-03, #1844): `get` reads a boolean
 # about a service the project owner already chose, `enable` would let the holder turn on any billable
 # API. apis.tf enables cloudkms.googleapis.com on this dedicated e2e project, so `get` is sufficient.
+# The one DNS permission roles/dns.admin does not carry — mirroring the customer connector's
+# alethiaDnsZoneIam, because the e2e SA provisions the same template and hits the same wall.
+#
+# The gcp template creates a zone-scoped binding for external-dns
+# (infra/templates/project/gcp/workload-identity.tf), which needs `dns.managedZones.setIamPolicy`.
+# Measured against the live API: roles/dns.admin has getIamPolicy but NOT setIamPolicy; neither does
+# roles/editor or roles/dns.peer; only roles/owner does. gcp's first full bar (32840106190) failed at
+#
+#   Error setting IAM policy for dns managedzone "...": Error 403: The caller does not have
+#   permission, forbidden
+#
+# after 48 minutes, because a floor run never provisions a DNS zone and so never reaches it.
+resource "google_project_iam_custom_role" "e2e_dns_zone_iam" {
+  role_id     = "alethiaE2eDnsZoneIam"
+  project     = var.project_id
+  title       = "Alethia e2e DNS Zone IAM Binder"
+  description = "Set/get IAM policy on Cloud DNS managed zones — the zone-scoped external-dns binding. roles/dns.admin does NOT include setIamPolicy; only roles/owner does. Mirrors the customer connector's alethiaDnsZoneIam."
+  permissions = [
+    "dns.managedZones.getIamPolicy",
+    "dns.managedZones.setIamPolicy",
+  ]
+}
+
 resource "google_project_iam_custom_role" "e2e_project_reader" {
   role_id     = "alethiaE2eProjectReader"
   project     = var.project_id
@@ -100,8 +123,12 @@ resource "google_project_iam_custom_role" "e2e_project_reader" {
 }
 
 resource "google_project_iam_member" "e2e_provisioner_custom" {
+  for_each = toset([
+    google_project_iam_custom_role.e2e_project_reader.id,
+    google_project_iam_custom_role.e2e_dns_zone_iam.id,
+  ])
   project = var.project_id
-  role    = google_project_iam_custom_role.e2e_project_reader.id
+  role    = each.value
   member  = "serviceAccount:${google_service_account.e2e.email}"
 }
 
