@@ -20,6 +20,21 @@
 # vswitch id FORMAT before any API call; rrsa_metadata is a computed nested block the outputs read).
 
 mock_provider "alicloud" {
+  # ACK's create API resolves a ROS component by EXACT version string, so ack-version.tf resolves the
+  # declared MINOR against what the region offers. Same trap the alicloud_zones mock above documents:
+  # the mock's default for a computed LIST is an EMPTY list, so without this every plan fails the
+  # terraform_data.ack_version_resolvable precondition — which is the guard doing its job, not a bug.
+  # The patch numbers are the ones eu-central-1 actually offered on 2026-08-25.
+  mock_data "alicloud_cs_kubernetes_version" {
+    defaults = {
+      metadata = [
+        { version = "1.36.2-aliyun.1", runtime = [] },
+        { version = "1.35.7-aliyun.1", runtime = [] },
+        { version = "1.34.10-aliyun.1", runtime = [] },
+      ]
+    }
+  }
+
   mock_data "alicloud_zones" {
     defaults = {
       zones = [
@@ -281,5 +296,43 @@ run "ceilings_without_a_bidding_strategy_block_the_plan" {
   expect_failures = [
     check.ack_price_limits_need_a_spot_strategy,
     terraform_data.ack_node_shape_guard,
+  ]
+}
+
+# ACK's create API resolves a ROS component by EXACT version string. The template declares a MINOR
+# (matching compat/matrix.json and the other four clouds) and ack-version.tf resolves it against the
+# versions the region actually offers. This is the direction that keeps the resolver honest: the
+# mock above makes every ordinary run find a match, so without a run that finds NONE the guard would
+# be satisfied by its own fixture and would never be shown to fire.
+#
+# 1.29 is inside no offered patch line, and is also outside the compat window — so BOTH gates trip,
+# which is the correct behaviour and is asserted as such rather than papered over with one.
+run "a_minor_with_no_offered_patch_blocks_the_plan" {
+  command = plan
+
+  variables {
+    ack_cluster_version = "1.29"
+  }
+
+  expect_failures = [
+    check.compat_k8s_supported,
+    terraform_data.compat_k8s_guard,
+    terraform_data.ack_version_resolvable,
+  ]
+}
+
+# The same guard, INSIDE the compat window — the case that isolates the resolver from the compat
+# gate. 1.33 is supported by matrix.json, so compat passes; the mock offers no 1.33.x, so only
+# ack_version_resolvable trips. If this run ever starts passing, the resolver has stopped resolving
+# and every alibaba apply is one Alibaba patch-retirement away from `no ros component exists`.
+run "a_supported_minor_the_region_does_not_offer_blocks_the_plan" {
+  command = plan
+
+  variables {
+    ack_cluster_version = "1.33"
+  }
+
+  expect_failures = [
+    terraform_data.ack_version_resolvable,
   ]
 }
