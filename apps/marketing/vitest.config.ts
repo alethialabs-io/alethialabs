@@ -15,9 +15,18 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+	// Vitest otherwise auto-discovers apps/marketing/postcss.config.mjs and tries to load
+	// `@tailwindcss/postcss` as a classic PostCSS plugin, which it is not:
+	//   Failed to load PostCSS config: Invalid PostCSS Plugin found at: plugins[0]
+	// An empty object opts out of config discovery entirely. Nothing here renders CSS, so the
+	// whole pipeline is switched off below as well. apps/console/vitest.config.ts does the same.
+	css: {
+		postcss: {},
+	},
 	test: {
 		environment: "node",
 		include: ["./tests/**/*.test.ts"],
 		exclude: ["**/node_modules/**"],
+		css: false,
 	},
 });
