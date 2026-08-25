@@ -13,7 +13,11 @@ export default defineConfig({
 		include: ["./tests/**/*.test.ts"],
 		coverage: {
 			provider: "v8",
-			reporter: ["text", "lcov", "json-summary"],
+			// "json" writes coverage-final.json — the RAW statement map, and the artefact the
+			// coverage ratchet (scripts/ts-coverage.mjs) measures. It is in vitest's DEFAULT
+			// reporter set, but naming any `reporter` array REPLACES that default, so it has to
+			// be listed explicitly here. json-summary stays for scripts/coverage-badge.mjs.
+			reporter: ["text", "lcov", "json-summary", "json"],
 			include: ["src/**"],
 		},
 	},

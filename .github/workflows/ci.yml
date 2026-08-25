@@ -134,13 +134,10 @@ jobs:
       - name: Type-check + lint (all workspace projects)
         run: pnpm exec turbo run check-types lint
       - name: Unit tests
+        id: unit
         run: pnpm exec turbo run test
       # Coverage is merged into the self-hosted README badge by the `coverage-badge` job
       # (push-to-main); no third-party service. See scripts/coverage-badge.mjs + TESTING.md.
-      # Build smoke for the split-affected apps — catches transpilePackages /
-      # standalone breakage on PRs. Build-only placeholder env so the console's
-      # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
-      # nothing is contacted — postgres-js + the S3 client connect lazily).
       - name: App build smoke (console · marketing · docs)
         run: pnpm exec turbo run build --filter=console --filter=marketing --filter=docs
         env:
@@ -151,6 +148,70 @@ jobs:
           ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
           ALETHIA_STORAGE_ACCESS_KEY_ID: build
           ALETHIA_STORAGE_SECRET_ACCESS_KEY: build
+
+      # PLACED AFTER THE BUILD SMOKE, DELIBERATELY.
+      #
+      # These steps carry no `if:`, and a job stops at its first failing step — so sitting them
+      # BEFORE `App build smoke` meant a TRUE ratchet failure on apps/console would skip the other
+      # two ratchets AND the production build. That build is the only check in this job that
+      # catches what tsc and eslint structurally cannot: a module imported from both a server and a
+      # client component type-checks, lints and unit-tests clean, then 500s the page at runtime.
+      # Losing it to a coverage regression trades a real signal for a lesser one.
+      #
+      # Putting them last closes that with no conditions at all — everything that can inform the
+      # author has already run by the time the ratchet is able to fail. See #2662 for the general
+      # case: `guards` is 64 steps with zero `if:`, so its first failure skips the other 63.
+      #
+      # Per-directory statement-coverage RATCHET: coverage may rise, never fall. Reads the
+      # coverage-final.json each project's vitest run wrote above — or that turbo REPLAYED from
+      # cache, which is equally valid, because a cache hit means byte-identical inputs and the
+      # `test` task now declares ALETHIA_EDITION in its cache key. It does NOT re-run the suite.
+      #
+      # No `working-directory`: the script resolves the repo root itself, so every project is
+      # invoked identically and the fix command it prints needs no cd puzzle.
+      #
+      # No `if: always()`: when `Unit tests` fails there is no usable coverage artefact, and
+      # reporting a coverage collapse on top of a test failure misattributes the cause.
+      #
+      # ONE STEP PER PROJECT, deliberately — a `--all` wildcard is how a project silently drops
+      # out of the gate. Adding a project is a three-line edit here, and `--self-test` FAILS
+      # until that edit is made: it asserts this file carries a step for every vitest project
+      # that declares a coverage block.
+      #
+      # Every false-failure path is fail-open and enumerated F1..F10 in the script header. The
+      # floors carry a fingerprint of the environment that recorded them — including whether
+      # ee/dist existed, which is FALSE here (apps/console depends on @alethia/enterprise-api,
+      # not @alethia/ee, so turbo's `test.dependsOn: ["^build"]` never reaches it) and TRUE on a
+      # maintainer's machine after the local dev bring-up builds it. A mismatch DEMOTES failures
+      # to warnings rather than blaming coverage for a scope change.
+      - name: Coverage ratchet — apps/console
+        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
+        # rather than inheriting the implicit success() that would let one project's ratchet hide
+        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
+        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
+        # cause. `!cancelled()` keeps it off a cancelled run.
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project apps/console
+      - name: Coverage ratchet — packages/ui
+        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
+        # rather than inheriting the implicit success() that would let one project's ratchet hide
+        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
+        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
+        # cause. `!cancelled()` keeps it off a cancelled run.
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project packages/ui
+      - name: Coverage ratchet — packages/plan-catalog
+        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
+        # rather than inheriting the implicit success() that would let one project's ratchet hide
+        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
+        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
+        # cause. `!cancelled()` keeps it off a cancelled run.
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project packages/plan-catalog
+      # Build smoke for the split-affected apps — catches transpilePackages /
+      # standalone breakage on PRs. Build-only placeholder env so the console's
+      # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
+      # nothing is contacted — postgres-js + the S3 client connect lazily).
 
   integration:
     name: Integration (real Postgres + RLS)
@@ -722,6 +783,28 @@ jobs:
       # Hermetic: no go, no network, no repo state.
       - name: Go coverage ratchet (arithmetic · fail-open set · merge-safe layout)
         run: bash scripts/go-coverage.sh --self-test
+      # The TypeScript half of the same design — three steps inside `TypeScript (lint · types ·
+      # test · docs)`, a REQUIRED check with NO path filter, so it gates every PR in the
+      # repository and a false failure stops the merge queue for everyone. Five properties are
+      # pinned here, because each is a way it could wedge the repo:
+      #   · the arithmetic is integer cross-multiplication, never a percentage — including the
+      #     rounding trap where 185/291 displays as "63.6%", so a stored display value would fail
+      #     its own floor with zero code change, forever.
+      #   · the measurement derives from coverage-final.json's statementMap — the artefact vitest
+      #     emits BY DEFAULT — never from coverage-summary.json's rolled-up integers, and it
+      #     rejects any record whose statementMap and s disagree. That last check is a corruption
+      #     tripwire the summary artefact structurally cannot express.
+      #   · the fail-open set F1..F10, each branch reached deliberately: unparseable floors from a
+      #     hand-resolved conflict, an absent or truncated artefact, a fingerprint mismatch, a
+      #     collapsed denominator, a directory with no floor yet.
+      #   · the floors JSON layout, asserted with a REAL `git merge-file`: two PRs each raising a
+      #     DIFFERENT, ADJACENT directory must merge clean, or every concurrent TS PR conflicts on
+      #     a generated file nobody is allowed to hand-resolve.
+      #   · that ci.yml carries a ratchet step for every vitest project declaring a coverage block
+      #     — the guard's own guard, so a new project cannot join un-gated.
+      # Hermetic: no suites, no network, no installed tree.
+      - name: TS coverage ratchet (arithmetic · fail-open set · merge-safe layout · scope)
+        run: node scripts/ts-coverage.mjs --self-test
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
@@ -1055,6 +1138,95 @@ jobs:
         with:
           name: coverage-floors-${{ strategy.job-index }}
           path: ${{ matrix.module }}/coverage-floors.json
+
+  ts-coverage-determinism:
+    name: TS coverage determinism probe (manual)
+    # MANUAL ONLY. The same question `coverage-determinism` asks of Go, asked of TypeScript: are
+    # the numbers CI produces stable run-to-run, and are they the numbers a laptop produces?
+    #
+    # They are NOT the same as a laptop's, and that is the point of running this here. This job
+    # deliberately does NOT build @alethia/ee — because the `typescript` job does not either
+    # (apps/console depends on @alethia/enterprise-api, not on @alethia/ee, so turbo's
+    # `test.dependsOn: ["^build"]` never reaches its dist). The console therefore measures
+    # COMMUNITY scope here, while a maintainer's local bring-up builds ee/dist and measures the
+    # EE paths. Floors recorded from a laptop would bake in numbers CI can never reproduce and
+    # would red — or worse, silently DEMOTE — every PR in the repository.
+    #
+    # So: run this, read its output, and generate the floors from THESE numbers.
+    #
+    # `--force` on every run, or turbo replays run 1's cached coverage/ outputs and the probe
+    # proves nothing at all.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: What this runner actually carries (the fingerprint, verbatim)
+        run: |
+          printf '%-22s %s\n' os "$(uname -s)"
+          printf '%-22s %s\n' node "$(node -v)"
+          printf '%-22s %s\n' ALETHIA_EDITION "${ALETHIA_EDITION:-unset}"
+          printf '%-22s %s\n' ee/dist "$(test -f ee/dist/index.js && echo present || echo ABSENT)"
+          node -p "require('./node_modules/@vitest/coverage-v8/package.json').version" 2>/dev/null \
+            || echo "coverage-v8 version: resolved per-project"
+      # This must MIRROR the `typescript` job, not the e2e ones. If ee/dist is ever present here
+      # the recorded floors describe a scope the gate can never reproduce, so this is a hard stop
+      # rather than a warning.
+      - name: Guard — ee/dist must be ABSENT, or these floors describe the wrong scope
+        run: |
+          if [ -f ee/dist/index.js ]; then
+            echo "::error::ee/dist/index.js exists — this probe would record EE-scope floors that the"
+            echo "::error::required 'typescript' job (community scope) can never reproduce."
+            exit 1
+          fi
+          echo "✓ ee/dist absent — measuring the same scope the required job measures"
+      - name: Five runs, comparing parsed pairs
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            rm -rf apps/console/coverage packages/ui/coverage packages/plan-catalog/coverage
+            pnpm exec turbo run test --force
+            for p in apps/console packages/ui packages/plan-catalog; do
+              node scripts/ts-coverage.mjs --project "$p" --print | sed "s|^|$p |" >>"run.$i.txt"
+            done
+          done
+          echo "── per-directory covered/total, run 1 ──"
+          cat run.1.txt
+          # sort -u over all five runs must collapse to exactly run 1's line count, or some row
+          # differed between runs.
+          if [ "$(cat run.*.txt | sort -u | wc -l)" -eq "$(wc -l <run.1.txt)" ]; then
+            echo "✓ TypeScript coverage is run-to-run deterministic across 5 runs"
+          else
+            echo "::error::NONDETERMINISTIC — do NOT floor this. Rows that did not appear 5 times:"
+            cat run.*.txt | sort | uniq -c | awk '$1 != 5'
+            exit 1
+          fi
+      - name: The floors these numbers produce (commit these VERBATIM)
+        run: |
+          for p in apps/console packages/ui packages/plan-catalog; do
+            node scripts/ts-coverage.mjs --project "$p" --update
+            echo "── $p/coverage-floors.json ──"
+            cat "$p/coverage-floors.json"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ts-coverage-floors
+          # plan-catalog's raw artefact rides along deliberately: it is the smallest project, so a
+          # verbatim copy is a committable size, and it is how the --self-test fixture gets
+          # captured from a REAL vitest run with real CI absolute paths rather than hand-written.
+          path: |
+            apps/console/coverage-floors.json
+            packages/ui/coverage-floors.json
+            packages/plan-catalog/coverage-floors.json
+            packages/plan-catalog/coverage/coverage-final.json
+          if-no-files-found: error
 
   runner-image-arch:
     name: Runner image arch (amd64 ships x86-64 — INCIDENT 2026-07-22 guard)
