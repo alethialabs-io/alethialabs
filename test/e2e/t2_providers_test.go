@@ -14,6 +14,9 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -633,4 +636,41 @@ func TestT2RequireCostShape(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestT2SweeperNameMatchesRealScripts pins the sweeper table against the files on disk.
+//
+// The bug this replaces printed `hcloud-cleanup` on EVERY provider, so an aws run whose in-test
+// destroy was interrupted pointed the reader at hetzner's script — at the exact moment they were
+// diagnosing a possible leak.
+//
+// The first fix was worse than the bug in one case: deriving `<provider>-cleanup.sh` yields
+// `hetzner-cleanup.sh`, which does not exist, because hetzner's sweeper is named after the API.
+// So this asserts against the FILESYSTEM rather than against a naming rule — a table that drifts
+// from the scripts is the same defect wearing a different name.
+func TestT2SweeperNameMatchesRealScripts(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the test file")
+	}
+	dir := filepath.Join(filepath.Dir(thisFile), "..", "..", "scripts", "e2e")
+
+	for provider := range t2ProviderTable {
+		t.Run(provider, func(t *testing.T) {
+			name := t2SweeperName(provider)
+			if strings.HasPrefix(name, "(no sweeper") {
+				t.Fatalf("every provider in the T2 table needs a sweeper mapping; %q has none", provider)
+			}
+			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+				t.Errorf("t2SweeperName(%q) = %q, which is not a file in scripts/e2e: %v", provider, name, err)
+			}
+		})
+	}
+
+	t.Run("an unmapped provider does not get a plausible-looking path", func(t *testing.T) {
+		got := t2SweeperName("nosuchcloud")
+		if strings.HasSuffix(got, ".sh") {
+			t.Errorf("an unknown provider must not be given something that reads as a script path, got %q", got)
+		}
+	})
 }

@@ -375,7 +375,12 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer dcancel()
 		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, project, env, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
-			t.Logf("teardown RunDestroy failed (workflow hcloud-cleanup is the guarantee): %v", derr)
+			// The sweeper NAME follows the provider. This line hardcoded `hcloud-cleanup` on every
+			// cloud, so an aws run whose in-test destroy failed pointed the reader at hetzner's
+			// script — the workflow's own per-provider `case` had already chosen `aws-cleanup.sh`
+			// correctly, so only the message was wrong, and only when someone was reading it after
+			// a failure. `provider` is in scope four lines up.
+			t.Logf("teardown RunDestroy failed (workflow %s is the guarantee): %v", t2SweeperName(provider), derr)
 		} else {
 			t.Log("teardown: cluster destroyed via RunDestroy")
 		}
