@@ -531,13 +531,36 @@ function runSelfTest() {
 		const ci = readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
 		const configs = execFileSync("git", ["ls-files", "*vitest.config.ts"], { cwd: ROOT, encoding: "utf8" }).trim().split("\n").filter(Boolean);
 		/** @type {string[]} */
+		const emitting = [];
+		/** @type {string[]} */
 		const ungated = [];
 		for (const cfg of configs) {
 			const src = readFileSync(path.join(ROOT, cfg), "utf8");
 			if (!/\bcoverage\s*:\s*\{/.test(src)) continue;
 			const proj = path.dirname(cfg);
+			emitting.push(proj);
 			if (!ci.includes(`--project ${proj}`)) ungated.push(proj);
 		}
+		// THE VACUITY CHECK, AND IT COMES FIRST.
+		//
+		// Without it this whole block passes on an EMPTY input: `configs` empty means the loop body
+		// never runs, `ungated` stays empty, and "no project lacks a ratchet step" reports green
+		// having examined ZERO projects. The `catch` below does not cover it either — it handles
+		// git THROWING, not git succeeding and printing nothing (a `git ls-files` from outside a
+		// work tree, a future rename of the config file, a pathspec that stops matching).
+		//
+		// That is the exact defect this script exists to prevent elsewhere: a "nothing found"
+		// branch indistinguishable from "nothing wrong". Asserting the denominator makes the
+		// difference visible — an empty sweep now FAILS instead of congratulating itself.
+		//
+		// The floor is 3 rather than 1 because three projects (apps/console, packages/ui,
+		// packages/plan-catalog) demonstrably declare a coverage block today; a sweep that finds
+		// fewer has stopped seeing something it used to see, whatever the reason.
+		check(
+			"the scope sweep actually examined projects (>= 3 declare coverage)",
+			emitting.length >= 3,
+			`found ${emitting.length} of ${configs.length} vitest configs: ${emitting.join(", ") || "(none)"}`,
+		);
 		check("no coverage-emitting vitest project lacks a ratchet step in ci.yml", ungated.length === 0, ungated.join(", "));
 	} catch (err) {
 		check("scope check could run", false, err.message);
