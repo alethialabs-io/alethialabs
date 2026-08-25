@@ -354,3 +354,89 @@ func TestManagedCloudProbesAreUnknownWithoutACLI(t *testing.T) {
 		})
 	}
 }
+
+// TestDecideZoneAvailability pins the sibling decision for the per-ZONE probe. Same three verdicts
+// and, critically, the same nil-vs-empty distinction: an empty list is the cloud answering "no zone
+// here sells it" and is a REFUSAL, while a nil list is the probe having produced no answer and is
+// not. A `len(zones) == 0` test would collapse the strongest evidence available into an
+// unverified pass — the mistake that would make this check worthless on the case it exists for.
+func TestDecideZoneAvailability(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		zones   []string
+		err     error
+		want    preflightVerdict
+		mustSay string
+	}{
+		{
+			name:    "offered in some zones proceeds and says how many",
+			zones:   []string{"us-east-1a", "us-east-1c"},
+			want:    preflightProceed,
+			mustSay: "2 availability zone(s)",
+		},
+		{
+			// THE POINT. Empty is an ANSWER: no zone in this region sells it.
+			name:    "offered in no zone is a refusal, not an unknown",
+			zones:   []string{},
+			want:    preflightRefuse,
+			mustSay: "NO availability zone",
+		},
+		{
+			// ...and nil is the ABSENCE of an answer, which must never read as a refusal or a pass.
+			name:    "a nil list is unknown, never a refusal",
+			zones:   nil,
+			want:    preflightUnknown,
+			mustSay: "NOT checked",
+		},
+		{
+			name:    "a probe error is unknown and carries the cause",
+			zones:   nil,
+			err:     errors.New("could not connect"),
+			want:    preflightUnknown,
+			mustSay: "could not connect",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := decideZoneAvailability("probe", "m5.large", "us-east-1", tc.zones, tc.err)
+			if got.Verdict != tc.want {
+				t.Errorf("verdict = %q, want %q (detail: %s)", got.Verdict, tc.want, got.Detail)
+			}
+			if !strings.Contains(got.Detail, tc.mustSay) {
+				t.Errorf("detail must mention %q, got: %s", tc.mustSay, got.Detail)
+			}
+			if got.Detail == "" {
+				t.Error("Detail is always non-empty — a check whose result says nothing cannot be told from one that never ran")
+			}
+		})
+	}
+}
+
+// TestDecideZoneAvailabilityProceedDoesNotOverstate keeps the PROCEED honest. The run's own subnets
+// are not resolved here, so "offered in some zone" is not "will work in the zone this cluster lands
+// in" — and an EKS node group lands in specific subnets. The detail has to carry that gap, or a
+// green preflight becomes a guarantee it cannot make.
+func TestDecideZoneAvailabilityProceedDoesNotOverstate(t *testing.T) {
+	got := decideZoneAvailability("probe", "m5.large", "us-east-1", []string{"us-east-1a"}, nil)
+	if got.Verdict != preflightProceed {
+		t.Fatalf("verdict = %q, want proceed", got.Verdict)
+	}
+	if !strings.Contains(got.Detail, "not that the zone this cluster lands in will") {
+		t.Errorf("PROCEED must not read as a guarantee about the run's own zone, got: %s", got.Detail)
+	}
+}
+
+// TestAlibabaCapacityPreflightIsANamedExclusion asserts alibaba is UNKNOWN with a message that says
+// so by name. It routes through its own case rather than the unknown-provider default: an exclusion
+// nobody named becomes a permanent one, and cloud parity is a hard rule in this repository.
+func TestAlibabaCapacityPreflightIsANamedExclusion(t *testing.T) {
+	got := capacityPreflightFor(context.Background(), "alibaba", "cn-hangzhou-b", "ecs.g6.large")
+	if got.Verdict != preflightUnknown {
+		t.Fatalf("verdict = %q, want unknown — an unprobed cloud must never read as checked", got.Verdict)
+	}
+	if !strings.Contains(got.Detail, "alibaba") {
+		t.Errorf("the exclusion must name the cloud, got: %s", got.Detail)
+	}
+	if !strings.Contains(got.Detail, "UNVERIFIED") {
+		t.Errorf("the exclusion must say the run was not verified, got: %s", got.Detail)
+	}
+}
