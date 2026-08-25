@@ -1583,20 +1583,25 @@ func TestProv_WriteAddOnGitOpsReportsEveryFailureMode(t *testing.T) {
 		}
 	})
 
-	t.Run("an unrenderable add-on", func(t *testing.T) {
+	t.Run("a hostile namespace renders instead of breaking the manifest", func(t *testing.T) {
 		bare := newBareAppsRepo(t, nil)
 		bad := provGitopsAddOn("grafana")
-		// A namespace carrying an unclosed YAML flow sequence renders a manifest the label
-		// injector cannot re-parse. That is the reachable render failure: it must be REPORTED
-		// rather than committing a manifest ArgoCD would reject.
+		// INVERTED BY #2589. This asserted that `Namespace = "[unclosed"` — an unclosed YAML flow
+		// sequence — renders a manifest the label injector cannot re-parse, and called that "the
+		// reachable render failure". It was the YAML-injection hole, exercised as though it were the
+		// behaviour under test: the same lever that let a namespace open a SECOND document carrying
+		// a ClusterRoleBinding.
+		//
+		// The Application is now marshalled, so no field value can break the document. The property
+		// worth asserting is therefore the opposite one, and it is stronger: the add-on renders,
+		// commits, and the hostile value survives as DATA rather than as syntax.
 		bad.Namespace = "[unclosed"
 		vc := &types.ProjectConfig{AddOns: []types.AddOnInstall{bad}}
 		vc.Repositories.AppsDestinationRepo = "file://" + bare
 
 		labels := map[string]string{"alethia.io/environment-id": "env-1"}
-		err := writeAddOnGitOps(context.Background(), vc, "tok", labels, io.Discard, io.Discard)
-		if err == nil || !strings.Contains(err.Error(), "render gitops add-on") {
-			t.Fatalf("want the render failure named, got: %v", err)
+		if err := writeAddOnGitOps(context.Background(), vc, "tok", labels, io.Discard, io.Discard); err != nil {
+			t.Fatalf("a field value can no longer produce an unrenderable add-on: %v", err)
 		}
 	})
 
