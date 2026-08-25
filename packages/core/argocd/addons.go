@@ -11,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"text/template"
+	"strconv"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"github.com/alethialabs-io/alethialabs/packages/core/utils"
@@ -33,84 +33,98 @@ import (
 // ServerSideApply is set on both shapes so large-CRD charts (e.g. kube-prometheus-stack's
 // monitoring.coreos.com CRDs) don't blow ArgoCD's 262144-byte client-side annotation limit
 // on first apply.
-var applicationTmpl = template.Must(template.New("addon-app").Parse(`apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: {{ .Name }}
-  namespace: argocd
-  annotations:
-    argocd.argoproj.io/sync-wave: "{{ .SyncWave }}"
-  labels:
-    alethia.io/managed-by: addon-marketplace
-    alethia.io/addon-id: {{ .ID }}
-    alethia.io/addon-mode: {{ .Mode }}
-    alethia.io/addon-source: {{ .Source }}
-  finalizers:
-    - resources-finalizer.argocd.argoproj.io
-spec:
-  project: {{ .Project }}
-  source:
-    repoURL: {{ .ChartRepo }}
-    {{- if eq .Source "git" }}
-    path: {{ .Path }}
-    {{- else }}
-    chart: {{ .Chart }}
-    {{- end }}
-    targetRevision: "{{ .Version }}"
-    helm:
-      values: |
-{{ .ValuesIndented }}
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: {{ .Namespace }}
-  # Under ServerSideApply, ArgoCD's predicted-live carries the API-server-managed status, so the
-  # Kubernetes 1.33+ apps/Deployment .status.terminatingReplicas field (KEP-3973) shows up as a
-  # permanent SPURIOUS diff -> the Application is stuck OutOfSync, and selfHeal cannot fix it (you
-  # cannot apply status). Client-side apps strip status and stay Synced; SSA apps (all marketplace
-  # add-ons) do not. Ignore that status field so every Deployment-backed add-on reaches Synced (the
-  # floor's Healthy+Synced gate). Kubernetes also defaults resourceFieldRef.divisor to "1"; ignore
-  # that API-server-only default so it cannot pin a Deployment-backed add-on OutOfSync. RespectIgnoreDifferences
-  # makes the sync honor both ignores too.
-  ignoreDifferences:
-    - group: apps
-      kind: Deployment
-      jsonPointers:
-        - /status/terminatingReplicas
-      jqPathExpressions:
-        - .spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor
-  {{- if eq .Source "git" }}
-  syncPolicy:
-    syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true
-      - RespectIgnoreDifferences=true
-  {{- else }}
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - CreateNamespace=true
-      - ServerSideApply=true
-      - RespectIgnoreDifferences=true
-  {{- end }}
-  revisionHistoryLimit: 3
-`))
+// The Application wire shape, MARSHALLED rather than templated (#2589).
+//
+// WHAT THE TEMPLATE DID. `applicationTmpl` interpolated NINE values into YAML with no escaping
+// whatsoever — `.Name`, `.ID`, `.Mode`, `.Source`, `.Project`, `.ChartRepo`, `.Path`, `.Chart` and
+// `.Namespace` — and text/template does not escape anything. `.Namespace` is the readiest lever: it
+// arrives from the add-on install spec, reaches the template untouched (there is no DNS-1123
+// validator on this path anywhere in packages/core), and a value of the form
+//
+//	x
+//	---
+//	<an entire ClusterRoleBinding>
+//
+// closes the scalar and opens a SECOND document, which the runner then applies with the cluster's
+// admin kubeconfig. That is the same class #2540 closed for the BYO namespace and #2588 closed for
+// the sibling AppProject; this renderer kept interpolating raw, which is exactly the "fixed one
+// renderer of a value while its sibling kept interpolating" mistake this repo has already paid for.
+//
+// THE TRAP IN THE OBVIOUS FIX. `targetRevision: "{{ .Version }}"` and the sync-wave annotation were
+// ALREADY quoted, so a patch that "adds the missing quotes" looks complete while nine fields stay
+// open — and quoting is not sufficient anyway, since a value containing a quote plus a newline
+// escapes a quoted scalar too. Marshalling closes the class instead of one instance of it.
+//
+// A SECOND BUG DIES WITH IT. `helm.values` was a hand-indented literal block
+// (`indent(valuesYAML, "        ")`). Any values map whose own YAML carried a line that dedented
+// past that prefix would have broken the document; yaml.v3 now emits the block scalar itself and
+// picks its own indent indicator.
+//
+// TYPED STRUCTS, not map[string]any: field ORDER is preserved (yaml.v3 sorts map keys, which would
+// reshuffle the manifest on every render for no reason), and the shape is checked by the compiler
+// rather than by whoever next reads a 60-line template.
+type addonApplication struct {
+	APIVersion string       `yaml:"apiVersion"`
+	Kind       string       `yaml:"kind"`
+	Metadata   addonAppMeta `yaml:"metadata"`
+	Spec       addonAppSpec `yaml:"spec"`
+}
 
-// addonTmplData is the flattened view the Application template renders against.
-type addonTmplData struct {
-	Name           string
-	ID             string
-	Mode           string
-	Source         string
-	Project        string
-	Chart          string
-	Path           string
-	ChartRepo      string
-	Version        string
-	Namespace      string
-	SyncWave       int
-	ValuesIndented string
+type addonAppMeta struct {
+	Name      string `yaml:"name"`
+	Namespace string `yaml:"namespace"`
+	// The sync-wave value MUST marshal as a STRING: ArgoCD reads the annotation as text, and an
+	// unquoted 2 is an int. Held as a string for that reason, not as an int formatted late.
+	Annotations map[string]string `yaml:"annotations"`
+	Labels      map[string]string `yaml:"labels"`
+	Finalizers  []string          `yaml:"finalizers"`
+}
+
+type addonAppSpec struct {
+	Project           string                  `yaml:"project"`
+	Source            addonAppSource          `yaml:"source"`
+	Destination       addonAppDestination     `yaml:"destination"`
+	IgnoreDifferences []addonIgnoreDifference `yaml:"ignoreDifferences"`
+	SyncPolicy        addonSyncPolicy         `yaml:"syncPolicy"`
+	RevisionHistory   int                     `yaml:"revisionHistoryLimit"`
+}
+
+type addonAppSource struct {
+	RepoURL string `yaml:"repoURL"`
+	// Exactly ONE of Path (git source) or Chart (helm source) is set; the other is omitted. The
+	// template expressed this with an if/else, which is why both carry omitempty here.
+	Path           string       `yaml:"path,omitempty"`
+	Chart          string       `yaml:"chart,omitempty"`
+	TargetRevision string       `yaml:"targetRevision"`
+	Helm           addonAppHelm `yaml:"helm"`
+}
+
+type addonAppHelm struct {
+	Values string `yaml:"values"`
+}
+
+type addonAppDestination struct {
+	Server    string `yaml:"server"`
+	Namespace string `yaml:"namespace"`
+}
+
+type addonIgnoreDifference struct {
+	Group             string   `yaml:"group"`
+	Kind              string   `yaml:"kind"`
+	JSONPointers      []string `yaml:"jsonPointers,omitempty"`
+	JQPathExpressions []string `yaml:"jqPathExpressions,omitempty"`
+}
+
+type addonSyncPolicy struct {
+	// Automated is nil for git (BYO) sources — an untrusted chart is not self-healed or pruned
+	// automatically. The template expressed the same split with an if/else.
+	Automated   *addonAutomated `yaml:"automated,omitempty"`
+	SyncOptions []string        `yaml:"syncOptions"`
+}
+
+type addonAutomated struct {
+	Prune    bool `yaml:"prune"`
+	SelfHeal bool `yaml:"selfHeal"`
 }
 
 // AddOnAppName is the ArgoCD Application name for an add-on. Deterministic (the catalog id),
@@ -181,23 +195,68 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 	if project == "" {
 		project = "infra"
 	}
-	data := addonTmplData{
-		Name:           AddOnAppName(a.ID),
-		ID:             a.ID,
-		Mode:           mode,
-		Source:         source,
-		Project:        project,
-		Chart:          a.Chart,
-		Path:           a.Path,
-		ChartRepo:      a.ChartRepo,
-		Version:        a.Version,
-		Namespace:      a.Namespace,
-		SyncWave:       a.SyncWave,
-		ValuesIndented: indent(valuesYAML, "        "),
+	app := addonApplication{
+		APIVersion: "argoproj.io/v1alpha1",
+		Kind:       "Application",
+		Metadata: addonAppMeta{
+			Name:        AddOnAppName(a.ID),
+			Namespace:   "argocd",
+			Annotations: map[string]string{"argocd.argoproj.io/sync-wave": strconv.Itoa(a.SyncWave)},
+			Labels: map[string]string{
+				"alethia.io/managed-by":   "addon-marketplace",
+				"alethia.io/addon-id":     a.ID,
+				"alethia.io/addon-mode":   mode,
+				"alethia.io/addon-source": source,
+			},
+			Finalizers: []string{"resources-finalizer.argocd.argoproj.io"},
+		},
+		Spec: addonAppSpec{
+			Project: project,
+			Source: addonAppSource{
+				RepoURL:        a.ChartRepo,
+				TargetRevision: a.Version,
+				Helm:           addonAppHelm{Values: valuesYAML},
+			},
+			Destination: addonAppDestination{
+				Server:    "https://kubernetes.default.svc",
+				Namespace: a.Namespace,
+			},
+			// Under ServerSideApply, ArgoCD's predicted-live carries the API-server-managed status, so
+			// the Kubernetes 1.33+ apps/Deployment .status.terminatingReplicas field (KEP-3973) shows up
+			// as a permanent SPURIOUS diff -> the Application is stuck OutOfSync, and selfHeal cannot fix
+			// it (you cannot apply status). Client-side apps strip status and stay Synced; SSA apps (all
+			// marketplace add-ons) do not. Kubernetes also defaults resourceFieldRef.divisor to "1";
+			// ignore that API-server-only default so it cannot pin a Deployment-backed add-on OutOfSync.
+			// RespectIgnoreDifferences makes the sync honor both ignores too.
+			IgnoreDifferences: []addonIgnoreDifference{{
+				Group:             "apps",
+				Kind:              "Deployment",
+				JSONPointers:      []string{"/status/terminatingReplicas"},
+				JQPathExpressions: []string{".spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor"},
+			}},
+			SyncPolicy: addonSyncPolicy{
+				SyncOptions: []string{"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"},
+			},
+			RevisionHistory: 3,
+		},
 	}
+	if source == "git" {
+		app.Spec.Source.Path = a.Path
+	} else {
+		app.Spec.Source.Chart = a.Chart
+		// A git (BYO) source is NOT automated: an untrusted chart must not be self-healed or pruned
+		// without a deploy asking for it. Marketplace charts are.
+		app.Spec.SyncPolicy.Automated = &addonAutomated{Prune: true, SelfHeal: true}
+	}
+
 	var buf bytes.Buffer
-	if err := applicationTmpl.Execute(&buf, data); err != nil {
-		return "", err
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(app); err != nil {
+		return "", fmt.Errorf("failed to marshal add-on Application %s: %w", a.ID, err)
+	}
+	if err := enc.Close(); err != nil {
+		return "", fmt.Errorf("failed to marshal add-on Application %s: %w", a.ID, err)
 	}
 	return buf.String(), nil
 }
@@ -217,22 +276,6 @@ func marshalValues(values map[string]interface{}) (string, error) {
 	}
 	_ = enc.Close()
 	return buf.String(), nil
-}
-
-// indent prefixes every non-empty line with `prefix` (for nesting a YAML block under a
-// literal-block scalar). Trailing empty lines are dropped so the block stays tight.
-func indent(s, prefix string) string {
-	lines := splitLines(s)
-	var buf bytes.Buffer
-	for i, ln := range lines {
-		if ln == "" && i == len(lines)-1 {
-			continue
-		}
-		buf.WriteString(prefix)
-		buf.WriteString(ln)
-		buf.WriteByte('\n')
-	}
-	return buf.String()
 }
 
 // splitLines splits on '\n' without a trailing empty element surprise (keeps interior blanks).
