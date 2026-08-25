@@ -325,9 +325,24 @@ func diagnoseArgoURLError(err error) string {
 		return "dns-not-resolving: the hostname does not resolve — external-dns has not written the record (waiting longer will NOT fix this)"
 	case strings.Contains(msg, "connection refused"):
 		return "connect-refused: the name resolves but nothing is listening — the target is not serving yet (a timing problem)"
+	// BEFORE the certificate arm, deliberately. Go emits exactly "net/http: TLS handshake
+	// timeout" (net/http/transport.go, tlsHandshakeTimeoutError), which contains no "tls:", no
+	// "certificate" and no "x509" — so it used to reach the default and come back UNCLASSIFIED,
+	// carrying no timing claim at all for a failure that is entirely about timing. Ordering it
+	// first also means a future wrapped form that DOES read "tls: ... handshake timeout" cannot
+	// be captured by the certificate arm, where it would assert the opposite advice: the two
+	// labels disagree about whether waiting helps, and that decides the next run's budget.
+	case strings.Contains(msg, "TLS handshake timeout"):
+		return "tls-handshake-timeout: TCP connected but the handshake did not complete — the listener is up and not yet serving TLS, or the reply is being dropped (a timing problem)"
 	case strings.Contains(msg, "certificate"), strings.Contains(msg, "tls:"),
 		strings.Contains(msg, "x509"):
-		return "tls: the connection was made and the certificate was rejected — the ACM certificate is not attached to the listener, or does not cover this name"
+		// States what was OBSERVED and offers causes as candidates. An earlier wording named a
+		// single cause — "the ACM certificate is not attached to the listener, or does not cover
+		// this name" — which reads as a diagnosis the probe cannot support: a rejected
+		// certificate is equally an expired one, an untrusted chain, or an SNI mismatch, and
+		// on the clouds where cert-manager rather than ACM issues the certificate, ACM is not
+		// even the mechanism. Its siblings state observations; this one asserted a conclusion.
+		return "tls: the connection was made and the certificate was rejected — check that a certificate is attached to the listener and covers this name, is unexpired, and chains to a trusted root (waiting longer will NOT fix this)"
 	case strings.Contains(msg, "context deadline exceeded"), strings.Contains(msg, "i/o timeout"),
 		strings.Contains(msg, "Client.Timeout"):
 		return "timeout: the name resolves and the connection hangs — typically a security group, or an ALB still registering targets (a timing problem)"
