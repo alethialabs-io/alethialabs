@@ -522,6 +522,12 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derive expected ArgoCD apps: %v\nraw metadata: %s", err, metaRaw)
 	}
+	// The set is DERIVED from persisted metadata, which can silently shrink — see
+	// RequireAllAddOnsExpected. Checked before it is used, so a full-surface run cannot assert
+	// the floor and report the 18-chart sweep.
+	if err := RequireAllAddOnsExpected(expectedApps); err != nil {
+		t.Fatalf("full add-on surface: %v", err)
+	}
 	t.Logf("asserting ArgoCD Applications reach Healthy+Synced: %v", expectedApps)
 
 	if reposEnabled {

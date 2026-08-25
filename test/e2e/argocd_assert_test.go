@@ -707,3 +707,78 @@ func TestAGICApplicationNameMatchesTemplate(t *testing.T) {
 		t.Errorf("AGIC gate %q must be azure-only", gate[1])
 	}
 }
+
+// TestRequireAllAddOnsExpected pins the guard that stops a full-surface run reporting the floor.
+//
+// Run 32883521925 PASSED the `addons` dimension having asserted four Applications —
+// [addon-byo-e2e apps external-secrets-operator metrics-server] — because the expected set is
+// derived from execution_metadata.addon_status and that persistence had silently failed. Four is
+// not zero, so DeriveExpectedArgoApps's "never empty" check did not fire.
+//
+// The axis varied here is THE COMPLETENESS OF THE SET, not whether it is empty — an empty-set test
+// would have passed against the bug.
+func TestRequireAllAddOnsExpected(t *testing.T) {
+	catalog, err := AllCatalogAddOns()
+	if err != nil {
+		t.Fatalf("catalog fixture: %v", err)
+	}
+	var wantApps []string
+	for _, a := range catalog {
+		if a.Mode == "managed" && !a.IsManifestSource() {
+			wantApps = append(wantApps, argocd.AddOnAppName(a.ID))
+		}
+	}
+	if len(wantApps) < 2 {
+		t.Fatalf("the catalog fixture yields %d Application-bearing add-ons — this test would be vacuous", len(wantApps))
+	}
+
+	t.Run("off by default: the lean tier is not required to carry the catalog", func(t *testing.T) {
+		t.Setenv("ALETHIA_E2E_ALL_ADDONS", "")
+		if err := RequireAllAddOnsExpected([]string{"external-secrets-operator"}); err != nil {
+			t.Errorf("the lean tier must not be held to the full surface: %v", err)
+		}
+	})
+
+	t.Run("THE REGRESSION: the real four-app set is refused", func(t *testing.T) {
+		t.Setenv("ALETHIA_E2E_ALL_ADDONS", "1")
+		err := RequireAllAddOnsExpected([]string{"addon-byo-e2e", "apps", "external-secrets-operator", "metrics-server"})
+		if err == nil {
+			t.Fatal("a full-surface run asserting four Applications must be refused — this is run 32883521925")
+		}
+		// The failure has to name what is missing; "incomplete" alone sends the reader to a cluster.
+		if !strings.Contains(err.Error(), "ABSENT") {
+			t.Errorf("the failure must say what is absent, got %q", err)
+		}
+		for _, probe := range wantApps[:2] {
+			if !strings.Contains(err.Error(), probe) {
+				t.Errorf("the failure must NAME the missing add-on %q, got %q", probe, err)
+			}
+		}
+		// And it must point at the cause, which is not the assertion.
+		if !strings.Contains(err.Error(), "recordAddonHealth") {
+			t.Errorf("the failure should point at the persistence that shrank the set, got %q", err)
+		}
+	})
+
+	t.Run("the complete set passes", func(t *testing.T) {
+		t.Setenv("ALETHIA_E2E_ALL_ADDONS", "1")
+		full := append([]string{"external-secrets-operator", "metrics-server"}, wantApps...)
+		if err := RequireAllAddOnsExpected(full); err != nil {
+			t.Errorf("a complete set must pass: %v", err)
+		}
+	})
+
+	t.Run("ONE missing add-on is still refused", func(t *testing.T) {
+		// The interesting boundary is not four-of-twenty; it is nineteen-of-twenty, which a
+		// count-based check tuned to "roughly the right size" would wave through.
+		t.Setenv("ALETHIA_E2E_ALL_ADDONS", "1")
+		full := append([]string{"external-secrets-operator", "metrics-server"}, wantApps[1:]...)
+		err := RequireAllAddOnsExpected(full)
+		if err == nil {
+			t.Fatal("a single missing add-on must still fail — the surface is not 'roughly complete'")
+		}
+		if !strings.Contains(err.Error(), wantApps[0]) {
+			t.Errorf("the one missing add-on must be named, got %q", err)
+		}
+	})
+}

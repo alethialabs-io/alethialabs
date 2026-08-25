@@ -40,6 +40,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 )
 
 // argoPollInterval is how often AssertArgoAppsHealthy re-reads the Applications.
@@ -273,6 +275,71 @@ func DeriveExpectedArgoApps(provider string, metaRaw []byte) ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// RequireAllAddOnsExpected refuses a full-surface run whose ASSERTION set lost the add-ons.
+//
+// WHY, measured. hetzner/addons run 32883521925 reported
+//
+//	--- PASS: TestT2RealCloudProvisioning (1053.09s)
+//
+// having asserted FOUR Applications — `[addon-byo-e2e apps external-secrets-operator
+// metrics-server]` — on the dimension whose own banner calls it "the 18-chart sweep to
+// Healthy+Synced". No harbor, no kube-prometheus-stack, no loki, no vault. The 2026-08-24 run of
+// the same dimension asserted twenty. `ALETHIA_E2E_ALL_ADDONS=1` was set and reached the harness.
+//
+// The add-on half of the expected set comes from `execution_metadata.addon_status`, and the same
+// run logged why it was missing:
+//
+//	A0.5 WARN: reloader add-on health row absent/empty — finalizeDeployment.recordAddonHealth
+//	did not persist real ArgoCD health
+//
+// So the assertion derives its own SCOPE from a source that can silently shrink. DeriveExpectedArgoApps
+// guards `len(set) == 0` — "never empty" — and four is not zero, so a full-surface run reported
+// green having proven the floor. That is precisely the vacuous proof `AllCatalogAddOns` already
+// refuses on the SEEDING side ("a full-surface run that quietly installed 1 add-on and reported
+// green would be the exact vacuous proof the FULLY-TESTED bar exists to prevent"); the same
+// argument had never been applied to the ASSERTING side.
+//
+// The harness already knew the right number: `argoAddOnCount` sizes the convergence BUDGET from
+// the catalog, so the budget expected eighteen while the assertion expected four. A decision that
+// reports on an emitter must mirror every field the emitter set.
+//
+// A no-op unless ALETHIA_E2E_ALL_ADDONS is on — the lean tier genuinely seeds a small set.
+func RequireAllAddOnsExpected(expected []string) error {
+	if !AllAddOnsEnabled() {
+		return nil
+	}
+	catalog, err := AllCatalogAddOns()
+	if err != nil {
+		// Fail-closed: unable to read the catalog is not "nothing to check".
+		return fmt.Errorf("full add-on surface requested but the catalog fixture is unreadable, so the assertion set cannot be checked for completeness: %w", err)
+	}
+	have := make(map[string]struct{}, len(expected))
+	for _, e := range expected {
+		have[e] = struct{}{}
+	}
+	var missing []string
+	for _, a := range catalog {
+		if a.Mode != "managed" || a.IsManifestSource() {
+			// Only ArgoCD-rendered add-ons produce an Application to assert on. A manifest
+			// add-on is kubectl-applied and has none, so requiring one would red every run.
+			continue
+		}
+		name := argocd.AddOnAppName(a.ID)
+		if _, ok := have[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf(
+		"ALETHIA_E2E_ALL_ADDONS=1 but %d of the catalog's Application-bearing add-ons are ABSENT from the expected set, so this run would assert the floor and report the 18-chart sweep: %s\n"+
+			"  the set is derived from execution_metadata.addon_status; an empty/short one means finalizeDeployment.recordAddonHealth did not persist add-on health (look for the A0.5 WARN in this run)\n"+
+			"  asserted instead: %v",
+		len(missing), strings.Join(missing, ", "), expected)
 }
 
 // AssertArgoAppsHealthy polls `kubectl get applications.argoproj.io -n argocd -o json`
