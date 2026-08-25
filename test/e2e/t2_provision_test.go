@@ -322,7 +322,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// fidelity check runs against (lean synthetic by default; the REAL console fixture shape under
 	// ALETHIA_E2E_A05_REAL_SNAPSHOT); `full` layers the A0.6 repos + the per-cloud cluster-json
 	// override the runner actually consumes.
-	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, registry, registryOn, a05)
+	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, registry, registryOn, acmCert, acmCertOn, a05)
 	if err != nil {
 		t.Fatalf("build deploy snapshot: %v", err)
 	}

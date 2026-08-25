@@ -317,3 +317,106 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+// TestScenarioApplyToSnapshotIsCalled is the third guard in this file, and it closes the gap the
+// first two structurally cannot see.
+//
+// The existing guards ask "is the enable VARIABLE wired?" and "does the script name a REAL test?".
+// #1773 satisfied both and still could not pass: ALETHIA_E2E_ACM_CERT was wired in e2e-nightly.yml,
+// acmCertConfig.decide() turned the layer on, the provision test logged "ACM certificate ENABLED",
+// and runT2AcmCert then asserted a certificate that nothing had ever asked the template to build.
+// acmCertConfig.applyToSnapshot existed, was unit-tested, carried a comment saying "this assignment
+// is what the floor path uses" — and was called from no production path at all.
+//
+// Run 32838291742 is the record: the plan carried no aws_acm_certificate, `route53_zone_id = ""`,
+// and the verdict read `no aws_acm_certificate_validation in state`. A scenario that ASSERTS without
+// CONFIGURING cannot go green, and no amount of retrying moves it.
+//
+// So: every scenario type that DEFINES an applyToSnapshot must have it CALLED from the one function
+// that assembles the deploy snapshot. The check is a source grep for the same reason the guards
+// above are — it has to hold about the code as written, not about a code path a test happened to
+// take.
+func TestScenarioApplyToSnapshotIsCalled(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	dir := filepath.Dir(thisFile)
+
+	definer := regexp.MustCompile(`func \(([a-z]) ([a-zA-Z0-9_]+)\) applyToSnapshot\(`)
+
+	// Every receiver type that defines the method, and the file it was defined in (for the message).
+	defined := map[string]string{}
+	// Every receiver VALUE the assembler calls it on, e.g. `repos` in `repos.applyToSnapshot(full)`.
+	called := map[string]bool{}
+	// t2DeploySnapshot's parameter list, verbatim — the only reliable type→variable mapping.
+	sig := ""
+
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return err
+		}
+		src, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		text := string(src)
+		base := filepath.Base(path)
+
+		// Definitions come from anywhere; a scenario's type may live in a _test.go file or not.
+		for _, m := range definer.FindAllStringSubmatch(text, -1) {
+			defined[m[2]] = base
+		}
+		// Calls only count from the snapshot assembler. A call from a unit test proves the method
+		// works; it does not put the configuration into a real deploy, which is precisely the
+		// distinction #1773 fell through.
+		if strings.Contains(text, "func t2DeploySnapshot(") {
+			if m := regexp.MustCompile(`func t2DeploySnapshot\(([^)]*)\)`).FindStringSubmatch(text); m != nil {
+				sig = m[1]
+			}
+			for _, m := range regexp.MustCompile(`\b([a-zA-Z0-9_]+)\.applyToSnapshot\(`).FindAllStringSubmatch(text, -1) {
+				called[m[1]] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
+	}
+
+	if len(defined) == 0 {
+		t.Fatal("found no applyToSnapshot definitions at all — this guard is scanning the wrong tree " +
+			"and would pass over any number of unwired scenarios")
+	}
+	if len(called) == 0 {
+		t.Fatal("found no applyToSnapshot CALLS in t2DeploySnapshot — either the assembler was renamed " +
+			"or every scenario is unwired; both make this guard vacuous, so it fails rather than passes")
+	}
+
+	// Resolve each scenario TYPE to the variable the assembler receives it as, by reading
+	// t2DeploySnapshot's own parameter list. Matching type names against variable names by string
+	// similarity does not work — `t2ArgoRepos` arrives as `repos`, `secretsXacctConfig` as `xacct` —
+	// and a guard that guesses wrong is worse than none: it either cries wolf or, if loosened to stop
+	// crying wolf, stops catching the thing it exists for.
+	paramOf := map[string]string{} // type name -> parameter variable name
+	for _, m := range regexp.MustCompile(`([a-zA-Z0-9_]+) ([a-zA-Z0-9_]+)(?:,|\))`).FindAllStringSubmatch(sig, -1) {
+		paramOf[m[2]] = m[1]
+	}
+
+	for typeName, file := range defined {
+		v, isParam := paramOf[typeName]
+		if !isParam {
+			t.Errorf("%s defines applyToSnapshot (%s) but is not even a parameter of t2DeploySnapshot — "+
+				"the scenario cannot reach a real deploy snapshot at all. That is #1773: "+
+				"ALETHIA_E2E_ACM_CERT was wired, decide() said yes, the run logged ENABLED, and the "+
+				"plan carried no certificate because acmCertConfig was never passed in.", typeName, file)
+			continue
+		}
+		if !called[v] {
+			t.Errorf("%s (%s) is passed to t2DeploySnapshot as %q but %s.applyToSnapshot is never "+
+				"called there — the scenario can turn ON, log that it is enabled, and then assert "+
+				"against a snapshot it never configured. Call it AFTER MaxConfigSnapshot.",
+				typeName, file, v, v)
+		}
+	}
+}
