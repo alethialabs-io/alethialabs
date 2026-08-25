@@ -159,12 +159,65 @@ function escapeRe(s) {
  */
 export function envValueSettings(block) {
 	const out = [];
-	// Each `set { … }` body, non-greedy: these blocks never nest.
-	for (const m of block.matchAll(/set\s*\{([^{}]*)\}/g)) {
-		const body = m[1];
+	// STRING-AWARE, walking braces rather than `/set\s*\{([^{}]*)\}/g`.
+	//
+	// That character class excludes braces OUTRIGHT, so a `set { … }` whose VALUE contains one does
+	// not match at all — it never enters `out`, and a skipped setting is indistinguishable from a
+	// typed one. The failure direction is the bad one: an untyped `env.*.value` inside a
+	// brace-bearing block passes the guard silently, which is the exact class this guard exists to
+	// end.
+	//
+	// This file already demonstrates the shape that breaks it:
+	//
+	//	set {
+	//	  name  = "securityContext.capabilities.ciliumAgent"
+	//	  value = "{CHOWN,KILL,NET_ADMIN,…}"
+	//	}
+	//
+	// Harmless today — those are `securityContext.*` and live in the cilium block rather than the
+	// CCM block this runs against — but it is the same brace problem `extractCcmBlock` already
+	// solves one level up, and solving it the same way keeps ONE answer to "where does this block
+	// end" instead of two that can disagree.
+	for (let i = 0; i < block.length; i++) {
+		const at = block.indexOf("set", i);
+		if (at === -1) break;
+		// `set` must be a WORD, not the tail of an identifier like `offset` or `ruleset`.
+		if (at > 0 && /[A-Za-z0-9_]/.test(block[at - 1])) {
+			i = at + 2;
+			continue;
+		}
+		const open = block.indexOf("{", at);
+		if (open === -1) break;
+		// Only a `set` immediately followed by its brace; anything else is a different construct.
+		if (block.slice(at + 3, open).trim() !== "") {
+			i = at + 2;
+			continue;
+		}
+		let depth = 0;
+		let inString = false;
+		let end = -1;
+		for (let j = open; j < block.length; j++) {
+			const ch = block[j];
+			if (inString) {
+				if (ch === "\\") j++;
+				else if (ch === '"') inString = false;
+				continue;
+			}
+			if (ch === '"') inString = true;
+			else if (ch === "{") depth++;
+			else if (ch === "}") {
+				depth--;
+				if (depth === 0) {
+					end = j;
+					break;
+				}
+			}
+		}
+		if (end === -1) break; // unbalanced: the caller's block extraction already reports that
+		const body = block.slice(open + 1, end);
 		const name = /name\s*=\s*"env\.([A-Za-z0-9_.-]+)\.value"/.exec(body);
-		if (!name) continue;
-		out.push({ key: name[1], typed: /type\s*=\s*"string"/.test(body) });
+		if (name) out.push({ key: name[1], typed: /type\s*=\s*"string"/.test(body) });
+		i = end;
 	}
 	return out;
 }
@@ -266,6 +319,14 @@ data "helm_template" "hcloud_ccm" {
 }`;
 	// The EXACT pre-fix shape that shipped the bug.
 	// #2549: a value carrying a `#` or `//`. Both are ordinary in helm extraArgs and annotations.
+	// #2625's guard was blind to its own file's shape: `/set\s*\{([^{}]*)\}/g` excludes braces
+	// OUTRIGHT, so a `set` whose VALUE carries one never matched and was never checked for
+	// `type = "string"`. A skipped setting and a typed setting looked identical in the result.
+	const braceInAnEnvValue = `
+data "helm_template" "hcloud_ccm" {
+  set { name = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value" value = "nbg1" type = "string" }
+  set { name = "env.HCLOUD_CAPS.value" value = "{CHOWN,KILL,NET_ADMIN}" }
+}`;
 	const hashInAString = `
 data "helm_template" "hcloud_ccm" {
   set { name = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value" value = "nbg1" }
@@ -361,6 +422,14 @@ data "helm_template" "hcloud_ccm" {
 	// brace-balancer ran to EOF and a CORRECTLY configured block reported `block: null` — the hard
 	// failure that says "the CCM was removed", on a template where it is right there.
 	ok("a '#' inside a quoted value does not blank the block (#2549)", analyse(hashInAString).block !== null);
+	ok(
+		"an UNTYPED env value containing a brace is CAUGHT, not skipped (#2625)",
+		analyse(braceInAnEnvValue).untyped.includes("HCLOUD_CAPS"),
+	);
+	ok(
+		"...and the typed sibling in the same block is still seen as typed",
+		!analyse(braceInAnEnvValue).untyped.includes("HCLOUD_LOAD_BALANCERS_LOCATION"),
+	);
 	ok("...and the location it configures is still found", analyse(hashInAString).found.length === 1);
 	ok("a '//' inside a quoted value is likewise not a comment", analyse(slashesInAString).found.length === 1);
 	// The under-stripping half must stay closed: a comment OUTSIDE a string is still removed.
