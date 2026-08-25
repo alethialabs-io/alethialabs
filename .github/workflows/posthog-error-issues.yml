@@ -36,6 +36,9 @@ jobs:
   file:
     runs-on: ubuntu-latest
     steps:
+      # ABSENT is a clean skip; INVALID is not. A rejected key means error triage is down, so the
+      # run fails and says to rotate it (scripts/posthog-error-issues.mjs). Gating on presence alone
+      # is what let an expired key read as an unexplained 401 for days — #2485.
       - name: Guard — skip cleanly when the PostHog key is absent
         id: guard
         env:
