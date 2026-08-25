@@ -71,6 +71,19 @@ ALETHIA_E2E_ENV=30518134684-1 ALETHIA_E2E_REGION=<region> ./scripts/e2e/aws-clea
 
 ---
 
+## 0.5 · Make the e2e federation authoritative — **two applies and one import, not four applies**
+
+#2462 says "four applies". Planned against live state on 2026-08-25 that is wrong in a way that
+costs a failed apply, so the breakdown lives here and the commands live in
+**`docs/testing/e2e-federation-apply-runbook.md`**:
+
+| stack | action | why |
+|---|---|---|
+| `infra/gcp-e2e` | **apply** | the e2e SA holds `roles/browser` and no `roles/cloudkms.admin`; #2295 was committed and never applied, so `gcp/floor` dies in `secrets-encryption.tf` (#2258) |
+| `infra/alibaba-e2e` | **apply** | `+kms:*`, and `oidc:sub` is still a **scalar** — alibaba cannot be dispatched from `dev` at all |
+| `infra/azure-e2e` | **import** | `gh-oidc-env` exists live but is absent from state; an apply **collides** instead of converging |
+| `infra/aws-oidc` | **nothing** | both subjects present and state agrees — a diff here means you passed a different `e2e_budget_alert_emails`, not drift |
+
 ## 1 · Set one secret — closes two issues
 
 | unit | action |
@@ -83,6 +96,12 @@ The gate at `e2e-nightly.yml:201` green-skips hetzner every night until then.
 
 ⚠️ The issue asks you to dispatch hetzner alone at floor and run the kill-drill **before**
 setting the secret — the account is shared with prod.
+
+That warning is about the **account**, and the remedy is the **project**. Mint the token inside
+`alethia-infra-tests`, which the 2026-08-24 preflight measured as completely empty: a Hetzner API
+token is scoped to one project and cannot see another, so a token minted there has no prod blast
+radius and the kill-drill is not a precondition. Minting it in `tovr-prod` or any
+`alethia-*-prod` context is the thing #1579 is actually warning against.
 
 ---
 
