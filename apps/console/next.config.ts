@@ -33,11 +33,12 @@ const PUBLIC_DEV_ORIGINS = (() => {
 
 const nextConfig: NextConfig = {
 	output: "standalone",
-	// `next build` type-checks against tsconfig.build.json, which is tsconfig.json minus
-	// `tests/`. See that file for why: the production image installs a PRUNED closure, and
-	// type-checking a test that imports a sibling app broke every console build while CI —
-	// which runs `tsc --noEmit` after a FULL install — stayed green. This narrows only the
-	// BUILD's graph; `check-types` still covers tests.
+	// `next build` type-checks against tsconfig.build.json — tsconfig.json minus every file the
+	// image does not ship (tests, e2e + its helpers, scripts, tooling configs). The production
+	// image installs a PRUNED closure, so a non-shipped file can resolve in CI's full install and
+	// fail in the image; #2521 fixed the instance, this narrows the class. `check-types` still
+	// covers all of it. ⚠️ `extends` in that file silently disables Next's own tsconfig
+	// verification — see the note there before editing either.
 	typescript: { tsconfigPath: "tsconfig.build.json" },
 	// The dev indicator defaults to bottom-left, where it lands on the sidebar
 	// profile (avatar + name). Same reason ReactQueryDevtools moved — see providers.tsx.
