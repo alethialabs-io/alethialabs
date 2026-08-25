@@ -314,3 +314,44 @@ run "a_replica_list_naming_the_primary_region_is_deduplicated" {
     error_message = "Primary at 0, the one real replica at 1 — nothing doubled; got ${jsonencode(module.cosmos_db[0].geo_locations)}."
   }
 }
+
+# One `partition_key` field feeds two clouds with incompatible rules: DynamoDB takes a bare attribute
+# name, Cosmos takes a JSON path that must start with `/`. The console labels the field "Hash key" —
+# DynamoDB's own word — so `pk` is the obvious thing for a customer to type, and it is correct on
+# aws. On azure it produced, on the first full bar to ever reach Cosmos (32836351919):
+#
+#   The partition key component definition path 'pk' could not be accepted, failed near position '0'
+#
+# This is the direction that catches a regression in the rooting.
+run "a_bare_partition_key_is_rooted_into_a_path" {
+  command = plan
+
+  variables {
+    cosmos_db_collections = [
+      { name = "items", partition_key = "pk" },
+    ]
+  }
+
+  assert {
+    condition     = module.cosmos_db[0].partition_key_paths["items"] == tolist(["/pk"])
+    error_message = "A bare partition key must be rooted to a Cosmos path — Cosmos rejects 'pk' at apply; got ${jsonencode(module.cosmos_db[0].partition_key_paths["items"])}."
+  }
+}
+
+# The other direction, and the one a naive fix breaks: an ALREADY-rooted path must pass through
+# untouched. Prefixing unconditionally would yield `//id`, which Cosmos rejects for the same reason —
+# turning a bug that only bit new users into one that bit existing ones too.
+run "an_already_rooted_partition_key_is_left_alone" {
+  command = plan
+
+  variables {
+    cosmos_db_collections = [
+      { name = "orders", partition_key = "/tenant" },
+    ]
+  }
+
+  assert {
+    condition     = module.cosmos_db[0].partition_key_paths["orders"] == tolist(["/tenant"])
+    error_message = "An already-rooted path must not be prefixed again (`//tenant` is as invalid as `tenant`); got ${jsonencode(module.cosmos_db[0].partition_key_paths["orders"])}."
+  }
+}

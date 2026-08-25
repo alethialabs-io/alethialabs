@@ -80,7 +80,7 @@ on:
           - alibaba
         default: hetzner
       region:
-        description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, gcp europe-west3, azure germanywestcentral, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1."
+        description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, gcp europe-west3, azure westeurope, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1."
         type: string
         default: ""
       full_bar:
@@ -327,7 +327,7 @@ jobs:
             hetzner) DEFAULT_REGION="nbg1" ;;
             aws)     DEFAULT_REGION="us-east-1" ;;
             gcp)     DEFAULT_REGION="europe-west3" ;;
-            azure)   DEFAULT_REGION="germanywestcentral" ;;
+            azure)   DEFAULT_REGION="westeurope" ;;
             alibaba) DEFAULT_REGION="eu-central-1" ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
           esac

@@ -67,10 +67,30 @@ resource "azurerm_cosmosdb_sql_container" "this" {
     for c in var.collections : c.name => c
   } : {}
 
-  name                   = each.value.name
-  resource_group_name    = var.resource_group_name
-  account_name           = azurerm_cosmosdb_account.this.name
-  database_name          = azurerm_cosmosdb_sql_database.this[0].name
-  partition_key_paths    = [each.value.partition_key]
+  name                = each.value.name
+  resource_group_name = var.resource_group_name
+  account_name        = azurerm_cosmosdb_account.this.name
+  database_name       = azurerm_cosmosdb_sql_database.this[0].name
+
+  # Cosmos wants a PATH; the product collects an ATTRIBUTE NAME.
+  #
+  # One `partition_key` field feeds two clouds with different rules. DynamoDB takes a bare attribute
+  # name (`pk`) — the console labels the field "Hash key", which is DynamoDB's own word for it — and
+  # Cosmos takes a JSON path that must begin with `/`. So the identical component that provisions on
+  # aws fails on azure with
+  #
+  #   The partition key component definition path 'pk' could not be accepted, failed near position '0'
+  #
+  # which is what the first azure full bar hit (32836351919). Any customer who types `pk` in the
+  # console — the obvious thing to type, and correct for aws — gets that error.
+  #
+  # Normalised here rather than at the caller because the caller is not one place: the console form,
+  # the CLI, the promotion diff and test/e2e/maxconfig.go all supply this field, and a fix in one of
+  # them leaves the other three broken. An already-rooted path is passed through untouched, so the
+  # module's own `/id` default and anyone already storing `/pk` are unaffected.
+  partition_key_paths = [
+    startswith(each.value.partition_key, "/") ? each.value.partition_key : "/${each.value.partition_key}"
+  ]
+
   analytical_storage_ttl = each.value.analytical_storage_enabled ? -1 : null
 }
