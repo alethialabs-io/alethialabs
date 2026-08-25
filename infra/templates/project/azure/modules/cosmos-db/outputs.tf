@@ -51,3 +51,11 @@ output "serverless" {
   description = "Whether the account is planned with the EnableServerless capability — false once any table asked for global replicas (serverless is single-region-only)."
   value       = contains([for c in azurerm_cosmosdb_account.this.capabilities : c.name], "EnableServerless")
 }
+
+output "partition_key_paths" {
+  description = "Map of container name → the partition key PATH actually planned. Exposed so the rooting of a bare attribute name (`pk` → `/pk`) is assertable: Cosmos rejects an unrooted path at apply, and only a real apply would otherwise have caught it."
+  value = {
+    for name, c in azurerm_cosmosdb_sql_container.this :
+    name => c.partition_key_paths
+  }
+}

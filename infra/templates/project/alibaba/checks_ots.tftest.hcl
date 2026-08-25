@@ -22,6 +22,21 @@
 # Providers are mocked and no cluster is provisioned, so this needs no credentials and runs on any PR.
 
 mock_provider "alicloud" {
+  # ACK's create API resolves a ROS component by EXACT version string, so ack-version.tf resolves the
+  # declared MINOR against what the region offers. Same trap the alicloud_zones mock above documents:
+  # the mock's default for a computed LIST is an EMPTY list, so without this every plan fails the
+  # terraform_data.ack_version_resolvable precondition — which is the guard doing its job, not a bug.
+  # The patch numbers are the ones eu-central-1 actually offered on 2026-08-25.
+  mock_data "alicloud_cs_kubernetes_version" {
+    defaults = {
+      metadata = [
+        { version = "1.36.2-aliyun.1", runtime = [] },
+        { version = "1.35.7-aliyun.1", runtime = [] },
+        { version = "1.34.10-aliyun.1", runtime = [] },
+      ]
+    }
+  }
+
   # PLAN-OUT SAFETY (#621) keeps the zone COUNT static, but modules/network still calls
   # element(local.zones, count.index) on the ids from this data source, and the mock's default for a
   # computed list is an empty list — element() on which is a hard error. Two zones are enough.

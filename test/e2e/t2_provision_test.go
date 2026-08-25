@@ -179,7 +179,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Logf("#1773: ACM certificate ENABLED — issuing for *.%s, validating in the pre-delegated zone %s",
 			acmCert.domainName, acmCert.zoneID)
 	case acmCertBlocked != "":
-		t.Logf("#1773: ACM certificate BLOCKED on %s — %s", provider, acmCertBlocked)
+		// "NOT RUN" rather than "BLOCKED": this arm now carries two different facts — a cloud whose
+		// lane cannot prove it, and a max-config dimension that withholds it. "BLOCKED on aws" would
+		// read as "aws cannot do this", which is backwards; aws is the only lane that can.
+		t.Logf("#1773: ACM certificate NOT RUN on %s — %s", provider, acmCertBlocked)
 	default:
 		t.Logf("#1773: ACM certificate SKIPPED — set %s (+ %s, %s) to enable.", envAcmCert, envAcmCertZoneID, envAcmCertZoneName)
 	}
@@ -322,7 +325,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// fidelity check runs against (lean synthetic by default; the REAL console fixture shape under
 	// ALETHIA_E2E_A05_REAL_SNAPSHOT); `full` layers the A0.6 repos + the per-cloud cluster-json
 	// override the runner actually consumes.
-	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, registry, registryOn, a05)
+	base, full, err := t2DeploySnapshot(t, project, env, provider, region, repos, reposEnabled, xacct, xacctOn, keyless, keylessOn, registry, registryOn, acmCert, acmCertOn, a05)
 	if err != nil {
 		t.Fatalf("build deploy snapshot: %v", err)
 	}
@@ -344,6 +347,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Fatalf("#845 fabric-demo node-shape guard: %s", msg)
 		}
 		t.Logf("#845 fabric-demo node-shape guard (warning): %s", msg)
+	}
+	// PRE-SPEND capacity preflight: the two guards above ask whether the shape is big enough
+	// for what this run asserts; this one asks whether the cloud will sell us that shape HERE.
+	// On 2026-08-25 two hetzner runs died five minutes into a paid apply because cx33 has
+	// capacity in no datacenter Hetzner operates — a fact one free GET answers. Hard under
+	// REQUIRE on a definite refusal; NEVER fatal on UNKNOWN, which is a probe that did not get
+	// an answer rather than an answer of "no".
+	if fatal, msg := t2RequireCapacityPreflight(ctx, provider, region, full); msg != "" {
+		if fatal {
+			t.Fatalf("pre-spend capacity preflight: %s", msg)
+		}
+		t.Logf("pre-spend %s", msg)
 	}
 	a05CheckFidelity(t, a05, base)
 

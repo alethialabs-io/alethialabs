@@ -6,7 +6,7 @@
 import type { CSSProperties } from "react";
 
 import { CONSENT_LABELS } from "./consent";
-import { useConsent } from "./consent-provider";
+import { useOptionalConsent } from "./consent-provider";
 
 interface PrivacySettingsButtonProps {
 	className?: string;
@@ -31,9 +31,12 @@ export function PrivacySettingsButton({
 	style,
 	children = CONSENT_LABELS.settings,
 }: PrivacySettingsButtonProps) {
-	const { hasDecision, openPreferences } = useConsent();
+	const consent = useOptionalConsent();
 
-	if (!hasDecision) return null;
+	// No provider on this surface, or no decision recorded yet — in the second case
+	// the first-visit notice is already on screen offering the same dialog.
+	if (!consent?.hasDecision) return null;
+	const { openPreferences } = consent;
 
 	return (
 		<button type="button" onClick={openPreferences} className={className} style={style}>

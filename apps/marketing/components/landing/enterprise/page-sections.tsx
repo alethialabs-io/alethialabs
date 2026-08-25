@@ -17,7 +17,8 @@ import {
 	Prov,
 	type ProviderId,
 	Wrap,
-} from "@/components/landing/home/primitives";
+} from "@repo/brand/site-primitives";
+import { PageCTA, PageHero, SectionMark } from "@repo/brand/site-sections";
 
 /* ---------- CTA destinations ---------- */
 const SALES = "/contact/sales"; // matches the site header's "Get a demo"
@@ -46,35 +47,6 @@ function MonoBadge({
 		>
 			{children}
 		</Badge>
-	);
-}
-
-/** Numbered section eyebrow — "01 ── Label". */
-function SecMark({ n, label }: { n: string; label: string }) {
-	return (
-		<div
-			style={{
-				display: "flex",
-				alignItems: "center",
-				gap: 12,
-				marginBottom: 18,
-			}}
-		>
-			<span
-				style={{
-					...mono,
-					fontSize: 11,
-					color: "var(--text-disabled)",
-					letterSpacing: "0.1em",
-				}}
-			>
-				{n}
-			</span>
-			<span
-				style={{ width: 22, height: 1, background: "var(--border-strong)" }}
-			/>
-			<span style={{ ...eyebrow }}>{label}</span>
-		</div>
 	);
 }
 
@@ -713,7 +685,7 @@ function Orgs() {
 			style={{ padding: "84px 0", borderTop: "1px solid var(--border)" }}
 		>
 			<Wrap>
-				<SecMark n="01" label="Organizations & teams" />
+				<SectionMark n="01" label="Organizations & teams" />
 				<div
 					className="ah-surface"
 					style={{
@@ -957,7 +929,7 @@ function SSO() {
 			}}
 		>
 			<Wrap>
-				<SecMark n="02" label="Single sign-on" />
+				<SectionMark n="02" label="Single sign-on" />
 				<div
 					style={{
 						display: "flex",
@@ -1220,7 +1192,7 @@ function Rbac() {
 			style={{ padding: "84px 0", borderTop: "1px solid var(--border)" }}
 		>
 			<Wrap>
-				<SecMark n="03" label="Roles & RBAC" />
+				<SectionMark n="03" label="Roles & RBAC" />
 				<div
 					style={{
 						display: "flex",
@@ -1458,7 +1430,7 @@ function Audit() {
 			}}
 		>
 			<Wrap>
-				<SecMark n="04" label="Audit log" />
+				<SectionMark n="04" label="Audit log" />
 				<div
 					style={{
 						display: "flex",
@@ -1675,7 +1647,7 @@ function Security() {
 			style={{ padding: "84px 0", borderTop: "1px solid var(--border)" }}
 		>
 			<Wrap>
-				<SecMark n="05" label="Security & deployment" />
+				<SectionMark n="05" label="Security & deployment" />
 				<div
 					style={{
 						display: "flex",

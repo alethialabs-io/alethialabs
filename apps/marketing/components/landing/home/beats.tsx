@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import Link from "next/link";
+import { Button } from "@repo/ui/button";
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
 
 import { VerifyReceipt } from "./verify-receipt";
@@ -81,12 +82,17 @@ export function Close() {
 			<AlethiaLogo width={30} height={30} className="mkt-close-mark" />
 			<h2 className="mkt-h2 mkt-close-h">Provision it. Prove it.</h2>
 			<div className="mkt-acts mkt-acts--center">
-				<Link className="mkt-btn mkt-btn--solid" href="/signup">
+				<Button render={<Link href="/signup" />} nativeButton={false} size="lg">
 					Start free →
-				</Link>
-				<Link className="mkt-btn" href="/contact/enterprise">
+				</Button>
+				<Button
+					render={<Link href="/contact/enterprise" />}
+					nativeButton={false}
+					size="lg"
+					variant="outline"
+				>
 					Book a demo →
-				</Link>
+				</Button>
 			</div>
 		</section>
 	);

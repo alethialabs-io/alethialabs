@@ -1,0 +1,1008 @@
+runner dev
+{"time":"2026-08-25T10:17:28.926569649Z","level":"INFO","msg":"runner started","runner_id":"958fdc1c-79f0-4f43-acd6-0407f8bb567d","operator":"self","version":"dev","alethia_url":"http://127.0.0.1:46417"}
+{"time":"2026-08-25T10:17:28.939683893Z","level":"INFO","msg":"claimed job","runner_id":"958fdc1c-79f0-4f43-acd6-0407f8bb567d","job_id":"994d5e43-f1a7-405c-9b82-73b8a2b8551b","job_type":"DEPLOY"}
+▸ Job claimed — preparing workspace…
+[sandbox] job isolation DISABLED (PassthroughSandbox): running "deploy" job 994d5e43-f1a7-405c-9b82-73b8a2b8551b in-process with the full host environment — safe only for trusted (non-BYO) work
+Starting deployment for project: alethia-nl (provider: gcp)
+Using bundled templates from project-templates/gcp
+State backend: console HTTP proxy (per-job token)
+Initializing OpenTofu...
+{
+  "terraform_version": "1.9.0",
+  "platform": "linux_amd64",
+  "provider_selections": {
+    "registry.opentofu.org/hashicorp/google": "6.50.0",
+    "registry.opentofu.org/hashicorp/google-beta": "6.50.0",
+    "registry.opentofu.org/hashicorp/helm": "3.2.0",
+    "registry.opentofu.org/hashicorp/kubernetes": "3.2.1",
+    "registry.opentofu.org/hashicorp/random": "3.9.0"
+  }
+}
+
+Initializing the backend...
+
+Successfully configured the backend "http"! OpenTofu will automatically
+use this backend unless the backend configuration changes.
+Initializing modules...
+- artifact_registry in modules/artifact-registry
+- cloud_armor in modules/cloud-armor
+- cloud_dns in modules/cloud-dns
+- cloud_sql in modules/cloud-sql
+- cloud_storage in modules/cloud-storage
+- firestore in modules/firestore
+- gke in modules/gke
+- memorystore in modules/memorystore
+- memorystore_valkey in modules/memorystore-valkey
+- pubsub in modules/pubsub
+- secret_manager in modules/secret-manager
+- vpc_network in modules/vpc-network
+
+Initializing provider plugins...
+- terraform.io/builtin/terraform is built in to OpenTofu
+- Reusing previous version of hashicorp/helm from the dependency lock file
+- Reusing previous version of hashicorp/kubernetes from the dependency lock file
+- Reusing previous version of hashicorp/google from the dependency lock file
+- Reusing previous version of hashicorp/google-beta from the dependency lock file
+- Reusing previous version of hashicorp/random from the dependency lock file
+- Installing hashicorp/random v3.9.0...
+- Installed hashicorp/random v3.9.0 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/helm v3.2.0...
+- Installed hashicorp/helm v3.2.0 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/kubernetes v3.2.1...
+- Installed hashicorp/kubernetes v3.2.1 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/google v6.50.0...
+- Installed hashicorp/google v6.50.0 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/google-beta v6.50.0...
+- Installed hashicorp/google-beta v6.50.0 (signed, key ID 0C0AF313E5FD9F80)
+
+Providers are signed by their developers.
+If you'd like to know more about provider signing, you can read about it here:
+https://opentofu.org/docs/cli/plugins/signing/
+
+OpenTofu has been successfully initialized!
+Running OpenTofu plan...
+data.google_project_service.cloudkms[0]: Reading...
+data.google_client_config.default: Reading...
+data.google_project.current: Reading...
+data.google_client_config.default: Read complete after 0s [id=projects/itgix-adp/regions/europe-west3/zones/]
+data.google_project.current: Read complete after 0s [id=projects/itgix-adp]
+data.google_project_service.cloudkms[0]: Read complete after 4s [id=itgix-adp/cloudkms.googleapis.com]
+
+OpenTofu used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+
+OpenTofu will perform the following actions:
+
+  # google_kms_crypto_key.gke_secrets[0] will be created
+  + resource "google_kms_crypto_key" "gke_secrets" {
+      + crypto_key_backend         = (known after apply)
+      + destroy_scheduled_duration = (known after apply)
+      + effective_labels           = {
+          + "goog-terraform-provisioned" = "true"
+        }
+      + id                         = (known after apply)
+      + import_only                = (known after apply)
+      + key_ring                   = (known after apply)
+      + name                       = "gke-secrets"
+      + primary                    = (known after apply)
+      + purpose                    = "ENCRYPT_DECRYPT"
+      + rotation_period            = "7776000s"
+      + terraform_labels           = {
+          + "goog-terraform-provisioned" = "true"
+        }
+
+      + version_template (known after apply)
+    }
+
+  # google_kms_crypto_key_iam_member.gke_secrets[0] will be created
+  + resource "google_kms_crypto_key_iam_member" "gke_secrets" {
+      + crypto_key_id = (known after apply)
+      + etag          = (known after apply)
+      + id            = (known after apply)
+      + member        = "serviceAccount:service-432436016123@container-engine-robot.iam.gserviceaccount.com"
+      + role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
+    }
+
+  # google_kms_key_ring.gke_secrets[0] will be created
+  + resource "google_kms_key_ring" "gke_secrets" {
+      + id       = (known after apply)
+      + location = "europe-west3"
+      + name     = "kms-ew3-32836114196-1-alethia-nl"
+      + project  = "itgix-adp"
+    }
+
+  # google_service_account.external_dns[0] will be created
+  + resource "google_service_account" "external_dns" {
+      + account_id   = "extdns-d7a3ffea"
+      + disabled     = false
+      + display_name = "external-dns (alethia-nl)"
+      + email        = "extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+      + id           = (known after apply)
+      + member       = "serviceAccount:extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+      + name         = (known after apply)
+      + project      = "itgix-adp"
+      + unique_id    = (known after apply)
+    }
+
+  # google_service_account.external_secrets[0] will be created
+  + resource "google_service_account" "external_secrets" {
+      + account_id   = "extsec-d7a3ffea"
+      + disabled     = false
+      + display_name = "external-secrets (alethia-nl)"
+      + email        = "extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+      + id           = (known after apply)
+      + member       = "serviceAccount:extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+      + name         = (known after apply)
+      + project      = "itgix-adp"
+      + unique_id    = (known after apply)
+    }
+
+  # google_service_account_iam_member.cert_manager_wi[0] will be created
+  + resource "google_service_account_iam_member" "cert_manager_wi" {
+      + etag               = (known after apply)
+      + id                 = (known after apply)
+      + member             = "serviceAccount:itgix-adp.svc.id.goog[cert-manager/cert-manager]"
+      + role               = "roles/iam.workloadIdentityUser"
+      + service_account_id = (known after apply)
+    }
+
+  # google_service_account_iam_member.external_dns_wi[0] will be created
+  + resource "google_service_account_iam_member" "external_dns_wi" {
+      + etag               = (known after apply)
+      + id                 = (known after apply)
+      + member             = "serviceAccount:itgix-adp.svc.id.goog[external-dns/external-dns-sa]"
+      + role               = "roles/iam.workloadIdentityUser"
+      + service_account_id = (known after apply)
+    }
+
+  # google_service_account_iam_member.external_secrets_wi[0] will be created
+  + resource "google_service_account_iam_member" "external_secrets_wi" {
+      + etag               = (known after apply)
+      + id                 = (known after apply)
+      + member             = "serviceAccount:itgix-adp.svc.id.goog[external-secrets-operator/external-secrets-operator-sa]"
+      + role               = "roles/iam.workloadIdentityUser"
+      + service_account_id = (known after apply)
+    }
+
+  # terraform_data.brownfield_subnet_guard will be created
+  + resource "terraform_data" "brownfield_subnet_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.compat_k8s_guard will be created
+  + resource "terraform_data" "compat_k8s_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.gcp_naming_guard will be created
+  + resource "terraform_data" "gcp_naming_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.gke_node_shape_guard will be created
+  + resource "terraform_data" "gke_node_shape_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.gke_secrets_encryption_api_guard[0] will be created
+  + resource "terraform_data" "gke_secrets_encryption_api_guard" {
+      + id = (known after apply)
+    }
+
+  # module.gke[0].google_container_cluster.cluster will be created
+  + resource "google_container_cluster" "cluster" {
+      + cluster_ipv4_cidr                        = (known after apply)
+      + datapath_provider                        = (known after apply)
+      + default_max_pods_per_node                = (known after apply)
+      + deletion_protection                      = false
+      + disable_l4_lb_firewall_reconciliation    = false
+      + effective_labels                         = {
+          + "alethia_project-id"         = "e2e-32836114196-1"
+          + "environment"                = "32836114196-1"
+          + "goog-terraform-provisioned" = "true"
+          + "managed-by"                 = "opentofu"
+          + "service"                    = "alethia-nl"
+        }
+      + enable_cilium_clusterwide_network_policy = false
+      + enable_fqdn_network_policy               = false
+      + enable_intranode_visibility              = (known after apply)
+      + enable_kubernetes_alpha                  = false
+      + enable_l4_ilb_subsetting                 = false
+      + enable_legacy_abac                       = false
+      + enable_multi_networking                  = false
+      + enable_shielded_nodes                    = true
+      + endpoint                                 = (known after apply)
+      + id                                       = (known after apply)
+      + initial_node_count                       = 1
+      + label_fingerprint                        = (known after apply)
+      + location                                 = "europe-west3"
+      + logging_service                          = "logging.googleapis.com/kubernetes"
+      + master_version                           = (known after apply)
+      + min_master_version                       = "1.35"
+      + monitoring_service                       = "monitoring.googleapis.com/kubernetes"
+      + name                                     = "gke-ew3-32836114196-1-alethia-nl"
+      + network                                  = "alethia-nl-32836114196-1-vpc"
+      + networking_mode                          = (known after apply)
+      + node_locations                           = (known after apply)
+      + node_version                             = (known after apply)
+      + operation                                = (known after apply)
+      + private_ipv6_google_access               = (known after apply)
+      + project                                  = "itgix-adp"
+      + remove_default_node_pool                 = true
+      + resource_labels                          = {
+          + "alethia_project-id" = "e2e-32836114196-1"
+          + "environment"        = "32836114196-1"
+          + "managed-by"         = "opentofu"
+          + "service"            = "alethia-nl"
+        }
+      + self_link                                = (known after apply)
+      + services_ipv4_cidr                       = (known after apply)
+      + subnetwork                               = "alethia-nl-32836114196-1-private"
+      + terraform_labels                         = {
+          + "alethia_project-id"         = "e2e-32836114196-1"
+          + "environment"                = "32836114196-1"
+          + "goog-terraform-provisioned" = "true"
+          + "managed-by"                 = "opentofu"
+          + "service"                    = "alethia-nl"
+        }
+      + tpu_ipv4_cidr_block                      = (known after apply)
+
+      + addons_config {
+          + cloudrun_config (known after apply)
+          + config_connector_config (known after apply)
+          + dns_cache_config (known after apply)
+          + gce_persistent_disk_csi_driver_config (known after apply)
+          + gcp_filestore_csi_driver_config (known after apply)
+          + gcs_fuse_csi_driver_config (known after apply)
+          + gke_backup_agent_config (known after apply)
+          + horizontal_pod_autoscaling {
+              + disabled = false
+            }
+          + http_load_balancing {
+              + disabled = false
+            }
+          + lustre_csi_driver_config (known after apply)
+          + network_policy_config {
+              + disabled = false
+            }
+          + parallelstore_csi_driver_config (known after apply)
+          + ray_operator_config (known after apply)
+          + stateful_ha_config (known after apply)
+        }
+
+      + anonymous_authentication_config (known after apply)
+
+      + authenticator_groups_config (known after apply)
+
+      + cluster_autoscaling (known after apply)
+
+      + confidential_nodes (known after apply)
+
+      + control_plane_endpoints_config (known after apply)
+
+      + cost_management_config (known after apply)
+
+      + database_encryption (known after apply)
+
+      + default_snat_status (known after apply)
+
+      + enterprise_config (known after apply)
+
+      + gateway_api_config (known after apply)
+
+      + gke_auto_upgrade_config (known after apply)
+
+      + identity_service_config (known after apply)
+
+      + ip_allocation_policy {
+          + cluster_ipv4_cidr_block       = (known after apply)
+          + cluster_secondary_range_name  = "gke-ew3-32836114196-1-alethia-nl-pods"
+          + services_ipv4_cidr_block      = (known after apply)
+          + services_secondary_range_name = "gke-ew3-32836114196-1-alethia-nl-services"
+          + stack_type                    = "IPV4"
+
+          + pod_cidr_overprovision_config (known after apply)
+        }
+
+      + logging_config (known after apply)
+
+      + master_auth (known after apply)
+
+      + master_authorized_networks_config {
+          + gcp_public_cidrs_access_enabled      = (known after apply)
+          + private_endpoint_enforcement_enabled = (known after apply)
+
+          + cidr_blocks {
+              + cidr_block   = "0.0.0.0/0"
+              + display_name = "all"
+            }
+        }
+
+      + mesh_certificates (known after apply)
+
+      + monitoring_config (known after apply)
+
+      + network_policy {
+          + enabled  = true
+          + provider = "CALICO"
+        }
+
+      + node_config {
+          + disk_size_gb     = (known after apply)
+          + disk_type        = (known after apply)
+          + effective_taints = (known after apply)
+          + image_type       = (known after apply)
+          + labels           = (known after apply)
+          + local_ssd_count  = (known after apply)
+          + logging_variant  = (known after apply)
+          + machine_type     = (known after apply)
+          + metadata         = (known after apply)
+          + min_cpu_platform = (known after apply)
+          + oauth_scopes     = (known after apply)
+          + preemptible      = false
+          + service_account  = (known after apply)
+          + spot             = false
+
+          + boot_disk (known after apply)
+
+          + confidential_nodes (known after apply)
+
+          + gcfs_config (known after apply)
+
+          + guest_accelerator (known after apply)
+
+          + kubelet_config (known after apply)
+
+          + linux_node_config (known after apply)
+
+          + shielded_instance_config (known after apply)
+
+          + windows_node_config (known after apply)
+
+          + workload_metadata_config (known after apply)
+        }
+
+      + node_pool (known after apply)
+
+      + node_pool_auto_config (known after apply)
+
+      + node_pool_defaults (known after apply)
+
+      + notification_config (known after apply)
+
+      + pod_autoscaling (known after apply)
+
+      + private_cluster_config {
+          + enable_private_nodes   = true
+          + master_ipv4_cidr_block = "172.16.0.0/28"
+          + peering_name           = (known after apply)
+          + private_endpoint       = (known after apply)
+          + public_endpoint        = (known after apply)
+
+          + master_global_access_config (known after apply)
+        }
+
+      + rbac_binding_config (known after apply)
+
+      + release_channel {
+          + channel = "REGULAR"
+        }
+
+      + security_posture_config (known after apply)
+
+      + service_external_ips_config (known after apply)
+
+      + vertical_pod_autoscaling (known after apply)
+
+      + workload_identity_config {
+          + workload_pool = "itgix-adp.svc.id.goog"
+        }
+    }
+
+  # module.gke[0].google_container_node_pool.default[0] will be created
+  + resource "google_container_node_pool" "default" {
+      + cluster                     = "gke-ew3-32836114196-1-alethia-nl"
+      + id                          = (known after apply)
+      + initial_node_count          = 1
+      + instance_group_urls         = (known after apply)
+      + location                    = "europe-west3"
+      + managed_instance_group_urls = (known after apply)
+      + max_pods_per_node           = (known after apply)
+      + name                        = "gke-ew3-32836114196-1-alethia-n-e238cb6"
+      + name_prefix                 = (known after apply)
+      + node_count                  = (known after apply)
+      + node_locations              = (known after apply)
+      + operation                   = (known after apply)
+      + project                     = "itgix-adp"
+      + version                     = (known after apply)
+
+      + autoscaling {
+          + location_policy = (known after apply)
+          + max_node_count  = 2
+          + min_node_count  = 1
+        }
+
+      + management {
+          + auto_repair  = true
+          + auto_upgrade = true
+        }
+
+      + network_config (known after apply)
+
+      + node_config {
+          + disk_size_gb     = 20
+          + disk_type        = "pd-standard"
+          + effective_taints = (known after apply)
+          + image_type       = (known after apply)
+          + labels           = {
+              + "alethia_project-id" = "e2e-32836114196-1"
+              + "environment"        = "32836114196-1"
+              + "managed-by"         = "opentofu"
+              + "service"            = "alethia-nl"
+            }
+          + local_ssd_count  = (known after apply)
+          + logging_variant  = (known after apply)
+          + machine_type     = "e2-small"
+          + metadata         = {
+              + "disable-legacy-endpoints" = "true"
+            }
+          + min_cpu_platform = (known after apply)
+          + oauth_scopes     = [
+              + "https://www.googleapis.com/auth/cloud-platform",
+            ]
+          + preemptible      = false
+          + service_account  = (known after apply)
+          + spot             = false
+
+          + boot_disk (known after apply)
+
+          + confidential_nodes (known after apply)
+
+          + gcfs_config (known after apply)
+
+          + guest_accelerator (known after apply)
+
+          + kubelet_config (known after apply)
+
+          + linux_node_config (known after apply)
+
+          + shielded_instance_config {
+              + enable_integrity_monitoring = true
+              + enable_secure_boot          = true
+            }
+
+          + windows_node_config (known after apply)
+
+          + workload_metadata_config {
+              + mode = "GKE_METADATA"
+            }
+        }
+
+      + upgrade_settings (known after apply)
+    }
+
+  # module.vpc_network[0].google_compute_firewall.allow_health_checks will be created
+  + resource "google_compute_firewall" "allow_health_checks" {
+      + creation_timestamp = (known after apply)
+      + destination_ranges = (known after apply)
+      + direction          = "INGRESS"
+      + enable_logging     = (known after apply)
+      + id                 = (known after apply)
+      + name               = "alethia-nl-32836114196-1-vpc-allow-health-checks"
+      + network            = (known after apply)
+      + priority           = 1000
+      + project            = "itgix-adp"
+      + self_link          = (known after apply)
+      + source_ranges      = [
+          + "130.211.0.0/22",
+          + "35.191.0.0/16",
+        ]
+
+      + allow {
+          + ports    = []
+          + protocol = "tcp"
+        }
+
+      + log_config {
+          + metadata = "INCLUDE_ALL_METADATA"
+        }
+    }
+
+  # module.vpc_network[0].google_compute_firewall.allow_internal will be created
+  + resource "google_compute_firewall" "allow_internal" {
+      + creation_timestamp = (known after apply)
+      + destination_ranges = (known after apply)
+      + direction          = "INGRESS"
+      + enable_logging     = (known after apply)
+      + id                 = (known after apply)
+      + name               = "alethia-nl-32836114196-1-vpc-allow-internal"
+      + network            = (known after apply)
+      + priority           = 1000
+      + project            = "itgix-adp"
+      + self_link          = (known after apply)
+      + source_ranges      = [
+          + "10.0.0.0/16",
+          + "10.1.0.0/16",
+          + "10.2.0.0/20",
+        ]
+
+      + allow {
+          + ports    = [
+              + "0-65535",
+            ]
+          + protocol = "tcp"
+        }
+      + allow {
+          + ports    = [
+              + "0-65535",
+            ]
+          + protocol = "udp"
+        }
+      + allow {
+          + ports    = []
+          + protocol = "icmp"
+        }
+
+      + log_config {
+          + metadata = "INCLUDE_ALL_METADATA"
+        }
+    }
+
+  # module.vpc_network[0].google_compute_global_address.private_service_access will be created
+  + resource "google_compute_global_address" "private_service_access" {
+      + address            = (known after apply)
+      + address_type       = "INTERNAL"
+      + creation_timestamp = (known after apply)
+      + effective_labels   = {
+          + "goog-terraform-provisioned" = "true"
+        }
+      + id                 = (known after apply)
+      + label_fingerprint  = (known after apply)
+      + name               = "alethia-nl-32836114196-1-psa"
+      + network            = (known after apply)
+      + prefix_length      = 16
+      + project            = "itgix-adp"
+      + purpose            = "VPC_PEERING"
+      + self_link          = (known after apply)
+      + terraform_labels   = {
+          + "goog-terraform-provisioned" = "true"
+        }
+    }
+
+  # module.vpc_network[0].google_compute_network.vpc will be created
+  + resource "google_compute_network" "vpc" {
+      + auto_create_subnetworks                   = false
+      + bgp_always_compare_med                    = (known after apply)
+      + bgp_best_path_selection_mode              = (known after apply)
+      + bgp_inter_region_cost                     = (known after apply)
+      + delete_default_routes_on_create           = false
+      + gateway_ipv4                              = (known after apply)
+      + id                                        = (known after apply)
+      + internal_ipv6_range                       = (known after apply)
+      + mtu                                       = (known after apply)
+      + name                                      = "alethia-nl-32836114196-1-vpc"
+      + network_firewall_policy_enforcement_order = "AFTER_CLASSIC_FIREWALL"
+      + network_id                                = (known after apply)
+      + numeric_id                                = (known after apply)
+      + project                                   = "itgix-adp"
+      + routing_mode                              = "REGIONAL"
+      + self_link                                 = (known after apply)
+    }
+
+  # module.vpc_network[0].google_compute_router.router will be created
+  + resource "google_compute_router" "router" {
+      + creation_timestamp = (known after apply)
+      + id                 = (known after apply)
+      + name               = "alethia-nl-32836114196-1-router"
+      + network            = (known after apply)
+      + project            = "itgix-adp"
+      + region             = "europe-west3"
+      + self_link          = (known after apply)
+
+      + bgp {
+          + advertise_mode     = "DEFAULT"
+          + asn                = 64514
+          + identifier_range   = (known after apply)
+          + keepalive_interval = 20
+        }
+    }
+
+  # module.vpc_network[0].google_compute_router_nat.nat will be created
+  + resource "google_compute_router_nat" "nat" {
+      + auto_network_tier                   = (known after apply)
+      + drain_nat_ips                       = (known after apply)
+      + enable_dynamic_port_allocation      = (known after apply)
+      + enable_endpoint_independent_mapping = (known after apply)
+      + endpoint_types                      = [
+          + "ENDPOINT_TYPE_VM",
+        ]
+      + icmp_idle_timeout_sec               = 30
+      + id                                  = (known after apply)
+      + min_ports_per_vm                    = (known after apply)
+      + name                                = "alethia-nl-32836114196-1-nat"
+      + nat_ip_allocate_option              = "AUTO_ONLY"
+      + nat_ips                             = (known after apply)
+      + project                             = "itgix-adp"
+      + region                              = "europe-west3"
+      + router                              = "alethia-nl-32836114196-1-router"
+      + source_subnetwork_ip_ranges_to_nat  = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+      + tcp_established_idle_timeout_sec    = 1200
+      + tcp_time_wait_timeout_sec           = 120
+      + tcp_transitory_idle_timeout_sec     = 30
+      + type                                = "PUBLIC"
+      + udp_idle_timeout_sec                = 30
+
+      + log_config {
+          + enable = true
+          + filter = "ERRORS_ONLY"
+        }
+    }
+
+  # module.vpc_network[0].google_compute_subnetwork.private will be created
+  + resource "google_compute_subnetwork" "private" {
+      + creation_timestamp         = (known after apply)
+      + enable_flow_logs           = (known after apply)
+      + external_ipv6_prefix       = (known after apply)
+      + fingerprint                = (known after apply)
+      + gateway_address            = (known after apply)
+      + id                         = (known after apply)
+      + internal_ipv6_prefix       = (known after apply)
+      + ip_cidr_range              = "10.0.0.0/16"
+      + ipv6_cidr_range            = (known after apply)
+      + ipv6_gce_endpoint          = (known after apply)
+      + name                       = "alethia-nl-32836114196-1-private"
+      + network                    = (known after apply)
+      + private_ip_google_access   = true
+      + private_ipv6_google_access = (known after apply)
+      + project                    = "itgix-adp"
+      + purpose                    = (known after apply)
+      + region                     = "europe-west3"
+      + self_link                  = (known after apply)
+      + stack_type                 = (known after apply)
+      + state                      = (known after apply)
+      + subnetwork_id              = (known after apply)
+
+      + log_config {
+          + aggregation_interval = "INTERVAL_5_SEC"
+          + filter_expr          = "true"
+          + flow_sampling        = 0.5
+          + metadata             = "INCLUDE_ALL_METADATA"
+        }
+
+      + secondary_ip_range {
+          + ip_cidr_range = "10.1.0.0/16"
+          + range_name    = "gke-ew3-32836114196-1-alethia-nl-pods"
+        }
+      + secondary_ip_range {
+          + ip_cidr_range = "10.2.0.0/20"
+          + range_name    = "gke-ew3-32836114196-1-alethia-nl-services"
+        }
+    }
+
+  # module.vpc_network[0].google_compute_subnetwork.public will be created
+  + resource "google_compute_subnetwork" "public" {
+      + creation_timestamp         = (known after apply)
+      + enable_flow_logs           = (known after apply)
+      + external_ipv6_prefix       = (known after apply)
+      + fingerprint                = (known after apply)
+      + gateway_address            = (known after apply)
+      + id                         = (known after apply)
+      + internal_ipv6_prefix       = (known after apply)
+      + ip_cidr_range              = "10.3.0.0/24"
+      + ipv6_cidr_range            = (known after apply)
+      + ipv6_gce_endpoint          = (known after apply)
+      + name                       = "alethia-nl-32836114196-1-public"
+      + network                    = (known after apply)
+      + private_ip_google_access   = (known after apply)
+      + private_ipv6_google_access = (known after apply)
+      + project                    = "itgix-adp"
+      + purpose                    = (known after apply)
+      + region                     = "europe-west3"
+      + self_link                  = (known after apply)
+      + stack_type                 = (known after apply)
+      + state                      = (known after apply)
+      + subnetwork_id              = (known after apply)
+
+      + secondary_ip_range (known after apply)
+    }
+
+  # module.vpc_network[0].google_service_networking_connection.private_vpc will be created
+  + resource "google_service_networking_connection" "private_vpc" {
+      + deletion_policy         = "ABANDON"
+      + id                      = (known after apply)
+      + network                 = (known after apply)
+      + peering                 = (known after apply)
+      + reserved_peering_ranges = [
+          + "alethia-nl-32836114196-1-psa",
+        ]
+      + service                 = "servicenetworking.googleapis.com"
+    }
+
+Plan: 24 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + artifact_registry_urls                  = {}
+  + cloud_dns_name_servers                  = []
+  + cloud_storage_public_access_prevention  = {}
+  + cloud_storage_publicly_readable_buckets = []
+  + custom_secret_ids                       = {}
+  + custom_secret_names                     = {}
+  + external_dns_service_account            = "extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+  + external_secrets_service_account        = "extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+  + gar_pull_gsa_email                      = ""
+  + gcp_project_id                          = "itgix-adp"
+  + gke_cluster_ca_certificate              = (sensitive value)
+  + gke_cluster_endpoint                    = (sensitive value)
+  + gke_cluster_name                        = "gke-ew3-32836114196-1-alethia-nl"
+  + network_self_link                       = (known after apply)
+  + private_subnet_self_link                = (known after apply)
+  + project_id                              = "itgix-adp"
+  + region_short                            = "ew3"
+
+Warning: Deprecated attribute
+
+  on modules/memorystore-valkey/checks.tf line 7, in check "instance_endpoint_is_resolvable":
+   7:     condition     = length(google_memorystore_instance.this.discovery_endpoints) > 0
+
+The attribute "discovery_endpoints" is deprecated. Refer to the provider
+documentation for details.
+
+(and 2 more similar warnings elsewhere)
+Generating plan JSON...
+Verification gate: verdict=not_evaluable (pass=3 fail=0 warn=0 not_evaluable=1, catalog elench-controls-0.5.2)
+  [GCP-WIF-001] coverage: no resources in scope for this control in this plan
+  [GCP-LEASTPRIV-001] coverage: no resources in scope for this control in this plan
+  [SCOPE-001] coverage: terraform_data.brownfield_subnet_guard: unrecognized provider terraform; terraform_data.compat_k8s_guard: unrecognized provider terraform; terraform_data.gcp_naming_guard: unrecognized provider terraform; terraform_data.gke_node_shape_guard: unrecognized provider terraform; terraform_data.gke_secrets_encryption_api_guard[0]: unrecognized provider terraform
+Compatibility gate: verdict=not_evaluable (pass=0 fail=0 warn=0 not_evaluable=2, catalog compat-matrix-0.1.0)
+  [COMPAT-K8S-CLOUD-GCP] coverage: cluster Kubernetes version is unset or unparseable
+  [COMPAT-ADDON-BYO-E2E] coverage: add-on "byo-e2e" is not in the compatibility matrix
+Evidence receipt signed (key 7adfd82aa9aa5b6b, plan sha256 c4b75d720f55…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+terraform_data.gcp_naming_guard: Creating...
+terraform_data.compat_k8s_guard: Creating...
+terraform_data.gcp_naming_guard: Creation complete after 0s [id=7e6bb88b-3cb7-a669-35e0-12d00befb12b]
+terraform_data.gke_node_shape_guard: Creating...
+terraform_data.gke_node_shape_guard: Creation complete after 0s [id=81d448a8-b701-3428-0941-2c4370efa963]
+terraform_data.compat_k8s_guard: Creation complete after 0s [id=a893211c-aeef-2a14-8a62-f72e81387c8d]
+terraform_data.gke_secrets_encryption_api_guard[0]: Creating...
+terraform_data.gke_secrets_encryption_api_guard[0]: Creation complete after 0s [id=5bfe1751-380c-4216-2d51-43b4f7e01524]
+terraform_data.brownfield_subnet_guard: Creating...
+terraform_data.brownfield_subnet_guard: Creation complete after 0s [id=21179a0f-c249-c32c-94c8-acfd9994523b]
+google_service_account.external_dns[0]: Creating...
+google_kms_key_ring.gke_secrets[0]: Creating...
+module.vpc_network[0].google_compute_network.vpc: Creating...
+google_service_account.external_secrets[0]: Creating...
+google_kms_key_ring.gke_secrets[0]: Creation complete after 1s [id=projects/itgix-adp/locations/europe-west3/keyRings/kms-ew3-32836114196-1-alethia-nl]
+google_kms_crypto_key.gke_secrets[0]: Creating...
+google_kms_crypto_key.gke_secrets[0]: Creation complete after 2s [id=projects/itgix-adp/locations/europe-west3/keyRings/kms-ew3-32836114196-1-alethia-nl/cryptoKeys/gke-secrets]
+google_kms_crypto_key_iam_member.gke_secrets[0]: Creating...
+google_kms_crypto_key_iam_member.gke_secrets[0]: Creation complete after 5s [id=projects/itgix-adp/locations/europe-west3/keyRings/kms-ew3-32836114196-1-alethia-nl/cryptoKeys/gke-secrets/roles/cloudkms.cryptoKeyEncrypterDecrypter/serviceAccount:service-432436016123@container-engine-robot.iam.gserviceaccount.com]
+google_service_account.external_dns[0]: Still creating... [10s elapsed]
+module.vpc_network[0].google_compute_network.vpc: Still creating... [10s elapsed]
+google_service_account.external_secrets[0]: Still creating... [10s elapsed]
+google_service_account.external_dns[0]: Creation complete after 15s [id=projects/itgix-adp/serviceAccounts/extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com]
+module.vpc_network[0].google_compute_network.vpc: Still creating... [20s elapsed]
+google_service_account.external_secrets[0]: Still creating... [20s elapsed]
+google_service_account.external_secrets[0]: Creation complete after 27s [id=projects/itgix-adp/serviceAccounts/extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com]
+module.vpc_network[0].google_compute_network.vpc: Still creating... [30s elapsed]
+module.vpc_network[0].google_compute_network.vpc: Creation complete after 32s [id=projects/itgix-adp/global/networks/alethia-nl-32836114196-1-vpc]
+module.vpc_network[0].google_compute_subnetwork.public: Creating...
+module.vpc_network[0].google_compute_router.router: Creating...
+module.vpc_network[0].google_compute_global_address.private_service_access: Creating...
+module.vpc_network[0].google_compute_firewall.allow_health_checks: Creating...
+module.vpc_network[0].google_compute_firewall.allow_internal: Creating...
+module.vpc_network[0].google_compute_subnetwork.private: Creating...
+module.vpc_network[0].google_compute_router.router: Still creating... [10s elapsed]
+module.vpc_network[0].google_compute_subnetwork.public: Still creating... [10s elapsed]
+module.vpc_network[0].google_compute_firewall.allow_health_checks: Still creating... [10s elapsed]
+module.vpc_network[0].google_compute_firewall.allow_internal: Still creating... [10s elapsed]
+module.vpc_network[0].google_compute_global_address.private_service_access: Still creating... [10s elapsed]
+module.vpc_network[0].google_compute_subnetwork.private: Still creating... [10s elapsed]
+module.vpc_network[0].google_compute_global_address.private_service_access: Creation complete after 11s [id=projects/itgix-adp/global/addresses/alethia-nl-32836114196-1-psa]
+module.vpc_network[0].google_service_networking_connection.private_vpc: Creating...
+module.vpc_network[0].google_compute_subnetwork.public: Creation complete after 12s [id=projects/itgix-adp/regions/europe-west3/subnetworks/alethia-nl-32836114196-1-public]
+module.vpc_network[0].google_compute_router.router: Still creating... [20s elapsed]
+module.vpc_network[0].google_compute_firewall.allow_health_checks: Still creating... [20s elapsed]
+module.vpc_network[0].google_compute_subnetwork.private: Still creating... [20s elapsed]
+module.vpc_network[0].google_compute_firewall.allow_internal: Still creating... [20s elapsed]
+module.vpc_network[0].google_compute_router.router: Creation complete after 21s [id=projects/itgix-adp/regions/europe-west3/routers/alethia-nl-32836114196-1-router]
+module.vpc_network[0].google_compute_router_nat.nat: Creating...
+module.vpc_network[0].google_service_networking_connection.private_vpc: Still creating... [10s elapsed]
+module.vpc_network[0].google_compute_firewall.allow_health_checks: Still creating... [30s elapsed]
+module.vpc_network[0].google_compute_firewall.allow_internal: Still creating... [30s elapsed]
+module.vpc_network[0].google_compute_subnetwork.private: Still creating... [30s elapsed]
+module.vpc_network[0].google_compute_router_nat.nat: Still creating... [10s elapsed]
+module.vpc_network[0].google_compute_firewall.allow_internal: Creation complete after 31s [id=projects/itgix-adp/global/firewalls/alethia-nl-32836114196-1-vpc-allow-internal]
+module.vpc_network[0].google_service_networking_connection.private_vpc: Still creating... [20s elapsed]
+module.vpc_network[0].google_compute_subnetwork.private: Creation complete after 32s [id=projects/itgix-adp/regions/europe-west3/subnetworks/alethia-nl-32836114196-1-private]
+module.vpc_network[0].google_compute_router_nat.nat: Creation complete after 12s [id=itgix-adp/europe-west3/alethia-nl-32836114196-1-router/alethia-nl-32836114196-1-nat]
+module.vpc_network[0].google_compute_firewall.allow_health_checks: Still creating... [40s elapsed]
+module.vpc_network[0].google_compute_firewall.allow_health_checks: Creation complete after 41s [id=projects/itgix-adp/global/firewalls/alethia-nl-32836114196-1-vpc-allow-health-checks]
+module.vpc_network[0].google_service_networking_connection.private_vpc: Still creating... [30s elapsed]
+module.vpc_network[0].google_service_networking_connection.private_vpc: Still creating... [40s elapsed]
+module.vpc_network[0].google_service_networking_connection.private_vpc: Still creating... [50s elapsed]
+module.vpc_network[0].google_service_networking_connection.private_vpc: Creation complete after 52s [id=https%3A%2F%2Fwww.googleapis.com%2Fcompute%2Fv1%2Fprojects%2Fitgix-adp%2Fglobal%2Fnetworks%2Falethia-nl-32836114196-1-vpc:servicenetworking.googleapis.com]
+module.gke[0].google_container_cluster.cluster: Creating...
+module.gke[0].google_container_cluster.cluster: Still creating... [10s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [20s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [30s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [40s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [50s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [1m0s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [1m10s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [1m20s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [1m30s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [1m40s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [1m50s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [2m0s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [2m10s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [2m20s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [2m30s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [2m40s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [2m50s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [3m0s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [3m10s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [3m20s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [3m30s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [3m40s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [3m50s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [4m0s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [4m10s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [4m20s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [4m30s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [4m40s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [4m50s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [5m0s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [5m10s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [5m20s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [5m30s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [5m40s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [5m50s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [6m0s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [6m10s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [6m20s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [6m30s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [6m40s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [6m50s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [7m0s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [7m10s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [7m20s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [7m30s elapsed]
+module.gke[0].google_container_cluster.cluster: Still creating... [7m40s elapsed]
+module.gke[0].google_container_cluster.cluster: Creation complete after 7m46s [id=projects/itgix-adp/locations/europe-west3/clusters/gke-ew3-32836114196-1-alethia-nl]
+module.gke[0].google_container_node_pool.default[0]: Creating...
+module.gke[0].google_container_node_pool.default[0]: Still creating... [10s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [20s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [30s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [40s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [50s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [1m0s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [1m10s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [1m20s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [1m30s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [1m40s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [1m50s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [2m0s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [2m10s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [2m20s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [2m30s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [2m40s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [2m50s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [3m0s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [3m10s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Still creating... [3m20s elapsed]
+module.gke[0].google_container_node_pool.default[0]: Creation complete after 3m27s [id=projects/itgix-adp/locations/europe-west3/clusters/gke-ew3-32836114196-1-alethia-nl/nodePools/gke-ew3-32836114196-1-alethia-n-e238cb6]
+google_service_account_iam_member.external_dns_wi[0]: Creating...
+google_service_account_iam_member.cert_manager_wi[0]: Creating...
+google_service_account_iam_member.external_secrets_wi[0]: Creating...
+google_service_account_iam_member.external_dns_wi[0]: Creation complete after 4s [id=projects/itgix-adp/serviceAccounts/extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:itgix-adp.svc.id.goog[external-dns/external-dns-sa]]
+google_service_account_iam_member.external_secrets_wi[0]: Creation complete after 4s [id=projects/itgix-adp/serviceAccounts/extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:itgix-adp.svc.id.goog[external-secrets-operator/external-secrets-operator-sa]]
+google_service_account_iam_member.cert_manager_wi[0]: Creation complete after 7s [id=projects/itgix-adp/serviceAccounts/extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com/roles/iam.workloadIdentityUser/serviceAccount:itgix-adp.svc.id.goog[cert-manager/cert-manager]]
+
+Apply complete! Resources: 24 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+artifact_registry_urls = {}
+cloud_dns_name_servers = []
+cloud_storage_public_access_prevention = {}
+cloud_storage_publicly_readable_buckets = []
+custom_secret_ids = {}
+custom_secret_names = {}
+external_dns_service_account = "extdns-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+external_secrets_service_account = "extsec-d7a3ffea@itgix-adp.iam.gserviceaccount.com"
+gar_pull_gsa_email = ""
+gcp_project_id = "itgix-adp"
+gke_cluster_ca_certificate = <sensitive>
+gke_cluster_endpoint = <sensitive>
+gke_cluster_name = "gke-ew3-32836114196-1-alethia-nl"
+network_self_link = "https://www.googleapis.com/compute/v1/projects/itgix-adp/global/networks/alethia-nl-32836114196-1-vpc"
+private_subnet_self_link = "https://www.googleapis.com/compute/v1/projects/itgix-adp/regions/europe-west3/subnetworks/alethia-nl-32836114196-1-private"
+project_id = "itgix-adp"
+region_short = "ew3"
+Getting OpenTofu outputs...
+Configuring kubeconfig for GKE cluster gke-ew3-32836114196-1-alethia-nl...
+Kubeconfig written to /home/runner/.alethia/kubeconfig (exec-plugin auth: /tmp/TestT2RealCloudProvisioning220685822/001/alethia-runner [kube-token --provider gcp])
+Waiting for the cluster to become reachable (timeout 15m0s)...
+Cluster API server is reachable.
+3/3 nodes Ready.
+Verifying a pod can reach the API server (ClusterIP 10.2.0.1:443) across the cluster network...
+A pod reached the API server across the cluster network — pod datapath is healthy.
+Installing ArgoCD...
+"argo" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "argo" chart repository
+Update Complete. ⎈Happy Helming!⎈
+namespace/argocd created
+secret/argocd-redis created
+Pre-seeded argocd-redis secret (avoids the chart's flaky redis-secret-init hook).
+Release "argo-cd" does not exist. Installing it now.
+NAME: argo-cd
+LAST DEPLOYED: Tue Aug 25 10:32:26 2026
+NAMESPACE: argocd
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+NOTES:
+In order to access the server UI you have the following options:
+
+1. kubectl port-forward service/argo-cd-argocd-server -n argocd 8080:443
+
+    and then open the browser on http://localhost:8080 and accept the certificate
+
+2. enable ingress in the values file `server.ingress.enabled` and either
+      - Add the annotation for ssl passthrough: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-1-ssl-passthrough
+      - Set the `configs.params."server.insecure"` in the values file and terminate SSL at your ingress: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-2-multiple-ingress-objects-and-hosts
+
+
+After reaching the UI the first time you can login with username: admin and the random password generated during the installation. You can find the password by running:
+
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
+(You should delete the initial secret afterwards as suggested by the Getting Started Guide: https://argo-cd.readthedocs.io/en/stable/getting_started/#4-login-using-the-cli)
+ArgoCD installed.
+ArgoCD ready (no ingress on this cloud yet — access via port-forward; retrieve the admin password on-demand from argocd-initial-admin-secret).
+Configuring ArgoCD repository credentials for https://github.com/alethialabs-io/alethia-e2e-apps (secret repo-apps)
+secret/repo-apps created
+ArgoCD repository credentials configured.
+Applying ArgoCD infrastructure applications...
+Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+appproject.argoproj.io/addons created
+application.argoproj.io/addons created
+application.argoproj.io/external-secrets-operator created
+appproject.argoproj.io/infra created
+applicationset.argoproj.io/apps-overlays created
+appproject.argoproj.io/apps created
+application.argoproj.io/apps created
+ArgoCD infrastructure applications applied.
+Ensuring external-secrets ClusterSecretStore (waiting for the operator's CRD + webhook)...
+error: resource mapping not found for name: "secretstore-gcp" namespace: "" from "/tmp/alethia-addon-manifest-4200370015/manifest.yaml": no matches for kind "ClusterSecretStore" in version "external-secrets.io/v1beta1"
+ensure CRDs are installed first
+  external-secrets operator (CRD/webhook) isn't ready yet (attempt 1) — waiting 15s for ArgoCD to finish installing it...
+clustersecretstore.external-secrets.io/secretstore-gcp serverside-applied
+ClusterSecretStore applied.
+external-dns is not rendered for this configuration — removing any stale install...
+error: the server doesn't have a resource type "clusterissuer"
+Warning: could not remove stale cert-manager ClusterIssuer letsencrypt-prod: command returned non-zero exit code: exit status 1
+Configuring 1 bring-your-own chart(s) under hardened project "byo-alethia-nl"
+namespace/byo-e2e created
+Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+appproject.argoproj.io/byo-alethia-nl created
+Configuring ArgoCD repository credentials for https://github.com/alethialabs-io/alethia-e2e-chart (secret repo-byo-22e436f41e68)
+secret/repo-byo-22e436f41e68 created
+ArgoCD repository credentials configured.
+Applying add-on wave 2 (1 application(s))...
+Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+application.argoproj.io/addon-byo-e2e created
+Cloning https://github.com/alethialabs-io/alethia-e2e-apps into /tmp/alethia-addons-4266020678...
+Enumerating objects: 3, done.
+Counting objects:  33% (1/3)Counting objects:  66% (2/3)Counting objects: 100% (3/3)Counting objects: 100% (3/3), done.
+Compressing objects:  50% (1/2)Compressing objects: 100% (2/2)Compressing objects: 100% (2/2), done.
+Total 3 (delta 0), reused 3 (delta 0), pack-reused 0 (from 0)
+Waiting up to 10m0s for 1 add-on(s) to converge...
+Add-on convergence wait timed out after 10m0s: [addon-byo-e2e(Missing/OutOfSync)]
+Security posture: Trivy-Operator not installed or no reports yet.
+Deployment completed successfully.
+{"time":"2026-08-25T10:46:47.269461304Z","level":"INFO","msg":"job completed successfully","runner_id":"958fdc1c-79f0-4f43-acd6-0407f8bb567d","job_id":"994d5e43-f1a7-405c-9b82-73b8a2b8551b"}

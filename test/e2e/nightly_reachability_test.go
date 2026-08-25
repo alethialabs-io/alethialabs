@@ -317,3 +317,304 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+// TestScenarioApplyToSnapshotIsCalled is the third guard in this file, and it closes the gap the
+// first two structurally cannot see.
+//
+// The existing guards ask "is the enable VARIABLE wired?" and "does the script name a REAL test?".
+// #1773 satisfied both and still could not pass: ALETHIA_E2E_ACM_CERT was wired in e2e-nightly.yml,
+// acmCertConfig.decide() turned the layer on, the provision test logged "ACM certificate ENABLED",
+// and runT2AcmCert then asserted a certificate that nothing had ever asked the template to build.
+// acmCertConfig.applyToSnapshot existed, was unit-tested, carried a comment saying "this assignment
+// is what the floor path uses" — and was called from no production path at all.
+//
+// Run 32838291742 is the record: the plan carried no aws_acm_certificate, `route53_zone_id = ""`,
+// and the verdict read `no aws_acm_certificate_validation in state`. A scenario that ASSERTS without
+// CONFIGURING cannot go green, and no amount of retrying moves it.
+//
+// So: every scenario type that DEFINES an applyToSnapshot must have it CALLED from the one function
+// that assembles the deploy snapshot. The check is a source grep for the same reason the guards
+// above are — it has to hold about the code as written, not about a code path a test happened to
+// take.
+func TestScenarioApplyToSnapshotIsCalled(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	dir := filepath.Dir(thisFile)
+	self := filepath.Base(thisFile)
+
+	// Receiver may be a POINTER and may be named anything. The first version matched only
+	// `func (c X) applyToSnapshot(` — a single-letter VALUE receiver. `func (cfg X)` and
+	// `func (c *X)` are both idiomatic Go no reviewer would flag, and either would have dropped the
+	// scenario out of `defined` entirely, so the guard would report green on a completely unwired
+	// scenario. Which is #1773, the thing it exists to catch.
+	definer := scenarioDefinerRe
+	// The assembler's DECLARATION, anchored at line start so a mention in prose or a string cannot
+	// nominate a file as the assembler.
+	assemblerDecl := scenarioAssemblerRe
+	caller := scenarioCallerRe
+
+	defined := map[string]string{}
+	called := map[string]bool{}
+	sig := ""
+	sigFile := ""
+
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return err
+		}
+		base := filepath.Base(path)
+		// SKIP THIS FILE. The first version did not, and it self-satisfied: the literal
+		// `"func t2DeploySnapshot("` appears in this very function, so the guard nominated ITSELF as
+		// the assembler, then matched its own comment `repos.applyToSnapshot(full)` and set
+		// called["repos"] permanently. t2ArgoRepos was exempt forever and the len(called)==0
+		// non-vacuity fatal was unreachable — the guard failed in the same way it was built to catch.
+		if base == self {
+			return nil
+		}
+		src, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		// Comments are stripped before any match: a call written in prose is not a call.
+		text := stripGoComments(string(src))
+
+		for _, m := range definer.FindAllStringSubmatch(text, -1) {
+			defined[m[1]] = base
+		}
+		if m := assemblerDecl.FindStringSubmatch(text); m != nil {
+			if sig != "" && sigFile != base {
+				// Two files declaring it is not a thing to resolve by last-write-wins; that is how a
+				// stray file could silently blank `sig` and produce five wrong diagnoses at once.
+				t.Fatalf("t2DeploySnapshot is declared in both %s and %s — this guard cannot tell which assembles the snapshot", sigFile, base)
+			}
+			sig, sigFile = m[1], base
+			for _, c := range caller.FindAllStringSubmatch(text, -1) {
+				called[c[1]] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", dir, err)
+	}
+
+	if len(defined) == 0 {
+		t.Fatal("found no applyToSnapshot definitions at all — this guard is scanning the wrong tree " +
+			"and would pass over any number of unwired scenarios")
+	}
+	if sig == "" {
+		t.Fatal("found no t2DeploySnapshot declaration — either it was renamed or this guard stopped " +
+			"finding it; both make every result below meaningless, so this fails rather than passes")
+	}
+	if len(called) == 0 {
+		t.Fatal("found no applyToSnapshot CALLS in t2DeploySnapshot — either every scenario is unwired " +
+			"or the scan is broken; both make this guard vacuous, so it fails rather than passes")
+	}
+
+	// Resolve each scenario TYPE to the variable the assembler receives it as, by reading
+	// t2DeploySnapshot's own parameter list. Matching type names against variable names by string
+	// similarity does not work — `t2ArgoRepos` arrives as `repos`, `secretsXacctConfig` as `xacct` —
+	// and a guard that guesses wrong either cries wolf or gets loosened until it catches nothing.
+	//
+	// `(?:,|$)` and not `(?:,|\))`: the captured signature is the parameter list WITHOUT its closing
+	// paren, so a `\)` branch is dead and only a trailing comma could ever terminate a parameter.
+	// The LAST parameter was therefore unresolvable — and the end of the signature is exactly where
+	// the next scenario gets appended, as acmCert was.
+	paramOf := map[string]string{}
+	for _, m := range scenarioParamRe.FindAllStringSubmatch(sig, -1) {
+		paramOf[m[2]] = m[1]
+	}
+
+	for typeName, file := range defined {
+		v, isParam := paramOf[typeName]
+		if !isParam {
+			t.Errorf("%s defines applyToSnapshot (%s) but is not even a parameter of t2DeploySnapshot — "+
+				"the scenario cannot reach a real deploy snapshot at all. That is #1773: "+
+				"ALETHIA_E2E_ACM_CERT was wired, decide() said yes, the run logged ENABLED, and the "+
+				"plan carried no certificate because acmCertConfig was never passed in.", typeName, file)
+			continue
+		}
+		if !called[v] {
+			t.Errorf("%s (%s) is passed to t2DeploySnapshot as %q but %s.applyToSnapshot is never "+
+				"called there — the scenario can turn ON, log that it is enabled, and then assert "+
+				"against a snapshot it never configured. Call it AFTER MaxConfigSnapshot.",
+				typeName, file, v, v)
+		}
+	}
+}
+
+// stripGoComments removes // and /* */ comments so a call or a declaration written in PROSE cannot
+// satisfy this file's guards. Naive about both inside string literals, which can only make the
+// guards stricter — the safe direction for a check whose job is to refuse a claim.
+// The four patterns the scenario guard matches with, at package scope so the guard and the tests
+// below share ONE definition. They were locals, which meant every property they are relied on for —
+// a pointer receiver, a multi-character receiver name, an anchored declaration, a LAST parameter
+// with no trailing comma — could only be exercised by running the whole WalkDir against the real
+// tree. Three of the four were wrong at some point and nothing failed.
+var (
+	// Receiver may be a POINTER and may be named anything.
+	scenarioDefinerRe = regexp.MustCompile(`func \(\s*[A-Za-z_][A-Za-z0-9_]*\s+\*?([A-Za-z_][A-Za-z0-9_]*)\s*\) applyToSnapshot\(`)
+	// The assembler's DECLARATION, anchored at line start so prose cannot nominate a file.
+	scenarioAssemblerRe = regexp.MustCompile(`(?m)^func t2DeploySnapshot\(([\s\S]*?)\)\s*\(`)
+	scenarioCallerRe    = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\.applyToSnapshot\(`)
+	// `(?:,|$)` and not `(?:,|\))`: sig is the parameter list WITHOUT its closing paren, so a `\)`
+	// branch is dead and the LAST parameter — where the next scenario gets appended — never resolved.
+	scenarioParamRe = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:,|$)`)
+)
+
+func stripGoComments(src string) string {
+	var out strings.Builder
+	out.Grow(len(src))
+	for i := 0; i < len(src); i++ {
+		switch c := src[i]; {
+		case c == '"' || c == '`':
+			// Copy the whole literal verbatim. A raw string cannot contain an escape, and an
+			// interpreted one cannot span a line, so the two are terminated differently.
+			quote := c
+			out.WriteByte(c)
+			for i++; i < len(src); i++ {
+				if quote == '"' && src[i] == '\\' && i+1 < len(src) {
+					out.WriteByte(src[i])
+					i++
+					out.WriteByte(src[i])
+					continue
+				}
+				out.WriteByte(src[i])
+				if src[i] == quote || (quote == '"' && src[i] == '\n') {
+					break
+				}
+			}
+		case c == '/' && i+1 < len(src) && src[i+1] == '/':
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+			if i < len(src) {
+				out.WriteByte('\n') // keep line numbering intact
+			}
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			for i += 2; i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/'); i++ {
+				if src[i] == '\n' {
+					out.WriteByte('\n')
+				}
+			}
+			i++ // land on the '/' of the closing pair; the loop's i++ steps past it
+		default:
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
+}
+
+// ── the scenario guard's own parts, tested (#2566) ──────────────────────────────────────────
+//
+// #2581 fixed four defects in the guard above and verified each by hand — deleting a real call from
+// the real assembler, moving acmCert to the last position — then reverted the mutation. None of it
+// survived the commit, so the guard that had already failed silently once was left with its
+// discriminating branch unexercised again. These are those checks, kept.
+
+func TestStripGoCommentsIgnoresStringLiterals(t *testing.T) {
+	for _, tc := range []struct{ name, src, want, absent string }{
+		{
+			name:   "a line comment outside a string is removed",
+			src:    "a := 1 // applyToSnapshot(\nb := 2",
+			absent: "applyToSnapshot",
+		},
+		{
+			name:   "a block comment outside a string is removed",
+			src:    "a := 1\n/* func (c X) applyToSnapshot( */\nb := 2",
+			absent: "applyToSnapshot",
+		},
+		{
+			// THE HAZARD. `//` inside a URL is ordinary, and cutting the line at it truncates real
+			// code — including, in the worst case, a definition, which drops that scenario out of
+			// `defined` entirely and exempts it silently. That is the #1773 failure mode.
+			name: "a '//' inside an interpreted string is not a comment",
+			src:  `u := "https://example.com/x"` + "\n",
+			want: "https://example.com/x",
+		},
+		{
+			// A glob is the realistic way `/*` reaches a string. Non-greedy `/\*.*?\*/` would open a
+			// comment here and swallow everything up to the next `*/` anywhere in the file.
+			name: "a '/*' inside a string does not open a comment",
+			src:  "g := \"**/*.go\"\nfunc (c acmCertConfig) applyToSnapshot(s any) {}\nh := \"a*/b\"",
+			want: "applyToSnapshot",
+		},
+		{
+			name: "a raw string literal is copied verbatim",
+			src:  "r := `a // b /* c */ d`\n",
+			want: "a // b /* c */ d",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stripGoComments(tc.src)
+			if tc.want != "" && !strings.Contains(got, tc.want) {
+				t.Errorf("stripGoComments dropped %q:\nin:  %q\nout: %q", tc.want, tc.src, got)
+			}
+			if tc.absent != "" && strings.Contains(got, tc.absent) {
+				t.Errorf("stripGoComments kept %q, which was inside a comment:\nout: %q", tc.absent, got)
+			}
+		})
+	}
+}
+
+func TestScenarioDefinerMatchesEveryReceiverForm(t *testing.T) {
+	// Each of these is idiomatic Go no reviewer would flag, and the first version matched only the
+	// first. A scenario written either of the other two ways never entered `defined`, so the guard
+	// reported green on a completely unwired scenario — #1773 again.
+	for _, tc := range []struct{ name, src, want string }{
+		{"single-letter value receiver", "func (c acmCertConfig) applyToSnapshot(", "acmCertConfig"},
+		{"multi-character receiver", "func (cfg acmCertConfig) applyToSnapshot(", "acmCertConfig"},
+		{"pointer receiver", "func (c *acmCertConfig) applyToSnapshot(", "acmCertConfig"},
+		{"pointer + multi-character", "func (cfg *acmCertConfig) applyToSnapshot(", "acmCertConfig"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := scenarioDefinerRe.FindStringSubmatch(tc.src)
+			if m == nil {
+				t.Fatalf("no match for %q — a scenario written this way would be silently exempt", tc.src)
+			}
+			if m[1] != tc.want {
+				t.Errorf("captured %q, want the receiver TYPE %q", m[1], tc.want)
+			}
+		})
+	}
+}
+
+func TestScenarioAssemblerIsAnchoredToADeclaration(t *testing.T) {
+	// The guard nominated its own file as the assembler because it matched the literal anywhere.
+	// Anchoring is what makes a mention in prose or in a string not a declaration.
+	if m := scenarioAssemblerRe.FindStringSubmatch("func t2DeploySnapshot(a A, b B) (X, error) {"); m == nil {
+		t.Fatal("the real declaration must match")
+	}
+	for _, notADecl := range []string{
+		`// see func t2DeploySnapshot(a A) (X, error) {`,
+		`	s := "func t2DeploySnapshot(a A) (X, error) {"`,
+		`x := someFunc t2DeploySnapshot(a A) (X, error) {`,
+	} {
+		if scenarioAssemblerRe.MatchString(notADecl) {
+			t.Errorf("a non-declaration nominated a file as the assembler: %q", notADecl)
+		}
+	}
+}
+
+func TestScenarioParamResolvesTheLastParameter(t *testing.T) {
+	// `sig` is captured WITHOUT its closing paren, so the old `(?:,|\))` alternation had a dead
+	// branch and only a trailing comma terminated a parameter. The end of the signature is exactly
+	// where the next scenario gets appended — which is where acmCert went.
+	for _, sig := range []string{
+		"a TypeA, b TypeB, acmCert acmCertConfig",
+		"\n\ta TypeA,\n\tacmCert acmCertConfig,\n",
+	} {
+		// Keyed by TYPE, valued by the parameter NAME — the direction the guard uses to turn a
+		// scenario's type into the variable the assembler calls it on. (I had this backwards first;
+		// the regex was right and the test was wrong.)
+		paramOf := map[string]string{}
+		for _, m := range scenarioParamRe.FindAllStringSubmatch(sig, -1) {
+			paramOf[m[2]] = m[1]
+		}
+		if paramOf["acmCertConfig"] != "acmCert" {
+			t.Errorf("the LAST parameter did not resolve in %q: got %#v", sig, paramOf)
+		}
+	}
+}

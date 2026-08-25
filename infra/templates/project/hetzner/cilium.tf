@@ -124,4 +124,72 @@ data "helm_template" "hcloud_ccm" {
     name  = "networking.clusterCIDR"
     value = local.pod_cidr
   }
+
+  # A DEFAULT LOAD BALANCER LOCATION, without which the CCM refuses to create one at all.
+  #
+  # hcloud-cloud-controller-manager will not provision a Load Balancer unless it can decide WHERE
+  # to put it — from `HCLOUD_LOAD_BALANCERS_LOCATION`, `HCLOUD_LOAD_BALANCERS_NETWORK_ZONE`, or a
+  # per-Service `load-balancer.hetzner.cloud/location` annotation. This template set none of the
+  # three, so every `type: LoadBalancer` Service on a Hetzner cluster sat Pending forever. That is
+  # a PRODUCT bug, not a test one: it is any customer's ingress, not just ours.
+  #
+  # It is also the root cause of #2490, by a chain that is worth writing down because the symptom
+  # names none of it: no location → no Load Balancer → the ingress-nginx controller Service never
+  # goes healthy → its ArgoCD Application sits Progressing ("waiting for healthy state of
+  # /Service/addon-ingress-nginx-controller") → ArgoCD never runs PostSync → the chart's
+  # `admission-patch` post-install Job never injects the admission webhook's caBundle → every
+  # later Ingress is rejected with `x509: certificate signed by unknown authority`. Harbor (wave 2)
+  # was the visible casualty. Only the PreSync admission hooks ever reached Succeeded, which is the
+  # fingerprint of this and not of a slow wave.
+  #
+  # So this was never a race, and no ordering gate could have fixed it: a 5-minute wait, a 50-minute
+  # wait and no wait produce the same permanent failure.
+  set {
+    name  = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value"
+    value = data.hcloud_location.selected.name
+    # A Kubernetes container env `value` is a STRING, and helm's `--set` TYPE-INFERS. See the
+    # USE_PRIVATE_IP block below for what that cost. This one has never rendered wrong — no Hetzner
+    # location is spelled `true` or `3` — but the rule is uniform on purpose: an exception here is
+    # an exception the guard has to carry, and the next value put in this block would inherit it.
+    type = "string"
+  }
+
+  # Reach backends over the PRIVATE network. Unconditional, because there is always one (#2549).
+  #
+  # This was keyed off `provision_network`, with the rationale "with no private network there is
+  # nothing to route over". Both halves were wrong: `provision_network = false` does not mean "no
+  # private network", it means BRING YOUR OWN. On that path `network_id` is mandatory
+  # (checks_network.tf), `hcloud_network_subnet.nodes` is created either way — it carries no `count`
+  # — `local.network_id` resolves from the data source, and talos.tf always writes the `network` key
+  # into the `hcloud` Secret with `networking.enabled = "true"` hardcoded.
+  #
+  # So the BYO-network path yielded "false" and the CCM targeted the nodes' PUBLIC IPs, which
+  # `hcloud_firewall.this` admits only on 50000/50001/6443. The Load Balancer's health checks would
+  # never pass, ArgoCD would still mark the Service Healthy because an ingress IP had been assigned,
+  # and no traffic would reach nginx. Silent, in exactly the way #2490 was silent — which is the
+  # whole reason that bug survived long enough to be misdiagnosed as a race.
+  #
+  # The question this wants to ask is "is there a private network", not "did we create it". The
+  # answer here is always yes.
+  set {
+    name  = "env.HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP.value"
+    value = "true"
+    # WITHOUT THIS, NO HETZNER CLUSTER COMES UP AT ALL.
+    #
+    # `value = "true"` is a string in HCL and stops being one in helm: `--set x=true` TYPE-INFERS a
+    # boolean, so the chart rendered `value: true` into a container env var, and a Kubernetes env
+    # `value` must be a string. Server-side apply refuses the object outright:
+    #
+    #   failed to create typed patch object (kube-system/hcloud-cloud-controller-manager):
+    #     .spec…env[name="HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP"].value:
+    #     expected string, got &value.valueUnstructured{Value:true}
+    #
+    # The whole bootstrap manifest is one apply, so the CCM taking the object down took Cilium with
+    # it: CNI never installs, nodes stay NotReady (Talos ships CNI=none), all four retries fail
+    # identically, and the deploy dies ~4 minutes in having provisioned a full cluster. Measured on
+    # run 32873754809.
+    #
+    # `type = "string"` is `--set-string`. LOCATION escaped only because "nbg1" is not boolean-like.
+    type = "string"
+  }
 }

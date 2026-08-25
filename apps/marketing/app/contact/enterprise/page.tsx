@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { Metadata } from "next";
-import { Header } from "@/components/landing/home/header";
-import { Footer } from "@/components/landing/home/footer";
+import { SiteShell } from "@repo/brand/site-shell";
 import { ContactSection } from "@/components/contact/contact-page";
-import { getGitHubStars } from "@/lib/github-stars";
 
 export const metadata: Metadata = {
 	title: "Set up your Enterprise trial · Alethia",
@@ -15,11 +13,8 @@ export const metadata: Metadata = {
 
 /** Public "Enterprise trial" page. Shares the landing Header/Footer chrome. */
 export default async function ContactEnterprisePage() {
-	const stars = await getGitHubStars();
 	return (
-		<div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
-			<Header stars={stars} />
-			<main>
+		<SiteShell>
 				<ContactSection
 					type="enterprise"
 					submitLabel="Request your trial"
@@ -55,8 +50,6 @@ export default async function ContactEnterprisePage() {
 					crossHref="/contact/sales"
 					crossSub="Talk to sales for a custom demo against your stack."
 				/>
-			</main>
-			<Footer />
-		</div>
+		</SiteShell>
 	);
 }

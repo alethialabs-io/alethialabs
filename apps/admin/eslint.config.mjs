@@ -19,6 +19,24 @@ const eslintConfig = defineConfig([
 			"react-hooks/preserve-manual-memoization": "warn",
 		},
 	},
+	{
+		// An app may not reach into a SIBLING app with a relative path. On 2026-07-30 #1711 put a
+		// marketing test under apps/console importing "../../../marketing/proxy"; console's tsconfig
+		// includes **/*.ts, so that dragged apps/marketing/proxy.ts into the CONSOLE type-check, and
+		// the console image installs --filter console... (no marketing) — so next/server did not
+		// resolve there and TS2307 broke every production deploy for 26 days. Full CI stayed green
+		// because it installs the whole workspace. Shared code is PROMOTED to packages/*, never
+		// reached across for. This catches it at lint time instead of in a buildx log.
+		rules: {
+			"import/no-restricted-paths": [
+				"error",
+				{
+					basePath: import.meta.dirname,
+					zones: [{ target: ".", from: "../", except: ["./admin"] }],
+				},
+			],
+		},
+	},
 ]);
 
 export default eslintConfig;

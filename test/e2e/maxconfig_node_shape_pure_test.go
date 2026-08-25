@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/catalog"
@@ -25,7 +26,9 @@ import (
 	coretypes "github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
-// enableHeavy turns on both dimensions the guard gates on + REQUIRE (hard-fail mode).
+// enableHeavy turns on both heavy dimensions + REQUIRE (hard-fail mode). EITHER alone also arms the
+// guard now — see "each heavy dimension arms the guard on its own" below, which is the case that was
+// silently unguarded.
 func enableHeavy(t *testing.T) {
 	t.Helper()
 	t.Setenv("ALETHIA_E2E_ALL_ADDONS", "1")
@@ -89,6 +92,45 @@ func TestMaxConfigNodeShapeGuard(t *testing.T) {
 		}}
 		if fatal, _ := t2RequireMaxConfigNodeShape("azure", thin); !fatal {
 			t.Fatal("the azure override must lower the vCPU floor only — 24 GB total is still below heavyMinMemGB")
+		}
+	})
+
+	// THE REGRESSION. The guard used to return early unless BOTH flags were on, which made it a
+	// no-op on the two dimensions that need it most: `maxconfig` and `addons` each set exactly one.
+	// So the workflow gave them the cheapest floor pool (it keyed the heavy shape on the `full`
+	// token) and the one guard written to catch that combination said nothing — 18 charts Pending on
+	// a 2-vCPU node until the 165-minute cap. Each flag on its own must trip it.
+	for _, tc := range []struct{ name, env string }{
+		{"max-config alone", "ALETHIA_E2E_MAX_CONFIG"},
+		{"all-add-ons alone", "ALETHIA_E2E_ALL_ADDONS"},
+	} {
+		t.Run("each heavy dimension arms the guard on its own: "+tc.name, func(t *testing.T) {
+			t.Setenv("ALETHIA_E2E_ALL_ADDONS", "")
+			t.Setenv("ALETHIA_E2E_MAX_CONFIG", "")
+			t.Setenv(tc.env, "1")
+			t.Setenv("ALETHIA_E2E_T2_REQUIRE", "1")
+			// The floor shape the workflow used to hand these dimensions: one small node.
+			snap := map[string]any{"cluster": map[string]any{"node_desired_size": float64(1), "instance_types": []any{"t3.large"}}}
+			fatal, msg := t2RequireMaxConfigNodeShape("aws", snap)
+			if !fatal || msg == "" {
+				t.Fatalf("%s must arm the node-shape guard, got fatal=%v msg=%q", tc.name, fatal, msg)
+			}
+			// And it must name the dimension actually requested, not a combination nobody asked for.
+			if strings.Contains(msg, "max-config + all-add-ons") {
+				t.Fatalf("%s reported the both-dimensions phrasing: %q", tc.name, msg)
+			}
+		})
+	}
+
+	// The shipped heavy profile has to satisfy the guard under a SINGLE flag too — otherwise arming
+	// it on one dimension would red every maxconfig/addons run on a correctly-sized cluster.
+	t.Run("the shipped heavy profile clears the floor under one flag", func(t *testing.T) {
+		t.Setenv("ALETHIA_E2E_ALL_ADDONS", "1")
+		t.Setenv("ALETHIA_E2E_MAX_CONFIG", "")
+		t.Setenv("ALETHIA_E2E_T2_REQUIRE", "1")
+		snap := map[string]any{"cluster": loadHeavyProfile(t, "aws")}
+		if fatal, msg := t2RequireMaxConfigNodeShape("aws", snap); fatal || msg != "" {
+			t.Fatalf("the shipped aws heavy profile must satisfy the guard under one flag: fatal=%v msg=%q", fatal, msg)
 		}
 	})
 

@@ -37,8 +37,25 @@ resource "alicloud_kms_key" "ack_secrets" {
   # here rather than the longest.
   pending_window_in_days = 7
 
-  # Rotation is a no-op for already-encrypted Secrets — the old version is retained — so it is safe
-  # to leave on, and it means a long-lived project does not sit on one key material forever.
-  automatic_rotation = "Enabled"
-  rotation_interval  = "7776000s"
+  # ⚠️ NO AUTOMATIC ROTATION HERE, AND IT IS NOT AN OVERSIGHT (#2260).
+  #
+  # This used to set `automatic_rotation = "Enabled"` + `rotation_interval = "7776000s"` (90 days),
+  # on the reasoning that rotation is a no-op for already-encrypted Secrets — the old key version is
+  # retained — so it was safe to leave on. The reasoning about SAFETY was fine. The assumption that
+  # the parameter would be ACCEPTED was not, and it failed every single ACK apply:
+  #
+  #     Resource alicloud_kms_key CreateKey Failed!!!
+  #        Code: InvalidParameter
+  #        Message: The specified parameter EnableAutomaticRotation is not valid.
+  #
+  # This key is a DEFAULT (service) key — no `dkms_instance_id`, so it does not live in a KMS
+  # instance. Alibaba gates rotation for that tier twice over, and the committed config missed on
+  # both: it is a paid per-region value-added service (USD 9/yr) that this account has not bought,
+  # and even once bought the period is FIXED AT 365 DAYS, so a 90-day interval was never expressible.
+  # Turning it back on therefore needs a purchase decision, not a code change.
+  #
+  # Parity note, so the gap stays measurable rather than silent: gcp rotates its CMK
+  # (`gke_secrets_encryption_rotation_period`, 90 days) and azure does not. Alibaba now matches
+  # azure. Nothing in packages/core or test/ asserts rotation, so no control regresses — but if a
+  # rotation control is ever written, this is the cloud that will need the purchase first.
 }

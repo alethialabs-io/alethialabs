@@ -500,12 +500,13 @@ export function AuthForm({ mode }: AuthFormProps) {
 
 				<div className="grid grid-cols-2 gap-[9px]">
 					{oauthProviders.map((provider) => (
-						<button
+						<Button
 							key={provider}
 							type="button"
+							variant="outline"
 							onClick={() => handleOAuthLogin(provider)}
 							disabled={isLoading}
-							className="inline-flex h-[46px] items-center justify-center gap-[9px] rounded-sm border border-border-strong text-[13.5px] font-medium text-text-primary transition-colors hover:border-ring hover:bg-surface-muted disabled:opacity-50"
+							className="h-[46px] gap-[9px] rounded-sm border-border-strong text-[13.5px] hover:border-ring hover:bg-surface-muted"
 						>
 							{loadingProvider === provider ? (
 								<Loader2 className="size-[17px] animate-spin" />
@@ -513,24 +514,32 @@ export function AuthForm({ mode }: AuthFormProps) {
 								<ProviderIcon provider={provider} size={17} />
 							)}
 							{lookup(PROVIDER_LABELS, provider)}
-						</button>
+						</Button>
 					))}
 				</div>
 
-				{/* SSO — not wired yet; visible but disabled (coming soon). */}
-				<button
+				{/* The four remaining raw <button>s in this file are inline TEXT
+				    affordances — "← Other sign-in options", "Resend", the back-links.
+				    They are deliberately not `Button`: they have no box, so the clamp
+				    has nothing to clamp onto, and the system's `link` variant would put
+				    an underline on them that this composition does not want.
+
+				    SSO — not wired yet; visible but disabled (coming soon). An e2e spec
+				    asserts it is present AND disabled, so neither may change here. */}
+				<Button
 					type="button"
+					variant="outline"
 					disabled
 					title="SSO is coming soon"
 					aria-label="Continue with SSO (coming soon)"
-					className="inline-flex h-[46px] w-full cursor-not-allowed items-center justify-center gap-[9px] rounded-sm border border-border-strong text-[13.5px] font-medium text-text-primary opacity-55"
+					className="h-[46px] w-full cursor-not-allowed gap-[9px] rounded-sm border-border-strong text-[13.5px] opacity-55"
 				>
 					<Lock className="size-4 opacity-80" />
 					Continue with SSO
 					<span className="ml-1 rounded-full border border-border-strong px-1.5 py-px font-mono text-[8.5px] uppercase tracking-[0.12em] text-text-tertiary">
 						Soon
 					</span>
-				</button>
+				</Button>
 
 				<div className="flex items-center gap-3.5 py-2">
 					<span className="h-px flex-1 bg-border" />
@@ -540,18 +549,19 @@ export function AuthForm({ mode }: AuthFormProps) {
 					<span className="h-px flex-1 bg-border" />
 				</div>
 
-				<button
+				<Button
 					type="button"
+					variant="outline"
 					onClick={() => {
 						setStep("email");
 						setError(null);
 					}}
 					disabled={isLoading}
-					className="group inline-flex h-[46px] w-full items-center justify-center gap-[9px] rounded-sm border border-border-strong text-[13.5px] font-medium text-text-primary transition-colors hover:border-ring hover:bg-surface-muted disabled:opacity-50"
+					className="group h-[46px] w-full gap-[9px] rounded-sm border-border-strong text-[13.5px] hover:border-ring hover:bg-surface-muted"
 				>
 					<KeyRound className="size-4 opacity-80" />
 					Continue with email
-				</button>
+				</Button>
 
 				<p className="mt-4 flex items-start gap-2 text-xs leading-[1.55] text-text-tertiary">
 					<Lock className="mt-0.5 size-3.5 shrink-0 opacity-70" />
@@ -563,8 +573,11 @@ export function AuthForm({ mode }: AuthFormProps) {
 }
 
 /**
- * Ink primary button matching the design's `.btn-primary` (46px, arrow that
- * nudges on hover), with a spinner + label while loading.
+ * The primary action, 46px with an arrow that nudges on hover.
+ *
+ * It used to pass `bg-ink text-ink-foreground hover:bg-ink-hover`, which is the
+ * `default` variant restated by hand — so the variant was overridden with a copy of
+ * itself and drifted from it for free. Only the size and the group hook are local now.
  */
 function PrimaryButton({
 	loading,
@@ -578,7 +591,7 @@ function PrimaryButton({
 	return (
 		<Button
 			{...props}
-			className="group h-[46px] w-full rounded-sm bg-ink text-sm font-medium text-ink-foreground hover:bg-ink-hover"
+			className="group h-[46px] w-full rounded-sm text-sm"
 		>
 			{loading ? (
 				<>

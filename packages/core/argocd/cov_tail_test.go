@@ -181,12 +181,33 @@ func TestTail_RenderManagedAddOnsFailureArms(t *testing.T) {
 
 // ── byo.go / applicationset_preview.go / preview_guardrails.go ───────────────────
 
-// TestTail_RenderByoAppProjectRejectsUnlabellableOutput covers the label arm: a project name that
-// renders a manifest yaml cannot parse must fail rather than ship an unlabelled AppProject.
-func TestTail_RenderByoAppProjectRejectsUnlabellableOutput(t *testing.T) {
-	_, err := RenderByoAppProject("a: b: c", []string{"https://git.example.com/x"}, []string{"ns"}, tailLabels)
-	if err == nil || !strings.Contains(err.Error(), "label byo AppProject") {
-		t.Fatalf("RenderByoAppProject error = %v, want the label failure", err)
+// TestTail_RenderByoAppProjectQuotesAMetacharacterName replaces a test that asserted the opposite,
+// and the swap is the point of #2540.
+//
+// It used to pass the project name `a: b: c` and require an ERROR — because `metadata.name` was
+// interpolated UNQUOTED by a text/template, so a name carrying YAML metacharacters produced a
+// manifest that would not parse, and the failure surfaced two steps later as "label byo AppProject".
+// That arm only existed because the renderer could emit broken YAML at all, and it only fired when
+// commonLabels was non-empty: with nil labels InjectCommonLabels returns the manifest untouched, so
+// the same name shipped a CORRUPT AppProject silently.
+//
+// Marshalling removes the failure instead of reporting it. The name is quoted by the encoder, the
+// document parses, and there is nothing left to catch downstream.
+func TestTail_RenderByoAppProjectQuotesAMetacharacterName(t *testing.T) {
+	out, err := RenderByoAppProject("a: b: c", []string{"https://git.example.com/x"}, []string{"ns"}, tailLabels)
+	if err != nil {
+		t.Fatalf("a quoted name must render, got error %v", err)
+	}
+	var doc struct {
+		Metadata struct {
+			Name string `yaml:"name"`
+		} `yaml:"metadata"`
+	}
+	if err := yaml.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("the rendered AppProject must parse, got %v:\n%s", err, out)
+	}
+	if doc.Metadata.Name != "a: b: c" {
+		t.Errorf("metadata.name = %q, want it carried verbatim inside a quoted scalar:\n%s", doc.Metadata.Name, out)
 	}
 }
 
