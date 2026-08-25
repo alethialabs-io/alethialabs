@@ -4,8 +4,11 @@
 package argocd
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -238,5 +241,101 @@ func TestByoAppProjectStillForbidsClusterResources(t *testing.T) {
 	}
 	if strings.Contains(out, "kind: Namespace") {
 		t.Errorf("the AppProject must not whitelist Namespace:\n%s", out)
+	}
+}
+
+// TestRenderByoNamespaces_RefusesYamlInjection is #2540: the namespace reached the renderer
+// unvalidated (`z.string().trim().optional()`, no DNS-1123 check, a plain `text()` column, so
+// interior newlines survive), was interpolated RAW into hand-rolled YAML, and the result was applied
+// as a standalone MULTI-DOCUMENT manifest with the cluster's admin kubeconfig.
+//
+// So an injected `---` produced arbitrary top-level objects created by the runner — the exact
+// cluster-scoped power the hardened AppProject exists to deny an untrusted chart. The fix that
+// created the namespace in order to honour that boundary had opened a way around it.
+//
+// This is the payload from the issue, not a sanitised stand-in.
+func TestRenderByoNamespaces_RefusesYamlInjection(t *testing.T) {
+	payload := "byo-e2e\n---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: pwn"
+
+	out, err := RenderByoNamespaces([]string{payload}, nil)
+	if err == nil {
+		t.Fatalf("an injected document was ACCEPTED — rendered:\n%s", out)
+	}
+	if out != "" {
+		t.Errorf("a refused render must return no manifest at all, got:\n%s", out)
+	}
+
+	// The full payload is caught by the LENGTH rule, which is luck rather than defence — so the
+	// case that matters is a SHORT one, where length cannot save us and only the charset rule can.
+	// 30 characters, still a complete second document.
+	short := "a\n---\nkind: ClusterRoleBinding"
+	if len(short) > dns1123LabelMaxLen {
+		t.Fatalf("the short payload must be under the length limit or it proves nothing (%d chars)", len(short))
+	}
+	out, err = RenderByoNamespaces([]string{short}, nil)
+	if err == nil {
+		t.Fatalf("a SHORT injected document was ACCEPTED — rendered:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "DNS-1123") {
+		t.Errorf("the short payload must be refused by the DNS-1123 rule, not incidentally; got: %v", err)
+	}
+
+	// And the structural half: even with validation removed, marshalling alone must make a hostile
+	// value one absurd NAME rather than a second document. Encode the payload directly to prove the
+	// encoder quotes it.
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	if err := enc.Encode(map[string]any{"name": short}); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	_ = enc.Close()
+	if strings.Contains(buf.String(), "\n---\n") {
+		t.Errorf("the encoder emitted a document separator from a VALUE — marshalling is not containing it:\n%s", buf.String())
+	}
+}
+
+// TestRenderByoNamespaces_RefusesNamesKubernetesWould is the general case behind the injection one.
+// Refusing rather than normalising is deliberate: the SAME string is written into the hardened
+// AppProject's `destinations`, so silently rewriting it here would produce a project whose
+// destination never matches the namespace the chart syncs into — an ArgoCD permission error naming
+// neither cause.
+func TestRenderByoNamespaces_RefusesNamesKubernetesWould(t *testing.T) {
+	for _, bad := range []string{
+		"Byo-E2E",               // uppercase
+		"byo_e2e",               // underscore
+		"-byo",                  // leading dash
+		"byo-",                  // trailing dash
+		"byo e2e",               // space
+		"byo/e2e",               // slash
+		`byo"e2e`,               // a quote — would break OUT of the AppProject's quoted form
+		strings.Repeat("a", 64), // one over the DNS-1123 label limit
+	} {
+		if _, err := RenderByoNamespaces([]string{bad}, nil); err == nil {
+			t.Errorf("namespace %q was accepted; Kubernetes would refuse it", bad)
+		}
+	}
+	// …and the boundary case on the other side of the length rule is still fine.
+	if _, err := RenderByoNamespaces([]string{strings.Repeat("a", 63)}, nil); err != nil {
+		t.Errorf("a 63-character label is legal and must be accepted: %v", err)
+	}
+}
+
+// TestRenderByoNamespaces_IsDeterministic — the render is committed to nothing, but it IS applied on
+// every deploy, and a manifest that differs between identical deploys makes `kubectl apply` churn
+// and any diff meaningless. Go randomises map iteration; this pins that the encoder does not.
+func TestRenderByoNamespaces_IsDeterministic(t *testing.T) {
+	labels := map[string]string{"z": "1", "a": "2", "m": "3", "alethia.io/project-id": "p-123"}
+	first, err := RenderByoNamespaces([]string{"byo-e2e", "payments"}, labels)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for i := 0; i < 25; i++ {
+		got, err := RenderByoNamespaces([]string{"byo-e2e", "payments"}, labels)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != first {
+			t.Fatalf("render is not deterministic (iteration %d):\nfirst:\n%s\ngot:\n%s", i, first, got)
+		}
 	}
 }
