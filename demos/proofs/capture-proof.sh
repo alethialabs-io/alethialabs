@@ -48,7 +48,7 @@ if [ -z "$provider" ]; then
 	exit 2
 fi
 
-stamp="$(date -u +%Y-%m-%dT%H%M%SZ)"
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 out="$root/demos/proofs/$provider/$stamp"
 mkdir -p "$out"
 echo "→ capturing T2 proof v2 for $provider (outcome=$outcome) into $out"
