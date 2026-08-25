@@ -145,6 +145,28 @@ achievable fix. It also means the #1871 billing-budget work cannot be validated 
 
 **Action: attach an open billing account to `itgix-adp`, or nominate a different GCP project.**
 
+> ### ✅ CLEARED 2026-08-25 — the maintainer attached an open billing account
+>
+> Re-probed live, and the block is gone. The account id did not change; it was **reopened**:
+>
+> ```
+> $ gcloud beta billing accounts describe 012128-F87F79-AAE313
+> open: true                                    ← was false
+>
+> $ gcloud container clusters list --project itgix-adp ; echo $?
+> 0                                             ← was 403
+> ```
+>
+> Both halves matter. `open: true` alone would not have been enough evidence, because
+> `billingEnabled: true` was *already* reporting success while every billable call 403'd — that
+> mismatch is the whole reason this section exists. The rc=0 on a genuinely billable API is what
+> settles it.
+>
+> **`gcp/floor` is still not runnable**, but for a different and much smaller reason: the e2e
+> service account holds `roles/browser` and no `roles/cloudkms.admin`, so a run dies inside
+> `secrets-encryption.tf` (#2258). #2295 committed that grant and it was never applied. One
+> `tofu apply infra/gcp-e2e` clears it — see `e2e-federation-apply-runbook.md`.
+
 ## alibaba — one missing service-linked role
 
 ```
@@ -207,10 +229,18 @@ catch it. Hetzner has the same shape, in a different provider's helper.
 
 Ranked by how much they unblock per minute spent:
 
-1. **Attach an open GCP billing account to `itgix-adp`** — unblocks a whole cloud and two issues.
-2. **Create `AliyunCSDefaultRole`** — one click, unblocks a whole cloud.
+1. ~~**Attach an open GCP billing account to `itgix-adp`**~~ — **done 2026-08-25**, verified above.
+2. **Create `AliyunCSDefaultRole`** — unblocks a whole cloud. The ACK console prompt is one click,
+   but it is **also creatable by API**: `AliyunCSDefaultRolePolicy` is a System policy
+   (`AttachmentCount: 0`, which is itself the proof the role is absent), so it is a `ram:CreateRole`
+   with a `cs.aliyuncs.com` service trust plus an `AttachPolicyToRole`. Reversible via `DeleteRole`.
 3. **Set the `HCLOUD_TOKEN` repo secret** — stops the hetzner leg green-skipping, so failures like
-   #2458 are caught by CI instead of by hand.
-4. **Run the four e2e federation applies** so the OIDC trust widening is authoritative rather than
-   hand-applied (see the issue filed alongside this document).
+   #2458 are caught by CI instead of by hand. Scope it to the **`alethia-infra-tests`** project:
+   #1579 warns that the account is shared with prod, which is true of the account and false of that
+   project, so a project-scoped token carries no prod blast radius and needs no kill-drill first.
+4. **Make the e2e federation authoritative** — **not** four applies. Planned against live state on
+   2026-08-25 it is **two applies (`gcp-e2e`, `alibaba-e2e`), one import (`azure-e2e`), and one
+   stack already correct (`aws-oidc`)**. Running four applies would be actively wrong: Azure's
+   `gh-oidc-env` credential already exists live but is absent from state, so an apply collides
+   rather than converging. Exact commands: `e2e-federation-apply-runbook.md`.
 5. **Delegate a real DNS zone (#1773)** — the single ceiling failing the CLI bar on every cloud.
