@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
-	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
 
 // clearArgoReposEnv blanks every A0.6 env var — the shared vars, the leg-selecting provider var, and
