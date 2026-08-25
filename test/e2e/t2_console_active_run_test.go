@@ -113,7 +113,9 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	// A0.6: wire the apps-destination repo + append the BYO chart add-on when enabled. The git token
 	// is NOT written into the snapshot — it crosses via the control plane's git-token handler.
 	if reposEnabled {
-		repos.applyToSnapshot(full)
+		if err := repos.applyToSnapshot(full); err != nil {
+			return nil, nil, fmt.Errorf("A0.6 repos: %w", err)
+		}
 	}
 	// #1268: layer the cross-account secret + the service binding that consumes it. MUST come AFTER
 	// MaxConfigSnapshot, which assigns whole snapshot keys (base[key] = decoded) and would otherwise
@@ -121,7 +123,9 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	// the cross-account secret and still report green. applyToSnapshot appends for the same reason.
 	// On `full` ONLY (never `base`, the A0.5 fidelity target).
 	if xacctEnabled {
-		xacct.applyToSnapshot(full)
+		if err := xacct.applyToSnapshot(full); err != nil {
+			return nil, nil, fmt.Errorf("#1268 cross-account secrets: %w", err)
+		}
 		t.Logf("#1268: seeding the DEPLOY job with a %s secret + a secret-kind binding on service %q", xacct.connectorSlug(), xacct.serviceName)
 	}
 	// #1511: mark the database keyless and add the service that binds it. AFTER MaxConfigSnapshot for
@@ -130,7 +134,9 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	// resolved against the first one's endpoint, and the run would report green having proven the
 	// wrong database. On `full` ONLY (never `base`, the A0.5 fidelity target).
 	if keylessEnabled {
-		keyless.applyToSnapshot(full)
+		if err := keyless.applyToSnapshot(full); err != nil {
+			return nil, nil, fmt.Errorf("#1511 keyless DB: %w", err)
+		}
 		t.Logf("#1511: seeding the DEPLOY job with an iam_auth %s database + a database binding on service %q",
 			keyless.engine, keyless.serviceName)
 	}
@@ -142,7 +148,9 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 	// registry and gains a foreign-account pull. On `full` ONLY (never `base`, the A0.5 fidelity
 	// target).
 	if registryEnabled {
-		registry.applyToSnapshot(full)
+		if err := registry.applyToSnapshot(full); err != nil {
+			return nil, nil, fmt.Errorf("cross-account registry: %w", err)
+		}
 		t.Logf("#1047: seeding the DEPLOY job with a %s registry row + service %q running %q",
 			registry.connectorSlug(), registry.serviceName, registry.image)
 	}
