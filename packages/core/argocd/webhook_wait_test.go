@@ -5,9 +5,11 @@ package argocd
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ingressNginxMidPatch is the state that broke hetzner/addons: the chart has created the
@@ -165,5 +167,131 @@ func TestExhaustedBudgetReportsRatherThanPasses(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "skipped") {
 		t.Errorf("the message must say the check did not run, got %q", err)
+	}
+}
+
+// ── The poll loop, driven hermetically ───────────────────────────────────────────────────────
+//
+// The behaviour that matters is not "an empty caBundle is unservable" — that is one function call.
+// It is that the gate KEEPS LOOKING and returns the moment the cluster converges, and gives up
+// with a description when it does not. Neither can be exercised against a function that shells out
+// to a live cluster, which is why webhookKubectl is a seam.
+
+// stubKubectl installs a scripted kubectl for one test and restores the real one after.
+func stubKubectl(t *testing.T, fn func(cmd string) (string, error)) {
+	t.Helper()
+	prev, prevInterval := webhookKubectl, admissionWebhookPollInterval
+	webhookKubectl = fn
+	admissionWebhookPollInterval = time.Millisecond
+	t.Cleanup(func() { webhookKubectl, admissionWebhookPollInterval = prev, prevInterval })
+}
+
+const readyEndpoints = `{"subsets":[{"addresses":[{"ip":"10.0.0.1"}]}]}`
+
+func TestWaitAdmissionWebhooksServableConverges(t *testing.T) {
+	// THE POINT OF THE GATE: the first read is the ingress-nginx mid-patch state, the second is
+	// patched with ready endpoints. The wait must not fail on the first read, and must return as
+	// soon as the second lands.
+	calls := 0
+	stubKubectl(t, func(cmd string) (string, error) {
+		if strings.Contains(cmd, "endpoints") {
+			return readyEndpoints, nil
+		}
+		calls++
+		if calls == 1 {
+			return ingressNginxMidPatch, nil
+		}
+		return ingressNginxPatched, nil
+	})
+
+	var out strings.Builder
+	if err := WaitAdmissionWebhooksServable(newWebhookWaitBudget(), &out, io.Discard); err != nil {
+		t.Fatalf("the gate must succeed once the caBundle is patched, got %v", err)
+	}
+	if calls < 2 {
+		t.Errorf("the gate returned without re-reading — it did not poll (calls=%d)", calls)
+	}
+	// The success line must say what it checked. "nothing unservable" over an empty cluster and
+	// over a real one are different facts, and a gate that renders them identically is unauditable.
+	if !strings.Contains(out.String(), "backing service(s) with ready endpoints") {
+		t.Errorf("the success path must report what it checked, got %q", out.String())
+	}
+}
+
+func TestWaitAdmissionWebhooksServableGivesUpWithADescription(t *testing.T) {
+	stubKubectl(t, func(cmd string) (string, error) {
+		if strings.Contains(cmd, "endpoints") {
+			return readyEndpoints, nil
+		}
+		return ingressNginxMidPatch, nil // never converges
+	})
+
+	err := WaitAdmissionWebhooksServable(&webhookWaitBudget{remaining: 20 * time.Millisecond}, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("a webhook that never becomes servable must be reported")
+	}
+	if !strings.Contains(err.Error(), "ingress-nginx-admission") {
+		t.Errorf("the failure must NAME the webhook that held it up, got %q", err)
+	}
+	if !strings.Contains(err.Error(), "x509") {
+		t.Errorf("the failure should point at the symptom an operator will actually see, got %q", err)
+	}
+}
+
+func TestWaitAdmissionWebhooksServableWaitsForEndpointsToo(t *testing.T) {
+	// A patched caBundle with no ready endpoints must NOT satisfy the gate: the certificate can be
+	// published before the pod that presents it accepts connections.
+	stubKubectl(t, func(cmd string) (string, error) {
+		if strings.Contains(cmd, "endpoints") {
+			return `{"subsets":[{"notReadyAddresses":[{"ip":"10.0.0.1"}]}]}`, nil
+		}
+		return ingressNginxPatched, nil
+	})
+
+	err := WaitAdmissionWebhooksServable(&webhookWaitBudget{remaining: 20 * time.Millisecond}, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("a caBundle without ready endpoints must not pass the gate")
+	}
+	if !strings.Contains(err.Error(), "no ready endpoints") {
+		t.Errorf("the failure must say the endpoints were the problem, got %q", err)
+	}
+}
+
+func TestWaitAdmissionWebhooksServableTreatsAMissingEndpointsObjectAsNotReady(t *testing.T) {
+	// The window between the Service existing and its pod being admitted. Treating the 404 as
+	// "fine" would wave the gate through in exactly the state it exists to catch.
+	stubKubectl(t, func(cmd string) (string, error) {
+		if strings.Contains(cmd, "endpoints") {
+			return "", errors.New(`Error from server (NotFound): endpoints "x" not found`)
+		}
+		return ingressNginxPatched, nil
+	})
+
+	err := WaitAdmissionWebhooksServable(&webhookWaitBudget{remaining: 20 * time.Millisecond}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "no Endpoints object yet") {
+		t.Fatalf("a missing Endpoints object must read as not ready, got %v", err)
+	}
+}
+
+func TestWaitAdmissionWebhooksServableReportsAnUnreadableCluster(t *testing.T) {
+	// kubectl itself failing is not "no webhooks". It is "we could not tell", and the caller
+	// reports it as a warning rather than proceeding as though the check had passed.
+	stubKubectl(t, func(string) (string, error) { return "", errors.New("connection refused") })
+
+	err := WaitAdmissionWebhooksServable(newWebhookWaitBudget(), io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "could not read admission webhook configurations") {
+		t.Fatalf("an unreadable cluster must be reported, not passed, got %v", err)
+	}
+}
+
+func TestWaitAdmissionWebhooksServableOnAnEmptyCluster(t *testing.T) {
+	stubKubectl(t, func(string) (string, error) { return `{"items":[]}`, nil })
+
+	var out strings.Builder
+	if err := WaitAdmissionWebhooksServable(newWebhookWaitBudget(), &out, io.Discard); err != nil {
+		t.Fatalf("a cluster with no webhooks has nothing to wait for, got %v", err)
+	}
+	if !strings.Contains(out.String(), "0 in-cluster backing service(s)") {
+		t.Errorf("the success line must distinguish an empty cluster from a checked one, got %q", out.String())
 	}
 }

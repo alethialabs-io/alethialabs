@@ -54,9 +54,13 @@ const (
 	// be able to spend nine minutes of it. One budget, shared, consumed as it goes — and since the
 	// expected case returns in seconds, a healthy cluster never notices either shape.
 	admissionWebhookWaitBudget = 3 * time.Minute
-	// admissionWebhookPollInterval is how often readiness is re-read.
-	admissionWebhookPollInterval = 5 * time.Second
+	// admissionWebhookPollIntervalDefault is how often readiness is re-read.
+	admissionWebhookPollIntervalDefault = 5 * time.Second
 )
+
+// admissionWebhookPollInterval is a variable, not a constant, so a test can drive the poll loop
+// without sleeping through real seconds. Production never assigns it.
+var admissionWebhookPollInterval = admissionWebhookPollIntervalDefault
 
 // webhookWaitBudget hands out the remaining share of admissionWebhookWaitBudget. Created once per
 // ApplyAddOnsInWaves call so the bound is per-DEPLOY, never per-wave.
@@ -224,10 +228,18 @@ func WaitAdmissionWebhooksServable(budget *webhookWaitBudget, stdout, stderr io.
 		time.Since(started).Round(time.Second), strings.Join(last, ", "))
 }
 
+// webhookKubectl is the seam this gate reads the cluster through. A package variable rather than a
+// direct call so the POLL LOOP itself is testable: the interesting behaviour is that an unservable
+// webhook becomes servable and the wait then returns, and that cannot be exercised against a
+// function that shells out to a real cluster. Stubbed only by tests in this package.
+var webhookKubectl = func(cmd string) (string, error) {
+	return utils.ExecuteCommandWithOutput(cmd, ".", nil)
+}
+
 // readWebhookConfigs lists both webhook kinds in one call.
 func readWebhookConfigs() (webhookConfigList, error) {
 	var out webhookConfigList
-	raw, err := utils.ExecuteCommandWithOutput("kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o json", ".", nil)
+	raw, err := webhookKubectl("kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o json")
 	if err != nil {
 		return out, err
 	}
@@ -245,8 +257,8 @@ func readWebhookConfigs() (webhookConfigList, error) {
 func unreadyBackings(backings []webhookBacking) ([]string, error) {
 	var pending []string
 	for _, b := range backings {
-		raw, err := utils.ExecuteCommandWithOutput(
-			fmt.Sprintf("kubectl get endpoints -n %s %s -o json", b.Namespace, b.Name), ".", nil)
+		raw, err := webhookKubectl(
+			fmt.Sprintf("kubectl get endpoints -n %s %s -o json", b.Namespace, b.Name))
 		if err != nil {
 			pending = append(pending, fmt.Sprintf("%s/%s (no Endpoints object yet)", b.Namespace, b.Name))
 			continue
