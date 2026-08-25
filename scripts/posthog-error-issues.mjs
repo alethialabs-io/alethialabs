@@ -25,9 +25,9 @@ const DRY_RUN = process.argv.includes("--dry-run") || process.env.DRY_RUN === "1
 
 const LABELS = ["bug", "from:posthog"];
 
-/** Fail with a clear message + non-zero exit. */
+/** Fail with a clear message + non-zero exit, annotated so it lands on the run summary. */
 function die(msg) {
-	console.error(`posthog-error-issues: ${msg}`);
+	console.error(`::error::posthog-error-issues: ${msg}`);
 	process.exit(1);
 }
 
@@ -64,6 +64,18 @@ async function fetchPostHogIssues() {
 		});
 		if (!res.ok) {
 			const text = await res.text().catch(() => "");
+			// Present-but-rejected is NOT the same as absent, and only the second has a guard: the
+			// workflow skips cleanly on an UNSET key, so an expired one arrived here as a bare 401
+			// for days (#2485) with nothing saying what to do about it. Still fatal — an error-triage
+			// pipeline that swallows its own auth failure is worse than one that stops — but the
+			// failure now names its remedy.
+			if (res.status === 401 || res.status === 403) {
+				die(
+					`POSTHOG_PERSONAL_API_KEY is invalid or expired (HTTP ${res.status}). Rotate it in ` +
+						`repo secrets, with scopes error_tracking:read + query:read. Error triage is ` +
+						`down until it is rotated: ${text.slice(0, 200)}`,
+				);
+			}
 			die(`PostHog issues fetch ${res.status}: ${text.slice(0, 400)}`);
 		}
 		const page = await res.json();
