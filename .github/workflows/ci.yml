@@ -180,10 +180,21 @@ jobs:
       #
       # Every false-failure path is fail-open and enumerated F1..F10 in the script header. The
       # floors carry a fingerprint of the environment that recorded them — including whether
-      # ee/dist existed, which is FALSE here (apps/console depends on @alethia/enterprise-api,
-      # not @alethia/ee, so turbo's `test.dependsOn: ["^build"]` never reaches it) and TRUE on a
-      # maintainer's machine after the local dev bring-up builds it. A mismatch DEMOTES failures
-      # to warnings rather than blaming coverage for a scope change.
+      # ee/dist existed, which is TRUE here.
+      #
+      # CORRECTION. This comment previously claimed the opposite: that apps/console depends on
+      # @alethia/enterprise-api and NOT on @alethia/ee, so `test.dependsOn: ["^build"]` never
+      # reaches it. That is wrong. `apps/console/package.json:201` declares `@alethia/ee` under
+      # **optionalDependencies** — turbo's `^build` traverses it like any other workspace
+      # dependency, so `turbo run test` BUILDS ee/dist and the console suite runs in ENTERPRISE
+      # scope, here and on a laptop alike. Measured, not reasoned: the determinism probe checked
+      # ee/dist ABSENT at job start, then recorded `"ee_dist": true` in the floors it wrote after
+      # the suites — the build happened in between.
+      #
+      # The floors are still reachable BECAUSE of that, not despite it: this job and the probe run
+      # the same `turbo run test`, so they build the same dist and measure the same scope. What was
+      # wrong was the stated reason, and a fingerprint key whose rationale is inverted is one a
+      # future reader will "fix" in the wrong direction.
       - name: Coverage ratchet — apps/console
         # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
         # rather than inheriting the implicit success() that would let one project's ratchet hide
@@ -1176,17 +1187,6 @@ jobs:
           printf '%-22s %s\n' ee/dist "$(test -f ee/dist/index.js && echo present || echo ABSENT)"
           node -p "require('./node_modules/@vitest/coverage-v8/package.json').version" 2>/dev/null \
             || echo "coverage-v8 version: resolved per-project"
-      # This must MIRROR the `typescript` job, not the e2e ones. If ee/dist is ever present here
-      # the recorded floors describe a scope the gate can never reproduce, so this is a hard stop
-      # rather than a warning.
-      - name: Guard — ee/dist must be ABSENT, or these floors describe the wrong scope
-        run: |
-          if [ -f ee/dist/index.js ]; then
-            echo "::error::ee/dist/index.js exists — this probe would record EE-scope floors that the"
-            echo "::error::required 'typescript' job (community scope) can never reproduce."
-            exit 1
-          fi
-          echo "✓ ee/dist absent — measuring the same scope the required job measures"
       - name: Five runs, comparing parsed pairs
         run: |
           set -euo pipefail
@@ -1208,6 +1208,24 @@ jobs:
             cat run.*.txt | sort | uniq -c | awk '$1 != 5'
             exit 1
           fi
+      # This step used to assert ee/dist was ABSENT, "so the floors cannot describe a scope the
+      # required job can never reproduce". It ran BEFORE the suites, so it passed on every run and
+      # asserted nothing about the measurement — `turbo run test` then built ee/dist (see the
+      # correction in the `typescript` job) and the floors recorded `ee_dist: true`. A guard that
+      # checks the wrong moment reports green whatever happens, which is the class this whole
+      # programme exists to close.
+      #
+      # What actually makes the floors reachable is that this job and the required one run the
+      # IDENTICAL `pnpm exec turbo run test`, so they build the same dist and measure the same
+      # scope. That is a property of the commands, not something a filesystem probe can assert
+      # here — so this records the fact rather than pretending to gate on it, and the assertion
+      # that does bite is the fingerprint check inside the ratchet itself (F7), which demotes when
+      # the recorded environment and the measuring one disagree.
+      - name: Record ee/dist AFTER the suites — this is what the floors will fingerprint
+        run: |
+          test -f ee/dist/index.js \
+            && echo "ee/dist PRESENT — floors will record ee_dist: true (enterprise scope)" \
+            || echo "ee/dist ABSENT — floors will record ee_dist: false (community scope)"
       - name: The floors these numbers produce (commit these VERBATIM)
         run: |
           for p in apps/console packages/ui packages/plan-catalog; do
