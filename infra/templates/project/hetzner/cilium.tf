@@ -124,4 +124,38 @@ data "helm_template" "hcloud_ccm" {
     name  = "networking.clusterCIDR"
     value = local.pod_cidr
   }
+
+  # A DEFAULT LOAD BALANCER LOCATION, without which the CCM refuses to create one at all.
+  #
+  # hcloud-cloud-controller-manager will not provision a Load Balancer unless it can decide WHERE
+  # to put it — from `HCLOUD_LOAD_BALANCERS_LOCATION`, `HCLOUD_LOAD_BALANCERS_NETWORK_ZONE`, or a
+  # per-Service `load-balancer.hetzner.cloud/location` annotation. This template set none of the
+  # three, so every `type: LoadBalancer` Service on a Hetzner cluster sat Pending forever. That is
+  # a PRODUCT bug, not a test one: it is any customer's ingress, not just ours.
+  #
+  # It is also the root cause of #2490, by a chain that is worth writing down because the symptom
+  # names none of it: no location → no Load Balancer → the ingress-nginx controller Service never
+  # goes healthy → its ArgoCD Application sits Progressing ("waiting for healthy state of
+  # /Service/addon-ingress-nginx-controller") → ArgoCD never runs PostSync → the chart's
+  # `admission-patch` post-install Job never injects the admission webhook's caBundle → every
+  # later Ingress is rejected with `x509: certificate signed by unknown authority`. Harbor (wave 2)
+  # was the visible casualty. Only the PreSync admission hooks ever reached Succeeded, which is the
+  # fingerprint of this and not of a slow wave.
+  #
+  # So this was never a race, and no ordering gate could have fixed it: a 5-minute wait, a 50-minute
+  # wait and no wait produce the same permanent failure.
+  set {
+    name  = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value"
+    value = data.hcloud_location.selected.name
+  }
+
+  # Reach backends over the private network when there is one. The nodes' public interfaces are
+  # firewalled to the cluster's own rules, so a public-path Load Balancer would have to be granted
+  # its own way in; the private path is both the cheaper and the tighter default. With no private
+  # network provisioned there is nothing to route over, so this must be false rather than absent —
+  # the chart's own default is false, and stating it keeps the two branches symmetrical.
+  set {
+    name  = "env.HCLOUD_LOAD_BALANCERS_USE_PRIVATE_IP.value"
+    value = var.provision_network ? "true" : "false"
+  }
 }
