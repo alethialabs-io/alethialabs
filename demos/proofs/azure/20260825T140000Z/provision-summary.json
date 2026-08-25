@@ -1,0 +1,22 @@
+{
+  "provider": "azure",
+  "region": "westeurope",
+  "cluster": "alethia-nl-32853960703-1",
+  "run_tag": "nightly-32853960703-1",
+  "outcome": "failure",
+  "deploy_stage": "applying",
+  "git_sha": "0087536",
+  "captured_at": "2026-08-25T140159Z",
+  "resources_added": null,
+  "resources_destroyed": null,
+  "cluster_live_at_capture": false,
+  "nodes_ready": 0,
+  "argocd_total": 0,
+  "argocd_healthy_synced": 0,
+  "argocd_verdict": "not reached",
+  "receipt_signed": true,
+  "receipt_plan_sha256": "0071337b092d",
+  "destroyed": false,
+  "duration_seconds": 1724,
+  "verdict": "azure: ❌ FAILED at stage 'applying' (outcome=failure)"
+}

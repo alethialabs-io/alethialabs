@@ -1,0 +1,1805 @@
+runner dev
+{"time":"2026-08-25T13:35:32.744354003Z","level":"INFO","msg":"runner started","runner_id":"33090471-6c04-458a-b6a5-2533702d2d51","operator":"self","version":"dev","alethia_url":"http://127.0.0.1:33469"}
+{"time":"2026-08-25T13:35:32.757639284Z","level":"INFO","msg":"claimed job","runner_id":"33090471-6c04-458a-b6a5-2533702d2d51","job_id":"6cd462b9-a1f2-4a51-9ecd-8149c6832a47","job_type":"DEPLOY"}
+▸ Job claimed — preparing workspace…
+[sandbox] job isolation DISABLED (PassthroughSandbox): running "deploy" job 6cd462b9-a1f2-4a51-9ecd-8149c6832a47 in-process with the full host environment — safe only for trusted (non-BYO) work
+Starting deployment for project: alethia-nl (provider: azure)
+Using bundled templates from project-templates/azure
+State backend: console HTTP proxy (per-job token)
+Initializing OpenTofu...
+{
+  "terraform_version": "1.9.0",
+  "platform": "linux_amd64",
+  "provider_selections": {
+    "registry.opentofu.org/hashicorp/azuread": "3.9.0",
+    "registry.opentofu.org/hashicorp/azurerm": "4.81.0",
+    "registry.opentofu.org/hashicorp/helm": "3.2.0",
+    "registry.opentofu.org/hashicorp/kubernetes": "3.2.1",
+    "registry.opentofu.org/hashicorp/random": "3.9.0"
+  }
+}
+
+Initializing the backend...
+
+Successfully configured the backend "http"! OpenTofu will automatically
+use this backend unless the backend configuration changes.
+Initializing modules...
+- acr in modules/acr
+- aks in modules/aks
+- azure_cache in modules/azure-cache-redis
+- azure_db in modules/azure-db
+- azure_dns in modules/azure-dns
+- azure_waf in modules/azure-waf
+- cosmos_db in modules/cosmos-db
+- key_vault in modules/key-vault
+- service_bus in modules/service-bus
+- storage_account in modules/storage-account
+- vnet in modules/vnet
+
+Initializing provider plugins...
+- terraform.io/builtin/terraform is built in to OpenTofu
+- Reusing previous version of hashicorp/kubernetes from the dependency lock file
+- Reusing previous version of hashicorp/helm from the dependency lock file
+- Reusing previous version of hashicorp/azuread from the dependency lock file
+- Reusing previous version of hashicorp/random from the dependency lock file
+- Reusing previous version of hashicorp/azurerm from the dependency lock file
+- Installing hashicorp/kubernetes v3.2.1...
+- Installed hashicorp/kubernetes v3.2.1 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/helm v3.2.0...
+- Installed hashicorp/helm v3.2.0 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/azuread v3.9.0...
+- Installed hashicorp/azuread v3.9.0 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/random v3.9.0...
+- Installed hashicorp/random v3.9.0 (signed, key ID 0C0AF313E5FD9F80)
+- Installing hashicorp/azurerm v4.81.0...
+- Installed hashicorp/azurerm v4.81.0 (signed, key ID 0C0AF313E5FD9F80)
+
+Providers are signed by their developers.
+If you'd like to know more about provider signing, you can read about it here:
+https://opentofu.org/docs/cli/plugins/signing/
+
+OpenTofu has been successfully initialized!
+Running OpenTofu plan...
+data.azurerm_client_config.current: Reading...
+module.key_vault.data.azurerm_client_config.current: Reading...
+data.azurerm_client_config.current: Read complete after 0s [id=Y2xpZW50Q29uZmlncy9jbGllbnRJZD1lYTA0YjM5Yi1jNTcyLTQzZTgtYmJiMi1hZDc1MWU0MGU4NGY7b2JqZWN0SWQ9MTM1MWE3ZjYtNzZmOC00YTA1LWEzYjUtYmRlNzViN2FkMjQzO3N1YnNjcmlwdGlvbklkPTMyZjNkNmNhLWY5YjUtNDhmMS1iNzE0LWRjZmI5Y2M2NjFhZTt0ZW5hbnRJZD0yYjQ3MzMwMi1iNWNkLTRkNWUtODYwYy1jM2UyMDE0MWQ2ZTI=]
+module.key_vault.data.azurerm_client_config.current: Read complete after 0s [id=Y2xpZW50Q29uZmlncy9jbGllbnRJZD1lYTA0YjM5Yi1jNTcyLTQzZTgtYmJiMi1hZDc1MWU0MGU4NGY7b2JqZWN0SWQ9MTM1MWE3ZjYtNzZmOC00YTA1LWEzYjUtYmRlNzViN2FkMjQzO3N1YnNjcmlwdGlvbklkPTMyZjNkNmNhLWY5YjUtNDhmMS1iNzE0LWRjZmI5Y2M2NjFhZTt0ZW5hbnRJZD0yYjQ3MzMwMi1iNWNkLTRkNWUtODYwYy1jM2UyMDE0MWQ2ZTI=]
+
+OpenTofu used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  + create
+ <= read (data resources)
+
+OpenTofu will perform the following actions:
+
+  # azurerm_federated_identity_credential.app_db[0] will be created
+  + resource "azurerm_federated_identity_credential" "app_db" {
+      + audience                  = [
+          + "api://AzureADTokenExchange",
+        ]
+      + id                        = (known after apply)
+      + issuer                    = (known after apply)
+      + name                      = "app-db"
+      + parent_id                 = (known after apply)
+      + resource_group_name       = "rg-alethia-nl-32853960703-1"
+      + subject                   = "system:serviceaccount:default:alethia-app"
+      + user_assigned_identity_id = (known after apply)
+    }
+
+  # azurerm_federated_identity_credential.cert_manager[0] will be created
+  + resource "azurerm_federated_identity_credential" "cert_manager" {
+      + audience                  = [
+          + "api://AzureADTokenExchange",
+        ]
+      + id                        = (known after apply)
+      + issuer                    = (known after apply)
+      + name                      = "cert-manager"
+      + parent_id                 = (known after apply)
+      + resource_group_name       = "rg-alethia-nl-32853960703-1"
+      + subject                   = "system:serviceaccount:cert-manager:cert-manager"
+      + user_assigned_identity_id = (known after apply)
+    }
+
+  # azurerm_federated_identity_credential.db_admin[0] will be created
+  + resource "azurerm_federated_identity_credential" "db_admin" {
+      + audience                  = [
+          + "api://AzureADTokenExchange",
+        ]
+      + id                        = (known after apply)
+      + issuer                    = (known after apply)
+      + name                      = "db-admin"
+      + parent_id                 = (known after apply)
+      + resource_group_name       = "rg-alethia-nl-32853960703-1"
+      + subject                   = "system:serviceaccount:default:alethia-db-bootstrap"
+      + user_assigned_identity_id = (known after apply)
+    }
+
+  # azurerm_federated_identity_credential.external_dns[0] will be created
+  + resource "azurerm_federated_identity_credential" "external_dns" {
+      + audience                  = [
+          + "api://AzureADTokenExchange",
+        ]
+      + id                        = (known after apply)
+      + issuer                    = (known after apply)
+      + name                      = "external-dns"
+      + parent_id                 = (known after apply)
+      + resource_group_name       = "rg-alethia-nl-32853960703-1"
+      + subject                   = "system:serviceaccount:external-dns:external-dns-sa"
+      + user_assigned_identity_id = (known after apply)
+    }
+
+  # azurerm_federated_identity_credential.external_secrets[0] will be created
+  + resource "azurerm_federated_identity_credential" "external_secrets" {
+      + audience                  = [
+          + "api://AzureADTokenExchange",
+        ]
+      + id                        = (known after apply)
+      + issuer                    = (known after apply)
+      + name                      = "external-secrets"
+      + parent_id                 = (known after apply)
+      + resource_group_name       = "rg-alethia-nl-32853960703-1"
+      + subject                   = "system:serviceaccount:external-secrets-operator:external-secrets-operator-sa"
+      + user_assigned_identity_id = (known after apply)
+    }
+
+  # azurerm_key_vault_key.aks_secrets[0] will be created
+  + resource "azurerm_key_vault_key" "aks_secrets" {
+      + curve                   = (known after apply)
+      + e                       = (known after apply)
+      + id                      = (known after apply)
+      + key_opts                = [
+          + "decrypt",
+          + "encrypt",
+          + "unwrapKey",
+          + "wrapKey",
+        ]
+      + key_size                = 2048
+      + key_type                = "RSA"
+      + key_vault_id            = (known after apply)
+      + n                       = (known after apply)
+      + name                    = "aks-secrets-encryption"
+      + public_key_openssh      = (known after apply)
+      + public_key_pem          = (known after apply)
+      + resource_id             = (known after apply)
+      + resource_versionless_id = (known after apply)
+      + tags                    = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + version                 = (known after apply)
+      + versionless_id          = (known after apply)
+      + x                       = (known after apply)
+      + y                       = (known after apply)
+    }
+
+  # azurerm_postgresql_flexible_server_active_directory_administrator.db_admin[0] will be created
+  + resource "azurerm_postgresql_flexible_server_active_directory_administrator" "db_admin" {
+      + id                  = (known after apply)
+      + object_id           = (known after apply)
+      + principal_name      = "aks-weu-32853960703-1-alethia-nl-dbadmin"
+      + principal_type      = "ServicePrincipal"
+      + resource_group_name = "rg-alethia-nl-32853960703-1"
+      + server_name         = "alethia-nl-32853960703-1-db"
+      + tenant_id           = "2b473302-b5cd-4d5e-860c-c3e20141d6e2"
+    }
+
+  # azurerm_resource_group.main will be created
+  + resource "azurerm_resource_group" "main" {
+      + id       = (known after apply)
+      + location = "westeurope"
+      + name     = "rg-alethia-nl-32853960703-1"
+      + tags     = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+    }
+
+  # azurerm_role_assignment.aks_secrets_kms[0] will be created
+  + resource "azurerm_role_assignment" "aks_secrets_kms" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = (known after apply)
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "Key Vault Crypto User"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # azurerm_role_assignment.external_dns_dns[0] will be created
+  + resource "azurerm_role_assignment" "external_dns_dns" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = (known after apply)
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "DNS Zone Contributor"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # azurerm_role_assignment.external_secrets_kv[0] will be created
+  + resource "azurerm_role_assignment" "external_secrets_kv" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = (known after apply)
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "Key Vault Secrets User"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # azurerm_role_assignment.provisioner_crypto_officer[0] will be created
+  + resource "azurerm_role_assignment" "provisioner_crypto_officer" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = "1351a7f6-76f8-4a05-a3b5-bde75b7ad243"
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "Key Vault Crypto Officer"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # azurerm_user_assigned_identity.aks[0] will be created
+  + resource "azurerm_user_assigned_identity" "aks" {
+      + client_id           = (known after apply)
+      + id                  = (known after apply)
+      + location            = "westeurope"
+      + name                = "aks-weu-32853960703-1-alethia-nl-identity"
+      + principal_id        = (known after apply)
+      + resource_group_name = "rg-alethia-nl-32853960703-1"
+      + tags                = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + tenant_id           = (known after apply)
+    }
+
+  # azurerm_user_assigned_identity.app_db[0] will be created
+  + resource "azurerm_user_assigned_identity" "app_db" {
+      + client_id           = (known after apply)
+      + id                  = (known after apply)
+      + location            = "westeurope"
+      + name                = "aks-weu-32853960703-1-alethia-nl-appdb"
+      + principal_id        = (known after apply)
+      + resource_group_name = "rg-alethia-nl-32853960703-1"
+      + tenant_id           = (known after apply)
+    }
+
+  # azurerm_user_assigned_identity.db_admin[0] will be created
+  + resource "azurerm_user_assigned_identity" "db_admin" {
+      + client_id           = (known after apply)
+      + id                  = (known after apply)
+      + location            = "westeurope"
+      + name                = "aks-weu-32853960703-1-alethia-nl-dbadmin"
+      + principal_id        = (known after apply)
+      + resource_group_name = "rg-alethia-nl-32853960703-1"
+      + tenant_id           = (known after apply)
+    }
+
+  # azurerm_user_assigned_identity.external_dns[0] will be created
+  + resource "azurerm_user_assigned_identity" "external_dns" {
+      + client_id           = (known after apply)
+      + id                  = (known after apply)
+      + location            = "westeurope"
+      + name                = "aks-weu-32853960703-1-alethia-nl-extdns"
+      + principal_id        = (known after apply)
+      + resource_group_name = "rg-alethia-nl-32853960703-1"
+      + tags                = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + tenant_id           = (known after apply)
+    }
+
+  # azurerm_user_assigned_identity.external_secrets[0] will be created
+  + resource "azurerm_user_assigned_identity" "external_secrets" {
+      + client_id           = (known after apply)
+      + id                  = (known after apply)
+      + location            = "westeurope"
+      + name                = "aks-weu-32853960703-1-alethia-nl-extsecrets"
+      + principal_id        = (known after apply)
+      + resource_group_name = "rg-alethia-nl-32853960703-1"
+      + tags                = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + tenant_id           = (known after apply)
+    }
+
+  # terraform_data.aks_kms_purge_protection_guard[0] will be created
+  + resource "terraform_data" "aks_kms_purge_protection_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.aks_spot_guard will be created
+  + resource "terraform_data" "aks_spot_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.application_gateway_subnet_guard will be created
+  + resource "terraform_data" "application_gateway_subnet_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.brownfield_subnet_guard will be created
+  + resource "terraform_data" "brownfield_subnet_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.compat_k8s_guard will be created
+  + resource "terraform_data" "compat_k8s_guard" {
+      + id = (known after apply)
+    }
+
+  # terraform_data.service_bus_session_sku_guard will be created
+  + resource "terraform_data" "service_bus_session_sku_guard" {
+      + id = (known after apply)
+    }
+
+  # module.acr[0].azurerm_container_registry.this will be created
+  + resource "azurerm_container_registry" "this" {
+      + admin_enabled                                = false
+      + admin_password                               = (sensitive value)
+      + admin_username                               = (known after apply)
+      + azuread_authentication_as_arm_policy_enabled = true
+      + data_endpoint_host_names                     = (known after apply)
+      + encryption                                   = (known after apply)
+      + export_policy_enabled                        = true
+      + id                                           = (known after apply)
+      + location                                     = "westeurope"
+      + login_server                                 = (known after apply)
+      + name                                         = "acralethianl328539607031"
+      + network_rule_bypass_for_tasks_enabled        = false
+      + network_rule_bypass_option                   = "AzureServices"
+      + network_rule_set                             = (known after apply)
+      + public_network_access_enabled                = true
+      + resource_group_name                          = "rg-alethia-nl-32853960703-1"
+      + role_assignment_mode                         = "LegacyRegistryPermissions"
+      + sku                                          = "Basic"
+      + tags                                         = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + trust_policy_enabled                         = false
+      + zone_redundancy_enabled                      = false
+    }
+
+  # module.aks[0].data.azurerm_client_config.current will be read during apply
+  # (depends on a resource or a module with changes pending)
+ <= data "azurerm_client_config" "current" {
+      + client_id       = (known after apply)
+      + id              = (known after apply)
+      + object_id       = (known after apply)
+      + subscription_id = (known after apply)
+      + tenant_id       = (known after apply)
+    }
+
+  # module.aks[0].azurerm_kubernetes_cluster.this will be created
+  + resource "azurerm_kubernetes_cluster" "this" {
+      + ai_toolchain_operator_enabled       = false
+      + current_kubernetes_version          = (known after apply)
+      + dns_prefix                          = "aks-weu-32853960703-1-alethia-nl"
+      + fqdn                                = (known after apply)
+      + http_application_routing_zone_name  = (known after apply)
+      + id                                  = (known after apply)
+      + kube_admin_config                   = (sensitive value)
+      + kube_admin_config_raw               = (sensitive value)
+      + kube_config                         = (sensitive value)
+      + kube_config_raw                     = (sensitive value)
+      + kubernetes_version                  = "1.35"
+      + location                            = "westeurope"
+      + name                                = "aks-weu-32853960703-1-alethia-nl"
+      + node_os_upgrade_channel             = "NodeImage"
+      + node_resource_group                 = "MC_rg-alethia-nl-32853960703-1_aks-weu-32853960703-1-alethia-nl_westeurope"
+      + node_resource_group_id              = (known after apply)
+      + oidc_issuer_enabled                 = true
+      + oidc_issuer_url                     = (known after apply)
+      + portal_fqdn                         = (known after apply)
+      + private_cluster_enabled             = false
+      + private_cluster_public_fqdn_enabled = false
+      + private_dns_zone_id                 = (known after apply)
+      + private_fqdn                        = (known after apply)
+      + resource_group_name                 = "rg-alethia-nl-32853960703-1"
+      + role_based_access_control_enabled   = true
+      + run_command_enabled                 = true
+      + sku_tier                            = "Free"
+      + support_plan                        = "KubernetesOfficial"
+      + tags                                = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + workload_identity_enabled           = true
+
+      + auto_scaler_profile (known after apply)
+
+      + azure_active_directory_role_based_access_control {
+          + admin_group_object_ids = [
+              + "49fc55ff-a797-41d6-94cb-aa19bebc92fa",
+            ]
+          + azure_rbac_enabled     = true
+          + tenant_id              = (known after apply)
+        }
+
+      + bootstrap_profile (known after apply)
+
+      + default_node_pool {
+          + auto_scaling_enabled = true
+          + kubelet_disk_type    = (known after apply)
+          + max_count            = 3
+          + max_pods             = 110
+          + min_count            = 3
+          + name                 = "default"
+          + node_count           = 3
+          + node_labels          = (known after apply)
+          + orchestrator_version = (known after apply)
+          + os_disk_size_gb      = 60
+          + os_disk_type         = "Managed"
+          + os_sku               = (known after apply)
+          + scale_down_mode      = "Delete"
+          + type                 = "VirtualMachineScaleSets"
+          + ultra_ssd_enabled    = false
+          + vm_size              = "Standard_E2s_v3"
+          + vnet_subnet_id       = (known after apply)
+          + workload_runtime     = (known after apply)
+
+          + upgrade_settings {
+              + max_surge = "10%"
+            }
+        }
+
+      + identity {
+          + identity_ids = (known after apply)
+          + principal_id = (known after apply)
+          + tenant_id    = (known after apply)
+          + type         = (known after apply)
+        }
+
+      + key_management_service (known after apply)
+
+      + kubelet_identity (known after apply)
+
+      + network_profile {
+          + dns_service_ip     = "172.16.0.10"
+          + ip_versions        = (known after apply)
+          + load_balancer_sku  = "standard"
+          + network_data_plane = "azure"
+          + network_mode       = (known after apply)
+          + network_plugin     = "azure"
+          + network_policy     = "calico"
+          + outbound_type      = "loadBalancer"
+          + pod_cidr           = (known after apply)
+          + pod_cidrs          = (known after apply)
+          + service_cidr       = "172.16.0.0/16"
+          + service_cidrs      = (known after apply)
+
+          + load_balancer_profile (known after apply)
+
+          + nat_gateway_profile (known after apply)
+        }
+
+      + node_provisioning_profile (known after apply)
+
+      + windows_profile (known after apply)
+    }
+
+  # module.aks[0].azurerm_role_assignment.runner_cluster_admin[0] will be created
+  + resource "azurerm_role_assignment" "runner_cluster_admin" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = (known after apply)
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "Azure Kubernetes Service RBAC Cluster Admin"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # module.azure_cache[0].azurerm_managed_redis.this will be created
+  + resource "azurerm_managed_redis" "this" {
+      + high_availability_enabled = true
+      + hostname                  = (known after apply)
+      + id                        = (known after apply)
+      + location                  = "westeurope"
+      + name                      = "alethia-nl-32853960703-1-redis"
+      + public_network_access     = "Enabled"
+      + resource_group_name       = "rg-alethia-nl-32853960703-1"
+      + sku_name                  = "Balanced_B0"
+      + tags                      = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+
+      + default_database {
+          + access_keys_authentication_enabled = false
+          + client_protocol                    = "Encrypted"
+          + clustering_policy                  = "OSSCluster"
+          + eviction_policy                    = "VolatileLRU"
+          + id                                 = (known after apply)
+          + port                               = (known after apply)
+          + primary_access_key                 = (sensitive value)
+          + secondary_access_key               = (sensitive value)
+        }
+    }
+
+  # module.azure_db[0].azurerm_postgresql_flexible_server.this[0] will be created
+  + resource "azurerm_postgresql_flexible_server" "this" {
+      + administrator_login           = "pgadmin"
+      + administrator_password        = (sensitive value)
+      + auto_grow_enabled             = false
+      + backup_retention_days         = 7
+      + delegated_subnet_id           = (known after apply)
+      + fqdn                          = (known after apply)
+      + geo_redundant_backup_enabled  = false
+      + id                            = (known after apply)
+      + location                      = "westeurope"
+      + name                          = "alethia-nl-32853960703-1-db"
+      + private_dns_zone_id           = (known after apply)
+      + public_network_access_enabled = false
+      + resource_group_name           = "rg-alethia-nl-32853960703-1"
+      + sku_name                      = "B_Standard_B1ms"
+      + storage_mb                    = 32768
+      + storage_tier                  = (known after apply)
+      + tags                          = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + version                       = "16"
+      + zone                          = "1"
+
+      + authentication {
+          + active_directory_auth_enabled = true
+          + password_auth_enabled         = true
+        }
+    }
+
+  # module.azure_db[0].azurerm_postgresql_flexible_server_database.this[0] will be created
+  + resource "azurerm_postgresql_flexible_server_database" "this" {
+      + charset   = "UTF8"
+      + collation = "en_US.utf8"
+      + id        = (known after apply)
+      + name      = "alethia_nl_32853960703_1"
+      + server_id = (known after apply)
+    }
+
+  # module.azure_db[0].azurerm_private_dns_zone.postgres[0] will be created
+  + resource "azurerm_private_dns_zone" "postgres" {
+      + id                                                    = (known after apply)
+      + max_number_of_record_sets                             = (known after apply)
+      + max_number_of_virtual_network_links                   = (known after apply)
+      + max_number_of_virtual_network_links_with_registration = (known after apply)
+      + name                                                  = "alethia-nl-32853960703-1-db.private.postgres.database.azure.com"
+      + number_of_record_sets                                 = (known after apply)
+      + resource_group_name                                   = "rg-alethia-nl-32853960703-1"
+      + tags                                                  = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+
+      + soa_record (known after apply)
+    }
+
+  # module.azure_db[0].azurerm_private_dns_zone_virtual_network_link.postgres[0] will be created
+  + resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
+      + id                    = (known after apply)
+      + name                  = "alethia-nl-32853960703-1-db-dns-link"
+      + private_dns_zone_name = "alethia-nl-32853960703-1-db.private.postgres.database.azure.com"
+      + registration_enabled  = false
+      + resolution_policy     = (known after apply)
+      + resource_group_name   = "rg-alethia-nl-32853960703-1"
+      + tags                  = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + virtual_network_id    = (known after apply)
+    }
+
+  # module.azure_db[0].random_password.admin will be created
+  + resource "random_password" "admin" {
+      + bcrypt_hash = (sensitive value)
+      + id          = (known after apply)
+      + length      = 24
+      + lower       = true
+      + min_lower   = 0
+      + min_numeric = 0
+      + min_special = 0
+      + min_upper   = 0
+      + number      = true
+      + numeric     = true
+      + result      = (sensitive value)
+      + special     = true
+      + upper       = true
+    }
+
+  # module.azure_dns[0].azurerm_dns_zone.this will be created
+  + resource "azurerm_dns_zone" "this" {
+      + id                        = (known after apply)
+      + max_number_of_record_sets = (known after apply)
+      + name                      = "32853960703-1.e2e.alethialabs.io"
+      + name_servers              = (known after apply)
+      + number_of_record_sets     = (known after apply)
+      + resource_group_name       = "rg-alethia-nl-32853960703-1"
+      + tags                      = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+
+      + soa_record (known after apply)
+    }
+
+  # module.cosmos_db[0].azurerm_cosmosdb_account.this will be created
+  + resource "azurerm_cosmosdb_account" "this" {
+      + access_key_metadata_writes_enabled           = true
+      + analytical_storage_enabled                   = false
+      + automatic_failover_enabled                   = false
+      + burst_capacity_enabled                       = false
+      + create_mode                                  = (known after apply)
+      + default_identity_type                        = "FirstPartyIdentity"
+      + endpoint                                     = (known after apply)
+      + free_tier_enabled                            = false
+      + id                                           = (known after apply)
+      + is_virtual_network_filter_enabled            = false
+      + kind                                         = "GlobalDocumentDB"
+      + local_authentication_disabled                = (known after apply)
+      + local_authentication_enabled                 = (known after apply)
+      + location                                     = "westeurope"
+      + minimal_tls_version                          = "Tls12"
+      + mongo_server_version                         = (known after apply)
+      + multiple_write_locations_enabled             = false
+      + name                                         = "alethia-nl-32853960703-1-cosmos"
+      + network_acl_bypass_for_azure_services        = false
+      + offer_type                                   = "Standard"
+      + partition_merge_enabled                      = false
+      + primary_key                                  = (sensitive value)
+      + primary_mongodb_connection_string            = (sensitive value)
+      + primary_readonly_key                         = (sensitive value)
+      + primary_readonly_mongodb_connection_string   = (sensitive value)
+      + primary_readonly_sql_connection_string       = (sensitive value)
+      + primary_sql_connection_string                = (sensitive value)
+      + public_network_access_enabled                = true
+      + read_endpoints                               = (known after apply)
+      + resource_group_name                          = "rg-alethia-nl-32853960703-1"
+      + secondary_key                                = (sensitive value)
+      + secondary_mongodb_connection_string          = (sensitive value)
+      + secondary_readonly_key                       = (sensitive value)
+      + secondary_readonly_mongodb_connection_string = (sensitive value)
+      + secondary_readonly_sql_connection_string     = (sensitive value)
+      + secondary_sql_connection_string              = (sensitive value)
+      + tags                                         = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + write_endpoints                              = (known after apply)
+
+      + analytical_storage (known after apply)
+
+      + backup {
+          + interval_in_minutes = (known after apply)
+          + retention_in_hours  = (known after apply)
+          + storage_redundancy  = (known after apply)
+          + tier                = "Continuous7Days"
+          + type                = "Continuous"
+        }
+
+      + capabilities {
+          + name = "EnableServerless"
+        }
+
+      + capacity (known after apply)
+
+      + consistency_policy {
+          + consistency_level = "Session"
+        }
+
+      + geo_location {
+          + failover_priority = 0
+          + id                = (known after apply)
+          + location          = "westeurope"
+          + zone_redundant    = false
+        }
+    }
+
+  # module.cosmos_db[0].azurerm_cosmosdb_sql_container.this["items"] will be created
+  + resource "azurerm_cosmosdb_sql_container" "this" {
+      + account_name        = "alethia-nl-32853960703-1-cosmos"
+      + database_name       = "alethia-nl-32853960703-1-db"
+      + id                  = (known after apply)
+      + name                = "items"
+      + partition_key_kind  = "Hash"
+      + partition_key_paths = [
+          + "/pk",
+        ]
+      + resource_group_name = "rg-alethia-nl-32853960703-1"
+      + throughput          = (known after apply)
+
+      + conflict_resolution_policy (known after apply)
+
+      + indexing_policy (known after apply)
+    }
+
+  # module.cosmos_db[0].azurerm_cosmosdb_sql_database.this[0] will be created
+  + resource "azurerm_cosmosdb_sql_database" "this" {
+      + account_name        = "alethia-nl-32853960703-1-cosmos"
+      + id                  = (known after apply)
+      + name                = "alethia-nl-32853960703-1-db"
+      + resource_group_name = "rg-alethia-nl-32853960703-1"
+      + throughput          = (known after apply)
+    }
+
+  # module.key_vault.azurerm_key_vault.this will be created
+  + resource "azurerm_key_vault" "this" {
+      + access_policy                 = (known after apply)
+      + enable_rbac_authorization     = (known after apply)
+      + id                            = (known after apply)
+      + location                      = "westeurope"
+      + name                          = "alethia-nl-32853-aed088a"
+      + public_network_access_enabled = true
+      + purge_protection_enabled      = true
+      + rbac_authorization_enabled    = true
+      + resource_group_name           = "rg-alethia-nl-32853960703-1"
+      + sku_name                      = "standard"
+      + soft_delete_retention_days    = 7
+      + tags                          = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + tenant_id                     = "2b473302-b5cd-4d5e-860c-c3e20141d6e2"
+      + vault_uri                     = (known after apply)
+
+      + contact (known after apply)
+
+      + network_acls (known after apply)
+    }
+
+  # module.key_vault.azurerm_key_vault_secret.this["api-key"] will be created
+  + resource "azurerm_key_vault_secret" "this" {
+      + id                      = (known after apply)
+      + key_vault_id            = (known after apply)
+      + name                    = "api-key"
+      + resource_id             = (known after apply)
+      + resource_versionless_id = (known after apply)
+      + tags                    = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+      + value                   = (sensitive value)
+      + version                 = (known after apply)
+      + versionless_id          = (known after apply)
+    }
+
+  # module.key_vault.azurerm_role_assignment.provisioner_secrets_officer will be created
+  + resource "azurerm_role_assignment" "provisioner_secrets_officer" {
+      + condition_version                = (known after apply)
+      + id                               = (known after apply)
+      + name                             = (known after apply)
+      + principal_id                     = "1351a7f6-76f8-4a05-a3b5-bde75b7ad243"
+      + principal_type                   = (known after apply)
+      + role_definition_id               = (known after apply)
+      + role_definition_name             = "Key Vault Secrets Officer"
+      + scope                            = (known after apply)
+      + skip_service_principal_aad_check = (known after apply)
+    }
+
+  # module.key_vault.random_password.this["api-key"] will be created
+  + resource "random_password" "this" {
+      + bcrypt_hash = (sensitive value)
+      + id          = (known after apply)
+      + keepers     = {}
+      + length      = 32
+      + lower       = true
+      + min_lower   = 0
+      + min_numeric = 0
+      + min_special = 0
+      + min_upper   = 0
+      + number      = true
+      + numeric     = true
+      + result      = (sensitive value)
+      + special     = true
+      + upper       = true
+    }
+
+  # module.service_bus[0].azurerm_servicebus_namespace.this will be created
+  + resource "azurerm_servicebus_namespace" "this" {
+      + capacity                            = 0
+      + default_primary_connection_string   = (sensitive value)
+      + default_primary_key                 = (sensitive value)
+      + default_secondary_connection_string = (sensitive value)
+      + default_secondary_key               = (sensitive value)
+      + endpoint                            = (known after apply)
+      + id                                  = (known after apply)
+      + local_auth_enabled                  = true
+      + location                            = "westeurope"
+      + minimum_tls_version                 = "1.2"
+      + name                                = "sb-alethia-nl-32853960703-1"
+      + premium_messaging_partitions        = 0
+      + public_network_access_enabled       = true
+      + resource_group_name                 = "rg-alethia-nl-32853960703-1"
+      + sku                                 = "Standard"
+      + tags                                = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+
+      + network_rule_set (known after apply)
+    }
+
+  # module.service_bus[0].azurerm_servicebus_queue.this["jobs"] will be created
+  + resource "azurerm_servicebus_queue" "this" {
+      + auto_delete_on_idle                     = (known after apply)
+      + batched_operations_enabled              = true
+      + dead_lettering_on_message_expiration    = false
+      + default_message_ttl                     = "PT345600S"
+      + duplicate_detection_history_time_window = "PT10M"
+      + express_enabled                         = false
+      + id                                      = (known after apply)
+      + lock_duration                           = "PT30S"
+      + max_delivery_count                      = 10
+      + max_message_size_in_kilobytes           = (known after apply)
+      + max_size_in_megabytes                   = (known after apply)
+      + name                                    = "jobs"
+      + namespace_id                            = (known after apply)
+      + partitioning_enabled                    = false
+      + requires_duplicate_detection            = false
+      + requires_session                        = true
+      + status                                  = "Active"
+    }
+
+  # module.service_bus[0].azurerm_servicebus_subscription.this["events-arn-aws-sqs-us-east-1-000000000000-jobs-041ecd94"] will be created
+  + resource "azurerm_servicebus_subscription" "this" {
+      + auto_delete_on_idle                       = "P10675199DT2H48M5.4775807S"
+      + client_scoped_subscription_enabled        = false
+      + dead_lettering_on_filter_evaluation_error = true
+      + default_message_ttl                       = "P10675199DT2H48M5.4775807S"
+      + id                                        = (known after apply)
+      + lock_duration                             = "PT1M"
+      + max_delivery_count                        = 10
+      + name                                      = "arn-aws-sqs-us-east-1-000000000000-jobs-041ecd94"
+      + status                                    = "Active"
+      + topic_id                                  = (known after apply)
+    }
+
+  # module.service_bus[0].azurerm_servicebus_topic.this["events"] will be created
+  + resource "azurerm_servicebus_topic" "this" {
+      + auto_delete_on_idle                     = "P10675199DT2H48M5.4775807S"
+      + default_message_ttl                     = "P10675199DT2H48M5.4775807S"
+      + duplicate_detection_history_time_window = "PT10M"
+      + id                                      = (known after apply)
+      + max_message_size_in_kilobytes           = (known after apply)
+      + max_size_in_megabytes                   = (known after apply)
+      + name                                    = "events"
+      + namespace_id                            = (known after apply)
+      + status                                  = "Active"
+    }
+
+  # module.storage_account[0].azurerm_storage_account.this will be created
+  + resource "azurerm_storage_account" "this" {
+      + access_tier                        = (known after apply)
+      + account_kind                       = "StorageV2"
+      + account_replication_type           = "LRS"
+      + account_tier                       = "Standard"
+      + allow_nested_items_to_be_public    = false
+      + cross_tenant_replication_enabled   = false
+      + default_to_oauth_authentication    = false
+      + dns_endpoint_type                  = "Standard"
+      + https_traffic_only_enabled         = true
+      + id                                 = (known after apply)
+      + infrastructure_encryption_enabled  = false
+      + is_hns_enabled                     = false
+      + large_file_share_enabled           = (known after apply)
+      + local_user_enabled                 = true
+      + location                           = "westeurope"
+      + min_tls_version                    = "TLS1_2"
+      + name                               = "alethianl328539607031st"
+      + nfsv3_enabled                      = false
+      + primary_access_key                 = (sensitive value)
+      + primary_blob_connection_string     = (sensitive value)
+      + primary_blob_endpoint              = (known after apply)
+      + primary_blob_host                  = (known after apply)
+      + primary_blob_internet_endpoint     = (known after apply)
+      + primary_blob_internet_host         = (known after apply)
+      + primary_blob_microsoft_endpoint    = (known after apply)
+      + primary_blob_microsoft_host        = (known after apply)
+      + primary_connection_string          = (sensitive value)
+      + primary_dfs_endpoint               = (known after apply)
+      + primary_dfs_host                   = (known after apply)
+      + primary_dfs_internet_endpoint      = (known after apply)
+      + primary_dfs_internet_host          = (known after apply)
+      + primary_dfs_microsoft_endpoint     = (known after apply)
+      + primary_dfs_microsoft_host         = (known after apply)
+      + primary_file_endpoint              = (known after apply)
+      + primary_file_host                  = (known after apply)
+      + primary_file_internet_endpoint     = (known after apply)
+      + primary_file_internet_host         = (known after apply)
+      + primary_file_microsoft_endpoint    = (known after apply)
+      + primary_file_microsoft_host        = (known after apply)
+      + primary_location                   = (known after apply)
+      + primary_queue_endpoint             = (known after apply)
+      + primary_queue_host                 = (known after apply)
+      + primary_queue_microsoft_endpoint   = (known after apply)
+      + primary_queue_microsoft_host       = (known after apply)
+      + primary_table_endpoint             = (known after apply)
+      + primary_table_host                 = (known after apply)
+      + primary_table_microsoft_endpoint   = (known after apply)
+      + primary_table_microsoft_host       = (known after apply)
+      + primary_web_endpoint               = (known after apply)
+      + primary_web_host                   = (known after apply)
+      + primary_web_internet_endpoint      = (known after apply)
+      + primary_web_internet_host          = (known after apply)
+      + primary_web_microsoft_endpoint     = (known after apply)
+      + primary_web_microsoft_host         = (known after apply)
+      + public_network_access_enabled      = true
+      + queue_encryption_key_type          = "Service"
+      + resource_group_name                = "rg-alethia-nl-32853960703-1"
+      + secondary_access_key               = (sensitive value)
+      + secondary_blob_connection_string   = (sensitive value)
+      + secondary_blob_endpoint            = (known after apply)
+      + secondary_blob_host                = (known after apply)
+      + secondary_blob_internet_endpoint   = (known after apply)
+      + secondary_blob_internet_host       = (known after apply)
+      + secondary_blob_microsoft_endpoint  = (known after apply)
+      + secondary_blob_microsoft_host      = (known after apply)
+      + secondary_connection_string        = (sensitive value)
+      + secondary_dfs_endpoint             = (known after apply)
+      + secondary_dfs_host                 = (known after apply)
+      + secondary_dfs_internet_endpoint    = (known after apply)
+      + secondary_dfs_internet_host        = (known after apply)
+      + secondary_dfs_microsoft_endpoint   = (known after apply)
+      + secondary_dfs_microsoft_host       = (known after apply)
+      + secondary_file_endpoint            = (known after apply)
+      + secondary_file_host                = (known after apply)
+      + secondary_file_internet_endpoint   = (known after apply)
+      + secondary_file_internet_host       = (known after apply)
+      + secondary_file_microsoft_endpoint  = (known after apply)
+      + secondary_file_microsoft_host      = (known after apply)
+      + secondary_location                 = (known after apply)
+      + secondary_queue_endpoint           = (known after apply)
+      + secondary_queue_host               = (known after apply)
+      + secondary_queue_microsoft_endpoint = (known after apply)
+      + secondary_queue_microsoft_host     = (known after apply)
+      + secondary_table_endpoint           = (known after apply)
+      + secondary_table_host               = (known after apply)
+      + secondary_table_microsoft_endpoint = (known after apply)
+      + secondary_table_microsoft_host     = (known after apply)
+      + secondary_web_endpoint             = (known after apply)
+      + secondary_web_host                 = (known after apply)
+      + secondary_web_internet_endpoint    = (known after apply)
+      + secondary_web_internet_host        = (known after apply)
+      + secondary_web_microsoft_endpoint   = (known after apply)
+      + secondary_web_microsoft_host       = (known after apply)
+      + sftp_enabled                       = false
+      + shared_access_key_enabled          = true
+      + table_encryption_key_type          = "Service"
+      + tags                               = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+
+      + blob_properties {
+          + change_feed_enabled      = false
+          + default_service_version  = (known after apply)
+          + last_access_time_enabled = false
+          + versioning_enabled       = true
+
+          + delete_retention_policy {
+              + days                     = 7
+              + permanent_delete_enabled = false
+            }
+        }
+
+      + network_rules (known after apply)
+
+      + queue_properties (known after apply)
+
+      + routing (known after apply)
+
+      + share_properties (known after apply)
+
+      + static_website (known after apply)
+    }
+
+  # module.storage_account[0].azurerm_storage_container.this["assets"] will be created
+  + resource "azurerm_storage_container" "this" {
+      + container_access_type             = "private"
+      + default_encryption_scope          = (known after apply)
+      + encryption_scope_override_enabled = true
+      + has_immutability_policy           = (known after apply)
+      + has_legal_hold                    = (known after apply)
+      + id                                = (known after apply)
+      + metadata                          = (known after apply)
+      + name                              = "assets"
+      + resource_manager_id               = (known after apply)
+      + storage_account_id                = (known after apply)
+      + url                               = (known after apply)
+    }
+
+  # module.vnet[0].azurerm_nat_gateway.this[0] will be created
+  + resource "azurerm_nat_gateway" "this" {
+      + id                      = (known after apply)
+      + idle_timeout_in_minutes = 10
+      + location                = "westeurope"
+      + name                    = "alethia-nl-32853960703-1-nat-gw"
+      + resource_group_name     = "rg-alethia-nl-32853960703-1"
+      + resource_guid           = (known after apply)
+      + sku_name                = "Standard"
+      + tags                    = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+    }
+
+  # module.vnet[0].azurerm_nat_gateway_public_ip_association.this[0] will be created
+  + resource "azurerm_nat_gateway_public_ip_association" "this" {
+      + id                   = (known after apply)
+      + nat_gateway_id       = (known after apply)
+      + public_ip_address_id = (known after apply)
+    }
+
+  # module.vnet[0].azurerm_network_security_group.private will be created
+  + resource "azurerm_network_security_group" "private" {
+      + id                  = (known after apply)
+      + location            = "westeurope"
+      + name                = "alethia-nl-32853960703-1-private-nsg"
+      + resource_group_name = "rg-alethia-nl-32853960703-1"
+      + security_rule       = [
+          + {
+              + access                                     = "Allow"
+              + description                                = ""
+              + destination_address_prefix                 = "VirtualNetwork"
+              + destination_address_prefixes               = []
+              + destination_application_security_group_ids = []
+              + destination_port_range                     = "*"
+              + destination_port_ranges                    = []
+              + direction                                  = "Inbound"
+              + name                                       = "AllowVNetInbound"
+              + priority                                   = 100
+              + protocol                                   = "*"
+              + source_address_prefix                      = "VirtualNetwork"
+              + source_address_prefixes                    = []
+              + source_application_security_group_ids      = []
+              + source_port_range                          = "*"
+              + source_port_ranges                         = []
+            },
+          + {
+              + access                                     = "Deny"
+              + description                                = ""
+              + destination_address_prefix                 = "*"
+              + destination_address_prefixes               = []
+              + destination_application_security_group_ids = []
+              + destination_port_range                     = "*"
+              + destination_port_ranges                    = []
+              + direction                                  = "Inbound"
+              + name                                       = "DenyInternetInbound"
+              + priority                                   = 4096
+              + protocol                                   = "*"
+              + source_address_prefix                      = "Internet"
+              + source_address_prefixes                    = []
+              + source_application_security_group_ids      = []
+              + source_port_range                          = "*"
+              + source_port_ranges                         = []
+            },
+        ]
+      + tags                = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+    }
+
+  # module.vnet[0].azurerm_public_ip.nat[0] will be created
+  + resource "azurerm_public_ip" "nat" {
+      + allocation_method       = "Static"
+      + ddos_protection_mode    = "VirtualNetworkInherited"
+      + fqdn                    = (known after apply)
+      + id                      = (known after apply)
+      + idle_timeout_in_minutes = 4
+      + ip_address              = (known after apply)
+      + ip_version              = "IPv4"
+      + location                = "westeurope"
+      + name                    = "alethia-nl-32853960703-1-nat-pip"
+      + resource_group_name     = "rg-alethia-nl-32853960703-1"
+      + sku                     = "Standard"
+      + sku_tier                = "Regional"
+      + tags                    = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+    }
+
+  # module.vnet[0].azurerm_subnet.application_gateway will be created
+  + resource "azurerm_subnet" "application_gateway" {
+      + address_prefixes                              = [
+          + "10.0.48.0/20",
+        ]
+      + default_outbound_access_enabled               = true
+      + id                                            = (known after apply)
+      + name                                          = "alethia-nl-32853960703-1-appgw"
+      + private_endpoint_network_policies             = "Disabled"
+      + private_link_service_network_policies_enabled = true
+      + resource_group_name                           = "rg-alethia-nl-32853960703-1"
+      + virtual_network_name                          = "alethia-nl-32853960703-1-vnet"
+    }
+
+  # module.vnet[0].azurerm_subnet.database will be created
+  + resource "azurerm_subnet" "database" {
+      + address_prefixes                              = [
+          + "10.0.32.0/20",
+        ]
+      + default_outbound_access_enabled               = true
+      + id                                            = (known after apply)
+      + name                                          = "alethia-nl-32853960703-1-db"
+      + private_endpoint_network_policies             = "Disabled"
+      + private_link_service_network_policies_enabled = true
+      + resource_group_name                           = "rg-alethia-nl-32853960703-1"
+      + virtual_network_name                          = "alethia-nl-32853960703-1-vnet"
+
+      + delegation {
+          + name = "postgres-flexible-server"
+
+          + service_delegation {
+              + actions = [
+                  + "Microsoft.Network/virtualNetworks/subnets/join/action",
+                ]
+              + name    = "Microsoft.DBforPostgreSQL/flexibleServers"
+            }
+        }
+    }
+
+  # module.vnet[0].azurerm_subnet.private will be created
+  + resource "azurerm_subnet" "private" {
+      + address_prefixes                              = [
+          + "10.0.0.0/20",
+        ]
+      + default_outbound_access_enabled               = true
+      + id                                            = (known after apply)
+      + name                                          = "alethia-nl-32853960703-1-private"
+      + private_endpoint_network_policies             = "Disabled"
+      + private_link_service_network_policies_enabled = true
+      + resource_group_name                           = "rg-alethia-nl-32853960703-1"
+      + service_endpoints                             = [
+          + "Microsoft.KeyVault",
+          + "Microsoft.Sql",
+          + "Microsoft.Storage",
+        ]
+      + virtual_network_name                          = "alethia-nl-32853960703-1-vnet"
+    }
+
+  # module.vnet[0].azurerm_subnet.public will be created
+  + resource "azurerm_subnet" "public" {
+      + address_prefixes                              = [
+          + "10.0.16.0/20",
+        ]
+      + default_outbound_access_enabled               = true
+      + id                                            = (known after apply)
+      + name                                          = "alethia-nl-32853960703-1-public"
+      + private_endpoint_network_policies             = "Disabled"
+      + private_link_service_network_policies_enabled = true
+      + resource_group_name                           = "rg-alethia-nl-32853960703-1"
+      + virtual_network_name                          = "alethia-nl-32853960703-1-vnet"
+    }
+
+  # module.vnet[0].azurerm_subnet_nat_gateway_association.private[0] will be created
+  + resource "azurerm_subnet_nat_gateway_association" "private" {
+      + id             = (known after apply)
+      + nat_gateway_id = (known after apply)
+      + subnet_id      = (known after apply)
+    }
+
+  # module.vnet[0].azurerm_subnet_network_security_group_association.private will be created
+  + resource "azurerm_subnet_network_security_group_association" "private" {
+      + id                        = (known after apply)
+      + network_security_group_id = (known after apply)
+      + subnet_id                 = (known after apply)
+    }
+
+  # module.vnet[0].azurerm_virtual_network.this will be created
+  + resource "azurerm_virtual_network" "this" {
+      + address_space                  = [
+          + "10.0.0.0/16",
+        ]
+      + dns_servers                    = (known after apply)
+      + guid                           = (known after apply)
+      + id                             = (known after apply)
+      + location                       = "westeurope"
+      + name                           = "alethia-nl-32853960703-1-vnet"
+      + private_endpoint_vnet_policies = "Disabled"
+      + resource_group_name            = "rg-alethia-nl-32853960703-1"
+      + subnet                         = (known after apply)
+      + tags                           = {
+          + "Environment"        = "32853960703-1"
+          + "ManagedBy"          = "opentofu"
+          + "Project"            = "alethia-nl"
+          + "Service"            = "alethia-nl"
+          + "alethia:project-id" = "e2e-32853960703-1"
+        }
+    }
+
+Plan: 57 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + acr_login_server                        = (known after apply)
+  + acr_pull_client_id                      = ""
+  + aks_cluster_ca_certificate              = (sensitive value)
+  + aks_cluster_endpoint                    = (sensitive value)
+  + aks_cluster_name                        = "aks-weu-32853960703-1-alethia-nl"
+  + azure_cache_hostname                    = (known after apply)
+  + azure_db_aad_user                       = "aks-weu-32853960703-1-alethia-nl-appdb"
+  + azure_db_admin_client_id                = (known after apply)
+  + azure_db_admin_user                     = "aks-weu-32853960703-1-alethia-nl-dbadmin"
+  + azure_db_app_oid                        = (known after apply)
+  + azure_db_client_id                      = (known after apply)
+  + azure_db_fqdn                           = (known after apply)
+  + azure_db_name                           = "alethia_nl_32853960703_1"
+  + azure_dns_name_servers                  = (known after apply)
+  + azure_dns_zone_name                     = "32853960703-1.e2e.alethialabs.io"
+  + azure_subscription_id                   = "32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae"
+  + azure_tenant_id                         = "2b473302-b5cd-4d5e-860c-c3e20141d6e2"
+  + custom_secret_ids                       = {
+      + api-key = (known after apply)
+    }
+  + external_dns_client_id                  = (known after apply)
+  + external_secrets_client_id              = (known after apply)
+  + key_vault_uri                           = (known after apply)
+  + location_short                          = "weu"
+  + resource_group_name                     = "rg-alethia-nl-32853960703-1"
+  + storage_allow_nested_items_to_be_public = false
+  + storage_blob_versioning_enabled         = true
+  + storage_container_access_types          = {
+      + assets = "private"
+    }
+
+Warning: Value for undeclared variable
+
+The root module does not declare a variable named "acm_certificate" but a
+value was found in file
+"/tmp/alethia-deploy-3708940196/work/tofu.tfvars.json". If you meant to use
+this value, add a "variable" block to the configuration.
+
+To silence these warnings, use TF_VAR_... environment variables to provide
+certain "global" settings to all configurations in your organization. To
+reduce the verbosity of these warnings, use the -compact-warnings option.
+
+Warning: Argument is deprecated
+
+  with azurerm_federated_identity_credential.app_db[0],
+  on app-db-identity.tf line 73, in resource "azurerm_federated_identity_credential" "app_db":
+  73:   resource_group_name = azurerm_resource_group.main.name
+
+This field is no longer used and will be removed in the next major version of
+the Azure Provider
+
+(and 4 more similar warnings elsewhere)
+
+Warning: Check block assertion failed
+
+  on checks_data.tf line 39, in check "azure_cache_multi_az_requires_premium":
+  39:     condition     = !var.create_azure_cache || !var.azure_cache_multi_az || var.azure_cache_sku == "Premium"
+    ├────────────────
+    │ var.azure_cache_multi_az is true
+    │ var.azure_cache_sku is "Basic"
+    │ var.create_azure_cache is true
+
+azure_cache_multi_az (zone redundancy) requires azure_cache_sku = "Premium".
+
+Warning: Check block assertion known after apply
+
+  on checks_secrets.tf line 12, in check "external_secrets_identity_present":
+  12:     condition     = !var.provision_aks || (length(trimspace(try(azurerm_user_assigned_identity.external_secrets[0].client_id, ""))) > 0 && startswith(module.key_vault.vault_uri, "https://"))
+    ├────────────────
+    │ azurerm_user_assigned_identity.external_secrets[0].client_id is a string
+    │ module.key_vault.vault_uri is a string
+    │ var.provision_aks is true
+
+The condition could not be evaluated at this time, a result will be known
+when this plan is applied.
+
+Warning: Check block assertion known after apply
+
+  on checks_secrets.tf line 31, in check "external_secrets_identity_resolved":
+  31:     condition     = !var.provision_aks || local.external_secrets_client_id != ""
+    ├────────────────
+    │ local.external_secrets_client_id is a string
+    │ var.provision_aks is true
+
+The condition could not be evaluated at this time, a result will be known
+when this plan is applied.
+
+Warning: Check block assertion known after apply
+
+  on modules/azure-db/checks.tf line 27, in check "server_endpoint_is_resolvable":
+  27:     condition     = var.engine == "postgres" ? azurerm_postgresql_flexible_server.this[0].fqdn != "" : azurerm_mysql_flexible_server.this[0].fqdn != ""
+    ├────────────────
+    │ azurerm_mysql_flexible_server.this is empty tuple
+    │ azurerm_postgresql_flexible_server.this[0].fqdn is a string
+    │ var.engine is "postgres"
+
+The condition could not be evaluated at this time, a result will be known
+when this plan is applied.
+Generating plan JSON...
+Verification gate: verdict=not_evaluable (pass=3 fail=0 warn=0 not_evaluable=1, catalog elench-controls-0.5.2)
+  [AZURE-FED-001] coverage: no resources in scope for this control in this plan
+  [SCOPE-001] coverage: terraform_data.aks_kms_purge_protection_guard[0]: unrecognized provider terraform; terraform_data.aks_spot_guard: unrecognized provider terraform; terraform_data.application_gateway_subnet_guard: unrecognized provider terraform; terraform_data.brownfield_subnet_guard: unrecognized provider terraform; terraform_data.compat_k8s_guard: unrecognized provider terraform; terraform_data.service_bus_session_sku_guard: unrecognized provider terraform
+Compatibility gate: verdict=not_evaluable (pass=1 fail=0 warn=0 not_evaluable=1, catalog compat-matrix-0.1.0)
+  [COMPAT-ADDON-BYO-E2E] coverage: add-on "byo-e2e" is not in the compatibility matrix
+Evidence receipt signed (key 1c7c68ef7ab23919, plan sha256 0071337b092d…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+terraform_data.aks_kms_purge_protection_guard[0]: Creating...
+terraform_data.aks_kms_purge_protection_guard[0]: Creation complete after 0s [id=18910309-4484-f9b5-65b5-856f472cf4bf]
+terraform_data.service_bus_session_sku_guard: Creating...
+terraform_data.compat_k8s_guard: Creating...
+terraform_data.aks_spot_guard: Creating...
+terraform_data.service_bus_session_sku_guard: Creation complete after 0s [id=26f870b8-b0d5-06b1-816f-86a8db2c93d7]
+terraform_data.compat_k8s_guard: Creation complete after 0s [id=d06017cb-3d98-54ee-78cb-f3d97a688617]
+terraform_data.aks_spot_guard: Creation complete after 0s [id=cf1c590f-3dca-efd4-c451-9ad964ad8372]
+terraform_data.application_gateway_subnet_guard: Creating...
+terraform_data.application_gateway_subnet_guard: Creation complete after 0s [id=eebfebaf-dc67-8f74-84bf-4f9eeefd6c36]
+module.key_vault.random_password.this["api-key"]: Creating...
+module.key_vault.random_password.this["api-key"]: Creation complete after 0s [id=none]
+terraform_data.brownfield_subnet_guard: Creating...
+terraform_data.brownfield_subnet_guard: Creation complete after 0s [id=06681c96-0a8d-8e61-979e-27e5e1d30d0f]
+azurerm_resource_group.main: Creating...
+azurerm_resource_group.main: Still creating... [10s elapsed]
+azurerm_resource_group.main: Still creating... [20s elapsed]
+azurerm_resource_group.main: Creation complete after 25s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1]
+azurerm_user_assigned_identity.external_dns[0]: Creating...
+azurerm_user_assigned_identity.aks[0]: Creating...
+module.vnet[0].azurerm_public_ip.nat[0]: Creating...
+azurerm_user_assigned_identity.db_admin[0]: Creating...
+azurerm_user_assigned_identity.app_db[0]: Creating...
+azurerm_user_assigned_identity.external_secrets[0]: Creating...
+module.vnet[0].azurerm_nat_gateway.this[0]: Creating...
+module.service_bus[0].azurerm_servicebus_namespace.this: Creating...
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Creating...
+module.vnet[0].azurerm_network_security_group.private: Creating...
+azurerm_user_assigned_identity.app_db[0]: Creation complete after 4s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-weu-32853960703-1-alethia-nl-appdb]
+module.vnet[0].azurerm_virtual_network.this: Creating...
+azurerm_user_assigned_identity.external_dns[0]: Creation complete after 4s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-weu-32853960703-1-alethia-nl-extdns]
+azurerm_role_assignment.external_dns_dns[0]: Creating...
+azurerm_user_assigned_identity.aks[0]: Creation complete after 4s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-weu-32853960703-1-alethia-nl-identity]
+module.acr[0].azurerm_container_registry.this: Creating...
+azurerm_user_assigned_identity.db_admin[0]: Creation complete after 4s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-weu-32853960703-1-alethia-nl-dbadmin]
+module.azure_dns[0].azurerm_dns_zone.this: Creating...
+azurerm_user_assigned_identity.external_secrets[0]: Creation complete after 4s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-weu-32853960703-1-alethia-nl-extsecrets]
+module.storage_account[0].azurerm_storage_account.this: Creating...
+module.vnet[0].azurerm_public_ip.nat[0]: Creation complete after 5s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/publicIPAddresses/alethia-nl-32853960703-1-nat-pip]
+module.key_vault.azurerm_key_vault.this: Creating...
+module.vnet[0].azurerm_network_security_group.private: Creation complete after 5s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/networkSecurityGroups/alethia-nl-32853960703-1-private-nsg]
+module.vnet[0].azurerm_nat_gateway.this[0]: Still creating... [10s elapsed]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [10s elapsed]
+module.service_bus[0].azurerm_servicebus_namespace.this: Still creating... [10s elapsed]
+module.vnet[0].azurerm_virtual_network.this: Creation complete after 7s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32853960703-1-vnet]
+module.vnet[0].azurerm_subnet.database: Creating...
+module.vnet[0].azurerm_subnet.private: Creating...
+module.azure_dns[0].azurerm_dns_zone.this: Creation complete after 7s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/dnsZones/32853960703-1.e2e.alethialabs.io]
+module.vnet[0].azurerm_subnet.public: Creating...
+azurerm_role_assignment.external_dns_dns[0]: Still creating... [10s elapsed]
+module.vnet[0].azurerm_nat_gateway.this[0]: Creation complete after 14s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/natGateways/alethia-nl-32853960703-1-nat-gw]
+module.vnet[0].azurerm_subnet.application_gateway: Creating...
+module.acr[0].azurerm_container_registry.this: Still creating... [10s elapsed]
+module.storage_account[0].azurerm_storage_account.this: Still creating... [10s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [10s elapsed]
+module.vnet[0].azurerm_subnet.database: Creation complete after 6s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32853960703-1-vnet/subnets/alethia-nl-32853960703-1-db]
+module.vnet[0].azurerm_nat_gateway_public_ip_association.this[0]: Creating...
+module.service_bus[0].azurerm_servicebus_namespace.this: Creation complete after 19s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ServiceBus/namespaces/sb-alethia-nl-32853960703-1]
+module.service_bus[0].azurerm_servicebus_queue.this["jobs"]: Creating...
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [20s elapsed]
+module.vnet[0].azurerm_subnet.private: Still creating... [10s elapsed]
+module.vnet[0].azurerm_subnet.public: Still creating... [10s elapsed]
+azurerm_role_assignment.external_dns_dns[0]: Still creating... [20s elapsed]
+module.vnet[0].azurerm_subnet.private: Creation complete after 13s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32853960703-1-vnet/subnets/alethia-nl-32853960703-1-private]
+module.service_bus[0].azurerm_servicebus_topic.this["events"]: Creating...
+module.vnet[0].azurerm_subnet.application_gateway: Still creating... [10s elapsed]
+module.acr[0].azurerm_container_registry.this: Still creating... [20s elapsed]
+module.acr[0].azurerm_container_registry.this: Creation complete after 20s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ContainerRegistry/registries/acralethianl328539607031]
+module.vnet[0].azurerm_subnet_nat_gateway_association.private[0]: Creating...
+module.storage_account[0].azurerm_storage_account.this: Still creating... [20s elapsed]
+module.service_bus[0].azurerm_servicebus_queue.this["jobs"]: Creation complete after 5s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ServiceBus/namespaces/sb-alethia-nl-32853960703-1/queues/jobs]
+module.vnet[0].azurerm_subnet_network_security_group_association.private: Creating...
+module.key_vault.azurerm_key_vault.this: Still creating... [20s elapsed]
+module.vnet[0].azurerm_nat_gateway_public_ip_association.this[0]: Still creating... [10s elapsed]
+module.service_bus[0].azurerm_servicebus_topic.this["events"]: Creation complete after 5s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ServiceBus/namespaces/sb-alethia-nl-32853960703-1/topics/events]
+module.service_bus[0].azurerm_servicebus_subscription.this["events-arn-aws-sqs-us-east-1-000000000000-jobs-041ecd94"]: Creating...
+module.vnet[0].azurerm_subnet.public: Creation complete after 19s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32853960703-1-vnet/subnets/alethia-nl-32853960703-1-public]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [30s elapsed]
+module.vnet[0].azurerm_nat_gateway_public_ip_association.this[0]: Creation complete after 15s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/natGateways/alethia-nl-32853960703-1-nat-gw|/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/publicIPAddresses/alethia-nl-32853960703-1-nat-pip]
+module.service_bus[0].azurerm_servicebus_subscription.this["events-arn-aws-sqs-us-east-1-000000000000-jobs-041ecd94"]: Creation complete after 4s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ServiceBus/namespaces/sb-alethia-nl-32853960703-1/topics/events/subscriptions/arn-aws-sqs-us-east-1-000000000000-jobs-041ecd94]
+azurerm_role_assignment.external_dns_dns[0]: Still creating... [30s elapsed]
+module.vnet[0].azurerm_subnet.application_gateway: Still creating... [20s elapsed]
+module.vnet[0].azurerm_subnet_nat_gateway_association.private[0]: Still creating... [10s elapsed]
+module.storage_account[0].azurerm_storage_account.this: Still creating... [30s elapsed]
+module.vnet[0].azurerm_subnet_network_security_group_association.private: Still creating... [10s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [30s elapsed]
+module.vnet[0].azurerm_subnet.application_gateway: Creation complete after 22s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32853960703-1-vnet/subnets/alethia-nl-32853960703-1-appgw]
+azurerm_role_assignment.external_dns_dns[0]: Creation complete after 33s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Authorization/roleAssignments/8cab6cc5-5852-d09c-13a8-5cf399914224]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [40s elapsed]
+module.vnet[0].azurerm_subnet_nat_gateway_association.private[0]: Creation complete after 19s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32853960703-1-vnet/subnets/alethia-nl-32853960703-1-private]
+module.storage_account[0].azurerm_storage_account.this: Still creating... [40s elapsed]
+module.vnet[0].azurerm_subnet_network_security_group_association.private: Still creating... [20s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [40s elapsed]
+module.vnet[0].azurerm_subnet_network_security_group_association.private: Creation complete after 26s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/virtualNetworks/alethia-nl-32853960703-1-vnet/subnets/alethia-nl-32853960703-1-private]
+module.azure_db[0].azurerm_private_dns_zone.postgres[0]: Creating...
+module.azure_cache[0].azurerm_managed_redis.this: Creating...
+module.azure_db[0].random_password.admin: [REDACTED]
+module.azure_db[0].random_password.admin: [REDACTED] complete after 0s [id=none]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [50s elapsed]
+module.storage_account[0].azurerm_storage_account.this: Still creating... [50s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [50s elapsed]
+module.azure_db[0].azurerm_private_dns_zone.postgres[0]: Still creating... [10s elapsed]
+module.azure_cache[0].azurerm_managed_redis.this: Still creating... [10s elapsed]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [1m0s elapsed]
+module.storage_account[0].azurerm_storage_account.this: Still creating... [1m0s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m0s elapsed]
+module.azure_db[0].azurerm_private_dns_zone.postgres[0]: Still creating... [20s elapsed]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [1m10s elapsed]
+module.storage_account[0].azurerm_storage_account.this: Still creating... [1m10s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m10s elapsed]
+module.azure_db[0].azurerm_private_dns_zone.postgres[0]: Still creating... [30s elapsed]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [1m20s elapsed]
+module.storage_account[0].azurerm_storage_account.this: Still creating... [1m20s elapsed]
+module.azure_db[0].azurerm_private_dns_zone.postgres[0]: Creation complete after 35s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/privateDnsZones/alethia-nl-32853960703-1-db.private.postgres.database.azure.com]
+module.azure_db[0].azurerm_private_dns_zone_virtual_network_link.postgres[0]: Creating...
+module.key_vault.azurerm_key_vault.this: Still creating... [1m20s elapsed]
+module.storage_account[0].azurerm_storage_account.this: Creation complete after 1m22s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Storage/storageAccounts/alethianl328539607031st]
+module.storage_account[0].azurerm_storage_container.this["assets"]: Creating...
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [1m30s elapsed]
+module.azure_db[0].azurerm_private_dns_zone_virtual_network_link.postgres[0]: Still creating... [10s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m30s elapsed]
+module.storage_account[0].azurerm_storage_container.this["assets"]: Still creating... [10s elapsed]
+module.storage_account[0].azurerm_storage_container.this["assets"]: Creation complete after 13s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Storage/storageAccounts/alethianl328539607031st/blobServices/default/containers/assets]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [1m40s elapsed]
+module.azure_db[0].azurerm_private_dns_zone_virtual_network_link.postgres[0]: Still creating... [20s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m40s elapsed]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [1m50s elapsed]
+module.azure_db[0].azurerm_private_dns_zone_virtual_network_link.postgres[0]: Still creating... [30s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [1m50s elapsed]
+module.azure_db[0].azurerm_private_dns_zone_virtual_network_link.postgres[0]: Creation complete after 34s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.Network/privateDnsZones/alethia-nl-32853960703-1-db.private.postgres.database.azure.com/virtualNetworkLinks/alethia-nl-32853960703-1-db-dns-link]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Creating...
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [2m0s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [2m0s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [10s elapsed]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Still creating... [2m10s elapsed]
+module.key_vault.azurerm_key_vault.this: Still creating... [2m10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [20s elapsed]
+module.cosmos_db[0].azurerm_cosmosdb_account.this: Creation complete after 2m19s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.DocumentDB/databaseAccounts/alethia-nl-32853960703-1-cosmos]
+module.cosmos_db[0].azurerm_cosmosdb_sql_database.this[0]: Creating...
+module.key_vault.azurerm_key_vault.this: Still creating... [2m20s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [30s elapsed]
+module.cosmos_db[0].azurerm_cosmosdb_sql_database.this[0]: Still creating... [10s elapsed]
+module.cosmos_db[0].azurerm_cosmosdb_sql_database.this[0]: Creation complete after 14s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.DocumentDB/databaseAccounts/alethia-nl-32853960703-1-cosmos/sqlDatabases/alethia-nl-32853960703-1-db]
+module.cosmos_db[0].azurerm_cosmosdb_sql_container.this["items"]: Creating...
+module.key_vault.azurerm_key_vault.this: Still creating... [2m30s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [40s elapsed]
+module.key_vault.azurerm_key_vault.this: Creation complete after 2m35s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.KeyVault/vaults/alethia-nl-32853-aed088a]
+azurerm_role_assignment.external_secrets_kv[0]: Creating...
+module.key_vault.azurerm_role_assignment.provisioner_secrets_officer: Creating...
+azurerm_role_assignment.provisioner_crypto_officer[0]: Creating...
+azurerm_role_assignment.aks_secrets_kms[0]: Creating...
+module.cosmos_db[0].azurerm_cosmosdb_sql_container.this["items"]: Still creating... [10s elapsed]
+module.cosmos_db[0].azurerm_cosmosdb_sql_container.this["items"]: Creation complete after 15s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.DocumentDB/databaseAccounts/alethia-nl-32853960703-1-cosmos/sqlDatabases/alethia-nl-32853960703-1-db/containers/items]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [50s elapsed]
+module.key_vault.azurerm_role_assignment.provisioner_secrets_officer: Still creating... [10s elapsed]
+azurerm_role_assignment.provisioner_crypto_officer[0]: Still creating... [10s elapsed]
+azurerm_role_assignment.external_secrets_kv[0]: Still creating... [10s elapsed]
+azurerm_role_assignment.aks_secrets_kms[0]: Still creating... [10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [1m0s elapsed]
+azurerm_role_assignment.external_secrets_kv[0]: Still creating... [20s elapsed]
+module.key_vault.azurerm_role_assignment.provisioner_secrets_officer: Still creating... [20s elapsed]
+azurerm_role_assignment.provisioner_crypto_officer[0]: Still creating... [20s elapsed]
+azurerm_role_assignment.aks_secrets_kms[0]: Still creating... [20s elapsed]
+azurerm_role_assignment.aks_secrets_kms[0]: Creation complete after 28s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.KeyVault/vaults/alethia-nl-32853-aed088a/providers/Microsoft.Authorization/roleAssignments/9a0a4c86-e6b3-1448-a73a-2b039df8dec8]
+module.aks[0].data.azurerm_client_config.current: Reading...
+module.aks[0].data.azurerm_client_config.current: Read complete after 0s [id=Y2xpZW50Q29uZmlncy9jbGllbnRJZD1lYTA0YjM5Yi1jNTcyLTQzZTgtYmJiMi1hZDc1MWU0MGU4NGY7b2JqZWN0SWQ9MTM1MWE3ZjYtNzZmOC00YTA1LWEzYjUtYmRlNzViN2FkMjQzO3N1YnNjcmlwdGlvbklkPTMyZjNkNmNhLWY5YjUtNDhmMS1iNzE0LWRjZmI5Y2M2NjFhZTt0ZW5hbnRJZD0yYjQ3MzMwMi1iNWNkLTRkNWUtODYwYy1jM2UyMDE0MWQ2ZTI=]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [1m10s elapsed]
+azurerm_role_assignment.provisioner_crypto_officer[0]: Creation complete after 29s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.KeyVault/vaults/alethia-nl-32853-aed088a/providers/Microsoft.Authorization/roleAssignments/d93143ae-f2dd-1beb-7530-6fe780fa051a]
+azurerm_key_vault_key.aks_secrets[0]: Creating...
+module.key_vault.azurerm_role_assignment.provisioner_secrets_officer: Creation complete after 29s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.KeyVault/vaults/alethia-nl-32853-aed088a/providers/Microsoft.Authorization/roleAssignments/1431adb8-8530-64e1-1a67-a1da6fbc0b27]
+module.key_vault.azurerm_key_vault_secret.this["api-key"]: Creating...
+azurerm_role_assignment.external_secrets_kv[0]: Creation complete after 30s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.KeyVault/vaults/alethia-nl-32853-aed088a/providers/Microsoft.Authorization/roleAssignments/8e82ec45-5817-2ca7-040e-3f74f373e18a]
+module.key_vault.azurerm_key_vault_secret.this["api-key"]: Creation complete after 2s [id=https://alethia-nl-32853-aed088a.vault.azure.net/secrets/api-key/15148c3148d24e05a65274c09999d34b]
+azurerm_key_vault_key.aks_secrets[0]: Creation complete after 4s [id=https://alethia-nl-32853-aed088a.vault.azure.net/keys/aks-secrets-encryption/a5581cf74fba48909bf5752e70b62ed1]
+module.aks[0].azurerm_kubernetes_cluster.this: Creating...
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [1m20s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [1m30s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [20s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [1m40s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [30s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [1m50s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [40s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [2m0s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [50s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [2m10s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m0s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [2m20s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [2m30s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m20s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [2m40s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m30s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [2m50s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m40s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [3m0s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [1m50s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [3m10s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m0s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [3m20s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [3m30s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m20s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [3m40s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m30s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [3m50s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m40s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [4m0s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [2m50s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [4m10s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m0s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [4m20s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [4m30s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m20s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [4m40s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m30s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [4m50s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m40s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [5m0s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [3m50s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [5m10s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Still creating... [4m0s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [5m20s elapsed]
+module.aks[0].azurerm_kubernetes_cluster.this: Creation complete after 4m9s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ContainerService/managedClusters/aks-weu-32853960703-1-alethia-nl]
+module.aks[0].azurerm_role_assignment.runner_cluster_admin[0]: Creating...
+azurerm_federated_identity_credential.external_dns[0]: Creating...
+azurerm_federated_identity_credential.db_admin[0]: Creating...
+azurerm_federated_identity_credential.cert_manager[0]: Creating...
+azurerm_federated_identity_credential.app_db[0]: Creating...
+azurerm_federated_identity_credential.external_secrets[0]: Creating...
+azurerm_federated_identity_credential.external_secrets[0]: Creation complete after 2s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-weu-32853960703-1-alethia-nl-extsecrets/federatedIdentityCredentials/external-secrets]
+azurerm_federated_identity_credential.external_dns[0]: Creation complete after 2s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-weu-32853960703-1-alethia-nl-extdns/federatedIdentityCredentials/external-dns]
+azurerm_federated_identity_credential.db_admin[0]: Creation complete after 2s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-weu-32853960703-1-alethia-nl-dbadmin/federatedIdentityCredentials/db-admin]
+azurerm_federated_identity_credential.app_db[0]: Creation complete after 2s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-weu-32853960703-1-alethia-nl-appdb/federatedIdentityCredentials/app-db]
+azurerm_federated_identity_credential.cert_manager[0]: Creation complete after 4s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ManagedIdentity/userAssignedIdentities/aks-weu-32853960703-1-alethia-nl-extdns/federatedIdentityCredentials/cert-manager]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [5m30s elapsed]
+module.aks[0].azurerm_role_assignment.runner_cluster_admin[0]: Still creating... [10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [5m40s elapsed]
+module.aks[0].azurerm_role_assignment.runner_cluster_admin[0]: Still creating... [20s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [5m50s elapsed]
+module.aks[0].azurerm_role_assignment.runner_cluster_admin[0]: Creation complete after 28s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.ContainerService/managedClusters/aks-weu-32853960703-1-alethia-nl/providers/Microsoft.Authorization/roleAssignments/50024a40-7902-89f3-3281-35a626b38a9d]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [6m0s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [6m10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [6m20s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [6m30s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [6m40s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [6m50s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Still creating... [7m0s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server.this[0]: Creation complete after 7m9s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.DBforPostgreSQL/flexibleServers/alethia-nl-32853960703-1-db]
+module.azure_db[0].azurerm_postgresql_flexible_server_database.this[0]: Creating...
+azurerm_postgresql_flexible_server_active_directory_administrator.db_admin[0]: Creating...
+azurerm_postgresql_flexible_server_active_directory_administrator.db_admin[0]: Still creating... [10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server_database.this[0]: Still creating... [10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server_database.this[0]: Still creating... [20s elapsed]
+azurerm_postgresql_flexible_server_active_directory_administrator.db_admin[0]: Still creating... [20s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server_database.this[0]: Still creating... [30s elapsed]
+azurerm_postgresql_flexible_server_active_directory_administrator.db_admin[0]: Still creating... [30s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server_database.this[0]: Still creating... [40s elapsed]
+azurerm_postgresql_flexible_server_active_directory_administrator.db_admin[0]: Still creating... [40s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server_database.this[0]: Still creating... [50s elapsed]
+azurerm_postgresql_flexible_server_active_directory_administrator.db_admin[0]: Still creating... [50s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server_database.this[0]: Still creating... [1m0s elapsed]
+azurerm_postgresql_flexible_server_active_directory_administrator.db_admin[0]: Still creating... [1m0s elapsed]
+azurerm_postgresql_flexible_server_active_directory_administrator.db_admin[0]: Creation complete after 1m3s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.DBforPostgreSQL/flexibleServers/alethia-nl-32853960703-1-db/administrators/294dc0b6-8335-44eb-8faa-658e88d3108b]
+module.azure_db[0].azurerm_postgresql_flexible_server_database.this[0]: Still creating... [1m10s elapsed]
+module.azure_db[0].azurerm_postgresql_flexible_server_database.this[0]: Creation complete after 1m18s [id=/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/resourceGroups/rg-alethia-nl-32853960703-1/providers/Microsoft.DBforPostgreSQL/flexibleServers/alethia-nl-32853960703-1-db/databases/alethia_nl_32853960703_1]
+
+Warning: Argument is deprecated
+
+  with azurerm_federated_identity_credential.app_db[0],
+  on app-db-identity.tf line 73, in resource "azurerm_federated_identity_credential" "app_db":
+  73:   resource_group_name = azurerm_resource_group.main.name
+
+This field is no longer used and will be removed in the next major version of
+the Azure Provider
+
+(and 9 more similar warnings elsewhere)
+
+Warning: Check block assertion failed
+
+  on checks_data.tf line 39, in check "azure_cache_multi_az_requires_premium":
+  39:     condition     = !var.create_azure_cache || !var.azure_cache_multi_az || var.azure_cache_sku == "Premium"
+    ├────────────────
+    │ var.azure_cache_multi_az is true
+    │ var.azure_cache_sku is "Basic"
+    │ var.create_azure_cache is true
+
+azure_cache_multi_az (zone redundancy) requires azure_cache_sku = "Premium".
+
+Error: creating Redis Enterprise (Subscription: "32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae"
+Resource Group Name: "rg-alethia-nl-32853960703-1"
+Redis Enterprise Name: "alethia-nl-32853960703-1-redis"): polling after Create: polling failed: the Azure API returned the following error:
+
+Status: "Failed"
+Code: "InsufficientCapacity"
+Message: "Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region."
+Activity Id: ""
+
+---
+
+API Response:
+
+----[start]----
+{
+  "id": "/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/providers/Microsoft.Cache/locations/West Europe/operationsStatus/8325f931-8454-4b37-8a1c-2cc9beb3259a",
+  "name": "8325f931-8454-4b37-8a1c-2cc9beb3259a",
+  "status": "Failed",
+  "startTime": "2026-08-25T13:37:23.2917523+00:00",
+  "endTime": "2026-08-25T13:37:24.767664+00:00",
+  "error": {
+    "code": "InsufficientCapacity",
+    "message": "Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region.",
+    "target": null
+  }
+}
+-----[end]-----
+
+
+  with module.azure_cache[0].azurerm_managed_redis.this,
+  on modules/azure-cache-redis/main.tf line 23, in resource "azurerm_managed_redis" "this":
+  23: resource "azurerm_managed_redis" "this" {
+
+creating Redis Enterprise (Subscription:
+"32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae"
+Resource Group Name: "rg-alethia-nl-32853960703-1"
+Redis Enterprise Name: "alethia-nl-32853960703-1-redis"): polling after
+Create: polling failed: the Azure API returned the following error:
+
+Status: "Failed"
+Code: "InsufficientCapacity"
+Message: "Request failed due to insufficient capacity. Retry using a
+different Azure Managed Redis size or region."
+Activity Id: ""
+
+---
+
+API Response:
+
+----[start]----
+{
+  "id": "/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/providers/Microsoft.Cache/locations/West Europe/operationsStatus/8325f931-8454-4b37-8a1c-2cc9beb3259a",
+  "name": "8325f931-8454-4b37-8a1c-2cc9beb3259a",
+  "status": "Failed",
+  "startTime": "2026-08-25T13:37:23.2917523+00:00",
+  "endTime": "2026-08-25T13:37:24.767664+00:00",
+  "error": {
+    "code": "InsufficientCapacity",
+    "message": "Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region.",
+    "target": null
+  }
+}
+-----[end]-----
+
+::error::OpenTofu exited with code 1.
+
+ORPHAN RISK (likely): apply failed AFTER the cloud accepted the create (an asynchronous create/allocation failure) (module.azure_cache[0].azurerm_managed_redis.this). The resource may exist outside tofu state; if it does, the next apply will fail with "already exists". Reconcile before retrying.
+{"time":"2026-08-25T13:46:57.764697913Z","level":"ERROR","msg":"job execution failed","runner_id":"33090471-6c04-458a-b6a5-2533702d2d51","job_id":"6cd462b9-a1f2-4a51-9ecd-8149c6832a47","job_type":"DEPLOY","err":"tofu apply failed (orphan risk: likely): exit status 1\n\nError: creating Redis Enterprise (Subscription: \"32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae\"\nResource Group Name: \"rg-alethia-nl-32853960703-1\"\nRedis Enterprise Name: \"alethia-nl-32853960703-1-redis\"): polling after Create: polling failed: the Azure API returned the following error:\n\nStatus: \"Failed\"\nCode: \"InsufficientCapacity\"\nMessage: \"Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region.\"\nActivity Id: \"\"\n\n---\n\nAPI Response:\n\n----[start]----\n{\r\n  \"id\": \"/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/providers/Microsoft.Cache/locations/West Europe/operationsStatus/8325f931-8454-4b37-8a1c-2cc9beb3259a\",\r\n  \"name\": \"8325f931-8454-4b37-8a1c-2cc9beb3259a\",\r\n  \"status\": \"Failed\",\r\n  \"startTime\": \"2026-08-25T13:37:23.2917523+00:00\",\r\n  \"endTime\": \"2026-08-25T13:37:24.767664+00:00\",\r\n  \"error\": {\r\n    \"code\": \"InsufficientCapacity\",\r\n    \"message\": \"Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region.\",\r\n    \"target\": null\r\n  }\r\n}\n-----[end]-----\n\n\n  with module.azure_cache[0].azurerm_managed_redis.this,\n  on modules/azure-cache-redis/main.tf line 23, in resource \"azurerm_managed_redis\" \"this\":\n  23: resource \"azurerm_managed_redis\" \"this\" {\n\ncreating Redis Enterprise (Subscription:\n\"32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae\"\nResource Group Name: \"rg-alethia-nl-32853960703-1\"\nRedis Enterprise Name: \"alethia-nl-32853960703-1-redis\"): polling after\nCreate: polling failed: the Azure API returned the following error:\n\nStatus: \"Failed\"\nCode: \"InsufficientCapacity\"\nMessage: \"Request failed due to insufficient capacity. Retry using a\ndifferent Azure Managed Redis size or region.\"\nActivity Id: \"\"\n\n---\n\nAPI Response:\n\n----[start]----\n{\r\n  \"id\": \"/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/providers/Microsoft.Cache/locations/West Europe/operationsStatus/8325f931-8454-4b37-8a1c-2cc9beb3259a\",\r\n  \"name\": \"8325f931-8454-4b37-8a1c-2cc9beb3259a\",\r\n  \"status\": \"Failed\",\r\n  \"startTime\": \"2026-08-25T13:37:23.2917523+00:00\",\r\n  \"endTime\": \"2026-08-25T13:37:24.767664+00:00\",\r\n  \"error\": {\r\n    \"code\": \"InsufficientCapacity\",\r\n    \"message\": \"Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region.\",\r\n    \"target\": null\r\n  }\r\n}\n-----[end]-----\n\n"}
+Error: tofu apply failed (orphan risk: likely): exit status 1
+
+Error: creating Redis Enterprise (Subscription: "32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae"
+Resource Group Name: "rg-alethia-nl-32853960703-1"
+Redis Enterprise Name: "alethia-nl-32853960703-1-redis"): polling after Create: polling failed: the Azure API returned the following error:
+
+Status: "Failed"
+Code: "InsufficientCapacity"
+Message: "Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region."
+Activity Id: ""
+
+---
+
+API Response:
+
+----[start]----
+{
+  "id": "/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/providers/Microsoft.Cache/locations/West Europe/operationsStatus/8325f931-8454-4b37-8a1c-2cc9beb3259a",
+  "name": "8325f931-8454-4b37-8a1c-2cc9beb3259a",
+  "status": "Failed",
+  "startTime": "2026-08-25T13:37:23.2917523+00:00",
+  "endTime": "2026-08-25T13:37:24.767664+00:00",
+  "error": {
+    "code": "InsufficientCapacity",
+    "message": "Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region.",
+    "target": null
+  }
+}
+-----[end]-----
+
+
+  with module.azure_cache[0].azurerm_managed_redis.this,
+  on modules/azure-cache-redis/main.tf line 23, in resource "azurerm_managed_redis" "this":
+  23: resource "azurerm_managed_redis" "this" {
+
+creating Redis Enterprise (Subscription:
+"32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae"
+Resource Group Name: "rg-alethia-nl-32853960703-1"
+Redis Enterprise Name: "alethia-nl-32853960703-1-redis"): polling after
+Create: polling failed: the Azure API returned the following error:
+
+Status: "Failed"
+Code: "InsufficientCapacity"
+Message: "Request failed due to insufficient capacity. Retry using a
+different Azure Managed Redis size or region."
+Activity Id: ""
+
+---
+
+API Response:
+
+----[start]----
+{
+  "id": "/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/providers/Microsoft.Cache/locations/West Europe/operationsStatus/8325f931-8454-4b37-8a1c-2cc9beb3259a",
+  "name": "8325f931-8454-4b37-8a1c-2cc9beb3259a",
+  "status": "Failed",
+  "startTime": "2026-08-25T13:37:23.2917523+00:00",
+  "endTime": "2026-08-25T13:37:24.767664+00:00",
+  "error": {
+    "code": "InsufficientCapacity",
+    "message": "Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region.",
+    "target": null
+  }
+}
+-----[end]-----
+
+
+ORPHAN RISK (likely) — apply failed AFTER the cloud accepted the create (an asynchronous create/allocation failure) (module.azure_cache[0].azurerm_managed_redis.this). The resource may exist outside tofu state; if it does, the next apply will fail with "already exists". Reconcile before retrying.
+{"time":"2026-08-25T13:46:57.770178263Z","level":"ERROR","msg":"job failed","runner_id":"33090471-6c04-458a-b6a5-2533702d2d51","job_id":"6cd462b9-a1f2-4a51-9ecd-8149c6832a47","err":"tofu apply failed (orphan risk: likely): exit status 1\n\nError: creating Redis Enterprise (Subscription: \"32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae\"\nResource Group Name: \"rg-alethia-nl-32853960703-1\"\nRedis Enterprise Name: \"alethia-nl-32853960703-1-redis\"): polling after Create: polling failed: the Azure API returned the following error:\n\nStatus: \"Failed\"\nCode: \"InsufficientCapacity\"\nMessage: \"Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region.\"\nActivity Id: \"\"\n\n---\n\nAPI Response:\n\n----[start]----\n{\r\n  \"id\": \"/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/providers/Microsoft.Cache/locations/West Europe/operationsStatus/8325f931-8454-4b37-8a1c-2cc9beb3259a\",\r\n  \"name\": \"8325f931-8454-4b37-8a1c-2cc9beb3259a\",\r\n  \"status\": \"Failed\",\r\n  \"startTime\": \"2026-08-25T13:37:23.2917523+00:00\",\r\n  \"endTime\": \"2026-08-25T13:37:24.767664+00:00\",\r\n  \"error\": {\r\n    \"code\": \"InsufficientCapacity\",\r\n    \"message\": \"Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region.\",\r\n    \"target\": null\r\n  }\r\n}\n-----[end]-----\n\n\n  with module.azure_cache[0].azurerm_managed_redis.this,\n  on modules/azure-cache-redis/main.tf line 23, in resource \"azurerm_managed_redis\" \"this\":\n  23: resource \"azurerm_managed_redis\" \"this\" {\n\ncreating Redis Enterprise (Subscription:\n\"32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae\"\nResource Group Name: \"rg-alethia-nl-32853960703-1\"\nRedis Enterprise Name: \"alethia-nl-32853960703-1-redis\"): polling after\nCreate: polling failed: the Azure API returned the following error:\n\nStatus: \"Failed\"\nCode: \"InsufficientCapacity\"\nMessage: \"Request failed due to insufficient capacity. Retry using a\ndifferent Azure Managed Redis size or region.\"\nActivity Id: \"\"\n\n---\n\nAPI Response:\n\n----[start]----\n{\r\n  \"id\": \"/subscriptions/32f3d6ca-f9b5-48f1-b714-dcfb9cc661ae/providers/Microsoft.Cache/locations/West Europe/operationsStatus/8325f931-8454-4b37-8a1c-2cc9beb3259a\",\r\n  \"name\": \"8325f931-8454-4b37-8a1c-2cc9beb3259a\",\r\n  \"status\": \"Failed\",\r\n  \"startTime\": \"2026-08-25T13:37:23.2917523+00:00\",\r\n  \"endTime\": \"2026-08-25T13:37:24.767664+00:00\",\r\n  \"error\": {\r\n    \"code\": \"InsufficientCapacity\",\r\n    \"message\": \"Request failed due to insufficient capacity. Retry using a different Azure Managed Redis size or region.\",\r\n    \"target\": null\r\n  }\r\n}\n-----[end]-----\n\n"}
