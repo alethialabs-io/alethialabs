@@ -1268,7 +1268,27 @@ jobs:
           #    aws-only and that is a real ceiling: GCP and Azure issue TLS in-cluster via
           #    cert-manager (#1858 deleted GCP's managed-certificate resource), so there is no
           #    cloud-side certificate for this to assert. UNSET ⇒ empty ⇒ a clean skip.
-          ALETHIA_E2E_ACM_CERT: ${{ vars.E2E_ACM_CERT }}
+          #    ⚠️ WITHHELD ON A MAX-CONFIG DIMENSION, or aws's two heaviest cells cannot run AT ALL.
+          #
+          #    `t2_acm_cert.go:161` refuses LOUDLY when this and ALETHIA_E2E_MAX_CONFIG are both set,
+          #    and it is right to: this scenario brings a zone id, which makes `cloud_dns_enabled`
+          #    false, so no `aws_route53_zone` is created and the max-config `dns` kind reports
+          #    Missing. Its message says "run the certificate proof on a floor night; the full bar
+          #    proves the native-zone path" — but there was no mechanism to DO that. `E2E_ACM_CERT`
+          #    is a repo VARIABLE, so it is set on every run, and `full` sets MAX_CONFIG by
+          #    definition. Every aws full/maxconfig dispatch therefore died at that gate in 0.00s
+          #    having provisioned nothing (run 32878327250), permanently, for as long as the
+          #    variable exists. A correct refusal became an unreachable dimension.
+          #
+          #    The exclusion RULE still lives in exactly one place (t2_acm_cert.go); this reads the
+          #    DERIVED value resolve-dimension.sh already wrote to $GITHUB_ENV, so there is no
+          #    second list of which dimensions are heavy.
+          #
+          #    The condition is INVERTED on purpose. GitHub's `A && B || C` is not a ternary: when
+          #    the true-branch value is the empty string it is falsy, so `max_config && '' || vars.X`
+          #    falls through and yields X — the exact opposite of what it reads as. Testing for the
+          #    dimension that SHOULD carry the variable keeps the truthy value on the `&&` side.
+          ALETHIA_E2E_ACM_CERT: ${{ env.ALETHIA_E2E_MAX_CONFIG != '1' && vars.E2E_ACM_CERT || '' }}
           ALETHIA_E2E_ACM_CERT_ZONE_ID: ${{ vars.E2E_ACM_CERT_ZONE_ID }}
           ALETHIA_E2E_ACM_CERT_ZONE_NAME: ${{ vars.E2E_ACM_CERT_ZONE_NAME }}
           ALETHIA_E2E_ACM_CERT_TIMEOUT: ${{ vars.E2E_ACM_CERT_TIMEOUT }}
