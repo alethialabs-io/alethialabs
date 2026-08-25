@@ -606,11 +606,14 @@ func TestScenarioParamResolvesTheLastParameter(t *testing.T) {
 		"a TypeA, b TypeB, acmCert acmCertConfig",
 		"\n\ta TypeA,\n\tacmCert acmCertConfig,\n",
 	} {
+		// Keyed by TYPE, valued by the parameter NAME — the direction the guard uses to turn a
+		// scenario's type into the variable the assembler calls it on. (I had this backwards first;
+		// the regex was right and the test was wrong.)
 		paramOf := map[string]string{}
 		for _, m := range scenarioParamRe.FindAllStringSubmatch(sig, -1) {
 			paramOf[m[2]] = m[1]
 		}
-		if paramOf["acmCert"] != "acmCertConfig" {
+		if paramOf["acmCertConfig"] != "acmCert" {
 			t.Errorf("the LAST parameter did not resolve in %q: got %#v", sig, paramOf)
 		}
 	}
