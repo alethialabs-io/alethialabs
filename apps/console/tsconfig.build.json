@@ -1,0 +1,31 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// The tsconfig `next build` uses, and ONLY `next build` — wired via
+// `typescript.tsconfigPath` in next.config.ts. `tsc --noEmit` (the `check-types` task)
+// still reads tsconfig.json and still type-checks everything, tests included.
+//
+// WHY THIS EXISTS. The production image installs a PRUNED dependency closure
+// (apps/console/Dockerfile: `pnpm install --frozen-lockfile --filter console... --filter
+// @alethia/ee`), so no sibling app's node_modules exist inside it. Meanwhile tsconfig.json's
+// `include` is `**/*.ts`, which picks up `tests/`, and tsc follows imports BEYOND `include`.
+// `tests/lib/marketing-proxy.test.ts` imports `../../../marketing/proxy`, which imports
+// `next/server` — resolvable in a full workspace install, absent in the pruned one:
+//
+//     ../marketing/proxy.ts(4,48): error TS2307: Cannot find module 'next/server'
+//     Failed to type check.
+//
+// That failed EVERY production console build while CI stayed green, because CI's
+// `turbo run check-types` runs after an unfiltered `pnpm install` where marketing's
+// node_modules are present. The image and CI were type-checking the same files against
+// different dependency graphs.
+//
+// The fix is not to make the import resolve. It is that a production image has no business
+// type-checking test files at all: they are not shipped, they are already checked in CI, and
+// compiling them is what dragged a sibling app into a build that deliberately excludes it.
+{
+  "extends": "./tsconfig.json",
+  // `exclude` REPLACES the base's rather than merging, so node_modules is repeated here
+  // deliberately — dropping it would widen the build's graph, not narrow it.
+  "exclude": ["node_modules", "tests"]
+}
