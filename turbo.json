@@ -44,6 +44,7 @@
 		"test": {
 			"dependsOn": ["^build"],
 			"inputs": ["$TURBO_DEFAULT$", "!**/*.md", "!**/*.mdx"],
+			"env": ["ALETHIA_EDITION"],
 			"outputs": ["coverage/**"]
 		},
 		"dev": {
