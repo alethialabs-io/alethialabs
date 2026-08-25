@@ -5,8 +5,19 @@ import type { CloudProvider } from "@/lib/db/schema/enums";
 import type { CloudProviderSlug } from "./generated/catalog";
 
 /**
- * TLDs a cloud's own DNS service refuses to host a zone for — the SINGLE source of truth shared by
- * the canvas `domain_name` field and the deploy-time fail-closed gate (`buildConfigSnapshot`).
+ * TLDs a cloud's own DNS service refuses to host a zone for — the source of truth for the
+ * deploy-time fail-closed gate in `buildConfigSnapshot`.
+ *
+ * ⚠️ THE CANVAS HALF IS NOT WIRED YET, and this comment used to claim it was. `dnsTldUnsupportedReason`
+ * is exported for it but has no caller outside its own tests, so a user typing `example.io` into the
+ * DNS inspector still gets no feedback until they press Plan or Deploy.
+ *
+ * It is not wired because the obvious mechanism is the wrong one. `unavailableWhen` — which is how
+ * `waf_enabled` gates — REPLACES the control with prose (`config-fields.tsx:291`), so keying it on the
+ * typed value would delete the domain field the moment you typed a denied TLD, leaving no way to
+ * correct it. A switch you can see is off is a good answer; a text input that vanishes as you type is
+ * not. Value-level validation on a text field has no hook in the schema today, and adding one is a
+ * feature rather than a fix — so this stays server-side until that exists.
  * Modelled on `waf.ts`: a tiny runtime-only module with no client (`lucide-react`/React-Flow)
  * imports, so the server action can import it without pulling the canvas registry into the server
  * bundle.
@@ -44,8 +55,20 @@ import type { CloudProviderSlug } from "./generated/catalog";
  * and a four-label name fail identically while `.de` and `.com` succeed at the same depth, so the
  * TLD is the variable.
  */
-const UNSUPPORTED_TLDS_BY_PROVIDER: Partial<Record<string, ReadonlySet<string>>> = {
-	hetzner: new Set(["io"]),
+/**
+ * Keyed on `CloudProvider`, NOT `string`. A `string` key accepts a typo — `hetnzer` — or
+ * survives a provider-slug rename, and either compiles clean while `reasonFor` returns null for
+ * every domain and the gate goes silently inert. The only test that would fail is the one that
+ * happens to spell the key correctly. A typed key makes a rename a compile error instead.
+ *
+ * `vendor` lives beside the TLD set because the message names it: with a single hardcoded "Hetzner"
+ * in `reasonFor`, adding `alibaba` here would tell an Alibaba user that "Hetzner DNS will not host
+ * a .xyz zone", confidently and wrongly.
+ */
+const UNSUPPORTED_TLDS_BY_PROVIDER: Partial<
+	Record<CloudProvider, { vendor: string; accepted: string; denied: ReadonlySet<string> }>
+> = {
+	hetzner: { vendor: "Hetzner", accepted: ".de and .com", denied: new Set(["io"]) },
 };
 
 /** Lowercased final label of a domain, or "" when there isn't one. Trailing dots and surrounding
@@ -57,16 +80,16 @@ function tldOf(domainName: string): string {
 	return dot === -1 ? "" : trimmed.slice(dot + 1);
 }
 
-function reasonFor(provider: string, domainName: string): string | null {
-	const denied = UNSUPPORTED_TLDS_BY_PROVIDER[provider];
-	if (!denied) return null;
+function reasonFor(provider: CloudProvider, domainName: string): string | null {
+	const entry = UNSUPPORTED_TLDS_BY_PROVIDER[provider];
+	if (!entry) return null;
 	const tld = tldOf(domainName);
-	if (!tld || !denied.has(tld)) return null;
+	if (!tld || !entry.denied.has(tld)) return null;
 	return (
-		`Hetzner DNS will not host a .${tld} zone. Its API refuses the create with ` +
-		`"unsupported tld" (422) — verified against the live API, where .de and .com are accepted ` +
+		`${entry.vendor} DNS will not host a .${tld} zone. Its API refuses the create with ` +
+		`"unsupported tld" (422) — verified against the live API, where ${entry.accepted} are accepted ` +
 		`and .${tld} is not, at the same domain depth. Either point this project's DNS at a ` +
-		`connected provider such as Cloudflare, or use a domain on a TLD Hetzner hosts.`
+		`connected provider such as Cloudflare, or use a domain on a TLD ${entry.vendor} hosts.`
 	);
 }
 
