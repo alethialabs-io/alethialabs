@@ -1,0 +1,14 @@
+azure: ✅ apply(29 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(?)
+cluster:   alethia-nl-32816061207-1 (germanywestcentral)
+run:       nightly-32816061207-1 @ b315da0
+receipt:   signed=true sha256=f2e0f35d5b57
+teardown:  destroyed=false (? resources)
+duration:  1227s
+soak:      soak: skipped
+day2-access: n/a (P2-E day-2 access off or not reached)
+day2offer: n/a (day-2 offer postures off or not reached)
+fabric-demo: n/a (#845 Fabric placement gate off or not reached)
+acm-cert: n/a (#1773 ACM certificate gate off or not reached)
+byo-iac:   byo-iac: skipped
+xacct:     n/a (#1268 cross-account secrets off or not reached)
+keyless-db: n/a (#1511 keyless DB auth off or not reached)
