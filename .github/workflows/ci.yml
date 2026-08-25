@@ -137,6 +137,29 @@ jobs:
         run: pnpm exec turbo run test
       # Coverage is merged into the self-hosted README badge by the `coverage-badge` job
       # (push-to-main); no third-party service. See scripts/coverage-badge.mjs + TESTING.md.
+      - name: App build smoke (console · marketing · docs)
+        run: pnpm exec turbo run build --filter=console --filter=marketing --filter=docs
+        env:
+          BETTER_AUTH_SECRET: build-time-placeholder
+          BETTER_AUTH_URL: http://localhost:3000
+          ALETHIA_DATABASE_URL: postgres://build:build@localhost:5432/build
+          ALETHIA_APP_DATABASE_URL: postgres://build:build@localhost:5432/build
+          ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+          ALETHIA_STORAGE_ACCESS_KEY_ID: build
+          ALETHIA_STORAGE_SECRET_ACCESS_KEY: build
+
+      # PLACED AFTER THE BUILD SMOKE, DELIBERATELY.
+      #
+      # These steps carry no `if:`, and a job stops at its first failing step — so sitting them
+      # BEFORE `App build smoke` meant a TRUE ratchet failure on apps/console would skip the other
+      # two ratchets AND the production build. That build is the only check in this job that
+      # catches what tsc and eslint structurally cannot: a module imported from both a server and a
+      # client component type-checks, lints and unit-tests clean, then 500s the page at runtime.
+      # Losing it to a coverage regression trades a real signal for a lesser one.
+      #
+      # Putting them last closes that with no conditions at all — everything that can inform the
+      # author has already run by the time the ratchet is able to fail. See #2662 for the general
+      # case: `guards` is 64 steps with zero `if:`, so its first failure skips the other 63.
       #
       # Per-directory statement-coverage RATCHET: coverage may rise, never fall. Reads the
       # coverage-final.json each project's vitest run wrote above — or that turbo REPLAYED from
@@ -170,16 +193,6 @@ jobs:
       # standalone breakage on PRs. Build-only placeholder env so the console's
       # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
       # nothing is contacted — postgres-js + the S3 client connect lazily).
-      - name: App build smoke (console · marketing · docs)
-        run: pnpm exec turbo run build --filter=console --filter=marketing --filter=docs
-        env:
-          BETTER_AUTH_SECRET: build-time-placeholder
-          BETTER_AUTH_URL: http://localhost:3000
-          ALETHIA_DATABASE_URL: postgres://build:build@localhost:5432/build
-          ALETHIA_APP_DATABASE_URL: postgres://build:build@localhost:5432/build
-          ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
-          ALETHIA_STORAGE_ACCESS_KEY_ID: build
-          ALETHIA_STORAGE_SECRET_ACCESS_KEY: build
 
   integration:
     name: Integration (real Postgres + RLS)
