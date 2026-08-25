@@ -1,0 +1,14 @@
+hetzner: ❌ FAILED at stage 'argocd-ready' (outcome=failure)
+cluster:   alethia-nl-32896755214-1 (nbg1)
+run:       nightly-32896755214-1 @ e322317
+receipt:   signed=true sha256=f77daaf239bd
+teardown:  destroyed=false (? resources)
+duration:  3285s
+soak:      n/a (A0.3 soak off or not reached)
+day2-access: n/a (P2-E day-2 access off or not reached)
+day2offer: n/a (day-2 offer postures off or not reached)
+fabric-demo: n/a (#845 Fabric placement gate off or not reached)
+acm-cert: n/a (#1773 ACM certificate gate off or not reached)
+byo-iac:   n/a (#1765 BYO-IaC continuous proof off or not reached)
+xacct:     n/a (#1268 cross-account secrets off or not reached)
+keyless-db: n/a (#1511 keyless DB auth off or not reached)
