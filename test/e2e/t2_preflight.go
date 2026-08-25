@@ -328,17 +328,64 @@ func preflightCLIStrings(ctx context.Context, name string, args ...string) ([]st
 	return got, nil
 }
 
-// awsCapacityPreflight asks EC2 which instance types are offered in the target region.
+// awsCapacityPreflight asks EC2 which AVAILABILITY ZONES of the target region offer the type.
 //
 // `describe-instance-type-offerings` is the right question and `describe-instance-types` is
 // not: the second says the type EXISTS, the first says this region sells it. That is the same
 // supported-vs-available distinction that made the Hetzner failure invisible.
+//
+// PER-ZONE, and not per-region, because the region-level answer is weaker than it reads. An EKS
+// node group lands in specific SUBNETS and therefore specific zones, so a type offered somewhere
+// in the region but not in the zone the cluster actually uses passes a region-level check and
+// still fails the apply — the exact failure this preflight exists to prevent, surviving on the
+// one cloud whose check was coarsest. hetzner asks per datacenter, gcp per zone and azure per
+// subscription; this brings aws to the same granularity.
+//
+// It does NOT resolve the run's own subnets, which are not known here. So a type offered in SOME
+// zone still PROCEEDs — but the detail says how many, which is the difference between "this will
+// work" and "this can work somewhere in the region".
 func awsCapacityPreflight(ctx context.Context, region, wantType string) preflightResult {
-	const probe = "aws ec2 describe-instance-type-offerings --location-type region"
-	got, err := preflightCLIStrings(ctx, "aws", "ec2", "describe-instance-type-offerings",
-		"--location-type", "region", "--region", region,
-		"--query", "InstanceTypeOfferings[].InstanceType", "--output", "json")
-	return decideTypeAvailability(probe, wantType, region, got, err)
+	const probe = "aws ec2 describe-instance-type-offerings --location-type availability-zone"
+	if strings.TrimSpace(wantType) == "" {
+		// Same refusal decideTypeAvailability makes: nothing to check is not a clean check.
+		return preflightResult{
+			Verdict: preflightUnknown,
+			Probe:   probe,
+			Detail:  fmt.Sprintf("no machine type was resolved for %s, so nothing was checked", region),
+		}
+	}
+	zones, err := preflightCLIStrings(ctx, "aws", "ec2", "describe-instance-type-offerings",
+		"--location-type", "availability-zone", "--region", region,
+		"--filters", "Name=instance-type,Values="+wantType,
+		"--query", "InstanceTypeOfferings[].Location", "--output", "json")
+	return decideZoneAvailability(probe, wantType, region, zones, err)
+}
+
+// decideZoneAvailability is decideTypeAvailability's sibling for a probe that returns the
+// LOCATIONS offering one type rather than the types offered in one location.
+//
+// The nil-vs-empty distinction is the same and matters for the same reason: an empty list is the
+// cloud saying "no zone here sells it", which is a REFUSAL, while a nil list is the probe having
+// produced no answer, which is not. Collapsing them with a length test would turn the strongest
+// evidence available into an unverified pass.
+func decideZoneAvailability(probe, want, region string, zones []string, probeErr error) preflightResult {
+	r := preflightResult{Probe: probe}
+	switch {
+	case probeErr != nil:
+		r.Verdict = preflightUnknown
+		r.Detail = fmt.Sprintf("could not ask which zones of %s offer %q (%v) — proceeding UNVERIFIED; if the apply fails on capacity, this is why", region, want, probeErr)
+	case zones == nil:
+		r.Verdict = preflightUnknown
+		r.Detail = fmt.Sprintf("the zone-availability probe for %s returned no list at all — proceeding UNVERIFIED; %q was NOT checked", region, want)
+	case len(zones) == 0:
+		r.Verdict = preflightRefuse
+		r.Detail = fmt.Sprintf("%q is offered in NO availability zone of %s — the apply will fail on capacity, so it is refused before spending", want, region)
+	default:
+		r.Verdict = preflightProceed
+		r.Detail = fmt.Sprintf("%q is offered in %d availability zone(s) of %s (%s). NOTE: the run's own subnets are not resolved here, so this says the region CAN serve the type, not that the zone this cluster lands in will",
+			want, len(zones), region, renderOffer(zones))
+	}
+	return r
 }
 
 // gcpCapacityPreflight asks Compute Engine which machine types exist in the target ZONE.
@@ -426,6 +473,18 @@ func capacityPreflightFor(ctx context.Context, provider, location, wantType stri
 		return gcpCapacityPreflight(ctx, location, wantType)
 	case "azure":
 		return azureCapacityPreflight(ctx, location, wantType)
+	case "alibaba":
+		// NAMED, not left to the default branch, because an unnamed exclusion becomes a permanent
+		// one and cloud parity is a hard rule here. `aliyun ecs DescribeAvailableResource
+		// --DestinationResource InstanceType --ZoneId <zone>` is the equivalent question; it is not
+		// wired because the T2 alibaba row is currently blocked ahead of provisioning on a missing
+		// AliyunCSDefaultRole, so there is no run to validate the probe against. Deliberate gap with
+		// a known shape, reported the same way as any other unchecked run.
+		return preflightResult{
+			Verdict: preflightUnknown,
+			Probe:   "none (alibaba probe not implemented)",
+			Detail:  fmt.Sprintf("no capacity probe is wired for alibaba, so %q in %s was NOT checked — the run proceeds UNVERIFIED", wantType, location),
+		}
 	default:
 		return preflightResult{
 			Verdict: preflightUnknown,
