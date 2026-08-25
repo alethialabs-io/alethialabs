@@ -250,8 +250,11 @@ func (c keylessDBConfig) decide() (bool, string, error) {
 //
 // The service APPENDS, for the reason #1268 documents: MaxConfigSnapshot assigns whole snapshot keys,
 // so anything that assigns `services` after it would silently drop a full-bar run's own surface.
-func (c keylessDBConfig) applyToSnapshot(snap map[string]any) {
-	dbs := existingList(snap, "databases")
+func (c keylessDBConfig) applyToSnapshot(snap map[string]any) error {
+	dbs, err := snapshotList(snap, "databases")
+	if err != nil {
+		return err
+	}
 	db := map[string]any{}
 	if len(dbs) > 0 {
 		if first, ok := dbs[0].(map[string]any); ok {
@@ -296,13 +299,18 @@ func (c keylessDBConfig) applyToSnapshot(snap map[string]any) {
 			},
 		}},
 	}
-	snap["services"] = append(existingList(snap, "services"), svc)
+	services, err := snapshotList(snap, "services")
+	if err != nil {
+		return err
+	}
+	snap["services"] = append(services, svc)
+	return nil
 }
 
 // snapshotDBName reports the database name the binding targets after applyToSnapshot — the overlaid
 // entry's own name, which on a max-config run is maxconfig's, not this scenario's default.
 func (c keylessDBConfig) snapshotDBName(snap map[string]any) string {
-	dbs := existingList(snap, "databases")
+	dbs, _ := snapshotList(snap, "databases") // read-only probe: an unreadable shape yields no name
 	if len(dbs) > 0 {
 		if first, ok := dbs[0].(map[string]any); ok {
 			if n, ok := first["name"].(string); ok && n != "" {
