@@ -3,7 +3,7 @@
 
 import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
-import { proxy } from "../../../marketing/proxy";
+import { proxy } from "../proxy";
 
 const SESSION = "better-auth.session_token=test-session";
 
