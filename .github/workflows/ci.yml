@@ -827,6 +827,29 @@ jobs:
         if: matrix.module == 'apps/runner'
         with:
           version: v3.16.3
+      # packages/core inherited helm the same way apps/runner used to, and the consequence here is
+      # WORSE than a quiet skip. Its floors record `"helm": true`, and the ratchet's fingerprint
+      # check demotes — not fails — when the current environment is missing something the recording
+      # environment had. So the day ubuntu-latest prunes helm, this leg does not go red: it goes
+      # silently ADVISORY, and every coverage regression in packages/core sails through as a
+      # warning. That is the "a guard's nothing-found branch is indistinguishable from
+      # nothing-wrong" class, armed and waiting.
+      #
+      # Pinned to v3.21.4 DELIBERATELY, which is not the v3.16.3 above. That is the version
+      # actions/runner-images currently ships on ubuntu-24.04, so this leg keeps running the exact
+      # binary it runs today: the pin buys determinism and changes no behaviour, and therefore
+      # cannot move the recorded numbers. It has to be that way round, because the fingerprint is a
+      # BOOLEAN — `helm: true` cannot see a version change, so a version-shifting pin would not
+      # demote, it would simply red, and it would red on whoever landed next rather than on the PR
+      # that caused it.
+      #
+      # The two legs therefore run different helm versions. That is the honest state, not the
+      # desired one; harmonising them is a behaviour change that moves numbers and needs its own
+      # floors re-record, so it is filed separately rather than smuggled into a determinism fix.
+      - uses: azure/setup-helm@v5
+        if: matrix.module == 'packages/core'
+        with:
+          version: v3.21.4
       - uses: opentofu/setup-opentofu@v2
         if: matrix.module == 'packages/core' || matrix.module == 'apps/runner'
         with:
