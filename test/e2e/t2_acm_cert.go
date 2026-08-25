@@ -146,11 +146,33 @@ func acmCertFromEnv(provider string) acmCertConfig {
 // decide reports whether to run, why it is skipped, or that the request is unusable.
 //
 //	not requested            → (false, "",     nil)  silent
+//	not requested + full bar → (false, reason, nil)  LOGGED — withheld, not merely absent
 //	requested, lane BLOCKED  → (false, reason, nil)  logged, no spend
 //	requested, half-wired    → (false, "",     err)  HARD FAIL naming every missing key
 //	requested + full bar     → (false, "",     err)  HARD FAIL — mutually exclusive, see the header
 func (c acmCertConfig) decide() (bool, string, error) {
 	if !c.enabled {
+		// NOT SILENT WHEN MAX-CONFIG IS ON, and the reason is four lines below: the fullBar arm
+		// refuses LOUDLY precisely "because a silent skip here would look like the cert was proven
+		// on a night the full bar ran".
+		//
+		// #2630 made that refusal unreachable on the path it was written for. It withholds
+		// ALETHIA_E2E_ACM_CERT on a max-config dimension — correctly, because the variable is set on
+		// every run and `full` sets MAX_CONFIG by definition, so the hard failure made two of aws's
+		// five cells permanently unrunnable. But withholding the variable lands here, in the branch
+		// meant for "nobody asked for this", and says nothing at all. The rule survived; the
+		// announcement did not.
+		//
+		// So this is the third outcome the table lacked: not requested, not refused, WITHHELD. The
+		// wording covers both readings of the same state — deliberately withheld by the workflow, or
+		// never configured in this repo at all — because the env cannot tell them apart and the
+		// consequence is identical: the certificate was not proven on this run.
+		if c.fullBar {
+			return false, "not attempted on a max-config dimension. The two are mutually exclusive — this scenario " +
+				"brings a zone id, which makes cloud_dns_enabled false, so the max-config `dns` kind would report " +
+				"Missing — and e2e-nightly.yml withholds " + envAcmCert + " here for that reason. The certificate " +
+				"was NOT proven by this run; prove it on a floor night", nil
+		}
 		return false, "", nil
 	}
 	if ok, blocked := acmCertLane(c.provider); !ok {
