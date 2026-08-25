@@ -3,7 +3,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # resolve-dimension.sh — resolve which DIMENSION one E2E-nightly run is proving. PURE: no network,
-# no gh, no token. Trigger in, the single token `full` or `floor` out.
+# no gh, no token. Trigger in, ONE of the six dimension tokens out:
+#
+#   floor  maxconfig  addons  byo  day2  full
+#
+# It also owns two things DERIVED from that token, because both used to be retyped by a caller
+# and both were wrong: the run's FIDELITY (--fidelity) and whether it needs the provider's heavy
+# node profile (--heavy).
 #
 # E2E Nightly runs two dimensions:
 #   `17 3 * * *`  the cheap green-floor smoke   → floor  (the only SCHEDULED dimension)
@@ -31,13 +37,19 @@
 # imposed on the rollup itself).
 #
 # Usage:
-#   resolve-dimension.sh              # print `full` or `floor`
-#   resolve-dimension.sh --self-test  # run the offline cases
+#   resolve-dimension.sh                    # print the dimension for this trigger
+#   resolve-dimension.sh --fidelity [dim]   # the NAME=value lines that turn its assertions on
+#   resolve-dimension.sh --heavy [dim]      # `true` when it needs the heavy node shape
+#   resolve-dimension.sh --label            # the words that go in an issue title
+#   resolve-dimension.sh --dimensions       # the whole vocabulary
+#   resolve-dimension.sh --self-test        # run the offline cases
 #
 # Env:
-#   EVENT          github.event_name          (`schedule` | `workflow_dispatch` | …)
-#   DISPATCH_FULL  github.event.inputs.full_bar   (`true` picks the full bar on a dispatch)
-#   SCHEDULE       github.event.schedule      (the cron string that fired this run)
+#   EVENT               github.event_name       (`schedule` | `workflow_dispatch` | …)
+#   DISPATCH_DIMENSION  github.event.inputs.dimension  (names one of the six; wins over DISPATCH_FULL)
+#   DISPATCH_FULL       github.event.inputs.full_bar   (`true` picks the full bar on a dispatch)
+#   SCHEDULE            github.event.schedule   (the cron string that fired this run)
+#   E2E_SOAK            optional soak window, honoured only by the soak-defined dimensions
 set -uo pipefail
 
 # The one cron that means "full bar". Kept here, not in the workflow, so the provision job, the
@@ -140,8 +152,16 @@ fidelity_env() { # <dimension>
 		;;
 	byo)
 		# The A0.6 bring-your-own Helm/apps-repo proof activates from the caller's ALETHIA_E2E_ARGO_*
-		# inputs; nothing to switch on here beyond keeping the soak out of it.
+		# inputs — so asking for this dimension and NOT having them wired used to green-skip the only
+		# assertion it has (t2_argo_repos.go logs "A0.6 ... SKIPPED") and record `<cloud> byo PASS`
+		# having proven nothing but the floor.
+		#
+		# REQUIRE is what makes the difference between a proof and a claim, and it is the same
+		# reasoning soak_window applies to day2 twenty lines up: a dimension whose vehicle is off
+		# asserts nothing. With this set the leg REDS when the apps-repo env is missing instead of
+		# passing, which is the direction the bar demands.
 		echo "ALETHIA_E2E_SOAK=off"
+		echo "ALETHIA_E2E_ARGO_REPOS_REQUIRE=1"
 		;;
 	day2)
 		# The soak IS this dimension's vehicle. ${E2E_SOAK} lets a caller widen or narrow the window;
@@ -158,6 +178,31 @@ fidelity_env() { # <dimension>
 		return 2
 		;;
 	esac
+}
+
+# heavy_shape prints `true` when a dimension's assertions need the provider's HEAVY node profile,
+# and `false` when the cheapest floor pool will do.
+#
+# WHY THIS EXISTS. The workflow keyed that decision on E2E_FULL_BAR, which the resolve step sets
+# from `[ "$dim" = "full" ]` — so it was true for exactly ONE of the six dimensions. `maxconfig` and
+# `addons` therefore provisioned the cheapest floor shape and then asserted a surface that cannot fit
+# on it: on hetzner, 18 add-ons onto the template default cpx22 x1 (2 vCPU / 4 GB) against a heavy
+# fixture calling for 6x cx33 (24 vCPU / 48 GB). The add-ons sit Pending, the ArgoCD gate burns the
+# 165-minute cap, and it files as `<cloud> RED (addons)` for a node-size reason. The FT-5 guard did
+# not catch it either, because it returns early unless BOTH flags are on.
+#
+# DERIVED FROM fidelity_env, never a second list. A dimension needs the heavy shape exactly when it
+# turns on a heavier SURFACE — that is what MAX_CONFIG (11 kinds) and ALL_ADDONS (18 charts) mean.
+# Writing the set out again here is how the two would disagree the next time a dimension is added,
+# which is the whole failure this file was created to end (#1755).
+heavy_shape() { # <dimension>
+	local fidelity
+	fidelity="$(fidelity_env "${1:-}")" || return 2
+	if printf '%s\n' "$fidelity" | grep -qE '^ALETHIA_E2E_(MAX_CONFIG|ALL_ADDONS)=1$'; then
+		echo "true"
+	else
+		echo "false"
+	fi
 }
 
 # dimension_label turns the token into the words that go in an issue TITLE. The title is the dedup
@@ -183,8 +228,11 @@ run_self_test() {
 		fails=$((fails + 1))
 	fi; }
 
+	# DISPATCH_DIMENSION is cleared like the rest. Without it an ambient value in the operator's
+	# shell leaks into every case below and reports FAILs that are not defects — the self-test has to
+	# describe the script, not the terminal it was run from. (_rd already does this for DISPATCH_FULL.)
 	_r() { # <event> <dispatch_full> <schedule>
-		(EVENT="$1" DISPATCH_FULL="$2" SCHEDULE="$3" resolve)
+		(EVENT="$1" DISPATCH_FULL="$2" SCHEDULE="$3" DISPATCH_DIMENSION="" resolve)
 	}
 
 	# The two crons — the whole point. They fired 90 minutes apart on 2026-08-02 and read as one
@@ -297,6 +345,45 @@ run_self_test() {
 	fi
 
 	# VACUITY: the union above would also "hold" if every call returned nothing. Prove the table emits
+	# ── The heavy node shape. THE REGRESSION: this was keyed on E2E_FULL_BAR, true for `full`
+	# alone, so maxconfig and addons asserted a heavy surface on the cheapest floor pool. ──
+	_h() { (E2E_SOAK="" heavy_shape "$1"); }
+
+	_a "true" "$(_h full)" "full needs the heavy node shape"
+	_a "true" "$(_h maxconfig)" "maxconfig needs the heavy shape — 11 kinds do not fit the floor pool"
+	_a "true" "$(_h addons)" "addons needs the heavy shape — 18 charts do not fit the floor pool"
+	_a "false" "$(_h floor)" "the floor keeps the cheapest shape"
+	_a "false" "$(_h byo)" "byo runs a floor-sized cluster"
+	_a "false" "$(_h day2)" "day2 soaks a floor-sized cluster"
+
+	# Derived from fidelity_env, not from a second list — so a dimension that turns on a heavier
+	# SURFACE gets the heavier shape without anyone remembering to add it in two places.
+	_a "true" "$(_h maxconfig)" "heavy tracks MAX_CONFIG"
+	_a "true" "$(_h addons)" "heavy tracks ALL_ADDONS"
+	_a "2" "$(_h nonesuch >/dev/null 2>&1; echo $?)" "an unknown dimension is refused, not called cheap"
+	_a "" "$(_h nonesuch 2>/dev/null)" "...and prints no shape at all"
+
+	# Every dimension answers. A dimension the table forgot would exit 2 above rather than default
+	# to `false`, which would silently re-create the bug this replaces.
+	for _d in $DIMENSIONS; do
+		case "$(_h "$_d")" in
+		true | false) ;;
+		*)
+			echo "FAIL - heavy_shape has no answer for dimension '$_d'" >&2
+			fails=$((fails + 1))
+			;;
+		esac
+	done
+
+	# ── byo must not be able to record a PASS having proven nothing. ──
+	_a "ALETHIA_E2E_ARGO_REPOS_REQUIRE=1" "$(_f byo | grep '^ALETHIA_E2E_ARGO_REPOS_REQUIRE=')" "byo REQUIRES the A0.6 apps-repo proof rather than green-skipping it"
+	_a "" "$(_f floor | grep 'ARGO_REPOS_REQUIRE' || true)" "the floor does not require it — A0.6 is byo's assertion, not the floor's"
+
+	# ── --label must propagate resolve's refusal, not print `floor` for a typo. ──
+	_a "2" "$(EVENT=workflow_dispatch DISPATCH_DIMENSION=addonz DISPATCH_FULL="" SCHEDULE="" bash "$0" --label >/dev/null 2>&1; echo $?)" "--label exits non-zero on an unknown dimension"
+	_a "" "$(EVENT=workflow_dispatch DISPATCH_DIMENSION=addonz DISPATCH_FULL="" SCHEDULE="" bash "$0" --label 2>/dev/null)" "...and prints no label at all"
+	_a "addons" "$(EVENT=workflow_dispatch DISPATCH_DIMENSION=addons DISPATCH_FULL="" SCHEDULE="" bash "$0" --label 2>/dev/null)" "--label still labels a good dimension"
+
 	# real content.
 	_a "3" "$(_f full | wc -l | tr -d ' ')" "vacuity: full emits three fidelity lines, not zero"
 	if [ "$(_f full | grep -c '=')" -eq 3 ]; then
@@ -322,7 +409,21 @@ fi
 
 case "${1:-}" in
 --self-test) run_self_test ;;
---label) dimension_label "$(resolve)" ;;
+--label)
+	# `|| exit $?` because the refusal is the point. `dimension_label "$(resolve)"` discarded
+	# resolve's exit 2 and printed `floor` for a typo'd dimension — the silent downgrade the
+	# validation in resolve() exists to stop, reintroduced on the sibling entry point.
+	d="$(resolve)" || exit $?
+	dimension_label "$d"
+	;;
+--heavy)
+	if [ -n "${2:-}" ]; then
+		heavy_shape "$2"
+	else
+		d="$(resolve)" || exit $?
+		heavy_shape "$d"
+	fi
+	;;
 --dimensions) echo "$DIMENSIONS" ;;
 --fidelity)
 	# `--fidelity` with no argument resolves the dimension from the trigger first, so the workflow
@@ -331,7 +432,7 @@ case "${1:-}" in
 	;;
 "") resolve ;;
 *)
-	echo "usage: resolve-dimension.sh [--self-test|--label|--dimensions|--fidelity [dimension]]" >&2
+	echo "usage: resolve-dimension.sh [--self-test|--label|--dimensions|--fidelity [dimension]|--heavy [dimension]]" >&2
 	exit 2
 	;;
 esac

@@ -495,23 +495,39 @@ func heavyMinVCPUFor(provider string) float64 {
 // (vcpu/memory_gb) it enforces a total-capacity floor; otherwise it enforces the node-count floor and
 // requires concrete instance_types (a heavy run on a small single node is the mistake this catches —
 // e.g. forgetting to swap the cheapest cost-shape for the heavy profile). The vCPU floor is per-cloud
-// (heavyMinVCPUFor); the memory and node floors are not. A no-op unless BOTH heavy dimensions are on.
+// (heavyMinVCPUFor); the memory and node floors are not.
 // Off CI it warns; under ALETHIA_E2E_T2_REQUIRE it is a HARD FAIL. Returns (fatal, msg) mirroring
 // t2RequireCostShape.
+//
+// EITHER FLAG ARMS IT, not both. It used to return early unless BOTH were on, which made it a no-op
+// on exactly the runs that needed it most: the `maxconfig` and `addons` dimensions each turn on ONE
+// flag, and each asserts a surface the cheapest floor pool cannot schedule (18 charts, or 11 kinds'
+// controllers). So the one guard written to catch "heavy surface, floor-sized cluster" was silent
+// for both of them — a guard whose "nothing found" branch was indistinguishable from "nothing
+// wrong". The node/capacity floors below are the heavy profile's, and either surface needs it.
 func t2RequireMaxConfigNodeShape(provider string, snapshot map[string]any) (fatal bool, msg string) {
-	if !(AllAddOnsEnabled() && MaxConfigEnabled()) {
+	if !(AllAddOnsEnabled() || MaxConfigEnabled()) {
 		return false, ""
+	}
+	// Name what is actually on, so the failure tells the operator which dimension they dispatched
+	// rather than a fixed phrase describing a combination they may not have asked for.
+	want := "max-config + all-add-ons"
+	switch {
+	case MaxConfigEnabled() && !AllAddOnsEnabled():
+		want = "max-config"
+	case AllAddOnsEnabled() && !MaxConfigEnabled():
+		want = "all-add-ons"
 	}
 	heavyFixture := fmt.Sprintf("fixtures/cluster_json.heavy.%s.json", provider)
 	cluster, _ := snapshot["cluster"].(map[string]any)
 	if cluster == nil {
-		return t2RequireIsHard(), fmt.Sprintf("max-config + all-add-ons requested but the snapshot has no cluster block — set a heavy ALETHIA_E2E_CLUSTER_JSON (see %s)", heavyFixture)
+		return t2RequireIsHard(), fmt.Sprintf("%s requested but the snapshot has no cluster block — set a heavy ALETHIA_E2E_CLUSTER_JSON (see %s)", want, heavyFixture)
 	}
 	desired, _ := t2Num(cluster["node_desired_size"])
 	if int(desired) < heavyMinNodes {
 		return t2RequireIsHard(), fmt.Sprintf(
-			"max-config + all-add-ons need >= %d nodes for the 7 heavy charts + 11 kinds' controllers, but cluster.node_desired_size=%v — pin the heavy profile (%s) via ALETHIA_E2E_CLUSTER_JSON",
-			heavyMinNodes, cluster["node_desired_size"], heavyFixture)
+			"%s needs >= %d nodes for the 7 heavy charts + 11 kinds' controllers, but cluster.node_desired_size=%v — pin the heavy profile (%s) via ALETHIA_E2E_CLUSTER_JSON",
+			want, heavyMinNodes, cluster["node_desired_size"], heavyFixture)
 	}
 	minVCPU := heavyMinVCPUFor(provider)
 	if ns, ok := cluster["node_size"].(map[string]any); ok {
@@ -535,8 +551,9 @@ func t2RequireMaxConfigNodeShape(provider string, snapshot map[string]any) (fata
 // ── Fabric-demo node floor (#845) ────────────────────────────────────────────────────────────────
 //
 // The fabric demo is the OTHER heavy scenario, and until now it was the only one with no shape guard
-// and no shape override: the heavy fixture is swapped in by e2e-nightly.yml ONLY on full-bar, and
-// t2RequireMaxConfigNodeShape above is a no-op unless BOTH heavy dimensions are on. So setting
+// and no shape override: the heavy fixture was swapped in by e2e-nightly.yml ONLY on full-bar, and
+// t2RequireMaxConfigNodeShape above was a no-op unless BOTH heavy dimensions were on (both since
+// fixed — the shape now follows the resolved dimension, and either flag arms the guard). So setting
 // ALETHIA_E2E_FABRIC_DEMO on its own ran the demo on the CHEAPEST floor shape — one e2-small (2 GiB)
 // on gcp — where it cannot schedule, cannot recover, and burns the whole 165-minute cap on four
 // clouds before saying so. That is ~11 hours of billed cluster time to discover a node size.

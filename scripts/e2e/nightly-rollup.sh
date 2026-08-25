@@ -37,8 +37,9 @@
 #   OUT_DIR       (default `$RUNNER_TEMP` or a temp dir) where the rendered artifacts land.
 #   MATRIX_RESULT the `needs.provision.result` aggregate.
 #   RUN_URL       link used in the issue bodies.
-#   E2E_DIMENSION `full` | `floor` — which dimension this run proved, from resolve-dimension.sh.
-#                 Absent ⇒ `floor`, matching that script's fail-safe default.
+#   E2E_DIMENSION one of `floor` `maxconfig` `addons` `byo` `day2` `full` — which dimension this run
+#                 proved, from resolve-dimension.sh (all six are dispatchable; only `floor` is
+#                 scheduled). Absent ⇒ `floor`, matching that script's fail-safe default.
 #
 # Writes into OUT_DIR:
 #   summary.md              the step-summary block (table + coverage)
