@@ -37,7 +37,7 @@ export default async function SecurityPage() {
 				headline={{ lead: "The credentials we", muted: "deliberately never hold." }}
 				lede="Alethia provisions into your cloud account using short-lived federated identity. There is no access key to leak, because there is no access key. Every claim on this page is architectural and checkable against an AGPL codebase."
 				ctas={[
-					{ label: "Read the architecture", href: "/docs/architecture", icon: "arrow" },
+					{ label: "Read the architecture", href: "/docs/standards/workload-identity", icon: "arrow" },
 					{ label: "Report a vulnerability", href: "mailto:security@alethialabs.io", variant: "outline", icon: "shield", iconBefore: true },
 				]}
 				footnote="Last updated · August 5, 2026"
