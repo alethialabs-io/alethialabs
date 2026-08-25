@@ -165,7 +165,7 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**4 of 25 proof cells are proven.** 1 failing · 1 stale (cause fixed, needs a re-run) · 3 blocked · 16 never run.
+**4 of 25 proof cells are proven.** 3 failing · 1 stale (cause fixed, needs a re-run) · 1 blocked · 16 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -175,7 +175,7 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 |---|:---:|:---:|:---:|:---:|:---:|
 | **aws** | ✅ | · | · | · | · |
 | **gcp** | ✅ | · | · | · | · |
-| **azure** | ✅ | ⛔ | ⛔ | · | · |
+| **azure** | ✅ | ❌ | ❌ | · | · |
 | **alibaba** | · | · | · | · | · |
 | **hetzner** | ✅ | ⛔ | ♻️ | · | ❌ |
 
@@ -186,8 +186,8 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `aws/floor` **proven** — ledger 2026-08-24, bundle `demos/proofs/aws/20260824T211529Z`
 - `gcp/floor` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T105829Z`
 - `azure/floor` **proven** — ledger 2026-08-25, bundle `demos/proofs/azure/20260825T063447Z`
-- `azure/maxconfig` **blocked** — ledger 2026-08-25 (via the `full` composite run) — refused before spending
-- `azure/addons` **blocked** — ledger 2026-08-25 (via the `full` composite run) — refused before spending
+- `azure/maxconfig` **failing** — ledger 2026-08-25 (via the `full` composite run)
+- `azure/addons` **failing** — ledger 2026-08-25 (via the `full` composite run)
 - `hetzner/floor` **proven** — ledger 2026-08-24, bundle `demos/proofs/hetzner/20260824T201636Z`
 - `hetzner/maxconfig` **blocked** — ledger 2026-08-25 (via the `full` composite run) — refused before spending (#2568)
 - `hetzner/addons` **stale** — ledger 2026-08-24 — but #2490 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#2490)
@@ -204,6 +204,8 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 <details><summary>The next 10</summary>
 
 1. `hetzner/addons` — stale
+1. `azure/maxconfig` — failing
+1. `azure/addons` — failing
 1. `hetzner/day2` — failing
 1. `alibaba/floor` — never_run
 1. `aws/maxconfig` — never_run
@@ -211,8 +213,6 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 1. `alibaba/maxconfig` — never_run
 1. `aws/addons` — never_run
 1. `gcp/addons` — never_run
-1. `alibaba/addons` — never_run
-1. `aws/byo` — never_run
 
 </details>
 
@@ -270,8 +270,8 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cell | state | issue | issue state |
 |---|---|---|:---:|
-| `azure/maxconfig` | blocked | **none** | ? |
-| `azure/addons` | blocked | **none** | ? |
+| `azure/maxconfig` | failing | **none** | ? |
+| `azure/addons` | failing | **none** | ? |
 | `hetzner/maxconfig` | blocked | #2568 | ? |
 | `hetzner/addons` | stale | #2490 | ⛔ **CLOSED** |
 | `hetzner/day2` | failing | **none** | ? |
