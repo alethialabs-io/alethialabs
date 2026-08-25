@@ -437,22 +437,43 @@ func TestByoAppProjectWhitelistIsEmptyNotNull(t *testing.T) {
 	}
 }
 
-// TestEncodeByoDocsReportsAMarshalFailure covers the encoder's defensive arm, which neither renderer
-// can reach: both hand it plain structs and maps, and a bytes.Buffer write does not fail.
+// TestEncodeByoDocsSeparatesEveryDocument pins what the shared encoder is actually for: N values in,
+// one stream out, with a separator between documents and none before the first. RenderByoNamespaces
+// depends on that exactly — the template it replaced wrote `{{ if $i }}---` by hand.
 //
-// It is testable at all only because the encoding was factored out of the two renderers. Before
-// that there were two copies of the pair, four branches no test could enter — which is how a
-// change that merely MOVED them showed up as a coverage regression rather than as the simplification
-// it is. A channel is not marshallable, so this enters the arm honestly rather than by a stub.
-func TestEncodeByoDocsReportsAMarshalFailure(t *testing.T) {
-	out, err := encodeByoDocs("test", make(chan int))
-	if err == nil {
-		t.Fatalf("a value yaml.v3 cannot marshal must be reported, got %q", out)
+// It does NOT test the error arms, and the reason is worth recording. I tried to reach them by
+// handing the encoder a channel; yaml.v3 PANICS on an unmarshalable type rather than returning an
+// error ("cannot marshal type: chan int"). So `Encode` errors only on a write failure, and both
+// callers write to a bytes.Buffer, which does not fail. The arms are genuinely unreachable rather
+// than merely untested, which is why factoring them into ONE copy was the right answer to the
+// coverage ratchet instead of writing a test that only appeared to exercise them.
+func TestEncodeByoDocsSeparatesEveryDocument(t *testing.T) {
+	out, err := encodeByoDocs("test",
+		map[string]any{"kind": "A"},
+		map[string]any{"kind": "B"},
+		map[string]any{"kind": "C"},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "render byo test") {
-		t.Errorf("the error must name what failed to render, got %v", err)
+	if n := strings.Count(out, "\n---\n"); n != 2 {
+		t.Errorf("three documents want two separators, got %d:\n%s", n, out)
 	}
-	if out != "" {
-		t.Errorf("a failed render must return nothing, got %q", out)
+	if strings.HasPrefix(out, "---") {
+		t.Errorf("the stream must not open with a separator:\n%s", out)
+	}
+	dec := yaml.NewDecoder(strings.NewReader(out))
+	kinds := []string{}
+	for {
+		var doc map[string]any
+		if err := dec.Decode(&doc); err != nil {
+			break
+		}
+		if k, ok := doc["kind"].(string); ok {
+			kinds = append(kinds, k)
+		}
+	}
+	if strings.Join(kinds, ",") != "A,B,C" {
+		t.Errorf("documents round-trip in order, got %v:\n%s", kinds, out)
 	}
 }
