@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { Metadata } from "next";
-import { Header } from "@/components/landing/home/header";
-import { Footer } from "@/components/landing/home/footer";
+import { SiteShell } from "@repo/brand/site-shell";
 import { ContactSection } from "@/components/contact/contact-page";
-import { getGitHubStars } from "@/lib/github-stars";
 
 export const metadata: Metadata = {
 	title: "Talk to sales · Alethia",
@@ -13,13 +11,10 @@ export const metadata: Metadata = {
 		"Get a custom demo of Alethia against your own stack — console, CLI, and AI agent on the clouds you run. Governance, SSO, and self-managed options mapped to your organization.",
 };
 
-/** Public "Talk to sales" page. Shares the landing Header/Footer chrome. */
+/** Public "Talk to sales" page. Wears the shared site chrome. */
 export default async function ContactSalesPage() {
-	const stars = await getGitHubStars();
 	return (
-		<div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
-			<Header stars={stars} />
-			<main>
+		<SiteShell>
 				<ContactSection
 					type="sales"
 					submitLabel="Talk to sales"
@@ -49,8 +44,6 @@ export default async function ContactSalesPage() {
 					crossHref="/contact/enterprise"
 					crossSub="Set up an Enterprise trial and explore it yourself."
 				/>
-			</main>
-			<Footer />
-		</div>
+		</SiteShell>
 	);
 }

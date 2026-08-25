@@ -5,14 +5,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@repo/ui/sheet";
 import { ProviderIcon } from "@repo/ui/provider-icon";
-import { ThemeToggle } from "@repo/ui/theme-toggle";
 import {
   disp,
-  eyebrow,
   Icon,
   type IconKey,
   Lockup,
@@ -30,113 +29,35 @@ interface MenuLink {
   badge?: boolean;
   external?: boolean;
 }
-interface MenuGroup {
-  group: string;
-  items: MenuLink[];
-}
-
-const PRODUCT_MENU: MenuGroup[] = [
+/**
+ * The products. There are three, and this list holds three.
+ *
+ * It used to hold twelve across four groups — Project designer, Runners, Jobs,
+ * Alerts, AI agent, Repo scanner, MCP server, Organizations, SSO, RBAC. Those are
+ * FEATURES of the three products below, not products, and listing them here made
+ * the menu a feature dump that told a visitor nothing about what Alethia sells.
+ * Governance already has its own nav item (/enterprise); everything else is one
+ * level down in the docs where it belongs.
+ */
+const PRODUCT_MENU: MenuLink[] = [
   {
-    group: "Platform",
-    items: [
-      {
-        ic: "grid",
-        name: "Console",
-        desc: "Visual control plane — configure, deploy, observe",
-        href: "/docs/console",
-      },
-      {
-        ic: "node",
-        name: "Project designer",
-        desc: "Design infrastructure visually — form or canvas, live cost",
-        href: "/docs/console/design-project",
-      },
-      {
-        ic: "terminal",
-        name: "alethia CLI",
-        desc: "Plan, apply, and operate from your shell",
-        href: "/docs/cli",
-      },
-    ],
+    ic: "grid",
+    name: "Console",
+    desc: "The control plane — configure infrastructure visually, watch it apply",
+    href: "/docs/console",
   },
   {
-    group: "Operate",
-    items: [
-      {
-        ic: "server",
-        name: "Runners",
-        desc: "Self-healing warm pools that execute provisioning jobs",
-        href: "/docs/runner",
-      },
-      {
-        ic: "jobs",
-        name: "Jobs",
-        desc: "Every plan, apply, and teardown — streamed live",
-        href: "/docs/console/jobs",
-      },
-      {
-        ic: "bell",
-        name: "Alerts",
-        desc: "Policies match events; channels deliver them",
-        href: "/docs/console/alerts",
-      },
-    ],
+    ic: "terminal",
+    name: "alethia CLI",
+    desc: "Plan, apply, and operate from your shell",
+    href: "/docs/cli",
   },
-  {
-    group: "Intelligence",
-    items: [
-      {
-        ic: "sparkles",
-        name: "AI agent",
-        desc: "An assistant that knows your infrastructure — ask or act",
-        href: "/docs/console/assistant",
-      },
-      {
-        ic: "scan",
-        name: "Repo scanner",
-        desc: "Point it at a repo; get a proposed Project and cost",
-        href: "/docs/elench/architecture",
-      },
-      {
-        ic: "plug",
-        name: "MCP server",
-        desc: "The same tools, exposed to Claude over MCP",
-        href: "/docs/console/assistant/mcp",
-      },
-    ],
-  },
-  {
-    group: "Govern",
-    items: [
-      {
-        ic: "building",
-        name: "Organizations & teams",
-        desc: "Multi-tenant orgs, teams, and group-based grants",
-        href: "/docs/access-control/organizations",
-      },
-      {
-        ic: "key",
-        name: "SSO — OIDC & SAML",
-        desc: "Okta, Entra ID, IAM Identity Center",
-        href: "/docs/access-control/sso",
-      },
-      {
-        ic: "shield",
-        name: "Roles & RBAC",
-        desc: "Custom roles, granular allow/deny, audit log",
-        href: "/docs/access-control/roles-and-permissions",
-      },
-    ],
-  },
-];
-
-const PRODUCT_MENU_FOOT: { ic: IconKey; name: string; href: string }[] = [
   {
     ic: "shield",
-    name: "Zero-trust clouds",
-    href: "/docs/standards/workload-identity",
+    name: "Elench",
+    desc: "The gate between plan and apply — every apply leaves a signed receipt",
+    href: "/docs/elench",
   },
-  { ic: "git", name: "GitOps", href: "/docs/concepts/gitops-argocd" },
 ];
 
 const RESOURCE_MENU: MenuLink[] = [
@@ -176,23 +97,24 @@ function formatStars(n: number): string {
 }
 
 /** Single mega-menu entry row (icon tile + name + description). */
+/** One row in a mega-menu. Hover is CSS, not React state: the previous version
+ * tracked it with `useState` per item, so moving the pointer across the Product
+ * menu re-rendered a component twelve times for a background colour. */
 function MenuItem({ ic, name, desc, badge, href, external }: MenuLink) {
-  const [h, setH] = useState(false);
   return (
     <Link
       href={href}
       target={external ? "_blank" : undefined}
       rel={external ? "noreferrer" : undefined}
-      onMouseEnter={() => setH(true)}
-      onMouseLeave={() => setH(false)}
+      className="vx-clamp vx-clamp--tight hover:bg-[var(--surface-muted)]"
       style={{
         display: "flex",
         gap: 12,
         padding: "10px 11px",
         borderRadius: "var(--radius-md)",
-        background: h ? "var(--surface-muted)" : "transparent",
+        background: "transparent",
         textDecoration: "none",
-        transition: "background .12s",
+        transition: "background var(--dur-1) var(--ease)",
       }}
     >
       <span
@@ -353,6 +275,27 @@ function GitHubLink({ stars }: { stars?: number | null }) {
   );
 }
 
+/** A top-level nav link. `aria-current="page"` is the accessible signal that this
+ * is the page you are on, and the clamp reads the same attribute — so the visual
+ * held state and the announced one can never disagree. */
+function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+  const pathname = usePathname();
+  const current = pathname === href || pathname.startsWith(`${href}/`);
+  return (
+    <Link
+      href={href}
+      aria-current={current ? "page" : undefined}
+      className="vx-clamp vx-clamp--tight"
+      style={{
+        ...NAV_LINK_STYLE,
+        color: current ? "var(--text-primary)" : NAV_LINK_STYLE.color,
+      }}
+    >
+      {children}
+    </Link>
+  );
+}
+
 const NAV_LINK_STYLE: React.CSSProperties = {
   padding: "7px 12px",
   fontSize: 13.5,
@@ -447,72 +390,23 @@ export function Header({
             id="product"
             open={open}
             setOpen={setOpen}
-            width={880}
+            width={360}
           >
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr 1fr 1fr",
-                gap: 6,
-              }}
-            >
-              {PRODUCT_MENU.map((col) => (
-                <div key={col.group}>
-                  <p
-                    style={{
-                      ...eyebrow,
-                      fontSize: 9.5,
-                      padding: "4px 11px 8px",
-                    }}
-                  >
-                    {col.group}
-                  </p>
-                  {col.items.map((it) => (
-                    <MenuItem key={it.name} {...it} />
-                  ))}
-                </div>
-              ))}
-            </div>
+            {PRODUCT_MENU.map((it) => (
+              <MenuItem key={it.name} {...it} />
+            ))}
             <div
               style={{
                 borderTop: "1px solid var(--border-faint)",
                 marginTop: 8,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
                 padding: "12px 11px 4px",
-                gap: 16,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-                  Also:
-                </span>
-                {PRODUCT_MENU_FOOT.map((f) => (
-                  <a
-                    key={f.name}
-                    href={f.href}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      fontSize: 12,
-                      color: "var(--text-secondary)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "var(--radius-sm)",
-                      padding: "4px 9px",
-                      textDecoration: "none",
-                    }}
-                  >
-                    <Icon k={f.ic} size={13} sw={1.6} />
-                    {f.name}
-                  </a>
-                ))}
-              </div>
               <a
                 href="/docs/console/getting-started"
+                className="vx-clamp vx-clamp--tight"
                 style={{
-                  display: "flex",
+                  display: "inline-flex",
                   alignItems: "center",
                   gap: 6,
                   fontSize: 12.5,
@@ -521,7 +415,7 @@ export function Header({
                   textDecoration: "none",
                 }}
               >
-                Platform tour <Icon k="arrow" size={13} />
+                Getting started <Icon k="arrow" size={13} />
               </a>
             </div>
           </NavMenu>
@@ -538,17 +432,11 @@ export function Header({
             ))}
           </NavMenu>
 
-          <Link href="/enterprise" style={NAV_LINK_STYLE}>
-            Enterprise
-          </Link>
-          <Link href="/pricing" style={NAV_LINK_STYLE}>
-            Pricing
-          </Link>
+          <NavLink href="/enterprise">Enterprise</NavLink>
+          <NavLink href="/pricing">Pricing</NavLink>
         </nav>
 
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {/* The only way to reach light mode on this site — see app/layout.tsx. */}
-          <ThemeToggle bare className="ah-hide-sm" />
           <GitHubLink stars={stars} />
           {nav.status === "authed" ? (
             <>
@@ -607,7 +495,7 @@ export function Header({
             <SheetContent side="right" className="w-72 overflow-y-auto">
               <nav className="mt-8 flex flex-col gap-1">
                 <p className="vx-eyebrow px-3 pb-1 pt-2">Product</p>
-                {PRODUCT_MENU.flatMap((col) => col.items).map((it) => (
+                {PRODUCT_MENU.map((it) => (
                   <Link
                     key={it.name}
                     href={it.href}

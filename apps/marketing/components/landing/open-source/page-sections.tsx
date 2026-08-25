@@ -3,16 +3,16 @@
 
 import type { CSSProperties } from "react";
 import Link from "next/link";
-import { disp, eyebrow, HeroRail, Icon, type IconKey, mono, SecMark, Wrap } from "../home/primitives";
+import { disp, eyebrow, HeroRail, Icon, type IconKey, mono, SecMark, Wrap } from "@repo/brand/site-primitives";
 
 /* ---------- small local helpers (site idiom: hairline surfaces, mono data) ---------- */
 
-/** Compact star count (2400 ÃÂ¢ÃÂÃÂ "2.4k"); "" when unknown. */
+/** Compact star count (2400 → "2.4k"); "" when unknown. */
 function fmtStars(n: number | null | undefined): string {
 	if (n == null) return "";
-	if (n < 1000) return ` ÃÂÃÂ· ${n}`;
+	if (n < 1000) return ` · ${n}`;
 	const k = n / 1000;
-	return ` ÃÂÃÂ· ${(k >= 10 ? Math.round(k) : Math.round(k * 10) / 10)}k`;
+	return ` · ${(k >= 10 ? Math.round(k) : Math.round(k * 10) / 10)}k`;
 }
 
 /** Filled-ink primary / hairline secondary link button, matching the site's controls. */
@@ -41,7 +41,7 @@ function Command({ children }: { children: React.ReactNode }) {
 	);
 }
 
-/* ---------- 00 ÃÂÃÂ· Hero ---------- */
+/* ---------- 00 · Hero ---------- */
 
 function Hero({ stars }: { stars: number | null }) {
 	return (
@@ -68,12 +68,12 @@ function Hero({ stars }: { stars: number | null }) {
 	);
 }
 
-/* ---------- 01 ÃÂÃÂ· Portable, closed-origin (the differentiator) ---------- */
+/* ---------- 01 · Portable, closed-origin (the differentiator) ---------- */
 
 const CLOUDS: { name: string; access: string; hardening: string }[] = [
 	{ name: "Hetzner", access: "SSH (key-only)", hardening: "firewall: SSH only" },
 	{ name: "GCP", access: "IAP tunnel", hardening: "Shielded VM" },
-	{ name: "AWS", access: "SSM Session Manager", hardening: "IMDSv2 ÃÂÃÂ· encrypted EBS" },
+	{ name: "AWS", access: "SSM Session Manager", hardening: "IMDSv2 · encrypted EBS" },
 	{ name: "Azure", access: "az vm run-command", hardening: "Trusted Launch" },
 	{ name: "Alibaba", access: "Session Manager", hardening: "encrypted disk" },
 ];
@@ -82,15 +82,15 @@ function Proof() {
 	return (
 		<section style={{ padding: "84px 0", borderBottom: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
 			<Wrap>
-				<SecMark n="01" label="Portable ÃÂÃÂ· closed-origin" />
+				<SecMark n="01" label="Portable · closed-origin" />
 				<div style={{ display: "grid", gridTemplateColumns: "1fr 1.15fr", gap: 56, alignItems: "start" }} className="ah-surface">
 					<div>
 						<h2 style={{ ...disp, fontSize: 34, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 14px", color: "var(--text-primary)" }}>
 							One control plane, five clouds, zero open ports.
 						</h2>
 						<p style={{ fontSize: 15, color: "var(--text-tertiary)", lineHeight: 1.65, margin: "0 0 22px", maxWidth: 440 }}>
-							Each per-cloud stack fronts the box with a Cloudflare Tunnel ÃÂ¢ÃÂÃÂ the origin dials out,
-							so no web port is ever exposed. Admin access is the cloudÃ¢ÂÂs own no-open-port channel,
+							Each per-cloud stack fronts the box with a Cloudflare Tunnel — the origin dials out,
+							so no web port is ever exposed. Admin access is the cloud’s own no-open-port channel,
 							never a public SSH port. Pick a cloud; the OpenTofu is version-controlled and CI-checked.
 						</p>
 						<Link href="/docs/self-hosting/terraform" style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, color: "var(--text-primary)", borderBottom: "1px solid var(--border-strong)", paddingBottom: 3, textDecoration: "none" }}>
@@ -115,7 +115,7 @@ function Proof() {
 	);
 }
 
-/* ---------- 02 ÃÂÃÂ· What's open (editions / trust) ---------- */
+/* ---------- 02 · What's open (editions / trust) ---------- */
 
 function Editions() {
 	const card: CSSProperties = { border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", padding: "26px", boxShadow: "var(--shadow-sm)" };
@@ -128,19 +128,19 @@ function Editions() {
 				</h2>
 				<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }} className="ah-surface">
 					<div style={card}>
-						<span style={{ ...mono, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-tertiary)" }}>Core ÃÂÃÂ· AGPL-3.0</span>
+						<span style={{ ...mono, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-tertiary)" }}>Core · AGPL-3.0</span>
 						<h3 style={{ ...disp, fontSize: 19, fontWeight: 600, margin: "10px 0 10px", color: "var(--text-primary)" }}>The whole platform, free.</h3>
 						<p style={{ fontSize: 14, color: "var(--text-tertiary)", lineHeight: 1.6, margin: 0 }}>
 							Console, the <code style={{ ...mono, fontSize: 12.5 }}>alethia</code> CLI, self-healing
 							runners, multi-cloud provisioning, GitOps reconciliation. AGPL is OSI-approved open
-							source ÃÂ¢ÃÂÃÂ not source-available. Self-host it anywhere, forever.
+							source — not source-available. Self-host it anywhere, forever.
 						</p>
 					</div>
 					<div style={card}>
-						<span style={{ ...mono, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-tertiary)" }}>Enterprise ÃÂÃÂ· ee/</span>
+						<span style={{ ...mono, fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-tertiary)" }}>Enterprise · ee/</span>
 						<h3 style={{ ...disp, fontSize: 19, fontWeight: 600, margin: "10px 0 10px", color: "var(--text-primary)" }}>One directory, one license.</h3>
 						<p style={{ fontSize: 14, color: "var(--text-tertiary)", lineHeight: 1.6, margin: 0 }}>
-							SSO, custom RBAC, the audit trail, and managed runners live under <code style={{ ...mono, fontSize: 12.5 }}>ee/</code> ÃÂ¢ÃÂÃÂ
+							SSO, custom RBAC, the audit trail, and managed runners live under <code style={{ ...mono, fontSize: 12.5 }}>ee/</code> —
 							the only commercially-licensed code, and the boundary is enforced in CI so it can
 							never blur into the core.
 						</p>
@@ -157,7 +157,7 @@ function Editions() {
 
 const linkStyle: CSSProperties = { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13.5, color: "var(--text-secondary)", textDecoration: "none", borderBottom: "1px solid var(--border-strong)", paddingBottom: 2 };
 
-/* ---------- 03 ÃÂÃÂ· Self-host, honestly (candor) ---------- */
+/* ---------- 03 · Self-host, honestly (candor) ---------- */
 
 function Ops() {
 	const YOU = ["Security patches & CVEs", "Uptime & capacity", "Upgrades & migrations", "Backups & restore"];
@@ -182,7 +182,7 @@ function Ops() {
 					Full control means you carry the operations.
 				</h2>
 				<p style={{ fontSize: 15, color: "var(--text-tertiary)", lineHeight: 1.65, margin: "0 0 30px", maxWidth: 560 }}>
-					Thatâs the honest trade. Self-hosting gives you data residency and zero lock-in; the day-2
+					That’s the honest trade. Self-hosting gives you data residency and zero lock-in; the day-2
 					work that managed Alethia does for its customers becomes yours. If you’d rather not carry it,
 					we run it.
 				</p>
@@ -199,7 +199,7 @@ function Ops() {
 	);
 }
 
-/* ---------- 04 ÃÂÃÂ· Ways to run it ---------- */
+/* ---------- 04 · Ways to run it ---------- */
 
 const PATHS: { ic: IconKey; name: string; body: string; href: string }[] = [
 	{ ic: "terminal", name: "Docker Compose", body: "One command on a fresh VM. The whole bundle behind Caddy.", href: "/docs/self-hosting" },
@@ -231,7 +231,7 @@ function DeployPaths() {
 	);
 }
 
-/* ---------- 05 ÃÂÃÂ· Closing CTA ---------- */
+/* ---------- 05 · Closing CTA ---------- */
 
 function Close({ stars }: { stars: number | null }) {
 	return (

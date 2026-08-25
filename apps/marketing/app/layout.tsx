@@ -63,11 +63,15 @@ export default function RootLayout({
 			<body
 				className={`${geistSans.variable} ${geistMono.variable} ${spaceGrotesk.variable} antialiased`}
 			>
-				{/* Dark is the signature surface, so it stays the default — but it is no
-				    longer forced. `forcedTheme` did not merely hide a toggle, it made light
-				    mode unreachable; the CSS-var wiring underneath was always theme-correct.
-				    The switcher lives in the header. */}
-				<ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
+				{/* The site follows the visitor's OS and offers no control of its own:
+				    the header switcher is gone, and a marketing page is the wrong place to
+				    ask someone to configure anything. Both themes are therefore a SHIPPED
+				    surface — a visitor lands on either, so neither may be left unpolished.
+				    `apps/blog` defaults the same way, so the theme no longer flips when you
+				    cross between zones. A returning visitor whose choice is already in
+				    `localStorage` keeps it; the console, same origin and same key, still has
+				    a switcher. */}
+				<ThemeProvider attribute="class" defaultTheme="system" enableSystem>
 					<ConsentProvider>
 						{children}
 						<Toaster />

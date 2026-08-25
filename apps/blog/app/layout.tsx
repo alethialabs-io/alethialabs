@@ -6,8 +6,9 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import type { ReactNode } from "react";
-import { SiteHeader } from "@/components/site-header";
-import { SiteFooter } from "@/components/site-footer";
+import { Chrome } from "@repo/brand/site-chrome";
+import { SiteFooter } from "@repo/brand/site-footer";
+import { Header as SiteHeader } from "@repo/brand/site-header";
 
 // `--font-geist-sans`, not `--font-geist`: @repo/brand/tokens.css maps --font-sans to it.
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
@@ -36,9 +37,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 			suppressHydrationWarning
 		>
 			<body className="min-h-screen flex flex-col bg-background text-foreground">
-				{/* There was no ThemeProvider at all, so `.dark` never applied and the
-				    stylesheet's whole dark block was dead code. */}
-				<ThemeProvider attribute="class" defaultTheme="light" enableSystem>
+				{/* Matches apps/marketing: follow the OS, no switcher. It used to default
+				    to `light` while marketing defaulted to `dark`, so the theme flipped as
+				    soon as a visitor crossed from the site into the blog. */}
+				<ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+					<Chrome />
 					<SiteHeader />
 					<main className="flex-1">{children}</main>
 					<SiteFooter />
