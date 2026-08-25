@@ -73,12 +73,30 @@ export default defineConfig({
 				// v8 and then discarded by this scope. So the badge was not merely excluding
 				// untested code; it was throwing away tests that were already passing.
 				//
-				// `lib/scanner/**` and `use-canvas-store.ts` are therefore re-included here. The
-				// three that follow have no naming test and are handled separately, so that this
-				// change and that one move the number for visibly different reasons.
-				"lib/ai/tools/scanner.ts",
-				"app/server/actions/scanner.ts",
-				"app/server/actions/clusters.ts",
+				// `lib/scanner/**` and `use-canvas-store.ts` were re-included first, and CI measured
+				// the console at 67.09% -> 67.29% — it went UP, because their tests were already
+				// running and this scope was discarding the result.
+				//
+				// The last three — lib/ai/tools/scanner.ts, app/server/actions/scanner.ts and
+				// app/server/actions/clusters.ts — are re-included now, and they are the opposite
+				// case: nothing EXECUTES any of them, so measuring them moves the number DOWN. They
+				// were split out precisely so the two directions would be separately attributable
+				// rather than netting out inside one commit.
+				//
+				// "nothing executes them" rather than "no test names them", because two of the
+				// three ARE named — `tests/lib/ai/tools/registry.test.ts:23,29` and
+				// `read.test.ts:18,46`, four times, including a literal
+				// `import { getClusters } from "@/app/server/actions/clusters"`. Every one of those
+				// is a `vi.mock`, which REPLACES the module, so the real code never runs and v8
+				// records nothing for it. The distinction matters for whoever closes the gap: the
+				// remedy is a test that exercises these modules, and adding another `vi.mock`
+				// would satisfy "a test names it" while changing the coverage by zero.
+				//
+				// Publishing that drop is the point. An exclusion that keeps untested code out of
+				// the denominator does not make the code tested, it makes the badge wrong; and the
+				// ratchet (#2649) can only hold a floor under surface it can see. There is nothing
+				// left here to re-include — every remaining exclusion below is either infrastructural
+				// or a tier-separation claim with a named suite behind it.
 				// Real-SQL modules verified by the integration tier (tests/integration/*, real
 				// Postgres) — mocked unit tests can't exercise their WHERE/joins/CTEs, so they're
 				// scoped to that tier and excluded from the unit badge (same tier-separation as
