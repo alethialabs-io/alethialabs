@@ -67,6 +67,9 @@ func ApplyAddOnsInWaves(addons []types.AddOnInstall, renderedDir string, stdout,
 		return nil
 	}
 
+	// ONE webhook-wait budget for the whole loop — see admissionWebhookWaitBudget.
+	webhookBudget := newWebhookWaitBudget()
+
 	var firstErr error
 	for _, w := range waves {
 		group := byWave[w]
@@ -90,6 +93,21 @@ func ApplyAddOnsInWaves(addons []types.AddOnInstall, renderedDir string, stdout,
 				if err := waitForCRDEstablished(crd, stdout, stderr); err != nil {
 					fmt.Fprintf(stderr, "Warning: %v — a CR that needs it may fail its first sync\n", err)
 				}
+			}
+		}
+		// The other half of the same race. A CRD wait covers a resource whose SCHEMA does not
+		// exist yet; it does nothing for one whose ADMISSION CONTROLLER is not serving yet.
+		// ingress-nginx is wave 1 and establishes no CRD, so this gate had nothing to wait for
+		// and returned instantly — then wave 2's harbor Ingress hit a webhook whose caBundle was
+		// not yet patched and went SyncError with `x509: certificate signed by unknown
+		// authority`, taking twelve of twenty Applications past the convergence budget with it.
+		//
+		// Skipped after the LAST wave: there is no wave N+1 whose admission it would protect,
+		// and the convergence wait that follows is the honest place to observe what settled.
+		if w != waves[len(waves)-1] {
+			fmt.Fprintf(stdout, "  waiting for the admission webhooks to be servable...\n")
+			if err := WaitAdmissionWebhooksServable(webhookBudget, stdout, stderr); err != nil {
+				fmt.Fprintf(stderr, "Warning: %v\n", err)
 			}
 		}
 	}
