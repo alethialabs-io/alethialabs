@@ -304,18 +304,42 @@ resource "google_project_iam_custom_role" "project_reader" {
   ]
 }
 
+# ⚠️ THE IDS ARE CONSTRUCTED, NOT READ OFF THE RESOURCES, AND THAT IS DELIBERATE.
+#
+# `toset` uses its ELEMENTS as instance keys. Reading `google_project_iam_custom_role.X.id` works
+# only while every role already exists: a NEWLY ADDED role's `id` is `(known after apply)`, and one
+# unknown element makes the whole set unknown, so OpenTofu refuses at plan with
+# "Invalid for_each argument … cannot be determined until apply". That breaks the update plan for
+# every existing customer re-applying this terraform, not only a fresh install — which is how adding
+# `dns_zone_iam` here would have landed.
+#
+# `var.project_id` is an input, so these strings are known at plan. They are also byte-identical to
+# the ids the provider produces, so the instance keys do NOT change and no `moved` block is needed —
+# re-keying a live `google_project_iam_member` is its own hazard, since destroy-old and create-new
+# touch the same (project, role, member) triple with no ordering between them.
+#
+# `depends_on` replaces the implicit edge that reading `.id` used to provide.
 resource "google_project_iam_member" "alethia_provisioner_custom" {
   for_each = toset([
-    google_project_iam_custom_role.storage_provisioner.id,
-    google_project_iam_custom_role.firestore_provisioner.id,
-    google_project_iam_custom_role.pubsub_provisioner.id,
-    google_project_iam_custom_role.sa_provisioner.id,
-    google_project_iam_custom_role.project_reader.id,
-    google_project_iam_custom_role.dns_zone_iam.id,
+    "projects/${var.project_id}/roles/alethiaStorageProvisioner",
+    "projects/${var.project_id}/roles/alethiaFirestoreProvisioner",
+    "projects/${var.project_id}/roles/alethiaPubSubProvisioner",
+    "projects/${var.project_id}/roles/alethiaServiceAccountProvisioner",
+    "projects/${var.project_id}/roles/alethiaProjectReader",
+    "projects/${var.project_id}/roles/alethiaDnsZoneIam",
   ])
   project = var.project_id
   role    = each.value
   member  = "serviceAccount:${google_service_account.alethia.email}"
+
+  depends_on = [
+    google_project_iam_custom_role.storage_provisioner,
+    google_project_iam_custom_role.firestore_provisioner,
+    google_project_iam_custom_role.pubsub_provisioner,
+    google_project_iam_custom_role.sa_provisioner,
+    google_project_iam_custom_role.project_reader,
+    google_project_iam_custom_role.dns_zone_iam,
+  ]
 }
 
 resource "google_iam_workload_identity_pool" "alethia" {

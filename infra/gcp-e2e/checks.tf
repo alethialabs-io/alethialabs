@@ -93,6 +93,20 @@ check "e2e_cmk_path_is_grantable" {
   }
 }
 
+# Same reasoning as the CMK grant above, and the same cost profile: `roles/dns.admin` does NOT carry
+# the zone-scoped IAM verbs despite its name, so google_dns_managed_zone_iam_member 403s. That is
+# invisible to every floor run and surfaces ~48 minutes into a full bar, which is exactly the kind of
+# hard-won grant a future tightening pass would remove without noticing.
+check "e2e_dns_zone_iam_is_grantable" {
+  assert {
+    condition = alltrue([
+      contains(google_project_iam_custom_role.e2e_dns_zone_iam.permissions, "dns.managedZones.getIamPolicy"),
+      contains(google_project_iam_custom_role.e2e_dns_zone_iam.permissions, "dns.managedZones.setIamPolicy"),
+    ])
+    error_message = "alethiaE2eDnsZoneIam must carry BOTH dns.managedZones.getIamPolicy and setIamPolicy — roles/dns.admin does not include them, and without them a DNS-enabled environment 403s at google_dns_managed_zone_iam_member deep into the apply."
+  }
+}
+
 check "e2e_service_enablement_is_readable" {
   assert {
     condition = alltrue([

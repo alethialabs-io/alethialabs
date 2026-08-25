@@ -122,14 +122,33 @@ resource "google_project_iam_custom_role" "e2e_project_reader" {
   ]
 }
 
+# ⚠️ KEYED ON STATIC STRINGS, NOT ON THE ROLE IDS. `toset` uses its ELEMENTS as instance keys, and
+# `google_project_iam_custom_role.e2e_dns_zone_iam.id` is `(known after apply)` for a role that does
+# not exist yet — one unknown element makes the whole set unknown, and OpenTofu refuses at plan:
+#
+#     Invalid for_each argument … depends on resource attributes that cannot be determined until apply
+#
+# `tofu validate` never evaluates `for_each` and no CI job plans this stack, so the first thing that
+# would have failed is the maintainer's apply — the apply this grant exists to unblock. A map keyed
+# on literals is known at plan; only the VALUES are unknown, which for_each permits.
 resource "google_project_iam_member" "e2e_provisioner_custom" {
-  for_each = toset([
-    google_project_iam_custom_role.e2e_project_reader.id,
-    google_project_iam_custom_role.e2e_dns_zone_iam.id,
-  ])
+  for_each = {
+    project_reader = google_project_iam_custom_role.e2e_project_reader.id
+    dns_zone_iam   = google_project_iam_custom_role.e2e_dns_zone_iam.id
+  }
   project = var.project_id
   role    = each.value
   member  = "serviceAccount:${google_service_account.e2e.email}"
+}
+
+# The resource was un-keyed before this change and is already applied, so without this the plan is
+# destroy-old + create-new with NO dependency edge between them. Both instances read-modify-write the
+# same (project, role, member) triple; if the destroy lands after the create, the binding is REMOVED
+# while state says it is present — the SA silently loses `serviceusage.services.get` and the next
+# nightly dies at plan on the KMS guard, with an error naming nothing about IAM.
+moved {
+  from = google_project_iam_member.e2e_provisioner_custom
+  to   = google_project_iam_member.e2e_provisioner_custom["project_reader"]
 }
 
 # ── The e2e provisioner service account (federated into via WIF; never gets a key) ──
