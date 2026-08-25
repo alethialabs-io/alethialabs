@@ -132,7 +132,7 @@ resource "google_project_iam_member" "alethia_provisioner" {
     "roles/servicenetworking.networksAdmin", # private-services peering (Cloud SQL / Memorystore)
     "roles/cloudsql.admin",                  # Cloud SQL
     "roles/redis.admin",                     # Memorystore
-    "roles/dns.admin",                       # Cloud DNS managed zones (+ zone-scoped setIamPolicy)
+    "roles/dns.admin",                       # Cloud DNS managed zones — NOT setIamPolicy, see dns_zone_iam below
     "roles/artifactregistry.admin",          # Artifact Registry
     "roles/secretmanager.admin",             # Secret Manager (kept — see note re: versions.access)
     "roles/cloudkms.admin",                  # CMK for GKE Secrets encryption (#2092, on by default)
@@ -190,6 +190,47 @@ resource "google_project_iam_member" "alethia_app_db" {
 }
 
 # ── Custom roles: management-only replacements for the data-plane-broad predefined admin roles. ──
+# The one DNS permission roles/dns.admin does not carry.
+#
+# The gcp project template creates a ZONE-SCOPED binding so external-dns (and cert-manager's DNS01
+# solver, which shares the identity) can write records into the zone —
+# infra/templates/project/gcp/workload-identity.tf, google_dns_managed_zone_iam_member. Writing that
+# binding needs `dns.managedZones.setIamPolicy`, and MEASURED against the live API:
+#
+#   roles/dns.admin  → dns.managedZones.getIamPolicy   ✓   setIamPolicy ✗
+#   roles/editor     → setIamPolicy ✗
+#   roles/dns.peer   → setIamPolicy ✗
+#   roles/owner      → setIamPolicy ✓
+#
+# So among predefined roles ONLY owner can create it — which a least-privilege connector must never
+# be. The list above claimed dns.admin covered it ("+ zone-scoped setIamPolicy"); it never did, and
+# the comment is corrected alongside this role.
+#
+# The cost of the gap was silent in exactly the way that hurts: every plan stayed green, and the
+# apply failed at
+#
+#   Error setting IAM policy for dns managedzone "...": Error 403: The caller does not have
+#   permission, forbidden
+#
+# on gcp's first full bar (32840106190). A floor run never reaches it, because the floor provisions
+# no DNS zone.
+#
+# `dns.managedZones.setIamPolicy` is SUPPORTED in custom roles (gcloud list-testable-permissions
+# reports no support-level restriction), so this stays scoped to one permission rather than
+# reaching for owner. getIamPolicy rides along so a plan can READ the binding it is about to write;
+# dns.admin already grants it, and restating it here keeps the role self-contained if the predefined
+# grant is ever narrowed.
+resource "google_project_iam_custom_role" "dns_zone_iam" {
+  role_id     = "alethiaDnsZoneIam"
+  project     = var.project_id
+  title       = "Alethia DNS Zone IAM Binder"
+  description = "Set/get IAM policy on Cloud DNS managed zones — the zone-scoped external-dns binding. roles/dns.admin does NOT include setIamPolicy; only roles/owner does."
+  permissions = [
+    "dns.managedZones.getIamPolicy",
+    "dns.managedZones.setIamPolicy",
+  ]
+}
+
 resource "google_project_iam_custom_role" "storage_provisioner" {
   role_id     = "alethiaStorageProvisioner"
   project     = var.project_id
@@ -263,17 +304,42 @@ resource "google_project_iam_custom_role" "project_reader" {
   ]
 }
 
+# ⚠️ THE IDS ARE CONSTRUCTED, NOT READ OFF THE RESOURCES, AND THAT IS DELIBERATE.
+#
+# `toset` uses its ELEMENTS as instance keys. Reading `google_project_iam_custom_role.X.id` works
+# only while every role already exists: a NEWLY ADDED role's `id` is `(known after apply)`, and one
+# unknown element makes the whole set unknown, so OpenTofu refuses at plan with
+# "Invalid for_each argument … cannot be determined until apply". That breaks the update plan for
+# every existing customer re-applying this terraform, not only a fresh install — which is how adding
+# `dns_zone_iam` here would have landed.
+#
+# `var.project_id` is an input, so these strings are known at plan. They are also byte-identical to
+# the ids the provider produces, so the instance keys do NOT change and no `moved` block is needed —
+# re-keying a live `google_project_iam_member` is its own hazard, since destroy-old and create-new
+# touch the same (project, role, member) triple with no ordering between them.
+#
+# `depends_on` replaces the implicit edge that reading `.id` used to provide.
 resource "google_project_iam_member" "alethia_provisioner_custom" {
   for_each = toset([
-    google_project_iam_custom_role.storage_provisioner.id,
-    google_project_iam_custom_role.firestore_provisioner.id,
-    google_project_iam_custom_role.pubsub_provisioner.id,
-    google_project_iam_custom_role.sa_provisioner.id,
-    google_project_iam_custom_role.project_reader.id,
+    "projects/${var.project_id}/roles/alethiaStorageProvisioner",
+    "projects/${var.project_id}/roles/alethiaFirestoreProvisioner",
+    "projects/${var.project_id}/roles/alethiaPubSubProvisioner",
+    "projects/${var.project_id}/roles/alethiaServiceAccountProvisioner",
+    "projects/${var.project_id}/roles/alethiaProjectReader",
+    "projects/${var.project_id}/roles/alethiaDnsZoneIam",
   ])
   project = var.project_id
   role    = each.value
   member  = "serviceAccount:${google_service_account.alethia.email}"
+
+  depends_on = [
+    google_project_iam_custom_role.storage_provisioner,
+    google_project_iam_custom_role.firestore_provisioner,
+    google_project_iam_custom_role.pubsub_provisioner,
+    google_project_iam_custom_role.sa_provisioner,
+    google_project_iam_custom_role.project_reader,
+    google_project_iam_custom_role.dns_zone_iam,
+  ]
 }
 
 resource "google_iam_workload_identity_pool" "alethia" {
