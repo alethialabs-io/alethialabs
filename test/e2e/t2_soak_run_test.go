@@ -202,6 +202,12 @@ func soakDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p soakP
 			Details []struct {
 				Address string `json:"address"`
 				Kind    string `json:"kind"`
+				// The leaf paths that actually differed. The emitter has carried these
+				// since drift.ResourceDrift grew Attributes; this decoder did not read
+				// them, so the failure named five resources and nothing about WHY they
+				// were drifted — which is the whole question #2503 asks. A guard that
+				// reports a value must mirror every field the emitter set.
+				Attributes []string `json:"attributes"`
 			} `json:"details"`
 			Normalized        int `json:"normalized"`
 			NormalizedDetails []struct {
@@ -219,13 +225,29 @@ func soakDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p soakP
 	}
 	s.DriftInSync = meta.DriftPosture.InSync
 	s.DriftDrifted = meta.DriftPosture.Drifted
+	// Recorded BEFORE the pass/fail branch so the committed summary carries the evidence on
+	// either path. On an in-sync posture Details is empty and this is a no-op.
+	s.DriftDetails = make([]SoakDriftResource, 0, len(meta.DriftPosture.Details))
+	for _, d := range meta.DriftPosture.Details {
+		s.DriftDetails = append(s.DriftDetails, SoakDriftResource{Address: d.Address, Kind: d.Kind, Attributes: d.Attributes})
+	}
 	// Honest posture right after a clean apply: genuinely in-sync (0 drifted). unmanaged_known
 	// must be false — a refresh-only plan CANNOT see unmanaged resources, and claiming it did
 	// would be dishonest.
 	if !meta.DriftPosture.InSync || meta.DriftPosture.Drifted != 0 {
 		drifted := make([]string, 0, len(meta.DriftPosture.Details))
 		for _, d := range meta.DriftPosture.Details {
-			drifted = append(drifted, d.Address+" ("+d.Kind+")")
+			line := d.Address + " (" + d.Kind + ")"
+			// EMPTY IS NOT "no attributes differed" — drift.ResourceDrift.Attributes is
+			// omitempty and several verdicts are reached before the leaves are computed
+			// (a non-update action; a before/after that does not parse as an object). Say
+			// which of the two this is, so a reader never takes silence for a clean diff.
+			if len(d.Attributes) > 0 {
+				line += "\n             attrs: " + strings.Join(d.Attributes, ", ")
+			} else {
+				line += "\n             attrs: none recorded (verdict reached before the leaves were computed)"
+			}
+			drifted = append(drifted, line)
 		}
 		t.Fatalf("A0.3 drift: posture is not in-sync right after a clean apply: in_sync=%t drifted=%d\ndrifted: %s",
 			meta.DriftPosture.InSync, meta.DriftPosture.Drifted, strings.Join(drifted, "\n         "))
