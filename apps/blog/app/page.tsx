@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@repo/ui/empty";
 import { PostCard } from "@/components/post-card";
 import { getPublishedPosts } from "@/lib/posts";
 
@@ -10,15 +11,22 @@ export default function Page() {
 	return (
 		<div className="mx-auto max-w-3xl px-6 py-12">
 			<header className="mb-10">
-				<h1 className="text-3xl font-extrabold tracking-tight">Engineering Blog</h1>
-				<p className="mt-3 max-w-prose text-muted-foreground">
+				<h1 className="font-grotesk text-3xl font-semibold tracking-[-0.03em] text-text-primary">Engineering Blog</h1>
+				<p className="mt-3 max-w-prose text-text-secondary">
 					Deep dives into how Alethia is built — provisioning, the runner fleet, and the
 					architecture behind a multi-cloud control plane you run in your own cloud.
 				</p>
 			</header>
 
 			{posts.length === 0 ? (
-				<p className="text-muted-foreground">No posts yet.</p>
+				<Empty>
+					<EmptyHeader>
+						<EmptyTitle>No posts yet</EmptyTitle>
+						<EmptyDescription>
+							Engineering notes and product updates will appear here.
+						</EmptyDescription>
+					</EmptyHeader>
+				</Empty>
 			) : (
 				<div className="space-y-4">
 					{posts.map((post) => (

@@ -1,6 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/* This renders base-ui's Button, which is itself a client component, so this module
+   has always BEEN a client boundary — it just never declared one. Without the
+   directive the bundler was free to pull it into the server graph as well, and any
+   page that rendered a Button from a server component while the shared header
+   rendered one from the client graph got two copies of the module and a render that
+   threw "Element type is invalid … got: undefined". It cost a long bisect on the
+   home page and again on /open-source, and neither tsc, eslint nor the type checker
+   can see it — only a production build at request time.
+
+   `buttonVariants` is exported from here and CALLED in two places; both are already
+   client components (apps/docs/components/ai/page-actions.tsx, packages/ui/calendar.tsx),
+   so promoting this file to a client module costs nothing. Keep it that way: a server
+   component cannot call a value imported from a client module. */
+"use client";
+
 import { Button as ButtonPrimitive } from "@base-ui-components/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 import type * as React from "react"
@@ -18,9 +33,6 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90",
-        // Single-use: the "Start free trial" conversion CTA only. The one
-        // sanctioned hue on an otherwise grayscale system — do not reuse.
-        cta: "bg-cta text-cta-foreground hover:bg-cta-hover focus-visible:ring-cta/40",
         destructive:
           "border border-border bg-transparent text-foreground shadow-xs hover:border-foreground hover:bg-[var(--signal-critical-surface)] focus-visible:ring-ring/50",
         outline:

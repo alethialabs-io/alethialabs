@@ -3,6 +3,7 @@
 
 import type { CSSProperties } from "react";
 import Link from "next/link";
+import { Button } from "@repo/ui/button";
 import { disp, eyebrow, HeroRail, Icon, type IconKey, mono, SecMark, Wrap } from "@repo/brand/site-primitives";
 
 /* ---------- small local helpers (site idiom: hairline surfaces, mono data) ---------- */
@@ -15,21 +16,14 @@ function fmtStars(n: number | null | undefined): string {
 	return ` · ${(k >= 10 ? Math.round(k) : Math.round(k * 10) / 10)}k`;
 }
 
-/** Filled-ink primary / hairline secondary link button, matching the site's controls. */
-function CTA({ href, children, primary, external }: { href: string; children: React.ReactNode; primary?: boolean; external?: boolean }) {
-	const base: CSSProperties = {
-		display: "inline-flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px",
-		fontSize: 14, fontWeight: 500, borderRadius: "var(--radius-sm)", textDecoration: "none",
-	};
-	const style: CSSProperties = primary
-		? { ...base, background: "var(--ink)", color: "var(--ink-foreground)" }
-		: { ...base, border: "1px solid var(--border-strong)", color: "var(--text-primary)" };
-	return external ? (
-		<a href={href} target="_blank" rel="noreferrer" style={style}>{children}</a>
-	) : (
-		<Link href={href} style={style}>{children}</Link>
-	);
-}
+/**
+ * `CTA` lived here — a complete re-implementation of `@repo/ui/button` in inline
+ * styles. It looked close enough to pass review, and it was: same height, same
+ * radius, same ink. What it silently dropped was everything that is not colour —
+ * the clamp, the focus ring and the press displacement — so six controls on this
+ * page were unreachable-looking to a keyboard and dead to the motion system.
+ * Use `Button` and let the system carry those.
+ */
 
 /** A bordered command line, mono. */
 function Command({ children }: { children: React.ReactNode }) {
@@ -60,8 +54,8 @@ function Hero({ stars }: { stars: number | null }) {
 					<Command>curl -fsSL https://raw.githubusercontent.com/alethialabs-io/alethialabs/main/deploy/install.sh | sh</Command>
 				</div>
 				<div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
-					<CTA href="/docs/self-hosting" primary><Icon k="book" size={15} /> Read the self-host docs</CTA>
-					<CTA href="https://github.com/alethialabs-io/alethialabs" external><Icon k="git" size={15} /> Star on GitHub{fmtStars(stars)}</CTA>
+					<Button nativeButton={false} render={<Link href="/docs/self-hosting" />}><Icon k="book" size={15} /> Read the self-host docs</Button>
+					<Button variant="outline" nativeButton={false} render={<a href="https://github.com/alethialabs-io/alethialabs" target="_blank" rel="noreferrer" />}><Icon k="git" size={15} /> Star on GitHub{fmtStars(stars)}</Button>
 				</div>
 			</Wrap>
 		</section>
@@ -191,8 +185,8 @@ function Ops() {
 					{col("We run it", US, true)}
 				</div>
 				<div style={{ display: "flex", gap: 12, marginTop: 24 }}>
-					<CTA href="/pricing">See managed pricing</CTA>
-					<CTA href="/enterprise">Enterprise</CTA>
+					<Button variant="outline" nativeButton={false} render={<Link href="/pricing" />}>See managed pricing</Button>
+					<Button variant="outline" nativeButton={false} render={<Link href="/enterprise" />}>Enterprise</Button>
 				</div>
 			</Wrap>
 		</section>
@@ -215,7 +209,7 @@ function DeployPaths() {
 				<SecMark n="04" label="Ways to run it" />
 				<div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 16 }} className="ah-surface">
 					{PATHS.map((p) => (
-						<Link key={p.name} href={p.href} style={{ display: "flex", gap: 14, border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", padding: "20px 22px", textDecoration: "none" }} className="ah-card">
+						<Link key={p.name} href={p.href} style={{ display: "flex", gap: 14, border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", padding: "20px 22px", textDecoration: "none" }}>
 							<span style={{ display: "grid", placeItems: "center", width: 34, height: 34, flexShrink: 0, borderRadius: "var(--radius-sm)", border: "1px solid var(--border)", background: "var(--surface-sunken)", color: "var(--text-primary)" }}>
 								<Icon k={p.ic} size={17} />
 							</span>
@@ -242,8 +236,8 @@ function Close({ stars }: { stars: number | null }) {
 					Clone it, read the source, deploy it on your own cloud. Open the docs or star the repo.
 				</p>
 				<div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-					<CTA href="/docs/self-hosting" primary><Icon k="book" size={15} /> Self-host docs</CTA>
-					<CTA href="https://github.com/alethialabs-io/alethialabs" external><Icon k="git" size={15} /> Star on GitHub{fmtStars(stars)}</CTA>
+					<Button nativeButton={false} render={<Link href="/docs/self-hosting" />}><Icon k="book" size={15} /> Self-host docs</Button>
+					<Button variant="outline" nativeButton={false} render={<a href="https://github.com/alethialabs-io/alethialabs" target="_blank" rel="noreferrer" />}><Icon k="git" size={15} /> Star on GitHub{fmtStars(stars)}</Button>
 				</div>
 			</Wrap>
 		</section>

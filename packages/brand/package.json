@@ -20,7 +20,8 @@
     "./site-footer": "./src/site/site-footer.tsx",
     "./site-chrome": "./src/site/site-chrome.tsx",
     "./site-primitives": "./src/site/primitives.tsx",
-    "./github-stars": "./src/site/github-stars.ts"
+    "./github-stars": "./src/site/github-stars.ts",
+    "./site-sections": "./src/site/page-sections.tsx"
   },
   "scripts": {
     "lint": "eslint . --max-warnings 0",
