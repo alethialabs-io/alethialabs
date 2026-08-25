@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"gopkg.in/yaml.v3"
 )
 
 func sampleAddOn() types.AddOnInstall {
@@ -42,7 +43,11 @@ func TestRenderAddOnApplication(t *testing.T) {
 		"name: addon-kube-prometheus-stack",
 		"repoURL: https://prometheus-community.github.io/helm-charts",
 		"chart: kube-prometheus-stack",
-		`targetRevision: "61.9.0"`,
+		// NOT asserted as a spelling. yaml.v3 quotes a scalar exactly when the round trip needs it,
+		// so "61.9.0" (not a valid number) comes back unquoted and "5.2" would be quoted. The
+		// SEMANTICS are asserted in TestRenderAddOnTargetRevisionStaysAString, which is the property
+		// the old `targetRevision: "61.9.0"` literal was really reaching for.
+		"targetRevision: 61.9.0",
 		"namespace: monitoring",
 		`sync-wave: "2"`,
 		"alethia.io/addon-id: kube-prometheus-stack",
@@ -201,5 +206,100 @@ func TestArgoAppListParse(t *testing.T) {
 	}
 	if len(list.Items) != 1 || list.Items[0].Status.Health.Status != "Healthy" {
 		t.Errorf("parse mismatch: %+v", list)
+	}
+}
+
+// TestRenderAddOnTargetRevisionStaysAString pins the property the old literal assertion was
+// reaching for: a chart version must survive as a STRING, whatever it looks like.
+//
+// The template hard-quoted it. Marshalling quotes only when the round trip requires it — which is
+// strictly more correct, and worth asserting in the case that actually needs it: "5.2" is a valid
+// YAML float, so an unquoted emit would come back as 5.2 and ArgoCD would look for a chart version
+// that does not exist.
+func TestRenderAddOnTargetRevisionStaysAString(t *testing.T) {
+	for _, version := range []string{"61.9.0", "5.2", "1.0", "2", "v1.2.3"} {
+		t.Run(version, func(t *testing.T) {
+			manifest, err := RenderAddOnApplication(types.AddOnInstall{
+				ID: "x", Mode: "managed", ChartRepo: "https://example.com", Chart: "x",
+				Version: version, Namespace: "x",
+			})
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+			var back struct {
+				Spec struct {
+					Source struct {
+						TargetRevision string `yaml:"targetRevision"`
+					} `yaml:"source"`
+				} `yaml:"spec"`
+			}
+			if err := yaml.Unmarshal([]byte(manifest), &back); err != nil {
+				t.Fatalf("rendered manifest does not parse: %v\n%s", err, manifest)
+			}
+			if got := back.Spec.Source.TargetRevision; got != version {
+				t.Errorf("targetRevision round-tripped to %q, want %q\n%s", got, version, manifest)
+			}
+		})
+	}
+}
+
+// TestRenderAddOnApplicationResistsYAMLInjection is the #2589 regression.
+//
+// Every one of these fields reached a text/template with no escaping. `.Namespace` is the readiest
+// lever — it comes from the add-on install spec and there is no DNS-1123 validator on this path
+// anywhere in packages/core — but the same payload works through `.Chart`, `.Path`, `.ChartRepo`,
+// `.ID` and `.Project`, which is why the fix marshals rather than quoting a field at a time.
+//
+// The assertion is NOT "the payload is absent". A marshalled document legitimately contains the
+// payload as DATA. What must not happen is a second DOCUMENT, or the injected key appearing as a
+// key of the Application. Asserting absence would fail on a correct fix and pass on a clever one.
+func TestRenderAddOnApplicationResistsYAMLInjection(t *testing.T) {
+	// Closes a scalar, opens a second document, and declares a cluster-scoped object — the shape
+	// the empty clusterResourceWhitelist on the sibling AppProject exists to deny.
+	const payload = "x\n---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: pwn\n"
+
+	for _, tc := range []struct {
+		field string
+		a     types.AddOnInstall
+	}{
+		{"namespace", types.AddOnInstall{ID: "a", Mode: "managed", ChartRepo: "https://e.com", Chart: "c", Version: "1", Namespace: payload}},
+		{"chart", types.AddOnInstall{ID: "a", Mode: "managed", ChartRepo: "https://e.com", Chart: payload, Version: "1", Namespace: "n"}},
+		{"chartRepo", types.AddOnInstall{ID: "a", Mode: "managed", ChartRepo: payload, Chart: "c", Version: "1", Namespace: "n"}},
+		{"id", types.AddOnInstall{ID: payload, Mode: "managed", ChartRepo: "https://e.com", Chart: "c", Version: "1", Namespace: "n"}},
+		{"project", types.AddOnInstall{ID: "a", Mode: "managed", Project: payload, ChartRepo: "https://e.com", Chart: "c", Version: "1", Namespace: "n"}},
+		{"path", types.AddOnInstall{ID: "a", Mode: "managed", Source: "git", Path: payload, ChartRepo: "https://e.com", Version: "1", Namespace: "n"}},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			manifest, err := RenderAddOnApplication(tc.a)
+			if err != nil {
+				t.Fatalf("render: %v", err)
+			}
+
+			// ONE document. A `---` separator at the start of a line is the injection succeeding.
+			var docs int
+			dec := yaml.NewDecoder(strings.NewReader(manifest))
+			for {
+				var doc map[string]any
+				derr := dec.Decode(&doc)
+				if derr != nil {
+					break
+				}
+				docs++
+				if docs == 1 {
+					if doc["kind"] != "Application" {
+						t.Fatalf("first document is %v, not an Application:\n%s", doc["kind"], manifest)
+					}
+				}
+			}
+			if docs != 1 {
+				t.Fatalf("%s injection produced %d documents, want 1:\n%s", tc.field, docs, manifest)
+			}
+
+			// And the payload must have survived as DATA — proving the test is not passing because
+			// the value was silently dropped, which would be a different bug wearing this one's clothes.
+			if !strings.Contains(manifest, "pwn") {
+				t.Errorf("the payload vanished entirely; the field was dropped rather than escaped:\n%s", manifest)
+			}
+		})
 	}
 }
