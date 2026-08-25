@@ -19,6 +19,7 @@
 #   ALETHIA_E2E_PROOF_RUN_TAG       arg2 — e.g. nightly-<run_id>    (default: local-<stamp>)
 #   ALETHIA_E2E_PROOF_OUTCOME       success|failure|cancelled|…     (the T2 step's outcome)
 #   ALETHIA_E2E_T2_RUNNER_LOG       path to the runner process log  (the summary source)
+#   ALETHIA_E2E_T2_TEST_LOG         path to the go-test stream      (the assertions source)
 #   KUBECONFIG                      host kubeconfig for cluster state (optional; success path)
 #   ALETHIA_E2E_REGION / _CLUSTER   region + unique cluster name    (for the summary)
 #   ALETHIA_E2E_PROOF_START_EPOCH   epoch seconds at T2 start        (for the wall-clock)
@@ -103,6 +104,40 @@ if [ "$have_log" = 1 ]; then
 	grep -E 'Starting deployment|Applying OpenTofu|Apply complete!|Verification (gate|override)|Evidence receipt (signed|built)|Deployment completed|ArgoCD (installed|ready)|Destroy complete!|reachab|Ready' "$runner_log" 2>/dev/null \
 		| awk 'length($0) <= 2000' \
 		| scrub_stream >"$out/summary.txt" || true
+fi
+
+# ── assertions.txt — WHAT THE TEST ASSERTED, in the bundle rather than in an expiring log. ──
+#
+#    The first CI-captured bundle (hetzner/byo, 2026-08-25T175213Z) claimed a PASS whose only
+#    evidence was `--- PASS: TestT2RealCloudProvisioning` in the run log. That line was in no
+#    committed file: summary.txt is built from ALETHIA_E2E_T2_RUNNER_LOG, which is the RUNNER's
+#    deployment stream and carries no test output at all. Every numeric in provision-summary.json
+#    was 0 for that run because `cluster_live_at_capture` was false — the capture happens after
+#    teardown — so the verdicts read "(T2-asserted)" and the assertion itself lived only in a CI
+#    log on 30-day retention.
+#
+#    `bundleKind()` asks whether the bundle is a committed path that EXISTS, not whether it
+#    contains anything. So that row passes the mechanical check today and becomes unverifiable in
+#    a month — the same shape as the run-tag PASSes retracted in July, arriving through a door the
+#    check does not watch.
+#
+#    Highlights, not the whole stream, for the reason the summary block above learned the hard
+#    way: a committed bundle is not the place for a payload, and the raw log already has its own
+#    short-retention artifact. What goes in is the verdict line and the scenario DECISIONS —
+#    which cell was asserted, and which were skipped and why.
+if [ -n "${ALETHIA_E2E_T2_TEST_LOG:-}" ] && [ -r "${ALETHIA_E2E_T2_TEST_LOG}" ]; then
+	grep -E -- '--- (PASS|FAIL|SKIP): |^(ok|FAIL|PASS)\b|asserting ArgoCD Applications|A0\.[0-9]+[: ]|#(1773|1511|1268|2503): |soak [0-9]+s:|ArgoCD .*(Healthy|Synced)' \
+		"${ALETHIA_E2E_T2_TEST_LOG}" 2>/dev/null \
+		| awk 'length($0) <= 2000' \
+		| scrub_stream >"$out/assertions.txt" || true
+	# An EMPTY file is worse than none: it looks like a bundle that recorded nothing rather than a
+	# capture that found nothing, and this whole block exists because absence read as evidence.
+	if [ ! -s "$out/assertions.txt" ]; then
+		rm -f "$out/assertions.txt"
+		echo "capture-proof: WARNING — the go-test log matched no assertion lines; assertions.txt omitted rather than committed empty" >&2
+	fi
+else
+	echo "capture-proof: WARNING — ALETHIA_E2E_T2_TEST_LOG unset or unreadable; this bundle carries NO test assertions and its verdict cannot be checked from the tree" >&2
 fi
 
 # ── Cluster state — the honest "SUCCESS = a working cluster" evidence. BEST-EFFORT: the T2
