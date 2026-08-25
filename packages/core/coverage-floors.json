@@ -21,8 +21,8 @@
       "total": 622
     },
     "argocd": {
-      "covered": 1353,
-      "total": 1400
+      "covered": 1584,
+      "total": 1649
     },
     "assets": {
       "covered": 0,
