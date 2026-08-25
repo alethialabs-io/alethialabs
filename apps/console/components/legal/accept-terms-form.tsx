@@ -93,7 +93,7 @@ export function AcceptTermsForm({
 				<h1 className="text-xl font-medium">
 					{documents.length > 1 ? "Updated agreements" : "Our Terms have changed"}
 				</h1>
-				<p className="text-sm text-muted-foreground">
+				<p className="text-sm text-text-tertiary">
 					Read and accept to continue. Your work is untouched — nothing has been
 					removed and nothing expires while you decide.
 				</p>
@@ -110,7 +110,7 @@ export function AcceptTermsForm({
 						>
 							{doc.title}
 						</a>{" "}
-						<span className="text-muted-foreground">
+						<span className="text-text-tertiary">
 							(version {doc.version})
 						</span>
 					</li>
