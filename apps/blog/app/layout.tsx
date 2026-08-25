@@ -7,6 +7,7 @@ import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import type { ReactNode } from "react";
 import { Chrome } from "@repo/brand/site-chrome";
+import { ConsentProvider } from "@repo/brand/site-consent";
 import { SiteFooter } from "@repo/brand/site-footer";
 import { Header as SiteHeader } from "@repo/brand/site-header";
 
@@ -40,11 +41,25 @@ export default function RootLayout({ children }: { children: ReactNode }) {
 				{/* Matches apps/marketing: follow the OS, no switcher. It used to default
 				    to `light` while marketing defaulted to `dark`, so the theme flipped as
 				    soon as a visitor crossed from the site into the blog. */}
+				{/* The shared footer carries the consent control (PrivacySettingsButton →
+				    useConsent), which THROWS without a provider — so promoting the chrome to
+				    @repo/brand moved the footer into this app without the contract it depends on,
+				    and `/` stopped prerendering. Same reasoning as the theme comment above: one
+				    chrome across two zones means both zones owe it the same providers.
+
+				    Consent genuinely CROSSES here rather than being answered twice: the record is
+				    a host-only cookie at `Path=/` (packages/privacy/src/consent.ts), and the blog
+				    is the same host under `basePath: "/blog"` — so a choice made on the marketing
+				    site is already in effect on arrival. Imported from @repo/brand, which already
+				    depends on @repo/privacy, so this app does not take a second direct dependency
+				    for a contract its chrome brought with it. */}
 				<ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-					<Chrome />
-					<SiteHeader />
-					<main className="flex-1">{children}</main>
-					<SiteFooter />
+					<ConsentProvider>
+						<Chrome />
+						<SiteHeader />
+						<main className="flex-1">{children}</main>
+						<SiteFooter />
+					</ConsentProvider>
 				</ThemeProvider>
 			</body>
 		</html>
