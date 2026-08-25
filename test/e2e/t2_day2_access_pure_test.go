@@ -260,13 +260,14 @@ func TestDiagnoseArgoURLError(t *testing.T) {
 // diagnosis nobody reads. It must appear on the FAILING path and stay off the passing one.
 func TestAccessSummaryRendersTheDiagnosis(t *testing.T) {
 	bad := AccessSummary{
+		Enabled:        true, // without this accessSummaryVerdict short-circuits to "skipped"
 		ArgoURLChecked: true, ArgoURL: "https://argocd.x/", ArgoURLReachable: false,
 		ArgoURLDiagnosis: "dns-not-resolving: the hostname does not resolve",
 	}
 	if !strings.Contains(accessSummaryVerdict(bad), "dns-not-resolving") {
 		t.Errorf("the failing verdict must carry the diagnosis: %s", accessSummaryVerdict(bad))
 	}
-	good := AccessSummary{ArgoURLChecked: true, ArgoURL: "https://argocd.x/", ArgoURLReachable: true}
+	good := AccessSummary{Enabled: true, ArgoURLChecked: true, ArgoURL: "https://argocd.x/", ArgoURLReachable: true}
 	if strings.Contains(accessSummaryVerdict(good), "—") {
 		t.Errorf("a reachable URL must not render a diagnosis tail: %s", accessSummaryVerdict(good))
 	}
