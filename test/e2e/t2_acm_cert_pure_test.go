@@ -34,6 +34,16 @@ func TestAcmCertDecide(t *testing.T) {
 		{"azure is blocked with a reason", func(c *acmCertConfig) { c.provider = "azure" }, false, "cert-manager", ""},
 		{"hetzner is blocked", func(c *acmCertConfig) { c.provider = "hetzner" }, false, "no managed-certificate", ""},
 		{"full bar collides", func(c *acmCertConfig) { c.fullBar = true }, false, "", "cannot both be set"},
+		// #2630 withholds ALETHIA_E2E_ACM_CERT on a max-config dimension, which is right — the
+		// variable is set on every run and `full` sets MAX_CONFIG by definition, so the hard failure
+		// above made two of aws's five cells permanently unrunnable. But it lands in the `!enabled`
+		// branch, which was SILENT, and the fullBar arm refuses loudly precisely "because a silent
+		// skip here would look like the cert was proven on a night the full bar ran". Withheld is a
+		// third outcome, and it has to say so.
+		{"withheld on a max-config dimension is announced, not silent",
+			func(c *acmCertConfig) { c.enabled = false; c.fullBar = true }, false, "not attempted on a max-config dimension", ""},
+		{"...and it says the certificate was not proven, so an absence cannot read as a pass",
+			func(c *acmCertConfig) { c.enabled = false; c.fullBar = true }, false, "was NOT proven by this run", ""},
 		{"missing zone id fails", func(c *acmCertConfig) { c.zoneID = "" }, false, "", envAcmCertZoneID},
 		{"missing zone name fails", func(c *acmCertConfig) { c.zoneName = "" }, false, "", envAcmCertZoneName},
 		// #2566 finding 5. acmCertDomain falls back to the bare zone name when ALETHIA_E2E_ENV is
@@ -216,5 +226,27 @@ func TestAcmCertSummaryJSONStampsFeatureAndVerdict(t *testing.T) {
 	}
 	if got["verdict"] != "FAIL" {
 		t.Errorf("an empty summary must render FAIL, not blank — a missing verdict reads as green in the rollup; got %v", got["verdict"])
+	}
+}
+
+// TestAcmCertNotRequestedStaysSilent is deliberately NOT a row in the table above: that harness
+// asserts `if tc.wantBlocked != "" && !strings.Contains(...)`, so a row wanting the EMPTY string
+// skips its own assertion and passes whatever `decide()` returns. A case that cannot fail is worse
+// than no case, because it reads as coverage.
+//
+// The silence matters. Announcing on every floor night that a scenario nobody asked for did not run
+// trains the reader to skip the line — and that line is the one carrying the withheld notice when
+// max-config IS on.
+func TestAcmCertNotRequestedStaysSilent(t *testing.T) {
+	c := acmCertConfig{provider: "aws", enabled: false, fullBar: false}
+	run, blocked, err := c.decide()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if run {
+		t.Error("a scenario nobody requested must not run")
+	}
+	if blocked != "" {
+		t.Errorf("no max-config, no request — there is nothing to announce, got %q", blocked)
 	}
 }
