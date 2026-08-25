@@ -72,6 +72,18 @@ describeIfDb("orgHasSelfRunners — org scope on the service path", () => {
 					name: `it-rc-managed-${R_MANAGED.slice(0, 8)}`,
 					operator: "managed",
 					user_id: null,
+					// DELIBERATELY non-null, and production never produces this: managed runners are
+					// the shared platform pool and carry `org_id NULL` (programmables.sql — "Managed
+					// runners (org_id NULL, shared pool)"). Nothing constrains it today, and the
+					// fixture needs an org that owns a runner in order to isolate the OPERATOR axis
+					// — with org_id NULL this org would own nothing and the case would collapse into
+					// the org-predicate case above, testing one axis twice.
+					//
+					// Recorded because it is a real coupling: if a CHECK ((operator = 'managed') =
+					// (org_id IS NULL)) is ever added — the obvious companion to the existing
+					// runners_operator_owner_ck — this suite breaks in `beforeAll` and will look
+					// like a schema problem rather than a fixture that was always leaning on the
+					// absence of that constraint.
 					org_id: ORG_WITH_MANAGED_ONLY,
 					token_hash: `h-${R_MANAGED}`,
 					status: "ONLINE",
