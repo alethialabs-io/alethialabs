@@ -436,3 +436,23 @@ func TestByoAppProjectWhitelistIsEmptyNotNull(t *testing.T) {
 		t.Errorf("clusterResourceWhitelist rendered as null — a nil slice, not an empty one:\n%s", out)
 	}
 }
+
+// TestEncodeByoDocsReportsAMarshalFailure covers the encoder's defensive arm, which neither renderer
+// can reach: both hand it plain structs and maps, and a bytes.Buffer write does not fail.
+//
+// It is testable at all only because the encoding was factored out of the two renderers. Before
+// that there were two copies of the pair, four branches no test could enter — which is how a
+// change that merely MOVED them showed up as a coverage regression rather than as the simplification
+// it is. A channel is not marshallable, so this enters the arm honestly rather than by a stub.
+func TestEncodeByoDocsReportsAMarshalFailure(t *testing.T) {
+	out, err := encodeByoDocs("test", make(chan int))
+	if err == nil {
+		t.Fatalf("a value yaml.v3 cannot marshal must be reported, got %q", out)
+	}
+	if !strings.Contains(err.Error(), "render byo test") {
+		t.Errorf("the error must name what failed to render, got %v", err)
+	}
+	if out != "" {
+		t.Errorf("a failed render must return nothing, got %q", out)
+	}
+}

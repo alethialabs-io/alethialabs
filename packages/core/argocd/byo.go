@@ -87,6 +87,29 @@ type byoOrphanedResources struct {
 	Warn bool `yaml:"warn"`
 }
 
+// encodeByoDocs marshals one or more documents into a single YAML stream at the indent this
+// package uses everywhere.
+//
+// Shared by BOTH byo renderers rather than written out twice. Beyond the duplication, the encoder's
+// two error arms are not reachable from either caller — a bytes.Buffer write does not fail and the
+// values are plain structs and maps — so having a copy per renderer meant four defensive branches no
+// test can enter. One copy is one pair, and it is the pair that would actually catch a future value
+// yaml.v3 refuses to marshal.
+func encodeByoDocs(what string, docs ...any) (string, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	for _, d := range docs {
+		if err := enc.Encode(d); err != nil {
+			return "", fmt.Errorf("render byo %s: %w", what, err)
+		}
+	}
+	if err := enc.Close(); err != nil {
+		return "", fmt.Errorf("render byo %s: %w", what, err)
+	}
+	return buf.String(), nil
+}
+
 // byoRepoUnsafe rejects the injection vector WITHOUT pretending to be a URL parser.
 //
 // Deliberately not a URL allowlist. BYO chart repos legitimately arrive as `https://`, `ssh://`,
@@ -163,16 +186,11 @@ func RenderByoAppProject(name string, sourceRepos, namespaces []string, commonLa
 		},
 	}
 
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(proj); err != nil {
-		return "", fmt.Errorf("render byo AppProject: %w", err)
+	rendered, err := encodeByoDocs("AppProject", proj)
+	if err != nil {
+		return "", err
 	}
-	if err := enc.Close(); err != nil {
-		return "", fmt.Errorf("render byo AppProject: %w", err)
-	}
-	labeled, err := InjectCommonLabels(buf.String(), commonLabels)
+	labeled, err := InjectCommonLabels(rendered, commonLabels)
 	if err != nil {
 		return "", fmt.Errorf("label byo AppProject: %w", err)
 	}
@@ -265,29 +283,23 @@ func RenderByoNamespaces(namespaces []string, commonLabels map[string]string) (s
 		labels[k] = v
 	}
 
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
+	// Validate EVERY namespace before encoding any: a refusal must render nothing at all, not a
+	// partial stream that happens to stop at the bad one.
+	docs := make([]any, 0, len(ns))
 	for _, n := range ns {
 		if err := validateByoNamespace(n); err != nil {
 			return "", fmt.Errorf("render byo namespaces: %w", err)
 		}
-		doc := map[string]any{
+		docs = append(docs, map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Namespace",
 			"metadata": map[string]any{
 				"name":   n,
 				"labels": labels,
 			},
-		}
-		if err := enc.Encode(doc); err != nil {
-			return "", fmt.Errorf("render byo namespaces: %w", err)
-		}
+		})
 	}
-	if err := enc.Close(); err != nil {
-		return "", fmt.Errorf("render byo namespaces: %w", err)
-	}
-	return buf.String(), nil
+	return encodeByoDocs("namespaces", docs...)
 }
 
 // ByoRepoSecretName is the deterministic ArgoCD repository-Secret name for a BYO chart repo:
