@@ -738,6 +738,17 @@ jobs:
         run: |
           node scripts/check-e2e-spend-guard.mjs --self-test
           node scripts/check-e2e-spend-guard.mjs
+      # hcloud-cloud-controller-manager refuses to create a Load Balancer unless it is told WHERE.
+      # The hetzner template told it nothing, so every `type: LoadBalancer` Service sat Pending —
+      # SILENTLY, because a pending Service logs no error anyone surfaces. That silence is what let
+      # it become #2490: no LB → the ingress-nginx Service never goes healthy → ArgoCD never reaches
+      # PostSync → the admission webhook's caBundle is never patched → every Ingress fails x509.
+      # The symptom names none of its cause, so a comment in the template would not have survived;
+      # dropping the location re-arms the whole chain. Hermetic — parses one .tf, no cloud.
+      - name: Hetzner CCM has somewhere to put a Load Balancer
+        run: |
+          node scripts/check-hetzner-lb-location.mjs --self-test
+          node scripts/check-hetzner-lb-location.mjs
       # The proof-bundle scrub decides what a PUBLIC repo publishes, and its only run was inside
       # e2e-nightly.yml — a workflow no PR triggers. So the change that made the tripwire fire on
       # every azure plan JSON could not have been caught before merge, and wasn't: azure lost its
