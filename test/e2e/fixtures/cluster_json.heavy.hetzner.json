@@ -1,5 +1,5 @@
 {
-  "instance_types": ["cx33"],
+  "instance_types": ["cpx32"],
   "node_size": { "vcpu": 4, "memory_gb": 8 },
   "node_min_size": 6,
   "node_max_size": 6,
