@@ -53,17 +53,28 @@ export default defineConfig({
 				"lib/db/seed/**",
 				"**/*.config.*",
 				"tests/**",
-				// Mid-refactor: the spec→project rework is in flight, so the legacy spec/zone/
-				// scanner surface + the design canvas store are excluded from the coverage scope
-				// (the same skip we apply to their tests) until the new project model settles.
-				// Re-include + cover once the refactor lands.
-				"lib/scanner/**",
-				"lib/stores/use-canvas-store.ts",
+				// WAS: "Mid-refactor: the spec→project rework is in flight … the same skip we apply
+				// to their tests … re-include + cover once the refactor lands."
+				//
+				// The refactor landed. `app/server/actions/specs.ts` and `.../zones.ts` were
+				// deleted by 18f6b55e on 2026-06-30 — so two of these globs had been excluding
+				// NOTHING for eight weeks, which is why an exclusion that matches zero files has
+				// to be an error rather than a shrug.
+				//
+				// And the parenthetical was never true. `tests/lib/scanner/{schema,
+				// suggest-bindings,to-project,to-project-services}.test.ts` and
+				// `tests/lib/stores/use-canvas-store-{containers,keyless}.test.ts` are not
+				// skipped — they run on every PR, importing `@/lib/scanner/*` and
+				// `@/lib/stores/use-canvas-store` directly. Their coverage was being computed by
+				// v8 and then discarded by this scope. So the badge was not merely excluding
+				// untested code; it was throwing away tests that were already passing.
+				//
+				// `lib/scanner/**` and `use-canvas-store.ts` are therefore re-included here. The
+				// three that follow have no naming test and are handled separately, so that this
+				// change and that one move the number for visibly different reasons.
 				"lib/ai/tools/scanner.ts",
 				"app/server/actions/scanner.ts",
 				"app/server/actions/clusters.ts",
-				"app/server/actions/specs.ts",
-				"app/server/actions/zones.ts",
 				// Real-SQL modules verified by the integration tier (tests/integration/*, real
 				// Postgres) — mocked unit tests can't exercise their WHERE/joins/CTEs, so they're
 				// scoped to that tier and excluded from the unit badge (same tier-separation as
