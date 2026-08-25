@@ -1,0 +1,112 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Validate console build
+
+# Actually BUILD the box images on a PR that touches them — the check that was missing.
+#
+# deploy-console.yml is the ONLY workflow that builds apps/console/Dockerfile, and it triggers on
+# `push: branches: [main]`. So the image build was exercised for the first time AFTER the promotion
+# merge had already landed, and none of the ten required checks on `protect-main` builds an image at
+# all. A regression that only manifests in the image was therefore undetectable until main was
+# already broken, and main then stayed broken until someone read a buildx log.
+#
+# That is not hypothetical. #1711 (2026-07-30) put a MARKETING test under apps/console reaching
+# across with `../../../marketing/proxy`. apps/console/tsconfig.json includes `**/*.ts`, so the test
+# joined the console's type-check program and dragged apps/marketing/proxy.ts in with it — and
+# apps/console/Dockerfile installs `--filter console... --filter @alethia/ee`, which does not
+# include marketing, so `next/server` did not resolve inside the image: TS2307. CI stayed green the
+# whole time because ci.yml runs a FULL `pnpm install`, where marketing's `next` is present. Same
+# code, different install graph. Production shipped nothing for 26 days.
+#
+# This is the counterpart to validate-runner.yml, which closed exactly this gap for the runner image
+# and was never extended to the console. Build-only: nothing is pushed, no registry login.
+#
+# Deliberately NO secrets. The console build's source-map upload is non-fatal on a missing or dead
+# key (apps/console/next.config.ts, #2509), so this both works without one AND regression-tests that
+# guard on every PR — a PR that makes the upload fatal again turns this job red.
+#
+# ── Why there is no `paths:` filter and no job-level `if:` ────────────────────────────────────────
+# This check is meant to be REQUIRED on dev/staging/main. A workflow that is filtered out does not
+# report its status context at all, and a required context that never reports wedges every PR that
+# does not touch those paths. So the job always runs and self-gates its STEPS on the path filter,
+# reporting green in seconds when nothing relevant changed — the same shape ci.yml's docs-prose job
+# uses, and for the same reason (see infra/github/variables.tf).
+#
+# It is also ONE job rather than a build matrix: a matrix reports one context per leg, with the leg
+# name in it, and each would have to be listed in `required_status_checks` separately. One job means
+# one stable context to require. The builds are sequential for the same reason validate-runner.yml's
+# are — correctness of the gate over a few minutes of wall clock.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-console:
+    name: Build console images (no push)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same path set deploy-console.yml's `changes` job uses for its `apps` group, plus the
+      # lockfile and this workflow (so an edit to the build steps self-tests).
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            apps:
+              - 'apps/console/**'
+              - 'apps/marketing/**'
+              - 'apps/admin/**'
+              - 'apps/docs/**'
+              - 'apps/blog/**'
+              - 'packages/**'
+              - 'ee/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/workflows/validate-console.yml'
+
+      - name: Nothing to build
+        if: steps.filter.outputs.apps != 'true'
+        run: echo "No console-affecting paths changed — nothing to build."
+
+      - uses: docker/setup-buildx-action@v4
+        if: steps.filter.outputs.apps == 'true'
+
+      # The console image is built for BOTH targets. They share the Dockerfile's `build` stage,
+      # which is where the failure actually lives, but deploy-console.yml builds them as separate
+      # images, so they are proved separately here. Dockerfile.community repeats the same pruned
+      # `--filter console...` install and therefore has the same failure mode.
+      #
+      # `--load` is deliberately absent: nothing needs the image locally, and skipping the export
+      # saves both time and disk. A failed build still fails the step.
+      - name: Build the box images (no push)
+        if: steps.filter.outputs.apps == 'true'
+        env:
+          VERSION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          build() {
+            local name="$1" file="$2" target="${3:-}"
+            echo "::group::build ${name}"
+            if [ -n "$target" ]; then
+              docker build -f "$file" --target "$target" --build-arg VERSION="$VERSION" -t "validate-${name}:pr" .
+            else
+              docker build -f "$file" --build-arg VERSION="$VERSION" -t "validate-${name}:pr" .
+            fi
+            echo "::endgroup::"
+            # Reclaim before the next image: seven Next.js images do not fit on a hosted runner.
+            docker image rm "validate-${name}:pr" >/dev/null 2>&1 || true
+          }
+
+          build console-runner   apps/console/Dockerfile           runner
+          build console-migrate  apps/console/Dockerfile           migrate
+          build console-community apps/console/Dockerfile.community
+          build marketing        apps/marketing/Dockerfile
+          build admin            apps/admin/Dockerfile
+          build docs             apps/docs/Dockerfile
+          build blog             apps/blog/Dockerfile
