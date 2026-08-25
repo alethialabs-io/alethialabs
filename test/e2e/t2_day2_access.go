@@ -120,6 +120,13 @@ type AccessSummary struct {
 	ArgoURLChecked   bool   `json:"argocd_url_checked"`
 	ArgoURL          string `json:"argocd_url"`
 	ArgoURLReachable bool   `json:"argocd_url_reachable"`
+	// ArgoURLDiagnosis is WHY an unreachable URL was unreachable, and it is the difference
+	// between one run and two. #2591 recorded `argocd-url reachable=false` and nothing else,
+	// which left "the DNS record was never written" and "the record is written and the ALB is
+	// still coming up" indistinguishable — two different bugs with two different fixes, and the
+	// only proposed discriminator was another paid run. The last probe error already existed
+	// inside probeArgoURL; it simply never reached the summary. Empty on the reachable path.
+	ArgoURLDiagnosis string `json:"argocd_url_diagnosis,omitempty"`
 	Verdict          string `json:"verdict"`
 }
 
@@ -152,6 +159,9 @@ func accessSummaryVerdict(s AccessSummary) string {
 	argo := "argocd-url: n/a (no ingress on this cloud yet — access via port-forward)"
 	if s.ArgoURLChecked {
 		argo = fmt.Sprintf("argocd-url reachable=%t (%s)", s.ArgoURLReachable, s.ArgoURL)
+		if !s.ArgoURLReachable && s.ArgoURLDiagnosis != "" {
+			argo += " — " + s.ArgoURLDiagnosis
+		}
 	}
 	return fmt.Sprintf("%s day2-access: endpoint surfaced=%t · kube reachable=%t authorized=%t (can-i %s) · nodes ready=%d · %s",
 		icon, s.EndpointSurfaced, s.KubeReachable, s.KubeAuthorized, s.AuthAction, s.ReadyNodes, argo)
@@ -285,29 +295,82 @@ func probeReadyNodes(ctx context.Context, kubeconfigPath string) (int, error) {
 	return n, nil
 }
 
+// diagnoseArgoURLError names WHY a URL probe failed, in the vocabulary of the thing that has to be
+// fixed. It is PURE — a string classifier over the last error — so it is tested without a network.
+//
+// The point is to make one run answer the question two runs were about to be spent on (#2591):
+//
+//	dns-not-resolving   the hostname does not resolve at all. external-dns never wrote the
+//	                    record, or the zone is not the one being queried. NOT a timing problem;
+//	                    waiting longer will not fix it.
+//	connect-refused     it resolves, and nothing is listening. The record points at a load
+//	                    balancer that is not serving yet — this IS a timing problem.
+//	timeout             it resolves and the connection hangs. Typically a security group or an
+//	                    ALB still registering targets; also a timing problem, different cause.
+//	tls                 the connection is made and the certificate is rejected. The ACM
+//	                    certificate is not attached to the listener, or does not cover the name.
+//	http-<code>         it answered, and the answer was not one evaluateArgoURLStatus accepts.
+//
+// The default is UNCLASSIFIED and carries the error verbatim. A classifier that silently folded
+// an unrecognised failure into the nearest known bucket would be worse than no classifier: the
+// whole value here is that the label can be trusted to mean what it says.
+func diagnoseArgoURLError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "no such host"), strings.Contains(msg, "server misbehaving"),
+		strings.Contains(msg, "NXDOMAIN"):
+		return "dns-not-resolving: the hostname does not resolve — external-dns has not written the record (waiting longer will NOT fix this)"
+	case strings.Contains(msg, "connection refused"):
+		return "connect-refused: the name resolves but nothing is listening — the target is not serving yet (a timing problem)"
+	case strings.Contains(msg, "certificate"), strings.Contains(msg, "tls:"),
+		strings.Contains(msg, "x509"):
+		return "tls: the connection was made and the certificate was rejected — the ACM certificate is not attached to the listener, or does not cover this name"
+	case strings.Contains(msg, "context deadline exceeded"), strings.Contains(msg, "i/o timeout"),
+		strings.Contains(msg, "Client.Timeout"):
+		return "timeout: the name resolves and the connection hangs — typically a security group, or an ALB still registering targets (a timing problem)"
+	// Mirrors evaluateArgoURLStatus's OWN wording. Matching a phrase the emitter never
+	// produces is how a classifier reports UNCLASSIFIED for the one case it was written for,
+	// so the test builds this error by CALLING that function rather than retyping its text.
+	case strings.Contains(msg, "ArgoCD URL returned status"):
+		return "http: the URL answered, and the status was not one the check accepts — " + msg
+	default:
+		return "UNCLASSIFIED: " + msg
+	}
+}
+
 // probeArgoURL bounded-polls an HTTP GET of the ArgoCD URL until it RESOLVES (200 or a login
 // redirect), or the timeout elapses. Redirects are NOT followed — a 3xx to /login is itself
 // the reachability signal. Only meaningful where an ingress exists (AWS today).
-func probeArgoURL(ctx context.Context, url string, timeout time.Duration) (bool, error) {
+func probeArgoURL(ctx context.Context, url string, timeout time.Duration) (ok bool, diagnosis string, err error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
+	attempts := 0
 	for {
-		code, err := httpGetStatus(ctx, url)
-		if err == nil {
+		attempts++
+		code, gerr := httpGetStatus(ctx, url)
+		if gerr == nil {
 			if verr := evaluateArgoURLStatus(code); verr == nil {
-				return true, nil
+				return true, "", nil
 			} else {
 				lastErr = verr
 			}
 		} else {
-			lastErr = err
+			lastErr = gerr
 		}
 		if time.Now().After(deadline) {
-			return false, fmt.Errorf("ArgoCD URL %s did not resolve within %s: %v", url, timeout, lastErr)
+			// The attempt count is part of the evidence: "unreachable after 1 attempt" and
+			// "unreachable after 36" say different things about whether the budget was the
+			// binding constraint.
+			d := fmt.Sprintf("%s (after %d attempt(s) over %s)", diagnoseArgoURLError(lastErr), attempts, timeout)
+			return false, d, fmt.Errorf("ArgoCD URL %s did not resolve within %s: %v", url, timeout, lastErr)
 		}
 		select {
 		case <-ctx.Done():
-			return false, fmt.Errorf("context cancelled during ArgoCD URL probe (%v); last: %v", ctx.Err(), lastErr)
+			d := fmt.Sprintf("%s (probe cancelled after %d attempt(s): %v)", diagnoseArgoURLError(lastErr), attempts, ctx.Err())
+			return false, d, fmt.Errorf("context cancelled during ArgoCD URL probe (%v); last: %v", ctx.Err(), lastErr)
 		case <-time.After(day2PollInterval):
 		}
 	}

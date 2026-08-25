@@ -9,6 +9,7 @@
 package e2e
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -191,5 +192,83 @@ func TestDay2AccessTimeout(t *testing.T) {
 	t.Setenv("ALETHIA_E2E_DAY2_ACCESS_TIMEOUT", "soon")
 	if d := Day2AccessTimeout(); d != 3*time.Minute {
 		t.Fatalf("garbage timeout = %v, want the 3m default", d)
+	}
+}
+
+// TestDiagnoseArgoURLError pins the classifier that makes ONE run answer #2591's question.
+//
+// The run that woke this path recorded `argocd-url reachable=false` and nothing more, which left
+// two different bugs — "external-dns never wrote the record" and "the ALB is still coming up" —
+// indistinguishable, with a second paid run proposed as the discriminator. Each label below names
+// a different fix, so the labels have to be trustworthy.
+func TestDiagnoseArgoURLError(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		wantHas string
+		// wantTiming records whether the label claims waiting longer could help. Getting this
+		// backwards is the expensive mistake: it sends the next run at the wrong budget.
+		wantTiming bool
+	}{
+		{"NXDOMAIN", errors.New(`Get "https://argocd.x.e2e.alethialabs.io": dial tcp: lookup argocd.x.e2e.alethialabs.io: no such host`), "dns-not-resolving", false},
+		{"connection refused", errors.New("dial tcp 10.0.0.1:443: connect: connection refused"), "connect-refused", true},
+		{"i/o timeout", errors.New("dial tcp 10.0.0.1:443: i/o timeout"), "timeout", true},
+		{"client timeout", errors.New("context deadline exceeded (Client.Timeout exceeded while awaiting headers)"), "timeout", true},
+		{"bad certificate", errors.New(`tls: failed to verify certificate: x509: certificate signed by unknown authority`), "tls", false},
+		// Built by CALLING the emitter, never by retyping its wording: the first draft of this
+		// classifier matched a phrase evaluateArgoURLStatus does not produce, so the one case it
+		// was written for would have come back UNCLASSIFIED.
+		{"an unexpected status", evaluateArgoURLStatus(503), "http", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := diagnoseArgoURLError(tc.err)
+			if !strings.Contains(got, tc.wantHas) {
+				t.Fatalf("diagnosis %q does not name %q", got, tc.wantHas)
+			}
+			if strings.Contains(got, "UNCLASSIFIED") {
+				t.Errorf("a known failure fell through to UNCLASSIFIED: %q", got)
+			}
+			isTiming := strings.Contains(got, "a timing problem")
+			if isTiming != tc.wantTiming {
+				t.Errorf("timing claim = %v, want %v — this decides the next run's budget\ngot: %s", isTiming, tc.wantTiming, got)
+			}
+		})
+	}
+
+	t.Run("nil is empty, not a diagnosis", func(t *testing.T) {
+		if got := diagnoseArgoURLError(nil); got != "" {
+			t.Errorf("a reachable probe must carry no diagnosis, got %q", got)
+		}
+	})
+
+	t.Run("an unrecognised failure is UNCLASSIFIED and keeps the text", func(t *testing.T) {
+		// Deliberately NOT folded into the nearest bucket. The whole value of a label is that
+		// it can be trusted to mean what it says; a classifier that guesses destroys that for
+		// every other label too.
+		got := diagnoseArgoURLError(errors.New("something nobody has seen before"))
+		if !strings.HasPrefix(got, "UNCLASSIFIED: ") {
+			t.Errorf("want an UNCLASSIFIED prefix, got %q", got)
+		}
+		if !strings.Contains(got, "something nobody has seen before") {
+			t.Errorf("the original error must survive verbatim, got %q", got)
+		}
+	})
+}
+
+// TestAccessSummaryRendersTheDiagnosis — a diagnosis that never reaches the summary line is a
+// diagnosis nobody reads. It must appear on the FAILING path and stay off the passing one.
+func TestAccessSummaryRendersTheDiagnosis(t *testing.T) {
+	bad := AccessSummary{
+		Enabled:        true, // without this accessSummaryVerdict short-circuits to "skipped"
+		ArgoURLChecked: true, ArgoURL: "https://argocd.x/", ArgoURLReachable: false,
+		ArgoURLDiagnosis: "dns-not-resolving: the hostname does not resolve",
+	}
+	if !strings.Contains(accessSummaryVerdict(bad), "dns-not-resolving") {
+		t.Errorf("the failing verdict must carry the diagnosis: %s", accessSummaryVerdict(bad))
+	}
+	good := AccessSummary{Enabled: true, ArgoURLChecked: true, ArgoURL: "https://argocd.x/", ArgoURLReachable: true}
+	if strings.Contains(accessSummaryVerdict(good), "—") {
+		t.Errorf("a reachable URL must not render a diagnosis tail: %s", accessSummaryVerdict(good))
 	}
 }
