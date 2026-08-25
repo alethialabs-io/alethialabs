@@ -295,3 +295,38 @@ func TestWaitAdmissionWebhooksServableOnAnEmptyCluster(t *testing.T) {
 		t.Errorf("the success line must distinguish an empty cluster from a checked one, got %q", out.String())
 	}
 }
+
+// TestWaitAdmissionWebhooksServableOnAnUnreadableAnswer — kubectl SUCCEEDING with a body that does
+// not decode is a different failure from kubectl failing, and both must be reported rather than
+// read as "no webhooks found". A cluster whose answer we cannot parse has not been checked.
+func TestWaitAdmissionWebhooksServableOnAnUnreadableAnswer(t *testing.T) {
+	stubKubectl(t, func(string) (string, error) { return "Unable to connect to the server", nil })
+
+	err := WaitAdmissionWebhooksServable(newWebhookWaitBudget(), io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("a webhook list that does not decode must be reported, not treated as an empty cluster")
+	}
+	if !strings.Contains(err.Error(), "could not read admission webhook configurations") {
+		t.Errorf("want the read failure named, got %q", err)
+	}
+}
+
+// TestWaitAdmissionWebhooksServableOnAnUnreadableEndpointsAnswer — the same distinction one level
+// down. An Endpoints body that does not decode is "we could not tell", not "not ready": folding it
+// into the not-ready branch would burn the whole budget on a parse bug and blame the cluster.
+func TestWaitAdmissionWebhooksServableOnAnUnreadableEndpointsAnswer(t *testing.T) {
+	stubKubectl(t, func(cmd string) (string, error) {
+		if strings.Contains(cmd, "endpoints") {
+			return "NAME  ENDPOINTS  AGE", nil // -o json ignored / plain table came back
+		}
+		return ingressNginxPatched, nil
+	})
+
+	err := WaitAdmissionWebhooksServable(newWebhookWaitBudget(), io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("an undecodable endpoints body must be reported")
+	}
+	if !strings.Contains(err.Error(), "could not read webhook backing endpoints") {
+		t.Errorf("want the endpoints read failure named, got %q", err)
+	}
+}
