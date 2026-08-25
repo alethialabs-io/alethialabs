@@ -153,6 +153,12 @@ export async function getScanProposal(jobId: string): Promise<
 		inputTokens: inferred.inputTokens,
 		outputTokens: inferred.outputTokens,
 		cachedInputTokens: inferred.cachedInputTokens,
+	}).catch((err: unknown) => {
+		// Metering must never break an AI call — that is why it is fire-and-forget. But
+		// recordAiUsage has no internal try/catch, so without this a failed write is an
+		// UNHANDLED rejection AND silently strands the provisional hold this turn reserved,
+		// which assertAiAllowed's own contract says must never leak. Logged, not swallowed.
+		console.error("[ai-quota] metering write failed; a budget hold may be stranded", err);
 	});
 
 	const identities = await getVerifiedCloudIdentities();
@@ -225,6 +231,12 @@ export async function getMergedScanProposal(jobIds: string[]): Promise<
 			inputTokens: inferred.inputTokens,
 			outputTokens: inferred.outputTokens,
 			cachedInputTokens: inferred.cachedInputTokens,
+		}).catch((err: unknown) => {
+			// Metering must never break an AI call — that is why it is fire-and-forget. But
+			// recordAiUsage has no internal try/catch, so without this a failed write is an
+			// UNHANDLED rejection AND silently strands the provisional hold this turn reserved,
+			// which assertAiAllowed's own contract says must never leak. Logged, not swallowed.
+			console.error("[ai-quota] metering write failed; a budget hold may be stranded", err);
 		});
 		inputs.push({ stack: inferred.stack, repoUrl, ref, services: digest.services });
 	}
