@@ -48,8 +48,10 @@ type NormalizedResource struct {
 	Reason     NormalizedReason `json:"reason"`
 }
 
-// verdict is the outcome of examining one drift entry. Kind is meaningful when Drift
-// is true; Reason and Attributes when it is false.
+// verdict is the outcome of examining one drift entry. Kind is meaningful when Drift is
+// true; Reason when it is false. Attributes is meaningful in BOTH directions — the paths
+// that differed, whether they were dismissed or kept — and is empty only when the verdict
+// was reached before the leaves could be computed.
 type verdict struct {
 	Drift      bool
 	Kind       Kind
@@ -99,6 +101,17 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex) verdict {
 	// fires. Missing evidence must never widen what we dismiss.
 	declared, addrFound := cfg[tfaddr.ConfigAddress(rc.Address)]
 	configKnown := cfg != nil && addrFound
+
+	// Every differing leaf path, computed BEFORE the dismissal loop so the drift branch can
+	// name them too. A resource that stays drift is the case somebody has to diagnose, and
+	// naming only the resource makes that a cloud round-trip (#2503): the addresses were
+	// known and the attributes were not, so "provider hydration" stayed a hypothesis.
+	all := make([]string, 0, len(leaves))
+	for _, d := range leaves {
+		all = append(all, d.path)
+	}
+	sort.Strings(all)
+	asDrift.Attributes = all
 
 	// Report the WEAKEST justification used, not the strongest: a resource dismissed
 	// partly on the config-aware tier is recorded as such, so the audit trail never

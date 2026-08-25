@@ -377,6 +377,63 @@ func TestTableF_NoAttributeValuesEverLeak(t *testing.T) {
 	}
 }
 
+// ── Table F2 — a KEPT resource names its attributes, on the same terms ───────────────
+//
+// Attributes used to be populated only on the dismissal path, so a resource the detector
+// KEPT named itself and nothing else. That is backwards: the dismissed ones need no
+// diagnosis and the kept ones are the entire reason somebody opens the report. #2503 is
+// what it cost — five hetzner/talos resources reported as drifted with no way to see WHICH
+// fields moved, so "provider hydration" stayed a hypothesis that would have needed a live
+// cluster to settle.
+func TestTableF2_KeptResourceNamesItsAttributes(t *testing.T) {
+	// A scalar hydration (null -> 0) that no tier forgives, alongside a collection delta
+	// that tier 1 WOULD forgive on its own. All-or-nothing keeps the resource as drift,
+	// and both paths must be named — reporting only the un-forgivable one would describe
+	// a resource nobody could reconcile against the plan.
+	rc := updateDrift("hcloud_server.cp", "hcloud_server",
+		map[string]any{"placement_group_id": nil, "network": []any{map[string]any{"alias_ips": nil}}},
+		map[string]any{"placement_group_id": 0, "network": []any{map[string]any{"alias_ips": []any{}}}})
+
+	p := Analyze(planWithConfig(nil, rc))
+	assertDrift(t, p, true, "")
+
+	got := p.Details[0].Attributes
+	want := []string{"network[0].alias_ips", "placement_group_id"}
+	if len(got) != len(want) {
+		t.Fatalf("Attributes = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Attributes = %v, want %v (sorted)", got, want)
+		}
+	}
+}
+
+// The value-leak guarantee is not weaker on the drift path than on the dismissal path.
+// Table F pins it for a resource that was dismissed; this pins the branch that only
+// started carrying attributes when Details gained them. Plan JSON values are plaintext
+// secrets and this shape reaches the job log, execution_metadata and Postgres.
+func TestTableF2_NoValuesLeakOnTheDriftPath(t *testing.T) {
+	const sentinel = "S3CRET-DO-NOT-LEAK"
+	rc := updateDrift("hcloud_server.cp", "hcloud_server",
+		map[string]any{"backup_window": nil, "note": sentinel},
+		map[string]any{"backup_window": "", "note": sentinel})
+
+	p := Analyze(planWithConfig(nil, rc))
+	assertDrift(t, p, true, "")
+
+	if len(p.Details[0].Attributes) == 0 {
+		t.Fatal("the drift path must name its attributes — otherwise this test proves nothing")
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal posture: %v", err)
+	}
+	if strings.Contains(string(b), sentinel) {
+		t.Errorf("an attribute VALUE leaked into the posture via the drift path: %s", b)
+	}
+}
+
 // ── Table G — regression pin ─────────────────────────────────────────────────────────
 
 // TestTableG_ExistingFixtureUnchanged pins the two hand-written fixtures. drifted.json's
