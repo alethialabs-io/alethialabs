@@ -5,10 +5,13 @@
 // Per-environment protection rules (Phase 2). Read/write the toggleable gates that guard promotions
 // into an environment. Evaluated by lib/promotions/gates.ts when a promotion's PLAN completes.
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { authorize } from "@/lib/authz/guard";
 import { withActorScope } from "@/lib/db";
 import { environmentProtectionRules } from "@/lib/db/schema";
+// Lives outside this module on purpose: every export of a `"use server"` file is a callable server
+// action, so a security helper exported from here to make it testable would widen the RPC surface.
+import { assertEnvInProject } from "@/lib/promotions/env-ownership";
 import type { ApproverSpec } from "@/types/jsonb.types";
 
 /** The editable protection-rule fields for an environment. */
@@ -27,10 +30,18 @@ export interface ProtectionRulesInput {
 export async function getProtectionRules(projectId: string, envId: string) {
 	const actor = await authorize("view", { type: "project", id: projectId });
 	return withActorScope(actor, async (tx) => {
+		await assertEnvInProject(tx, projectId, envId);
 		const [row] = await tx
 			.select()
 			.from(environmentProtectionRules)
-			.where(eq(environmentProtectionRules.environment_id, envId))
+			.where(
+				and(
+					eq(environmentProtectionRules.environment_id, envId),
+					// Belt and braces alongside assertEnvInProject: the row carries project_id, so
+					// the read is scoped by the same id the caller was authorized against.
+					eq(environmentProtectionRules.project_id, projectId),
+				),
+			)
 			.limit(1);
 		return row ?? null;
 	});
@@ -89,6 +100,7 @@ export async function setProtectionRules(
 		cost_delta_threshold: input.cost_delta_threshold,
 	};
 	return withActorScope(actor, async (tx) => {
+		await assertEnvInProject(tx, projectId, envId);
 		const [row] = await tx
 			.insert(environmentProtectionRules)
 			.values({
@@ -101,8 +113,24 @@ export async function setProtectionRules(
 			.onConflictDoUpdate({
 				target: environmentProtectionRules.environment_id,
 				set: { ...fields, updated_at: new Date() },
+				// `setWhere` makes the write STRUCTURALLY unable to cross projects, rather than
+				// merely checked. assertEnvInProject above already refuses a foreign environment —
+				// but that leaves the higher-severity path standing on one line at the top of a
+				// callback that does nothing visible on the happy path, which is exactly the kind of
+				// line a later refactor moves or drops. With this predicate, a conflicting row
+				// belonging to ANOTHER project updates ZERO rows and `.returning()` yields nothing:
+				// a distinguishable failure instead of a silent overwrite.
+				//
+				// It matters more than usual here because the suite that proves the check inherits
+				// `describeIfDb` (#2669), which turns an unreachable Postgres into a silent green. A
+				// predicate in the statement holds whether or not the test ran.
+				setWhere: eq(environmentProtectionRules.project_id, projectId),
 			})
 			.returning();
+		// A foreign environment is already refused above; this is the second wall. If `setWhere`
+		// filtered the update out, `.returning()` is empty — surface that instead of handing back
+		// `undefined` as though nothing had been asked for.
+		if (!row) throw new Error("Unknown environment for this project");
 		return row;
 	});
 }
