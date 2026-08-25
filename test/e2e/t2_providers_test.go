@@ -65,7 +65,7 @@ func TestT2ProviderTableComplete(t *testing.T) {
 		"hetzner": {"nbg1", "8m", 25 * time.Minute},
 		"aws":     {"us-east-1", "15m", 50 * time.Minute},
 		"gcp":     {"europe-west3-a", "15m", 50 * time.Minute},
-		"azure":   {"germanywestcentral", "15m", 50 * time.Minute},
+		"azure":   {"westeurope", "15m", 50 * time.Minute},
 		"alibaba": {"eu-central-1", "15m", 50 * time.Minute},
 	}
 	if len(t2ProviderTable) != len(want) {
@@ -231,7 +231,7 @@ func TestT2ResolveRegion(t *testing.T) {
 		{"aws override", "aws", map[string]string{"ALETHIA_E2E_REGION": "eu-west-2"}, "eu-west-2"},
 		{"aws ignores legacy hcloud name", "aws", map[string]string{"ALETHIA_E2E_HCLOUD_REGION": "fsn1"}, "us-east-1"},
 		{"gcp default", "gcp", nil, "europe-west3-a"},
-		{"azure default", "azure", nil, "germanywestcentral"},
+		{"azure default", "azure", nil, "westeurope"},
 		{"alibaba override", "alibaba", map[string]string{"ALETHIA_E2E_REGION": "ap-southeast-1"}, "ap-southeast-1"},
 	}
 	for _, tc := range cases {

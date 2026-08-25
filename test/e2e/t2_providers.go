@@ -108,8 +108,25 @@ var t2ProviderTable = map[string]t2Provider{
 	// Azure AKS. The azurerm provider authenticates from the ARM_* service-principal /
 	// federated-identity triple.
 	"azure": {
-		name:                "azure",
-		defaultRegion:       "germanywestcentral",
+		name: "azure",
+		// westeurope, NOT germanywestcentral — the region cannot host the product's data services.
+		//
+		// The first azure full bar (32836351919) failed on two of them at once, and both are the
+		// region rather than our configuration. Measured with `az`, per region:
+		//
+		//   az postgres flexible-server list-skus -l <region>  →  supportedServerVersions
+		//     westeurope 8 · northeurope 8 · germanywestcentral 0 · eastus 0
+		//
+		// An empty supported-version list is exactly what the apply reported —
+		// `ParameterOutOfRange: The value of the 'Version' should be in: []` — so no Postgres
+		// version could ever have been correct there. Azure Managed Redis failed in the same run
+		// with `InsufficientCapacity: retry using a different size or region`, which is the same
+		// story told by a different service.
+		//
+		// A floor run never noticed because the floor provisions no database and no cache; only
+		// the full bar reaches them. westeurope carries the same 10 vCPU regional quota (0 in use),
+		// so nothing else about the shape changes.
+		defaultRegion:       "westeurope",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
 		credsPresent: func() (bool, string) {
