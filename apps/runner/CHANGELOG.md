@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.4.0...runner-v0.5.0) (2026-08-25)
+
+
+### Features
+
+* **hetzner:** carry the secret kind as a platform-operated in-cluste… ([67ef9bf](https://github.com/alethialabs-io/alethialabs/commit/67ef9bf09c718f4fb8d1c48324c5de3fe2d1f140))
+* **hetzner:** carry the secret kind as a platform-operated in-cluster Vault ([#2444](https://github.com/alethialabs-io/alethialabs/issues/2444)) ([7952b07](https://github.com/alethialabs-io/alethialabs/commit/7952b0767afe892504ae7a8b90abd800593ad3a0)), closes [#2432](https://github.com/alethialabs-io/alethialabs/issues/2432)
+* **hetzner:** give the in-cluster Harbor pull credentials, and open the registry kind ([#2437](https://github.com/alethialabs-io/alethialabs/issues/2437)) ([d21679c](https://github.com/alethialabs-io/alethialabs/commit/d21679c7c3e27624001df56916bd7ee94d8fa354))
+
 ## [0.4.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.3.0...runner-v0.4.0) (2026-08-12)
 
 
