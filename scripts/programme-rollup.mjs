@@ -97,7 +97,13 @@ const DIMENSIONS = [
 	{ id: "byo", label: "BYO-IaC", gate: "E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN", gates: [{ name: "E2E_ARGO_APPS_REPO", kind: "repo" }, { name: "E2E_GIT_TOKEN", kind: "repo" }], what: "customer IaC/charts applied, and Alethia services bound to their outputs" },
 	{ id: "day2", label: "day-2", gate: "ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS", gates: [{ name: "ALETHIA_E2E_SOAK", kind: "derived" }, { name: "E2E_DAY2_ACCESS", kind: "repo" }], what: "a real access path beyond the soak — kubeconfig / ArgoCD surface" },
 ];
-/** The composite dimension: a PASS here is evidence for every entry in DIMENSIONS. */
+// The composite dimension. A PASS here is evidence for every dimension the full bar ACTUALLY
+// EXERCISES — which is not the same as every dimension in DIMENSIONS, and the difference is
+// load-bearing. `full` (scripts/e2e/resolve-dimension.sh) exports SOAK + MAX_CONFIG + ALL_ADDONS
+// and nothing else, so a dimension gated on a `repo` variable that is unset green-skips inside the
+// run. See deriveCell's `compositeCredits`: the composite credits a dimension only once every
+// `repo`-kind gate it declares is wired, and refuses on `unknown` so a missing snapshot cannot buy
+// a proof.
 const COMPOSITE = "full";
 
 const LEDGER_VERDICTS = new Set(["PASS", "FAIL", "RETRACTED", "BLOCKED"]);
@@ -244,17 +250,31 @@ const STATE_GLYPH = {
 };
 
 /**
- * Derive one cell. `claims` is the collapsed ledger; `composite` is the surviving `full` claim for
- * this cloud, which is evidence for every dimension.
+ * Derive one cell. `claims` is the collapsed ledger.
+ *
+ * `compositeCredits` decides whether this cloud's surviving `full` claim counts as evidence for
+ * THIS dimension. It is not always true, and assuming it was is what this parameter exists to stop:
+ * the `full` token exports only SOAK + MAX_CONFIG + ALL_ADDONS (scripts/e2e/resolve-dimension.sh),
+ * so a dimension whose gate is a repo variable nobody set GREEN-SKIPS inside the full run. Crediting
+ * it anyway promotes a scenario that never executed to `proven` — the exact green-skip-as-proof
+ * failure that retracted every 2026-07-22 row.
+ *
  * @returns {{state: string, why: string, row: object|null}}
  */
-export function deriveCell({ cloud, dimension, claims, bundleExists }) {
+export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCredits = true }) {
 	const direct = claims.get(`${cloud}/${dimension}`) ?? null;
-	const composite = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
+	const compositeClaim = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
+	const composite = compositeCredits ? compositeClaim : null;
 	// A direct claim beats the composite: it is the more specific statement about this dimension.
 	const row = direct ?? composite;
 	if (row === null) {
-		return { state: STATE.neverRun, why: "no surviving ledger claim", row: null };
+		// Say WHICH branch we are in. "No claim at all" and "a claim we refused to count" are
+		// different facts, and collapsing them hides the refusal that is the whole point here.
+		const why =
+			compositeClaim === null
+				? "no surviving ledger claim"
+				: `no surviving ledger claim — this cloud's \`${COMPOSITE}\` run does NOT count for this dimension, whose layer green-skips until its repo gate is set`;
+		return { state: STATE.neverRun, why, row: null };
 	}
 	const via = direct === null ? ` (via the \`${COMPOSITE}\` composite run)` : "";
 	if (row.verdict === "FAIL") {
@@ -336,13 +356,25 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	const claims = collapseLedger(rows);
 	const clouds = spine.clouds;
 
+	// The board is read here, before the grid, because the grid needs gate state: whether this
+	// cloud's `full` claim may be credited to a dimension depends on that dimension's repo gates
+	// being wired. It is read once and reused by the gate-reality section further down.
+	const board = deriveBoard(snapshot);
+
 	// ── the proof grid: cloud × dimension ──
 	/** @type {Record<string, Record<string, {state: string, why: string, row: object|null}>>} */
 	const grid = {};
+	// A dimension gated only on `derived` names (or on nothing) is exercised by any full bar — the
+	// resolve step exports those from the dimension itself. A `repo` gate is the one a human sets,
+	// and an unset one means the layer green-skipped. `unknown` (no snapshot) is NOT `wired`, so a
+	// missing snapshot fails closed rather than buying a proof.
+	const compositeCreditsFor = new Map(
+		DIMENSIONS.map((d) => [d.id, d.gates.filter((g) => g.kind === "repo").every((g) => board.gateState(g.name) === "wired")]),
+	);
 	for (const cloud of clouds) {
 		grid[cloud] = {};
 		for (const d of DIMENSIONS) {
-			grid[cloud][d.id] = deriveCell({ cloud, dimension: d.id, claims, bundleExists });
+			grid[cloud][d.id] = deriveCell({ cloud, dimension: d.id, claims, bundleExists, compositeCredits: compositeCreditsFor.get(d.id) });
 		}
 	}
 
@@ -423,9 +455,9 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 
 	// The live board half runs HERE, before the tally and the ranking, because it RECLASSIFIES cells
 	// to `stale` — a tally computed above it would report 2 failing / 0 stale, and the ranking would
-	// offer a fix for a cause that is already closed.
+	// offer a fix for a cause that is already closed. `board` itself is built above the grid (it
+	// gates composite crediting); this is the point at which its RECLASSIFICATION runs.
 	// ── the live board half ──
-	const board = deriveBoard(snapshot);
 
 	// Open REDs: the join a reader actually wants — which cell, which issue, is that issue still open.
 	const reds = [];
@@ -945,10 +977,18 @@ function runSelfTest() {
 	ok("FAIL renders as failing", r.grid.aws.floor.state === "failing");
 	ok("BLOCKED is kept distinct from failing", r.grid.hetzner.floor.state === "blocked", r.grid.hetzner.floor.why);
 
-	// The composite: a `full` PASS is evidence for every dimension.
+	// The composite: a `full` PASS is evidence for every dimension the full bar ACTUALLY EXERCISES.
+	// `base` carries no snapshot, so every gate reads `unknown` — which is deliberately NOT `wired`.
 	r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full") });
-	ok("a `full` PASS proves every dimension", DIMENSIONS.every((d) => r.grid.aws[d.id].state === "proven"), JSON.stringify(Object.fromEntries(DIMENSIONS.map((d) => [d.id, r.grid.aws[d.id].state]))));
+	const derivedOnly = DIMENSIONS.filter((d) => d.gates.every((g) => g.kind !== "repo")).map((d) => d.id);
+	const repoGated = DIMENSIONS.filter((d) => d.gates.some((g) => g.kind === "repo")).map((d) => d.id);
+	ok("a `full` PASS proves every dimension it exercises", derivedOnly.every((id) => r.grid.aws[id].state === "proven"), JSON.stringify(derivedOnly.map((id) => [id, r.grid.aws[id].state])));
 	ok("...and says it came via the composite", /composite/.test(r.grid.aws.maxconfig.why));
+	// The regression this pins: `full` exports SOAK + MAX_CONFIG + ALL_ADDONS and nothing else, so a
+	// repo-gated layer green-skips inside the run. Crediting it would manufacture a proof for a
+	// scenario that never executed — and there is more than one such dimension, so assert the set.
+	ok("a `full` PASS does NOT prove a repo-gated dimension whose gate is unset", repoGated.length > 0 && repoGated.every((id) => r.grid.aws[id].state === "never_run"), JSON.stringify(repoGated.map((id) => [id, r.grid.aws[id].state])));
+	ok("...and the refusal is distinguishable from having no claim at all", repoGated.every((id) => /does NOT count for this dimension/.test(r.grid.aws[id].why)), r.grid.aws[repoGated[0]].why);
 
 	// A direct claim beats the composite — the more specific statement wins.
 	r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full") + row("2026-08-02", "aws", "addons", "FAIL", "demos/proofs/aws/y", "#1") });
@@ -1097,6 +1137,21 @@ function runSelfTest() {
 	// An issue beyond the fetch limit is `unknown`, NOT `open` — guessing open would hide a stale cite.
 	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: snap([9999], [8888]) });
 	ok("an issue in neither list is unknown, never assumed open", r.reds[0]?.issueState === "unknown", JSON.stringify(r.reds[0]));
+
+	// Composite crediting, the OTHER half: once a repo-gated dimension's gates are wired, its layer
+	// really does run inside a full bar, so the composite must credit it again. Without this the
+	// refusal above could be a permanent "no" — a guard that never says yes is not measuring anything.
+	{
+		const fullRow = row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full");
+		const byoGates = DIMENSIONS.find((d) => d.id === "byo").gates.filter((g) => g.kind === "repo").map((g) => g.name);
+		// Every repo gate the `byo` dimension declares, wired — named from DIMENSIONS rather than
+		// retyped, so renaming a gate cannot leave this test passing against a name nothing reads.
+		const wired = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], byoGates, []) });
+		ok("with its repo gates wired, the composite DOES credit the dimension", wired.grid.aws.byo.state === "proven", wired.grid.aws.byo.why);
+		// And it must be ALL of them, not any: a half-wired gate set still green-skips.
+		const half = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], byoGates.slice(0, 1), []) });
+		ok("a half-wired gate set does not credit the composite", byoGates.length > 1 && half.grid.aws.byo.state === "never_run", half.grid.aws.byo.why);
+	}
 
 	// Cloud gates: wired vs unwired, from NAMES only.
 	r = derive({ ...base, ledgerText: hdr, snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"], []) });
