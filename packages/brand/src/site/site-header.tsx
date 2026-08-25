@@ -5,11 +5,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Menu } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@repo/ui/sheet";
 import { ProviderIcon } from "@repo/ui/provider-icon";
-import { ThemeToggle } from "@repo/ui/theme-toggle";
 import {
   disp,
   eyebrow,
@@ -176,23 +176,24 @@ function formatStars(n: number): string {
 }
 
 /** Single mega-menu entry row (icon tile + name + description). */
+/** One row in a mega-menu. Hover is CSS, not React state: the previous version
+ * tracked it with `useState` per item, so moving the pointer across the Product
+ * menu re-rendered a component twelve times for a background colour. */
 function MenuItem({ ic, name, desc, badge, href, external }: MenuLink) {
-  const [h, setH] = useState(false);
   return (
     <Link
       href={href}
       target={external ? "_blank" : undefined}
       rel={external ? "noreferrer" : undefined}
-      onMouseEnter={() => setH(true)}
-      onMouseLeave={() => setH(false)}
+      className="vx-clamp vx-clamp--tight hover:bg-[var(--surface-muted)]"
       style={{
         display: "flex",
         gap: 12,
         padding: "10px 11px",
         borderRadius: "var(--radius-md)",
-        background: h ? "var(--surface-muted)" : "transparent",
+        background: "transparent",
         textDecoration: "none",
-        transition: "background .12s",
+        transition: "background var(--dur-1) var(--ease)",
       }}
     >
       <span
@@ -350,6 +351,27 @@ function GitHubLink({ stars }: { stars?: number | null }) {
         <span style={{ ...mono, fontSize: 12 }}>{formatStars(stars)}</span>
       )}
     </a>
+  );
+}
+
+/** A top-level nav link. `aria-current="page"` is the accessible signal that this
+ * is the page you are on, and the clamp reads the same attribute — so the visual
+ * held state and the announced one can never disagree. */
+function NavLink({ href, children }: { href: string; children: React.ReactNode }) {
+  const pathname = usePathname();
+  const current = pathname === href || pathname.startsWith(`${href}/`);
+  return (
+    <Link
+      href={href}
+      aria-current={current ? "page" : undefined}
+      className="vx-clamp vx-clamp--tight"
+      style={{
+        ...NAV_LINK_STYLE,
+        color: current ? "var(--text-primary)" : NAV_LINK_STYLE.color,
+      }}
+    >
+      {children}
+    </Link>
   );
 }
 
@@ -538,17 +560,11 @@ export function Header({
             ))}
           </NavMenu>
 
-          <Link href="/enterprise" style={NAV_LINK_STYLE}>
-            Enterprise
-          </Link>
-          <Link href="/pricing" style={NAV_LINK_STYLE}>
-            Pricing
-          </Link>
+          <NavLink href="/enterprise">Enterprise</NavLink>
+          <NavLink href="/pricing">Pricing</NavLink>
         </nav>
 
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {/* The only way to reach light mode on this site — see app/layout.tsx. */}
-          <ThemeToggle bare className="ah-hide-sm" />
           <GitHubLink stars={stars} />
           {nav.status === "authed" ? (
             <>

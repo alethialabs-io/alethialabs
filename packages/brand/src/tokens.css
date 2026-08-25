@@ -329,84 +329,165 @@
   color: var(--text-tertiary);
 }
 
-/* ── The bracket ─────────────────────────────────────────────────────────────
+/* ── The clamp ───────────────────────────────────────────────────────────────
    The `[ · ]` mark promoted from a logo to an interaction primitive: a control
-   is a subject the brackets bring into focus.
+   is a subject brought into focus. Four hairline corner marks rest just outside
+   the element, then reach in and clamp onto it.
 
-   The brackets are absolutely positioned INSIDE the control's own padding box,
-   so they sit outside layout entirely — the label cannot be pushed around and
-   nothing reflows on hover. They are invisible at rest, start nudged inward,
-   and on hover/focus fade in while settling outward to their slots.
+   This replaces an earlier device that drew literal `[` and `]` TEXT GLYPHS in
+   the control's padding. Geometry beats typography here: glyphs need a text
+   baseline and inline padding to sit in, so every icon-only and `xs` control had
+   to opt out, and the marketing home page kept a hand-rewritten copy with its own
+   px geometry that drifted. Corner marks are drawn from a border, so ONE rule
+   covers every box in the system — button, card, input, table row, section.
 
-   `translate` is animated directly rather than a registered `--bk` custom
-   property: registering would let us interpolate the property, but the browser
-   would then re-resolve style every frame, where `translate` is compositor-only.
+   All four corners come from a single pseudo-element: the box carries a full
+   border and a four-corner mask punches out everything between the arms. That
+   leaves `::after` free for a second layer (a fill, a rule, a travelling dot).
 
-   `--bk-inset` is in `em`, so the geometry scales with the control's font-size
-   and no size variant needs its own rule. */
+   Only `scale` and `opacity` animate, and both are compositor-only. `inset` is
+   the obvious way to express "reach in", but it is a layout property and would
+   re-resolve style every frame; scaling from just outside reads the same and
+   costs nothing. Reach is therefore proportional to the control's size, which is
+   deliberate — a wide button earns a wider gesture.
+
+   Geometry is in `px` because a hairline mark is a hairline at every size; only
+   the reach scales. `.vx-bracket` is kept as an alias so the console's existing
+   call sites inherit the new device without touching 155 files. */
+.vx-clamp,
 .vx-bracket {
   position: relative;
-  --bk-inset: 0.5em;
-  --bk-shift: 5px;
+  --cl-len: 7px;    /* arm length of each corner mark */
+  --cl-gap: 4px;    /* clamped distance from the box  */
+  --cl-reach: 1.06; /* resting scale — just outside   */
+  --cl-op: 0.55;
+  /* The marks sit OUTSIDE the control, on the page, so they take the page's ink
+     rather than the control's. `currentColor` looked right until a solid button
+     inverted its foreground to white and painted four white marks onto a white
+     background. Override `--cl-ink` for a control on an inverted surface. */
+  --cl-ink: var(--text-primary, currentColor);
 }
-.vx-bracket::before,
-.vx-bracket::after {
-  position: absolute;
-  top: 50%;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 1em;
-  line-height: 1;
-  font-weight: 400;
-  color: currentColor;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity var(--dur-2) var(--ease),
-    translate var(--dur-3) var(--ease-out);
+/* NOTE: `<input>` and other replaced elements render no `::before`, so a text
+   field clamps via its wrapping field/label, never the input itself. */
+/* Dense contexts — inputs, table rows — where 4px of reach would collide. */
+.vx-clamp--tight {
+  --cl-len: 5px;
+  --cl-gap: 2px;
+  --cl-reach: 1.03;
 }
-/* The `/ ""` is the CSS alt text, and it is NOT decoration — it is what keeps these
-   glyphs out of the ACCESSIBLE NAME. Generated content participates in name
-   computation, so a bare `content: "["` renamed every control wearing this class from
-   "Add" to "[Add]": a screen reader announced the brackets, and
-   `getByRole("button", { name: "Add", exact: true })` stopped matching. It reached all
-   155 console call sites of @repo/ui/button at once, because the class sits on the base
-   variant. Measured in Chromium — bare content: no match; with `/ ""`: match, identical
-   to a control carrying no bracket at all. Any future ::before/::after that draws a mark
-   rather than saying a word needs the same empty alt text. */
+.vx-clamp::before,
 .vx-bracket::before {
-  content: "[" / "";
-  inset-inline-start: var(--bk-inset);
-  translate: var(--bk-shift) -50%;
+  /* The `/ ""` is the CSS alt text, and it is NOT decoration — see the note on
+     `.vx-status` below and the history in git: generated content participates in
+     accessible-name computation. This pseudo-element draws a mark rather than
+     saying a word, so its alt text is empty. */
+  content: "" / "";
+  position: absolute;
+  inset: calc(-1 * var(--cl-gap));
+  border: 1px solid var(--cl-ink);
+  border-radius: inherit;
+  opacity: 0;
+  scale: var(--cl-reach);
+  pointer-events: none;
+  /* Punch out everything that is not a corner arm, leaving four right angles. */
+  mask:
+    linear-gradient(#000 0 0) top left / var(--cl-len) var(--cl-len) no-repeat,
+    linear-gradient(#000 0 0) top right / var(--cl-len) var(--cl-len) no-repeat,
+    linear-gradient(#000 0 0) bottom left / var(--cl-len) var(--cl-len) no-repeat,
+    linear-gradient(#000 0 0) bottom right / var(--cl-len) var(--cl-len) no-repeat;
+  transition:
+    opacity var(--dur-1) var(--ease),
+    scale var(--dur-2) var(--ease-out);
 }
-.vx-bracket::after {
-  content: "]" / "";
-  inset-inline-end: var(--bk-inset);
-  translate: calc(var(--bk-shift) * -1) -50%;
-}
+/* `data-active` is base-ui's active-item attribute and `aria-current` marks the
+   current route, so an active tab and the nav item for the page you are on hold
+   their clamp with no extra class. `[data-clamped]` is the manual escape hatch. */
+.vx-clamp:hover::before,
+.vx-clamp:focus-visible::before,
+.vx-clamp[data-clamped]::before,
+.vx-clamp[data-active]::before,
+.vx-clamp[aria-current]:not([aria-current="false"])::before,
+.vx-clamp--held::before,
 .vx-bracket:hover::before,
-.vx-bracket:hover::after,
-.vx-bracket:focus-visible::before,
-.vx-bracket:focus-visible::after {
-  opacity: 0.55;
-  translate: 0 -50%;
+.vx-bracket:focus-visible::before {
+  opacity: var(--cl-op);
+  scale: 1;
+}
+/* Press tightens past the resting clamp — the one moment the marks bite. */
+.vx-clamp:active::before,
+.vx-bracket:active::before {
+  scale: 0.994;
+  transition-duration: var(--dur-1), var(--dur-1);
+  transition-timing-function: var(--ease), var(--ease-press);
+}
+/* A live subject is still under examination: the clamp breathes rather than
+   settling. Paired with `.vx-status--live`, never used on its own. */
+.vx-clamp--live::before {
+  opacity: var(--cl-op);
+  animation: alethia-clamp-breathe 2s ease-in-out infinite;
+}
+@keyframes alethia-clamp-breathe {
+  0%, 100% { scale: 1; }
+  50% { scale: var(--cl-reach); }
 }
 /* A disabled control is not a subject under examination. */
+.vx-clamp:disabled::before,
+.vx-clamp[data-disabled]::before,
+.vx-clamp-none::before,
 .vx-bracket:disabled::before,
-.vx-bracket:disabled::after,
 .vx-bracket[data-disabled]::before,
-.vx-bracket[data-disabled]::after,
-.vx-bracket-none::before,
-.vx-bracket-none::after {
+.vx-bracket-none::before {
   content: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vx-bracket::before,
-  .vx-bracket::after {
+  /* The marks still appear — they just arrive already clamped. Opacity is not
+     suppressed anywhere, so the affordance survives; only the reach is dropped. */
+  .vx-clamp::before,
+  .vx-bracket::before {
+    scale: 1;
     transition: opacity var(--dur-1) var(--ease);
-    translate: 0 -50%;
   }
+  .vx-clamp--live::before { animation: none; }
 }
+
+/* ── Page chrome ─────────────────────────────────────────────────────────────
+   The hairline frame inset from the viewport and the two vertical edge rails.
+   Fixed, decorative, non-interactive: what makes a page read as an instrument
+   plate rather than a document. Promoted out of the marketing home page, which
+   was the only surface wearing it, so the whole site shares one frame. */
+.vx-grain {
+  position: fixed;
+  inset: 0;
+  z-index: 58;
+  pointer-events: none;
+  opacity: 0.4;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+}
+/* A real border, not an inset box-shadow: `forced-colors` resolves
+   `box-shadow` to `none` and the frame would vanish for high-contrast users. */
+.vx-frame {
+  position: fixed;
+  inset: 10px;
+  border: 1px solid var(--border);
+  pointer-events: none;
+  z-index: 60;
+}
+.vx-rail {
+  position: fixed;
+  left: 17px;
+  z-index: 55;
+  font-size: 10px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  pointer-events: none;
+}
+.vx-rail--top { top: 104px; }
+.vx-rail--bottom { bottom: 28px; text-transform: none; letter-spacing: 0.16em; }
 
 /* Status indicator — state read through dot fill/shape + a mono label,
    never hue. Tiers: active · pending · idle · failed · disabled · live. */

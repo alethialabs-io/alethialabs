@@ -89,7 +89,14 @@ export function StatusBadge({
 	const resolved = tier ?? statusTier(status);
 	return (
 		<span
-			className={cn("vx-status", `vx-status--${resolved}`, className)}
+			/* A live subject is still under examination, so its clamp breathes
+			   instead of settling. Every other tier reads from the dot alone. */
+			className={cn(
+				"vx-status",
+				`vx-status--${resolved}`,
+				resolved === "live" && "vx-clamp vx-clamp--tight vx-clamp--live",
+				className,
+			)}
 			{...props}
 		>
 			<span className="vx-status__dot" />
