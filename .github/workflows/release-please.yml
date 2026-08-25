@@ -18,9 +18,9 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      runner-released: ${{ steps.release.outputs['apps/runner--release_created'] }}
-      runner-version: ${{ steps.release.outputs['apps/runner--version'] }}
-      runner-tag: ${{ steps.release.outputs['apps/runner--tag_name'] }}
+      runner-released: ${{ steps.pick.outputs.released }}
+      runner-version: ${{ steps.pick.outputs.version }}
+      runner-tag: ${{ steps.pick.outputs.tag }}
     steps:
       # Create the release PRs with a GitHub App token, NOT the default GITHUB_TOKEN. PRs opened by
       # GITHUB_TOKEN do NOT trigger other workflows, so the protect-main required checks (CI +
@@ -36,12 +36,52 @@ jobs:
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
           owner: alethialabs-io
           repositories: alethialabs
+      # Two attempts, because the failure mode here is the network, not the config. Runs die with
+      # `release-please failed: other side closed` — a socket hangup from the GitHub API, thrown
+      # part-way through backfilling file lists for the large promotion merge commits. It is
+      # intermittent (it took out 2 of the last 8 runs) and it leaves `main` with no release PR
+      # until the next push, which on a dev→staging→main train can be days.
+      #
+      # Retrying is safe: release-please recomputes its candidate PRs from the branch on every run
+      # and reconciles an existing release PR rather than duplicating it, so a second attempt after
+      # a half-finished first is the same operation, not a repeat of it.
+      #
+      # (The `unexpected token ' ' at 1:6` lines in the log are unrelated and harmless — merge
+      # subjects like "Merge pull request #2442 from alethialabs-io/staging" are not conventional
+      # commits. They appear in the successful runs too.)
       - uses: googleapis/release-please-action@v5
         id: release
+        continue-on-error: true
         with:
           token: ${{ steps.rp_token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      - name: Retry release-please
+        id: release_retry
+        if: steps.release.outcome == 'failure'
+        uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ steps.rp_token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      # Whichever attempt ran is the one that carries the outputs. Without this the downstream
+      # runner release reads an empty string after a retry and silently never fires.
+      - name: Select the attempt that succeeded
+        id: pick
+        env:
+          FIRST_OUTCOME: ${{ steps.release.outcome }}
+          RELEASED: ${{ steps.release.outcome == 'failure' && steps.release_retry.outputs['apps/runner--release_created'] || steps.release.outputs['apps/runner--release_created'] }}
+          VERSION: ${{ steps.release.outcome == 'failure' && steps.release_retry.outputs['apps/runner--version'] || steps.release.outputs['apps/runner--version'] }}
+          TAG: ${{ steps.release.outcome == 'failure' && steps.release_retry.outputs['apps/runner--tag_name'] || steps.release.outputs['apps/runner--tag_name'] }}
+        run: |
+          if [ "$FIRST_OUTCOME" = "failure" ]; then
+            echo "::warning::release-please failed on its first attempt and was retried. If this recurs on most runs it is no longer a flake — investigate rather than re-running."
+          fi
+          {
+            echo "released=$RELEASED"
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
 
   release-runner:
     needs: release-please

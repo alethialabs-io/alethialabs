@@ -106,6 +106,33 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # An expired POSTHOG_PERSONAL_API_KEY has now stopped production deploys twice (#2244, #2485)
+      # and both times nobody noticed for ten days, because the only report of it was a line deep in
+      # a buildx log. The build no longer fails on it (apps/console/next.config.ts makes the upload
+      # non-fatal), which means the key can now rot silently — so say it on the run summary instead.
+      # Never fails: a dead telemetry key is not a reason to withhold a release.
+      - name: Check the PostHog key is still live
+        if: matrix.image == 'console'
+        continue-on-error: true
+        env:
+          PH_KEY: ${{ secrets.POSTHOG_PERSONAL_API_KEY }}
+          PH_HOST: ${{ vars.POSTHOG_API_HOST || 'https://eu.posthog.com' }}
+        run: |
+          if [ -z "$PH_KEY" ]; then
+            echo "::warning::POSTHOG_PERSONAL_API_KEY is not set — the console image ships without symbolicated stack traces."
+            exit 0
+          fi
+          code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+            -H "Authorization: Bearer $PH_KEY" "$PH_HOST/api/users/@me/" || echo 000)"
+          if [ "$code" = "200" ]; then
+            echo "PostHog personal API key accepted."
+          elif [ "$code" = "000" ]; then
+            echo "::warning::Could not reach $PH_HOST to check the PostHog key. Not treating that as a dead key."
+          else
+            echo "::error::POSTHOG_PERSONAL_API_KEY is invalid or expired (HTTP $code). Rotate it in repo secrets."
+            echo "The build continues without symbolication; posthog-error-issues.yml stays red until it is rotated."
+          fi
+
       - name: Build and push ${{ matrix.image }} (amd64)
         uses: docker/build-push-action@v7
         with:
