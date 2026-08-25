@@ -102,11 +102,16 @@ upsert_role alethiaServiceAccountProvisioner "Alethia Add-on SA Provisioner" \
   "iam.serviceAccounts.create,iam.serviceAccounts.delete,iam.serviceAccounts.get,iam.serviceAccounts.list,iam.serviceAccounts.update,iam.serviceAccounts.getIamPolicy,iam.serviceAccounts.setIamPolicy"
 upsert_role alethiaProjectReader "Alethia Project Reader" \
   "resourcemanager.projects.get"
+# roles/dns.admin does NOT include the zone-scoped IAM verbs, despite its name and despite a comment
+# in main.tf that claimed it did. Without these, google_dns_managed_zone_iam_member 403s on the first
+# DNS-enabled environment — 48 minutes into a full bar, and invisible to every floor run.
+upsert_role alethiaDnsZoneIam "Alethia DNS Zone IAM" \
+  "dns.managedZones.getIamPolicy,dns.managedZones.setIamPolicy"
 
 echo ""
 echo "==> Granting least-privilege provisioning roles to the service account..."
 # Predefined roles for services whose Google-maintained admin set is tightly scoped + churns (GKE, etc.),
-# plus the five custom roles above. In place of account-wide roles/editor. Matches infra/connector/gcp/main.tf.
+# plus the six custom roles above. In place of account-wide roles/editor. Matches infra/connector/gcp/main.tf.
 for ROLE in \
   roles/container.admin \
   roles/compute.networkAdmin \
@@ -122,7 +127,8 @@ for ROLE in \
   "projects/${PROJECT_ID}/roles/alethiaFirestoreProvisioner" \
   "projects/${PROJECT_ID}/roles/alethiaPubSubProvisioner" \
   "projects/${PROJECT_ID}/roles/alethiaServiceAccountProvisioner" \
-  "projects/${PROJECT_ID}/roles/alethiaProjectReader"; do
+  "projects/${PROJECT_ID}/roles/alethiaProjectReader" \
+  "projects/${PROJECT_ID}/roles/alethiaDnsZoneIam"; do
   gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
     --member="serviceAccount:${SA_EMAIL}" \
     --role="${ROLE}" \
