@@ -325,6 +325,9 @@ export function deriveBoard(snapshot) {
 	const open = new Map((snapshot.open_issues ?? []).map((i) => [i.number, i]));
 	const closed = new Map((snapshot.closed_issues ?? []).map((i) => [i.number, i]));
 	const names = new Set([...(snapshot.variables ?? []), ...(snapshot.secrets ?? [])]);
+	// A repo with zero variables AND zero secrets is not a state this repo can be in — it needs both
+	// to run anything. So an empty inventory is evidence the fetch failed, not evidence of absence.
+	const gatesKnown = names.size > 0;
 	const derivedAt = snapshot.derived_at ? Date.parse(snapshot.derived_at) : NaN;
 	// The snapshot carries the only timestamp in the mechanism, so "now" is read here and never
 	// rendered — a clock inside a diff-gated region would make every PR stale on arrival.
@@ -343,7 +346,26 @@ export function deriveBoard(snapshot) {
 			return "unknown"; // beyond the fetch limit, or a different repo — never guess "open"
 		},
 		/** @returns {"wired"|"unwired"|"unknown"} */
-		gateState: (name) => (names.has(name) ? "wired" : "unwired"),
+		/**
+		 * @returns {"wired"|"unwired"|"unknown"}
+		 *
+		 * An EMPTY gate inventory means "nobody fetched them", not "none are set" — the same
+		 * epistemic state as an absent snapshot, and it gets the same `unknown`.
+		 *
+		 * This is not hypothetical. `scripts/programme-fetch.sh` swallowed the error from
+		 * `gh variable list` / `gh secret list` and substituted `[]`, and programme.yml grants the
+		 * default token only `contents: write` + `pull-requests: write` — which cannot read repo
+		 * variables or secrets at all. So every refresh produced `variables: [], secrets: []` beside
+		 * 42 correctly-fetched issues, and the board rendered EVERY gate `⛔ unwired` — including
+		 * `HCLOUD_TOKEN`, which a green hetzner run had already proven wired.
+		 *
+		 * Collapsing that to `unwired` is the expensive direction, because `deriveCell`'s
+		 * `compositeCredits` refuses to credit a dimension whose repo gate reads unwired: a full-bar
+		 * PASS would silently not credit `byo` or `day2`, and the fix for one green-skip-as-proof bug
+		 * would have been disarmed by another. `unknown` keeps the refusal honest — it says the gate
+		 * was not measured rather than asserting it is off.
+		 */
+		gateState: (name) => (gatesKnown ? (names.has(name) ? "wired" : "unwired") : "unknown"),
 		needsHuman: [...open.values()].filter((i) => (i.labels ?? []).includes("needs:human")),
 	};
 }
@@ -1157,6 +1179,26 @@ function runSelfTest() {
 	r = derive({ ...base, ledgerText: hdr, snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"], []) });
 	ok("a cloud gate present in the snapshot reads wired", r.cloudGates.find((g) => g.cloud === "aws")?.state === "wired");
 	ok("a cloud gate absent from the snapshot reads unwired", r.cloudGates.find((g) => g.cloud === "hetzner")?.state === "unwired");
+
+	// An EMPTY gate inventory is a FAILED FETCH, not an empty repo. The real snapshot shipped
+	// `variables: [], secrets: []` beside 42 correctly-fetched issues, because programme.yml's token
+	// cannot list either — and every gate rendered `⛔ unwired`, including ones a green run had
+	// proven wired. Collapsing that to `unwired` also disarms deriveCell's compositeCredits, which
+	// refuses to credit a dimension whose repo gate reads unwired: a full-bar PASS would silently
+	// not credit `byo`/`day2`. So empty must read `unknown`, exactly like an absent snapshot.
+	{
+		const empty = derive({ ...base, ledgerText: hdr, snapshot: snap([], [], [], []) });
+		ok("an EMPTY gate inventory reads unknown, never unwired", empty.cloudGates.every((g) => g.state === "unknown"), JSON.stringify(empty.cloudGates.map((g) => [g.cloud, g.state])));
+		// ...and it must not be vacuous: with ONE name present the inventory is trusted again, so
+		// this cannot degrade into "every gate is always unknown".
+		const oneName = derive({ ...base, ledgerText: hdr, snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"], []) });
+		ok("...but one known name makes the inventory trusted again", oneName.cloudGates.find((g) => g.cloud === "aws")?.state === "wired" && oneName.cloudGates.find((g) => g.cloud === "hetzner")?.state === "unwired");
+		// The composite must not credit a repo-gated dimension on an unknown gate either — unknown
+		// is not `wired`, and fail-closed is the whole point.
+		const fullRow = row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full");
+		const credited = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], [], []) });
+		ok("an unknown gate does not let the composite credit a repo-gated dimension", credited.grid.aws.byo.state === "never_run", credited.grid.aws.byo.why);
+	}
 
 	// Dimension gates: a DERIVED gate is never "unwired" — there is no variable to set. Reporting one
 	// as unwired sends somebody hunting for a repo variable that cannot exist.
