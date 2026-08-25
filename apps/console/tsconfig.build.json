@@ -5,27 +5,81 @@
 // `typescript.tsconfigPath` in next.config.ts. `tsc --noEmit` (the `check-types` task)
 // still reads tsconfig.json and still type-checks everything, tests included.
 //
-// WHY THIS EXISTS. The production image installs a PRUNED dependency closure
-// (apps/console/Dockerfile: `pnpm install --frozen-lockfile --filter console... --filter
-// @alethia/ee`), so no sibling app's node_modules exist inside it. Meanwhile tsconfig.json's
-// `include` is `**/*.ts`, which picks up `tests/`, and tsc follows imports BEYOND `include`.
-// `tests/lib/marketing-proxy.test.ts` imports `../../../marketing/proxy`, which imports
-// `next/server` — resolvable in a full workspace install, absent in the pruned one:
+// WHY THIS EXISTS — and what it is NOT.
 //
-//     ../marketing/proxy.ts(4,48): error TS2307: Cannot find module 'next/server'
-//     Failed to type check.
+// It is not the fix for the 26-day deploy outage. #2521 was: it moved the offending test to
+// apps/marketing/tests/proxy.test.ts and added an `import/no-restricted-paths` zone
+// (apps/console/eslint.config.mjs) that fails lint on any relative reach into a sibling app.
+// Those two are the live guards; this file is defence-in-depth against the same CLASS, and the
+// class is worth naming precisely because a lint rule and a moved file do not cover all of it.
 //
-// That failed EVERY production console build while CI stayed green, because CI's
-// `turbo run check-types` runs after an unfiltered `pnpm install` where marketing's
-// node_modules are present. The image and CI were type-checking the same files against
-// different dependency graphs.
+// The class: the production image installs a PRUNED dependency closure — `Dockerfile:23` uses
+// `pnpm install --frozen-lockfile --filter console... --filter @alethia/ee`, and
+// `Dockerfile.community:15` uses `--filter console...` with NO `@alethia/ee`, i.e. a strictly
+// NARROWER closure. The community image is the more dangerous of the two for this failure class
+// and the one a reader will not think to check. Either way no sibling app's node_modules and no
+// root-only devDependency exist inside.
+// CI meanwhile runs `turbo run check-types` after an UNFILTERED `pnpm install`, where everything
+// resolves. Any file that is in the type-check program but not in the shipped closure can
+// therefore be green in CI and fatal in the image — which is exactly how TS2307 on
+// `next/server` broke every production deploy for 26 days while full CI stayed green.
 //
-// The fix is not to make the import resolve. It is that a production image has no business
-// type-checking test files at all: they are not shipped, they are already checked in CI, and
-// compiling them is what dragged a sibling app into a build that deliberately excludes it.
+// An eslint zone catches a *relative sibling import*. It does not catch a non-shipped file
+// importing a root-only devDependency, which is the same failure by a different route. Keeping
+// non-shipped files out of the BUILD's program closes the route rather than one entrance to it.
+//
+// WHAT IS EXCLUDED, and why each is genuinely un-shipped:
+//   tests/            the vitest suite's main home
+//   **/*.test.ts(x)   CO-LOCATED vitest tests, which `tests/` alone does not reach — nine live
+//                     under lib/cloud-providers/capabilities/{services,service-quotas}/, and
+//                     vitest.config.ts carries a glob for them precisely so they are not
+//                     silently skipped. Excluding `tests/` and stopping there left the #2521
+//                     route open, and Next's ignore regex does not save you: it filters
+//                     diagnostics ATTRIBUTED TO a *.test.ts file, so a co-located test that
+//                     reaches into a sibling app raises TS2307 in the IMPORTED file
+//                     (`../marketing/proxy.ts(4,48)` — the original failure verbatim), which is
+//                     unfiltered and fatal.
+//   e2e/              Playwright specs AND their helpers/fixtures/reporters. The helpers matter
+//                     most: they are not named *.test.ts/*.spec.ts, so Next's diagnostic-ignore
+//                     regex in runTypeCheck.js does NOT cover them either. They import
+//                     @playwright/test.
+//   scripts/          build/codegen helpers invoked by package.json, never bundled. These are
+//                     where `drizzle-kit` and `stripe` are imported (migrate.mjs,
+//                     stripe-setup.ts) — not e2e/, as an earlier draft of this comment claimed.
+//   the config files  vitest/playwright/drizzle tooling, not application code.
+// next.config.ts is deliberately NOT excluded: Next loads it to perform the build.
+//
+// ⚠️ The config list below is a HAND-MAINTAINED ENUMERATION, not a glob — `exclude` has no
+// negation, and `*.config.ts` would swallow next.config.ts. An unpinned enumeration is a guard
+// that reports green: add vitest.browser.config.ts tomorrow and it silently re-enters the build's
+// program while this comment still reads like a pattern. `tests/tsconfig-build-excludes.test.ts`
+// fails when a root-level *.config.ts is missing from it.
+//
+// ⚠️ SIDE EFFECT worth knowing before editing. Pointing `typescript.tsconfigPath` at a config
+// containing `extends` silently disables Next's own tsconfig verification —
+// `writeConfigurationDefaults` returns early on `'extends' in userTsConfig`
+// (next/dist/lib/typescript/writeConfigurationDefaults.js). So Next no longer enforces its
+// required compilerOptions here, nor appends newly required globs such as the
+// `.next/types/**/*.ts` family. Nothing breaks today because tsconfig.json already carries all
+// of them. On a Next major that changes the required set, the build will fail with a bare TS
+// error pointing at THIS file, which contains none of those options — look in tsconfig.json.
 {
   "extends": "./tsconfig.json",
   // `exclude` REPLACES the base's rather than merging, so node_modules is repeated here
   // deliberately — dropping it would widen the build's graph, not narrow it.
-  "exclude": ["node_modules", "tests"]
+  "exclude": [
+    "node_modules",
+    "tests",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "e2e",
+    "scripts",
+    "vitest.config.ts",
+    "vitest.integration.config.ts",
+    "vitest.mutation.config.ts",
+    "vitest.ai-eval.config.ts",
+    "playwright.config.ts",
+    "playwright.capture.config.ts",
+    "drizzle.config.ts"
+  ]
 }
