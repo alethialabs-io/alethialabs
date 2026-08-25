@@ -68,8 +68,9 @@ func TestRenderByoAppProject(t *testing.T) {
 	for _, want := range []string{
 		"name: byo-payments",
 		"kind: AppProject",
-		`- "https://github.com/acme/payments-helm"`,
-		`namespace: "payments"`,
+		// Unquoted: yaml.v3 quotes only what NEEDS quoting, which is the point of marshalling.
+		"- https://github.com/acme/payments-helm",
+		"namespace: payments",
 		"clusterResourceWhitelist: []",
 		"namespaceResourceBlacklist:",
 		"kind: RoleBinding",
@@ -83,7 +84,7 @@ func TestRenderByoAppProject(t *testing.T) {
 	if n := strings.Count(out, "payments-helm"); n != 1 {
 		t.Errorf("expected repo once (deduped), got %d:\n%s", n, out)
 	}
-	if n := strings.Count(out, `namespace: "payments"`); n != 1 {
+	if n := strings.Count(out, "namespace: payments"); n != 1 {
 		t.Errorf("expected namespace once (deduped), got %d:\n%s", n, out)
 	}
 	// A wide-open whitelist must never appear.
@@ -337,5 +338,142 @@ func TestRenderByoNamespaces_IsDeterministic(t *testing.T) {
 		if got != first {
 			t.Fatalf("render is not deterministic (iteration %d):\nfirst:\n%s\ngot:\n%s", i, first, got)
 		}
+	}
+}
+
+// TestByoAppProjectRefusesYamlInjection is the AppProject half of #2540. #2576 closed this hole in
+// RenderByoNamespaces and left it open here — and because prepareByoCharts only WARNS when the
+// namespace renderer refuses, the value it rejected still reached RenderByoAppProject, which
+// rendered it into a quoted scalar with text/template's zero escaping.
+func TestByoAppProjectRefusesYamlInjection(t *testing.T) {
+	// The payload that actually worked, verbatim: close the quoted scalar, open a second document,
+	// then a block scalar with an EXPLICIT indent indicator whose `#` swallows the template's own
+	// closing quote and whose body absorbs the remainder of the AppProject. Rendered two valid
+	// documents, the second a ClusterRoleBinding to cluster-admin, applied with the admin kubeconfig.
+	const pwn = "x\"\n---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\n" +
+		"metadata:\n  name: pwned-by-byo\nroleRef:\n  apiGroup: rbac.authorization.k8s.io\n" +
+		"  kind: ClusterRole\n  name: cluster-admin\nsubjects:\n  - kind: ServiceAccount\n" +
+		"    name: default\n    namespace: kube-system\nswallow: |2 #"
+
+	for _, tc := range []struct{ name, ns string }{
+		{"the full payload", pwn},
+		// A SHORT one too. The long payload is caught by the 63-character rule, which is luck rather
+		// than defence — #2576's own lesson. Only the charset rule catches this one.
+		{"a short one", "a\n---\nkind: Secret"},
+		{"a bare quote", `byo"e2e`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := RenderByoAppProject("byo-p", []string{"https://example.com/r"}, []string{tc.ns}, nil)
+			if err == nil {
+				t.Fatalf("expected a refusal, got none. Rendered:\n%s", out)
+			}
+			if out != "" {
+				t.Errorf("a refusal must render nothing, got:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestByoAppProjectSourceRepoCannotEscapeItsScalar covers the OTHER interpolation point in the same
+// template. A chart repo URL is user-supplied and was rendered raw beside the namespaces; a fix that
+// only guarded destinations would have moved the payload one field over.
+func TestByoAppProjectSourceRepoCannotEscapeItsScalar(t *testing.T) {
+	bad := "https://example.com/r\n---\nkind: ClusterRoleBinding"
+	if _, err := RenderByoAppProject("byo-p", []string{bad}, []string{"byo-e2e"}, nil); err == nil {
+		t.Fatal("a source repo carrying a newline must be refused")
+	}
+	// …and the forms that legitimately occur must still render. A URL allowlist would have refused
+	// these, which is worse than the gap it closes.
+	for _, ok := range []string{
+		"https://github.com/acme/c.git",
+		"ssh://git@github.com/acme/c.git",
+		"git@github.com:acme/c.git",
+	} {
+		if _, err := RenderByoAppProject("byo-p", []string{ok}, []string{"byo-e2e"}, nil); err != nil {
+			t.Errorf("legitimate repo %q was refused: %v", ok, err)
+		}
+	}
+}
+
+// TestByoAppProjectIsExactlyOneDocument is the structural half: whatever survives validation must
+// never be able to add a document to the stream. Asserted by DECODING rather than by string match,
+// because "no `---` in the output" is a weaker claim than "this parses to one object".
+func TestByoAppProjectIsExactlyOneDocument(t *testing.T) {
+	out, err := RenderByoAppProject("byo-p",
+		[]string{"https://example.com/r"}, []string{"byo-e2e", "payments"},
+		map[string]string{"alethia.io/project-id": "p-1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	dec := yaml.NewDecoder(strings.NewReader(out))
+	n := 0
+	for {
+		var doc yaml.Node
+		if err := dec.Decode(&doc); err != nil {
+			break
+		}
+		if len(doc.Content) > 0 {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("the AppProject must be exactly one document, got %d:\n%s", n, out)
+	}
+}
+
+// TestByoAppProjectWhitelistIsEmptyNotNull pins the one field the whole hardening rests on.
+// yaml.v3 marshals a NIL slice as `null`, and `clusterResourceWhitelist: null` is not the same
+// statement as `clusterResourceWhitelist: []`. Nothing but this test stands between the two.
+func TestByoAppProjectWhitelistIsEmptyNotNull(t *testing.T) {
+	out, err := RenderByoAppProject("byo-p", []string{"https://example.com/r"}, []string{"byo-e2e"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "clusterResourceWhitelist: []") {
+		t.Errorf("clusterResourceWhitelist must render as an empty LIST:\n%s", out)
+	}
+	if strings.Contains(out, "clusterResourceWhitelist: null") {
+		t.Errorf("clusterResourceWhitelist rendered as null — a nil slice, not an empty one:\n%s", out)
+	}
+}
+
+// TestEncodeByoDocsSeparatesEveryDocument pins what the shared encoder is actually for: N values in,
+// one stream out, with a separator between documents and none before the first. RenderByoNamespaces
+// depends on that exactly — the template it replaced wrote `{{ if $i }}---` by hand.
+//
+// It does NOT test the error arms, and the reason is worth recording. I tried to reach them by
+// handing the encoder a channel; yaml.v3 PANICS on an unmarshalable type rather than returning an
+// error ("cannot marshal type: chan int"). So `Encode` errors only on a write failure, and both
+// callers write to a bytes.Buffer, which does not fail. The arms are genuinely unreachable rather
+// than merely untested, which is why factoring them into ONE copy was the right answer to the
+// coverage ratchet instead of writing a test that only appeared to exercise them.
+func TestEncodeByoDocsSeparatesEveryDocument(t *testing.T) {
+	out, err := encodeByoDocs("test",
+		map[string]any{"kind": "A"},
+		map[string]any{"kind": "B"},
+		map[string]any{"kind": "C"},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n := strings.Count(out, "\n---\n"); n != 2 {
+		t.Errorf("three documents want two separators, got %d:\n%s", n, out)
+	}
+	if strings.HasPrefix(out, "---") {
+		t.Errorf("the stream must not open with a separator:\n%s", out)
+	}
+	dec := yaml.NewDecoder(strings.NewReader(out))
+	kinds := []string{}
+	for {
+		var doc map[string]any
+		if err := dec.Decode(&doc); err != nil {
+			break
+		}
+		if k, ok := doc["kind"].(string); ok {
+			kinds = append(kinds, k)
+		}
+	}
+	if strings.Join(kinds, ",") != "A,B,C" {
+		t.Errorf("documents round-trip in order, got %v:\n%s", kinds, out)
 	}
 }
