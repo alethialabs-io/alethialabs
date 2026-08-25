@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm";
 import { explainFindings } from "@/lib/ai/explain-findings";
 import { authorize } from "@/lib/authz/guard";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
-import { recordAiUsage } from "@/lib/billing/ai-quota";
+import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
 import { withActorScope } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
@@ -93,7 +93,7 @@ export async function explainJobFindings(jobId: string) {
 		inputTokens,
 		outputTokens,
 		cachedInputTokens,
-	});
+	}).catch(meteringFailed(actor.orgId));
 
 	return explanations;
 }
