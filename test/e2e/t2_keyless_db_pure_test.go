@@ -185,7 +185,7 @@ func TestApplyToSnapshot_CreatesTheDatabaseAndService(t *testing.T) {
 	snap := map[string]any{}
 	c.applyToSnapshot(snap)
 
-	dbs := existingList(snap, "databases")
+	dbs := snapshotListOrNil(snap, "databases")
 	if len(dbs) != 1 {
 		t.Fatalf("expected exactly one database, got %v", dbs)
 	}
@@ -196,7 +196,7 @@ func TestApplyToSnapshot_CreatesTheDatabaseAndService(t *testing.T) {
 	if db["engine_family"] != keylessEnginePostgres || db["engine_version"] != "16" || db["instance_class"] != "db.r6g.large" {
 		t.Errorf("engine trio not applied: %+v", db)
 	}
-	svcs := existingList(snap, "services")
+	svcs := snapshotListOrNil(snap, "services")
 	if len(svcs) != 1 {
 		t.Fatalf("expected one service, got %v", svcs)
 	}
@@ -234,7 +234,7 @@ func TestApplyToSnapshot_OverlaysDatabaseZero(t *testing.T) {
 	}
 	c.applyToSnapshot(snap)
 
-	dbs := existingList(snap, "databases")
+	dbs := snapshotListOrNil(snap, "databases")
 	if len(dbs) != 1 {
 		t.Fatalf("the scenario must OVERLAY databases[0], not append: %v", dbs)
 	}
@@ -249,7 +249,7 @@ func TestApplyToSnapshot_OverlaysDatabaseZero(t *testing.T) {
 		t.Errorf("the scenario's own fields must win: %+v", db)
 	}
 	// The binding must follow the overlaid name, not the scenario's default.
-	svc := existingList(snap, "services")[0].(map[string]any)
+	svc := snapshotListOrNil(snap, "services")[0].(map[string]any)
 	binding := svc["bindings"].([]any)[0].(map[string]any)
 	if got := binding["target"].(map[string]any)["name"]; got != "appdb" {
 		t.Errorf("the binding targets %v, but the overlaid database is appdb", got)
@@ -267,7 +267,7 @@ func TestApplyToSnapshot_AppendsServices(t *testing.T) {
 	c := keylessDBFromEnv("aws")
 	snap := map[string]any{"services": []any{map[string]any{"name": "xacct-probe"}}}
 	c.applyToSnapshot(snap)
-	svcs := existingList(snap, "services")
+	svcs := snapshotListOrNil(snap, "services")
 	if len(svcs) != 2 {
 		t.Fatalf("the scenario must APPEND to services, got %v", svcs)
 	}

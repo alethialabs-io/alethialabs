@@ -290,20 +290,29 @@ func (c xacctRegistryConfig) providerConfig() map[string]any {
 // dominantProvider skips, so the appended pluggable row is chosen — and a keyless registry sets the
 // separate `registry_pull_provider` guard, never `registry_provider`, so the cluster keeps its own
 // native registry.
-func (c xacctRegistryConfig) applyToSnapshot(snap map[string]any) {
+func (c xacctRegistryConfig) applyToSnapshot(snap map[string]any) error {
 	registry := map[string]any{
 		"name":            c.registryName(),
 		"provider":        c.connectorSlug(),
 		"provider_config": c.providerConfig(),
 	}
-	snap["container_registries"] = append(existingList(snap, "container_registries"), registry)
+	registries, err := snapshotList(snap, "container_registries")
+	if err != nil {
+		return err
+	}
+	snap["container_registries"] = append(registries, registry)
 
 	svc := map[string]any{
 		"name":   c.serviceName,
 		"type":   "deployment",
 		"source": map[string]any{"kind": "image", "image": c.image},
 	}
-	snap["services"] = append(existingList(snap, "services"), svc)
+	services, err := snapshotList(snap, "services")
+	if err != nil {
+		return err
+	}
+	snap["services"] = append(services, svc)
+	return nil
 }
 
 // registryName is the project-side name of the cross-account registry row. Derived from the slug so
