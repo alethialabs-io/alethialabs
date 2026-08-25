@@ -9,9 +9,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"text/template"
+
+	"gopkg.in/yaml.v3"
 )
 
 // byoAppProjectTmpl renders a HARDENED per-project ArgoCD AppProject for bring-your-own charts.
@@ -131,55 +132,85 @@ func RenderByoAppProject(name string, sourceRepos, namespaces []string, commonLa
 // boundary, and inventing a PSA level here would silently change what customer charts are permitted
 // to run — a security posture worth deciding explicitly rather than acquiring as a side effect of a
 // bug fix.
-var byoNamespaceTmpl = template.Must(template.New("byo-namespaces").Parse(
-	`{{- range $i, $ns := .Namespaces }}
-{{ if $i }}---
-{{ end }}apiVersion: v1
-kind: Namespace
-metadata:
-  name: {{ $ns }}
-  labels:
-    alethia.io/managed-by: byo-charts
-{{- range $.Labels }}
-    {{ .Key }}: {{ .Value }}
-{{- end }}
-{{- end }}
-`))
+// dns1123Label is Kubernetes' own rule for a Namespace name: lowercase alphanumerics and '-',
+// starting and ending alphanumeric, at most 63 characters. Matched in FULL — an unanchored pattern
+// would accept a valid prefix followed by anything at all, which is the whole attack.
+var dns1123Label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
-// byoLabel is one common label, carried as a SORTED SLICE rather than ranged over the map directly:
-// Go randomises map iteration order, so a map would make the rendered manifest differ between
-// identical deploys — churn in a diff that is supposed to mean something.
-type byoLabel struct{ Key, Value string }
+const dns1123LabelMaxLen = 63
+
+// validateByoNamespace REFUSES a namespace Kubernetes itself would refuse, rather than normalising
+// it.
+//
+// Normalising would be the more forgiving choice and it is the wrong one here, for a reason specific
+// to this call site: the SAME string is also written into the hardened AppProject's `destinations`
+// list. Silently rewriting it in one place and not the other would produce a project whose
+// destination never matches the namespace the chart syncs into, and the failure would surface as an
+// ArgoCD permission error naming neither cause.
+func validateByoNamespace(ns string) error {
+	if len(ns) > dns1123LabelMaxLen {
+		return fmt.Errorf("namespace %q is %d characters; Kubernetes allows at most %d", ns, len(ns), dns1123LabelMaxLen)
+	}
+	if !dns1123Label.MatchString(ns) {
+		return fmt.Errorf("namespace %q is not a valid DNS-1123 label (lowercase alphanumerics and '-', starting and ending alphanumeric)", ns)
+	}
+	return nil
+}
 
 // RenderByoNamespaces renders the destination namespaces for a project's BYO charts, so the runner
 // can create them before the charts sync. Returns "" when there are none, which callers treat as
 // "nothing to apply" rather than an error.
 //
-// commonLabels are the classification/sweep labels (BYOC B1.4), matching RenderByoAppProject. They
-// are rendered HERE rather than via InjectCommonLabels because that helper deliberately labels only
-// Application and AppProject documents — widening it to every kind would change what it stamps for
-// every other caller, which is a bigger decision than this fix.
+// # Why this is marshalled rather than templated (#2540)
+//
+// It used to interpolate the namespace RAW into hand-rolled YAML. Every other label-emitting path in
+// this package round-trips through gopkg.in/yaml.v3 and is therefore quoted correctly; this one did
+// not, and it is the one applied with the cluster's ADMIN kubeconfig as a standalone multi-document
+// manifest. A namespace containing a newline and a `---` therefore yielded arbitrary top-level
+// objects — a ClusterRoleBinding, say — created by the runner, which is precisely the cluster-scoped
+// power the hardened AppProject exists to deny an untrusted chart. The fix that created the
+// namespace to honour that boundary had opened a way around it.
+//
+// The value reaches here unvalidated: the console field is `z.string().trim().optional()` with no
+// DNS-1123 check, and it lands in a plain `text()` column, so interior newlines survive to the
+// runner.
+//
+// BOTH halves are kept. Marshalling makes injection structurally impossible — yaml.v3 quotes what
+// needs quoting, so a hostile value becomes one absurd namespace NAME rather than a second document.
+// Validation then refuses that absurd name outright, because a namespace Kubernetes would reject is
+// a deploy that fails later and more confusingly. Either alone would close the hole; the pair also
+// fails in the right direction.
 func RenderByoNamespaces(namespaces []string, commonLabels map[string]string) (string, error) {
 	ns := dedupeNonEmpty(namespaces)
 	if len(ns) == 0 {
 		return "", nil
 	}
-	keys := make([]string, 0, len(commonLabels))
-	for k := range commonLabels {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	labels := make([]byoLabel, 0, len(keys))
-	for _, k := range keys {
-		labels = append(labels, byoLabel{Key: k, Value: commonLabels[k]})
+
+	labels := map[string]string{"alethia.io/managed-by": "byo-charts"}
+	for k, v := range commonLabels {
+		labels[k] = v
 	}
 
 	var buf bytes.Buffer
-	data := struct {
-		Namespaces []string
-		Labels     []byoLabel
-	}{Namespaces: ns, Labels: labels}
-	if err := byoNamespaceTmpl.Execute(&buf, data); err != nil {
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	for _, n := range ns {
+		if err := validateByoNamespace(n); err != nil {
+			return "", fmt.Errorf("render byo namespaces: %w", err)
+		}
+		doc := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Namespace",
+			"metadata": map[string]any{
+				"name":   n,
+				"labels": labels,
+			},
+		}
+		if err := enc.Encode(doc); err != nil {
+			return "", fmt.Errorf("render byo namespaces: %w", err)
+		}
+	}
+	if err := enc.Close(); err != nil {
 		return "", fmt.Errorf("render byo namespaces: %w", err)
 	}
 	return buf.String(), nil
