@@ -113,8 +113,24 @@ export async function setProtectionRules(
 			.onConflictDoUpdate({
 				target: environmentProtectionRules.environment_id,
 				set: { ...fields, updated_at: new Date() },
+				// `setWhere` makes the write STRUCTURALLY unable to cross projects, rather than
+				// merely checked. assertEnvInProject above already refuses a foreign environment —
+				// but that leaves the higher-severity path standing on one line at the top of a
+				// callback that does nothing visible on the happy path, which is exactly the kind of
+				// line a later refactor moves or drops. With this predicate, a conflicting row
+				// belonging to ANOTHER project updates ZERO rows and `.returning()` yields nothing:
+				// a distinguishable failure instead of a silent overwrite.
+				//
+				// It matters more than usual here because the suite that proves the check inherits
+				// `describeIfDb` (#2669), which turns an unreachable Postgres into a silent green. A
+				// predicate in the statement holds whether or not the test ran.
+				setWhere: eq(environmentProtectionRules.project_id, projectId),
 			})
 			.returning();
+		// A foreign environment is already refused above; this is the second wall. If `setWhere`
+		// filtered the update out, `.returning()` is empty — surface that instead of handing back
+		// `undefined` as though nothing had been asked for.
+		if (!row) throw new Error("Unknown environment for this project");
 		return row;
 	});
 }

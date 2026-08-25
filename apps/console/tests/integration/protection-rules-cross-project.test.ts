@@ -30,7 +30,7 @@
 // a security helper from there merely to make it testable would widen the RPC surface to reach it.
 
 import { randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import {
@@ -150,6 +150,45 @@ describeIfDb("protection rules — environment must belong to the authorized pro
 				require_approval: false,
 			}),
 		).rejects.toThrow(/environment_protection_rules_env_key|duplicate key/i);
+	});
+
+	it("setWhere makes the WRITE structurally unable to cross projects", async () => {
+		// The second wall, exercised WITHOUT assertEnvInProject in front of it — because the value
+		// of a second wall is precisely that it holds when the first one is gone. This runs the
+		// exact upsert setProtectionRules issues, against the other project's environment.
+		const db = getServiceDb();
+		const returned = await db
+			.insert(environmentProtectionRules)
+			.values({
+				project_id: PROJ_ALLOWED,
+				environment_id: ENV_FORBIDDEN,
+				user_id: USER,
+				org_id: ORG,
+				require_approval: false,
+				require_verify_pass: false,
+			})
+			.onConflictDoUpdate({
+				target: environmentProtectionRules.environment_id,
+				set: { require_approval: false, require_verify_pass: false },
+				setWhere: eq(environmentProtectionRules.project_id, PROJ_ALLOWED),
+			})
+			.returning();
+
+		// ZERO rows: the conflicting row belongs to PROJ_FORBIDDEN, so setWhere filters the update
+		// out. Without setWhere this same statement rewrites the victim's gates and returns it.
+		expect(returned).toHaveLength(0);
+
+		const [victim] = await db
+			.select()
+			.from(environmentProtectionRules)
+			.where(
+				and(
+					eq(environmentProtectionRules.environment_id, ENV_FORBIDDEN),
+					eq(environmentProtectionRules.project_id, PROJ_FORBIDDEN),
+				),
+			);
+		expect(victim?.require_approval).toBe(true);
+		expect(victim?.require_verify_pass).toBe(true);
 	});
 
 	it("RLS does not separate projects inside one org — only the predicate does", async () => {
