@@ -215,6 +215,13 @@ func TestDiagnoseArgoURLError(t *testing.T) {
 		{"i/o timeout", errors.New("dial tcp 10.0.0.1:443: i/o timeout"), "timeout", true},
 		{"client timeout", errors.New("context deadline exceeded (Client.Timeout exceeded while awaiting headers)"), "timeout", true},
 		{"bad certificate", errors.New(`tls: failed to verify certificate: x509: certificate signed by unknown authority`), "tls", false},
+		// Verbatim from Go: net/http/transport.go, `func (tlsHandshakeTimeoutError) Error()`.
+		// It cannot be built by calling the emitter the way the status case below is — the type
+		// is unexported and provoking a real one needs a TLS server that accepts a connection
+		// and then hangs. So the string is quoted from the stdlib source rather than remembered,
+		// and the point of the case is the TIMING column: this reached `default` and came back
+		// UNCLASSIFIED, which carries no timing claim for a failure that is nothing but timing.
+		{"TLS handshake timeout", errors.New(`Get "https://argocd.x.e2e.alethialabs.io": net/http: TLS handshake timeout`), "tls-handshake-timeout", true},
 		// Built by CALLING the emitter, never by retyping its wording: the first draft of this
 		// classifier matched a phrase evaluateArgoURLStatus does not produce, so the one case it
 		// was written for would have come back UNCLASSIFIED.
@@ -235,6 +242,34 @@ func TestDiagnoseArgoURLError(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("a handshake timeout is not a certificate rejection, whichever words it arrives in", func(t *testing.T) {
+		// The two labels give OPPOSITE advice — one says wait, the other says waiting will not
+		// help — so a wrapped form carrying both vocabularies must not land in the certificate
+		// arm. This is what the arm ORDER buys, and ordering is invisible in a table test: both
+		// cases pass a table whether or not the new arm sits first.
+		got := diagnoseArgoURLError(errors.New(`tls: handshake failure: net/http: TLS handshake timeout`))
+		if !strings.Contains(got, "tls-handshake-timeout") {
+			t.Fatalf("a message naming both was classified as %q; the certificate arm claims waiting will NOT help, which is backwards here", got)
+		}
+		if !strings.Contains(got, "a timing problem") {
+			t.Errorf("a handshake timeout must claim timing, got %q", got)
+		}
+	})
+
+	t.Run("the certificate label states an observation, not a single cause", func(t *testing.T) {
+		// It used to end "the ACM certificate is not attached to the listener, or does not cover
+		// this name" — a conclusion the probe cannot support, and one that names a mechanism that
+		// is not even in use on the clouds where cert-manager issues the certificate. Its
+		// siblings state what was observed; this asserts what is wrong.
+		got := diagnoseArgoURLError(errors.New(`x509: certificate has expired or is not yet valid`))
+		if strings.Contains(got, "ACM") {
+			t.Errorf("the label names one cloud's mechanism as the cause: %q", got)
+		}
+		if !strings.Contains(got, "the certificate was rejected") {
+			t.Errorf("the label must still state the observation, got %q", got)
+		}
+	})
 
 	t.Run("nil is empty, not a diagnosis", func(t *testing.T) {
 		if got := diagnoseArgoURLError(nil); got != "" {
