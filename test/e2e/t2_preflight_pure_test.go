@@ -440,3 +440,17 @@ func TestAlibabaCapacityPreflightIsANamedExclusion(t *testing.T) {
 		t.Errorf("the exclusion must say the run was not verified, got: %s", got.Detail)
 	}
 }
+
+// TestAWSCapacityPreflightUnpinnedTypeSaysSo covers the early return that keeps the aws probe from
+// shelling out with an empty `Values=` filter — which AWS accepts and answers with every offering
+// in the region, so the check would have "passed" against a question nobody asked. Reachable
+// without a CLI because it returns before invoking one.
+func TestAWSCapacityPreflightUnpinnedTypeSaysSo(t *testing.T) {
+	got := awsCapacityPreflight(context.Background(), "us-east-1", "  ")
+	if got.Verdict != preflightUnknown {
+		t.Fatalf("verdict = %q, want unknown — nothing to check is not a clean check", got.Verdict)
+	}
+	if !strings.Contains(got.Detail, "no machine type was resolved") {
+		t.Errorf("detail must say why nothing was checked, got: %s", got.Detail)
+	}
+}
