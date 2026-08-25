@@ -400,12 +400,14 @@
     scale var(--dur-2) var(--ease-out);
 }
 /* `data-active` is base-ui's active-item attribute and `aria-current` marks the
-   current route, so an active tab and the nav item for the page you are on hold
-   their clamp with no extra class. `[data-clamped]` is the manual escape hatch. */
+   current route, `data-panel-open` an open accordion, and `aria-current` marks the
+   current route — so an active tab, an open panel and the nav item for the page you
+   are on all hold their clamp with no extra class. `[data-clamped]` is the manual escape hatch. */
 .vx-clamp:hover::before,
 .vx-clamp:focus-visible::before,
 .vx-clamp[data-clamped]::before,
 .vx-clamp[data-active]::before,
+.vx-clamp[data-panel-open]::before,
 .vx-clamp[aria-current]:not([aria-current="false"])::before,
 .vx-clamp--held::before,
 .vx-bracket:hover::before,

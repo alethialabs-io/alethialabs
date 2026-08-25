@@ -34,18 +34,28 @@ const badgeVariants = cva(
  * different element; the badge's props merge into it via `mergeProps`. `useRender` is a hook, so
  * this module is a client component — the exported `badgeVariants` cva still imports cleanly into
  * Server Components. */
+/** `interactive` marks a badge the reader can act on — a filter chip, a removable
+ * tag. It takes the clamp, and turns off the base `overflow-hidden` that would
+ * otherwise clip the marks (they are drawn OUTSIDE the badge's own box). A static
+ * badge is a label, not a control, so it stays still. */
 function Badge({
   className,
   variant = "default",
+  interactive = false,
   render,
   ...props
-}: useRender.ComponentProps<"span"> & VariantProps<typeof badgeVariants>) {
+}: useRender.ComponentProps<"span"> &
+  VariantProps<typeof badgeVariants> & { interactive?: boolean }) {
   // `data-slot` is a valid JSX data-attribute but not a member of the typed
   // `InputProps<"span">` literal, so it must be supplied via a variable (extra
   // props are allowed structurally) rather than a fresh literal (excess-checked).
   const ownProps = {
     "data-slot": "badge",
-    className: cn(badgeVariants({ variant }), className),
+    className: cn(
+      badgeVariants({ variant }),
+      interactive && "vx-clamp vx-clamp--tight cursor-pointer overflow-visible",
+      className,
+    ),
   }
   return useRender({
     defaultTagName: "span",

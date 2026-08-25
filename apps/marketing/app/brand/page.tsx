@@ -298,6 +298,34 @@ export default async function BrandPage() {
 						<Metric term="Press" value="0.994 · --ease-press" />
 					</dl>
 
+					<div className="mt-12 grid gap-8 sm:grid-cols-2">
+						<div>
+							<p className="vx-eyebrow">Clamps</p>
+							<p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+								Button · link and nav item · interactive card · tab · table row ·
+								checkbox · switch · accordion section · interactive badge · live
+								status. Hover, focus, or the current route drives it — an active
+								tab, an open panel and the page you are on hold the clamp with no
+								extra class, because the CSS reads{" "}
+								<span className="font-mono">aria-current</span>,{" "}
+								<span className="font-mono">data-active</span> and{" "}
+								<span className="font-mono">data-panel-open</span> directly.
+							</p>
+						</div>
+						<div>
+							<p className="vx-eyebrow">Deliberately still</p>
+							<p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+								A static card or badge is a label, not a control — a surface that
+								reacts to the pointer promises an affordance it does not have.
+								Dialogs, sheets and popovers keep their own entrance; clamping a
+								panel that is already animating in is decoration twice. Disabled
+								controls are not subjects under examination. And a text input
+								clamps through its wrapping field, because a replaced element
+								renders no pseudo-element at all.
+							</p>
+						</div>
+					</div>
+
 					<p className="mt-8 max-w-2xl text-xs leading-relaxed text-muted-foreground">
 						Only <span className="font-mono">scale</span> and{" "}
 						<span className="font-mono">opacity</span> animate, so the device is
