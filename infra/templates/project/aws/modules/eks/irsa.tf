@@ -1,6 +1,52 @@
 #################################
 #IRSA for VPC-CNI addon for EKS #
 #################################
+# ── `ec2:DescribeSubnets`, which the module's generated vpc-cni policy does not grant. ──
+#
+# The VPC CNI's SUBNET DISCOVERY (ENABLE_SUBNET_DISCOVERY, on by default since v1.18) calls
+# ec2:DescribeSubnets before it creates an ENI. The pinned iam module (5.34.0) predates that
+# feature, so `attach_vpc_cni_policy` emits a policy without the action, while the addon below is
+# `most_recent = true` and therefore always has the feature. A pinned policy against a floating
+# addon: the skew only ever widens.
+#
+# The failure is silent until a node needs its SECOND ENI, and then it is total. Measured on a real
+# EKS floor run, 2026-08-24 (cluster eks-ue1-local946c3d09-alethia-nl), from ipamd.log:
+#
+#   Failed to call ec2:DescribeSubnets: ... UnauthorizedOperation ... is not authorized to perform:
+#   ec2:DescribeSubnets because no identity-based policy allows the ec2:DescribeSubnets action
+#   Failed to increase pool size due to not able to allocate ENI ... Quit ENI creation attempt.
+#   hasRoomForEni: currentENIs=1, maxENI=3, hasRoom=true
+#
+# There was room for two more ENIs and 4079 free IPs in the subnet; the CNI simply could not ask
+# which subnet to use, and gave up rather than falling back. A t3.large's first ENI carries 12 IPs,
+# one of which is the node's own — so the cluster hard-stops at ELEVEN pod IPs. ArgoCD's
+# application-controller was the twelfth pod and sat in ContainerCreating with
+# `failed to assign an IP address to container` until the run timed out.
+#
+# Granting the read is the fix AWS documents for subnet discovery
+# (https://github.com/aws/amazon-vpc-cni-k8s/blob/master/docs/iam-policy.md — the CNI's own error
+# message links it). The alternative, pinning ENABLE_SUBNET_DISCOVERY=false, keeps the missing
+# permission and gives up a feature that matters precisely when a subnet fills up.
+data "aws_iam_policy_document" "vpc_cni_subnet_discovery" {
+  statement {
+    sid       = "VpcCniSubnetDiscovery"
+    effect    = "Allow"
+    actions   = ["ec2:DescribeSubnets"]
+    resources = ["*"] # DescribeSubnets is a list action; AWS does not support resource-level scoping on it
+  }
+}
+
+resource "aws_iam_policy" "vpc_cni_subnet_discovery" {
+  # `name_prefix`, not `name`, and without the cluster name in it — the same shape as the ALB
+  # controller policy below. A fixed name would collide on a replace-before-destroy, and folding a
+  # cluster name into an IAM name is the derived-length trap the repo has already paid for (#1905).
+  # The cluster is identified in the description instead, where nothing has to fit.
+  name_prefix = "AmazonEKS-VPC-CNI-SubnetDiscovery"
+  description = "ec2:DescribeSubnets for the VPC CNI's subnet discovery on ${var.eks_cluster_name} — absent from the pinned iam module's generated policy."
+  policy      = data.aws_iam_policy_document.vpc_cni_subnet_discovery.json
+  tags        = var.eks_tags
+}
+
 module "vpc_cni_irsa" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
   version = "5.34.0"
@@ -9,6 +55,10 @@ module "vpc_cni_irsa" {
   attach_vpc_cni_policy = true
   vpc_cni_enable_ipv6   = false
   vpc_cni_enable_ipv4   = true
+
+  role_policy_arns = {
+    subnet_discovery = aws_iam_policy.vpc_cni_subnet_discovery.arn
+  }
 
   oidc_providers = {
     main = {

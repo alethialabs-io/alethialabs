@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Which workflows are red, and have been red for a while.
+#
+# WHY THIS EXISTS. On 2026-08-24, one sweep of every workflow's last three runs found FIVE red
+# pipelines — four of them red on EVERY run — and not one had been noticed:
+#
+#   deploy-console        production had not deployed for four days (an expired PostHog key)
+#   posthog-error-issues  the same key, so the surface that REPORTS runtime errors was down too
+#   release-cli           red on every SUCCESSFUL publish, since v0.4.0
+#   e2e-nightly           four clouds reported red on nights that never touched a cloud
+#   programme             403 on push; its own staleness rule reds CI for everyone a week later
+#
+# All five were found by asking GitHub a question nobody was asking. That is the whole content of
+# this workflow: ask it daily, and put the answer where a human reads.
+#
+# IT DOES NOT FAIL. A red pipeline nobody notices is the problem being solved; adding a sixth would
+# be a joke at its own expense. It opens or updates ONE title-deduped issue — the mechanism
+# e2e-nightly's rollup already uses, and the one that demonstrably reaches someone.
+
+name: Workflow health
+
+on:
+  schedule:
+    - cron: "23 6 * * *" # daily, 06:23 UTC — after the nightly and its reaper have settled
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read # read each workflow's recent run conclusions
+  issues: write # upsert the one tracking issue
+
+concurrency:
+  group: workflow-health
+  cancel-in-progress: true
+
+jobs:
+  report:
+    name: Workflow health report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # The conclusions come from the API rather than the checkout, so a workflow deleted from the
+      # tree stops being reported the moment it stops existing — no stale entries to prune by hand.
+      - name: Collect each workflow's recent run conclusions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          : > runs.json
+          echo "[" >> runs.json
+          first=1
+          for wf in $(ls .github/workflows/*.yml | xargs -n1 basename); do
+            c="$(gh run list --workflow="$wf" --limit 5 --json conclusion \
+                  -q '[.[].conclusion] | map(select(. != null)) | @json' 2>/dev/null || echo '[]')"
+            [ -z "$c" ] && c='[]'
+            [ "$first" -eq 0 ] && echo "," >> runs.json
+            first=0
+            printf '{"name":"%s","conclusions":%s}' "${wf%.yml}" "$c" >> runs.json
+          done
+          echo "]" >> runs.json
+
+      - name: Assess
+        id: assess
+        run: |
+          set -euo pipefail
+          report="$(node scripts/ci/workflow-health.mjs --input runs.json)"
+          echo "$report"
+          count="$(printf '%s' "$report" | sed -n 's/^UNHEALTHY_COUNT=//p')"
+          echo "count=${count:-0}" >> "$GITHUB_OUTPUT"
+          # The body drops the machine-readable tail; the issue gets prose only.
+          printf '%s' "$report" | sed '/^UNHEALTHY_COUNT=/d' > report.md
+          { echo '## Workflow health'; echo; cat report.md; } >> "$GITHUB_STEP_SUMMARY"
+
+      # Title-deduped, like the nightly rollup's. One long-lived issue that gets updated, never a
+      # new one per day — a daily issue is indistinguishable from spam and gets muted, which would
+      # recreate the exact blindness this exists to remove.
+      - name: Open or update the tracking issue
+        if: steps.assess.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "ci: workflows red on every recent run"
+        run: |
+          set -euo pipefail
+          body="$(cat report.md)"
+          body="${body}
+
+          _Refreshed by \`.github/workflows/workflow-health.yml\` on $(date -u +%Y-%m-%d). Close it when the list is empty; it will reopen itself if that stops being true._"
+          # Dedup by LABEL, not by --search. GitHub's search index LAGS by minutes, and a dedup
+          # that only asks search has already filed a duplicate in this repo. `--label` is live.
+          existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
+            --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body "$body"
+            gh issue comment "$existing" --body "Still red on $(date -u +%Y-%m-%d) — see the updated body."
+            echo "updated #$existing"
+          else
+            gh issue create --title "$TITLE" --label "wave:hygiene" --body "$body"
+          fi
+
+      - name: Say so when everything is green
+        if: steps.assess.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "ci: workflows red on every recent run"
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
+            --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "No workflow has failed its last 3 runs as of $(date -u +%Y-%m-%d). Closing; this reopens itself if that changes."
+            echo "closed #$existing"
+          fi

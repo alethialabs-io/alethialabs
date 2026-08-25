@@ -1,0 +1,1553 @@
+=== RUN   TestT2RealCloudProvisioning
+    t2_provision_test.go:146: A0.6: ArgoCD-with-repos SKIPPED — no apps/BYO repo configured (set ALETHIA_E2E_ARGO_APPS_REPO + ALETHIA_E2E_ARGO_BYO_CHART_REPO + ALETHIA_E2E_GIT_TOKEN). Base T2 proof still runs.
+    t2_provision_test.go:164: #1268: cross-account keyless secrets SKIPPED — set ALETHIA_E2E_SECRETS_XACCT (+ its target vars) to enable.
+    t2_provision_test.go:184: #1773: ACM certificate SKIPPED — set ALETHIA_E2E_ACM_CERT (+ ALETHIA_E2E_ACM_CERT_ZONE_ID, ALETHIA_E2E_ACM_CERT_ZONE_NAME) to enable.
+    t2_provision_test.go:202: #1511: keyless DB auth SKIPPED — set ALETHIA_E2E_KEYLESS_DB (+ its engine vars) to enable.
+    t2_provision_test.go:221: #1047: cross-account keyless registry SKIPPED — set ALETHIA_E2E_XACCT_REGISTRY (+ its target vars) to enable.
+    t2_provision_test.go:239: T2 target: provider=hetzner region=nbg1 cluster=alethia-nl-local608306
+    t2_provision_test.go:264: T2 budget — hetzner: ctx 1h5m0s (= deploy-wait 25m0s + argocd-converge 8m0s + soak 25m0s + headroom 7m0s) < go 1h10m0s < step 1h15m0s < job 1h30m0s
+    t2_provision_test.go:302: A0.5: seeded console graph (project=fa29bf91-ff85-4d77-82b6-0315efe88233 env=4ff12cbb-5997-4e9f-a864-3f89b1d6be3f) + loaded fidelity fixture; enforce=false real_snapshot=false
+    t2_provision_test.go:348: A0.5: no divergence across the 2 key(s) this compares [addons provider] — NOT a statement about the other 33 fixture key(s), which the seed does not carry
+    t2_provision_test.go:354: seeded QUEUED DEPLOY job 5a1e947a-8870-43d1-aa7d-1fde61e6ad62 targeting hetzner template (cluster alethia-nl-local608306)
+    t2_provision_test.go:480: verified signed receipt sealed to plan sha256 d1a60425f33ce67188626d27a084d7d923f8fb20c8e2bcc545786c4d2fc4fc5d
+    t2_provision_test.go:493: 206 log lines shipped to job_logs
+    t2_provision_test.go:499: kubectl get nodes:
+        alethia-nl-local608306-cp-1       Ready   control-plane   86s   v1.35.6
+        alethia-nl-local608306-worker-1   Ready   <none>          92s   v1.35.6
+    t2_provision_test.go:510: asserting ArgoCD Applications reach Healthy+Synced: [addon-reloader external-secrets-operator metrics-server]
+    t2_provision_test.go:550: all 3 expected ArgoCD Applications are Healthy+Synced
+    t2_provision_test.go:602: A0.5: replayed real finalizeDeployment; shim: finalizeDeployment(5a1e947a-8870-43d1-aa7d-1fde61e6ad62) completed
+    t2_provision_test.go:602: A0.5: env 4ff12cbb-5997-4e9f-a864-3f89b1d6be3f is ACTIVE (real finalizeDeployment)
+    t2_provision_test.go:602: A0.5: persisted reloader health row: health="Healthy" status="ACTIVE"
+    t2_provision_test.go:602: A0.5: persisted Trivy security-posture row present (bonus)
+    t2_provision_test.go:610: day-2 access: skipped (ALETHIA_E2E_DAY2_ACCESS unset)
+    t2_provision_test.go:618: day-2 offer: skipped (ALETHIA_E2E_DAY2_OFFER unset)
+    t2_provision_test.go:634: A0.3 soak: ENABLED for 10m0s — day-2 window hetzner (deadline 2026-08-24T22:10:08Z)
+    t2_provision_test.go:634: A0.3 drift: deploy state records 27 managed resource instances
+    t2_provision_test.go:634: A0.3 drift: seeded DETECT_DRIFT job 5b4fb3ba-1c7a-4df3-9302-7436cfd503e0 (state aliased to deploy job 5a1e947a-8870-43d1-aa7d-1fde61e6ad62)
+    t2_provision_test.go:634: A0.3 drift: posture is not in-sync right after a clean apply: in_sync=false drifted=5
+        drifted: hcloud_firewall.this (modified)
+                 hcloud_primary_ip.control_plane_ipv4[0] (modified)
+                 hcloud_primary_ip.worker_ipv4[0] (modified)
+                 talos_cluster_kubeconfig.this (modified)
+                 talos_machine_secrets.this (modified)
+    t2_soak_run_test.go:82: A0.3 soak summary: ❌ soak 600s: liveness 1/1 ok · drift SUCCESS in_sync=false (state=27 res, non-empty reads=3, drifted=5) · pvc: n/a (provider cloud-side check not wired) · addons re-read=false
+    t2_provision_test.go:424: ──── runner process output ────
+        runner dev
+        {"time":"2026-08-25T00:51:58.555443+03:00","level":"INFO","msg":"runner started","runner_id":"d6faee40-294e-4ae2-97f0-f72a1db8c99f","operator":"self","version":"dev","alethia_url":"http://127.0.0.1:50742"}
+        {"time":"2026-08-25T00:51:58.578056+03:00","level":"INFO","msg":"claimed job","runner_id":"d6faee40-294e-4ae2-97f0-f72a1db8c99f","job_id":"5a1e947a-8870-43d1-aa7d-1fde61e6ad62","job_type":"DEPLOY"}
+        ▸ Job claimed — preparing workspace…
+        [sandbox] job isolation DISABLED (PassthroughSandbox): running "deploy" job 5a1e947a-8870-43d1-aa7d-1fde61e6ad62 in-process with the full host environment — safe only for trusted (non-BYO) work
+        Starting deployment for project: alethia-nl (provider: hetzner)
+        Using bundled templates from project-templates/hetzner
+        State backend: console HTTP proxy (per-job token)
+        Initializing OpenTofu...
+        {
+          "terraform_version": "1.9.0",
+          "platform": "darwin_arm64",
+          "provider_selections": {
+            "registry.opentofu.org/aminueza/minio": "3.38.5",
+            "registry.opentofu.org/hashicorp/helm": "2.17.0",
+            "registry.opentofu.org/hcloud-talos/imager": "1.0.18",
+            "registry.opentofu.org/hetznercloud/hcloud": "1.67.0",
+            "registry.opentofu.org/siderolabs/talos": "0.11.0"
+          }
+        }
+        
+        Initializing the backend...
+        
+        Successfully configured the backend "http"! OpenTofu will automatically
+        use this backend unless the backend configuration changes.
+        
+        Initializing provider plugins...
+        - terraform.io/builtin/terraform is built in to OpenTofu
+        - Reusing previous version of hcloud-talos/imager from the dependency lock file
+        - Reusing previous version of hashicorp/helm from the dependency lock file
+        - Reusing previous version of aminueza/minio from the dependency lock file
+        - Reusing previous version of hetznercloud/hcloud from the dependency lock file
+        - Reusing previous version of siderolabs/talos from the dependency lock file
+        - Using hcloud-talos/imager v1.0.18 from the shared cache directory
+        - Using hashicorp/helm v2.17.0 from the shared cache directory
+        - Using aminueza/minio v3.38.5 from the shared cache directory
+        - Using hetznercloud/hcloud v1.67.0 from the shared cache directory
+        - Using siderolabs/talos v0.11.0 from the shared cache directory
+        
+        OpenTofu has been successfully initialized!
+        Running OpenTofu plan...
+        data.talos_image_factory_extensions_versions.this: Reading...
+        data.helm_template.hcloud_ccm: Reading...
+        data.hcloud_location.selected: Reading...
+        data.helm_template.hcloud_csi: Reading...
+        data.helm_template.cilium: Reading...
+        data.hcloud_location.selected: Read complete after 0s [name=nbg1]
+        data.talos_image_factory_extensions_versions.this: Read complete after 1s [id=extensions_info]
+        data.helm_template.hcloud_ccm: Read complete after 4s [id=hcloud-cloud-controller-manager]
+        data.helm_template.hcloud_csi: Read complete after 7s [id=hcloud-csi]
+        data.helm_template.cilium: Still reading... [10s elapsed]
+        data.helm_template.cilium: Read complete after 11s [id=cilium]
+        
+        OpenTofu used the selected providers to generate the following execution
+        plan. Resource actions are indicated with the following symbols:
+          + create
+         <= read (data resources)
+        
+        OpenTofu will perform the following actions:
+        
+          # data.talos_client_configuration.this will be read during apply
+          # (config refers to values not yet known)
+         <= data "talos_client_configuration" "this" {
+              + client_configuration = (known after apply)
+              + cluster_name         = "alethia-nl-local608306"
+              + endpoints            = [
+                  + (known after apply),
+                ]
+              + id                   = (known after apply)
+              + talos_config         = (sensitive value)
+            }
+        
+          # data.talos_image_factory_urls.amd64[0] will be read during apply
+          # (config refers to values not yet known)
+         <= data "talos_image_factory_urls" "amd64" {
+              + architecture  = "amd64"
+              + id            = (known after apply)
+              + platform      = "hcloud"
+              + schematic_id  = (known after apply)
+              + talos_version = "v1.13.6"
+              + urls          = (known after apply)
+            }
+        
+          # data.talos_machine_configuration.control_plane will be read during apply
+          # (config refers to values not yet known)
+         <= data "talos_machine_configuration" "control_plane" {
+              + cluster_endpoint      = (known after apply)
+              + cluster_name          = "alethia-nl-local608306"
+              + config_patches        = [
+                  + (known after apply),
+                  + <<-EOT
+                        "cluster":
+                          "adminKubeconfig":
+                            "certLifetime": "24h0m0s"
+                          "network":
+                            "cni":
+                              "name": "none"
+                            "podSubnets":
+                            - "10.0.128.0/17"
+                            "serviceSubnets":
+                            - "10.0.96.0/19"
+                          "proxy":
+                            "disabled": true
+                    EOT,
+                ]
+              + docs                  = false
+              + examples              = false
+              + id                    = (known after apply)
+              + kubernetes_version    = "1.35.6"
+              + machine_configuration = (sensitive value)
+              + machine_secrets       = (known after apply)
+              + machine_type          = "controlplane"
+              + talos_version         = "v1.13.6"
+            }
+        
+          # data.talos_machine_configuration.worker will be read during apply
+          # (config refers to values not yet known)
+         <= data "talos_machine_configuration" "worker" {
+              + cluster_endpoint      = (known after apply)
+              + cluster_name          = "alethia-nl-local608306"
+              + config_patches        = [
+                  + (known after apply),
+                  + <<-EOT
+                        "cluster":
+                          "adminKubeconfig":
+                            "certLifetime": "24h0m0s"
+                          "network":
+                            "cni":
+                              "name": "none"
+                            "podSubnets":
+                            - "10.0.128.0/17"
+                            "serviceSubnets":
+                            - "10.0.96.0/19"
+                          "proxy":
+                            "disabled": true
+                    EOT,
+                ]
+              + docs                  = false
+              + examples              = false
+              + id                    = (known after apply)
+              + kubernetes_version    = "1.35.6"
+              + machine_configuration = (sensitive value)
+              + machine_secrets       = (known after apply)
+              + machine_type          = "worker"
+              + talos_version         = "v1.13.6"
+            }
+        
+          # hcloud_firewall.this will be created
+          + resource "hcloud_firewall" "this" {
+              + id     = (known after apply)
+              + labels = {
+                  + "alethia_project-id" = "e2e-local608306"
+                  + "cluster"            = "alethia-nl-local608306"
+                }
+              + name   = "alethia-nl-local608306"
+        
+              + rule {
+                  + description     = "Intra-cluster ICMP (private network)"
+                  + destination_ips = []
+                  + direction       = "in"
+                  + protocol        = "icmp"
+                  + source_ips      = [
+                      + "10.0.0.0/16",
+                    ]
+                }
+              + rule {
+                  + description     = "Intra-cluster TCP (private network)"
+                  + destination_ips = []
+                  + direction       = "in"
+                  + port            = "any"
+                  + protocol        = "tcp"
+                  + source_ips      = [
+                      + "10.0.0.0/16",
+                    ]
+                }
+              + rule {
+                  + description     = "Intra-cluster UDP (private network)"
+                  + destination_ips = []
+                  + direction       = "in"
+                  + port            = "any"
+                  + protocol        = "udp"
+                  + source_ips      = [
+                      + "10.0.0.0/16",
+                    ]
+                }
+              + rule {
+                  + description     = "Kubernetes API server"
+                  + destination_ips = []
+                  + direction       = "in"
+                  + port            = "6443"
+                  + protocol        = "tcp"
+                  + source_ips      = [
+                      + "0.0.0.0/0",
+                      + "::/0",
+                    ]
+                }
+              + rule {
+                  + description     = "Talos apid (trustd)"
+                  + destination_ips = []
+                  + direction       = "in"
+                  + port            = "50001"
+                  + protocol        = "tcp"
+                  + source_ips      = [
+                      + "0.0.0.0/0",
+                      + "::/0",
+                    ]
+                }
+              + rule {
+                  + description     = "Talos apid"
+                  + destination_ips = []
+                  + direction       = "in"
+                  + port            = "50000"
+                  + protocol        = "tcp"
+                  + source_ips      = [
+                      + "0.0.0.0/0",
+                      + "::/0",
+                    ]
+                }
+            }
+        
+          # hcloud_network.this[0] will be created
+          + resource "hcloud_network" "this" {
+              + delete_protection        = false
+              + expose_routes_to_vswitch = false
+              + id                       = (known after apply)
+              + ip_range                 = "10.0.0.0/16"
+              + labels                   = {
+                  + "alethia_project-id" = "e2e-local608306"
+                  + "cluster"            = "alethia-nl-local608306"
+                }
+              + name                     = "alethia-nl-local608306"
+            }
+        
+          # hcloud_network_subnet.nodes will be created
+          + resource "hcloud_network_subnet" "nodes" {
+              + gateway      = (known after apply)
+              + id           = (known after apply)
+              + ip_range     = "10.0.0.0/24"
+              + network_id   = (known after apply)
+              + network_zone = "eu-central"
+              + type         = "cloud"
+            }
+        
+          # hcloud_primary_ip.control_plane_ipv4[0] will be created
+          + resource "hcloud_primary_ip" "control_plane_ipv4" {
+              + assignee_id       = (known after apply)
+              + assignee_type     = (known after apply)
+              + auto_delete       = false
+              + datacenter        = (known after apply)
+              + delete_protection = false
+              + id                = (known after apply)
+              + ip_address        = (known after apply)
+              + ip_network        = (known after apply)
+              + labels            = {
+                  + "alethia_project-id" = "e2e-local608306"
+                  + "cluster"            = "alethia-nl-local608306"
+                  + "role"               = "control-plane"
+                }
+              + location          = "nbg1"
+              + name              = "alethia-nl-local608306-cp-1-ipv4"
+              + type              = "ipv4"
+            }
+        
+          # hcloud_primary_ip.worker_ipv4[0] will be created
+          + resource "hcloud_primary_ip" "worker_ipv4" {
+              + assignee_id       = (known after apply)
+              + assignee_type     = (known after apply)
+              + auto_delete       = false
+              + datacenter        = (known after apply)
+              + delete_protection = false
+              + id                = (known after apply)
+              + ip_address        = (known after apply)
+              + ip_network        = (known after apply)
+              + labels            = {
+                  + "alethia_project-id" = "e2e-local608306"
+                  + "cluster"            = "alethia-nl-local608306"
+                  + "role"               = "worker"
+                }
+              + location          = "nbg1"
+              + name              = "alethia-nl-local608306-worker-1-ipv4"
+              + type              = "ipv4"
+            }
+        
+          # hcloud_server.control_planes["alethia-nl-local608306-cp-1"] will be created
+          + resource "hcloud_server" "control_planes" {
+              + backup_window              = (known after apply)
+              + backups                    = false
+              + datacenter                 = (known after apply)
+              + delete_protection          = false
+              + firewall_ids               = (known after apply)
+              + id                         = (known after apply)
+              + ignore_remote_firewall_ids = false
+              + image                      = (known after apply)
+              + ipv4_address               = (known after apply)
+              + ipv6_address               = (known after apply)
+              + ipv6_network               = (known after apply)
+              + keep_disk                  = false
+              + labels                     = {
+                  + "alethia_project-id" = "e2e-local608306"
+                  + "cluster"            = "alethia-nl-local608306"
+                  + "role"               = "control-plane"
+                }
+              + location                   = "nbg1"
+              + name                       = "alethia-nl-local608306-cp-1"
+              + primary_disk_size          = (known after apply)
+              + rebuild_protection         = false
+              + server_type                = "cpx22"
+              + shutdown_before_deletion   = false
+              + status                     = (known after apply)
+              + user_data                  = (sensitive value)
+        
+              + network {
+                  + alias_ips   = (known after apply)
+                  + ip          = "10.0.0.101"
+                  + mac_address = (known after apply)
+                  + network_id  = (known after apply)
+                  + subnet_id   = (known after apply)
+                }
+        
+              + public_net {
+                  + ipv4         = (known after apply)
+                  + ipv4_enabled = true
+                  + ipv6         = (known after apply)
+                  + ipv6_enabled = true
+                }
+            }
+        
+          # hcloud_server.workers["alethia-nl-local608306-worker-1"] will be created
+          + resource "hcloud_server" "workers" {
+              + backup_window              = (known after apply)
+              + backups                    = false
+              + datacenter                 = (known after apply)
+              + delete_protection          = false
+              + firewall_ids               = (known after apply)
+              + id                         = (known after apply)
+              + ignore_remote_firewall_ids = false
+              + image                      = (known after apply)
+              + ipv4_address               = (known after apply)
+              + ipv6_address               = (known after apply)
+              + ipv6_network               = (known after apply)
+              + keep_disk                  = false
+              + labels                     = {
+                  + "alethia_project-id" = "e2e-local608306"
+                  + "cluster"            = "alethia-nl-local608306"
+                  + "role"               = "worker"
+                }
+              + location                   = "nbg1"
+              + name                       = "alethia-nl-local608306-worker-1"
+              + primary_disk_size          = (known after apply)
+              + rebuild_protection         = false
+              + server_type                = "cpx22"
+              + shutdown_before_deletion   = false
+              + status                     = (known after apply)
+              + user_data                  = (sensitive value)
+        
+              + network {
+                  + alias_ips   = (known after apply)
+                  + ip          = "10.0.0.201"
+                  + mac_address = (known after apply)
+                  + network_id  = (known after apply)
+                  + subnet_id   = (known after apply)
+                }
+        
+              + public_net {
+                  + ipv4         = (known after apply)
+                  + ipv4_enabled = true
+                  + ipv6         = (known after apply)
+                  + ipv6_enabled = true
+                }
+            }
+        
+          # imager_image.amd64[0] will be created
+          + resource "imager_image" "amd64" {
+              + architecture       = "x86"
+              + debug_skip_cleanup = false
+              + description        = "alethia-nl-local608306-talos-v1.13.6-amd64"
+              + effective_labels   = (known after apply)
+              + id                 = (known after apply)
+              + image_id           = (known after apply)
+              + image_url          = (known after apply)
+              + labels             = {
+                  + "alethia_project-id" = "e2e-local608306"
+                  + "cluster"            = "alethia-nl-local608306"
+                  + "os"                 = "talos"
+                }
+              + location           = "nbg1"
+        
+              + timeouts {
+                  + create = "15m"
+                  + delete = "10m"
+                }
+            }
+        
+          # talos_cluster_kubeconfig.this will be created
+          + resource "talos_cluster_kubeconfig" "this" {
+              + certificate_renewal_duration    = "720h"
+              + client_configuration            = (known after apply)
+              + endpoint                        = (known after apply)
+              + id                              = (known after apply)
+              + kubeconfig_raw                  = (sensitive value)
+              + kubernetes_client_configuration = (known after apply)
+              + node                            = (known after apply)
+            }
+        
+          # talos_image_factory_schematic.this will be created
+          + resource "talos_image_factory_schematic" "this" {
+              + id        = (known after apply)
+              + schematic = <<-EOT
+                    "customization":
+                      "systemExtensions":
+                        "officialExtensions":
+                        - "siderolabs/qemu-guest-agent"
+                EOT
+            }
+        
+          # talos_machine_bootstrap.this will be created
+          + resource "talos_machine_bootstrap" "this" {
+              + client_configuration = (known after apply)
+              + endpoint             = (known after apply)
+              + id                   = (known after apply)
+              + node                 = (known after apply)
+            }
+        
+          # talos_machine_configuration_apply.control_plane["alethia-nl-local608306-cp-1"] will be created
+          + resource "talos_machine_configuration_apply" "control_plane" {
+              + apply_mode                  = "auto"
+              + client_configuration        = (known after apply)
+              + endpoint                    = (known after apply)
+              + id                          = (known after apply)
+              + machine_configuration       = (sensitive value)
+              + machine_configuration_hash  = (known after apply)
+              + machine_configuration_input = (sensitive value)
+              + node                        = (known after apply)
+              + resolved_apply_mode         = (known after apply)
+            }
+        
+          # talos_machine_configuration_apply.worker["alethia-nl-local608306-worker-1"] will be created
+          + resource "talos_machine_configuration_apply" "worker" {
+              + apply_mode                  = "auto"
+              + client_configuration        = (known after apply)
+              + endpoint                    = (known after apply)
+              + id                          = (known after apply)
+              + machine_configuration       = (sensitive value)
+              + machine_configuration_hash  = (known after apply)
+              + machine_configuration_input = (sensitive value)
+              + node                        = (known after apply)
+              + resolved_apply_mode         = (known after apply)
+            }
+        
+          # talos_machine_secrets.this will be created
+          + resource "talos_machine_secrets" "this" {
+              + client_configuration = (known after apply)
+              + id                   = (known after apply)
+              + machine_secrets      = (known after apply)
+              + talos_version        = "v1.13.6"
+            }
+        
+          # terraform_data.byo_network_guard will be created
+          + resource "terraform_data" "byo_network_guard" {
+              + id = (known after apply)
+            }
+        
+          # terraform_data.compat_k8s_guard will be created
+          + resource "terraform_data" "compat_k8s_guard" {
+              + id = (known after apply)
+            }
+        
+          # terraform_data.csi_volume_label_guard will be created
+          + resource "terraform_data" "csi_volume_label_guard" {
+              + id     = (known after apply)
+              + input  = "2.22.0"
+              + output = (known after apply)
+            }
+        
+          # terraform_data.dns_zone_guard will be created
+          + resource "terraform_data" "dns_zone_guard" {
+              + id = (known after apply)
+            }
+        
+        Plan: 18 to add, 0 to change, 0 to destroy.
+        
+        Changes to Outputs:
+          + bootstrap_manifests    = (sensitive value)
+          + bucket_endpoints       = {}
+          + bucket_names           = []
+          + dns_name_servers       = []
+          + dns_zone_id            = ""
+          + kubeconfig             = (sensitive value)
+          + network_id             = (known after apply)
+          + talos_cluster_endpoint = (known after apply)
+          + talos_cluster_name     = "alethia-nl-local608306"
+          + talosconfig            = (sensitive value)
+        
+        Warning: Value for undeclared variable
+        
+        The root module does not declare a variable named "registry_provider" but a
+        value was found in file
+        "/var/folders/vm/lhl4207s6nx4bn8xn8slz2lr0000gn/T/alethia-deploy-1493664566/work/tofu.tfvars.json".
+        If you meant to use this value, add a "variable" block to the configuration.
+        
+        To silence these warnings, use TF_VAR_... environment variables to provide
+        certain "global" settings to all configurations in your organization. To
+        reduce the verbosity of these warnings, use the -compact-warnings option.
+        
+        Warning: Value for undeclared variable
+        
+        The root module does not declare a variable named "secrets_xacct_provider"
+        but a value was found in file
+        "/var/folders/vm/lhl4207s6nx4bn8xn8slz2lr0000gn/T/alethia-deploy-1493664566/work/tofu.tfvars.json".
+        If you meant to use this value, add a "variable" block to the configuration.
+        
+        To silence these warnings, use TF_VAR_... environment variables to provide
+        certain "global" settings to all configurations in your organization. To
+        reduce the verbosity of these warnings, use the -compact-warnings option.
+        
+        Warning: Values for undeclared variables
+        
+        In addition to the other similar warnings shown, 2 other variable(s) defined
+        without being declared.
+        Generating plan JSON...
+        Verification gate: verdict=warn (pass=1 fail=0 warn=1 not_evaluable=1, catalog elench-controls-0.5.2)
+          [HCLOUD-FW-001] coverage: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: firewall_ids computed until apply; configuration references hcloud_firewall.this.id; hcloud_server.workers["alethia-nl-local608306-worker-1"]: firewall_ids computed until apply; configuration references hcloud_firewall.this.id
+          [HCLOUD-NET-001/warn] hcloud_firewall.this.rule[3]: world-open management port tcp/6443 (Kubernetes API / Talos apid) — open to the internet BY DESIGN today (runner reaches the API/apid externally; K8s mTLS + Talos machine identity is the auth layer). Recorded as posture, not blocked
+          [HCLOUD-NET-001/warn] hcloud_firewall.this.rule[4]: world-open management port tcp/50001 (Kubernetes API / Talos apid) — open to the internet BY DESIGN today (runner reaches the API/apid externally; K8s mTLS + Talos machine identity is the auth layer). Recorded as posture, not blocked
+          [HCLOUD-NET-001/warn] hcloud_firewall.this.rule[5]: world-open management port tcp/50000 (Kubernetes API / Talos apid) — open to the internet BY DESIGN today (runner reaches the API/apid externally; K8s mTLS + Talos machine identity is the auth layer). Recorded as posture, not blocked
+          [SCOPE-001] coverage: terraform_data.byo_network_guard: unrecognized provider terraform; terraform_data.compat_k8s_guard: unrecognized provider terraform; terraform_data.csi_volume_label_guard: unrecognized provider terraform; terraform_data.dns_zone_guard: unrecognized provider terraform
+        Compatibility gate: verdict=not_evaluable (pass=0 fail=0 warn=0 not_evaluable=2, catalog compat-matrix-0.1.0)
+          [COMPAT-K8S-CLOUD-HETZNER] coverage: cluster Kubernetes version is unset or unparseable
+          [COMPAT-ADDON-RELOADER] coverage: no Kubernetes compatibility range recorded
+        Evidence receipt signed (key 96ebd76f730243d4, plan sha256 d1a60425f33c…)
+        Applying OpenTofu changes...
+        Applying OpenTofu plan...
+        terraform_data.dns_zone_guard: Creating...
+        terraform_data.compat_k8s_guard: Creating...
+        terraform_data.dns_zone_guard: Creation complete after 0s [id=4ba4c108-32b7-decd-2d2c-c69af9c1fb53]
+        terraform_data.compat_k8s_guard: Creation complete after 0s [id=f1f88d0d-b6cb-e3be-5984-5cddb227d27d]
+        hcloud_network.this[0]: Creating...
+        talos_image_factory_schematic.this: Creating...
+        talos_machine_secrets.this: Creating...
+        hcloud_primary_ip.worker_ipv4[0]: Creating...
+        terraform_data.csi_volume_label_guard: Creating...
+        terraform_data.byo_network_guard: Creating...
+        terraform_data.csi_volume_label_guard: Creation complete after 0s [id=b8ed5d69-17c4-2d86-8cde-53858baf4ef5]
+        terraform_data.byo_network_guard: Creation complete after 0s [id=3101d1d3-b9a7-4fa3-f3d4-06e46426c753]
+        hcloud_primary_ip.control_plane_ipv4[0]: Creating...
+        hcloud_firewall.this: Creating...
+        hcloud_primary_ip.worker_ipv4[0]: Creation complete after 0s [name=alethia-nl-local608306-worker-1-ipv4]
+        hcloud_primary_ip.control_plane_ipv4[0]: Creation complete after 0s [name=alethia-nl-local608306-cp-1-ipv4]
+        hcloud_firewall.this: Creation complete after 0s [id=11513971]
+        hcloud_network.this[0]: Creation complete after 0s [id=12577262]
+        hcloud_network_subnet.nodes: Creating...
+        hcloud_network_subnet.nodes: Creation complete after 0s [id=12577262-10.0.0.0/24]
+        talos_image_factory_schematic.this: Creation complete after 0s [id=ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d67c7515]
+        data.talos_image_factory_urls.amd64[0]: Reading...
+        data.talos_image_factory_urls.amd64[0]: Read complete after 0s
+        imager_image.amd64[0]: Creating...
+        talos_machine_secrets.this: Creation complete after 1s [id=machine_secrets]
+        data.talos_client_configuration.this: Reading...
+        data.talos_machine_configuration.control_plane: Reading...
+        data.talos_machine_configuration.worker: Reading...
+        data.talos_client_configuration.this: Read complete after 0s [id=alethia-nl-local608306]
+        data.talos_machine_configuration.worker: Read complete after 0s [id=alethia-nl-local608306]
+        data.talos_machine_configuration.control_plane: Read complete after 0s [id=alethia-nl-local608306]
+        imager_image.amd64[0]: Still creating... [10s elapsed]
+        imager_image.amd64[0]: Still creating... [20s elapsed]
+        imager_image.amd64[0]: Still creating... [30s elapsed]
+        imager_image.amd64[0]: Still creating... [40s elapsed]
+        imager_image.amd64[0]: Still creating... [50s elapsed]
+        imager_image.amd64[0]: Still creating... [1m0s elapsed]
+        imager_image.amd64[0]: Still creating... [1m10s elapsed]
+        imager_image.amd64[0]: Still creating... [1m20s elapsed]
+        imager_image.amd64[0]: Creation complete after 1m22s [id=423919923]
+        hcloud_server.workers["alethia-nl-local608306-worker-1"]: Creating...
+        hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Creating...
+        hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still creating... [10s elapsed]
+        hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still creating... [10s elapsed]
+        hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still creating... [20s elapsed]
+        hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still creating... [20s elapsed]
+        hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still creating... [30s elapsed]
+        hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still creating... [30s elapsed]
+        hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still creating... [40s elapsed]
+        hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still creating... [40s elapsed]
+        hcloud_server.workers["alethia-nl-local608306-worker-1"]: Creation complete after 41s [id=163489866]
+        talos_machine_configuration_apply.worker["alethia-nl-local608306-worker-1"]: Creating...
+        talos_machine_configuration_apply.worker["alethia-nl-local608306-worker-1"]: Creation complete after 3s [id=machine_configuration_apply]
+        hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still creating... [50s elapsed]
+        hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still creating... [1m0s elapsed]
+        hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Creation complete after 1m1s [id=163489867]
+        talos_machine_configuration_apply.control_plane["alethia-nl-local608306-cp-1"]: Creating...
+        talos_machine_configuration_apply.control_plane["alethia-nl-local608306-cp-1"]: Creation complete after 1s [id=machine_configuration_apply]
+        talos_machine_bootstrap.this: Creating...
+        talos_machine_bootstrap.this: Creation complete after 0s [id=machine_bootstrap]
+        talos_cluster_kubeconfig.this: [REDACTED]
+        talos_cluster_kubeconfig.this: [REDACTED]
+        
+        Apply complete! Resources: 18 added, 0 changed, 0 destroyed.
+        
+        Outputs:
+        
+        bootstrap_manifests = [REDACTED]
+        bucket_endpoints = {}
+        bucket_names = []
+        dns_name_servers = []
+        dns_zone_id = ""
+        kubeconfig = [REDACTED]
+        network_id = "12577262"
+        talos_cluster_endpoint = "https://91.98.206.101:6443"
+        talos_cluster_name = "alethia-nl-local608306"
+        talosconfig = [REDACTED]
+        Getting OpenTofu outputs...
+        Writing Talos kubeconfig for cluster alethia-nl-local608306...
+        Kubeconfig written to /Users/borislavborisov/.alethia/kubeconfig
+        Bootstrapping cluster CNI + cloud integration (self-managed)...
+        error: error validating "/var/folders/vm/lhl4207s6nx4bn8xn8slz2lr0000gn/T/alethia-bootstrap-2910272981/bootstrap.yaml": error validating data: failed to download openapi: Get "https://91.98.206.101:6443/openapi/v2?timeout=32s": dial tcp 91.98.206.101:6443: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false
+        CNI bootstrap attempt 1/4 failed (API/CRD not ready yet): command returned non-zero exit code: exit status 1
+        secret/hcloud serverside-applied
+        namespace/cilium-secrets serverside-applied
+        serviceaccount/cilium serverside-applied
+        role.rbac.authorization.k8s.io/cilium-config-agent serverside-applied
+        role.rbac.authorization.k8s.io/cilium-tlsinterception-secrets serverside-applied
+        role.rbac.authorization.k8s.io/cilium-operator-tlsinterception-secrets serverside-applied
+        role.rbac.authorization.k8s.io/cilium-operator-ztunnel serverside-applied
+        rolebinding.rbac.authorization.k8s.io/cilium-config-agent serverside-applied
+        rolebinding.rbac.authorization.k8s.io/cilium-tlsinterception-secrets serverside-applied
+        rolebinding.rbac.authorization.k8s.io/cilium-operator-tlsinterception-secrets serverside-applied
+        rolebinding.rbac.authorization.k8s.io/cilium-operator-ztunnel serverside-applied
+        service/cilium-envoy serverside-applied
+        daemonset.apps/cilium serverside-applied
+        serviceaccount/cilium-envoy serverside-applied
+        daemonset.apps/cilium-envoy serverside-applied
+        deployment.apps/cilium-operator serverside-applied
+        serviceaccount/cilium-operator serverside-applied
+        configmap/cilium-config serverside-applied
+        configmap/cilium-envoy-config serverside-applied
+        clusterrole.rbac.authorization.k8s.io/cilium serverside-applied
+        clusterrole.rbac.authorization.k8s.io/cilium-operator serverside-applied
+        clusterrolebinding.rbac.authorization.k8s.io/cilium serverside-applied
+        clusterrolebinding.rbac.authorization.k8s.io/cilium-operator serverside-applied
+        serviceaccount/hcloud-cloud-controller-manager serverside-applied
+        clusterrole.rbac.authorization.k8s.io/system:hcloud-cloud-controller-manager serverside-applied
+        clusterrolebinding.rbac.authorization.k8s.io/system:hcloud-cloud-controller-manager:restricted serverside-applied
+        deployment.apps/hcloud-cloud-controller-manager serverside-applied
+        serviceaccount/hcloud-csi-controller serverside-applied
+        storageclass.storage.k8s.io/hcloud-volumes serverside-applied
+        clusterrole.rbac.authorization.k8s.io/hcloud-csi-controller serverside-applied
+        clusterrolebinding.rbac.authorization.k8s.io/hcloud-csi-controller serverside-applied
+        daemonset.apps/hcloud-csi-node serverside-applied
+        deployment.apps/hcloud-csi-controller serverside-applied
+        csidriver.storage.k8s.io/csi.hetzner.cloud serverside-applied
+        Waiting for the cluster to become reachable (timeout 8m0s)...
+        Cluster API server is reachable.
+        1/2 nodes Ready.
+        Verifying a pod can reach the API server (ClusterIP 10.0.96.1:443) across the cluster network...
+        A pod reached the API server across the cluster network — pod datapath is healthy.
+        Installing ArgoCD...
+        "argo" already exists with the same configuration, skipping
+        Hang tight while we grab the latest from your chart repositories...
+        ...Successfully got an update from the "ss-r" chart repository
+        ...Successfully got an update from the "keda-r" chart repository
+        ...Successfully got an update from the "minio-r" chart repository
+        ...Successfully got an update from the "hcloud" chart repository
+        ...Successfully got an update from the "minio-official" chart repository
+        ...Successfully got an update from the "edns-r" chart repository
+        ...Successfully got an update from the "ot" chart repository
+        ...Successfully got an update from the "trivy-r" chart repository
+        ...Successfully got an update from the "ing-r" chart repository
+        ...Successfully got an update from the "vmware-tanzu" chart repository
+        ...Successfully got an update from the "vel-r" chart repository
+        ...Successfully got an update from the "rel-r" chart repository
+        ...Successfully got an update from the "stakater" chart repository
+        ...Successfully got an update from the "kyv-r" chart repository
+        ...Successfully got an update from the "argo" chart repository
+        ...Successfully got an update from the "falco-r" chart repository
+        ...Successfully got an update from the "ar-r" chart repository
+        ...Successfully got an update from the "otel-r" chart repository
+        ...Successfully got an update from the "cm-r" chart repository
+        ...Successfully got an update from the "vault-r" chart repository
+        ...Successfully got an update from the "hashicorp" chart repository
+        ...Successfully got an update from the "external-secrets" chart repository
+        ...Successfully got an update from the "goharbor" chart repository
+        ...Successfully got an update from the "harbor" chart repository
+        ...Successfully got an update from the "gold-r" chart repository
+        ...Successfully got an update from the "cnpg" chart repository
+        ...Successfully got an update from the "kps-r" chart repository
+        ...Successfully got an update from the "valkey-io" chart repository
+        ...Successfully got an update from the "harbor-r" chart repository
+        ...Successfully got an update from the "cloudpirates" chart repository
+        ...Successfully got an update from the "loki-r" chart repository
+        ...Successfully got an update from the "tem-r" chart repository
+        ...Successfully got an update from the "prometheus-community" chart repository
+        ...Successfully got an update from the "rmq" chart repository
+        ...Successfully got an update from the "bitnami" chart repository
+        Update Complete. ⎈Happy Helming!⎈
+        namespace/argocd created
+        secret/argocd-redis created
+        Pre-seeded argocd-redis secret (avoids the chart's flaky redis-secret-init hook).
+        Release "argo-cd" does not exist. Installing it now.
+        NAME: argo-cd
+        LAST DEPLOYED: Tue Aug 25 00:56:08 2026
+        NAMESPACE: argocd
+        STATUS: deployed
+        REVISION: 1
+        TEST SUITE: None
+        NOTES:
+        In order to access the server UI you have the following options:
+        
+        1. kubectl port-forward service/argo-cd-argocd-server -n argocd 8080:443
+        
+            and then open the browser on http://localhost:8080 and accept the certificate
+        
+        2. enable ingress in the values file `server.ingress.enabled` and either
+              - Add the annotation for ssl passthrough: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-1-ssl-passthrough
+              - Set the `configs.params."server.insecure"` in the values file and terminate SSL at your ingress: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-2-multiple-ingress-objects-and-hosts
+        
+        
+        After reaching the UI the first time you can login with username: admin and the random password generated during the installation. You can find the password by running:
+        
+        kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+        
+        (You should delete the initial secret afterwards as suggested by the Getting Started Guide: https://argo-cd.readthedocs.io/en/stable/getting_started/#4-login-using-the-cli)
+        ArgoCD installed.
+        ArgoCD ready (no ingress on this cloud yet — access via port-forward; retrieve the admin password on-demand from argocd-initial-admin-secret).
+        Seeding external-dns credential secret external-dns-hetzner...
+        namespace/external-dns created
+        secret/external-dns-hetzner created
+        Applying ArgoCD infrastructure applications...
+        Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+        application.argoproj.io/external-secrets-operator created
+        application.argoproj.io/metrics-server created
+        appproject.argoproj.io/infra created
+        ArgoCD infrastructure applications applied.
+        external-dns is not rendered for this configuration — removing any stale install...
+        error: the server doesn't have a resource type "clusterissuer"
+        Warning: could not remove stale cert-manager ClusterIssuer letsencrypt-prod: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-gcp-xacct: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-alibaba-xacct: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-aws: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-azure: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-vault: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-doppler: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-azure-xacct: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-gcp: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-alibaba: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-hetzner: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-generic: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-infisical: command returned non-zero exit code: exit status 1
+        error: the server doesn't have a resource type "clustersecretstore"
+        Warning: could not remove stale ClusterSecretStore secretstore-aws-xacct: command returned non-zero exit code: exit status 1
+        Applying add-on wave 1 (1 application(s))...
+        Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+        application.argoproj.io/addon-reloader created
+        Warning: could not list BYO binding ExternalSecrets to prune: command failed: exit status 1, stderr: error: the server doesn't have a resource type "externalsecrets"
+        
+        Waiting up to 10m0s for 1 add-on(s) to converge...
+        All add-ons Healthy + Synced.
+        Security posture: Trivy-Operator not installed or no reports yet.
+        Deployment completed successfully.
+        Warning: failed to persist Fabric talosconfig for placement re-mint: put talosconfig returned status 404
+        {"time":"2026-08-25T00:57:01.291256+03:00","level":"INFO","msg":"job completed successfully","runner_id":"d6faee40-294e-4ae2-97f0-f72a1db8c99f","job_id":"5a1e947a-8870-43d1-aa7d-1fde61e6ad62"}
+        {"time":"2026-08-25T01:00:28.5807+03:00","level":"INFO","msg":"claimed job","runner_id":"d6faee40-294e-4ae2-97f0-f72a1db8c99f","job_id":"5b4fb3ba-1c7a-4df3-9302-7436cfd503e0","job_type":"DETECT_DRIFT"}
+        ▸ Job claimed — preparing workspace…
+        Initializing OpenTofu...
+        {
+          "terraform_version": "1.9.0",
+          "platform": "darwin_arm64",
+          "provider_selections": {
+            "registry.opentofu.org/aminueza/minio": "3.38.5",
+            "registry.opentofu.org/hashicorp/helm": "2.17.0",
+            "registry.opentofu.org/hcloud-talos/imager": "1.0.18",
+            "registry.opentofu.org/hetznercloud/hcloud": "1.67.0",
+            "registry.opentofu.org/siderolabs/talos": "0.11.0"
+          }
+        }
+        
+        Initializing the backend...
+        
+        Successfully configured the backend "http"! OpenTofu will automatically
+        use this backend unless the backend configuration changes.
+        
+        Initializing provider plugins...
+        - terraform.io/builtin/terraform is built in to OpenTofu
+        - Reusing previous version of hashicorp/helm from the dependency lock file
+        - Reusing previous version of aminueza/minio from the dependency lock file
+        - Reusing previous version of hetznercloud/hcloud from the dependency lock file
+        - Reusing previous version of siderolabs/talos from the dependency lock file
+        - Reusing previous version of hcloud-talos/imager from the dependency lock file
+        - Using hashicorp/helm v2.17.0 from the shared cache directory
+        - Using aminueza/minio v3.38.5 from the shared cache directory
+        - Using hetznercloud/hcloud v1.67.0 from the shared cache directory
+        - Using siderolabs/talos v0.11.0 from the shared cache directory
+        - Using hcloud-talos/imager v1.0.18 from the shared cache directory
+        
+        OpenTofu has been successfully initialized!
+        Running OpenTofu plan (refresh-only)...
+        terraform_data.compat_k8s_guard: Refreshing state... [id=f1f88d0d-b6cb-e3be-5984-5cddb227d27d]
+        terraform_data.dns_zone_guard: Refreshing state... [id=4ba4c108-32b7-decd-2d2c-c69af9c1fb53]
+        data.talos_image_factory_extensions_versions.this: Reading...
+        data.hcloud_location.selected: Reading...
+        hcloud_network.this[0]: Refreshing state... [id=12577262]
+        talos_machine_secrets.this: Refreshing state... [id=machine_secrets]
+        terraform_data.byo_network_guard: Refreshing state... [id=3101d1d3-b9a7-4fa3-f3d4-06e46426c753]
+        data.helm_template.cilium: Reading...
+        data.helm_template.hcloud_ccm: Reading...
+        data.helm_template.hcloud_csi: Reading...
+        hcloud_firewall.this: Refreshing state... [id=11513971]
+        data.hcloud_location.selected: Read complete after 0s [name=nbg1]
+        hcloud_network_subnet.nodes: Refreshing state... [id=12577262-10.0.0.0/24]
+        hcloud_primary_ip.control_plane_ipv4[0]: Refreshing state... [name=alethia-nl-local608306-cp-1-ipv4]
+        hcloud_primary_ip.worker_ipv4[0]: Refreshing state... [name=alethia-nl-local608306-worker-1-ipv4]
+        data.talos_client_configuration.this: Reading...
+        data.talos_client_configuration.this: Read complete after 0s [id=alethia-nl-local608306]
+        data.talos_machine_configuration.worker: Reading...
+        data.talos_machine_configuration.control_plane: Reading...
+        data.talos_machine_configuration.worker: Read complete after 0s [id=alethia-nl-local608306]
+        data.talos_machine_configuration.control_plane: Read complete after 0s [id=alethia-nl-local608306]
+        data.talos_image_factory_extensions_versions.this: Read complete after 1s [id=extensions_info]
+        talos_image_factory_schematic.this: Refreshing state... [id=ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d67c7515]
+        data.talos_image_factory_urls.amd64[0]: Reading...
+        data.talos_image_factory_urls.amd64[0]: Read complete after 0s
+        imager_image.amd64[0]: Refreshing state... [id=423919923]
+        hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Refreshing state... [id=163489867]
+        hcloud_server.workers["alethia-nl-local608306-worker-1"]: Refreshing state... [id=163489866]
+        talos_machine_configuration_apply.worker["alethia-nl-local608306-worker-1"]: Refreshing state... [id=machine_configuration_apply]
+        talos_machine_configuration_apply.control_plane["alethia-nl-local608306-cp-1"]: Refreshing state... [id=machine_configuration_apply]
+        talos_machine_bootstrap.this: Refreshing state... [id=machine_bootstrap]
+        talos_cluster_kubeconfig.this: [REDACTED]
+        data.helm_template.hcloud_csi: Read complete after 4s [id=hcloud-csi]
+        terraform_data.csi_volume_label_guard: Refreshing state... [id=b8ed5d69-17c4-2d86-8cde-53858baf4ef5]
+        data.helm_template.hcloud_ccm: Read complete after 7s [id=hcloud-cloud-controller-manager]
+        data.helm_template.cilium: Still reading... [10s elapsed]
+        data.helm_template.cilium: Read complete after 10s [id=cilium]
+        
+        Note: Objects have changed outside of OpenTofu
+        
+        OpenTofu detected the following changes made outside of OpenTofu since the
+        last "tofu apply" which may have affected this plan:
+        
+          # hcloud_firewall.this has changed
+          ~ resource "hcloud_firewall" "this" {
+                id     = "11513971"
+                name   = "alethia-nl-local608306"
+                # (1 unchanged attribute hidden)
+        
+              + apply_to {
+                  + server = 163489866
+                }
+              + apply_to {
+                  + server = 163489867
+                }
+        
+                # (6 unchanged blocks hidden)
+            }
+        
+          # hcloud_primary_ip.control_plane_ipv4[0] has changed
+          ~ resource "hcloud_primary_ip" "control_plane_ipv4" {
+              ~ assignee_id       = 0 -> 163489867
+                id                = 146402929
+                name              = "alethia-nl-local608306-cp-1-ipv4"
+                # (7 unchanged attributes hidden)
+            }
+        
+          # hcloud_primary_ip.worker_ipv4[0] has changed
+          ~ resource "hcloud_primary_ip" "worker_ipv4" {
+              ~ assignee_id       = 0 -> 163489866
+                id                = 146402928
+                name              = "alethia-nl-local608306-worker-1-ipv4"
+                # (7 unchanged attributes hidden)
+            }
+        
+          # talos_cluster_kubeconfig.this has changed
+          ~ resource "talos_cluster_kubeconfig" "this" {
+                id                              = "alethia-nl-local608306"
+                # (6 unchanged attributes hidden)
+            }
+        
+          # talos_machine_secrets.this has changed
+          ~ resource "talos_machine_secrets" "this" {
+                id                   = "machine_secrets"
+                # (3 unchanged attributes hidden)
+            }
+        
+        
+        This is a refresh-only plan, so OpenTofu will not take any actions to undo
+        these. If you were expecting these changes then you can apply this plan to
+        record the updated values in the OpenTofu state without changing any remote
+        objects.
+        
+        Warning: Value for undeclared variable
+        
+        The root module does not declare a variable named "secrets_provider" but a
+        value was found in file
+        "/var/folders/vm/lhl4207s6nx4bn8xn8slz2lr0000gn/T/alethia-drift-4004685636/work/tofu.tfvars.json".
+        If you meant to use this value, add a "variable" block to the configuration.
+        
+        To silence these warnings, use TF_VAR_... environment variables to provide
+        certain "global" settings to all configurations in your organization. To
+        reduce the verbosity of these warnings, use the -compact-warnings option.
+        
+        Warning: Value for undeclared variable
+        
+        The root module does not declare a variable named "secrets_xacct_provider"
+        but a value was found in file
+        "/var/folders/vm/lhl4207s6nx4bn8xn8slz2lr0000gn/T/alethia-drift-4004685636/work/tofu.tfvars.json".
+        If you meant to use this value, add a "variable" block to the configuration.
+        
+        To silence these warnings, use TF_VAR_... environment variables to provide
+        certain "global" settings to all configurations in your organization. To
+        reduce the verbosity of these warnings, use the -compact-warnings option.
+        
+        Warning: Values for undeclared variables
+        
+        In addition to the other similar warnings shown, 2 other variable(s) defined
+        without being declared.
+        Generating plan JSON...
+        Drift posture: {"in_sync":false,"drifted":5,"details":[{"address":"hcloud_firewall.this","type":"hcloud_firewall","kind":"modified"},{"address":"hcloud_primary_ip.control_plane_ipv4[0]","type":"hcloud_primary_ip","kind":"modified"},{"address":"hcloud_primary_ip.worker_ipv4[0]","type":"hcloud_primary_ip","kind":"modified"},{"address":"talos_cluster_kubeconfig.this","type":"talos_cluster_kubeconfig","kind":"modified"},{"address":"talos_machine_secrets.this","type":"talos_machine_secrets","kind":"modified"}],"normalized":0,"unmanaged":0,"unmanaged_known":false}
+        Getting OpenTofu outputs...
+        {"time":"2026-08-25T01:00:40.716751+03:00","level":"INFO","msg":"job completed successfully","runner_id":"d6faee40-294e-4ae2-97f0-f72a1db8c99f","job_id":"5b4fb3ba-1c7a-4df3-9302-7436cfd503e0"}
+    t2_provision_test.go:986: Destroying environment alethia-nl-local608306...
+Initializing OpenTofu...
+    t2_provision_test.go:986: {
+    t2_provision_test.go:986:   "terraform_version": "1.9.0",
+    t2_provision_test.go:986:   "platform": "darwin_arm64",
+    t2_provision_test.go:986:   "provider_selections": {
+    t2_provision_test.go:986:     "registry.opentofu.org/aminueza/minio": "3.38.5",
+    t2_provision_test.go:986:     "registry.opentofu.org/hashicorp/helm": "2.17.0",
+    t2_provision_test.go:986:     "registry.opentofu.org/hcloud-talos/imager": "1.0.18",
+    t2_provision_test.go:986:     "registry.opentofu.org/hetznercloud/hcloud": "1.67.0",
+    t2_provision_test.go:986:     "registry.opentofu.org/siderolabs/talos": "0.11.0"
+    t2_provision_test.go:986:   }
+    t2_provision_test.go:986: }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: Initializing the backend...
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: Successfully configured the backend "http"! OpenTofu will automatically
+    t2_provision_test.go:986: use this backend unless the backend configuration changes.
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: Initializing provider plugins...
+    t2_provision_test.go:986: - terraform.io/builtin/terraform is built in to OpenTofu
+    t2_provision_test.go:986: - Reusing previous version of hcloud-talos/imager from the dependency lock file
+    t2_provision_test.go:986: - Reusing previous version of hashicorp/helm from the dependency lock file
+    t2_provision_test.go:986: - Reusing previous version of aminueza/minio from the dependency lock file
+    t2_provision_test.go:986: - Reusing previous version of hetznercloud/hcloud from the dependency lock file
+    t2_provision_test.go:986: - Reusing previous version of siderolabs/talos from the dependency lock file
+    t2_provision_test.go:986: - Using aminueza/minio v3.38.5 from the shared cache directory
+    t2_provision_test.go:986: - Using hetznercloud/hcloud v1.67.0 from the shared cache directory
+    t2_provision_test.go:986: - Using siderolabs/talos v0.11.0 from the shared cache directory
+    t2_provision_test.go:986: - Using hcloud-talos/imager v1.0.18 from the shared cache directory
+    t2_provision_test.go:986: - Using hashicorp/helm v2.17.0 from the shared cache directory
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: OpenTofu has been successfully initialized!
+    t2_provision_test.go:986:    Destroying Cloud Resources (this may take 10-15 mins)...
+Running OpenTofu destroy...
+    t2_provision_test.go:986: terraform_data.compat_k8s_guard: Refreshing state... [id=f1f88d0d-b6cb-e3be-5984-5cddb227d27d]
+    t2_provision_test.go:986: terraform_data.dns_zone_guard: Refreshing state... [id=4ba4c108-32b7-decd-2d2c-c69af9c1fb53]
+    t2_provision_test.go:986: data.talos_image_factory_extensions_versions.this: Reading...
+    t2_provision_test.go:986: data.hcloud_location.selected: Reading...
+    t2_provision_test.go:986: hcloud_network.this[0]: Refreshing state... [id=12577262]
+    t2_provision_test.go:986: talos_machine_secrets.this: Refreshing state... [id=machine_secrets]
+    t2_provision_test.go:986: data.helm_template.cilium: Reading...
+    t2_provision_test.go:986: data.helm_template.hcloud_csi: Reading...
+    t2_provision_test.go:986: data.helm_template.hcloud_ccm: Reading...
+    t2_provision_test.go:986: hcloud_firewall.this: Refreshing state... [id=11513971]
+    t2_provision_test.go:986: terraform_data.byo_network_guard: Refreshing state... [id=3101d1d3-b9a7-4fa3-f3d4-06e46426c753]
+    t2_provision_test.go:986: data.hcloud_location.selected: Read complete after 0s [name=nbg1]
+    t2_provision_test.go:986: hcloud_primary_ip.control_plane_ipv4[0]: Refreshing state... [name=alethia-nl-local608306-cp-1-ipv4]
+    t2_provision_test.go:986: hcloud_primary_ip.worker_ipv4[0]: Refreshing state... [name=alethia-nl-local608306-worker-1-ipv4]
+    t2_provision_test.go:986: hcloud_network_subnet.nodes: Refreshing state... [id=12577262-10.0.0.0/24]
+    t2_provision_test.go:986: data.talos_client_configuration.this: Reading...
+    t2_provision_test.go:986: data.talos_client_configuration.this: Read complete after 0s [id=alethia-nl-local608306]
+    t2_provision_test.go:986: data.talos_machine_configuration.worker: Reading...
+    t2_provision_test.go:986: data.talos_machine_configuration.control_plane: Reading...
+    t2_provision_test.go:986: data.talos_machine_configuration.worker: Read complete after 0s [id=alethia-nl-local608306]
+    t2_provision_test.go:986: data.talos_machine_configuration.control_plane: Read complete after 0s [id=alethia-nl-local608306]
+    t2_provision_test.go:986: data.talos_image_factory_extensions_versions.this: Read complete after 1s [id=extensions_info]
+    t2_provision_test.go:986: talos_image_factory_schematic.this: Refreshing state... [id=ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d67c7515]
+    t2_provision_test.go:986: data.talos_image_factory_urls.amd64[0]: Reading...
+    t2_provision_test.go:986: data.talos_image_factory_urls.amd64[0]: Read complete after 0s
+    t2_provision_test.go:986: imager_image.amd64[0]: Refreshing state... [id=423919923]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Refreshing state... [id=163489866]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Refreshing state... [id=163489867]
+    t2_provision_test.go:986: talos_machine_configuration_apply.control_plane["alethia-nl-local608306-cp-1"]: Refreshing state... [id=machine_configuration_apply]
+    t2_provision_test.go:986: talos_machine_bootstrap.this: Refreshing state... [id=machine_bootstrap]
+    t2_provision_test.go:986: talos_cluster_kubeconfig.this: [REDACTED] state... [id=alethia-nl-local608306]
+    t2_provision_test.go:986: talos_machine_configuration_apply.worker["alethia-nl-local608306-worker-1"]: Refreshing state... [id=machine_configuration_apply]
+    t2_provision_test.go:986: data.helm_template.hcloud_ccm: Read complete after 3s [id=hcloud-cloud-controller-manager]
+    t2_provision_test.go:986: data.helm_template.hcloud_csi: Read complete after 7s [id=hcloud-csi]
+    t2_provision_test.go:986: terraform_data.csi_volume_label_guard: Refreshing state... [id=b8ed5d69-17c4-2d86-8cde-53858baf4ef5]
+    t2_provision_test.go:986: data.helm_template.cilium: Read complete after 10s [id=cilium]
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: OpenTofu used the selected providers to generate the following execution
+    t2_provision_test.go:986: plan. Resource actions are indicated with the following symbols:
+    t2_provision_test.go:986:   - destroy
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: OpenTofu will perform the following actions:
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # hcloud_firewall.this will be destroyed
+    t2_provision_test.go:986:   - resource "hcloud_firewall" "this" {
+    t2_provision_test.go:986:       - id     = "11513971" -> null
+    t2_provision_test.go:986:       - labels = {
+    t2_provision_test.go:986:           - "alethia_project-id" = "e2e-local608306"
+    t2_provision_test.go:986:           - "cluster"            = "alethia-nl-local608306"
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - name   = "alethia-nl-local608306" -> null
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:       - apply_to {
+    t2_provision_test.go:986:           - server = 163489866 -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986:       - apply_to {
+    t2_provision_test.go:986:           - server = 163489867 -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:       - rule {
+    t2_provision_test.go:986:           - description     = "Intra-cluster ICMP (private network)" -> null
+    t2_provision_test.go:986:           - destination_ips = [] -> null
+    t2_provision_test.go:986:           - direction       = "in" -> null
+    t2_provision_test.go:986:           - protocol        = "icmp" -> null
+    t2_provision_test.go:986:           - source_ips      = [
+    t2_provision_test.go:986:               - "10.0.0.0/16",
+    t2_provision_test.go:986:             ] -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986:       - rule {
+    t2_provision_test.go:986:           - description     = "Intra-cluster TCP (private network)" -> null
+    t2_provision_test.go:986:           - destination_ips = [] -> null
+    t2_provision_test.go:986:           - direction       = "in" -> null
+    t2_provision_test.go:986:           - port            = "any" -> null
+    t2_provision_test.go:986:           - protocol        = "tcp" -> null
+    t2_provision_test.go:986:           - source_ips      = [
+    t2_provision_test.go:986:               - "10.0.0.0/16",
+    t2_provision_test.go:986:             ] -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986:       - rule {
+    t2_provision_test.go:986:           - description     = "Intra-cluster UDP (private network)" -> null
+    t2_provision_test.go:986:           - destination_ips = [] -> null
+    t2_provision_test.go:986:           - direction       = "in" -> null
+    t2_provision_test.go:986:           - port            = "any" -> null
+    t2_provision_test.go:986:           - protocol        = "udp" -> null
+    t2_provision_test.go:986:           - source_ips      = [
+    t2_provision_test.go:986:               - "10.0.0.0/16",
+    t2_provision_test.go:986:             ] -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986:       - rule {
+    t2_provision_test.go:986:           - description     = "Kubernetes API server" -> null
+    t2_provision_test.go:986:           - destination_ips = [] -> null
+    t2_provision_test.go:986:           - direction       = "in" -> null
+    t2_provision_test.go:986:           - port            = "6443" -> null
+    t2_provision_test.go:986:           - protocol        = "tcp" -> null
+    t2_provision_test.go:986:           - source_ips      = [
+    t2_provision_test.go:986:               - "0.0.0.0/0",
+    t2_provision_test.go:986:               - "::/0",
+    t2_provision_test.go:986:             ] -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986:       - rule {
+    t2_provision_test.go:986:           - description     = "Talos apid (trustd)" -> null
+    t2_provision_test.go:986:           - destination_ips = [] -> null
+    t2_provision_test.go:986:           - direction       = "in" -> null
+    t2_provision_test.go:986:           - port            = "50001" -> null
+    t2_provision_test.go:986:           - protocol        = "tcp" -> null
+    t2_provision_test.go:986:           - source_ips      = [
+    t2_provision_test.go:986:               - "0.0.0.0/0",
+    t2_provision_test.go:986:               - "::/0",
+    t2_provision_test.go:986:             ] -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986:       - rule {
+    t2_provision_test.go:986:           - description     = "Talos apid" -> null
+    t2_provision_test.go:986:           - destination_ips = [] -> null
+    t2_provision_test.go:986:           - direction       = "in" -> null
+    t2_provision_test.go:986:           - port            = "50000" -> null
+    t2_provision_test.go:986:           - protocol        = "tcp" -> null
+    t2_provision_test.go:986:           - source_ips      = [
+    t2_provision_test.go:986:               - "0.0.0.0/0",
+    t2_provision_test.go:986:               - "::/0",
+    t2_provision_test.go:986:             ] -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # hcloud_network.this[0] will be destroyed
+    t2_provision_test.go:986:   - resource "hcloud_network" "this" {
+    t2_provision_test.go:986:       - delete_protection        = false -> null
+    t2_provision_test.go:986:       - expose_routes_to_vswitch = false -> null
+    t2_provision_test.go:986:       - id                       = "12577262" -> null
+    t2_provision_test.go:986:       - ip_range                 = "10.0.0.0/16" -> null
+    t2_provision_test.go:986:       - labels                   = {
+    t2_provision_test.go:986:           - "alethia_project-id" = "e2e-local608306"
+    t2_provision_test.go:986:           - "cluster"            = "alethia-nl-local608306"
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - name                     = "alethia-nl-local608306" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # hcloud_network_subnet.nodes will be destroyed
+    t2_provision_test.go:986:   - resource "hcloud_network_subnet" "nodes" {
+    t2_provision_test.go:986:       - gateway      = "10.0.0.1" -> null
+    t2_provision_test.go:986:       - id           = "12577262-10.0.0.0/24" -> null
+    t2_provision_test.go:986:       - ip_range     = "10.0.0.0/24" -> null
+    t2_provision_test.go:986:       - network_id   = 12577262 -> null
+    t2_provision_test.go:986:       - network_zone = "eu-central" -> null
+    t2_provision_test.go:986:       - type         = "cloud" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # hcloud_primary_ip.control_plane_ipv4[0] will be destroyed
+    t2_provision_test.go:986:   - resource "hcloud_primary_ip" "control_plane_ipv4" {
+    t2_provision_test.go:986:       - assignee_id       = 163489867 -> null
+    t2_provision_test.go:986:       - assignee_type     = "server" -> null
+    t2_provision_test.go:986:       - auto_delete       = false -> null
+    t2_provision_test.go:986:       - delete_protection = false -> null
+    t2_provision_test.go:986:       - id                = 146402929 -> null
+    t2_provision_test.go:986:       - ip_address        = "91.98.206.101" -> null
+    t2_provision_test.go:986:       - labels            = {
+    t2_provision_test.go:986:           - "alethia_project-id" = "e2e-local608306"
+    t2_provision_test.go:986:           - "cluster"            = "alethia-nl-local608306"
+    t2_provision_test.go:986:           - "role"               = "control-plane"
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - location          = "nbg1" -> null
+    t2_provision_test.go:986:       - name              = "alethia-nl-local608306-cp-1-ipv4" -> null
+    t2_provision_test.go:986:       - type              = "ipv4" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # hcloud_primary_ip.worker_ipv4[0] will be destroyed
+    t2_provision_test.go:986:   - resource "hcloud_primary_ip" "worker_ipv4" {
+    t2_provision_test.go:986:       - assignee_id       = 163489866 -> null
+    t2_provision_test.go:986:       - assignee_type     = "server" -> null
+    t2_provision_test.go:986:       - auto_delete       = false -> null
+    t2_provision_test.go:986:       - delete_protection = false -> null
+    t2_provision_test.go:986:       - id                = 146402928 -> null
+    t2_provision_test.go:986:       - ip_address        = "91.99.97.101" -> null
+    t2_provision_test.go:986:       - labels            = {
+    t2_provision_test.go:986:           - "alethia_project-id" = "e2e-local608306"
+    t2_provision_test.go:986:           - "cluster"            = "alethia-nl-local608306"
+    t2_provision_test.go:986:           - "role"               = "worker"
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - location          = "nbg1" -> null
+    t2_provision_test.go:986:       - name              = "alethia-nl-local608306-worker-1-ipv4" -> null
+    t2_provision_test.go:986:       - type              = "ipv4" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # hcloud_server.control_planes["alethia-nl-local608306-cp-1"] will be destroyed
+    t2_provision_test.go:986:   - resource "hcloud_server" "control_planes" {
+    t2_provision_test.go:986:       - backups                    = false -> null
+    t2_provision_test.go:986:       - delete_protection          = false -> null
+    t2_provision_test.go:986:       - firewall_ids               = [
+    t2_provision_test.go:986:           - 11513971,
+    t2_provision_test.go:986:         ] -> null
+    t2_provision_test.go:986:       - id                         = "163489867" -> null
+    t2_provision_test.go:986:       - ignore_remote_firewall_ids = false -> null
+    t2_provision_test.go:986:       - image                      = "423919923" -> null
+    t2_provision_test.go:986:       - ipv4_address               = "91.98.206.101" -> null
+    t2_provision_test.go:986:       - ipv6_address               = "2a01:4f8:1c16:c821::1" -> null
+    t2_provision_test.go:986:       - ipv6_network               = "2a01:4f8:1c16:c821::/64" -> null
+    t2_provision_test.go:986:       - keep_disk                  = false -> null
+    t2_provision_test.go:986:       - labels                     = {
+    t2_provision_test.go:986:           - "alethia_project-id" = "e2e-local608306"
+    t2_provision_test.go:986:           - "cluster"            = "alethia-nl-local608306"
+    t2_provision_test.go:986:           - "role"               = "control-plane"
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - location                   = "nbg1" -> null
+    t2_provision_test.go:986:       - name                       = "alethia-nl-local608306-cp-1" -> null
+    t2_provision_test.go:986:       - placement_group_id         = 0 -> null
+    t2_provision_test.go:986:       - primary_disk_size          = 80 -> null
+    t2_provision_test.go:986:       - rebuild_protection         = false -> null
+    t2_provision_test.go:986:       - server_type                = "cpx22" -> null
+    t2_provision_test.go:986:       - shutdown_before_deletion   = false -> null
+    t2_provision_test.go:986:       - status                     = "running" -> null
+    t2_provision_test.go:986:       - user_data                  = (sensitive value) -> null
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:       - network {
+    t2_provision_test.go:986:           - alias_ips   = [] -> null
+    t2_provision_test.go:986:           - ip          = "10.0.0.101" -> null
+    t2_provision_test.go:986:           - mac_address = "86:00:00:36:18:a9" -> null
+    t2_provision_test.go:986:           - network_id  = 12577262 -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:       - public_net {
+    t2_provision_test.go:986:           - ipv4         = 146402929 -> null
+    t2_provision_test.go:986:           - ipv4_enabled = true -> null
+    t2_provision_test.go:986:           - ipv6         = 0 -> null
+    t2_provision_test.go:986:           - ipv6_enabled = true -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # hcloud_server.workers["alethia-nl-local608306-worker-1"] will be destroyed
+    t2_provision_test.go:986:   - resource "hcloud_server" "workers" {
+    t2_provision_test.go:986:       - backups                    = false -> null
+    t2_provision_test.go:986:       - delete_protection          = false -> null
+    t2_provision_test.go:986:       - firewall_ids               = [
+    t2_provision_test.go:986:           - 11513971,
+    t2_provision_test.go:986:         ] -> null
+    t2_provision_test.go:986:       - id                         = "163489866" -> null
+    t2_provision_test.go:986:       - ignore_remote_firewall_ids = false -> null
+    t2_provision_test.go:986:       - image                      = "423919923" -> null
+    t2_provision_test.go:986:       - ipv4_address               = "91.99.97.101" -> null
+    t2_provision_test.go:986:       - ipv6_address               = "2a01:4f8:1c16:b366::1" -> null
+    t2_provision_test.go:986:       - ipv6_network               = "2a01:4f8:1c16:b366::/64" -> null
+    t2_provision_test.go:986:       - keep_disk                  = false -> null
+    t2_provision_test.go:986:       - labels                     = {
+    t2_provision_test.go:986:           - "alethia_project-id" = "e2e-local608306"
+    t2_provision_test.go:986:           - "cluster"            = "alethia-nl-local608306"
+    t2_provision_test.go:986:           - "role"               = "worker"
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - location                   = "nbg1" -> null
+    t2_provision_test.go:986:       - name                       = "alethia-nl-local608306-worker-1" -> null
+    t2_provision_test.go:986:       - placement_group_id         = 0 -> null
+    t2_provision_test.go:986:       - primary_disk_size          = 80 -> null
+    t2_provision_test.go:986:       - rebuild_protection         = false -> null
+    t2_provision_test.go:986:       - server_type                = "cpx22" -> null
+    t2_provision_test.go:986:       - shutdown_before_deletion   = false -> null
+    t2_provision_test.go:986:       - status                     = "running" -> null
+    t2_provision_test.go:986:       - user_data                  = (sensitive value) -> null
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:       - network {
+    t2_provision_test.go:986:           - alias_ips   = [] -> null
+    t2_provision_test.go:986:           - ip          = "10.0.0.201" -> null
+    t2_provision_test.go:986:           - mac_address = "86:00:00:36:18:aa" -> null
+    t2_provision_test.go:986:           - network_id  = 12577262 -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:       - public_net {
+    t2_provision_test.go:986:           - ipv4         = 146402928 -> null
+    t2_provision_test.go:986:           - ipv4_enabled = true -> null
+    t2_provision_test.go:986:           - ipv6         = 0 -> null
+    t2_provision_test.go:986:           - ipv6_enabled = true -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # imager_image.amd64[0] will be destroyed
+    t2_provision_test.go:986:   - resource "imager_image" "amd64" {
+    t2_provision_test.go:986:       - architecture       = "x86" -> null
+    t2_provision_test.go:986:       - debug_skip_cleanup = false -> null
+    t2_provision_test.go:986:       - description        = "alethia-nl-local608306-talos-v1.13.6-amd64" -> null
+    t2_provision_test.go:986:       - effective_labels   = {
+    t2_provision_test.go:986:           - "alethia_project-id"     = "e2e-local608306"
+    t2_provision_test.go:986:           - "apricote.de/created-by" = "hcloud-upload-image"
+    t2_provision_test.go:986:           - "arch"                   = "x86"
+    t2_provision_test.go:986:           - "cluster"                = "alethia-nl-local608306"
+    t2_provision_test.go:986:           - "creator"                = "hcloud-talos-imager"
+    t2_provision_test.go:986:           - "os"                     = "talos"
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - id                 = "423919923" -> null
+    t2_provision_test.go:986:       - image_id           = "423919923" -> null
+    t2_provision_test.go:986:       - image_url          = "https://factory.talos.dev/image/ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d67c7515/v1.13.6/hcloud-amd64.raw.xz" -> null
+    t2_provision_test.go:986:       - labels             = {
+    t2_provision_test.go:986:           - "alethia_project-id" = "e2e-local608306"
+    t2_provision_test.go:986:           - "cluster"            = "alethia-nl-local608306"
+    t2_provision_test.go:986:           - "os"                 = "talos"
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - location           = "nbg1" -> null
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:       - timeouts {
+    t2_provision_test.go:986:           - create = "15m" -> null
+    t2_provision_test.go:986:           - delete = "10m" -> null
+    t2_provision_test.go:986:         }
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # talos_cluster_kubeconfig.this will be destroyed
+    t2_provision_test.go:986:   - resource "talos_cluster_kubeconfig" "this" {
+    t2_provision_test.go:986:       - certificate_renewal_duration    = "720h" -> null
+    t2_provision_test.go:986:       - client_configuration            = {
+    t2_provision_test.go:986:           - ca_certificate     = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJQakNCOGFBREFnRUNBaEIyNElVQkhYNHk4NDNaMm90RHN1OXJNQVVHQXl0bGNEQVFNUTR3REFZRFZRUUsKRXdWMFlXeHZjekFlRncweU5qQTRNalF5TVRVeU1URmFGdzB6TmpBNE1qRXlNVFV5TVRGYU1CQXhEakFNQmdOVgpCQW9UQlhSaGJHOXpNQ293QlFZREsyVndBeUVBb2FXM3BoU2JtYmYzT29GTGtIaUhqWXh5bmRQSUNjWTJ0Q2E2Cm9LaURDdHVqWVRCZk1BNEdBMVVkRHdFQi93UUVBd0lDaERBZEJnTlZIU1VFRmpBVUJnZ3JCZ0VGQlFjREFRWUkKS3dZQkJRVUhBd0l3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFkQmdOVkhRNEVGZ1FVMVU0cERHUU5xa2RMaisrMgozY3ZTYXFQQXVGd3dCUVlESzJWd0EwRUFHc1BIU05OckoxNHk1U2hYbVhmZDZ1WmNYQTRoYTBHWDhZakxGYUVrClNhVVRPQnNGTjRVRThmbFYwNDJLVmIrVXEvaERyMUZQSU5JbGdncHB0eWJhQ1E9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==" -> null
+    t2_provision_test.go:986:           - client_certificate = "[REDACTED]" -> null
+    t2_provision_test.go:986:           - client_key         = (sensitive value) -> null
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - endpoint                        = "91.98.206.101" -> null
+    t2_provision_test.go:986:       - id                              = "alethia-nl-local608306" -> null
+    t2_provision_test.go:986:       - kubeconfig_raw                  = (sensitive value) -> null
+    t2_provision_test.go:986:       - kubernetes_client_configuration = {
+    t2_provision_test.go:986:           - ca_certificate     = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJpVENDQVMrZ0F3SUJBZ0lRTElBZ1pTS3pWbEhCcEppbWI0eW9DakFLQmdncWhrak9QUVFEQWpBVk1STXcKRVFZRFZRUUtFd3ByZFdKbGNtNWxkR1Z6TUI0WERUSTJNRGd5TkRJeE5USXhNVm9YRFRNMk1EZ3lNVEl4TlRJeApNVm93RlRFVE1CRUdBMVVFQ2hNS2EzVmlaWEp1WlhSbGN6QlpNQk1HQnlxR1NNNDlBZ0VHQ0NxR1NNNDlBd0VICkEwSUFCUEplVmw0UmlNQVRVQVovVUcyR2ZDenZhTi9qNkQ3UlpKcmJUVG1qQ3FSSXV4S0x4RjUvaWhac2NEVHcKZ1U5NDU2QlpZb1AzY1NoZnZDa1Q2dDRrMzJDallUQmZNQTRHQTFVZER3RUIvd1FFQXdJQ2hEQWRCZ05WSFNVRQpGakFVQmdnckJnRUZCUWNEQVFZSUt3WUJCUVVIQXdJd0R3WURWUjBUQVFIL0JBVXdBd0VCL3pBZEJnTlZIUTRFCkZnUVUySzFYbmFIZXRlcDA2Z2JLNGZtamFCemM4cVl3Q2dZSUtvWkl6ajBFQXdJRFNBQXdSUUlnVjlURmlsRTEKT0JjMWRxLzdzMzR2bk9zZFBDdFE0TWZGamp3ZUVPQ25jQ29DSVFEZzg2N2RSeFJ1Rzl0L2cvaENxZUhVYWdHbgpySmFmejFncklhMHR3WFYwWFE9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==" -> null
+    t2_provision_test.go:986:           - client_certificate = "[REDACTED]" -> null
+    t2_provision_test.go:986:           - client_key         = (sensitive value) -> null
+    t2_provision_test.go:986:           - host               = "https://91.98.206.101:6443" -> null
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - node                            = "91.98.206.101" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # talos_image_factory_schematic.this will be destroyed
+    t2_provision_test.go:986:   - resource "talos_image_factory_schematic" "this" {
+    t2_provision_test.go:986:       - id        = "ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d67c7515" -> null
+    t2_provision_test.go:986:       - schematic = <<-EOT
+    t2_provision_test.go:986:             "customization":
+    t2_provision_test.go:986:               "systemExtensions":
+    t2_provision_test.go:986:                 "officialExtensions":
+    t2_provision_test.go:986:                 - "siderolabs/qemu-guest-agent"
+    t2_provision_test.go:986:         EOT -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # talos_machine_bootstrap.this will be destroyed
+    t2_provision_test.go:986:   - resource "talos_machine_bootstrap" "this" {
+    t2_provision_test.go:986:       - client_configuration = {
+    t2_provision_test.go:986:           - ca_certificate     = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJQakNCOGFBREFnRUNBaEIyNElVQkhYNHk4NDNaMm90RHN1OXJNQVVHQXl0bGNEQVFNUTR3REFZRFZRUUsKRXdWMFlXeHZjekFlRncweU5qQTRNalF5TVRVeU1URmFGdzB6TmpBNE1qRXlNVFV5TVRGYU1CQXhEakFNQmdOVgpCQW9UQlhSaGJHOXpNQ293QlFZREsyVndBeUVBb2FXM3BoU2JtYmYzT29GTGtIaUhqWXh5bmRQSUNjWTJ0Q2E2Cm9LaURDdHVqWVRCZk1BNEdBMVVkRHdFQi93UUVBd0lDaERBZEJnTlZIU1VFRmpBVUJnZ3JCZ0VGQlFjREFRWUkKS3dZQkJRVUhBd0l3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFkQmdOVkhRNEVGZ1FVMVU0cERHUU5xa2RMaisrMgozY3ZTYXFQQXVGd3dCUVlESzJWd0EwRUFHc1BIU05OckoxNHk1U2hYbVhmZDZ1WmNYQTRoYTBHWDhZakxGYUVrClNhVVRPQnNGTjRVRThmbFYwNDJLVmIrVXEvaERyMUZQSU5JbGdncHB0eWJhQ1E9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==" -> null
+    t2_provision_test.go:986:           - client_certificate = "[REDACTED]" -> null
+    t2_provision_test.go:986:           - client_key         = (sensitive value) -> null
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - endpoint             = "91.98.206.101" -> null
+    t2_provision_test.go:986:       - id                   = "machine_bootstrap" -> null
+    t2_provision_test.go:986:       - node                 = "91.98.206.101" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # talos_machine_configuration_apply.control_plane["alethia-nl-local608306-cp-1"] will be destroyed
+    t2_provision_test.go:986:   - resource "talos_machine_configuration_apply" "control_plane" {
+    t2_provision_test.go:986:       - apply_mode                  = "auto" -> null
+    t2_provision_test.go:986:       - client_configuration        = {
+    t2_provision_test.go:986:           - ca_certificate     = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJQakNCOGFBREFnRUNBaEIyNElVQkhYNHk4NDNaMm90RHN1OXJNQVVHQXl0bGNEQVFNUTR3REFZRFZRUUsKRXdWMFlXeHZjekFlRncweU5qQTRNalF5TVRVeU1URmFGdzB6TmpBNE1qRXlNVFV5TVRGYU1CQXhEakFNQmdOVgpCQW9UQlhSaGJHOXpNQ293QlFZREsyVndBeUVBb2FXM3BoU2JtYmYzT29GTGtIaUhqWXh5bmRQSUNjWTJ0Q2E2Cm9LaURDdHVqWVRCZk1BNEdBMVVkRHdFQi93UUVBd0lDaERBZEJnTlZIU1VFRmpBVUJnZ3JCZ0VGQlFjREFRWUkKS3dZQkJRVUhBd0l3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFkQmdOVkhRNEVGZ1FVMVU0cERHUU5xa2RMaisrMgozY3ZTYXFQQXVGd3dCUVlESzJWd0EwRUFHc1BIU05OckoxNHk1U2hYbVhmZDZ1WmNYQTRoYTBHWDhZakxGYUVrClNhVVRPQnNGTjRVRThmbFYwNDJLVmIrVXEvaERyMUZQSU5JbGdncHB0eWJhQ1E9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==" -> null
+    t2_provision_test.go:986:           - client_certificate = "[REDACTED]" -> null
+    t2_provision_test.go:986:           - client_key         = (sensitive value) -> null
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - endpoint                    = "91.98.206.101" -> null
+    t2_provision_test.go:986:       - id                          = "machine_configuration_apply" -> null
+    t2_provision_test.go:986:       - machine_configuration       = (sensitive value) -> null
+    t2_provision_test.go:986:       - machine_configuration_hash  = "299475e2eb42034c88ff3ee30119492a8cc0f82b6a9d6be9dd5d6a712f3abd71" -> null
+    t2_provision_test.go:986:       - machine_configuration_input = (sensitive value) -> null
+    t2_provision_test.go:986:       - node                        = "91.98.206.101" -> null
+    t2_provision_test.go:986:       - resolved_apply_mode         = "auto" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # talos_machine_configuration_apply.worker["alethia-nl-local608306-worker-1"] will be destroyed
+    t2_provision_test.go:986:   - resource "talos_machine_configuration_apply" "worker" {
+    t2_provision_test.go:986:       - apply_mode                  = "auto" -> null
+    t2_provision_test.go:986:       - client_configuration        = {
+    t2_provision_test.go:986:           - ca_certificate     = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJQakNCOGFBREFnRUNBaEIyNElVQkhYNHk4NDNaMm90RHN1OXJNQVVHQXl0bGNEQVFNUTR3REFZRFZRUUsKRXdWMFlXeHZjekFlRncweU5qQTRNalF5TVRVeU1URmFGdzB6TmpBNE1qRXlNVFV5TVRGYU1CQXhEakFNQmdOVgpCQW9UQlhSaGJHOXpNQ293QlFZREsyVndBeUVBb2FXM3BoU2JtYmYzT29GTGtIaUhqWXh5bmRQSUNjWTJ0Q2E2Cm9LaURDdHVqWVRCZk1BNEdBMVVkRHdFQi93UUVBd0lDaERBZEJnTlZIU1VFRmpBVUJnZ3JCZ0VGQlFjREFRWUkKS3dZQkJRVUhBd0l3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFkQmdOVkhRNEVGZ1FVMVU0cERHUU5xa2RMaisrMgozY3ZTYXFQQXVGd3dCUVlESzJWd0EwRUFHc1BIU05OckoxNHk1U2hYbVhmZDZ1WmNYQTRoYTBHWDhZakxGYUVrClNhVVRPQnNGTjRVRThmbFYwNDJLVmIrVXEvaERyMUZQSU5JbGdncHB0eWJhQ1E9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==" -> null
+    t2_provision_test.go:986:           - client_certificate = "[REDACTED]" -> null
+    t2_provision_test.go:986:           - client_key         = (sensitive value) -> null
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - endpoint                    = "91.99.97.101" -> null
+    t2_provision_test.go:986:       - id                          = "machine_configuration_apply" -> null
+    t2_provision_test.go:986:       - machine_configuration       = (sensitive value) -> null
+    t2_provision_test.go:986:       - machine_configuration_hash  = "6e5fafe00ce88b499f1e25f1bb952f2478c4ac0666a0643fcee33dcb1f5f335d" -> null
+    t2_provision_test.go:986:       - machine_configuration_input = (sensitive value) -> null
+    t2_provision_test.go:986:       - node                        = "91.99.97.101" -> null
+    t2_provision_test.go:986:       - resolved_apply_mode         = "auto" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # talos_machine_secrets.this will be destroyed
+    t2_provision_test.go:986:   - resource "talos_machine_secrets" "this" {
+    t2_provision_test.go:986:       - client_configuration = {
+    t2_provision_test.go:986:           - ca_certificate     = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJQakNCOGFBREFnRUNBaEIyNElVQkhYNHk4NDNaMm90RHN1OXJNQVVHQXl0bGNEQVFNUTR3REFZRFZRUUsKRXdWMFlXeHZjekFlRncweU5qQTRNalF5TVRVeU1URmFGdzB6TmpBNE1qRXlNVFV5TVRGYU1CQXhEakFNQmdOVgpCQW9UQlhSaGJHOXpNQ293QlFZREsyVndBeUVBb2FXM3BoU2JtYmYzT29GTGtIaUhqWXh5bmRQSUNjWTJ0Q2E2Cm9LaURDdHVqWVRCZk1BNEdBMVVkRHdFQi93UUVBd0lDaERBZEJnTlZIU1VFRmpBVUJnZ3JCZ0VGQlFjREFRWUkKS3dZQkJRVUhBd0l3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFkQmdOVkhRNEVGZ1FVMVU0cERHUU5xa2RMaisrMgozY3ZTYXFQQXVGd3dCUVlESzJWd0EwRUFHc1BIU05OckoxNHk1U2hYbVhmZDZ1WmNYQTRoYTBHWDhZakxGYUVrClNhVVRPQnNGTjRVRThmbFYwNDJLVmIrVXEvaERyMUZQSU5JbGdncHB0eWJhQ1E9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==" -> null
+    t2_provision_test.go:986:           - client_certificate = "[REDACTED]" -> null
+    t2_provision_test.go:986:           - client_key         = (sensitive value) -> null
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - id                   = "machine_secrets" -> null
+    t2_provision_test.go:986:       - machine_secrets      = {
+    t2_provision_test.go:986:           - certs      = {
+    t2_provision_test.go:986:               - etcd               = {
+    t2_provision_test.go:986:                   - cert = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJmakNDQVNPZ0F3SUJBZ0lRR0JHY0EyU1hwZExSdkhsUE9rQ3hTREFLQmdncWhrak9QUVFEQWpBUE1RMHcKQ3dZRFZRUUtFd1JsZEdOa01CNFhEVEkyTURneU5ESXhOVEl4TVZvWERUTTJNRGd5TVRJeE5USXhNVm93RHpFTgpNQXNHQTFVRUNoTUVaWFJqWkRCWk1CTUdCeXFHU000OUFnRUdDQ3FHU000OUF3RUhBMElBQk1EL1VnTXliTEloCkZCMHIvN0hpTUtFRk55TjBjaWlwblZ0RU83Sm1FK245dmdQQ2gzbW9kZVZIdUkwZTFNaTgzdlNiVllVSGdLdm4KL3VjTzV2emIvMVdqWVRCZk1BNEdBMVVkRHdFQi93UUVBd0lDaERBZEJnTlZIU1VFRmpBVUJnZ3JCZ0VGQlFjRApBUVlJS3dZQkJRVUhBd0l3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFkQmdOVkhRNEVGZ1FVMjRIZkVwaThKRXAyCjMrNmo3MEpjU3VmVkFFc3dDZ1lJS29aSXpqMEVBd0lEU1FBd1JnSWhBUC9kMnBZcTlNUGVkTG56cVduZW9zTVMKcDdwMEcvMEJIN2pEVkdkZUp0YzlBaUVBcFV2cnZoUGdHenFGdnhhSjZxOVljUk5ueEU4S1A5Umd6RnQvNktOaQpITUk9Ci0tLS0tRU5EIENFUlRJRklDQVRFLS0tLS0K" -> null
+    t2_provision_test.go:986:                   - key  = (sensitive value) -> null
+    t2_provision_test.go:986:                 } -> null
+    t2_provision_test.go:986:               - k8s                = {
+    t2_provision_test.go:986:                   - cert = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJpVENDQVMrZ0F3SUJBZ0lRTElBZ1pTS3pWbEhCcEppbWI0eW9DakFLQmdncWhrak9QUVFEQWpBVk1STXcKRVFZRFZRUUtFd3ByZFdKbGNtNWxkR1Z6TUI0WERUSTJNRGd5TkRJeE5USXhNVm9YRFRNMk1EZ3lNVEl4TlRJeApNVm93RlRFVE1CRUdBMVVFQ2hNS2EzVmlaWEp1WlhSbGN6QlpNQk1HQnlxR1NNNDlBZ0VHQ0NxR1NNNDlBd0VICkEwSUFCUEplVmw0UmlNQVRVQVovVUcyR2ZDenZhTi9qNkQ3UlpKcmJUVG1qQ3FSSXV4S0x4RjUvaWhac2NEVHcKZ1U5NDU2QlpZb1AzY1NoZnZDa1Q2dDRrMzJDallUQmZNQTRHQTFVZER3RUIvd1FFQXdJQ2hEQWRCZ05WSFNVRQpGakFVQmdnckJnRUZCUWNEQVFZSUt3WUJCUVVIQXdJd0R3WURWUjBUQVFIL0JBVXdBd0VCL3pBZEJnTlZIUTRFCkZnUVUySzFYbmFIZXRlcDA2Z2JLNGZtamFCemM4cVl3Q2dZSUtvWkl6ajBFQXdJRFNBQXdSUUlnVjlURmlsRTEKT0JjMWRxLzdzMzR2bk9zZFBDdFE0TWZGamp3ZUVPQ25jQ29DSVFEZzg2N2RSeFJ1Rzl0L2cvaENxZUhVYWdHbgpySmFmejFncklhMHR3WFYwWFE9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==" -> null
+    t2_provision_test.go:986:                   - key  = (sensitive value) -> null
+    t2_provision_test.go:986:                 } -> null
+    t2_provision_test.go:986:               - k8s_aggregator     = {
+    t2_provision_test.go:986:                   - cert = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJYekNDQVFhZ0F3SUJBZ0lSQU9iQW50R210L3ZxcWd1dnFpVHNMUkV3Q2dZSUtvWkl6ajBFQXdJd0FEQWUKRncweU5qQTRNalF5TVRVeU1URmFGdzB6TmpBNE1qRXlNVFV5TVRGYU1BQXdXVEFUQmdjcWhrak9QUUlCQmdncQpoa2pPUFFNQkJ3TkNBQVJ0SFc1Y3gweDFsSFRld2F5WnZTTno1MmxCakVlaXZRdC90dm9aQWJyenlTUkJwZnM1ClgzcHQ3L2R5REluWGRlVG5HcmZrVFNtOWpRWTNFQlRPcVRxSG8yRXdYekFPQmdOVkhROEJBZjhFQkFNQ0FvUXcKSFFZRFZSMGxCQll3RkFZSUt3WUJCUVVIQXdFR0NDc0dBUVVGQndNQ01BOEdBMVVkRXdFQi93UUZNQU1CQWY4dwpIUVlEVlIwT0JCWUVGT2taQ0g4Q0JVcWVTYVV5cEM3ZEs3QTloWG83TUFvR0NDcUdTTTQ5QkFNQ0EwY0FNRVFDCklHbk9wYzU2eVUwVERMTkx5Z2YrUUQvRW9BVGhOc3F6M2pENlg5Qzh6ZXR1QWlCMFQ1eVVxd2xJV0sraTJpZHgKa2dFdE92ZjAwQlBOTm5GOHkwUTNmMGFEVkE9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==" -> null
+    t2_provision_test.go:986:                   - key  = (sensitive value) -> null
+    t2_provision_test.go:986:                 } -> null
+    t2_provision_test.go:986:               - k8s_serviceaccount = {
+    t2_provision_test.go:986:                   - key = (sensitive value) -> null
+    t2_provision_test.go:986:                 } -> null
+    t2_provision_test.go:986:               - os                 = {
+    t2_provision_test.go:986:                   - cert = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUJQakNCOGFBREFnRUNBaEIyNElVQkhYNHk4NDNaMm90RHN1OXJNQVVHQXl0bGNEQVFNUTR3REFZRFZRUUsKRXdWMFlXeHZjekFlRncweU5qQTRNalF5TVRVeU1URmFGdzB6TmpBNE1qRXlNVFV5TVRGYU1CQXhEakFNQmdOVgpCQW9UQlhSaGJHOXpNQ293QlFZREsyVndBeUVBb2FXM3BoU2JtYmYzT29GTGtIaUhqWXh5bmRQSUNjWTJ0Q2E2Cm9LaURDdHVqWVRCZk1BNEdBMVVkRHdFQi93UUVBd0lDaERBZEJnTlZIU1VFRmpBVUJnZ3JCZ0VGQlFjREFRWUkKS3dZQkJRVUhBd0l3RHdZRFZSMFRBUUgvQkFVd0F3RUIvekFkQmdOVkhRNEVGZ1FVMVU0cERHUU5xa2RMaisrMgozY3ZTYXFQQXVGd3dCUVlESzJWd0EwRUFHc1BIU05OckoxNHk1U2hYbVhmZDZ1WmNYQTRoYTBHWDhZakxGYUVrClNhVVRPQnNGTjRVRThmbFYwNDJLVmIrVXEvaERyMUZQSU5JbGdncHB0eWJhQ1E9PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==" -> null
+    t2_provision_test.go:986:                   - key  = (sensitive value) -> null
+    t2_provision_test.go:986:                 } -> null
+    t2_provision_test.go:986:             } -> null
+    t2_provision_test.go:986:           - cluster    = {
+    t2_provision_test.go:986:               - id     = "p8aWzDzJQVELUUGvd6013CFKl4YRLsE-Bw_T7cFR8lQ=" -> null
+    t2_provision_test.go:986:               - secret = (sensitive value) -> null
+    t2_provision_test.go:986:             } -> null
+    t2_provision_test.go:986:           - secrets    = {
+    t2_provision_test.go:986:               - bootstrap_token             = (sensitive value) -> null
+    t2_provision_test.go:986:               - secretbox_encryption_secret = (sensitive value) -> null
+    t2_provision_test.go:986:             } -> null
+    t2_provision_test.go:986:           - trustdinfo = {
+    t2_provision_test.go:986:               - token = (sensitive value) -> null
+    t2_provision_test.go:986:             } -> null
+    t2_provision_test.go:986:         } -> null
+    t2_provision_test.go:986:       - talos_version        = "v1.13.6" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # terraform_data.byo_network_guard will be destroyed
+    t2_provision_test.go:986:   - resource "terraform_data" "byo_network_guard" {
+    t2_provision_test.go:986:       - id = "3101d1d3-b9a7-4fa3-f3d4-06e46426c753" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # terraform_data.compat_k8s_guard will be destroyed
+    t2_provision_test.go:986:   - resource "terraform_data" "compat_k8s_guard" {
+    t2_provision_test.go:986:       - id = "f1f88d0d-b6cb-e3be-5984-5cddb227d27d" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # terraform_data.csi_volume_label_guard will be destroyed
+    t2_provision_test.go:986:   - resource "terraform_data" "csi_volume_label_guard" {
+    t2_provision_test.go:986:       - id     = "b8ed5d69-17c4-2d86-8cde-53858baf4ef5" -> null
+    t2_provision_test.go:986:       - input  = "2.22.0" -> null
+    t2_provision_test.go:986:       - output = "2.22.0" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986:   # terraform_data.dns_zone_guard will be destroyed
+    t2_provision_test.go:986:   - resource "terraform_data" "dns_zone_guard" {
+    t2_provision_test.go:986:       - id = "4ba4c108-32b7-decd-2d2c-c69af9c1fb53" -> null
+    t2_provision_test.go:986:     }
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: Plan: 0 to add, 0 to change, 18 to destroy.
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: Changes to Outputs:
+    t2_provision_test.go:986:   - bootstrap_manifests    = (sensitive value) -> null
+    t2_provision_test.go:986:   - bucket_endpoints       = {} -> null
+    t2_provision_test.go:986:   - bucket_names           = [] -> null
+    t2_provision_test.go:986:   - dns_name_servers       = [] -> null
+    t2_provision_test.go:986:   - dns_zone_id            = "" -> null
+    t2_provision_test.go:986:   - kubeconfig             = (sensitive value) -> null
+    t2_provision_test.go:986:   - network_id             = "12577262" -> null
+    t2_provision_test.go:986:   - talos_cluster_endpoint = "https://91.98.206.101:6443" -> null
+    t2_provision_test.go:986:   - talos_cluster_name     = "alethia-nl-local608306" -> null
+    t2_provision_test.go:986:   - talosconfig            = (sensitive value) -> null
+    t2_provision_test.go:986: terraform_data.compat_k8s_guard: Destroying... [id=f1f88d0d-b6cb-e3be-5984-5cddb227d27d]
+    t2_provision_test.go:986: terraform_data.byo_network_guard: Destroying... [id=3101d1d3-b9a7-4fa3-f3d4-06e46426c753]
+    t2_provision_test.go:986: terraform_data.dns_zone_guard: Destroying... [id=4ba4c108-32b7-decd-2d2c-c69af9c1fb53]
+    t2_provision_test.go:986: terraform_data.byo_network_guard: Destruction complete after 0s
+    t2_provision_test.go:986: terraform_data.compat_k8s_guard: Destruction complete after 0s
+    t2_provision_test.go:986: terraform_data.csi_volume_label_guard: Destroying... [id=b8ed5d69-17c4-2d86-8cde-53858baf4ef5]
+    t2_provision_test.go:986: terraform_data.dns_zone_guard: Destruction complete after 0s
+    t2_provision_test.go:986: terraform_data.csi_volume_label_guard: Destruction complete after 0s
+    t2_provision_test.go:986: talos_cluster_kubeconfig.this: [REDACTED] [id=alethia-nl-local608306]
+    t2_provision_test.go:986: talos_machine_configuration_apply.worker["alethia-nl-local608306-worker-1"]: Destroying... [id=machine_configuration_apply]
+    t2_provision_test.go:986: talos_cluster_kubeconfig.this: [REDACTED] complete after 0s
+    t2_provision_test.go:986: talos_machine_configuration_apply.worker["alethia-nl-local608306-worker-1"]: Destruction complete after 0s
+    t2_provision_test.go:986: talos_machine_bootstrap.this: Destroying... [id=machine_bootstrap]
+    t2_provision_test.go:986: talos_machine_bootstrap.this: Destruction complete after 0s
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Destroying... [id=163489866]
+    t2_provision_test.go:986: talos_machine_configuration_apply.control_plane["alethia-nl-local608306-cp-1"]: Destroying... [id=machine_configuration_apply]
+    t2_provision_test.go:986: talos_machine_configuration_apply.control_plane["alethia-nl-local608306-cp-1"]: Destruction complete after 0s
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Destroying... [id=163489867]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 10s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 10s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 20s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 20s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 30s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 30s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 40s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 40s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 50s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 50s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 1m0s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 1m0s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 1m10s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 1m10s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 1m20s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 1m20s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 1m30s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 1m30s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 1m40s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 1m40s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 1m50s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 1m50s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 2m0s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 2m0s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Still destroying... [id=163489867, 2m10s elapsed]
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Still destroying... [id=163489866, 2m10s elapsed]
+    t2_provision_test.go:986: hcloud_server.control_planes["alethia-nl-local608306-cp-1"]: Destruction complete after 2m16s
+    t2_provision_test.go:986: hcloud_server.workers["alethia-nl-local608306-worker-1"]: Destruction complete after 2m16s
+    t2_provision_test.go:986: hcloud_network_subnet.nodes: Destroying... [id=12577262-10.0.0.0/24]
+    t2_provision_test.go:986: hcloud_primary_ip.worker_ipv4[0]: Destroying... [name=alethia-nl-local608306-worker-1-ipv4]
+    t2_provision_test.go:986: hcloud_primary_ip.control_plane_ipv4[0]: Destroying... [name=alethia-nl-local608306-cp-1-ipv4]
+    t2_provision_test.go:986: imager_image.amd64[0]: Destroying... [id=423919923]
+    t2_provision_test.go:986: talos_machine_secrets.this: Destroying... [id=machine_secrets]
+    t2_provision_test.go:986: hcloud_firewall.this: Destroying... [id=11513971]
+    t2_provision_test.go:986: talos_machine_secrets.this: Destruction complete after 0s
+    t2_provision_test.go:986: hcloud_primary_ip.control_plane_ipv4[0]: Destruction complete after 0s
+    t2_provision_test.go:986: hcloud_firewall.this: Destruction complete after 0s
+    t2_provision_test.go:986: hcloud_primary_ip.worker_ipv4[0]: Destruction complete after 0s
+    t2_provision_test.go:986: hcloud_network_subnet.nodes: Destruction complete after 0s
+    t2_provision_test.go:986: hcloud_network.this[0]: Destroying... [id=12577262]
+    t2_provision_test.go:986: imager_image.amd64[0]: Destruction complete after 0s
+    t2_provision_test.go:986: talos_image_factory_schematic.this: Destroying... [id=ce4c980550dd2ab1b17bbf2b08801c7eb59418eafe8f279833297925d67c7515]
+    t2_provision_test.go:986: talos_image_factory_schematic.this: Destruction complete after 0s
+    t2_provision_test.go:986: hcloud_network.this[0]: Destruction complete after 0s
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: Warning: Value for undeclared variable
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: The root module does not declare a variable named "secrets_provider" but a
+    t2_provision_test.go:986: value was found in file
+    t2_provision_test.go:986: "/var/folders/vm/lhl4207s6nx4bn8xn8slz2lr0000gn/T/alethia-destroy-3678427793/work/tofu.tfvars.json".
+    t2_provision_test.go:986: If you meant to use this value, add a "variable" block to the configuration.
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: To silence these warnings, use TF_VAR_... environment variables to provide
+    t2_provision_test.go:986: certain "global" settings to all configurations in your organization. To
+    t2_provision_test.go:986: reduce the verbosity of these warnings, use the -compact-warnings option.
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: Warning: Value for undeclared variable
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: The root module does not declare a variable named "registry_pull_provider"
+    t2_provision_test.go:986: but a value was found in file
+    t2_provision_test.go:986: "/var/folders/vm/lhl4207s6nx4bn8xn8slz2lr0000gn/T/alethia-destroy-3678427793/work/tofu.tfvars.json".
+    t2_provision_test.go:986: If you meant to use this value, add a "variable" block to the configuration.
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: To silence these warnings, use TF_VAR_... environment variables to provide
+    t2_provision_test.go:986: certain "global" settings to all configurations in your organization. To
+    t2_provision_test.go:986: reduce the verbosity of these warnings, use the -compact-warnings option.
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: Warning: Values for undeclared variables
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: In addition to the other similar warnings shown, 2 other variable(s) defined
+    t2_provision_test.go:986: without being declared.
+    t2_provision_test.go:986: 
+    t2_provision_test.go:986: Destroy complete! Resources: 18 destroyed.
+    t2_provision_test.go:986: Environment destroyed successfully!
+    t2_provision_test.go:365: teardown: cluster destroyed via RunDestroy
+--- FAIL: TestT2RealCloudProvisioning (674.73s)
+FAIL
+FAIL	github.com/alethialabs-io/alethialabs/test/e2e	678.100s
+?   	github.com/alethialabs-io/alethialabs/test/e2e/cmd/t2budget	[no test files]
+FAIL

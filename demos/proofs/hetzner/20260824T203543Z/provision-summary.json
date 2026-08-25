@@ -1,0 +1,3 @@
+{"feature":"provisioning","cloud":"hetzner","dimension":"addons","verdict":"FAIL",
+ "quarantined":false,
+ "git_sha":"49325749","captured_at":"20260824T203543Z","detail":"--- FAIL: TestT2RealCloudProvisioning (2271.56s)"}
