@@ -100,8 +100,35 @@ export default defineConfig({
 				// Real-SQL modules verified by the integration tier (tests/integration/*, real
 				// Postgres) — mocked unit tests can't exercise their WHERE/joins/CTEs, so they're
 				// scoped to that tier and excluded from the unit badge (same tier-separation as
-				// e2e-covered components). Each has a green integration suite.
-				"lib/queries/**",
+				// e2e-covered components).
+				//
+				// `lib/queries/**` USED TO BE ONE GLOB, and the claim it carried — "Each has a green
+				// integration suite" — was true of six of its twelve files and false of the other
+				// six. Measured by which suite actually names each module:
+				//
+				//   named by an integration suite   classification 2 · cluster-for-env 1 ·
+				//                                   evidence 1 · projects 1 · runner-usage 3 ·
+				//                                   usage-counts 3
+				//   named by NONE                   capabilities · cli-config ·
+				//                                   project-components-read · runner-capabilities ·
+				//                                   signing · support
+				//
+				// Three of the six unproven ones have UNIT tests whose coverage this exclusion was
+				// then discarding — against a rationale that says mocked unit tests cannot exercise
+				// this code. And the hole was not academic: cli-config.ts was covered by nothing at
+				// all, and was hiding a real defect (#2663 — an unordered LIMIT 1 over a non-unique
+				// project_name, reachable from three authenticated CLI routes).
+				//
+				// So the glob is SPLIT rather than dropped. A directory-wide exclusion is precisely
+				// how six unproven files hid behind six proven ones: one line asserted twelve
+				// things, and nobody could see which of them were true. Per-file entries make each
+				// claim separately checkable and separately falsifiable.
+				"lib/queries/classification.ts",
+				"lib/queries/cluster-for-env.ts",
+				"lib/queries/evidence.ts",
+				"lib/queries/projects.ts",
+				"lib/queries/runner-usage.ts",
+				"lib/queries/usage-counts.ts",
 				"lib/billing/ai-quota.ts",
 				"lib/billing/queries.ts",
 				"lib/fleet/queue.ts",
