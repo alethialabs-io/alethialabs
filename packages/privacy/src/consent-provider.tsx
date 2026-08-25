@@ -61,8 +61,33 @@ export function useConsent(): ConsentContextValue {
  * only a production build did. A component that may render anywhere reads consent
  * through this and degrades instead of exploding.
  */
+/** Module-scoped so the dev warning below fires ONCE. It sits in a render body, and a missing
+ * provider means every consent-reading component on the page warns on every render — under
+ * StrictMode's double-invoke that is a wall of identical lines nobody reads to the end of. */
+let warnedNoProvider = false;
+
 export function useOptionalConsent(): ConsentContextValue | null {
-	return useContext(ConsentContext);
+	const context = useContext(ConsentContext);
+	// DEGRADING IS NOT THE SAME AS SAYING NOTHING.
+	//
+	// The strict hook threw, which is how the blog's missing provider was found at all — as the
+	// comment above says, neither tsc nor eslint could see it and only a production build did.
+	// Removing the throw was right, but it turned a LOUD failure into a SILENT one: a host that
+	// forgets the provider now renders no consent control and every gate stays green. For a control
+	// the design calls legally load-bearing, silently absent is a worse outcome than a broken build,
+	// because nothing surfaces it until somebody looks at the rendered page.
+	//
+	// So the net stays and the silence does not. Dev-only: the warning is for whoever is wiring a
+	// new host, and a production bundle should not carry it.
+	if (context === null && !warnedNoProvider && process.env.NODE_ENV !== "production") {
+		warnedNoProvider = true;
+		console.warn(
+			"[@repo/privacy] useOptionalConsent: no ConsentProvider above this component. " +
+				"Consent-dependent UI (including the cookie-settings control in the shared site footer) " +
+				"will render nothing. If this host is meant to offer consent, wrap it in <ConsentProvider>.",
+		);
+	}
+	return context;
 }
 
 interface ConsentProviderProps {
