@@ -448,26 +448,42 @@ jobs:
         run: pnpm exec turbo run test
       - name: Compute merged coverage → badge JSON
         run: node scripts/coverage-badge.mjs
-      - name: Commit the badge if it changed
+      # Publish UNCONDITIONALLY. There used to be an `if git diff --quiet -- <the badge>` guard
+      # here, and it was a trap waiting for the tracked copy to go away.
+      #
+      # `git diff` compares the index and the working tree for TRACKED paths. It says NOTHING
+      # about an untracked one — measured, both directions: on an untracked file
+      # `git diff --quiet -- <path>` exits 0 ("clean") while `git status --porcelain -- <path>`
+      # correctly prints `?? <path>`. The badge JSON is no longer checked in (it could never be
+      # kept honest — this job runs only on push to main and publishes to `badges`, so it never
+      # writes back to the tree, and the checked-in copy sat at 91% against a real 67.8%).
+      # So the file coverage-badge.mjs writes is now always untracked, the old conditional would
+      # always have reported "unchanged", and the badge would have frozen forever with this job
+      # GREEN — the same swallowed-signal shape that left the Go badge advertising 21.6% against
+      # a real 61.2% for five weeks.
+      #
+      # Dropping the conditional is safe precisely BECAUSE the file is untracked: each run starts
+      # from a fresh checkout of main where it does not exist, so `git add` always stages a new
+      # file and `git commit` can never fail with "nothing to commit".
+      - name: Publish the badge
         run: |
-          if git diff --quiet -- .github/badges/coverage.json; then
-            echo "Coverage badge unchanged."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/badges/coverage.json
-            # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
-            # commits to main; this CI-authored badge commit is legitimate.
-            git commit --no-verify -m "chore(ci): update coverage badge [skip ci]"
-            # Publish to the unprotected orphan `badges` branch, NOT to main. `protect-main` is
-            # enforcement:active with bypass_actors:[] and a pull_request rule, so a direct push
-            # to refs/heads/main is refused with GH006 — contents:write on the token is
-            # irrelevant, the ruleset denies the ref update. See publish_badge in the Go badge
-            # job below for the full diagnosis; this badge was dead for the same reason.
-            #
-            # NO `|| true`. A push that cannot land must RED this job.
-            git push --force origin HEAD:badges
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # -f is defensive: .gitignore carries a bare `coverage` rule, which does NOT match
+          # `.github/badges/coverage.json` today (no path component is exactly `coverage`), but a
+          # future broadening of that rule must not silently stop the badge instead of failing.
+          git add -f .github/badges/coverage.json
+          # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
+          # commits to main; this CI-authored badge commit is legitimate.
+          git commit --no-verify -m "chore(ci): update coverage badge [skip ci]"
+          # Publish to the unprotected orphan `badges` branch, NOT to main. `protect-main` is
+          # enforcement:active with bypass_actors:[] and a pull_request rule, so a direct push
+          # to refs/heads/main is refused with GH006 — contents:write on the token is
+          # irrelevant, the ruleset denies the ref update. See publish_badge in the Go badge
+          # job below for the full diagnosis; this badge was dead for the same reason.
+          #
+          # NO `|| true`. A push that cannot land must RED this job.
+          git push --force origin HEAD:badges
 
   guards:
     name: Authz / open-core guards
@@ -1126,35 +1142,45 @@ jobs:
       - name: Compute aggregate Go coverage → badge JSON
         run: node scripts/go-coverage-badge.mjs
       - name: Commit the badge if it changed
+      # Publish UNCONDITIONALLY — the identical `git diff --quiet` trap the TypeScript badge job
+      # above carried. `git diff` reports TRACKED paths only; on an untracked one it exits 0
+      # ("clean") while `git status --porcelain` correctly prints `?? <path>`. Now that the badge
+      # JSON is no longer checked in, the regenerated file is always untracked and that guard
+      # would have reported "unchanged" on every run — freezing the badge with this job GREEN.
+      # That is the same swallowed-signal shape this job's own post-mortem below describes.
+      #
+      # Safe to drop because the file is untracked: every run starts from a fresh checkout of
+      # main where it does not exist, so `git add` always stages a new file and `git commit`
+      # can never fail with "nothing to commit".
+      - name: Publish the badge
         run: |
-          if git diff --quiet -- .github/badges/go-coverage.json; then
-            echo "Go coverage badge unchanged."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/badges/go-coverage.json
-            # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
-            # commits to main; this CI-authored badge commit is legitimate.
-            git commit --no-verify -m "chore(ci): update go coverage badge [skip ci]"
-            # WHY NOT `git push` TO MAIN, AND WHY NO `|| true`:
-            #
-            # `protect-main` (infra/github/main.tf) is enforcement:active with bypass_actors:[]
-            # and a pull_request rule, so EVERY update to refs/heads/main must arrive via a PR.
-            # This push was refused with `GH006: Protected branch update failed … Changes must be
-            # made through a pull request`, and `|| echo "::warning::badge push skipped"` turned
-            # that hard failure into a green job. `permissions: contents: write` never mattered —
-            # the token has the permission, the ruleset denies the ref update.
-            #
-            # Consequence: this job had NEVER pushed successfully. .github/badges/go-coverage.json
-            # has exactly one commit in its history (23892e35, 2026-06-28, hand-authored); the
-            # job was added 2026-06-30 and the ruleset created 2026-07-03. The README advertised
-            # 21.6% for five weeks while the real aggregate was 61.2% — a 40-point error that the
-            # swallowed exit code hid. The TypeScript badge above was dead for the same reason.
-            #
-            # The rulesets match only refs/heads/{dev,main,staging} with empty excludes, so the
-            # orphan `badges` branch is writable with no Terraform apply and no hole in main.
-            git push --force origin HEAD:badges
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # -f is defensive: .gitignore carries a bare `coverage` rule, which does NOT match this
+          # path today (no component is exactly `coverage`), but a future broadening of that rule
+          # must not silently stop the badge instead of failing.
+          git add -f .github/badges/go-coverage.json
+          # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
+          # commits to main; this CI-authored badge commit is legitimate.
+          git commit --no-verify -m "chore(ci): update go coverage badge [skip ci]"
+          # WHY NOT `git push` TO MAIN, AND WHY NO `|| true`:
+          #
+          # `protect-main` (infra/github/main.tf) is enforcement:active with bypass_actors:[]
+          # and a pull_request rule, so EVERY update to refs/heads/main must arrive via a PR.
+          # This push was refused with `GH006: Protected branch update failed … Changes must be
+          # made through a pull request`, and `|| echo "::warning::badge push skipped"` turned
+          # that hard failure into a green job. `permissions: contents: write` never mattered —
+          # the token has the permission, the ruleset denies the ref update.
+          #
+          # Consequence: this job had NEVER pushed successfully. .github/badges/go-coverage.json
+          # has exactly one commit in its history (23892e35, 2026-06-28, hand-authored); the
+          # job was added 2026-06-30 and the ruleset created 2026-07-03. The README advertised
+          # 21.6% for five weeks while the real aggregate was 61.2% — a 40-point error that the
+          # swallowed exit code hid. The TypeScript badge above was dead for the same reason.
+          #
+          # The rulesets match only refs/heads/{dev,main,staging} with empty excludes, so the
+          # orphan `badges` branch is writable with no Terraform apply and no hole in main.
+          git push --force origin HEAD:badges
 
   mutation:
     name: Mutation testing (Stryker + Gremlins)
