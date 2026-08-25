@@ -56,6 +56,29 @@
 // F1..F10 below and each one is reached deliberately by --self-test.
 //
 // ─────────────────────────────────────────────────────────────────────────────────────────────
+// ARMING A PROJECT IS RACY, AND THAT IS INHERENT
+//
+// Floors are a SNAPSHOT of a measurement taken on one commit. Anything that merges between the
+// probe run and the floors PR merging can invalidate them — and not only a coverage-SCOPE change,
+// which is the obvious case. Ordinary code does it too: a new file, or new statements in an
+// existing directory, raises the denominator while `covered` stays put, and the ratio falls.
+//
+// Measured, on this ratchet's own arming PR: #2681 landed between the probe and the PR, adding
+// `lib/promotions/env-ownership.ts` (+18 statements) and growing `app/server/actions` (+9). Both
+// are verified by the INTEGRATION tier, which contributes nothing to this unit measurement, so
+// both read as uncovered here:
+//
+//     app/server/actions  57.2% -> 57.1%   (7048/12327 -> 7048/12336)
+//     lib/promotions      81.6% -> 78.2%   (337/413    -> 337/431)
+//
+// That is the gate working, not misfiring: new statements with no unit coverage ARE a ratio
+// regression, and the fix is a fresh probe rather than a weakened comparison. Do not add a grace
+// margin to make arming easier — a floor that tolerates "a little" drift tolerates it forever.
+//
+// So: arm in a quiet window, expect to re-probe if the branch loses the race, and remember that
+// gains are never locked until floors are REGENERATED. The same applies to a routine re-record.
+//
+// ─────────────────────────────────────────────────────────────────────────────────────────────
 // NOT COMPATIBLE WITH TEST SHARDING
 //
 // Each shard would write a partial coverage-final.json, which F8 would (correctly) demote —
