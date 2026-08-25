@@ -33,9 +33,18 @@ export function PrivacySettingsButton({
 }: PrivacySettingsButtonProps) {
 	const consent = useOptionalConsent();
 
-	// No provider on this surface, or no decision recorded yet — in the second case
-	// the first-visit notice is already on screen offering the same dialog.
-	if (!consent?.hasDecision) return null;
+	// TWO DIFFERENT FACTS, kept apart even though both render nothing.
+	//
+	// `consent === null` means no ConsentProvider is mounted above this surface — a WIRING BUG, and
+	// the one that took the blog's build down before the hook was made optional. `hasDecision ===
+	// false` is the NORMAL first-visit case, where the notice is already on screen offering the same
+	// dialog.
+	//
+	// Collapsing them into one `!consent?.hasDecision` made a bug and an ordinary state
+	// indistinguishable in the source, which is the shape this repository keeps paying for. The
+	// hook warns in dev for the first; this keeps the intent legible for the next reader.
+	if (consent === null) return null;
+	if (!consent.hasDecision) return null;
 	const { openPreferences } = consent;
 
 	return (
