@@ -80,6 +80,9 @@ type acmCertConfig struct {
 	domainName string
 	// fullBar records whether the full-bar surface is also requested, so decide() can refuse the
 	// combination with a reason instead of letting the `dns` kind fail obscurely later.
+	// runEnv is ALETHIA_E2E_ENV as read, kept RAW so decide() can tell "unset" from a derived
+	// default. domainName alone cannot: an empty env and a zone apex render identically.
+	runEnv  string
 	fullBar bool
 }
 
@@ -135,6 +138,7 @@ func acmCertFromEnv(provider string) acmCertConfig {
 		zoneID:     strings.TrimSpace(os.Getenv(envAcmCertZoneID)),
 		zoneName:   zoneName,
 		domainName: acmCertDomain(env, zoneName),
+		runEnv:     env,
 		fullBar:    MaxConfigEnabled(),
 	}
 }
@@ -173,6 +177,25 @@ func (c acmCertConfig) decide() (bool, string, error) {
 			"%s is set but %s missing — the certificate validates into a PRE-DELEGATED zone, so both the "+
 				"zone id and its name are required (see infra/aws-oidc/e2e-dns.tf outputs)",
 			envAcmCert, strings.Join(missing, ", "))
+	}
+	// REFUSE the zone apex (#2566, finding 5). acmCertDomain falls back to the bare zone name when
+	// ALETHIA_E2E_ENV is empty, and that fallback became reachable the moment this scenario was
+	// actually wired: the driver derives its own env as `local<hex>` when the variable is unset, so a
+	// manual or local run with E2E_ACM_CERT set would provision env `local<hex>` while requesting a
+	// certificate for `*.<zone>` and writing the validation record UN-SCOPED into the shared,
+	// long-lived zone.
+	//
+	// acmCertDomain's own comment says the run-scoping exists "so two concurrent legs never write the
+	// same validation record into the SHARED zone" — the fallback silently removes exactly that. The
+	// nightly always sets ALETHIA_E2E_ENV, so this refuses the operator's mistake, never CI's normal
+	// path. Loud, because a silent apex certificate is indistinguishable from a correct one until two
+	// runs collide.
+	if c.runEnv == "" {
+		return false, "", fmt.Errorf(
+			"%s is set but ALETHIA_E2E_ENV is empty — the domain would fall back to the zone apex %q and write an "+
+				"UN-SCOPED validation record into the shared zone, which is what run-scoping exists to prevent. "+
+				"Export ALETHIA_E2E_ENV (the nightly always does)",
+			envAcmCert, c.zoneName)
 	}
 	if c.domainName == "" {
 		return false, "", fmt.Errorf("%s: could not derive a domain name from %s=%q", envAcmCert, envAcmCertZoneName, c.zoneName)
