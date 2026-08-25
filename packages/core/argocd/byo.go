@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"text/template"
 )
@@ -101,6 +102,87 @@ func RenderByoAppProject(name string, sourceRepos, namespaces []string, commonLa
 		return "", fmt.Errorf("label byo AppProject: %w", err)
 	}
 	return labeled, nil
+}
+
+// byoNamespaceTmpl renders the target namespaces for BYO charts.
+//
+// WHY THE RUNNER MUST CREATE THESE, and why `CreateNamespace=true` cannot.
+//
+// A BYO Application is rendered with the `CreateNamespace=true` sync option, which asks ArgoCD to
+// create the destination namespace as part of the sync. Against a HARDENED BYO AppProject that can
+// never work: `clusterResourceWhitelist` is empty, and a Namespace is a cluster-scoped resource —
+// the byoAppProjectTmpl comment above names Namespace in that list explicitly. So ArgoCD is asked
+// to create a namespace it is simultaneously forbidden from creating, and every BYO chart whose
+// namespace does not already exist fails its sync with
+//
+//	one or more objects failed to apply, reason: namespaces "<ns>" not found
+//
+// leaving the Application health=Missing sync=OutOfSync forever. That is not a race and no wait
+// fixes it. It is what the BYO-IaC dimension did on its first ever real execution (gcp, #2490's
+// sibling): `apps` and `external-secrets-operator` converged, `addon-byo-e2e` did not.
+//
+// The resolution is NOT to relax the AppProject — the whole point is that an untrusted chart may
+// not create cluster-scoped objects. It is for the RUNNER, which is a trusted actor holding the
+// cluster's admin kubeconfig, to create the namespace itself before the chart syncs into it. The
+// trust boundary is unchanged: the chart still cannot create one.
+//
+// Pod-level hardening (Pod Security Admission labels + an admission controller) is deliberately NOT
+// applied here. byoAppProjectTmpl's comment scopes that as the separate pod-level half of the
+// boundary, and inventing a PSA level here would silently change what customer charts are permitted
+// to run — a security posture worth deciding explicitly rather than acquiring as a side effect of a
+// bug fix.
+var byoNamespaceTmpl = template.Must(template.New("byo-namespaces").Parse(
+	`{{- range $i, $ns := .Namespaces }}
+{{ if $i }}---
+{{ end }}apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    alethia.io/managed-by: byo-charts
+{{- range $.Labels }}
+    {{ .Key }}: {{ .Value }}
+{{- end }}
+{{- end }}
+`))
+
+// byoLabel is one common label, carried as a SORTED SLICE rather than ranged over the map directly:
+// Go randomises map iteration order, so a map would make the rendered manifest differ between
+// identical deploys — churn in a diff that is supposed to mean something.
+type byoLabel struct{ Key, Value string }
+
+// RenderByoNamespaces renders the destination namespaces for a project's BYO charts, so the runner
+// can create them before the charts sync. Returns "" when there are none, which callers treat as
+// "nothing to apply" rather than an error.
+//
+// commonLabels are the classification/sweep labels (BYOC B1.4), matching RenderByoAppProject. They
+// are rendered HERE rather than via InjectCommonLabels because that helper deliberately labels only
+// Application and AppProject documents — widening it to every kind would change what it stamps for
+// every other caller, which is a bigger decision than this fix.
+func RenderByoNamespaces(namespaces []string, commonLabels map[string]string) (string, error) {
+	ns := dedupeNonEmpty(namespaces)
+	if len(ns) == 0 {
+		return "", nil
+	}
+	keys := make([]string, 0, len(commonLabels))
+	for k := range commonLabels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	labels := make([]byoLabel, 0, len(keys))
+	for _, k := range keys {
+		labels = append(labels, byoLabel{Key: k, Value: commonLabels[k]})
+	}
+
+	var buf bytes.Buffer
+	data := struct {
+		Namespaces []string
+		Labels     []byoLabel
+	}{Namespaces: ns, Labels: labels}
+	if err := byoNamespaceTmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("render byo namespaces: %w", err)
+	}
+	return buf.String(), nil
 }
 
 // ByoRepoSecretName is the deterministic ArgoCD repository-Secret name for a BYO chart repo:

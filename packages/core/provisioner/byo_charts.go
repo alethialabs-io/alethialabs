@@ -6,6 +6,7 @@ package provisioner
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
@@ -116,6 +117,25 @@ func prepareByoCharts(vc *types.ProjectConfig, token string, repoTokens map[stri
 	}
 
 	fmt.Fprintf(stdout, "Configuring %d bring-your-own chart(s) under hardened project %q\n", len(repos), projName)
+
+	// The destination namespaces, created by the RUNNER because the chart cannot create them.
+	//
+	// The Application carries `CreateNamespace=true`, but the hardened AppProject below has an empty
+	// clusterResourceWhitelist and a Namespace is cluster-scoped — so ArgoCD is asked to create a
+	// namespace it is forbidden to create, and the sync dies with `namespaces "<ns>" not found`,
+	// health=Missing, forever. Creating them here (trusted runner, admin kubeconfig) is what makes
+	// the hardening and the sync option coexist; it does not widen what the chart may do.
+	//
+	// Fail-soft like everything else in this stage: a namespace we could not create surfaces as an
+	// unhealthy Application in the console, which is honest, rather than failing a good cluster.
+	if ns, err := argocd.RenderByoNamespaces(namespaces, commonLabels); err != nil {
+		fmt.Fprintf(stderr, "Warning: could not render BYO namespaces: %v\n", err)
+	} else if ns != "" {
+		if err := argocd.ApplyManifest(ns, stdout, stderr); err != nil {
+			fmt.Fprintf(stderr, "Warning: could not create BYO namespace(s) %s — a chart targeting one will fail its sync with `namespaces not found`: %v\n",
+				strings.Join(namespaces, ", "), err)
+		}
+	}
 
 	// Hardened AppProject locked to the BYO repos + namespaces.
 	if proj, err := argocd.RenderByoAppProject(projName, repos, namespaces, commonLabels); err != nil {
