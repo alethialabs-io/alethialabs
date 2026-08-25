@@ -114,7 +114,7 @@ func TestRenderAddOnApplication_GitSource(t *testing.T) {
 	for _, want := range []string{
 		"project: byo-payments",
 		"path: charts/payments",
-		`targetRevision: "main"`,
+		`targetRevision: main`,
 		"alethia.io/addon-source: git",
 	} {
 		if !strings.Contains(out, want) {
