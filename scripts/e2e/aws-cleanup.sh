@@ -905,6 +905,88 @@ alive_network() {
 	} | sort -u || true
 }
 
+# ── sweep_litter — the FREE leftovers. They cost nothing, which is exactly why nothing ever
+#    removed them, and exactly why they became a problem: every one of them keeps its run's
+#    `alethia:project-id` value alive in the region, so the preflight kept rediscovering finished
+#    environments forever and the backlog could only grow (#2485). classify_arn calls these FREE;
+#    this is what makes that classification self-draining instead of permanent.
+#
+#    Cheap, but still scope-locked through tagged_arns/assert_scope like every other sweep — an
+#    IAM policy delete is not reversible either. IAM is global, so these ARNs surface in whichever
+#    region the sweep runs; that is harmless because the scope is the tag, not the region. ──
+sweep_litter() {
+	assert_scope
+	local arns arn name vers ver
+
+	# An IAM policy cannot be deleted while a role still references it, and it keeps every
+	# non-default VERSION until they are removed — a plain delete-policy fails on both counts.
+	arns="$(tagged_arns iam:policy)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		if [ "$DRY_RUN" != "1" ]; then
+			for name in $(aws iam list-entities-for-policy --policy-arn "$arn" --query 'PolicyRoles[].RoleName' --output text 2>/dev/null | tr '\t' '\n'); do
+				[ -n "$name" ] || continue
+				aws iam detach-role-policy --role-name "$name" --policy-arn "$arn" >/dev/null 2>&1 || true
+			done
+			vers="$(aws iam list-policy-versions --policy-arn "$arn" --query 'Versions[?!IsDefaultVersion].VersionId' --output text 2>/dev/null | tr '\t' '\n')"
+			while IFS= read -r ver; do
+				[ -n "$ver" ] || continue
+				aws iam delete-policy-version --policy-arn "$arn" --version-id "$ver" >/dev/null 2>&1 || true
+			done <<<"$vers"
+		fi
+		retry_delete "iam policy $(arn_id "$arn")" aws iam delete-policy --policy-arn "$arn"
+	done <<<"$arns"
+
+	arns="$(tagged_arns iam:oidc-provider)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		retry_delete "iam oidc provider $(arn_id "$arn")" aws iam delete-open-id-connect-provider --open-id-connect-provider-arn "$arn"
+	done <<<"$arns"
+
+	arns="$(tagged_arns ec2:launch-template)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		retry_delete "launch template $(arn_id "$arn")" aws ec2 delete-launch-template --launch-template-id "$(arn_id "$arn")"
+	done <<<"$arns"
+
+	arns="$(tagged_arns rds:subgrp)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		retry_delete "rds subnet group ${arn##*:}" aws rds delete-db-subnet-group --db-subnet-group-name "${arn##*:}"
+	done <<<"$arns"
+
+	arns="$(tagged_arns events:rule)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		name="$(arn_id "$arn")"
+		# A rule with targets refuses to delete; remove them first.
+		if [ "$DRY_RUN" != "1" ]; then
+			vers="$(aws events list-targets-by-rule --rule "$name" --query 'Targets[].Id' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' | tr '\n' ' ')"
+			# shellcheck disable=SC2086
+			[ -n "$vers" ] && aws events remove-targets --rule "$name" --ids $vers >/dev/null 2>&1 || true
+		fi
+		retry_delete "eventbridge rule ${name}" aws events delete-rule --name "$name"
+	done <<<"$arns"
+
+	# Log groups, INCLUDING the ones still holding bytes. A first draft swept only the empty ones
+	# and left the rest to "the operator" — which would have rebuilt the very bug this change
+	# removes. The nightly runs daily and EKS log groups keep 14 days, so up to fourteen
+	# environments can hold a non-empty group at once; classify_arn calls those BILLING (correctly
+	# — stored bytes are charged), they would have exceeded PREFLIGHT_MAX_ENVS=3, and the
+	# ::error:: would have come straight back, just more slowly.
+	#
+	# Deleting them is also simply right: the run these logs describe is over, its diagnostics are
+	# already in the run's artifacts, and nothing else reads them. BILLING has to mean "costs money
+	# AND we sweep it", never "costs money and we mention it forever".
+	arns="$(tagged_arns logs:log-group)"
+	while IFS= read -r arn; do
+		[ -n "$arn" ] || continue
+		name="$(printf '%s' "$arn" | cut -d: -f7)"
+		[ -n "$name" ] || continue
+		retry_delete "log group ${name}" aws logs delete-log-group --log-group-name "$name"
+	done <<<"$arns"
+}
+
 verify_swept() {
 	assert_scope
 	local leaks="" x
@@ -972,22 +1054,77 @@ sweep_env() {
 	sweep_network
 	sweep_managed_services
 	sweep_route53
+	sweep_litter
 	[ "$DRY_RUN" = "1" ] && return 0
 	verify_swept
 }
 
-# ── list_orphan_envs — every OTHER e2e run's ENV that still has project-id-tagged resources in this
-#    region (prior-run orphans). Discovers all values of the `alethia:project-id` tag key via
-#    get-tag-values, keeps only `e2e-`-prefixed values (never a real prod project-id), strips the
-#    prefix, EXCLUDES this run (SELF_ENV), and re-validates each against the SAME specificity +
-#    prod/shared denylist guards as the top-of-file ENV guards — so a preflight can never widen past
-#    a genuine prior nightly. Empty output ⇒ nothing to sweep. ──
-list_orphan_envs() {
-	local vals v oenv
-	vals="$(aws resourcegroupstaggingapi get-tag-values --key alethia:project-id \
-		--query 'TagValues[]' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
-	while IFS= read -r v; do
-		[ -n "$v" ] || continue
+# ── classify_arn — is this leftover resource actually COSTING anything? Echoes exactly one of
+#    TERMINATING | FREE | BILLING.
+#
+#    #2485 aftermath: the preflight used to call every project-id-tagged resource a billing orphan.
+#    It is not. Two whole classes are not leaks at all —
+#
+#      * TERMINATING — a KMS key in PendingDeletion is a teardown that WORKED. AWS enforces a 7-30
+#        day waiting period, does not bill the key during it, and REFUSES to delete it sooner. There
+#        is no action to take and no faster path; reporting it as an unswept leak is just wrong.
+#      * FREE — IAM policies/roles/OIDC providers, EC2 launch templates, RDS subnet groups,
+#        EventBridge rules and an empty log group cost nothing. They are litter (see the sweep
+#        below, which now removes them), not spend.
+#
+#    Everything else is BILLING. That default direction is the point: the FREE set is an ALLOWLIST,
+#    so a resource type we have never seen before still alarms the first time it leaks, instead of
+#    being silently absolved. Getting this backwards is how a sweep reported "load balancers: none"
+#    while one billed (#2460). ──
+classify_arn() {
+	local arn="$1" svc restype keyid state bytes
+	svc="$(printf '%s' "$arn" | cut -d: -f3)"
+	restype="$(printf '%s' "$arn" | cut -d: -f6 | cut -d/ -f1)"
+
+	case "${svc}:${restype}" in
+	kms:key)
+		keyid="${arn##*/}"
+		state="$(aws kms describe-key --key-id "$keyid" --region "$REGION" \
+			--query 'KeyMetadata.KeyState' --output text 2>/dev/null || true)"
+		case "$state" in
+		PendingDeletion | PendingReplicaDeletion) printf 'TERMINATING\n' ;;
+		# An ENABLED customer-managed key is ~$1/month and IS a real leak. Unknown state (the
+		# describe failed) is billing too — never absolve what we could not read.
+		*) printf 'BILLING\n' ;;
+		esac
+		;;
+	iam:policy | iam:role | iam:oidc-provider | iam:instance-profile) printf 'FREE\n' ;;
+	ec2:launch-template | rds:subgrp | events:rule) printf 'FREE\n' ;;
+	logs:log-group)
+		# Storage is the only charge; an empty group is free. Bytes unreadable ⇒ assume billing.
+		bytes="$(aws logs describe-log-groups --region "$REGION" \
+			--log-group-name-prefix "$(printf '%s' "$arn" | cut -d: -f7)" \
+			--query 'logGroups[0].storedBytes' --output text 2>/dev/null || true)"
+		if [ "$bytes" = "0" ]; then printf 'FREE\n'; else printf 'BILLING\n'; fi
+		;;
+	*) printf 'BILLING\n' ;;
+	esac
+}
+
+# ── classify_orphan_envs — every OTHER e2e run's ENV that still has project-id-tagged resources in
+#    this region, each with the worst class among its resources. Emits `<env>\t<class>` lines.
+#
+#    Discovery reads LIVE RESOURCES (get-resources), not the tag-value index. `get-tag-values`
+#    returns every value the key has EVER carried in a region and keeps returning it after the last
+#    resource is gone — it reported 30 "orphans" here including one, e2e-local946c3d09, with zero
+#    resources attached, and the list could only ever grow (#2485). This is the shape gcp-cleanup.sh
+#    has always used: enumerate the inventory, not a history of names.
+#
+#    Every existing safety guard is unchanged — `e2e-` prefix only (never a real prod project-id),
+#    EXCLUDES this run (SELF_ENV), and the same specificity + prod/shared denylist as the
+#    top-of-file ENV guards. This narrows what is REPORTED; it never widens what is SWEPT. ──
+classify_orphan_envs() {
+	local arn v oenv cls
+	aws resourcegroupstaggingapi get-resources --region "$REGION" \
+		--tag-filters "Key=alethia:project-id" \
+		--query 'ResourceTagMappingList[].[ResourceARN,Tags[?Key==`alethia:project-id`].Value|[0]]' \
+		--output text 2>/dev/null | while IFS=$'\t' read -r arn v; do
+		[ -n "$arn" ] && [ -n "$v" ] || continue
 		case "$v" in e2e-*) ;; *) continue ;; esac # e2e-prefixed values only — never prod project-ids
 		oenv="${v#e2e-}"
 		[ "$oenv" = "$SELF_ENV" ] && continue # skip THIS run (its own teardown handles it)
@@ -995,8 +1132,20 @@ list_orphan_envs() {
 		case "$oenv" in
 		prod | prod-* | production | production-* | staging | staging-* | main | alethia | alethia-* | data) continue ;;
 		esac
-		printf '%s\n' "$oenv"
-	done <<<"$vals" | sort -u
+		cls="$(classify_arn "$arn")"
+		printf '%s\t%s\n' "$oenv" "$cls"
+	done | sort -u | awk -F'\t' '
+		# Worst class wins per env: BILLING > TERMINATING > FREE.
+		{ rank = ($2 == "BILLING") ? 3 : ($2 == "TERMINATING") ? 2 : 1
+		  if (rank > best[$1]) { best[$1] = rank; cls[$1] = $2 } }
+		END { for (e in cls) printf "%s\t%s\n", e, cls[e] }
+	' | sort
+}
+
+# ── list_orphan_envs — the envs the preflight must actually SWEEP: those holding at least one
+#    BILLING resource. Empty output ⇒ nothing is costing money. ──
+list_orphan_envs() {
+	classify_orphan_envs | awk -F'\t' '$2 == "BILLING" { print $1 }'
 }
 
 # ── PREFLIGHT: sweep prior-run e2e orphans (NOT this run), best-effort + loud. ──
@@ -1004,9 +1153,22 @@ SELF_ENV="$ENV"
 if [ "$PREFLIGHT" = "1" ]; then
 	echo "→ aws STALE PREFLIGHT in ${REGION}: sweeping prior-run e2e orphans (excludes this run ${SELF_ENV})"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
-	orphans="$(list_orphan_envs || true)"
+	classified="$(classify_orphan_envs || true)"
+	orphans="$(printf '%s\n' "$classified" | awk -F'\t' '$2 == "BILLING" { print $1 }')"
+
+	# Named, and explicitly NOT a leak. Silence here would be its own defect: these envs DO have
+	# leftovers, and a reader who sees nothing cannot tell "checked, benign" from "never looked".
+	benign="$(printf '%s\n' "$classified" | awk -F'\t' 'NF && $2 != "BILLING" { printf "%s (%s) ", $1, $2 }')"
+	if [ -n "$benign" ]; then
+		echo "::notice::preflight: prior-run leftovers that cost nothing — ${benign}"
+		echo "  TERMINATING = a KMS key already scheduled for deletion. AWS enforces a 7-30 day"
+		echo "  waiting period, does not bill during it, and refuses to delete sooner — there is no"
+		echo "  action to take. FREE = IAM policy/role/OIDC provider, launch template, RDS subnet"
+		echo "  group, EventBridge rule, empty log group. The sweep clears the FREE litter below."
+	fi
+
 	if [ -z "$orphans" ]; then
-		echo "✓ preflight: no prior-run e2e orphans in ${REGION} — nothing to sweep"
+		echo "✓ preflight: no BILLING prior-run e2e orphans in ${REGION} — nothing to sweep"
 		exit 0
 	fi
 	# shellcheck disable=SC2086
@@ -1015,8 +1177,11 @@ if [ "$PREFLIGHT" = "1" ]; then
 	residual=0
 	attempted=0
 	deadline=$(($(date +%s) + PREFLIGHT_BUDGET_SECONDS))
-	# Anything the bounds stop us from reaching is named, not silently dropped — an unswept orphan
-	# is BILLING, so "we ran out of budget" has to be as visible as "we tried and failed".
+	# Anything the bounds stop us from reaching is named, not silently dropped. Everything in
+	# $orphans is BILLING by construction now (classify_orphan_envs), so "we ran out of budget"
+	# genuinely does mean money is still being spent — which is what makes the ::error:: below
+	# honest. It used to fire for KMS keys mid-deletion and free IAM litter, 28 of them, on every
+	# single nightly (#2485).
 	skipped=""
 	while IFS= read -r oenv; do
 		[ -n "$oenv" ] || continue
@@ -1111,6 +1276,56 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_sg_case "a VPC with no extra groups yields nothing" "" ""
 	unset -f aws
 
+	# ── classify_arn. The preflight spent ten weeks calling 28 non-leaks "UNSWEPT and BILLING"
+	# (#2485), so the rule now has a test. $ST_KEY_STATE / $ST_LOG_BYTES are what the stub reports.
+	aws() {
+		case "$1 ${2:-}" in
+		"kms describe-key") printf '%s\n' "$ST_KEY_STATE" ;;
+		"logs describe-log-groups") printf '%s\n' "$ST_LOG_BYTES" ;;
+		*) : ;;
+		esac
+	}
+	st_cls_case() { # <name> <arn> <expected class>
+		local got
+		got="$(classify_arn "$2" 2>/dev/null)"
+		if [ "$got" = "$3" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected '$3', got '$got'" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+
+	ST_KEY_STATE="PendingDeletion"
+	st_cls_case "a KMS key mid-deletion is not a leak" \
+		"arn:aws:kms:us-east-1:0:key/eeb6fe0f-036e-41d5-841b-13e9d41a0da9" "TERMINATING"
+	ST_KEY_STATE="Enabled"
+	st_cls_case "an ENABLED KMS key IS a leak (~\$1/mo)" \
+		"arn:aws:kms:us-east-1:0:key/eeb6fe0f-036e-41d5-841b-13e9d41a0da9" "BILLING"
+	ST_KEY_STATE=""
+	st_cls_case "a KMS key whose state we could not read is billing" \
+		"arn:aws:kms:us-east-1:0:key/eeb6fe0f-036e-41d5-841b-13e9d41a0da9" "BILLING"
+
+	st_cls_case "an IAM policy is free" "arn:aws:iam::0:policy/irsa_karpenter2026" "FREE"
+	st_cls_case "an IAM OIDC provider is free" "arn:aws:iam::0:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/AB" "FREE"
+	st_cls_case "a launch template is free" "arn:aws:ec2:us-east-1:0:launch-template/lt-071e8f31193797f9e" "FREE"
+	st_cls_case "an RDS subnet group is free" "arn:aws:rds:us-east-1:0:subgrp:vpc-ue1-x-alethia-common" "FREE"
+	st_cls_case "an EventBridge rule is free" "arn:aws:events:us-east-1:0:rule/alethia-x" "FREE"
+
+	ST_LOG_BYTES="0"
+	st_cls_case "an empty log group is free" "arn:aws:logs:us-east-1:0:log-group:/aws/eks/x/cluster" "FREE"
+	ST_LOG_BYTES="5713053"
+	st_cls_case "a log group holding data bills" "arn:aws:logs:us-east-1:0:log-group:/aws/eks/x/cluster" "BILLING"
+
+	# THE case that keeps this honest. The FREE set is an allowlist, so anything we have never
+	# classified must come back BILLING — if this ever flips to FREE, a brand-new billable resource
+	# type leaks silently, which is #2460's failure re-run.
+	st_cls_case "an EKS cluster bills" "arn:aws:eks:us-east-1:0:cluster/eks-ue1-x-alethia" "BILLING"
+	st_cls_case "a load balancer bills" "arn:aws:elasticloadbalancing:us-east-1:0:loadbalancer/net/k8s/abc" "BILLING"
+	st_cls_case "a NAT gateway bills" "arn:aws:ec2:us-east-1:0:natgateway/nat-0abc" "BILLING"
+	st_cls_case "an UNKNOWN resource type bills (fail-closed)" "arn:aws:quantumledger:us-east-1:0:ledger/whatever" "BILLING"
+	unset -f aws
+
 	if [ "$st_fails" -ne 0 ]; then
 		echo "✗ aws-cleanup.sh self-test: ${st_fails} failure(s)" >&2
 		exit 1
@@ -1132,6 +1347,9 @@ sweep_volumes
 sweep_network
 sweep_managed_services
 sweep_route53
+# Last: the free leftovers. Nothing depends on them, and removing them is what stops a finished
+# run being rediscovered as an orphan for the rest of the account's life.
+sweep_litter
 
 if [ "$DRY_RUN" = "1" ]; then
 	echo "✓ aws DRY RUN complete for alethia:project-id=${PROJECT_ID_TAG} (nothing deleted, nothing verified)"
