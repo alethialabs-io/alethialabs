@@ -80,6 +80,7 @@ import {
 	dbEngineFamily,
 	DEFAULT_K8S_VERSION,
 	getProvider,
+	dnsTldUnsupportedReasonForCloud,
 	keylessUnavailableReasonForCloud,
 	wafUnavailableReasonForCloud,
 } from "@/lib/cloud-providers";
@@ -1005,6 +1006,23 @@ async function buildConfigSnapshot(
 				throw new Error(
 					`Web application firewall: ${reason} Open this project in the canvas and save the staged change to turn the WAF switch off, or move the project to a cloud where Alethia provisions one.`,
 				);
+			}
+		}
+
+		// #2568: the cluster cloud's own DNS may refuse the TLD outright. Only reachable when DNS is
+		// enabled AND native — a connected provider (Cloudflare) hosts the zone instead, and the
+		// cloud's own restriction does not apply.
+		//
+		// THROWS rather than clearing the domain, like the WAF gate above and for the same reason:
+		// silently dropping the zone would deploy a cluster whose ingress resolves nowhere, which is
+		// a worse outcome than a refusal that names the remedy.
+		if (dns?.enabled && (!dns.provider || dns.provider === "native")) {
+			const reason = dnsTldUnsupportedReasonForCloud(
+				identity.provider,
+				dns.domain_name,
+			);
+			if (reason) {
+				throw new Error(`DNS: ${reason}`);
 			}
 		}
 
