@@ -278,20 +278,6 @@ func marshalValues(values map[string]interface{}) (string, error) {
 	return buf.String(), nil
 }
 
-// splitLines splits on '\n' without a trailing empty element surprise (keeps interior blanks).
-func splitLines(s string) []string {
-	var out []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			out = append(out, s[start:i])
-			start = i + 1
-		}
-	}
-	out = append(out, s[start:])
-	return out
-}
-
 // ManagedAddOnNames returns the ArgoCD Application names for the managed add-ons, sorted.
 // Manifest-source add-ons are EXCLUDED: they have no Application, so listing them here would make
 // PruneManagedAddOns treat every other managed Application as undesired-but-present… and, worse,
