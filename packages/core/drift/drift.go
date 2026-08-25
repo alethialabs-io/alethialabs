@@ -48,6 +48,24 @@ type ResourceDrift struct {
 	Address string `json:"address"`
 	Type    string `json:"type"`
 	Kind    Kind   `json:"kind"`
+	// Attributes are the attribute paths that actually differed, sorted — e.g.
+	// ["network[0].alias_ips", "placement_group_id"].
+	//
+	// Carried for the same reason NormalizedResource.Attributes is, and as the same
+	// slice-of-strings shape for the same reason (the console's metadata scrub is a KEY
+	// denylist, so paths must travel as values or an attribute named `client_secret`
+	// would be deleted from the audit record).
+	//
+	// Until this existed, a DISMISSED delta named its attributes and a REAL one did not —
+	// so "9 resources dismissed, here is exactly what" sat next to "5 resources drifted,
+	// good luck". Diagnosing #2503 needed the leaf paths and had to reach for a live
+	// cluster to get them.
+	//
+	// EMPTY IS NOT "no attributes differed". Several drift verdicts are reached before the
+	// leaves are computed at all — a non-update action, or a change whose before/after do
+	// not parse as objects. Those are honestly attribute-less rather than attribute-free,
+	// which is why this is `omitempty` and why nothing should read emptiness as a claim.
+	Attributes []string `json:"attributes,omitempty"`
 }
 
 // Posture is the storable drift summary for one environment at one point in time.
@@ -107,9 +125,10 @@ func Analyze(plan *tfjson.Plan) *Posture {
 			continue
 		}
 		p.Details = append(p.Details, ResourceDrift{
-			Address: rc.Address,
-			Type:    rc.Type,
-			Kind:    v.Kind,
+			Address:    rc.Address,
+			Type:       rc.Type,
+			Kind:       v.Kind,
+			Attributes: v.Attributes,
 		})
 	}
 	p.Drifted = len(p.Details)
