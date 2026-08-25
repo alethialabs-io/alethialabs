@@ -55,18 +55,7 @@ export function LegalShell({ title, lastUpdated, children }: LegalShellProps) {
 					<p className="vx-eyebrow mt-3">Last updated · {lastUpdated}</p>
 				</header>
 
-				<div
-					className="space-y-4 text-sm leading-relaxed text-muted-foreground
-						[&_h2]:mt-10 [&_h2]:mb-3 [&_h2]:text-lg [&_h2]:font-semibold [&_h2]:text-foreground
-						[&_h3]:mt-6 [&_h3]:mb-2 [&_h3]:text-base [&_h3]:font-medium [&_h3]:text-foreground
-						[&_p]:leading-relaxed
-						[&_ul]:my-3 [&_ul]:space-y-2 [&_ul]:pl-5 [&_ul]:list-disc
-						[&_li]:leading-relaxed
-						[&_a]:text-foreground [&_a]:underline [&_a]:underline-offset-4 hover:[&_a]:opacity-80
-						[&_strong]:text-foreground [&_strong]:font-medium
-						[&_code]:font-mono [&_code]:text-xs [&_code]:text-foreground
-						[&_mark]:bg-muted [&_mark]:text-foreground [&_mark]:px-1.5 [&_mark]:py-0.5 [&_mark]:rounded [&_mark]:font-mono [&_mark]:text-xs"
-				>
+				<div className="vx-prose">
 					{children}
 				</div>
 
