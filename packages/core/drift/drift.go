@@ -61,6 +61,26 @@ type ResourceDrift struct {
 	// good luck". Diagnosing #2503 needed the leaf paths and had to reach for a live
 	// cluster to get them.
 	//
+	// PATHS TRAVEL; VALUES NEVER DO. A path here can name a sensitive attribute —
+	// `admin_password`, `client_secret`, a token field. That is deliberate on both sides:
+	// the scrub does not remove it (above), and the assembly in normalize.go copies
+	// `leafDelta.path` for EVERY differing leaf without consulting `leafDelta.sensitive`.
+	//
+	// What never travels is the VALUE, and that is structural rather than a rule someone has
+	// to keep applying. This type has no field that could hold one; the before/after values
+	// live in unexported fields of an unexported type, which is why normalize.go can state
+	// that they "are carried for classification only and never escape the package". So a
+	// record can say `admin_password` changed and cannot say what it changed to.
+	//
+	// Note the sensitivity flag pushes the other way: a sensitive leaf can never be dismissed
+	// as merely normalizing (normalize.go's `d.sensitive` guard), so a sensitive attribute is
+	// MORE likely to surface here as real drift, not less. This property carries weight.
+	//
+	// A path is still a disclosure — knowing the admin password drifted is knowing something —
+	// and it is the least a reader needs to act on it. Anything rendering these should treat
+	// them as attribute names worth showing, never as handles to resolve back to a value:
+	// that lookup is the step this shape exists to prevent.
+	//
 	// EMPTY IS NOT "no attributes differed". Several drift verdicts are reached before the
 	// leaves are computed at all — a non-update action, or a change whose before/after do
 	// not parse as objects. Those are honestly attribute-less rather than attribute-free,
