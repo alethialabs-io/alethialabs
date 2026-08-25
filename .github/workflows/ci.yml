@@ -513,6 +513,8 @@ jobs:
         run: pnpm -F console check:authz-scope
       - name: Marketing routes ⇄ reservation ⇄ Caddy in sync
         run: pnpm -F console check:marketing-routes
+      - name: tsconfig.build.json excludes every un-shipped file (pruned-image type-check)
+        run: pnpm -F console check:tsconfig-build
       - name: Drizzle migration history is unforked (linear snapshot chain)
         run: pnpm -F console check:migrations
       - name: Every canvas offer is buildable on every cloud, or documented (offer parity)

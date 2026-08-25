@@ -12,6 +12,7 @@
     "check:ee-boundary": "node scripts/check-ee-boundary.mjs",
     "check:authz-scope": "node scripts/check-authz-scope.mjs",
     "check:marketing-routes": "node scripts/check-marketing-routes.mjs",
+    "check:tsconfig-build": "node scripts/check-tsconfig-build-excludes.mjs",
     "check:offer-parity": "node scripts/check-offer-parity.mjs",
     "gen:offer-parity": "node scripts/check-offer-parity.mjs --matrix",
     "check:config-carriage": "node scripts/check-config-carriage.mjs",
