@@ -40,7 +40,11 @@ export default defineConfig({
 		coverage: {
 			provider: "v8",
 			// text → terminal, html → local browse, lcov + json-summary → the CI coverage badge.
-			reporter: ["text", "html", "lcov", "json-summary"],
+			// "json" writes coverage-final.json — the RAW statement map, and the artefact the
+			// coverage ratchet (scripts/ts-coverage.mjs) measures. It is in vitest's DEFAULT
+			// reporter set, but naming any `reporter` array REPLACES that default, so it has to
+			// be listed explicitly here. json-summary stays for scripts/coverage-badge.mjs.
+			reporter: ["text", "html", "lcov", "json-summary", "json"],
 			reportsDirectory: "./coverage",
 			// Scope to our business LOGIC — the layer unit/action tests target. Presentational
 			// components (components/**) are intentionally excluded: UI is covered by the focused
