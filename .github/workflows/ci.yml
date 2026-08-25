@@ -467,12 +467,39 @@ jobs:
       # file and `git commit` can never fail with "nothing to commit".
       - name: Publish the badge
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # THE SIBLING BADGE HAS TO BE CARRIED FORWARD, OR PUBLISHING THIS ONE DELETES IT.
+          #
+          # Both badge jobs end in `git push --force origin HEAD:badges` — they publish main's
+          # tree, with their own badge committed on top. That was survivable only while BOTH
+          # JSONs were tracked in main: each job's tree carried its sibling's file along for the
+          # ride. Now that neither is tracked, this job's tree contains only `coverage.json`, so
+          # a force-push would drop `go-coverage.json` from `badges` — and the README's Go badge
+          # would 404 on every push to main, with both jobs green. That is the exact
+          # failure-with-a-green-check shape this PR exists to remove, so it must not be
+          # reintroduced by the fix.
+          #
+          # Restoring the sibling from the branch we are about to overwrite makes the force-push
+          # additive rather than destructive. `|| true` is correct ONLY here: on the very first
+          # run the file legitimately does not exist yet, and this job does not own it.
+          # `|| true` on the fetch would be a fail-open that silently reintroduces the deletion
+          # this block exists to prevent: no FETCH_HEAD, no sibling restored, force-push drops it,
+          # job green. So the ONLY tolerated absence is a `badges` branch that genuinely does not
+          # exist yet (the very first publish); a fetch that FAILS against an existing branch reds
+          # this job.
+          if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
+            git fetch --depth=1 origin badges
+            git checkout FETCH_HEAD -- .github/badges/go-coverage.json 2>/dev/null \
+              || echo "::notice::no go-coverage.json on \`badges\` yet — nothing to carry forward"
+          else
+            echo "::notice::\`badges\` does not exist yet — first publish, nothing to carry forward"
+          fi
           # -f is defensive: .gitignore carries a bare `coverage` rule, which does NOT match
           # `.github/badges/coverage.json` today (no path component is exactly `coverage`), but a
           # future broadening of that rule must not silently stop the badge instead of failing.
-          git add -f .github/badges/coverage.json
+          git add -f .github/badges/
           # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
           # commits to main; this CI-authored badge commit is legitimate.
           git commit --no-verify -m "chore(ci): update coverage badge [skip ci]"
@@ -1124,6 +1151,13 @@ jobs:
     # Push-to-main only: aggregate the three Go modules' coverage into one badge JSON the README
     # renders, and commit it. `[skip ci]` avoids a run loop.
     if: github.ref == 'refs/heads/main'
+    # SERIALISED behind the TypeScript badge job, deliberately. Both jobs force-push their own
+    # tree to the `badges` branch, and each now restores the other's badge file first so the push
+    # is additive. Run concurrently, they would both restore from the SAME base and the second to
+    # push would silently revert the first's fresh number — a lost update, with both jobs green.
+    # `needs:` removes the race instead of narrowing it. Both carry the same `if:`, so this adds
+    # no skip coupling; it only orders them on the pushes where both actually run.
+    needs: coverage-badge
     permissions:
       contents: write
     steps:
@@ -1141,7 +1175,6 @@ jobs:
           done
       - name: Compute aggregate Go coverage → badge JSON
         run: node scripts/go-coverage-badge.mjs
-      - name: Commit the badge if it changed
       # Publish UNCONDITIONALLY — the identical `git diff --quiet` trap the TypeScript badge job
       # above carried. `git diff` reports TRACKED paths only; on an untracked one it exits 0
       # ("clean") while `git status --porcelain` correctly prints `?? <path>`. Now that the badge
@@ -1154,12 +1187,34 @@ jobs:
       # can never fail with "nothing to commit".
       - name: Publish the badge
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Carry the sibling badge forward — see the long note in the `coverage-badge` job. A
+          # force-push publishes THIS tree, and this tree no longer contains `coverage.json`, so
+          # without restoring it first this job would delete the TypeScript badge and 404 the
+          # README. `|| true` is correct only for the first-run case where the file does not exist.
+          #
+          # This job also `needs: coverage-badge`, which removes the race outright: the two ran
+          # concurrently, each restoring the other's file from the SAME base, so whichever pushed
+          # second would silently revert the first's fresh number. Serialised, this one fetches a
+          # `badges` that already carries the TypeScript job's new value.
+          # `|| true` on the fetch would be a fail-open that silently reintroduces the deletion
+          # this block exists to prevent: no FETCH_HEAD, no sibling restored, force-push drops it,
+          # job green. So the ONLY tolerated absence is a `badges` branch that genuinely does not
+          # exist yet (the very first publish); a fetch that FAILS against an existing branch reds
+          # this job.
+          if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
+            git fetch --depth=1 origin badges
+            git checkout FETCH_HEAD -- .github/badges/coverage.json 2>/dev/null \
+              || echo "::notice::no coverage.json on \`badges\` yet — nothing to carry forward"
+          else
+            echo "::notice::\`badges\` does not exist yet — first publish, nothing to carry forward"
+          fi
           # -f is defensive: .gitignore carries a bare `coverage` rule, which does NOT match this
           # path today (no component is exactly `coverage`), but a future broadening of that rule
           # must not silently stop the badge instead of failing.
-          git add -f .github/badges/go-coverage.json
+          git add -f .github/badges/
           # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
           # commits to main; this CI-authored badge commit is legitimate.
           git commit --no-verify -m "chore(ci): update go coverage badge [skip ci]"
