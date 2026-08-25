@@ -294,8 +294,26 @@ sweep_unlabelled_lbs() {
 	local net_for_lbs
 	net_for_lbs="$(cluster_network_id)"
 	if ! printf '%s' "$net_for_lbs" | grep -Eq '^[0-9]+$'; then
-		local lb_total
-		lb_total="$(hcloud load-balancer list -o noheader -o columns=id 2>/dev/null | grep -c . || true)"
+		# The exit status is captured SEPARATELY, and that is the whole point (#2549).
+		#
+		# This was `hcloud ... | grep -c . || true`, which launders the status twice over: the pipe
+		# reports grep's, and `|| true` swallows what remains. An expired token, an absent context,
+		# an API 5xx or a rate limit all print nothing to stdout and exit non-zero — so lb_total was
+		# 0 and the sweep announced "project holds no load balancer at all" on the strength of a
+		# command that never ran. That is the failure this function was rewritten to fix, one level
+		# down: `hcloud network list` with no ACTIVE context returns a clean empty table and exit 0,
+		# and nothing distinguishes it from a genuinely empty project.
+		#
+		# Reported the way the `hcloud zone list` probe above reports its own unavailability: both
+		# mean this script could not look, which is never silently folded into "none".
+		local lb_list lb_total lb_rc=0
+		lb_list="$(hcloud load-balancer list -o noheader -o columns=id 2>/dev/null)" || lb_rc=$?
+		if [ "$lb_rc" -ne 0 ]; then
+			echo "::warning::'hcloud load-balancer list' failed (exit ${lb_rc}) while checking for a CCM-created ingress load balancer for ${SELECTOR}. NOT swept and NOT verified — check load balancers by hand in the Hetzner Console (#2549)." >&2
+			UNVERIFIABLE="${UNVERIFIABLE}ccm-load-balancers(list-failed) "
+			return 0
+		fi
+		lb_total="$(printf '%s' "$lb_list" | grep -c . || true)"
 		if [ "${lb_total:-0}" -eq 0 ]; then
 			echo "  · unlabelled (CCM) load balancers: none (project holds no load balancer at all)"
 			return 0
@@ -572,7 +590,10 @@ if [ "$SELF_TEST" = "1" ]; then
 		"server list") printf '%s\n' "$ST_SERVERS" ;;
 		"ssh-key list") printf '%s\n' "$ST_KEYS" ;;
 		"network list") printf '%s\n' "$ST_NETWORK" ;;
-		"load-balancer list") printf '%s\n' "$ST_LBS" ;;
+		# ST_LBS_RC lets a case make the CLI FAIL rather than merely return nothing. Without it the
+		# stub can only ever produce the two OUTPUTS, and "empty because it worked" and "empty
+		# because it could not run" are exactly the pair this function must not confuse.
+		"load-balancer list") printf '%s\n' "$ST_LBS"; return "${ST_LBS_RC:-0}" ;;
 		*) : ;;
 		esac
 	}
@@ -601,10 +622,11 @@ if [ "$SELF_TEST" = "1" ]; then
 	# through its private-network attachment, and `tofu destroy` deletes that network FIRST — so the
 	# lookup that finds it is already impossible by the time the sweep runs, and it used to print
 	# "none" over a load balancer that was still billing.
-	st_lb_case() { # <name> <network list> <load-balancer list> <expect UNVERIFIABLE to mention ccm-load-balancers: yes|no>
+	st_lb_case() { # <name> <network list> <load-balancer list> <expect ccm-load-balancers in UNVERIFIABLE: yes|no> [lb-list exit code]
 		UNVERIFIABLE=""
 		ST_NETWORK="$2"
 		ST_LBS="$3"
+		ST_LBS_RC="${5:-0}"
 		sweep_unlabelled_lbs >/dev/null 2>&1
 		local got=no
 		case "$UNVERIFIABLE" in *ccm-load-balancers*) got=yes ;; esac
@@ -619,6 +641,34 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_lb_case "network gone + a load balancer present is UNVERIFIABLE, not 'none'" "" "4711" yes
 	st_lb_case "network gone + no load balancer at all is honestly none" "" "" no
 	st_lb_case "network still present resolves normally, raising nothing" "12345" "" no
+	# THE REGRESSION. The fallback asked `hcloud ... | grep -c . || true`, which launders the exit
+	# status twice — the pipe reports grep's, `|| true` swallows the rest. An expired token or an API
+	# error printed nothing, counted 0, and the sweep announced "project holds no load balancer at
+	# all" having never looked. Empty-and-failed must not read as empty-and-clean.
+	st_lb_case "network gone + the CLI FAILING is UNVERIFIABLE, not 'none'" "" "" yes 1
+
+	# The REASON, not merely the fact. A case with output AND a non-zero exit passes the yes/no
+	# assertion above either way — the network-gone branch already flags it — so asserting only
+	# "something was unverifiable" proves nothing about this fix. What must be true is that a failed
+	# list is reported AS a failed list: `list-failed`, not `network-already-destroyed`. Confusing
+	# the two sends whoever reads the warning to look for a teardown-ordering problem that isn't
+	# there, while the token that actually broke goes unmentioned.
+	st_lb_reason() { # <name> <load-balancer list> <lb-list exit code> <expected reason substring>
+		UNVERIFIABLE=""
+		ST_NETWORK=""
+		ST_LBS="$2"
+		ST_LBS_RC="$3"
+		sweep_unlabelled_lbs >/dev/null 2>&1
+		case "$UNVERIFIABLE" in
+		*"$4"*) echo "  ✓ $1" ;;
+		*)
+			echo "  ✗ $1 — expected UNVERIFIABLE to name '$4', got '${UNVERIFIABLE}'" >&2
+			st_fails=$((st_fails + 1))
+			;;
+		esac
+	}
+	st_lb_reason "a failed list is reported as list-failed, not network-already-destroyed" "4711" 1 "ccm-load-balancers(list-failed)"
+	st_lb_reason "a network that is genuinely gone still reports network-already-destroyed" "4711" 0 "ccm-load-balancers(network-already-destroyed)"
 
 	unset -f hcloud
 

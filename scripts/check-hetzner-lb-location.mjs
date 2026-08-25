@@ -44,18 +44,51 @@ const CCM_FILE = "infra/templates/project/hetzner/cilium.tf";
 const LOCATION_KEYS = ["HCLOUD_LOAD_BALANCERS_LOCATION", "HCLOUD_LOAD_BALANCERS_NETWORK_ZONE"];
 
 /**
- * Strip `#` and `//` line comments from HCL.
+ * Strip `#` and `//` line comments from HCL, IGNORING both inside quoted strings.
  *
- * Deliberately naive about `#` inside a string: over-stripping can only make this guard STRICTER (a
- * real setting would have to be restated outside a comment), and strictness is the safe direction
- * for a guard whose whole job is to refuse a claim. Under-stripping is the failure that matters —
- * it is what let prose satisfy the check — and it is the one this closes.
+ * The string-awareness is not decoration, and the note that used to sit here — "over-stripping can
+ * only make this guard STRICTER, and strictness is the safe direction" — was wrong (#2549). It does
+ * not merely make the guard stricter; it changes WHICH failure is reported. This function feeds
+ * `extractCcmBlock`, which tracks quotes: stripping a `#` out of a value leaves the quote
+ * unterminated, `inString` never closes, the block is never balanced, and `analyse` returns
+ * `block: null` — the caller's HARD failure, reported as "a missing block means this check has
+ * stopped looking at anything". So a CCM block that correctly sets the location reds CI with a
+ * message telling the reader to restore a block that is right there. Measured on a value as
+ * ordinary as `value = "--label=team #1"`.
+ *
+ * Under-stripping is still the failure that let prose satisfy the check, and it stays closed: a
+ * comment outside a string is removed exactly as before.
  */
 export function stripComments(hcl) {
-	return hcl
-		.split("\n")
-		.map((line) => line.replace(/(^|\s)(#|\/\/).*$/, "$1"))
-		.join("\n");
+	let out = "";
+	let inString = false;
+	for (let i = 0; i < hcl.length; i++) {
+		const ch = hcl[i];
+		if (inString) {
+			out += ch;
+			if (ch === "\\") {
+				// Copy the escaped character verbatim so an escaped quote cannot end the string.
+				if (i + 1 < hcl.length) out += hcl[++i];
+			} else if (ch === '"') {
+				inString = false;
+			}
+			continue;
+		}
+		if (ch === '"') {
+			inString = true;
+			out += ch;
+			continue;
+		}
+		const isComment = ch === "#" || (ch === "/" && hcl[i + 1] === "/");
+		if (isComment) {
+			// Drop to the end of the line; the newline itself is kept so line numbers do not move.
+			while (i < hcl.length && hcl[i] !== "\n") i++;
+			if (i < hcl.length) out += "\n";
+			continue;
+		}
+		out += ch;
+	}
+	return out;
 }
 
 /**
@@ -97,12 +130,20 @@ export function extractCcmBlock(tf) {
  * Report which of the accepted location keys the CCM block actually SETS.
  * @returns {{found: string[], block: string|null}}
  */
+/** Escape a literal for safe interpolation into a RegExp. */
+function escapeRe(s) {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function analyse(tf) {
 	const block = extractCcmBlock(stripComments(tf));
 	if (block === null) return { found: [], block: null };
 	const found = LOCATION_KEYS.filter((k) =>
-		// The rendered shape of a real setting, not the key appearing somewhere.
-		new RegExp(`name\\s*=\\s*"env\\.${k}\\.value"`).test(block),
+		// The rendered shape of a real setting, not the key appearing somewhere. The key is ESCAPED
+		// before interpolation: today's two are letters and underscores, but a future key carrying a
+		// `.`, `-` or `+` would silently widen the match or throw, and a guard that matches more than
+		// it means is the same defect as one that matches a comment.
+		new RegExp(`name\\s*=\\s*"env\\.${escapeRe(k)}\\.value"`).test(block),
 	);
 	return { found, block };
 }
@@ -170,6 +211,17 @@ data "helm_template" "hcloud_ccm" {
   set { name = "env.HCLOUD_LOAD_BALANCERS_NETWORK_ZONE.value" value = "eu-central" }
 }`;
 	// The EXACT pre-fix shape that shipped the bug.
+	// #2549: a value carrying a `#` or `//`. Both are ordinary in helm extraArgs and annotations.
+	const hashInAString = `
+data "helm_template" "hcloud_ccm" {
+  set { name = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value" value = "nbg1" }
+  set { name = "extraArgs" value = "--label=team #1" }
+}`;
+	const slashesInAString = `
+data "helm_template" "hcloud_ccm" {
+  set { name = "env.HCLOUD_LOAD_BALANCERS_LOCATION.value" value = "nbg1" }
+  set { name = "endpoint" value = "https://api.hetzner.cloud/v1" }
+}`;
 	const theBug = `
 data "helm_template" "hcloud_ccm" {
   set { name = "networking.enabled" value = "true" }
@@ -205,6 +257,14 @@ data "helm_template" "hcloud_ccm" {
 	ok("a location outside the CCM block does NOT satisfy it", analyse(locationElsewhere).found.length === 0);
 	ok("a missing CCM block is reported as absent, not as a pass", analyse("locals {}").block === null);
 	ok("a brace inside a quoted value does not truncate the block (#2549)", analyse(braceInAString).found.length === 1);
+	// A `#` inside a VALUE is not a comment. Stripping it left the quote unterminated, so the
+	// brace-balancer ran to EOF and a CORRECTLY configured block reported `block: null` — the hard
+	// failure that says "the CCM was removed", on a template where it is right there.
+	ok("a '#' inside a quoted value does not blank the block (#2549)", analyse(hashInAString).block !== null);
+	ok("...and the location it configures is still found", analyse(hashInAString).found.length === 1);
+	ok("a '//' inside a quoted value is likewise not a comment", analyse(slashesInAString).found.length === 1);
+	// The under-stripping half must stay closed: a comment OUTSIDE a string is still removed.
+	ok("a real trailing comment is still stripped", analyse(keysOnlyInAComment).found.length === 0);
 	ok(
 		"nested braces do not truncate the block",
 		analyse(withLocation).block.includes("HCLOUD_LOAD_BALANCERS_LOCATION"),
