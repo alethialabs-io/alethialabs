@@ -1,0 +1,38 @@
+{
+  "enabled": true,
+  "provider": "gcp",
+  "duration_seconds": 600,
+  "liveness_checks": 19,
+  "liveness_failures": 0,
+  "drift_job_status": "SUCCESS",
+  "drift_in_sync": false,
+  "drift_drifted": 1,
+  "drift_state_resources": 27,
+  "drift_state_reads": 3,
+  "drift_details": [
+    {
+      "address": "module.gke[0].google_container_cluster.cluster",
+      "kind": "modified",
+      "attributes": [
+        "node_config",
+        "node_pool"
+      ]
+    }
+  ],
+  "drift_baseline": [
+    {
+      "address": "module.gke[0].google_container_cluster.cluster",
+      "kind": "modified",
+      "attributes": [
+        "node_config",
+        "node_pool"
+      ]
+    }
+  ],
+  "pvc_checked": false,
+  "pvc_bound": false,
+  "pvc_volume_id": "",
+  "pvc_sweep_tag_ok": false,
+  "addon_reread_ok": true,
+  "verdict": "✅ soak 600s: liveness 19/19 ok · drift SUCCESS baseline=1 final=1 NEW=0 (state=27 res, non-empty reads=3) · pvc: n/a (provider cloud-side check not wired) · addons re-read=true"
+}
