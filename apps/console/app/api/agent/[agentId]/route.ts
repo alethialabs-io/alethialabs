@@ -21,7 +21,7 @@ import {
 	assertAiAllowed,
 	releaseAiHold,
 } from "@/lib/billing/ai-guard";
-import { recordAiUsage } from "@/lib/billing/ai-quota";
+import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
 import { withScope } from "@/lib/db";
 import { agentIdentities } from "@/lib/db/schema";
@@ -152,13 +152,7 @@ export async function POST(
 					tools: toolNames,
 					stopReason: finishReason,
 					stream: true,
-				}).catch((err: unknown) => {
-					// Metering must never break an AI call — that is why it is fire-and-forget. But
-					// recordAiUsage has no internal try/catch, so without this a failed write is an
-					// UNHANDLED rejection AND silently strands the provisional hold this turn reserved,
-					// which assertAiAllowed's own contract says must never leak. Logged, not swallowed.
-					console.error("[ai-quota] metering write failed; a budget hold may be stranded", err);
-				});
+				}).catch(meteringFailed(actor.orgId));
 			},
 			onError: ({ error }) => {
 				// Record the failed generation so it shows in PostHog's Errors view (no tokens on error)
@@ -178,13 +172,7 @@ export async function POST(
 					stream: true,
 					isError: true,
 					error: error instanceof Error ? error.message : String(error),
-				}).catch((err: unknown) => {
-					// Metering must never break an AI call — that is why it is fire-and-forget. But
-					// recordAiUsage has no internal try/catch, so without this a failed write is an
-					// UNHANDLED rejection AND silently strands the provisional hold this turn reserved,
-					// which assertAiAllowed's own contract says must never leak. Logged, not swallowed.
-					console.error("[ai-quota] metering write failed; a budget hold may be stranded", err);
-				});
+				}).catch(meteringFailed(actor.orgId));
 			},
 			// Client disconnect mid-stream: onFinish/onError won't fire, so RELEASE the hold here
 			// (mutually exclusive with them) — otherwise an abandoned turn leaks its ≈$0.10 hold.

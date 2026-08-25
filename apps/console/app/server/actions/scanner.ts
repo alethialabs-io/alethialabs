@@ -7,7 +7,7 @@ import { signedJob } from "@/lib/db/signed-job";
 import { getVerifiedCloudIdentities } from "@/app/server/actions/aws/identities";
 import { currentActor } from "@/lib/authz/guard";
 import { AiBudgetError, assertAiAllowed } from "@/lib/billing/ai-guard";
-import { recordAiUsage } from "@/lib/billing/ai-quota";
+import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import { assertJobQuotaAllowed } from "@/lib/billing/job-quota";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { withActorScope } from "@/lib/db";
@@ -153,13 +153,7 @@ export async function getScanProposal(jobId: string): Promise<
 		inputTokens: inferred.inputTokens,
 		outputTokens: inferred.outputTokens,
 		cachedInputTokens: inferred.cachedInputTokens,
-	}).catch((err: unknown) => {
-		// Metering must never break an AI call — that is why it is fire-and-forget. But
-		// recordAiUsage has no internal try/catch, so without this a failed write is an
-		// UNHANDLED rejection AND silently strands the provisional hold this turn reserved,
-		// which assertAiAllowed's own contract says must never leak. Logged, not swallowed.
-		console.error("[ai-quota] metering write failed; a budget hold may be stranded", err);
-	});
+	}).catch(meteringFailed(scanActor.orgId));
 
 	const identities = await getVerifiedCloudIdentities();
 	if (identities.length === 0) {
@@ -231,13 +225,7 @@ export async function getMergedScanProposal(jobIds: string[]): Promise<
 			inputTokens: inferred.inputTokens,
 			outputTokens: inferred.outputTokens,
 			cachedInputTokens: inferred.cachedInputTokens,
-		}).catch((err: unknown) => {
-			// Metering must never break an AI call — that is why it is fire-and-forget. But
-			// recordAiUsage has no internal try/catch, so without this a failed write is an
-			// UNHANDLED rejection AND silently strands the provisional hold this turn reserved,
-			// which assertAiAllowed's own contract says must never leak. Logged, not swallowed.
-			console.error("[ai-quota] metering write failed; a budget hold may be stranded", err);
-		});
+		}).catch(meteringFailed(scanActor.orgId));
 		inputs.push({ stack: inferred.stack, repoUrl, ref, services: digest.services });
 	}
 
