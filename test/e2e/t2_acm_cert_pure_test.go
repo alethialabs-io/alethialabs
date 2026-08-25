@@ -18,6 +18,7 @@ func TestAcmCertDecide(t *testing.T) {
 			provider: "aws", enabled: true,
 			zoneID: "Z123456789ABCDEFGHIJK", zoneName: "e2e.alethialabs.io",
 			domainName: "run-1.e2e.alethialabs.io",
+			runEnv:     "run-1",
 		}
 	}
 	cases := []struct {
@@ -35,6 +36,16 @@ func TestAcmCertDecide(t *testing.T) {
 		{"full bar collides", func(c *acmCertConfig) { c.fullBar = true }, false, "", "cannot both be set"},
 		{"missing zone id fails", func(c *acmCertConfig) { c.zoneID = "" }, false, "", envAcmCertZoneID},
 		{"missing zone name fails", func(c *acmCertConfig) { c.zoneName = "" }, false, "", envAcmCertZoneName},
+		// #2566 finding 5. acmCertDomain falls back to the bare zone name when ALETHIA_E2E_ENV is
+		// empty, and wiring the scenario made that fallback reachable: the driver derives its own env
+		// as `local<hex>` when the variable is unset, so a manual run would provision env `local<hex>`
+		// while writing an UN-SCOPED validation record into the shared, long-lived zone — removing
+		// the very run-scoping that exists so two concurrent legs never collide on one record.
+		{"an empty run env is refused rather than falling back to the zone apex",
+			func(c *acmCertConfig) { c.runEnv = ""; c.domainName = c.zoneName }, false, "", "ALETHIA_E2E_ENV"},
+		// …and the refusal must name the apex it declined to use, or an operator cannot tell what it
+		// was about to do.
+		{"...and the refusal names the apex", func(c *acmCertConfig) { c.runEnv = ""; c.domainName = c.zoneName }, false, "", "e2e.alethialabs.io"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
