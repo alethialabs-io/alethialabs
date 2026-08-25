@@ -342,40 +342,56 @@ func TestScenarioApplyToSnapshotIsCalled(t *testing.T) {
 		t.Fatal("runtime.Caller failed")
 	}
 	dir := filepath.Dir(thisFile)
+	self := filepath.Base(thisFile)
 
-	definer := regexp.MustCompile(`func \(([a-z]) ([a-zA-Z0-9_]+)\) applyToSnapshot\(`)
+	// Receiver may be a POINTER and may be named anything. The first version matched only
+	// `func (c X) applyToSnapshot(` — a single-letter VALUE receiver. `func (cfg X)` and
+	// `func (c *X)` are both idiomatic Go no reviewer would flag, and either would have dropped the
+	// scenario out of `defined` entirely, so the guard would report green on a completely unwired
+	// scenario. Which is #1773, the thing it exists to catch.
+	definer := regexp.MustCompile(`func \(\s*[A-Za-z_][A-Za-z0-9_]*\s+\*?([A-Za-z_][A-Za-z0-9_]*)\s*\) applyToSnapshot\(`)
+	// The assembler's DECLARATION, anchored at line start so a mention in prose or a string cannot
+	// nominate a file as the assembler.
+	assemblerDecl := regexp.MustCompile(`(?m)^func t2DeploySnapshot\(([\s\S]*?)\)\s*\(`)
+	caller := regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\.applyToSnapshot\(`)
 
-	// Every receiver type that defines the method, and the file it was defined in (for the message).
 	defined := map[string]string{}
-	// Every receiver VALUE the assembler calls it on, e.g. `repos` in `repos.applyToSnapshot(full)`.
 	called := map[string]bool{}
-	// t2DeploySnapshot's parameter list, verbatim — the only reliable type→variable mapping.
 	sig := ""
+	sigFile := ""
 
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
 		}
+		base := filepath.Base(path)
+		// SKIP THIS FILE. The first version did not, and it self-satisfied: the literal
+		// `"func t2DeploySnapshot("` appears in this very function, so the guard nominated ITSELF as
+		// the assembler, then matched its own comment `repos.applyToSnapshot(full)` and set
+		// called["repos"] permanently. t2ArgoRepos was exempt forever and the len(called)==0
+		// non-vacuity fatal was unreachable — the guard failed in the same way it was built to catch.
+		if base == self {
+			return nil
+		}
 		src, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
-		text := string(src)
-		base := filepath.Base(path)
+		// Comments are stripped before any match: a call written in prose is not a call.
+		text := stripGoComments(string(src))
 
-		// Definitions come from anywhere; a scenario's type may live in a _test.go file or not.
 		for _, m := range definer.FindAllStringSubmatch(text, -1) {
-			defined[m[2]] = base
+			defined[m[2-1]] = base
 		}
-		// Calls only count from the snapshot assembler. A call from a unit test proves the method
-		// works; it does not put the configuration into a real deploy, which is precisely the
-		// distinction #1773 fell through.
-		if strings.Contains(text, "func t2DeploySnapshot(") {
-			if m := regexp.MustCompile(`func t2DeploySnapshot\(([^)]*)\)`).FindStringSubmatch(text); m != nil {
-				sig = m[1]
+		if m := assemblerDecl.FindStringSubmatch(text); m != nil {
+			if sig != "" && sigFile != base {
+				// Two files declaring it is not a thing to resolve by last-write-wins; that is how a
+				// stray file could silently blank `sig` and produce five wrong diagnoses at once.
+				t.Fatalf("t2DeploySnapshot is declared in both %s and %s — this guard cannot tell which assembles the snapshot", sigFile, base)
 			}
-			for _, m := range regexp.MustCompile(`\b([a-zA-Z0-9_]+)\.applyToSnapshot\(`).FindAllStringSubmatch(text, -1) {
-				called[m[1]] = true
+			sig, sigFile = m[1], base
+			for _, c := range caller.FindAllStringSubmatch(text, -1) {
+				called[c[1]] = true
 			}
 		}
 		return nil
@@ -388,18 +404,26 @@ func TestScenarioApplyToSnapshotIsCalled(t *testing.T) {
 		t.Fatal("found no applyToSnapshot definitions at all — this guard is scanning the wrong tree " +
 			"and would pass over any number of unwired scenarios")
 	}
+	if sig == "" {
+		t.Fatal("found no t2DeploySnapshot declaration — either it was renamed or this guard stopped " +
+			"finding it; both make every result below meaningless, so this fails rather than passes")
+	}
 	if len(called) == 0 {
-		t.Fatal("found no applyToSnapshot CALLS in t2DeploySnapshot — either the assembler was renamed " +
-			"or every scenario is unwired; both make this guard vacuous, so it fails rather than passes")
+		t.Fatal("found no applyToSnapshot CALLS in t2DeploySnapshot — either every scenario is unwired " +
+			"or the scan is broken; both make this guard vacuous, so it fails rather than passes")
 	}
 
 	// Resolve each scenario TYPE to the variable the assembler receives it as, by reading
 	// t2DeploySnapshot's own parameter list. Matching type names against variable names by string
 	// similarity does not work — `t2ArgoRepos` arrives as `repos`, `secretsXacctConfig` as `xacct` —
-	// and a guard that guesses wrong is worse than none: it either cries wolf or, if loosened to stop
-	// crying wolf, stops catching the thing it exists for.
-	paramOf := map[string]string{} // type name -> parameter variable name
-	for _, m := range regexp.MustCompile(`([a-zA-Z0-9_]+) ([a-zA-Z0-9_]+)(?:,|\))`).FindAllStringSubmatch(sig, -1) {
+	// and a guard that guesses wrong either cries wolf or gets loosened until it catches nothing.
+	//
+	// `(?:,|$)` and not `(?:,|\))`: the captured signature is the parameter list WITHOUT its closing
+	// paren, so a `\)` branch is dead and only a trailing comma could ever terminate a parameter.
+	// The LAST parameter was therefore unresolvable — and the end of the signature is exactly where
+	// the next scenario gets appended, as acmCert was.
+	paramOf := map[string]string{}
+	for _, m := range regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:,|$)`).FindAllStringSubmatch(sig, -1) {
 		paramOf[m[2]] = m[1]
 	}
 
@@ -419,4 +443,12 @@ func TestScenarioApplyToSnapshotIsCalled(t *testing.T) {
 				typeName, file, v, v)
 		}
 	}
+}
+
+// stripGoComments removes // and /* */ comments so a call or a declaration written in PROSE cannot
+// satisfy this file's guards. Naive about both inside string literals, which can only make the
+// guards stricter — the safe direction for a check whose job is to refuse a claim.
+func stripGoComments(src string) string {
+	src = regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(src, "")
+	return regexp.MustCompile(`(?m)//.*$`).ReplaceAllString(src, "")
 }
