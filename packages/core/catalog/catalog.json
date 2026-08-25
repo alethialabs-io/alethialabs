@@ -523,6 +523,22 @@
 					"memory_gb": 8,
 					"family": "general",
 					"cost": "~€8/mo"
+				},
+				{
+					"value": "cpx22",
+					"label": "CPX22 (x86, AMD)",
+					"vcpu": 2,
+					"memory_gb": 4,
+					"family": "general",
+					"cost": "~€19/mo"
+				},
+				{
+					"value": "cpx32",
+					"label": "CPX32 (x86, AMD)",
+					"vcpu": 4,
+					"memory_gb": 8,
+					"family": "general",
+					"cost": "~€35/mo"
 				}
 			]
 		},
