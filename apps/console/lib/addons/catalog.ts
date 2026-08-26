@@ -74,6 +74,72 @@ function defineAddOn<S extends z.ZodTypeAny>(
  * SSOT: this array is the single source of truth for the marketplace add-on set. Its length is
  * guarded by tests/lib/addons/catalog-count.test.ts (the BYOC proof's ArgoCD expected-set
  * derivation depends on it) — a deliberate add/remove here must update that test. */
+/**
+ * How each ExternalDNS provider AUTHENTICATES — the one table `configSchema`, `toValues`,
+ * `secretValues` and the field descriptors all read from.
+ *
+ * WHY THIS EXISTS. The catalog offered six providers and wired credentials for two. The mapping was
+ * a single line — `c.provider === "digitalocean" ? "DO_TOKEN" : "CF_API_TOKEN"` — so hetzner, aws,
+ * google and azure each silently received a **Cloudflare-shaped env var**, and the schema had no
+ * service-account knob at all, which put IRSA and Workload Identity out of reach entirely. Four of
+ * six offers could not be honoured, and an add-on that starts and then fails every write reports
+ * Degraded in exactly the way an unconfigured one does — so the offer looked fine until a real DNS
+ * record failed to appear.
+ *
+ * The platform's own rail (`infra/templates/argocd/external-dns.yaml`) has always done this
+ * correctly. This table is that rail's knowledge, moved to where the marketplace can use it.
+ *
+ * TWO AUTH SHAPES, and the difference is not cosmetic:
+ *
+ *   token       a provider API token, delivered as an env var from a runner-seeded Secret.
+ *   identity    the cloud's own workload identity, delivered as a ServiceAccount ANNOTATION.
+ *               There is no credential to store, which is the point — Alethia is keyless wherever
+ *               the cloud allows it, and offering these a token field would invite a user to paste
+ *               a long-lived key where none is needed.
+ *
+ * HETZNER IS NEITHER, QUITE. ExternalDNS ships no native `hetzner` provider, so `provider.name:
+ * "hetzner"` — what the old wiring produced — is not a configuration the chart understands. Hetzner
+ * DNS is reached through the official webhook SIDECAR, and the token goes to the sidecar's env
+ * block rather than the controller's.
+ */
+/** How ONE ExternalDNS provider authenticates. Every field but `label` is optional because the
+ * shapes are mutually exclusive — see the table below. */
+interface ExternalDnsProviderAuth {
+	label: string;
+	/** Token providers: the env var the controller (or the webhook sidecar) reads its token from. */
+	tokenEnv?: string;
+	/** Workload-identity providers: the ServiceAccount annotation that carries the cloud identity. */
+	saAnnotation?: string;
+	/** Providers ExternalDNS has no native support for, reached through a webhook sidecar instead. */
+	webhook?: { image: { repository: string; tag: string } };
+}
+
+/** The provider ids the catalog offers. */
+const EXTERNAL_DNS_PROVIDER_IDS = ["cloudflare", "digitalocean", "hetzner", "aws", "google", "azure"] as const;
+
+type ExternalDnsProvider = (typeof EXTERNAL_DNS_PROVIDER_IDS)[number];
+
+/**
+ * Provider → how it authenticates. `Record<ExternalDnsProvider, …>` is doing real work here: adding
+ * an id to the tuple above without giving it a credential path is a COMPILE error, so the offer and
+ * the wiring cannot diverge again.
+ */
+const EXTERNAL_DNS_PROVIDERS: Record<ExternalDnsProvider, ExternalDnsProviderAuth> = {
+	cloudflare: { label: "Cloudflare", tokenEnv: "CF_API_TOKEN" },
+	digitalocean: { label: "DigitalOcean", tokenEnv: "DO_TOKEN" },
+	hetzner: {
+		label: "Hetzner",
+		tokenEnv: "HETZNER_TOKEN",
+		// Pinned to the same image and tag the platform rail runs
+		// (infra/templates/argocd/external-dns.yaml), so the marketplace path and the platform path
+		// cannot drift into two different Hetzner integrations.
+		webhook: { image: { repository: "docker.io/hetzner/external-dns-hetzner-webhook", tag: "v0.3.3" } },
+	},
+	aws: { label: "AWS Route 53", saAnnotation: "eks.amazonaws.com/role-arn" },
+	google: { label: "Google Cloud DNS", saAnnotation: "iam.gke.io/gcp-service-account" },
+	azure: { label: "Azure DNS", saAnnotation: "azure.workload.identity/client-id" },
+};
+
 export const ADDON_CATALOG: AddOnDef[] = [
 	defineAddOn({
 		id: "kube-prometheus-stack",
@@ -935,37 +1001,54 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		namespace: "external-dns",
 		configSchema: z.object({
 			/** DNS provider the controller writes records to (a fixed choice — enum). */
-			provider: z
-				.enum(["cloudflare", "hetzner", "aws", "google", "azure", "digitalocean"])
-				.default("cloudflare"),
+			provider: z.enum(EXTERNAL_DNS_PROVIDER_IDS).default("cloudflare"),
 			/** Restrict record management to this domain (optional). */
 			domainFilter: z.string().default(""),
-			/** Provider API token (secret — encrypted at rest). Cloudflare's CF_API_TOKEN for now;
-			 * other providers wire their own env in a follow-up. */
+			/** Provider API token (secret — encrypted at rest). Used by the TOKEN providers only;
+			 * see EXTERNAL_DNS_PROVIDERS. A workload-identity provider ignores it. */
 			apiToken: z.string().default(""),
+			/** The cloud identity external-dns assumes on a workload-identity provider: an IAM role
+			 * ARN (aws), a service-account email (google) or a managed-identity client id (azure).
+			 * NOT a secret — it is an identifier, and the whole point of the keyless path is that
+			 * there is no credential to store. Ignored by the token providers. */
+			workloadIdentity: z.string().default(""),
 		}),
-		toValues: (c) => ({
-			provider: { name: c.provider },
-			...(c.domainFilter ? { domainFilters: [c.domainFilter] } : {}),
-			// The API token deliberately does NOT appear here (W4.5): toValues never sees
-			// secret knobs. The token reaches the chart via `secretValues` below — an env
-			// valueFrom.secretKeyRef into the runner-seeded Secret, the same shape the
-			// platform's own infra external-dns uses (infra/templates/argocd/external-dns.yaml).
-		}),
+		toValues: (c) => {
+			const p = EXTERNAL_DNS_PROVIDERS[c.provider];
+			return {
+				// Hetzner is reached through the webhook SIDECAR, never as a native provider name —
+				// see EXTERNAL_DNS_PROVIDERS. The token half of the webhook block is added by
+				// `secretValues` and deep-merged onto this.
+				provider: p.webhook ? { name: "webhook", webhook: { image: p.webhook.image } } : { name: c.provider },
+				...(c.domainFilter ? { domainFilters: [c.domainFilter] } : {}),
+				// A workload-identity provider authenticates by ANNOTATION, not by env var. Without
+				// this the chart's ServiceAccount carries no identity and the controller falls back
+				// to the node role, which has no DNS permission — so it starts, fails every write,
+				// and reports Degraded exactly as an unconfigured token provider does.
+				...(p.saAnnotation && c.workloadIdentity
+					? {
+							serviceAccount: {
+								name: "external-dns-sa",
+								annotations: { [p.saAnnotation]: c.workloadIdentity },
+							},
+							// Azure's workload-identity webhook only injects into labelled pods.
+							...(c.provider === "azure" ? { podLabels: { "azure.workload.identity/use": "true" } } : {}),
+						}
+					: {}),
+			};
+		},
 		secretValues: (refs, c) => {
 			const ref = refs.apiToken;
-			if (!ref) return {};
-			// Provider token env var (cloudflare's CF_API_TOKEN for now — matching the
-			// pre-W4.5 wiring; other providers add their own env names in a follow-up).
-			const envName = c.provider === "digitalocean" ? "DO_TOKEN" : "CF_API_TOKEN";
-			return {
-				env: [
-					{
-						name: envName,
-						valueFrom: { secretKeyRef: { name: ref.name, key: ref.key } },
-					},
-				],
-			};
+			const p = EXTERNAL_DNS_PROVIDERS[c.provider];
+			// A workload-identity provider takes NO token. Rendering one anyway is what the previous
+			// wiring did — every non-digitalocean provider got `CF_API_TOKEN` — so aws, google and
+			// azure received a Cloudflare-shaped env var they have no use for while their actual
+			// identity path stayed unreachable. An env var that cannot work is worse than none: it
+			// makes a broken install look configured.
+			if (!ref || !p.tokenEnv) return {};
+			const env = [{ name: p.tokenEnv, valueFrom: { secretKeyRef: { name: ref.name, key: ref.key } } }];
+			// The webhook sidecar reads its token from ITS OWN env block, not the controller's.
+			return p.webhook ? { provider: { webhook: { env } } } : { env };
 		},
 		fields: [
 			{
@@ -973,17 +1056,23 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "DNS provider",
 				type: "enum",
 				default: "cloudflare",
-				options: [
-					{ value: "cloudflare", label: "Cloudflare" },
-					{ value: "hetzner", label: "Hetzner" },
-					{ value: "aws", label: "AWS Route 53" },
-					{ value: "google", label: "Google Cloud DNS" },
-					{ value: "azure", label: "Azure DNS" },
-					{ value: "digitalocean", label: "DigitalOcean" },
-				],
+				options: EXTERNAL_DNS_PROVIDER_IDS.map((id) => ({ value: id, label: EXTERNAL_DNS_PROVIDERS[id].label })),
 			},
 			{ key: "domainFilter", label: "Domain filter (optional)", type: "string", default: "" },
-			{ key: "apiToken", label: "Provider API token", type: "secret", secret: true },
+			{
+				key: "apiToken",
+				label: "Provider API token",
+				type: "secret",
+				secret: true,
+				help: "Required for Cloudflare, DigitalOcean and Hetzner. AWS, Google and Azure authenticate through workload identity instead — leave this empty and fill in the identity below.",
+			},
+			{
+				key: "workloadIdentity",
+				label: "Workload identity (AWS / Google / Azure)",
+				type: "string",
+				default: "",
+				help: "The identity external-dns assumes: an IAM role ARN (AWS), a service-account email (Google) or a managed-identity client id (Azure). Not needed for the token providers.",
+			},
 		],
 		syncWave: 2,
 	}),
