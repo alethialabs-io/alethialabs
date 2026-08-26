@@ -782,3 +782,84 @@ func TestRequireAllAddOnsExpected(t *testing.T) {
 		}
 	})
 }
+
+// TestArgoReportNamesOutOfSyncResources pins the diagnosis that a Healthy-but-OutOfSync app needs.
+//
+// On 2026-08-26 three add-ons sat Healthy/OutOfSync on BOTH hetzner and aws — argo-rollouts,
+// kyverno and tempo. The workload is up, nothing in the cluster is wrong, and the run still loses
+// its verdict. The report named the Applications and not what differed, so acting on it meant
+// reaching for a live cluster.
+//
+// The answer was already in the payload this assertion fetches: `.status.resources[]` carries a
+// per-resource sync status, and it was being discarded.
+func TestArgoReportNamesOutOfSyncResources(t *testing.T) {
+	raw := []byte(`{"items":[
+	  {"metadata":{"name":"addon-kyverno"},"status":{
+	     "health":{"status":"Healthy"},"sync":{"status":"OutOfSync"},
+	     "resources":[
+	       {"group":"apiextensions.k8s.io","kind":"CustomResourceDefinition","name":"policies.kyverno.io","status":"OutOfSync"},
+	       {"group":"apps","kind":"Deployment","name":"kyverno-admission-controller","status":"Synced"},
+	       {"group":"apiextensions.k8s.io","kind":"CustomResourceDefinition","name":"policies.kyverno.io","status":"OutOfSync"}
+	     ]}}
+	]}`)
+	observed, err := parseArgoApps(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	st := observed["addon-kyverno"]
+
+	if len(st.OutOfSyncResources) != 1 {
+		t.Fatalf("want the OutOfSync resource named once (deduped), got %v", st.OutOfSyncResources)
+	}
+	if st.OutOfSyncResources[0] != "apiextensions.k8s.io/CustomResourceDefinition/policies.kyverno.io" {
+		t.Errorf("the label must carry group/kind/name so the resource class is identifiable, got %q", st.OutOfSyncResources[0])
+	}
+
+	// A SYNCED resource inside an OutOfSync app is the part that is fine, and must not be listed.
+	for _, r := range st.OutOfSyncResources {
+		if strings.Contains(r, "kyverno-admission-controller") {
+			t.Errorf("a Synced resource must not appear in the OutOfSync list: %v", st.OutOfSyncResources)
+		}
+	}
+
+	_, err = evaluateArgoApps(observed, []string{"addon-kyverno"})
+	if err == nil {
+		t.Fatal("a Healthy/OutOfSync app must still fail the assertion")
+	}
+	if !strings.Contains(err.Error(), "policies.kyverno.io") {
+		t.Errorf("the failure must NAME the differing resource — that is the whole diagnosis:\n%s", err)
+	}
+}
+
+// TestArgoReportSaysWhenNoResourceDetail — an OutOfSync app whose resource list is empty must say
+// so. Silence there reads as a clean diff, which is the defect class this repo keeps paying for.
+func TestArgoReportSaysWhenNoResourceDetail(t *testing.T) {
+	raw := []byte(`{"items":[{"metadata":{"name":"addon-x"},"status":{
+	  "health":{"status":"Healthy"},"sync":{"status":"OutOfSync"},"resources":[]}}]}`)
+	observed, err := parseArgoApps(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	_, err = evaluateArgoApps(observed, []string{"addon-x"})
+	if err == nil {
+		t.Fatal("still a failure")
+	}
+	if !strings.Contains(err.Error(), "no per-resource detail") {
+		t.Errorf("an empty resource list must be reported as absent detail, not as nothing differing:\n%s", err)
+	}
+}
+
+// TestArgoReportOmitsResourceLineWhenSynced — a Healthy+Synced app is not in the report at all, and
+// a Degraded-but-Synced one must not grow a misleading empty OutOfSync line.
+func TestArgoReportOmitsResourceLineWhenSynced(t *testing.T) {
+	raw := []byte(`{"items":[{"metadata":{"name":"addon-y"},"status":{
+	  "health":{"status":"Degraded"},"sync":{"status":"Synced"},"resources":[]}}]}`)
+	observed, _ := parseArgoApps(raw)
+	_, err := evaluateArgoApps(observed, []string{"addon-y"})
+	if err == nil {
+		t.Fatal("Degraded must fail")
+	}
+	if strings.Contains(err.Error(), "OutOfSync:") {
+		t.Errorf("a Synced app must not carry an OutOfSync detail line:\n%s", err)
+	}
+}

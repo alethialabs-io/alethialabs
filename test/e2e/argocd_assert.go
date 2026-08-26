@@ -54,6 +54,21 @@ type argoAppState struct {
 	Health     string
 	Sync       string
 	Conditions []string
+	// OutOfSyncResources names the individual resources ArgoCD reports as OutOfSync, as
+	// `Kind/name`. Sorted and de-duplicated.
+	//
+	// WHY IT IS CARRIED. An Application that is Healthy AND OutOfSync is the most confusing
+	// state this assertion can report: the workload is up, nothing in the cluster is wrong, and
+	// the run still loses its verdict. On 2026-08-26 three add-ons sat there on BOTH hetzner and
+	// aws — argo-rollouts, kyverno and tempo — and the report named the Applications without
+	// naming what differed, so the only way to act on it was to reach for a live cluster.
+	//
+	// The answer was already in the payload: `.status.resources[]` carries a per-resource sync
+	// status, and this assertion was fetching and discarding it. The Application template already
+	// ignores two API-server-managed fields (`.status.terminatingReplicas`, the resourceFieldRef
+	// divisor) for exactly this class; naming the resource is what tells you whether a third
+	// belongs there.
+	OutOfSyncResources []string
 }
 
 // anyProvider is the infraServiceArgoApps inner key meaning "the same Application on
@@ -472,6 +487,12 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 					Type    string `json:"type"`
 					Message string `json:"message"`
 				} `json:"conditions"`
+				Resources []struct {
+					Group  string `json:"group"`
+					Kind   string `json:"kind"`
+					Name   string `json:"name"`
+					Status string `json:"status"`
+				} `json:"resources"`
 			} `json:"status"`
 		} `json:"items"`
 	}
@@ -487,6 +508,24 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 		for _, c := range item.Status.Conditions {
 			st.Conditions = append(st.Conditions, c.Type+": "+c.Message)
 		}
+		// Only the OutOfSync ones. A Synced resource in a Synced app is noise, and in an
+		// OutOfSync app it is the part that is fine.
+		seenRes := map[string]struct{}{}
+		for _, r := range item.Status.Resources {
+			if r.Status != "OutOfSync" {
+				continue
+			}
+			label := r.Kind + "/" + r.Name
+			if r.Group != "" {
+				label = r.Group + "/" + r.Kind + "/" + r.Name
+			}
+			if _, dup := seenRes[label]; dup {
+				continue
+			}
+			seenRes[label] = struct{}{}
+			st.OutOfSyncResources = append(st.OutOfSyncResources, label)
+		}
+		sort.Strings(st.OutOfSyncResources)
 		out[item.Metadata.Name] = st
 	}
 	return out, nil
@@ -517,6 +556,16 @@ func evaluateArgoApps(observed map[string]argoAppState, expected []string) (lose
 		fmt.Fprintf(&report, "  - %s: health=%s sync=%s", name, st.Health, st.Sync)
 		if len(st.Conditions) > 0 {
 			fmt.Fprintf(&report, " [%s]", strings.Join(st.Conditions, "; "))
+		}
+		// Name WHAT differs, not just that something does. For a Healthy-but-OutOfSync app this
+		// is the whole diagnosis: the workload is up, so the resource named here is a
+		// spurious-diff candidate for the template's ignoreDifferences.
+		if len(st.OutOfSyncResources) > 0 {
+			fmt.Fprintf(&report, "\n      OutOfSync: %s", strings.Join(st.OutOfSyncResources, ", "))
+		} else if st.Sync == "OutOfSync" {
+			// EMPTY IS NOT "nothing differs". ArgoCD can report an app OutOfSync with an empty
+			// or not-yet-populated resource list, and silence there would read as a clean diff.
+			report.WriteString("\n      OutOfSync: (no per-resource detail reported by ArgoCD)")
 		}
 		report.WriteString("\n")
 	}
