@@ -384,14 +384,32 @@ func TestMaxConfigSuffixPrecedence(t *testing.T) {
 
 // TestMaxConfigDomainForScopesToTheRun — the run-scoped prefix must survive the suffix change, or
 // two concurrent runs would contend for one zone name.
+//
+// HETZNER IS NOW EXEMPT, and the original reason is not dismissed — it is answered elsewhere.
+// Hetzner Cloud DNS refuses a zone name deeper than two labels whatever the TLD (#2843), so it
+// cannot carry the prefix at all. The contention this test was written to prevent is instead
+// prevented by `.github/workflows/e2e-nightly.yml`, which scopes concurrency to
+// `e2e-nightly-${{ matrix.provider }}` with `cancel-in-progress: false`: two hetzner runs QUEUE
+// rather than overlap, so there is never a second run to contend with.
+//
+// That is a weaker guarantee than a unique name — it depends on a workflow setting rather than on
+// arithmetic — which is why maxconfig_zone_depth_pure_test.go asserts the exemption is
+// hetzner-only, and why widening that concurrency group should be treated as touching this.
 func TestMaxConfigDomainForScopesToTheRun(t *testing.T) {
 	t.Setenv(envMaxConfigDomainSuffix, "")
-	t.Setenv(envMaxConfigDomainSuffix+"_HETZNER", "e2e.alethia-e2e.com")
+	t.Setenv(envMaxConfigDomainSuffix+"_HETZNER", "alethia-e2e.com")
 	t.Setenv("ALETHIA_E2E_ENV", "run-42")
-	if got, want := MaxConfigDomainFor("hetzner"), "run-42.e2e.alethia-e2e.com"; got != want {
+	// hetzner: the suffix IS the zone, because a third label is refused by the API.
+	if got, want := MaxConfigDomainFor("hetzner"), "alethia-e2e.com"; got != want {
 		t.Errorf("MaxConfigDomainFor(hetzner) = %q, want %q", got, want)
 	}
+	// every other cloud keeps the run scoping, which is the property this test still guards.
 	if got, want := MaxConfigDomainFor("aws"), "run-42."+maxConfigDomainSuffix; got != want {
 		t.Errorf("MaxConfigDomainFor(aws) = %q, want %q", got, want)
+	}
+	for _, p := range []string{"gcp", "azure", "alibaba", ""} {
+		if got := MaxConfigDomainFor(p); got != "run-42."+maxConfigDomainSuffix {
+			t.Errorf("MaxConfigDomainFor(%q) lost its run scoping: %q", p, got)
+		}
 	}
 }
