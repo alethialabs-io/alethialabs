@@ -22,6 +22,7 @@ import { useState } from "react";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InlineThemeSwitcher } from "@/components/theme-menu";
 import { authClient } from "@/lib/auth/client";
+import { useAuthPrefsStore } from "@/lib/stores/use-auth-prefs-store";
 import { legalUrl } from "@/lib/legal";
 import { globalHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
@@ -73,6 +74,11 @@ export function SidebarProfile({ isHosted = false }: { isHosted?: boolean }) {
   /** Signs out and returns to the marketing root. */
   const handleLogout = async () => {
     await authClient.signOut();
+    // Signing out is the one moment the person at the keyboard has said they are done
+    // with this machine, so the sign-in form's memory of them goes too — the "Last used"
+    // mark and the pre-filled address. Leaving them would show the next person which
+    // provider this account uses and what its address is.
+    useAuthPrefsStore.getState().forget();
     router.push("/");
   };
 

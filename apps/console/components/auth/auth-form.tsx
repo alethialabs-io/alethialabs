@@ -9,6 +9,7 @@ import { authClient } from "@/lib/auth/client";
 import { requestEmailCode } from "@/app/server/actions/auth";
 import { track } from "@/lib/analytics/track";
 import { safeNext } from "@/lib/auth/safe-next";
+import { useAuthPrefsStore } from "@/lib/stores/use-auth-prefs-store";
 import { arrayIncludes } from "@/lib/type-guards";
 import { AuthCard } from "@/components/auth/auth-shell";
 import { ProviderIcon, PROVIDER_LABELS, type Provider } from "@repo/ui/provider-icon";
@@ -52,7 +53,7 @@ const COPY: Record<
 	login: {
 		eyebrow: "Welcome back",
 		title: "Log in to Alethia",
-		sub: "Configure multi-cloud infrastructure in the browser. Deploy from the terminal.",
+		sub: "Your clusters are where you left them.",
 		emailEyebrow: "Sign in",
 		emailTitle: "Sign in with email",
 		verifyCta: "Continue",
@@ -60,7 +61,7 @@ const COPY: Record<
 	signup: {
 		eyebrow: "Get started",
 		title: "Create your account",
-		sub: "Configure multi-cloud infrastructure in the browser. Deploy from the terminal. Free to start — no card required.",
+		sub: "Your first cluster, on any cloud.",
 		emailEyebrow: "Get started",
 		emailTitle: "Sign up with email",
 		verifyCta: "Create account",
@@ -76,6 +77,15 @@ function fmtCountdown(seconds: number): string {
 	const m = Math.floor(seconds / 60);
 	const s = String(seconds % 60).padStart(2, "0");
 	return `${m}:${s}`;
+}
+
+/**
+ * Pulls a 6-digit code out of whatever was pasted — "418 902", "code: 418902", a whole
+ * line lifted out of the email. Shared by the OTP field's own paste handling and the
+ * step-level listener, so there is one definition of what a pasted code looks like.
+ */
+function digitsOnly(pasted: string): string {
+	return pasted.replace(/\D/g, "").slice(0, 6);
 }
 
 /** Allowlisted banner copy keyed by `?error=` / `?message=`. Arbitrary querystring
@@ -101,11 +111,14 @@ function ProviderButton({
 	provider,
 	isLoading,
 	loadingProvider,
+	lastUsed,
 	onSelect,
 }: {
 	provider: AuthProvider;
 	isLoading: boolean;
 	loadingProvider: string | null;
+	/** Mark this tile as the method that carried the last sign-in through. */
+	lastUsed?: boolean;
 	onSelect: (provider: AuthProvider) => void;
 }) {
 	return (
@@ -114,14 +127,35 @@ function ProviderButton({
 			variant="outline"
 			onClick={() => onSelect(provider)}
 			disabled={isLoading}
+			aria-label={
+				lastUsed ? `${lookup(PROVIDER_LABELS, provider)} (last used)` : undefined
+			}
 			className="h-[46px] w-full gap-[9px] border-border-strong text-[13.5px] hover:border-ring hover:bg-surface-muted"
 		>
 			{loadingProvider === provider ? (
 				<Loader2 className="size-[17px] animate-spin" />
 			) : (
-				<ProviderIcon provider={provider} size={17} />
+				<ProviderIcon provider={provider} size={17} decorative />
 			)}
 			{lookup(PROVIDER_LABELS, provider)}
+			{/* The pill is aria-hidden and the BUTTON names itself instead — the same
+			    shape the SSO button uses for its "Soon". Letting the pill text join the
+			    name by itself was the first attempt and it announced "GitHubLast used":
+			    the accessible name concatenates descendant text and knows nothing about
+			    `ml-1`, and a JSX {" "} between them does not survive the render (checked
+			    in the DOM — the text node is simply absent). An explicit label is the
+			    only version whose spacing is not a guess.
+
+			    Visually unchanged: `vx-badge-mono` carries font, tracking and colour but
+			    no border or padding, so those come in here. */}
+			{lastUsed ? (
+				<span
+					aria-hidden="true"
+					className="vx-badge-mono ml-1 border border-border-strong px-1.5 py-px"
+				>
+					Last used
+				</span>
+			) : null}
 		</Button>
 	);
 }
@@ -146,10 +180,36 @@ export function AuthForm({ mode }: AuthFormProps) {
 	const prefillEmail = searchParams.get("email") ?? "";
 	const next = safeNext(searchParams.get("next"));
 
+	// What the browser remembers from last time. Read AFTER mount, never during render:
+	// this form is server-prerendered and then hydrated, so a first client render that
+	// consulted localStorage would not match the server's HTML. Same shape as
+	// packages/ui/src/theme-toggle.tsx — the DOM is identical on the first client render
+	// and the remembered marks appear on the second.
+	const rememberedMethod = useAuthPrefsStore((s) => s.lastMethod);
+	const rememberedEmail = useAuthPrefsStore((s) => s.lastEmail);
+	const remember = useAuthPrefsStore((s) => s.remember);
+	const forget = useAuthPrefsStore((s) => s.forget);
+	const [mounted, setMounted] = useState(false);
+	/** Wraps the OTP field, so the window paste listener can tell "already handled" from "not". */
+	const otpRef = useRef<HTMLDivElement>(null);
+	useEffect(() => setMounted(true), []);
+	const lastMethod = mounted ? rememberedMethod : null;
+
 	const [step, setStep] = useState<Step>(prefillEmail ? "email" : "providers");
 	const [isLoading, setIsLoading] = useState(false);
 	const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
 	const [email, setEmail] = useState(prefillEmail);
+	// Pre-fill the remembered address once, after mount, and only when the field is
+	// still empty — a `?email=` param, or anything already typed, wins.
+	//
+	// The VALUE only. `step` is initialised from `prefillEmail`, and feeding remembered
+	// state into that would move a returning user off the provider tiles and onto the
+	// email form a beat after the page settled, which is a worse experience than the one
+	// this is meant to improve.
+	useEffect(() => {
+		if (!mounted || prefillEmail) return;
+		setEmail((current) => current || (rememberedEmail ?? ""));
+	}, [mounted, prefillEmail, rememberedEmail]);
 	const [code, setCode] = useState("");
 	const [error, setError] = useState<string | null>(() => {
 		const code =
@@ -212,6 +272,17 @@ export function AuthForm({ mode }: AuthFormProps) {
 		// 1.7 promoted the generic providers (gitlab, bitbucket) to first-class social
 		// providers and deleted `signIn.oauth2`, so the github/google split is gone —
 		// one call now covers every provider.
+		// Remember the choice before handing off. OAuth leaves the page, so there is no
+		// "after" to run here — this is the last moment this code is alive.
+		//
+		// That makes the write optimistic, so EVERY path that does not reach the provider
+		// has to roll it back: the error branch below, and the no-url/no-error branch at
+		// the end. Both call forget(). Only the `window.location.href` hand-off keeps the
+		// mark. This comment used to assert that a failed attempt never leaves a mark
+		// while the third branch quietly did — the invariant is only worth stating if
+		// every exit actually holds it.
+		remember(provider);
+
 		const { data, error } = await authClient.signIn.social({
 			provider,
 			callbackURL,
@@ -220,6 +291,8 @@ export function AuthForm({ mode }: AuthFormProps) {
 		});
 
 		if (error) {
+			// The hand-off never happened — don't leave "Last used" on a tile that failed.
+			forget();
 			setError(error.message ?? `Failed to sign in with ${provider}`);
 			setIsLoading(false);
 			setLoadingProvider(null);
@@ -232,6 +305,10 @@ export function AuthForm({ mode }: AuthFormProps) {
 			window.location.href = data.url;
 			return;
 		}
+		// Third exit, and the one the rollback originally missed: no url AND no error, so
+		// the hand-off never happened either. Without this the tile keeps its "Last used"
+		// mark and the form goes on recommending the provider that most recently failed.
+		forget();
 		setError(`Could not start ${provider} sign-in. Please try again.`);
 		setIsLoading(false);
 		setLoadingProvider(null);
@@ -301,6 +378,8 @@ export function AuthForm({ mode }: AuthFormProps) {
 			return;
 		}
 		track("login_succeeded", { method: "otp" });
+		// Verified, so this address is worth keeping — see the note on `lastEmail`.
+		remember("email", email);
 		// Resume the OAuth authorize flow with a full-page navigation (the user now
 		// has a session) so the redirect to the connector lands in the browser.
 		if (isOAuthResume) {
@@ -309,6 +388,29 @@ export function AuthForm({ mode }: AuthFormProps) {
 		}
 		router.push(successDestination);
 	};
+
+	// Paste anywhere on the code step. The OTP field handles its own paste, but only
+	// while one of its slots holds focus — and the natural gesture after switching to the
+	// mail app and back is Cmd-V against a page nobody has clicked. This catches that.
+	//
+	// It defers to the field whenever the paste is already headed there (checked via the
+	// event target, not activeElement, so a slot that is focused but not the target still
+	// resolves correctly), so a code is never applied twice.
+	useEffect(() => {
+		if (step !== "code") return;
+		const onPaste = (e: ClipboardEvent) => {
+			const target = e.target;
+			if (target instanceof Node && otpRef.current?.contains(target)) return;
+			const pasted = digitsOnly(e.clipboardData?.getData("text") ?? "");
+			if (pasted.length < 6) return;
+			e.preventDefault();
+			setCode(pasted);
+			void handleVerify(pasted);
+		};
+		window.addEventListener("paste", onPaste);
+		return () => window.removeEventListener("paste", onPaste);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [step, email, isLoading]);
 
 	const handleResend = async () => {
 		if (cooldown > 0 || isLoading) return;
@@ -373,6 +475,10 @@ export function AuthForm({ mode }: AuthFormProps) {
 				<div className="space-y-4">
 					{errorBanner}
 
+					{/* The wrapper carries the ref the window paste listener tests against —
+					    InputOTP renders a hidden field plus the slots, so there is no single
+					    node of its own to point at. */}
+					<div ref={otpRef}>
 					<InputOTP
 						maxLength={6}
 						value={code}
@@ -381,9 +487,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 						pattern={REGEXP_ONLY_DIGITS}
 						// Strip spaces/labels so pasting the grouped code from the email
 						// ("418 902") or "code: 418902" fills all six boxes.
-						pasteTransformer={(pasted) =>
-							pasted.replace(/\D/g, "").slice(0, 6)
-						}
+						pasteTransformer={digitsOnly}
 						disabled={isLoading}
 						// Never let session replay capture the login code (OTP digits render as text, not
 						// a masked <input>, so maskAllInputs alone wouldn't hide them).
@@ -401,6 +505,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 							))}
 						</InputOTPGroup>
 					</InputOTP>
+					</div>
 
 					<PrimaryButton
 						type="button"
@@ -572,6 +677,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 					provider={PRIMARY_PROVIDER}
 					isLoading={isLoading}
 					loadingProvider={loadingProvider}
+					lastUsed={lastMethod === PRIMARY_PROVIDER}
 					onSelect={handleOAuthLogin}
 				/>
 				<div className="grid grid-cols-3 gap-[9px]">
@@ -581,6 +687,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 							provider={provider}
 							isLoading={isLoading}
 							loadingProvider={loadingProvider}
+							lastUsed={lastMethod === provider}
 							onSelect={handleOAuthLogin}
 						/>
 					))}
@@ -606,6 +713,14 @@ export function AuthForm({ mode }: AuthFormProps) {
 				>
 					<KeyRound className="size-4 opacity-80" />
 					Continue with email
+					{lastMethod === "email" ? (
+						<span
+							aria-hidden="true"
+							className="vx-badge-mono ml-1 border border-border-strong px-1.5 py-px"
+						>
+							Last used
+						</span>
+					) : null}
 				</Button>
 
 				{/* SSO — not wired yet; visible but disabled (coming soon). An e2e spec
@@ -658,7 +773,7 @@ function PrimaryButton({
 	return (
 		<Button
 			{...props}
-			className="group h-[46px] w-full text-sm"
+			className="group relative h-[46px] w-full text-sm"
 		>
 			{loading ? (
 				<>
@@ -669,6 +784,19 @@ function PrimaryButton({
 				<>
 					{children}
 					<ArrowRight className="ml-1 size-4 transition-transform group-hover:translate-x-[3px]" />
+					{/* Every form this button ends submits on Enter; the affordance just
+					    says so. aria-hidden and absolutely positioned on purpose: the
+					    accessible name has to stay exactly "Continue with email" /
+					    "Create account", because the e2e fixtures match those and
+					    capture.setup.ts needs /continue with email/i to resolve to one
+					    node per step. Hidden below `sm` — on a touch keyboard there is
+					    no Enter key to point at. */}
+					<span
+						aria-hidden="true"
+						className="vx-badge-mono absolute right-3 hidden border border-current/25 px-1 py-px opacity-45 sm:inline"
+					>
+						↵
+					</span>
 				</>
 			)}
 		</Button>
