@@ -633,8 +633,18 @@ func kubectlGetArgoApps(ctx context.Context, kubeconfigPath string) ([]byte, err
 // (best-effort, truncated per app, capped at 5 apps) formatted for appending to the
 // timeout error — the "full dump" that makes a red nightly diagnosable from logs.
 func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []string) string {
-	const maxApps = 5
-	const maxPerApp = 4000
+	// SIZED TO THE WORST OBSERVED FAILURE, not to a comfortable number.
+	//
+	// hetzner/addons run 32959867406 had EIGHT losers against a cap of five, so minio and velero were
+	// never described at all — and minio turned out to be the one whose cause (#2822) mattered most.
+	// A dump that silently stops before the interesting failure has the same effect as no dump, at
+	// the same price: the run still costs EUR 0.75 and forty minutes.
+	//
+	// 18 marketplace add-ons plus the platform rail is the realistic ceiling on how many can fail at
+	// once, so cover all of them. The per-app budget shrinks to compensate — `describe` is mostly the
+	// spec, which the Application already rendered above, and the useful part is at the top.
+	const maxApps = 20
+	const maxPerApp = 2500
 	var b strings.Builder
 	for i, name := range losers {
 		if i == maxApps {
@@ -686,7 +696,9 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 // wrong" must not look the same.
 func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 	const (
-		maxPods     = 3
+		// Three was enough for a Deployment; a DaemonSet on a multi-node cluster can have every pod
+		// unhappy for one reason, and seeing only three of them hides whether it is one node or all.
+		maxPods     = 6
 		maxLogLines = "40"
 	)
 	// ArgoCD labels every resource it manages with the Application's name. That is how the pods are
@@ -811,7 +823,9 @@ func (r outOfSyncRef) kubectlTarget() string {
 // a run hangs or an error is lost.
 func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []outOfSyncRef) string {
 	const (
-		maxResources = 8
+		// 17 OutOfSync refs against a cap of 8 on run 32959867406 — "… 9 more not shown" hid more
+		// than it showed. Deduplication (#2778) reduced the count; it did not make 8 enough.
+		maxResources = 24
 		maxPathsPer  = 12
 	)
 	if len(refs) == 0 {
