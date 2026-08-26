@@ -89,8 +89,12 @@ func TestCLIDemoCloudsAreReal(t *testing.T) {
 //
 // Both halves are load-bearing:
 //   - zero CLIGaps — a NEW gap must be a deliberate, visible edit, never a quiet regression.
-//   - not Passed() — nobody gets to declare the bar met while a ceiling still forces a human
-//     into a cloud console mid-demo.
+//   - not Passed() on the UNEVALUATED proof — ScoreCLIDemo is pure and never runs a ceiling's
+//     SatisfiedBy probe, so every ceiling is still counted outstanding here. That is the
+//     fail-closed direction: a caller who forgets EvaluateCeilings gets the strict answer.
+//
+// A ceiling whose manual work has DEMONSTRABLY been done no longer fails the bar — see
+// t2_cli_ceiling.go — but establishing that needs the network, so it lives in the run half.
 func TestCLIDemoBarFailsOnlyOnCloudCeilings(t *testing.T) {
 	p, err := ScoreCLIDemo("aws")
 	if err != nil {
@@ -162,9 +166,24 @@ func TestCLIDemoValidateDiscriminates(t *testing.T) {
 		{"gap with no Issue", DemoStep{ID: "x", Title: "x", WantArgv: []string{"b"}, Reach: CLIGap, Why: strings.Repeat("w", 50)}},
 		{"gap with no Why", DemoStep{ID: "x", Title: "x", WantArgv: []string{"b"}, Reach: CLIGap, Issue: "#1"}},
 
-		{"manual carrying Argv", DemoStep{ID: "x", Title: "x", Argv: []string{"a"}, Reach: CloudManual, Issue: "#1", Why: strings.Repeat("w", 50)}},
-		{"manual with no Issue", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Why: strings.Repeat("w", 50)}},
-		{"manual with no Why", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Issue: "#1"}},
+		// Each of these carries a VALID probe so the case isolates ONE violation. Without it every
+		// row below would fail on the missing-SatisfiedBy rule instead of the rule it names, and a
+		// mutation gate that passes for the wrong reason proves nothing about the rule it claims.
+		{"manual carrying Argv", DemoStep{ID: "x", Title: "x", Argv: []string{"a"}, Reach: CloudManual, Issue: "#1", Why: strings.Repeat("w", 50), SatisfiedBy: validProbe()}},
+		{"manual with no Issue", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Why: strings.Repeat("w", 50), SatisfiedBy: validProbe()}},
+		{"manual with no Why", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Issue: "#1", SatisfiedBy: validProbe()}},
+
+		// ── The SatisfiedBy rules (#CLI ceiling probe). ──
+		{"manual with NO probe", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Issue: "#1", Why: strings.Repeat("w", 50)}},
+		{"manual probe with no Kind", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Issue: "#1", Why: strings.Repeat("w", 50), SatisfiedBy: &CeilingProbe{Env: []string{"A"}, Expect: "x"}}},
+		{"manual probe with unknown Kind", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Issue: "#1", Why: strings.Repeat("w", 50), SatisfiedBy: &CeilingProbe{Kind: CeilingProbeKind("vibes"), Env: []string{"A"}, Expect: "x"}}},
+		{"manual probe with no Expect", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Issue: "#1", Why: strings.Repeat("w", 50), SatisfiedBy: &CeilingProbe{Kind: ProbeEnvTruthy, Env: []string{"A"}}}},
+		{"env probe naming no variables", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Issue: "#1", Why: strings.Repeat("w", 50), SatisfiedBy: &CeilingProbe{Kind: ProbeEnvTruthy, Expect: "x"}}},
+		{"env probe naming an empty variable", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Issue: "#1", Why: strings.Repeat("w", 50), SatisfiedBy: &CeilingProbe{Kind: ProbeEnvTruthy, Env: []string{"  "}, Expect: "x"}}},
+		{"zone probe naming two variables", DemoStep{ID: "x", Title: "x", Reach: CloudManual, Issue: "#1", Why: strings.Repeat("w", 50), SatisfiedBy: &CeilingProbe{Kind: ProbeZoneDelegated, Env: []string{"A", "B"}, Expect: "x"}}},
+		{"driven carrying a probe", DemoStep{ID: "x", Title: "x", Argv: []string{"a"}, Reach: CLIDriven, SatisfiedBy: validProbe()}},
+		{"console-only carrying a probe", DemoStep{ID: "x", Title: "x", Reach: ConsoleOnly, Why: strings.Repeat("w", 50), SatisfiedBy: validProbe()}},
+		{"table row pre-setting ProbeReading", DemoStep{ID: "x", Title: "x", Argv: []string{"a"}, Reach: CLIDriven, ProbeReading: "looks fine to me"}},
 
 		{"console-only carrying Argv", DemoStep{ID: "x", Title: "x", Argv: []string{"a"}, Reach: ConsoleOnly, Why: strings.Repeat("w", 50)}},
 		{"console-only with no Why", DemoStep{ID: "x", Title: "x", Reach: ConsoleOnly}},
@@ -207,4 +226,10 @@ func TestCLIDemoScoreRefusesAMalformedTable(t *testing.T) {
 	if _, err := ScoreCLIDemo("aws"); err == nil {
 		t.Fatal("ScoreCLIDemo returned a proof for a cloud with zero applicable steps — that must be an error, not an empty pass")
 	}
+}
+
+// validProbe is a minimal well-formed probe, used as the control in the mutation cases above so
+// each one isolates the rule it names rather than tripping the missing-SatisfiedBy rule.
+func validProbe() *CeilingProbe {
+	return &CeilingProbe{Kind: ProbeEnvTruthy, Env: []string{"CEILING_PROBE_TEST_CONTROL"}, Expect: "a maintainer sets it"}
 }

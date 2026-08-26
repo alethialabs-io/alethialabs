@@ -1644,6 +1644,26 @@ jobs:
           ALETHIA_E2E_CLI_DEMO: ${{ vars.E2E_CLI_DEMO }}
           ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
+          # ── CEILING SATISFACTION PROBES (t2_cli_ceiling.go). ──
+          #
+          #    A CloudManual step records that no cloud API can reach it — a permanent fact. These
+          #    inputs answer the OTHER question, which changes: has the human actually done it?
+          #    Without them the bar FAILED on every cloud on every run with ZERO CLI gaps, on two
+          #    ceilings that had both already been met (#1773 and #2332 are closed).
+          #
+          #    PRESENCE BOOLEANS, NEVER THE SECRET. `secrets.X != ''` renders the string "true" or
+          #    "false", so the credential never enters a step that has no use for it. The probe
+          #    demands TRUTHY rather than merely present precisely because "false" is what a
+          #    MISSING secret renders — a presence check would read that as satisfied and silently
+          #    retire a real requirement.
+          ALETHIA_E2E_HETZNER_S3_KEYS_PRESENT: ${{ secrets.HETZNER_S3_ACCESS_KEY != '' && secrets.HETZNER_S3_SECRET_KEY != '' }}
+          #    The zone NAME is not a secret, and the probe resolves it against the public internet
+          #    rather than trusting this value — a zone we merely created answers with no NS set.
+          ALETHIA_E2E_ACM_CERT_ZONE_NAME: ${{ vars.E2E_ACM_CERT_ZONE_NAME }}
+          #    Both still OUTSTANDING, and correctly reported so: #1871's publisher binding does not
+          #    exist, and the alibaba CR sweep RECURS after every full bar rather than retiring once.
+          ALETHIA_E2E_GCP_BUDGET_PUBLISHER_GRANTED: ${{ vars.E2E_GCP_BUDGET_PUBLISHER_GRANTED }}
+          ALETHIA_E2E_ALIBABA_CR_SWEPT: ${{ vars.E2E_ALIBABA_CR_SWEPT }}
         run: |
           set -euo pipefail
           if [ -z "${ALETHIA_E2E_CLI_BIN:-}" ]; then
