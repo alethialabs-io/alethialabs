@@ -99,6 +99,20 @@ func runT2ByoIac(t *testing.T, ctx context.Context, cp *ControlPlane, p byoIacPa
 
 	sha := byoIacResolvePinnedSHA(t, ctx, repo, ref)
 	summary.PinnedSHA = sha
+
+	// ── FIXTURE PREFLIGHT. Do the two module directories actually EXIST at that commit? ──
+	//
+	// Every default here resolves to a path in a repo this one does not own: `iac/drift/<provider>`
+	// and `iac/blocked` in the public enterprise-demo. Nothing offline can check them, and on
+	// 2026-08-26 none of them existed — the repo held only README.md, base/ and overlays/. That was
+	// the THIRD reason this leg had never run, after the step-level env key and the unset variable
+	// (#2775, #2792), and it is the only one that would have been paid for with a cloud run.
+	//
+	// Checked HERE, before anything provisions, because the alternative is learning it from a failed
+	// clone twenty minutes and EUR 0.75 into a run whose logs are mostly tofu. Two seconds against a
+	// commit that is already resolved.
+	byoIacRequireFixture(t, ctx, repo, sha, path, "the drift module")
+	byoIacRequireFixture(t, ctx, repo, sha, byoIacBlockedPath(p.provider), "the blocked (negative-case) module")
 	src := byoIacSource{RepoURL: repo, Ref: ref, Path: path, CommitSHA: sha}
 	if err := src.validate(); err != nil {
 		t.Fatalf("byo-iac: %v", err)
@@ -547,4 +561,46 @@ func byoIacDestroyInProcess(ctx context.Context, p byoIacParams, src byoIacSourc
 		Stdout:        out,
 		Stderr:        out,
 	})
+}
+
+// byoIacRequireFixture fails the leg when a module directory is absent from the pinned commit.
+//
+// `git ls-tree` against the ALREADY-RESOLVED sha, never the ref — the same pin every job carries. A
+// check against the moving ref could pass while the jobs cloned a commit without the module, which
+// would make this preflight worse than none: a green check standing in front of a red run.
+//
+// It asks for the directory ENTRY rather than listing the repo, so the answer is one line and the
+// absence is unambiguous. A `git` failure is reported as a failure to CHECK, distinct from a
+// confirmed absence — "could not tell" and "it is not there" send somebody to different places.
+func byoIacRequireFixture(t *testing.T, ctx context.Context, repo, sha, path, what string) {
+	t.Helper()
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	// A bare `git ls-tree <sha> <path>` needs a local clone; against a remote, resolve through
+	// `git archive`-style access is unavailable, so use the same transport ls-remote used and read
+	// the tree via the GitHub contents API when the repo is on github.com. Falling back to a shallow
+	// fetch would cost more than the check saves.
+	api, ok := githubContentsURL(repo, sha, path)
+	if !ok {
+		t.Logf("byo-iac: cannot preflight %s at %q — %s is not a github.com repo, so the run will find out by cloning", what, path, repo)
+		return
+	}
+	out, err := exec.CommandContext(cctx, "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", api).CombinedOutput()
+	code := strings.TrimSpace(string(out))
+	if err != nil {
+		t.Logf("byo-iac: could not preflight %s at %q (%v) — proceeding; the clone is the real check", what, path, err)
+		return
+	}
+	switch code {
+	case "200":
+		t.Logf("byo-iac: %s is present at %s:%s", what, path, sha[:8])
+	case "404":
+		t.Fatalf("byo-iac: %s does not exist at %q in %s@%s.\n"+
+			"The leg cannot run: every job would clone a commit that has no module there. Create the "+
+			"directory upstream (see iac/README.md in that repo for what it must contain), or point this "+
+			"cloud at one with %s / %s.",
+			what, path, repo, sha[:8], envByoIacPath, envByoIacBlockedPath)
+	default:
+		t.Logf("byo-iac: preflight for %s at %q answered HTTP %s — inconclusive, proceeding", what, path, code)
+	}
 }
