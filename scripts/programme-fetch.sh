@@ -110,15 +110,31 @@ for run_id in $(printf '%s' "$runs" | jq -r '.[].id'); do
 	# The provider is the parenthesised matrix value in the job name; the gate reading is the
 	# `Record gate-off proof` step's conclusion. A job missing that step tells us nothing and is
 	# skipped rather than guessed at.
+	# RAW FACTS ONLY. Whether those facts amount to "the gate was reached" is a JUDGEMENT, and this
+	# file deliberately holds none — see the header. The rollup decides, and its self-test can drive
+	# every combination offline, which a shell pipeline against a live API never could.
+	#
+	# `earlier_failure` is the fact that makes the judgement possible. `Record gate-off proof` carries
+	# a bare `if:`, which implies success(), so `skipped` means EITHER "the gate was on and the leg
+	# proceeded" OR "an earlier step failed and we never got here". Those are opposite readings, and
+	# the second would print a confident ✅ for a leg that never started — the exact false-green this
+	# whole change exists to avoid, pointing the other way. The step numbers are already in the
+	# payload, so distinguishing them costs no extra call.
 	obs="$(printf '%s' "$jobs" | jq -c --arg run "$run_id" '
     [ .jobs[]
       | select(.name | test("^Provision .*\\(([a-z]+)\\)$"))
       | { provider: (.name | capture("\\((?<p>[a-z]+)\\)$").p),
-          gate_off: [.steps[]? | select(.name == "Record gate-off proof") | .conclusion],
+          steps: (.steps // []),
           run: $run,
           at: .started_at }
-      | select(.gate_off | length > 0)
-      | { provider, reached: (.gate_off[0] == "skipped"), run, at } ]' 2>/dev/null || echo '[]')"
+      | . as $j
+      | ($j.steps | map(select(.name == "Record gate-off proof")) | first) as $gate
+      | select($gate != null)
+      | { provider: $j.provider,
+          gate_off: $gate.conclusion,
+          earlier_failure: ([ $j.steps[] | select(.number < $gate.number) | select(.conclusion == "failure") ] | length > 0),
+          run: $j.run,
+          at: $j.at } ]' 2>/dev/null || echo '[]')"
 	for provider in $(printf '%s' "$obs" | jq -r '.[].provider'); do
 		case " $seen_providers " in *" $provider "*) continue ;; esac
 		seen_providers="$seen_providers $provider"

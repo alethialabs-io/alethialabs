@@ -189,6 +189,39 @@ export function bundlePath(ref) {
  * @returns {Map<string, object|null>} "cloud/dimension" → the surviving row, or null if voided
  */
 /**
+ * Did this leg actually get PAST its cloud gate?
+ *
+ * The `Record gate-off proof` step runs only when the gate is OFF, so a naive reading is
+ * `conclusion === "skipped"`. That reading is UNSOUND, and the failure mode is the one this whole
+ * mechanism exists to avoid — pointing the other way.
+ *
+ * The step carries a bare `if: steps.gate.outputs.run == 'false'`, and a bare `if:` implies
+ * `success()`. So `skipped` means EITHER:
+ *
+ *   - the gate was ON and the leg proceeded            → reached
+ *   - an EARLIER step failed, so this one never ran     → NOT reached
+ *
+ * The second would print a confident ✅ for a leg that never started. A false green is worse than
+ * the `? unknown` it replaces, because the hedge at least invites somebody to check.
+ *
+ * So an earlier failure disqualifies the reading. A failure AFTER the gate-off step does not — that
+ * leg genuinely did pass its gate and then broke on something else, which is exactly what gcp did on
+ * 2026-08-26 (it died at *Configure GCP credentials*, step 20-odd, long past the gate at step 6).
+ *
+ * A cleaner mechanism exists and the workflow already names it: have the gate-off step STAMP its own
+ * provenance, so a POSITIVE marker is the signal. A marker cannot be produced by a step that never
+ * ran, where an absence can be produced by three different things. That is a workflow change; this
+ * is the sound reading of what the workflow emits today.
+ *
+ * @returns {boolean|null} null when the observation cannot be read at all.
+ */
+export function gateReached(observation) {
+	if (!observation || typeof observation.gate_off !== "string") return null;
+	if (observation.earlier_failure === true) return false;
+	return observation.gate_off === "skipped";
+}
+
+/**
  * Ledger dimension token → the column it belongs to. A RENAMED dimension keeps its old token working
  * here rather than having its rows rewritten: the ledger is append-only, the rows were true when
  * written, and rewriting history to match a corrected label is the more expensive error.
@@ -358,6 +391,7 @@ export function deriveBoard(snapshot) {
 	// Built defensively: a snapshot written before this field existed simply has none, and every
 	// cloud falls back to the declared inventory rather than reading as unobserved-and-therefore-off.
 	const observations = new Map();
+	// (see gateReached below — the snapshot carries raw facts, this file decides what they mean)
 	for (const o of snapshot.gate_observations ?? []) {
 		if (o && typeof o.provider === "string" && !observations.has(o.provider)) {
 			observations.set(o.provider, o);
@@ -418,8 +452,8 @@ export function deriveBoard(snapshot) {
 		 * federated in weeks — a false green in the one region of this file whose whole purpose is
 		 * that its status half can be trusted.
 		 *
-		 * Sourced from the `Record gate-off proof` step, which runs ONLY when the gate is off, so
-		 * `skipped` reads as "the gate was on and the leg proceeded".
+		 * Sourced from the `Record gate-off proof` step, which runs ONLY when the gate is off — see
+		 * `gateReached` for why its conclusion alone is not enough to read.
 		 */
 		observedGate: (cloud) => observations.get(cloud) ?? null,
 		needsHuman: [...open.values()].filter((i) => (i.labels ?? []).includes("needs:human")),
@@ -663,7 +697,10 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		// proves the gate works, whatever the inventory says — and a leg that recorded a gate-off
 		// proof proves it does not, even if the variable is present. `state` stays the declared
 		// reading so nothing downstream changes meaning; `effective` is what a reader should act on.
-		const effective = observed === null ? declared : observed.reached ? "wired" : "unwired";
+		const reached = gateReached(observed);
+		// `null` — an observation this file cannot read — falls back to the declaration rather than
+		// being treated as a negative. Unreadable is not the same as off.
+		const effective = reached === null ? declared : reached ? "wired" : "unwired";
 		return { cloud: c, gate: CLOUD_GATES[c] ?? "(unknown)", state: declared, observed, effective };
 	});
 
@@ -851,8 +888,9 @@ export function render(v) {
 		// An OBSERVED state names the run that observed it, because "a leg got past this gate" is a
 		// checkable claim and "a variable is set somewhere" is not. A declared-only state says so,
 		// so the two are never mistaken for each other.
-		const evidence = g.observed
-			? `${g.observed.reached ? "a leg reached the gate" : "a gate-off proof was recorded"} — run ${g.observed.run}`
+		const reached = g.observed ? gateReached(g.observed) : null;
+		const evidence = reached !== null
+			? `${reached ? "a leg reached the gate" : g.observed.earlier_failure ? "the leg failed BEFORE its gate" : "a gate-off proof was recorded"} — run ${g.observed.run}`
 			: g.state === "unknown"
 				? "not observed, and the inventory was not readable"
 				: "declared only — no recent run observed this leg";
@@ -1564,14 +1602,39 @@ function runSelfTest() {
 	// ── GATE REALITY, OBSERVED. The declaration and the observation come apart, and when they do the
 	//    observation is the one worth acting on. ──
 	{
-		const obs = (provider, reached) => ({ provider, reached, run: "999", at: "2026-08-26T09:00:00Z" });
+		// The RAW facts the snapshot carries. `reached` is not among them — that is this file's
+		// judgement, and gateReached below is what makes it.
+		const obs = (provider, gate_off, earlier_failure = false) => ({
+			provider,
+			gate_off,
+			earlier_failure,
+			run: "999",
+			at: "2026-08-26T09:00:00Z",
+		});
+
+		// ── THE UNSOUND READING, and why `skipped` alone is not enough. ──
+		//
+		// `Record gate-off proof` carries a bare `if:`, which implies success(). So `skipped` means
+		// either "the gate was on and the leg proceeded" OR "an earlier step failed and we never got
+		// here". Reading the second as reached prints a confident ✅ for a leg that never started —
+		// a false green, which is worse than the `? unknown` this whole mechanism replaces.
+		ok("a skipped gate-off step with no earlier failure reads as REACHED", gateReached(obs("aws", "skipped")) === true);
+		ok("...but the SAME conclusion after an earlier failure does NOT", gateReached(obs("aws", "skipped", true)) === false);
+		ok("a gate-off proof that actually RAN means the gate was off", gateReached(obs("aws", "success")) === false);
+		// A failure AFTER the gate-off step is not disqualifying: that leg genuinely passed its gate
+		// and broke on something else. gcp did exactly this on 2026-08-26 — it died at *Configure GCP
+		// credentials*, twenty-odd steps past the gate at step 6.
+		ok("a leg that failed LATER still reached its gate", gateReached(obs("gcp", "skipped", false)) === true);
+		// Unreadable is not the same as off.
+		ok("an observation with no conclusion is unreadable, not negative", gateReached(obs("aws", undefined)) === null);
+		ok("a missing observation is unreadable, not negative", gateReached(null) === null);
 
 		// A leg that got past its gate proves the gate WORKS, whatever the inventory says — and the
 		// inventory here says nothing at all, which is the situation programme.yml is actually in.
 		const observed = derive({
 			...base,
 			ledgerText: hdr,
-			snapshot: snap([], [], [], [], [obs("aws", true)]),
+			snapshot: snap([], [], [], [], [obs("aws", "skipped")]),
 		});
 		const awsGate = observed.cloudGates.find((g) => g.cloud === "aws");
 		ok("an observed leg beats an unreadable inventory", awsGate?.effective === "wired", JSON.stringify(awsGate));
@@ -1587,11 +1650,23 @@ function runSelfTest() {
 		const contradicted = derive({
 			...base,
 			ledgerText: hdr,
-			snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"], [], [obs("aws", false)]),
+			snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"], [], [obs("aws", "success")]),
 		});
 		const contradictedGate = contradicted.cloudGates.find((g) => g.cloud === "aws");
 		ok("an observed gate-off beats a PRESENT variable", contradictedGate?.effective === "unwired", JSON.stringify(contradictedGate));
 		ok("...and the declaration still reads wired, so the disagreement is visible", contradictedGate?.state === "wired", JSON.stringify(contradictedGate));
+
+		// THE CASE THAT WOULD HAVE BEEN A FALSE GREEN. A leg that failed before ever reaching its
+		// gate must NOT be credited, even though its gate-off step reads `skipped` like a healthy one.
+		const failedEarly = derive({
+			...base,
+			ledgerText: hdr,
+			snapshot: snap([], [], [], [], [obs("aws", "skipped", true)]),
+		});
+		const earlyGate = failedEarly.cloudGates.find((g) => g.cloud === "aws");
+		ok("a leg that failed BEFORE its gate is not credited as reaching it", earlyGate?.effective === "unwired", JSON.stringify(earlyGate));
+		ok("...and the rendered evidence says so, rather than blaming a gate-off proof",
+			/failed BEFORE its gate/.test(render(failedEarly)), "evidence line missing");
 
 		// The rendered table must NAME the run, or an observed claim is as unfalsifiable as the
 		// declared one it replaced.
