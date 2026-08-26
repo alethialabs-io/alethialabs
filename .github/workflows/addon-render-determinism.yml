@@ -9,7 +9,7 @@
 # ten upstream Helm repositories, and an upstream outage must not red a PR that has nothing to do
 # with add-ons. The chart versions are PINNED, so the answer can only change when the catalogue
 # changes — which is precisely what the paths filter below keys on.
-name: Add-on render determinism
+name: Add-on chart guards
 
 on:
   pull_request:
@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: addon-render-determinism-${{ github.ref }}
+  group: addon-chart-guards-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -48,3 +48,9 @@ jobs:
           node-version: 22
       - name: Render each catalogued add-on twice and diff
         run: bash scripts/addons/check-render-determinism.sh
+      - name: No add-on ships a credential its upstream chart publishes
+        # Runs even when the determinism check fails: they detect OPPOSITE halves of the same class
+        # — one finds credentials that MOVE, the other credentials that are PUBLIC and therefore
+        # never move — and a run that reports only the first would hide the second.
+        if: always()
+        run: bash scripts/addons/check-published-defaults.sh
