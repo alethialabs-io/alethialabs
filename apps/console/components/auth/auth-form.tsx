@@ -135,7 +135,7 @@ function ProviderButton({
 			{loadingProvider === provider ? (
 				<Loader2 className="size-[17px] animate-spin" />
 			) : (
-				<ProviderIcon provider={provider} size={17} />
+				<ProviderIcon provider={provider} size={17} decorative />
 			)}
 			{lookup(PROVIDER_LABELS, provider)}
 			{/* The pill is aria-hidden and the BUTTON names itself instead — the same
