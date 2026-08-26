@@ -10,7 +10,11 @@ module "cluster" {
   cluster_name = local.ack_name
 
   secrets_encryption_key_id = local.alibaba_secrets_encryption ? alicloud_kms_key.ack_secrets[0].id : ""
-  cluster_version           = var.ack_cluster_version
+  # The FULL version ACK's create API accepts (e.g. "1.35.7-aliyun.1"), resolved from the declared
+  # minor against what this region actually offers. Passing the bare minor is what produced
+  # `400: no ros component exists … version: 1.35` on the first real alibaba apply — see
+  # ack-version.tf for why this is resolved rather than hardcoded.
+  cluster_version = local.ack_resolved_version
 
   vswitch_ids = local.vswitch_ids
 

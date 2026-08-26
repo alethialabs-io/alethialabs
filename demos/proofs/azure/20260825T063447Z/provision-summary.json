@@ -1,0 +1,22 @@
+{
+  "provider": "azure",
+  "region": "germanywestcentral",
+  "cluster": "alethia-nl-32816061207-1",
+  "run_tag": "nightly-32816061207-1",
+  "outcome": "success",
+  "deploy_stage": "argocd-ready",
+  "git_sha": "b315da0",
+  "captured_at": "2026-08-25T063447Z",
+  "resources_added": 29,
+  "resources_destroyed": null,
+  "cluster_live_at_capture": false,
+  "nodes_ready": 0,
+  "argocd_total": 0,
+  "argocd_healthy_synced": 0,
+  "argocd_verdict": "Healthy+Synced (T2-asserted)",
+  "receipt_signed": true,
+  "receipt_plan_sha256": "f2e0f35d5b57",
+  "destroyed": false,
+  "duration_seconds": 1227,
+  "verdict": "azure: ✅ apply(29 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(?)"
+}

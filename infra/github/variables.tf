@@ -63,6 +63,16 @@ variable "required_status_checks" {
     # active. After registration this same workflow is replaced by the versioned CLA signing gate.
     # It always reports for pull requests, including founder/bot and promotion PRs.
     "contribution-legal",
+    # Builds apps/console/Dockerfile (both targets), Dockerfile.community and the other box images
+    # on the PR. This is the check whose ABSENCE let a 2026-07-30 cross-app import ride dev → staging
+    # → main behind ten green checks and then break every production deploy for 26 days: the console
+    # image was only ever built by deploy-console.yml, on a push to main, i.e. after the merge.
+    # ci.yml cannot catch it — it installs the FULL workspace, while the image installs
+    # `--filter console...`, and the bug only exists in the pruned graph.
+    # SAFE to require: the job is unfiltered and self-gates its steps on a paths-filter, so it always
+    # reports (green in seconds when no app path changed) and never wedges an unrelated PR.
+    # One job, not a matrix, so there is exactly one context to name here.
+    "Build console images (no push)",
   ]
 }
 

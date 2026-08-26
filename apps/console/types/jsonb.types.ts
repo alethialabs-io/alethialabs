@@ -858,6 +858,13 @@ export interface DriftResource {
 	address: string;
 	type: string;
 	kind: DriftResourceKind;
+	// The attribute PATHS that differed — never VALUES, same rule as
+	// DriftNormalizedResource.attributes and for the same reason.
+	//
+	// Optional because it is genuinely absent for verdicts reached before the leaf diff
+	// runs (a non-update action, or a change whose sides do not parse as objects). Empty
+	// therefore means "not computed", never "nothing differed".
+	attributes?: string[];
 }
 
 // Why a refresh delta was dismissed as representational rather than counted as drift.

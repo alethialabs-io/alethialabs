@@ -97,7 +97,13 @@ const DIMENSIONS = [
 	{ id: "byo", label: "BYO-IaC", gate: "E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN", gates: [{ name: "E2E_ARGO_APPS_REPO", kind: "repo" }, { name: "E2E_GIT_TOKEN", kind: "repo" }], what: "customer IaC/charts applied, and Alethia services bound to their outputs" },
 	{ id: "day2", label: "day-2", gate: "ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS", gates: [{ name: "ALETHIA_E2E_SOAK", kind: "derived" }, { name: "E2E_DAY2_ACCESS", kind: "repo" }], what: "a real access path beyond the soak — kubeconfig / ArgoCD surface" },
 ];
-/** The composite dimension: a PASS here is evidence for every entry in DIMENSIONS. */
+// The composite dimension. A PASS here is evidence for every dimension the full bar ACTUALLY
+// EXERCISES — which is not the same as every dimension in DIMENSIONS, and the difference is
+// load-bearing. `full` (scripts/e2e/resolve-dimension.sh) exports SOAK + MAX_CONFIG + ALL_ADDONS
+// and nothing else, so a dimension gated on a `repo` variable that is unset green-skips inside the
+// run. See deriveCell's `compositeCredits`: the composite credits a dimension only once every
+// `repo`-kind gate it declares is wired, and refuses on `unknown` so a missing snapshot cannot buy
+// a proof.
 const COMPOSITE = "full";
 
 const LEDGER_VERDICTS = new Set(["PASS", "FAIL", "RETRACTED", "BLOCKED"]);
@@ -244,17 +250,31 @@ const STATE_GLYPH = {
 };
 
 /**
- * Derive one cell. `claims` is the collapsed ledger; `composite` is the surviving `full` claim for
- * this cloud, which is evidence for every dimension.
+ * Derive one cell. `claims` is the collapsed ledger.
+ *
+ * `compositeCredits` decides whether this cloud's surviving `full` claim counts as evidence for
+ * THIS dimension. It is not always true, and assuming it was is what this parameter exists to stop:
+ * the `full` token exports only SOAK + MAX_CONFIG + ALL_ADDONS (scripts/e2e/resolve-dimension.sh),
+ * so a dimension whose gate is a repo variable nobody set GREEN-SKIPS inside the full run. Crediting
+ * it anyway promotes a scenario that never executed to `proven` — the exact green-skip-as-proof
+ * failure that retracted every 2026-07-22 row.
+ *
  * @returns {{state: string, why: string, row: object|null}}
  */
-export function deriveCell({ cloud, dimension, claims, bundleExists }) {
+export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCredits = true }) {
 	const direct = claims.get(`${cloud}/${dimension}`) ?? null;
-	const composite = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
+	const compositeClaim = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
+	const composite = compositeCredits ? compositeClaim : null;
 	// A direct claim beats the composite: it is the more specific statement about this dimension.
 	const row = direct ?? composite;
 	if (row === null) {
-		return { state: STATE.neverRun, why: "no surviving ledger claim", row: null };
+		// Say WHICH branch we are in. "No claim at all" and "a claim we refused to count" are
+		// different facts, and collapsing them hides the refusal that is the whole point here.
+		const why =
+			compositeClaim === null
+				? "no surviving ledger claim"
+				: `no surviving ledger claim — this cloud's \`${COMPOSITE}\` run does NOT count for this dimension, whose layer green-skips until its repo gate is set`;
+		return { state: STATE.neverRun, why, row: null };
 	}
 	const via = direct === null ? ` (via the \`${COMPOSITE}\` composite run)` : "";
 	if (row.verdict === "FAIL") {
@@ -305,6 +325,9 @@ export function deriveBoard(snapshot) {
 	const open = new Map((snapshot.open_issues ?? []).map((i) => [i.number, i]));
 	const closed = new Map((snapshot.closed_issues ?? []).map((i) => [i.number, i]));
 	const names = new Set([...(snapshot.variables ?? []), ...(snapshot.secrets ?? [])]);
+	// A repo with zero variables AND zero secrets is not a state this repo can be in — it needs both
+	// to run anything. So an empty inventory is evidence the fetch failed, not evidence of absence.
+	const gatesKnown = names.size > 0;
 	const derivedAt = snapshot.derived_at ? Date.parse(snapshot.derived_at) : NaN;
 	// The snapshot carries the only timestamp in the mechanism, so "now" is read here and never
 	// rendered — a clock inside a diff-gated region would make every PR stale on arrival.
@@ -323,12 +346,31 @@ export function deriveBoard(snapshot) {
 			return "unknown"; // beyond the fetch limit, or a different repo — never guess "open"
 		},
 		/** @returns {"wired"|"unwired"|"unknown"} */
-		gateState: (name) => (names.has(name) ? "wired" : "unwired"),
+		/**
+		 * @returns {"wired"|"unwired"|"unknown"}
+		 *
+		 * An EMPTY gate inventory means "nobody fetched them", not "none are set" — the same
+		 * epistemic state as an absent snapshot, and it gets the same `unknown`.
+		 *
+		 * This is not hypothetical. `scripts/programme-fetch.sh` swallowed the error from
+		 * `gh variable list` / `gh secret list` and substituted `[]`, and programme.yml grants the
+		 * default token only `contents: write` + `pull-requests: write` — which cannot read repo
+		 * variables or secrets at all. So every refresh produced `variables: [], secrets: []` beside
+		 * 42 correctly-fetched issues, and the board rendered EVERY gate `⛔ unwired` — including
+		 * `HCLOUD_TOKEN`, which a green hetzner run had already proven wired.
+		 *
+		 * Collapsing that to `unwired` is the expensive direction, because `deriveCell`'s
+		 * `compositeCredits` refuses to credit a dimension whose repo gate reads unwired: a full-bar
+		 * PASS would silently not credit `byo` or `day2`, and the fix for one green-skip-as-proof bug
+		 * would have been disarmed by another. `unknown` keeps the refusal honest — it says the gate
+		 * was not measured rather than asserting it is off.
+		 */
+		gateState: (name) => (gatesKnown ? (names.has(name) ? "wired" : "unwired") : "unknown"),
 		needsHuman: [...open.values()].filter((i) => (i.labels ?? []).includes("needs:human")),
 	};
 }
 
-export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, exclusionCounts, snapshot }) {
+export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot }) {
 	const failures = [];
 	const notes = [];
 	const { rows, errors } = parseLedger(ledgerText);
@@ -336,13 +378,25 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	const claims = collapseLedger(rows);
 	const clouds = spine.clouds;
 
+	// The board is read here, before the grid, because the grid needs gate state: whether this
+	// cloud's `full` claim may be credited to a dimension depends on that dimension's repo gates
+	// being wired. It is read once and reused by the gate-reality section further down.
+	const board = deriveBoard(snapshot);
+
 	// ── the proof grid: cloud × dimension ──
 	/** @type {Record<string, Record<string, {state: string, why: string, row: object|null}>>} */
 	const grid = {};
+	// A dimension gated only on `derived` names (or on nothing) is exercised by any full bar — the
+	// resolve step exports those from the dimension itself. A `repo` gate is the one a human sets,
+	// and an unset one means the layer green-skipped. `unknown` (no snapshot) is NOT `wired`, so a
+	// missing snapshot fails closed rather than buying a proof.
+	const compositeCreditsFor = new Map(
+		DIMENSIONS.map((d) => [d.id, d.gates.filter((g) => g.kind === "repo").every((g) => board.gateState(g.name) === "wired")]),
+	);
 	for (const cloud of clouds) {
 		grid[cloud] = {};
 		for (const d of DIMENSIONS) {
-			grid[cloud][d.id] = deriveCell({ cloud, dimension: d.id, claims, bundleExists });
+			grid[cloud][d.id] = deriveCell({ cloud, dimension: d.id, claims, bundleExists, compositeCredits: compositeCreditsFor.get(d.id) });
 		}
 	}
 
@@ -355,6 +409,60 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 			failures.push(
 				`${LEDGER}:${r.line}: dimension ${JSON.stringify(r.dimension)} is not one of ${DIMENSIONS.map((d) => d.id).join(", ")}, ${COMPOSITE} — ` +
 					`a row nobody can render is a proof nobody counts`,
+			);
+		}
+	}
+
+	// ── INTEGRITY: a BLOCKED row whose own bundle says the run SPENT ──
+	//
+	// `BLOCKED` and `FAIL` are defined against one axis and one only. This file says "the harness
+	// refused before spending" and the self-test below puts it plainly: "one spent money and broke,
+	// the other refused before spending". The ledger's own legend says "couldn't run".
+	//
+	// The verdict is typed by a human. `provision-summary.json`, sitting in the SAME committed
+	// bundle, is written by the harness and already records `outcome` and `deploy_stage`. Nothing
+	// compared them, so a row could claim BLOCKED while the file beside it said
+	// `FAILED at stage 'applying'` and every gate stayed green.
+	//
+	// That is not hypothetical, and it is not a one-off. It happened TWICE on 2026-08-25, on two
+	// clouds, in two PRs: hetzner/full (#2575) reached `applying`, ran 237s and created 19 resources;
+	// azure/full (#2587) reached `applying`, ran 1724s and created 55, including a Cosmos DB account
+	// and a NAT gateway. Both were filed BLOCKED.
+	//
+	// The cost is not bookkeeping. `deriveCell` hardcodes "— refused before spending" into every
+	// BLOCKED rationale, so PROGRAMME.md asserts something the bundle contradicts; and because
+	// failing cells rank ABOVE never-run ones, ⛔ files a run that cost money BELOW cells nobody has
+	// ever attempted.
+	//
+	// ONE DIRECTION on purpose. A FAIL row on a run that never spent is a conservative mislabel — it
+	// overstates the damage, ranks the cell for attention, and costs nobody a proof. BLOCKED on a run
+	// that spent understates it, which is the direction that hides money. Only that one is refused.
+	//
+	// It does NOT check `destroyed`. That flag is captured at failure, before teardown runs, so a
+	// false `false` is expected and gating on it would refuse honest rows. Orphan detection is the
+	// sweeper's job, not the ledger's.
+	//
+	// CHECKS THE SURVIVING CLAIM ONLY, not every row. The ledger is append-only, so a corrected row
+	// is still in the file forever — #2585 superseded the hetzner/full BLOCKED row with a RETRACTED
+	// plus a FAIL re-record, and the original is still sitting at line 53. Walking `rows` fired on
+	// that corpse and failed the build on history that had already been fixed properly, which would
+	// have made this rule punish exactly the behaviour it is asking for. `claims` is the collapsed
+	// view, so a voided row is simply not in it.
+	{
+		const SPENDING_STAGE = "applying";
+		for (const r of claims.values()) {
+			if (!r || r.verdict !== "BLOCKED") continue;
+			if (bundleKind(r.bundle) !== "path") continue;
+			const summary = readBundleSummary(path.join(bundlePath(r.bundle), "provision-summary.json"));
+			if (!summary || typeof summary !== "object") continue;
+			if (summary.deploy_stage !== SPENDING_STAGE) continue;
+			const spent = summary.duration_seconds ? ` after ${summary.duration_seconds}s` : "";
+			failures.push(
+				`${LEDGER}:${r.line}: ${r.cloud}/${r.dimension} is recorded BLOCKED, but its own bundle ` +
+					`\`${r.bundle}/provision-summary.json\` says \`deploy_stage: "${summary.deploy_stage}"\`` +
+					`${summary.outcome ? ` and \`outcome: "${summary.outcome}"\`` : ""}${spent}. ` +
+					`BLOCKED means the harness refused BEFORE spending; a run that reached '${SPENDING_STAGE}' spent and broke, which is FAIL. ` +
+					`The ledger is append-only — supersede the row with a RETRACTED naming it, then re-record as FAIL.`,
 			);
 		}
 	}
@@ -423,9 +531,9 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 
 	// The live board half runs HERE, before the tally and the ranking, because it RECLASSIFIES cells
 	// to `stale` — a tally computed above it would report 2 failing / 0 stale, and the ranking would
-	// offer a fix for a cause that is already closed.
+	// offer a fix for a cause that is already closed. `board` itself is built above the grid (it
+	// gates composite crediting); this is the point at which its RECLASSIFICATION runs.
 	// ── the live board half ──
-	const board = deriveBoard(snapshot);
 
 	// Open REDs: the join a reader actually wants — which cell, which issue, is that issue still open.
 	const reds = [];
@@ -862,6 +970,16 @@ function readInputs() {
 		resolverText: need(RESOLVER),
 		unsupportedText: need(UNSUPPORTED_KINDS),
 		bundleExists: (p) => fs.existsSync(p),
+		// Tolerant on purpose: an absent or unreadable summary means "cannot check", which is not the
+		// same as "checked and fine". The rule below simply does not fire, rather than inventing a
+		// verdict from a file it could not read.
+		readBundleSummary: (p) => {
+			try {
+				return JSON.parse(fs.readFileSync(p, "utf8"));
+			} catch {
+				return null;
+			}
+		},
 		exclusionCounts: Object.fromEntries(
 			[
 				["infra/offer-exclusions.yaml", countExclusions("infra/offer-exclusions.yaml")],
@@ -922,6 +1040,93 @@ function runSelfTest() {
 	r = derive({ ...base, bundleExists: () => false, ledgerText: hdr + row("2026-08-01", "aws", "floor", "PASS", "demos/proofs/aws/20260801T000000Z") });
 	ok("a PASS whose bundle is missing from the tree is NOT proven", r.grid.aws.floor.state === "never_run", r.grid.aws.floor.why);
 
+	// ── BLOCKED vs FAIL, reconciled against the bundle's own summary. ──
+	//
+	// Both directions, and the negative cases matter more than the positive one: a rule that fires
+	// on everything is not a check, it is a ban on the verdict.
+	{
+		const summaries = (m) => (p) => m[p] ?? null;
+		const AT = "demos/proofs/hetzner/20260825T130348Z";
+		const spent = { outcome: "failure", deploy_stage: "applying", duration_seconds: 237 };
+
+		// THE REGRESSION, twice over: #2575 and #2587 both typed this.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "BLOCKED", AT),
+			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: spent }),
+		});
+		ok(
+			"a BLOCKED row whose bundle reached 'applying' is an integrity failure",
+			r.failures.some((f) => /recorded BLOCKED, but its own bundle/.test(f)),
+			JSON.stringify(r.failures),
+		);
+		ok("...and the message names the stage it actually reached", r.failures.some((f) => /deploy_stage: "applying"/.test(f)), JSON.stringify(r.failures));
+
+		// A genuine refusal — the harness stopped at a prerequisite gate, before any apply.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "BLOCKED", AT),
+			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: { outcome: "failure", deploy_stage: "prerequisites" } }),
+		});
+		ok("a BLOCKED row that never reached 'applying' is left alone", !r.failures.some((f) => /recorded BLOCKED/.test(f)), JSON.stringify(r.failures));
+
+		// FAIL is the correct verdict for the same summary, so it must raise nothing. Without this
+		// the rule could be keyed on the summary alone and still pass the case above.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "FAIL", AT),
+			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: spent }),
+		});
+		ok("the same bundle recorded FAIL raises nothing", !r.failures.some((f) => /recorded BLOCKED/.test(f)), JSON.stringify(r.failures));
+
+		// ONE DIRECTION: a FAIL on a run that never spent overstates the damage, which costs nobody
+		// a proof. It is deliberately not refused.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "FAIL", AT),
+			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: { outcome: "failure", deploy_stage: "prerequisites" } }),
+		});
+		ok("a FAIL on a run that did not spend is NOT refused", r.failures.length === 0, JSON.stringify(r.failures));
+
+		// No summary in the bundle ⇒ cannot check. That is not the same as checked-and-fine, and it
+		// must not invent a verdict from a file it could not read.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "BLOCKED", AT),
+			readBundleSummary: () => null,
+		});
+		ok("an unreadable summary does not fire the rule", !r.failures.some((f) => /recorded BLOCKED/.test(f)), JSON.stringify(r.failures));
+
+		// THE CASE THE REAL TREE TAUGHT ME. The ledger is append-only, so a row corrected the proper
+		// way is still in the file forever: #2585 superseded hetzner/full with a RETRACTED plus a
+		// FAIL re-record, and the original BLOCKED row is still at line 53. Walking every row fired
+		// on it and failed the build on history that had already been fixed — the rule would have
+		// punished exactly the correction it asks for. It reads the collapsed claim instead.
+		r = derive({
+			...base,
+			ledgerText:
+				hdr +
+				row("2026-08-25", "hetzner", "full", "BLOCKED", AT) +
+				row("2026-08-25", "hetzner", "full", "RETRACTED", AT, "#2575") +
+				row("2026-08-25", "hetzner", "full", "FAIL", AT, "#2568"),
+			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: spent }),
+		});
+		ok(
+			"a BLOCKED row already superseded by a RETRACTED + re-record does NOT fire",
+			!r.failures.some((f) => /recorded BLOCKED/.test(f)),
+			JSON.stringify(r.failures),
+		);
+		ok("...and the re-recorded FAIL is the surviving claim", r.grid.hetzner.maxconfig.state === "failing", r.grid.hetzner.maxconfig.why);
+
+		// A run-tag bundle has no committed summary to read, so the rule cannot apply to it at all.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "BLOCKED", "nightly-32850686520"),
+			readBundleSummary: summaries({ "nightly-32850686520/provision-summary.json": spent }),
+		});
+		ok("a run-tag bundle is not reconciled", !r.failures.some((f) => /recorded BLOCKED/.test(f)), JSON.stringify(r.failures));
+	}
+
 	// RETRACTED supersession — voids the claim rather than replacing it.
 	r = derive({
 		...base,
@@ -945,10 +1150,18 @@ function runSelfTest() {
 	ok("FAIL renders as failing", r.grid.aws.floor.state === "failing");
 	ok("BLOCKED is kept distinct from failing", r.grid.hetzner.floor.state === "blocked", r.grid.hetzner.floor.why);
 
-	// The composite: a `full` PASS is evidence for every dimension.
+	// The composite: a `full` PASS is evidence for every dimension the full bar ACTUALLY EXERCISES.
+	// `base` carries no snapshot, so every gate reads `unknown` — which is deliberately NOT `wired`.
 	r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full") });
-	ok("a `full` PASS proves every dimension", DIMENSIONS.every((d) => r.grid.aws[d.id].state === "proven"), JSON.stringify(Object.fromEntries(DIMENSIONS.map((d) => [d.id, r.grid.aws[d.id].state]))));
+	const derivedOnly = DIMENSIONS.filter((d) => d.gates.every((g) => g.kind !== "repo")).map((d) => d.id);
+	const repoGated = DIMENSIONS.filter((d) => d.gates.some((g) => g.kind === "repo")).map((d) => d.id);
+	ok("a `full` PASS proves every dimension it exercises", derivedOnly.every((id) => r.grid.aws[id].state === "proven"), JSON.stringify(derivedOnly.map((id) => [id, r.grid.aws[id].state])));
 	ok("...and says it came via the composite", /composite/.test(r.grid.aws.maxconfig.why));
+	// The regression this pins: `full` exports SOAK + MAX_CONFIG + ALL_ADDONS and nothing else, so a
+	// repo-gated layer green-skips inside the run. Crediting it would manufacture a proof for a
+	// scenario that never executed — and there is more than one such dimension, so assert the set.
+	ok("a `full` PASS does NOT prove a repo-gated dimension whose gate is unset", repoGated.length > 0 && repoGated.every((id) => r.grid.aws[id].state === "never_run"), JSON.stringify(repoGated.map((id) => [id, r.grid.aws[id].state])));
+	ok("...and the refusal is distinguishable from having no claim at all", repoGated.every((id) => /does NOT count for this dimension/.test(r.grid.aws[id].why)), r.grid.aws[repoGated[0]].why);
 
 	// A direct claim beats the composite — the more specific statement wins.
 	r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full") + row("2026-08-02", "aws", "addons", "FAIL", "demos/proofs/aws/y", "#1") });
@@ -1098,10 +1311,45 @@ function runSelfTest() {
 	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: snap([9999], [8888]) });
 	ok("an issue in neither list is unknown, never assumed open", r.reds[0]?.issueState === "unknown", JSON.stringify(r.reds[0]));
 
+	// Composite crediting, the OTHER half: once a repo-gated dimension's gates are wired, its layer
+	// really does run inside a full bar, so the composite must credit it again. Without this the
+	// refusal above could be a permanent "no" — a guard that never says yes is not measuring anything.
+	{
+		const fullRow = row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full");
+		const byoGates = DIMENSIONS.find((d) => d.id === "byo").gates.filter((g) => g.kind === "repo").map((g) => g.name);
+		// Every repo gate the `byo` dimension declares, wired — named from DIMENSIONS rather than
+		// retyped, so renaming a gate cannot leave this test passing against a name nothing reads.
+		const wired = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], byoGates, []) });
+		ok("with its repo gates wired, the composite DOES credit the dimension", wired.grid.aws.byo.state === "proven", wired.grid.aws.byo.why);
+		// And it must be ALL of them, not any: a half-wired gate set still green-skips.
+		const half = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], byoGates.slice(0, 1), []) });
+		ok("a half-wired gate set does not credit the composite", byoGates.length > 1 && half.grid.aws.byo.state === "never_run", half.grid.aws.byo.why);
+	}
+
 	// Cloud gates: wired vs unwired, from NAMES only.
 	r = derive({ ...base, ledgerText: hdr, snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"], []) });
 	ok("a cloud gate present in the snapshot reads wired", r.cloudGates.find((g) => g.cloud === "aws")?.state === "wired");
 	ok("a cloud gate absent from the snapshot reads unwired", r.cloudGates.find((g) => g.cloud === "hetzner")?.state === "unwired");
+
+	// An EMPTY gate inventory is a FAILED FETCH, not an empty repo. The real snapshot shipped
+	// `variables: [], secrets: []` beside 42 correctly-fetched issues, because programme.yml's token
+	// cannot list either — and every gate rendered `⛔ unwired`, including ones a green run had
+	// proven wired. Collapsing that to `unwired` also disarms deriveCell's compositeCredits, which
+	// refuses to credit a dimension whose repo gate reads unwired: a full-bar PASS would silently
+	// not credit `byo`/`day2`. So empty must read `unknown`, exactly like an absent snapshot.
+	{
+		const empty = derive({ ...base, ledgerText: hdr, snapshot: snap([], [], [], []) });
+		ok("an EMPTY gate inventory reads unknown, never unwired", empty.cloudGates.every((g) => g.state === "unknown"), JSON.stringify(empty.cloudGates.map((g) => [g.cloud, g.state])));
+		// ...and it must not be vacuous: with ONE name present the inventory is trusted again, so
+		// this cannot degrade into "every gate is always unknown".
+		const oneName = derive({ ...base, ledgerText: hdr, snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"], []) });
+		ok("...but one known name makes the inventory trusted again", oneName.cloudGates.find((g) => g.cloud === "aws")?.state === "wired" && oneName.cloudGates.find((g) => g.cloud === "hetzner")?.state === "unwired");
+		// The composite must not credit a repo-gated dimension on an unknown gate either — unknown
+		// is not `wired`, and fail-closed is the whole point.
+		const fullRow = row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full");
+		const credited = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], [], []) });
+		ok("an unknown gate does not let the composite credit a repo-gated dimension", credited.grid.aws.byo.state === "never_run", credited.grid.aws.byo.why);
+	}
 
 	// Dimension gates: a DERIVED gate is never "unwired" — there is no variable to set. Reporting one
 	// as unwired sends somebody hunting for a repo variable that cannot exist.

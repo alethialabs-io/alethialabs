@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { SiteShell } from "@repo/brand/site-shell";
+import { Button } from "@repo/ui/button";
+import { Card } from "@repo/ui/card";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { BRAND_STATUS } from "@repo/brand/status";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -12,12 +16,14 @@ export const metadata: Metadata = {
 		"The Alethia Labs identity, mark construction, typography, color, spacing, and interface principles.",
 };
 
+// Read from the ramp, never copied. A brand reference that hard-codes its own
+// hexes is the one page guaranteed not to notice when a token moves.
 const GRAYS = [
-	["Paper", "#FAFAFA"],
-	["Mist", "#EDEDED"],
-	["Graphite", "#737373"],
-	["Carbon", "#2A2A2A"],
-	["Ink", "#0A0A0A"],
+	["Paper", "var(--gray-0)"],
+	["Mist", "var(--gray-100)"],
+	["Graphite", "var(--gray-600)"],
+	["Carbon", "var(--gray-900)"],
+	["Ink", "var(--gray-1050)"],
 ] as const;
 
 const TYPE_SAMPLES = [
@@ -42,11 +48,10 @@ const TYPE_SAMPLES = [
 ] as const;
 
 /** Public, review-safe presentation of Alethia's interim identity system. */
-export default function BrandPage() {
+export default async function BrandPage() {
 	return (
-		<div className="min-h-screen bg-background text-foreground">
-			<BrandNav />
-			<main>
+		<SiteShell>
+			<>
 				<section className="relative overflow-hidden border-b border-border">
 					<div className="ah-grid-bg" aria-hidden="true" />
 					<div className="relative mx-auto max-w-6xl px-6 py-28 sm:py-36">
@@ -122,8 +127,8 @@ export default function BrandPage() {
 							</div>
 						</LogoField>
 						<LogoField label="App icon · dark-only tile">
-							<div className="grid size-32 place-items-center rounded-[28px] bg-[#1A1A1A]">
-								<AlethiaLogo className="size-20 text-[#FAFAFA]" />
+							<div className="grid size-32 place-items-center rounded-[28px] bg-[var(--gray-1000)]">
+								<AlethiaLogo className="size-20 text-[var(--gray-0)]" />
 							</div>
 						</LogoField>
 					</div>
@@ -157,8 +162,14 @@ export default function BrandPage() {
 					</div>
 				</BrandSection>
 
-				<BrandSection eyebrow="04 · Color" title="Neutral by default. Blue once.">
-					<div className="grid grid-cols-2 border-t border-l border-border sm:grid-cols-5">
+				<BrandSection eyebrow="04 · Color" title="No colour. Structure instead.">
+					<p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+						A sixteen-step neutral ramp, zero chroma, carries the entire system.
+						There is no accent and no palette. Emphasis comes from weight, fill and
+						hairline structure; state comes from a dot&rsquo;s fill and shape plus a
+						mono label, never from hue.
+					</p>
+					<div className="mt-10 grid grid-cols-2 border-t border-l border-border sm:grid-cols-5">
 						{GRAYS.map(([name, color]) => (
 							<div key={name} className="border-r border-b border-border">
 								<div className="aspect-square" style={{ background: color }} />
@@ -171,16 +182,19 @@ export default function BrandPage() {
 							</div>
 						))}
 					</div>
-					<div className="mt-6 grid border border-border md:grid-cols-[180px_1fr]">
-						<div className="min-h-36 bg-[#2563EB]" />
-						<div className="p-6 sm:p-8">
-							<p className="vx-eyebrow">Conversion blue · #2563EB</p>
-							<p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-								Reserved for one primary conversion action per view. It is not a
-								brand-mark color, status color, chart palette, or decorative accent.
-								Third-party provider marks may retain their own colors.
-							</p>
-						</div>
+					<div className="mt-6 border border-border p-6 sm:p-8">
+						<p className="vx-eyebrow">The one exception</p>
+						<p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+							Third-party provider and integration marks keep their own colours —
+							AWS, GCP, Azure, GitHub. They are someone else&rsquo;s identity, not
+							our palette, and recolouring them would misrepresent them.
+						</p>
+						<p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
+							A single blue used to sit here, reserved for one conversion button. It
+							was retired: it was the only thing on the site that broke the rule
+							everything else is built on, and on a dark surface it read as a foreign
+							element rather than as emphasis.
+						</p>
 					</div>
 				</BrandSection>
 
@@ -229,45 +243,111 @@ export default function BrandPage() {
 						</VoiceCard>
 					</div>
 				</BrandSection>
-			</main>
-			<footer className="border-t border-border">
-				<div className="mx-auto flex max-w-6xl flex-col gap-4 px-6 py-10 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-					<p>© 2026 Alethia Labs · Interim brand reference</p>
-					<div className="flex gap-5">
-						<Link href="/privacy" className="hover:text-foreground">
-							Privacy
-						</Link>
-						<Link href="/cookies" className="hover:text-foreground">
-							Cookies
-						</Link>
-						<Link href="/contact/sales" className="hover:text-foreground">
-							Contact
-						</Link>
-					</div>
-				</div>
-			</footer>
-		</div>
-	);
-}
 
-/** Minimal page navigation that keeps the brand specimen self-contained. */
-function BrandNav() {
-	return (
-		<header className="sticky top-0 z-40 border-b border-border bg-background/90 backdrop-blur-md">
-			<div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-				<Link href="/" aria-label="Alethia Labs home">
-					<AlethiaLogo withText className="h-7 w-auto" />
-				</Link>
-				<nav className="flex items-center gap-6 text-xs text-muted-foreground">
-					<span className="hidden font-mono uppercase tracking-[0.14em] sm:inline">
-						Brand reference
-					</span>
-					<Link href="/contact/sales" className="text-foreground hover:opacity-70">
-						Contact
-					</Link>
-				</nav>
-			</div>
-		</header>
+				<BrandSection
+					eyebrow="07 · Motion"
+					title="The mark, performed."
+				>
+					<p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+						One primitive carries every interaction in the system. Four hairline
+						corner marks rest just outside an element, then reach in and clamp
+						onto it — the <span className="font-mono">[ · ]</span> as a verb.
+						Because it is geometry and not typography, the same rule fits a
+						button, a card, a field, a tab, or a whole section. Hover anything
+						below.
+					</p>
+
+					<div className="mt-10 flex flex-wrap items-center gap-6">
+						<Button size="lg">Start free →</Button>
+						<Button size="lg" variant="outline">
+							Read the docs →
+						</Button>
+						<Button size="sm" variant="secondary">
+							Secondary
+						</Button>
+						<Button size="xs" variant="outline">
+							Extra small
+						</Button>
+						<span className="vx-clamp vx-clamp--tight inline-flex items-center px-3 py-1.5 text-xs">
+							Nav item
+						</span>
+						<span
+							className="vx-clamp vx-clamp--tight vx-clamp--held inline-flex items-center px-3 py-1.5 text-xs"
+							title="Held — the page you are on"
+						>
+							Nav item · held
+						</span>
+						<StatusBadge status="live" label="Live" />
+					</div>
+
+					<div className="mt-10 grid gap-4 sm:grid-cols-3">
+						<Card interactive className="p-5">
+							<p className="vx-eyebrow">Card</p>
+							<p className="mt-2 text-sm text-muted-foreground">
+								Interactive cards clamp. Static ones do not — a surface that
+								reacts to the pointer promises something it cannot do.
+							</p>
+						</Card>
+						<Card className="p-5">
+							<p className="vx-eyebrow">Card · static</p>
+							<p className="mt-2 text-sm text-muted-foreground">
+								No clamp, no hover. This is the default.
+							</p>
+						</Card>
+						<label className="vx-clamp vx-clamp--tight flex items-center rounded-sm border border-input bg-transparent px-3 py-2">
+							<input
+								className="w-full bg-transparent text-sm outline-none"
+								placeholder="A field clamps on focus"
+							/>
+						</label>
+					</div>
+
+					<dl className="mt-12 grid gap-px overflow-hidden rounded border border-border bg-border sm:grid-cols-4">
+						<Metric term="Reach" value="scale 1.06 → 1" />
+						<Metric term="Clamp" value="120ms · --ease" />
+						<Metric term="Settle" value="260ms · --ease-out" />
+						<Metric term="Press" value="0.994 · --ease-press" />
+					</dl>
+
+					<div className="mt-12 grid gap-8 sm:grid-cols-2">
+						<div>
+							<p className="vx-eyebrow">Clamps</p>
+							<p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+								Button · link and nav item · interactive card · tab · table row ·
+								checkbox · switch · accordion section · interactive badge · live
+								status. Hover, focus, or the current route drives it — an active
+								tab, an open panel and the page you are on hold the clamp with no
+								extra class, because the CSS reads{" "}
+								<span className="font-mono">aria-current</span>,{" "}
+								<span className="font-mono">data-active</span> and{" "}
+								<span className="font-mono">data-panel-open</span> directly.
+							</p>
+						</div>
+						<div>
+							<p className="vx-eyebrow">Deliberately still</p>
+							<p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+								A static card or badge is a label, not a control — a surface that
+								reacts to the pointer promises an affordance it does not have.
+								Dialogs, sheets and popovers keep their own entrance; clamping a
+								panel that is already animating in is decoration twice. Disabled
+								controls are not subjects under examination. And a text input
+								clamps through its wrapping field, because a replaced element
+								renders no pseudo-element at all.
+							</p>
+						</div>
+					</div>
+
+					<p className="mt-8 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+						Only <span className="font-mono">scale</span> and{" "}
+						<span className="font-mono">opacity</span> animate, so the device is
+						compositor-only and never triggers layout. Under{" "}
+						<span className="font-mono">prefers-reduced-motion</span> the marks
+						still appear — they simply arrive already clamped, because the
+						affordance is not the animation.
+					</p>
+				</BrandSection>
+			</>
+		</SiteShell>
 	);
 }
 
@@ -319,7 +399,7 @@ function LogoField({
 	return (
 		<div
 			className={`relative grid min-h-72 place-items-center border border-border p-10 ${
-				dark ? "bg-[#0A0A0A]" : "bg-[#FAFAFA]"
+				dark ? "bg-[var(--gray-1050)]" : "bg-[var(--gray-0)]"
 			}`}
 		>
 			<p

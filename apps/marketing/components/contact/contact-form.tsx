@@ -21,7 +21,7 @@ import {
 import { CountrySelect } from "@repo/ui/country-select";
 import { PhoneInput } from "@repo/ui/phone-input";
 import { submitContactLead } from "@/app/server/actions/contact";
-import { disp, Icon, mono } from "@/components/landing/home/primitives";
+import { disp, Icon, mono } from "@repo/brand/site-primitives";
 import {
 	contactLeadSchema,
 	DEFAULT_COUNTRY,

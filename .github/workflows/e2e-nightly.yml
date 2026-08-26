@@ -80,8 +80,20 @@ on:
           - alibaba
         default: hetzner
       region:
-        description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, gcp europe-west3, azure germanywestcentral, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1."
+        description: "Cloud region/location override (blank ⇒ the per-provider cheap default: hetzner nbg1, aws us-east-1, gcp europe-west3, azure westeurope, alibaba eu-central-1). hetzner: nbg1/fsn1/hel1."
         type: string
+        default: ""
+      dimension:
+        description: "Which DIMENSION to prove. Blank keeps the old floor/full_bar behaviour. The four middle values (maxconfig/addons/byo/day2) were previously reachable ONLY from a laptop — a boolean cannot express them — so a cell whose cause had been fixed could sit stale with no way to re-drive it from CI. Costs scale with the dimension, not with this input: addons and maxconfig are heavy, byo and day2 are near-floor."
+        type: choice
+        options:
+          - ""
+          - floor
+          - maxconfig
+          - addons
+          - byo
+          - day2
+          - full
         default: ""
       full_bar:
         description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws; gcp/azure/alibaba/hetzner are unpriced, so dispatch those one at a time and watch them."
@@ -327,7 +339,7 @@ jobs:
             hetzner) DEFAULT_REGION="nbg1" ;;
             aws)     DEFAULT_REGION="us-east-1" ;;
             gcp)     DEFAULT_REGION="europe-west3" ;;
-            azure)   DEFAULT_REGION="germanywestcentral" ;;
+            azure)   DEFAULT_REGION="westeurope" ;;
             alibaba) DEFAULT_REGION="eu-central-1" ;;
             *) echo "::error::unknown provider '$PROVIDER'"; exit 1 ;;
           esac
@@ -350,9 +362,10 @@ jobs:
       #    When on, export ALETHIA_E2E_MAX_CONFIG=1 + ALETHIA_E2E_ALL_ADDONS=1 (the T2 harness reads
       #    these from the process env — $GITHUB_ENV carries them into the go-test step) so the run
       #    proves all 11 resource kinds land in tofu state AND all 18 marketplace add-ons converge.
-      #    E2E_FULL_BAR gates the raised cost ceiling below; E2E_DIMENSION labels the rollup's ledger
-      #    row and its issue titles (full vs floor). $GITHUB_ENV is per-JOB, so neither reaches the
-      #    rollup job — it calls the SAME resolve-dimension.sh rather than retyping the cron (#1755).
+      #    E2E_DIMENSION labels the rollup's ledger row and its issue titles; E2E_HEAVY_SHAPE gates
+      #    BOTH the node pool below and the raised aws cost ceiling, because those two must price the
+      #    same cluster. $GITHUB_ENV is per-JOB, so neither reaches the rollup job — it calls the SAME
+      #    resolve-dimension.sh rather than retyping the cron (#1755).
       #
       #    This MUST resolve BEFORE the cluster shape is chosen: the two are coupled, because the
       #    full-bar surface needs a bigger node pool than the cheap floor (see the next step). It used
@@ -363,6 +376,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
+          DISPATCH_DIMENSION: ${{ github.event.inputs.dimension }}
           SCHEDULE: ${{ github.event.schedule }}
           # The soak window a maintainer chose, forwarded so fidelity_env can honour it on the
           # dimensions the soak belongs to. `vars.` is not automatically in a step's environment, so
@@ -374,11 +388,21 @@ jobs:
           # ledger all read the answer from scripts/e2e/resolve-dimension.sh — which owns the
           # `17 5 * * 0` cron string and is self-tested — instead of each retyping the comparison.
           dim="$(bash scripts/e2e/resolve-dimension.sh)"
-          full="false"
-          if [ "$dim" = "full" ]; then full="true"; fi
+          # E2E_HEAVY_SHAPE is NOT `full` by another name, and the difference is the bug it fixes.
+          # The node shape and the cost ceiling both used to key on E2E_FULL_BAR, which is true for
+          # exactly ONE of the six dimensions — so `maxconfig` and `addons` provisioned the cheapest
+          # floor pool and then asserted a surface that cannot fit on it. Derived by the same script
+          # that owns the fidelity, from the fidelity, so the two cannot disagree (#1755).
+          heavy="$(bash scripts/e2e/resolve-dimension.sh --heavy "$dim")"
+          #
+          # E2E_FULL_BAR IS GONE. It was `[ "$dim" = "full" ]` and, once the shape and the ceiling
+          # moved to E2E_HEAVY_SHAPE, it had zero readers left in the repo — set every run, read by
+          # nothing. A variable in that state is not harmless: the next thing that needs "is this a
+          # big run?" reaches for the name that sounds right and silently gets `full`-only again,
+          # which is precisely how this bug happened. Removed rather than kept for symmetry.
           {
-            echo "E2E_FULL_BAR=$full"
             echo "E2E_DIMENSION=$dim"
+            echo "E2E_HEAVY_SHAPE=$heavy"
           } >> "$GITHUB_ENV"
 
           # The dimension's FIDELITY comes from the same deriver, never from an inline list here
@@ -391,14 +415,34 @@ jobs:
           #
           # A step-level `env:` key WINS over $GITHUB_ENV, which is why the soak line had to be
           # DELETED from the go-test step rather than merely changed here.
-          bash scripts/e2e/resolve-dimension.sh --fidelity "$dim" >> "$GITHUB_ENV"
-          echo "::notice::dimension=$dim fidelity: $(bash scripts/e2e/resolve-dimension.sh --fidelity "$dim" | tr '\n' ' ')"
+          fidelity="$(bash scripts/e2e/resolve-dimension.sh --fidelity "$dim")"
+          printf '%s\n' "$fidelity" >> "$GITHUB_ENV"
+          echo "::notice::dimension=$dim fidelity: $(printf '%s' "$fidelity" | tr '\n' ' ')"
 
-          if [ "$full" = "true" ]; then
-            echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (18) + the day-2 soak on this run (raised cost ceiling on aws; UNPRICED elsewhere)."
-          else
-            echo "::notice::green-floor dimension — provision + cluster_ready + ArgoCD Healthy+Synced (+ A0.6 repos when wired). NO day-2 soak: that is the day2/full dimension (#2356)."
-          fi
+          # The notice names the dimension that actually resolved. The old `else` branch fired for
+          # every non-`full` token, so a `dimension: day2` dispatch — which exports
+          # ALETHIA_E2E_SOAK=10m — announced "NO day-2 soak", and a `maxconfig` one called itself a
+          # green floor. In a workflow whose whole point is that every dimension names itself, the
+          # operator-facing line was the last place it did not.
+          case "$dim" in
+            full)
+              echo "::notice::FULL-BAR dimension ENABLED — max-config (11 kinds) + all-add-ons (18) + the day-2 soak on this run (heavy node shape; raised cost ceiling on aws; UNPRICED elsewhere)." ;;
+            maxconfig)
+              echo "::notice::MAX-CONFIG dimension — the 11-kind surface on the heavy node shape. No add-on sweep, no day-2 soak." ;;
+            addons)
+              echo "::notice::ADD-ONS dimension — the 18-chart sweep to Healthy+Synced on the heavy node shape. No max-config surface, no day-2 soak." ;;
+            day2)
+              # Read back out of $fidelity, NOT out of the environment: the line above wrote
+              # ALETHIA_E2E_SOAK to $GITHUB_ENV, which does not take effect until the NEXT step, so
+              # "${ALETHIA_E2E_SOAK}" is empty right here and the window would always print as the
+              # default even when a caller widened it.
+              soak="$(printf '%s\n' "$fidelity" | sed -n 's/^ALETHIA_E2E_SOAK=//p')"
+              echo "::notice::DAY-2 dimension — floor shape, then the A0.3 soak for ${soak:-10m} with its FATAL drift check." ;;
+            byo)
+              echo "::notice::BYO dimension — floor shape plus the A0.6 bring-your-own apps-repo/chart proof, REQUIRED on this dimension (it reds rather than skipping when the apps-repo env is unset)." ;;
+            *)
+              echo "::notice::green-floor dimension — provision + cluster_ready + ArgoCD Healthy+Synced (+ A0.6 repos when wired). NO day-2 soak: that is the day2/full dimension (#2356)." ;;
+          esac
 
       # ── Cheapest-shape override (BYOC F4). The managed-cloud templates default to LARGE nodes
       #    (AWS m5a.4xlarge×2 SPOT ≈ $0.30/run); the harness cost guard HARD-FAILS a managed run
@@ -447,7 +491,7 @@ jobs:
           # FULL-BAR: swap the floor shape for the provider's heavy profile. The fixture PATH is the
           # one the FT-5 guard names in its own failure message, so guard and workflow cannot disagree
           # about which file is used. The floor NUMBERS are the guard's, not this file's.
-          if [ "${E2E_FULL_BAR:-false}" = "true" ]; then
+          if [ "${E2E_HEAVY_SHAPE:-false}" = "true" ]; then
             HEAVY="test/e2e/fixtures/cluster_json.heavy.${PROVIDER}.json"
             if [ ! -f "$HEAVY" ]; then
               # Documented exclusion, not a silent gap (cloud-parity rule): a cloud without a heavy
@@ -457,7 +501,7 @@ jobs:
               exit 1
             fi
             SHAPE="$(jq -c . "$HEAVY")"
-            echo "::notice::T2 FULL-BAR heavy shape for $PROVIDER (from $HEAVY): $SHAPE"
+            echo "::notice::T2 heavy shape for $PROVIDER on dimension '${E2E_DIMENSION:-?}' (from $HEAVY): $SHAPE"
           elif printf '%s' "${E2E_FABRIC_DEMO:-}" | grep -qiE '^(1|true|yes|on)$'; then
             # FABRIC DEMO (#845): the other heavy scenario, and until #2295-era it was the only one
             # with no shape override — so it ran on the cheapest floor shape above. On gcp that is ONE
@@ -1224,7 +1268,27 @@ jobs:
           #    aws-only and that is a real ceiling: GCP and Azure issue TLS in-cluster via
           #    cert-manager (#1858 deleted GCP's managed-certificate resource), so there is no
           #    cloud-side certificate for this to assert. UNSET ⇒ empty ⇒ a clean skip.
-          ALETHIA_E2E_ACM_CERT: ${{ vars.E2E_ACM_CERT }}
+          #    ⚠️ WITHHELD ON A MAX-CONFIG DIMENSION, or aws's two heaviest cells cannot run AT ALL.
+          #
+          #    `t2_acm_cert.go:161` refuses LOUDLY when this and ALETHIA_E2E_MAX_CONFIG are both set,
+          #    and it is right to: this scenario brings a zone id, which makes `cloud_dns_enabled`
+          #    false, so no `aws_route53_zone` is created and the max-config `dns` kind reports
+          #    Missing. Its message says "run the certificate proof on a floor night; the full bar
+          #    proves the native-zone path" — but there was no mechanism to DO that. `E2E_ACM_CERT`
+          #    is a repo VARIABLE, so it is set on every run, and `full` sets MAX_CONFIG by
+          #    definition. Every aws full/maxconfig dispatch therefore died at that gate in 0.00s
+          #    having provisioned nothing (run 32878327250), permanently, for as long as the
+          #    variable exists. A correct refusal became an unreachable dimension.
+          #
+          #    The exclusion RULE still lives in exactly one place (t2_acm_cert.go); this reads the
+          #    DERIVED value resolve-dimension.sh already wrote to $GITHUB_ENV, so there is no
+          #    second list of which dimensions are heavy.
+          #
+          #    The condition is INVERTED on purpose. GitHub's `A && B || C` is not a ternary: when
+          #    the true-branch value is the empty string it is falsy, so `max_config && '' || vars.X`
+          #    falls through and yields X — the exact opposite of what it reads as. Testing for the
+          #    dimension that SHOULD carry the variable keeps the truthy value on the `&&` side.
+          ALETHIA_E2E_ACM_CERT: ${{ env.ALETHIA_E2E_MAX_CONFIG != '1' && vars.E2E_ACM_CERT || '' }}
           ALETHIA_E2E_ACM_CERT_ZONE_ID: ${{ vars.E2E_ACM_CERT_ZONE_ID }}
           ALETHIA_E2E_ACM_CERT_ZONE_NAME: ${{ vars.E2E_ACM_CERT_ZONE_NAME }}
           ALETHIA_E2E_ACM_CERT_TIMEOUT: ${{ vars.E2E_ACM_CERT_TIMEOUT }}
@@ -1261,11 +1325,16 @@ jobs:
           #    cheap run ≈ $150–200/mo) catches a runaway shape. Enabling the ceiling REQUIRES the
           #    secret — without it the guard fail-closes (a ceiling with no estimate refuses). For
           #    non-aws providers the ceiling is unset ⇒ no cost gate (their waves add their own).
-          #    On a FULL-BAR run (P2-F, #1068) the 11-kind + 19-add-on surface bills more (extra
-          #    managed resources + add-on scale-up), so the ceiling is raised to the full-bar var
-          #    (default $600/mo) — E2E_FULL_BAR was set to `true` in $GITHUB_ENV by the resolve step. ──
+          #    On a HEAVY-SHAPE run (P2-F, #1068) the 11-kind / 18-add-on surface bills more (extra
+          #    managed resources + add-on scale-up, on a bigger node pool), so the ceiling is raised
+          #    to the full-bar var (default $600/mo).
+          #
+          #    KEYED ON E2E_HEAVY_SHAPE, NOT E2E_FULL_BAR. The ceiling has to follow the SHAPE it is
+          #    pricing: `maxconfig` and `addons` now provision the heavy pool too, and pricing them
+          #    against the $300 floor ceiling would hard-fail the pre-apply cost guard on aws before
+          #    the run started. Same expression as the node-shape override above, on purpose. ──
           INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
-          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (env.E2E_FULL_BAR == 'true' && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || '' }}
+          ALETHIA_COST_CEILING_MONTHLY_USD: ${{ matrix.provider == 'aws' && (env.E2E_HEAVY_SHAPE == 'true' && (vars.E2E_AWS_COST_CEILING_FULL_USD || '600') || (vars.E2E_AWS_COST_CEILING_USD || '300')) || '' }}
           # The two outer rungs, passed in so t2budget can verify them against what this leg needs.
           # They are the SAME expressions as the step/job timeout-minutes above; if you change one,
           # change both — and t2budget will tell you if you got it wrong, on the next run.
@@ -1614,6 +1683,7 @@ jobs:
           # re-resolved here from the SAME script rather than a second copy of the cron comparison.
           EVENT: ${{ github.event_name }}
           DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
+          DISPATCH_DIMENSION: ${{ github.event.inputs.dimension }}
           SCHEDULE: ${{ github.event.schedule }}
         run: |
           set -euo pipefail

@@ -171,6 +171,19 @@ func hcloudGetVolume(ctx context.Context, token, volumeID string) (*hcloudVolume
 	return parseHcloudVolumeResponse(body)
 }
 
+// SoakDriftResource is one resource the drift posture counted as drifted, as recorded in
+// the committed soak summary. It mirrors drift.ResourceDrift's public shape; it is declared
+// here rather than imported so the e2e module keeps no dependency on packages/core just to
+// name three strings.
+type SoakDriftResource struct {
+	Address string `json:"address"`
+	Kind    string `json:"kind"`
+	// Attributes are the leaf paths that differed, sorted. EMPTY IS NOT "no attributes
+	// differed" — the emitter omits them when the verdict was reached before the leaves
+	// could be computed, so a reader must not take absence for a clean diff.
+	Attributes []string `json:"attributes,omitempty"`
+}
+
 // SoakSummary is the machine-readable result of the day-2 soak window (BYOC A0.3), written
 // to ALETHIA_E2E_SOAK_SUMMARY so the proof/verdict capture (A0.4) can fold a soak line into
 // the per-provider step summary.
@@ -185,12 +198,80 @@ type SoakSummary struct {
 	DriftDrifted        int    `json:"drift_drifted"`
 	DriftStateResources int    `json:"drift_state_resources"`
 	DriftStateReads     int    `json:"drift_state_reads"`
-	PVCChecked          bool   `json:"pvc_checked"`
-	PVCBound            bool   `json:"pvc_bound"`
-	PVCVolumeID         string `json:"pvc_volume_id"`
-	PVCSweepTagOK       bool   `json:"pvc_sweep_tag_ok"`
-	AddonReReadOK       bool   `json:"addon_reread_ok"`
-	Verdict             string `json:"verdict"`
+	// DriftDetails names the resources the posture counted as drifted, and the leaf
+	// paths that differed. Carried into the COMMITTED proof bundle, not only the job
+	// log, because a run's log expires and the ledger row it justifies does not: the
+	// 2026-08-24 hetzner/day2 FAIL named five resources with no attributes, and
+	// answering "is this provider hydration or real drift?" needed a second cluster.
+	//
+	// Empty on an in-sync posture. Paths only, never values — the same boundary
+	// drift.NormalizedResource.Attributes documents: plan-JSON attribute VALUES are
+	// plaintext secrets, and this summary is committed to the repo.
+	DriftDetails []SoakDriftResource `json:"drift_details,omitempty"`
+	// DriftBaseline is the posture read at the START of the soak window, and DriftNew is what
+	// appeared BETWEEN the two reads. The verdict gates on DriftNew being empty — see
+	// soakDriftDelta for why the day-2 question is a delta and not an absolute.
+	DriftBaseline []SoakDriftResource `json:"drift_baseline,omitempty"`
+	DriftNew      []SoakDriftResource `json:"drift_new,omitempty"`
+	PVCChecked    bool                `json:"pvc_checked"`
+	PVCBound      bool                `json:"pvc_bound"`
+	PVCVolumeID   string              `json:"pvc_volume_id"`
+	PVCSweepTagOK bool                `json:"pvc_sweep_tag_ok"`
+	AddonReReadOK bool                `json:"addon_reread_ok"`
+	Verdict       string              `json:"verdict"`
+}
+
+// soakDriftDelta reports the drifted entries present at the END of the soak window that were not
+// already present at its START.
+//
+// WHY DAY-2 IS A DELTA AND NOT AN ABSOLUTE (#2503).
+//
+// The soak used to gate on `DriftInSync`, which a clean apply cannot deliver — and, measured on
+// run 32878498637, SHOULD not. That run's posture named five resources and, for the first time,
+// the attributes behind them:
+//
+//	hcloud_firewall.this                     apply_to
+//	hcloud_primary_ip.control_plane_ipv4[0]  assignee_id
+//	hcloud_primary_ip.worker_ipv4[0]         assignee_id
+//	talos_cluster_kubeconfig.this            (leaves not computable — wholly sensitive)
+//	talos_machine_secrets.this               (leaves not computable — wholly sensitive)
+//
+// All three named attributes are declared FROM THE OTHER SIDE of their relationship:
+// `servers.tf` sets `firewall_ids`, and the server attaches the primary IP. Neither
+// `hcloud_firewall` nor `hcloud_primary_ip` declares them (`network.tf:94-140`). So the provider
+// populates them on refresh and the posture reports a real difference between recorded state and
+// live — honestly.
+//
+// THE NORMALIZER IS RIGHT TO REFUSE THEM, and this deliberately does not touch it.
+// `assignee_id` is a SCALAR, and normalize.go excludes scalars from both tiers by construction
+// because "security-relevant out-of-band flips are overwhelmingly scalars". `apply_to` moves
+// `[] -> non-empty`, not `null -> non-empty`, so Tier 2 declines: an element appeared. Widening
+// either rule to make this cell green would be widening a ceiling to clear a red, and would blind
+// the drift feature to exactly the class it exists to catch.
+//
+// What was wrong was the QUESTION. Day-2 asks "did anything change under us while we watched",
+// and a template whose relationships are declared from the far side starts every window with a
+// non-empty, benign hydration baseline. Comparing against that baseline asserts the same thing the
+// old gate meant to and can actually be satisfied — while a resource that genuinely drifts DURING
+// the window still appears, because it is not in the baseline.
+//
+// Keyed on address AND attribute set, so the SAME resource drifting on a NEW attribute is new. An
+// entry that DISAPPEARS is not reported: converging toward state is not a day-2 failure.
+func soakDriftDelta(before, after []SoakDriftResource) []SoakDriftResource {
+	key := func(r SoakDriftResource) string {
+		return r.Address + "\x00" + strings.Join(r.Attributes, ",")
+	}
+	seen := make(map[string]struct{}, len(before))
+	for _, r := range before {
+		seen[key(r)] = struct{}{}
+	}
+	var out []SoakDriftResource
+	for _, r := range after {
+		if _, ok := seen[key(r)]; !ok {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // soakVerdictPass reports whether every soak check that RAN passed non-vacuously. The PVC
@@ -201,7 +282,7 @@ func soakVerdictPass(s SoakSummary) bool {
 		return false
 	}
 	base := s.LivenessChecks > 0 && s.LivenessFailures == 0 &&
-		s.DriftJobStatus == "SUCCESS" && s.DriftInSync && s.DriftStateReads > 0 &&
+		s.DriftJobStatus == "SUCCESS" && len(s.DriftNew) == 0 && s.DriftStateReads > 0 &&
 		s.DriftStateResources > 0 && s.AddonReReadOK
 	if !base {
 		return false
@@ -226,9 +307,13 @@ func soakSummaryVerdict(s SoakSummary) string {
 	if s.PVCChecked {
 		pvc = fmt.Sprintf("pvc bound=%t sweep-tag=%t (vol %s)", s.PVCBound, s.PVCSweepTagOK, s.PVCVolumeID)
 	}
-	return fmt.Sprintf("%s soak %ds: liveness %d/%d ok · drift %s in_sync=%t (state=%d res, non-empty reads=%d, drifted=%d) · %s · addons re-read=%t",
+	// `new=N` is what the verdict now turns on, and it is printed next to the baseline it is
+	// measured against — "drifted=5 new=0" and "drifted=5 new=5" are opposite outcomes, and a
+	// line showing only the absolute would render them identically.
+	return fmt.Sprintf("%s soak %ds: liveness %d/%d ok · drift %s baseline=%d final=%d NEW=%d (state=%d res, non-empty reads=%d) · %s · addons re-read=%t",
 		icon, s.DurationSeconds, s.LivenessChecks-s.LivenessFailures, s.LivenessChecks,
-		s.DriftJobStatus, s.DriftInSync, s.DriftStateResources, s.DriftStateReads, s.DriftDrifted,
+		s.DriftJobStatus, len(s.DriftBaseline), len(s.DriftDetails), len(s.DriftNew),
+		s.DriftStateResources, s.DriftStateReads,
 		pvc, s.AddonReReadOK)
 }
 

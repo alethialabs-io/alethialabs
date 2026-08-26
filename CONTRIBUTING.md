@@ -77,6 +77,21 @@ receives merges from `staging`.
   bumps); this flow is unchanged by the branch model.
 - A production release is a `staging → main` PR. Hotfixes still go through
   `dev → staging → main` unless it's a true emergency (cherry-pick to `staging`).
+- **Merging the promotion PR is not the release.** The merge is pre-merge-gated; the deploy
+  runs *after* it, and `deploy` is gated `!cancelled() && !failure()`, so a red build silently
+  skips it and `main` moves while production does not. Between 2026-07-30 and 2026-08-25 that
+  shipped nothing for 26 days across 15 merges. So after merging a `staging → main` PR:
+  1. Watch the `Deploy Console` run to **`deploy: success`** — not merely to "green".
+  2. Confirm the deployed commit is the one you promoted, because a green run is *not*
+     sufficient on its own: `retag-unchanged` retags `latest` → the new SHA for an image group
+     that did not change, and on 2026-08-13 it did that to a 14-day-old image whose builds had
+     all failed — a green deploy of stale code under a fresh SHA.
+     `docker buildx imagetools inspect ghcr.io/alethialabs-io/console:<sha>` should report an
+     `ALETHIA_SOURCE_COMMIT` equal to `<sha>`.
+
+  `deploy-console.yml`'s `report-failure` job opens an issue when the run is red, and
+  `workflow-health.yml` catches a workflow that stays red across runs — but neither replaces
+  looking, and neither fires for the stale-retag case.
 
 > The protections are **codified** in [`infra/github/`](infra/github/) (Terraform `github`
 > provider), applied once locally during bootstrap; a manual `gh api` fallback lives in

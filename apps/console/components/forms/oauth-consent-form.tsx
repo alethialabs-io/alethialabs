@@ -64,10 +64,10 @@ export function OAuthConsentForm() {
 		return (
 			<div className="space-y-3">
 				<p className="vx-eyebrow">Authorize</p>
-				<h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground">
+				<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
 					Nothing to authorize
 				</h1>
-				<p className="text-[15px] text-muted-foreground">
+				<p className="text-[15px] text-text-tertiary">
 					This page is part of connecting an external app. Start the connection from
 					that app to continue.
 				</p>
@@ -79,15 +79,15 @@ export function OAuthConsentForm() {
 		<div className="space-y-8">
 			<div className="space-y-3">
 				<p className="vx-eyebrow">Authorize</p>
-				<h1 className="text-3xl font-extrabold tracking-[-0.03em] text-foreground">
+				<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
 					Connect an external app
 				</h1>
-				<p className="text-[15px] text-muted-foreground">
+				<p className="text-[15px] text-text-tertiary">
 					An application
 					{clientId ? (
 						<>
 							{" "}
-							(<span className="font-mono text-foreground">{clientId}</span>)
+							(<span className="font-mono text-text-primary">{clientId}</span>)
 						</>
 					) : null}{" "}
 					is requesting access to your Alethia account.
@@ -107,9 +107,9 @@ export function OAuthConsentForm() {
 						{(scopes.length ? scopes : ["openid"]).map((scope) => (
 							<li
 								key={scope}
-								className="px-4 py-3 text-sm text-foreground flex items-baseline gap-2"
+								className="px-4 py-3 text-sm text-text-primary flex items-baseline gap-2"
 							>
-								<span aria-hidden="true" className="text-muted-foreground">
+								<span aria-hidden="true" className="text-text-tertiary">
 									·
 								</span>
 								{SCOPE_LABELS[scope] ?? scope}
@@ -118,7 +118,7 @@ export function OAuthConsentForm() {
 					</ul>
 				</div>
 
-				<p className="text-xs text-muted-foreground">
+				<p className="text-xs text-text-tertiary">
 					Access is read-only and bounded by your account permissions. You can revoke
 					it anytime from settings.
 				</p>

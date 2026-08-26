@@ -80,7 +80,7 @@ func setupA05(t *testing.T, ctx context.Context, cp *ControlPlane, root, project
 // (with per-run dynamic overrides) under ALETHIA_E2E_A05_REAL_SNAPSHOT. `full` clones `base` and
 // layers the A0.6 apps/BYO repo wiring + the per-cloud cluster-json override — the exact snapshot
 // the runner consumes. Cloning keeps `base` pristine so fidelity is judged on the un-mutated shape.
-func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, keyless keylessDBConfig, keylessEnabled bool, registry xacctRegistryConfig, registryEnabled bool, s *a05Session) (base, full map[string]any, err error) {
+func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos t2ArgoRepos, reposEnabled bool, xacct secretsXacctConfig, xacctEnabled bool, keyless keylessDBConfig, keylessEnabled bool, registry xacctRegistryConfig, registryEnabled bool, acmCert acmCertConfig, acmCertEnabled bool, s *a05Session) (base, full map[string]any, err error) {
 	t.Helper()
 	if s.enabled && a05RealSnapshotEnabled() {
 		envID := ""
@@ -145,6 +145,27 @@ func t2DeploySnapshot(t *testing.T, project, env, provider, region string, repos
 		registry.applyToSnapshot(full)
 		t.Logf("#1047: seeding the DEPLOY job with a %s registry row + service %q running %q",
 			registry.connectorSlug(), registry.serviceName, registry.image)
+	}
+	// #1773: bring the pre-delegated zone and ask for the certificate. This call was MISSING, and its
+	// absence is why the scenario could never pass: acmCertConfig.decide() turned the layer on, the
+	// provision test logged "ACM certificate ENABLED", and runT2AcmCert then asserted a certificate
+	// that nothing had ever asked the template to build. Run 32838291742 is the record — the plan
+	// carried no aws_acm_certificate at all, `route53_zone_id = ""`, and the verdict was
+	// `no aws_acm_certificate_validation in state — the certificate was never validated`.
+	//
+	// A scenario that ASSERTS without CONFIGURING cannot go green, so this was never a flake and no
+	// number of retries would have moved it.
+	//
+	// AFTER MaxConfigSnapshot for the same reason as every layer above, and more sharply: this one
+	// ASSIGNS snap["dns"] wholesale (a brought zone and a created zone are contradictory by
+	// construction), so running it earlier would have max-config silently overwrite the brought zone
+	// and the run would validate against a zone nobody delegated. decide() refuses the max-config
+	// combination outright, but the ordering is what makes that refusal the only thing standing
+	// between the two configurations. On `full` ONLY (never `base`, the A0.5 fidelity target).
+	if acmCertEnabled {
+		acmCert.applyToSnapshot(full)
+		t.Logf("#1773: seeding the DEPLOY job with the delegated zone %s and acm_certificate=true for *.%s",
+			acmCert.zoneID, acmCert.domainName)
 	}
 	// Merge the per-cloud cluster shape override into the `cluster` block. Malformed JSON is a loud
 	// failure — a workflow typo must not silently provision the wrong shape.

@@ -13,6 +13,10 @@
 /* Scan shared workspace packages so their Tailwind classes are generated. */
 @source "../../../packages/ui/src";
 @source "../../../packages/brand/src";
+/* #2603 mounted ConsentProvider here but did not add this line, so the consent
+   notice's Tailwind classes were never generated for this app and the banner
+   rendered unstyled. Scanning a package is part of consuming it. */
+@source "../../../packages/privacy/src";
 
 /* Squared everywhere — the brand rejects rounding. */
 * {
@@ -24,90 +28,8 @@ h1, h2, h3, h4 {
 	letter-spacing: -0.02em;
 }
 
-/* Article body — hand-rolled prose (no typography plugin). */
-.prose {
-	line-height: 1.7;
-	color: var(--foreground);
-}
-.prose > * + * {
-	margin-top: 1.1rem;
-}
-.prose h2 {
-	margin-top: 2.5rem;
-	font-size: 1.5rem;
-	font-weight: 800;
-	letter-spacing: -0.02em;
-}
-.prose h3 {
-	margin-top: 2rem;
-	font-size: 1.2rem;
-	font-weight: 700;
-}
-.prose p,
-.prose li {
-	color: var(--foreground);
-}
-.prose a {
-	text-decoration: underline;
-	text-underline-offset: 2px;
-}
-.prose ul,
-.prose ol {
-	padding-left: 1.3rem;
-}
-.prose ul {
-	list-style: disc;
-}
-.prose ol {
-	list-style: decimal;
-}
-.prose li + li {
-	margin-top: 0.4rem;
-}
-.prose code {
-	font-family: var(--font-mono);
-	font-size: 0.85em;
-	background: var(--muted);
-	border: 1px solid var(--border);
-	padding: 0.1em 0.35em;
-}
-.prose pre {
-	background: var(--muted);
-	border: 1px solid var(--border);
-	padding: 1rem;
-	overflow-x: auto;
-	font-size: 0.85rem;
-}
-.prose pre code {
-	background: transparent;
-	border: 0;
-	padding: 0;
-}
-.prose blockquote {
-	border-left: 2px solid var(--border-strong);
-	padding-left: 1rem;
-	color: var(--muted-foreground);
-}
-.prose table {
-	width: 100%;
-	border-collapse: collapse;
-	font-size: 0.9rem;
-}
-.prose th,
-.prose td {
-	border-bottom: 1px solid var(--border);
-	padding: 0.5rem 0.7rem;
-	text-align: left;
-	vertical-align: top;
-}
-.prose th {
-	font-family: var(--font-mono);
-	font-size: 0.7rem;
-	text-transform: uppercase;
-	letter-spacing: 0.06em;
-	color: var(--muted-foreground);
-	font-weight: 500;
-}
-.prose strong {
-	font-weight: 700;
-}
+/* The blog's own `.prose` block lived here — a second solution to the same problem
+   `LegalShell` was solving with a Tailwind arbitrary-variant blob. Both are now
+   `.vx-prose` in @repo/brand/tokens.css, so an article, a legal document and the
+   security page read identically. The one consumer now asks for `.vx-prose`
+   directly — `@apply` cannot take a plain class, only a Tailwind utility. */

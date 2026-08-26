@@ -90,7 +90,7 @@ Firestore, Pub/Sub, and the workload-identity service accounts + bindings for in
 
 <Callout type="info">
 **Least-privilege by default — no `roles/editor`.** The provisioner service account gets **11 predefined
-roles + 5 custom roles**:
+roles + 6 custom roles**:
 
 - **11 predefined roles** for services whose Google-maintained admin set is already tightly scoped and
   churns with new features (`container.admin`, `compute.networkAdmin`, `compute.securityAdmin`,
@@ -100,7 +100,7 @@ roles + 5 custom roles**:
   permission to *use* the key: `cryptoKeys.useToEncrypt` and `useToDecrypt` live in a separate role that the
   provisioner never holds, so it writes the key's encrypt/decrypt binding for your cluster and cannot read a
   Secret with it.
-- **5 custom roles** replacing the predefined admin roles that bundled **data-plane access** a provisioner
+- **6 custom roles** replacing the predefined admin roles that bundled **data-plane access** a provisioner
   must never hold, granting management verbs only: GCS bucket mgmt *without object data*, Firestore
   database/index mgmt *without entity data*, Pub/Sub topic/sub mgmt *without publish/consume*, add-on SA
   mgmt (dropping undelete/enable/disable), and a project-metadata reader (replacing `roles/browser`, no

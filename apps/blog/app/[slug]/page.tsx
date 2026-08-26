@@ -29,12 +29,12 @@ export default async function Page(props: { params: Promise<{ slug: string }> })
 				← All posts
 			</Link>
 
-			<h1 className="mt-6 text-3xl font-extrabold tracking-tight sm:text-4xl">{post.title}</h1>
+			<h1 className="mt-6 font-grotesk text-3xl font-semibold tracking-[-0.03em] text-text-primary sm:text-4xl">{post.title}</h1>
 			<div className="mt-3 text-xs font-mono uppercase tracking-wider text-muted-foreground">
 				{formatDate(post.date)} · {post.author} · {post.metadata.readingTime} min read
 			</div>
 
-			<div className="prose mt-8">
+			<div className="vx-prose mt-8">
 				<MDXContent code={post.code} />
 			</div>
 

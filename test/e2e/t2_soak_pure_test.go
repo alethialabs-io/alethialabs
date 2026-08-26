@@ -9,6 +9,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -138,13 +140,29 @@ func TestSoakVerdictPass(t *testing.T) {
 	if !soakVerdictPass(green) {
 		t.Fatal("fully-green summary should pass")
 	}
+	// The #2503 direction, asserted where the old gate lived: an out-of-sync ABSOLUTE posture with
+	// nothing new in the window is a PASS. Without this the old assertion could be restored without
+	// anything going red.
+	hydrated := green
+	hydrated.DriftInSync = false
+	hydrated.DriftBaseline = []SoakDriftResource{{Address: "hcloud_firewall.this", Attributes: []string{"apply_to"}}}
+	hydrated.DriftDetails = hydrated.DriftBaseline
+	if !soakVerdictPass(hydrated) {
+		t.Fatal("a hydration baseline with nothing NEW must pass — in_sync is no longer the gate (#2503)")
+	}
 	// Each individual failing condition must flip the verdict red.
 	flips := map[string]func(*SoakSummary){
-		"disabled":            func(s *SoakSummary) { s.Enabled = false },
-		"no liveness checks":  func(s *SoakSummary) { s.LivenessChecks = 0 },
-		"a liveness failure":  func(s *SoakSummary) { s.LivenessFailures = 1 },
-		"drift not success":   func(s *SoakSummary) { s.DriftJobStatus = "FAILED" },
-		"drift not in sync":   func(s *SoakSummary) { s.DriftInSync = false },
+		"disabled":           func(s *SoakSummary) { s.Enabled = false },
+		"no liveness checks": func(s *SoakSummary) { s.LivenessChecks = 0 },
+		"a liveness failure": func(s *SoakSummary) { s.LivenessFailures = 1 },
+		"drift not success":  func(s *SoakSummary) { s.DriftJobStatus = "FAILED" },
+		// #2503: the gate moved from the ABSOLUTE posture to the DELTA. `DriftInSync=false` is
+		// the normal state of a freshly-applied template (the provider hydrates attributes the
+		// config declares from the other side) and no longer fails; a resource that drifts
+		// DURING the window does.
+		"new drift in the window": func(s *SoakSummary) {
+			s.DriftNew = []SoakDriftResource{{Address: "hcloud_server.worker[0]", Attributes: []string{"labels"}}}
+		},
 		"no non-empty reads":  func(s *SoakSummary) { s.DriftStateReads = 0 },
 		"no state resources":  func(s *SoakSummary) { s.DriftStateResources = 0 },
 		"pvc not bound":       func(s *SoakSummary) { s.PVCBound = false },
@@ -167,5 +185,186 @@ func TestSoakVerdictPass(t *testing.T) {
 	noPVC.PVCSweepTagOK = false
 	if !soakVerdictPass(noPVC) {
 		t.Fatal("with PVCChecked=false the PVC fields must not gate the verdict")
+	}
+}
+
+// TestSoakSummaryCarriesDriftAttributes pins the #2503 consumer half: the drift emitter has
+// carried the differing leaf paths since drift.ResourceDrift grew Attributes, and the soak's
+// summary must carry them into the COMMITTED proof bundle rather than only into a job log
+// that expires. The 2026-08-24 hetzner/day2 FAIL named five resources and no attributes, and
+// deciding whether those were provider hydration or real drift needed a second cluster.
+//
+// It also pins the boundary that keeps this safe to commit: attribute PATHS travel, attribute
+// VALUES never do. Plan-JSON values are plaintext secrets (kubeconfigs, DB passwords, cloud
+// tokens) and this summary is written into the repository.
+func TestSoakSummaryCarriesDriftAttributes(t *testing.T) {
+	s := SoakSummary{
+		Enabled:  true,
+		Provider: "hetzner",
+		DriftDetails: []SoakDriftResource{
+			{Address: "hcloud_firewall.this", Kind: "modified", Attributes: []string{"labels", "rule[0].description"}},
+			// Attribute-less on purpose: several drift verdicts are reached before the leaves
+			// are computed at all. That case must stay REPRESENTABLE and distinguishable from
+			// "no attributes differed" — reading absence as a clean diff is the mistake.
+			{Address: "talos_machine_secrets.this", Kind: "other"},
+		},
+	}
+
+	raw, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("marshal soak summary: %v", err)
+	}
+	got := string(raw)
+
+	for _, want := range []string{
+		`"address":"hcloud_firewall.this"`,
+		`"labels"`,
+		`"rule[0].description"`,
+		`"address":"talos_machine_secrets.this"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("committed summary is missing %s — the evidence #2503 needs\ngot: %s", want, got)
+		}
+	}
+
+	// The attribute-less entry must NOT carry an empty `attributes` key: `omitempty` is what
+	// keeps "not recorded" distinguishable from "recorded as empty".
+	var back struct {
+		DriftDetails []struct {
+			Address    string   `json:"address"`
+			Attributes []string `json:"attributes"`
+		} `json:"drift_details"`
+	}
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("round-trip: %v", err)
+	}
+	if len(back.DriftDetails) != 2 {
+		t.Fatalf("want 2 drift details, got %d", len(back.DriftDetails))
+	}
+	if len(back.DriftDetails[0].Attributes) != 2 {
+		t.Errorf("first entry lost its attribute paths: %#v", back.DriftDetails[0])
+	}
+	if len(back.DriftDetails[1].Attributes) != 0 {
+		t.Errorf("attribute-less entry gained attributes: %#v", back.DriftDetails[1])
+	}
+}
+
+// TestSoakSummaryOmitsDriftDetailsWhenInSync keeps the in-sync summary byte-identical to what
+// it was before this field existed — an empty slice must vanish, not serialize as `[]`.
+func TestSoakSummaryOmitsDriftDetailsWhenInSync(t *testing.T) {
+	raw, err := json.Marshal(SoakSummary{Enabled: true, Provider: "aws", DriftInSync: true, DriftDetails: []SoakDriftResource{}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(raw), "drift_details") {
+		t.Errorf("an in-sync posture must not emit drift_details at all\ngot: %s", raw)
+	}
+}
+
+// TestSoakDriftDelta pins the #2503 fix: day-2 asks what changed DURING the window, not whether a
+// freshly-applied template has a hydration baseline.
+//
+// The fixtures are the real posture from run 32878498637 — the first run whose failure named the
+// attributes behind it. All three named attributes are declared from the OTHER side of their
+// relationship (servers.tf sets firewall_ids; the server attaches the primary IP), so the provider
+// populates them on refresh and the posture reports them honestly. normalize.go is right to refuse
+// to dismiss them and is deliberately untouched.
+func TestSoakDriftDelta(t *testing.T) {
+	baseline := []SoakDriftResource{
+		{Address: "hcloud_firewall.this", Kind: "modified", Attributes: []string{"apply_to"}},
+		{Address: "hcloud_primary_ip.control_plane_ipv4[0]", Kind: "modified", Attributes: []string{"assignee_id"}},
+		{Address: "hcloud_primary_ip.worker_ipv4[0]", Kind: "modified", Attributes: []string{"assignee_id"}},
+		{Address: "talos_cluster_kubeconfig.this", Kind: "modified"},
+		{Address: "talos_machine_secrets.this", Kind: "modified"},
+	}
+
+	t.Run("THE REGRESSION: an unchanged hydration baseline is not day-2 drift", func(t *testing.T) {
+		if got := soakDriftDelta(baseline, baseline); len(got) != 0 {
+			t.Fatalf("a window in which nothing changed must yield no new drift, got %v", got)
+		}
+	})
+
+	t.Run("a resource that drifts DURING the window is caught", func(t *testing.T) {
+		final := append(append([]SoakDriftResource(nil), baseline...),
+			SoakDriftResource{Address: "hcloud_server.worker[0]", Kind: "modified", Attributes: []string{"labels"}})
+		got := soakDriftDelta(baseline, final)
+		if len(got) != 1 || got[0].Address != "hcloud_server.worker[0]" {
+			t.Fatalf("real drift during the window must be reported, got %v", got)
+		}
+	})
+
+	t.Run("the SAME resource drifting on a NEW attribute is new", func(t *testing.T) {
+		// Keyed on address AND attribute set. Keying on address alone would let a firewall that
+		// starts hydrated on `apply_to` and later has its RULES changed out-of-band pass silently
+		// — the single most valuable thing this check could catch.
+		final := []SoakDriftResource{
+			{Address: "hcloud_firewall.this", Kind: "modified", Attributes: []string{"apply_to", "rule"}},
+		}
+		if got := soakDriftDelta(baseline, final); len(got) != 1 {
+			t.Fatalf("a new attribute on an already-drifted resource must be reported, got %v", got)
+		}
+	})
+
+	t.Run("an entry that DISAPPEARS is not a failure", func(t *testing.T) {
+		// Converging toward recorded state is not day-2 drift.
+		if got := soakDriftDelta(baseline, baseline[:2]); len(got) != 0 {
+			t.Fatalf("convergence must not be reported as drift, got %v", got)
+		}
+	})
+
+	t.Run("an empty baseline still catches everything", func(t *testing.T) {
+		// A cloud whose apply hydrates nothing must not get a weaker check by accident.
+		if got := soakDriftDelta(nil, baseline); len(got) != len(baseline) {
+			t.Fatalf("with no baseline every entry is new, got %d of %d", len(got), len(baseline))
+		}
+	})
+
+	t.Run("attribute-less entries are matched, not collapsed", func(t *testing.T) {
+		// The two talos resources carry no computable leaves. They must still be distinguishable
+		// from each other — collapsing them would let one appear while the other vanished.
+		final := []SoakDriftResource{
+			{Address: "talos_machine_secrets.this", Kind: "modified"},
+			{Address: "talos_something_new.this", Kind: "modified"},
+		}
+		got := soakDriftDelta(baseline, final)
+		if len(got) != 1 || got[0].Address != "talos_something_new.this" {
+			t.Fatalf("want only the genuinely new attribute-less entry, got %v", got)
+		}
+	})
+}
+
+// TestSoakVerdictGatesOnNewDriftNotAbsolute — the verdict must follow the delta. A summary
+// carrying the real hetzner baseline and nothing new is a PASS; the same summary with one new
+// entry is a FAIL. Without this, changing the gate could silently make the soak unfailable.
+func TestSoakVerdictGatesOnNewDriftNotAbsolute(t *testing.T) {
+	base := SoakSummary{
+		Enabled: true, LivenessChecks: 3, LivenessFailures: 0,
+		DriftJobStatus: "SUCCESS", DriftStateReads: 3, DriftStateResources: 27,
+		AddonReReadOK: true,
+		DriftBaseline: []SoakDriftResource{{Address: "hcloud_firewall.this", Attributes: []string{"apply_to"}}},
+		DriftDetails:  []SoakDriftResource{{Address: "hcloud_firewall.this", Attributes: []string{"apply_to"}}},
+	}
+	if !soakVerdictPass(base) {
+		t.Error("a hydration baseline with nothing new must PASS — this is the whole of #2503")
+	}
+
+	drifted := base
+	drifted.DriftNew = []SoakDriftResource{{Address: "hcloud_server.worker[0]", Attributes: []string{"labels"}}}
+	if soakVerdictPass(drifted) {
+		t.Error("real drift during the window must FAIL — the gate is not vacuous")
+	}
+
+	// The non-vacuity guards must still bite: a drift job that did not really run cannot pass by
+	// virtue of having produced no delta.
+	for _, bad := range []func(s *SoakSummary){
+		func(s *SoakSummary) { s.DriftJobStatus = "FAILED" },
+		func(s *SoakSummary) { s.DriftStateReads = 0 },
+		func(s *SoakSummary) { s.DriftStateResources = 0 },
+	} {
+		s := base
+		bad(&s)
+		if soakVerdictPass(s) {
+			t.Errorf("a vacuous drift read must not pass: %+v", s)
+		}
 	}
 }

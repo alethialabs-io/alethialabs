@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import Link from "next/link";
-import { disp, eyebrow, Icon, type IconKey, mono, Wrap } from "@/components/landing/home/primitives";
+import { disp, eyebrow, Icon, type IconKey, mono, Wrap } from "@repo/brand/site-primitives";
 import type { ContactLeadType } from "@/lib/validations/contact.schema";
 import { ContactForm } from "./contact-form";
 

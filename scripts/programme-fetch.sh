@@ -56,8 +56,25 @@ closed="$(gh issue list --repo "$REPO" --state closed --limit 500 \
 	--jq '[.[] | {number, title, labels: [.labels[].name]}]')"
 
 # Gate reality: NAMES ONLY (see the header).
-vars="$(gh variable list --repo "$REPO" --json name --jq '[.[].name]' 2>/dev/null || echo '[]')"
-secrets="$(gh secret list --repo "$REPO" --json name --jq '[.[].name]' 2>/dev/null || echo '[]')"
+#
+# ⚠️ DO NOT restore a `2>/dev/null || echo '[]'` fallback here. That is what this used to do, and
+# it turned "the token cannot read repo variables" into "this repo has no variables" — silently.
+# programme.yml grants the default GITHUB_TOKEN only contents+pull-requests, which cannot list
+# variables or secrets at all, so every refresh committed `variables: [], secrets: []` next to 42
+# correctly-fetched issues, and PROGRAMME.md rendered EVERY gate `⛔ unwired` — including ones a
+# green run had already proven wired. An empty list and a failed read must not look the same.
+#
+# The rollup now treats an empty inventory as `unknown` rather than `unwired`, so a failure here is
+# no longer load-bearing for correctness — but it should still be LOUD rather than mistaken for a
+# measurement.
+if ! vars="$(gh variable list --repo "$REPO" --json name --jq '[.[].name]')"; then
+	echo "::warning::programme-fetch: could not list repo VARIABLES (the token likely lacks the scope). Recording an empty inventory, which the rollup reads as 'unknown', not 'unwired'." >&2
+	vars='[]'
+fi
+if ! secrets="$(gh secret list --repo "$REPO" --json name --jq '[.[].name]')"; then
+	echo "::warning::programme-fetch: could not list repo SECRETS (the token likely lacks the scope). Recording an empty inventory, which the rollup reads as 'unknown', not 'unwired'." >&2
+	secrets='[]'
+fi
 
 jq -n \
 	--arg derived_at "$derived_at" \

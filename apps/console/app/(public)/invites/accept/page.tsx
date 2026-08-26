@@ -5,7 +5,7 @@
 import { Loader2, MailQuestion } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { AuthShell } from "@/components/auth/auth-shell";
 import { Button } from "@repo/ui/button";
 import { authClient } from "@/lib/auth/client";
 
@@ -33,7 +33,7 @@ function AcceptInvite() {
 		return <Message title="Invalid invitation" body="This invite link is missing its token." />;
 	}
 	if (isPending || !session?.user) {
-		return <Centered>{<Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />}</Centered>;
+		return <Centered>{<Loader2 className="h-5 w-5 animate-spin text-text-tertiary" />}</Centered>;
 	}
 
 	const accept = async () => {
@@ -60,16 +60,16 @@ function AcceptInvite() {
 
 	return (
 		<Centered>
-			<div className="w-full max-w-[400px] rounded-lg border border-border/50 bg-card p-8 text-center shadow-sm">
-				<div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
+			<div className="w-full max-w-[400px] rounded-lg border border-border bg-surface p-8 text-center shadow-sm">
+				<div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-surface-muted text-text-tertiary">
 					<MailQuestion className="h-5 w-5" />
 				</div>
-				<h1 className="mt-4 text-lg font-semibold text-foreground">
+				<h1 className="mt-4 font-grotesk text-[22px] font-semibold tracking-[-0.03em] text-text-primary">
 					You&apos;ve been invited to an organization
 				</h1>
-				<p className="mt-1.5 text-sm text-muted-foreground">
+				<p className="mt-1.5 text-sm text-text-secondary">
 					Accept to join and start collaborating, signed in as{" "}
-					<span className="font-medium text-foreground">{session.user.email}</span>.
+					<span className="font-medium text-text-primary">{session.user.email}</span>.
 				</p>
 				{error && (
 					<p className="mt-4 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -98,25 +98,23 @@ function AcceptInvite() {
 	);
 }
 
+/**
+ * The shell, not a copy of it. This drew its own unlinked logo at `left-10 top-10`
+ * and no footer — one of three public routes that each reimplemented `AuthShell`
+ * slightly differently.
+ */
 function Centered({ children }: { children: React.ReactNode }) {
-	return (
-		<div className="relative min-h-screen bg-background">
-			<div className="absolute left-10 top-10">
-				<AlethiaLogo withText className="h-6 w-auto text-foreground" />
-			</div>
-			<div className="flex min-h-screen items-center justify-center px-6">
-				{children}
-			</div>
-		</div>
-	);
+	return <AuthShell cardWidth="wide">{children}</AuthShell>;
 }
 
 function Message({ title, body }: { title: string; body: string }) {
 	return (
 		<Centered>
-			<div className="max-w-[400px] text-center">
-				<h1 className="text-lg font-semibold text-foreground">{title}</h1>
-				<p className="mt-1.5 text-sm text-muted-foreground">{body}</p>
+			<div className="text-center">
+				<h1 className="font-grotesk text-[22px] font-semibold tracking-[-0.03em] text-text-primary">
+					{title}
+				</h1>
+				<p className="mt-1.5 text-sm text-text-secondary">{body}</p>
 			</div>
 		</Centered>
 	);

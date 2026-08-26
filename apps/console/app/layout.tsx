@@ -65,9 +65,15 @@ export default function RootLayout({
 				className={`${geistSans.variable} ${geistMono.variable} ${spaceGrotesk.variable} antialiased`}
 			>
 				{/* `enableSystem` must stay on: the account menu offers a System option,
-				    and with it off picking that option silently did nothing. The default
-				    stays `light` so a first load is unchanged. */}
-				<ThemeProvider attribute="class" defaultTheme="light" enableSystem>
+				    and with it off picking that option silently did nothing.
+
+				    The default is `system`, matching apps/marketing and apps/blog. It used
+				    to be `light` while those two followed the OS, so the theme flipped the
+				    moment a visitor crossed from the site into the login page — the same
+				    seam, in the other direction, that the marketing/blog mismatch created.
+				    Only the DEFAULT moves: the account-menu toggle still pins a choice, and
+				    anyone who already made one keeps it, because localStorage wins. */}
+				<ThemeProvider attribute="class" defaultTheme="system" enableSystem>
 					<Providers>{children}</Providers>
 					{/* Bottom-center keeps toasts clear of the bottom-right floating chrome (setup
 					    guide card + assistant button) without a brittle fixed offset. Sonner already

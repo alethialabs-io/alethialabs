@@ -165,7 +165,7 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**2 of 25 proof cells are proven.** 2 failing · 0 stale (cause fixed, needs a re-run) · 0 blocked · 21 never run.
+**5 of 25 proof cells are proven.** 4 failing · 1 stale (cause fixed, needs a re-run) · 0 blocked · 15 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -174,40 +174,46 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 | cloud | floor | all kinds | 18 add-ons | BYO-IaC | day-2 |
 |---|:---:|:---:|:---:|:---:|:---:|
 | **aws** | ✅ | · | · | · | · |
-| **gcp** | · | · | · | · | · |
-| **azure** | · | · | · | · | · |
+| **gcp** | ✅ | · | · | · | · |
+| **azure** | ✅ | ❌ | ❌ | · | · |
 | **alibaba** | · | · | · | · | · |
-| **hetzner** | ✅ | · | ❌ | · | ❌ |
+| **hetzner** | ✅ | ❌ | ♻️ | ✅ | ❌ |
 
 Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · — ceiling · 🔶 deferred
 
 <details><summary>Every cell that has any evidence at all</summary>
 
 - `aws/floor` **proven** — ledger 2026-08-24, bundle `demos/proofs/aws/20260824T211529Z`
+- `gcp/floor` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T105829Z`
+- `azure/floor` **proven** — ledger 2026-08-25, bundle `demos/proofs/azure/20260825T063447Z`
+- `azure/maxconfig` **failing** — ledger 2026-08-25 (via the `full` composite run)
+- `azure/addons` **failing** — ledger 2026-08-25 (via the `full` composite run)
 - `hetzner/floor` **proven** — ledger 2026-08-24, bundle `demos/proofs/hetzner/20260824T201636Z`
-- `hetzner/addons` **failing** — ledger 2026-08-24 (#2490)
+- `hetzner/maxconfig` **failing** — ledger 2026-08-25 (via the `full` composite run) (#2568)
+- `hetzner/addons` **stale** — ledger 2026-08-24 — but #2490 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#2490)
+- `hetzner/byo` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/2026-08-25T175213Z`
 - `hetzner/day2` **failing** — ledger 2026-08-24
 
 </details>
 
 ### The mechanical next
 
-**`hetzner/addons`** — failing. ledger 2026-08-24
+**`hetzner/addons`** — stale. ledger 2026-08-24 — but #2490 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
 <details><summary>The next 10</summary>
 
-1. `hetzner/addons` — failing
+1. `hetzner/addons` — stale
+1. `azure/maxconfig` — failing
+1. `hetzner/maxconfig` — failing
+1. `azure/addons` — failing
 1. `hetzner/day2` — failing
-1. `gcp/floor` — never_run
-1. `azure/floor` — never_run
 1. `alibaba/floor` — never_run
 1. `aws/maxconfig` — never_run
 1. `gcp/maxconfig` — never_run
-1. `azure/maxconfig` — never_run
 1. `alibaba/maxconfig` — never_run
-1. `hetzner/maxconfig` — never_run
+1. `aws/addons` — never_run
 
 </details>
 
@@ -245,11 +251,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state |
 |---|---|:---:|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired |
-| **hetzner** | `HCLOUD_TOKEN` | ⛔ **unwired** |
+| **aws** | `E2E_AWS_ROLE_ARN` | ? unknown |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ? unknown |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ? unknown |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ? unknown |
+| **hetzner** | `HCLOUD_TOKEN` | ? unknown |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -258,21 +264,30 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | floor | `(the cloud gate alone)` | n/a | real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set |
 | all kinds | `ALETHIA_E2E_MAX_CONFIG` | ✅ by dimension: `ALETHIA_E2E_MAX_CONFIG` | every kind this cloud offers lands in tofu state (or converges as its named Application) |
 | 18 add-ons | `ALETHIA_E2E_ALL_ADDONS` | ✅ by dimension: `ALETHIA_E2E_ALL_ADDONS` | all 18 marketplace add-ons Healthy+Synced |
-| BYO-IaC | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ⛔ **unwired**: `E2E_ARGO_APPS_REPO`<br>⛔ **unwired**: `E2E_GIT_TOKEN` | customer IaC/charts applied, and Alethia services bound to their outputs |
-| day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>⛔ **unwired**: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
+| BYO-IaC | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ? unknown: `E2E_ARGO_APPS_REPO`<br>? unknown: `E2E_GIT_TOKEN` | customer IaC/charts applied, and Alethia services bound to their outputs |
+| day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>? unknown: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
 
 ### Open REDs
 
 | cell | state | issue | issue state |
 |---|---|---|:---:|
-| `hetzner/addons` | failing | #2490 | ? |
+| `azure/maxconfig` | failing | **none** | ? |
+| `azure/addons` | failing | **none** | ? |
+| `hetzner/maxconfig` | failing | #2568 | ? |
+| `hetzner/addons` | stale | #2490 | ⛔ **CLOSED** |
 | `hetzner/day2` | failing | **none** | ? |
+
+♻️ **1 cell(s) cite a CLOSED issue**, so they are rendered `stale` rather than `failing`: the cause is fixed and what they need is a **re-run**, not a fix. They rank first in the mechanical next for exactly that reason — it is the cheapest action on the board.
+
+The ledger row itself is not wrong and is not rewritten (it is append-only, and it was true when written). What was wrong was reading it as open work — the same defect that had the parity board citing four closed issues as live floor blockers.
 
 ### Blocked on a human
 
-- **`hetzner` cannot provision** — `HCLOUD_TOKEN` is not set, so the leg green-skips.
+- #2485 — prod: the console has not deployed since 2026-07-30 — a cross-app import in the pruned image build, masked by fail-fast behind an expired PostHog key
+- #2482 — release: the console never learns about a new CLI version — the notification's credentials cannot mint from a tag
+- #2465 — programme: two of the six MVP predicates assert something no script can check
+- #2462 — infra(e2e): make the e2e-dev OIDC trust widening authoritative — four applies, currently hand-applied
 - #2283 — probe(alibaba-cr): does an AUTO scan rule fire with no VPC endpoint? (#2265 shipped the wiring, not the proof)
-- #2260 — e2e nightly: alibaba RED (floor)
 - #2259 — e2e nightly: azure RED (floor)
 - #2258 — e2e nightly: gcp RED (floor)
 - #2099 — e2e nightly: gcp RED (full-bar)
@@ -306,11 +321,11 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-08-23T14:41:46Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-08-25T11:47:25Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
-Ledger rows read: **18** · surviving claims: **4** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
+Ledger rows read: **25** · surviving claims: **9** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
 
 _Generated by `scripts/programme-rollup.mjs`. Do not edit below the marker — run `pnpm gen:programme`._
 
