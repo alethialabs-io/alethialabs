@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
@@ -46,7 +47,42 @@ func getAuthToken() (string, error) {
 	return getAuthTokenInternal(true)
 }
 
+// ServiceTokenEnv is the environment variable a NON-INTERACTIVE caller sets instead of logging in.
+//
+// This is the whole mechanism behind "drive Alethia from your own CI". Before it, the only way in
+// was the device flow — `alethia login` opens a browser and waits for a human to approve — which is
+// the right experience at a terminal and an impossible one in a pipeline. `--no-input` did not help:
+// it suppresses PROMPTS, it does not supply a credential, so a pipeline still failed with
+// "authentication required. Please run `alethia login`".
+const ServiceTokenEnv = "ALETHIA_TOKEN"
+
+// serviceTokenFlag is the --token value, set by the root command's persistent flag. The flag WINS
+// over the environment, matching every other tool's precedence: the more specific, more deliberate
+// source is the one nearer the invocation.
+var serviceTokenFlag string
+
+// serviceToken returns the non-interactive credential, if one was supplied.
+//
+// Trimmed, because a token pasted into a CI secret picks up a trailing newline more often than not,
+// and a credential that fails for an invisible reason is the worst kind to debug.
+func serviceToken() string {
+	if t := strings.TrimSpace(serviceTokenFlag); t != "" {
+		return t
+	}
+	return strings.TrimSpace(os.Getenv(ServiceTokenEnv))
+}
+
 func getAuthTokenInternal(promptLogin bool) (string, error) {
+	// A supplied token SHORT-CIRCUITS the whole credentials-file dance: no file is read, no refresh
+	// is attempted, nothing is written to disk. That is the point — a CI runner has no home
+	// directory worth persisting to, and a credential written to one is a credential left behind.
+	//
+	// It is checked FIRST so that setting it works even on a machine that happens to have a stale
+	// credentials.json: an explicit credential must not be silently outranked by an implicit one.
+	if t := serviceToken(); t != "" {
+		return t, nil
+	}
+
 	credsPath, err := getCredentialsPath()
 	if err != nil {
 		return "", fmt.Errorf("error getting credentials path: %w", err)
