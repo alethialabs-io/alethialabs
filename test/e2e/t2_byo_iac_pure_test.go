@@ -421,3 +421,41 @@ func TestByoIacProbeResourceTypeCoversEveryT2Provider(t *testing.T) {
 		}
 	}
 }
+
+// githubContentsURL is what makes the fixture preflight possible without a clone, so its parsing is
+// worth pinning: a URL built wrongly would 404 for the WRONG reason and report a present module as
+// missing — a preflight that fails a run nothing is wrong with is worse than no preflight.
+func TestGithubContentsURL(t *testing.T) {
+	got, ok := githubContentsURL("https://github.com/alethialabs-io/enterprise-demo", "abc123", "iac/drift/hetzner")
+	if !ok {
+		t.Fatal("a plain github https repo was not recognised")
+	}
+	const want = "https://api.github.com/repos/alethialabs-io/enterprise-demo/contents/iac/drift/hetzner?ref=abc123"
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+
+	// A trailing `.git` is how a remote is written half the time, and it must not end up inside the
+	// slug — `…/enterprise-demo.git/contents/…` 404s for a reason that has nothing to do with the
+	// module being absent.
+	if got, _ := githubContentsURL("https://github.com/alethialabs-io/enterprise-demo.git", "s", "p"); !strings.Contains(got, "/repos/alethialabs-io/enterprise-demo/contents/") {
+		t.Errorf(".git suffix leaked into the slug: %s", got)
+	}
+	// A leading slash on the path would double up and 404 the same way.
+	if got, _ := githubContentsURL("https://github.com/o/r", "s", "/iac/blocked"); !strings.Contains(got, "/contents/iac/blocked?") {
+		t.Errorf("leading slash was not trimmed: %s", got)
+	}
+
+	// NOT github. The preflight must decline rather than invent an API shape — an unrecognised host
+	// is "cannot check", which the caller logs and proceeds past, not "the module is missing".
+	for _, repo := range []string{
+		"https://gitlab.com/o/r",
+		"git@github.com:o/r.git",
+		"https://github.com/only-one-segment",
+		"https://github.com/",
+	} {
+		if _, ok := githubContentsURL(repo, "s", "p"); ok {
+			t.Errorf("%q was treated as a github contents target", repo)
+		}
+	}
+}
