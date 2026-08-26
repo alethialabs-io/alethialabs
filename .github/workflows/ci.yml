@@ -651,6 +651,8 @@ jobs:
           retention-days: 30
       - name: No Supabase
         run: pnpm -F console check:no-supabase
+      - name: No arbitrary var utility shadowed by an unlayered brand device
+        run: pnpm check:var-utility-shadowing
       - name: Authz scope (PDP, not ad-hoc user_id)
         run: pnpm -F console check:authz-scope
       - name: Marketing routes ⇄ reservation ⇄ Caddy in sync
