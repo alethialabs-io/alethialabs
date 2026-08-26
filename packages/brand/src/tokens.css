@@ -369,6 +369,18 @@
   --cl-gap: 2px;
   --cl-reach: 1.03;
 }
+/* The wrapper half of the note above. A field's clamp lives on the wrapper, but the
+   thing that actually receives focus is the `<input>` inside it — and `:focus-visible`
+   matches the focused element, never its container, so a wrapped field could never
+   clamp on focus at all. `:focus-within` is what a wrapper needs.
+   It is opt-in rather than folded into the base rule on purpose: `.vx-clamp` is on 155
+   call sites, many of them cards and rows that CONTAIN focusable children, and making
+   the base rule focus-within would light those up whenever anything inside them was
+   tabbed to. Put this on the element that draws the field's border. */
+.vx-clamp--field:focus-within::before {
+  opacity: var(--cl-op);
+  scale: 1;
+}
 .vx-clamp::before,
 .vx-bracket::before {
   /* The `/ ""` is the CSS alt text, and it is NOT decoration — see the note on

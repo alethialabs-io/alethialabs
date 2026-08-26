@@ -68,17 +68,17 @@ function CliLoginContent() {
     return (
       <div className="flex flex-col gap-6">
         <div className="space-y-2 text-center">
-          <p className="text-sm font-medium text-foreground">
+          <p className="text-sm font-medium text-text-primary">
             Confirm the code from your terminal
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-text-secondary">
             A device is asking to sign in to your account. Approve it only if this
             code matches the one <code>alethia login</code> printed.
           </p>
         </div>
 
         <div
-          className="rounded-lg border border-border/50 bg-muted/40 py-4 text-center font-mono text-2xl tracking-[0.3em] text-foreground"
+          className="border border-border bg-surface-sunken py-4 text-center font-mono text-2xl tracking-[0.3em] text-text-primary"
           aria-label="Device confirmation code"
         >
           {userCode}
@@ -104,7 +104,7 @@ function CliLoginContent() {
           </Button>
         </div>
 
-        <p className="text-center text-xs text-muted-foreground">
+        <p className="text-center text-xs text-text-secondary">
           If you did not start this sign-in, do not approve it.
         </p>
       </div>
@@ -114,14 +114,14 @@ function CliLoginContent() {
   if (stage === 'approved') {
     return (
       <div className="flex flex-col items-center justify-center gap-4">
-        <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-          <CheckCircle className="h-6 w-6 text-foreground" />
+        <div className="h-12 w-12 rounded-full bg-surface-muted flex items-center justify-center">
+          <CheckCircle className="h-6 w-6 text-text-primary" />
         </div>
         <div className="text-center space-y-1">
-          <p className="text-sm font-medium text-foreground">
+          <p className="text-sm font-medium text-text-primary">
             Authentication successful
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-text-secondary">
             You can close this window and return to your terminal.
           </p>
         </div>
@@ -132,14 +132,14 @@ function CliLoginContent() {
   if (stage === 'declined') {
     return (
       <div className="flex flex-col items-center justify-center gap-4">
-        <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
-          <XCircle className="h-6 w-6 text-foreground" />
+        <div className="h-12 w-12 rounded-full bg-surface-muted flex items-center justify-center">
+          <XCircle className="h-6 w-6 text-text-primary" />
         </div>
         <div className="text-center space-y-1">
-          <p className="text-sm font-medium text-foreground">
+          <p className="text-sm font-medium text-text-primary">
             Sign-in not approved
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-text-secondary">
             Nothing was shared. You can close this window.
           </p>
         </div>
@@ -153,7 +153,7 @@ function CliLoginContent() {
         <XCircle className="h-6 w-6 text-destructive" />
       </div>
       <div className="text-center space-y-1">
-        <p className="text-sm font-medium text-foreground">
+        <p className="text-sm font-medium text-text-primary">
           Authentication failed
         </p>
         <p className="text-xs text-destructive">
