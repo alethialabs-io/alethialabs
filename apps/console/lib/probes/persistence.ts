@@ -1,6 +1,10 @@
-"use server";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
+// PROBE_CLUSTER result persistence + the latest-probe read. NOT server actions — see the note
+// in lib/jobs/finalize-deployment.ts. recordProbeResult writes through getServiceDb() on the
+// runner's status callback; getLatestProbesByEnv is a plain org-scoped query whose callers
+// (app/server/actions/reconcile.ts, app/api/cli/projects/[id]/probes/route.ts) authorize
+// first and pass the org id in.
 
 // Live cluster-alive signal (BYOC B2) — the "is it still up?" half of day-2, alongside drift
 // ("has it diverged?"). A PROBE_CLUSTER job dials the env's cluster API server and the runner

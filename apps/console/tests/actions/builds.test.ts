@@ -14,7 +14,7 @@ vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 import {
 	enqueueDeployAfterBuild,
 	finalizeBuild,
-} from "@/app/server/actions/builds";
+} from "@/lib/jobs/finalize-build";
 import { getServiceDb } from "@/lib/db";
 import { jobs, projectServices } from "@/lib/db/schema";
 

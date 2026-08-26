@@ -1,6 +1,11 @@
-"use server";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
+// Runner-callback finalizers for a DEPLOY job. These are NOT server actions and must never
+// become ones: they write through getServiceDb() (RLS-bypassing) and take a bare job id, so a
+// file-level "use server" would compile every export into a POST-addressable Server Action
+// that flips environments to ACTIVE for any caller who can guess a job UUID. They live in lib/
+// so the only way in is their caller, app/api/jobs/[id]/status/route.ts, which authenticates
+// the runner token first. scripts/check-action-boundary.mjs enforces the separation.
 
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";

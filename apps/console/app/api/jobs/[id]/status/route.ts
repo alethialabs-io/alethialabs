@@ -6,14 +6,14 @@ import { NextResponse } from "next/server";
 import {
 	finalizeDeployment,
 	setIacSourceStatus,
-} from "@/app/server/actions/deployments";
+} from "@/lib/jobs/finalize-deployment";
 import { finalizeChartScan } from "@/app/server/actions/byo-charts";
 import { finalizeIacScan } from "@/app/server/actions/byo-iac";
 import {
 	enqueueBuildAfterProvision,
 	enqueueDeployAfterBuild,
 	finalizeBuild,
-} from "@/app/server/actions/builds";
+} from "@/lib/jobs/finalize-build";
 import {
 	recordDriftPosture,
 	recordFabricDriftPosture,
@@ -24,7 +24,7 @@ import {
 	failPromotionForJob,
 	finalizePromotionOnDeploy,
 } from "@/app/server/actions/promotions";
-import { recordProbeResult } from "@/app/server/actions/probes";
+import { recordProbeResult } from "@/lib/probes/persistence";
 import { maybeAutoHeal } from "@/app/server/actions/reconcile";
 import {
 	recordAddonHealth,
