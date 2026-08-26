@@ -2632,3 +2632,65 @@ func (c *Client) ExecuteBreakglass(params BreakglassExecuteParams) (*BreakglassR
 	}
 	return &out, nil
 }
+
+// ── CLI service-account tokens (non-interactive authentication) ──
+
+// ServiceToken is one token as the console reports it. There is deliberately NO field for the
+// token value: the plaintext exists once, in the CreateServiceToken response, and nothing on the
+// server can read it back. A field here would imply otherwise.
+type ServiceToken struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	TokenPrefix string  `json:"token_prefix"`
+	CreatedAt   string  `json:"created_at"`
+	ExpiresAt   *string `json:"expires_at"`
+	LastUsedAt  *string `json:"last_used_at"`
+	RevokedAt   *string `json:"revoked_at"`
+}
+
+// CreatedServiceToken is the mint response — the ONLY time Token carries a value.
+type CreatedServiceToken struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	TokenPrefix string  `json:"token_prefix"`
+	ExpiresAt   *string `json:"expires_at"`
+	Token       string  `json:"token"`
+	Warning     string  `json:"warning"`
+}
+
+// ListServiceTokens returns the active org's service-account tokens, revoked ones included — a
+// revoked token that vanishes from the list takes its audit trail with it.
+func (c *Client) ListServiceTokens() ([]ServiceToken, error) {
+	endpoint := fmt.Sprintf("%s/cli/tokens", c.baseURL)
+	var successResp struct {
+		Tokens []ServiceToken `json:"tokens"`
+	}
+	if err := c.doGet(endpoint, &successResp); err != nil {
+		return nil, fmt.Errorf("failed to list service tokens: %w", err)
+	}
+	return successResp.Tokens, nil
+}
+
+// CreateServiceToken mints one. The caller MUST surface the returned Token immediately; it is not
+// stored and cannot be retrieved again.
+func (c *Client) CreateServiceToken(name string, expiresInDays int) (*CreatedServiceToken, error) {
+	endpoint := fmt.Sprintf("%s/cli/tokens", c.baseURL)
+	payload := map[string]interface{}{"name": name}
+	if expiresInDays > 0 {
+		payload["expires_in_days"] = expiresInDays
+	}
+	var created CreatedServiceToken
+	if err := c.doPost(endpoint, payload, &created); err != nil {
+		return nil, fmt.Errorf("failed to create service token: %w", err)
+	}
+	return &created, nil
+}
+
+// RevokeServiceToken revokes one by id. It takes effect on the very next request the token makes.
+func (c *Client) RevokeServiceToken(id string) error {
+	endpoint := fmt.Sprintf("%s/cli/tokens/%s", c.baseURL, url.PathEscape(id))
+	if err := c.doDelete(endpoint); err != nil {
+		return fmt.Errorf("failed to revoke service token: %w", err)
+	}
+	return nil
+}

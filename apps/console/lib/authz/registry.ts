@@ -54,6 +54,17 @@ export const ACTIONS = [
 	// Support cases: post a reply to a case thread vs triage/assign/resolve (staff).
 	"reply",
 	"manage_support",
+	// CLI service-account tokens: mint, list and revoke a long-lived machine credential.
+	//
+	// ITS OWN ACTION, not a reuse of manage_members, and the distinction is a privilege one. A
+	// service token acts as its creator inside its org, so minting one is issuing a credential that
+	// carries your access into a pipeline you may not be watching. That is a strictly higher bar
+	// than inviting a colleague, who arrives with their OWN role and can be removed by name.
+	//
+	// Falls to owner and admin only: the operator template selects on a fixed action list this is
+	// not in, so an operator can deploy infrastructure and still not mint a credential that could
+	// keep deploying after they leave.
+	"manage_tokens",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -70,7 +81,7 @@ export interface PermissionDef {
 /** Which actions are valid on which resource (the matrix). Default-deny: a pair
  *  not listed here is not a permission and can never be granted. */
 const MATRIX: Partial<Record<Resource, readonly Action[]>> = {
-	org: ["view", "edit", "manage_billing"],
+	org: ["view", "edit", "manage_billing", "manage_tokens"],
 	project: ["view", "create", "edit", "plan", "deploy", "destroy"],
 	runner: ["view", "create", "edit", "destroy", "deploy"],
 	cloud_identity: ["view", "manage_identities", "test"],
