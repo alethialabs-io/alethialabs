@@ -59,6 +59,7 @@ var nightlyExemptEnv = map[string]string{
 	"ALETHIA_E2E_T1_RUNNER_LOG":       "T1 only",
 	"ALETHIA_E2E_T1_WAIT":             "T1 only",
 	"ALETHIA_E2E_T2_WAIT":             "per-provider default resolved from the provider row; overridden only for local debugging",
+	"ALETHIA_E2E_T2_TEARDOWN":         "per-provider default resolved from the provider row; overridden only for local debugging. Deliberately NOT a repo variable: ResolveT2Budget RESERVES this window in the go-timeout, so a value set on one side only would put the reservation and the destroy's own ceiling back out of step — which is the #2729 bug it was added to fix",
 	"ALETHIA_E2E_ARGO_TIMEOUT":        "tuning knob with a sane default; overridden only for local debugging",
 	"ALETHIA_E2E_B6_REQUIRE":          "the B6 promotion gate is its own build tag and its own workflow",
 	"ALETHIA_E2E_A05_ENFORCE":         "A0.5 fidelity ramp: warn-only until the maintainer flips it, deliberately not wired yet",

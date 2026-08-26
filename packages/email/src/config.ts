@@ -82,8 +82,12 @@ function envBool(name: string): boolean | undefined {
 export function getEmailConfig(): EmailConfig {
 	if (cached) return cached;
 
-	const authFrom =
-		env("AUTH_EMAIL_FROM") || "Alethia <no-reply@auth.alethialabs.io>";
+	// The fallback domain must be one the provider has VERIFIED. This used to default to
+	// `no-reply@auth.alethialabs.io`, and a provider that verifies domains individually — Resend
+	// does — rejects a subdomain whose parent is verified. So the fallback was a footgun: it looks
+	// like a safe default and bounces every message, at send time, after everything upstream has
+	// reported success. The apex is the address actually verified.
+	const authFrom = env("AUTH_EMAIL_FROM") || "Alethia <no-reply@alethialabs.io>";
 	// General stream falls back to the auth address until a separate one is set.
 	const generalFrom = env("EMAIL_FROM") || authFrom;
 
