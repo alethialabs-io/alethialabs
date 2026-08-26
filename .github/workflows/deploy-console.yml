@@ -816,8 +816,69 @@ jobs:
           # "Running". Recreate it on every release so routing changes take effect.
           docker compose $cf up -d --force-recreate --no-deps caddy
           docker compose $cf exec -T caddy caddy validate --config /etc/caddy/Caddyfile
+          # ...and then RESTART CLOUDFLARED, because the recreate above just invalidated it.
+          #
+          # `--no-deps` is what makes the line above safe to run on its own, and it is also why the
+          # tunnel breaks: cloudflared proxies to `http://caddy:80` BY SERVICE NAME over the compose
+          # network, and it is already running by this point (the `up -d` above started it). Force-
+          # recreating caddy destroys that container and creates a new one with a NEW IP, while
+          # cloudflared keeps its pooled connections pointed at the address that no longer exists.
+          # Cloudflare's edge then has no origin and every request to alethialabs.io is a 502.
+          #
+          # That is not hypothetical: the #2747 promotion deployed at 06:27:08Z on 2026-08-26 and
+          # took the marketing site down. `caddy validate` passed, every container reported Started,
+          # the job went green, and the site had been 502 for minutes before anyone looked.
+          #
+          # Restarting cloudflared re-resolves the service name. It costs ~1s and is a no-op for
+          # correctness when caddy did not actually change.
+          docker compose $cf restart cloudflared
           docker image prune -f
           REMOTE
+
+          # DID THE SITE COME BACK? Nothing above answers that.
+          #
+          # Everything this job asserted up to here is about the box: images pulled, containers
+          # Started, and a Caddyfile whose SYNTAX is valid. None of it touches the path a visitor
+          # actually takes — edge → cloudflared → caddy → app — which is exactly the path the
+          # cloudflared/caddy ordering above used to break. A deploy that cannot tell a serving site
+          # from a dead one is not reporting on the deploy.
+          #
+          # Polled rather than probed once: containers legitimately take a few seconds to accept
+          # connections, so a single immediate curl would be flaky in the other direction. Ten
+          # attempts over ~100s is far longer than a healthy start and far shorter than a human
+          # noticing.
+          echo "Verifying ${APP_URL} actually serves..."
+          # `served` is the verdict and `last` is the evidence, deliberately two variables. Folding
+          # them into one (reset the code to 000 before each retry, then test it at the end) reports
+          # 000 for every failure — and 000 (nothing answered) points somewhere completely different
+          # from 502 (the edge answered, the origin did not). Losing that distinction in the one
+          # message an operator reads at 3am would repeat this incident's actual problem: an output
+          # that is technically emitted and tells you nothing.
+          served=0
+          last=000
+          for attempt in $(seq 1 10); do
+            last="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "$APP_URL/" || echo 000)"
+            case "$last" in
+              2*|3*) served=1; echo "✓ ${APP_URL} returned $last after ${attempt} attempt(s)"; break ;;
+            esac
+            echo "  attempt ${attempt}/10: HTTP ${last} — retrying in 10s"
+            sleep 10
+          done
+          if [ "$served" -ne 1 ]; then
+            echo "::error::Deploy finished but ${APP_URL} never served a 2xx/3xx (last HTTP ${last}). The"
+            echo "::error::containers are up — suspect the tunnel: cloudflared holding a stale caddy address."
+            echo "::group::compose ps"
+            # The -f list is spelled out rather than reusing `$cf`: that variable is assigned inside
+            # the <<'REMOTE' heredoc, which is QUOTED, so it exists only on the box and would expand
+            # to empty here — leaving a `docker compose ps` that reads the base file alone and
+            # cheerfully reports on the wrong set of services.
+            ssh $SSHOPTS "root@${HOST}" 'cd /opt/alethia && docker compose \
+              -f docker-compose.yml \
+              -f deploy/prod/docker-compose.prod.yml \
+              -f deploy/prod/docker-compose.tunnel.yml ps' || true
+            echo "::endgroup::"
+            exit 1
+          fi
 
   # A red production deploy must never again be discovered by someone happening to read a buildx log.
   # It has happened three times: #2244 (ten days), #2485 (closed on half the diagnosis), and the
