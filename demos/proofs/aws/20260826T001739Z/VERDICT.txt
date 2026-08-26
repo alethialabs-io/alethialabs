@@ -1,0 +1,14 @@
+aws: ❌ FAILED at stage 'argocd-ready' (outcome=failure)
+cluster:   alethia-nl-32909287152-1 (us-east-1)
+run:       nightly-32909287152-1 @ 66b9812
+receipt:   signed=true sha256=1dcffb1cd664
+teardown:  destroyed=false (? resources)
+duration:  4227s
+soak:      n/a (A0.3 soak off or not reached)
+day2-access: ❌ day2-access: endpoint surfaced=true · kube reachable=true authorized=true (can-i * / *) · nodes ready=1 · argocd-url reachable=false (https://argocd.32909287152-1.e2e.alethialabs.io) — dns-not-resolving: the hostname does not resolve — external-dns has not written the record (waiting longer will NOT fix this) (after 19 attempt(s) over 3m0s)
+day2offer: n/a (day-2 offer postures off or not reached)
+fabric-demo: n/a (#845 Fabric placement gate off or not reached)
+acm-cert: n/a (#1773 ACM certificate gate off or not reached)
+byo-iac:   n/a (#1765 BYO-IaC continuous proof off or not reached)
+xacct:     n/a (#1268 cross-account secrets off or not reached)
+keyless-db: n/a (#1511 keyless DB auth off or not reached)
