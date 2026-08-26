@@ -1,6 +1,9 @@
-"use server";
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
+// Runner-callback finalizers for a BUILD job. NOT server actions — see the note in
+// lib/jobs/finalize-deployment.ts. enqueueDeployAfterBuild() INSERTS a DEPLOY job (it
+// provisions real cloud infrastructure) from a bare job id, which is precisely why this file
+// must stay out of app/server/actions/ and carry no "use server" directive.
 
 import { and, eq } from "drizzle-orm";
 import { signedJob } from "@/lib/db/signed-job";

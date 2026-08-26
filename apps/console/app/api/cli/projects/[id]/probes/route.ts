@@ -8,7 +8,7 @@
 
 import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { getLatestProbesByEnv } from "@/app/server/actions/probes";
+import { getLatestProbesByEnv } from "@/lib/probes/persistence";
 import { authorizeCli } from "@/lib/authz/guard";
 import { resolveCliProject } from "@/lib/cli/resolve-project";
 import { cliJson } from "@/lib/cli/respond";

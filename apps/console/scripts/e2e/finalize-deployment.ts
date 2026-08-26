@@ -38,7 +38,7 @@
 // a non-zero exit as WARN unless ALETHIA_E2E_A05_ENFORCE is set, so a shim hiccup can never red the
 // expensive nightly before the assertion has proven itself over 3 green nights.
 
-import { finalizeDeployment } from "@/app/server/actions/deployments";
+import { finalizeDeployment } from "@/lib/jobs/finalize-deployment";
 
 async function main(): Promise<void> {
 	const jobId = process.argv[2];

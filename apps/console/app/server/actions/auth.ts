@@ -6,6 +6,14 @@
 // silently create an account: an unknown address gets a "no account — sign up"
 // email instead of a sign-in code. Signup proceeds normally (emailOTP creates the
 // user on verify).
+//
+// action-boundary-ok: this is the PRE-auth surface — there is by definition no actor to
+// resolve and nothing to authorize yet, so it cannot satisfy check-action-boundary.mjs. It
+// reads `user` through the service client only to answer "does this address exist?".
+// Note that the answer IS observable to the client (auth-form.tsx branches to a "no-account"
+// step), i.e. this endpoint distinguishes registered from unregistered addresses. That is the
+// deliberate cost of refusing to silently create an account on the login path, not an
+// oversight — but it does mean this action wants a rate limit before it wants anything else.
 
 import { eq, sql } from "drizzle-orm";
 import { getAuthConfig } from "@/lib/config/auth";

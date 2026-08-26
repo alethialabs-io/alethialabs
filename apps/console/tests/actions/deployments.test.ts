@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 
-import { finalizeDeployment } from "@/app/server/actions/deployments";
+import { finalizeDeployment } from "@/lib/jobs/finalize-deployment";
 import { getServiceDb } from "@/lib/db";
 import {
 	projectCaches,

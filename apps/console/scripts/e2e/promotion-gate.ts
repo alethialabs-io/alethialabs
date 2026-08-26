@@ -36,7 +36,7 @@
 // resolvable outside Next's bundler, so NODE_PATH points at the committed no-op stubs (server-only /
 // client-only) — React stays on its normal build. Exit 0 on success, non-zero on any error.
 
-import { finalizeDeployment } from "@/app/server/actions/deployments";
+import { finalizeDeployment } from "@/lib/jobs/finalize-deployment";
 import {
 	advancePromotionOnPlan,
 	applyPromotionApproval,
