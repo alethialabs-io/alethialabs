@@ -36,7 +36,7 @@ export default async function ContactSalesPage() {
 							[
 								"building",
 								"Deploy where your data lives",
-								"Hosted, single-tenant, or fully self-managed inside your own VPC. Zero credentials stored, either way.",
+								"Hosted, single-tenant, or fully self-managed inside your own VPC. Keyless on AWS, GCP, Azure and Alibaba, either way.",
 							],
 						],
 					}}
