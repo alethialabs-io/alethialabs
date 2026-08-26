@@ -157,7 +157,7 @@ jobs:
     # below) — a real ctx of 90m against a 75m step cap. The step killed the process before the ctx
     # could cancel, which loses the named scenario failure AND skips the in-process t.Cleanup
     # teardown, leaking the cluster to the sweeper. Do not hand-tune these; run t2budget.
-    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 252 || 157 }}
+    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 265 || 160 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -972,7 +972,7 @@ jobs:
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 237 || 142 }}
+        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 250 || 145 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -1345,6 +1345,13 @@ jobs:
           #   2. ResolveT2Budget now RESERVES the in-process teardown window in the go-timeout
           #      (30m managed / 15m hetzner, #2729), which every rung above it inherits.
           #
+          # 142/157 -> 145/160 (fabric 237/252 -> 250/265) because the day-2 access layer became a
+          # RESERVED ladder term. Its probes always consumed ctx; nothing reserved for them, so the
+          # time came silently out of `headroom` — the same defect shape as the teardown window
+          # below. Making it explicit necessarily surfaces in the outer backstop. MEASURED, per real
+          # dimension rather than a cartesian product: the worst leg is aws/full at step 145 / job
+          # 160 (aws/day2 is 143/158, i.e. the old cap was already too small for it).
+          #
           # The fabric-demo branch moved further, to 237/252, and NOT only because of teardown: at
           # 195/210 it could not contain its own ladder either. An aws leg with the demo on resolves
           # to ctx 197m, which needed step 207m / job 222m even BEFORE teardown was reserved. It has
@@ -1353,8 +1360,8 @@ jobs:
           # This is the outer GitHub-level backstop, NOT the effective bound on a cheap leg: the
           # ladder is per-provider and per-dimension, so a floor run is still killed by its own
           # ~100m go-timeout. This pair only binds if every finer timeout has already failed.
-          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 237 || 142 }}
-          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 252 || 157 }}
+          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 250 || 145 }}
+          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 265 || 160 }}
           # Where the go-test stream is teed so capture-proof.sh can put the ASSERTIONS in the
           # committed bundle. ALETHIA_E2E_T2_RUNNER_LOG above is the RUNNER's deployment log — a
           # different stream, which carries no `--- PASS` and no A0.x decision lines.

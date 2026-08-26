@@ -335,14 +335,15 @@ func AssertArgoReposConverge(ctx context.Context, kubeconfigPath string, expecte
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	var lastLosers []string
+	var lastRefs []outOfSyncRef
 	for {
 		raw, err := kubectlGetArgoApps(ctx, kubeconfigPath)
 		if err != nil {
 			lastErr = fmt.Errorf("listing ArgoCD Applications failed: %w", err)
-			lastLosers = nil
+			lastLosers, lastRefs = nil, nil
 		} else if observed, perr := parseArgoApps(raw); perr != nil {
 			lastErr = fmt.Errorf("parsing ArgoCD Applications failed: %w", perr)
-			lastLosers = nil
+			lastLosers, lastRefs = nil, nil
 		} else {
 			// Nudge the manual-sync (hardened BYO) apps that haven't converged yet.
 			for _, name := range manualSync {
@@ -356,10 +357,11 @@ func AssertArgoReposConverge(ctx context.Context, kubeconfigPath string, expecte
 				return nil
 			}
 			lastErr, lastLosers = everr, losers
+			lastRefs = refsForLosers(observed, losers)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ArgoCD Applications (incl. repo-apps + repo-byo) did not all reach Healthy+Synced within %s:\n%v%s",
-				timeout, lastErr, describeArgoApps(ctx, kubeconfigPath, lastLosers))
+				timeout, lastErr, describeArgoApps(ctx, kubeconfigPath, lastLosers)+dumpOutOfSyncResources(ctx, kubeconfigPath, lastRefs))
 		}
 		select {
 		case <-ctx.Done():
