@@ -350,8 +350,18 @@ export function deriveBoard(snapshot) {
 			ageHours: null,
 			issueState: () => "unknown",
 			gateState: () => "unknown",
+			observedGate: () => null,
 			needsHuman: [],
 		};
+	}
+	// Newest-first in the snapshot, so the FIRST entry per cloud is the most recent observation.
+	// Built defensively: a snapshot written before this field existed simply has none, and every
+	// cloud falls back to the declared inventory rather than reading as unobserved-and-therefore-off.
+	const observations = new Map();
+	for (const o of snapshot.gate_observations ?? []) {
+		if (o && typeof o.provider === "string" && !observations.has(o.provider)) {
+			observations.set(o.provider, o);
+		}
 	}
 	const open = new Map((snapshot.open_issues ?? []).map((i) => [i.number, i]));
 	const closed = new Map((snapshot.closed_issues ?? []).map((i) => [i.number, i]));
@@ -397,6 +407,21 @@ export function deriveBoard(snapshot) {
 		 * was not measured rather than asserting it is off.
 		 */
 		gateState: (name) => (gatesKnown ? (names.has(name) ? "wired" : "unwired") : "unknown"),
+		/**
+		 * What the nightly OBSERVED for one cloud, or null.
+		 *
+		 * A DIFFERENT AND BETTER QUESTION than gateState's. That one answers "is this gate
+		 * DECLARED?"; this answers "did a leg actually get past it?". They come apart, and gcp is the
+		 * standing proof: `E2E_GCP_WIF_PROVIDER` was set the whole time while every dispatch died at
+		 * *Configure GCP credentials*, because a bare apply on infra/gcp-e2e narrowed the WIF trust
+		 * to ref-only. A variable listing would have printed a confident ✅ for a cloud that had not
+		 * federated in weeks — a false green in the one region of this file whose whole purpose is
+		 * that its status half can be trusted.
+		 *
+		 * Sourced from the `Record gate-off proof` step, which runs ONLY when the gate is off, so
+		 * `skipped` reads as "the gate was on and the leg proceeded".
+		 */
+		observedGate: (cloud) => observations.get(cloud) ?? null,
 		needsHuman: [...open.values()].filter((i) => (i.labels ?? []).includes("needs:human")),
 	};
 }
@@ -631,7 +656,16 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 
 	// The per-cloud gate that decides whether a leg provisions at all.
 	const CLOUD_GATES = { hetzner: "HCLOUD_TOKEN", aws: "E2E_AWS_ROLE_ARN", gcp: "E2E_GCP_WIF_PROVIDER", azure: "E2E_AZURE_CLIENT_ID", alibaba: "E2E_ALIBABA_ROLE_ARN" };
-	const cloudGates = clouds.map((c) => ({ cloud: c, gate: CLOUD_GATES[c] ?? "(unknown)", state: board.gateState(CLOUD_GATES[c] ?? "") }));
+	const cloudGates = clouds.map((c) => {
+		const declared = board.gateState(CLOUD_GATES[c] ?? "");
+		const observed = board.observedGate(c);
+		// OBSERVATION WINS over the declaration, in BOTH directions. A leg that got past its gate
+		// proves the gate works, whatever the inventory says — and a leg that recorded a gate-off
+		// proof proves it does not, even if the variable is present. `state` stays the declared
+		// reading so nothing downstream changes meaning; `effective` is what a reader should act on.
+		const effective = observed === null ? declared : observed.reached ? "wired" : "unwired";
+		return { cloud: c, gate: CLOUD_GATES[c] ?? "(unknown)", state: declared, observed, effective };
+	});
 
 	// Snapshot freshness. A broken cron produces NO signal, so staleness has to be an error eventually
 	// rather than a note nobody reads — but it warns first, because a quiet week should not red the repo
@@ -810,11 +844,19 @@ export function render(v) {
 	L.push("");
 	L.push("**Which clouds can provision at all.** A leg whose gate is unwired green-skips every night.");
 	L.push("");
-	L.push("| cloud | gate | state |");
-	L.push("|---|---|:---:|");
+	L.push("| cloud | gate | state | evidence |");
+	L.push("|---|---|:---:|---|");
 	for (const g of v.cloudGates) {
-		const glyph = { wired: "✅ wired", unwired: "⛔ **unwired**", unknown: "? unknown" }[g.state];
-		L.push(`| **${g.cloud}** | \`${g.gate}\` | ${glyph} |`);
+		const glyph = { wired: "✅ wired", unwired: "⛔ **unwired**", unknown: "? unknown" }[g.effective];
+		// An OBSERVED state names the run that observed it, because "a leg got past this gate" is a
+		// checkable claim and "a variable is set somewhere" is not. A declared-only state says so,
+		// so the two are never mistaken for each other.
+		const evidence = g.observed
+			? `${g.observed.reached ? "a leg reached the gate" : "a gate-off proof was recorded"} — run ${g.observed.run}`
+			: g.state === "unknown"
+				? "not observed, and the inventory was not readable"
+				: "declared only — no recent run observed this leg";
+		L.push(`| **${g.cloud}** | \`${g.gate}\` | ${glyph} | ${evidence} |`);
 	}
 	L.push("");
 	L.push("**Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.");
@@ -869,7 +911,7 @@ export function render(v) {
 
 	L.push("### Blocked on a human");
 	L.push("");
-	const unwiredClouds = v.cloudGates.filter((g) => g.state === "unwired");
+	const unwiredClouds = v.cloudGates.filter((g) => g.effective === "unwired");
 	if (!v.board.present) {
 		L.push("Unknown without a snapshot.");
 	} else if (unwiredClouds.length === 0 && v.board.needsHuman.length === 0) {
@@ -1330,7 +1372,8 @@ function runSelfTest() {
 	}
 
 	// ── the LIVE BOARD half ──
-	const snap = (open = [], closed = [], variables = [], secrets = []) => ({
+	const snap = (open = [], closed = [], variables = [], secrets = [], gate_observations = []) => ({
+		gate_observations,
 		derived_at: new Date(Date.now() - 3600_000).toISOString(),
 		open_issues: open.map((n) => ({ number: n, title: `t${n}`, labels: [] })),
 		closed_issues: closed.map((n) => ({ number: n, title: `t${n}`, labels: [] })),
@@ -1358,7 +1401,7 @@ function runSelfTest() {
 	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: null });
 	ok("with NO snapshot a FAIL stays `failing` — unknown never becomes stale", r.grid.aws.floor.state === "failing", r.grid.aws.floor.state);
 	ok("...and the board reports itself absent", r.board.present === false);
-	ok("...and every gate reads unknown rather than unwired", r.cloudGates.every((g) => g.state === "unknown"), JSON.stringify(r.cloudGates));
+	ok("...and every gate reads unknown rather than unwired", r.cloudGates.every((g) => g.effective === "unknown"), JSON.stringify(r.cloudGates));
 
 	// An issue beyond the fetch limit is `unknown`, NOT `open` — guessing open would hide a stale cite.
 	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: snap([9999], [8888]) });
@@ -1516,6 +1559,51 @@ function runSelfTest() {
 			fullPass.grid.aws["byo-iac"].state !== "proven",
 			`${fullPass.grid.aws["byo-iac"].state}: ${fullPass.grid.aws["byo-iac"].why}`,
 		);
+	}
+
+	// ── GATE REALITY, OBSERVED. The declaration and the observation come apart, and when they do the
+	//    observation is the one worth acting on. ──
+	{
+		const obs = (provider, reached) => ({ provider, reached, run: "999", at: "2026-08-26T09:00:00Z" });
+
+		// A leg that got past its gate proves the gate WORKS, whatever the inventory says — and the
+		// inventory here says nothing at all, which is the situation programme.yml is actually in.
+		const observed = derive({
+			...base,
+			ledgerText: hdr,
+			snapshot: snap([], [], [], [], [obs("aws", true)]),
+		});
+		const awsGate = observed.cloudGates.find((g) => g.cloud === "aws");
+		ok("an observed leg beats an unreadable inventory", awsGate?.effective === "wired", JSON.stringify(awsGate));
+		ok("...and the DECLARED reading is kept alongside, not overwritten", awsGate?.state === "unknown", JSON.stringify(awsGate));
+		ok("...and a cloud with no observation still falls back to the declaration",
+			observed.cloudGates.find((g) => g.cloud === "hetzner")?.effective === "unknown",
+			JSON.stringify(observed.cloudGates.find((g) => g.cloud === "hetzner")));
+
+		// THE OTHER DIRECTION, and the one that matters more. A variable being present is not the
+		// same as a gate working — gcp's WIF was declared the whole time it was rejecting every
+		// dispatch. A leg that recorded a gate-off proof says the gate is off, and that must win over
+		// a present variable rather than being outvoted by it.
+		const contradicted = derive({
+			...base,
+			ledgerText: hdr,
+			snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"], [], [obs("aws", false)]),
+		});
+		const contradictedGate = contradicted.cloudGates.find((g) => g.cloud === "aws");
+		ok("an observed gate-off beats a PRESENT variable", contradictedGate?.effective === "unwired", JSON.stringify(contradictedGate));
+		ok("...and the declaration still reads wired, so the disagreement is visible", contradictedGate?.state === "wired", JSON.stringify(contradictedGate));
+
+		// The rendered table must NAME the run, or an observed claim is as unfalsifiable as the
+		// declared one it replaced.
+		const rendered = render(observed);
+		ok("the rendered table cites the run that observed the gate", /run 999/.test(rendered), rendered.slice(0, 200));
+
+		// A snapshot written BEFORE this field existed must not read as "no cloud was observed,
+		// therefore all are off". Absent evidence is not evidence of absence.
+		const legacy = derive({ ...base, ledgerText: hdr, snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"]) });
+		ok("a snapshot with no observations falls back to the declaration",
+			legacy.cloudGates.find((g) => g.cloud === "aws")?.effective === "wired",
+			JSON.stringify(legacy.cloudGates.find((g) => g.cloud === "aws")));
 	}
 
 	// needs:human flows through to the blocked list.

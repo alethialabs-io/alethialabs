@@ -258,13 +258,13 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 **Which clouds can provision at all.** A leg whose gate is unwired green-skips every night.
 
-| cloud | gate | state |
-|---|---|:---:|
-| **aws** | `E2E_AWS_ROLE_ARN` | ? unknown |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ? unknown |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ? unknown |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ? unknown |
-| **hetzner** | `HCLOUD_TOKEN` | ? unknown |
+| cloud | gate | state | evidence |
+|---|---|:---:|---|
+| **aws** | `E2E_AWS_ROLE_ARN` | ? unknown | not observed, and the inventory was not readable |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ? unknown | not observed, and the inventory was not readable |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ? unknown | not observed, and the inventory was not readable |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ? unknown | not observed, and the inventory was not readable |
+| **hetzner** | `HCLOUD_TOKEN` | ? unknown | not observed, and the inventory was not readable |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
