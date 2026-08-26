@@ -29,7 +29,12 @@ type Step = "providers" | "email" | "code" | "no-account";
 
 export type AuthMode = "login" | "signup";
 
-const oauthProviders: AuthProvider[] = ["github", "google", "gitlab", "bitbucket"];
+/** Leads the grid at full width — for a Kubernetes control plane it is GitHub. */
+const PRIMARY_PROVIDER = "github" satisfies AuthProvider;
+/** The rest, three-up beneath it. */
+const SECONDARY_PROVIDERS: AuthProvider[] = ["google", "gitlab", "bitbucket"];
+/** Everything the `?provider=` hint is allowed to name. */
+const oauthProviders: AuthProvider[] = [PRIMARY_PROVIDER, ...SECONDARY_PROVIDERS];
 
 /** Per-mode copy. Logic is identical — email-OTP (type "sign-in") creates the
  * user on first verify, so signup and login share the same code paths. */
@@ -42,7 +47,6 @@ const COPY: Record<
 		emailEyebrow: string;
 		emailTitle: string;
 		verifyCta: string;
-		note: string;
 	}
 > = {
 	login: {
@@ -52,7 +56,6 @@ const COPY: Record<
 		emailEyebrow: "Sign in",
 		emailTitle: "Sign in with email",
 		verifyCta: "Continue",
-		note: "No passwords. We email you a one-time code to verify it’s you.",
 	},
 	signup: {
 		eyebrow: "Get started",
@@ -61,7 +64,6 @@ const COPY: Record<
 		emailEyebrow: "Get started",
 		emailTitle: "Sign up with email",
 		verifyCta: "Create account",
-		note: "No passwords, ever. We email you a one-time code to verify it’s you.",
 	},
 };
 
@@ -84,6 +86,36 @@ const AUTH_MESSAGES: Record<string, string> = {
 	session_expired: "Your session expired — please sign in again.",
 	verify_email: "Check your email to finish signing in.",
 };
+
+/** One OAuth provider tile — spinner while its own sign-in is in flight. */
+function ProviderButton({
+	provider,
+	isLoading,
+	loadingProvider,
+	onSelect,
+}: {
+	provider: AuthProvider;
+	isLoading: boolean;
+	loadingProvider: string | null;
+	onSelect: (provider: AuthProvider) => void;
+}) {
+	return (
+		<Button
+			type="button"
+			variant="outline"
+			onClick={() => onSelect(provider)}
+			disabled={isLoading}
+			className="h-[46px] w-full gap-[9px] rounded-sm border-border-strong text-[13.5px] hover:border-ring hover:bg-surface-muted"
+		>
+			{loadingProvider === provider ? (
+				<Loader2 className="size-[17px] animate-spin" />
+			) : (
+				<ProviderIcon provider={provider} size={17} />
+			)}
+			{lookup(PROVIDER_LABELS, provider)}
+		</Button>
+	);
+}
 
 interface AuthFormProps {
 	mode: AuthMode;
@@ -285,8 +317,21 @@ export function AuthForm({ mode }: AuthFormProps) {
 		}
 	};
 
+	/** Back to the email step, clearing the half-typed code and any stale error. */
+	const backToEmail = () => {
+		setStep("email");
+		setCode("");
+		setError(null);
+	};
+
+	// `role="alert"`: on a failed verification the text swaps in place and the OTP
+	// field clears underneath it. A sighted user sees both; without a live region a
+	// screen-reader user got neither.
 	const errorBanner = error ? (
-		<div className="rounded-sm border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+		<div
+			role="alert"
+			className="rounded-sm border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+		>
 			{error}
 		</div>
 	) : null;
@@ -294,7 +339,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 	// Step 3 — enter the 6-digit code.
 	if (step === "code") {
 		return (
-			<AuthCard>
+			<AuthCard key={step}>
 				<div className="mb-6 flex flex-col gap-2.5">
 					<p className="vx-eyebrow">Verify</p>
 					<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
@@ -302,7 +347,14 @@ export function AuthForm({ mode }: AuthFormProps) {
 					</h1>
 					<p className="text-[14.5px] leading-[1.55] text-text-secondary">
 						We sent a 6-digit code to{" "}
-						<span className="font-medium text-text-primary">{email}</span>.
+						<span className="font-medium text-text-primary">{email}</span>.{" "}
+						<button
+							type="button"
+							onClick={backToEmail}
+							className="text-text-tertiary underline underline-offset-2 transition-colors hover:text-text-primary"
+						>
+							Change
+						</button>
 					</p>
 				</div>
 
@@ -351,11 +403,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 					<div className="flex items-center justify-between text-[13px]">
 						<button
 							type="button"
-							onClick={() => {
-								setStep("email");
-								setCode("");
-								setError(null);
-							}}
+							onClick={backToEmail}
 							className="text-text-tertiary transition-colors hover:text-text-primary"
 						>
 							← Use a different email
@@ -387,7 +435,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 			? `/signup?${signupParams.toString()}`
 			: "/signup";
 		return (
-			<AuthCard>
+			<AuthCard key={step}>
 				<div className="mb-6 flex flex-col gap-2.5">
 					<p className="vx-eyebrow">No account</p>
 					<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
@@ -427,7 +475,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 	// Step 2 — enter email.
 	if (step === "email") {
 		return (
-			<AuthCard>
+			<AuthCard key={step}>
 				<div className="mb-6 flex flex-col gap-2.5">
 					<p className="vx-eyebrow">{copy.emailEyebrow}</p>
 					<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
@@ -484,7 +532,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 
 	// Step 1 — provider list.
 	return (
-		<AuthCard>
+		<AuthCard key={step}>
 			<div className="mb-6 flex flex-col gap-2.5">
 				<p className="vx-eyebrow">{copy.eyebrow}</p>
 				<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
@@ -498,48 +546,27 @@ export function AuthForm({ mode }: AuthFormProps) {
 			<div className="space-y-[9px]">
 				{errorBanner}
 
-				<div className="grid grid-cols-2 gap-[9px]">
-					{oauthProviders.map((provider) => (
-						<Button
+				{/* A flat 2x2 of four equal tiles said "we have no idea which one you
+				    want". For a Kubernetes control plane it is overwhelmingly GitHub, so
+				    it leads at full width and the other three share a row. The e2e specs
+				    select by accessible name, so nothing here is position-dependent. */}
+				<ProviderButton
+					provider={PRIMARY_PROVIDER}
+					isLoading={isLoading}
+					loadingProvider={loadingProvider}
+					onSelect={handleOAuthLogin}
+				/>
+				<div className="grid grid-cols-3 gap-[9px]">
+					{SECONDARY_PROVIDERS.map((provider) => (
+						<ProviderButton
 							key={provider}
-							type="button"
-							variant="outline"
-							onClick={() => handleOAuthLogin(provider)}
-							disabled={isLoading}
-							className="h-[46px] gap-[9px] rounded-sm border-border-strong text-[13.5px] hover:border-ring hover:bg-surface-muted"
-						>
-							{loadingProvider === provider ? (
-								<Loader2 className="size-[17px] animate-spin" />
-							) : (
-								<ProviderIcon provider={provider} size={17} />
-							)}
-							{lookup(PROVIDER_LABELS, provider)}
-						</Button>
+							provider={provider}
+							isLoading={isLoading}
+							loadingProvider={loadingProvider}
+							onSelect={handleOAuthLogin}
+						/>
 					))}
 				</div>
-
-				{/* The four remaining raw <button>s in this file are inline TEXT
-				    affordances — "← Other sign-in options", "Resend", the back-links.
-				    They are deliberately not `Button`: they have no box, so the clamp
-				    has nothing to clamp onto, and the system's `link` variant would put
-				    an underline on them that this composition does not want.
-
-				    SSO — not wired yet; visible but disabled (coming soon). An e2e spec
-				    asserts it is present AND disabled, so neither may change here. */}
-				<Button
-					type="button"
-					variant="outline"
-					disabled
-					title="SSO is coming soon"
-					aria-label="Continue with SSO (coming soon)"
-					className="h-[46px] w-full cursor-not-allowed gap-[9px] rounded-sm border-border-strong text-[13.5px] opacity-55"
-				>
-					<Lock className="size-4 opacity-80" />
-					Continue with SSO
-					<span className="ml-1 rounded-full border border-border-strong px-1.5 py-px font-mono text-[8.5px] uppercase tracking-[0.12em] text-text-tertiary">
-						Soon
-					</span>
-				</Button>
 
 				<div className="flex items-center gap-3.5 py-2">
 					<span className="h-px flex-1 bg-border" />
@@ -563,10 +590,32 @@ export function AuthForm({ mode }: AuthFormProps) {
 					Continue with email
 				</Button>
 
-				<p className="mt-4 flex items-start gap-2 text-xs leading-[1.55] text-text-tertiary">
-					<Lock className="mt-0.5 size-3.5 shrink-0 opacity-70" />
-					{copy.note}
-				</p>
+				{/* SSO — not wired yet; visible but disabled (coming soon). An e2e spec
+				    asserts it is present AND disabled, so neither may change here. What
+				    could change is where it sits: it used to be the first full-width
+				    control under the provider grid, so a third of the visible options
+				    were dead before the visitor read a word. It now follows the live
+				    ones. The spec selects by accessible name, so the move is free.
+
+				    The raw <button>s elsewhere in this file are inline TEXT affordances
+				    — "← Other sign-in options", "Resend", the back-links. They are
+				    deliberately not `Button`: they have no box for the clamp to grip,
+				    and the `link` variant would underline them. */}
+				<Button
+					type="button"
+					variant="outline"
+					disabled
+					title="SSO is coming soon"
+					aria-label="Continue with SSO (coming soon)"
+					className="h-[46px] w-full cursor-not-allowed gap-[9px] rounded-sm border-border-strong text-[13.5px] opacity-55"
+				>
+					<Lock className="size-4 opacity-80" />
+					Continue with SSO
+					<span className="ml-1 rounded-full border border-border-strong px-1.5 py-px font-mono text-[8.5px] uppercase tracking-[0.12em] text-text-tertiary">
+						Soon
+					</span>
+				</Button>
+
 			</div>
 		</AuthCard>
 	);

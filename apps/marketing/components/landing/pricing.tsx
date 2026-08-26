@@ -16,10 +16,10 @@ import {
 	disp,
 	eyebrow,
 	Icon,
-	Mark,
 	mono,
 	Wrap,
 } from "@repo/brand/site-primitives";
+import { AlethiaMark } from "@repo/brand/lockup";
 import { PageCTA, PageHero, SectionMark } from "@repo/brand/site-sections";
 import {
 	PLAN_CATALOG,
@@ -312,7 +312,7 @@ function OpenCore() {
 				<div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", padding: "40px 36px", display: "grid", gridTemplateColumns: "1fr auto", gap: 32, alignItems: "center" }} className="ah-surface">
 					<div>
 						<div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, color: "var(--text-primary)" }}>
-							<Mark size={26} /><span style={{ ...eyebrow }}>Open core</span>
+							<AlethiaMark size={26} /><span style={{ ...eyebrow }}>Open core</span>
 						</div>
 						<h2 style={{ ...disp, fontSize: 30, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 12px", color: "var(--text-primary)" }}>
 							Free forever. Run it in your own cloud.

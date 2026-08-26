@@ -3,7 +3,7 @@
 
 import Link from "next/link";
 import { Button } from "@repo/ui/button";
-import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { AlethiaMark } from "@repo/brand/lockup";
 
 import { VerifyReceipt } from "./verify-receipt";
 
@@ -79,7 +79,7 @@ export function KeepBeat() {
 export function Close() {
 	return (
 		<section className="mkt-close">
-			<AlethiaLogo width={30} height={30} className="mkt-close-mark" />
+			<AlethiaMark size={30} className="mkt-close-mark" />
 			<h2 className="mkt-h2 mkt-close-h">Provision it. Prove it.</h2>
 			<div className="mkt-acts mkt-acts--center">
 				<Button render={<Link href="/signup" />} nativeButton={false} size="lg">

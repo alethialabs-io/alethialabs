@@ -27,17 +27,14 @@
   --shadow-xl: 0 30px 80px oklch(0 0 0 / 0.62);
 }
 
-/* responsive collapse — mirrors the design's media queries */
+/* responsive collapse — marketing-only grids.
+   `.ah-h1`, `.ah-navmenu`, `.ah-hide-sm` and `.vx-rail` moved to
+   packages/brand/src/tokens.css: they style shared @repo/brand components, and
+   apps/blog renders the same header with no copy of these rules, so its nav
+   never collapsed. `.ah-foot-grid` was dropped outright — nothing renders it. */
 @media (max-width: 900px) {
-  .ah-h1 { font-size: 46px !important; }
-  .ah-surface, .ah-foot-grid, .ah-3col, .ah-2col { grid-template-columns: 1fr !important; }
+  .ah-surface, .ah-3col, .ah-2col { grid-template-columns: 1fr !important; }
   .ah-3col, .ah-2col { gap: 16px !important; }
-  .ah-foot-grid { grid-template-columns: 1fr 1fr !important; gap: 28px !important; }
-  .ah-navmenu { display: none !important; }
-}
-@media (max-width: 620px) {
-  .ah-h1 { font-size: 36px !important; }
-  .ah-hide-sm { display: none !important; }
 }
 
 /* enterprise page — page-specific collapses (mirror the design's .en-* rules) */
@@ -190,9 +187,10 @@
 .mkt-hero-in {
   position: relative;
   z-index: 2;
-  max-width: 1180px;
+  max-width: var(--wrap-max);
   margin: 0 auto;
-  padding: 0 64px 4vh;
+  padding-inline: var(--wrap-pad);
+  padding-block: 0 4vh;
   min-height: 100svh;
   display: flex;
   flex-direction: column;
@@ -270,7 +268,7 @@
 
 .mkt-beat { position: relative; z-index: 2; border-top: 1px solid var(--border); padding: 110px 0; }
 .mkt-beat--sunken { background: var(--surface-sunken); }
-.mkt-wrap { max-width: 1180px; margin: 0 auto; padding: 0 64px; }
+.mkt-wrap { max-width: var(--wrap-max); margin: 0 auto; padding-inline: var(--wrap-pad); }
 
 .mkt-plate {
   position: relative;
@@ -357,7 +355,6 @@
   .mkt-h1 { font-size: 52px; }
 }
 @media (max-width: 900px) {
-  .vx-rail { display: none; }
   .mkt-keep { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {

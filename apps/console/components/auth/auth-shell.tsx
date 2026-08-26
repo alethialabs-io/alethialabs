@@ -12,7 +12,7 @@
 import type React from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { AlethiaLockup } from "@repo/brand/lockup";
 import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { PrivacySettingsButton } from "@repo/privacy/privacy-settings-button";
 import { Button } from "@repo/ui/button";
@@ -75,7 +75,7 @@ export function AuthShell({
           aria-label="Alethia Labs — home"
           className="vx-clamp vx-clamp--tight inline-flex items-center transition-opacity hover:opacity-80"
         >
-          <AlethiaLogo withText className="h-6 w-auto text-text-primary" />
+          <AlethiaLockup size={24} className="text-text-primary" />
         </Link>
 
         {switchPrompt && switchHref && switchLabel ? (

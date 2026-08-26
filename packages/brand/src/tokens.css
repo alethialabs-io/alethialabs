@@ -619,10 +619,19 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
 }
 /* A real border, not an inset box-shadow: `forced-colors` resolves
-   `box-shadow` to `none` and the frame would vanish for high-contrast users. */
+   `box-shadow` to `none` and the frame would vanish for high-contrast users.
+
+   The inset is a token because the sticky header has to know it. The frame is
+   fixed at z-60 and paints OVER the z-50 header, so the header's visible band
+   starts at `--frame-inset`, not at 0 — which left 20.5px of air above the nav
+   row and 31.5px below it, and read as top-heavy. The header pays the inset
+   back as padding-top. Change one and the other follows. */
+:root {
+  --frame-inset: 10px;
+}
 .vx-frame {
   position: fixed;
-  inset: 10px;
+  inset: var(--frame-inset);
   border: 1px solid var(--border);
   pointer-events: none;
   z-index: 60;
@@ -639,7 +648,8 @@
   transform: rotate(180deg);
   pointer-events: none;
 }
-.vx-rail--top { top: 104px; }
+/* Clears the header, which is now `--frame-inset` taller. */
+.vx-rail--top { top: calc(104px + var(--frame-inset) + 1px); }
 .vx-rail--bottom { bottom: 28px; text-transform: none; letter-spacing: 0.16em; }
 
 /* Status indicator — state read through dot fill/shape + a mono label,
@@ -694,4 +704,49 @@
 
 @media (prefers-reduced-motion: reduce) {
   .vx-status--live .vx-status__dot { animation: none; }
+}
+
+
+/* ── The one content container ───────────────────────────────────────────────
+   There were two: `Wrap` at 1160/32 (header, footer, enterprise, pricing) and
+   the marketing home page's `.mkt-wrap` at 1180/64. At 1440px they put the
+   header lockup at 172px and the hero headline directly beneath it at 194px.
+
+   1180/64 wins on a measurement, not a preference: `.vx-rail` is fixed at
+   `left: 17px` in vertical writing mode at 10px, so it occupies x ≈ [17, 29].
+   With a 32px gutter, any viewport at or below the 1160px max-width puts body
+   text at x = 32 — three pixels off the rail glyphs, on every 13" laptop
+   between 901px (where the rail hides) and 1160px. 64px clears it. */
+:root {
+  --wrap-max: 1180px;
+  --wrap-pad: 64px;
+}
+@media (max-width: 640px) {
+  :root { --wrap-pad: 26px; }
+}
+.vx-wrap {
+  max-width: var(--wrap-max);
+  margin-inline: auto;
+  padding-inline: var(--wrap-pad);
+}
+
+/* ── Shared-header responsive collapse ───────────────────────────────────────
+   These three classes are applied by `packages/brand/src/site/site-header.tsx`
+   and `page-sections.tsx`, but their media queries lived only in
+   `apps/marketing/app/globals.css`. `apps/blog` renders the same SiteShell and
+   had no such rule, so on a phone the blog showed the desktop nav AND the
+   hamburger AND the GitHub link AND "Get a demo" AND "Login", and the row
+   overflowed. Same bug as `.ah-pulse` above, one class over: a class used
+   across apps has to live where every app already imports from.
+
+   The `!important` is load-bearing — it was there in the app stylesheet, and
+   tokens.css is imported first, so dropping it would flip the cascade. */
+@media (max-width: 900px) {
+  .ah-navmenu { display: none !important; }
+  .ah-h1 { font-size: 46px !important; }
+  .vx-rail { display: none; }
+}
+@media (max-width: 620px) {
+  .ah-hide-sm { display: none !important; }
+  .ah-h1 { font-size: 36px !important; }
 }
