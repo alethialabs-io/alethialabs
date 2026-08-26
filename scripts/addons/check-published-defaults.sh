@@ -88,6 +88,16 @@ if [ -r "$allowfile" ]; then
 fi
 is_declared() { printf '%s\n' "$declared" | grep -qxF "$1"; }
 
+# The set of add-ons this method CANNOT reach is itself ratcheted (#2853 review). Otherwise a third
+# chart becoming un-renderable at its defaults would quietly drop coverage from 16 to 15 on a run
+# that still printed OK — the number of add-ons actually checked would fall with nothing to say so.
+uncheckfile="$repo_root/scripts/addons/published-defaults-uncheckable.txt"
+uncheckable=""
+if [ -r "$uncheckfile" ]; then
+  uncheckable="$(sed -e 's/#.*//' "$uncheckfile" | grep -v '^[[:space:]]*$' | sed 's/[[:space:]]*$//' || true)"
+fi
+is_uncheckable() { printf '%s\n' "$uncheckable" | grep -qxF "$1"; }
+
 while read -r id repo chart version ns; do
   [ -n "$id" ] || continue
   helm repo add "pd-$id" "$repo" >/dev/null 2>&1 || true
@@ -98,6 +108,8 @@ undeclared=""
 stale=""
 failed=""
 uncomparable=""
+new_uncheckable=""
+now_checkable=""
 seen_file="$workdir/seen.txt"
 : > "$seen_file"
 
@@ -123,8 +135,13 @@ while read -r id repo chart version ns; do
     # real limit of this method rather than a fault, and it is reported as "not checked" — the one
     # thing it must never do is print `clean`.
     uncomparable="$uncomparable $id"
-    echo "NOT CHECKED    $id — the chart cannot render at its own defaults, so there is no"
-    echo "               published reference: $(head -1 "$workdir/$id.err" | cut -c1-88)"
+    if is_uncheckable "$id"; then
+      echo "NOT CHECKED    $id — declared: cannot render at its own defaults"
+    else
+      new_uncheckable="$new_uncheckable $id"
+      echo "NEWLY UNCHECKABLE  $id — the chart cannot render at its own defaults, so there is no"
+      echo "                   published reference: $(head -1 "$workdir/$id.err" | cut -c1-84)"
+    fi
     continue
   fi
 
@@ -235,12 +252,36 @@ fi
 echo
 echo "checked $total add-on(s)"
 
+# And the other direction: a declared-uncheckable add-on that now renders is coverage REGAINED, and
+# the list must shrink to record it.
+if [ -n "$uncheckable" ]; then
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    case " $uncomparable " in
+      *" $entry "*) ;;
+      *) now_checkable="$now_checkable $entry"
+         echo "NOW CHECKABLE  $entry — it renders at its defaults again; remove it from $(basename "$uncheckfile")" ;;
+    esac
+  done <<< "$uncheckable"
+fi
+
 status=0
 if [ -n "$uncomparable" ]; then
   # Reported loudly and NOT a failure: these add-ons cannot be checked by this method at all, and
   # pretending otherwise in either direction would be worse than saying so. Counting them as clean
   # would be the silent-pass bug; failing on them would make the check unpassable.
   echo "NOT CHECKED (no default render available):$uncomparable" >&2
+fi
+if [ -n "$new_uncheckable" ]; then
+  echo "FAIL: add-on(s) newly cannot be checked:$new_uncheckable" >&2
+  echo "      Coverage SHRANK. Declare them in $(basename "$uncheckfile") with the reason, so the" >&2
+  echo "      set this method cannot reach is a recorded decision rather than a drifting number." >&2
+  status=1
+fi
+if [ -n "$now_checkable" ]; then
+  echo "FAIL: declared-uncheckable add-on(s) now render:$now_checkable" >&2
+  echo "      Coverage grew — drop them so the list can only shrink." >&2
+  status=1
 fi
 if [ -n "$failed" ]; then
   echo "FAIL: chart(s) did not render at all:$failed" >&2
