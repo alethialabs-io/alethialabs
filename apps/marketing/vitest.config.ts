@@ -28,5 +28,24 @@ export default defineConfig({
 		include: ["./tests/**/*.test.ts"],
 		exclude: ["**/node_modules/**"],
 		css: false,
+		coverage: {
+			provider: "v8",
+			// "json" writes coverage-final.json — the artefact scripts/ts-coverage.mjs measures. It
+			// is in vitest's DEFAULT reporter set, but naming any `reporter` array REPLACES that
+			// default, so it must be listed explicitly.
+			reporter: ["text", "json"],
+			reportsDirectory: "./coverage",
+			// Scope to the LOGIC surface, the same policy apps/console applies: `app/**` and
+			// `components/**` are views, covered by the browser tier rather than here.
+			//
+			// THIS NUMBER WILL START LOW AND THAT IS THE POINT. This suite has exactly one test file
+			// (tests/proxy.test.ts, exercising proxy.ts), so most of lib/** is measured at zero. A
+			// scope drawn tightly around the one tested file would report a flattering number about
+			// a surface nobody chose — the `@repo/ui` include-allowlist mistake, which #2653 had to
+			// write down as a caveat in TESTING.md. Measuring the real logic surface says something
+			// true instead: marketing's logic is barely tested, and now it cannot get quieter.
+			include: ["proxy.ts", "lib/**"],
+			exclude: ["**/*.d.ts", "**/*.config.*", "tests/**"],
+		},
 	},
 });

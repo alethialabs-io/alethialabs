@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "provider": "aws",
+  "endpoint_surfaced": true,
+  "endpoint": "https://09AB781FA0E36B4E587C06B0AECB9E75.gr7.us-east-1.eks.amazonaws.com",
+  "kube_reachable": true,
+  "kube_authorized": true,
+  "auth_action": "* / *",
+  "ready_nodes": 1,
+  "argocd_url_checked": true,
+  "argocd_url": "https://argocd.32909305608-1.e2e.alethialabs.io",
+  "argocd_url_reachable": false,
+  "argocd_url_diagnosis": "dns-not-resolving: the hostname does not resolve — external-dns has not written the record (waiting longer will NOT fix this) (after 19 attempt(s) over 3m0s)",
+  "verdict": "❌ day2-access: endpoint surfaced=true · kube reachable=true authorized=true (can-i * / *) · nodes ready=1 · argocd-url reachable=false (https://argocd.32909305608-1.e2e.alethialabs.io) — dns-not-resolving: the hostname does not resolve — external-dns has not written the record (waiting longer will NOT fix this) (after 19 attempt(s) over 3m0s)"
+}

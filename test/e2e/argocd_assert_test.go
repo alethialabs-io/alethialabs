@@ -707,3 +707,159 @@ func TestAGICApplicationNameMatchesTemplate(t *testing.T) {
 		t.Errorf("AGIC gate %q must be azure-only", gate[1])
 	}
 }
+
+// TestRequireAllAddOnsExpected pins the guard that stops a full-surface run reporting the floor.
+//
+// Run 32883521925 PASSED the `addons` dimension having asserted four Applications —
+// [addon-byo-e2e apps external-secrets-operator metrics-server] — because the expected set is
+// derived from execution_metadata.addon_status and that persistence had silently failed. Four is
+// not zero, so DeriveExpectedArgoApps's "never empty" check did not fire.
+//
+// The axis varied here is THE COMPLETENESS OF THE SET, not whether it is empty — an empty-set test
+// would have passed against the bug.
+func TestRequireAllAddOnsExpected(t *testing.T) {
+	catalog, err := AllCatalogAddOns()
+	if err != nil {
+		t.Fatalf("catalog fixture: %v", err)
+	}
+	var wantApps []string
+	for _, a := range catalog {
+		if a.Mode == "managed" && !a.IsManifestSource() {
+			wantApps = append(wantApps, argocd.AddOnAppName(a.ID))
+		}
+	}
+	if len(wantApps) < 2 {
+		t.Fatalf("the catalog fixture yields %d Application-bearing add-ons — this test would be vacuous", len(wantApps))
+	}
+
+	t.Run("off by default: the lean tier is not required to carry the catalog", func(t *testing.T) {
+		t.Setenv("ALETHIA_E2E_ALL_ADDONS", "")
+		if err := RequireAllAddOnsExpected([]string{"external-secrets-operator"}); err != nil {
+			t.Errorf("the lean tier must not be held to the full surface: %v", err)
+		}
+	})
+
+	t.Run("THE REGRESSION: the real four-app set is refused", func(t *testing.T) {
+		t.Setenv("ALETHIA_E2E_ALL_ADDONS", "1")
+		err := RequireAllAddOnsExpected([]string{"addon-byo-e2e", "apps", "external-secrets-operator", "metrics-server"})
+		if err == nil {
+			t.Fatal("a full-surface run asserting four Applications must be refused — this is run 32883521925")
+		}
+		// The failure has to name what is missing; "incomplete" alone sends the reader to a cluster.
+		if !strings.Contains(err.Error(), "ABSENT") {
+			t.Errorf("the failure must say what is absent, got %q", err)
+		}
+		for _, probe := range wantApps[:2] {
+			if !strings.Contains(err.Error(), probe) {
+				t.Errorf("the failure must NAME the missing add-on %q, got %q", probe, err)
+			}
+		}
+		// And it must point at the cause, which is not the assertion.
+		if !strings.Contains(err.Error(), "recordAddonHealth") {
+			t.Errorf("the failure should point at the persistence that shrank the set, got %q", err)
+		}
+	})
+
+	t.Run("the complete set passes", func(t *testing.T) {
+		t.Setenv("ALETHIA_E2E_ALL_ADDONS", "1")
+		full := append([]string{"external-secrets-operator", "metrics-server"}, wantApps...)
+		if err := RequireAllAddOnsExpected(full); err != nil {
+			t.Errorf("a complete set must pass: %v", err)
+		}
+	})
+
+	t.Run("ONE missing add-on is still refused", func(t *testing.T) {
+		// The interesting boundary is not four-of-twenty; it is nineteen-of-twenty, which a
+		// count-based check tuned to "roughly the right size" would wave through.
+		t.Setenv("ALETHIA_E2E_ALL_ADDONS", "1")
+		full := append([]string{"external-secrets-operator", "metrics-server"}, wantApps[1:]...)
+		err := RequireAllAddOnsExpected(full)
+		if err == nil {
+			t.Fatal("a single missing add-on must still fail — the surface is not 'roughly complete'")
+		}
+		if !strings.Contains(err.Error(), wantApps[0]) {
+			t.Errorf("the one missing add-on must be named, got %q", err)
+		}
+	})
+}
+
+// TestArgoReportNamesOutOfSyncResources pins the diagnosis that a Healthy-but-OutOfSync app needs.
+//
+// On 2026-08-26 three add-ons sat Healthy/OutOfSync on BOTH hetzner and aws — argo-rollouts,
+// kyverno and tempo. The workload is up, nothing in the cluster is wrong, and the run still loses
+// its verdict. The report named the Applications and not what differed, so acting on it meant
+// reaching for a live cluster.
+//
+// The answer was already in the payload this assertion fetches: `.status.resources[]` carries a
+// per-resource sync status, and it was being discarded.
+func TestArgoReportNamesOutOfSyncResources(t *testing.T) {
+	raw := []byte(`{"items":[
+	  {"metadata":{"name":"addon-kyverno"},"status":{
+	     "health":{"status":"Healthy"},"sync":{"status":"OutOfSync"},
+	     "resources":[
+	       {"group":"apiextensions.k8s.io","kind":"CustomResourceDefinition","name":"policies.kyverno.io","status":"OutOfSync"},
+	       {"group":"apps","kind":"Deployment","name":"kyverno-admission-controller","status":"Synced"},
+	       {"group":"apiextensions.k8s.io","kind":"CustomResourceDefinition","name":"policies.kyverno.io","status":"OutOfSync"}
+	     ]}}
+	]}`)
+	observed, err := parseArgoApps(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	st := observed["addon-kyverno"]
+
+	if len(st.OutOfSyncResources) != 1 {
+		t.Fatalf("want the OutOfSync resource named once (deduped), got %v", st.OutOfSyncResources)
+	}
+	if st.OutOfSyncResources[0] != "apiextensions.k8s.io/CustomResourceDefinition/policies.kyverno.io" {
+		t.Errorf("the label must carry group/kind/name so the resource class is identifiable, got %q", st.OutOfSyncResources[0])
+	}
+
+	// A SYNCED resource inside an OutOfSync app is the part that is fine, and must not be listed.
+	for _, r := range st.OutOfSyncResources {
+		if strings.Contains(r, "kyverno-admission-controller") {
+			t.Errorf("a Synced resource must not appear in the OutOfSync list: %v", st.OutOfSyncResources)
+		}
+	}
+
+	_, err = evaluateArgoApps(observed, []string{"addon-kyverno"})
+	if err == nil {
+		t.Fatal("a Healthy/OutOfSync app must still fail the assertion")
+	}
+	if !strings.Contains(err.Error(), "policies.kyverno.io") {
+		t.Errorf("the failure must NAME the differing resource — that is the whole diagnosis:\n%s", err)
+	}
+}
+
+// TestArgoReportSaysWhenNoResourceDetail — an OutOfSync app whose resource list is empty must say
+// so. Silence there reads as a clean diff, which is the defect class this repo keeps paying for.
+func TestArgoReportSaysWhenNoResourceDetail(t *testing.T) {
+	raw := []byte(`{"items":[{"metadata":{"name":"addon-x"},"status":{
+	  "health":{"status":"Healthy"},"sync":{"status":"OutOfSync"},"resources":[]}}]}`)
+	observed, err := parseArgoApps(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	_, err = evaluateArgoApps(observed, []string{"addon-x"})
+	if err == nil {
+		t.Fatal("still a failure")
+	}
+	if !strings.Contains(err.Error(), "no per-resource detail") {
+		t.Errorf("an empty resource list must be reported as absent detail, not as nothing differing:\n%s", err)
+	}
+}
+
+// TestArgoReportOmitsResourceLineWhenSynced — a Healthy+Synced app is not in the report at all, and
+// a Degraded-but-Synced one must not grow a misleading empty OutOfSync line.
+func TestArgoReportOmitsResourceLineWhenSynced(t *testing.T) {
+	raw := []byte(`{"items":[{"metadata":{"name":"addon-y"},"status":{
+	  "health":{"status":"Degraded"},"sync":{"status":"Synced"},"resources":[]}}]}`)
+	observed, _ := parseArgoApps(raw)
+	_, err := evaluateArgoApps(observed, []string{"addon-y"})
+	if err == nil {
+		t.Fatal("Degraded must fail")
+	}
+	if strings.Contains(err.Error(), "OutOfSync:") {
+		t.Errorf("a Synced app must not carry an OutOfSync detail line:\n%s", err)
+	}
+}

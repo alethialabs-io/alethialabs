@@ -75,6 +75,45 @@ func TestUnservableWebhooks(t *testing.T) {
 		}
 	})
 
+	t.Run("an Ignore-policy webhook is not waited on", func(t *testing.T) {
+		// It cannot block admission — the API server proceeds when it cannot reach it — so it can
+		// never cause the SyncError this gate prevents. Waiting on one spends the 3-minute
+		// WHOLE-DEPLOY budget, and that time is then denied to a Fail webhook in a later wave.
+		raw := `{"items":[{"metadata":{"name":"optional-policy"},
+		  "webhooks":[{"name":"opt.example.com","failurePolicy":"Ignore",
+		    "clientConfig":{"caBundle":"","service":{"namespace":"policy","name":"svc"}}}]}]}`
+		unservable, backings := unservableWebhooks(decodeList(t, raw))
+		if len(unservable) != 0 || len(backings) != 0 {
+			t.Errorf("an Ignore webhook cannot block admission and must not be waited on, got unservable=%v backings=%v", unservable, backings)
+		}
+	})
+
+	// THE CASE THAT MATTERS. `failurePolicy` is optional, and admissionregistration.k8s.io/v1
+	// defaults it to Fail — so the ZERO VALUE and the permissive value are opposites. Testing for
+	// "Fail" instead of for "Ignore" would have silently skipped every webhook that omits the field,
+	// which is most of them, and turned this gate off entirely.
+	t.Run("an ABSENT failurePolicy means Fail, so it is still waited on", func(t *testing.T) {
+		raw := `{"items":[{"metadata":{"name":"ingress-nginx-admission"},
+		  "webhooks":[{"name":"validate.nginx.ingress.kubernetes.io",
+		    "clientConfig":{"caBundle":"","service":{"namespace":"ingress-nginx","name":"admission"}}}]}]}`
+		unservable, _ := unservableWebhooks(decodeList(t, raw))
+		if len(unservable) != 1 {
+			t.Fatalf("an absent failurePolicy is Fail and must still be waited on, got %v", unservable)
+		}
+	})
+
+	t.Run("an unrecognised failurePolicy is waited on, not skipped", func(t *testing.T) {
+		// Failing toward waiting is the safe direction: the cost of over-waiting is budget, the cost
+		// of under-waiting is the SyncError this exists to prevent.
+		raw := `{"items":[{"metadata":{"name":"odd"},
+		  "webhooks":[{"name":"odd.example.com","failurePolicy":"Whatever",
+		    "clientConfig":{"caBundle":"","service":{"namespace":"ns","name":"svc"}}}]}]}`
+		unservable, _ := unservableWebhooks(decodeList(t, raw))
+		if len(unservable) != 1 {
+			t.Fatalf("an unrecognised policy must be treated as Fail, got %v", unservable)
+		}
+	})
+
 	t.Run("no webhooks at all is servable, and says what it checked", func(t *testing.T) {
 		unservable, backings := unservableWebhooks(decodeList(t, `{"items":[]}`))
 		if len(unservable) != 0 || len(backings) != 0 {

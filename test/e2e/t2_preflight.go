@@ -75,6 +75,14 @@ type preflightResult struct {
 // preflightTimeout bounds one probe. Generous for an HTTP GET and far below any apply.
 const preflightTimeout = 30 * time.Second
 
+// azurePreflightTimeout is azure's own bound, and it is not 30s for a measured reason: enumerating
+// westeurope's virtualMachines SKUs returns 1114 entries and takes 36.5s. Under the shared bound
+// EVERY azure run reported `az: signal: killed`, so the gate reported UNKNOWN and never actually
+// ran — inert on a whole cloud, and only visible because UNKNOWN says what it did not check.
+// 90s is ~2.5x the measured time, which leaves room for a slower runner without approaching the
+// several MINUTES an apply would take to discover the same fact.
+const azurePreflightTimeout = 90 * time.Second
+
 // decideTypeAvailability is the PURE core: given what the cloud said about a location, is
 // the wanted machine shape available there?
 //
@@ -447,18 +455,165 @@ func gcpMachineTypesRaw(ctx context.Context, zone string) ([]byte, error) {
 	return out, nil
 }
 
-// azureCapacityPreflight asks which VM SKUs the target region offers WITHOUT restrictions.
+// azureSKURestriction is one entry of a SKU's `restrictions` array.
+type azureSKURestriction struct {
+	// Type is "Location" or "Zone". This is the field the whole decision turns on.
+	Type            string   `json:"type"`
+	ReasonCode      string   `json:"reasonCode"`
+	Values          []string `json:"values"`
+	RestrictionInfo struct {
+		Locations []string `json:"locations"`
+		Zones     []string `json:"zones"`
+	} `json:"restrictionInfo"`
+}
+
+// azureSKU is the subset of `az vm list-skus` the preflight reads.
+type azureSKU struct {
+	Name string `json:"name"`
+	// LocationInfo says which zones the SKU is OFFERED in, per location. Without it a zone
+	// restriction cannot be judged: "restricted in zones 1 and 3" is harmless when the SKU is
+	// offered in 1, 2 and 3, and total when it is offered only in 1 and 3.
+	LocationInfo []struct {
+		Location string   `json:"location"`
+		Zones    []string `json:"zones"`
+	} `json:"locationInfo"`
+	Restrictions []azureSKURestriction `json:"restrictions"`
+}
+
+// azureOfferedZones returns the zones a SKU is offered in for one location, or nil when the SKU
+// is not zonal there. Nil is meaningful: a non-zonal SKU cannot be zone-restricted out of
+// existence, so the caller must not treat "no zones offered" as "no zones left".
+func azureOfferedZones(sku azureSKU, region string) []string {
+	for _, li := range sku.LocationInfo {
+		if strings.EqualFold(li.Location, region) {
+			return li.Zones
+		}
+	}
+	return nil
+}
+
+// azureSKUUsable reports whether a SKU can be deployed in the target region at all, and why not
+// when it cannot.
 //
-// The restriction filter is the whole point. `az vm list-skus -l <region>` happily lists a SKU
-// the subscription may not deploy — NotAvailableForSubscription is carried in `restrictions`,
-// not by omission — so a membership test over the unfiltered list would answer "available" for
-// a SKU the apply is about to be refused.
+// A NON-EMPTY `restrictions` ARRAY DOES NOT MEAN UNAVAILABLE, and the first version of this probe
+// assumed it did. Measured against the live subscription on 2026-08-26:
+//
+//	Standard_D2s_v3 / westeurope
+//	  reasonCode: NotAvailableForSubscription
+//	  type:       Zone
+//	  restrictionInfo.zones: ["1", "3"]
+//
+// That SKU is restricted in zones 1 and 3 and perfectly deployable elsewhere in the region — and
+// azure/byo run 32895579252 PROVISIONED WITH IT AND PASSED. A `length(restrictions)==0` filter
+// calls that unavailable, so the guard would have REFUSED a run that then succeeded. A guard that
+// blocks good work is worse than no guard: it gets switched off, and takes the real refusals with it.
+//
+// So only a LOCATION-scoped restriction covering the target region makes a SKU unusable. A
+// ZONE-scoped one leaves the other zones, which is what a non-zonal or unpinned deployment lands in.
+// The excluded zones are returned so the caller can say which they are rather than implying none.
+func azureSKUUsable(sku azureSKU, region string) (usable bool, why string, zonesExcluded []string) {
+	for _, r := range sku.Restrictions {
+		switch r.Type {
+		case "Location":
+			for _, loc := range r.RestrictionInfo.Locations {
+				if strings.EqualFold(loc, region) {
+					return false, fmt.Sprintf("%s in %s (a LOCATION-scoped restriction — no zone of this region can take it)", r.ReasonCode, loc), nil
+				}
+			}
+			// A Location restriction naming some OTHER region does not concern this run.
+		case "Zone":
+			zonesExcluded = append(zonesExcluded, r.RestrictionInfo.Zones...)
+		default:
+			// An unrecognised restriction type is NOT dismissed. Azure may add one, and treating
+			// "we do not understand this restriction" as "there is no restriction" is the same
+			// mistake in the opposite direction from the one this function was written to fix.
+			return false, fmt.Sprintf("unrecognised restriction type %q (%s) — refusing to guess whether it blocks this region", r.Type, r.ReasonCode), nil
+		}
+	}
+	// A Zone restriction covering EVERY zone the SKU is offered in leaves nowhere to place it,
+	// and must refuse. Reported by review on #2716: the first version accumulated the excluded
+	// zones and returned usable regardless of how many there were, so "restricted in 1, 2 and 3"
+	// read the same as "restricted in 1". The aws sibling in this file already refuses the
+	// equivalent (`len(zones) == 0` after filtering), and this brings azure into line with it.
+	//
+	// STRICTLY GUARDED, because a false refusal is the bug this whole function exists to fix. It
+	// refuses ONLY when the SKU is genuinely zonal in this region (offered != nil and non-empty)
+	// AND every offered zone appears in the excluded set. A non-zonal SKU — offered == nil — is
+	// left usable: it cannot be zoned out of existence, and treating an empty offer list as "no
+	// zones left" would refuse every SKU in a region without availability zones.
+	if offered := azureOfferedZones(sku, region); len(offered) > 0 && len(zonesExcluded) > 0 {
+		excluded := make(map[string]struct{}, len(zonesExcluded))
+		for _, z := range zonesExcluded {
+			excluded[z] = struct{}{}
+		}
+		remaining := 0
+		for _, z := range offered {
+			if _, gone := excluded[z]; !gone {
+				remaining++
+			}
+		}
+		if remaining == 0 {
+			return false, fmt.Sprintf("restricted in EVERY zone it is offered in (%s in %s) — a zone restriction this wide leaves nowhere to place it",
+				strings.Join(offered, ", "), region), zonesExcluded
+		}
+	}
+	return true, "", zonesExcluded
+}
+
+// azureCapacityPreflight asks whether the target region can deploy the resolved VM SKU.
+//
+// It reads the WHOLE SKU objects rather than a pre-filtered list of names, because the decision
+// needs `restrictions[].type` — see azureSKUUsable for why a name list cannot express it.
+//
+// `--size` is deliberately NOT used to narrow the query. Measured: the full westeurope list is
+// 1114 SKUs and 36.5s; the same call with `--size Standard_D2s_v3` took 40.0s. It filters
+// client-side after the same enumeration, so it buys nothing and costs a second round trip.
+// The bound below is raised instead — the previous 30s was under the measured floor, which is why
+// every azure run reported `az: signal: killed` and the gate never once ran.
 func azureCapacityPreflight(ctx context.Context, region, wantType string) preflightResult {
-	const probe = "az vm list-skus --resource-type virtualMachines (restrictions == [])"
-	got, err := preflightCLIStrings(ctx, "az", "vm", "list-skus",
+	const probe = "az vm list-skus --resource-type virtualMachines (restrictions inspected by type)"
+
+	cctx, cancel := context.WithTimeout(ctx, azurePreflightTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "az", "vm", "list-skus",
 		"--location", region, "--resource-type", "virtualMachines",
-		"--query", "[?length(restrictions)==`0`].name", "--output", "json")
-	return decideTypeAvailability(probe, wantType, region, got, err)
+		"--query", "[].{name:name,restrictions:restrictions}", "--output", "json").Output()
+	if err != nil {
+		return decideTypeAvailability(probe, wantType, region, nil, fmt.Errorf("az: %w", err))
+	}
+	var skus []azureSKU
+	if jerr := json.Unmarshal(out, &skus); jerr != nil {
+		return decideTypeAvailability(probe, wantType, region, nil, fmt.Errorf("az: SKU list is not decodable: %w", jerr))
+	}
+	if skus == nil {
+		return decideTypeAvailability(probe, wantType, region, nil, errors.New("az: SKU list decoded to JSON null, not a list"))
+	}
+
+	usable := make([]string, 0, len(skus))
+	var wantWhy string
+	var wantZones []string
+	var wantSeen bool
+	for _, sku := range skus {
+		ok, why, zones := azureSKUUsable(sku, region)
+		if sku.Name == wantType {
+			wantSeen, wantWhy, wantZones = true, why, zones
+		}
+		if ok {
+			usable = append(usable, sku.Name)
+		}
+	}
+
+	res := decideTypeAvailability(probe, wantType, region, usable, nil)
+	// Enrich the verdict with what the restrictions actually said — "not available" and "not
+	// available in zones 1 and 3" are different facts, and only one of them stops a run.
+	if res.Verdict == preflightRefuse && wantSeen && wantWhy != "" {
+		res.Detail = fmt.Sprintf("%s is refused in %s: %s", wantType, region, wantWhy)
+	}
+	if res.Verdict == preflightProceed && len(wantZones) > 0 {
+		res.Detail += fmt.Sprintf(" — NOTE: restricted in zone(s) %s, so a zone-pinned deployment there would still fail",
+			strings.Join(wantZones, ", "))
+	}
+	return res
 }
 
 // capacityPreflightFor dispatches to one cloud's probe. An unknown provider is UNKNOWN, never

@@ -40,6 +40,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 )
 
 // argoPollInterval is how often AssertArgoAppsHealthy re-reads the Applications.
@@ -52,6 +54,21 @@ type argoAppState struct {
 	Health     string
 	Sync       string
 	Conditions []string
+	// OutOfSyncResources names the individual resources ArgoCD reports as OutOfSync, as
+	// `Kind/name`. Sorted and de-duplicated.
+	//
+	// WHY IT IS CARRIED. An Application that is Healthy AND OutOfSync is the most confusing
+	// state this assertion can report: the workload is up, nothing in the cluster is wrong, and
+	// the run still loses its verdict. On 2026-08-26 three add-ons sat there on BOTH hetzner and
+	// aws — argo-rollouts, kyverno and tempo — and the report named the Applications without
+	// naming what differed, so the only way to act on it was to reach for a live cluster.
+	//
+	// The answer was already in the payload: `.status.resources[]` carries a per-resource sync
+	// status, and this assertion was fetching and discarding it. The Application template already
+	// ignores two API-server-managed fields (`.status.terminatingReplicas`, the resourceFieldRef
+	// divisor) for exactly this class; naming the resource is what tells you whether a third
+	// belongs there.
+	OutOfSyncResources []string
 }
 
 // anyProvider is the infraServiceArgoApps inner key meaning "the same Application on
@@ -275,6 +292,71 @@ func DeriveExpectedArgoApps(provider string, metaRaw []byte) ([]string, error) {
 	return names, nil
 }
 
+// RequireAllAddOnsExpected refuses a full-surface run whose ASSERTION set lost the add-ons.
+//
+// WHY, measured. hetzner/addons run 32883521925 reported
+//
+//	--- PASS: TestT2RealCloudProvisioning (1053.09s)
+//
+// having asserted FOUR Applications — `[addon-byo-e2e apps external-secrets-operator
+// metrics-server]` — on the dimension whose own banner calls it "the 18-chart sweep to
+// Healthy+Synced". No harbor, no kube-prometheus-stack, no loki, no vault. The 2026-08-24 run of
+// the same dimension asserted twenty. `ALETHIA_E2E_ALL_ADDONS=1` was set and reached the harness.
+//
+// The add-on half of the expected set comes from `execution_metadata.addon_status`, and the same
+// run logged why it was missing:
+//
+//	A0.5 WARN: reloader add-on health row absent/empty — finalizeDeployment.recordAddonHealth
+//	did not persist real ArgoCD health
+//
+// So the assertion derives its own SCOPE from a source that can silently shrink. DeriveExpectedArgoApps
+// guards `len(set) == 0` — "never empty" — and four is not zero, so a full-surface run reported
+// green having proven the floor. That is precisely the vacuous proof `AllCatalogAddOns` already
+// refuses on the SEEDING side ("a full-surface run that quietly installed 1 add-on and reported
+// green would be the exact vacuous proof the FULLY-TESTED bar exists to prevent"); the same
+// argument had never been applied to the ASSERTING side.
+//
+// The harness already knew the right number: `argoAddOnCount` sizes the convergence BUDGET from
+// the catalog, so the budget expected eighteen while the assertion expected four. A decision that
+// reports on an emitter must mirror every field the emitter set.
+//
+// A no-op unless ALETHIA_E2E_ALL_ADDONS is on — the lean tier genuinely seeds a small set.
+func RequireAllAddOnsExpected(expected []string) error {
+	if !AllAddOnsEnabled() {
+		return nil
+	}
+	catalog, err := AllCatalogAddOns()
+	if err != nil {
+		// Fail-closed: unable to read the catalog is not "nothing to check".
+		return fmt.Errorf("full add-on surface requested but the catalog fixture is unreadable, so the assertion set cannot be checked for completeness: %w", err)
+	}
+	have := make(map[string]struct{}, len(expected))
+	for _, e := range expected {
+		have[e] = struct{}{}
+	}
+	var missing []string
+	for _, a := range catalog {
+		if a.Mode != "managed" || a.IsManifestSource() {
+			// Only ArgoCD-rendered add-ons produce an Application to assert on. A manifest
+			// add-on is kubectl-applied and has none, so requiring one would red every run.
+			continue
+		}
+		name := argocd.AddOnAppName(a.ID)
+		if _, ok := have[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf(
+		"ALETHIA_E2E_ALL_ADDONS=1 but %d of the catalog's Application-bearing add-ons are ABSENT from the expected set, so this run would assert the floor and report the 18-chart sweep: %s\n"+
+			"  the set is derived from execution_metadata.addon_status; an empty/short one means finalizeDeployment.recordAddonHealth did not persist add-on health (look for the A0.5 WARN in this run)\n"+
+			"  asserted instead: %v",
+		len(missing), strings.Join(missing, ", "), expected)
+}
+
 // AssertArgoAppsHealthy polls `kubectl get applications.argoproj.io -n argocd -o json`
 // via the given kubeconfig until EVERY expected Application reports health "Healthy"
 // AND sync "Synced", or the timeout elapses. A bounded poll (argoPollInterval), so a
@@ -405,6 +487,12 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 					Type    string `json:"type"`
 					Message string `json:"message"`
 				} `json:"conditions"`
+				Resources []struct {
+					Group  string `json:"group"`
+					Kind   string `json:"kind"`
+					Name   string `json:"name"`
+					Status string `json:"status"`
+				} `json:"resources"`
 			} `json:"status"`
 		} `json:"items"`
 	}
@@ -420,6 +508,24 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 		for _, c := range item.Status.Conditions {
 			st.Conditions = append(st.Conditions, c.Type+": "+c.Message)
 		}
+		// Only the OutOfSync ones. A Synced resource in a Synced app is noise, and in an
+		// OutOfSync app it is the part that is fine.
+		seenRes := map[string]struct{}{}
+		for _, r := range item.Status.Resources {
+			if r.Status != "OutOfSync" {
+				continue
+			}
+			label := r.Kind + "/" + r.Name
+			if r.Group != "" {
+				label = r.Group + "/" + r.Kind + "/" + r.Name
+			}
+			if _, dup := seenRes[label]; dup {
+				continue
+			}
+			seenRes[label] = struct{}{}
+			st.OutOfSyncResources = append(st.OutOfSyncResources, label)
+		}
+		sort.Strings(st.OutOfSyncResources)
 		out[item.Metadata.Name] = st
 	}
 	return out, nil
@@ -450,6 +556,16 @@ func evaluateArgoApps(observed map[string]argoAppState, expected []string) (lose
 		fmt.Fprintf(&report, "  - %s: health=%s sync=%s", name, st.Health, st.Sync)
 		if len(st.Conditions) > 0 {
 			fmt.Fprintf(&report, " [%s]", strings.Join(st.Conditions, "; "))
+		}
+		// Name WHAT differs, not just that something does. For a Healthy-but-OutOfSync app this
+		// is the whole diagnosis: the workload is up, so the resource named here is a
+		// spurious-diff candidate for the template's ignoreDifferences.
+		if len(st.OutOfSyncResources) > 0 {
+			fmt.Fprintf(&report, "\n      OutOfSync: %s", strings.Join(st.OutOfSyncResources, ", "))
+		} else if st.Sync == "OutOfSync" {
+			// EMPTY IS NOT "nothing differs". ArgoCD can report an app OutOfSync with an empty
+			// or not-yet-populated resource list, and silence there would read as a clean diff.
+			report.WriteString("\n      OutOfSync: (no per-resource detail reported by ArgoCD)")
 		}
 		report.WriteString("\n")
 	}

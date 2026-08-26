@@ -1,0 +1,12 @@
+Starting deployment for project: alethia-nl (provider: azure)
+Verification gate: verdict=not_evaluable (pass=3 fail=0 warn=0 not_evaluable=1, catalog elench-controls-0.5.2)
+Evidence receipt signed (key 7de4c21fca2689d0, plan sha256 4bc63bfc7180…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 29 added, 0 changed, 0 destroyed.
+Waiting for the cluster to become reachable (timeout 15m0s)...
+Cluster API server is reachable.
+1/1 nodes Ready.
+ArgoCD installed.
+ArgoCD ready (no ingress on this cloud yet — access via port-forward; retrieve the admin password on-demand from argocd-initial-admin-secret).
+Deployment completed successfully.

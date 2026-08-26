@@ -1,0 +1,22 @@
+{
+  "provider": "gcp",
+  "region": "europe-west3",
+  "cluster": "alethia-nl-32922715251-1",
+  "run_tag": "nightly-32922715251-1",
+  "outcome": "failure",
+  "deploy_stage": "applying",
+  "git_sha": "dcff15e",
+  "captured_at": "20260826T025751Z",
+  "resources_added": null,
+  "resources_destroyed": null,
+  "cluster_live_at_capture": false,
+  "nodes_ready": 0,
+  "argocd_total": 0,
+  "argocd_healthy_synced": 0,
+  "argocd_verdict": "not reached",
+  "receipt_signed": true,
+  "receipt_plan_sha256": "2a8205d79906",
+  "destroyed": false,
+  "duration_seconds": 1868,
+  "verdict": "gcp: ❌ FAILED at stage 'applying' (outcome=failure)"
+}

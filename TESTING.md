@@ -37,7 +37,7 @@ hundred mocked unit tests, so **integration is the widest band**. E2E stays deli
 | **Action (mocked)** | Vitest | `apps/console/tests/actions/**` | DB/Stripe/auth mocked at the module boundary | yes |
 | **Integration (real DB)** | Vitest (`vitest.integration.config.ts`) | `apps/console/tests/integration/**` | real Postgres, nothing else | gated (needs Postgres) |
 | **Shared package** | Vitest | `packages/<pkg>/tests/**` (e.g. `@repo/ui`, `@repo/plan-catalog`) | per-package | yes (turbo fan-out) |
-| **E2E** | Playwright | `apps/console/e2e/**` | real app, dev stack | local-only (for now) |
+| **E2E** | Playwright | `apps/console/e2e/**` | real app, dev stack | **two projects** — see below |
 | **Go** | `go test ./...` | `apps/{cli,runner}`, `packages/core` | `httptest` | yes (matrix) |
 
 ## Running tests
@@ -84,9 +84,16 @@ cd apps/runner && go test ./...
   badge reflects "is our logic tested" rather than being dragged down by untested view code.
 - **Self-hosted badge (no third-party service):** the `coverage-badge` CI job (push-to-main)
   runs the suites, merges the per-project `coverage-summary.json` line totals via
-  `scripts/coverage-badge.mjs`, and commits `.github/badges/coverage.json` — the shields.io
-  endpoint the README badge reads. Regenerate locally with `pnpm exec turbo run test &&
-  node scripts/coverage-badge.mjs`.
+  `scripts/coverage-badge.mjs`, and publishes the result to the orphan **`badges`** branch —
+  the shields.io endpoint the README badge reads. Regenerate locally with
+  `pnpm exec turbo run test && node scripts/coverage-badge.mjs`.
+
+  **The badge JSON is deliberately not checked in.** It used to be, and the checked-in copy said
+  91% while the published one said 67.8%. It could not be otherwise: this job runs only on push
+  to `main` and publishes to `badges`, so it never writes a number back into the tree, and
+  nothing reconciled the two. The number now lives only where it is measured. (A push to `main`
+  cannot be made directly — `protect-main` is `enforcement: active` with `bypass_actors: []`,
+  which is why the badge goes to an orphan branch rather than to `main`.)
 - **Thresholds are report-only today and ratcheted up as suites land.** When a layer is
   meaningfully covered, raise the floor in `vitest.config.ts → test.coverage.thresholds` so it
   can't regress.
@@ -98,7 +105,22 @@ cd apps/runner && go test ./...
 | **coverage** | console **logic** (`lib/**`, `app/server/actions/**`) + `@repo/ui` src + `@repo/plan-catalog` | console `components/**` (presentational), the marketing/docs/blog apps, `@repo/{email,brand}` |
 | **go coverage** | aggregate of `apps/cli` + `apps/runner` + `packages/core` (`go test -coverprofile`, via `scripts/go-coverage-badge.mjs`) | — |
 
-Both are **honest, not cherry-picked-high** — they climb as more logic gets tested. View/content code is covered by component tests + e2e, not these badges. Regenerate the Go badge locally with: `for m in apps/cli apps/runner packages/core; do (cd $m && go test -coverprofile=cover.out ./...); done && node scripts/go-coverage-badge.mjs`.
+They climb as more logic gets tested, and neither is cherry-picked *upward* by discarding a
+failing suite. But "honest" was too strong a word for the **coverage** badge, and it is being
+earned rather than asserted under #2649:
+
+- The console scope excludes ~7,300 lines of `lib/**` and `app/server/actions/**` on top of the
+  `components/**` exclusion above — some of it correctly (real-SQL modules verified by the
+  integration tier), some of it under reasons that have since expired.
+- `@repo/ui` counts an **allowlist** of hand-listed files rather than its whole `src/`. An
+  include-allowlist is an exclusion with the sign flipped and no comment.
+
+Until every one of those is recorded as a decision with checkable evidence, read the coverage
+badge as "the measured part of our logic is this well tested", not "our logic is this well
+tested". The **go coverage** badge has no such caveat: every package in all four modules is
+floored and ratcheted by `scripts/go-coverage.sh`.
+
+Regenerate the Go badge locally with: `for m in apps/cli apps/runner packages/core; do (cd $m && go test -coverprofile=cover.out ./...); done && node scripts/go-coverage-badge.mjs`.
 
 ## Writing tests — recipes
 
@@ -140,6 +162,22 @@ server actions the component imports. Form components: reuse
 Keep them few and high-value. Auth goes through the real email-OTP flow — the shared fixture
 in `e2e/fixtures/auth.ts` requests a code and reads it from the dev server log. Gate anything
 needing Stripe behind `test.skip(!process.env.STRIPE_SECRET_KEY)`.
+
+**Which projects CI actually runs — check before citing "covered by e2e".**
+`playwright.config.ts` defines eight project entries; `.github/workflows/ci.yml` launches
+**two** of them on every PR:
+
+| project | runs in CI | job |
+|---|:---:|---|
+| `setup` | yes (dependency) | both, via `auth.setup.ts` |
+| `hero` | **yes** | `E2E (browser · Playwright hero path)` |
+| `elench-ai` | **yes** | `E2E (browser · Elench AI journeys · scripted model)` |
+| `elench-ux`, `elench-live`, `canvas`, `qa`, `chromium` | **no** | — |
+
+`qa` alone matches all 20 `e2e/flows/*.spec.ts`. So "this is covered by e2e" is only true of the
+two projects above — everything else is a local-only suite, and an exclusion justified by a
+project CI never launches is justified by nothing. Both CI jobs carry a guard that the project
+matches at least one test, because a `--project` whose `testMatch` selects zero specs exits 0.
 
 ## Test organization — the standard (one rule, no drift)
 

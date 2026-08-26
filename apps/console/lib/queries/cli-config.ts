@@ -3,7 +3,7 @@
 
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { Db, Tx } from "@/lib/db";
 import type {
 	CloudProvider,
@@ -174,6 +174,22 @@ export async function getCliConfig(
 	db: Executor,
 	opts: { userId: string; projectName: string; envId?: string },
 ): Promise<CliProjectConfig | null> {
+	// ORDER BY is load-bearing here, not tidiness. `project_name` carries NO uniqueness constraint
+	// — the only unique on `projects` is (org_id, slug) — and duplicates are the DESIGNED behaviour
+	// of the create path: insertProjectWithDefaultFabric de-duplicates the SLUG via pickFreeSlug and
+	// then inserts project_name verbatim, so two projects called "api" get slugs `api` and `api-2`
+	// with the same name. updateProjectName allows renaming one onto another for the same reason
+	// (it keeps the slug stable on purpose).
+	//
+	// An unordered LIMIT 1 over a non-unique filter has no defined result in Postgres: which row
+	// comes back can change between identical calls after a plan change or a row rewrite. This
+	// resolver backs three authenticated CLI routes, so that meant `alethia project get api` could
+	// silently return a DIFFERENT project's region, cluster endpoint, DNS zone and apps repo — and a
+	// different one next time. For a provisioning tool, quietly reading the wrong project is worse
+	// than an error.
+	//
+	// A total order fixes the nondeterminism. Whether a genuine ambiguity should instead FAIL and
+	// name both slugs is a CLI-contract decision, tracked in #2663 and deliberately not taken here.
 	const [project] = await db
 		.select()
 		.from(projects)
@@ -183,13 +199,18 @@ export async function getCliConfig(
 				eq(projects.project_name, opts.projectName),
 			),
 		)
+		.orderBy(asc(projects.created_at), asc(projects.id))
 		.limit(1);
 	if (!project) return null;
 
+	// The same defect, in the same function: `envs[0]` is the fallback when no environment is
+	// flagged default, and it was being taken from an unordered select. Ordered for the same reason
+	// — a fallback that picks an arbitrary environment can pick a different one next time.
 	const envs = await db
 		.select()
 		.from(projectEnvironments)
-		.where(eq(projectEnvironments.project_id, project.id));
+		.where(eq(projectEnvironments.project_id, project.id))
+		.orderBy(asc(projectEnvironments.created_at), asc(projectEnvironments.id));
 	const env = opts.envId
 		? envs.find((e) => e.id === opts.envId)
 		: (envs.find((e) => e.is_default) ?? envs[0]);

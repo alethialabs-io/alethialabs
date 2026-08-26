@@ -14,6 +14,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The real nbg1 answer, read from the live API on 2026-08-25. cx33 is absent; it is the type
@@ -453,4 +454,186 @@ func TestAWSCapacityPreflightUnpinnedTypeSaysSo(t *testing.T) {
 	if !strings.Contains(got.Detail, "no machine type was resolved") {
 		t.Errorf("detail must say why nothing was checked, got: %s", got.Detail)
 	}
+}
+
+// ── Azure SKU restrictions ───────────────────────────────────────────────────────────────────
+//
+// THE REGRESSION IS A FALSE REFUSAL, which is the direction that gets a guard switched off.
+//
+// The first version of the azure probe filtered on `length(restrictions)==0`. Measured against the
+// live subscription on 2026-08-26, `Standard_D2s_v3` in westeurope carries
+//
+//	reasonCode: NotAvailableForSubscription, type: Zone, restrictionInfo.zones: ["1","3"]
+//
+// so that filter calls it unavailable — while azure/byo run 32895579252 provisioned with it and
+// PASSED. The guard would have refused a run that succeeded. These cases pin the distinction that
+// makes the difference: a restriction's TYPE, not its presence.
+
+// The real payload, verbatim from `az vm list-skus`.
+var azureZoneRestrictedSKU = azureSKU{
+	Name: "Standard_D2s_v3",
+	LocationInfo: []struct {
+		Location string   `json:"location"`
+		Zones    []string `json:"zones"`
+	}{{Location: "westeurope", Zones: []string{"1", "2", "3"}}},
+	Restrictions: []azureSKURestriction{{
+		Type:       "Zone",
+		ReasonCode: "NotAvailableForSubscription",
+		Values:     []string{"westeurope"},
+		RestrictionInfo: struct {
+			Locations []string `json:"locations"`
+			Zones     []string `json:"zones"`
+		}{Locations: []string{"westeurope"}, Zones: []string{"1", "3"}},
+	}},
+}
+
+func TestAzureSKUUsable(t *testing.T) {
+	t.Run("THE REGRESSION: a ZONE restriction does not make a SKU unusable", func(t *testing.T) {
+		ok, why, zones := azureSKUUsable(azureZoneRestrictedSKU, "westeurope")
+		if !ok {
+			t.Fatalf("Standard_D2s_v3 is deployable in westeurope — azure/byo 32895579252 proved it by passing. Refused with: %s", why)
+		}
+		if len(zones) != 2 {
+			t.Errorf("the excluded zones must be reported so the caller can name them, got %v", zones)
+		}
+	})
+
+	t.Run("a LOCATION restriction covering the region DOES", func(t *testing.T) {
+		sku := azureSKU{Name: "Standard_X", Restrictions: []azureSKURestriction{{
+			Type: "Location", ReasonCode: "NotAvailableForSubscription",
+			RestrictionInfo: struct {
+				Locations []string `json:"locations"`
+				Zones     []string `json:"zones"`
+			}{Locations: []string{"westeurope"}},
+		}}}
+		ok, why, _ := azureSKUUsable(sku, "westeurope")
+		if ok {
+			t.Fatal("a Location-scoped restriction on the target region leaves no zone that can take it")
+		}
+		if !strings.Contains(why, "LOCATION-scoped") {
+			t.Errorf("the reason must say which scope refused it, got %q", why)
+		}
+	})
+
+	t.Run("a LOCATION restriction on ANOTHER region does not", func(t *testing.T) {
+		sku := azureSKU{Name: "Standard_X", Restrictions: []azureSKURestriction{{
+			Type: "Location", ReasonCode: "NotAvailableForSubscription",
+			RestrictionInfo: struct {
+				Locations []string `json:"locations"`
+				Zones     []string `json:"zones"`
+			}{Locations: []string{"eastus"}},
+		}}}
+		if ok, why, _ := azureSKUUsable(sku, "westeurope"); !ok {
+			t.Errorf("a restriction naming eastus says nothing about westeurope, got %q", why)
+		}
+	})
+
+	t.Run("region matching is case-insensitive", func(t *testing.T) {
+		sku := azureSKU{Name: "Standard_X", Restrictions: []azureSKURestriction{{
+			Type: "Location", ReasonCode: "NotAvailableForSubscription",
+			RestrictionInfo: struct {
+				Locations []string `json:"locations"`
+				Zones     []string `json:"zones"`
+			}{Locations: []string{"WestEurope"}},
+		}}}
+		if ok, _, _ := azureSKUUsable(sku, "westeurope"); ok {
+			t.Error("Azure spells regions inconsistently across APIs; a case difference must not silently pass a refusal")
+		}
+	})
+
+	t.Run("no restrictions at all is usable", func(t *testing.T) {
+		if ok, why, zones := azureSKUUsable(azureSKU{Name: "Standard_Y"}, "westeurope"); !ok || why != "" || zones != nil {
+			t.Errorf("an unrestricted SKU must be plainly usable, got ok=%v why=%q zones=%v", ok, why, zones)
+		}
+	})
+
+	t.Run("an UNRECOGNISED restriction type is refused, not dismissed", func(t *testing.T) {
+		// Fail-closed on the unknown. Treating "we do not understand this restriction" as "there is
+		// no restriction" is the same mistake as the original filter, pointing the other way.
+		sku := azureSKU{Name: "Standard_Z", Restrictions: []azureSKURestriction{{
+			Type: "SomethingAzureAddedLater", ReasonCode: "NotAvailableForSubscription",
+		}}}
+		ok, why, _ := azureSKUUsable(sku, "westeurope")
+		if ok {
+			t.Fatal("an unknown restriction type must not be assumed harmless")
+		}
+		if !strings.Contains(why, "unrecognised") {
+			t.Errorf("the reason must say the type was not understood, got %q", why)
+		}
+	})
+}
+
+// TestAzurePreflightTimeoutExceedsMeasuredFloor pins the bound against the number that made the
+// gate inert. The full westeurope enumeration measured 36.5s for 1114 SKUs; the shared 30s bound
+// killed it on every run, so azure reported UNKNOWN and never checked anything.
+func TestAzurePreflightTimeoutExceedsMeasuredFloor(t *testing.T) {
+	const measured = 37 * time.Second
+	if azurePreflightTimeout <= measured {
+		t.Fatalf("azurePreflightTimeout=%s is at or under the measured %s enumeration — the gate would be inert again",
+			azurePreflightTimeout, measured)
+	}
+	if azurePreflightTimeout <= preflightTimeout {
+		t.Errorf("azure needs its own, larger bound; sharing %s is what made it inert", preflightTimeout)
+	}
+}
+
+// TestAzureSKURestrictedInEveryZone is the seventh case, from review on #2716.
+//
+// The first version accumulated `zonesExcluded` and returned usable regardless of how many there
+// were, so "restricted in 1, 2 and 3" read identically to "restricted in 1". The aws sibling in
+// this file already refuses the equivalent state, so azure was inconsistent with its own file.
+//
+// The six existing cases all still pass against that bug, which is the point of adding this one:
+// they vary the restriction's TYPE and the region, and this varies its BREADTH.
+func TestAzureSKURestrictedInEveryZone(t *testing.T) {
+	zoneRestricted := func(offered, excluded []string) azureSKU {
+		return azureSKU{
+			Name: "Standard_D2s_v3",
+			LocationInfo: []struct {
+				Location string   `json:"location"`
+				Zones    []string `json:"zones"`
+			}{{Location: "westeurope", Zones: offered}},
+			Restrictions: []azureSKURestriction{{
+				Type: "Zone", ReasonCode: "NotAvailableForSubscription",
+				RestrictionInfo: struct {
+					Locations []string `json:"locations"`
+					Zones     []string `json:"zones"`
+				}{Locations: []string{"westeurope"}, Zones: excluded},
+			}},
+		}
+	}
+
+	t.Run("every offered zone restricted is a REFUSAL", func(t *testing.T) {
+		ok, why, _ := azureSKUUsable(zoneRestricted([]string{"1", "2", "3"}, []string{"1", "2", "3"}), "westeurope")
+		if ok {
+			t.Fatal("a zone restriction covering every offered zone leaves nowhere to place the SKU")
+		}
+		if !strings.Contains(why, "EVERY zone") {
+			t.Errorf("the reason must say the restriction was total, got %q", why)
+		}
+	})
+
+	t.Run("some zones left is still usable — the #2716 regression", func(t *testing.T) {
+		// The real payload: offered in 1,2,3 and restricted in 1,3. Zone 2 remains, and the run
+		// that used this SKU passed.
+		if ok, why, _ := azureSKUUsable(zoneRestricted([]string{"1", "2", "3"}, []string{"1", "3"}), "westeurope"); !ok {
+			t.Fatalf("zone 2 remains, so this must stay usable: %s", why)
+		}
+	})
+
+	t.Run("a NON-ZONAL SKU is not refused by a zone restriction", func(t *testing.T) {
+		// offered == nil. Treating "no zones offered" as "no zones left" would refuse every SKU
+		// in a region that has no availability zones — a false refusal of exactly the kind this
+		// function was written to remove.
+		sku := zoneRestricted(nil, []string{"1"})
+		if ok, why, _ := azureSKUUsable(sku, "westeurope"); !ok {
+			t.Fatalf("a SKU with no zonal offer cannot be zoned out of existence: %s", why)
+		}
+	})
+
+	t.Run("restrictions naming zones the SKU does not offer do not refuse it", func(t *testing.T) {
+		if ok, why, _ := azureSKUUsable(zoneRestricted([]string{"1", "2"}, []string{"3"}), "westeurope"); !ok {
+			t.Fatalf("zones 1 and 2 remain untouched: %s", why)
+		}
+	})
 }

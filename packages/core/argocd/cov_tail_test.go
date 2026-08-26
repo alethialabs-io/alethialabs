@@ -142,12 +142,22 @@ func TestTail_RenderApplicationsRejectsMissingTemplatesDir(t *testing.T) {
 // ── addons.go ────────────────────────────────────────────────────────────────────
 
 // TestTail_RenderManagedAddOnsFailureArms covers RenderManagedAddOns' reachable refusals: an
-// unusable temp dir, an add-on field that renders a manifest yaml cannot parse (so the label
-// injection fails), and an id that escapes the output directory.
+// unusable temp dir, and an id that escapes the output directory.
 //
-// The fourth arm — marshalValues failing — is NOT covered, and deliberately: yaml.v3's
+// TWO ARMS BECAME UNREACHABLE WITH #2589, and are recorded here rather than quietly dropped.
+//
+// `failed to label add-on` used to be reached by giving a STRING FIELD a value that broke the
+// rendered YAML — the subtest below did it with `Namespace = "a: b: c"`. That was the injection
+// hole being exercised as though it were a feature. The Application is now MARSHALLED, so no field
+// value can produce a document the label injector cannot re-parse, and that subtest is inverted:
+// the same input must round-trip. This is a case where losing coverage of a branch is the POINT —
+// the branch is still there as a backstop, and nothing in the data can reach it any more.
+//
+// `failed to render add-on` is unreachable for the reason this file already recorded: yaml.v3's
 // Encoder.Encode PANICS on a value it cannot marshal rather than returning an error, so
-// `marshalValues`' documented error return can never fire. It is unreachable rather than untested.
+// `marshalValues`' documented error return can never fire. Unreachable rather than untested — and
+// deliberately NOT exercised with an unmarshallable value, which would panic the suite rather than
+// fail it.
 func TestTail_RenderManagedAddOnsFailureArms(t *testing.T) {
 	base := types.AddOnInstall{ID: "demo", Mode: "managed", Chart: "c", ChartRepo: "https://charts.example.com", Namespace: "ns"}
 
@@ -159,13 +169,34 @@ func TestTail_RenderManagedAddOnsFailureArms(t *testing.T) {
 		}
 	})
 
-	t.Run("rendered manifest is not yaml", func(t *testing.T) {
+	// THIS SUBTEST USED TO ASSERT THE BUG (#2589). It set `Namespace = "a: b: c"` with the note
+	// "a namespace carrying a bare colon renders `namespace: a: b`, which yaml refuses" — which is
+	// the YAML-injection hole, described as though it were the behaviour under test. Since the
+	// Application is MARSHALLED rather than templated, no value can break the document, so it is
+	// inverted here: the same input must now render VALID yaml and survive the round trip.
+	t.Run("a namespace that used to break the document now round-trips", func(t *testing.T) {
 		a := base
-		// A namespace carrying a bare colon renders `namespace: a: b`, which yaml refuses.
 		a.Namespace = "a: b: c"
-		if _, err := RenderManagedAddOns([]types.AddOnInstall{a}, tailLabels); err == nil ||
-			!strings.Contains(err.Error(), "failed to label add-on") {
-			t.Fatalf("RenderManagedAddOns error = %v, want the label failure", err)
+		dir, err := RenderManagedAddOns([]types.AddOnInstall{a}, tailLabels)
+		if err != nil {
+			t.Fatalf("a value can no longer produce an unparseable manifest: %v", err)
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, AddOnAppName(a.ID)+".yaml"))
+		if err != nil {
+			t.Fatalf("read rendered manifest: %v", err)
+		}
+		var back struct {
+			Spec struct {
+				Destination struct {
+					Namespace string `yaml:"namespace"`
+				} `yaml:"destination"`
+			} `yaml:"spec"`
+		}
+		if err := yaml.Unmarshal(raw, &back); err != nil {
+			t.Fatalf("rendered manifest does not parse: %v\n%s", err, raw)
+		}
+		if back.Spec.Destination.Namespace != a.Namespace {
+			t.Errorf("namespace round-tripped to %q, want %q", back.Spec.Destination.Namespace, a.Namespace)
 		}
 	})
 
