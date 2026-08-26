@@ -30,26 +30,63 @@ does not:
 click is, and neither can their procurement team. They are recorded apart because the remedies
 differ — the same reason `MaxConfigStateProof` keeps `.Excluded` and `.Deferred` in separate lists.
 
-## Status — 2026-08-11
+## A ceiling is two claims, not one
 
-Scored against `alethia` built from `dev`. Every `CLIDriven` claim below was **executed**, not
+A `CloudManual` step used to record one fact — *no cloud API can reach this* — and fail the bar on
+it forever. That is only half of what a reader needs. The other half changes: **has the human
+actually done it?**
+
+The cost of collapsing the two was measured. On 2026-08-26 the bar was FAILing on every cloud, on
+every run, with **zero** CLI gaps. The entire failure was two ceilings, and both had already been
+met: `e2e.alethialabs.io` was delegated and ACM had issued against it ([#1773] closed), and the
+Hetzner Object Storage keys had been minted and stored ([#2332] closed). Nothing the bar could
+observe had changed, so nothing it reported could change either.
+
+Every ceiling now carries a `SatisfiedBy` probe, and the probe reads something **outside** the
+table that would be false if the work had not been done:
+
+| Probe | Reads | Why it cannot be faked |
+|---|---|---|
+| `zone_delegated` | an `NS` lookup on the public internet | a hosted zone you created answers with an **empty** name-server set; only a parent delegation answers with one |
+| `env_truthy` | a presence boolean rendered from a repo secret | the workflow passes `secrets.X != ''`, never the secret; and the probe demands **truthy**, because `"false"` is exactly what a *missing* secret renders |
+
+A satisfied ceiling **passes** the bar and is **still printed** — a prospect deserves to know the
+manual step exists before they hit it. An outstanding one fails and prints both what the probe read
+and what would satisfy it, so the proof bundle carries a remedy rather than only a complaint.
+
+Every direction fails closed: unset, empty, whitespace, `"false"`, an empty answer, a resolver error
+and a timeout all read as **unsatisfied**. `ScoreCLIDemo` stays pure and never runs a probe, so a
+caller that forgets to evaluate gets the strict answer, never a laxer one.
+
+## Status — 2026-08-26
+
+Scored against `alethia` built from `dev`. Every `CLIDriven` claim below is **executed**, not
 asserted: the run half runs `alethia <cmd> --help` for each and fails on a non-zero exit.
 
-| Cloud | CLI-driven | CLI gaps | Cloud ceilings | Console by design | Verdict |
-|---|:---:|:---:|:---:|:---:|:---:|
-| **AWS** | 19 | 0 | 1 | 1 | ❌ |
-| **GCP** | 19 | 0 | 2 | 1 | ❌ |
-| **Azure** | 19 | 0 | 1 | 1 | ❌ |
-| **Alibaba** | 19 | 0 | 2 | 1 | ❌ |
-| **Hetzner** | 19 | 0 | 2 | 1 | ❌ |
+| Cloud | CLI-driven | CLI gaps | Ceilings | of which satisfied | Console by design | Verdict |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **AWS** | 19 | 0 | 1 | 1 | 1 | ✅ |
+| **GCP** | 19 | 0 | 2 | 1 | 1 | ❌ [#1871] |
+| **Azure** | 19 | 0 | 1 | 1 | 1 | ✅ |
+| **Alibaba** | 19 | 0 | 2 | 1 | 1 | ❌ [#2333] |
+| **Hetzner** | 19 | 0 | 2 | 2 | 1 | ✅ |
 
-**19 of 20 applicable steps are CLI-driven on every cloud, and the CLI gap column is now zero.**
-What still fails the bar is a cloud ceiling — on every cloud, DNS zone delegation — plus one extra
-ceiling on GCP, Alibaba and Hetzner.
+The verdict column is what the scored table plus the current satisfaction state resolves to; the
+**recorded** proof is whichever run next dispatches this bar, as always.
 
-That distinction is the one worth carrying into a demo. The table is still red, but nothing red in
-it is ours: every remaining ❌ is a thing the cloud does not offer an API for, not a thing Alethia
-has not built.
+**19 of 20 applicable steps are CLI-driven on every cloud, and the CLI gap column is zero.** What
+still fails the bar is a ceiling nobody has met yet — GCP's billing-budgets publisher binding, which
+genuinely does not exist, and Alibaba's Container Registry sweep, which **recurs** after every full
+bar rather than retiring once.
+
+That distinction is the one worth carrying into a demo. Nothing red here is ours: every remaining ❌
+is a thing the cloud does not offer an API for **and** that has not been done by hand, not a thing
+Alethia has not built.
+
+[#1773]: https://github.com/alethialabs-io/alethialabs/issues/1773
+[#2332]: https://github.com/alethialabs-io/alethialabs/issues/2332
+[#1871]: https://github.com/alethialabs-io/alethialabs/issues/1871
+[#2333]: https://github.com/alethialabs-io/alethialabs/issues/2333
 
 ### The CLI gap that closed — [#2331]
 
