@@ -313,6 +313,48 @@ var CLIDemoSteps = []DemoStep{
 		Argv:  []string{"addon", "list"},
 		Reach: CLIDriven,
 	},
+
+	// ── BRING-YOUR-OWN. Everything above is the golden path over Alethia's own templates and
+	//    catalog. These four are the customer's OWN code — their Helm chart, their OpenTofu — and
+	//    they were absent from this table entirely.
+	//
+	//    That absence UNDERSTATED the product, which is the failure mode this file's header warns
+	//    about in the other direction. The write half shipped in #2321 and nothing here asserted it,
+	//    so the whole BYO story was un-ratcheted: the day one of these verbs was renamed, no test
+	//    would have noticed.
+	//
+	//    The credential question is answered and worth stating, because the obvious reading is
+	//    wrong. `--git-credential-id` points at `project_git_credentials`, a table NOTHING in the
+	//    repo writes — so it looks as though a private repo cannot be reached from the terminal.
+	//    It can: the runner fetches a token at job time from the job owner's LINKED OAUTH ACCOUNT
+	//    (`/api/jobs/{id}/git-token`), and that route's authorized-repo set already covers both the
+	//    BYO chart repos and the BYO IaC repo. So these are genuinely CLIDriven, and the inert flag
+	//    is a separate defect rather than a gap in CLI coverage. ──
+	{
+		ID:    "chart-attach",
+		Title: "Attach a bring-your-own Helm chart to an environment",
+		Argv:  []string{"chart", "attach"},
+		Reach: CLIDriven,
+	},
+	{
+		ID:    "chart-scan",
+		Title: "Scan the bring-your-own chart before it may deploy",
+		Argv:  []string{"chart", "scan"},
+		Reach: CLIDriven,
+	},
+	{
+		ID:    "iac-attach",
+		Title: "Attach a bring-your-own OpenTofu module to an environment",
+		Argv:  []string{"iac", "attach"},
+		Reach: CLIDriven,
+	},
+	{
+		ID:    "iac-scan",
+		Title: "Scan the bring-your-own module — it is not deployable until it passes",
+		Argv:  []string{"iac", "scan"},
+		Reach: CLIDriven,
+	},
+
 	{
 		ID:    "promotion-approve",
 		Title: "Approve a promotion between environments",

@@ -461,6 +461,26 @@
 			"reach": "cli"
 		},
 		{
+			"id": "chart-attach",
+			"title": "Attach a bring-your-own Helm chart to an environment",
+			"reach": "cli"
+		},
+		{
+			"id": "chart-scan",
+			"title": "Scan the bring-your-own chart before it may deploy",
+			"reach": "cli"
+		},
+		{
+			"id": "iac-attach",
+			"title": "Attach a bring-your-own OpenTofu module to an environment",
+			"reach": "cli"
+		},
+		{
+			"id": "iac-scan",
+			"title": "Scan the bring-your-own module — it is not deployable until it passes",
+			"reach": "cli"
+		},
+		{
 			"id": "promotion-approve",
 			"title": "Approve a promotion between environments",
 			"reach": "console_only",
