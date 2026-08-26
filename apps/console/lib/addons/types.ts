@@ -88,6 +88,19 @@ export interface AddOnField {
 	fields?: AddOnField[];
 	/** Convenience flag equal to `type === "secret"` — persisted encrypted-at-rest, never plaintext. */
 	secret?: boolean;
+	/**
+	 * This field is MINTED by `generateSecrets` and never shown in the configure form (#2846).
+	 *
+	 * Some charts read a credential from a Secret under a key THEY choose — harbor's data-encryption
+	 * key must be stored under literally `secretKey`, and the chart says so. Such a field has to
+	 * exist so `secretFieldKeys` includes it and the runner seeds it, but putting `secretKey` in a
+	 * marketplace form would be noise at best: nobody has an opinion about its value, and changing
+	 * it after install makes harbor unable to decrypt everything it has already stored.
+	 *
+	 * A `generated` field is therefore machine-owned. It still travels the ordinary secret path —
+	 * encrypted at rest, stripped before validation, delivered by secretRef — it simply has no UI.
+	 */
+	generated?: boolean;
 }
 
 const addOnFieldOption = z.object({ value: z.string(), label: z.string() });

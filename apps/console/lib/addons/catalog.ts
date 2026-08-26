@@ -978,8 +978,29 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			exposeType: z
 				.enum(["ingress", "clusterIP", "nodePort", "loadBalancer"])
 				.default("ingress"),
-			/** Harbor admin password (secret — encrypted at rest; empty = chart default). */
+			/** Harbor admin password (secret — encrypted at rest; empty = Alethia mints one, #2846). */
 			adminPassword: z.string().default(""),
+			/**
+			 * Harbor's data-encryption key (secret, MINTED — never shown in the form).
+			 *
+			 * The chart's default is the literal string `not-a-secure-key`, and this is the key
+			 * Harbor encrypts data at rest with — including the credentials of every registry it
+			 * replicates from. The key name is dictated by the chart: "If using
+			 * existingSecretSecretKey, the key must be secretKey".
+			 */
+			secretKey: z
+				.string()
+				// The 16-char rule is the CHART's, not a style preference — Harbor refuses to start
+				// on any other length. `generated: true` keeps this out of the form, but hidden is
+				// not unsettable: `enableAddon` validates the incoming values before stripping
+				// secrets, and every server action is reachable as a POST. So the invariant is
+				// enforced here rather than resting on the fact that our own minting happens to
+				// produce 16.
+				.refine((v) => v === "" || v.length === 16, {
+					message:
+						"Harbor's data-encryption key must be exactly 16 characters (leave it blank and Alethia mints one).",
+				})
+				.default(""),
 		}),
 		// RECREATE, NOT ROLLINGUPDATE — and this is a default rather than a knob on purpose.
 		//
@@ -1014,13 +1035,27 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		// Harbor reads HARBOR_ADMIN_PASSWORD from `existingSecretAdminPassword` at the key
 		// named by `existingSecretAdminPasswordKey` — verified via `helm template harbor
 		// --version 1.15.1`. Rides the #640 runner-seeded Secret.
-		secretValues: (refs) =>
-			refs.adminPassword
+		secretValues: (refs) => ({
+			...(refs.adminPassword
 				? {
 						existingSecretAdminPassword: refs.adminPassword.name,
 						existingSecretAdminPasswordKey: "adminPassword",
 					}
-				: {},
+				: {}),
+			// The key NAME is not ours to choose — the chart requires literally `secretKey`.
+			...(refs.secretKey ? { existingSecretSecretKey: refs.secretKey.name } : {}),
+		}),
+		// #2846: a blank field must not mean "ship the chart's published default". Both of these
+		// are constants in goharbor's values.yaml on GitHub — `Harbor12345` and `not-a-secure-key`
+		// — so leaving them unset shipped a registry whose admin login and data-encryption key are
+		// public knowledge. Because they are CONSTANTS the render never drifted, so no sync status
+		// and no determinism check could ever have noticed.
+		generateSecrets: (present): Record<string, string> => {
+			const out: Record<string, string> = {};
+			if (!present.has("adminPassword")) out.adminPassword = randomCredential();
+			if (!present.has("secretKey")) out.secretKey = randomCredential(12);
+			return out;
+		},
 		fields: [
 			{ key: "storageGb", label: "Registry storage (GiB)", type: "number", default: 50, min: 10, max: 2000 },
 			{
@@ -1040,7 +1075,16 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "Admin password",
 				type: "secret",
 				secret: true,
-				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Empty = the chart default (change it on first login).",
+				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Leave it empty and Alethia mints one for you, ONCE — read it back with `kubectl -n harbor get secret alethia-addon-harbor`. It is not regenerated on a later save.",
+			},
+			{
+				// MINTED, never shown: the chart dictates the key name, and changing it after
+				// install makes Harbor unable to decrypt anything it has already stored.
+				key: "secretKey",
+				label: "Data encryption key",
+				type: "secret",
+				secret: true,
+				generated: true,
 			},
 		],
 		syncWave: 2,
