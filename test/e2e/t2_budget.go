@@ -30,10 +30,19 @@ import (
 //
 // The correct ordering is ctx < go-timeout < step < job, each margin serving a purpose:
 //
-//	ctx  cancels first  → the scenario reports its own bounded failure, and t.Cleanup tears down
-//	go   +5m            → if the ctx is somehow not honored, go panics with a stack naming the test
-//	step +5m            → if go is wedged, the step kills it and the run still reaches teardown
-//	job  +15m           → teardown, proof capture and the scrub all run after the step is done
+//	ctx      cancels first  → the scenario reports its own bounded failure, and t.Cleanup tears down
+//	teardown reserved       → the t.Cleanup destroy's OWN window, inside the process deadline
+//	go       +5m            → if the ctx is somehow not honored, go panics with a stack naming the test
+//	step     +5m            → if go is wedged, the step kills it and the run still reaches teardown
+//	job      +15m           → proof capture and the scrub run after the step is done
+//
+// The teardown rung is why GoTimeout is NOT simply Ctx+margin. This comment used to say the job's
+// +15m covered "teardown, proof capture and the scrub", which conflated two different teardowns: the
+// WORKFLOW sweeper does run after the step, but the in-process t.Cleanup destroy runs INSIDE the go
+// test process, so only GoTimeout can bound it. Nothing reserved for it, and aws/byo run 32909287152
+// passed every assertion and was recorded FAIL with an internet gateway still detaching (#2729).
+// Teardown is deliberately excluded from Ctx: the test BODY must not get a longer wait because the
+// destroy is slow.
 //
 // ResolveT2Budget is the ONE definition. The tagged cloud test derives its ctx from it, the workflow
 // derives its step and go-timeout from it (cmd/t2budget), and TestT2BudgetLadderHolds proves the
@@ -141,7 +150,7 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 	}
 	// Whole minutes, rounded UP: the workflow's timeout-minutes is an integer, and truncating would
 	// invert the very ordering this function exists to guarantee.
-	b.GoTimeout = ceilMinutes(b.Ctx + t2GoTimeoutMargin)
+	b.GoTimeout = ceilMinutes(b.Ctx + resolveT2TeardownTimeout(p) + t2GoTimeoutMargin)
 	b.Step = ceilMinutes(b.GoTimeout + t2StepMargin)
 	b.Job = ceilMinutes(b.Step + t2JobMargin)
 	return b, nil
