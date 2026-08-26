@@ -175,7 +175,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			grafana: z.boolean().default(true),
 			/** Grafana admin username (paired with the password in the same admin Secret). */
 			adminUser: z.string().min(1).default("admin"),
-			/** Grafana admin password (secret — encrypted at rest; empty = chart-generated). */
+			/** Grafana admin password (secret — encrypted at rest; empty = Alethia mints one, #2846). */
 			adminPassword: z.string().default(""),
 			/** Deploy Alertmanager alongside Prometheus. */
 			alertmanager: z.boolean().default(true),
@@ -201,7 +201,14 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		// (`grafana.admin.existingSecret` + userKey/passwordKey — verified via
 		// `helm template kube-prometheus-stack --version 61.9.0`). The password rides the
 		// #640 runner-seeded Secret; the username is not a secret, so it pairs in via
-		// secretStaticData. No stored password ⇒ no wiring (chart generates its own).
+		// secretStaticData.
+		//
+		// This comment used to end "No stored password ⇒ no wiring (chart generates its own)".
+		// IT DOES NOT. Decoding the rendered Secret at the catalog's own values gives
+		// `admin-user: admin` / `admin-password: prom-operator` — the goharbor-style published
+		// default, a constant sitting in the chart's values.yaml on GitHub. Because it is a
+		// CONSTANT the render never drifts, so nothing ever flagged it: the Application reports
+		// Healthy while Grafana accepts a password anyone can look up (#2846).
 		secretValues: (refs) =>
 			refs.adminPassword
 				? {
@@ -215,6 +222,11 @@ export const ADDON_CATALOG: AddOnDef[] = [
 					}
 				: {},
 		secretStaticData: (c) => ({ adminUser: c.adminUser }),
+		// #2846: a blank field must not mean "accept the chart's published default". Minting here
+		// sets `hasStoredSecret`, which makes resolveAddOnInstall emit a secretRef, which makes the
+		// wiring above point Grafana at a real credential instead of `prom-operator`.
+		generateSecrets: (present): Record<string, string> =>
+			present.has("adminPassword") ? {} : { adminPassword: randomCredential() },
 		fields: [
 			{
 				key: "retentionDays",
@@ -260,7 +272,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "Grafana admin password",
 				type: "secret",
 				secret: true,
-				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Empty = the chart generates one.",
+				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Leave it empty and Alethia mints one for you, ONCE — read it back with `kubectl -n monitoring get secret alethia-addon-kube-prometheus-stack`. It is not regenerated on a later save.",
 			},
 			{
 				key: "alertmanager",
