@@ -777,7 +777,7 @@ var MaxConfigKinds = []MaxConfigKind{
 		Doc:  "cloud-native DNS (Route 53). cloud_dns_enabled fires only when enabled AND no zone_id is brought.",
 		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.DNS = types.ProjectDNSConfig{
-				Enabled: true, DomainName: MaxConfigDomain(), ZoneID: "",
+				Enabled: true, DomainName: MaxConfigDomainFor(provider), ZoneID: "",
 				// ACM is OFF. See MaxConfigDomain: a DNS-validated certificate cannot be
 				// issued for a zone nothing on the public internet delegates to us, so this
 				// is an EXPLICIT, documented exclusion rather than a silent one.
@@ -821,6 +821,35 @@ var maxConfigSnapshotKeys = []string{
 // It is also the name we would DELEGATE if the ACM path is ever to be proven — see MaxConfigDomain.
 const maxConfigDomainSuffix = "e2e.alethialabs.io"
 
+// envMaxConfigDomainSuffix overrides that default, with a per-provider form
+// (ALETHIA_E2E_MAXCONFIG_DOMAIN_SUFFIX_<PROVIDER>) taking precedence over the global one.
+//
+// It exists because HETZNER CANNOT USE THE DEFAULT AT ALL. Hetzner DNS refuses to host a `.io`
+// zone — its API answers `unsupported tld (invalid_input)`, 422, measured against the live API and
+// recorded in apps/console/lib/cloud-providers/dns-tld.ts. So hetzner/maxconfig and hetzner/full
+// were blocked on the TLD of a constant, on every run, whatever else was fixed.
+//
+// PER-PROVIDER rather than one global switch, deliberately. aws's certificate path is wired to THIS
+// zone — E2E_ACM_CERT_ZONE_ID / _ZONE_NAME name `e2e.alethialabs.io` and ACM has issued against it —
+// so moving every cloud at once would require those to move in the same step or aws would request a
+// certificate for a zone it does not hold. One cloud moves; the working path is left alone.
+const envMaxConfigDomainSuffix = "ALETHIA_E2E_MAXCONFIG_DOMAIN_SUFFIX"
+
+// maxConfigSuffixFor resolves the zone suffix for one provider: the per-provider override, then the
+// global one, then the compiled-in default. Same <BASE>_<PROVIDER> shape the argo-repos inputs use,
+// so there is one convention rather than two.
+func maxConfigSuffixFor(provider string) string {
+	if p := strings.ToUpper(strings.TrimSpace(provider)); p != "" {
+		if v := strings.TrimSpace(os.Getenv(envMaxConfigDomainSuffix + "_" + p)); v != "" {
+			return v
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv(envMaxConfigDomainSuffix)); v != "" {
+		return v
+	}
+	return maxConfigDomainSuffix
+}
+
 // MaxConfigDomain is the DNS zone name the max-config fixture provisions, scoped to this run so
 // two runs never contend for one zone name. ALETHIA_E2E_ENV is the same run-scoped identifier the
 // harness already uses for the project/environment pair; the constant fallback keeps the fixture
@@ -849,11 +878,16 @@ const maxConfigDomainSuffix = "e2e.alethialabs.io"
 // re-check cadence is undocumented, and the parent's negative-cache window is 30 minutes — none of
 // which belongs on the critical path of a run that also has to prove ten other kinds. The stable
 // zone lands in infra/aws-oidc/e2e-dns.tf (#1773) and the cert is proven by its own scenario.
-func MaxConfigDomain() string {
+func MaxConfigDomain() string { return MaxConfigDomainFor("") }
+
+// MaxConfigDomainFor is MaxConfigDomain for one provider, honouring its suffix override. The
+// zero-provider form keeps the old behaviour for callers that have no provider in hand.
+func MaxConfigDomainFor(provider string) string {
+	suffix := maxConfigSuffixFor(provider)
 	if env := strings.TrimSpace(os.Getenv("ALETHIA_E2E_ENV")); env != "" {
-		return env + "." + maxConfigDomainSuffix
+		return env + "." + suffix
 	}
-	return maxConfigDomainSuffix
+	return suffix
 }
 
 // MaxConfigEnabled reports whether this run should provision the FULL 11-kind surface.
