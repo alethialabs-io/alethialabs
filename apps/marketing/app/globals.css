@@ -37,28 +37,6 @@
   .ah-3col, .ah-2col { gap: 16px !important; }
 }
 
-/* enterprise page — page-specific collapses (mirror the design's .en-* rules) */
-@media (max-width: 980px) {
-  .en-deploy { grid-template-columns: 1fr 1fr !important; }
-  .en-deploy-cell:nth-child(odd) { border-left: none !important; }
-  .en-deploy-cell:nth-child(even) { border-left: 1px solid var(--border) !important; }
-  .en-deploy-cell:nth-child(n + 3) { border-top: 1px solid var(--border) !important; }
-}
-@media (max-width: 900px) {
-  .en-plan { grid-template-columns: 1fr !important; }
-  .en-hero-grid { grid-template-columns: 1fr !important; }
-  .en-plan-left { border-right: none !important; border-bottom: 1px solid var(--border) !important; }
-}
-@media (max-width: 620px) {
-  .en-pillars { grid-template-columns: 1fr 1fr !important; }
-  .en-pillar:nth-child(odd) { border-left: none !important; padding-left: 0 !important; }
-  .en-deploy { grid-template-columns: 1fr !important; }
-  .en-deploy-cell { border-left: none !important; }
-  .en-deploy-cell:nth-child(n + 2) { border-top: 1px solid var(--border) !important; }
-  .en-plan-inc { grid-template-columns: 1fr !important; }
-  .en-hide-sm { display: none !important; }
-}
-
 /* ============================================================
    Reduced-motion safety net — the last word. Every animated beat above already
    ships a legible static fallback (the framer/three.js islands via the reduced-

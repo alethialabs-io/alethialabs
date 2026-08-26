@@ -232,7 +232,7 @@ export default async function BrandPage() {
 				<BrandSection eyebrow="06 · Voice" title="Quiet. Exact. Verifiable.">
 					<div className="grid gap-4 md:grid-cols-2">
 						<VoiceCard title="Write this">
-							“Deploy from the terminal. Zero credentials stored.”
+							“Deploy from the terminal. Every apply leaves a receipt.”
 						</VoiceCard>
 						<VoiceCard title="Avoid this" muted>
 							“Supercharge your cloud journey with magical automation!”
