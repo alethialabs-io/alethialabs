@@ -328,7 +328,7 @@ export async function updateSsoProvider(
 		resource_id: id,
 	});
 	recordActivity(actor, "edit", { type: "sso_provider", id });
-	revalidatePath(SSO_PATH);
+	revalidatePath(SSO_PATH, "page");
 }
 
 /** Removes a provider (its users can no longer sign in through it). */
@@ -347,7 +347,7 @@ export async function deleteSsoProvider(id: string): Promise<void> {
 		resource_id: id,
 	});
 	recordActivity(actor, "destroy", { type: "sso_provider", id });
-	revalidatePath(SSO_PATH);
+	revalidatePath(SSO_PATH, "page");
 }
 
 /** Mints (or re-mints) the DNS TXT token proving control of the provider's domain. */
@@ -386,7 +386,7 @@ export async function verifySsoDomain(id: string): Promise<{ verified: boolean }
 		resource_id: id,
 	});
 	recordActivity(actor, "edit", { type: "sso_provider", id });
-	revalidatePath(SSO_PATH);
+	revalidatePath(SSO_PATH, "page");
 	return { verified: true };
 }
 

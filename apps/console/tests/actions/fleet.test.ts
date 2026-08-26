@@ -264,7 +264,7 @@ describe("createFleetPool", () => {
 			}),
 		);
 		expect(wakeFleetScaler).toHaveBeenCalledTimes(1);
-		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/runners");
+		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/runners", "page");
 	});
 
 	it("rejects invalid input before touching the DB", async () => {
@@ -315,7 +315,7 @@ describe("setFleetPoolEnabled", () => {
 		expect(patch.enabled).toBe(false);
 		expect(patch.updated_at).toBeInstanceOf(Date);
 		expect(wakeFleetScaler).toHaveBeenCalledTimes(1);
-		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/runners");
+		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/runners", "page");
 	});
 });
 
@@ -332,7 +332,7 @@ describe("deleteFleetPool", () => {
 		expect(patch.enabled).toBe(false);
 		expect(patch.updated_at).toBeInstanceOf(Date);
 		expect(wakeFleetScaler).toHaveBeenCalledTimes(1);
-		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/runners");
+		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/runners", "page");
 	});
 
 	it("throws on a hosted deployment", async () => {
