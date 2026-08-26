@@ -239,7 +239,7 @@ Cloud ceilings (the cloud genuinely does not offer the kind — not our debt):
 
 ### Driven from the CLI
 
-**19 steps CLI-driven · 0 CLI gaps (our debt) · 4 cloud ceilings · 1 console by design.**
+**23 steps CLI-driven · 0 CLI gaps (our debt) · 4 cloud ceilings · 1 console by design.**
 
 The CLI debt is **zero** — every remaining blocker is a thing the cloud offers no API for, not a thing Alethia has not built. That distinction is the one worth carrying into a demo.
 
