@@ -711,9 +711,21 @@ func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) == 1 && lines[0] == "" {
-		// A DIFFERENT fact from "they are all fine", and it must read differently: an Application
-		// with no pods at all is Degraded for a reason no pod dump will ever explain.
-		return fmt.Sprintf("\n──── pods for %s: NONE match %s — the workload was never created ────\n", app, selector)
+		// NO PODS. That is a DIFFERENT fact from "they are all fine" — but on its own it is ALSO
+		// ambiguous, and the first run to hit it proved so.
+		//
+		// hetzner/addons 32959867406 reported `addon-falco: NONE match … — the workload was never
+		// created`, and that read as a finding. It is not one: it conflates
+		//
+		//     the Application manages a workload that has produced no pods   (a real fault)
+		//     the Application manages no workload at all                     (a different fault)
+		//     the pods exist under a label this selector does not match      (NOT a fault — a bug HERE)
+		//
+		// The third would have this dump confidently blame a chart for something the harness got
+		// wrong. So ask ArgoCD what it thinks it manages: the Application's own `.status.resources`
+		// is the authority, and it distinguishes all three.
+		return fmt.Sprintf("\n──── pods for %s: NONE match %s ────%s\n", app, selector,
+			describeManagedWorkloads(ctx, kubeconfigPath, app))
 	}
 
 	var b strings.Builder
@@ -975,4 +987,53 @@ func refsForLosers(observed map[string]argoAppState, losers []string) []outOfSyn
 		}
 	}
 	return refs
+}
+
+// describeManagedWorkloads reports the workload-bearing resources an Application says it manages,
+// so "no pods" can be read correctly rather than assumed.
+//
+// It exists because "no pods matched my selector" is a statement about the SELECTOR as much as about
+// the cluster, and a dump that cannot tell those apart will eventually blame a chart for a harness
+// bug. ArgoCD's `.status.resources` is what it believes it created, so:
+//
+//	a DaemonSet/Deployment IS listed, and no pods    → the workload exists and produced none. Real.
+//	nothing workload-bearing is listed               → the chart rendered none. Also real, different.
+//	resources listed but the selector found nothing  → suspect the SELECTOR, not the chart.
+//
+// Best-effort on an already-failing path: an error is reported as an inability to check, never as an
+// absence.
+func describeManagedWorkloads(ctx context.Context, kubeconfigPath, app string) string {
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"get", "applications.argoproj.io", "-n", "argocd", app,
+		"-o", "jsonpath={range .status.resources[*]}{.kind}/{.name} {.health.status}{\"\\n\"}{end}",
+	).Output()
+	if err != nil {
+		return fmt.Sprintf("\n  (could not read what %s manages: %v — so whether the workload exists is UNKNOWN)", app, err)
+	}
+
+	var workloads []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// The kinds that produce pods. A ConfigMap telling us nothing is noise on a failing path.
+		for _, kind := range []string{"DaemonSet/", "Deployment/", "StatefulSet/", "Job/", "CronJob/", "ReplicaSet/"} {
+			if strings.HasPrefix(line, kind) {
+				workloads = append(workloads, line)
+				break
+			}
+		}
+	}
+
+	if len(workloads) == 0 {
+		return "\n  ArgoCD lists NO workload-bearing resource for this Application — the chart rendered none," +
+			"\n  so there is nothing to produce a pod. Not a scheduling problem."
+	}
+	sort.Strings(workloads)
+	return fmt.Sprintf("\n  but ArgoCD says it manages %d workload(s), so either they produced no pods or this"+
+		"\n  selector is wrong — check the label before blaming the chart:\n    %s",
+		len(workloads), strings.Join(workloads, "\n    "))
 }
