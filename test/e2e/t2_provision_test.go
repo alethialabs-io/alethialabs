@@ -535,7 +535,16 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if err := RequireAllAddOnsExpected(expectedApps); err != nil {
 		t.Fatalf("full add-on surface: %v", err)
 	}
-	t.Logf("asserting ArgoCD Applications reach Healthy+Synced: %v", expectedApps)
+	// Split the derived set AFTER the completeness guard above, never before: that guard's whole
+	// job is to prove the set still covers the catalog, and handing it a pre-filtered set would
+	// make it agree with a set that had already dropped the add-ons it exists to count.
+	//
+	// A withheld add-on is still installed and still observed — it is only not REQUIRED to
+	// converge, because it cannot at catalog defaults (see addon_exclusions.go). The withheld set
+	// is logged on every run, green ones included, so a passing verdict never hides its own scope.
+	assertedApps, withheldApps := PartitionExcludedAddOns(expectedApps)
+	t.Logf("%s", DescribeWithheldAddOns(withheldApps))
+	t.Logf("asserting ArgoCD Applications reach Healthy+Synced: %v", assertedApps)
 
 	if reposEnabled {
 		// (7) ArgoCD-WITH-REPOS + BYO Helm CONVERGED (BYOC A0.6) — the #1 ask. The repo-apps
@@ -559,7 +568,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Fatalf("A0.6 repo-byo credential: %v", e)
 		}
 		t.Logf("A0.6: repo-apps (apps) + repo-byo (%s) derived + credentialed; converging (BYO synced over its CR)...", byoApp)
-		if e := AssertArgoReposConverge(ctx, kc, expectedApps, []string{byoApp}, ArgoAssertTimeout()); e != nil {
+		if e := AssertArgoReposConverge(ctx, kc, assertedApps, []string{byoApp}, ArgoAssertTimeout()); e != nil {
 			t.Fatalf("A0.6 ArgoCD-with-repos convergence failed: %v", e)
 		}
 		// Not vacuous: both repo-sourced apps must MANAGE ≥1 resource — an empty repo/chart
@@ -572,10 +581,16 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			t.Fatalf("A0.6 repo-byo workload: %v", e)
 		}
 		t.Logf("A0.6: ArgoCD-with-repos proven — repo-apps + repo-byo Applications Healthy+Synced and managing real resources on real infra")
-	} else if err := AssertArgoAppsHealthy(ctx, kc, expectedApps, ArgoAssertTimeout()); err != nil {
+	} else if err := AssertArgoAppsHealthy(ctx, kc, assertedApps, ArgoAssertTimeout()); err != nil {
 		t.Fatalf("ArgoCD application health assertion failed: %v", err)
 	}
-	t.Logf("all %d expected ArgoCD Applications are Healthy+Synced", len(expectedApps))
+	// The exclusions RATCHET. A withheld add-on that reached Healthy+Synced means the reason it was
+	// withheld no longer holds, and leaving it on the list would make every later run assert less
+	// than it could. One read, not a poll: staleness does not resolve by waiting.
+	if err := AssertNoStaleAddOnExclusions(ctx, kc, withheldApps); err != nil {
+		t.Fatalf("stale add-on exclusion: %v", err)
+	}
+	t.Logf("all %d asserted ArgoCD Applications are Healthy+Synced (%d withheld)", len(assertedApps), len(withheldApps))
 
 	// (7.6) MAX-CONFIG SURFACE (FT-5). When ALETHIA_E2E_MAX_CONFIG=1 the deploy seeded every kind this
 	//       cloud offers; prove each one GENUINELY landed — the real-apply half of the max-config
