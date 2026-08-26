@@ -891,10 +891,46 @@ func MaxConfigDomain() string { return MaxConfigDomainFor("") }
 // zero-provider form keeps the old behaviour for callers that have no provider in hand.
 func MaxConfigDomainFor(provider string) string {
 	suffix := maxConfigSuffixFor(provider)
+	// Hetzner Cloud DNS refuses a zone name with more than two labels, so it gets the suffix AS the
+	// zone and forgoes the run-scoping prefix. See maxConfigZoneWantsFlatName.
+	if maxConfigZoneWantsFlatName(provider) {
+		return suffix
+	}
 	if env := strings.TrimSpace(os.Getenv("ALETHIA_E2E_ENV")); env != "" {
 		return env + "." + suffix
 	}
 	return suffix
+}
+
+// maxConfigZoneWantsFlatName reports whether a provider's DNS refuses a multi-label zone name, so
+// the run-scoping prefix must be dropped.
+//
+// WHY, and a CORRECTION to what this repo already believed (#2843).
+//
+// `apps/console/lib/cloud-providers/dns-tld.ts` records four probes against the live Hetzner API:
+//
+//	probe-hcloud.alethialabs.io   → unsupported tld (422)   3 labels, .io
+//	probe1.e2e.alethialabs.io     → unsupported tld (422)   4 labels, .io
+//	alethia-probe-zz19.de         → created                 2 labels, .de
+//	alethia-probe-zz19.com        → created                 2 labels, .com
+//
+// and concludes "it is NOT subdomain depth … `.de` and `.com` succeed at the same depth". They do
+// not: both successes are TWO labels and both failures are three and four. Depth and TLD were varied
+// TOGETHER, and no multi-label name outside `.io` was ever tried — so the data cannot separate them.
+//
+// hetzner/maxconfig run 32984975119 supplied the missing cell. `32984975119-1.e2e.alethia-e2e.com`
+// — four labels, `.com`, a TLD the same probe set proved is accepted — failed with the identical
+// `unsupported tld (invalid_input)`, 422. So DEPTH is a cause, whatever the TLD denylist is also
+// measuring.
+//
+// Dropping the run prefix rather than flattening it into one label (`alethia-e2e-<run>.com`) because
+// that would create zones for registrable domains we do not own. A fixed name is safe here for a
+// reason outside this file: `.github/workflows/e2e-nightly.yml` scopes concurrency to
+// `e2e-nightly-${{ matrix.provider }}` with `cancel-in-progress: false`, so two hetzner runs queue
+// and never overlap. If that group is ever widened, this becomes a collision and the guard test
+// below is what should fail first.
+func maxConfigZoneWantsFlatName(provider string) bool {
+	return strings.EqualFold(strings.TrimSpace(provider), "hetzner")
 }
 
 // MaxConfigEnabled reports whether this run should provision the FULL 11-kind surface.
