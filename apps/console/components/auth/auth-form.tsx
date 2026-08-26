@@ -127,6 +127,9 @@ function ProviderButton({
 			variant="outline"
 			onClick={() => onSelect(provider)}
 			disabled={isLoading}
+			aria-label={
+				lastUsed ? `${lookup(PROVIDER_LABELS, provider)} (last used)` : undefined
+			}
 			className="h-[46px] w-full gap-[9px] border-border-strong text-[13.5px] hover:border-ring hover:bg-surface-muted"
 		>
 			{loadingProvider === provider ? (
@@ -135,15 +138,21 @@ function ProviderButton({
 				<ProviderIcon provider={provider} size={17} />
 			)}
 			{lookup(PROVIDER_LABELS, provider)}
-			{/* Deliberately NOT aria-hidden. These buttons carry no aria-label, so this
-			    text joins the accessible name — "GitHub Last used" — which is the whole
-			    point of the mark and is worth hearing. The e2e specs match provider names
-			    by regex (/github/i), so a longer name still resolves.
+			{/* The pill is aria-hidden and the BUTTON names itself instead — the same
+			    shape the SSO button uses for its "Soon". Letting the pill text join the
+			    name by itself was the first attempt and it announced "GitHubLast used":
+			    the accessible name concatenates descendant text and knows nothing about
+			    `ml-1`, and a JSX {" "} between them does not survive the render (checked
+			    in the DOM — the text node is simply absent). An explicit label is the
+			    only version whose spacing is not a guess.
 
-			    Same pill as the SSO button's "Soon": `vx-badge-mono` carries the font,
-			    tracking and colour but no border or padding, so those come in here. */}
+			    Visually unchanged: `vx-badge-mono` carries font, tracking and colour but
+			    no border or padding, so those come in here. */}
 			{lastUsed ? (
-				<span className="vx-badge-mono ml-1 border border-border-strong px-1.5 py-px">
+				<span
+					aria-hidden="true"
+					className="vx-badge-mono ml-1 border border-border-strong px-1.5 py-px"
+				>
 					Last used
 				</span>
 			) : null}
@@ -264,9 +273,14 @@ export function AuthForm({ mode }: AuthFormProps) {
 		// providers and deleted `signIn.oauth2`, so the github/google split is gone —
 		// one call now covers every provider.
 		// Remember the choice before handing off. OAuth leaves the page, so there is no
-		// "after" to run here — recording on a confirmed redirect is the last moment this
-		// code is alive. A provider that errors below is un-remembered again, so a failed
-		// attempt never leaves a mark.
+		// "after" to run here — this is the last moment this code is alive.
+		//
+		// That makes the write optimistic, so EVERY path that does not reach the provider
+		// has to roll it back: the error branch below, and the no-url/no-error branch at
+		// the end. Both call forget(). Only the `window.location.href` hand-off keeps the
+		// mark. This comment used to assert that a failed attempt never leaves a mark
+		// while the third branch quietly did — the invariant is only worth stating if
+		// every exit actually holds it.
 		remember(provider);
 
 		const { data, error } = await authClient.signIn.social({
@@ -291,6 +305,10 @@ export function AuthForm({ mode }: AuthFormProps) {
 			window.location.href = data.url;
 			return;
 		}
+		// Third exit, and the one the rollback originally missed: no url AND no error, so
+		// the hand-off never happened either. Without this the tile keeps its "Last used"
+		// mark and the form goes on recommending the provider that most recently failed.
+		forget();
 		setError(`Could not start ${provider} sign-in. Please try again.`);
 		setIsLoading(false);
 		setLoadingProvider(null);
@@ -696,7 +714,10 @@ export function AuthForm({ mode }: AuthFormProps) {
 					<KeyRound className="size-4 opacity-80" />
 					Continue with email
 					{lastMethod === "email" ? (
-						<span className="vx-badge-mono ml-1 border border-border-strong px-1.5 py-px">
+						<span
+							aria-hidden="true"
+							className="vx-badge-mono ml-1 border border-border-strong px-1.5 py-px"
+						>
 							Last used
 						</span>
 					) : null}
