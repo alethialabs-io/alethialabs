@@ -16,27 +16,6 @@ harbor.redisURL
 # no credential in it. It matches the chart default because the DNS name is derived from the release
 # name, which is deterministic by design.
 
-kube-prometheus-stack.admin-user
-# `admin`. A username, and the paired password is minted (#2847). Grafana's login being `admin` is
-# not a secret in any deployment anywhere.
-
-# ── REAL CREDENTIALS, STILL SHIPPED, FIX LANDS WITH #2845 ───────────────────────────────────────
-# Declared so this check can land and start guarding the other sixteen add-ons rather than waiting.
-#
-# THE TRIGGER IS #2845, NOT THE PRs THAT ADDED THE GENERATORS. #2847 and #2848 taught these add-ons
-# to MINT their credentials at enable time, and both are merged — but this check renders the e2e
-# FIXTURE, and `exportCatalogSpecs` resolves every add-on with NO stored values, so `secretValues`
-# is never reached and the fixture still carries the chart's own defaults. #2845 is what makes the
-# export resolve as-if-stored; until it lands, these three are genuinely still shipped and these
-# declarations are accurate.
-#
-# So #2845 is the PR that must delete these lines, because it is the PR that makes them false. It
-# cannot do so before this file exists, which is why the order is: this PR, then that one.
-
-harbor.HARBOR_ADMIN_PASSWORD          # `Harbor12345` — minted by #2848, reaches the fixture via #2845
-harbor.secretKey                      # `not-a-secure-key` — same
-kube-prometheus-stack.admin-password  # `prom-operator` — minted by #2847, reaches the fixture via #2845
-
 # ── REAL CREDENTIALS, NOT YET FIXABLE ───────────────────────────────────────────────────────────
 
 harbor.POSTGRESQL_PASSWORD

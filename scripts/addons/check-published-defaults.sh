@@ -107,6 +107,7 @@ helm repo update >/dev/null 2>&1 || true
 undeclared=""
 stale=""
 failed=""
+unreadable=""
 uncomparable=""
 new_uncheckable=""
 now_checkable=""
@@ -149,8 +150,13 @@ while read -r id repo chart version ns; do
 import base64, os, re, sys
 
 def secret_values(path):
-    """decoded value -> set of data keys, across every Secret in the document."""
-    found, in_secret = {}, False
+    """decoded value -> set of data keys, across every Secret in the document.
+
+    Returns (values, decoded_any). `decoded_any` counts every entry that base64-decoded, BEFORE the
+    length filter — it answers "can this scan still read this chart", which is a different question
+    from "did anything survive as a credential candidate".
+    """
+    found, in_secret, decoded_any = {}, False, 0
     for line in open(path, encoding="utf-8", errors="replace"):
         if line.startswith("kind: Secret"):
             in_secret = True
@@ -162,11 +168,13 @@ def secret_values(path):
                 dec = base64.b64decode(m.group(2)).decode("utf-8", "strict")
             except Exception:
                 continue
-            # Long values are certificates and keys, not shipped constants; and a value we
-            # generate will not match theirs anyway.
+            decoded_any += 1
+            # Long values are certificates, keys and embedded config files — not shipped credential
+            # constants, and a value we generate would not match theirs anyway. Note this filter is
+            # applied AFTER counting: a value excluded here was read perfectly well.
             if 0 < len(dec) <= 128:
                 found.setdefault(dec, set()).add(m.group(1))
-    return found
+    return found, decoded_any
 
 # Metadata keys that live at the same indent as data entries and are not data.
 _META = re.compile(r"^  (name|namespace|labels|annotations|type|apiVersion|kind|data|stringData):")
@@ -189,7 +197,8 @@ def candidate_data_lines(path):
             n += 1
     return n
 
-ours, theirs = secret_values(sys.argv[1]), secret_values(sys.argv[2])
+ours, ours_decoded = secret_values(sys.argv[1])
+theirs, _ = secret_values(sys.argv[2])
 addon = os.environ["ADDON_ID"]
 
 # EXTRACTION-BROKE detector. Data-shaped lines that yield NO decoded values mean the shape moved
@@ -200,7 +209,12 @@ addon = os.environ["ADDON_ID"]
 # Keyed on candidate LINES rather than on Secret documents, because a Secret with an empty `data:`
 # block is legitimately empty: trivy-operator and velero both render one, and the first version of
 # this check called them broken.
-if candidate_data_lines(sys.argv[1]) > 0 and not ours:
+# Keyed on whether anything DECODED, not on whether anything survived the length filter. A chart
+# whose only Secret holds one long embedded config — kube-prometheus-stack, once Grafana reads its
+# admin credential from a runner-seeded Secret and stops rendering its own — decodes fine and
+# legitimately yields no credential candidates. Reporting that as a broken extractor is a false
+# alarm on a chart that is working exactly as intended.
+if candidate_data_lines(sys.argv[1]) > 0 and ours_decoded == 0:
     print(f"{addon}\t!EXTRACTION-YIELDED-NOTHING")
     sys.exit(0)
 
@@ -216,7 +230,7 @@ PY
   fi
 
   if printf '%s' "$hits" | grep -q '!EXTRACTION-YIELDED-NOTHING'; then
-    failed="$failed $id"
+    unreadable="$unreadable $id"
     echo "EXTRACTION BROKE  $id — the render contains Secret documents but none decoded."
     echo "                  The scan cannot see this chart any more; it has NOT been checked."
     continue
@@ -285,6 +299,13 @@ if [ -n "$now_checkable" ]; then
 fi
 if [ -n "$failed" ]; then
   echo "FAIL: chart(s) did not render at all:$failed" >&2
+  status=1
+fi
+if [ -n "$unreadable" ]; then
+  # A DIFFERENT failure from a render failure, and it used to share that message — which sent me
+  # looking for a broken chart when the chart rendered perfectly.
+  echo "FAIL: chart(s) rendered but this scan could not read their Secrets:$unreadable" >&2
+  echo "      The extraction has stopped matching; those add-ons were NOT checked." >&2
   status=1
 fi
 if [ -n "$undeclared" ]; then
