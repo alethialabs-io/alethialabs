@@ -7,7 +7,7 @@
 // boundary supplies its own links / reset() buttons.
 
 import type { ReactNode } from "react";
-import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { AlethiaMark } from "@repo/brand/lockup";
 import { cn } from "@repo/ui/utils";
 
 interface ErrorStateProps {
@@ -41,7 +41,7 @@ export function ErrorState({
 			)}
 		>
 			{fullPage && (
-				<AlethiaLogo className="mb-1 h-7 w-7 text-text-primary" aria-hidden />
+				<AlethiaMark className="mb-1 h-7 w-7 text-text-primary" aria-hidden />
 			)}
 			{code && (
 				<span className="font-mono text-[12px] uppercase tracking-[0.22em] text-text-tertiary">

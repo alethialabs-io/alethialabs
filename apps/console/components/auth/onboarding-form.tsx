@@ -204,7 +204,7 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 		<div className="mx-auto w-full max-w-[560px]">
 			<div className="mb-8 flex flex-col gap-2.5">
 				<p className="vx-eyebrow">Get started</p>
-				<h1 className="font-grotesk text-[30px] font-semibold leading-[1.04] tracking-[-0.03em] text-text-primary">
+				<h1 className="font-grotesk text-display-sm font-semibold leading-[1.04] tracking-display text-text-primary">
 					Create your organization
 				</h1>
 				<p className="text-[14.5px] leading-[1.55] text-text-secondary">
@@ -270,7 +270,7 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 					value={name}
 					autoComplete="off"
 					placeholder="Acme Cloud"
-					className="h-[46px] rounded-sm border-border-strong bg-surface-sunken text-[15px]"
+					className="h-[46px] border-border-strong bg-surface-sunken text-[15px]"
 					onChange={(e) => {
 						const v = e.target.value;
 						setName(v);
@@ -295,7 +295,7 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 					</button>
 				</div>
 				{showUrl && (
-					<div className="flex h-[40px] items-center overflow-hidden rounded-sm border border-border-strong bg-surface-sunken">
+					<div className="flex h-[40px] items-center overflow-hidden border border-border-strong bg-surface-sunken">
 						<span className="whitespace-nowrap pl-3 pr-0.5 font-mono text-[12px] text-text-tertiary">
 							{orgHost()}/
 						</span>
@@ -323,11 +323,15 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 			</div>
 
 			{/* CTA */}
-			<button
+			{/* `bg-ink text-ink-foreground hover:bg-ink-hover` IS Button's `default`
+			    variant, restated by hand — so this control was overriding the variant
+			    with a copy of itself and drifting from it for free. Only the size and
+			    the group hook are local, the same shape auth-form's PrimaryButton uses. */}
+			<Button
 				type="button"
 				disabled={!nameValid || busy}
 				onClick={() => void submit()}
-				className="group mt-8 inline-flex h-[46px] w-full items-center justify-center gap-2 rounded-sm bg-ink text-sm font-medium text-ink-foreground transition-colors hover:bg-ink-hover disabled:opacity-40"
+				className="group mt-8 h-[46px] w-full text-sm"
 			>
 				{busy
 					? "Creating…"
@@ -337,7 +341,7 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 				{!busy && (
 					<ArrowRight className="size-4 transition-transform group-hover:translate-x-[3px]" />
 				)}
-			</button>
+			</Button>
 			<p className="mt-3 text-center font-mono text-[10.5px] text-text-tertiary">
 				{plan === "team"
 					? trialAvailable

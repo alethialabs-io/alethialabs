@@ -127,7 +127,7 @@ export function ContactSection({
 	return (
 		<section style={{ position: "relative", overflow: "hidden", borderBottom: "1px solid var(--border)" }}>
 			<div className="ah-grid-bg" />
-			<Wrap style={{ position: "relative", padding: "64px 32px 80px" }}>
+			<Wrap style={{ position: "relative", paddingBlock: "64px 80px" }}>
 				<div className="grid grid-cols-1 gap-10 lg:grid-cols-[0.92fr_1fr] lg:gap-16 lg:items-start">
 					<LeftRail {...rail} />
 					<div className="lg:sticky lg:top-[86px]">

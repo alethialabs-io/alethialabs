@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Building2, CircleDollarSign, LifeBuoy } from "lucide-react";
+import { Building2, CircleDollarSign } from "lucide-react";
 import Link from "next/link";
 import type React from "react";
+import { AlethiaLockup } from "@repo/brand/lockup";
 import { cn } from "@repo/ui/utils";
 
 /** Which top-nav section is active (drives the highlighted link). */
@@ -37,12 +38,10 @@ export function StaffShell({
 			<header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
 				<div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between gap-4 px-4">
 					<div className="flex items-center gap-6">
-						<Link
-							href="/"
-							className="flex items-center gap-2 text-sm font-medium"
-						>
-							<LifeBuoy className="size-4 text-muted-foreground" />
-							Alethia staff
+						{/* This was a lucide LifeBuoy plus the words "Alethia staff" — the one
+						    surface in the product carrying no brand mark at all. */}
+						<Link href="/" aria-label="Alethia staff — home" className="flex items-center">
+							<AlethiaLockup tag="staff" size={22} />
 						</Link>
 						<nav className="flex items-center gap-4">
 							{NAV.map((item) => (

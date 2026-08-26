@@ -96,6 +96,14 @@ type DemoStep struct {
 	// Clouds narrows the step to specific clouds. Empty means every cloud. Used by the per-cloud
 	// prerequisites that only one provider imposes.
 	Clouds []string
+	// SatisfiedBy is the evidence that a CloudManual step's manual work HAS been done. Required
+	// for CloudManual and forbidden everywhere else. See t2_cli_ceiling.go for why a ceiling is
+	// two claims rather than one.
+	SatisfiedBy *CeilingProbe
+	// ProbeReading is what the probe actually read, filled in by EvaluateCeilings for a ceiling
+	// that came back UNSATISFIED. Never set on the table itself — it is a run-time observation,
+	// and the summary prints it so an unsatisfied ceiling says why, not merely that.
+	ProbeReading string
 }
 
 // AppliesTo reports whether this step is in scope for the given cloud.
@@ -119,6 +127,12 @@ func (s DemoStep) Validate() error {
 	}
 	if s.Title == "" {
 		return fmt.Errorf("step %q has no Title", s.ID)
+	}
+	if s.Reach != CloudManual && s.SatisfiedBy != nil {
+		return fmt.Errorf("step %q: verdict %q must not carry SatisfiedBy — only a cloud ceiling has manual work to be satisfied, and a probe anywhere else would score a step on something other than its verdict", s.ID, s.Reach)
+	}
+	if s.ProbeReading != "" {
+		return fmt.Errorf("step %q: ProbeReading is a run-time observation and must not be set on the table", s.ID)
 	}
 	switch s.Reach {
 	case CLIDriven:
@@ -153,6 +167,9 @@ func (s DemoStep) Validate() error {
 		}
 		if s.Why == "" {
 			return fmt.Errorf("step %q: verdict %q needs a Why naming the missing API", s.ID, s.Reach)
+		}
+		if err := s.SatisfiedBy.Validate(s.ID); err != nil {
+			return err
 		}
 	case ConsoleOnly:
 		if len(s.Argv) > 0 || len(s.WantArgv) > 0 {
@@ -296,6 +313,48 @@ var CLIDemoSteps = []DemoStep{
 		Argv:  []string{"addon", "list"},
 		Reach: CLIDriven,
 	},
+
+	// ── BRING-YOUR-OWN. Everything above is the golden path over Alethia's own templates and
+	//    catalog. These four are the customer's OWN code — their Helm chart, their OpenTofu — and
+	//    they were absent from this table entirely.
+	//
+	//    That absence UNDERSTATED the product, which is the failure mode this file's header warns
+	//    about in the other direction. The write half shipped in #2321 and nothing here asserted it,
+	//    so the whole BYO story was un-ratcheted: the day one of these verbs was renamed, no test
+	//    would have noticed.
+	//
+	//    The credential question is answered and worth stating, because the obvious reading is
+	//    wrong. `--git-credential-id` points at `project_git_credentials`, a table NOTHING in the
+	//    repo writes — so it looks as though a private repo cannot be reached from the terminal.
+	//    It can: the runner fetches a token at job time from the job owner's LINKED OAUTH ACCOUNT
+	//    (`/api/jobs/{id}/git-token`), and that route's authorized-repo set already covers both the
+	//    BYO chart repos and the BYO IaC repo. So these are genuinely CLIDriven, and the inert flag
+	//    is a separate defect rather than a gap in CLI coverage. ──
+	{
+		ID:    "chart-attach",
+		Title: "Attach a bring-your-own Helm chart to an environment",
+		Argv:  []string{"chart", "attach"},
+		Reach: CLIDriven,
+	},
+	{
+		ID:    "chart-scan",
+		Title: "Scan the bring-your-own chart before it may deploy",
+		Argv:  []string{"chart", "scan"},
+		Reach: CLIDriven,
+	},
+	{
+		ID:    "iac-attach",
+		Title: "Attach a bring-your-own OpenTofu module to an environment",
+		Argv:  []string{"iac", "attach"},
+		Reach: CLIDriven,
+	},
+	{
+		ID:    "iac-scan",
+		Title: "Scan the bring-your-own module — it is not deployable until it passes",
+		Argv:  []string{"iac", "scan"},
+		Reach: CLIDriven,
+	},
+
 	{
 		ID:    "promotion-approve",
 		Title: "Approve a promotion between environments",
@@ -326,6 +385,14 @@ var CLIDemoSteps = []DemoStep{
 			"authenticates from HETZNER_S3_ACCESS_KEY / HETZNER_S3_SECRET_KEY. Hetzner ships NO API that mints " +
 			"them — a human creates them in the cloud console. This is the purest CloudManual case in the product: " +
 			"there is no call we are failing to make",
+		SatisfiedBy: &CeilingProbe{
+			Kind: ProbeEnvTruthy,
+			// The workflow renders these from `secrets.HETZNER_S3_* != ''`, so what arrives here is
+			// the STRING "true" or "false" — never the credential. A probe in this file must not be
+			// able to print one even by accident.
+			Env:    []string{"ALETHIA_E2E_HETZNER_S3_KEYS_PRESENT"},
+			Expect: "a maintainer mints an Object Storage key pair in the Hetzner console and sets the HETZNER_S3_ACCESS_KEY / HETZNER_S3_SECRET_KEY repo secrets (both were set on 2026-08-25)",
+		},
 	},
 	{
 		ID:    "dns-delegation",
@@ -336,6 +403,14 @@ var CLIDemoSteps = []DemoStep{
 			"creating a hosted zone is not the same as being delegated one. Delegation is a registrar action, " +
 			"outside every cloud's API. Consequence: the full bar proves the dns kind but NOT the cert path, on " +
 			"any cloud — infra/templates/project/aws/modules/acm is switched off for exactly this reason",
+		SatisfiedBy: &CeilingProbe{
+			Kind: ProbeZoneDelegated,
+			// Ask the internet, not ourselves. A hosted zone that exists in an account but that
+			// nothing delegates to answers with an EMPTY name-server set, which is exactly the
+			// state #1773 described — so an empty answer must read as unsatisfied, not as success.
+			Env:    []string{"ALETHIA_E2E_ACM_CERT_ZONE_NAME"},
+			Expect: "a registrar/parent-zone NS record delegates the zone named by E2E_ACM_CERT_ZONE_NAME to the e2e account (done for e2e.alethialabs.io — ACM has issued against it, which DNS validation could not have done otherwise)",
+		},
 	},
 	{
 		ID:     "gcp-budget-publisher",
@@ -346,6 +421,14 @@ var CLIDemoSteps = []DemoStep{
 		Why: "billing-budgets@system.gserviceaccount.com needs a publisher binding that must be granted out of band " +
 			"in the Cloud Console before the binding can be imported. Until then the budget's alerts are " +
 			"undeliverable — the stack's own cost guard is the one resource that does not come up",
+		SatisfiedBy: &CeilingProbe{
+			Kind: ProbeEnvTruthy,
+			// UNSATISFIED today, and correctly so — #1871 is open and the binding does not exist.
+			// A probe that cannot yet be satisfied is still worth declaring: it names what
+			// completion looks like, where omitting one names nothing at all.
+			Env:    []string{"ALETHIA_E2E_GCP_BUDGET_PUBLISHER_GRANTED"},
+			Expect: "grant billing-budgets@system.gserviceaccount.com the Pub/Sub publisher binding in the Cloud Console budget UI, `tofu import` it behind budget_publisher_binding_enabled, then set the E2E_GCP_BUDGET_PUBLISHER_GRANTED repo variable (#1871)",
+		},
 	},
 	{
 		ID:     "alibaba-cr-sweep",
@@ -357,6 +440,14 @@ var CLIDemoSteps = []DemoStep{
 			"creates with payment_type = Subscription. A prepaid instance is not released by tofu destroy the way " +
 			"a pay-as-you-go one is, so every full bar leaves a non-cancellable monthly instance behind AND the " +
 			"teardown still reports clean. Releasing it is a console action",
+		SatisfiedBy: &CeilingProbe{
+			Kind: ProbeEnvTruthy,
+			// Deliberately NOT satisfiable by #2333 being closed. This ceiling is RECURRING — every
+			// full bar buys another prepaid instance — so unlike the other three there is no
+			// one-time act that retires it. The variable asserts the sweep ran for THIS cycle.
+			Env:    []string{"ALETHIA_E2E_ALIBABA_CR_SWEPT"},
+			Expect: "release the prepaid Container Registry EE instance in the Alibaba console after each full bar and set E2E_ALIBABA_CR_SWEPT; this ceiling RECURS, so satisfying it once does not retire it (#2333)",
+		},
 	},
 }
 
@@ -369,23 +460,44 @@ type CLIDemoProof struct {
 	Driven []string
 	// Gaps are steps the CLI cannot reach but the product performs — our debt.
 	Gaps []DemoStep
-	// Manual are steps no cloud API can reach — a ceiling, and still a demo failure.
+	// Manual are steps no cloud API can reach AND that nobody has done — a ceiling that is still
+	// outstanding, and a demo failure. A ceiling whose probe reports it satisfied moves to
+	// Satisfied and does NOT fail the bar.
 	Manual []DemoStep
+	// Satisfied are ceilings whose manual work has been done, with the evidence saying so. They
+	// are still PRINTED — a prospect deserves to know the manual step exists before they hit it —
+	// but they no longer fail the bar, because the thing they describe is not outstanding.
+	//
+	// ScoreCLIDemo leaves this empty: it is filled only by EvaluateCeilings, which is impure.
+	// So a caller that skips the evaluation gets the strict old behaviour, never a laxer one.
+	Satisfied []SatisfiedCeiling
 	// Console are the deliberate human-in-the-loop steps. NOT a failure.
 	Console []DemoStep
 }
 
 // Passed reports whether this cloud clears the demo bar: every applicable step driven from the
-// CLI, with only deliberate console steps set aside. Gaps and ceilings BOTH fail, per the ruling.
+// CLI, with only deliberate console steps set aside.
+//
+// Gaps and OUTSTANDING ceilings both fail, per the ruling — a prospect cannot tell whose fault the
+// click is. What changed on 2026-08-26 is what "outstanding" means: a ceiling whose SatisfiedBy
+// probe reports the manual work DONE has left Manual, so it no longer fails. The expression is
+// unchanged; EvaluateCeilings is what moves a step out of Manual, and only positive evidence does
+// that. See t2_cli_ceiling.go.
 func (p CLIDemoProof) Passed() bool { return len(p.Gaps) == 0 && len(p.Manual) == 0 }
 
 // Verdict renders the one-line ledger verdict.
 func (p CLIDemoProof) Verdict() string {
 	if p.Passed() {
-		return fmt.Sprintf("PASS — %d/%d steps driven from the CLI (%d deliberate console step(s))",
+		v := fmt.Sprintf("PASS — %d/%d steps driven from the CLI (%d deliberate console step(s))",
 			len(p.Driven), len(p.Driven)+len(p.Console), len(p.Console))
+		if len(p.Satisfied) > 0 {
+			// Say it on the headline. A PASS that silently omits the ceilings would read as
+			// "this cloud has none", and the next person to hit one would be surprised by it.
+			v += fmt.Sprintf(", %d cloud ceiling(s) satisfied", len(p.Satisfied))
+		}
+		return v
 	}
-	return fmt.Sprintf("FAIL — %d step(s) the CLI cannot reach, %d the cloud offers no API for (%d driven)",
+	return fmt.Sprintf("FAIL — %d step(s) the CLI cannot reach, %d the cloud offers no API for and nobody has done (%d driven)",
 		len(p.Gaps), len(p.Manual), len(p.Driven))
 }
 
@@ -407,10 +519,24 @@ func (p CLIDemoProof) Summary() string {
 				fmt.Fprintf(&b, " %s", s.Issue)
 			}
 			fmt.Fprintf(&b, "\n      %s\n", s.Why)
+			// An outstanding ceiling prints what the probe READ and what would satisfy it, so the
+			// bundle carries a remedy rather than only a complaint.
+			if s.ProbeReading != "" {
+				fmt.Fprintf(&b, "      probe: %s\n", s.ProbeReading)
+			}
+			if s.SatisfiedBy != nil {
+				fmt.Fprintf(&b, "      to satisfy: %s\n", s.SatisfiedBy.Expect)
+			}
 		}
 	}
 	section("FAIL — the CLI cannot reach these (our debt)", p.Gaps)
-	section("FAIL — no cloud API exists (a ceiling, filed anyway)", p.Manual)
+	section("FAIL — no cloud API exists, and the manual step is OUTSTANDING", p.Manual)
+	if len(p.Satisfied) > 0 {
+		fmt.Fprintf(&b, "\ncloud ceilings SATISFIED — no API exists, and the manual step is done (%d):\n", len(p.Satisfied))
+		for _, sc := range p.Satisfied {
+			fmt.Fprintf(&b, "  - %s [%s] %s\n      %s\n", sc.Step.Title, sc.Step.ID, sc.Step.Issue, sc.Evidence)
+		}
+	}
 	section("set aside — deliberately human-in-the-loop", p.Console)
 	return b.String()
 }

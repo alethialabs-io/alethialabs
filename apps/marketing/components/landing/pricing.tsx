@@ -6,26 +6,27 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@repo/ui/button";
 import { Badge } from "@repo/ui/badge";
-import { Card } from "@repo/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@repo/ui/table";
 import { Accordion, AccordionContent, AccordionHeader, AccordionItem, AccordionTrigger } from "@repo/ui/accordion";
 import { SegmentedControl } from "@repo/ui/segmented-control";
+import { Input } from "@repo/ui/input";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { cn } from "@repo/ui/utils";
 import {
 	disp,
 	eyebrow,
 	Icon,
-	Mark,
 	mono,
 	Wrap,
 } from "@repo/brand/site-primitives";
-import { PageCTA, PageHero, SectionMark } from "@repo/brand/site-sections";
+import { AlethiaMark } from "@repo/brand/lockup";
+import { PageClose } from "@repo/brand/site-sections";
 import {
 	PLAN_CATALOG,
 	type PlanId,
 	type SupportedCurrency,
 } from "@repo/plan-catalog";
+import { splitPriceLabel } from "@/lib/billing/price-label";
 
 const SALES = "/contact/sales";
 
@@ -36,123 +37,187 @@ interface Cta {
 }
 
 /**
- * CTA(s) per tier. Hobby drops into the app; Team starts a one-month trial via the
- * /start intent carrier; Enterprise is contact-only (demo + self-serve trial).
+ * One CTA per tier. Enterprise used to carry two ("Get a demo" + "Request trial"),
+ * which made its column a different shape from the other two and asked the visitor
+ * to choose twice. `/enterprise` now closes with the trial form itself, so this is
+ * the demo path only.
  */
-function ctasFor(plan: PlanId): Cta[] {
+function ctaFor(plan: PlanId): Cta {
 	switch (plan) {
 		case "community":
-			return [{ label: "Start provisioning", href: "/signup", variant: "outline" }];
+			return { label: "Start provisioning", href: "/signup", variant: "outline" };
 		case "team":
-			return [
-				{
-					// Solid ink, not the retired blue. Emphasis comes from the card —
-					// raised surface, stronger border, shadow and the POPULAR badge.
-					label: "Start free trial",
-					href: "/signup?next=%2Fstart%3Fplan%3Dteam%26trial%3D1",
-					variant: "default",
-				},
-			];
+			return {
+				// Solid ink, not the retired blue. Emphasis comes from the column tint
+				// and the POPULAR badge.
+				label: "Start free trial",
+				href: "/signup?next=%2Fstart%3Fplan%3Dteam%26trial%3D1",
+				variant: "default",
+			};
 		case "enterprise":
-			return [
-				{ label: "Get a demo", href: SALES, variant: "outline" },
-				{ label: "Request trial", href: "/contact/enterprise", variant: "outline" },
-			];
+			return { label: "Talk to sales", href: SALES, variant: "outline" };
 		default:
-			return [{ label: "Get started", href: "/signup", variant: "outline" }];
+			return { label: "Get started", href: "/signup", variant: "outline" };
 	}
 }
 
 /* ============ Hero ============ */
-/** Pricing hero. The composition lives in @repo/brand — /enterprise and this page
- *  were building the identical hero by hand, down to the letter-spacing. */
-function PricingHero() {
+/**
+ * Two lines, left, and nothing else — no rail, no lede, no CTAs, no footnote.
+ * The tier box is a few hundred pixels below and is the actual call to action;
+ * a second one above it was competing with it.
+ */
+function PricingOpen() {
 	return (
-		<PageHero
-			kicker="alethia · pricing"
-			status="open core"
-			headline={{ lead: "Own your infrastructure.", muted: "Pay for the convenience." }}
-			lede="The core is open source and free to self-host. Hosted plans add organizations, governance, and SSO — billed for the convenience, never for the cloud you already pay for."
-			ledeMaxWidth={600}
-			ctas={[
-				{ label: "Get started", href: "/signup", icon: "arrow" },
-				{ label: "Read the docs", href: "/docs", variant: "outline", icon: "book", iconBefore: true },
-			]}
-			footnote="Self-hosting the open-source core is free forever"
-			paddingTop={96}
-			paddingBottom={28}
-		/>
+		<section className="pt-[112px] pb-14 max-[640px]:pt-[80px]">
+			<Wrap>
+				<h1
+					className="vx-display-in font-grotesk text-display-md font-bold leading-display tracking-display text-text-primary"
+					style={{ margin: 0, maxWidth: "16ch" }}
+				>
+					<span>Own your infrastructure.</span>
+					<span>Pay for the convenience.</span>
+				</h1>
+			</Wrap>
+		</section>
 	);
 }
 
-/* ============ Plan cards (equal height) ============ */
-/** A single plan card. `h-full` + the stretch grid below keep all cards equal height. */
-function PlanCard({ plan, priceLabel }: { plan: (typeof PLAN_CATALOG)[number]; priceLabel: string }) {
+/* ============ Tiers ============ */
+/**
+ * One column of the tier box.
+ *
+ * Feature rows come from `plan.included`, flattened — NOT `plan.highlights`.
+ * `highlights` is 3 / 4 / 5 items across the three plans, which gives ragged
+ * columns; `included` flattens to exactly 6 for Hobby and 6 for Pro, and 12 for
+ * Enterprise, so one `slice` squares them off.
+ *
+ * The `(coming soon)` filter is load-bearing, not cosmetic. The catalog's only
+ * such entry is "SCIM provisioning (coming soon)", and it sits at index 4 of
+ * Enterprise — inside the slice. `apps/docs/content/docs/standards/scim-saml.mdx`
+ * carries an explicit "Do not represent SCIM as available" callout: there is no
+ * `/scim/v2` endpoint. Without this filter the page ships it as a feature.
+ */
+function TierColumn({
+	plan,
+	priceLabel,
+}: {
+	plan: (typeof PLAN_CATALOG)[number];
+	priceLabel: string;
+}) {
 	const popular = Boolean(plan.popular);
-	const ctas = ctasFor(plan.id);
-	// "Everything in {previous tier}, plus:" lead-in over the feature list (Vercel-style),
-	// derived from the entitlement ladder. The base tier has no parent → "Includes:".
+	const cta = ctaFor(plan.id);
+	const { amount, suffix } = splitPriceLabel(priceLabel);
 	const inheritsName = plan.inheritsFrom
 		? PLAN_CATALOG.find((p) => p.id === plan.inheritsFrom)?.name
 		: undefined;
-	const featuresLead = inheritsName ? `Everything in ${inheritsName}, plus:` : "Includes:";
+	const rows = plan.included
+		.flatMap((group) => group.items)
+		.filter((item) => !item.includes("(coming soon)"))
+		.slice(0, 6);
 	return (
-		<Card
-			className={cn(
-				"relative h-full gap-0 rounded-lg px-5 py-[22px]",
-				popular ? "border-border-strong bg-surface-raised shadow-md" : "border-border bg-surface shadow-none",
-			)}
-		>
-			<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-				<span style={{ ...disp, fontSize: 17, fontWeight: 600, color: "var(--text-primary)" }}>{plan.name}</span>
+		<div className={cn("flex flex-col px-7 py-8", popular && "bg-surface-muted")}>
+			<div className="flex items-center justify-between">
+				<span style={{ ...disp, fontSize: 17, fontWeight: 600, color: "var(--text-primary)" }}>
+					{plan.name}
+				</span>
 				{popular && (
 					<Badge variant="outline" className="vx-badge-mono">
 						Popular
 					</Badge>
 				)}
 			</div>
-			<p style={{ fontSize: 12.5, color: "var(--text-tertiary)", margin: "0 0 16px", lineHeight: 1.45, minHeight: 34 }}>{plan.tagline}</p>
-			<div style={{ ...disp, fontSize: 28, fontWeight: 600, letterSpacing: "-0.03em", color: "var(--text-primary)", lineHeight: 1.1, marginBottom: 18 }}>
-				{priceLabel}
+
+			<div className="mt-7 flex items-baseline gap-1.5">
+				<span
+					className="font-grotesk font-bold tracking-display text-text-primary"
+					style={{ fontSize: 44, lineHeight: 1 }}
+				>
+					{amount}
+				</span>
+				{suffix && <span className="text-[12px] text-text-tertiary">{suffix}</span>}
 			</div>
-			<div style={{ ...eyebrow, fontSize: 10, color: "var(--text-tertiary)", marginBottom: 12 }}>{featuresLead}</div>
-			<div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-				{plan.highlights.map((h) => (
-					<div key={h} style={{ display: "flex", alignItems: "flex-start", gap: 9 }}>
-						<span style={{ color: "var(--text-primary)", marginTop: 1, flexShrink: 0 }}><Icon k="check" size={14} sw={2.2} /></span>
-						<span style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.4 }}>{h}</span>
-					</div>
+
+			<p className="mt-5 min-h-[38px] max-w-[26ch] text-[13px] leading-[1.5] text-text-tertiary">
+				{plan.tagline}
+			</p>
+
+			<hr className="my-7 border-0 border-t border-border-faint" />
+			<p className="text-[12px] text-text-tertiary">
+				{inheritsName ? `All ${inheritsName} features, plus:` : "Includes:"}
+			</p>
+
+			<ul className="mt-4 m-0 list-none space-y-3 p-0">
+				{rows.map((row) => (
+					<li key={row} className="flex items-start gap-2.5">
+						<span className="mt-0.5 shrink-0 text-text-primary">
+							<Icon k="check" size={14} sw={2.2} />
+						</span>
+						<span className="text-[13px] leading-[1.4] text-text-secondary">{row}</span>
+					</li>
 				))}
+			</ul>
+
+			{/* Pinned so all three CTAs share one baseline whatever the row count. */}
+			<div className="mt-auto pt-9">
+				<Button
+					size="sm"
+					variant={cta.variant}
+					className="w-full"
+					nativeButton={false}
+					render={<Link href={cta.href} />}
+				>
+					{cta.label}
+				</Button>
 			</div>
-			{/* Pinned to the card bottom so every plan's CTA(s) share one baseline, regardless
-			    of how many features or buttons the card has. */}
-			<div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: "auto", paddingTop: 24 }}>
-				{ctas.map((cta) => (
-					<Button key={cta.label} variant={cta.variant} size="sm" className="w-full" nativeButton={false} render={<Link href={cta.href} />}>
-						{cta.label}<Icon k="arrow" size={14} />
-					</Button>
-				))}
-			</div>
-		</Card>
+		</div>
 	);
 }
 
-/** The three plan cards in an equal-height (stretch) grid. */
-function PlanCards({ teamPriceLabel }: { teamPriceLabel: string }) {
+/**
+ * The three tiers as ONE bordered box split by vertical hairlines, rather than
+ * three detached cards with a gap between them. The hairline is how every other
+ * surface in this system separates things; three floating cards with their own
+ * borders, shadows and raised fills were the odd one out.
+ */
+function TierBox({
+	teamPriceLabel,
+	currency,
+	onCurrency,
+}: {
+	teamPriceLabel: string;
+	currency: SupportedCurrency;
+	onCurrency: (c: SupportedCurrency) => void;
+}) {
 	return (
-		<section style={{ padding: "20px 0 8px" }}>
+		<section className="pb-[96px]">
 			<Wrap>
-				<div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 16, alignItems: "stretch" }} className="ah-3col">
-					{PLAN_CATALOG.map((plan) => (
-						<PlanCard
-							key={plan.id}
-							plan={plan}
-							priceLabel={plan.id === "team" ? teamPriceLabel : plan.priceLabel}
-						/>
-					))}
+				<div className="mb-4 flex justify-end">
+					<SegmentedControl
+						label="Currency"
+						mono
+						options={[
+							{ value: "usd" as SupportedCurrency, label: "usd" },
+							{ value: "eur" as SupportedCurrency, label: "eur" },
+						]}
+						value={currency}
+						onChange={onCurrency}
+					/>
 				</div>
-				<p style={{ fontSize: 12.5, color: "var(--text-tertiary)", textAlign: "center", margin: "22px 0 0", lineHeight: 1.6 }}>
-					All plans include multi-cloud provisioning, the Project designer, GitOps, the AI agent, and zero stored credentials. The Team price is per seat, billed monthly through Stripe.
+				<div style={{ border: "1px solid var(--border)", background: "var(--surface)" }}>
+					<div className="grid grid-cols-1 divide-y divide-border md:grid-cols-3 md:divide-x md:divide-y-0">
+						{PLAN_CATALOG.map((plan) => (
+							<TierColumn
+								key={plan.id}
+								plan={plan}
+								priceLabel={plan.id === "team" ? teamPriceLabel : plan.priceLabel}
+							/>
+						))}
+					</div>
+				</div>
+				<p className="mt-6 text-[12.5px] leading-[1.6] text-text-tertiary">
+					Every plan provisions into your own cloud account. The Pro price is per seat, billed
+					monthly through Stripe.
 				</p>
 			</Wrap>
 		</section>
@@ -236,16 +301,40 @@ function MatrixCell({ value, head }: { value: MatrixValue; head: boolean }) {
  * `<table>` element in the whole marketing app. The Team column stays tinted, and the
  * group headers keep their spacer cells so the tint runs unbroken down the column.
  */
-function Matrix({ teamPriceLabel }: { teamPriceLabel: string }) {
+function Matrix({ teamPriceLabel, query, onQuery }: { teamPriceLabel: string; query: string; onQuery: (q: string) => void }) {
+	const q = query.trim().toLowerCase();
+	const groups = q
+		? MATRIX.map((g) => ({ ...g, rows: g.rows.filter((r) => r[0].toLowerCase().includes(q)) })).filter(
+				(g) => g.rows.length > 0,
+			)
+		: MATRIX;
+	const matchCount = groups.reduce((n, g) => n + g.rows.length, 0);
 	const colClass = (i: number): string => (i === POP_COL ? "bg-surface-muted" : "");
 	const priceFor = (id: PlanId, fallback: string): string => (id === "team" ? teamPriceLabel : fallback);
 	return (
 		<section style={{ padding: "72px 0", borderTop: "1px solid var(--border)" }}>
 			<Wrap>
-				<SectionMark n="—" label="Compare plans" />
-				<h2 style={{ ...disp, fontSize: 32, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 28px", color: "var(--text-primary)" }}>
+				<h2
+					className="font-grotesk text-display-sm font-bold tracking-display text-text-primary"
+					style={{ margin: "0 0 24px", lineHeight: 1.05 }}
+				>
 					Every plan, side by side.
 				</h2>
+				<div className="mb-5 max-w-[300px]">
+					<Input
+						type="search"
+						value={query}
+						onChange={(e) => onQuery(e.target.value)}
+						placeholder="Search features…"
+						aria-label="Search features"
+						className="h-9 rounded-sm border-border-strong bg-surface-sunken text-[13px]"
+					/>
+					{/* The count is announced rather than shown: a sighted user sees rows
+					    disappear, and without this a screen-reader user gets nothing. */}
+					<p aria-live="polite" className="sr-only">
+						{matchCount} {matchCount === 1 ? "feature matches" : "features match"}
+					</p>
+				</div>
 				<div className="overflow-hidden rounded-lg border border-border bg-surface">
 					<Table className="min-w-[720px]">
 						<caption className="sr-only">
@@ -270,7 +359,7 @@ function Matrix({ teamPriceLabel }: { teamPriceLabel: string }) {
 								))}
 							</TableRow>
 						</TableHeader>
-						{MATRIX.map((group) => (
+						{groups.map((group) => (
 							<TableBody key={group.label}>
 								<TableRow className="border-border-faint bg-surface-sunken hover:bg-surface-sunken">
 									<TableHead scope="colgroup" className="px-[18px] py-2.5">
@@ -312,13 +401,13 @@ function OpenCore() {
 				<div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", background: "var(--surface)", padding: "40px 36px", display: "grid", gridTemplateColumns: "1fr auto", gap: 32, alignItems: "center" }} className="ah-surface">
 					<div>
 						<div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, color: "var(--text-primary)" }}>
-							<Mark size={26} /><span style={{ ...eyebrow }}>Open core</span>
+							<AlethiaMark size={26} /><span style={{ ...eyebrow }}>Open core</span>
 						</div>
 						<h2 style={{ ...disp, fontSize: 30, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 12px", color: "var(--text-primary)" }}>
 							Free forever. Run it in your own cloud.
 						</h2>
 						<p style={{ fontSize: 15, color: "var(--text-tertiary)", lineHeight: 1.6, margin: 0, maxWidth: 620 }}>
-							The complete single-tenant product is open source under AGPL-3.0 — full provisioning, the Project designer, GitOps, the AI agent, and community RBAC. The paid tiers add multi-member organizations, SSO, custom roles, and audit export. No cloud credentials ever leave your control.
+							The complete single-tenant product is open source under AGPL-3.0 — full provisioning, the Project designer, GitOps, the AI agent, and community RBAC. The paid tiers add multi-member organizations, SSO, custom roles, and audit export.
 						</p>
 					</div>
 					<div style={{ display: "flex", flexDirection: "column", gap: 10 }} className="ah-hide-sm">
@@ -340,7 +429,7 @@ const FAQ: { q: string; a: string }[] = [
 	{ q: "Is the free tier really free?", a: "Yes. The core is open source under AGPL-3.0 — self-host it in your own cloud and pay nothing. It's a management layer over infrastructure you already own." },
 	{ q: "How does per-seat billing work?", a: "Team is billed per active member of your organization, monthly through Stripe. Add or remove seats as your team changes." },
 	{ q: "Can I self-host the paid features?", a: "Enterprise includes a self-managed license, so you can run the full governance feature set — SSO, custom roles, audit — in your own environment." },
-	{ q: "Do you store my cloud credentials?", a: "No. Every cloud connects through short-lived federated identity; no access keys are written to disk or held in our database, on any plan." },
+	{ q: "Do you store my cloud credentials?", a: "On AWS, GCP, Azure and Alibaba, no — the runner mints short-lived federated credentials per job and no access key is written to disk or held in our database. Hetzner, DigitalOcean and Civo have no federation, so a scoped API token is stored encrypted at rest and decrypted only for the job. Run a self-managed runner on those and the token never reaches us at all." },
 ];
 
 /**
@@ -355,8 +444,10 @@ function Faq() {
 	return (
 		<section style={{ padding: "72px 0", borderTop: "1px solid var(--border)", background: "var(--surface-sunken)" }}>
 			<Wrap>
-				<SectionMark n="—" label="FAQ" />
-				<h2 style={{ ...disp, fontSize: 32, fontWeight: 600, letterSpacing: "-0.035em", margin: "0 0 28px", color: "var(--text-primary)" }}>
+				<h2
+					className="font-grotesk text-display-sm font-bold tracking-display text-text-primary"
+					style={{ margin: "0 0 24px", lineHeight: 1.05 }}
+				>
 					Questions, answered.
 				</h2>
 				<Accordion
@@ -386,16 +477,14 @@ function Faq() {
 	);
 }
 
-/* ============ CTA ============ */
-/** Closing CTA. The composition is shared — three pages were building it by hand. */
-function PricingCTA() {
+/* ============ Close ============ */
+function PricingClose() {
 	return (
-		<PageCTA
-			headline="Start free. Upgrade when your team does."
-			lede="Self-host the open core today, or spin up a hosted organization in minutes."
+		<PageClose
+			line="Start free. Upgrade when your team does."
 			ctas={[
-				{ label: "Get started", href: "/signup", icon: "arrow" },
-				{ label: "Contact sales", href: SALES, variant: "outline" },
+				{ label: "Get started", href: "/signup" },
+				{ label: "Talk to sales", href: SALES, variant: "outline" },
 			]}
 		/>
 	);
@@ -417,27 +506,16 @@ interface PricingProps {
  */
 export function Pricing({ teamPrice, initialCurrency }: PricingProps) {
 	const [currency, setCurrency] = useState<SupportedCurrency>(initialCurrency);
+	const [query, setQuery] = useState("");
 	const teamPriceLabel = teamPrice[currency];
 	return (
 		<div id="pricing">
-			<PricingHero />
-			<div className="mx-auto flex w-full max-w-6xl justify-end px-6">
-				<SegmentedControl
-					label="Currency"
-					mono
-					options={[
-						{ value: "usd" as SupportedCurrency, label: "usd" },
-						{ value: "eur" as SupportedCurrency, label: "eur" },
-					]}
-					value={currency}
-					onChange={setCurrency}
-				/>
-			</div>
-			<PlanCards teamPriceLabel={teamPriceLabel} />
-			<Matrix teamPriceLabel={teamPriceLabel} />
+			<PricingOpen />
+			<TierBox teamPriceLabel={teamPriceLabel} currency={currency} onCurrency={setCurrency} />
+			<Matrix teamPriceLabel={teamPriceLabel} query={query} onQuery={setQuery} />
 			<OpenCore />
 			<Faq />
-			<PricingCTA />
+			<PricingClose />
 		</div>
 	);
 }

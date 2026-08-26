@@ -3,7 +3,7 @@
 
 import type { Metadata } from "next";
 import { SiteShell } from "@repo/brand/site-shell";
-import { Reveal } from "@/components/landing/home/reveal";
+import { Reveal } from "@/components/landing/reveal";
 import { EnterpriseSections } from "@/components/landing/enterprise/page-sections";
 
 export const metadata: Metadata = {
@@ -13,10 +13,14 @@ export const metadata: Metadata = {
 };
 
 /**
- * Public enterprise-governance page. Mirrors the home/pricing chrome (landing
- * Header + Footer) and renders the enterprise sections — organizations, SSO,
- * RBAC, audit, security, and the Enterprise plan band — inside the shared
- * scroll-reveal wrapper. Served at /enterprise inside the console app.
+ * Public enterprise-governance page: organizations, identity, roles, audit,
+ * deployment, and the trial form.
+ *
+ * `Reveal` selects `:scope > section` and skips the first, so
+ * `EnterpriseSections` must return a flat fragment of `<section>` elements with
+ * the hero first — a wrapper div here would silently kill every scroll
+ * animation on the page. The plan band is gone: it duplicated /pricing's
+ * Enterprise tier with a different and partly wrong feature list.
  */
 export default async function EnterprisePage() {
 	return (

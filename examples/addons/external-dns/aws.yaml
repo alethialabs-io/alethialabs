@@ -1,0 +1,23 @@
+# ExternalDNS on AWS — Route 53, keyless.
+#
+# AWS authenticates by IAM ROLE, never by token. `workloadIdentity` becomes the
+# `eks.amazonaws.com/role-arn` annotation on the controller's ServiceAccount, and IRSA does the rest:
+# there is no credential to store, rotate, or leak.
+#
+# Before #2777 this add-on handed every non-DigitalOcean provider a Cloudflare-shaped `CF_API_TOKEN`
+# and had no ServiceAccount knob at all, so this configuration was not expressible.
+
+provider: aws
+
+# The IAM role external-dns assumes. It needs route53:ChangeResourceRecordSets on the hosted zone
+# plus route53:ListHostedZones / ListResourceRecordSets. Create it with a trust policy for the
+# cluster's OIDC provider and this ServiceAccount.
+workloadIdentity: arn:aws:iam::000000000000:role/external-dns
+
+# Restrict record management to one zone. STRONGLY RECOMMENDED, and not merely tidiness: without it
+# the controller manages every zone the role can reach, and a mistake in one cluster's Ingress can
+# rewrite DNS for something else entirely.
+domainFilter: example.com
+
+# apiToken is deliberately absent. A workload-identity provider takes no token, and supplying one
+# would invite a long-lived key where none is needed.

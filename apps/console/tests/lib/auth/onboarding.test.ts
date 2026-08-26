@@ -17,6 +17,7 @@ vi.mock("@/lib/authz/grants", () => ({ ensureMemberGrant: vi.fn() }));
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import {
 	completeOnboarding,
+	ensurePrimaryOrg,
 	getPrimaryOrg,
 	isOnboardingComplete,
 	provisionPrimaryOrg,
@@ -224,5 +225,77 @@ describe("completeOnboarding", () => {
 		expect(calls.set).toHaveLength(1);
 		const payload = calls.set[0] as { onboardingCompletedAt: unknown };
 		expect(payload.onboardingCompletedAt).toBeInstanceOf(Date);
+	});
+});
+
+/**
+ * The /dashboard <-> /onboarding loop.
+ *
+ * Org provisioning runs from the `user.create.after` hook, where a failure is logged
+ * and swallowed so it cannot abort account creation. That leaves a user with no
+ * `member` row and a NULL `onboarding_completed_at` — a pair that /dashboard answers
+ * by routing to /onboarding and that /onboarding used to answer by routing back. The
+ * user was signed in and bounced between the two forever, never reaching the app.
+ *
+ * `ensurePrimaryOrg` is the break: the read side REPAIRS instead of redirecting, and
+ * reports failure as null so the page can dead-end readably rather than bounce. These
+ * assert all three branches, including that the happy path stays write-free.
+ */
+describe("ensurePrimaryOrg (the /dashboard <-> /onboarding loop)", () => {
+	it("returns the existing org and writes nothing", async () => {
+		const calls = makeDb([
+			[{ id: "org-1", name: "Bob's Org", slug: "bob", logo: null, role: "owner" }],
+		]);
+
+		const r = await ensurePrimaryOrg("u-1");
+
+		expect(r?.slug).toBe("bob");
+		// The repair path must not cost a write on every /onboarding render.
+		expect(calls.insertTargets).toHaveLength(0);
+		expect(ensureMemberGrant).not.toHaveBeenCalled();
+	});
+
+	it("provisions the missing org and returns it, rather than redirecting", async () => {
+		const calls = makeDb([
+			[], // getPrimaryOrg: none -> this is the wedged user
+			[{ email: "bob@x.com", name: null, username: "bob" }], // user row
+			[], // provisionPrimaryOrg: existingMember none
+			[], // taken slugs
+			[{ id: "org-1" }], // organization insert returning
+			undefined, // member insert
+			[{ id: "org-1", name: "bob's Org", slug: "bob", logo: null, role: "owner" }],
+		]);
+
+		const r = await ensurePrimaryOrg("u-1");
+
+		expect(r?.slug).toBe("bob");
+		expect(calls.insertTargets[0]).toBe(organization);
+		expect(calls.insertTargets[1]).toBe(member);
+		expect(ensureMemberGrant).toHaveBeenCalledWith("org-1", "u-1", "owner");
+	});
+
+	it("returns null when the repair itself fails, so the caller can dead-end", async () => {
+		makeDb([
+			[], // getPrimaryOrg: none
+			[{ email: "bob@x.com", name: null, username: "bob" }], // user row
+			[], // existingMember none
+			[], // taken slugs
+			[{ id: "org-1" }], // organization insert
+			undefined, // member insert
+		]);
+		// The PDP mirror is down — provisionPrimaryOrg rejects.
+		vi.mocked(ensureMemberGrant).mockRejectedValueOnce(new Error("fga down"));
+
+		await expect(ensurePrimaryOrg("u-1")).resolves.toBeNull();
+	});
+
+	it("returns null when the session has no user row to provision against", async () => {
+		const calls = makeDb([
+			[], // getPrimaryOrg: none
+			[], // user row: gone
+		]);
+
+		await expect(ensurePrimaryOrg("u-1")).resolves.toBeNull();
+		expect(calls.insertTargets).toHaveLength(0);
 	});
 });

@@ -1,0 +1,19 @@
+# ExternalDNS on Hetzner DNS — through the webhook sidecar.
+#
+# ExternalDNS ships NO native `hetzner` provider. Selecting hetzner renders
+# `provider.name: webhook` plus the official `hetzner/external-dns-hetzner-webhook` sidecar, pinned
+# to the same image the platform's own external-dns runs so the two cannot drift into two different
+# integrations.
+#
+# Before #2777 this rendered `provider.name: hetzner`, which is not a configuration the chart
+# understands — the add-on was not merely unauthenticated on Hetzner, it was unrunnable.
+
+provider: hetzner
+
+domainFilter: example.com
+
+# REQUIRES A TOKEN, which is why this file is incomplete on purpose.
+#
+# Set `apiToken` in the configure form to a Hetzner DNS API token (Hetzner Cloud console → DNS →
+# API tokens). It is stored encrypted at rest and delivered to the SIDECAR as HETZNER_TOKEN — never
+# written to a file like this one.

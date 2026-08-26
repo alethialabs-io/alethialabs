@@ -1,0 +1,14 @@
+# ExternalDNS on Azure — Azure DNS, keyless.
+#
+# `workloadIdentity` becomes the `azure.workload.identity/client-id` annotation. The add-on also
+# labels its pods `azure.workload.identity/use: "true"` automatically — without that label the
+# identity webhook never injects, and the controller starts up with no credential and fails every
+# write while looking healthy for a while.
+
+provider: azure
+
+# The managed identity's CLIENT ID (not its object id, and not the tenant id). Give it the
+# "DNS Zone Contributor" role on the zone's resource group.
+workloadIdentity: 00000000-0000-0000-0000-000000000000
+
+domainFilter: example.com

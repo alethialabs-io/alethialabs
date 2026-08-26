@@ -117,18 +117,32 @@ func TestT2CLIDemoReachability(t *testing.T) {
 				}
 			})
 		case CloudManual, ConsoleOnly:
-			// Nothing to execute: the claim is that no command exists on either side. The pure
+			// Nothing to EXECUTE: the claim is that no command exists on either side. The pure
 			// half already enforces that such a step names no Argv, and the Why/Issue that make
-			// it auditable.
+			// it auditable. CloudManual is still CHECKED, but by its SatisfiedBy probe rather
+			// than by a command — see the evaluation below.
 		}
+	}
+
+	// Evaluate the ceilings. ScoreCLIDemo is pure and cannot do this: ProbeZoneDelegated asks the
+	// public internet whether a zone is actually delegated, which is the whole point of it — a
+	// hosted zone we created proves nothing, a parent NS record pointing at us proves everything.
+	//
+	// A ceiling that is SATISFIED stops failing the bar and keeps being printed. Until 2026-08-26
+	// there was no such state, so the bar sat FAIL on every cloud on every run with zero CLI gaps,
+	// on two ceilings that had both already been met (#1773 and #2332 are closed).
+	proof = proof.EvaluateCeilings(t.Context())
+	for _, sc := range proof.Satisfied {
+		t.Logf("ceiling satisfied: %s [%s] — %s", sc.Step.Title, sc.Step.ID, sc.Evidence)
 	}
 
 	t.Log("\n" + proof.Summary())
 
 	if !proof.Passed() {
 		t.Logf("CLI-only demo bar for %s: %s", cloud, proof.Verdict())
-		// Per the maintainer's ruling for the investor benchmark, a gap or a ceiling is a FAIL —
-		// a prospect cannot tell whose fault the click is. The failure is recorded, never hidden.
+		// Per the maintainer's ruling for the investor benchmark, a gap or an OUTSTANDING ceiling
+		// is a FAIL — a prospect cannot tell whose fault the click is. The failure is recorded,
+		// never hidden. A ceiling whose manual work is demonstrably done is not outstanding.
 		t.Errorf("cloud %s does NOT clear the CLI-only demo bar: %s", cloud, proof.Verdict())
 	}
 }

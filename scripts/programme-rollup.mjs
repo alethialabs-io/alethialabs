@@ -94,7 +94,25 @@ const DIMENSIONS = [
 	{ id: "floor", label: "floor", gate: "(the cloud gate alone)", gates: [], what: "real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set" },
 	{ id: "maxconfig", label: "all kinds", gate: "ALETHIA_E2E_MAX_CONFIG", gates: [{ name: "ALETHIA_E2E_MAX_CONFIG", kind: "derived" }], what: "every kind this cloud offers lands in tofu state (or converges as its named Application)" },
 	{ id: "addons", label: "18 add-ons", gate: "ALETHIA_E2E_ALL_ADDONS", gates: [{ name: "ALETHIA_E2E_ALL_ADDONS", kind: "derived" }], what: "all 18 marketplace add-ons Healthy+Synced" },
-	{ id: "byo", label: "BYO-IaC", gate: "E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN", gates: [{ name: "E2E_ARGO_APPS_REPO", kind: "repo" }, { name: "E2E_GIT_TOKEN", kind: "repo" }], what: "customer IaC/charts applied, and Alethia services bound to their outputs" },
+	// RENAMED from `byo`, and the rename IS the correction. This column asserts A0.6 — a customer
+	// apps-DESTINATION repo plus a BYO Helm chart converging as ArgoCD Applications, each managing at
+	// least one real resource. Under the old label ("BYO-IaC", "customer IaC/charts applied, and
+	// Alethia services bound to their outputs") three cells read as proven BYO-IaC while proving
+	// this, which is a different thing. demos/proofs/provisioning-e2e-log.md recorded the
+	// discrepancy and said one of the two definitions should move; this is it moving.
+	//
+	// NOTHING IS RETRACTED. The rows are true — the label was wrong, not the evidence — and `aliases`
+	// carries them forward: ledger rows filed under `byo` key onto this column unchanged.
+	{ id: "gitops", label: "GitOps repos", aliases: ["byo"], gate: "E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN", gates: [{ name: "E2E_ARGO_APPS_REPO", kind: "repo" }, { name: "E2E_GIT_TOKEN", kind: "repo" }], what: "a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource" },
+	// The proof the old `byo` column CLAIMED and never delivered: test/e2e/t2_byo_iac.go's seven-job
+	// custody chain. It had never executed in CI — ALETHIA_E2E_BYO_IAC was a step-level `env:` key in
+	// e2e-nightly.yml and a step-level key wins over $GITHUB_ENV, so no dimension could switch it on.
+	// It now has a dimension of its own.
+	//
+	// `composedByFull: false` MIRRORS FULL_EXCLUDES in scripts/e2e/resolve-dimension.sh — `full` does
+	// not compose this dimension, so a full-bar PASS must never credit it. The self-test READS that
+	// shell file and fails if the two disagree, because a hand-kept second copy is how they drift.
+	{ id: "byo-iac", label: "BYO-IaC", gate: "ALETHIA_E2E_BYO_IAC", gates: [{ name: "ALETHIA_E2E_BYO_IAC", kind: "derived" }], composedByFull: false, what: "a customer OpenTofu root module is refused when unsafe, applied through the state proxy, drifts, heals and destroys — with state cleared" },
 	{ id: "day2", label: "day-2", gate: "ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS", gates: [{ name: "ALETHIA_E2E_SOAK", kind: "derived" }, { name: "E2E_DAY2_ACCESS", kind: "repo" }], what: "a real access path beyond the soak — kubeconfig / ArgoCD surface" },
 ];
 // The composite dimension. A PASS here is evidence for every dimension the full bar ACTUALLY
@@ -170,11 +188,57 @@ export function bundlePath(ref) {
  * one. So we replay in file order and let RETRACTED clear the slot.
  * @returns {Map<string, object|null>} "cloud/dimension" → the surviving row, or null if voided
  */
+/**
+ * Did this leg actually get PAST its cloud gate?
+ *
+ * The `Record gate-off proof` step runs only when the gate is OFF, so a naive reading is
+ * `conclusion === "skipped"`. That reading is UNSOUND, and the failure mode is the one this whole
+ * mechanism exists to avoid — pointing the other way.
+ *
+ * The step carries a bare `if: steps.gate.outputs.run == 'false'`, and a bare `if:` implies
+ * `success()`. So `skipped` means EITHER:
+ *
+ *   - the gate was ON and the leg proceeded            → reached
+ *   - an EARLIER step failed, so this one never ran     → NOT reached
+ *
+ * The second would print a confident ✅ for a leg that never started. A false green is worse than
+ * the `? unknown` it replaces, because the hedge at least invites somebody to check.
+ *
+ * So an earlier failure disqualifies the reading. A failure AFTER the gate-off step does not — that
+ * leg genuinely did pass its gate and then broke on something else, which is exactly what gcp did on
+ * 2026-08-26 (it died at *Configure GCP credentials*, step 20-odd, long past the gate at step 6).
+ *
+ * A cleaner mechanism exists and the workflow already names it: have the gate-off step STAMP its own
+ * provenance, so a POSITIVE marker is the signal. A marker cannot be produced by a step that never
+ * ran, where an absence can be produced by three different things. That is a workflow change; this
+ * is the sound reading of what the workflow emits today.
+ *
+ * @returns {boolean|null} null when the observation cannot be read at all.
+ */
+export function gateReached(observation) {
+	if (!observation || typeof observation.gate_off !== "string") return null;
+	if (observation.earlier_failure === true) return false;
+	return observation.gate_off === "skipped";
+}
+
+/**
+ * Ledger dimension token → the column it belongs to. A RENAMED dimension keeps its old token working
+ * here rather than having its rows rewritten: the ledger is append-only, the rows were true when
+ * written, and rewriting history to match a corrected label is the more expensive error.
+ * @type {Map<string, string>}
+ */
+export const DIMENSION_ALIASES = new Map(DIMENSIONS.flatMap((d) => (d.aliases ?? []).map((a) => [a, d.id])));
+
+/** Resolve a ledger row's dimension token to its column id. */
+export function canonicalDimension(token) {
+	return DIMENSION_ALIASES.get(token) ?? token;
+}
+
 export function collapseLedger(rows) {
 	/** @type {Map<string, object|null>} */
 	const claims = new Map();
 	for (const r of rows) {
-		const key = `${r.cloud}/${r.dimension}`;
+		const key = `${r.cloud}/${canonicalDimension(r.dimension)}`;
 		if (r.verdict === "RETRACTED") {
 			claims.set(key, null); // the earlier claim is void; the pair is back to "no evidence"
 			continue;
@@ -319,8 +383,19 @@ export function deriveBoard(snapshot) {
 			ageHours: null,
 			issueState: () => "unknown",
 			gateState: () => "unknown",
+			observedGate: () => null,
 			needsHuman: [],
 		};
+	}
+	// Newest-first in the snapshot, so the FIRST entry per cloud is the most recent observation.
+	// Built defensively: a snapshot written before this field existed simply has none, and every
+	// cloud falls back to the declared inventory rather than reading as unobserved-and-therefore-off.
+	const observations = new Map();
+	// (see gateReached below — the snapshot carries raw facts, this file decides what they mean)
+	for (const o of snapshot.gate_observations ?? []) {
+		if (o && typeof o.provider === "string" && !observations.has(o.provider)) {
+			observations.set(o.provider, o);
+		}
 	}
 	const open = new Map((snapshot.open_issues ?? []).map((i) => [i.number, i]));
 	const closed = new Map((snapshot.closed_issues ?? []).map((i) => [i.number, i]));
@@ -366,6 +441,21 @@ export function deriveBoard(snapshot) {
 		 * was not measured rather than asserting it is off.
 		 */
 		gateState: (name) => (gatesKnown ? (names.has(name) ? "wired" : "unwired") : "unknown"),
+		/**
+		 * What the nightly OBSERVED for one cloud, or null.
+		 *
+		 * A DIFFERENT AND BETTER QUESTION than gateState's. That one answers "is this gate
+		 * DECLARED?"; this answers "did a leg actually get past it?". They come apart, and gcp is the
+		 * standing proof: `E2E_GCP_WIF_PROVIDER` was set the whole time while every dispatch died at
+		 * *Configure GCP credentials*, because a bare apply on infra/gcp-e2e narrowed the WIF trust
+		 * to ref-only. A variable listing would have printed a confident ✅ for a cloud that had not
+		 * federated in weeks — a false green in the one region of this file whose whole purpose is
+		 * that its status half can be trusted.
+		 *
+		 * Sourced from the `Record gate-off proof` step, which runs ONLY when the gate is off — see
+		 * `gateReached` for why its conclusion alone is not enough to read.
+		 */
+		observedGate: (cloud) => observations.get(cloud) ?? null,
 		needsHuman: [...open.values()].filter((i) => (i.labels ?? []).includes("needs:human")),
 	};
 }
@@ -390,8 +480,19 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	// resolve step exports those from the dimension itself. A `repo` gate is the one a human sets,
 	// and an unset one means the layer green-skipped. `unknown` (no snapshot) is NOT `wired`, so a
 	// missing snapshot fails closed rather than buying a proof.
+	// TWO independent reasons the composite may not credit a dimension, and both must hold for it to:
+	//
+	//   composedByFull  `full` does not turn this dimension's switch on AT ALL (FULL_EXCLUDES in
+	//                   scripts/e2e/resolve-dimension.sh). No gate state can rescue that — the code
+	//                   simply never ran. This is the stronger of the two.
+	//   repo gates      the switch IS composed, but a repo variable a human must set is unset, so the
+	//                   layer green-skipped inside the run. `unknown` is NOT `wired`, so a missing
+	//                   snapshot fails closed rather than buying a proof.
 	const compositeCreditsFor = new Map(
-		DIMENSIONS.map((d) => [d.id, d.gates.filter((g) => g.kind === "repo").every((g) => board.gateState(g.name) === "wired")]),
+		DIMENSIONS.map((d) => [
+			d.id,
+			d.composedByFull !== false && d.gates.filter((g) => g.kind === "repo").every((g) => board.gateState(g.name) === "wired"),
+		]),
 	);
 	for (const cloud of clouds) {
 		grid[cloud] = {};
@@ -405,7 +506,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		if (!clouds.includes(r.cloud)) {
 			failures.push(`${LEDGER}:${r.line}: cloud ${JSON.stringify(r.cloud)} is not one of the declared clouds (${clouds.join(", ")})`);
 		}
-		if (r.dimension !== COMPOSITE && !DIMENSIONS.some((d) => d.id === r.dimension)) {
+		if (r.dimension !== COMPOSITE && !DIMENSIONS.some((d) => d.id === canonicalDimension(r.dimension))) {
 			failures.push(
 				`${LEDGER}:${r.line}: dimension ${JSON.stringify(r.dimension)} is not one of ${DIMENSIONS.map((d) => d.id).join(", ")}, ${COMPOSITE} — ` +
 					`a row nobody can render is a proof nobody counts`,
@@ -484,7 +585,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		/** @type {Map<string, {date: string, line: number}>} */
 		const lastSeen = new Map();
 		for (const r of rows) {
-			const key = `${r.cloud}/${r.dimension}`;
+			const key = `${r.cloud}/${canonicalDimension(r.dimension)}`;
 			const prev = lastSeen.get(key);
 			if (prev && r.date < prev.date) {
 				failures.push(
@@ -589,7 +690,19 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 
 	// The per-cloud gate that decides whether a leg provisions at all.
 	const CLOUD_GATES = { hetzner: "HCLOUD_TOKEN", aws: "E2E_AWS_ROLE_ARN", gcp: "E2E_GCP_WIF_PROVIDER", azure: "E2E_AZURE_CLIENT_ID", alibaba: "E2E_ALIBABA_ROLE_ARN" };
-	const cloudGates = clouds.map((c) => ({ cloud: c, gate: CLOUD_GATES[c] ?? "(unknown)", state: board.gateState(CLOUD_GATES[c] ?? "") }));
+	const cloudGates = clouds.map((c) => {
+		const declared = board.gateState(CLOUD_GATES[c] ?? "");
+		const observed = board.observedGate(c);
+		// OBSERVATION WINS over the declaration, in BOTH directions. A leg that got past its gate
+		// proves the gate works, whatever the inventory says — and a leg that recorded a gate-off
+		// proof proves it does not, even if the variable is present. `state` stays the declared
+		// reading so nothing downstream changes meaning; `effective` is what a reader should act on.
+		const reached = gateReached(observed);
+		// `null` — an observation this file cannot read — falls back to the declaration rather than
+		// being treated as a negative. Unreadable is not the same as off.
+		const effective = reached === null ? declared : reached ? "wired" : "unwired";
+		return { cloud: c, gate: CLOUD_GATES[c] ?? "(unknown)", state: declared, observed, effective };
+	});
 
 	// Snapshot freshness. A broken cron produces NO signal, so staleness has to be an error eventually
 	// rather than a note nobody reads — but it warns first, because a quiet week should not red the repo
@@ -768,11 +881,20 @@ export function render(v) {
 	L.push("");
 	L.push("**Which clouds can provision at all.** A leg whose gate is unwired green-skips every night.");
 	L.push("");
-	L.push("| cloud | gate | state |");
-	L.push("|---|---|:---:|");
+	L.push("| cloud | gate | state | evidence |");
+	L.push("|---|---|:---:|---|");
 	for (const g of v.cloudGates) {
-		const glyph = { wired: "✅ wired", unwired: "⛔ **unwired**", unknown: "? unknown" }[g.state];
-		L.push(`| **${g.cloud}** | \`${g.gate}\` | ${glyph} |`);
+		const glyph = { wired: "✅ wired", unwired: "⛔ **unwired**", unknown: "? unknown" }[g.effective];
+		// An OBSERVED state names the run that observed it, because "a leg got past this gate" is a
+		// checkable claim and "a variable is set somewhere" is not. A declared-only state says so,
+		// so the two are never mistaken for each other.
+		const reached = g.observed ? gateReached(g.observed) : null;
+		const evidence = reached !== null
+			? `${reached ? "a leg reached the gate" : g.observed.earlier_failure ? "the leg failed BEFORE its gate" : "a gate-off proof was recorded"} — run ${g.observed.run}`
+			: g.state === "unknown"
+				? "not observed, and the inventory was not readable"
+				: "declared only — no recent run observed this leg";
+		L.push(`| **${g.cloud}** | \`${g.gate}\` | ${glyph} | ${evidence} |`);
 	}
 	L.push("");
 	L.push("**Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.");
@@ -827,7 +949,7 @@ export function render(v) {
 
 	L.push("### Blocked on a human");
 	L.push("");
-	const unwiredClouds = v.cloudGates.filter((g) => g.state === "unwired");
+	const unwiredClouds = v.cloudGates.filter((g) => g.effective === "unwired");
 	if (!v.board.present) {
 		L.push("Unknown without a snapshot.");
 	} else if (unwiredClouds.length === 0 && v.board.needsHuman.length === 0) {
@@ -1153,9 +1275,20 @@ function runSelfTest() {
 	// The composite: a `full` PASS is evidence for every dimension the full bar ACTUALLY EXERCISES.
 	// `base` carries no snapshot, so every gate reads `unknown` — which is deliberately NOT `wired`.
 	r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full") });
-	const derivedOnly = DIMENSIONS.filter((d) => d.gates.every((g) => g.kind !== "repo")).map((d) => d.id);
-	const repoGated = DIMENSIONS.filter((d) => d.gates.some((g) => g.kind === "repo")).map((d) => d.id);
+	// "Exercises" now has TWO conditions, not one. A dimension is exercised by the full bar only if
+	// `full` composes its switch at all (composedByFull) AND every repo-kind gate it declares is
+	// wired. The first condition is new: byo-iac is declared out of the composite entirely, so no
+	// gate state could make a full-bar PASS evidence for it.
+	const composed = DIMENSIONS.filter((d) => d.composedByFull !== false);
+	const derivedOnly = composed.filter((d) => d.gates.every((g) => g.kind !== "repo")).map((d) => d.id);
+	const repoGated = composed.filter((d) => d.gates.some((g) => g.kind === "repo")).map((d) => d.id);
+	const notComposed = DIMENSIONS.filter((d) => d.composedByFull === false).map((d) => d.id);
 	ok("a `full` PASS proves every dimension it exercises", derivedOnly.every((id) => r.grid.aws[id].state === "proven"), JSON.stringify(derivedOnly.map((id) => [id, r.grid.aws[id].state])));
+	ok(
+		"...and proves NOTHING for a dimension full does not compose",
+		notComposed.length > 0 && notComposed.every((id) => r.grid.aws[id].state !== "proven"),
+		JSON.stringify(notComposed.map((id) => [id, r.grid.aws[id].state])),
+	);
 	ok("...and says it came via the composite", /composite/.test(r.grid.aws.maxconfig.why));
 	// The regression this pins: `full` exports SOAK + MAX_CONFIG + ALL_ADDONS and nothing else, so a
 	// repo-gated layer green-skips inside the run. Crediting it would manufacture a proof for a
@@ -1277,7 +1410,8 @@ function runSelfTest() {
 	}
 
 	// ── the LIVE BOARD half ──
-	const snap = (open = [], closed = [], variables = [], secrets = []) => ({
+	const snap = (open = [], closed = [], variables = [], secrets = [], gate_observations = []) => ({
+		gate_observations,
 		derived_at: new Date(Date.now() - 3600_000).toISOString(),
 		open_issues: open.map((n) => ({ number: n, title: `t${n}`, labels: [] })),
 		closed_issues: closed.map((n) => ({ number: n, title: `t${n}`, labels: [] })),
@@ -1305,7 +1439,7 @@ function runSelfTest() {
 	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: null });
 	ok("with NO snapshot a FAIL stays `failing` — unknown never becomes stale", r.grid.aws.floor.state === "failing", r.grid.aws.floor.state);
 	ok("...and the board reports itself absent", r.board.present === false);
-	ok("...and every gate reads unknown rather than unwired", r.cloudGates.every((g) => g.state === "unknown"), JSON.stringify(r.cloudGates));
+	ok("...and every gate reads unknown rather than unwired", r.cloudGates.every((g) => g.effective === "unknown"), JSON.stringify(r.cloudGates));
 
 	// An issue beyond the fetch limit is `unknown`, NOT `open` — guessing open would hide a stale cite.
 	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: snap([9999], [8888]) });
@@ -1316,14 +1450,14 @@ function runSelfTest() {
 	// refusal above could be a permanent "no" — a guard that never says yes is not measuring anything.
 	{
 		const fullRow = row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full");
-		const byoGates = DIMENSIONS.find((d) => d.id === "byo").gates.filter((g) => g.kind === "repo").map((g) => g.name);
-		// Every repo gate the `byo` dimension declares, wired — named from DIMENSIONS rather than
+		const gitopsGates = DIMENSIONS.find((d) => d.id === "gitops").gates.filter((g) => g.kind === "repo").map((g) => g.name);
+		// Every repo gate the `gitops` dimension declares, wired — named from DIMENSIONS rather than
 		// retyped, so renaming a gate cannot leave this test passing against a name nothing reads.
-		const wired = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], byoGates, []) });
-		ok("with its repo gates wired, the composite DOES credit the dimension", wired.grid.aws.byo.state === "proven", wired.grid.aws.byo.why);
+		const wired = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], gitopsGates, []) });
+		ok("with its repo gates wired, the composite DOES credit the dimension", wired.grid.aws.gitops.state === "proven", wired.grid.aws.gitops.why);
 		// And it must be ALL of them, not any: a half-wired gate set still green-skips.
-		const half = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], byoGates.slice(0, 1), []) });
-		ok("a half-wired gate set does not credit the composite", byoGates.length > 1 && half.grid.aws.byo.state === "never_run", half.grid.aws.byo.why);
+		const half = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], gitopsGates.slice(0, 1), []) });
+		ok("a half-wired gate set does not credit the composite", gitopsGates.length > 1 && half.grid.aws.gitops.state === "never_run", half.grid.aws.gitops.why);
 	}
 
 	// Cloud gates: wired vs unwired, from NAMES only.
@@ -1348,7 +1482,7 @@ function runSelfTest() {
 		// is not `wired`, and fail-closed is the whole point.
 		const fullRow = row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full");
 		const credited = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], [], []) });
-		ok("an unknown gate does not let the composite credit a repo-gated dimension", credited.grid.aws.byo.state === "never_run", credited.grid.aws.byo.why);
+		ok("an unknown gate does not let the composite credit a repo-gated dimension", credited.grid.aws.gitops.state === "never_run", credited.grid.aws.gitops.why);
 	}
 
 	// Dimension gates: a DERIVED gate is never "unwired" — there is no variable to set. Reporting one
@@ -1370,21 +1504,182 @@ function runSelfTest() {
 	);
 	// `unwired` requires the workflow to REFERENCE the gate; a gate it never mentions is `no_vehicle`,
 	// which is a different remedy (write the wiring, not set a variable). Both are pinned.
-	const byoNoVehicle = r.gateReality.find((d) => d.id === "byo");
-	ok("a gate the workflow never references reads `no_vehicle`, not `unwired`", byoNoVehicle?.states.every((x) => x.state === "no_vehicle"), JSON.stringify(byoNoVehicle?.states));
+	const gitopsNoVehicle = r.gateReality.find((d) => d.id === "gitops");
+	ok("a gate the workflow never references reads `no_vehicle`, not `unwired`", gitopsNoVehicle?.states.every((x) => x.state === "no_vehicle"), JSON.stringify(gitopsNoVehicle?.states));
 	const rWired = derive({
 		...base,
 		workflowText: base.workflowText + "        FOO: ${{ vars.E2E_ARGO_APPS_REPO }}\n        BAR: ${{ secrets.E2E_GIT_TOKEN }}\n",
 		ledgerText: hdr,
 		snapshot: snap([], [], ["E2E_ARGO_APPS_REPO"], []),
 	});
-	const byoMixed = rWired.gateReality.find((d) => d.id === "byo");
+	const gitopsMixed = rWired.gateReality.find((d) => d.id === "gitops");
 	ok(
 		"a REFERENCED maintainer-set gate reads wired/unwired from the snapshot",
-		byoMixed?.states.find((x) => x.name === "E2E_ARGO_APPS_REPO")?.state === "wired" &&
-			byoMixed?.states.find((x) => x.name === "E2E_GIT_TOKEN")?.state === "unwired",
-		JSON.stringify(byoMixed?.states),
+		gitopsMixed?.states.find((x) => x.name === "E2E_ARGO_APPS_REPO")?.state === "wired" &&
+			gitopsMixed?.states.find((x) => x.name === "E2E_GIT_TOKEN")?.state === "unwired",
+		JSON.stringify(gitopsMixed?.states),
 	);
+
+	// ── THE TWO-FILE INVARIANT. `composedByFull: false` above is a copy of FULL_EXCLUDES in
+	//    scripts/e2e/resolve-dimension.sh, and a hand-kept copy is how two sources of truth drift.
+	//    So read the shell file and hold them to each other. This is the check that would have caught
+	//    the original defect: `byo` turned on ALETHIA_E2E_ARGO_REPOS_REQUIRE, `full` never emitted it,
+	//    and this rollup credited `full` for the `byo` column anyway. ──
+	{
+		const resolver = fs.readFileSync(new URL("./e2e/resolve-dimension.sh", import.meta.url), "utf8");
+		const declared = new Set((/^FULL_EXCLUDES="([^"]*)"/m.exec(resolver)?.[1] ?? "").split(/\s+/).filter(Boolean));
+		const inJs = new Set(DIMENSIONS.filter((d) => d.composedByFull === false).map((d) => d.id));
+		ok(
+			"FULL_EXCLUDES is non-empty in the resolver, so this check is not vacuous",
+			declared.size > 0,
+			"no FULL_EXCLUDES line matched — the regex or the shell declaration changed shape",
+		);
+		ok(
+			"every dimension the resolver excludes from `full` is composedByFull:false here",
+			[...declared].every((d) => inJs.has(d)),
+			`resolver excludes ${JSON.stringify([...declared])}, this file marks ${JSON.stringify([...inJs])}`,
+		);
+		ok(
+			"...and nothing here claims to be excluded that the resolver still composes",
+			[...inJs].every((d) => declared.has(d)),
+			`this file marks ${JSON.stringify([...inJs])}, resolver excludes ${JSON.stringify([...declared])}`,
+		);
+		// The dimension ids themselves must exist on both sides, or one file is describing a
+		// programme the other has never heard of.
+		const resolverDims = new Set((/^DIMENSIONS="([^"]*)"/m.exec(resolver)?.[1] ?? "").split(/\s+/).filter(Boolean));
+		ok(
+			"every rollup column is a dimension the resolver can actually run",
+			DIMENSIONS.every((d) => resolverDims.has(d.id)),
+			`columns ${JSON.stringify(DIMENSIONS.map((d) => d.id))} vs resolver ${JSON.stringify([...resolverDims])}`,
+		);
+	}
+
+	// A renamed dimension's OLD ledger rows must still land on its column — the whole reason nothing
+	// was retracted. Keyed under `byo`, read out as `gitops`.
+	{
+		const renamed = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "aws", "byo", "PASS", "demos/proofs/aws/legacy"),
+			snapshot: snap([], [], ["E2E_ARGO_APPS_REPO", "E2E_GIT_TOKEN"], []),
+		});
+		ok(
+			"a ledger row filed under the legacy `byo` token still proves the `gitops` column",
+			renamed.grid.aws.gitops.state === "proven",
+			`${renamed.grid.aws.gitops.state}: ${renamed.grid.aws.gitops.why}`,
+		);
+		ok(
+			"...and does NOT leak into the new byo-iac column, which nothing has proven",
+			renamed.grid.aws["byo-iac"].state !== "proven",
+			`${renamed.grid.aws["byo-iac"].state}: ${renamed.grid.aws["byo-iac"].why}`,
+		);
+		ok(
+			"...and the legacy token raises no 'unknown dimension' integrity failure",
+			!renamed.failures.some((f) => /is not one of/.test(f)),
+			JSON.stringify(renamed.failures),
+		);
+	}
+
+	// A `full` PASS must NOT credit byo-iac, which `full` does not compose. This is the difference
+	// between a composite that means something and one that launders unproven cells into `proven`.
+	{
+		const fullPass = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-26", "aws", "full", "PASS", "demos/proofs/aws/full"),
+			snapshot: snap([], [], ["E2E_ARGO_APPS_REPO", "E2E_GIT_TOKEN"], []),
+		});
+		ok(
+			"a full-bar PASS credits maxconfig, which full DOES compose",
+			fullPass.grid.aws.maxconfig.state === "proven",
+			`${fullPass.grid.aws.maxconfig.state}: ${fullPass.grid.aws.maxconfig.why}`,
+		);
+		ok(
+			"a full-bar PASS does NOT credit byo-iac, which full does NOT compose",
+			fullPass.grid.aws["byo-iac"].state !== "proven",
+			`${fullPass.grid.aws["byo-iac"].state}: ${fullPass.grid.aws["byo-iac"].why}`,
+		);
+	}
+
+	// ── GATE REALITY, OBSERVED. The declaration and the observation come apart, and when they do the
+	//    observation is the one worth acting on. ──
+	{
+		// The RAW facts the snapshot carries. `reached` is not among them — that is this file's
+		// judgement, and gateReached below is what makes it.
+		const obs = (provider, gate_off, earlier_failure = false) => ({
+			provider,
+			gate_off,
+			earlier_failure,
+			run: "999",
+			at: "2026-08-26T09:00:00Z",
+		});
+
+		// ── THE UNSOUND READING, and why `skipped` alone is not enough. ──
+		//
+		// `Record gate-off proof` carries a bare `if:`, which implies success(). So `skipped` means
+		// either "the gate was on and the leg proceeded" OR "an earlier step failed and we never got
+		// here". Reading the second as reached prints a confident ✅ for a leg that never started —
+		// a false green, which is worse than the `? unknown` this whole mechanism replaces.
+		ok("a skipped gate-off step with no earlier failure reads as REACHED", gateReached(obs("aws", "skipped")) === true);
+		ok("...but the SAME conclusion after an earlier failure does NOT", gateReached(obs("aws", "skipped", true)) === false);
+		ok("a gate-off proof that actually RAN means the gate was off", gateReached(obs("aws", "success")) === false);
+		// A failure AFTER the gate-off step is not disqualifying: that leg genuinely passed its gate
+		// and broke on something else. gcp did exactly this on 2026-08-26 — it died at *Configure GCP
+		// credentials*, twenty-odd steps past the gate at step 6.
+		ok("a leg that failed LATER still reached its gate", gateReached(obs("gcp", "skipped", false)) === true);
+		// Unreadable is not the same as off.
+		ok("an observation with no conclusion is unreadable, not negative", gateReached(obs("aws", undefined)) === null);
+		ok("a missing observation is unreadable, not negative", gateReached(null) === null);
+
+		// A leg that got past its gate proves the gate WORKS, whatever the inventory says — and the
+		// inventory here says nothing at all, which is the situation programme.yml is actually in.
+		const observed = derive({
+			...base,
+			ledgerText: hdr,
+			snapshot: snap([], [], [], [], [obs("aws", "skipped")]),
+		});
+		const awsGate = observed.cloudGates.find((g) => g.cloud === "aws");
+		ok("an observed leg beats an unreadable inventory", awsGate?.effective === "wired", JSON.stringify(awsGate));
+		ok("...and the DECLARED reading is kept alongside, not overwritten", awsGate?.state === "unknown", JSON.stringify(awsGate));
+		ok("...and a cloud with no observation still falls back to the declaration",
+			observed.cloudGates.find((g) => g.cloud === "hetzner")?.effective === "unknown",
+			JSON.stringify(observed.cloudGates.find((g) => g.cloud === "hetzner")));
+
+		// THE OTHER DIRECTION, and the one that matters more. A variable being present is not the
+		// same as a gate working — gcp's WIF was declared the whole time it was rejecting every
+		// dispatch. A leg that recorded a gate-off proof says the gate is off, and that must win over
+		// a present variable rather than being outvoted by it.
+		const contradicted = derive({
+			...base,
+			ledgerText: hdr,
+			snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"], [], [obs("aws", "success")]),
+		});
+		const contradictedGate = contradicted.cloudGates.find((g) => g.cloud === "aws");
+		ok("an observed gate-off beats a PRESENT variable", contradictedGate?.effective === "unwired", JSON.stringify(contradictedGate));
+		ok("...and the declaration still reads wired, so the disagreement is visible", contradictedGate?.state === "wired", JSON.stringify(contradictedGate));
+
+		// THE CASE THAT WOULD HAVE BEEN A FALSE GREEN. A leg that failed before ever reaching its
+		// gate must NOT be credited, even though its gate-off step reads `skipped` like a healthy one.
+		const failedEarly = derive({
+			...base,
+			ledgerText: hdr,
+			snapshot: snap([], [], [], [], [obs("aws", "skipped", true)]),
+		});
+		const earlyGate = failedEarly.cloudGates.find((g) => g.cloud === "aws");
+		ok("a leg that failed BEFORE its gate is not credited as reaching it", earlyGate?.effective === "unwired", JSON.stringify(earlyGate));
+		ok("...and the rendered evidence says so, rather than blaming a gate-off proof",
+			/failed BEFORE its gate/.test(render(failedEarly)), "evidence line missing");
+
+		// The rendered table must NAME the run, or an observed claim is as unfalsifiable as the
+		// declared one it replaced.
+		const rendered = render(observed);
+		ok("the rendered table cites the run that observed the gate", /run 999/.test(rendered), rendered.slice(0, 200));
+
+		// A snapshot written BEFORE this field existed must not read as "no cloud was observed,
+		// therefore all are off". Absent evidence is not evidence of absence.
+		const legacy = derive({ ...base, ledgerText: hdr, snapshot: snap([], [], ["E2E_AWS_ROLE_ARN"]) });
+		ok("a snapshot with no observations falls back to the declaration",
+			legacy.cloudGates.find((g) => g.cloud === "aws")?.effective === "wired",
+			JSON.stringify(legacy.cloudGates.find((g) => g.cloud === "aws")));
+	}
 
 	// needs:human flows through to the blocked list.
 	r = derive({

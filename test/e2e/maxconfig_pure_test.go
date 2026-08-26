@@ -334,3 +334,64 @@ func TestMaxConfigDomainIsRunScoped(t *testing.T) {
 		t.Errorf("with no ALETHIA_E2E_ENV the domain must fall back to the bare suffix, got %q", bare)
 	}
 }
+
+// TestMaxConfigSuffixPrecedence pins the resolution order, and pins that the DEFAULT is unchanged.
+//
+// The per-provider form exists so hetzner can leave `.io` — Hetzner DNS refuses that TLD outright
+// (422 `unsupported tld`) — WITHOUT moving aws, whose ACM certificate is issued against
+// e2e.alethialabs.io. A change that silently moved every cloud would make aws request a certificate
+// for a zone it does not hold, so "the default did not move" is as much the assertion here as the
+// override working.
+func TestMaxConfigSuffixPrecedence(t *testing.T) {
+	t.Setenv("ALETHIA_E2E_ENV", "")
+	t.Setenv(envMaxConfigDomainSuffix, "")
+	t.Setenv(envMaxConfigDomainSuffix+"_HETZNER", "")
+
+	for _, p := range []string{"", "aws", "hetzner", "gcp"} {
+		if got := maxConfigSuffixFor(p); got != maxConfigDomainSuffix {
+			t.Errorf("with nothing set, %q resolved to %q, want the compiled default %q", p, got, maxConfigDomainSuffix)
+		}
+	}
+
+	// Global override moves every cloud.
+	t.Setenv(envMaxConfigDomainSuffix, "e2e.example-global.com")
+	for _, p := range []string{"", "aws", "hetzner"} {
+		if got := maxConfigSuffixFor(p); got != "e2e.example-global.com" {
+			t.Errorf("global override: %q resolved to %q", p, got)
+		}
+	}
+
+	// Per-provider WINS over the global, and only for that provider — the property the whole
+	// design rests on.
+	t.Setenv(envMaxConfigDomainSuffix+"_HETZNER", "e2e.alethia-e2e.com")
+	if got := maxConfigSuffixFor("hetzner"); got != "e2e.alethia-e2e.com" {
+		t.Errorf("hetzner override = %q, want the per-provider value", got)
+	}
+	if got := maxConfigSuffixFor("aws"); got != "e2e.example-global.com" {
+		t.Errorf("aws = %q — the hetzner override leaked to another cloud", got)
+	}
+
+	// Case-insensitive on the provider, because callers pass the lowercase slug.
+	if got := maxConfigSuffixFor("HETZNER"); got != "e2e.alethia-e2e.com" {
+		t.Errorf("uppercase provider = %q, want the same override", got)
+	}
+	// Blank is not an override — an unset-but-present var must fall through, not blank the domain.
+	t.Setenv(envMaxConfigDomainSuffix+"_HETZNER", "   ")
+	if got := maxConfigSuffixFor("hetzner"); got != "e2e.example-global.com" {
+		t.Errorf("whitespace override = %q, want fall-through to the global", got)
+	}
+}
+
+// TestMaxConfigDomainForScopesToTheRun — the run-scoped prefix must survive the suffix change, or
+// two concurrent runs would contend for one zone name.
+func TestMaxConfigDomainForScopesToTheRun(t *testing.T) {
+	t.Setenv(envMaxConfigDomainSuffix, "")
+	t.Setenv(envMaxConfigDomainSuffix+"_HETZNER", "e2e.alethia-e2e.com")
+	t.Setenv("ALETHIA_E2E_ENV", "run-42")
+	if got, want := MaxConfigDomainFor("hetzner"), "run-42.e2e.alethia-e2e.com"; got != want {
+		t.Errorf("MaxConfigDomainFor(hetzner) = %q, want %q", got, want)
+	}
+	if got, want := MaxConfigDomainFor("aws"), "run-42."+maxConfigDomainSuffix; got != want {
+		t.Errorf("MaxConfigDomainFor(aws) = %q, want %q", got, want)
+	}
+}
