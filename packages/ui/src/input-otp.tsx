@@ -19,6 +19,11 @@ function InputOTP({
   return (
     <OTPInput
       data-slot="input-otp"
+      // Lets the browser/OS offer the emailed code instead of the user leaving the tab
+      // to copy it by hand. Declared here rather than per call site because it is true
+      // of every one-time-code field by definition — and it sits BEFORE the spread, so
+      // a caller can still override it.
+      autoComplete="one-time-code"
       containerClassName={cn(
         "flex items-center gap-2 has-disabled:opacity-50",
         containerClassName
