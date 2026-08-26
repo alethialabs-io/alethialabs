@@ -677,35 +677,41 @@ func (r outOfSyncRef) kubectlTarget() string {
 	return strings.ToLower(r.Kind) + "." + r.Group + "/" + r.Name
 }
 
-// dumpOutOfSyncResources fetches each OutOfSync resource and prints its LIVE object, so a failing
-// run names the FIELD that differs rather than only the object.
+// dumpOutOfSyncResources fetches each OutOfSync resource and names the FIELDS the chart did not
+// author, by reading server-side-apply FIELD OWNERSHIP rather than dumping the object.
 //
-// Why the live object is the right thing to print, and not a diff: every confirmed member of this
-// class so far has been an API-SERVER-DEFAULTED value that ServerSideApply then carries into
-// ArgoCD's predicted-live — `.status.terminatingReplicas` (KEP-3973) and a `resourceFieldRef.divisor`
-// defaulted to "1". The chart never wrote either; the apiserver did. So the culprit is visible in
-// the live object as a field the chart plainly did not author, and printing it is enough to identify
-// the ignoreDifferences entry that belongs — WITHOUT the ArgoCD API, a session token, or a
-// port-forward, none of which the harness has today.
+// WHY OWNERSHIP AND NOT THE OBJECT. The previous version printed the live object, on the reasoning
+// that an API-server-defaulted field would be visible in it. It is — but only to a reader who
+// already knows which field to look for, and the objects are large: hetzner/addons run 32949217522
+// dumped five CustomResourceDefinitions, each truncated at 3000 bytes inside its `spec.versions`
+// openAPIV3Schema, and named no field on any of them. It cost a real run and answered nothing.
 //
-// This exists because the alternative is guessing. hetzner/addons run 32940541089 named five kinds
-// as OutOfSync across three groups (CustomResourceDefinition, CronJob, StatefulSet) and gave no way
-// to tell which field was at fault on any of them. An ignore guessed onto a kind is not a no-op the
-// way an ignore for an absent field is — it can hide genuine drift — so guessing is the one thing
-// this class must not do. One cheap run with this output settles all three.
+// Every Application here syncs with ServerSideApply=true, and that is what makes ownership readable:
+// the apiserver records, per field, WHICH MANAGER set it. A field ArgoCD applied is owned by the
+// ArgoCD controller. A field ArgoCD did NOT apply — a defaulted value, or one a controller wrote
+// back — is owned by somebody else, and those are exactly the candidates for an ignoreDifferences
+// entry. So the question "which field did the chart not author?" has a direct answer in
+// `.metadata.managedFields`, and it needs only kubectl: no ArgoCD API, no session token, no
+// port-forward, none of which the harness has.
+//
+// It NARROWS the candidates; it does not prove the diff. A field ArgoCD does not own is not
+// automatically the one ArgoCD is complaining about. That is why the output is labelled as
+// candidates, and why an ignore is still a deliberate decision — an ignore guessed onto a kind can
+// hide genuine drift, which is the one thing this class must not do.
 //
 // Best-effort and hard-capped: this runs on an ALREADY-FAILING path, so it must never be the reason
 // a run hangs or an error is lost.
 func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []outOfSyncRef) string {
 	const (
-		maxResources = 6
-		maxPerObject = 3000
+		maxResources = 8
+		maxPathsPer  = 12
 	)
 	if len(refs) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\n  live objects for the OutOfSync resources (the differing field is an API-server default the chart did not author):")
+	b.WriteString("\n  fields the chart did NOT author, by server-side-apply ownership")
+	b.WriteString("\n  (candidates for an ignoreDifferences entry — narrowing, not proof):")
 	shown := 0
 	for _, r := range refs {
 		if shown >= maxResources {
@@ -726,15 +732,127 @@ func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []o
 			fmt.Fprintf(&b, "\n    - %s: could not fetch (%v)", r.kubectlTarget(), err)
 			continue
 		}
-		obj := string(out)
-		if len(obj) > maxPerObject {
-			// Same shape as describeArgoApps just above: say it was cut, so a reader never mistakes
-			// a truncated object for a complete one.
-			obj = obj[:maxPerObject] + "…(truncated)"
+		byManager, perr := foreignFieldOwners(out)
+		if perr != nil {
+			fmt.Fprintf(&b, "\n    - %s: could not read managedFields (%v)", r.kubectlTarget(), perr)
+			continue
 		}
-		fmt.Fprintf(&b, "\n    - %s:\n%s", r.kubectlTarget(), obj)
+		if len(byManager) == 0 {
+			// A DIFFERENT fact from "we could not tell", and it must read differently: every field
+			// on this object belongs to ArgoCD, so an apiserver default is not the explanation here
+			// and the cause is elsewhere.
+			fmt.Fprintf(&b, "\n    - %s: every field is ArgoCD-owned — no foreign default to blame", r.kubectlTarget())
+			continue
+		}
+		fmt.Fprintf(&b, "\n    - %s:", r.kubectlTarget())
+		for _, m := range sortedManagers(byManager) {
+			paths := byManager[m]
+			sort.Strings(paths)
+			if len(paths) > maxPathsPer {
+				paths = append(paths[:maxPathsPer:maxPathsPer], fmt.Sprintf("…%d more", len(byManager[m])-maxPathsPer))
+			}
+			fmt.Fprintf(&b, "\n        owned by %q: %s", m, strings.Join(paths, ", "))
+		}
 	}
 	return b.String()
+}
+
+// argoFieldManagers are the manager names ArgoCD applies under. A field owned by one of these was
+// authored by the chart, so it is NOT a candidate.
+//
+// Matched as a SUBSTRING, deliberately: ArgoCD's manager name has varied across versions
+// (`argocd-controller`, `argocd-application-controller`, and a `argocd-controller-ssa` variant on
+// the server-side-apply path), and this runs on a failing path where a missed match would print a
+// misleading candidate rather than fail loudly.
+var argoFieldManagers = []string{"argocd"}
+
+// foreignFieldOwners returns manager → the field paths that manager owns, for every manager that is
+// NOT ArgoCD. Paths are rendered dotted, from the apiserver's `f:`-prefixed fieldsV1 tree.
+func foreignFieldOwners(objJSON []byte) (map[string][]string, error) {
+	var obj struct {
+		Metadata struct {
+			ManagedFields []struct {
+				Manager  string          `json:"manager"`
+				FieldsV1 json.RawMessage `json:"fieldsV1"`
+			} `json:"managedFields"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(objJSON, &obj); err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, mf := range obj.Metadata.ManagedFields {
+		if isArgoManager(mf.Manager) {
+			continue
+		}
+		var tree map[string]json.RawMessage
+		if err := json.Unmarshal(mf.FieldsV1, &tree); err != nil {
+			continue
+		}
+		paths := flattenFieldsV1(tree, "")
+		if len(paths) > 0 {
+			out[mf.Manager] = append(out[mf.Manager], paths...)
+		}
+	}
+	return out, nil
+}
+
+// isArgoManager reports whether a field manager is ArgoCD's.
+func isArgoManager(name string) bool {
+	lower := strings.ToLower(name)
+	for _, m := range argoFieldManagers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// flattenFieldsV1 turns the apiserver's fieldsV1 tree into dotted paths.
+//
+// The encoding: a key is `f:<field>` for a field, `k:{...}` / `i:<n>` / `v:<x>` for a list entry,
+// and the bare `.` marks "this node itself is owned". Leaf `.` keys are dropped rather than rendered
+// as a trailing dot, because `.spec.replicas.` is not a path anyone can act on.
+func flattenFieldsV1(tree map[string]json.RawMessage, prefix string) []string {
+	var paths []string
+	for key, raw := range tree {
+		// `.` means the node at `prefix` is itself owned; it adds no new path.
+		if key == "." {
+			continue
+		}
+		var seg string
+		switch {
+		case strings.HasPrefix(key, "f:"):
+			seg = prefix + "." + strings.TrimPrefix(key, "f:")
+		default:
+			// A list-entry selector (k:/i:/v:). Keep it verbatim inside brackets: which ELEMENT
+			// differs is often the whole answer on a containers[] or versions[] list.
+			seg = prefix + "[" + key + "]"
+		}
+		var child map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &child); err != nil || len(child) == 0 {
+			paths = append(paths, seg)
+			continue
+		}
+		sub := flattenFieldsV1(child, seg)
+		if len(sub) == 0 {
+			paths = append(paths, seg)
+			continue
+		}
+		paths = append(paths, sub...)
+	}
+	return paths
+}
+
+// sortedManagers returns the manager names in order, so the dump is stable run to run — an unstable
+// dump makes two runs look different when nothing changed.
+func sortedManagers(m map[string][]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // refsForLosers collects the OutOfSync resource refs belonging to the failing Applications, so the

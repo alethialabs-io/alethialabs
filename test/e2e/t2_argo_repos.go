@@ -61,6 +61,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -308,16 +309,31 @@ func argoAppResourceCount(ctx context.Context, kubeconfigPath, name string) (int
 }
 
 // triggerArgoSync issues a sync operation on an Application over its CR (never the ArgoCD URL),
-// mirroring what an operator does for a manual-sync (hardened BYO) Application. Best-effort: an
-// empty sync uses the app's configured targetRevision, and patching while an operation is already
-// running returns a harmless error the caller ignores (it retries next poll).
-func triggerArgoSync(ctx context.Context, kubeconfigPath, name string) {
+// mirroring what an operator does for a manual-sync (hardened BYO) Application.
+//
+// It RETURNS its error rather than swallowing it, and the difference is not academic. Retrying is
+// still correct — patching while an operation is already running fails harmlessly, and the next poll
+// succeeds — but `_ = cmd.Run()` made "the sync is queued and the chart is slow" indistinguishable
+// from "every sync attempt was rejected". `addon-byo-e2e` sat Missing on hetzner/addons for a whole
+// run under that ambiguity: Missing means it was NEVER synced, and the only thing that ever syncs it
+// is this function.
+//
+// So the caller keeps retrying and keeps the LAST error, and reports it if the app never converges.
+// Failing on the first error would be wrong — it would red the run on the harmless already-running
+// case, which is the reason the error was discarded in the first place.
+func triggerArgoSync(ctx context.Context, kubeconfigPath, name string) error {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
 		"-n", "argocd", "patch", "applications.argoproj.io", name,
 		"--type", "merge", "-p", `{"operation":{"sync":{}}}`)
-	_ = cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// kubectl's stderr carries the actual reason (already-running, not found, forbidden), and
+		// those are three different remedies. A bare exit status is not actionable.
+		return fmt.Errorf("sync %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // AssertArgoReposConverge is A0.6's convergence assertion. It is A0.2's bounded poll
@@ -336,6 +352,7 @@ func AssertArgoReposConverge(ctx context.Context, kubeconfigPath string, expecte
 	var lastErr error
 	var lastLosers []string
 	var lastRefs []outOfSyncRef
+	lastSyncErr := map[string]error{}
 	for {
 		raw, err := kubectlGetArgoApps(ctx, kubeconfigPath)
 		if err != nil {
@@ -345,11 +362,19 @@ func AssertArgoReposConverge(ctx context.Context, kubeconfigPath string, expecte
 			lastErr = fmt.Errorf("parsing ArgoCD Applications failed: %w", perr)
 			lastLosers, lastRefs = nil, nil
 		} else {
-			// Nudge the manual-sync (hardened BYO) apps that haven't converged yet.
+			// Nudge the manual-sync (hardened BYO) apps that haven't converged yet, keeping the
+			// last error per app so a persistently-REJECTED sync is reported instead of looking
+			// like a slow one.
 			for _, name := range manualSync {
 				st, ok := observed[name]
 				if !ok || st.Health != "Healthy" || st.Sync != "Synced" {
-					triggerArgoSync(ctx, kubeconfigPath, name)
+					if serr := triggerArgoSync(ctx, kubeconfigPath, name); serr != nil {
+						lastSyncErr[name] = serr
+					} else {
+						// A success VOIDS an earlier failure. Carrying a stale error forward would
+						// report a problem that has since resolved, which is its own wrong answer.
+						delete(lastSyncErr, name)
+					}
 				}
 			}
 			losers, everr := evaluateArgoApps(observed, expected)
@@ -360,8 +385,10 @@ func AssertArgoReposConverge(ctx context.Context, kubeconfigPath string, expecte
 			lastRefs = refsForLosers(observed, losers)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("ArgoCD Applications (incl. repo-apps + repo-byo) did not all reach Healthy+Synced within %s:\n%v%s",
-				timeout, lastErr, describeArgoApps(ctx, kubeconfigPath, lastLosers)+dumpOutOfSyncResources(ctx, kubeconfigPath, lastRefs))
+			return fmt.Errorf("ArgoCD Applications (incl. repo-apps + repo-byo) did not all reach Healthy+Synced within %s:\n%v%s%s",
+				timeout, lastErr,
+				renderSyncErrors(lastSyncErr),
+				describeArgoApps(ctx, kubeconfigPath, lastLosers)+dumpOutOfSyncResources(ctx, kubeconfigPath, lastRefs))
 		}
 		select {
 		case <-ctx.Done():
@@ -369,4 +396,31 @@ func AssertArgoReposConverge(ctx context.Context, kubeconfigPath string, expecte
 		case <-time.After(argoPollInterval):
 		}
 	}
+}
+
+// renderSyncErrors names the manual-sync apps whose LAST sync attempt was rejected, and why.
+//
+// This is the half that was missing. `triggerArgoSync` used to discard its error, so a manual-sync
+// app that was never successfully synced looked exactly like one that was synced and is converging
+// slowly — and ArgoCD reports both as OutOfSync. `addon-byo-e2e` sat `Missing` for a whole
+// hetzner/addons run under that ambiguity, and `Missing` means it was NEVER synced: the sync is the
+// only thing that could have moved it.
+//
+// Empty output when nothing failed, so a run whose syncs all succeeded says nothing extra rather
+// than printing a reassuring empty section.
+func renderSyncErrors(errs map[string]error) string {
+	if len(errs) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(errs))
+	for name := range errs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var b strings.Builder
+	b.WriteString("\n  manual-sync apps whose LAST sync attempt was REJECTED (not merely slow):")
+	for _, name := range names {
+		fmt.Fprintf(&b, "\n    - %s: %v", name, errs[name])
+	}
+	return b.String()
 }
