@@ -240,9 +240,20 @@
 			"mode": "standalone",
 			"persistence": {
 				"size": "50Gi"
-			}
+			},
+			"existingSecret": "alethia-addon-minio"
 		},
-		"syncWave": 2
+		"syncWave": 2,
+		"secretRef": {
+			"secretName": "alethia-addon-minio",
+			"namespace": "minio",
+			"keys": [
+				"rootPassword"
+			],
+			"staticData": {
+				"rootUser": "admin"
+			}
+		}
 	},
 	{
 		"id": "opentelemetry-collector",
