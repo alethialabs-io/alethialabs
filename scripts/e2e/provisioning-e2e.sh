@@ -17,7 +17,8 @@
 #               maxconfig — + ALETHIA_E2E_MAX_CONFIG=1  (all 11 resource kinds land in tofu state).
 #               addons    — + ALETHIA_E2E_ALL_ADDONS=1  (all 18 marketplace add-ons Healthy+Synced;
 #                           18 not 19 — cert-manager moved to the platform rail, #1722).
-#               byo       — + the A0.6 bring-your-own HELM CHART + apps-repo ArgoCD proof (needs
+#               gitops    — + the A0.6 apps-repo + BYO HELM CHART ArgoCD proof (`byo` is the old
+#                           name and still works). NOT the BYO-IaC custody chain (needs
 #                           ALETHIA_E2E_ARGO_* + _GIT_TOKEN). NOT bring-your-own IaC: no customer
 #                           OpenTofu runs in this dimension. It was labelled "BYO-IaC" here and in
 #                           demos/proofs/provisioning-e2e-log.md, so the ledger has been recording a
@@ -25,7 +26,13 @@
 #               day2      — + the A0.3 day-2 soak (liveness, drift posture, PVC). E2E_SOAK widens or
 #                           narrows the window; it cannot switch it off, because a day-2 dimension
 #                           with no soak asserts nothing.
-#               full      — every dimension above in one real apply (the FULLY-TESTED bar).
+#               byo-iac   — + ALETHIA_E2E_BYO_IAC=1: the seven-job custody chain over a CUSTOMER
+#                           OpenTofu root module — refused when it trips the safety gate, applied
+#                           through the state proxy, drifted by an out-of-band mutation, healed,
+#                           destroyed, state cleared. One verdict, no partial credit. This is the
+#                           proof the `byo` column used to claim and never delivered.
+#               full      — every dimension above in one real apply (the FULLY-TESTED bar), EXCEPT
+#                           those declared in FULL_EXCLUDES with a reason.
 #
 # The dimension list and the env each one switches on live in ONE place — DIMENSIONS and
 # fidelity_env in scripts/e2e/resolve-dimension.sh, which self-tests the pair. They were written out
@@ -48,8 +55,8 @@
 #   ALETHIA_E2E_REGION=...     — region override (else the workflow's per-cloud cheap default).
 set -uo pipefail
 
-cloud="${1:?usage: provisioning-e2e.sh <aws|gcp|azure|alibaba|hetzner> <floor|maxconfig|addons|byo|day2|full>}"
-dimension="${2:?usage: provisioning-e2e.sh <cloud> <floor|maxconfig|addons|byo|day2|full>}"
+cloud="${1:?usage: provisioning-e2e.sh <aws|gcp|azure|alibaba|hetzner> <floor|maxconfig|addons|gitops|byo-iac|day2|full>}"
+dimension="${2:?usage: provisioning-e2e.sh <cloud> <floor|maxconfig|addons|gitops|byo-iac|day2|full>}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 ledger="$root/demos/proofs/provisioning-e2e-log.md"

@@ -94,7 +94,25 @@ const DIMENSIONS = [
 	{ id: "floor", label: "floor", gate: "(the cloud gate alone)", gates: [], what: "real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set" },
 	{ id: "maxconfig", label: "all kinds", gate: "ALETHIA_E2E_MAX_CONFIG", gates: [{ name: "ALETHIA_E2E_MAX_CONFIG", kind: "derived" }], what: "every kind this cloud offers lands in tofu state (or converges as its named Application)" },
 	{ id: "addons", label: "18 add-ons", gate: "ALETHIA_E2E_ALL_ADDONS", gates: [{ name: "ALETHIA_E2E_ALL_ADDONS", kind: "derived" }], what: "all 18 marketplace add-ons Healthy+Synced" },
-	{ id: "byo", label: "BYO-IaC", gate: "E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN", gates: [{ name: "E2E_ARGO_APPS_REPO", kind: "repo" }, { name: "E2E_GIT_TOKEN", kind: "repo" }], what: "customer IaC/charts applied, and Alethia services bound to their outputs" },
+	// RENAMED from `byo`, and the rename IS the correction. This column asserts A0.6 — a customer
+	// apps-DESTINATION repo plus a BYO Helm chart converging as ArgoCD Applications, each managing at
+	// least one real resource. Under the old label ("BYO-IaC", "customer IaC/charts applied, and
+	// Alethia services bound to their outputs") three cells read as proven BYO-IaC while proving
+	// this, which is a different thing. demos/proofs/provisioning-e2e-log.md recorded the
+	// discrepancy and said one of the two definitions should move; this is it moving.
+	//
+	// NOTHING IS RETRACTED. The rows are true — the label was wrong, not the evidence — and `aliases`
+	// carries them forward: ledger rows filed under `byo` key onto this column unchanged.
+	{ id: "gitops", label: "GitOps repos", aliases: ["byo"], gate: "E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN", gates: [{ name: "E2E_ARGO_APPS_REPO", kind: "repo" }, { name: "E2E_GIT_TOKEN", kind: "repo" }], what: "a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource" },
+	// The proof the old `byo` column CLAIMED and never delivered: test/e2e/t2_byo_iac.go's seven-job
+	// custody chain. It had never executed in CI — ALETHIA_E2E_BYO_IAC was a step-level `env:` key in
+	// e2e-nightly.yml and a step-level key wins over $GITHUB_ENV, so no dimension could switch it on.
+	// It now has a dimension of its own.
+	//
+	// `composedByFull: false` MIRRORS FULL_EXCLUDES in scripts/e2e/resolve-dimension.sh — `full` does
+	// not compose this dimension, so a full-bar PASS must never credit it. The self-test READS that
+	// shell file and fails if the two disagree, because a hand-kept second copy is how they drift.
+	{ id: "byo-iac", label: "BYO-IaC", gate: "ALETHIA_E2E_BYO_IAC", gates: [{ name: "ALETHIA_E2E_BYO_IAC", kind: "derived" }], composedByFull: false, what: "a customer OpenTofu root module is refused when unsafe, applied through the state proxy, drifts, heals and destroys — with state cleared" },
 	{ id: "day2", label: "day-2", gate: "ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS", gates: [{ name: "ALETHIA_E2E_SOAK", kind: "derived" }, { name: "E2E_DAY2_ACCESS", kind: "repo" }], what: "a real access path beyond the soak — kubeconfig / ArgoCD surface" },
 ];
 // The composite dimension. A PASS here is evidence for every dimension the full bar ACTUALLY
@@ -170,11 +188,24 @@ export function bundlePath(ref) {
  * one. So we replay in file order and let RETRACTED clear the slot.
  * @returns {Map<string, object|null>} "cloud/dimension" → the surviving row, or null if voided
  */
+/**
+ * Ledger dimension token → the column it belongs to. A RENAMED dimension keeps its old token working
+ * here rather than having its rows rewritten: the ledger is append-only, the rows were true when
+ * written, and rewriting history to match a corrected label is the more expensive error.
+ * @type {Map<string, string>}
+ */
+export const DIMENSION_ALIASES = new Map(DIMENSIONS.flatMap((d) => (d.aliases ?? []).map((a) => [a, d.id])));
+
+/** Resolve a ledger row's dimension token to its column id. */
+export function canonicalDimension(token) {
+	return DIMENSION_ALIASES.get(token) ?? token;
+}
+
 export function collapseLedger(rows) {
 	/** @type {Map<string, object|null>} */
 	const claims = new Map();
 	for (const r of rows) {
-		const key = `${r.cloud}/${r.dimension}`;
+		const key = `${r.cloud}/${canonicalDimension(r.dimension)}`;
 		if (r.verdict === "RETRACTED") {
 			claims.set(key, null); // the earlier claim is void; the pair is back to "no evidence"
 			continue;
@@ -390,8 +421,19 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	// resolve step exports those from the dimension itself. A `repo` gate is the one a human sets,
 	// and an unset one means the layer green-skipped. `unknown` (no snapshot) is NOT `wired`, so a
 	// missing snapshot fails closed rather than buying a proof.
+	// TWO independent reasons the composite may not credit a dimension, and both must hold for it to:
+	//
+	//   composedByFull  `full` does not turn this dimension's switch on AT ALL (FULL_EXCLUDES in
+	//                   scripts/e2e/resolve-dimension.sh). No gate state can rescue that — the code
+	//                   simply never ran. This is the stronger of the two.
+	//   repo gates      the switch IS composed, but a repo variable a human must set is unset, so the
+	//                   layer green-skipped inside the run. `unknown` is NOT `wired`, so a missing
+	//                   snapshot fails closed rather than buying a proof.
 	const compositeCreditsFor = new Map(
-		DIMENSIONS.map((d) => [d.id, d.gates.filter((g) => g.kind === "repo").every((g) => board.gateState(g.name) === "wired")]),
+		DIMENSIONS.map((d) => [
+			d.id,
+			d.composedByFull !== false && d.gates.filter((g) => g.kind === "repo").every((g) => board.gateState(g.name) === "wired"),
+		]),
 	);
 	for (const cloud of clouds) {
 		grid[cloud] = {};
@@ -405,7 +447,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		if (!clouds.includes(r.cloud)) {
 			failures.push(`${LEDGER}:${r.line}: cloud ${JSON.stringify(r.cloud)} is not one of the declared clouds (${clouds.join(", ")})`);
 		}
-		if (r.dimension !== COMPOSITE && !DIMENSIONS.some((d) => d.id === r.dimension)) {
+		if (r.dimension !== COMPOSITE && !DIMENSIONS.some((d) => d.id === canonicalDimension(r.dimension))) {
 			failures.push(
 				`${LEDGER}:${r.line}: dimension ${JSON.stringify(r.dimension)} is not one of ${DIMENSIONS.map((d) => d.id).join(", ")}, ${COMPOSITE} — ` +
 					`a row nobody can render is a proof nobody counts`,
@@ -484,7 +526,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		/** @type {Map<string, {date: string, line: number}>} */
 		const lastSeen = new Map();
 		for (const r of rows) {
-			const key = `${r.cloud}/${r.dimension}`;
+			const key = `${r.cloud}/${canonicalDimension(r.dimension)}`;
 			const prev = lastSeen.get(key);
 			if (prev && r.date < prev.date) {
 				failures.push(
@@ -1153,9 +1195,20 @@ function runSelfTest() {
 	// The composite: a `full` PASS is evidence for every dimension the full bar ACTUALLY EXERCISES.
 	// `base` carries no snapshot, so every gate reads `unknown` — which is deliberately NOT `wired`.
 	r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full") });
-	const derivedOnly = DIMENSIONS.filter((d) => d.gates.every((g) => g.kind !== "repo")).map((d) => d.id);
-	const repoGated = DIMENSIONS.filter((d) => d.gates.some((g) => g.kind === "repo")).map((d) => d.id);
+	// "Exercises" now has TWO conditions, not one. A dimension is exercised by the full bar only if
+	// `full` composes its switch at all (composedByFull) AND every repo-kind gate it declares is
+	// wired. The first condition is new: byo-iac is declared out of the composite entirely, so no
+	// gate state could make a full-bar PASS evidence for it.
+	const composed = DIMENSIONS.filter((d) => d.composedByFull !== false);
+	const derivedOnly = composed.filter((d) => d.gates.every((g) => g.kind !== "repo")).map((d) => d.id);
+	const repoGated = composed.filter((d) => d.gates.some((g) => g.kind === "repo")).map((d) => d.id);
+	const notComposed = DIMENSIONS.filter((d) => d.composedByFull === false).map((d) => d.id);
 	ok("a `full` PASS proves every dimension it exercises", derivedOnly.every((id) => r.grid.aws[id].state === "proven"), JSON.stringify(derivedOnly.map((id) => [id, r.grid.aws[id].state])));
+	ok(
+		"...and proves NOTHING for a dimension full does not compose",
+		notComposed.length > 0 && notComposed.every((id) => r.grid.aws[id].state !== "proven"),
+		JSON.stringify(notComposed.map((id) => [id, r.grid.aws[id].state])),
+	);
 	ok("...and says it came via the composite", /composite/.test(r.grid.aws.maxconfig.why));
 	// The regression this pins: `full` exports SOAK + MAX_CONFIG + ALL_ADDONS and nothing else, so a
 	// repo-gated layer green-skips inside the run. Crediting it would manufacture a proof for a
@@ -1316,14 +1369,14 @@ function runSelfTest() {
 	// refusal above could be a permanent "no" — a guard that never says yes is not measuring anything.
 	{
 		const fullRow = row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full");
-		const byoGates = DIMENSIONS.find((d) => d.id === "byo").gates.filter((g) => g.kind === "repo").map((g) => g.name);
-		// Every repo gate the `byo` dimension declares, wired — named from DIMENSIONS rather than
+		const gitopsGates = DIMENSIONS.find((d) => d.id === "gitops").gates.filter((g) => g.kind === "repo").map((g) => g.name);
+		// Every repo gate the `gitops` dimension declares, wired — named from DIMENSIONS rather than
 		// retyped, so renaming a gate cannot leave this test passing against a name nothing reads.
-		const wired = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], byoGates, []) });
-		ok("with its repo gates wired, the composite DOES credit the dimension", wired.grid.aws.byo.state === "proven", wired.grid.aws.byo.why);
+		const wired = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], gitopsGates, []) });
+		ok("with its repo gates wired, the composite DOES credit the dimension", wired.grid.aws.gitops.state === "proven", wired.grid.aws.gitops.why);
 		// And it must be ALL of them, not any: a half-wired gate set still green-skips.
-		const half = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], byoGates.slice(0, 1), []) });
-		ok("a half-wired gate set does not credit the composite", byoGates.length > 1 && half.grid.aws.byo.state === "never_run", half.grid.aws.byo.why);
+		const half = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], gitopsGates.slice(0, 1), []) });
+		ok("a half-wired gate set does not credit the composite", gitopsGates.length > 1 && half.grid.aws.gitops.state === "never_run", half.grid.aws.gitops.why);
 	}
 
 	// Cloud gates: wired vs unwired, from NAMES only.
@@ -1348,7 +1401,7 @@ function runSelfTest() {
 		// is not `wired`, and fail-closed is the whole point.
 		const fullRow = row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full");
 		const credited = derive({ ...base, ledgerText: hdr + fullRow, snapshot: snap([], [], [], []) });
-		ok("an unknown gate does not let the composite credit a repo-gated dimension", credited.grid.aws.byo.state === "never_run", credited.grid.aws.byo.why);
+		ok("an unknown gate does not let the composite credit a repo-gated dimension", credited.grid.aws.gitops.state === "never_run", credited.grid.aws.gitops.why);
 	}
 
 	// Dimension gates: a DERIVED gate is never "unwired" — there is no variable to set. Reporting one
@@ -1370,21 +1423,100 @@ function runSelfTest() {
 	);
 	// `unwired` requires the workflow to REFERENCE the gate; a gate it never mentions is `no_vehicle`,
 	// which is a different remedy (write the wiring, not set a variable). Both are pinned.
-	const byoNoVehicle = r.gateReality.find((d) => d.id === "byo");
-	ok("a gate the workflow never references reads `no_vehicle`, not `unwired`", byoNoVehicle?.states.every((x) => x.state === "no_vehicle"), JSON.stringify(byoNoVehicle?.states));
+	const gitopsNoVehicle = r.gateReality.find((d) => d.id === "gitops");
+	ok("a gate the workflow never references reads `no_vehicle`, not `unwired`", gitopsNoVehicle?.states.every((x) => x.state === "no_vehicle"), JSON.stringify(gitopsNoVehicle?.states));
 	const rWired = derive({
 		...base,
 		workflowText: base.workflowText + "        FOO: ${{ vars.E2E_ARGO_APPS_REPO }}\n        BAR: ${{ secrets.E2E_GIT_TOKEN }}\n",
 		ledgerText: hdr,
 		snapshot: snap([], [], ["E2E_ARGO_APPS_REPO"], []),
 	});
-	const byoMixed = rWired.gateReality.find((d) => d.id === "byo");
+	const gitopsMixed = rWired.gateReality.find((d) => d.id === "gitops");
 	ok(
 		"a REFERENCED maintainer-set gate reads wired/unwired from the snapshot",
-		byoMixed?.states.find((x) => x.name === "E2E_ARGO_APPS_REPO")?.state === "wired" &&
-			byoMixed?.states.find((x) => x.name === "E2E_GIT_TOKEN")?.state === "unwired",
-		JSON.stringify(byoMixed?.states),
+		gitopsMixed?.states.find((x) => x.name === "E2E_ARGO_APPS_REPO")?.state === "wired" &&
+			gitopsMixed?.states.find((x) => x.name === "E2E_GIT_TOKEN")?.state === "unwired",
+		JSON.stringify(gitopsMixed?.states),
 	);
+
+	// ── THE TWO-FILE INVARIANT. `composedByFull: false` above is a copy of FULL_EXCLUDES in
+	//    scripts/e2e/resolve-dimension.sh, and a hand-kept copy is how two sources of truth drift.
+	//    So read the shell file and hold them to each other. This is the check that would have caught
+	//    the original defect: `byo` turned on ALETHIA_E2E_ARGO_REPOS_REQUIRE, `full` never emitted it,
+	//    and this rollup credited `full` for the `byo` column anyway. ──
+	{
+		const resolver = fs.readFileSync(new URL("./e2e/resolve-dimension.sh", import.meta.url), "utf8");
+		const declared = new Set((/^FULL_EXCLUDES="([^"]*)"/m.exec(resolver)?.[1] ?? "").split(/\s+/).filter(Boolean));
+		const inJs = new Set(DIMENSIONS.filter((d) => d.composedByFull === false).map((d) => d.id));
+		ok(
+			"FULL_EXCLUDES is non-empty in the resolver, so this check is not vacuous",
+			declared.size > 0,
+			"no FULL_EXCLUDES line matched — the regex or the shell declaration changed shape",
+		);
+		ok(
+			"every dimension the resolver excludes from `full` is composedByFull:false here",
+			[...declared].every((d) => inJs.has(d)),
+			`resolver excludes ${JSON.stringify([...declared])}, this file marks ${JSON.stringify([...inJs])}`,
+		);
+		ok(
+			"...and nothing here claims to be excluded that the resolver still composes",
+			[...inJs].every((d) => declared.has(d)),
+			`this file marks ${JSON.stringify([...inJs])}, resolver excludes ${JSON.stringify([...declared])}`,
+		);
+		// The dimension ids themselves must exist on both sides, or one file is describing a
+		// programme the other has never heard of.
+		const resolverDims = new Set((/^DIMENSIONS="([^"]*)"/m.exec(resolver)?.[1] ?? "").split(/\s+/).filter(Boolean));
+		ok(
+			"every rollup column is a dimension the resolver can actually run",
+			DIMENSIONS.every((d) => resolverDims.has(d.id)),
+			`columns ${JSON.stringify(DIMENSIONS.map((d) => d.id))} vs resolver ${JSON.stringify([...resolverDims])}`,
+		);
+	}
+
+	// A renamed dimension's OLD ledger rows must still land on its column — the whole reason nothing
+	// was retracted. Keyed under `byo`, read out as `gitops`.
+	{
+		const renamed = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "aws", "byo", "PASS", "demos/proofs/aws/legacy"),
+			snapshot: snap([], [], ["E2E_ARGO_APPS_REPO", "E2E_GIT_TOKEN"], []),
+		});
+		ok(
+			"a ledger row filed under the legacy `byo` token still proves the `gitops` column",
+			renamed.grid.aws.gitops.state === "proven",
+			`${renamed.grid.aws.gitops.state}: ${renamed.grid.aws.gitops.why}`,
+		);
+		ok(
+			"...and does NOT leak into the new byo-iac column, which nothing has proven",
+			renamed.grid.aws["byo-iac"].state !== "proven",
+			`${renamed.grid.aws["byo-iac"].state}: ${renamed.grid.aws["byo-iac"].why}`,
+		);
+		ok(
+			"...and the legacy token raises no 'unknown dimension' integrity failure",
+			!renamed.failures.some((f) => /is not one of/.test(f)),
+			JSON.stringify(renamed.failures),
+		);
+	}
+
+	// A `full` PASS must NOT credit byo-iac, which `full` does not compose. This is the difference
+	// between a composite that means something and one that launders unproven cells into `proven`.
+	{
+		const fullPass = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-26", "aws", "full", "PASS", "demos/proofs/aws/full"),
+			snapshot: snap([], [], ["E2E_ARGO_APPS_REPO", "E2E_GIT_TOKEN"], []),
+		});
+		ok(
+			"a full-bar PASS credits maxconfig, which full DOES compose",
+			fullPass.grid.aws.maxconfig.state === "proven",
+			`${fullPass.grid.aws.maxconfig.state}: ${fullPass.grid.aws.maxconfig.why}`,
+		);
+		ok(
+			"a full-bar PASS does NOT credit byo-iac, which full does NOT compose",
+			fullPass.grid.aws["byo-iac"].state !== "proven",
+			`${fullPass.grid.aws["byo-iac"].state}: ${fullPass.grid.aws["byo-iac"].why}`,
+		);
+	}
 
 	// needs:human flows through to the blocked list.
 	r = derive({
