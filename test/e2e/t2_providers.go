@@ -47,6 +47,16 @@ type t2Provider struct {
 	// waitTimeout bounds the test-side WaitTerminal poll for the job to go terminal
 	// (image build + apply + spine + argo on real infra).
 	waitTimeout time.Duration
+	// teardownTimeout bounds the in-process t.Cleanup destroy. It is NOT part of the test
+	// body's ctx — teardown runs after the body returns — but it IS inside the go-test
+	// process deadline, which is why ResolveT2Budget reserves it in GoTimeout rather than
+	// in Ctx.
+	//
+	// It was a flat 15m for every cloud, which is HETZNER's number: hetzner tears its 18
+	// resources down in seconds, while aws/byo run 32909287152 passed every assertion and
+	// was still recorded FAIL because an EKS cluster's NAT-gateway/VPC dependency chain had
+	// an internet gateway `Still destroying... [13m30s elapsed]` when the ceiling hit (#2729).
+	teardownTimeout time.Duration
 	// credsPresent reports whether this provider's credentials are wired into the
 	// environment, and (when not) a human message naming exactly what to set. It is a
 	// closure so each cloud's distinct credential shape (ambient AWS keys vs a GCP
@@ -68,6 +78,7 @@ var t2ProviderTable = map[string]t2Provider{
 		defaultRegion:       "nbg1",
 		clusterReadyTimeout: "8m",
 		waitTimeout:         25 * time.Minute,
+		teardownTimeout:     15 * time.Minute,
 		credsPresent:        hetznerCredsPresent,
 	},
 	// AWS EKS. The workflow runs aws-actions/configure-aws-credentials (OIDC or static
@@ -85,6 +96,7 @@ var t2ProviderTable = map[string]t2Provider{
 		defaultRegion:       "us-east-1",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
+		teardownTimeout:     30 * time.Minute,
 		credsPresent: func() (bool, string) {
 			ready := t2Truthy(os.Getenv("ALETHIA_E2E_AWS_READY"))
 			hasHandle := os.Getenv("AWS_ACCESS_KEY_ID") != "" || os.Getenv("AWS_ROLE_ARN") != ""
@@ -100,6 +112,7 @@ var t2ProviderTable = map[string]t2Provider{
 		defaultRegion:       "europe-west3-a",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
+		teardownTimeout:     30 * time.Minute,
 		credsPresent: func() (bool, string) {
 			return t2AllEnvPresent([]string{"GOOGLE_APPLICATION_CREDENTIALS"}),
 				"GOOGLE_APPLICATION_CREDENTIALS is unset (path to the GCP service-account key file)"
@@ -129,6 +142,7 @@ var t2ProviderTable = map[string]t2Provider{
 		defaultRegion:       "westeurope",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
+		teardownTimeout:     30 * time.Minute,
 		credsPresent: func() (bool, string) {
 			return t2AllEnvPresent([]string{"ARM_CLIENT_ID", "ARM_TENANT_ID", "ARM_SUBSCRIPTION_ID"}),
 				"Azure credentials are incomplete — set ARM_CLIENT_ID, ARM_TENANT_ID and ARM_SUBSCRIPTION_ID"
@@ -141,6 +155,7 @@ var t2ProviderTable = map[string]t2Provider{
 		defaultRegion:       "eu-central-1",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
+		teardownTimeout:     30 * time.Minute,
 		credsPresent: func() (bool, string) {
 			static := os.Getenv("ALICLOUD_ACCESS_KEY") != ""
 			oidc := os.Getenv("ALICLOUD_OIDC_TOKEN_FILE") != "" && os.Getenv("ALICLOUD_ROLE_ARN") != ""
@@ -256,6 +271,25 @@ func resolveT2WaitTimeout(p t2Provider) time.Duration {
 		}
 	}
 	return p.waitTimeout
+}
+
+// resolveT2TeardownTimeout bounds the in-process destroy for one provider, with an
+// ALETHIA_E2E_T2_TEARDOWN override for a laptop run.
+//
+// ResolveT2Budget (which RESERVES the window in the process deadline) and the t.Cleanup that
+// SPENDS it both call this, so the deadline can never reserve a different number than the
+// destroy is actually given. Two sources for one quantity is how #2729 arose in the first place.
+//
+// There is deliberately no fallback for a zero value: a provider row that forgets the field
+// would get an already-expired context and fail its destroy instantly, so
+// TestT2ProviderTableTeardownBudgets fails the build instead — before any spend.
+func resolveT2TeardownTimeout(p t2Provider) time.Duration {
+	if v := strings.TrimSpace(os.Getenv("ALETHIA_E2E_T2_TEARDOWN")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return p.teardownTimeout
 }
 
 // t2RequireIsHard reports whether a missing prerequisite must HARD-FAIL rather than

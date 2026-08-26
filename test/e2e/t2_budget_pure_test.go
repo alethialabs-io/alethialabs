@@ -188,3 +188,107 @@ func TestT2BudgetPropagatesASoakParseError(t *testing.T) {
 		t.Fatal("test env not applied")
 	}
 }
+
+// TestT2ProviderTableTeardownBudgets pins the in-process destroy window for every cloud.
+//
+// A row that forgets the field gets the zero value, which makes context.WithTimeout return an
+// ALREADY-EXPIRED context: the destroy would fail instantly, the cluster would leak to the workflow
+// sweeper, and ResolveT2Budget would reserve nothing for it. That is silent in every other test, so
+// it is asserted here rather than defaulted away in the resolver.
+func TestT2ProviderTableTeardownBudgets(t *testing.T) {
+	for name, p := range t2ProviderTable {
+		if p.teardownTimeout <= 0 {
+			t.Errorf("provider %q has no teardownTimeout: its t.Cleanup destroy would get an "+
+				"already-expired context, and the go-timeout would reserve nothing for it", name)
+		}
+	}
+	// The split is the whole point of #2729 — one number for both was hetzner's, charged to clouds
+	// whose teardown is a different animal (an EKS internet gateway was still detaching at 13m30s).
+	want := map[string]time.Duration{
+		"hetzner": 15 * time.Minute,
+		"aws":     30 * time.Minute,
+		"gcp":     30 * time.Minute,
+		"azure":   30 * time.Minute,
+		"alibaba": 30 * time.Minute,
+	}
+	for cloud, d := range want {
+		p, ok := t2LookupProvider(cloud)
+		if !ok {
+			t.Errorf("no provider row for %q", cloud)
+			continue
+		}
+		if got := resolveT2TeardownTimeout(p); got != d {
+			t.Errorf("%s teardown = %s, want %s", cloud, got, d)
+		}
+	}
+}
+
+// TestT2TeardownOverride pins the escape hatch, including the fall-back an unparseable value takes —
+// the same shape resolveT2WaitTimeout uses, so the two cannot behave differently under a typo.
+func TestT2TeardownOverride(t *testing.T) {
+	aws, ok := t2LookupProvider("aws")
+	if !ok {
+		t.Fatal("no aws provider row")
+	}
+	t.Setenv("ALETHIA_E2E_T2_TEARDOWN", "45m")
+	if got := resolveT2TeardownTimeout(aws); got != 45*time.Minute {
+		t.Errorf("override = %s, want 45m", got)
+	}
+	for _, bad := range []string{"forty-five", "45", "", "  "} {
+		t.Setenv("ALETHIA_E2E_T2_TEARDOWN", bad)
+		if got := resolveT2TeardownTimeout(aws); got != 30*time.Minute {
+			t.Errorf("override %q = %s, want the aws row default 30m", bad, got)
+		}
+	}
+}
+
+// TestT2BudgetReservesTeardownInGoTimeout is the anti-vacuity check for the teardown rung.
+//
+// TestT2BudgetLadderHolds cannot catch a dropped teardown reservation: removing the term only makes
+// GoTimeout SMALLER, and ctx < go < step < job still holds. And TestT2BudgetCoversEveryEnabledScenario
+// cannot catch it either, because teardown is deliberately excluded from Ctx — the test BODY must not
+// get a longer wait just because the destroy is slow. So the reservation is asserted directly, and by
+// varying the VALUE of the window rather than merely toggling a switch: a widened teardown must move
+// the process deadline by exactly that much, and must leave the ctx alone.
+func TestT2BudgetReservesTeardownInGoTimeout(t *testing.T) {
+	for _, v := range T2BudgetScenarioEnv() {
+		t.Setenv(v, "")
+	}
+	for _, cloud := range t2LadderClouds() {
+		t.Run(cloud, func(t *testing.T) {
+			p, ok := t2LookupProvider(cloud)
+			if !ok {
+				t.Fatalf("no provider row for %q", cloud)
+			}
+			def := p.teardownTimeout
+
+			t.Setenv("ALETHIA_E2E_T2_TEARDOWN", "")
+			base, err := ResolveT2Budget(cloud, "ladder")
+			if err != nil {
+				t.Fatalf("baseline: %v", err)
+			}
+			if want := base.Ctx + def + t2GoTimeoutMargin; base.GoTimeout < want {
+				t.Errorf("go-timeout %s does not reserve the %s teardown window (ctx %s + teardown %s "+
+					"+ margin %s = %s) — a destroy at its own ceiling would be killed mid-flight by the "+
+					"test framework, losing the log naming what was still deleting",
+					base.GoTimeout, def, base.Ctx, def, t2GoTimeoutMargin, want)
+			}
+
+			const wide = 60 * time.Minute
+			t.Setenv("ALETHIA_E2E_T2_TEARDOWN", wide.String())
+			got, err := ResolveT2Budget(cloud, "ladder")
+			if err != nil {
+				t.Fatalf("widened: %v", err)
+			}
+			if got.Ctx != base.Ctx {
+				t.Errorf("widening teardown moved the ctx (%s → %s): teardown leaked into the test "+
+					"body's budget, which would stretch every ctx-derived wait", base.Ctx, got.Ctx)
+			}
+			if delta, want := got.GoTimeout-base.GoTimeout, wide-def; delta != want {
+				t.Errorf("widening teardown %s → %s moved the go-timeout by %s, want %s — the "+
+					"reservation is not tracking the window the destroy is actually given",
+					def, wide, delta, want)
+			}
+		})
+	}
+}
