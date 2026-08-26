@@ -50,6 +50,17 @@ type AddOnInstall struct {
 	Values map[string]interface{} `json:"values"`
 	// ArgoCD sync-wave ordering (lower installs first).
 	SyncWave int `json:"syncWave"`
+	// PodSecurity is the Pod Security Standards level this add-on's namespace must allow
+	// ("privileged" | "baseline" | "restricted"), rendered as
+	// syncPolicy.managedNamespaceMetadata.labels so ArgoCD labels the namespace it creates (#2837).
+	//
+	// Talos enforces `baseline` on every namespace but kube-system, and baseline forbids privileged
+	// containers, host namespaces and hostPath volumes — so a chart needing any of those has its
+	// DaemonSet admitted and its PODS rejected: zero pods, Progressing forever, nothing saying why.
+	//
+	// Empty = do not label the namespace, leaving the cluster's own default in force. Mirrors the
+	// TS `AddOnInstallSpec.podSecurity`.
+	PodSecurity string `json:"podSecurity,omitempty"`
 	// SecretRef names the per-add-on k8s Secret this chart's secret knobs read from
 	// (W4.5 #640). It carries NO values — the runner fetches the plaintext at execution
 	// time over the authenticated job channel (FetchAddonSecrets, the git-token pattern)

@@ -48,7 +48,8 @@
 				"enabled": false
 			}
 		},
-		"syncWave": 2
+		"syncWave": 2,
+		"podSecurity": "privileged"
 	},
 	{
 		"id": "goldilocks",
@@ -157,7 +158,8 @@
 				"enabled": true
 			}
 		},
-		"syncWave": 2
+		"syncWave": 2,
+		"podSecurity": "privileged"
 	},
 	{
 		"id": "kyverno",

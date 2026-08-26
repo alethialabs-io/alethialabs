@@ -159,6 +159,12 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "kube-prometheus-stack",
 		version: "61.9.0",
 		namespace: "monitoring",
+		// #2837: the bundled prometheus-node-exporter DaemonSet needs hostNetwork, hostPID and three
+		// hostPaths to read node metrics at all — every one forbidden by PodSecurity `baseline`, which
+		// Talos enforces on every namespace but kube-system. This is the more dangerous of the two,
+		// because the operator and Grafana come up fine and the stack LOOKS healthy; it is only the
+		// node metrics that are silently missing.
+		podSecurity: "privileged",
 		defaultValues: {
 			grafana: { enabled: true },
 			// Keep the footprint small by default; the knobs below tune it.
@@ -719,6 +725,11 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "falco",
 		version: "4.9.0",
 		namespace: "falco",
+		// #2837: falco mounts ten hostPaths and runs `privileged: true` — every one of those is
+		// forbidden by PodSecurity `baseline`, which Talos enforces on every namespace but
+		// kube-system. Without this its DaemonSet is created, its pods are REJECTED, and it reports
+		// Progressing forever having monitored nothing.
+		podSecurity: "privileged",
 		configSchema: z.object({
 			/** Syscall capture driver. `auto` picks the best available for the kernel. */
 			driver: z.enum(["auto", "modern_ebpf", "ebpf", "kmod"]).default("auto"),
@@ -1206,6 +1217,9 @@ export function resolveAddOnInstall(row: {
 		namespace: def.namespace,
 		values,
 		syncWave: def.syncWave,
+		// #2837: only when the add-on asks. An absent field leaves the namespace unlabelled and the
+		// cluster's own default in force.
+		...(def.podSecurity ? { podSecurity: def.podSecurity } : {}),
 		...(secretKeys.length > 0
 			? {
 					secretRef: {
