@@ -4,7 +4,9 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -42,27 +44,24 @@ var tokenListCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		client := api.NewClient(token)
-		var tokens []api.ServiceToken
-		if interactiveTable(cmd) {
-			ui.RunSpinner("Fetching tokens...", func() { tokens, err = client.ListServiceTokens() })
-		} else {
-			tokens, err = client.ListServiceTokens()
-		}
-		if err != nil {
+		if err := runTokenList(api.NewClient(token), os.Stdout, outputFormat(cmd)); err != nil {
 			failf("Failed to list tokens: %v", err)
 		}
-		if len(tokens) == 0 && interactiveTable(cmd) {
-			ui.Muted("No service tokens. Create one with `alethia token create --name ci`.")
-			return
-		}
-		if err := ui.Render(os.Stdout, outputFormat(cmd), ui.TableSpec{
-			Columns: tokenListColumns,
-			Rows:    tokenRows(tokens),
-		}, tokens); err != nil {
-			failf("Failed to render tokens: %v", err)
-		}
 	},
+}
+
+// runTokenList is the testable half — the same client/writer/format shape runOrgList uses, so the
+// cobra Run above stays thin glue and the behaviour is driven directly.
+func runTokenList(c apiClient, out io.Writer, format string) error {
+	tokens, err := c.ListServiceTokens()
+	if err != nil {
+		return err
+	}
+	if len(tokens) == 0 && format == ui.FormatTable {
+		fmt.Fprintln(out, ui.MutedStyle.Render("No service tokens. Create one with `alethia token create --name ci`."))
+		return nil
+	}
+	return ui.Render(out, format, ui.TableSpec{Columns: tokenListColumns, Rows: tokenRows(tokens)}, tokens)
 }
 
 var tokenListColumns = []string{"ID", "Name", "Prefix", "Created", "Expires", "Last used", "Status"}
@@ -126,41 +125,45 @@ var tokenCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Mint a service-account token (shown ONCE)",
 	Run: func(cmd *cobra.Command, args []string) {
-		name := strings.TrimSpace(tokenCreateName)
-		if name == "" {
-			failf("--name is required: a list of tokens should be a list of PURPOSES, not of prefixes")
-		}
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
 		}
-		client := api.NewClient(token)
-		created, err := client.CreateServiceToken(name, tokenCreateExpires)
-		if err != nil {
-			failf("Failed to create token: %v", err)
-		}
-
-		// The value goes to STDOUT and everything else to stderr, so `alethia token create ... |
-		// gh secret set` does the right thing and a user never has to select the token out of a
-		// decorated block by eye. In table mode the warning is loud; in json/csv the caller is a
-		// program and the plain value is what it needs.
-		if interactiveTable(cmd) {
-			fmt.Fprintln(os.Stderr)
-			ui.Muted(created.Warning)
-			fmt.Fprintf(os.Stderr, "  id      %s\n  name    %s\n  prefix  %s\n  expires %s\n\n",
-				created.ID, created.Name, created.TokenPrefix, stampOrNever(created.ExpiresAt))
-			fmt.Println(created.Token)
-			fmt.Fprintln(os.Stderr)
-			ui.Muted("Use it with:  export ALETHIA_TOKEN=…   (or --token)")
-			return
-		}
-		if err := ui.Render(os.Stdout, outputFormat(cmd), ui.TableSpec{
-			Columns: []string{"ID", "Name", "Prefix", "Token"},
-			Rows:    [][]string{{created.ID, created.Name, created.TokenPrefix, created.Token}},
-		}, created); err != nil {
-			failf("Failed to render token: %v", err)
+		if err := runTokenCreate(api.NewClient(token), os.Stdout, os.Stderr, outputFormat(cmd), tokenCreateName, tokenCreateExpires); err != nil {
+			failf("%v", err)
 		}
 	},
+}
+
+// runTokenCreate mints one and surfaces it exactly once.
+//
+// THE VALUE GOES TO `out`, EVERYTHING ELSE TO `errOut`. That split is the feature: it makes
+// `alethia token create --name ci | gh secret set ALETHIA_TOKEN` do the right thing, so nobody has
+// to select a credential out of a decorated block by eye.
+func runTokenCreate(c apiClient, out, errOut io.Writer, format, name string, expiresInDays int) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("--name is required: a list of tokens should be a list of PURPOSES, not of prefixes")
+	}
+	created, err := c.CreateServiceToken(name, expiresInDays)
+	if err != nil {
+		return fmt.Errorf("failed to create token: %w", err)
+	}
+	if format != ui.FormatTable {
+		// The caller is a program; the plain value is what it needs.
+		return ui.Render(out, format, ui.TableSpec{
+			Columns: []string{"ID", "Name", "Prefix", "Token"},
+			Rows:    [][]string{{created.ID, created.Name, created.TokenPrefix, created.Token}},
+		}, created)
+	}
+	fmt.Fprintln(errOut)
+	fmt.Fprintln(errOut, ui.MutedStyle.Render(created.Warning))
+	fmt.Fprintf(errOut, "  id      %s\n  name    %s\n  prefix  %s\n  expires %s\n\n",
+		created.ID, created.Name, created.TokenPrefix, stampOrNever(created.ExpiresAt))
+	fmt.Fprintln(out, created.Token)
+	fmt.Fprintln(errOut)
+	fmt.Fprintln(errOut, ui.MutedStyle.Render("Use it with:  export ALETHIA_TOKEN=…   (or --token)"))
+	return nil
 }
 
 var tokenRevokeCmd = &cobra.Command{
@@ -172,12 +175,20 @@ var tokenRevokeCmd = &cobra.Command{
 		if err != nil {
 			fail(err)
 		}
-		client := api.NewClient(token)
-		if err := client.RevokeServiceToken(args[0]); err != nil {
+		if err := runTokenRevoke(api.NewClient(token), os.Stdout, args[0]); err != nil {
 			failf("Failed to revoke token: %v", err)
 		}
-		ui.Muted(fmt.Sprintf("Revoked %s — it stops working on its next request.", args[0]))
 	},
+}
+
+// runTokenRevoke revokes one by id. It takes effect on the token's very next request, because
+// `resolveServiceToken` filters on `revoked_at` inside the lookup query itself.
+func runTokenRevoke(c apiClient, out io.Writer, id string) error {
+	if err := c.RevokeServiceToken(id); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, ui.MutedStyle.Render(fmt.Sprintf("Revoked %s — it stops working on its next request.", id)))
+	return nil
 }
 
 func init() {

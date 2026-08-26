@@ -77,7 +77,9 @@ describe("which bearers take the service-token branch", () => {
 	it("refuses a prefix with no random part WITHOUT touching the database", async () => {
 		const { resolveServiceToken } = await import("@/lib/cli/service-token");
 		expect(await resolveServiceToken("alethia_sat_")).toBeNull();
-		expect(selectWhere, "a degenerate token must not reach a lookup at all").not.toHaveBeenCalled();
+		// The test's own title carries the reason; `vitest/valid-expect` is configured with the rule's
+		// default maxArgs of 1, so the assertion message goes there rather than as a second argument.
+		expect(selectWhere).not.toHaveBeenCalled();
 	});
 
 	it("returns null for a bearer that is not a service token", async () => {
@@ -109,8 +111,11 @@ describe("resolution fails closed", () => {
 		await resolveServiceToken("alethia_sat_whatever");
 		expect(selectWhere).toHaveBeenCalledTimes(1);
 		const consulted = columnsIn(selectWhere.mock.calls[0][0]);
+		// Asserted as a SET rather than column-by-column: the failure then names every column that is
+		// missing in one diff, instead of stopping at the first. Moving the revocation test out of the
+		// query would print `expected [ 'token_hash', 'expires_at' ] to include 'revoked_at'`.
 		for (const column of ["token_hash", "revoked_at", "expires_at"]) {
-			expect(consulted, `the lookup does not consult ${column}`).toContain(column);
+			expect(consulted).toContain(column);
 		}
 	});
 

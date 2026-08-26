@@ -12,16 +12,23 @@ import (
 // method returns, and the *Err fields force the error path. Mutating calls record
 // their arguments so tests can assert what was sent.
 type fakeClient struct {
-	whoami      *api.WhoAmI
-	orgs        []api.OrgSummary
-	members     []api.Member
-	teams       []api.Team
-	runners     []api.Runner
-	clusters    []api.ClusterSummary
-	configs     []types.ConfigurationSummary
-	jobsPage    *api.JobsPage
-	job         *api.ProvisionJob
-	signingKeys []api.SigningKey
+	whoami   *api.WhoAmI
+	orgs     []api.OrgSummary
+	members  []api.Member
+	teams    []api.Team
+	runners  []api.Runner
+	clusters []api.ClusterSummary
+	// Service-account tokens (non-interactive auth). The three recorded fields are what the
+	// assertions read back: a mint that dropped the name or the expiry would otherwise look fine.
+	serviceTokens      []api.ServiceToken
+	createdToken       *api.CreatedServiceToken
+	createdTokenName   string
+	createdTokenExpiry int
+	revokedTokenID     string
+	configs            []types.ConfigurationSummary
+	jobsPage           *api.JobsPage
+	job                *api.ProvisionJob
+	signingKeys        []api.SigningKey
 	// signingKeysErr is separate from err: verify-receipt's whole degradation story is a job
 	// fetch that SUCCEEDS while the trusted-key set does not, so the two must fail independently.
 	signingKeysErr error
@@ -220,6 +227,20 @@ func (f *fakeClient) ExportConfiguration(projectName, format string) (*api.Confi
 
 func (f *fakeClient) GetRepositories(provider string) ([]api.Repository, error) {
 	return f.repos, f.err
+}
+
+func (f *fakeClient) ListServiceTokens() ([]api.ServiceToken, error) {
+	return f.serviceTokens, f.err
+}
+
+func (f *fakeClient) CreateServiceToken(name string, expiresInDays int) (*api.CreatedServiceToken, error) {
+	f.createdTokenName, f.createdTokenExpiry = name, expiresInDays
+	return f.createdToken, f.err
+}
+
+func (f *fakeClient) RevokeServiceToken(id string) error {
+	f.revokedTokenID = id
+	return f.err
 }
 
 func (f *fakeClient) GetProviderStatus(provider string) (*api.ProviderStatus, error) {

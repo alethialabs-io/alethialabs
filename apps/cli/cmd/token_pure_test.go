@@ -4,10 +4,16 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
 )
 
@@ -58,6 +64,13 @@ func TestStampRenderingDistinguishesNeverFromAbsent(t *testing.T) {
 	if got := stampOrNever(ptr("   ")); got != "never" {
 		t.Errorf("whitespace renders %q, want \"never\"", got)
 	}
+	// A REAL timestamp must delegate to stampOrDash rather than being swallowed by the "never" arm —
+	// otherwise a token that HAS been used would report that it never was, which is the exact
+	// distinction this pair exists to make.
+	used := "2026-08-26T09:41:00Z"
+	if got := stampOrNever(&used); got != "2026-08-26 09:41" {
+		t.Errorf("a used token renders %q, want the UTC minute", got)
+	}
 	if got := stampOrDash(nil); got != "—" {
 		t.Errorf("an absent timestamp renders %q, want an em dash", got)
 	}
@@ -91,5 +104,175 @@ func TestServiceTokenListTypeCarriesNoSecret(t *testing.T) {
 	}
 	if !strings.Contains(joined, "never") {
 		t.Errorf("a never-used token must say so, got %q", joined)
+	}
+}
+
+// The NON-INTERACTIVE credential's precedence, which is a documented promise: the --token flag wins
+// over $ALETHIA_TOKEN, and the docs tell users to prefer the environment variable in CI because a
+// flag value lands in the process table and in shell history. Untested, that is just a claim.
+func TestServiceTokenPrecedence(t *testing.T) {
+	original := serviceTokenFlag
+	t.Cleanup(func() { serviceTokenFlag = original })
+
+	cases := []struct {
+		name string
+		flag string
+		env  string
+		want string
+	}{
+		{"neither supplied", "", "", ""},
+		{"environment only", "", "env-token", "env-token"},
+		{"flag only", "flag-token", "", "flag-token"},
+		// The more specific, more deliberate source is the one nearer the invocation.
+		{"flag WINS over the environment", "flag-token", "env-token", "flag-token"},
+		// A token pasted into a CI secret picks up a trailing newline more often than not, and a
+		// credential that fails for an invisible reason is the worst kind to debug.
+		{"surrounding whitespace is trimmed", "", "  env-token\n", "env-token"},
+		{"a whitespace-only flag falls through to the environment", "   ", "env-token", "env-token"},
+		{"whitespace-only everywhere is no token at all", "  ", "   ", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			serviceTokenFlag = tc.flag
+			t.Setenv(ServiceTokenEnv, tc.env)
+			if got := serviceToken(); got != tc.want {
+				t.Errorf("serviceToken() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The whole point of the feature: with a token supplied, NOTHING is read from or written to disk.
+// A CI runner has no home directory worth persisting to, and a credential written to one is a
+// credential left behind.
+func TestServiceTokenShortCircuitsTheCredentialsFile(t *testing.T) {
+	original := serviceTokenFlag
+	t.Cleanup(func() { serviceTokenFlag = original })
+	serviceTokenFlag = ""
+
+	// Point HOME at an empty directory: with no token, resolving would have to fall through to the
+	// credentials file (and, absent one, to the login prompt). With a token, it must not look.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv(ServiceTokenEnv, "alethia_sat_from-the-environment")
+
+	got, err := getAuthTokenInternal(false)
+	if err != nil {
+		t.Fatalf("a supplied token still errored: %v", err)
+	}
+	if got != "alethia_sat_from-the-environment" {
+		t.Errorf("got %q, want the supplied token", got)
+	}
+	// Nothing was written. A credentials file appearing here would mean the short-circuit ran and
+	// then persisted anyway.
+	if _, statErr := os.Stat(filepath.Join(home, ".config", "alethia", "credentials.json")); statErr == nil {
+		t.Error("a credentials file was written despite the token short-circuit")
+	}
+}
+
+// ── The command bodies, driven through the same client/writer/format seam runOrgList uses. ──
+
+func TestRunTokenList(t *testing.T) {
+	var buf bytes.Buffer
+	c := &fakeClient{serviceTokens: []api.ServiceToken{
+		{ID: "t1", Name: "github-actions", TokenPrefix: "alethia_sat_abc12345", CreatedAt: "2026-08-26T09:00:00Z"},
+	}}
+	if err := runTokenList(c, &buf, ui.FormatTable); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, want := range []string{"github-actions", "alethia_sat_abc12345", "never", "active"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("the table drops %q:\n%s", want, buf.String())
+		}
+	}
+
+	// An EMPTY list in table mode says what to do next; in a machine format it must stay machine
+	// readable rather than emitting prose a parser would choke on.
+	buf.Reset()
+	empty := &fakeClient{}
+	if err := runTokenList(empty, &buf, ui.FormatTable); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "token create") {
+		t.Errorf("the empty case does not say how to create one:\n%s", buf.String())
+	}
+	buf.Reset()
+	if err := runTokenList(empty, &buf, "json"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), "token create") {
+		t.Errorf("json mode emitted prose:\n%s", buf.String())
+	}
+
+	if err := runTokenList(&fakeClient{err: errors.New("boom")}, &buf, ui.FormatTable); err == nil {
+		t.Error("a client error was swallowed")
+	}
+}
+
+func TestRunTokenCreate(t *testing.T) {
+	// A name is REQUIRED, and the failure must not reach the client — minting an unnamed credential
+	// is how a token list becomes a list of prefixes nobody can identify.
+	c := &fakeClient{}
+	if err := runTokenCreate(c, io.Discard, io.Discard, ui.FormatTable, "   ", 0); err == nil {
+		t.Fatal("an empty name was accepted")
+	}
+	if c.createdTokenName != "" {
+		t.Error("the client was called despite the empty name")
+	}
+
+	// THE SPLIT THAT MAKES THE PIPE WORK: the token on stdout, everything else on stderr.
+	var out, errOut bytes.Buffer
+	c = &fakeClient{createdToken: &api.CreatedServiceToken{
+		ID: "t1", Name: "ci", TokenPrefix: "alethia_sat_abc12345",
+		Token: "alethia_sat_abc12345-the-rest", Warning: "Copy this token now",
+	}}
+	if err := runTokenCreate(c, &out, &errOut, ui.FormatTable, "ci", 90); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "alethia_sat_abc12345-the-rest" {
+		t.Errorf("stdout must carry the token and NOTHING else, got %q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "Copy this token now") {
+		t.Errorf("the once-only warning did not reach stderr:\n%s", errOut.String())
+	}
+	if strings.Contains(errOut.String(), "alethia_sat_abc12345-the-rest") {
+		t.Error("the full token leaked onto stderr — a pipe would then be the only safe use")
+	}
+	if c.createdTokenName != "ci" || c.createdTokenExpiry != 90 {
+		t.Errorf("name/expiry not passed through: %q %d", c.createdTokenName, c.createdTokenExpiry)
+	}
+
+	// A machine format renders one row and no prose.
+	out.Reset()
+	if err := runTokenCreate(c, &out, io.Discard, "json", "ci", 0); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out.String(), "alethia_sat_abc12345-the-rest") {
+		t.Errorf("json mode dropped the token:\n%s", out.String())
+	}
+
+	if err := runTokenCreate(&fakeClient{err: errors.New("boom")}, io.Discard, io.Discard, ui.FormatTable, "ci", 0); err == nil {
+		t.Error("a client error was swallowed")
+	}
+}
+
+func TestRunTokenRevoke(t *testing.T) {
+	var buf bytes.Buffer
+	c := &fakeClient{}
+	if err := runTokenRevoke(c, &buf, "t1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if c.revokedTokenID != "t1" {
+		t.Errorf("the id was not passed through: %q", c.revokedTokenID)
+	}
+	// The confirmation states WHEN it takes effect. "Revoked" alone leaves a reader wondering
+	// whether a running pipeline keeps working.
+	if !strings.Contains(buf.String(), "next request") {
+		t.Errorf("the confirmation does not say when it takes effect:\n%s", buf.String())
+	}
+
+	if err := runTokenRevoke(&fakeClient{err: errors.New("boom")}, io.Discard, "t1"); err == nil {
+		t.Error("a client error was swallowed")
 	}
 }
