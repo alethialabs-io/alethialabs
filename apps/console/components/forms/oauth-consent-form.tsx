@@ -64,7 +64,7 @@ export function OAuthConsentForm() {
 		return (
 			<div className="space-y-3">
 				<p className="vx-eyebrow">Authorize</p>
-				<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
+				<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
 					Nothing to authorize
 				</h1>
 				<p className="text-[15px] text-text-tertiary">
@@ -79,7 +79,7 @@ export function OAuthConsentForm() {
 		<div className="space-y-8">
 			<div className="space-y-3">
 				<p className="vx-eyebrow">Authorize</p>
-				<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
+				<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
 					Connect an external app
 				</h1>
 				<p className="text-[15px] text-text-tertiary">

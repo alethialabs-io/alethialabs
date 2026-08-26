@@ -5,7 +5,7 @@
 import { Loader2, MailQuestion } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { AuthShell } from "@/components/auth/auth-shell";
+import { AuthCard, AuthShell } from "@/components/auth/auth-shell";
 import { Button } from "@repo/ui/button";
 import { authClient } from "@/lib/auth/client";
 
@@ -60,11 +60,14 @@ function AcceptInvite() {
 
 	return (
 		<Centered>
-			<div className="w-full max-w-[400px] rounded-lg border border-border bg-surface p-8 text-center shadow-sm">
+			{/* The shared card, not a near-miss copy of it — so this screen picks up the
+			    clamp frame with every other auth surface instead of keeping its own
+			    bordered box. */}
+			<AuthCard className="text-center">
 				<div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-surface-muted text-text-tertiary">
 					<MailQuestion className="h-5 w-5" />
 				</div>
-				<h1 className="mt-4 font-grotesk text-[22px] font-semibold tracking-[-0.03em] text-text-primary">
+				<h1 className="mt-4 font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
 					You&apos;ve been invited to an organization
 				</h1>
 				<p className="mt-1.5 text-sm text-text-secondary">
@@ -72,7 +75,7 @@ function AcceptInvite() {
 					<span className="font-medium text-text-primary">{session.user.email}</span>.
 				</p>
 				{error && (
-					<p className="mt-4 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+					<p className="mt-4 border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
 						{error}
 					</p>
 				)}
@@ -93,7 +96,7 @@ function AcceptInvite() {
 						)}
 					</Button>
 				</div>
-			</div>
+			</AuthCard>
 		</Centered>
 	);
 }
@@ -110,12 +113,12 @@ function Centered({ children }: { children: React.ReactNode }) {
 function Message({ title, body }: { title: string; body: string }) {
 	return (
 		<Centered>
-			<div className="text-center">
-				<h1 className="font-grotesk text-[22px] font-semibold tracking-[-0.03em] text-text-primary">
+			<AuthCard className="text-center">
+				<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
 					{title}
 				</h1>
 				<p className="mt-1.5 text-sm text-text-secondary">{body}</p>
-			</div>
+			</AuthCard>
 		</Centered>
 	);
 }
