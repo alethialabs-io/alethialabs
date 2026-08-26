@@ -118,3 +118,32 @@ describe("generated fields are machine-owned", () => {
 		}
 	});
 });
+
+describe("the 16-character rule is enforced, not merely produced", () => {
+	// `generated: true` hides the field from the configure form. It does NOT make it unsettable:
+	// enableAddon validates incoming values BEFORE secrets are stripped, and every server action is
+	// reachable as a POST. Relying on "our minting happens to produce 16" would leave a caller able
+	// to store a length Harbor refuses to start on.
+	const schema = (getAddOn("harbor") as AddOnDef).configSchema;
+
+	it("accepts blank — the signal to mint one", () => {
+		expect(schema.safeParse({ secretKey: "" }).success).toBe(true);
+	});
+
+	it("accepts exactly 16 characters", () => {
+		expect(schema.safeParse({ secretKey: "0123456789abcdef" }).success).toBe(true);
+	});
+
+	it.each([
+		["15 characters", "0123456789abcde"],
+		["17 characters", "0123456789abcdefg"],
+		["1 character", "x"],
+		["a long passphrase", "correct-horse-battery-staple"],
+	])("rejects %s", (_label, value) => {
+		const result = schema.safeParse({ secretKey: value });
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(JSON.stringify(result.error.issues)).toContain("16 characters");
+		}
+	});
+});

@@ -965,7 +965,19 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			 * replicates from. The key name is dictated by the chart: "If using
 			 * existingSecretSecretKey, the key must be secretKey".
 			 */
-			secretKey: z.string().default(""),
+			secretKey: z
+				.string()
+				// The 16-char rule is the CHART's, not a style preference — Harbor refuses to start
+				// on any other length. `generated: true` keeps this out of the form, but hidden is
+				// not unsettable: `enableAddon` validates the incoming values before stripping
+				// secrets, and every server action is reachable as a POST. So the invariant is
+				// enforced here rather than resting on the fact that our own minting happens to
+				// produce 16.
+				.refine((v) => v === "" || v.length === 16, {
+					message:
+						"Harbor's data-encryption key must be exactly 16 characters (leave it blank and Alethia mints one).",
+				})
+				.default(""),
 		}),
 		// RECREATE, NOT ROLLINGUPDATE — and this is a default rather than a knob on purpose.
 		//
