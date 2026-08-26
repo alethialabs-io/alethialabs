@@ -165,19 +165,19 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**10 of 25 proof cells are proven.** 9 failing · 0 stale (cause fixed, needs a re-run) · 0 blocked · 6 never run.
+**10 of 30 proof cells are proven.** 9 failing · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
 ### Proof grid — cloud × dimension
 
-| cloud | floor | all kinds | 18 add-ons | BYO-IaC | day-2 |
-|---|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **gcp** | ✅ | ❌ | · | ✅ | ✅ |
-| **azure** | ✅ | ❌ | ❌ | ✅ | ✅ |
-| **alibaba** | · | · | · | · | · |
-| **hetzner** | ✅ | ❌ | ❌ | ✅ | ✅ |
+| cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **aws** | ✅ | ❌ | ❌ | ❌ | · | ❌ |
+| **gcp** | ✅ | ❌ | · | ✅ | · | ✅ |
+| **azure** | ✅ | ❌ | ❌ | ✅ | · | ✅ |
+| **alibaba** | · | · | · | · | · | · |
+| **hetzner** | ✅ | ❌ | ❌ | ✅ | · | ✅ |
 
 Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · — ceiling · 🔶 deferred
 
@@ -186,21 +186,21 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `aws/floor` **proven** — ledger 2026-08-24, bundle `demos/proofs/aws/20260824T211529Z`
 - `aws/maxconfig` **failing** — ledger 2026-08-26 (via the `full` composite run) (#2717)
 - `aws/addons` **failing** — ledger 2026-08-26 (via the `full` composite run) (#2717)
-- `aws/byo` **failing** — ledger 2026-08-26 (#2591)
+- `aws/gitops` **failing** — ledger 2026-08-26 (#2591)
 - `aws/day2` **failing** — ledger 2026-08-26 (#2717)
 - `gcp/floor` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T105829Z`
 - `gcp/maxconfig` **failing** — ledger 2026-08-26 (#2567)
-- `gcp/byo` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
+- `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
 - `azure/floor` **proven** — ledger 2026-08-25, bundle `demos/proofs/azure/20260825T063447Z`
 - `azure/maxconfig` **failing** — ledger 2026-08-25 (via the `full` composite run)
 - `azure/addons` **failing** — ledger 2026-08-25 (via the `full` composite run)
-- `azure/byo` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
+- `azure/gitops` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
 - `azure/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T235236Z`
 - `hetzner/floor` **proven** — ledger 2026-08-24, bundle `demos/proofs/hetzner/20260824T201636Z`
 - `hetzner/maxconfig` **failing** — ledger 2026-08-25 (via the `full` composite run) (#2568)
 - `hetzner/addons` **failing** — ledger 2026-08-26 (#2717)
-- `hetzner/byo` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/2026-08-25T175213Z`
+- `hetzner/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/2026-08-25T175213Z`
 - `hetzner/day2` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/20260825T192100Z`
 
 </details>
@@ -220,7 +220,7 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 1. `aws/addons` — failing
 1. `azure/addons` — failing
 1. `hetzner/addons` — failing
-1. `aws/byo` — failing
+1. `aws/gitops` — failing
 1. `aws/day2` — failing
 1. `alibaba/floor` — never_run
 
@@ -273,7 +273,8 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | floor | `(the cloud gate alone)` | n/a | real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set |
 | all kinds | `ALETHIA_E2E_MAX_CONFIG` | ✅ by dimension: `ALETHIA_E2E_MAX_CONFIG` | every kind this cloud offers lands in tofu state (or converges as its named Application) |
 | 18 add-ons | `ALETHIA_E2E_ALL_ADDONS` | ✅ by dimension: `ALETHIA_E2E_ALL_ADDONS` | all 18 marketplace add-ons Healthy+Synced |
-| BYO-IaC | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ? unknown: `E2E_ARGO_APPS_REPO`<br>? unknown: `E2E_GIT_TOKEN` | customer IaC/charts applied, and Alethia services bound to their outputs |
+| GitOps repos | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ? unknown: `E2E_ARGO_APPS_REPO`<br>? unknown: `E2E_GIT_TOKEN` | a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource |
+| BYO-IaC | `ALETHIA_E2E_BYO_IAC` | ✅ by dimension: `ALETHIA_E2E_BYO_IAC` | a customer OpenTofu root module is refused when unsafe, applied through the state proxy, drifts, heals and destroys — with state cleared |
 | day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>? unknown: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
 
 ### Open REDs
@@ -282,7 +283,7 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 |---|---|---|:---:|
 | `aws/maxconfig` | failing | #2717 | open |
 | `aws/addons` | failing | #2717 | open |
-| `aws/byo` | failing | #2591 | open |
+| `aws/gitops` | failing | #2591 | open |
 | `aws/day2` | failing | #2717 | open |
 | `gcp/maxconfig` | failing | #2567 | ? |
 | `azure/maxconfig` | failing | **none** | ? |
