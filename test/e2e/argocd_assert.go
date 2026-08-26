@@ -856,11 +856,27 @@ func sortedManagers(m map[string][]string) []string {
 }
 
 // refsForLosers collects the OutOfSync resource refs belonging to the failing Applications, so the
-// live-object dump covers exactly the losers and not the whole cluster.
+// dump covers exactly the losers and not the whole cluster.
+//
+// DEDUPLICATED, and it matters more than it looks. Cluster-scoped objects — a CustomResourceDefinition
+// most of all — can be reported OutOfSync under MORE THAN ONE Application, and the dump is capped at
+// maxResources. hetzner/addons run 32949217522 had exactly 8 losers against a cap of 8, five of them
+// argo-rollouts CRDs: a single duplicate would have pushed a genuine object behind
+// "… 1 more not shown" and cost that run an answer, which is the same way the previous dump failed.
+//
+// Order is preserved (first occurrence wins) so the output still follows the loser order a reader
+// sees above it, rather than an arbitrary map order.
 func refsForLosers(observed map[string]argoAppState, losers []string) []outOfSyncRef {
 	var refs []outOfSyncRef
+	seen := map[outOfSyncRef]bool{}
 	for _, name := range losers {
-		refs = append(refs, observed[name].OutOfSyncRefs...)
+		for _, r := range observed[name].OutOfSyncRefs {
+			if seen[r] {
+				continue
+			}
+			seen[r] = true
+			refs = append(refs, r)
+		}
 	}
 	return refs
 }

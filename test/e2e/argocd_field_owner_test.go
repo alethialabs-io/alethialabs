@@ -206,3 +206,25 @@ func TestRenderSyncErrorsNamesTheRejectedApps(t *testing.T) {
 		t.Errorf("apps are not in sorted order:\n%s", out)
 	}
 }
+
+// A cluster-scoped object can be OutOfSync under more than one Application — a CustomResourceDefinition
+// most of all. The dump is CAPPED, so a duplicate does not merely repeat itself: it pushes a genuine
+// object behind "… n more not shown". hetzner/addons run 32949217522 had exactly 8 losers against a
+// cap of 8, five of them argo-rollouts CRDs, so one duplicate would have cost that run an answer.
+func TestRefsForLosersDeduplicatesAcrossApplications(t *testing.T) {
+	crd := outOfSyncRef{Group: "apiextensions.k8s.io", Kind: "CustomResourceDefinition", Name: "rollouts.argoproj.io"}
+	own := outOfSyncRef{Kind: "StatefulSet", Name: "addon-tempo", Namespace: "tempo"}
+	observed := map[string]argoAppState{
+		"addon-argo-rollouts": {OutOfSyncRefs: []outOfSyncRef{crd}},
+		"addon-kyverno":       {OutOfSyncRefs: []outOfSyncRef{crd}},
+		"addon-tempo":         {OutOfSyncRefs: []outOfSyncRef{own, crd}},
+	}
+	got := refsForLosers(observed, []string{"addon-argo-rollouts", "addon-kyverno", "addon-tempo"})
+	if len(got) != 2 {
+		t.Fatalf("got %d refs, want 2 (the CRD once, the StatefulSet once): %+v", len(got), got)
+	}
+	// First occurrence wins, so the dump still follows the loser order the reader sees above it.
+	if got[0] != crd || got[1] != own {
+		t.Errorf("order not preserved: %+v", got)
+	}
+}
