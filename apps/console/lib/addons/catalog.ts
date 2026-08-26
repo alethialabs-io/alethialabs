@@ -16,7 +16,12 @@ import {
 	type ChartWorkloadOverlay,
 	composeChartOverlay,
 } from "./chart-overlay";
-import { hasStoredSecret, secretFieldKeys, stripAddonSecrets } from "./secrets";
+import {
+	hasStoredSecret,
+	randomCredential,
+	secretFieldKeys,
+	stripAddonSecrets,
+} from "./secrets";
 import type { AddOnDef, AddOnInstallSpec, AddOnMode } from "./types";
 
 /**
@@ -898,6 +903,14 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		secretValues: (refs) =>
 			refs.rootPassword ? { existingSecret: refs.rootPassword.name } : {},
 		secretStaticData: (c) => ({ rootUser: c.rootUser }),
+		// #2822: with no `existingSecret`, the minio chart mints a random rootUser AND rootPassword
+		// on EVERY render — verified by rendering 5.2.0 twice and diffing, which differs. ArgoCD
+		// re-renders on every reconcile, so the Secret is permanently OutOfSync and the credentials
+		// rotate under a running workload: anything that authenticated once stops working, with
+		// nothing to say why. A blank field therefore mints here instead, which sets
+		// `existingSecret` and stops the render moving.
+		generateSecrets: (present): Record<string, string> =>
+			present.has("rootPassword") ? {} : { rootPassword: randomCredential() },
 		fields: [
 			{ key: "storageGb", label: "Storage (GiB)", type: "number", default: 50, min: 5, max: 2000 },
 			{
@@ -916,7 +929,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "Root password",
 				type: "secret",
 				secret: true,
-				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Empty = the chart generates one.",
+				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Leave it empty and Alethia mints one for you, ONCE — read it back with `kubectl -n minio get secret alethia-addon-minio`. It is not regenerated on a later save.",
 			},
 		],
 		syncWave: 2,

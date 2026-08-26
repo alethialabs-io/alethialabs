@@ -12,6 +12,8 @@
 // the git-token pattern) and seeds a k8s Secret in-cluster, which the chart consumes via the
 // def's `secretValues` wiring (existingSecret / secretKeyRef).
 
+import { randomBytes } from "node:crypto";
+
 import { decryptSecret, encryptSecret } from "@/lib/crypto/secrets";
 import type { AddOnDef } from "@/lib/addons/types";
 import type { EncryptedSecret } from "@/types/jsonb.types";
@@ -130,6 +132,64 @@ export function mergeAddonSecrets(
 			if (isEncryptedSecret(prior)) out[key] = prior;
 			else delete out[key];
 		}
+	}
+	return out;
+}
+
+/**
+ * A URL-safe random credential of `bytes` entropy, for `generateSecrets` implementations.
+ *
+ * base64url rather than a hand-rolled alphabet loop: no modulo bias, and no alphabet to get
+ * subtly wrong. 24 bytes is 192 bits, well past anything a chart's own `randAlphaNum 16` gives.
+ */
+export function randomCredential(bytes = 24): string {
+	return randomBytes(bytes).toString("base64url");
+}
+
+/**
+ * Mint the secret knobs an add-on declares as auto-generated and the user left unset, encrypting
+ * each before it is persisted (#2822, #2823).
+ *
+ * WHY THIS EXISTS. A chart that generates its own credential does so at RENDER time. ArgoCD
+ * re-renders on every reconcile, so the Secret never matches the live one — the Application sits
+ * permanently OutOfSync, selfHeal rewrites it every pass, and any chart that stamps a
+ * `checksum/secret` annotation onto its pod template rolls its pods forever. Worse, the rotating
+ * value is often load-bearing: harbor's token-signing keypair signs the registry's auth tokens, so
+ * rotating it silently invalidates every `docker pull` credential the registry ever issued.
+ *
+ * So for these add-ons a blank field must not mean "let the chart generate one". Minting the value
+ * here makes `hasStoredSecret` true, which makes `resolveAddOnInstall` emit a secretRef, which makes
+ * the def's `secretValues` wire the chart at an `existingSecret` — and the render stops moving.
+ *
+ * Runs AFTER `mergeAddonSecrets`, on its output, so:
+ *   - a value the user supplied wins (it is already present, so nothing is minted for that key);
+ *   - a value carried forward from a previous save wins for the same reason — a reconfigure of
+ *     unrelated knobs can never rotate a live credential;
+ *   - and only a genuinely unset key is filled.
+ *
+ * A generator that returns a key which is already set, or an empty string, is ignored rather than
+ * trusted — the invariant this function actually owns is "never overwrite a stored secret", and it
+ * must not depend on every definition getting that right.
+ *
+ * Returns a new object. Server-side only (it encrypts).
+ */
+export function generateAddonSecrets(
+	def: AddOnDef,
+	values: Record<string, unknown>,
+): Record<string, unknown> {
+	if (!def.generateSecrets) return values;
+	const keys = secretFieldKeys(def);
+	if (keys.length === 0) return values;
+	const present = new Set(keys.filter((k) => hasStoredSecret(values[k])));
+	const minted = def.generateSecrets(present);
+	const out = { ...values };
+	for (const [key, plaintext] of Object.entries(minted)) {
+		// Only declared SECRET fields — a generator cannot smuggle a value into a plain knob,
+		// which would land in the deploy snapshot as plaintext.
+		if (!keys.includes(key)) continue;
+		if (present.has(key)) continue;
+		if (typeof plaintext !== "string" || plaintext.length === 0) continue;
+		out[key] = encryptSecret({ [key]: plaintext });
 	}
 	return out;
 }
