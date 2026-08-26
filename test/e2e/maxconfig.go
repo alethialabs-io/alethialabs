@@ -821,8 +821,15 @@ var maxConfigSnapshotKeys = []string{
 // It is also the name we would DELEGATE if the ACM path is ever to be proven — see MaxConfigDomain.
 const maxConfigDomainSuffix = "e2e.alethialabs.io"
 
-// envMaxConfigDomainSuffix overrides that default, with a per-provider form
-// (ALETHIA_E2E_MAXCONFIG_DOMAIN_SUFFIX_<PROVIDER>) taking precedence over the global one.
+// envMaxConfigDomainSuffix overrides that default. A per-provider form — this same name with
+// `_` + the upper-cased provider slug appended — takes precedence over the global one.
+//
+// The per-provider name is deliberately NOT spelled out as a literal here. TestScenarioEnablesReachTheNightly
+// scans this file with a plain `ALETHIA_E2E_[A-Z0-9_]*` regex and does NOT strip comments (it strips
+// them on the workflow side only), so a name written out in prose is indexed as a variable the
+// harness reads — and a `..._<PROVIDER>` placeholder matches up to the underscore, producing a
+// phantom var that no workflow can ever set. The concrete per-provider names that ARE wired live in
+// e2e-nightly.yml.
 //
 // It exists because HETZNER CANNOT USE THE DEFAULT AT ALL. Hetzner DNS refuses to host a `.io`
 // zone — its API answers `unsupported tld (invalid_input)`, 422, measured against the live API and
