@@ -656,6 +656,102 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 			s = s[:maxPerApp] + "…(truncated)"
 		}
 		b.WriteString(s)
+		// `describe application` shows the DESIRED spec and the sync status. It says nothing about
+		// the workload, so a Degraded app — which ArgoCD derives from the underlying Deployment —
+		// reports a verdict with no cause attached. See dumpUnhealthyPods.
+		b.WriteString(dumpUnhealthyPods(ctx, kubeconfigPath, name))
+	}
+	return b.String()
+}
+
+// dumpUnhealthyPods reports the pods behind an Application that are not Running, with their recent
+// events and container logs.
+//
+// WHY. ArgoCD's `Degraded` comes from the workload, and `kubectl describe application` shows only
+// the desired spec and the sync status — no restart count, no container status, no events. gcp
+// `maxconfig` run 32951789725 spent 52 minutes and ~EUR 1.50 to end at
+// `external-dns: health=Degraded sync=Synced`, with the rendered Application visibly CORRECT
+// (`provider: google`, the right workload-identity annotation) and nothing in the dump able to say
+// what the pod was actually doing. A verdict nobody can act on costs the next run too.
+//
+// This is the `Degraded` counterpart to dumpOutOfSyncResources, and the same shape
+// applyStoreAwaitingOperator already uses on its deadline branch — for the same stated reason: a
+// slow install and a crash-looping pod are indistinguishable from the outer error alone.
+//
+// The events are usually the whole answer. `CreateContainerConfigError`, `CrashLoopBackOff` and an
+// image-pull failure all look identical at the Application level and need three different fixes.
+//
+// Best-effort and hard-capped: this runs on an ALREADY-FAILING path and must never be why a run
+// hangs or an error is lost. A pod dump that fails says so — "could not read it" and "nothing was
+// wrong" must not look the same.
+func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
+	const (
+		maxPods     = 3
+		maxLogLines = "40"
+	)
+	// ArgoCD labels every resource it manages with the Application's name. That is how the pods are
+	// found without knowing which namespace the chart chose.
+	selector := "app.kubernetes.io/instance=" + app
+	run := func(timeout time.Duration, args ...string) (string, error) {
+		cctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		full := append([]string{"--kubeconfig", kubeconfigPath}, args...)
+		out, err := exec.CommandContext(cctx, "kubectl", full...).CombinedOutput()
+		return string(out), err
+	}
+
+	// `-o custom-columns` rather than JSON: this is read by a human in a log, and the whole point is
+	// that the restart count and the waiting reason are visible at a glance.
+	out, err := run(30*time.Second, "get", "pods", "-A", "-l", selector, "--no-headers",
+		"-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name,PHASE:.status.phase,"+
+			"READY:.status.containerStatuses[*].ready,RESTARTS:.status.containerStatuses[*].restartCount,"+
+			"REASON:.status.containerStatuses[*].state.waiting.reason")
+	if err != nil {
+		return fmt.Sprintf("\n──── pods for %s: could not list (%v) ────\n", app, err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		// A DIFFERENT fact from "they are all fine", and it must read differently: an Application
+		// with no pods at all is Degraded for a reason no pod dump will ever explain.
+		return fmt.Sprintf("\n──── pods for %s: NONE match %s — the workload was never created ────\n", app, selector)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n──── pods for %s (%s) ────\n%s\n", app, selector, strings.Join(lines, "\n"))
+
+	shown := 0
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		ns, pod, phase := fields[0], fields[1], fields[2]
+		// Only the pods that are actually unhappy. A Running pod's logs are not why the Application
+		// is Degraded, and dumping them would bury the one that is.
+		if phase == "Running" && !strings.Contains(line, "false") {
+			continue
+		}
+		if shown >= maxPods {
+			fmt.Fprintf(&b, "… more unhealthy pods not dumped\n")
+			break
+		}
+		shown++
+		if ev, err := run(30*time.Second, "describe", "pod", "-n", ns, pod); err == nil {
+			// Only the Events block: a full describe is mostly the spec, which the Application
+			// already showed.
+			if i := strings.Index(ev, "Events:"); i >= 0 {
+				fmt.Fprintf(&b, "\n  events for %s/%s:\n%s\n", ns, pod, ev[i:])
+			}
+		}
+		if logs, err := run(30*time.Second, "logs", "-n", ns, pod, "--all-containers", "--tail", maxLogLines); err == nil && strings.TrimSpace(logs) != "" {
+			fmt.Fprintf(&b, "\n  last %s log lines for %s/%s:\n%s\n", maxLogLines, ns, pod, logs)
+		}
+	}
+	if shown == 0 {
+		// Every pod is Running and ready, yet ArgoCD calls the Application Degraded. That is a real
+		// and quite different finding — the health is coming from something other than pod
+		// readiness — and saying so is more useful than printing nothing.
+		fmt.Fprintf(&b, "  every pod is Running and ready — the Degraded health is NOT pod readiness\n")
 	}
 	return b.String()
 }
