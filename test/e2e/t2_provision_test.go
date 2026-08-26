@@ -372,7 +372,9 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// mid-deploy failure still tears the cluster down. The workflow's always() cleanup
 	// is the hard guarantee for a killed process; this is the in-process best effort.
 	t.Cleanup(func() {
-		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		// Per-provider, and the SAME function ResolveT2Budget reserves the window with — a
+		// flat 15m here was hetzner's number charged to every cloud (#2729).
+		dctx, dcancel := context.WithTimeout(context.Background(), resolveT2TeardownTimeout(p))
 		defer dcancel()
 		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, project, env, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
 			// The sweeper NAME follows the provider. This line hardcoded `hcloud-cleanup` on every
