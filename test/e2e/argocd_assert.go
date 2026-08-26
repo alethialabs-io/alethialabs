@@ -69,6 +69,10 @@ type argoAppState struct {
 	// divisor) for exactly this class; naming the resource is what tells you whether a third
 	// belongs there.
 	OutOfSyncResources []string
+	// OutOfSyncRefs is the same set, structured, so the live objects can be fetched and dumped.
+	// Naming the RESOURCE (#2738) answered "which object differs" and left "which FIELD differs"
+	// to a guess — and a guessed ignoreDifferences entry can MASK REAL DRIFT rather than no-op.
+	OutOfSyncRefs []outOfSyncRef
 }
 
 // anyProvider is the infraServiceArgoApps inner key meaning "the same Application on
@@ -372,6 +376,7 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	var lastLosers []string
+	var lastRefs []outOfSyncRef
 	for {
 		raw, err := kubectlGetArgoApps(ctx, kubeconfigPath)
 		if err != nil {
@@ -379,20 +384,21 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 			// deadline — unlike ReadAddOnHealth's best-effort Unknown, a persistent failure
 			// here must FAIL, not soften.
 			lastErr = fmt.Errorf("listing ArgoCD Applications failed: %w", err)
-			lastLosers = nil
+			lastLosers, lastRefs = nil, nil
 		} else if observed, perr := parseArgoApps(raw); perr != nil {
 			lastErr = fmt.Errorf("parsing ArgoCD Applications failed: %w", perr)
-			lastLosers = nil
+			lastLosers, lastRefs = nil, nil
 		} else {
 			losers, everr := evaluateArgoApps(observed, expected)
 			if everr == nil {
 				return nil
 			}
 			lastErr, lastLosers = everr, losers
+			lastRefs = refsForLosers(observed, losers)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ArgoCD Applications did not all reach Healthy+Synced within %s:\n%v%s",
-				timeout, lastErr, describeArgoApps(ctx, kubeconfigPath, lastLosers))
+				timeout, lastErr, describeArgoApps(ctx, kubeconfigPath, lastLosers)+dumpOutOfSyncResources(ctx, kubeconfigPath, lastRefs))
 		}
 		select {
 		case <-ctx.Done():
@@ -488,10 +494,11 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 					Message string `json:"message"`
 				} `json:"conditions"`
 				Resources []struct {
-					Group  string `json:"group"`
-					Kind   string `json:"kind"`
-					Name   string `json:"name"`
-					Status string `json:"status"`
+					Group     string `json:"group"`
+					Kind      string `json:"kind"`
+					Name      string `json:"name"`
+					Namespace string `json:"namespace"`
+					Status    string `json:"status"`
 				} `json:"resources"`
 			} `json:"status"`
 		} `json:"items"`
@@ -524,6 +531,9 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 			}
 			seenRes[label] = struct{}{}
 			st.OutOfSyncResources = append(st.OutOfSyncResources, label)
+			st.OutOfSyncRefs = append(st.OutOfSyncRefs, outOfSyncRef{
+				Group: r.Group, Kind: r.Kind, Name: r.Name, Namespace: r.Namespace,
+			})
 		}
 		sort.Strings(st.OutOfSyncResources)
 		out[item.Metadata.Name] = st
@@ -648,4 +658,91 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 		b.WriteString(s)
 	}
 	return b.String()
+}
+
+// outOfSyncRef identifies one OutOfSync resource well enough to fetch it from the cluster.
+type outOfSyncRef struct {
+	Group     string
+	Kind      string
+	Name      string
+	Namespace string
+}
+
+// kubectlTarget renders the ref as a `kubectl get` argument. The group is included when present so
+// a CustomResourceDefinition is not confused with some other Kind of the same name.
+func (r outOfSyncRef) kubectlTarget() string {
+	if r.Group == "" {
+		return strings.ToLower(r.Kind) + "/" + r.Name
+	}
+	return strings.ToLower(r.Kind) + "." + r.Group + "/" + r.Name
+}
+
+// dumpOutOfSyncResources fetches each OutOfSync resource and prints its LIVE object, so a failing
+// run names the FIELD that differs rather than only the object.
+//
+// Why the live object is the right thing to print, and not a diff: every confirmed member of this
+// class so far has been an API-SERVER-DEFAULTED value that ServerSideApply then carries into
+// ArgoCD's predicted-live — `.status.terminatingReplicas` (KEP-3973) and a `resourceFieldRef.divisor`
+// defaulted to "1". The chart never wrote either; the apiserver did. So the culprit is visible in
+// the live object as a field the chart plainly did not author, and printing it is enough to identify
+// the ignoreDifferences entry that belongs — WITHOUT the ArgoCD API, a session token, or a
+// port-forward, none of which the harness has today.
+//
+// This exists because the alternative is guessing. hetzner/addons run 32940541089 named five kinds
+// as OutOfSync across three groups (CustomResourceDefinition, CronJob, StatefulSet) and gave no way
+// to tell which field was at fault on any of them. An ignore guessed onto a kind is not a no-op the
+// way an ignore for an absent field is — it can hide genuine drift — so guessing is the one thing
+// this class must not do. One cheap run with this output settles all three.
+//
+// Best-effort and hard-capped: this runs on an ALREADY-FAILING path, so it must never be the reason
+// a run hangs or an error is lost.
+func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []outOfSyncRef) string {
+	const (
+		maxResources = 6
+		maxPerObject = 3000
+	)
+	if len(refs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n  live objects for the OutOfSync resources (the differing field is an API-server default the chart did not author):")
+	shown := 0
+	for _, r := range refs {
+		if shown >= maxResources {
+			fmt.Fprintf(&b, "\n    … %d more not shown", len(refs)-shown)
+			break
+		}
+		shown++
+		args := []string{"--kubeconfig", kubeconfigPath, "get", r.kubectlTarget(), "-o", "json"}
+		if r.Namespace != "" {
+			args = append(args, "-n", r.Namespace)
+		}
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		out, err := exec.CommandContext(cctx, "kubectl", args...).Output()
+		cancel()
+		if err != nil {
+			// Naming the failure matters as much as the dump: "could not read it" and "it had
+			// nothing interesting" must not look the same.
+			fmt.Fprintf(&b, "\n    - %s: could not fetch (%v)", r.kubectlTarget(), err)
+			continue
+		}
+		obj := string(out)
+		if len(obj) > maxPerObject {
+			// Same shape as describeArgoApps just above: say it was cut, so a reader never mistakes
+			// a truncated object for a complete one.
+			obj = obj[:maxPerObject] + "…(truncated)"
+		}
+		fmt.Fprintf(&b, "\n    - %s:\n%s", r.kubectlTarget(), obj)
+	}
+	return b.String()
+}
+
+// refsForLosers collects the OutOfSync resource refs belonging to the failing Applications, so the
+// live-object dump covers exactly the losers and not the whole cluster.
+func refsForLosers(observed map[string]argoAppState, losers []string) []outOfSyncRef {
+	var refs []outOfSyncRef
+	for _, name := range losers {
+		refs = append(refs, observed[name].OutOfSyncRefs...)
+	}
+	return refs
 }
