@@ -1,0 +1,11 @@
+# ExternalDNS on GCP — Cloud DNS, keyless.
+#
+# `workloadIdentity` becomes the `iam.gke.io/gcp-service-account` annotation. Bind that service
+# account to the controller's KSA with roles/iam.workloadIdentityUser and grant it roles/dns.admin on
+# the project (or, better, on the specific managed zone).
+
+provider: google
+
+workloadIdentity: external-dns@my-project.iam.gserviceaccount.com
+
+domainFilter: example.com

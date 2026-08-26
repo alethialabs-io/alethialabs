@@ -1,0 +1,30 @@
+# Velero on Azure — backups to Blob Storage.
+#
+# WITHOUT A BUCKET, VELERO INSTALLS AND BACKS UP NOTHING. `toValues` emits the
+# `configuration.backupStorageLocation` block only when `bucket` is set, so at catalog defaults the
+# controller comes up with no backup location at all — running, healthy-looking, and useless. That is
+# what this file exists to prevent.
+
+provider: azure
+
+# An S3 bucket you own. Velero writes backup tarballs and metadata here; give it versioning and a
+# lifecycle rule, because a backup store with no retention grows without bound.
+bucket: my-velero-backups
+
+# The bucket's region. Velero needs it explicitly — it does not discover it.
+region: westeurope
+
+# Volume snapshots via the cloud's own snapshot API, alongside the object-store backup. Cheap and
+# fast to restore from; keep it on unless your volumes are all ephemeral.
+snapshotsEnabled: true
+
+# The node-agent DaemonSet (file-level backup of volumes the snapshot API cannot reach — hostPath,
+# and any CSI driver without snapshot support). Off by default because it runs a pod on every node;
+# turn it on if you have volumes that matter and no snapshot support.
+deployNodeAgent: false
+
+# REQUIRES CREDENTIALS, which is why this file is incomplete on purpose.
+#
+# Set `cloud` in the configure form to the velero plugin's credentials file contents. It is stored
+# encrypted at rest and mounted from a runner-seeded Secret's `cloud` key — never inlined into
+# values, and never written to a file like this one.

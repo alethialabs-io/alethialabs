@@ -1,0 +1,12 @@
+# ExternalDNS on Cloudflare — the default provider, and the only one that is cloud-independent.
+#
+# Named for the DNS PROVIDER rather than for a cloud, because Cloudflare is where a great many teams
+# already keep DNS regardless of which cloud runs their cluster. Copy this one on any cloud.
+
+provider: cloudflare
+
+domainFilter: example.com
+
+# REQUIRES A TOKEN. Set `apiToken` in the configure form to a Cloudflare API token scoped to
+# Zone:Read + DNS:Edit on that zone only — not a Global API Key, which is account-wide and cannot be
+# scoped. It is delivered as CF_API_TOKEN from an encrypted store.
