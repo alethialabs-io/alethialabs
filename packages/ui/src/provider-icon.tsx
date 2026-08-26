@@ -57,6 +57,20 @@ interface ProviderIconProps {
 	size?: number;
 	className?: string;
 	/**
+	 * The mark is decorative here because the provider is already named in adjacent
+	 * text — so it contributes nothing to the accessible name.
+	 *
+	 * This matters more than it looks. GitHub and Google are inline SVGs and name
+	 * nothing, but GitLab and Bitbucket are `<img>` with a real `alt`, so a button that
+	 * pairs the icon with a label announced "GitLabGitLab" and "BitbucketBitbucket" —
+	 * the name concatenates every descendant. Two of four sign-in tiles said their own
+	 * name twice, and nothing anywhere objected.
+	 *
+	 * Leave it false wherever the icon stands ALONE (a connector row, a logo wall):
+	 * there the alt text is the only thing naming it.
+	 */
+	decorative?: boolean;
+	/**
 	 * Render the brand mark desaturated (the grayscale design-system default). Set
 	 * `false` to show the logo in its real colors — e.g. to signal a *connected*
 	 * provider. GitHub/Google are inline `currentColor` marks and are unaffected.
@@ -69,6 +83,7 @@ export function ProviderIcon({
 	size = 16,
 	className,
 	mono = true,
+	decorative = false,
 }: ProviderIconProps) {
 	const slug = provider?.toLowerCase();
 
@@ -89,7 +104,7 @@ export function ProviderIcon({
 		return (
 			<img
 				src={cloudIconPath(slug, size)}
-				alt={PROVIDER_LABELS[slug as Provider] ?? slug}
+				alt={decorative ? "" : (PROVIDER_LABELS[slug as Provider] ?? slug)}
 				width={size}
 				height={size}
 				className={cn(
@@ -108,7 +123,7 @@ export function ProviderIcon({
 		return (
 			<img
 				src={gitIconPath(slug)}
-				alt={PROVIDER_LABELS[slug as Provider] ?? slug}
+				alt={decorative ? "" : (PROVIDER_LABELS[slug as Provider] ?? slug)}
 				width={size}
 				height={size}
 				className={cn(
