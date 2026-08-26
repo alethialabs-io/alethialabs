@@ -4,6 +4,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@repo/ui/button";
+import { PROVIDER_LABELS, ProviderIcon, type Provider } from "@repo/ui/provider-icon";
 
 import { AlethiaMark } from "../lockup";
 import { disp, eyebrow, HeroRail, Icon, type IconKey, mono, Wrap } from "./primitives";
@@ -264,4 +265,271 @@ export function formatStars(n: number | null): string {
 	if (n < 1000) return String(n);
 	const k = n / 1000;
 	return `${k >= 10 ? Math.round(k) : Math.round(k * 10) / 10}k`;
+}
+
+/* ============================================================================
+   The minimal compositions.
+
+   `PageHero` / `PageCTA` above are the centred, rail-topped, lede-carrying
+   originals; they still serve /open-source and /security. Everything below is
+   the quieter shape the home, enterprise and pricing pages moved to: a headline
+   hard-left, a short rail on the right, and a lot of air.
+
+   SECTION-LEVEL — each renders `<section>` as its outermost element, so a run of
+   them can sit directly under `Reveal`:
+       Section · PageOpen · Band · LogoWall · PageClose
+   INNER — these render a <p>, a <div> or a row, and must live INSIDE one of the
+   above:
+       Eyebrow · ActionRow · Rail
+
+   The split is load bearing, not incidental. `Reveal` selects `:scope > section`
+   and `.slice(1)`, so wrapping a run of the section-level ones in a layout <div>
+   — or putting an inner one directly under the Reveal root — silently kills
+   every scroll animation on the page, with no type error, no lint error and no
+   build failure. An earlier version of this comment claimed all of them were
+   section-level, which is exactly the mistake it was written to prevent.
+   ========================================================================== */
+
+/** One section's vertical rhythm and hairline. Everything below composes it. */
+export function Section({
+	id,
+	bordered = true,
+	children,
+}: {
+	id?: string;
+	bordered?: boolean;
+	children: ReactNode;
+}) {
+	return (
+		<section
+			id={id}
+			className="py-[120px] max-[640px]:py-[72px]"
+			style={bordered ? { borderTop: "1px solid var(--border)" } : undefined}
+		>
+			<Wrap>{children}</Wrap>
+		</section>
+	);
+}
+
+/** The only uppercase mono on these pages. */
+export function Eyebrow({ children }: { children: string }) {
+	return <p className="vx-eyebrow mb-5">{children}</p>;
+}
+
+/** A row of CTAs. Square, clamped, from the shared Button — never a pill. */
+export function ActionRow({
+	ctas,
+	size = "default",
+	align = "start",
+}: {
+	ctas: PageCtaLink[];
+	size?: "default" | "lg";
+	align?: "start" | "center";
+}) {
+	if (!ctas.length) return null;
+	return (
+		<div style={{ ...CTA_ROW, justifyContent: align === "center" ? "center" : "flex-start" }}>
+			{ctas.map((cta) => (
+				<CtaButton key={cta.label} cta={cta} size={size} />
+			))}
+		</div>
+	);
+}
+
+/** Headline lines, each its own <span> so the blur-resolve can stagger them. */
+function DisplayLines({ lines, className }: { lines: string[]; className: string }) {
+	return (
+		<span className={`vx-display-in ${className}`}>
+			{lines.map((line) => (
+				<span key={line}>{line}</span>
+			))}
+		</span>
+	);
+}
+
+export interface PageOpenProps {
+	/** Hard-broken headline lines — one <span> each, no auto-balancing. */
+	lines: string[];
+	/**
+	 * The right column. `lines` is the home page's three bare statements;
+	 * `lede` is a single paragraph, which is what the wider enterprise hero wants.
+	 */
+	side: { kind: "lines"; items: string[] } | { kind: "lede"; text: string };
+	ctas?: PageCtaLink[];
+	/** Which column the CTAs sit under. Home: left, under the headline. */
+	ctaSide?: "left" | "right";
+	gridBg?: boolean;
+}
+
+/**
+ * The asymmetric opening: a large headline hard-left, a short rail at roughly
+ * three-quarters across, and nothing in between. No hero paragraph under the
+ * headline, no hero image, no status rail.
+ *
+ * Server-only by construction — the <h1> is the LCP element and has to be in the
+ * initial HTML. Do not reach for state in here.
+ */
+export function PageOpen({ lines, side, ctas = [], ctaSide = "left", gridBg = true }: PageOpenProps) {
+	const actions = ctas.length ? <ActionRow ctas={ctas} /> : null;
+	return (
+		<section className="relative overflow-hidden pt-[128px] pb-[112px] max-[640px]:pt-[88px] max-[640px]:pb-[72px]">
+			{gridBg ? <div className="ah-grid-bg" aria-hidden="true" /> : null}
+			<Wrap style={{ position: "relative" }}>
+				<div className="grid grid-cols-1 gap-14 lg:grid-cols-[1fr_320px] lg:items-start lg:gap-20">
+					<div>
+						<h1
+							className="font-grotesk text-display-lg font-bold leading-display tracking-display text-text-primary"
+							style={{ margin: 0, maxWidth: "13ch" }}
+						>
+							<DisplayLines lines={lines} className="block" />
+						</h1>
+						{ctaSide === "left" && actions ? <div className="mt-10">{actions}</div> : null}
+					</div>
+
+					<div className="lg:justify-self-end">
+						{side.kind === "lines" ? (
+							<ul className="m-0 list-none space-y-3.5 p-0">
+								{side.items.map((item) => (
+									<li key={item} className="text-[13px] leading-[1.6] text-text-secondary">
+										{item}
+									</li>
+								))}
+							</ul>
+						) : (
+							<p className="m-0 text-[13.5px] leading-[1.65] text-text-secondary">{side.text}</p>
+						)}
+						{ctaSide === "right" && actions ? <div className="mt-9">{actions}</div> : null}
+					</div>
+				</div>
+			</Wrap>
+		</section>
+	);
+}
+
+export interface RailProps {
+	/**
+	 * One sentence of proof. `lead` takes primary ink and `rest` stays muted, so
+	 * the eye lands on the claim and not the sentence.
+	 */
+	proof: { lead: string; rest: string };
+	/** Tiny mono label over the links, e.g. "Console". */
+	label: string;
+	/** Four. Not three, not six — the count is the discipline. */
+	links: { label: string; href: string }[];
+}
+
+/** The right-hand rail of a Band: one proof sentence over four plain links. */
+export function Rail({ proof, label, links }: RailProps) {
+	return (
+		<div className="lg:pt-[92px]">
+			<p className="m-0 text-[13px] leading-[1.6] text-text-secondary">
+				<span className="text-text-primary">{proof.lead}</span>
+				{proof.rest}
+			</p>
+			<p className="vx-eyebrow mt-10 mb-4">{label}</p>
+			<ul className="m-0 list-none space-y-2.5 p-0">
+				{links.map((link) => (
+					<li key={link.href}>
+						<Link
+							href={link.href}
+							className="vx-clamp vx-clamp--tight text-[13px] text-text-secondary no-underline transition-colors hover:text-text-primary"
+						>
+							{link.label}
+						</Link>
+					</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
+/**
+ * A capability band: two headline lines, one visual, one rail.
+ *
+ * No icons, no card, no border around the band, no alternating fill. One
+ * hairline and 120px of air is the whole separator.
+ */
+export function Band({
+	eyebrow: eyebrowText,
+	lines,
+	visual,
+	rail,
+}: {
+	eyebrow?: string;
+	lines: [string, string];
+	visual?: ReactNode;
+	rail?: RailProps;
+}) {
+	return (
+		<section
+			className="py-[120px] max-[640px]:py-[72px]"
+			style={{ borderTop: "1px solid var(--border)" }}
+		>
+			<Wrap>
+				{eyebrowText ? <Eyebrow>{eyebrowText}</Eyebrow> : null}
+				<div className="grid grid-cols-1 gap-y-12 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-x-20">
+					<div className="min-w-0">
+						<h2
+							className="mb-12 font-grotesk text-display-sm font-bold tracking-[-0.025em] text-text-primary"
+							style={{ margin: "0 0 48px", maxWidth: "16ch", lineHeight: 1.02 }}
+						>
+							<span className="block">{lines[0]}</span>
+							<span className="block">{lines[1]}</span>
+						</h2>
+						{visual}
+					</div>
+					{rail ? <Rail {...rail} /> : null}
+				</div>
+			</Wrap>
+		</section>
+	);
+}
+
+/**
+ * A row of provider marks under a mono caption.
+ *
+ * The caption is the point. Five grayscale logos with no label on a control
+ * plane's home page read as "integrations" or, worse, as customers; "Provisions
+ * into" makes it a statement about what the product targets. It is not a claim
+ * that every cloud is proven end to end — see PROGRAMME.md for what is.
+ */
+export function LogoWall({ eyebrow: caption, providers }: { eyebrow?: string; providers: Provider[] }) {
+	return (
+		<section className="py-14" style={{ borderTop: "1px solid var(--border)" }}>
+			<Wrap>
+				{caption ? <p className="vx-eyebrow mb-7">{caption}</p> : null}
+				<div className="flex flex-wrap items-center gap-x-16 gap-y-8">
+					{providers.map((provider) => (
+						<span key={provider} className="flex items-center gap-2.5">
+							<ProviderIcon provider={provider} size={20} className="opacity-55" />
+							<span className="text-[12px] text-text-tertiary">
+								{PROVIDER_LABELS[provider]}
+							</span>
+						</span>
+					))}
+				</div>
+			</Wrap>
+		</section>
+	);
+}
+
+/** The closing line and its two actions. One sentence, nothing else. */
+export function PageClose({ line, ctas }: { line: string; ctas: PageCtaLink[] }) {
+	return (
+		<section
+			className="relative overflow-hidden py-[128px] text-center max-[640px]:py-[88px]"
+			style={{ borderTop: "1px solid var(--border)" }}
+		>
+			<div className="ah-grid-cta" aria-hidden="true" />
+			<Wrap style={{ position: "relative" }}>
+				<h2
+					className="font-grotesk text-display-sm font-bold tracking-display text-text-primary"
+					style={{ margin: "0 auto 36px", maxWidth: "18ch", lineHeight: 1.05 }}
+				>
+					{line}
+				</h2>
+				<ActionRow ctas={ctas} align="center" />
+			</Wrap>
+		</section>
+	);
 }

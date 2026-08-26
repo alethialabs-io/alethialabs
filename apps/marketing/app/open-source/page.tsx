@@ -4,7 +4,7 @@
 import type { Metadata } from "next";
 import { SiteShell } from "@repo/brand/site-shell";
 import { getGitHubStars } from "@repo/brand/github-stars";
-import { Reveal } from "@/components/landing/home/reveal";
+import { Reveal } from "@/components/landing/reveal";
 import { OpenSourceSections } from "@/components/landing/open-source/page-sections";
 
 export const metadata: Metadata = {

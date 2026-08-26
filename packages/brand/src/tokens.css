@@ -707,6 +707,49 @@
 }
 
 
+/* ── Display type ────────────────────────────────────────────────────────────
+   Three sizes, and no more. Every headline in the repo used to be a hardcoded
+   `fontSize:` number — 36/32/42/56/58/64 across five files, all slightly
+   different — because the ladder lived in the design skill's typography.css,
+   which no app imports.
+
+   Space Grotesk is the display face here; it reaches it through --font-grotesk,
+   not --font-display (which is Geist; see the note at the top of this file). */
+@theme inline {
+  --text-display-lg: 56px;  /* h1 on / and /enterprise */
+  --text-display-md: 40px;  /* h1 on /pricing          */
+  --text-display-sm: 30px;  /* band h2                 */
+  --tracking-display: -0.022em;
+  --leading-display: 0.96;
+}
+@media (max-width: 900px) {
+  :root { --text-display-lg: 44px; --text-display-md: 34px; --text-display-sm: 26px; }
+}
+@media (max-width: 620px) {
+  :root { --text-display-lg: 34px; --text-display-md: 28px; --text-display-sm: 23px; }
+}
+
+/* The headline resolves out of blur. It never animates opacity: an element at
+   `opacity: 0` is not an LCP candidate, so fading the h1 in would push LCP out
+   by the whole duration of the fade. Blur and transform are paint/composite
+   only. Moved here from the marketing app's stylesheet because the component
+   that applies it (PageOpen) lives in this package, and a class defined only in
+   one app would not resolve for the others. */
+.vx-display-in > span {
+  display: block;
+  filter: blur(10px);
+  transform: translateY(0.16em);
+  animation: vx-focus 0.85s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.vx-display-in > span:nth-child(2) { animation-delay: 0.09s; }
+.vx-display-in > span:nth-child(3) { animation-delay: 0.18s; }
+@keyframes vx-focus {
+  to { filter: blur(0); transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vx-display-in > span { filter: none; transform: none; animation: none; }
+}
+
 /* ── The one content container ───────────────────────────────────────────────
    There were two: `Wrap` at 1160/32 (header, footer, enterprise, pricing) and
    the marketing home page's `.mkt-wrap` at 1180/64. At 1440px they put the
