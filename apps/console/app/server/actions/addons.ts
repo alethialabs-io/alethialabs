@@ -20,7 +20,11 @@ import {
 } from "@/lib/db/schema";
 import { resolveActiveEnvironmentId } from "@/app/server/actions/resolve";
 import { ADDON_CATALOG, getAddOn, parseValuesYaml } from "@/lib/addons/catalog";
-import { mergeAddonSecrets, redactAddonSecrets } from "@/lib/addons/secrets";
+import {
+	generateAddonSecrets,
+	mergeAddonSecrets,
+	redactAddonSecrets,
+} from "@/lib/addons/secrets";
 import type {
 	AddOnCategory,
 	AddOnField,
@@ -213,10 +217,15 @@ export async function enableAddon(input: {
 				),
 			)
 			.limit(1);
-		const storedValues: AddOnValues = mergeAddonSecrets(
+		// Then mint any secret the add-on declares as auto-generated and that is STILL unset
+		// (#2822, #2823). Ordered after the merge, so a value the user supplied — or one carried
+		// forward from an earlier save — is already present and is never rotated by a reconfigure.
+		// Without this, a chart that generates its own credential does so at RENDER time, and
+		// ArgoCD re-renders on every reconcile: permanently OutOfSync, with the credential moving
+		// under the running workload.
+		const storedValues: AddOnValues = generateAddonSecrets(
 			def,
-			asRecord(parsed.data),
-			existing?.values ?? null,
+			mergeAddonSecrets(def, asRecord(parsed.data), existing?.values ?? null),
 		);
 		await tx
 			.insert(projectAddons)

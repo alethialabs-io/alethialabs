@@ -165,6 +165,26 @@ export interface AddOnDef<Schema extends z.ZodTypeAny = z.ZodTypeAny> {
 	 * MUST NOT return credential material — this rides the config snapshot.
 	 */
 	secretStaticData?: (config: z.infer<Schema>) => Record<string, string>;
+	/**
+	 * Mints values for secret knobs the user left unset, at ENABLE time (#2822, #2823).
+	 *
+	 * Some charts generate their own credential when none is supplied — and they do it at RENDER
+	 * time, with `randAlphaNum` or `genCA`. ArgoCD re-renders on every reconcile, so such a chart
+	 * is PERMANENTLY OutOfSync, and the value it depends on rotates underneath the running
+	 * workload. For those add-ons "leave it blank" cannot mean "let the chart decide"; it has to
+	 * mean "Alethia decides once", so the rendered manifest stops moving.
+	 *
+	 * Called with the set of secret keys that ALREADY have a stored value, and returns plaintext
+	 * for the keys it wants to fill — the caller encrypts them and never persists them otherwise.
+	 * Returning a key that is already present is ignored, so an existing credential is never
+	 * rotated by a reconfigure.
+	 *
+	 * It receives the present set (rather than being called per field) because generated
+	 * credentials are often CORRELATED: a keypair whose halves must both be minted together, or a
+	 * password and the hash derived from it. Only the definition knows which of its keys travel as
+	 * a group.
+	 */
+	generateSecrets?: (present: ReadonlySet<string>) => Record<string, string>;
 	/** Serializable descriptors for the surfaced knobs (mirror `configSchema`) — drive the
 	 * client configure form. Empty for add-ons with no knobs. */
 	fields: AddOnField[];
