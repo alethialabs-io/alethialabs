@@ -105,6 +105,11 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
+          # THESE GLOBS ARE THE DEFINITION OF "this group changed", and `retag-unchanged`'s
+          # staleness guard resolves against the SAME lists (see t2 `stale_check`). Keeping one
+          # definition is the point: when the guard asked a broader question than the filter, a
+          # console-only change made it refuse to retag the RUNNER images and the deploy was
+          # skipped — see #2762.
           filters: |
             apps:
               - 'apps/console/**'
@@ -113,6 +118,14 @@ jobs:
               - 'apps/docs/**'
               - 'apps/blog/**'
               - 'packages/**'
+              # apps/console declares @alethia/ee (workspace:*, optionalDependencies) and resolves
+              # EE scope from ee/dist at runtime, so an ee/-only change genuinely changes the
+              # console image. It was absent here, which meant such a change did not rebuild —
+              # it RETAGGED a stale image under a fresh SHA, which is #2521's failure exactly.
+              - 'ee/**'
+              # A dependency bump changes what gets installed into every JS image while touching
+              # no app source. Same hazard: without this it retags rather than rebuilds.
+              - 'pnpm-lock.yaml'
               - 'docker-compose.yml'
               - 'deploy/prod/**'
             runner:
@@ -538,8 +551,30 @@ jobs:
           #
           # So: read the commit the candidate image was actually built from (ALETHIA_SOURCE_COMMIT,
           # set from VERSION in the Dockerfile) and refuse to retag if real code moved since.
+          # THE PATHS EACH GROUP IS BUILT FROM. These MIRROR the `changes` job's paths-filter, and
+          # the two must move together — that is the whole fix for #2762.
+          #
+          # This guard used to ask ONE question for both groups: "did apps/, packages/, ee/ or the
+          # lockfile change?". But the dispatch below is PER GROUP, so the guard and the filter
+          # could disagree — and they did. On 2026-08-26 the #2758 promotion changed
+          # packages/email/src/config.ts and apps/console/tests/lib/email (console-only). The
+          # filter correctly said the runner group was unchanged and skipped all ten runner jobs;
+          # the guard then refused to retag the runner images because `packages/` had moved. The
+          # job failed, `deploy` is gated `!cancelled() && !failure()`, and production never
+          # received the promotion.
+          #
+          # It also asserted the wrong cause: "the last build of this group FAILED and latest is
+          # stale". The runner build had not failed. The runner group simply had not changed, so
+          # its latest is legitimately older than HEAD. A guard that names a cause it has not
+          # established sends the reader looking for a failure that does not exist.
+          #
+          # The correct question is per group: did anything THIS image is built from move since
+          # the commit its latest was built at?
+          APPS_PATHS="apps/console apps/marketing apps/admin apps/docs apps/blog packages/ ee/ pnpm-lock.yaml docker-compose.yml deploy/prod/"
+          RUNNER_PATHS="apps/runner packages/core infra/templates"
+
           stale_check() {
-            local img="$1" ref="${IMAGE_PREFIX}/$1:latest" built
+            local img="$1" paths="$2" ref="${IMAGE_PREFIX}/$1:latest" built
             built="$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' 2>/dev/null \
               | jq -r '.. | .Env? // empty | .[]? | select(startswith("ALETHIA_SOURCE_COMMIT=")) | sub("^ALETHIA_SOURCE_COMMIT=";"")' \
               | head -n1)"
@@ -551,24 +586,41 @@ jobs:
               echo "::warning::$img:latest names commit ${built}, which is not in this repository's history; retagging anyway."
               return 0
             fi
-            if ! git diff --quiet "${built}" "${SHA}" -- apps/ packages/ ee/ pnpm-lock.yaml; then
-              echo "::error::REFUSING to retag ${img}: its latest was built from ${built}, and apps/, packages/, ee/ or the lockfile have changed between that commit and ${SHA}."
-              echo "::error::That means the last build of this group FAILED and latest is stale. Retagging it would ship old code under a new SHA — fix the build instead."
+            # Unquoted on purpose — $paths is a space-separated pathspec list, and quoting it would
+            # hand `git diff` one pathspec containing spaces, which matches nothing. A pathspec that
+            # matches nothing makes `--quiet` always succeed, so the guard would pass on everything:
+            # the exact silent-green shape it exists to prevent.
+            # shellcheck disable=SC2086
+            if ! git diff --quiet "${built}" "${SHA}" -- $paths; then
+              echo "::error::REFUSING to retag ${img}: its latest was built from ${built}, and paths this image is built from have changed between that commit and ${SHA}:"
+              # `|| true` because `pipefail` + `set -e` would otherwise let head(1) closing the pipe
+              # early abort the whole step on SIGPIPE, losing the return 1 below and every image
+              # after this one. Naming the files is a courtesy; it must not decide the verdict.
+              git diff --name-only "${built}" "${SHA}" -- $paths 2>/dev/null | head -20 | sed 's/^/::error::  /' || true
+              echo "::error::latest is stale for this group. Retagging it would ship old code under a new SHA — rebuild instead."
+              echo "::error::If those paths do NOT feed this image, the group's path list here and the changes filter have drifted apart (#2762)."
               return 1
             fi
           }
 
           retag() {
-            stale_check "$1" || return 1
+            stale_check "$1" "$2" || return 1
             echo "retag $1: latest -> ${SHA}"
             docker buildx imagetools create -t "${IMAGE_PREFIX}/$1:${SHA}" "${IMAGE_PREFIX}/$1:latest"
           }
+          rc=0
           if [ "${APPS_CHANGED}" != "true" ]; then
-            for img in console console-migrate docs blog marketing admin; do retag "$img"; done
+            for img in console console-migrate docs blog marketing admin; do retag "$img" "$APPS_PATHS" || rc=1; done
           fi
           if [ "${RUNNER_CHANGED}" != "true" ]; then
-            for img in runner runner-aws runner-gcp runner-azure runner-alibaba runner-hetzner; do retag "$img"; done
+            for img in runner runner-aws runner-gcp runner-azure runner-alibaba runner-hetzner; do retag "$img" "$RUNNER_PATHS" || rc=1; done
           fi
+          # Report EVERY stale image, not just the first. `set -e` is active, so `retag` returning
+          # 1 inside the loop used to abort the step immediately — run 32942599508 named `runner`
+          # and stopped, saying nothing about the five runner images behind it. `|| rc=1` keeps the
+          # sweep going and `exit $rc` still fails the job, so one run now lists everything that
+          # needs rebuilding instead of surfacing them one promotion at a time.
+          exit $rc
 
   deploy:
     needs: [changes, build-amd64, merge-runner-images, merge-runner, retag-unchanged]
