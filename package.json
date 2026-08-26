@@ -29,6 +29,7 @@
     "compose:down": "docker compose down",
     "check:connector-assets": "node scripts/check-connector-assets.mjs",
     "check:docs-contract": "node scripts/check-docs-contract.mjs",
+    "check:theme-inline": "node scripts/check-theme-inline-overrides.mjs",
     "check:legal-hashes": "node scripts/check-legal-document-hashes.mjs",
     "check:e2e-spend-guard": "node scripts/check-e2e-spend-guard.mjs",
     "check:hetzner-lb-location": "node scripts/check-hetzner-lb-location.mjs",
