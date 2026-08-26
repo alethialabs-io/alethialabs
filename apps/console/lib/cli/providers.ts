@@ -86,7 +86,14 @@ export async function resolveCliProvider(
 		};
 	}
 
-	const scope = await getActiveScope(userId);
+	// A SERVICE TOKEN SCOPES TO ITS OWN ORG, not the creator's default one.
+	//
+	// `getActiveScope(userId)` with no org resolves whichever org that PERSON last had active — which
+	// for a machine credential is somebody else's session state, and is not the org the token was
+	// issued for. verifyCliToken already refuses a MISMATCHED header; this closes the other half,
+	// where no header is sent at all and the default would quietly win.
+	const pinnedOrg = typeof payload?.service_token_org_id === "string" ? payload.service_token_org_id : undefined;
+	const scope = await getActiveScope(userId, pinnedOrg);
 	return { userId, scope, provider, errorResponse: null };
 }
 
