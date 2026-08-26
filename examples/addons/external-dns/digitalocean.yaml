@@ -1,0 +1,16 @@
+# ExternalDNS on DigitalOcean DNS.
+#
+# Named for the DNS PROVIDER, like cloudflare.yaml — DigitalOcean DNS is usable from a cluster on any
+# cloud, and plenty of teams keep DNS there while running compute elsewhere.
+#
+# The one provider whose env var was already correct before #2777: the old mapping was
+# `provider === "digitalocean" ? "DO_TOKEN" : "CF_API_TOKEN"`, so DigitalOcean and Cloudflare worked
+# and the other four received a Cloudflare-shaped variable they had no use for.
+
+provider: digitalocean
+
+domainFilter: example.com
+
+# REQUIRES A TOKEN. Set `apiToken` in the configure form to a DigitalOcean API token with WRITE
+# scope (Control Panel → API → Tokens). It is stored encrypted at rest and delivered as DO_TOKEN —
+# never written to a file like this one.

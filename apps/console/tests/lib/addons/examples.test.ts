@@ -55,50 +55,48 @@ describe("examples/addons", () => {
 	});
 
 	it.each(FILES)("%s/%s names a real catalog add-on", (addonId) => {
-		expect(getAddOn(addonId), `examples/addons/${addonId}/ has no catalog entry`).not.toBeNull();
+		expect(getAddOn(addonId)).not.toBeNull();
 	});
 
-	it.each(FILES)("%s/%s is accepted by the add-on's own configSchema", (addonId, file, path) => {
+	it.each(FILES)(
+		"%s/%s is accepted by the add-on's own configSchema — a worked config the console would reject " +
+			"is worse than none, because somebody pastes it and gets an error on a value we shipped",
+		(addonId, file, path) => {
 		const def = getAddOn(addonId);
 		if (!def) return; // reported by the test above; do not fail twice for one cause
 		const parsed = parseYaml(readFileSync(path, "utf8")) ?? {};
 		const result = def.configSchema.safeParse(parsed);
-		expect(
-			result.success,
-			`examples/addons/${addonId}/${file} would be REJECTED by the configure form: ` +
-				(result.success ? "" : JSON.stringify(result.error.issues)),
-		).toBe(true);
+		// The ISSUES are the actionable part, so assert on them rather than on the boolean: a failure
+		// then prints which field and which value the configure form would reject, where `expected
+		// false to be true` would print nothing at all.
+		expect(result.success ? [] : result.error.issues).toEqual([]);
 	});
 
 	// THE ONE THAT CATCHES ROT. Zod strips unknown keys rather than failing, so a knob that was
 	// renamed or misspelled parses cleanly and does nothing at all — the file still looks worked, and
 	// the value it was written to set is silently dropped.
-	it.each(FILES)("%s/%s sets no key the add-on does not declare", (addonId, file, path) => {
+	it.each(FILES)(
+		"%s/%s sets no key the add-on does not declare — Zod STRIPS unknown keys, so a renamed or " +
+			"misspelled one parses cleanly and silently does nothing, leaving the file looking configured",
+		(addonId, file, path) => {
 		const def = getAddOn(addonId);
 		if (!def) return;
 		const known = declaredKeys(def.fields);
 		const parsed = parseYaml(readFileSync(path, "utf8")) ?? {};
-		const unknown = Object.keys(parsed).filter((k) => !known.has(k));
-		expect(
-			unknown,
-			`examples/addons/${addonId}/${file} sets ${JSON.stringify(unknown)}, which ${addonId} does not ` +
-				`declare. Zod strips unknown keys silently, so this file would look configured and do nothing.`,
-		).toEqual([]);
+		expect(Object.keys(parsed).filter((k) => !known.has(k))).toEqual([]);
 	});
 
 	// A token pasted into a repository is a leaked token, whatever the file is called. The rule is
 	// enforced rather than documented, because the documented version is the one that gets forgotten
 	// at the moment somebody is trying to make an example "complete".
-	it.each(FILES)("%s/%s carries no secret value", (addonId, file, path) => {
+	it.each(FILES)(
+		"%s/%s carries no secret value — a secret knob is stored encrypted at rest and belongs in the " +
+			"configure form; a token pasted into a repository is a leaked token whatever the file is called",
+		(addonId, file, path) => {
 		const def = getAddOn(addonId);
 		if (!def) return;
 		const secrets = secretKeys(def.fields);
 		const parsed = parseYaml(readFileSync(path, "utf8")) ?? {};
-		const leaked = Object.keys(parsed).filter((k) => secrets.has(k));
-		expect(
-			leaked,
-			`examples/addons/${addonId}/${file} sets the SECRET field(s) ${JSON.stringify(leaked)}. ` +
-				`Secrets are stored encrypted at rest and belong in the configure form, never in this repo.`,
-		).toEqual([]);
+		expect(Object.keys(parsed).filter((k) => secrets.has(k))).toEqual([]);
 	});
 });
