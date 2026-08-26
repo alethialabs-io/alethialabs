@@ -945,6 +945,30 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			/** Harbor admin password (secret — encrypted at rest; empty = chart default). */
 			adminPassword: z.string().default(""),
 		}),
+		// RECREATE, NOT ROLLINGUPDATE — and this is a default rather than a knob on purpose.
+		//
+		// Harbor's `registry` and `jobservice` Deployments own persistent volumes. On RollingUpdate
+		// the new pod is scheduled BEFORE the old one is torn down, so it waits for a volume the old
+		// pod still holds — and the old pod waits for the new one to become ready. On any storage
+		// class that is ReadWriteOnce, that is a permanent deadlock, and every cloud's default block
+		// storage is RWO.
+		//
+		// Measured, not inferred. hetzner/addons run 32959867406:
+		//
+		//   addon-harbor-registry-5c7b89b786-bnqgd  Running  true,true    <none>
+		//   addon-harbor-registry-65df4f667f-b7vdh  Pending  false,false  ContainerCreating
+		//     Warning FailedAttachVolume  Multi-Attach error for volume "pvc-a9ffe492-…"
+		//             Volume is already used by pod(s) addon-harbor-registry-5c7b89b786-bnqgd
+		//
+		// Every other harbor pod was Running and ready. Nothing was misconfigured; the update
+		// strategy was wrong for the storage class.
+		//
+		// The chart's own values file says exactly this — "Set it as Recreate when RWM for volumes
+		// isn't supported" — and RWM needs NFS/EFS/Filestore, which none of the five clouds provision
+		// by default. A user should not have to know that, which is why it is a default and not a
+		// field: the brief downtime Recreate costs on upgrade is the correct trade against a registry
+		// that never finishes rolling.
+		defaultValues: { updateStrategy: { type: "Recreate" } },
 		toValues: (c) => ({
 			persistence: {
 				persistentVolumeClaim: { registry: { size: `${c.storageGb}Gi` } },
