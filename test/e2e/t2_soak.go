@@ -258,18 +258,60 @@ type SoakSummary struct {
 // Keyed on address AND attribute set, so the SAME resource drifting on a NEW attribute is new. An
 // entry that DISAPPEARS is not reported: converging toward state is not a day-2 failure.
 func soakDriftDelta(before, after []SoakDriftResource) []SoakDriftResource {
-	key := func(r SoakDriftResource) string {
-		return r.Address + "\x00" + strings.Join(r.Attributes, ",")
+	// Keyed on the (address, ATTRIBUTE) pair, not on the attribute SET.
+	//
+	// The set key was one character from correct and wrong in a way the comment above did not
+	// cover. "An entry that DISAPPEARS is not reported" held for a resource that converged
+	// ENTIRELY, but a resource that converged PARTIALLY produced a different set, hence a different
+	// key, hence a miss — and was reported as new drift:
+	//
+	//	baseline [{X,[a,b]}]  final [{X,[a]}]   -> NEW [{X,[a]}]   'b' settled, and X is blamed
+	//	baseline [{X,[a,b]}]  final []          -> NEW []          fully converged, forgiven
+	//
+	// Full convergence forgiven and partial convergence punished is not a distinction anyone would
+	// defend on purpose, and it would surface as an intermittent day-2 red whose attribute list is
+	// SHORTER than the baseline's — a confusing thing to debug from a verdict line. Eventual
+	// consistency is the normal reason a set shrinks mid-window.
+	//
+	// Per-attribute keying keeps every property the set key was chosen for: a NEW attribute on an
+	// already-drifting resource is still new (the firewall that begins hydrated on `apply_to` and
+	// later has its RULES changed out-of-band is the case this must catch), an attribute that
+	// settles is simply absent from `after`, and a wholly new resource has all-new pairs.
+	//
+	// The reported entry carries only the attributes that are actually NEW, so the verdict line
+	// names what changed during the window rather than everything that resource ever drifted on.
+	const noAttrs = "\x00none-recorded"
+	// A resource whose leaves were not computable has no pairs to key on, so it keys on its address
+	// alone via this sentinel — otherwise talos_cluster_kubeconfig and talos_machine_secrets, which
+	// are ALWAYS in that state, would be invisible to the delta in both directions.
+	attrsOf := func(r SoakDriftResource) []string {
+		if len(r.Attributes) == 0 {
+			return []string{noAttrs}
+		}
+		return r.Attributes
 	}
 	seen := make(map[string]struct{}, len(before))
 	for _, r := range before {
-		seen[key(r)] = struct{}{}
+		for _, a := range attrsOf(r) {
+			seen[r.Address+"\x00"+a] = struct{}{}
+		}
 	}
 	var out []SoakDriftResource
 	for _, r := range after {
-		if _, ok := seen[key(r)]; !ok {
-			out = append(out, r)
+		var fresh []string
+		for _, a := range attrsOf(r) {
+			if _, ok := seen[r.Address+"\x00"+a]; !ok {
+				fresh = append(fresh, a)
+			}
 		}
+		if len(fresh) == 0 {
+			continue
+		}
+		n := r
+		if len(r.Attributes) > 0 {
+			n.Attributes = fresh
+		}
+		out = append(out, n)
 	}
 	return out
 }

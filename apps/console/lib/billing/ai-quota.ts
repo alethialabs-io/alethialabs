@@ -9,6 +9,7 @@ import { aiCostMicros } from "@/lib/billing/model-costs";
 import { costToCredits } from "@/lib/billing/ai-credits";
 import { type AiMessage, captureAiGeneration } from "@/lib/analytics/server";
 import { checkAiSpendThreshold } from "@/lib/billing/ai-spend-alert";
+import { log } from "@/lib/observability/log";
 
 export type AiUsageKind = "scan" | "agent" | "support";
 export type CreditSource = "included" | "purchased";
@@ -241,6 +242,32 @@ export async function grantAiCredits(input: {
  * When `holdId` is set it RECONCILES that provisional hold row in place (always, even to 0) rather
  * than inserting — see the field doc — so a metered turn's ≈$0.10 hold never leaks.
  */
+/**
+ * The handler every fire-and-forget `recordAiUsage(...)` call must carry.
+ *
+ * Metering is deliberately not awaited — it must never delay a user's response. But
+ * `recordAiUsage` has no internal try/catch, so an un-caught rejection is BOTH an unhandled
+ * promise rejection AND a silently stranded provisional hold: the ~$0.10 `assertAiAllowed`
+ * reserved stays against the org's window until it rolls, with no ledger row explaining where
+ * the headroom went. That is exactly what the hold contract above says must never happen.
+ *
+ * Structured rather than `console.error`, and that is the point rather than style: nothing in
+ * this app patches the global console, so a console line never reaches the OTel bridge in
+ * lib/observability/log.ts. A stranded hold that no automation can see is a stranded hold nobody
+ * will act on — and it is precisely the signal a retry/queue policy (#2683) would have to key on.
+ *
+ * @param orgId the org whose hold may now be stranded
+ * @returns a rejection handler that logs and swallows
+ */
+export function meteringFailed(orgId: string): (err: unknown) => void {
+	return (err: unknown) => {
+		log.error("ai metering write failed; a budget hold may be stranded", {
+			org_id: orgId,
+			err,
+		});
+	};
+}
+
 export async function recordAiUsage(input: {
 	orgId: string;
 	userId: string;

@@ -203,10 +203,26 @@ func (c t2ArgoRepos) byoSecretName() string { return argocd.ByoRepoSecretName(c.
 // apps-destination repo (drives repo-apps credentials + the "apps" app-of-apps) and the BYO
 // chart add-on (appended to the existing seed add-ons — reloader is preserved). The git token is
 // deliberately NOT written here; it is served by the control plane's git-token handler.
-func (c t2ArgoRepos) applyToSnapshot(snap map[string]any) {
+func (c t2ArgoRepos) applyToSnapshot(snap map[string]any) error {
 	snap["repositories"] = map[string]any{"apps_destination_repo": c.appsRepo}
-	existing, _ := snap["addons"].([]types.AddOnInstall)
+	// `snapshotList`, NOT a bare type assertion. This line read
+	//
+	//	existing, _ := snap["addons"].([]types.AddOnInstall)
+	//
+	// and the `_` was load-bearing in the worst way. `t2DeploySnapshot` builds `full` as
+	// `a05NormalizeSnapshot(base)` — a json round trip — so by the time this runs `snap["addons"]`
+	// is `[]any`, the assertion fails, `existing` is nil, and the append REPLACED every seeded
+	// add-on with this one. On a full add-on surface that is 18 charts silently reduced to 1.
+	//
+	// It only bites when the A0.6 repos are wired, which is why it lay dormant: hetzner/addons
+	// asserted twenty Applications on 2026-08-24 and four on 2026-08-25, and the only thing that
+	// changed between them was `E2E_ARGO_APPS_REPO` being set.
+	existing, err := snapshotList(snap, "addons")
+	if err != nil {
+		return err
+	}
 	snap["addons"] = append(existing, c.byoAddon())
+	return nil
 }
 
 // t2AssertContains reports an error unless want is present in got — the fail-closed guard that the

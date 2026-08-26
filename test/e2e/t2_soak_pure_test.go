@@ -294,7 +294,7 @@ func TestSoakDriftDelta(t *testing.T) {
 	})
 
 	t.Run("the SAME resource drifting on a NEW attribute is new", func(t *testing.T) {
-		// Keyed on address AND attribute set. Keying on address alone would let a firewall that
+		// Keyed on the (address, attribute) PAIR. Keying on address alone would let a firewall that
 		// starts hydrated on `apply_to` and later has its RULES changed out-of-band pass silently
 		// — the single most valuable thing this check could catch.
 		final := []SoakDriftResource{
@@ -302,6 +302,51 @@ func TestSoakDriftDelta(t *testing.T) {
 		}
 		if got := soakDriftDelta(baseline, final); len(got) != 1 {
 			t.Fatalf("a new attribute on an already-drifted resource must be reported, got %v", got)
+		}
+	})
+
+	t.Run("PARTIAL convergence is not new drift either", func(t *testing.T) {
+		// The set key made this a false positive: baseline [{X,[a,b]}] and final [{X,[a]}] are
+		// different SETS, so the final entry missed and X was blamed for drift it was recovering
+		// from. Full convergence was forgiven and partial convergence punished — and it would have
+		// surfaced as an intermittent red whose attribute list is SHORTER than the baseline's.
+		before := []SoakDriftResource{
+			{Address: "hcloud_firewall.this", Kind: "modified", Attributes: []string{"apply_to", "rule"}},
+		}
+		after := []SoakDriftResource{
+			{Address: "hcloud_firewall.this", Kind: "modified", Attributes: []string{"apply_to"}},
+		}
+		if got := soakDriftDelta(before, after); len(got) != 0 {
+			t.Fatalf("an attribute that SETTLED must not be reported as new drift, got %v", got)
+		}
+	})
+
+	t.Run("only the NEW attributes are reported, not the whole history", func(t *testing.T) {
+		before := []SoakDriftResource{
+			{Address: "hcloud_firewall.this", Kind: "modified", Attributes: []string{"apply_to"}},
+		}
+		after := []SoakDriftResource{
+			{Address: "hcloud_firewall.this", Kind: "modified", Attributes: []string{"apply_to", "rule"}},
+		}
+		got := soakDriftDelta(before, after)
+		if len(got) != 1 {
+			t.Fatalf("a new attribute must be reported, got %v", got)
+		}
+		if len(got[0].Attributes) != 1 || got[0].Attributes[0] != "rule" {
+			t.Errorf("the verdict must name what changed DURING the window, not everything the resource ever drifted on; got %v", got[0].Attributes)
+		}
+	})
+
+	// talos_cluster_kubeconfig and talos_machine_secrets are ALWAYS `attrs: none recorded` — their
+	// leaves are not computable — so they have no pairs to key on and would be invisible to the
+	// delta in BOTH directions without a sentinel.
+	t.Run("an attribute-less resource is tracked by address", func(t *testing.T) {
+		none := []SoakDriftResource{{Address: "talos_machine_secrets.this", Kind: "modified"}}
+		if got := soakDriftDelta(none, none); len(got) != 0 {
+			t.Fatalf("an unchanged attribute-less resource is not new, got %v", got)
+		}
+		if got := soakDriftDelta(nil, none); len(got) != 1 {
+			t.Fatalf("an attribute-less resource appearing DURING the window must be caught, got %v", got)
 		}
 	})
 

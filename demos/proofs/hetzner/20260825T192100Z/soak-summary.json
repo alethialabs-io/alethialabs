@@ -1,0 +1,80 @@
+{
+  "enabled": true,
+  "provider": "hetzner",
+  "duration_seconds": 600,
+  "liveness_checks": 20,
+  "liveness_failures": 0,
+  "drift_job_status": "SUCCESS",
+  "drift_in_sync": false,
+  "drift_drifted": 5,
+  "drift_state_resources": 27,
+  "drift_state_reads": 3,
+  "drift_details": [
+    {
+      "address": "hcloud_firewall.this",
+      "kind": "modified",
+      "attributes": [
+        "apply_to"
+      ]
+    },
+    {
+      "address": "hcloud_primary_ip.control_plane_ipv4[0]",
+      "kind": "modified",
+      "attributes": [
+        "assignee_id"
+      ]
+    },
+    {
+      "address": "hcloud_primary_ip.worker_ipv4[0]",
+      "kind": "modified",
+      "attributes": [
+        "assignee_id"
+      ]
+    },
+    {
+      "address": "talos_cluster_kubeconfig.this",
+      "kind": "modified"
+    },
+    {
+      "address": "talos_machine_secrets.this",
+      "kind": "modified"
+    }
+  ],
+  "drift_baseline": [
+    {
+      "address": "hcloud_firewall.this",
+      "kind": "modified",
+      "attributes": [
+        "apply_to"
+      ]
+    },
+    {
+      "address": "hcloud_primary_ip.control_plane_ipv4[0]",
+      "kind": "modified",
+      "attributes": [
+        "assignee_id"
+      ]
+    },
+    {
+      "address": "hcloud_primary_ip.worker_ipv4[0]",
+      "kind": "modified",
+      "attributes": [
+        "assignee_id"
+      ]
+    },
+    {
+      "address": "talos_cluster_kubeconfig.this",
+      "kind": "modified"
+    },
+    {
+      "address": "talos_machine_secrets.this",
+      "kind": "modified"
+    }
+  ],
+  "pvc_checked": true,
+  "pvc_bound": true,
+  "pvc_volume_id": "106704371",
+  "pvc_sweep_tag_ok": true,
+  "addon_reread_ok": true,
+  "verdict": "✅ soak 600s: liveness 20/20 ok · drift SUCCESS baseline=5 final=5 NEW=0 (state=27 res, non-empty reads=3) · pvc bound=true sweep-tag=true (vol 106704371) · addons re-read=true"
+}

@@ -134,13 +134,10 @@ jobs:
       - name: Type-check + lint (all workspace projects)
         run: pnpm exec turbo run check-types lint
       - name: Unit tests
+        id: unit
         run: pnpm exec turbo run test
       # Coverage is merged into the self-hosted README badge by the `coverage-badge` job
       # (push-to-main); no third-party service. See scripts/coverage-badge.mjs + TESTING.md.
-      # Build smoke for the split-affected apps — catches transpilePackages /
-      # standalone breakage on PRs. Build-only placeholder env so the console's
-      # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
-      # nothing is contacted — postgres-js + the S3 client connect lazily).
       - name: App build smoke (console · marketing · docs)
         run: pnpm exec turbo run build --filter=console --filter=marketing --filter=docs
         env:
@@ -151,6 +148,99 @@ jobs:
           ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
           ALETHIA_STORAGE_ACCESS_KEY_ID: build
           ALETHIA_STORAGE_SECRET_ACCESS_KEY: build
+
+      # PLACED AFTER THE BUILD SMOKE, DELIBERATELY.
+      #
+      # These steps carry no `if:`, and a job stops at its first failing step — so sitting them
+      # BEFORE `App build smoke` meant a TRUE ratchet failure on apps/console would skip the other
+      # two ratchets AND the production build. That build is the only check in this job that
+      # catches what tsc and eslint structurally cannot: a module imported from both a server and a
+      # client component type-checks, lints and unit-tests clean, then 500s the page at runtime.
+      # Losing it to a coverage regression trades a real signal for a lesser one.
+      #
+      # Putting them last closes that with no conditions at all — everything that can inform the
+      # author has already run by the time the ratchet is able to fail. See #2662 for the general
+      # case: `guards` is 64 steps with zero `if:`, so its first failure skips the other 63.
+      #
+      # Per-directory statement-coverage RATCHET: coverage may rise, never fall. Reads the
+      # coverage-final.json each project's vitest run wrote above — or that turbo REPLAYED from
+      # cache, which is equally valid, because a cache hit means byte-identical inputs and the
+      # `test` task now declares ALETHIA_EDITION in its cache key. It does NOT re-run the suite.
+      #
+      # No `working-directory`: the script resolves the repo root itself, so every project is
+      # invoked identically and the fix command it prints needs no cd puzzle.
+      #
+      # No `if: always()`: when `Unit tests` fails there is no usable coverage artefact, and
+      # reporting a coverage collapse on top of a test failure misattributes the cause.
+      #
+      # ONE STEP PER PROJECT, deliberately — a `--all` wildcard is how a project silently drops
+      # out of the gate. Adding a project is a three-line edit here, and `--self-test` FAILS
+      # until that edit is made: it asserts this file carries a step for every vitest project
+      # that declares a coverage block.
+      #
+      # Every false-failure path is fail-open and enumerated F1..F10 in the script header. The
+      # floors carry a fingerprint of the environment that recorded them — including whether
+      # ee/dist existed, which is TRUE here.
+      #
+      # CORRECTION. This comment previously claimed the opposite: that apps/console depends on
+      # @alethia/enterprise-api and NOT on @alethia/ee, so `test.dependsOn: ["^build"]` never
+      # reaches it. That is wrong. `apps/console/package.json:201` declares `@alethia/ee` under
+      # **optionalDependencies** — turbo's `^build` traverses it like any other workspace
+      # dependency, so `turbo run test` BUILDS ee/dist and the console suite runs in ENTERPRISE
+      # scope, here and on a laptop alike. Measured, not reasoned: the determinism probe checked
+      # ee/dist ABSENT at job start, then recorded `"ee_dist": true` in the floors it wrote after
+      # the suites — the build happened in between.
+      #
+      # The floors are still reachable BECAUSE of that, not despite it: this job and the probe run
+      # the same `turbo run test`, so they build the same dist and measure the same scope. What was
+      # wrong was the stated reason, and a fingerprint key whose rationale is inverted is one a
+      # future reader will "fix" in the wrong direction.
+      - name: Coverage ratchet — apps/console
+        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
+        # rather than inheriting the implicit success() that would let one project's ratchet hide
+        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
+        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
+        # cause. `!cancelled()` keeps it off a cancelled run.
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project apps/console
+      - name: Coverage ratchet — packages/ui
+        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
+        # rather than inheriting the implicit success() that would let one project's ratchet hide
+        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
+        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
+        # cause. `!cancelled()` keeps it off a cancelled run.
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project packages/ui
+      - name: Coverage ratchet — packages/plan-catalog
+        # Runs whenever the coverage ARTEFACT is trustworthy, which is the real precondition —
+        # rather than inheriting the implicit success() that would let one project's ratchet hide
+        # the other two's verdicts. NOT `always()`: with `Unit tests` failed there is no usable
+        # artefact, and reporting a coverage collapse on top of a test failure misattributes the
+        # cause. `!cancelled()` keeps it off a cancelled run.
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project packages/plan-catalog
+      # apps/marketing and ee join the gate here. Both emitted NO coverage at all until now — they
+      # ran `vitest run` with no `--coverage`, so there was no artefact and nothing for the ratchet
+      # to hold. `ee/` is the LICENSED tier: the code customers pay for was the least measured
+      # surface in the repository.
+      #
+      # Both land INERT: no floors file yet, so F1 fires and each exits 0. Arming follows once the
+      # determinism probe has recorded numbers from CI. Same two-step bootstrap the other three
+      # projects used, for the same reason — floors recorded on a laptop are not comparable to CI.
+      #
+      # These steps are not optional bookkeeping: `--self-test` FAILS while a project declares a
+      # coverage block and has no step here, which is exactly how this change was caught mid-edit
+      # ("no coverage-emitting vitest project lacks a ratchet step in ci.yml — apps/marketing, ee").
+      - name: Coverage ratchet — apps/marketing
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project apps/marketing
+      - name: Coverage ratchet — ee
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project ee
+      # Build smoke for the split-affected apps — catches transpilePackages /
+      # standalone breakage on PRs. Build-only placeholder env so the console's
+      # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
+      # nothing is contacted — postgres-js + the S3 client connect lazily).
 
   integration:
     name: Integration (real Postgres + RLS)
@@ -448,26 +538,76 @@ jobs:
         run: pnpm exec turbo run test
       - name: Compute merged coverage → badge JSON
         run: node scripts/coverage-badge.mjs
-      - name: Commit the badge if it changed
+      # Publish UNCONDITIONALLY. There used to be an `if git diff --quiet -- <the badge>` guard
+      # here, and it was a trap waiting for the tracked copy to go away.
+      #
+      # `git diff` compares the index and the working tree for TRACKED paths. It says NOTHING
+      # about an untracked one — measured, both directions: on an untracked file
+      # `git diff --quiet -- <path>` exits 0 ("clean") while `git status --porcelain -- <path>`
+      # correctly prints `?? <path>`. The badge JSON is no longer checked in (it could never be
+      # kept honest — this job runs only on push to main and publishes to `badges`, so it never
+      # writes back to the tree, and the checked-in copy sat at 91% against a real 67.8%).
+      # So the file coverage-badge.mjs writes is now always untracked, the old conditional would
+      # always have reported "unchanged", and the badge would have frozen forever with this job
+      # GREEN — the same swallowed-signal shape that left the Go badge advertising 21.6% against
+      # a real 61.2% for five weeks.
+      #
+      # Dropping the conditional is safe precisely BECAUSE the file is untracked: each run starts
+      # from a fresh checkout of main where it does not exist, so `git add` always stages a new
+      # file and `git commit` can never fail with "nothing to commit".
+      - name: Publish the badge
         run: |
-          if git diff --quiet -- .github/badges/coverage.json; then
-            echo "Coverage badge unchanged."
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # THE SIBLING BADGE HAS TO BE CARRIED FORWARD, OR PUBLISHING THIS ONE DELETES IT.
+          #
+          # Both badge jobs end in `git push --force origin HEAD:badges` — they publish main's
+          # tree, with their own badge committed on top. That was survivable only while BOTH
+          # JSONs were tracked in main: each job's tree carried its sibling's file along for the
+          # ride. Now that neither is tracked, this job's tree contains only `coverage.json`, so
+          # a force-push would drop `go-coverage.json` from `badges` — and the README's Go badge
+          # would 404 on every push to main, with both jobs green. That is the exact
+          # failure-with-a-green-check shape this PR exists to remove, so it must not be
+          # reintroduced by the fix.
+          #
+          # Restoring the sibling from the branch we are about to overwrite makes the force-push
+          # additive rather than destructive. `|| true` is correct ONLY here: on the very first
+          # run the file legitimately does not exist yet, and this job does not own it.
+          # `|| true` on the fetch would be a fail-open that silently reintroduces the deletion
+          # this block exists to prevent: no FETCH_HEAD, no sibling restored, force-push drops it,
+          # job green. So the ONLY tolerated absence is a `badges` branch that genuinely does not
+          # exist yet (the very first publish); a fetch that FAILS against an existing branch reds
+          # this job.
+          if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
+            git fetch --depth=1 origin badges
+            # `checkout … || echo` would swallow EVERY failure of that command, not only the one
+            # absence we mean to tolerate: a wrong FETCH_HEAD, a moved path or a locked index would
+            # all print the same notice and then force-push the sibling away, green. So the
+            # tolerated case is tested for explicitly and the checkout itself is strict.
+            if git cat-file -e "FETCH_HEAD:.github/badges/go-coverage.json" 2>/dev/null; then
+              git checkout FETCH_HEAD -- .github/badges/go-coverage.json
+            else
+              echo "::notice::no go-coverage.json on \`badges\` yet — nothing to carry forward"
+            fi
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/badges/coverage.json
-            # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
-            # commits to main; this CI-authored badge commit is legitimate.
-            git commit --no-verify -m "chore(ci): update coverage badge [skip ci]"
-            # Publish to the unprotected orphan `badges` branch, NOT to main. `protect-main` is
-            # enforcement:active with bypass_actors:[] and a pull_request rule, so a direct push
-            # to refs/heads/main is refused with GH006 — contents:write on the token is
-            # irrelevant, the ruleset denies the ref update. See publish_badge in the Go badge
-            # job below for the full diagnosis; this badge was dead for the same reason.
-            #
-            # NO `|| true`. A push that cannot land must RED this job.
-            git push --force origin HEAD:badges
+            echo "::notice::\`badges\` does not exist yet — first publish, nothing to carry forward"
           fi
+          # -f is defensive: .gitignore carries a bare `coverage` rule, which does NOT match
+          # `.github/badges/coverage.json` today (no path component is exactly `coverage`), but a
+          # future broadening of that rule must not silently stop the badge instead of failing.
+          git add -f .github/badges/
+          # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
+          # commits to main; this CI-authored badge commit is legitimate.
+          git commit --no-verify -m "chore(ci): update coverage badge [skip ci]"
+          # Publish to the unprotected orphan `badges` branch, NOT to main. `protect-main` is
+          # enforcement:active with bypass_actors:[] and a pull_request rule, so a direct push
+          # to refs/heads/main is refused with GH006 — contents:write on the token is
+          # irrelevant, the ruleset denies the ref update. See publish_badge in the Go badge
+          # job below for the full diagnosis; this badge was dead for the same reason.
+          #
+          # NO `|| true`. A push that cannot land must RED this job.
+          git push --force origin HEAD:badges
 
   guards:
     name: Authz / open-core guards
@@ -672,6 +812,28 @@ jobs:
       # Hermetic: no go, no network, no repo state.
       - name: Go coverage ratchet (arithmetic · fail-open set · merge-safe layout)
         run: bash scripts/go-coverage.sh --self-test
+      # The TypeScript half of the same design — three steps inside `TypeScript (lint · types ·
+      # test · docs)`, a REQUIRED check with NO path filter, so it gates every PR in the
+      # repository and a false failure stops the merge queue for everyone. Five properties are
+      # pinned here, because each is a way it could wedge the repo:
+      #   · the arithmetic is integer cross-multiplication, never a percentage — including the
+      #     rounding trap where 185/291 displays as "63.6%", so a stored display value would fail
+      #     its own floor with zero code change, forever.
+      #   · the measurement derives from coverage-final.json's statementMap — the artefact vitest
+      #     emits BY DEFAULT — never from coverage-summary.json's rolled-up integers, and it
+      #     rejects any record whose statementMap and s disagree. That last check is a corruption
+      #     tripwire the summary artefact structurally cannot express.
+      #   · the fail-open set F1..F10, each branch reached deliberately: unparseable floors from a
+      #     hand-resolved conflict, an absent or truncated artefact, a fingerprint mismatch, a
+      #     collapsed denominator, a directory with no floor yet.
+      #   · the floors JSON layout, asserted with a REAL `git merge-file`: two PRs each raising a
+      #     DIFFERENT, ADJACENT directory must merge clean, or every concurrent TS PR conflicts on
+      #     a generated file nobody is allowed to hand-resolve.
+      #   · that ci.yml carries a ratchet step for every vitest project declaring a coverage block
+      #     — the guard's own guard, so a new project cannot join un-gated.
+      # Hermetic: no suites, no network, no installed tree.
+      - name: TS coverage ratchet (arithmetic · fail-open set · merge-safe layout · scope)
+        run: node scripts/ts-coverage.mjs --self-test
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
@@ -827,6 +989,29 @@ jobs:
         if: matrix.module == 'apps/runner'
         with:
           version: v3.16.3
+      # packages/core inherited helm the same way apps/runner used to, and the consequence here is
+      # WORSE than a quiet skip. Its floors record `"helm": true`, and the ratchet's fingerprint
+      # check demotes — not fails — when the current environment is missing something the recording
+      # environment had. So the day ubuntu-latest prunes helm, this leg does not go red: it goes
+      # silently ADVISORY, and every coverage regression in packages/core sails through as a
+      # warning. That is the "a guard's nothing-found branch is indistinguishable from
+      # nothing-wrong" class, armed and waiting.
+      #
+      # Pinned to v3.21.4 DELIBERATELY, which is not the v3.16.3 above. That is the version
+      # actions/runner-images currently ships on ubuntu-24.04, so this leg keeps running the exact
+      # binary it runs today: the pin buys determinism and changes no behaviour, and therefore
+      # cannot move the recorded numbers. It has to be that way round, because the fingerprint is a
+      # BOOLEAN — `helm: true` cannot see a version change, so a version-shifting pin would not
+      # demote, it would simply red, and it would red on whoever landed next rather than on the PR
+      # that caused it.
+      #
+      # The two legs therefore run different helm versions. That is the honest state, not the
+      # desired one; harmonising them is a behaviour change that moves numbers and needs its own
+      # floors re-record, so it is filed separately rather than smuggled into a determinism fix.
+      - uses: azure/setup-helm@v5
+        if: matrix.module == 'packages/core'
+        with:
+          version: v3.21.4
       - uses: opentofu/setup-opentofu@v2
         if: matrix.module == 'packages/core' || matrix.module == 'apps/runner'
         with:
@@ -983,6 +1168,102 @@ jobs:
           name: coverage-floors-${{ strategy.job-index }}
           path: ${{ matrix.module }}/coverage-floors.json
 
+  ts-coverage-determinism:
+    name: TS coverage determinism probe (manual)
+    # MANUAL ONLY. The same question `coverage-determinism` asks of Go, asked of TypeScript: are
+    # the numbers CI produces stable run-to-run, and are they the numbers a laptop produces?
+    #
+    # They are NOT the same as a laptop's, and that is the point of running this here. This job
+    # deliberately does NOT build @alethia/ee — because the `typescript` job does not either
+    # (apps/console depends on @alethia/enterprise-api, not on @alethia/ee, so turbo's
+    # `test.dependsOn: ["^build"]` never reaches its dist). The console therefore measures
+    # COMMUNITY scope here, while a maintainer's local bring-up builds ee/dist and measures the
+    # EE paths. Floors recorded from a laptop would bake in numbers CI can never reproduce and
+    # would red — or worse, silently DEMOTE — every PR in the repository.
+    #
+    # So: run this, read its output, and generate the floors from THESE numbers.
+    #
+    # `--force` on every run, or turbo replays run 1's cached coverage/ outputs and the probe
+    # proves nothing at all.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: What this runner actually carries (the fingerprint, verbatim)
+        run: |
+          printf '%-22s %s\n' os "$(uname -s)"
+          printf '%-22s %s\n' node "$(node -v)"
+          printf '%-22s %s\n' ALETHIA_EDITION "${ALETHIA_EDITION:-unset}"
+          printf '%-22s %s\n' ee/dist "$(test -f ee/dist/index.js && echo present || echo ABSENT)"
+          node -p "require('./node_modules/@vitest/coverage-v8/package.json').version" 2>/dev/null \
+            || echo "coverage-v8 version: resolved per-project"
+      - name: Five runs, comparing parsed pairs
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5; do
+            rm -rf apps/console/coverage packages/ui/coverage packages/plan-catalog/coverage
+            pnpm exec turbo run test --force
+            for p in apps/console packages/ui packages/plan-catalog; do
+              node scripts/ts-coverage.mjs --project "$p" --print | sed "s|^|$p |" >>"run.$i.txt"
+            done
+          done
+          echo "── per-directory covered/total, run 1 ──"
+          cat run.1.txt
+          # sort -u over all five runs must collapse to exactly run 1's line count, or some row
+          # differed between runs.
+          if [ "$(cat run.*.txt | sort -u | wc -l)" -eq "$(wc -l <run.1.txt)" ]; then
+            echo "✓ TypeScript coverage is run-to-run deterministic across 5 runs"
+          else
+            echo "::error::NONDETERMINISTIC — do NOT floor this. Rows that did not appear 5 times:"
+            cat run.*.txt | sort | uniq -c | awk '$1 != 5'
+            exit 1
+          fi
+      # This step used to assert ee/dist was ABSENT, "so the floors cannot describe a scope the
+      # required job can never reproduce". It ran BEFORE the suites, so it passed on every run and
+      # asserted nothing about the measurement — `turbo run test` then built ee/dist (see the
+      # correction in the `typescript` job) and the floors recorded `ee_dist: true`. A guard that
+      # checks the wrong moment reports green whatever happens, which is the class this whole
+      # programme exists to close.
+      #
+      # What actually makes the floors reachable is that this job and the required one run the
+      # IDENTICAL `pnpm exec turbo run test`, so they build the same dist and measure the same
+      # scope. That is a property of the commands, not something a filesystem probe can assert
+      # here — so this records the fact rather than pretending to gate on it, and the assertion
+      # that does bite is the fingerprint check inside the ratchet itself (F7), which demotes when
+      # the recorded environment and the measuring one disagree.
+      - name: Record ee/dist AFTER the suites — this is what the floors will fingerprint
+        run: |
+          test -f ee/dist/index.js \
+            && echo "ee/dist PRESENT — floors will record ee_dist: true (enterprise scope)" \
+            || echo "ee/dist ABSENT — floors will record ee_dist: false (community scope)"
+      - name: The floors these numbers produce (commit these VERBATIM)
+        run: |
+          for p in apps/console packages/ui packages/plan-catalog; do
+            node scripts/ts-coverage.mjs --project "$p" --update
+            echo "── $p/coverage-floors.json ──"
+            cat "$p/coverage-floors.json"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ts-coverage-floors
+          # plan-catalog's raw artefact rides along deliberately: it is the smallest project, so a
+          # verbatim copy is a committable size, and it is how the --self-test fixture gets
+          # captured from a REAL vitest run with real CI absolute paths rather than hand-written.
+          path: |
+            apps/console/coverage-floors.json
+            packages/ui/coverage-floors.json
+            packages/plan-catalog/coverage-floors.json
+            packages/plan-catalog/coverage/coverage-final.json
+          if-no-files-found: error
+
   runner-image-arch:
     name: Runner image arch (amd64 ships x86-64 — INCIDENT 2026-07-22 guard)
     # Would have caught the 2026-07-22 fleet-churn incident BEFORE prod: apps/runner/Dockerfile.base
@@ -1107,7 +1388,24 @@ jobs:
     runs-on: ubuntu-latest
     # Push-to-main only: aggregate the three Go modules' coverage into one badge JSON the README
     # renders, and commit it. `[skip ci]` avoids a run loop.
-    if: github.ref == 'refs/heads/main'
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    # SERIALISED behind the TypeScript badge job. Both jobs force-push their own tree to `badges`,
+    # and each restores the other's badge first so the push is additive. Run concurrently they
+    # would both restore from the SAME base, and the second to push would silently revert the
+    # first's fresh number — a lost update, with both jobs green. `needs:` removes that race
+    # rather than narrowing it.
+    #
+    # BUT `needs:` CARRIES AN IMPLICIT success() ON THE UPSTREAM JOB, and a matching `if:` does not
+    # cancel it — only a status function does. Left bare, a failure anywhere in `coverage-badge`
+    # (its install, its suites, its push) would SKIP this job entirely, so a TypeScript-side
+    # problem would cost BOTH badges instead of one, and the Go badge would be skipped rather than
+    # red. That is the same "a failure vetoes an unrelated unit downstream of it" shape this PR is
+    # fixing elsewhere, so it must not be reintroduced here.
+    #
+    # `!cancelled()` degrades `needs:` to pure ORDERING: the job still runs after its predecessor,
+    # whatever that predecessor's outcome, and a TypeScript failure leaves one stale badge instead
+    # of two frozen ones.
+    needs: coverage-badge
     permissions:
       contents: write
     steps:
@@ -1125,36 +1423,74 @@ jobs:
           done
       - name: Compute aggregate Go coverage → badge JSON
         run: node scripts/go-coverage-badge.mjs
-      - name: Commit the badge if it changed
+      # Publish UNCONDITIONALLY — the identical `git diff --quiet` trap the TypeScript badge job
+      # above carried. `git diff` reports TRACKED paths only; on an untracked one it exits 0
+      # ("clean") while `git status --porcelain` correctly prints `?? <path>`. Now that the badge
+      # JSON is no longer checked in, the regenerated file is always untracked and that guard
+      # would have reported "unchanged" on every run — freezing the badge with this job GREEN.
+      # That is the same swallowed-signal shape this job's own post-mortem below describes.
+      #
+      # Safe to drop because the file is untracked: every run starts from a fresh checkout of
+      # main where it does not exist, so `git add` always stages a new file and `git commit`
+      # can never fail with "nothing to commit".
+      - name: Publish the badge
         run: |
-          if git diff --quiet -- .github/badges/go-coverage.json; then
-            echo "Go coverage badge unchanged."
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Carry the sibling badge forward — see the long note in the `coverage-badge` job. A
+          # force-push publishes THIS tree, and this tree no longer contains `coverage.json`, so
+          # without restoring it first this job would delete the TypeScript badge and 404 the
+          # README. `|| true` is correct only for the first-run case where the file does not exist.
+          #
+          # This job also `needs: coverage-badge`, which removes the race outright: the two ran
+          # concurrently, each restoring the other's file from the SAME base, so whichever pushed
+          # second would silently revert the first's fresh number. Serialised, this one fetches a
+          # `badges` that already carries the TypeScript job's new value.
+          # `|| true` on the fetch would be a fail-open that silently reintroduces the deletion
+          # this block exists to prevent: no FETCH_HEAD, no sibling restored, force-push drops it,
+          # job green. So the ONLY tolerated absence is a `badges` branch that genuinely does not
+          # exist yet (the very first publish); a fetch that FAILS against an existing branch reds
+          # this job.
+          if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
+            git fetch --depth=1 origin badges
+            # `checkout … || echo` would swallow EVERY failure of that command, not only the one
+            # absence we mean to tolerate: a wrong FETCH_HEAD, a moved path or a locked index would
+            # all print the same notice and then force-push the sibling away, green. So the
+            # tolerated case is tested for explicitly and the checkout itself is strict.
+            if git cat-file -e "FETCH_HEAD:.github/badges/coverage.json" 2>/dev/null; then
+              git checkout FETCH_HEAD -- .github/badges/coverage.json
+            else
+              echo "::notice::no coverage.json on \`badges\` yet — nothing to carry forward"
+            fi
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .github/badges/go-coverage.json
-            # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
-            # commits to main; this CI-authored badge commit is legitimate.
-            git commit --no-verify -m "chore(ci): update go coverage badge [skip ci]"
-            # WHY NOT `git push` TO MAIN, AND WHY NO `|| true`:
-            #
-            # `protect-main` (infra/github/main.tf) is enforcement:active with bypass_actors:[]
-            # and a pull_request rule, so EVERY update to refs/heads/main must arrive via a PR.
-            # This push was refused with `GH006: Protected branch update failed … Changes must be
-            # made through a pull request`, and `|| echo "::warning::badge push skipped"` turned
-            # that hard failure into a green job. `permissions: contents: write` never mattered —
-            # the token has the permission, the ruleset denies the ref update.
-            #
-            # Consequence: this job had NEVER pushed successfully. .github/badges/go-coverage.json
-            # has exactly one commit in its history (23892e35, 2026-06-28, hand-authored); the
-            # job was added 2026-06-30 and the ruleset created 2026-07-03. The README advertised
-            # 21.6% for five weeks while the real aggregate was 61.2% — a 40-point error that the
-            # swallowed exit code hid. The TypeScript badge above was dead for the same reason.
-            #
-            # The rulesets match only refs/heads/{dev,main,staging} with empty excludes, so the
-            # orphan `badges` branch is writable with no Terraform apply and no hole in main.
-            git push --force origin HEAD:badges
+            echo "::notice::\`badges\` does not exist yet — first publish, nothing to carry forward"
           fi
+          # -f is defensive: .gitignore carries a bare `coverage` rule, which does NOT match this
+          # path today (no component is exactly `coverage`), but a future broadening of that rule
+          # must not silently stop the badge instead of failing.
+          git add -f .github/badges/
+          # --no-verify: the repo's pre-commit hook (core.hooksPath) blocks direct
+          # commits to main; this CI-authored badge commit is legitimate.
+          git commit --no-verify -m "chore(ci): update go coverage badge [skip ci]"
+          # WHY NOT `git push` TO MAIN, AND WHY NO `|| true`:
+          #
+          # `protect-main` (infra/github/main.tf) is enforcement:active with bypass_actors:[]
+          # and a pull_request rule, so EVERY update to refs/heads/main must arrive via a PR.
+          # This push was refused with `GH006: Protected branch update failed … Changes must be
+          # made through a pull request`, and `|| echo "::warning::badge push skipped"` turned
+          # that hard failure into a green job. `permissions: contents: write` never mattered —
+          # the token has the permission, the ruleset denies the ref update.
+          #
+          # Consequence: this job had NEVER pushed successfully. .github/badges/go-coverage.json
+          # has exactly one commit in its history (23892e35, 2026-06-28, hand-authored); the
+          # job was added 2026-06-30 and the ruleset created 2026-07-03. The README advertised
+          # 21.6% for five weeks while the real aggregate was 61.2% — a 40-point error that the
+          # swallowed exit code hid. The TypeScript badge above was dead for the same reason.
+          #
+          # The rulesets match only refs/heads/{dev,main,staging} with empty excludes, so the
+          # orphan `badges` branch is writable with no Terraform apply and no hole in main.
+          git push --force origin HEAD:badges
 
   mutation:
     name: Mutation testing (Stryker + Gremlins)

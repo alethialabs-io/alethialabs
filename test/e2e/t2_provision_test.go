@@ -375,7 +375,12 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		dctx, dcancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer dcancel()
 		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, project, env, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
-			t.Logf("teardown RunDestroy failed (workflow hcloud-cleanup is the guarantee): %v", derr)
+			// The sweeper NAME follows the provider. This line hardcoded `hcloud-cleanup` on every
+			// cloud, so an aws run whose in-test destroy failed pointed the reader at hetzner's
+			// script — the workflow's own per-provider `case` had already chosen `aws-cleanup.sh`
+			// correctly, so only the message was wrong, and only when someone was reading it after
+			// a failure. `provider` is in scope four lines up.
+			t.Logf("teardown RunDestroy failed (workflow %s is the guarantee): %v", t2SweeperName(provider), derr)
 		} else {
 			t.Log("teardown: cluster destroyed via RunDestroy")
 		}
@@ -521,6 +526,12 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	expectedApps, err := DeriveExpectedArgoApps(provider, metaRaw)
 	if err != nil {
 		t.Fatalf("derive expected ArgoCD apps: %v\nraw metadata: %s", err, metaRaw)
+	}
+	// The set is DERIVED from persisted metadata, which can silently shrink — see
+	// RequireAllAddOnsExpected. Checked before it is used, so a full-surface run cannot assert
+	// the floor and report the 18-chart sweep.
+	if err := RequireAllAddOnsExpected(expectedApps); err != nil {
+		t.Fatalf("full add-on surface: %v", err)
 	}
 	t.Logf("asserting ArgoCD Applications reach Healthy+Synced: %v", expectedApps)
 

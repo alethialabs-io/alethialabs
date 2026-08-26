@@ -1340,6 +1340,10 @@ jobs:
           # change both — and t2budget will tell you if you got it wrong, on the next run.
           T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 195 || 100 }}
           T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 210 || 120 }}
+          # Where the go-test stream is teed so capture-proof.sh can put the ASSERTIONS in the
+          # committed bundle. ALETHIA_E2E_T2_RUNNER_LOG above is the RUNNER's deployment log — a
+          # different stream, which carries no `--- PASS` and no A0.x decision lines.
+          ALETHIA_E2E_T2_TEST_LOG: ${{ runner.temp }}/t2-test.log
         run: |
           # Derive the go-timeout from the harness's OWN budget arithmetic, in this step, with this
           # step's env — so the number `go test` is given and the ctx the test builds come from one
@@ -1352,8 +1356,14 @@ jobs:
             -step-cap-minutes "$T2_STEP_CAP_MINUTES" \
             -job-cap-minutes "$T2_JOB_CAP_MINUTES")"
           echo "::notice::T2 ctx ${ctx_minutes}m · go-timeout ${go_timeout} · step cap ${T2_STEP_CAP_MINUTES}m · job cap ${T2_JOB_CAP_MINUTES}m"
+          # pipefail is load-bearing here for the same reason it is at the Trivy install above:
+          # without it `go test | tee` reports TEE's status, so a FAILING e2e run would report
+          # success and the whole nightly would go quietly green. Only `-o pipefail` is set, not
+          # `-e`/`-u`, so nothing else in this block changes behaviour.
+          set -o pipefail
           GOWORK=off go test -tags=e2e_t2 ./... \
-            -run TestT2RealCloudProvisioning -count=1 -timeout "$go_timeout" -v
+            -run TestT2RealCloudProvisioning -count=1 -timeout "$go_timeout" -v \
+            2>&1 | tee "$ALETHIA_E2E_T2_TEST_LOG"
 
       # ── Teardown, CANCELLATION PATH ONLY (#2330). ───────────────────────────────────────────
       #

@@ -40,7 +40,11 @@ export default defineConfig({
 		coverage: {
 			provider: "v8",
 			// text → terminal, html → local browse, lcov + json-summary → the CI coverage badge.
-			reporter: ["text", "html", "lcov", "json-summary"],
+			// "json" writes coverage-final.json — the RAW statement map, and the artefact the
+			// coverage ratchet (scripts/ts-coverage.mjs) measures. It is in vitest's DEFAULT
+			// reporter set, but naming any `reporter` array REPLACES that default, so it has to
+			// be listed explicitly here. json-summary stays for scripts/coverage-badge.mjs.
+			reporter: ["text", "html", "lcov", "json-summary", "json"],
 			reportsDirectory: "./coverage",
 			// Scope to our business LOGIC — the layer unit/action tests target. Presentational
 			// components (components/**) are intentionally excluded: UI is covered by the focused
@@ -53,22 +57,78 @@ export default defineConfig({
 				"lib/db/seed/**",
 				"**/*.config.*",
 				"tests/**",
-				// Mid-refactor: the spec→project rework is in flight, so the legacy spec/zone/
-				// scanner surface + the design canvas store are excluded from the coverage scope
-				// (the same skip we apply to their tests) until the new project model settles.
-				// Re-include + cover once the refactor lands.
-				"lib/scanner/**",
-				"lib/stores/use-canvas-store.ts",
-				"lib/ai/tools/scanner.ts",
-				"app/server/actions/scanner.ts",
-				"app/server/actions/clusters.ts",
-				"app/server/actions/specs.ts",
-				"app/server/actions/zones.ts",
+				// WAS: "Mid-refactor: the spec→project rework is in flight … the same skip we apply
+				// to their tests … re-include + cover once the refactor lands."
+				//
+				// The refactor landed. `app/server/actions/specs.ts` and `.../zones.ts` were
+				// deleted by 18f6b55e on 2026-06-30 — so two of these globs had been excluding
+				// NOTHING for eight weeks, which is why an exclusion that matches zero files has
+				// to be an error rather than a shrug.
+				//
+				// And the parenthetical was never true. `tests/lib/scanner/{schema,
+				// suggest-bindings,to-project,to-project-services}.test.ts` and
+				// `tests/lib/stores/use-canvas-store-{containers,keyless}.test.ts` are not
+				// skipped — they run on every PR, importing `@/lib/scanner/*` and
+				// `@/lib/stores/use-canvas-store` directly. Their coverage was being computed by
+				// v8 and then discarded by this scope. So the badge was not merely excluding
+				// untested code; it was throwing away tests that were already passing.
+				//
+				// `lib/scanner/**` and `use-canvas-store.ts` were re-included first, and CI measured
+				// the console at 67.09% -> 67.29% — it went UP, because their tests were already
+				// running and this scope was discarding the result.
+				//
+				// The last three — lib/ai/tools/scanner.ts, app/server/actions/scanner.ts and
+				// app/server/actions/clusters.ts — are re-included now, and they are the opposite
+				// case: nothing EXECUTES any of them, so measuring them moves the number DOWN. They
+				// were split out precisely so the two directions would be separately attributable
+				// rather than netting out inside one commit.
+				//
+				// "nothing executes them" rather than "no test names them", because two of the
+				// three ARE named — `tests/lib/ai/tools/registry.test.ts:23,29` and
+				// `read.test.ts:18,46`, four times, including a literal
+				// `import { getClusters } from "@/app/server/actions/clusters"`. Every one of those
+				// is a `vi.mock`, which REPLACES the module, so the real code never runs and v8
+				// records nothing for it. The distinction matters for whoever closes the gap: the
+				// remedy is a test that exercises these modules, and adding another `vi.mock`
+				// would satisfy "a test names it" while changing the coverage by zero.
+				//
+				// Publishing that drop is the point. An exclusion that keeps untested code out of
+				// the denominator does not make the code tested, it makes the badge wrong; and the
+				// ratchet (#2649) can only hold a floor under surface it can see. There is nothing
+				// left here to re-include — every remaining exclusion below is either infrastructural
+				// or a tier-separation claim with a named suite behind it.
 				// Real-SQL modules verified by the integration tier (tests/integration/*, real
 				// Postgres) — mocked unit tests can't exercise their WHERE/joins/CTEs, so they're
 				// scoped to that tier and excluded from the unit badge (same tier-separation as
-				// e2e-covered components). Each has a green integration suite.
-				"lib/queries/**",
+				// e2e-covered components).
+				//
+				// `lib/queries/**` USED TO BE ONE GLOB, and the claim it carried — "Each has a green
+				// integration suite" — was true of six of its twelve files and false of the other
+				// six. Measured by which suite actually names each module:
+				//
+				//   named by an integration suite   classification 2 · cluster-for-env 1 ·
+				//                                   evidence 1 · projects 1 · runner-usage 3 ·
+				//                                   usage-counts 3
+				//   named by NONE                   capabilities · cli-config ·
+				//                                   project-components-read · runner-capabilities ·
+				//                                   signing · support
+				//
+				// Three of the six unproven ones have UNIT tests whose coverage this exclusion was
+				// then discarding — against a rationale that says mocked unit tests cannot exercise
+				// this code. And the hole was not academic: cli-config.ts was covered by nothing at
+				// all, and was hiding a real defect (#2663 — an unordered LIMIT 1 over a non-unique
+				// project_name, reachable from three authenticated CLI routes).
+				//
+				// So the glob is SPLIT rather than dropped. A directory-wide exclusion is precisely
+				// how six unproven files hid behind six proven ones: one line asserted twelve
+				// things, and nobody could see which of them were true. Per-file entries make each
+				// claim separately checkable and separately falsifiable.
+				"lib/queries/classification.ts",
+				"lib/queries/cluster-for-env.ts",
+				"lib/queries/evidence.ts",
+				"lib/queries/projects.ts",
+				"lib/queries/runner-usage.ts",
+				"lib/queries/usage-counts.ts",
 				"lib/billing/ai-quota.ts",
 				"lib/billing/queries.ts",
 				"lib/fleet/queue.ts",

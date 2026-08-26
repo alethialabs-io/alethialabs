@@ -88,8 +88,12 @@ type webhookConfigList struct {
 			Name string `json:"name"`
 		} `json:"metadata"`
 		Webhooks []struct {
-			Name         string `json:"name"`
-			ClientConfig struct {
+			Name string `json:"name"`
+			// FailurePolicy decides whether this webhook can block admission at all. ABSENT means
+			// `Fail` in admissionregistration.k8s.io/v1, so an empty string must never be read as
+			// "ignore" — the zero value and the permissive value are opposites here.
+			FailurePolicy string `json:"failurePolicy"`
+			ClientConfig  struct {
 				CABundle string `json:"caBundle"`
 				// Service is set when the webhook is served by an in-cluster Service. A
 				// webhook with a URL instead is served from OUTSIDE the cluster; nothing
@@ -129,6 +133,24 @@ func unservableWebhooks(list webhookConfigList) (unservable []string, backings [
 	for _, item := range list.Items {
 		for _, w := range item.Webhooks {
 			if w.ClientConfig.Service == nil {
+				continue
+			}
+			// An `Ignore` webhook cannot block admission — the API server proceeds when it cannot
+			// reach it — so it can never cause the SyncError this gate exists to prevent, and waiting
+			// on one is pure cost. That cost is not local: admissionWebhookWaitBudget is 3 minutes for
+			// the WHOLE deploy, spent down across waves, so time burned on an Ignore webhook that
+			// never becomes servable is time denied to a Fail webhook in a later wave — which then
+			// reports "the budget was already spent by an earlier wave" and reads as if the earlier
+			// wave legitimately needed it.
+			//
+			// Reachable on the shape the comment above already anticipates: a cluster carrying an
+			// external policy webhook, which is frequently `Ignore` precisely so it cannot wedge
+			// admission.
+			//
+			// Compared case-insensitively against the one permissive value, NOT by testing for
+			// "Fail": an absent policy IS Fail, and so is any value we do not recognise, so both fall
+			// through to being waited on. Failing toward waiting is the safe direction.
+			if strings.EqualFold(strings.TrimSpace(w.FailurePolicy), "Ignore") {
 				continue
 			}
 			if strings.TrimSpace(w.ClientConfig.CABundle) == "" {
@@ -213,7 +235,12 @@ func WaitAdmissionWebhooksServable(budget *webhookWaitBudget, stdout, stderr io.
 				// Say what was checked, not just that nothing was wrong. "0 unservable"
 				// over an empty list and "0 unservable" over eleven webhooks are different
 				// facts, and a gate that renders them identically cannot be audited.
-				fmt.Fprintf(stdout, "  admission webhooks servable (%d in-cluster backing service(s) with ready endpoints)\n", len(backings))
+				// Names what was NOT checked, because the green line is otherwise a stronger claim
+				// than the gate makes: URL-backed webhooks have no endpoints to read and are skipped
+				// deliberately, and an `Ignore` webhook cannot block admission so it is not waited
+				// on. A `Fail` webhook served from a URL that is down WILL still reject wave N+1's
+				// resources, and this gate will have said "servable".
+				fmt.Fprintf(stdout, "  admission webhooks servable (%d in-cluster backing service(s) with ready endpoints; URL-backed and failurePolicy=Ignore webhooks are not checked)\n", len(backings))
 				return nil
 			}
 			unservable = pending

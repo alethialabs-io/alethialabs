@@ -13,7 +13,7 @@
   "scripts": {
     "build": "esbuild src/index.ts --bundle --platform=node --format=cjs --packages=external --outfile=dist/index.js",
     "check-types": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --coverage"
   },
   "peerDependencies": {
     "@better-auth/sso": "^1.7.1",
@@ -24,6 +24,7 @@
     "samlify": "^2.0.0"
   },
   "devDependencies": {
+		"@vitest/coverage-v8": "^2.1.9",
     "@alethia/enterprise-api": "workspace:*",
     "@types/node": "^20",
     "esbuild": "^0.28.2",

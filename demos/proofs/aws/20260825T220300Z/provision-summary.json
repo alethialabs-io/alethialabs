@@ -1,0 +1,22 @@
+{
+  "provider": "aws",
+  "region": "us-east-1",
+  "cluster": "alethia-nl-32896743138-1",
+  "run_tag": "nightly-32896743138-1",
+  "outcome": "failure",
+  "deploy_stage": "argocd-ready",
+  "git_sha": "e322317",
+  "captured_at": "20260825T220300Z",
+  "resources_added": 172,
+  "resources_destroyed": null,
+  "cluster_live_at_capture": false,
+  "nodes_ready": 0,
+  "argocd_total": 0,
+  "argocd_healthy_synced": 0,
+  "argocd_verdict": "not reached",
+  "receipt_signed": true,
+  "receipt_plan_sha256": "98b9c8db9a4b",
+  "destroyed": false,
+  "duration_seconds": 4875,
+  "verdict": "aws: ❌ FAILED at stage 'argocd-ready' (outcome=failure)"
+}
