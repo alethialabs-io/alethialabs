@@ -280,30 +280,31 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cell | state | issue | issue state |
 |---|---|---|:---:|
-| `aws/maxconfig` | failing | #2717 | ? |
-| `aws/addons` | failing | #2717 | ? |
-| `aws/byo` | failing | #2591 | ? |
-| `aws/day2` | failing | #2717 | ? |
+| `aws/maxconfig` | failing | #2717 | open |
+| `aws/addons` | failing | #2717 | open |
+| `aws/byo` | failing | #2591 | open |
+| `aws/day2` | failing | #2717 | open |
 | `gcp/maxconfig` | failing | #2567 | ? |
 | `azure/maxconfig` | failing | **none** | ? |
 | `azure/addons` | failing | **none** | ? |
-| `hetzner/maxconfig` | failing | #2568 | ? |
-| `hetzner/addons` | failing | #2717 | ? |
+| `hetzner/maxconfig` | failing | #2568 | open |
+| `hetzner/addons` | failing | #2717 | open |
 
 ### Blocked on a human
 
+- #2698 — security(billing): runColonyTasks lets the caller set its own fan-out, behind one up-front budget hold
+- #2697 — security(audit): queueAudit attaches a job to any projectId without authorizing it, and an AI tool supplies that id
+- #2683 — fix(billing): a failed metering write leaks the AI budget hold it was meant to reconcile
+- #2679 — security(promotions): protection rules are authorized on one project and written to another
+- #2663 — fix(cli): `project get <name>` resolves to an arbitrary project when two share a name
+- #2568 — ceiling(hetzner): Hetzner DNS refuses .io — the max-config dns kind cannot use alethialabs.io
 - #2485 — prod: the console has not deployed since 2026-07-30 — a cross-app import in the pruned image build, masked by fail-fast behind an expired PostHog key
 - #2482 — release: the console never learns about a new CLI version — the notification's credentials cannot mint from a tag
 - #2465 — programme: two of the six MVP predicates assert something no script can check
 - #2462 — infra(e2e): make the e2e-dev OIDC trust widening authoritative — four applies, currently hand-applied
 - #2283 — probe(alibaba-cr): does an AUTO scan rule fire with no VPC endpoint? (#2265 shipped the wiring, not the proof)
-- #2259 — e2e nightly: azure RED (floor)
-- #2258 — e2e nightly: gcp RED (floor)
 - #2099 — e2e nightly: gcp RED (full-bar)
 - #1871 — fix(gcp-e2e): the billing budget's alerts are undeliverable — the publisher binding cannot be created
-- #1773 — e2e: delegate a real zone so the full bar can prove the ACM/cert path
-- #1720 — e2e nightly: 1 of 5 clouds are not enabled
-- #1579 — e2e nightly: wire the hetzner gate (HCLOUD_TOKEN — no stack)
 - #1513 — feat(keyless): GA — default-on rollout and delete ALETHIA_KEYLESS_DB_AUTH_ENABLED
 - #1450 — test(e2e): azure-mysql keyless real-apply on Azure (main-gated)
 - #1268 — test(e2e): cross-account keyless cloud-SM in-cluster read — AWS/GCP/Azure/Alibaba (main-gated)
@@ -330,7 +331,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-08-25T11:47:25Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-08-26T09:24:06Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
