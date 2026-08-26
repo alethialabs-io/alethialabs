@@ -160,6 +160,32 @@ expect ALLOW "$(run "$(bash_payload "cd $WT && git rebase origin/dev")")" "cd <m
 expect ALLOW "$(run "$(bash_payload "git -C $WT commit -m x")")" "git -C <my worktree> commit"
 expect ALLOW "$(run "$(bash_payload "git -C $WT add -A")")" "git -C <my worktree> add -A"
 
+echo "── a SIBLING REPOSITORY is not the main checkout (#2795) ──"
+# Its own .git, its own remote, its own default branch. The rule is "don't commit into the shared
+# MAIN CHECKOUT"; a sibling is neither that nor a linked worktree, so it used to read as
+# "unresolved" and get refused — the fail-closed default catching something the rule was never about.
+#
+# Real, not hypothetical: the e2e fixtures live in three separate repositories (enterprise-demo,
+# alethia-e2e-apps, alethia-e2e-chart), and all three are inputs to proof cells in PROGRAMME.md, so
+# working on them is ordinary programme work.
+git init -q "$TMP/sibling"
+(cd "$TMP/sibling" && git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init)
+mkdir -p "$TMP/sibling/sub"
+expect ALLOW "$(run "$(bash_payload "git -C $TMP/sibling commit -m x")")" "git -C <sibling repo> commit"
+expect ALLOW "$(run "$(bash_payload "git -C $TMP/sibling add -A")")" "git -C <sibling repo> add -A"
+expect ALLOW "$(run "$(bash_payload "cd $TMP/sibling && git commit -m x")")" "cd <sibling repo>, then commit"
+# A SUBDIRECTORY of a sibling still resolves to the sibling's toplevel.
+expect ALLOW "$(run "$(bash_payload "git -C $TMP/sibling/sub commit -m x")")" "git -C <sibling subdir> commit"
+
+echo "── ...and the hole it leaves must stay shut ──"
+# Compared by TOPLEVEL, not by path prefix — so a subdirectory OF THE MAIN CHECKOUT resolves to the
+# main checkout and is still blocked. That is the case a prefix test would get wrong, and the one
+# that would turn this fix into a bypass.
+mkdir -p "$MAIN/sub"
+expect BLOCK "$(run "$(bash_payload "git -C $MAIN/sub commit -m x")")" "git -C <MAIN subdir> commit"
+# An unresolvable path has no toplevel and must fall through to the block, not sail past it.
+expect BLOCK "$(run "$(bash_payload "git -C /nonexistent/nowhere commit -m x")")" "git -C <nonexistent> commit"
+
 echo "── no over-reach: the rule must not eat ordinary git ──"
 expect ALLOW "$(run "$(bash_payload "git status --short")")" "git status"
 expect ALLOW "$(run "$(bash_payload "git log --oneline -5")")" "git log"
