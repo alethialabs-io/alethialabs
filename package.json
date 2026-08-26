@@ -29,6 +29,7 @@
     "compose:down": "docker compose down",
     "check:connector-assets": "node scripts/check-connector-assets.mjs",
     "check:docs-contract": "node scripts/check-docs-contract.mjs",
+    "check:addon-render": "bash scripts/addons/check-render-determinism.sh",
     "check:theme-inline": "node scripts/check-theme-inline-overrides.mjs",
     "check:var-utility-shadowing": "node scripts/check-var-utility-shadowing.mjs",
     "check:legal-hashes": "node scripts/check-legal-document-hashes.mjs",

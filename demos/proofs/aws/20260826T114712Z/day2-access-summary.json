@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "provider": "aws",
+  "endpoint_surfaced": true,
+  "endpoint": "https://FA62C2FC0278059B81DE726B88F2062C.yl4.us-east-1.eks.amazonaws.com",
+  "kube_reachable": true,
+  "kube_authorized": true,
+  "auth_action": "* / *",
+  "ready_nodes": 3,
+  "argocd_url_checked": false,
+  "argocd_url": "",
+  "argocd_url_reachable": false,
+  "verdict": "✅ day2-access: endpoint surfaced=true · kube reachable=true authorized=true (can-i * / *) · nodes ready=3 · argocd-url: n/a (no ingress on this cloud yet — access via port-forward)"
+}

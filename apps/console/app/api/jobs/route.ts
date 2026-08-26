@@ -156,7 +156,19 @@ export async function POST(req: Request) {
 		// caller's actor. The actions authorize via the PDP, freeze the nested
 		// buildConfigSnapshot, insert the job, flip the env status, audit, and notify
 		// the scaler — identical to a console-queued job.
-		const headerOrg = req.headers.get("X-Alethia-Org")?.trim();
+		// A SERVICE TOKEN'S ORG WINS OVER THE HEADER, and over the caller's default scope.
+		//
+		// This route is PLAN / DEPLOY / DESTROY — it provisions and tears down real cloud
+		// infrastructure — and it resolves its own scope rather than going through `authorizeCli`.
+		// Without this, a token minted for one org could drive a deploy in another whenever its
+		// creator belonged to both: not a cross-tenant escalation, but a containment promise the
+		// product makes and would not have kept.
+		//
+		// verifyCliToken already refuses a mismatched header before we get here; the fallback below
+		// is what stops an ABSENT header resolving the creator's default org instead.
+		const pinnedOrg =
+			typeof payload?.service_token_org_id === "string" ? payload.service_token_org_id : undefined;
+		const headerOrg = pinnedOrg ?? req.headers.get("X-Alethia-Org")?.trim();
 		const actor = await getActiveScope(userId, headerOrg || undefined);
 		if (headerOrg) {
 			const denied = await ensureCliOrgAccess(actor, userId, headerOrg);

@@ -633,8 +633,18 @@ func kubectlGetArgoApps(ctx context.Context, kubeconfigPath string) ([]byte, err
 // (best-effort, truncated per app, capped at 5 apps) formatted for appending to the
 // timeout error — the "full dump" that makes a red nightly diagnosable from logs.
 func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []string) string {
-	const maxApps = 5
-	const maxPerApp = 4000
+	// SIZED TO THE WORST OBSERVED FAILURE, not to a comfortable number.
+	//
+	// hetzner/addons run 32959867406 had EIGHT losers against a cap of five, so minio and velero were
+	// never described at all — and minio turned out to be the one whose cause (#2822) mattered most.
+	// A dump that silently stops before the interesting failure has the same effect as no dump, at
+	// the same price: the run still costs EUR 0.75 and forty minutes.
+	//
+	// 18 marketplace add-ons plus the platform rail is the realistic ceiling on how many can fail at
+	// once, so cover all of them. The per-app budget shrinks to compensate — `describe` is mostly the
+	// spec, which the Application already rendered above, and the useful part is at the top.
+	const maxApps = 20
+	const maxPerApp = 2500
 	var b strings.Builder
 	for i, name := range losers {
 		if i == maxApps {
@@ -686,7 +696,9 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 // wrong" must not look the same.
 func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 	const (
-		maxPods     = 3
+		// Three was enough for a Deployment; a DaemonSet on a multi-node cluster can have every pod
+		// unhappy for one reason, and seeing only three of them hides whether it is one node or all.
+		maxPods     = 6
 		maxLogLines = "40"
 	)
 	// ArgoCD labels every resource it manages with the Application's name. That is how the pods are
@@ -711,9 +723,21 @@ func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) == 1 && lines[0] == "" {
-		// A DIFFERENT fact from "they are all fine", and it must read differently: an Application
-		// with no pods at all is Degraded for a reason no pod dump will ever explain.
-		return fmt.Sprintf("\n──── pods for %s: NONE match %s — the workload was never created ────\n", app, selector)
+		// NO PODS. That is a DIFFERENT fact from "they are all fine" — but on its own it is ALSO
+		// ambiguous, and the first run to hit it proved so.
+		//
+		// hetzner/addons 32959867406 reported `addon-falco: NONE match … — the workload was never
+		// created`, and that read as a finding. It is not one: it conflates
+		//
+		//     the Application manages a workload that has produced no pods   (a real fault)
+		//     the Application manages no workload at all                     (a different fault)
+		//     the pods exist under a label this selector does not match      (NOT a fault — a bug HERE)
+		//
+		// The third would have this dump confidently blame a chart for something the harness got
+		// wrong. So ask ArgoCD what it thinks it manages: the Application's own `.status.resources`
+		// is the authority, and it distinguishes all three.
+		return fmt.Sprintf("\n──── pods for %s: NONE match %s ────%s\n", app, selector,
+			describeManagedWorkloads(ctx, kubeconfigPath, app))
 	}
 
 	var b strings.Builder
@@ -799,7 +823,9 @@ func (r outOfSyncRef) kubectlTarget() string {
 // a run hangs or an error is lost.
 func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []outOfSyncRef) string {
 	const (
-		maxResources = 8
+		// 17 OutOfSync refs against a cap of 8 on run 32959867406 — "… 9 more not shown" hid more
+		// than it showed. Deduplication (#2778) reduced the count; it did not make 8 enough.
+		maxResources = 24
 		maxPathsPer  = 12
 	)
 	if len(refs) == 0 {
@@ -975,4 +1001,53 @@ func refsForLosers(observed map[string]argoAppState, losers []string) []outOfSyn
 		}
 	}
 	return refs
+}
+
+// describeManagedWorkloads reports the workload-bearing resources an Application says it manages,
+// so "no pods" can be read correctly rather than assumed.
+//
+// It exists because "no pods matched my selector" is a statement about the SELECTOR as much as about
+// the cluster, and a dump that cannot tell those apart will eventually blame a chart for a harness
+// bug. ArgoCD's `.status.resources` is what it believes it created, so:
+//
+//	a DaemonSet/Deployment IS listed, and no pods    → the workload exists and produced none. Real.
+//	nothing workload-bearing is listed               → the chart rendered none. Also real, different.
+//	resources listed but the selector found nothing  → suspect the SELECTOR, not the chart.
+//
+// Best-effort on an already-failing path: an error is reported as an inability to check, never as an
+// absence.
+func describeManagedWorkloads(ctx context.Context, kubeconfigPath, app string) string {
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"get", "applications.argoproj.io", "-n", "argocd", app,
+		"-o", "jsonpath={range .status.resources[*]}{.kind}/{.name} {.health.status}{\"\\n\"}{end}",
+	).Output()
+	if err != nil {
+		return fmt.Sprintf("\n  (could not read what %s manages: %v — so whether the workload exists is UNKNOWN)", app, err)
+	}
+
+	var workloads []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// The kinds that produce pods. A ConfigMap telling us nothing is noise on a failing path.
+		for _, kind := range []string{"DaemonSet/", "Deployment/", "StatefulSet/", "Job/", "CronJob/", "ReplicaSet/"} {
+			if strings.HasPrefix(line, kind) {
+				workloads = append(workloads, line)
+				break
+			}
+		}
+	}
+
+	if len(workloads) == 0 {
+		return "\n  ArgoCD lists NO workload-bearing resource for this Application — the chart rendered none," +
+			"\n  so there is nothing to produce a pod. Not a scheduling problem."
+	}
+	sort.Strings(workloads)
+	return fmt.Sprintf("\n  but ArgoCD says it manages %d workload(s), so either they produced no pods or this"+
+		"\n  selector is wrong — check the label before blaming the chart:\n    %s",
+		len(workloads), strings.Join(workloads, "\n    "))
 }
