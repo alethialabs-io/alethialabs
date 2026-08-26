@@ -48,7 +48,7 @@ import {
 	policyInputSchema,
 } from "@/lib/validations/alerts";
 
-const ALERTS_PATH = "/dashboard/alerts";
+const ALERTS_PATH = "/[org]/~/alerts";
 
 // ── DTOs (client-safe; never carry the encrypted secret envelope) ───────────────
 
@@ -355,7 +355,7 @@ export async function addChannel(
 			created_by: actor.userId,
 		})
 		.returning({ id: alertChannels.id });
-	revalidatePath(ALERTS_PATH);
+	revalidatePath(ALERTS_PATH, "page");
 	return { ok: true, id: row.id };
 }
 
@@ -393,7 +393,7 @@ export async function updateChannel(
 		.where(
 			and(eq(alertChannels.id, id), eq(alertChannels.org_id, actor.orgId)),
 		);
-	revalidatePath(ALERTS_PATH);
+	revalidatePath(ALERTS_PATH, "page");
 }
 
 /** Deletes a channel (its policy bindings cascade; deliveries keep history via SET NULL). */
@@ -405,7 +405,7 @@ export async function deleteChannel(id: string): Promise<void> {
 		.where(
 			and(eq(alertChannels.id, id), eq(alertChannels.org_id, actor.orgId)),
 		);
-	revalidatePath(ALERTS_PATH);
+	revalidatePath(ALERTS_PATH, "page");
 }
 
 /**
@@ -422,7 +422,7 @@ export async function setChannelEnabled(
 		.update(alertChannels)
 		.set({ enabled, updated_at: new Date() })
 		.where(and(eq(alertChannels.id, id), eq(alertChannels.org_id, actor.orgId)));
-	revalidatePath(ALERTS_PATH);
+	revalidatePath(ALERTS_PATH, "page");
 }
 
 /** Sends a synthetic test event through the channel and records the result. */
@@ -456,7 +456,7 @@ export async function verifyChannel(
 			.update(alertChannels)
 			.set({ is_verified: true, last_verified_at: new Date() })
 			.where(eq(alertChannels.id, id));
-		revalidatePath(ALERTS_PATH);
+		revalidatePath(ALERTS_PATH, "page");
 		return { ok: true };
 	} catch (err) {
 		return { ok: false, error: friendlyVerifyError(err) };
@@ -561,7 +561,7 @@ export async function createPolicy(input: PolicyInput): Promise<void> {
 		})),
 	);
 	invalidateOrgRules(actor.orgId);
-	revalidatePath(ALERTS_PATH);
+	revalidatePath(ALERTS_PATH, "page");
 }
 
 /** Updates a policy and replaces its channel bindings. */
@@ -602,7 +602,7 @@ export async function updatePolicy(id: string, input: PolicyInput): Promise<void
 		})),
 	);
 	invalidateOrgRules(actor.orgId);
-	revalidatePath(ALERTS_PATH);
+	revalidatePath(ALERTS_PATH, "page");
 }
 
 /** Enables/disables a policy without opening the editor. */
@@ -614,7 +614,7 @@ export async function togglePolicy(id: string, enabled: boolean): Promise<void> 
 		.set({ enabled, updated_at: new Date() })
 		.where(and(eq(alertRules.id, id), eq(alertRules.org_id, actor.orgId)));
 	invalidateOrgRules(actor.orgId);
-	revalidatePath(ALERTS_PATH);
+	revalidatePath(ALERTS_PATH, "page");
 }
 
 /** Deletes a policy (its bindings cascade). */
@@ -625,7 +625,7 @@ export async function deletePolicy(id: string): Promise<void> {
 		.delete(alertRules)
 		.where(and(eq(alertRules.id, id), eq(alertRules.org_id, actor.orgId)));
 	invalidateOrgRules(actor.orgId);
-	revalidatePath(ALERTS_PATH);
+	revalidatePath(ALERTS_PATH, "page");
 }
 
 /** Guards that every bound channel belongs to the actor's org (no cross-org binding). */
