@@ -84,13 +84,15 @@ on:
         type: string
         default: ""
       dimension:
-        description: "Which DIMENSION to prove. Blank keeps the old floor/full_bar behaviour. The four middle values (maxconfig/addons/byo/day2) were previously reachable ONLY from a laptop — a boolean cannot express them — so a cell whose cause had been fixed could sit stale with no way to re-drive it from CI. Costs scale with the dimension, not with this input: addons and maxconfig are heavy, byo and day2 are near-floor."
+        description: "Which DIMENSION to prove. Blank keeps the old floor/full_bar behaviour. The middle values were previously reachable ONLY from a laptop — a boolean cannot express them — so a cell whose cause had been fixed could sit stale with no way to re-drive it from CI. `gitops` is the A0.6 apps-repo + BYO Helm chart proof (renamed from `byo`, which still works); `byo-iac` is the separate seven-job customer-OpenTofu custody chain. Costs scale with the dimension, not with this input: addons and maxconfig are heavy, gitops/byo-iac/day2 are near-floor."
         type: choice
         options:
           - ""
           - floor
           - maxconfig
           - addons
+          - gitops
+          - byo-iac
           - byo
           - day2
           - full
@@ -438,8 +440,10 @@ jobs:
               # default even when a caller widened it.
               soak="$(printf '%s\n' "$fidelity" | sed -n 's/^ALETHIA_E2E_SOAK=//p')"
               echo "::notice::DAY-2 dimension — floor shape, then the A0.3 soak for ${soak:-10m} with its FATAL drift check." ;;
-            byo)
-              echo "::notice::BYO dimension — floor shape plus the A0.6 bring-your-own apps-repo/chart proof, REQUIRED on this dimension (it reds rather than skipping when the apps-repo env is unset)." ;;
+            gitops | byo)
+              echo "::notice::GITOPS dimension — floor shape plus the A0.6 apps-repo + BYO Helm chart proof, REQUIRED on this dimension (it reds rather than skipping when the apps-repo env is unset). This is NOT the BYO-IaC custody chain; that is the byo-iac dimension." ;;
+            byo-iac)
+              echo "::notice::BYO-IaC dimension — floor shape plus the seven-job custody chain: a customer OpenTofu module refused when unsafe, applied through the state proxy, drifted, healed, destroyed, state cleared. No partial credit." ;;
             *)
               echo "::notice::green-floor dimension — provision + cluster_ready + ArgoCD Healthy+Synced (+ A0.6 repos when wired). NO day-2 soak: that is the day2/full dimension (#2356)." ;;
           esac
@@ -1028,7 +1032,14 @@ jobs:
           ALETHIA_E2E_ARGO_BYO_CHART_REVISION_AZURE: ${{ vars.E2E_ARGO_BYO_CHART_REVISION_AZURE }}
           # REQUIRED whenever ANY apps-repo (shared OR a per-cloud gcp/azure override) is set — so a
           # half-wired per-cloud config HARD-FAILS at decide() (fail-closed) instead of silently skipping.
-          ALETHIA_E2E_ARGO_REPOS_REQUIRE: ${{ (vars.E2E_ARGO_APPS_REPO != '' || vars.E2E_ARGO_APPS_REPO_GCP != '' || vars.E2E_ARGO_APPS_REPO_AZURE != '') && '1' || '' }}
+          #
+          # DEFERS TO THE DIMENSION FIRST. A step-level `env:` key WINS over $GITHUB_ENV (see the
+          # resolve step), so this line used to make the `gitops` dimension's own switch inert: the
+          # resolver could emit ALETHIA_E2E_ARGO_REPOS_REQUIRE=1 and be silently overwritten by
+          # whatever these repo variables happened to derive. The dimension is what a dispatcher
+          # ASKED FOR, so it wins; the vars remain the default for every dimension that does not
+          # care either way.
+          ALETHIA_E2E_ARGO_REPOS_REQUIRE: ${{ env.ALETHIA_E2E_ARGO_REPOS_REQUIRE != '' && env.ALETHIA_E2E_ARGO_REPOS_REQUIRE || ((vars.E2E_ARGO_APPS_REPO != '' || vars.E2E_ARGO_APPS_REPO_GCP != '' || vars.E2E_ARGO_APPS_REPO_AZURE != '') && '1' || '') }}
           # ── NAMESPACE-PLACEMENT proof (#959 · wave:fabric). Opt-in, ON TOP of the base T2 proof:
           #    after the base run provisions a real cluster (the Fabric) and ArgoCD is Healthy, the
           #    harness layers a SECOND DEPLOY onto the SAME cluster with placement_mode=namespace and
@@ -1119,7 +1130,16 @@ jobs:
           #    already puts on PATH and authenticates: aws + az ship with the runner image, gcloud
           #    is installed by setup-gcloud, aliyun by the Alibaba credential step, hcloud by the
           #    teardown step. ──
-          ALETHIA_E2E_BYO_IAC: ${{ vars.E2E_BYO_IAC }}
+          #    THE BUG THIS LINE HAD. It was `${{ vars.E2E_BYO_IAC }}` alone, and a step-level `env:`
+          #    key WINS over $GITHUB_ENV — so no dimension could ever switch this scenario on, even
+          #    if one emitted it. E2E_BYO_IAC was never set as a repo variable either. Net effect:
+          #    the seven-job custody chain in test/e2e/t2_byo_iac.go was written, shipped, and has
+          #    NEVER EXECUTED IN CI on any dimension. Meanwhile the programme ledger's `byo` column
+          #    was labelled "BYO-IaC" and described as this scenario, so three cells read as proven
+          #    BYO-IaC while proving A0.6 — a different thing entirely.
+          #
+          #    The `byo-iac` dimension is now its vehicle, and the dimension wins here.
+          ALETHIA_E2E_BYO_IAC: ${{ env.ALETHIA_E2E_BYO_IAC != '' && env.ALETHIA_E2E_BYO_IAC || vars.E2E_BYO_IAC }}
           ALETHIA_E2E_BYO_IAC_REPO: ${{ vars.E2E_BYO_IAC_REPO }}
           ALETHIA_E2E_BYO_IAC_REF: ${{ vars.E2E_BYO_IAC_REF }}
           ALETHIA_E2E_BYO_IAC_PATH: ${{ vars.E2E_BYO_IAC_PATH }}

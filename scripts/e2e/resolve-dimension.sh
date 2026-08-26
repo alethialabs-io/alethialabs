@@ -69,13 +69,17 @@ resolve() {
 	# Validated against that same list rather than trusted: a typo'd dispatch input must not silently
 	# resolve to `floor` and record a cheap run under an expensive name.
 	if [ "${EVENT:-}" = "workflow_dispatch" ] && [ -n "${DISPATCH_DIMENSION:-}" ]; then
-		case " $DIMENSIONS " in
+		# Aliases resolve to THEMSELVES, not to their canonical name. `byo` must keep producing the
+		# token `byo` so its issue titles and ledger rows stay keyed the way they already are —
+		# fidelity_env and dimension_label both accept it. Renaming it here would silently re-file
+		# every open "<cloud> RED (byo)" issue under a new title.
+		case " $DIMENSIONS $DIMENSION_ALIASES " in
 		*" $DISPATCH_DIMENSION "*)
 			echo "$DISPATCH_DIMENSION"
 			return 0
 			;;
 		*)
-			echo "resolve: unknown dispatch dimension '${DISPATCH_DIMENSION}' (want one of: $DIMENSIONS)" >&2
+			echo "resolve: unknown dispatch dimension '${DISPATCH_DIMENSION}' (want one of: $DIMENSIONS${DIMENSION_ALIASES:+ $DIMENSION_ALIASES})" >&2
 			return 2
 			;;
 		esac
@@ -110,7 +114,40 @@ resolve() {
 #
 # So the dimension DECIDES its assertions, and there is no per-run override: an override is exactly
 # how the divergence returns. A heavier claim gets a heavier dimension — that ladder already exists.
-DIMENSIONS="floor maxconfig addons byo day2 full"
+DIMENSIONS="floor maxconfig addons gitops byo-iac day2 full"
+
+# `byo` is the OLD name for `gitops`, kept as an accepted alias so no dispatch, no runbook and no
+# ledger row breaks. It is deliberately NOT in DIMENSIONS: the list drives the self-test's
+# every-dimension sweeps and the workflow's choice list, and an alias in there would present two
+# names for one thing in the dispatch UI.
+DIMENSION_ALIASES="byo"
+
+# FULL_EXCLUDES names the dimensions `full` deliberately does NOT compose, each with the reason.
+#
+# WHY A DECLARED LIST AND NOT A SILENT OMISSION. `full` claims to be "every dimension in one apply".
+# For months it was not: `byo`'s ALETHIA_E2E_ARGO_REPOS_REQUIRE was never in its union, and the
+# comment in the self-test warning that this could happen was, by then, describing its own violation.
+# A silent omission cannot be caught by review, because there is nothing to review.
+#
+# So an omission is now a DECLARATION, and the self-test holds every dimension to being in exactly
+# one of the two sets. Adding a dimension without deciding this fails the build.
+FULL_EXCLUDES="byo-iac"
+
+# full_exclude_reason prints WHY a dimension is out of the composite. A reason nobody can read is
+# indistinguishable from an oversight, which is the shape this whole file exists to prevent.
+full_exclude_reason() { # <dimension>
+	case "${1:-}" in
+	byo-iac)
+		# The seven-job BYO-IaC custody chain has never executed in CI (ALETHIA_E2E_BYO_IAC was a
+		# step-level `env:` key that no dimension could set, so no dimension ever did). Folding an
+		# unproven scenario into the composite would red the whole full bar — and `full` is the
+		# vehicle that credits maxconfig, addons and day2, so a red there costs three cells their
+		# only proof route. It joins the union once it has passed standalone at least once.
+		echo "never executed in CI; folding it in would red the composite that credits maxconfig/addons/day2 — joins after its first standalone PASS"
+		;;
+	*) return 1 ;;
+	esac
+}
 
 # soak_window prints a POSITIVE soak window for the two dimensions whose assertion IS the soak. A
 # caller may widen or narrow it; they may not EMPTY it, because a day-2 dimension with no soak
@@ -150,18 +187,46 @@ fidelity_env() { # <dimension>
 		echo "ALETHIA_E2E_SOAK=off"
 		echo "ALETHIA_E2E_ALL_ADDONS=1"
 		;;
-	byo)
-		# The A0.6 bring-your-own Helm/apps-repo proof activates from the caller's ALETHIA_E2E_ARGO_*
-		# inputs — so asking for this dimension and NOT having them wired used to green-skip the only
-		# assertion it has (t2_argo_repos.go logs "A0.6 ... SKIPPED") and record `<cloud> byo PASS`
-		# having proven nothing but the floor.
+	gitops | byo)
+		# NAMED `gitops`, NOT `byo`, AND THE RENAME IS THE POINT.
+		#
+		# What this dimension asserts is A0.6: a customer apps-DESTINATION repo plus a BYO Helm
+		# chart converge as ArgoCD Applications, each managing at least one real resource. That is
+		# a GitOps-repos proof. It is NOT the BYO-IaC proof — a customer OpenTofu root module
+		# scanned, applied through the state proxy, drifted, healed and destroyed — which lives in
+		# test/e2e/t2_byo_iac.go and is now the `byo-iac` dimension below.
+		#
+		# Under the old name the programme ledger rendered this column "BYO-IaC" and described it as
+		# "customer IaC/charts applied, and Alethia services bound to their outputs", so three cells
+		# read as proven BYO-IaC while proving A0.6. demos/proofs/provisioning-e2e-log.md recorded
+		# the discrepancy and said one of the two definitions should move. This is it moving.
+		#
+		# `byo` stays accepted as an alias: the rows already in the ledger are TRUE — the label was
+		# wrong, not the evidence — and retracting correct evidence is the more expensive error.
 		#
 		# REQUIRE is what makes the difference between a proof and a claim, and it is the same
-		# reasoning soak_window applies to day2 twenty lines up: a dimension whose vehicle is off
-		# asserts nothing. With this set the leg REDS when the apps-repo env is missing instead of
-		# passing, which is the direction the bar demands.
+		# reasoning soak_window applies to day2 above: a dimension whose vehicle is off asserts
+		# nothing. Asking for this dimension without the ALETHIA_E2E_ARGO_* inputs wired used to
+		# green-skip its only assertion (t2_argo_repos.go logs "A0.6 ... SKIPPED") and record a PASS
+		# having proven nothing but the floor. With this set the leg REDS instead.
 		echo "ALETHIA_E2E_SOAK=off"
 		echo "ALETHIA_E2E_ARGO_REPOS_REQUIRE=1"
+		;;
+	byo-iac)
+		# The BYO-IaC custody chain (test/e2e/t2_byo_iac.go): a customer OpenTofu root module is
+		# refused when it trips the safety gate, applied through the state proxy, drifts under an
+		# out-of-band mutation, heals, destroys, and leaves no state behind. Seven jobs, one verdict,
+		# no partial credit.
+		#
+		# It had NEVER RUN FROM CI. ALETHIA_E2E_BYO_IAC was set only as a step-level `env:` key in
+		# e2e-nightly.yml, and a step-level key WINS over $GITHUB_ENV — so no dimension could turn it
+		# on even if one had wanted to, and none did. The harness was written, shipped, and never
+		# executed. This dimension is its vehicle; the workflow change alongside stops the step-level
+		# key from overriding it.
+		#
+		# Near-floor cost: one apply of a small customer module, no 11-kind surface and no 18 charts.
+		echo "ALETHIA_E2E_SOAK=off"
+		echo "ALETHIA_E2E_BYO_IAC=1"
 		;;
 	day2)
 		# The soak IS this dimension's vehicle. ${E2E_SOAK} lets a caller widen or narrow the window;
@@ -169,9 +234,18 @@ fidelity_env() { # <dimension>
 		echo "ALETHIA_E2E_SOAK=$(soak_window)"
 		;;
 	full)
+		# THE UNION of every dimension except those declared in FULL_EXCLUDES. The self-test holds
+		# each dimension to being in exactly one of the two, so a dimension can no longer be added
+		# without a decision about this one.
 		echo "ALETHIA_E2E_SOAK=$(soak_window)"
 		echo "ALETHIA_E2E_MAX_CONFIG=1"
 		echo "ALETHIA_E2E_ALL_ADDONS=1"
+		# gitops was missing from the union for months. In practice A0.6 still ran on `full`, but by
+		# a different route entirely — the workflow sets the ALETHIA_E2E_ARGO_* inputs unconditionally
+		# and derives REQUIRE from the repo vars — so the composite's claim was accidentally true and
+		# would have become false the moment those vars were unwired. Deriving it HERE makes it true
+		# on purpose.
+		echo "ALETHIA_E2E_ARGO_REPOS_REQUIRE=1"
 		;;
 	*)
 		echo "fidelity_env: unknown dimension '${1:-}' (want one of: $DIMENSIONS)" >&2
@@ -216,7 +290,11 @@ heavy_shape() { # <dimension>
 dimension_label() { # <token>
 	case "${1:-}" in
 	full) echo "full-bar" ;;
-	maxconfig | addons | byo | day2) echo "$1" ;;
+	# `byo` maps to itself, NOT to `gitops`. The label is the issue DEDUP KEY: re-labelling it would
+	# orphan every open nightly issue titled "<cloud> RED (byo)" and immediately re-file each one
+	# under a new name. The dimension is renamed; its issue titles are not, and the two are allowed
+	# to differ precisely because one of them is a database key.
+	maxconfig | addons | byo | gitops | byo-iac | day2) echo "$1" ;;
 	*) echo "floor" ;;
 	esac
 }
@@ -263,7 +341,9 @@ run_self_test() {
 	_a "addons" "$(_rd workflow_dispatch addons)" "a dispatch naming addons resolves addons"
 	_a "maxconfig" "$(_rd workflow_dispatch maxconfig)" "a dispatch naming maxconfig resolves maxconfig"
 	_a "day2" "$(_rd workflow_dispatch day2)" "a dispatch naming day2 resolves day2"
-	_a "byo" "$(_rd workflow_dispatch byo)" "a dispatch naming byo resolves byo"
+	_a "byo" "$(_rd workflow_dispatch byo)" "a dispatch naming the LEGACY byo still resolves byo"
+	_a "gitops" "$(_rd workflow_dispatch gitops)" "a dispatch naming gitops resolves gitops"
+	_a "byo-iac" "$(_rd workflow_dispatch byo-iac)" "a dispatch naming byo-iac resolves byo-iac"
 	_a "floor" "$(_rd workflow_dispatch floor)" "a dispatch naming floor still resolves floor"
 	_a "full" "$(_rd workflow_dispatch full)" "a dispatch naming full resolves full"
 
@@ -318,11 +398,67 @@ run_self_test() {
 	_a "ALETHIA_E2E_ALL_ADDONS=1" "$(_f addons | grep '^ALETHIA_E2E_ALL_ADDONS=')" "addons enables the add-on health assertion"
 	_a "ALETHIA_E2E_SOAK=off" "$(_f addons | grep '^ALETHIA_E2E_SOAK=')" "addons does not smuggle in the soak"
 
-	# `full` is the composite and must be the UNION — the FULLY-TESTED bar. If a dimension's switch is
-	# ever added without adding it here, `full` silently stops being "every dimension in one apply".
+	# The two BYO dimensions are distinct proofs and must not share a switch — that conflation is
+	# what made three ledger cells read as proven BYO-IaC while proving A0.6.
+	_a "ALETHIA_E2E_ARGO_REPOS_REQUIRE=1" "$(_f gitops | grep '^ALETHIA_E2E_ARGO_REPOS_REQUIRE=')" "gitops requires the A0.6 repos"
+	_a "" "$(_f gitops | grep 'BYO_IAC' || true)" "gitops does NOT claim the BYO-IaC custody chain"
+	_a "ALETHIA_E2E_BYO_IAC=1" "$(_f byo-iac | grep '^ALETHIA_E2E_BYO_IAC=')" "byo-iac turns the custody chain on"
+	_a "" "$(_f byo-iac | grep 'ARGO_REPOS_REQUIRE' || true)" "byo-iac does NOT claim the A0.6 repos"
+	# The old name must keep resolving, byte-identically — the ledger rows filed under it are true.
+	_a "$(_f gitops)" "$(_f byo)" "the legacy 'byo' token is an exact alias of 'gitops'"
+	# `full` is the composite and must be the UNION of every dimension NOT declared in FULL_EXCLUDES.
+	# The sweep below is what makes that structural rather than aspirational: for months this comment
+	# claimed the property while `byo`'s own switch was missing from the union, and nothing failed.
 	_a "ALETHIA_E2E_MAX_CONFIG=1" "$(_f full | grep '^ALETHIA_E2E_MAX_CONFIG=')" "full includes max-config"
 	_a "ALETHIA_E2E_ALL_ADDONS=1" "$(_f full | grep '^ALETHIA_E2E_ALL_ADDONS=')" "full includes all-add-ons"
 	_a "ALETHIA_E2E_SOAK=10m" "$(_f full | grep '^ALETHIA_E2E_SOAK=')" "full includes the day-2 soak"
+	_a "ALETHIA_E2E_ARGO_REPOS_REQUIRE=1" "$(_f full | grep '^ALETHIA_E2E_ARGO_REPOS_REQUIRE=')" "full includes the gitops repos"
+
+	# THE STRUCTURAL CHECK. Every switch any dimension turns on must appear in `full`'s output,
+	# UNLESS that dimension is declared in FULL_EXCLUDES with a reason. Derived by comparing outputs,
+	# never by a hand-written list of switches — a second list is how the two drift apart, which is
+	# the failure #1755 and #2356 were both about.
+	local full_out d line sw excluded
+	full_out="$(_f full)"
+	for d in $DIMENSIONS; do
+		[ "$d" = "full" ] && continue
+		excluded=no
+		for x in $FULL_EXCLUDES; do [ "$x" = "$d" ] && excluded=yes; done
+		if [ "$excluded" = yes ]; then
+			if reason="$(full_exclude_reason "$d")" && [ -n "$reason" ]; then
+				echo "ok   - '$d' is DECLARED out of the full composite: $reason"
+			else
+				echo "FAIL - '$d' is in FULL_EXCLUDES with no reason — an omission nobody can read is an oversight" >&2
+				fails=$((fails + 1))
+			fi
+			continue
+		fi
+		# The soak is the one switch whose VALUE legitimately differs (off vs a window), so compare
+		# switch NAMES here and let the value assertions above cover the soak itself.
+		while IFS= read -r line; do
+			[ -z "$line" ] && continue
+			sw="${line%%=*}"
+			if printf '%s\n' "$full_out" | grep -q "^${sw}="; then
+				echo "ok   - full composes '$d' switch $sw"
+			else
+				echo "FAIL - dimension '$d' turns on $sw and 'full' does NOT — full is not the union it claims to be. Add it to full, or declare '$d' in FULL_EXCLUDES with a reason" >&2
+				fails=$((fails + 1))
+			fi
+		done <<-EOF
+			$(_f "$d")
+		EOF
+	done
+
+	# A dimension may not be BOTH composed and excluded, and FULL_EXCLUDES may not name a dimension
+	# that does not exist — either way the declaration would be decorative.
+	for x in $FULL_EXCLUDES; do
+		if printf '%s\n' $DIMENSIONS | grep -qx "$x"; then
+			echo "ok   - FULL_EXCLUDES entry '$x' is a real dimension"
+		else
+			echo "FAIL - FULL_EXCLUDES names '$x', which is not a dimension" >&2
+			fails=$((fails + 1))
+		fi
+	done
 
 	# Every declared dimension must HAVE a fidelity, and an undeclared one must be refused rather than
 	# silently producing an empty env (which would run the cheapest shape while recording the heaviest
@@ -354,6 +490,9 @@ run_self_test() {
 	_a "true" "$(_h addons)" "addons needs the heavy shape — 18 charts do not fit the floor pool"
 	_a "false" "$(_h floor)" "the floor keeps the cheapest shape"
 	_a "false" "$(_h byo)" "byo runs a floor-sized cluster"
+	# Both BYO dimensions are near-floor: neither buys the 11-kind surface or the 18 charts.
+	_a "false" "$(_h gitops)" "gitops runs a floor-sized cluster"
+	_a "false" "$(_h byo-iac)" "byo-iac runs a floor-sized cluster"
 	_a "false" "$(_h day2)" "day2 soaks a floor-sized cluster"
 
 	# Derived from fidelity_env, not from a second list — so a dimension that turns on a heavier
@@ -384,9 +523,14 @@ run_self_test() {
 	_a "" "$(EVENT=workflow_dispatch DISPATCH_DIMENSION=addonz DISPATCH_FULL="" SCHEDULE="" bash "$0" --label 2>/dev/null)" "...and prints no label at all"
 	_a "addons" "$(EVENT=workflow_dispatch DISPATCH_DIMENSION=addons DISPATCH_FULL="" SCHEDULE="" bash "$0" --label 2>/dev/null)" "--label still labels a good dimension"
 
-	# real content.
-	_a "3" "$(_f full | wc -l | tr -d ' ')" "vacuity: full emits three fidelity lines, not zero"
-	if [ "$(_f full | grep -c '=')" -eq 3 ]; then
+	# VACUITY, and a RATCHET. The count is asserted EXACTLY, not as ">0". The union sweep above proves
+	# every non-excluded dimension's switch is PRESENT; this proves nothing extra crept in. Both
+	# directions are load-bearing — a `full` that quietly gained a switch nobody decided on is as
+	# wrong as one that quietly lost one. Bump it deliberately when a dimension joins the union.
+	_a "4" "$(_f full | wc -l | tr -d ' ')" "vacuity: full emits four fidelity lines, not zero"
+	# DERIVED from the line count, never a second literal: the two used to be written out separately
+	# and the assignment check silently kept passing against a stale number when the union grew.
+	if [ "$(_f full | grep -c '=')" -eq "$(_f full | wc -l | tr -d ' ')" ]; then
 		echo "ok   - vacuity: every full fidelity line is a NAME=value assignment"
 	else
 		echo "FAIL - vacuity: full's fidelity lines are not all assignments" >&2
