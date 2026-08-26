@@ -369,6 +369,20 @@
   --cl-gap: 2px;
   --cl-reach: 1.03;
 }
+/* Large surfaces — a card, a panel, a dialog. The arm lengths above are proportioned
+   for a control; across ~400px of card the same 7px arm reads as a scuff on the page
+   rather than as a bracket. Only the ARMS grow: `--cl-gap` stays put, so the marks sit
+   exactly as close to their box as they do on every button.
+
+   This is a modifier here rather than a `[--cl-len:20px]` utility at the call site,
+   because that utility silently loses. Tailwind emits it into `@layer utilities`, and
+   `.vx-clamp` is declared in this file OUTSIDE any layer — unlayered declarations beat
+   layered ones no matter the specificity or source order, so the class applied, computed
+   to 7px, and the override was dead on arrival. Caught in the browser, not in review:
+   the class was right there in `className` the whole time. */
+.vx-clamp--card {
+  --cl-len: 20px;
+}
 /* The wrapper half of the note above. A field's clamp lives on the wrapper, but the
    thing that actually receives focus is the `<input>` inside it — and `:focus-visible`
    matches the focused element, never its container, so a wrapped field could never
