@@ -280,7 +280,7 @@ export function formatStars(n: number | null): string {
        Section · PageOpen · Band · LogoWall · PageClose
    INNER — these render a <p>, a <div> or a row, and must live INSIDE one of the
    above:
-       Eyebrow · ActionRow · Rail
+       Eyebrow · ActionRow · Rail · Plate · PointGrid
 
    The split is load bearing, not incidental. `Reveal` selects `:scope > section`
    and `.slice(1)`, so wrapping a run of the section-level ones in a layout <div>
@@ -457,6 +457,7 @@ export function Band({
 }: {
 	eyebrow?: string;
 	lines: [string, string];
+	/** The band's body — a product panel, a transcript, or a `PointGrid`. */
 	visual?: ReactNode;
 	rail?: RailProps;
 }) {
@@ -467,7 +468,15 @@ export function Band({
 		>
 			<Wrap>
 				{eyebrowText ? <Eyebrow>{eyebrowText}</Eyebrow> : null}
-				<div className="grid grid-cols-1 gap-y-12 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-x-20">
+				{/* Without a rail the body takes the whole width rather than leaving a
+				    300px hole where the rail would have been. */}
+				<div
+					className={
+						rail
+							? "grid grid-cols-1 gap-y-12 lg:grid-cols-[minmax(0,1fr)_300px] lg:gap-x-20"
+							: "grid grid-cols-1"
+					}
+				>
 					<div className="min-w-0">
 						<h2
 							className="mb-12 font-grotesk text-display-sm font-bold tracking-[-0.025em] text-text-primary"
@@ -531,5 +540,83 @@ export function PageClose({ line, ctas }: { line: string; ctas: PageCtaLink[] })
 				<ActionRow ctas={ctas} align="center" />
 			</Wrap>
 		</section>
+	);
+}
+
+/**
+ * A hairline plate with a labelled header bar, for product surfaces.
+ *
+ * Replaces the 126-line `Frame` the enterprise page carried — fake traffic
+ * lights, a URL pill with a lock glyph, an `ee` corner tag, and a fake 50px app
+ * sidebar rendering six icons. That was a lot of chrome to sell one screenshot.
+ * One label bar does the same job.
+ */
+export function Plate({ label, children }: { label: string; children: ReactNode }) {
+	return (
+		<div
+			style={{
+				border: "1px solid var(--border)",
+				borderRadius: "var(--radius-md)",
+				background: "var(--surface)",
+				overflow: "hidden",
+				boxShadow: "var(--shadow-md)",
+			}}
+		>
+			<div
+				className="flex items-center gap-2.5 px-3.5 py-2.5"
+				style={{ borderBottom: "1px solid var(--border-faint)", background: "var(--surface-muted)" }}
+			>
+				<span className="flex gap-1.5" aria-hidden="true">
+					{[0, 1, 2].map((i) => (
+						<span
+							key={i}
+							className="size-[7px] rounded-full"
+							style={{ background: "var(--border-strong)" }}
+						/>
+					))}
+				</span>
+				<span className="font-mono text-[10.5px] text-text-tertiary">{label}</span>
+			</div>
+			{children}
+		</div>
+	);
+}
+
+/**
+ * A grid of {title, one sentence} points.
+ *
+ * No icons, deliberately — the same rule the bands follow. The enterprise page
+ * previously drew a 38px bordered icon tile beside every one of these, which
+ * added a column of decoration to a list whose whole job is to be read.
+ */
+export function PointGrid({
+	points,
+	cols = 2,
+}: {
+	points: { title: string; body: string }[];
+	cols?: 2 | 3;
+}) {
+	return (
+		<div
+			className={
+				cols === 3
+					? "grid grid-cols-1 gap-x-14 gap-y-10 sm:grid-cols-2 lg:grid-cols-3"
+					: "grid grid-cols-1 gap-x-16 gap-y-10 sm:grid-cols-2"
+			}
+		>
+			{points.map((point) => (
+				<div key={point.title}>
+					<p
+						className="font-grotesk text-[15px] font-semibold text-text-primary"
+						style={{ margin: "0 0 8px", letterSpacing: "-0.01em" }}
+					>
+						{point.title}
+					</p>
+					<p className="m-0 max-w-[42ch] text-[13px] leading-[1.6] text-text-secondary">
+						{point.body}
+					</p>
+				</div>
+			))}
+		</div>
 	);
 }
