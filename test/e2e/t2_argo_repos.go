@@ -352,6 +352,9 @@ func AssertArgoReposConverge(ctx context.Context, kubeconfigPath string, expecte
 	var lastErr error
 	var lastLosers []string
 	var lastRefs []outOfSyncRef
+	// Carried so the shared deadline dump can tell an OutOfSync loser (which HAS a diff to fetch)
+	// from a Degraded-but-Synced one (which does not).
+	var lastObserved map[string]argoAppState
 	lastSyncErr := map[string]error{}
 	for {
 		raw, err := kubectlGetArgoApps(ctx, kubeconfigPath)
@@ -383,12 +386,13 @@ func AssertArgoReposConverge(ctx context.Context, kubeconfigPath string, expecte
 			}
 			lastErr, lastLosers = everr, losers
 			lastRefs = refsForLosers(observed, losers)
+			lastObserved = observed
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ArgoCD Applications (incl. repo-apps + repo-byo) did not all reach Healthy+Synced within %s:\n%v%s%s",
 				timeout, lastErr,
 				renderSyncErrors(lastSyncErr),
-				describeArgoApps(ctx, kubeconfigPath, lastLosers)+dumpOutOfSyncResources(ctx, kubeconfigPath, lastRefs))
+				argoDeadlineDump(ctx, kubeconfigPath, lastObserved, lastLosers, lastRefs))
 		}
 		select {
 		case <-ctx.Done():
