@@ -90,14 +90,14 @@ export async function deleteProviderToken(provider: PublicGitProvider) {
 		const accountId = await resolveAccountId(actor.userId, provider);
 		if (accountId === null) {
 			// Already unlinked. Idempotent: the caller's intent is satisfied.
-			revalidatePath("/dashboard/connectors");
+			revalidatePath("/[org]/~/connectors", "page");
 			return { success: true };
 		}
 		await auth.api.unlinkAccount({
 			body: { accountId },
 			headers: await headers(),
 		});
-		revalidatePath("/dashboard/connectors");
+		revalidatePath("/[org]/~/connectors", "page");
 		return { success: true };
 	} catch (error) {
 		console.error("Unexpected error unlinking provider:", error);

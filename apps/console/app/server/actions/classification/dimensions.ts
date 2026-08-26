@@ -88,7 +88,7 @@ function toDimensionDTO(
 	};
 }
 
-const CLASSIFICATION_PATH = "/dashboard/settings/classification";
+const CLASSIFICATION_PATH = "/[org]/~/settings/classification";
 
 /**
  * Lists the org's classification dimensions with values + usage counts nested. When `search`
@@ -133,7 +133,7 @@ export async function createDimension(
 			return row.id;
 		},
 	);
-	revalidatePath(CLASSIFICATION_PATH);
+	revalidatePath(CLASSIFICATION_PATH, "page");
 	return { id };
 }
 
@@ -157,7 +157,7 @@ export async function updateDimension(
 			})
 			.where(eq(classificationDimension.id, id)),
 	);
-	revalidatePath(CLASSIFICATION_PATH);
+	revalidatePath(CLASSIFICATION_PATH, "page");
 }
 
 /** Deletes a dimension; its values + assignments cascade (FK ON DELETE cascade). */
@@ -168,7 +168,7 @@ export async function deleteDimension(id: string): Promise<void> {
 			.delete(classificationDimension)
 			.where(eq(classificationDimension.id, id)),
 	);
-	revalidatePath(CLASSIFICATION_PATH);
+	revalidatePath(CLASSIFICATION_PATH, "page");
 }
 
 /** Adds an allowed value to a dimension. Returns its new id. */
@@ -204,7 +204,7 @@ export async function createValue(
 			return row.id;
 		},
 	);
-	revalidatePath(CLASSIFICATION_PATH);
+	revalidatePath(CLASSIFICATION_PATH, "page");
 	return { id };
 }
 
@@ -227,7 +227,7 @@ export async function updateValue(
 			})
 			.where(eq(classificationValue.id, id)),
 	);
-	revalidatePath(CLASSIFICATION_PATH);
+	revalidatePath(CLASSIFICATION_PATH, "page");
 }
 
 /** Deletes a value; its assignments cascade. */
@@ -238,7 +238,7 @@ export async function deleteValue(id: string): Promise<void> {
 			.delete(classificationValue)
 			.where(and(eq(classificationValue.id, id))),
 	);
-	revalidatePath(CLASSIFICATION_PATH);
+	revalidatePath(CLASSIFICATION_PATH, "page");
 }
 
 /** One value in a template / bulk create (presentation only; server stamps the rest). */
@@ -292,7 +292,7 @@ export async function createDimensionWithValues(
 			return row.id;
 		},
 	);
-	revalidatePath(CLASSIFICATION_PATH);
+	revalidatePath(CLASSIFICATION_PATH, "page");
 	return { id };
 }
 
@@ -307,7 +307,7 @@ export async function reorderDimensions(ids: string[]): Promise<void> {
 				.where(eq(classificationDimension.id, ids[i]));
 		}
 	});
-	revalidatePath(CLASSIFICATION_PATH);
+	revalidatePath(CLASSIFICATION_PATH, "page");
 }
 
 /** Persists a new value order within a dimension (position = index). */
@@ -321,5 +321,5 @@ export async function reorderValues(ids: string[]): Promise<void> {
 				.where(eq(classificationValue.id, ids[i]));
 		}
 	});
-	revalidatePath(CLASSIFICATION_PATH);
+	revalidatePath(CLASSIFICATION_PATH, "page");
 }

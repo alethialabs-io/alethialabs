@@ -190,7 +190,7 @@ describe("deleteProviderToken", () => {
 			body: { accountId: "acct-row-1" },
 			headers: expect.any(Headers),
 		});
-		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/connectors");
+		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/connectors", "page");
 		expect(result).toEqual({ success: true });
 	});
 
@@ -212,7 +212,7 @@ describe("deleteProviderToken", () => {
 		const result = await deleteProviderToken("bitbucket");
 
 		expect(unlinkAccount).not.toHaveBeenCalled();
-		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/connectors");
+		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/connectors", "page");
 		expect(result).toEqual({ success: true });
 	});
 });
