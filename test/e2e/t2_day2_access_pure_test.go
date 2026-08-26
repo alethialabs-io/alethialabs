@@ -181,8 +181,8 @@ func TestAccessSummaryVerdict(t *testing.T) {
 
 func TestDay2AccessTimeout(t *testing.T) {
 	t.Setenv("ALETHIA_E2E_DAY2_ACCESS_TIMEOUT", "")
-	if d := Day2AccessTimeout(); d != 3*time.Minute {
-		t.Fatalf("default timeout = %v, want 3m", d)
+	if d := Day2AccessTimeout(); d != day2AccessDefaultTimeout {
+		t.Fatalf("default timeout = %v, want the default", d)
 	}
 	t.Setenv("ALETHIA_E2E_DAY2_ACCESS_TIMEOUT", "90s")
 	if d := Day2AccessTimeout(); d != 90*time.Second {
@@ -190,8 +190,8 @@ func TestDay2AccessTimeout(t *testing.T) {
 	}
 	// A garbage / non-positive value falls back to the default (never a zero-timeout probe).
 	t.Setenv("ALETHIA_E2E_DAY2_ACCESS_TIMEOUT", "soon")
-	if d := Day2AccessTimeout(); d != 3*time.Minute {
-		t.Fatalf("garbage timeout = %v, want the 3m default", d)
+	if d := Day2AccessTimeout(); d != day2AccessDefaultTimeout {
+		t.Fatalf("garbage timeout = %v, want the default", d)
 	}
 }
 
@@ -305,5 +305,80 @@ func TestAccessSummaryRendersTheDiagnosis(t *testing.T) {
 	good := AccessSummary{Enabled: true, ArgoURLChecked: true, ArgoURL: "https://argocd.x/", ArgoURLReachable: true}
 	if strings.Contains(accessSummaryVerdict(good), "—") {
 		t.Errorf("a reachable URL must not render a diagnosis tail: %s", accessSummaryVerdict(good))
+	}
+}
+
+// TestDnsNotResolvingDoesNotClaimWaitingIsFutile pins the CORRECTION.
+//
+// The label used to assert "waiting longer will NOT fix this". It cost a wrong diagnosis: aws/byo
+// run 32909287152 was read as a structural failure on that basis, when in fact the zone was
+// delegated (ACM had ISSUED a certificate against it, which requires public resolvability),
+// external-dns was deployed and its IRSA role was bound — the record simply was not written yet at
+// 3m. NXDOMAIN while a load balancer is still provisioning is the EXPECTED state.
+//
+// This label decides whether a maintainer spends another run, so it must not claim more than the
+// error supports.
+func TestDnsNotResolvingDoesNotClaimWaitingIsFutile(t *testing.T) {
+	got := diagnoseArgoURLError(errors.New(`Get "https://argocd.x.e2e.alethialabs.io": dial tcp: lookup argocd.x.e2e.alethialabs.io: no such host`))
+	if !strings.HasPrefix(got, "dns-not-resolving") {
+		t.Fatalf("classification changed: %q", got)
+	}
+	for _, forbidden := range []string{"NOT a timing problem", "waiting longer will NOT fix", "will not fix it"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("dns-not-resolving asserts %q, which the error does not establish — an NXDOMAIN "+
+				"during load-balancer provisioning is exactly a wait-longer state:\n%s", forbidden, got)
+		}
+	}
+	// And it must still be USEFUL — a label that says nothing is no better than the wrong one.
+	if !strings.Contains(got, "AMBIGUOUS") {
+		t.Errorf("dns-not-resolving no longer tells the reader the label is ambiguous:\n%s", got)
+	}
+}
+
+// TestDay2AccessIsReservedInTheLadder — the probes run inside the test ctx and are bounded by
+// Day2AccessTimeout, so a ceiling sized for an ALB spends real minutes. Before this, the layer had
+// no ladder term at all and that time came silently out of `headroom` (the #2729 defect shape).
+func TestDay2AccessIsReservedInTheLadder(t *testing.T) {
+	for _, v := range T2BudgetScenarioEnv() {
+		t.Setenv(v, "")
+	}
+	t.Setenv("ALETHIA_E2E_ARGO_TIMEOUT", "")
+	off, err := ResolveT2Budget("aws", "ladder")
+	if err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+	t.Setenv("ALETHIA_E2E_DAY2_ACCESS", "1")
+	on, err := ResolveT2Budget("aws", "ladder")
+	if err != nil {
+		t.Fatalf("day-2 access on: %v", err)
+	}
+	if got, want := on.Ctx-off.Ctx, Day2AccessTimeout(); got != want {
+		t.Errorf("enabling the day-2 access layer widened the ctx by %s, want %s — its kube probe "+
+			"would run to its own ceiling against headroom the ladder never reserved", got, want)
+	}
+
+	// The URL probe is reserved only where a URL can EXIST. Under max-config the workflow leaves
+	// ALETHIA_E2E_ACM_CERT empty (#2630), so there is no ingress certificate, no argocd_url, and the
+	// probe is skipped — reserving for it there would inflate the heaviest bar by ten minutes it
+	// cannot spend. Varying the EMITTER's inputs is the axis that decides this, so that is what the
+	// test varies.
+	t.Setenv(envAcmCert, "1")
+	t.Setenv("ALETHIA_E2E_MAX_CONFIG", "")
+	withURL, err := ResolveT2Budget("aws", "ladder")
+	if err != nil {
+		t.Fatalf("acm on, max-config off: %v", err)
+	}
+	if got, want := withURL.Ctx-on.Ctx, Day2URLTimeout(); got != want {
+		t.Errorf("a run that WILL probe the URL reserved %s for it, want %s", got, want)
+	}
+
+	t.Setenv("ALETHIA_E2E_MAX_CONFIG", "1")
+	maxCfg, err := ResolveT2Budget("aws", "ladder")
+	if err != nil {
+		t.Fatalf("acm on, max-config on: %v", err)
+	}
+	if maxCfg.Ctx >= withURL.Ctx {
+		t.Errorf("max-config reserved the URL probe (ctx %s) even though it empties ALETHIA_E2E_ACM_CERT "+
+			"and therefore renders no ArgoCD URL for the probe to check", maxCfg.Ctx)
 	}
 }

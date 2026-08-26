@@ -75,7 +75,7 @@ func runT2Day2Access(t *testing.T, ctx context.Context, kc string, p day2AccessP
 	// (c) ArgoCD URL reachability — only meaningful where an ingress exists (AWS ALB+ACM today);
 	//     on gcp/azure ArgoURLChecked=false ⇒ n/a, does not gate.
 	if targets.HasArgoURL {
-		ok, diagnosis, uerr := probeArgoURL(ctx, targets.ArgoURL, timeout)
+		ok, diagnosis, uerr := probeArgoURL(ctx, targets.ArgoURL, Day2URLTimeout())
 		summary.ArgoURLReachable = ok
 		summary.ArgoURLDiagnosis = diagnosis
 		if uerr != nil {
