@@ -913,7 +913,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			mode: z.enum(["standalone", "distributed"]).default("standalone"),
 			/** Root (admin) username — paired with the password in the same Secret. */
 			rootUser: z.string().min(3).default("admin"),
-			/** Root password (secret — encrypted at rest; empty = chart-generated). */
+			/** Root password (secret — encrypted at rest; empty = Alethia mints one, #2822). */
 			rootPassword: z.string().default(""),
 		}),
 		toValues: (c) => ({
