@@ -137,12 +137,17 @@ describe("enum choices resolve into the Helm values", () => {
 		});
 	});
 
+	// This case USED to assert `provider: { name: "hetzner" }`, and in doing so pinned a bug: there
+	// is no native `hetzner` provider in ExternalDNS, so that value is not a configuration the chart
+	// understands. Hetzner DNS is reached through the webhook sidecar. Cloudflare is the right
+	// subject for "the enum value reaches the values", because it IS a native provider name.
+	// The hetzner shape is asserted properly in external-dns-providers.test.ts.
 	it("external-dns provider picks the chosen enum value", () => {
 		const spec = resolveAddOnInstall({
 			addon_id: "external-dns",
 			mode: "managed",
-			values: { provider: "hetzner" },
+			values: { provider: "cloudflare" },
 		});
-		expect(spec?.values).toMatchObject({ provider: { name: "hetzner" } });
+		expect(spec?.values).toMatchObject({ provider: { name: "cloudflare" } });
 	});
 });
