@@ -85,6 +85,15 @@ const AUTH_MESSAGES: Record<string, string> = {
 	access_denied: "Sign-in was cancelled.",
 	session_expired: "Your session expired — please sign in again.",
 	verify_email: "Check your email to finish signing in.",
+	// The four reasons app/(public)/sso/[slug]/route.ts can bounce back with. They
+	// arrive under `sso_error`, and none of them had an entry here — so every SP-
+	// initiated SSO failure redirected to a login page that looked completely normal
+	// and said nothing at all. An allowlist that silently drops a code its own
+	// codebase emits is not an allowlist, it is a dropped error.
+	unknown_org: "We don’t recognize that organization.",
+	no_provider: "Single sign-on isn’t set up for that organization.",
+	sso_unavailable: "Single sign-on is temporarily unavailable — try again shortly.",
+	sign_in_unavailable: "We couldn’t start single sign-on — try again shortly.",
 };
 
 /** One OAuth provider tile — spinner while its own sign-in is in flight. */
@@ -105,7 +114,7 @@ function ProviderButton({
 			variant="outline"
 			onClick={() => onSelect(provider)}
 			disabled={isLoading}
-			className="h-[46px] w-full gap-[9px] rounded-sm border-border-strong text-[13.5px] hover:border-ring hover:bg-surface-muted"
+			className="h-[46px] w-full gap-[9px] border-border-strong text-[13.5px] hover:border-ring hover:bg-surface-muted"
 		>
 			{loadingProvider === provider ? (
 				<Loader2 className="size-[17px] animate-spin" />
@@ -143,7 +152,10 @@ export function AuthForm({ mode }: AuthFormProps) {
 	const [email, setEmail] = useState(prefillEmail);
 	const [code, setCode] = useState("");
 	const [error, setError] = useState<string | null>(() => {
-		const code = searchParams.get("error") ?? searchParams.get("message");
+		const code =
+			searchParams.get("error") ??
+			searchParams.get("message") ??
+			searchParams.get("sso_error");
 		return code ? (AUTH_MESSAGES[code] ?? null) : null;
 	});
 
@@ -330,7 +342,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 	const errorBanner = error ? (
 		<div
 			role="alert"
-			className="rounded-sm border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+			className="border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive"
 		>
 			{error}
 		</div>
@@ -342,7 +354,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 			<AuthCard key={step}>
 				<div className="mb-6 flex flex-col gap-2.5">
 					<p className="vx-eyebrow">Verify</p>
-					<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
+					<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
 						Enter your code
 					</h1>
 					<p className="text-[14.5px] leading-[1.55] text-text-secondary">
@@ -384,7 +396,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 								<InputOTPSlot
 									key={i}
 									index={i}
-									className="h-14 w-full rounded-sm border-border-strong bg-surface-sunken font-mono text-[22px] font-medium"
+									className="h-14 w-full border-border-strong bg-surface-sunken font-mono text-[22px] font-medium"
 								/>
 							))}
 						</InputOTPGroup>
@@ -438,7 +450,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 			<AuthCard key={step}>
 				<div className="mb-6 flex flex-col gap-2.5">
 					<p className="vx-eyebrow">No account</p>
-					<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
+					<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
 						No account for this email
 					</h1>
 					<p className="text-[14.5px] leading-[1.55] text-text-secondary">
@@ -478,7 +490,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 			<AuthCard key={step}>
 				<div className="mb-6 flex flex-col gap-2.5">
 					<p className="vx-eyebrow">{copy.emailEyebrow}</p>
-					<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
+					<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
 						{copy.emailTitle}
 					</h1>
 				</div>
@@ -493,17 +505,23 @@ export function AuthForm({ mode }: AuthFormProps) {
 						>
 							Work email
 						</label>
-						<Input
-							id="email"
-							type="email"
-							placeholder="name@company.com"
-							value={email}
-							onChange={(e) => setEmail(e.target.value)}
-							required
-							disabled={isLoading}
-							autoFocus
-							className="h-[46px] rounded-sm border-border-strong bg-surface-sunken text-sm"
-						/>
+						{/* The clamp is on this wrapper, not on the Input: a replaced
+						    element renders no ::before, so an <input> cannot draw its own
+						    corner marks. --field makes the wrapper answer to the focus of
+						    the input inside it. */}
+						<div className="vx-clamp vx-clamp--tight vx-clamp--field">
+							<Input
+								id="email"
+								type="email"
+								placeholder="name@company.com"
+								value={email}
+								onChange={(e) => setEmail(e.target.value)}
+								required
+								disabled={isLoading}
+								autoFocus
+								className="h-[46px] w-full border-border-strong bg-surface-sunken text-sm"
+							/>
+						</div>
 					</div>
 
 					<PrimaryButton
@@ -535,7 +553,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 		<AuthCard key={step}>
 			<div className="mb-6 flex flex-col gap-2.5">
 				<p className="vx-eyebrow">{copy.eyebrow}</p>
-				<h1 className="font-grotesk text-[28px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary">
+				<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
 					{copy.title}
 				</h1>
 				<p className="text-[14.5px] leading-[1.55] text-text-secondary">
@@ -584,7 +602,7 @@ export function AuthForm({ mode }: AuthFormProps) {
 						setError(null);
 					}}
 					disabled={isLoading}
-					className="group h-[46px] w-full gap-[9px] rounded-sm border-border-strong text-[13.5px] hover:border-ring hover:bg-surface-muted"
+					className="group h-[46px] w-full gap-[9px] border-border-strong text-[13.5px] hover:border-ring hover:bg-surface-muted"
 				>
 					<KeyRound className="size-4 opacity-80" />
 					Continue with email
@@ -607,11 +625,11 @@ export function AuthForm({ mode }: AuthFormProps) {
 					disabled
 					title="SSO is coming soon"
 					aria-label="Continue with SSO (coming soon)"
-					className="h-[46px] w-full cursor-not-allowed gap-[9px] rounded-sm border-border-strong text-[13.5px] opacity-55"
+					className="h-[46px] w-full cursor-not-allowed gap-[9px] border-border-strong text-[13.5px] opacity-55"
 				>
 					<Lock className="size-4 opacity-80" />
 					Continue with SSO
-					<span className="ml-1 rounded-full border border-border-strong px-1.5 py-px font-mono text-[8.5px] uppercase tracking-[0.12em] text-text-tertiary">
+					<span className="vx-badge-mono ml-1 border border-border-strong px-1.5 py-px">
 						Soon
 					</span>
 				</Button>
@@ -640,7 +658,7 @@ function PrimaryButton({
 	return (
 		<Button
 			{...props}
-			className="group h-[46px] w-full rounded-sm text-sm"
+			className="group h-[46px] w-full text-sm"
 		>
 			{loading ? (
 				<>
