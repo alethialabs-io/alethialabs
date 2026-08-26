@@ -166,10 +166,13 @@ export function AuthShell({
  * `--held` modifier pins it, which is exactly "this is the subject" — the right thing
  * to say about the only object on the page.
  *
- * `--cl-len` is the one override. The device is tuned for controls, where a 7px arm
- * is proportionate; across ~400px of card the same arm reads as a rendering artifact
- * rather than a bracket. Only the arm LENGTH grows — `--cl-gap` stays at its default,
- * so the marks sit exactly as close to the content as they do on every button.
+ * `--card` is the one modifier. The device is tuned for controls, where a 7px arm is
+ * proportionate; across ~400px of card the same arm reads as a scuff rather than a
+ * bracket. Only the arm LENGTH grows — `--cl-gap` stays at its default, so the marks sit
+ * exactly as close to the content as they do on every button. It has to be a modifier
+ * in tokens.css and not a `[--cl-len:20px]` utility here: Tailwind puts that in
+ * `@layer utilities`, `.vx-clamp` is unlayered, and unlayered always wins — so the
+ * utility applied and computed to 7px anyway.
  *
  * Note the marks are drawn OUTSIDE the box, so nothing between here and `<main>` may
  * clip: no `overflow-hidden` on an ancestor, and the shell's centring wrapper leaves
@@ -185,7 +188,7 @@ export function AuthCard({
   return (
     <div
       className={cn(
-        "auth-pane-in vx-clamp vx-clamp--held px-9 pb-8 pt-9 [--cl-len:20px]",
+        "auth-pane-in vx-clamp vx-clamp--held vx-clamp--card px-9 pb-8 pt-9",
         className,
       )}
     >
