@@ -137,7 +137,17 @@ describe("getEmailConfig — provider selection", () => {
 
 	it("uses default from-addresses and lets EMAIL_FROM/AUTH_EMAIL_FROM override", async () => {
 		const dflt = await loadConfig();
-		expect(dflt.from.auth).toContain("auth.alethialabs.io");
+		// The default sender must sit on the APEX domain. It used to default to
+		// `no-reply@auth.alethialabs.io`, and a provider that verifies domains individually —
+		// Resend does — rejects a subdomain whose parent is verified. That bounces every message at
+		// send time, after the deploy and the config have both reported success.
+		//
+		// Asserted as an exact DOMAIN rather than with `toContain`, because
+		// `toContain("alethialabs.io")` is satisfied by `auth.alethialabs.io` too — a substring
+		// check cannot tell the apex from the subdomain, which is the whole distinction here. The
+		// local-part stays free to change.
+		const domainOf = (addr: string) => addr.split("@").at(-1)?.replace(">", "").trim();
+		expect(domainOf(dflt.from.auth)).toBe("alethialabs.io");
 		expect(dflt.from.general).toBe(dflt.from.auth); // general falls back to auth
 
 		process.env.AUTH_EMAIL_FROM = "Acme <no-reply@auth.acme.io>";
