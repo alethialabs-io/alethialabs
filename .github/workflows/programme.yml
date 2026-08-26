@@ -50,6 +50,15 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  # Reads the e2e-nightly run/job history, which is how gate reality is OBSERVED rather than
+  # declared (scripts/programme-fetch.sh, the gate_observations block).
+  #
+  # This is the scope that exists. There is NO workflow permission that lets a GITHUB_TOKEN list
+  # repo variables or secrets — not a missing grant, a token class that cannot do it — which is why
+  # every refresh has committed `variables: [], secrets: []` and the board has rendered `? unknown`
+  # for facts a run had already demonstrated. `actions: read` answers the better question anyway:
+  # whether a leg got PAST its gate, not whether a variable is present somewhere.
+  actions: read
 
 jobs:
   refresh:
