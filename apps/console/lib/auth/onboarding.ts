@@ -103,6 +103,50 @@ export async function getPrimaryOrg(userId: string): Promise<PrimaryOrg | null> 
 }
 
 /**
+ * The user's primary org, provisioning one first if it is missing.
+ *
+ * `provisionPrimaryOrg` runs from the `user.create.after` hook, where a failure is
+ * logged and swallowed — it must not abort account creation. That left a real hole:
+ * a user with no `member` row and a NULL `onboarding_completed_at` could not be served
+ * by /dashboard (which routes them to /onboarding) *or* /onboarding (which had nothing
+ * to configure), and the two bounced the user between them forever.
+ *
+ * So the read side repairs instead of redirecting. This is safe to call on every
+ * /onboarding render: `provisionPrimaryOrg` is idempotent — it returns early once the
+ * user holds any membership — so the happy path costs one indexed lookup and no write.
+ *
+ * Returns null only when provisioning genuinely cannot succeed (the DB or the PDP is
+ * down), which the caller must render as a terminal error rather than a redirect.
+ */
+export async function ensurePrimaryOrg(
+	userId: string,
+): Promise<PrimaryOrg | null> {
+	const existing = await getPrimaryOrg(userId);
+	if (existing) return existing;
+
+	const [row] = await getServiceDb()
+		.select({ email: user.email, name: user.name, username: user.username })
+		.from(user)
+		.where(eq(user.id, userId))
+		.limit(1);
+	// No user row for a live session — nothing to provision against.
+	if (!row) return null;
+
+	try {
+		await provisionPrimaryOrg({
+			id: userId,
+			email: row.email,
+			name: row.name,
+			username: row.username,
+		});
+	} catch (e) {
+		console.error("[onboarding] org repair failed:", e);
+		return null;
+	}
+	return getPrimaryOrg(userId);
+}
+
+/**
  * Whether the user has finished the post-signup /onboarding setup flow. Drives the
  * post-login gate: a NULL `onboarding_completed_at` (brand-new signup) routes the
  * user into /onboarding; pre-existing users are backfilled and skip it.
