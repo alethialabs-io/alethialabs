@@ -62,6 +62,12 @@ type ControlPlane struct {
 	runnerID    string
 	runnerToken string
 
+	// Add-on secret values this control plane OWNS, addon id → key → plaintext (#2835). Minted on
+	// first fetch and held for the process lifetime: a value that changed between two fetches would
+	// reintroduce exactly the per-reconcile rotation #2822 is about.
+	addonSecretsMu sync.Mutex
+	addonSecrets   map[string]map[string]string
+
 	// In-memory OpenTofu http state backend, keyed by a STORAGE KEY (state + lock).
 	// The key is the requesting job's id by default, but a job may be ALIASED onto
 	// another job's slot (AliasStateToJob) so a follow-on job — a DETECT_DRIFT after a
@@ -316,6 +322,7 @@ func (cp *ControlPlane) mux() http.Handler {
 	m.HandleFunc("POST /api/jobs/{id}/logs", cp.handleLogs)
 	m.HandleFunc("POST /api/jobs/{id}/state-token", cp.handleStateToken)
 	m.HandleFunc("POST /api/jobs/{id}/git-token", cp.handleGitToken)
+	m.HandleFunc("POST /api/jobs/{id}/addon-secrets", cp.handleAddonSecrets)
 	m.HandleFunc("POST /api/runners/heartbeat", cp.handleHeartbeat)
 	m.HandleFunc("GET /api/runners/wake", cp.handleWake)
 	// OpenTofu http state backend (in-memory). Lock is a distinct sub-path.
@@ -525,6 +532,138 @@ func (cp *ControlPlane) handleGitToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": nil})
+}
+
+// handleAddonSecrets serves the runner's add-on secret fetch (W4.5 #640), the same
+// production-faithful shape as handleGitToken above: values are NEVER carried in the
+// config_snapshot (which is persisted to Postgres), and the runner that owns the job pulls them at
+// execution time to seed each add-on's in-cluster Secret before ArgoCD syncs.
+//
+// WHY THIS EXISTS (#2835). Until now this route simply did not exist on the stand-in. The runner
+// asked, got a 404, and `argocd.EnsureAddOnSecrets` received an empty map — so NO add-on could ever
+// receive a secret in an e2e run. minio then fell back to the chart's own credential generation,
+// which happens at RENDER time and therefore differs on every reconcile (#2822): permanently
+// OutOfSync, with the root credentials rotating under a running workload.
+//
+// The values are MINTED HERE and held for the process lifetime, rather than read from the snapshot
+// or the DB. Two reasons: a value in the snapshot is the leak this whole path exists to avoid, and
+// minting keeps the stand-in honest about what it is — a control plane that OWNS these values,
+// exactly as the console does. Stability across the run is what matters (a value that changed
+// between two fetches would reintroduce the very rotation being fixed); encryption-at-rest is a
+// console concern with its own unit tests and no keyring exists here.
+func (cp *ControlPlane) handleAddonSecrets(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := cp.authHash(r); !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	jobID := r.PathValue("id")
+
+	// Which add-ons this job enabled, and which keys each declares — read from the snapshot the
+	// job was seeded with, so the answer follows the fixture rather than a second hardcoded list.
+	addons, err := cp.addonSecretKeys(r.Context(), jobID)
+	if err != nil {
+		http.Error(w, "could not read job add-ons", http.StatusInternalServerError)
+		return
+	}
+
+	cp.addonSecretsMu.Lock()
+	defer cp.addonSecretsMu.Unlock()
+	if cp.addonSecrets == nil {
+		cp.addonSecrets = map[string]map[string]string{}
+	}
+	out, err := mintAddonSecrets(cp.addonSecrets, addons, newToken)
+	if err != nil {
+		http.Error(w, "could not mint add-on secret", http.StatusInternalServerError)
+		return
+	}
+	// Note the ABSENCE of a log line naming a value. Only ids and key names may be logged.
+	writeJSON(w, http.StatusOK, map[string]any{"secrets": out})
+}
+
+// mintAddonSecrets returns the requested values, minting any key not already held and REMEMBERING
+// it in `held` (mutated in place, addon id → key → plaintext).
+//
+// Split from the handler so the property that actually matters is testable without a database: a
+// value must be STABLE across fetches. One that changed between two calls would reintroduce exactly
+// the per-reconcile credential rotation this whole path exists to remove (#2822) — the runner would
+// seed a different Secret on every deploy, and the chart would restart against credentials that
+// moved underneath it.
+//
+// `mint` is injected so a test can force the failure branch; a mint error aborts rather than
+// serving a partial set, because a half-populated Secret fails in a way that looks like a chart bug.
+func mintAddonSecrets(
+	held map[string]map[string]string,
+	addons map[string][]string,
+	mint func() (string, error),
+) (map[string]map[string]string, error) {
+	out := map[string]map[string]string{}
+	for addonID, keys := range addons {
+		vals := map[string]string{}
+		for _, k := range keys {
+			if _, ok := held[addonID]; !ok {
+				held[addonID] = map[string]string{}
+			}
+			if _, already := held[addonID][k]; !already {
+				v, err := mint()
+				if err != nil {
+					return nil, err
+				}
+				held[addonID][k] = v
+			}
+			vals[k] = held[addonID][k]
+		}
+		if len(vals) > 0 {
+			out[addonID] = vals
+		}
+	}
+	return out, nil
+}
+
+// addonSecretKeys reads addon id → secretRef.keys from the job's config_snapshot. An add-on with no
+// secretRef contributes nothing, which is how every add-on that needs no credential stays untouched.
+func (cp *ControlPlane) addonSecretKeys(ctx context.Context, jobID string) (map[string][]string, error) {
+	var raw []byte
+	if err := cp.pool.QueryRow(ctx,
+		`SELECT config_snapshot FROM public.jobs WHERE id = $1`, jobID).Scan(&raw); err != nil {
+		return nil, err
+	}
+	return parseAddonSecretKeys(raw)
+}
+
+// parseAddonSecretKeys reads addon id → secretRef.keys out of a config snapshot. Split from the
+// query so it can be tested without a database.
+//
+// An add-on with no secretRef, an empty key list, or a blank id contributes NOTHING. That is what
+// keeps every add-on which needs no credential untouched, and it is the branch worth pinning: a
+// permissive reader here would mint and serve secrets for add-ons that never asked for one.
+func parseAddonSecretKeys(raw []byte) (map[string][]string, error) {
+	var snap struct {
+		AddOns []struct {
+			ID        string `json:"id"`
+			SecretRef *struct {
+				Keys []string `json:"keys"`
+			} `json:"secretRef"`
+		} `json:"addons"`
+	}
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, a := range snap.AddOns {
+		if a.ID == "" || a.SecretRef == nil {
+			continue
+		}
+		var keys []string
+		for _, k := range a.SecretRef.Keys {
+			if strings.TrimSpace(k) != "" {
+				keys = append(keys, k)
+			}
+		}
+		if len(keys) > 0 {
+			out[a.ID] = keys
+		}
+	}
+	return out, nil
 }
 
 func (cp *ControlPlane) handleHeartbeat(w http.ResponseWriter, r *http.Request) {

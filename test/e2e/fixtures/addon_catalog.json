@@ -88,9 +88,20 @@
 			},
 			"expose": {
 				"type": "ingress"
-			}
+			},
+			"existingSecretAdminPassword": "alethia-addon-harbor",
+			"existingSecretAdminPasswordKey": "adminPassword",
+			"existingSecretSecretKey": "alethia-addon-harbor"
 		},
-		"syncWave": 2
+		"syncWave": 2,
+		"secretRef": {
+			"secretName": "alethia-addon-harbor",
+			"namespace": "harbor",
+			"keys": [
+				"adminPassword",
+				"secretKey"
+			]
+		}
 	},
 	{
 		"id": "ingress-nginx",
@@ -135,7 +146,12 @@
 		"namespace": "monitoring",
 		"values": {
 			"grafana": {
-				"enabled": true
+				"enabled": true,
+				"admin": {
+					"existingSecret": "alethia-addon-kube-prometheus-stack",
+					"userKey": "adminUser",
+					"passwordKey": "adminPassword"
+				}
 			},
 			"prometheus": {
 				"prometheusSpec": {
@@ -159,7 +175,17 @@
 			}
 		},
 		"syncWave": 2,
-		"podSecurity": "privileged"
+		"podSecurity": "privileged",
+		"secretRef": {
+			"secretName": "alethia-addon-kube-prometheus-stack",
+			"namespace": "monitoring",
+			"keys": [
+				"adminPassword"
+			],
+			"staticData": {
+				"adminUser": "admin"
+			}
+		}
 	},
 	{
 		"id": "kyverno",
@@ -240,9 +266,20 @@
 			"mode": "standalone",
 			"persistence": {
 				"size": "50Gi"
-			}
+			},
+			"existingSecret": "alethia-addon-minio"
 		},
-		"syncWave": 2
+		"syncWave": 2,
+		"secretRef": {
+			"secretName": "alethia-addon-minio",
+			"namespace": "minio",
+			"keys": [
+				"rootPassword"
+			],
+			"staticData": {
+				"rootUser": "admin"
+			}
+		}
 	},
 	{
 		"id": "opentelemetry-collector",
