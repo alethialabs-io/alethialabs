@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { AlethiaLockup } from "@repo/brand/lockup";
 import type { BaseLayoutProps, LinkItemType } from "fumadocs-ui/layouts/shared";
 
 // A single "Blog" top-nav link to the separate blog app. `external` renders a plain
@@ -12,13 +12,13 @@ export const linkItems: LinkItemType[] = [
 
 // The mark was hand-inlined here as a raw <svg>, a third copy of a component this
 // app already depends on. A drifted copy of a logo is worse than no copy.
-export const logo = (
-	<span className="inline-flex items-center gap-2 font-semibold">
-		<AlethiaLogo className="size-5" />
-		<span>Alethia</span>
-		<span className="font-normal text-fd-muted-foreground">Docs</span>
-	</span>
-);
+//
+// The rest of the lockup used to be hand-composed too — a bare <span>Alethia</span>
+// in the body font at font-semibold with no tracking, plus a muted "Docs". That was
+// a fourth lockup no other surface rendered, and it is why the docs wordmark never
+// matched the console's or the marketing site's. It is now the shared component with
+// its own tag.
+export const logo = <AlethiaLockup tag="docs" size={22} />;
 
 export function baseOptions(): BaseLayoutProps {
 	return {

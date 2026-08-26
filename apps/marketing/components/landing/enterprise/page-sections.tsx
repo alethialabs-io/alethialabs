@@ -12,12 +12,12 @@ import {
 	HeroRail,
 	Icon,
 	type IconKey,
-	Mark,
 	mono,
 	Prov,
 	type ProviderId,
 	Wrap,
 } from "@repo/brand/site-primitives";
+import { AlethiaMark } from "@repo/brand/lockup";
 import { PageCTA, PageHero, SectionMark } from "@repo/brand/site-sections";
 
 /* ---------- CTA destinations ---------- */
@@ -155,7 +155,7 @@ function Frame({
 					}}
 				>
 					<span style={{ color: "var(--text-primary)", marginBottom: 8 }}>
-						<Mark size={18} />
+						<AlethiaMark size={18} />
 					</span>
 					{nav.map((k, i) => (
 						<span
@@ -2008,7 +2008,7 @@ function CTA() {
 					alignItems: "center",
 				}}
 			>
-				<Mark size={34} />
+				<AlethiaMark size={34} />
 				<h2
 					style={{
 						...disp,

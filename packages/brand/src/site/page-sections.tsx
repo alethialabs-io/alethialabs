@@ -5,7 +5,8 @@ import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { Button } from "@repo/ui/button";
 
-import { disp, eyebrow, HeroRail, Icon, type IconKey, Mark, mono, Wrap } from "./primitives";
+import { AlethiaMark } from "../lockup";
+import { disp, eyebrow, HeroRail, Icon, type IconKey, mono, Wrap } from "./primitives";
 
 /**
  * The two compositions every marketing page was already building by hand.
@@ -215,7 +216,7 @@ export function PageCTA({ headline, lede, ctas }: PageCTAProps) {
 			<div className="ah-grid-bg ah-grid-cta" aria-hidden="true" />
 			<Wrap style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center" }}>
 				<span style={{ color: "var(--text-tertiary)", opacity: 0.55, marginBottom: 22 }}>
-					<Mark size={30} />
+					<AlethiaMark size={30} />
 				</span>
 				<h2
 					style={{

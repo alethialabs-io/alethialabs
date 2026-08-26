@@ -5,7 +5,8 @@ import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { PrivacySettingsButton } from "@repo/privacy/privacy-settings-button";
 import Link from "next/link";
 
-import { eyebrow, Lockup, mono, Wrap } from "./primitives";
+import { AlethiaLockup } from "../lockup";
+import { eyebrow, mono, Wrap } from "./primitives";
 
 /**
  * The site footer: two hairline rows, no link columns.
@@ -74,7 +75,7 @@ export function SiteFooter() {
 						aria-label={`${LEGAL_ENTITY.tradingName} home`}
 						style={{ textDecoration: "none", color: "inherit" }}
 					>
-						<Lockup />
+						<AlethiaLockup size={24} />
 					</Link>
 
 					<nav

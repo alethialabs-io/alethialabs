@@ -5,7 +5,7 @@
 import type { ChatStatus } from "ai";
 import { Sparkles } from "lucide-react";
 import Link from "next/link";
-import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { AlethiaMark } from "@repo/brand/lockup";
 import type { Mention } from "@/lib/ai/mentions";
 import { track } from "@/lib/analytics/track";
 import type { AgentThread } from "@/lib/db/schema";
@@ -50,7 +50,7 @@ function greeting(): string {
 /** The bracketed-point mark as the surface's focal graphic (grayscale, currentColor). */
 function ElenchMark({ className }: { className?: string }) {
 	return (
-		<AlethiaLogo
+		<AlethiaMark
 			aria-hidden
 			className={cn("mx-auto text-foreground", className)}
 		/>

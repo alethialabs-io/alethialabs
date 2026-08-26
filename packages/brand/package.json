@@ -4,7 +4,7 @@
   "private": true,
   "exports": {
     "./status": "./src/brand-status.ts",
-    "./alethia-logo": "./src/alethia-logo.tsx",
+    "./lockup": "./src/lockup.tsx",
     "./tokens.css": "./src/tokens.css",
     "./icon": "./src/icon.tsx",
     "./apple-icon": "./src/apple-icon.tsx",

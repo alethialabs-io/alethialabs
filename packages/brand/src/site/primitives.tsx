@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
+import { AlethiaMark } from "../lockup";
 
 /* ---------- shared inline-style tokens (mirror the design's helpers) ---------- */
 export const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
@@ -56,22 +57,14 @@ export function Wrap({
 	children: ReactNode;
 	style?: CSSProperties;
 }) {
+	// Width and gutter come from `--wrap-max` / `--wrap-pad` in tokens.css, which
+	// the marketing home page's sections read too — one container, one left edge.
+	// `style` still spreads last so the handful of call sites that override the
+	// block-axis padding keep winning.
 	return (
-		<div style={{ maxWidth: 1160, margin: "0 auto", padding: "0 32px", ...style }}>
+		<div className="vx-wrap" style={style}>
 			{children}
 		</div>
-	);
-}
-
-/* ---------- brand mark ---------- */
-/** The bracketed-point [·] mark, drawn in currentColor. */
-export function Mark({ size = 26 }: { size?: number }) {
-	return (
-		<svg width={size} height={size} viewBox="0 0 32 32" fill="none" style={{ display: "block" }}>
-			<path d="M11 6 H6.5 V26 H11" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-			<path d="M21 6 H25.5 V26 H21" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-			<circle cx="16" cy="16" r="2.9" fill="currentColor" />
-		</svg>
 	);
 }
 
@@ -92,7 +85,7 @@ export function HeroRail({
 		<div style={{ display: "flex", alignItems: "center", gap: 20, width: "100%", maxWidth, marginBottom: 32 }}>
 			<span style={{ flex: 1, height: 1, minWidth: 24, background: "linear-gradient(90deg, transparent, var(--border-strong))" }} />
 			<span style={{ display: "inline-flex", alignItems: "center", gap: 11, whiteSpace: "nowrap" }}>
-				<span style={{ color: "var(--text-secondary)", display: "flex" }}><Mark size={16} /></span>
+				<span style={{ color: "var(--text-secondary)", display: "flex" }}><AlethiaMark size={16} /></span>
 				<span style={{ ...mono, fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase", color: "var(--text-secondary)" }}>{kicker}</span>
 				<span style={{ width: 3, height: 3, borderRadius: 999, background: "var(--text-disabled)" }} />
 				<span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
@@ -101,21 +94,6 @@ export function HeroRail({
 				</span>
 			</span>
 			<span style={{ flex: 1, height: 1, minWidth: 24, background: "linear-gradient(90deg, var(--border-strong), transparent)" }} />
-		</div>
-	);
-}
-
-/** [·] Alethia · LABS company lockup. */
-export function Lockup({ size = 24 }: { size?: number }) {
-	return (
-		<div style={{ display: "flex", alignItems: "center", gap: 11, color: "var(--text-primary)" }}>
-			<Mark size={size} />
-			<span style={{ ...disp, fontSize: size * 0.75, fontWeight: 600, letterSpacing: "-0.01em" }}>
-				Alethia
-			</span>
-			<span style={{ ...mono, fontSize: 9, letterSpacing: "0.26em", textTransform: "uppercase", color: "var(--text-tertiary)", opacity: 0.8 }}>
-				Labs
-			</span>
 		</div>
 	);
 }
