@@ -726,8 +726,20 @@
    which no app imports.
 
    Space Grotesk is the display face here; it reaches it through --font-grotesk,
-   not --font-display (which is Geist; see the note at the top of this file). */
-@theme inline {
+   not --font-display (which is Geist; see the note at the top of this file).
+
+   NOT `@theme inline`, and the distinction is the whole ladder. `inline` compiles a
+   utility to the variable's VALUE rather than a `var()` reference — so
+   `.text-display-lg` became a literal `font-size: 56px` and the two @media blocks
+   below, which reassign these on :root, were read by nothing at all. The site shipped
+   its hero at 56px on a 375px phone with three breakpoints sitting right here claiming
+   otherwise. Nothing in the toolchain warns: it compiles, it lints, and the only signal
+   is opening the page on a phone. `scripts/check-theme-inline-overrides.mjs` now fails
+   the build on this pairing.
+
+   `inline` earns its place only where a theme value is itself a `var()` — the font
+   block at the top of this file is the real case for it. A literal length never is. */
+@theme {
   --text-display-lg: 56px;  /* h1 on / and /enterprise */
   --text-display-md: 40px;  /* h1 on /pricing          */
   --text-display-sm: 30px;  /* band h2                 */
