@@ -13,6 +13,7 @@
 package e2e
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -192,4 +193,40 @@ func TestOutOfSyncLosers(t *testing.T) {
 			t.Fatalf("got %v", got)
 		}
 	})
+}
+
+func TestDumpArgoAppDiffsNoOutOfSyncLoser(t *testing.T) {
+	t.Parallel()
+	// The early return, and the only branch of dumpArgoAppDiffs that runs no kubectl at all — so it
+	// is testable here, and it is the branch most worth pinning: when every loser is Degraded or
+	// Progressing while SYNCED, there is genuinely no diff to fetch, and saying so is different from
+	// emitting nothing. An empty section reads like the dump never ran.
+	observed := map[string]argoAppState{
+		"addon-falco":        {Health: "Progressing", Sync: "Synced"},
+		"addon-external-dns": {Health: "Degraded", Sync: "Synced"},
+	}
+	got := dumpArgoAppDiffs(context.Background(), "/nonexistent-kubeconfig",
+		observed, []string{"addon-falco", "addon-external-dns"})
+
+	if !strings.Contains(got, "no loser is OutOfSync") {
+		t.Fatalf("did not explain why there is no diff: %q", got)
+	}
+	if strings.TrimSpace(got) == "" {
+		t.Fatal("rendered nothing, which reads as 'the dump never ran'")
+	}
+	// It must not have tried to exec — a bogus kubeconfig would surface as a "could NOT be read"
+	// section if it had.
+	if strings.Contains(got, "could NOT be read") {
+		t.Fatalf("attempted a diff for a Synced loser: %q", got)
+	}
+}
+
+func TestDumpArgoAppDiffsSkipsLosersArgoNeverReported(t *testing.T) {
+	t.Parallel()
+	// A loser absent from `observed` has no sync status to judge, so it must not be diffed blindly.
+	got := dumpArgoAppDiffs(context.Background(), "/nonexistent-kubeconfig",
+		map[string]argoAppState{}, []string{"addon-never-seen"})
+	if !strings.Contains(got, "no loser is OutOfSync") {
+		t.Fatalf("unknown loser was not skipped: %q", got)
+	}
 }

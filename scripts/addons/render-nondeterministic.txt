@@ -8,4 +8,8 @@ harbor   # 2823 — genCA/genSignedCert for expose.tls AND an EPHEMERAL core tok
          #        plus randAlphaNum for core.secret/xsrfKey, jobservice.secret, registry.secret and
          #        a per-render bcrypt salt in the registry htpasswd. The rotating checksum/secret
          #        annotations roll core, jobservice, registry and trivy on every reconcile.
-minio    # 2822 — randAlphaNum rootUser + rootPassword whenever existingSecret is unset.
+
+# minio left this list on 2026-08-26: with the fixture now carrying its secretRef, the chart
+# receives `existingSecret` and stops minting per render. The ratchet MEASURED that independently
+# ("declared non-deterministic but now stable") — it was not removed because someone believed the
+# fix worked.
