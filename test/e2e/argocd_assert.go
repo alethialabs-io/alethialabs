@@ -403,9 +403,7 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ArgoCD Applications did not all reach Healthy+Synced within %s:\n%v%s",
 				timeout, lastErr,
-				describeArgoApps(ctx, kubeconfigPath, lastLosers)+
-					dumpOutOfSyncResources(ctx, kubeconfigPath, lastRefs)+
-					dumpArgoAppDiffs(ctx, kubeconfigPath, lastObserved, lastLosers))
+				argoDeadlineDump(ctx, kubeconfigPath, lastObserved, lastLosers, lastRefs))
 		}
 		select {
 		case <-ctx.Done():
@@ -878,6 +876,29 @@ func (r outOfSyncRef) kubectlTarget() string {
 //
 // Best-effort and hard-capped: this runs on an ALREADY-FAILING path, so it must never be the reason
 // a run hangs or an error is lost.
+// argoDeadlineDump is EVERY diagnostic a timed-out ArgoCD wait should carry, in one place.
+//
+// It exists because there are two of these waits — AssertArgoAppsHealthy here, and the A0.6
+// repo-apps wait in t2_argo_repos.go — each with its own hand-assembled dump. #2834 added the
+// desired-vs-live diff to this file's caller and not the other one, so hetzner/maxconfig run
+// 32993552300 timed out with five OutOfSync StatefulSets and printed no diff at all: the run went
+// through the OTHER wait, which A0.6 enables.
+//
+// That is the whole argument for a single function. Two call sites assembling the same list by hand
+// will drift, and the drift is invisible until a run needs the missing half — by which point it has
+// already cost a real apply.
+func argoDeadlineDump(
+	ctx context.Context,
+	kubeconfigPath string,
+	observed map[string]argoAppState,
+	losers []string,
+	refs []outOfSyncRef,
+) string {
+	return describeArgoApps(ctx, kubeconfigPath, losers) +
+		dumpOutOfSyncResources(ctx, kubeconfigPath, refs) +
+		dumpArgoAppDiffs(ctx, kubeconfigPath, observed, losers)
+}
+
 // dumpArgoAppDiffs asks ArgoCD for the desired-vs-live diff of every OUT-OF-SYNC loser.
 //
 // Scoped to OutOfSync on purpose: a Degraded-but-Synced Application (external-dns crash-looping,
