@@ -48,6 +48,19 @@ export type AddOnRequirement = "ingress" | "domain" | "storage";
 /** The kind of a configurable add-on knob. `enum` = a fixed choice (carries `options`); `secret`
  * = a credential persisted encrypted-at-rest (EncryptedSecret), never plaintext; `nested` = a
  * one-level group of scalar sub-fields (e.g. `resources.requests.{cpu,memory}`). */
+/**
+ * The Pod Security Standards levels, most permissive first. A finite, externally-defined set — the
+ * three levels the upstream `pod-security.kubernetes.io/enforce` label accepts.
+ */
+export const ADDON_POD_SECURITY_LEVELS = [
+	"privileged",
+	"baseline",
+	"restricted",
+] as const;
+
+/** One Pod Security Standards level. */
+export type AddOnPodSecurityLevel = (typeof ADDON_POD_SECURITY_LEVELS)[number];
+
 export type AddOnFieldType =
 	| "number"
 	| "boolean"
@@ -166,6 +179,24 @@ export interface AddOnDef<Schema extends z.ZodTypeAny = z.ZodTypeAny> {
 	 */
 	secretStaticData?: (config: z.infer<Schema>) => Record<string, string>;
 	/**
+	 * The Pod Security Standards level this add-on's OWN namespace must allow (#2837).
+	 *
+	 * Talos — which every hetzner cluster runs — enables the PodSecurity admission plugin with
+	 * `enforce: baseline` and exempts only `kube-system`. Baseline forbids privileged containers,
+	 * host namespaces and hostPath volumes, so a chart that needs any of those has its DaemonSet
+	 * ADMITTED and its pods REJECTED: `desiredNumberScheduled > 0`, zero pods, Progressing forever,
+	 * and nothing in the Application saying why.
+	 *
+	 * Declaring it here rather than relaxing the cluster is the point. It is scoped to this add-on's
+	 * own namespace, so enabling falco does not weaken the namespace next door; it is visible, which
+	 * is what a user deciding whether to install a node-level agent should be told; and an add-on
+	 * that does not ask for host access still cannot get it.
+	 *
+	 * Omitted means "do not label the namespace" — the cluster's own default applies, which is the
+	 * right answer for every add-on that runs as an ordinary workload.
+	 */
+	podSecurity?: AddOnPodSecurityLevel;
+	/**
 	 * Mints values for secret knobs the user left unset, at ENABLE time (#2822, #2823).
 	 *
 	 * Some charts generate their own credential when none is supplied — and they do it at RENDER
@@ -266,6 +297,11 @@ export interface AddOnInstallSpec {
 	 * NEVER contains a secret-typed knob's value (W4.5) — only SecretKeyRef wiring. */
 	values: Record<string, unknown>;
 	syncWave: number;
+	/** The Pod Security Standards level this add-on's namespace must allow (#2837). The renderer
+	 * turns it into `syncPolicy.managedNamespaceMetadata.labels`, so ArgoCD labels the namespace it
+	 * creates. Absent = leave the namespace unlabelled and let the cluster's default stand.
+	 * Mirrors the Go `AddOnInstall.PodSecurity`. */
+	podSecurity?: AddOnPodSecurityLevel;
 	/** The k8s Secret the runner seeds pre-sync for this add-on's secret knobs (W4.5).
 	 * Absent when the add-on has no secret-typed field with a stored value. */
 	secretRef?: AddOnSecretRef;
