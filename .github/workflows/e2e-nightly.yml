@@ -1293,6 +1293,20 @@ jobs:
           ALETHIA_E2E_ACM_CERT_ZONE_NAME: ${{ vars.E2E_ACM_CERT_ZONE_NAME }}
           ALETHIA_E2E_ACM_CERT_TIMEOUT: ${{ vars.E2E_ACM_CERT_TIMEOUT }}
           ALETHIA_E2E_ACM_CERT_SUMMARY: ${{ runner.temp }}/acm-cert-summary.json
+          # ── The max-config DNS zone suffix, global and per-cloud. ──
+          #
+          #    Hetzner DNS REFUSES a `.io` zone outright — its API answers `unsupported tld
+          #    (invalid_input)`, 422, measured against the live API (dns-tld.ts). The suffix was a
+          #    compiled-in constant, so hetzner/maxconfig and hetzner/full were blocked on the TLD of
+          #    a `const` on every run, whatever else got fixed.
+          #
+          #    The per-provider form is what a maintainer sets, NOT the global one: aws's certificate
+          #    path is wired to this same zone (E2E_ACM_CERT_ZONE_ID / _ZONE_NAME name
+          #    e2e.alethialabs.io, and ACM has issued against it). Moving every cloud in one step
+          #    would have aws request a certificate for a zone it does not hold. Unset ⇒ the
+          #    compiled default, so nothing changes until a zone is actually delegated.
+          ALETHIA_E2E_MAXCONFIG_DOMAIN_SUFFIX: ${{ vars.E2E_MAXCONFIG_DOMAIN_SUFFIX }}
+          ALETHIA_E2E_MAXCONFIG_DOMAIN_SUFFIX_HETZNER: ${{ vars.E2E_MAXCONFIG_DOMAIN_SUFFIX_HETZNER }}
           # ── CLI-ONLY DEMO BAR — can the whole product be driven from the terminal?
           #
           #    Every other layer here asks whether the PLATFORM works. This one asks whether the
