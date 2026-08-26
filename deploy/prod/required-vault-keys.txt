@@ -1,0 +1,29 @@
+# Vault keys that MUST exist in `alethia/prod/env` for a production deploy to be valid.
+#
+# ONE key per line. `#` comments and blank lines are ignored. This file is the single source of
+# truth: `.github/workflows/deploy-console.yml`'s `preflight` job checks every key here against the
+# live vault BEFORE any image is built, and also asserts that the deploy job's own inline
+# `[ -n "$X" ] || … exit 1` assertions correspond exactly to this list — so the two cannot drift.
+#
+# WHY THIS FILE EXISTS
+#
+# #2375 added two such assertions for keys that were never populated. Nothing in CI reads the
+# vault, so it passed every check and only failed after reaching `main` — and it failed AFTER ~20
+# minutes of image builds, at the very last step. Production could not deploy for two weeks.
+#
+# Adding a key here is a deliberate, reviewable act. Adding an assertion to the deploy WITHOUT
+# adding it here fails the preflight, which is the point: the list and the gate move together.
+#
+# A key that is merely *nice to have* does NOT belong here — an absent key that the app has a
+# documented default for is not a deploy blocker. Only list what genuinely must not be empty.
+
+# The box to deploy to. Written by infra-cp-hetzner on provision.
+DEPLOY_HOST
+
+# Public company phone. Legally required on the Bulgarian company-information surface (#2375).
+ALETHIA_PUBLIC_PHONE
+
+# Transactional email. The deploy pins EMAIL_PROVIDER=resend and ALETHIA_DEPLOYMENT_MODE=hosted,
+# and packages/email/src/config.ts THROWS in hosted mode when the pinned provider has no
+# credentials — so an empty key breaks email-OTP sign-in rather than degrading quietly.
+RESEND_API_KEY

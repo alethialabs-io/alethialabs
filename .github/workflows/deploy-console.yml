@@ -36,7 +36,66 @@ jobs:
   # images (`runner`). Images whose group didn't change are re-tagged latest→sha by `retag-unchanged` so the
   # deploy's `:${sha}` pull always resolves. `packages/**` is conservatively treated as affecting the apps;
   # `packages/core` (Go, shared by the runner) additionally triggers the runner group.
+  # Does the vault hold everything the deploy will REQUIRE? Answered in ~15 seconds, before a
+  # single image is built.
+  #
+  # This exists because the answer used to arrive last. #2375 added two `exit 1` gates for vault
+  # keys that were never populated; nothing in CI reads the vault, so it passed every check, reached
+  # `main`, and then failed at the final step of a ~20-minute run. Production could not deploy for
+  # two weeks, and each attempt rebuilt every image before telling anyone why.
+  #
+  # Every build job depends on this, so a missing key now costs seconds and the error is the first
+  # thing in the run rather than the last.
+  preflight:
+    name: Preflight — the vault holds what the deploy requires
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # same read-only vault role the deploy uses; no stored secrets
+    env:
+      ASM_SECRET_ID: alethia/prod/env
+      ASM_REGION: eu-central-1
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.DEPLOY_READER_ROLE_ARN }}
+          aws-region: ${{ env.ASM_REGION }}
+
+      # The list and the gate must move together, or this job becomes a second place to forget.
+      # deploy/prod/required-vault-keys.txt is the single source of truth; this asserts the deploy
+      # job's own inline assertions name exactly the same keys — no more, no less.
+      # The list and the gate must move together, or this file becomes a second place to forget.
+      # Fails in BOTH directions, and refuses to pass on an empty parse — see the script's header.
+      - name: The required list matches the deploy's own assertions
+        run: python3 scripts/ci/check-deploy-required-keys.py
+
+      - name: Every required key is present in the vault
+        run: |
+          set -euo pipefail
+          json="$(aws secretsmanager get-secret-value --secret-id "$ASM_SECRET_ID" --region "$ASM_REGION" --query SecretString --output text)"
+          missing=0
+          while read -r key; do
+            # `// ""` so an absent key and a present-but-empty one are the same failure: an empty
+            # value reaches the box as `KEY=` and is exactly as broken as no key at all.
+            if [ -z "$(printf '%s' "$json" | jq -r --arg k "$key" '.[$k] // ""')" ]; then
+              echo "::error::$key is missing or empty in $ASM_SECRET_ID"
+              missing=$((missing + 1))
+            fi
+          done < <(grep -vE '^\s*(#|$)' deploy/prod/required-vault-keys.txt)
+          if [ "$missing" -gt 0 ]; then
+            echo "::error::$missing required vault key(s) missing — fix the vault, not this workflow."
+            exit 1
+          fi
+          echo "✓ every required key present"
+
   changes:
+    # Gated on preflight because EVERY build job needs `changes` — so one edge here puts the vault
+    # check in front of the whole graph rather than repeating `needs: preflight` on each of them.
+    # `changes` itself is a path filter and costs nothing, so nothing is lost by ordering it last.
+    needs: preflight
     runs-on: ubuntu-latest
     outputs:
       apps: ${{ steps.filter.outputs.apps }}
@@ -550,6 +609,12 @@ jobs:
           RESEND_KEY="$(val RESEND_API_KEY)"
           [ -n "$RESEND_KEY" ] || { echo "::error::EMAIL_PROVIDER=resend requires RESEND_API_KEY."; exit 1; }
 
+          # Sender addresses — vault first, apex fallback. The fallback domain MUST be one the
+          # provider has verified; a subdomain here is rejected at send time, long after this job
+          # has reported success. See the note at the emit site below.
+          AUTH_FROM="$(val AUTH_EMAIL_FROM)"; AUTH_FROM="${AUTH_FROM:-Alethia <no-reply@alethialabs.io>}"
+          GENERAL_FROM="$(val EMAIL_FROM)"; GENERAL_FROM="${GENERAL_FROM:-Alethia <hello@alethialabs.io>}"
+
           # SSH private key from the vault (never touches the runner env / logs).
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           val DEPLOY_SSH_PRIVATE_KEY > ~/.ssh/deploy_key
@@ -757,8 +822,23 @@ jobs:
             echo "PLATFORM_ADMIN_EMAILS=borislav@alethialabs.io"
             echo "PLATFORM_SYSTEM_USER_EMAIL=borislav@alethialabs.io"
             emit STRIPE_ENTERPRISE_PRODUCT_ID
-            echo "AUTH_EMAIL_FROM=Alethia <no-reply@auth.alethialabs.io>"
-            echo "EMAIL_FROM=Alethia <hello@mail.alethialabs.io>"
+            # SENDER ADDRESSES COME FROM THE VAULT. They used to be hardcoded here, on two
+            # SUBDOMAINS (no-reply@auth. and hello@mail.), and that silently broke every send.
+            #
+            # Resend verifies each domain SEPARATELY — verifying `alethialabs.io` does not cover
+            # `auth.alethialabs.io` or `mail.alethialabs.io`, and the account has one domain slot.
+            # So a valid RESEND_API_KEY was necessary but NOT sufficient: mail would still have been
+            # rejected at the provider as an unverified sender, after the deploy reported success.
+            #
+            # Hardcoding them here also meant the vault's own AUTH_EMAIL_FROM / EMAIL_FROM were dead
+            # values that DISAGREED with what shipped (no-reply@ vs hello@) — two sources of truth,
+            # one of them inert and neither obviously so.
+            #
+            # Vault-driven with an apex fallback (the same `${X:-default}` shape this job already
+            # uses for PUBLIC_APP_URL and HCLOUD_SERVER_TYPE), so the eventual switch back to SES —
+            # which verifies subdomains differently — is a vault edit rather than a PR.
+            echo "AUTH_EMAIL_FROM=$AUTH_FROM"
+            echo "EMAIL_FROM=$GENERAL_FROM"
             echo "ALETHIA_IMAGE_TAG=$IMAGE_TAG"
           } > env.deploy
 
