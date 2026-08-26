@@ -7,6 +7,7 @@ import {
 	LogoWall,
 	PageClose,
 	PageOpen,
+	Plate,
 } from "@repo/brand/site-sections";
 import { JOBS, JobsTable } from "@repo/brand/site-primitives";
 
@@ -22,38 +23,6 @@ import { VerifyReceipt } from "./verify-receipt";
  * throw, an auto-demo attract loop, a rAF loop over a full-viewport canvas with
  * `touch-action: none`); it is gone, along with the readout panel it drove.
  */
-
-/** A hairline plate with a browser-ish header, for product surfaces. */
-function Plate({ label, children }: { label: string; children: React.ReactNode }) {
-	return (
-		<div
-			style={{
-				border: "1px solid var(--border)",
-				borderRadius: "var(--radius-md)",
-				background: "var(--surface)",
-				overflow: "hidden",
-				boxShadow: "var(--shadow-md)",
-			}}
-		>
-			<div
-				className="flex items-center gap-2.5 px-3.5 py-2.5"
-				style={{ borderBottom: "1px solid var(--border-faint)", background: "var(--surface-muted)" }}
-			>
-				<span className="flex gap-1.5" aria-hidden="true">
-					{[0, 1, 2].map((i) => (
-						<span
-							key={i}
-							className="size-[7px] rounded-full"
-							style={{ background: "var(--border-strong)" }}
-						/>
-					))}
-				</span>
-				<span className="font-mono text-[10.5px] text-text-tertiary">{label}</span>
-			</div>
-			{children}
-		</div>
-	);
-}
 
 /**
  * Real `alethia verify receipt` output, copied verbatim from
