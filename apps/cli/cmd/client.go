@@ -27,6 +27,9 @@ type apiClient interface {
 	GetConfigurations() ([]types.ConfigurationSummary, error)
 	ExportConfiguration(projectName, format string) (*api.ConfigurationExport, error)
 	GetRepositories(provider string) ([]api.Repository, error)
+	ListServiceTokens() ([]api.ServiceToken, error)
+	CreateServiceToken(name string, expiresInDays int) (*api.CreatedServiceToken, error)
+	RevokeServiceToken(id string) error
 	GetProviderStatus(provider string) (*api.ProviderStatus, error)
 	VerifyProviderIdentity(provider, identityID string) (*api.ConnectIdentityResponse, error)
 	GetJobs(status string, limit, offset int) (*api.JobsPage, error)

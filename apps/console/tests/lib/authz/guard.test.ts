@@ -15,6 +15,13 @@ vi.mock("@/lib/authz", () => ({ getPdp: vi.fn() }));
 vi.mock("@/lib/authz/actor-context", () => ({ getInjectedActor: vi.fn() }));
 vi.mock("@/lib/cli/auth", () => ({ verifyCliToken: vi.fn() }));
 
+// `isOrgMember` reads the `member` table, and the service-token branch below calls it on EVERY
+// request. vi.hoisted because the factory is hoisted above every const in this file.
+const { dbLimit } = vi.hoisted(() => ({ dbLimit: vi.fn() }));
+vi.mock("@/lib/db", () => ({
+	getServiceDb: () => ({ select: () => ({ from: () => ({ where: () => ({ limit: dbLimit }) }) }) }),
+}));
+
 import { getOwnerScope } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
 import { getPdp } from "@/lib/authz";
@@ -217,6 +224,98 @@ describe("authorizeCli", () => {
 		enforce.mockRejectedValueOnce(boom);
 
 		await expect(authorizeCli(req, "manage_connectors", { type: "connector" })).rejects.toBe(boom);
+	});
+});
+
+// ── SERVICE-ACCOUNT TOKENS: the organization pin. ──
+//
+// A service token's org is fixed when it is minted. An interactive session picks its org with an
+// `X-Alethia-Org` header, which is safe because a human's own memberships bound it; a machine
+// credential has no human behind it, so honouring that header would let a token issued to one tenant
+// act on another. CLI routes query via getServiceDb() with NO RLS beneath them, so this branch IS the
+// tenancy boundary for anything driven from a pipeline.
+//
+// Asserted here as BEHAVIOUR rather than as source text: the Go-side equivalent was caught by the
+// anti-vacuity tripwire for scanning source and executing none of the code, and this is the same
+// property on the other side of the wire.
+describe("authorizeCli with a service-account token", () => {
+	const SERVICE_ACTOR: Actor = { userId: "u-minter", orgId: "org-A" };
+
+	/** A request carrying a service-token payload, optionally scoped by an org header. */
+	function serviceReq(headerOrg?: string): Request {
+		const headers = new Headers();
+		if (headerOrg) headers.set("X-Alethia-Org", headerOrg);
+		return new Request("https://example.test/api/cli", { headers });
+	}
+
+	beforeEach(() => {
+		vi.mocked(verifyCliToken).mockResolvedValue({
+			payload: { sub: "u-minter", type: "access", service_token_org_id: "org-A", service_token_id: "tok-1" },
+			error: undefined,
+		} as never);
+		vi.mocked(getActiveScope).mockResolvedValue(SERVICE_ACTOR);
+		// The minting profile is a member of org-A by default.
+		dbLimit.mockResolvedValue([{ id: "m-1" }]);
+	});
+
+	it("scopes to the token's own org when no header is sent", async () => {
+		const result = await authorizeCli(serviceReq(), "manage_tokens", { type: "org" });
+
+		// The PINNED org, not `getActiveScope(userId)` — which would resolve whichever org that
+		// PERSON last had active, i.e. somebody's session state standing in for a machine's scope.
+		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
+		expect(result).toEqual({ actor: SERVICE_ACTOR });
+	});
+
+	it("accepts a header that AGREES with the token's org", async () => {
+		const result = await authorizeCli(serviceReq("org-A"), "manage_tokens", { type: "org" });
+
+		expect(getActiveScope).toHaveBeenCalledWith("u-minter", "org-A");
+		expect(result).toEqual({ actor: SERVICE_ACTOR });
+	});
+
+	// THE ONE THAT MATTERS. Refused, never ignored: ignoring it would let a pipeline believe it is
+	// writing to org B while every write lands in org A — a wrong answer that looks like a right one.
+	it("REFUSES a header naming a different org, and resolves no scope at all", async () => {
+		const result = await authorizeCli(serviceReq("org-B"), "manage_tokens", { type: "org" });
+
+		expect("error" in result).toBe(true);
+		expect((result as { error: Response }).error.status).toBe(403);
+		expect(getActiveScope).not.toHaveBeenCalled();
+		expect(enforce).not.toHaveBeenCalled();
+	});
+
+	// Membership is re-checked on EVERY request rather than trusted from mint time — otherwise
+	// revoking somebody's access would leave their tokens live, which is the offboarding hole
+	// long-lived credentials are known for.
+	it("REFUSES when the minting profile is no longer a member of the token's org", async () => {
+		dbLimit.mockResolvedValue([]);
+
+		const result = await authorizeCli(serviceReq(), "manage_tokens", { type: "org" });
+
+		expect("error" in result).toBe(true);
+		expect((result as { error: Response }).error.status).toBe(403);
+		expect(enforce).not.toHaveBeenCalled();
+	});
+
+	// The pin decides SCOPE; it does not grant permission. The PDP still rules on the action, and a
+	// denial is a 403 like any other — a service token is not a way around authorization.
+	it("still defers to the PDP, mapping a ForbiddenError to 403", async () => {
+		enforce.mockRejectedValueOnce(
+			new ForbiddenError("manage_tokens", { type: "org" }, "no_grant"),
+		);
+
+		const result = await authorizeCli(serviceReq(), "manage_tokens", { type: "org" });
+
+		expect("error" in result).toBe(true);
+		expect((result as { error: Response }).error.status).toBe(403);
+	});
+
+	it("rethrows a non-Forbidden PDP error rather than turning it into a denial", async () => {
+		const boom = new Error("pdp down");
+		enforce.mockRejectedValueOnce(boom);
+
+		await expect(authorizeCli(serviceReq(), "manage_tokens", { type: "org" })).rejects.toBe(boom);
 	});
 });
 

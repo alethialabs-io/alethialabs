@@ -1,11 +1,16 @@
 ---
 title: Authentication
-description: Device Authorization Grant flow, token storage, and automatic refresh.
+description: Device Authorization Grant flow for people, service-account tokens for pipelines, token storage, and automatic refresh.
 ---
 
 # Authentication
 
-alethia uses the **Device Authorization Grant** (RFC 8628) for authentication. You never type a password in the terminal. For the full technical details, see [Authentication Flows](/concepts/authentication).
+alethia authenticates two ways, for two different callers:
+
+- **You, at a terminal** — the **Device Authorization Grant** (RFC 8628). You never type a password.
+- **A pipeline** — a **service-account token**, supplied through `$ALETHIA_TOKEN`. No browser, no prompt.
+
+For the full technical details, see [Authentication Flows](/concepts/authentication).
 
 ## Login
 
@@ -72,16 +77,80 @@ The active organization is sent as the `X-Alethia-Org` header on every request. 
 with `alethia org switch`. See [Identity & Global Options](/cli/identity) and
 [Organizations, Members & Teams](/cli/commands/organizations).
 
+## Running in CI
+
+The device flow needs a browser and a person, so a pipeline cannot use it. Mint a **service-account
+token** instead:
+
+```bash
+alethia token create --name "github-actions"
+```
+
+The token is printed **once**, on stdout, with everything else on stderr — so you can pipe it
+straight into a secret store without selecting it by eye:
+
+```bash
+alethia token create --name "github-actions" | gh secret set ALETHIA_TOKEN
+```
+
+Then set `ALETHIA_TOKEN` in your job and use the CLI normally. Nothing is written to disk, and no
+`alethia login` is needed:
+
+```yaml
+- name: Deploy staging
+  env:
+    ALETHIA_TOKEN: ${{ secrets.ALETHIA_TOKEN }}
+  run: |
+    alethia project apply --env staging --wait --no-input
+```
+
+Pair it with `--no-input`, which makes the CLI fail rather than prompt — together they mean a job
+never hangs waiting for an answer nobody is there to give.
+
+### What a service token can do
+
+A token **acts as the person who created it**, inside the **one organization** it was minted for.
+That org is fixed when the token is created: an `X-Alethia-Org` header that disagrees with it is
+refused, not ignored, so a token issued for one organization can never act on another.
+
+It also stops working the moment its creator leaves that organization — membership is re-checked on
+every request, not trusted from when the token was minted.
+
+### Managing tokens
+
+```bash
+alethia token list                       # name, prefix, when created, when last used, status
+alethia token revoke <id>                # takes effect on the token's next request
+alethia token create --name ci --expires-in-days 90
+```
+
+`alethia token list` shows `last used: never` for a token nothing has ever presented. That is usually
+the most interesting row on the list — a credential that was minted, put somewhere, and forgotten.
+
+<Callout type="warn">
+The token value is shown **once** and is never stored — the server keeps only a hash of it. If you
+lose it, revoke it and mint another. There is no way to read it back, by design.
+</Callout>
+
+Minting, listing and revoking tokens requires the `org:manage_tokens` permission, which **owners and
+admins** hold. Operators deliberately do not: issuing a credential that carries someone's access into
+an unattended pipeline is a higher bar than deploying infrastructure by hand.
+
 ## Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ALETHIA_WEB_ORIGIN` | Production URL (baked at build) | Override the Alethia API URL |
+| `ALETHIA_TOKEN` | unset | A service-account token for non-interactive use. When set, the CLI uses it and never reads or writes the credentials file. |
 
 ```bash
 export ALETHIA_WEB_ORIGIN=http://localhost:3000
 alethia login  # authenticates against local dev server
 ```
+
+The `--token` flag does the same thing as `$ALETHIA_TOKEN` and takes precedence over it. Prefer the
+environment variable in CI: a flag value lands in the process table and in shell history, where an
+environment variable does not.
 
 ## Token Storage
 

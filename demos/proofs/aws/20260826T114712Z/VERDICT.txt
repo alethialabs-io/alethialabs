@@ -1,0 +1,14 @@
+aws: ✅ apply(172 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(?)
+cluster:   alethia-nl-32960217601-1 (us-east-1)
+run:       nightly-32960217601-1 @ ebe47c0
+receipt:   signed=true sha256=e22f10303fe6
+teardown:  destroyed=false (? resources)
+duration:  3382s
+soak:      soak: skipped
+day2-access: ✅ day2-access: endpoint surfaced=true · kube reachable=true authorized=true (can-i * / *) · nodes ready=3 · argocd-url: n/a (no ingress on this cloud yet — access via port-forward)
+day2offer: n/a (day-2 offer postures off or not reached)
+fabric-demo: n/a (#845 Fabric placement gate off or not reached)
+acm-cert: n/a (#1773 ACM certificate gate off or not reached)
+byo-iac:   byo-iac: skipped
+xacct:     n/a (#1268 cross-account secrets off or not reached)
+keyless-db: n/a (#1511 keyless DB auth off or not reached)

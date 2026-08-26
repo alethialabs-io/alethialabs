@@ -67,13 +67,19 @@ export function AuthShell({
   const status = statusUrl();
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-background">
-      {/* The same page chrome the marketing site wears — the hairline viewport frame,
-          the two vertical rails and the grain. It is what makes a page read as an
-          instrument plate rather than a document, and the front door had been the one
-          surface without it: arriving at /login from the marketing site changed
-          products mid-flow. All three layers are fixed, aria-hidden and
-          pointer-events:none, so nothing here is in the tab order or the a11y tree. */}
-      <Chrome />
+      {/* The same page chrome the marketing site wears — the hairline viewport frame
+          and the grain. It is what makes a page read as an instrument plate rather than
+          a document, and the front door had been the one surface without it: arriving at
+          /login from the marketing site changed products mid-flow. Both layers are fixed,
+          aria-hidden and pointer-events:none, so nothing here is in the tab order or the
+          a11y tree.
+
+          Rails OFF. They are fixed to the left edge, and `.vx-rail--bottom` sits at
+          `bottom: 28px` — the same line as this footer's `pb-7` legal row, so the
+          vertical "ἀλήθεια" landed hard against "© 2026 Alethia Labs". Marketing has a
+          tall footer with room beside it; a single card over one line of legal text does
+          not, and there is nowhere else on this page for a rail to go. */}
+      <Chrome rails={false} />
       <div className="ah-grid-bg" aria-hidden="true" />
 
       {/* top bar */}

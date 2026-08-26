@@ -75,6 +75,9 @@
 		"version": "1.15.1",
 		"namespace": "harbor",
 		"values": {
+			"updateStrategy": {
+				"type": "Recreate"
+			},
 			"persistence": {
 				"persistentVolumeClaim": {
 					"registry": {

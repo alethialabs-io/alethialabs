@@ -100,6 +100,10 @@ export async function ensureCliOrgAccess(
  * An optional `X-Alethia-Org` header selects which org the call is scoped to (the CLI
  * `--org` flag). It is honoured only after verifying the caller is a member of that org
  * (else 403); absent, behaviour is identical to resolving the default active scope.
+ *
+ * A SERVICE-ACCOUNT token overrides that entirely: its org is fixed at mint time, a conflicting
+ * header is refused rather than ignored, and the minting profile's membership is re-checked on every
+ * request. See the branch below.
  */
 export async function authorizeCli(
 	req: Request,
@@ -117,6 +121,40 @@ export async function authorizeCli(
 		};
 	}
 	const headerOrg = req.headers.get("X-Alethia-Org")?.trim();
+
+	// ── A SERVICE TOKEN'S ORG IS FIXED AT MINT TIME AND WINS. ──
+	//
+	// The header exists so a HUMAN can pick which of their orgs a call is scoped to, and the
+	// membership check below is what makes that safe. A service token has no human behind it: its
+	// org was chosen when it was minted, and letting a request re-point it would mean a token issued
+	// to one tenant could act on another — the tenancy boundary these routes rest on, since CLI
+	// routes query via getServiceDb() with no RLS underneath them.
+	//
+	// A CONFLICTING header is REFUSED, not silently ignored. Ignoring it would let a pipeline
+	// believe it is writing to org B while every write lands in org A, and that is worse than an
+	// error: it is a wrong answer that looks like a right one.
+	const serviceOrg = payload?.service_token_org_id;
+	if (typeof serviceOrg === "string" && serviceOrg) {
+		if (headerOrg && headerOrg !== serviceOrg) {
+			return { error: forbidden() };
+		}
+		// Re-checked on EVERY request rather than trusted from mint time. A token acts as the
+		// profile that created it, so it must stop working the moment that profile stops being a
+		// member — otherwise revoking somebody's access would leave their tokens live, which is
+		// exactly the offboarding hole long-lived credentials are known for.
+		if (!(await isOrgMember(userId, serviceOrg))) {
+			return { error: forbidden() };
+		}
+		const serviceActor = await getActiveScope(userId, serviceOrg);
+		try {
+			await getPdp().enforce(serviceActor, action, { type: resource.type, id: resource.id });
+		} catch (e) {
+			if (e instanceof ForbiddenError) return { error: forbidden() };
+			throw e;
+		}
+		return { actor: serviceActor };
+	}
+
 	if (headerOrg && !(await isOrgMember(userId, headerOrg))) {
 		return { error: forbidden() };
 	}

@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# A chart that generates a credential at RENDER time sits permanently OutOfSync under ArgoCD, and
+# rolls its pods on every reconcile if it stamps a checksum annotation. Two catalogued add-ons were
+# shipping exactly that (#2822, #2823). See scripts/addons/check-render-determinism.sh.
+#
+# NOT part of the required per-PR rollup, and deliberately so: the sweep pulls eighteen charts from
+# ten upstream Helm repositories, and an upstream outage must not red a PR that has nothing to do
+# with add-ons. The chart versions are PINNED, so the answer can only change when the catalogue
+# changes — which is precisely what the paths filter below keys on.
+name: Add-on render determinism
+
+on:
+  pull_request:
+    paths:
+      - "apps/console/lib/addons/**"
+      - "test/e2e/fixtures/addon_catalog.json"
+      - "scripts/addons/**"
+      - ".github/workflows/addon-render-determinism.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "apps/console/lib/addons/**"
+      - "test/e2e/fixtures/addon_catalog.json"
+      - "scripts/addons/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: addon-render-determinism-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  determinism:
+    name: Every add-on renders identically twice
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Render each catalogued add-on twice and diff
+        run: bash scripts/addons/check-render-determinism.sh
