@@ -1,0 +1,45 @@
+# Values an add-on ships that its upstream chart ALSO publishes.
+#
+# One `<addon>.<secret data key>` per line. See scripts/addons/check-published-defaults.sh.
+#
+# THIS LIST IS A RATCHET. The check fails when an entry stops appearing, so a fix cannot land
+# without also shrinking the list — and an entry marked IN FLIGHT below will fail here the moment
+# its PR merges, which is the intended way to be reminded.
+#
+# Two kinds of entry, and the distinction is the whole point of the file:
+
+# ── NOT CREDENTIALS ─────────────────────────────────────────────────────────────────────────────
+# Public by nature. Nothing leaks by matching the chart's default.
+
+harbor.redisURL
+# `redis://addon-harbor-redis:6379/5?idle_timeout_seconds=30` — an in-cluster service address with
+# no credential in it. It matches the chart default because the DNS name is derived from the release
+# name, which is deterministic by design.
+
+kube-prometheus-stack.admin-user
+# `admin`. A username, and the paired password is minted (#2847). Grafana's login being `admin` is
+# not a secret in any deployment anywhere.
+
+# ── REAL CREDENTIALS, FIX IN FLIGHT ─────────────────────────────────────────────────────────────
+# Declared so this check can land and start guarding the other sixteen add-ons rather than waiting.
+# Each fails here as "no longer shipped" when its PR merges — remove the line then.
+
+harbor.HARBOR_ADMIN_PASSWORD          # IN FLIGHT #2848 — `Harbor12345`, goharbor's published default
+harbor.secretKey                      # IN FLIGHT #2848 — `not-a-secure-key`, the data-encryption key
+kube-prometheus-stack.admin-password  # IN FLIGHT #2847 — `prom-operator`, grafana's published default
+
+# ── REAL CREDENTIALS, NOT YET FIXABLE ───────────────────────────────────────────────────────────
+
+harbor.POSTGRESQL_PASSWORD
+harbor.POSTGRES_PASSWORD
+# `changeit`, harbor's INTERNAL database. The chart exposes an `existingSecret` for the EXTERNAL
+# database only; the internal one takes a plain value, so setting it would put the credential into
+# Helm values and therefore into `config_snapshot`, which is Postgres-persisted — the A0.0 leak the
+# W4.5 design exists to prevent. A default password reachable only from inside the namespace is the
+# lesser problem. Fixing it properly needs an upstream chart change. See #2848.
+
+harbor.REGISTRY_CREDENTIAL_PASSWORD
+# `harbor_registry_password`, how harbor's core authenticates to its own registry. Part of #2823's
+# rotation fix rather than #2846's: pinning it requires `registry.credentials.existingSecret`, which
+# also requires minting the bcrypt htpasswd that the registry side reads. Needs the dependency
+# decision in #2823.
