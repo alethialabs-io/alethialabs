@@ -63,13 +63,49 @@ func Day2AccessEnabled() bool {
 // Day2AccessTimeout bounds each access probe — ALETHIA_E2E_DAY2_ACCESS_TIMEOUT when set (a Go
 // duration), else 3m. Each probe returns the moment it succeeds, so the default only costs
 // time on a genuinely inaccessible cluster.
+// day2AccessDefaultTimeout bounds the KUBE probes — reaching the apiserver and asking `can-i`.
+// Those answer in seconds on a healthy cluster and never wait on a load balancer, so 3m is right
+// and is unchanged.
+//
+// The URL probe is a different animal and now has its own ceiling; see day2URLDefaultTimeout. They
+// were one knob, which is why raising the URL wait would have inflated a kube wait that had no
+// reason to grow.
+const day2AccessDefaultTimeout = 3 * time.Minute
+
+// day2URLDefaultTimeout bounds the ArgoCD-URL probe alone.
+//
+// 3m could not cover the aws path BY CONSTRUCTION. The hostname only exists once an ALB is active,
+// so the probe is waiting on ALB provisioning (2-4m on its own) BEFORE external-dns can publish
+// anything, plus its reconcile interval and propagation. The old ceiling expired mid-chain every
+// time, and the `dns-not-resolving` label then asserted that waiting would not help — which is how
+// aws/byo run 32909287152 came to be read as a structural failure it was not.
+//
+// Raising a POLL ceiling is close to free, and it is the argument ArgoAssertTimeout already makes:
+// the probe returns the moment the URL answers, so a larger budget costs time only on a genuinely
+// broken cluster, while a budget smaller than the chain costs a real run its verdict. What it is
+// NOT free of is the ctx — see t2_budget.go, where it is a RESERVED term rather than silent spend
+// against headroom.
+const day2URLDefaultTimeout = 10 * time.Minute
+
+// Day2URLTimeout bounds the ArgoCD-URL probe. It shares ALETHIA_E2E_DAY2_ACCESS_TIMEOUT so an
+// operator debugging by hand still has one knob, and falls back to its own default rather than the
+// kube one.
+func Day2URLTimeout() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("ALETHIA_E2E_DAY2_ACCESS_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return day2URLDefaultTimeout
+}
+
 func Day2AccessTimeout() time.Duration {
 	if v := strings.TrimSpace(os.Getenv("ALETHIA_E2E_DAY2_ACCESS_TIMEOUT")); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {
 			return d
 		}
 	}
-	return 3 * time.Minute
+	return day2AccessDefaultTimeout
 }
 
 // AccessTargets are the day-2 access artifacts a deploy surfaced, derived from its persisted
@@ -300,9 +336,9 @@ func probeReadyNodes(ctx context.Context, kubeconfigPath string) (int, error) {
 //
 // The point is to make one run answer the question two runs were about to be spent on (#2591):
 //
-//	dns-not-resolving   the hostname does not resolve at all. external-dns never wrote the
-//	                    record, or the zone is not the one being queried. NOT a timing problem;
-//	                    waiting longer will not fix it.
+//	dns-not-resolving   the hostname does not resolve. external-dns has not written the record
+//	                    — which is a TIMING state early in the window and a real fault late in
+//	                    it, and the label cannot tell them apart. See below.
 //	connect-refused     it resolves, and nothing is listening. The record points at a load
 //	                    balancer that is not serving yet — this IS a timing problem.
 //	timeout             it resolves and the connection hangs. Typically a security group or an
@@ -310,6 +346,17 @@ func probeReadyNodes(ctx context.Context, kubeconfigPath string) (int, error) {
 //	tls                 the connection is made and the certificate is rejected. The ACM
 //	                    certificate is not attached to the listener, or does not cover the name.
 //	http-<code>         it answered, and the answer was not one evaluateArgoURLStatus accepts.
+//
+// ⚠️ `dns-not-resolving` used to assert "NOT a timing problem; waiting longer will not fix it".
+// That was never established, and it cost a wrong diagnosis: aws/byo run 32909287152 was read as a
+// structural failure on that basis, when the run had a delegated public zone (ACM ISSUED a
+// certificate against it, which requires the validation record to resolve publicly), external-dns
+// deployed, and its IRSA role bound. Every precondition held; the record simply was not there yet
+// at 3m. The serial chain before it can resolve is ALB active (2-4m on its own) -> Ingress gets a
+// hostname -> external-dns reconciles (1m interval) -> Route53 write -> propagation. NXDOMAIN
+// inside that window is the EXPECTED state, and is indistinguishable from a permanent fault by
+// looking at the error alone. A label that decides whether to spend another run must not claim
+// more than it knows.
 //
 // The default is UNCLASSIFIED and carries the error verbatim. A classifier that silently folded
 // an unrecognised failure into the nearest known bucket would be worse than no classifier: the
@@ -322,7 +369,7 @@ func diagnoseArgoURLError(err error) string {
 	switch {
 	case strings.Contains(msg, "no such host"), strings.Contains(msg, "server misbehaving"),
 		strings.Contains(msg, "NXDOMAIN"):
-		return "dns-not-resolving: the hostname does not resolve — external-dns has not written the record (waiting longer will NOT fix this)"
+		return "dns-not-resolving: the hostname does not resolve — external-dns has not written the record yet. This is AMBIGUOUS: it is the expected state while the load balancer is still provisioning (nothing has a hostname for external-dns to publish), and it is also what a genuinely broken zone or domain-filter looks like. Distinguish by whether the probe budget covered the LB's provisioning time"
 	case strings.Contains(msg, "connection refused"):
 		return "connect-refused: the name resolves but nothing is listening — the target is not serving yet (a timing problem)"
 	// BEFORE the certificate arm, deliberately. Go emits exactly "net/http: TLS handshake

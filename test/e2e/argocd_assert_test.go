@@ -863,3 +863,55 @@ func TestArgoReportOmitsResourceLineWhenSynced(t *testing.T) {
 		t.Errorf("a Synced app must not carry an OutOfSync detail line:\n%s", err)
 	}
 }
+
+// TestKubectlTargetIncludesTheGroup — a bare `kubectl get customresourcedefinition/x` is ambiguous
+// once a CRD of the same Kind exists in another group, and the dump would fetch the wrong object or
+// nothing. Varying the GROUP is the axis that matters here.
+func TestKubectlTargetIncludesTheGroup(t *testing.T) {
+	cases := []struct {
+		ref  outOfSyncRef
+		want string
+	}{
+		{outOfSyncRef{Kind: "Secret", Name: "addon-minio"}, "secret/addon-minio"},
+		{outOfSyncRef{Group: "apps", Kind: "StatefulSet", Name: "addon-tempo"}, "statefulset.apps/addon-tempo"},
+		{outOfSyncRef{Group: "batch", Kind: "CronJob", Name: "kyverno-cleanup-admission-reports"}, "cronjob.batch/kyverno-cleanup-admission-reports"},
+		{outOfSyncRef{Group: "apiextensions.k8s.io", Kind: "CustomResourceDefinition", Name: "rollouts.argoproj.io"},
+			"customresourcedefinition.apiextensions.k8s.io/rollouts.argoproj.io"},
+	}
+	for _, tc := range cases {
+		if got := tc.ref.kubectlTarget(); got != tc.want {
+			t.Errorf("kubectlTarget() = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+// TestRefsForLosersTakesOnlyTheLosers — dumping a Synced app's resources would bury the failing
+// ones in noise, and dumping nothing would make the whole diagnostic inert.
+func TestRefsForLosersTakesOnlyTheLosers(t *testing.T) {
+	observed := map[string]argoAppState{
+		"addon-tempo": {Health: "Healthy", Sync: "OutOfSync", OutOfSyncRefs: []outOfSyncRef{
+			{Group: "apps", Kind: "StatefulSet", Name: "addon-tempo", Namespace: "tempo"},
+		}},
+		"addon-keda": {Health: "Healthy", Sync: "Synced"},
+	}
+	refs := refsForLosers(observed, []string{"addon-tempo"})
+	if len(refs) != 1 || refs[0].Name != "addon-tempo" || refs[0].Namespace != "tempo" {
+		t.Fatalf("refsForLosers = %+v, want the one tempo StatefulSet with its namespace", refs)
+	}
+	// A loser with no recorded refs (Missing, never rendered) must not panic or invent one.
+	if got := refsForLosers(observed, []string{"addon-velero"}); len(got) != 0 {
+		t.Errorf("an app absent from the observed map yielded refs: %+v", got)
+	}
+	if got := refsForLosers(observed, nil); len(got) != 0 {
+		t.Errorf("no losers yielded refs: %+v", got)
+	}
+}
+
+// TestDumpOutOfSyncResourcesIsANoOpWithNothingToDump — this runs on an already-failing path, so an
+// empty ref set must cost nothing and add no confusing header. Proven by passing a kubeconfig path
+// that cannot work: if it ever shelled out, this would not return empty.
+func TestDumpOutOfSyncResourcesIsANoOpWithNothingToDump(t *testing.T) {
+	if got := dumpOutOfSyncResources(t.Context(), "/nonexistent/kubeconfig", nil); got != "" {
+		t.Errorf("empty ref set produced output: %q", got)
+	}
+}

@@ -10,9 +10,18 @@ audit trail; git history is the timeline. Parity board:
 
 - **dimension**: `floor` (provision + cluster_ready + ArgoCD converge — and **nothing else**: no
   day-2 soak, no drift check) · `maxconfig` (all 11 kinds) · `addons` (all 18 add-ons Healthy+Synced) ·
-  `byo` (A0.6 bring-your-own **Helm chart** + apps repo — **not** bring-your-own IaC; no customer
-  OpenTofu runs in it) · `day2` (the A0.3 soak: liveness, drift posture, PVC) ·
-  `full` (every dimension in one apply).
+  `gitops` (A0.6: an apps-destination repo + a bring-your-own **Helm chart**, each converging as an
+  ArgoCD Application managing at least one real resource) · `byo-iac` (the seven-job custody chain:
+  a customer **OpenTofu** root module refused when unsafe, applied through the state proxy, drifted,
+  healed, destroyed, state cleared) · `day2` (the A0.3 soak: liveness, drift posture, PVC) ·
+  `full` (every dimension in one apply **except** those declared in `FULL_EXCLUDES`).
+
+  **`gitops` was called `byo`, and the rename is a correction.** The old name, plus a programme
+  column labelled "BYO-IaC", made three cells read as proven customer-OpenTofu while proving A0.6 —
+  the discrepancy this legend and `provisioning-e2e.sh` had both already recorded in prose. `byo`
+  remains an accepted alias and every row filed under it keys onto the `gitops` column unchanged:
+  the rows were true, the label was not, and retracting correct evidence is the worse error.
+  `byo-iac` is the proof the old column claimed; it had never executed in CI.
 
   The list above is not prose: it is `DIMENSIONS` in `scripts/e2e/resolve-dimension.sh`, which also
   owns the env each one switches on (`fidelity_env`) and self-tests the pair. Two things this legend

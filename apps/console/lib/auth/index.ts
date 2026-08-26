@@ -275,8 +275,22 @@ export const auth = betterAuth({
 				after: async (u) => {
 					await upsertProfile(u);
 					// Owner of the personal scope (org_id == user.id) — grant + FGA tuple.
-					await ensureMemberGrant(u.id, u.id, "owner");
+					// Best-effort: this mirrors into OpenFGA, so an unreachable PDP used to
+					// throw straight out of the hook and abort the rest of it — including the
+					// org provisioning below, which is what actually gets the user into the app.
+					await ensureMemberGrant(u.id, u.id, "owner").catch((e) =>
+						console.error("[onboarding] personal-scope grant failed:", e),
+					);
 					// Auto-create a real, named org (slug = username) and make it primary.
+					//
+					// A failure here used to be logged and forgotten, which left a user row with
+					// NO membership and a NULL `onboarding_completed_at`. That pair is not a
+					// cosmetic gap: /dashboard sends such a user to /onboarding and /onboarding
+					// sent them back, so they were signed in and looping forever, never landing in
+					// the app. The loop is now broken on the read side too (both pages), and
+					// /onboarding repairs a missing org in place — but keep this loud, because a
+					// repeated failure here means the PDP or the DB is unhealthy, not that one
+					// signup was unlucky.
 					await provisionPrimaryOrg({
 						id: u.id,
 						email: u.email,

@@ -69,6 +69,10 @@ type argoAppState struct {
 	// divisor) for exactly this class; naming the resource is what tells you whether a third
 	// belongs there.
 	OutOfSyncResources []string
+	// OutOfSyncRefs is the same set, structured, so the live objects can be fetched and dumped.
+	// Naming the RESOURCE (#2738) answered "which object differs" and left "which FIELD differs"
+	// to a guess — and a guessed ignoreDifferences entry can MASK REAL DRIFT rather than no-op.
+	OutOfSyncRefs []outOfSyncRef
 }
 
 // anyProvider is the infraServiceArgoApps inner key meaning "the same Application on
@@ -372,6 +376,7 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	var lastLosers []string
+	var lastRefs []outOfSyncRef
 	for {
 		raw, err := kubectlGetArgoApps(ctx, kubeconfigPath)
 		if err != nil {
@@ -379,20 +384,21 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 			// deadline — unlike ReadAddOnHealth's best-effort Unknown, a persistent failure
 			// here must FAIL, not soften.
 			lastErr = fmt.Errorf("listing ArgoCD Applications failed: %w", err)
-			lastLosers = nil
+			lastLosers, lastRefs = nil, nil
 		} else if observed, perr := parseArgoApps(raw); perr != nil {
 			lastErr = fmt.Errorf("parsing ArgoCD Applications failed: %w", perr)
-			lastLosers = nil
+			lastLosers, lastRefs = nil, nil
 		} else {
 			losers, everr := evaluateArgoApps(observed, expected)
 			if everr == nil {
 				return nil
 			}
 			lastErr, lastLosers = everr, losers
+			lastRefs = refsForLosers(observed, losers)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ArgoCD Applications did not all reach Healthy+Synced within %s:\n%v%s",
-				timeout, lastErr, describeArgoApps(ctx, kubeconfigPath, lastLosers))
+				timeout, lastErr, describeArgoApps(ctx, kubeconfigPath, lastLosers)+dumpOutOfSyncResources(ctx, kubeconfigPath, lastRefs))
 		}
 		select {
 		case <-ctx.Done():
@@ -488,10 +494,11 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 					Message string `json:"message"`
 				} `json:"conditions"`
 				Resources []struct {
-					Group  string `json:"group"`
-					Kind   string `json:"kind"`
-					Name   string `json:"name"`
-					Status string `json:"status"`
+					Group     string `json:"group"`
+					Kind      string `json:"kind"`
+					Name      string `json:"name"`
+					Namespace string `json:"namespace"`
+					Status    string `json:"status"`
 				} `json:"resources"`
 			} `json:"status"`
 		} `json:"items"`
@@ -524,6 +531,9 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 			}
 			seenRes[label] = struct{}{}
 			st.OutOfSyncResources = append(st.OutOfSyncResources, label)
+			st.OutOfSyncRefs = append(st.OutOfSyncRefs, outOfSyncRef{
+				Group: r.Group, Kind: r.Kind, Name: r.Name, Namespace: r.Namespace,
+			})
 		}
 		sort.Strings(st.OutOfSyncResources)
 		out[item.Metadata.Name] = st
@@ -646,6 +656,323 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 			s = s[:maxPerApp] + "…(truncated)"
 		}
 		b.WriteString(s)
+		// `describe application` shows the DESIRED spec and the sync status. It says nothing about
+		// the workload, so a Degraded app — which ArgoCD derives from the underlying Deployment —
+		// reports a verdict with no cause attached. See dumpUnhealthyPods.
+		b.WriteString(dumpUnhealthyPods(ctx, kubeconfigPath, name))
 	}
 	return b.String()
+}
+
+// dumpUnhealthyPods reports the pods behind an Application that are not Running, with their recent
+// events and container logs.
+//
+// WHY. ArgoCD's `Degraded` comes from the workload, and `kubectl describe application` shows only
+// the desired spec and the sync status — no restart count, no container status, no events. gcp
+// `maxconfig` run 32951789725 spent 52 minutes and ~EUR 1.50 to end at
+// `external-dns: health=Degraded sync=Synced`, with the rendered Application visibly CORRECT
+// (`provider: google`, the right workload-identity annotation) and nothing in the dump able to say
+// what the pod was actually doing. A verdict nobody can act on costs the next run too.
+//
+// This is the `Degraded` counterpart to dumpOutOfSyncResources, and the same shape
+// applyStoreAwaitingOperator already uses on its deadline branch — for the same stated reason: a
+// slow install and a crash-looping pod are indistinguishable from the outer error alone.
+//
+// The events are usually the whole answer. `CreateContainerConfigError`, `CrashLoopBackOff` and an
+// image-pull failure all look identical at the Application level and need three different fixes.
+//
+// Best-effort and hard-capped: this runs on an ALREADY-FAILING path and must never be why a run
+// hangs or an error is lost. A pod dump that fails says so — "could not read it" and "nothing was
+// wrong" must not look the same.
+func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
+	const (
+		maxPods     = 3
+		maxLogLines = "40"
+	)
+	// ArgoCD labels every resource it manages with the Application's name. That is how the pods are
+	// found without knowing which namespace the chart chose.
+	selector := "app.kubernetes.io/instance=" + app
+	run := func(timeout time.Duration, args ...string) (string, error) {
+		cctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		full := append([]string{"--kubeconfig", kubeconfigPath}, args...)
+		out, err := exec.CommandContext(cctx, "kubectl", full...).CombinedOutput()
+		return string(out), err
+	}
+
+	// `-o custom-columns` rather than JSON: this is read by a human in a log, and the whole point is
+	// that the restart count and the waiting reason are visible at a glance.
+	out, err := run(30*time.Second, "get", "pods", "-A", "-l", selector, "--no-headers",
+		"-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name,PHASE:.status.phase,"+
+			"READY:.status.containerStatuses[*].ready,RESTARTS:.status.containerStatuses[*].restartCount,"+
+			"REASON:.status.containerStatuses[*].state.waiting.reason")
+	if err != nil {
+		return fmt.Sprintf("\n──── pods for %s: could not list (%v) ────\n", app, err)
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		// A DIFFERENT fact from "they are all fine", and it must read differently: an Application
+		// with no pods at all is Degraded for a reason no pod dump will ever explain.
+		return fmt.Sprintf("\n──── pods for %s: NONE match %s — the workload was never created ────\n", app, selector)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n──── pods for %s (%s) ────\n%s\n", app, selector, strings.Join(lines, "\n"))
+
+	shown := 0
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		ns, pod, phase := fields[0], fields[1], fields[2]
+		// Only the pods that are actually unhappy. A Running pod's logs are not why the Application
+		// is Degraded, and dumping them would bury the one that is.
+		if phase == "Running" && !strings.Contains(line, "false") {
+			continue
+		}
+		if shown >= maxPods {
+			fmt.Fprintf(&b, "… more unhealthy pods not dumped\n")
+			break
+		}
+		shown++
+		if ev, err := run(30*time.Second, "describe", "pod", "-n", ns, pod); err == nil {
+			// Only the Events block: a full describe is mostly the spec, which the Application
+			// already showed.
+			if i := strings.Index(ev, "Events:"); i >= 0 {
+				fmt.Fprintf(&b, "\n  events for %s/%s:\n%s\n", ns, pod, ev[i:])
+			}
+		}
+		if logs, err := run(30*time.Second, "logs", "-n", ns, pod, "--all-containers", "--tail", maxLogLines); err == nil && strings.TrimSpace(logs) != "" {
+			fmt.Fprintf(&b, "\n  last %s log lines for %s/%s:\n%s\n", maxLogLines, ns, pod, logs)
+		}
+	}
+	if shown == 0 {
+		// Every pod is Running and ready, yet ArgoCD calls the Application Degraded. That is a real
+		// and quite different finding — the health is coming from something other than pod
+		// readiness — and saying so is more useful than printing nothing.
+		fmt.Fprintf(&b, "  every pod is Running and ready — the Degraded health is NOT pod readiness\n")
+	}
+	return b.String()
+}
+
+// outOfSyncRef identifies one OutOfSync resource well enough to fetch it from the cluster.
+type outOfSyncRef struct {
+	Group     string
+	Kind      string
+	Name      string
+	Namespace string
+}
+
+// kubectlTarget renders the ref as a `kubectl get` argument. The group is included when present so
+// a CustomResourceDefinition is not confused with some other Kind of the same name.
+func (r outOfSyncRef) kubectlTarget() string {
+	if r.Group == "" {
+		return strings.ToLower(r.Kind) + "/" + r.Name
+	}
+	return strings.ToLower(r.Kind) + "." + r.Group + "/" + r.Name
+}
+
+// dumpOutOfSyncResources fetches each OutOfSync resource and names the FIELDS the chart did not
+// author, by reading server-side-apply FIELD OWNERSHIP rather than dumping the object.
+//
+// WHY OWNERSHIP AND NOT THE OBJECT. The previous version printed the live object, on the reasoning
+// that an API-server-defaulted field would be visible in it. It is — but only to a reader who
+// already knows which field to look for, and the objects are large: hetzner/addons run 32949217522
+// dumped five CustomResourceDefinitions, each truncated at 3000 bytes inside its `spec.versions`
+// openAPIV3Schema, and named no field on any of them. It cost a real run and answered nothing.
+//
+// Every Application here syncs with ServerSideApply=true, and that is what makes ownership readable:
+// the apiserver records, per field, WHICH MANAGER set it. A field ArgoCD applied is owned by the
+// ArgoCD controller. A field ArgoCD did NOT apply — a defaulted value, or one a controller wrote
+// back — is owned by somebody else, and those are exactly the candidates for an ignoreDifferences
+// entry. So the question "which field did the chart not author?" has a direct answer in
+// `.metadata.managedFields`, and it needs only kubectl: no ArgoCD API, no session token, no
+// port-forward, none of which the harness has.
+//
+// It NARROWS the candidates; it does not prove the diff. A field ArgoCD does not own is not
+// automatically the one ArgoCD is complaining about. That is why the output is labelled as
+// candidates, and why an ignore is still a deliberate decision — an ignore guessed onto a kind can
+// hide genuine drift, which is the one thing this class must not do.
+//
+// Best-effort and hard-capped: this runs on an ALREADY-FAILING path, so it must never be the reason
+// a run hangs or an error is lost.
+func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []outOfSyncRef) string {
+	const (
+		maxResources = 8
+		maxPathsPer  = 12
+	)
+	if len(refs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n  fields the chart did NOT author, by server-side-apply ownership")
+	b.WriteString("\n  (candidates for an ignoreDifferences entry — narrowing, not proof):")
+	shown := 0
+	for _, r := range refs {
+		if shown >= maxResources {
+			fmt.Fprintf(&b, "\n    … %d more not shown", len(refs)-shown)
+			break
+		}
+		shown++
+		args := []string{"--kubeconfig", kubeconfigPath, "get", r.kubectlTarget(), "-o", "json"}
+		if r.Namespace != "" {
+			args = append(args, "-n", r.Namespace)
+		}
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		out, err := exec.CommandContext(cctx, "kubectl", args...).Output()
+		cancel()
+		if err != nil {
+			// Naming the failure matters as much as the dump: "could not read it" and "it had
+			// nothing interesting" must not look the same.
+			fmt.Fprintf(&b, "\n    - %s: could not fetch (%v)", r.kubectlTarget(), err)
+			continue
+		}
+		byManager, perr := foreignFieldOwners(out)
+		if perr != nil {
+			fmt.Fprintf(&b, "\n    - %s: could not read managedFields (%v)", r.kubectlTarget(), perr)
+			continue
+		}
+		if len(byManager) == 0 {
+			// A DIFFERENT fact from "we could not tell", and it must read differently: every field
+			// on this object belongs to ArgoCD, so an apiserver default is not the explanation here
+			// and the cause is elsewhere.
+			fmt.Fprintf(&b, "\n    - %s: every field is ArgoCD-owned — no foreign default to blame", r.kubectlTarget())
+			continue
+		}
+		fmt.Fprintf(&b, "\n    - %s:", r.kubectlTarget())
+		for _, m := range sortedManagers(byManager) {
+			paths := byManager[m]
+			sort.Strings(paths)
+			if len(paths) > maxPathsPer {
+				paths = append(paths[:maxPathsPer:maxPathsPer], fmt.Sprintf("…%d more", len(byManager[m])-maxPathsPer))
+			}
+			fmt.Fprintf(&b, "\n        owned by %q: %s", m, strings.Join(paths, ", "))
+		}
+	}
+	return b.String()
+}
+
+// argoFieldManagers are the manager names ArgoCD applies under. A field owned by one of these was
+// authored by the chart, so it is NOT a candidate.
+//
+// Matched as a SUBSTRING, deliberately: ArgoCD's manager name has varied across versions
+// (`argocd-controller`, `argocd-application-controller`, and a `argocd-controller-ssa` variant on
+// the server-side-apply path), and this runs on a failing path where a missed match would print a
+// misleading candidate rather than fail loudly.
+var argoFieldManagers = []string{"argocd"}
+
+// foreignFieldOwners returns manager → the field paths that manager owns, for every manager that is
+// NOT ArgoCD. Paths are rendered dotted, from the apiserver's `f:`-prefixed fieldsV1 tree.
+func foreignFieldOwners(objJSON []byte) (map[string][]string, error) {
+	var obj struct {
+		Metadata struct {
+			ManagedFields []struct {
+				Manager  string          `json:"manager"`
+				FieldsV1 json.RawMessage `json:"fieldsV1"`
+			} `json:"managedFields"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(objJSON, &obj); err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, mf := range obj.Metadata.ManagedFields {
+		if isArgoManager(mf.Manager) {
+			continue
+		}
+		var tree map[string]json.RawMessage
+		if err := json.Unmarshal(mf.FieldsV1, &tree); err != nil {
+			continue
+		}
+		paths := flattenFieldsV1(tree, "")
+		if len(paths) > 0 {
+			out[mf.Manager] = append(out[mf.Manager], paths...)
+		}
+	}
+	return out, nil
+}
+
+// isArgoManager reports whether a field manager is ArgoCD's.
+func isArgoManager(name string) bool {
+	lower := strings.ToLower(name)
+	for _, m := range argoFieldManagers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// flattenFieldsV1 turns the apiserver's fieldsV1 tree into dotted paths.
+//
+// The encoding: a key is `f:<field>` for a field, `k:{...}` / `i:<n>` / `v:<x>` for a list entry,
+// and the bare `.` marks "this node itself is owned". Leaf `.` keys are dropped rather than rendered
+// as a trailing dot, because `.spec.replicas.` is not a path anyone can act on.
+func flattenFieldsV1(tree map[string]json.RawMessage, prefix string) []string {
+	var paths []string
+	for key, raw := range tree {
+		// `.` means the node at `prefix` is itself owned; it adds no new path.
+		if key == "." {
+			continue
+		}
+		var seg string
+		switch {
+		case strings.HasPrefix(key, "f:"):
+			seg = prefix + "." + strings.TrimPrefix(key, "f:")
+		default:
+			// A list-entry selector (k:/i:/v:). Keep it verbatim inside brackets: which ELEMENT
+			// differs is often the whole answer on a containers[] or versions[] list.
+			seg = prefix + "[" + key + "]"
+		}
+		var child map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &child); err != nil || len(child) == 0 {
+			paths = append(paths, seg)
+			continue
+		}
+		sub := flattenFieldsV1(child, seg)
+		if len(sub) == 0 {
+			paths = append(paths, seg)
+			continue
+		}
+		paths = append(paths, sub...)
+	}
+	return paths
+}
+
+// sortedManagers returns the manager names in order, so the dump is stable run to run — an unstable
+// dump makes two runs look different when nothing changed.
+func sortedManagers(m map[string][]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// refsForLosers collects the OutOfSync resource refs belonging to the failing Applications, so the
+// dump covers exactly the losers and not the whole cluster.
+//
+// DEDUPLICATED, and it matters more than it looks. Cluster-scoped objects — a CustomResourceDefinition
+// most of all — can be reported OutOfSync under MORE THAN ONE Application, and the dump is capped at
+// maxResources. hetzner/addons run 32949217522 had exactly 8 losers against a cap of 8, five of them
+// argo-rollouts CRDs: a single duplicate would have pushed a genuine object behind
+// "… 1 more not shown" and cost that run an answer, which is the same way the previous dump failed.
+//
+// Order is preserved (first occurrence wins) so the output still follows the loser order a reader
+// sees above it, rather than an arbitrary map order.
+func refsForLosers(observed map[string]argoAppState, losers []string) []outOfSyncRef {
+	var refs []outOfSyncRef
+	seen := map[outOfSyncRef]bool{}
+	for _, name := range losers {
+		for _, r := range observed[name].OutOfSyncRefs {
+			if seen[r] {
+				continue
+			}
+			seen[r] = true
+			refs = append(refs, r)
+		}
+	}
+	return refs
 }

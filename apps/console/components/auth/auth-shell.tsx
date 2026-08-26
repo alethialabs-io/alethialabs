@@ -12,7 +12,8 @@
 import type React from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { AlethiaLockup } from "@repo/brand/lockup";
+import { Chrome } from "@repo/brand/site-chrome";
 import { LEGAL_ENTITY } from "@repo/legal/entity";
 import { PrivacySettingsButton } from "@repo/privacy/privacy-settings-button";
 import { Button } from "@repo/ui/button";
@@ -66,6 +67,13 @@ export function AuthShell({
   const status = statusUrl();
   return (
     <div className="relative flex min-h-screen flex-col overflow-hidden bg-background">
+      {/* The same page chrome the marketing site wears — the hairline viewport frame,
+          the two vertical rails and the grain. It is what makes a page read as an
+          instrument plate rather than a document, and the front door had been the one
+          surface without it: arriving at /login from the marketing site changed
+          products mid-flow. All three layers are fixed, aria-hidden and
+          pointer-events:none, so nothing here is in the tab order or the a11y tree. */}
+      <Chrome />
       <div className="ah-grid-bg" aria-hidden="true" />
 
       {/* top bar */}
@@ -75,7 +83,7 @@ export function AuthShell({
           aria-label="Alethia Labs — home"
           className="vx-clamp vx-clamp--tight inline-flex items-center transition-opacity hover:opacity-80"
         >
-          <AlethiaLogo withText className="h-6 w-auto text-text-primary" />
+          <AlethiaLockup size={24} className="text-text-primary" />
         </Link>
 
         {switchPrompt && switchHref && switchLabel ? (
@@ -148,9 +156,27 @@ export function AuthShell({
 /**
  * The card surface that wraps a single auth/onboarding step.
  *
- * Was `rounded-xl` over a heavy `--shadow-lg`, which is a different surface from
- * every card on the rest of the site: elevation there reads from a hairline border,
- * not from drop-shadow. Squared and quiet now, and it keeps the entrance animation.
+ * There is no card any more — no border, no fill, no shadow. An outlined box parked
+ * in the middle of an empty viewport is the one shape this design system does not
+ * make anywhere else, and it read as a template rather than as Alethia.
+ *
+ * What holds the content instead is the clamp: the `[ · ]` mark promoted to a UI
+ * device, four hairline corner marks drawn from a single masked border
+ * (`.vx-clamp`, packages/brand/src/tokens.css). It is normally a hover state; the
+ * `--held` modifier pins it, which is exactly "this is the subject" — the right thing
+ * to say about the only object on the page.
+ *
+ * `--card` is the one modifier. The device is tuned for controls, where a 7px arm is
+ * proportionate; across ~400px of card the same arm reads as a scuff rather than a
+ * bracket. Only the arm LENGTH grows — `--cl-gap` stays at its default, so the marks sit
+ * exactly as close to the content as they do on every button. It has to be a modifier
+ * in tokens.css and not a `[--cl-len:20px]` utility here: Tailwind puts that in
+ * `@layer utilities`, `.vx-clamp` is unlayered, and unlayered always wins — so the
+ * utility applied and computed to 7px anyway.
+ *
+ * Note the marks are drawn OUTSIDE the box, so nothing between here and `<main>` may
+ * clip: no `overflow-hidden` on an ancestor, and the shell's centring wrapper leaves
+ * `px-6` of room for them.
  */
 export function AuthCard({
   className,
@@ -162,7 +188,7 @@ export function AuthCard({
   return (
     <div
       className={cn(
-        "auth-pane-in rounded-lg border border-border bg-surface px-9 pb-8 pt-9 shadow-sm",
+        "auth-pane-in vx-clamp vx-clamp--held vx-clamp--card px-9 pb-8 pt-9",
         className,
       )}
     >

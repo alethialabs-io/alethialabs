@@ -5,7 +5,7 @@
 import { ChevronLeft, LayoutGrid, Minimize2, PanelLeft } from "lucide-react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { AlethiaMark } from "@repo/brand/lockup";
 import { ArtifactPanel } from "@/components/agent/artifact-panel";
 import { WidgetGrid } from "@/components/agent/widgets/widget-grid";
 import { ThreadRail } from "@/components/agent/thread-rail";
@@ -139,7 +139,7 @@ export function ElenchModal({
 				{showSidebar && (
 					<div className="hidden w-[284px] flex-none flex-col border-r border-border bg-card lg:flex">
 						<div className="flex items-center gap-2 px-3.5 py-3">
-							<AlethiaLogo className="h-6 w-auto flex-none text-foreground" />
+							<AlethiaMark className="h-6 w-auto flex-none text-foreground" />
 							<span className="min-w-0 flex-1 truncate text-sm font-semibold">
 								Elench
 							</span>

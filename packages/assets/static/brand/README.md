@@ -12,7 +12,7 @@ third-party trademark permission.
 |---|---|---|---|---|
 | **Mark** (icon only) | `alethia-mark.svg` | `alethia-mark-black.svg`, `-black-pure.svg` | `alethia-mark-white.svg`, `-white-pure.svg` | `0 0 32 32` |
 | **Wordmark** (icon + Alethia) | `alethia-wordmark.svg` | `alethia-wordmark-black*.svg` | `alethia-wordmark-white*.svg` | `0 0 112 32` |
-| **Lockup** (icon + Alethia + LABS) | `alethia-lockup.svg` | `alethia-lockup-black*.svg` | `alethia-lockup-white*.svg` | `0 0 150 32` |
+| **Lockup** (icon + Alethia + LABS) | `alethia-lockup.svg` | `alethia-lockup-black*.svg` | `alethia-lockup-white*.svg` | `0 0 188 32` |
 | **App icon** (dark rounded square) | `alethia-app-icon.svg` | — | — | `0 0 512 512` |
 
 - The unsuffixed file uses `currentColor` — ideal for embedding in code/CSS where the logo should
@@ -50,6 +50,6 @@ or third‑party use where the fonts aren't guaranteed, **outline the text** fir
 - Don't stretch, rotate, or change the proportions or the wordmark↔LABS spacing.
 - Don't place the mark on a busy/low‑contrast background.
 
-> The in‑app logo is the `<AlethiaLogo>` React component
-> (`apps/console/components/alethia-logo.tsx`), which renders the same geometry in `currentColor`.
+> The in‑app logo is the `<AlethiaLockup>` / `<AlethiaMark>` React component pair
+> (`packages/brand/src/lockup.tsx`), which renders the same geometry in `currentColor`.
 > These static files mirror it for use outside the app.

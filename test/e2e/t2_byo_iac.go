@@ -538,3 +538,18 @@ func writeByoIacSummary(path string, s ByoIacSummary) error {
 	}
 	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
+
+// githubContentsURL renders the contents-API URL for one path at one commit, or reports that the
+// repo is not on github.com. Only https://github.com/<owner>/<repo>(.git) is recognised; anything
+// else returns false rather than guessing an API shape that would 404 for the wrong reason.
+func githubContentsURL(repo, sha, path string) (string, bool) {
+	const prefix = "https://github.com/"
+	if !strings.HasPrefix(repo, prefix) {
+		return "", false
+	}
+	slug := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(repo, prefix), "/"), ".git")
+	if strings.Count(slug, "/") != 1 || slug == "" {
+		return "", false
+	}
+	return fmt.Sprintf("https://api.github.com/repos/%s/contents/%s?ref=%s", slug, strings.Trim(path, "/"), sha), true
+}

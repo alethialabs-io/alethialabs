@@ -8,7 +8,7 @@ import { ContactSection } from "@/components/contact/contact-page";
 export const metadata: Metadata = {
 	title: "Set up your Enterprise trial · Alethia",
 	description:
-		"Start an Alethia Enterprise trial — SSO/SAML + SCIM, custom roles and granular IAM, exportable audit, and a self-managed option you can run inside your own perimeter.",
+		"Start an Alethia Enterprise trial — SSO over OIDC or SAML, custom roles and granular IAM, exportable audit, and a self-managed option you can run inside your own perimeter.",
 };
 
 /** Public "Enterprise trial" page. Shares the landing Header/Footer chrome. */
@@ -25,8 +25,8 @@ export default async function ContactEnterprisePage() {
 						points: [
 							[
 								"key",
-								"SSO / SAML + SCIM",
-								"Wire your identity provider over OIDC or SAML; SCIM keeps membership in sync automatically.",
+								"SSO / SAML",
+								"Wire your identity provider over OIDC or SAML. Members are provisioned just-in-time on first sign-in; SCIM is not built yet.",
 							],
 							[
 								"sliders",
@@ -41,7 +41,7 @@ export default async function ContactEnterprisePage() {
 							[
 								"building",
 								"Self-managed option",
-								"Run the whole control plane inside your perimeter — single-tenant or air-gapped.",
+								"Run the whole control plane inside your perimeter, single-tenant. Runners can sit on-premises or air-gapped.",
 							],
 						],
 						foot: "We'll help you stand it up and onboard your team.",

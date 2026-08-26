@@ -10,11 +10,11 @@ import { Menu } from "lucide-react";
 import { Button } from "@repo/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@repo/ui/sheet";
 import { ProviderIcon } from "@repo/ui/provider-icon";
+import { AlethiaLockup } from "../lockup";
 import {
   disp,
   Icon,
   type IconKey,
-  Lockup,
   mono,
   Wrap,
 } from "./primitives";
@@ -363,6 +363,14 @@ export function Header({
         position: "sticky",
         top: 0,
         zIndex: 50,
+        // The fixed `.vx-frame` (z-60) paints over this header (z-50), so the
+        // visible band starts at `--frame-inset`, not at 0. Without this the 62px
+        // row centres at y=31 — 20.5px above the frame line, 31.5px below the
+        // bottom rule — and the nav reads as sitting too high. Padding rather
+        // than `top: 10px`: the background and backdrop-filter must still cover
+        // the whole band, and scrolled page content must never show through the
+        // strip outside the frame.
+        paddingTop: "calc(var(--frame-inset) + 1px)",
         borderBottom: "1px solid var(--border)",
         background: "color-mix(in oklch, var(--background) 80%, transparent)",
         backdropFilter: "blur(10px)",
@@ -378,7 +386,7 @@ export function Header({
         }}
       >
         <Link href={homeHref} style={{ textDecoration: "none" }}>
-          <Lockup size={23} />
+          <AlethiaLockup size={24} />
         </Link>
 
         <nav
@@ -487,7 +495,7 @@ export function Header({
           <Sheet open={mobile} onOpenChange={setMobile}>
             <SheetTrigger
               render={
-                <Button variant="ghost" size="icon-sm" className="md:hidden">
+                <Button variant="ghost" size="icon-sm" className="hidden max-[900px]:inline-flex">
                   <Menu className="h-4 w-4" />
                 </Button>
               }

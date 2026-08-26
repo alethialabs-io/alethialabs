@@ -287,19 +287,54 @@ if [ -z "$target" ]; then
 fi
 
 if [ -n "$target" ]; then
-	tgd="$(git -C "$target" rev-parse --git-dir 2>/dev/null || true)"
-	tgcd="$(git -C "$target" rev-parse --git-common-dir 2>/dev/null || true)"
+	# --path-format=absolute IS LOAD-BEARING, and its absence was a live bypass.
+	#
+	# Run from a repo SUBDIRECTORY, git reports `--git-dir` as an ABSOLUTE path and
+	# `--git-common-dir` as a RELATIVE one:
+	#
+	#     git -C <main>/sub rev-parse --git-dir          → /abs/path/main/.git
+	#     git -C <main>/sub rev-parse --git-common-dir    → ../.git
+	#
+	# Those differ as STRINGS, so the "linked worktree" test below fired and ALLOWED the write.
+	# `git -C app/apps/console <verb>` therefore wrote straight into the shared main checkout, past
+	# the one rule this hook exists to enforce. Absolute form makes both sides the same path, so the
+	# subdirectory correctly reads as the main checkout while a real linked worktree still differs
+	# (its git-dir is .git/worktrees/<name>). Verified in all three positions.
+	tgd="$(git -C "$target" rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+	tgcd="$(git -C "$target" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 	# Linked worktree ⇔ git-dir != git-common-dir. Confirmed by git → allow. (R-LEASE above has
 	# already established the worktree isn't someone else's.)
 	if [ -n "$tgd" ] && [ "$tgd" != "$tgcd" ]; then
+		exit 0
+	fi
+	# A DIFFERENT REPOSITORY ENTIRELY — its own .git, its own remote, its own default branch.
+	#
+	# This rule is "don't commit into the shared MAIN CHECKOUT". A sibling repo is neither the main
+	# checkout nor a linked worktree, so it used to read as "unresolved" and got refused: the
+	# fail-closed default catching something the rule was never about.
+	#
+	# That is not hypothetical. The e2e fixtures live in THREE separate repositories —
+	# enterprise-demo (the BYO-IaC modules), alethia-e2e-apps (the A0.6 apps repo) and
+	# alethia-e2e-chart (the BYO Helm chart) — and all three are inputs to proof cells in
+	# PROGRAMME.md. Working on them is ordinary programme work. On 2026-08-26 committing fixtures
+	# into enterprise-demo was blocked here with a message naming a checkout the command never
+	# touched, and the commit had to be built through the GitHub API instead (#2795).
+	#
+	# Compared by TOPLEVEL, not by path prefix: a subdirectory of the main checkout resolves to the
+	# main checkout's toplevel and stays blocked, which is the case a prefix test would get wrong.
+	# An unresolvable path yields an empty toplevel and falls through to the block, so the
+	# fail-closed direction is preserved.
+	tgtop="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null || true)"
+	maintop="$(git -C "${CLAUDE_PROJECT_DIR:-$PWD}" rev-parse --show-toplevel 2>/dev/null || true)"
+	if [ -n "$tgtop" ] && [ -n "$maintop" ] && [ "$tgtop" != "$maintop" ]; then
 		exit 0
 	fi
 fi
 
 # --- Fall-through: no confirmed worktree ⇒ the original main-checkout guard, unchanged -------------
 dir="${CLAUDE_PROJECT_DIR:-$PWD}"
-gd="$(git -C "$dir" rev-parse --git-dir 2>/dev/null || echo _gd)"
-gcd="$(git -C "$dir" rev-parse --git-common-dir 2>/dev/null || echo _gcd)"
+gd="$(git -C "$dir" rev-parse --path-format=absolute --git-dir 2>/dev/null || echo _gd)"
+gcd="$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || echo _gcd)"
 
 # Main checkout ⇔ git-dir == git-common-dir. Linked worktrees differ, so they pass.
 if [ "$gd" = "$gcd" ]; then

@@ -62,6 +62,13 @@ const (
 	t2KeylessPostDwell   = 20 * time.Minute
 	t2RegistryPollBudget = 25 * time.Minute
 	t2SoakHeadroom       = 15 * time.Minute // drift wait (10m) + PVC bind (5m)
+
+	// The day-2 access layer had NO ladder term at all, so its probes spent against `headroom`
+	// unnoticed. At the old flat 3m that was survivable by luck; with a URL ceiling sized for an
+	// ALB it would not be. Same defect as #2729's teardown window — a real, bounded wait the ladder
+	// does not reserve for — fixed the same way rather than by keeping the ceiling too small to
+	// notice. The two probes are reserved SEPARATELY because only one of them waits on a load
+	// balancer, and only one of them runs on every dimension.
 )
 
 // T2BudgetTerm is one enabled scenario's contribution, kept named so a failure can say which
@@ -120,6 +127,18 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 	if soakOn {
 		add("soak", soakDur+t2SoakHeadroom)
 	}
+	if Day2AccessEnabled() {
+		add("day2-access", Day2AccessTimeout())
+		// The URL probe reservation MIRRORS ITS EMITTER rather than assuming the probe always runs.
+		// A managed ArgoCD URL needs an ingress with a certificate, and the workflow sets
+		// ALETHIA_E2E_ACM_CERT only when MAX_CONFIG is off (#2630) — so on a `full` bar there is no
+		// URL, HasArgoURL is false, and the probe is skipped entirely. Reserving for it anyway would
+		// inflate the heaviest bar's ctx by ten minutes it cannot spend, and that inflation lands on
+		// the one dimension whose ladder is already closest to the cap.
+		if acmCertEnabled() && !MaxConfigEnabled() {
+			add("day2-url", Day2URLTimeout())
+		}
+	}
 	if secretsXacctEnabled() {
 		add("secrets-xacct", t2XacctPollBudget)
 	}
@@ -167,6 +186,7 @@ func ceilMinutes(d time.Duration) time.Duration {
 func T2BudgetScenarioEnv() []string {
 	vars := []string{
 		"ALETHIA_E2E_SOAK",
+		"ALETHIA_E2E_DAY2_ACCESS",
 		envSecretsXacct,
 		envKeylessDB,
 		envXacctRegistry,

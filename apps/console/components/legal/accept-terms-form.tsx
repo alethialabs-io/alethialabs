@@ -90,7 +90,7 @@ export function AcceptTermsForm({
 	return (
 		<form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-6">
 			<div className="flex flex-col gap-2">
-				<h1 className="text-xl font-medium">
+				<h1 className="font-grotesk text-display-sm font-semibold leading-[1.05] tracking-display text-text-primary">
 					{documents.length > 1 ? "Updated agreements" : "Our Terms have changed"}
 				</h1>
 				<p className="text-sm text-text-tertiary">

@@ -6,7 +6,7 @@
 // [·] brand mark, uniform icon-buttons (label on hover), and a user avatar that opens the account
 // settings modal. Persists across every project view; the full sidebar returns on org routes.
 
-import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { AlethiaMark } from "@repo/brand/lockup";
 import { PanelLeftOpen } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -143,7 +143,7 @@ export function SidebarRail({
             aria-label="Home"
             className="flex h-9 w-9 items-center justify-center rounded-md hover:bg-muted/60"
           >
-            <AlethiaLogo className="h-6 w-6" />
+            <AlethiaMark className="h-6 w-6" />
           </Link>
         </div>
 

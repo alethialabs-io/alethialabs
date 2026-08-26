@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { AlethiaLogo } from "@repo/brand/alethia-logo";
+import { AlethiaLockup, AlethiaMark } from "@repo/brand/lockup";
 import { SiteShell } from "@repo/brand/site-shell";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
@@ -86,7 +86,7 @@ export default async function BrandPage() {
 									backgroundSize: "32px 32px",
 								}}
 							/>
-							<AlethiaLogo
+							<AlethiaMark
 								className="relative size-48 text-foreground"
 								aria-label="Alethia bracketed point mark"
 							/>
@@ -116,19 +116,22 @@ export default async function BrandPage() {
 				<BrandSection eyebrow="02 · Lockups" title="Company, product, and app.">
 					<div className="grid gap-4 md:grid-cols-2">
 						<LogoField label="Company lockup · dark field" dark>
-							<AlethiaLogo withText className="h-12 w-auto text-white" />
+							<AlethiaLockup size={38} className="text-white" />
 						</LogoField>
 						<LogoField label="Company lockup · light field">
-							<AlethiaLogo withText className="h-12 w-auto text-black" />
+							<AlethiaLockup size={38} className="text-black" />
+						</LogoField>
+						<LogoField label="Platform lockup · dark field" dark>
+							<AlethiaLockup tag="platform" size={30} className="text-white" />
 						</LogoField>
 						<LogoField label="Product mark · clear space" dark>
 							<div className="border border-dashed border-white/25 p-8">
-								<AlethiaLogo className="size-20 text-white" />
+								<AlethiaMark className="size-20 text-white" />
 							</div>
 						</LogoField>
 						<LogoField label="App icon · dark-only tile">
 							<div className="grid size-32 place-items-center rounded-[28px] bg-[var(--gray-1000)]">
-								<AlethiaLogo className="size-20 text-[var(--gray-0)]" />
+								<AlethiaMark className="size-20 text-[var(--gray-0)]" />
 							</div>
 						</LogoField>
 					</div>
@@ -229,7 +232,7 @@ export default async function BrandPage() {
 				<BrandSection eyebrow="06 · Voice" title="Quiet. Exact. Verifiable.">
 					<div className="grid gap-4 md:grid-cols-2">
 						<VoiceCard title="Write this">
-							“Deploy from the terminal. Zero credentials stored.”
+							“Deploy from the terminal. Every apply leaves a receipt.”
 						</VoiceCard>
 						<VoiceCard title="Avoid this" muted>
 							“Supercharge your cloud journey with magical automation!”
