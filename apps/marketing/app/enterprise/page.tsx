@@ -3,7 +3,7 @@
 
 import type { Metadata } from "next";
 import { SiteShell } from "@repo/brand/site-shell";
-import { Reveal } from "@/components/landing/home/reveal";
+import { Reveal } from "@/components/landing/reveal";
 import { EnterpriseSections } from "@/components/landing/enterprise/page-sections";
 
 export const metadata: Metadata = {
