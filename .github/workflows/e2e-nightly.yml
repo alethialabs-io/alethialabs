@@ -1313,6 +1313,26 @@ jobs:
           ALETHIA_E2E_ACM_CERT_ZONE_NAME: ${{ vars.E2E_ACM_CERT_ZONE_NAME }}
           ALETHIA_E2E_ACM_CERT_TIMEOUT: ${{ vars.E2E_ACM_CERT_TIMEOUT }}
           ALETHIA_E2E_ACM_CERT_SUMMARY: ${{ runner.temp }}/acm-cert-summary.json
+          # ── Convergence budgets, so a "too slow" can be told apart from a "never". ──
+          #
+          #    These knobs already existed in the harness and were reachable ONLY from a laptop,
+          #    which made two open questions unanswerable from CI at any price:
+          #
+          #      * #2717 class (b) — falco/loki/vault sit `Progressing` at the end of the add-on
+          #        budget. Raising ALETHIA_E2E_ARGO_TIMEOUT for one run is what distinguishes "the
+          #        budget is short" from "this will never converge", and the second is a ceiling.
+          #      * #2591 — the day-2 ArgoCD-URL probe failed on the first run that ever had a URL.
+          #        Its 3m default was chosen when the probe could not run on ANY cloud, so it was
+          #        never sized against a real ALB plus external-dns plus Route53 propagation. The
+          #        cheap discriminator is one run at 10m; without this line there was no way to ask.
+          #
+          #    Unset resolves to "" and every reader falls back to its own default, so adding these
+          #    changes no behaviour until a variable is deliberately set — and the variable is the
+          #    audit trail for why a run had a non-standard budget.
+          ALETHIA_E2E_ARGO_TIMEOUT: ${{ vars.E2E_ARGO_TIMEOUT }}
+          ALETHIA_E2E_DAY2_ACCESS_TIMEOUT: ${{ vars.E2E_DAY2_ACCESS_TIMEOUT }}
+          ALETHIA_E2E_DAY2_OFFER_TIMEOUT: ${{ vars.E2E_DAY2_OFFER_TIMEOUT }}
+          ALETHIA_E2E_KEYLESS_DB_DWELL: ${{ vars.E2E_KEYLESS_DB_DWELL }}
           # ── The max-config DNS zone suffix, global and per-cloud. ──
           #
           #    Hetzner DNS REFUSES a `.io` zone outright — its API answers `unsupported tld

@@ -1,0 +1,44 @@
+# ALETHIA_E2E_* knobs the harness READS that the nightly workflow deliberately does NOT set.
+#
+# One name per line, each with the reason it is local-only. See scripts/check-e2e-knob-reach.mjs.
+#
+# WHY THIS FILE EXISTS. A knob the harness reads but no workflow can set is a scenario that cannot
+# be run at any price, and it fails SILENTLY: the code is there, the tests pass, the flag is
+# documented, and the run just quietly takes the default forever. #2775 found one that way
+# (`ALETHIA_E2E_BYO_IAC` was a step-level `env:` key no dimension could set, so the whole BYO-IaC
+# custody chain had never executed). #2591 and #2717 then each asked for a run that a timeout knob
+# would have made possible, and neither could be dispatched.
+#
+# RATCHETED IN BOTH DIRECTIONS. The check fails if
+#   * the harness reads a knob that is neither wired nor listed here (a new unreachable scenario), OR
+#   * a listed knob IS now wired (it became reachable — remove it, so the list only shrinks), OR
+#   * a listed knob is no longer read by the harness at all (it is gone — remove the stale line), OR
+#   * the harness scan finds no knobs (the extractor stopped matching, so nothing was checked).
+#
+# That last one is the point. A sweep whose "found nothing" branch is indistinguishable from its
+# "nothing is wrong" branch is the defect this repo keeps paying for.
+
+# ── LOCAL-ONLY BY DESIGN: these drive a laptop run of T1, which CI does not do. ──
+ALETHIA_E2E_T1_REQUIRE
+ALETHIA_E2E_T1_RUNNER_LOG
+ALETHIA_E2E_T1_WAIT
+ALETHIA_E2E_T2_WAIT
+
+# ── MUST NOT BE CI-SETTABLE. ──
+ALETHIA_E2E_T2_TEARDOWN
+# Disables teardown. A variable that leaks a real cloud cluster for every subsequent run is not a
+# knob CI should own — the guaranteed scope-locked sweep is the whole reason a failed run does not
+# bill. Local only, deliberately.
+
+# ── FIDELITY / ENFORCEMENT SWITCHES, exported by the resolver rather than set as `env:`. ──
+ALETHIA_E2E_A05_ENFORCE
+ALETHIA_E2E_A05_REAL_SNAPSHOT
+ALETHIA_E2E_B6_REQUIRE
+# These are turned on by scripts/e2e/resolve-dimension.sh writing $GITHUB_ENV, not by a YAML `env:`
+# key, so they ARE reachable from CI — just not by the mechanism this check scans for. Listed rather
+# than wired a second way: two sources for one switch is how they come to disagree.
+
+# ── CLOUD-SHAPE OVERRIDES already carried by the `region` dispatch input. ──
+ALETHIA_E2E_HCLOUD_REGION
+# The workflow's `region` input already reaches hetzner; a second name for the same thing would let
+# a dispatch set one and the harness read the other.
