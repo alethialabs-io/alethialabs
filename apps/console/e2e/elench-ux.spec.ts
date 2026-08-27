@@ -47,9 +47,14 @@ async function seedTaggableResources(page: Page, count: number): Promise<void> {
 	const orgId = await orgIdBySlug(slug);
 	if (!orgId) throw new Error(`no organization row for slug ${slug}`);
 
-	const rows = await db()<{ userId: string }[]>`
-		select "userId" from member where "organizationId" = ${orgId} limit 1`;
-	const userId = rows[0]?.userId;
+	// snake_case, NOT the camelCase the Drizzle schema object shows: `member` is generated with
+	// `casing: "snake_case"` (0000_baseline.sql:523 — "organization_id", "user_id"). The sibling
+	// helper pendingInvitationId() quotes "organizationId" because Better Auth's `invitation`
+	// table really is camelCase; the two do not share a convention, so neither can be inferred
+	// from the other.
+	const rows = await db()<{ user_id: string }[]>`
+		select user_id from member where organization_id = ${orgId} limit 1`;
+	const userId = rows[0]?.user_id;
 	if (!userId) throw new Error(`organization ${slug} has no member to own seeded projects`);
 
 	for (let i = 0; i < count; i++) {
