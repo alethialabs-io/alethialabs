@@ -6,6 +6,11 @@ import { eq, inArray } from "drizzle-orm";
 import { currentActor } from "@/lib/authz/guard";
 import { getServiceDb } from "@/lib/db";
 import { team, teamMember, user } from "@/lib/db/schema";
+import {
+	queryTeamsPage,
+	type TeamsPage,
+	type TeamsQuery,
+} from "@/lib/queries/teams";
 
 /** A team member, light — for the avatar stack on the Teams cards. */
 export interface TeamMemberLite {
@@ -65,4 +70,22 @@ export async function getTeams(): Promise<TeamRow[]> {
 		const members = byTeam.get(t.id) ?? [];
 		return { id: t.id, name: t.name, memberCount: members.length, members };
 	});
+}
+
+/**
+ * The Teams PAGE read (#2899): rows filtered SERVER-SIDE in SQL for `query`, plus size-facet
+ * counts over the org's UNFILTERED teams — the console filter standard's step 5 + 6
+ * (lib/query/README.md). Key it with `qk.teams(org, q)`.
+ *
+ * The unfiltered `getTeams()` above stays as it is: it is the shared universe read (the
+ * manage-team dialog, the grant builder) and its `qk.teams(org)` cache. This mirrors
+ * `getJobs()` / `getJobsPage()` — a page's parameterized read is a sibling, not a
+ * replacement.
+ *
+ * Authorization is IDENTICAL to `getTeams()`: `currentActor()` resolves the caller's active
+ * tenancy, and every SQL predicate is scoped to `actor.orgId` (never a client-supplied org).
+ */
+export async function getTeamsPage(query: TeamsQuery = {}): Promise<TeamsPage> {
+	const actor = await currentActor();
+	return queryTeamsPage(actor.orgId, query);
 }

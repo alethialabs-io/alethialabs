@@ -40,6 +40,20 @@ import {
 	type AlertSeverity,
 	provisionJobType,
 } from "@/lib/db/schema/enums";
+import {
+	type AlertChannelsPage,
+	type AlertChannelsQuery,
+	type AlertDeliveriesPage,
+	type AlertDeliveriesQuery,
+	type AlertPoliciesPage,
+	type AlertPoliciesQuery,
+	queryAlertChannelsPage,
+	queryAlertDeliveriesPage,
+	queryAlertPoliciesPage,
+	toChannelDTO,
+	toDeliveryDTO,
+	toPolicyDTO,
+} from "@/lib/queries/alerts-lists";
 import type { AlertRuleMatch } from "@/types/jsonb.types";
 import {
 	type ChannelInput,
@@ -145,19 +159,9 @@ function assertAlertingEntitled(actor: Actor): void {
 	}
 }
 
-/** Maps a channel row to its client-safe DTO. */
-function toChannelDTO(row: typeof alertChannels.$inferSelect): ChannelDTO {
-	return {
-		id: row.id,
-		type: row.type,
-		name: row.name,
-		enabled: row.enabled,
-		is_verified: row.is_verified,
-		recipients: row.config.recipients ?? [],
-		has_secret: Boolean(row.secret),
-		last_verified_at: row.last_verified_at?.toISOString() ?? null,
-	};
-}
+// The row → DTO mappers (`toChannelDTO` / `toPolicyDTO` / `toDeliveryDTO`) live in
+// lib/queries/alerts-lists.ts, so the bootstrap below and the filtered sibling reads at the
+// end of this file cannot drift into two shapes of the same row.
 
 /** Everything the Alerts page needs in one round-trip. */
 export async function getAlertsBootstrap(): Promise<AlertsBootstrap> {
@@ -211,24 +215,13 @@ export async function getAlertsBootstrap(): Promise<AlertsBootstrap> {
 		channelsByRule.set(row.rule_id, list);
 	}
 
-	const policies: PolicyDTO[] = ruleRows.map((r) => {
-		const channels = channelsByRule.get(r.id) ?? [];
-		return {
-			id: r.id,
-			name: r.name,
-			description: r.description,
-			event_patterns: r.event_patterns,
-			is_security: r.event_patterns.some(isSecurityKey),
-			severity: r.severity,
-			match: r.match,
-			throttle_seconds: r.throttle_seconds,
-			escalate: r.escalate,
-			recipient: r.recipient,
-			enabled: r.enabled,
-			channels,
-			channelIds: channels.map((c) => c.id),
-		};
-	});
+	const policies: PolicyDTO[] = ruleRows.map((r) =>
+		toPolicyDTO(
+			r,
+			channelsByRule.get(r.id) ?? [],
+			r.event_patterns.some(isSecurityKey),
+		),
+	);
 
 	// Option lists for the policy "conditions" editor (best-effort on projects).
 	const projectList = await getProjects().catch(() => []);
@@ -250,16 +243,7 @@ export async function getAlertsBootstrap(): Promise<AlertsBootstrap> {
 	return {
 		channels: channelRows.map(toChannelDTO),
 		policies,
-		deliveries: deliveryRows.map((d) => ({
-			id: d.id,
-			event_key: d.event_key,
-			status: d.status,
-			title: d.context.title,
-			attempts: d.attempts,
-			last_error: d.last_error,
-			created_at: d.created_at.toISOString(),
-			sent_at: d.sent_at?.toISOString() ?? null,
-		})),
+		deliveries: deliveryRows.map(toDeliveryDTO),
 		categories: CATEGORIES,
 		stats: {
 			policies: policies.length,
@@ -645,4 +629,55 @@ async function assertChannelsOwned(
 	if (owned.length !== channelIds.length) {
 		throw new Error("One or more channels are invalid.");
 	}
+}
+
+// ── The filtered list reads (#2899) ─────────────────────────────────────────────
+//
+// Query-taking SIBLINGS of getAlertsBootstrap(), not a replacement for it.
+//
+// The bootstrap stays the alerts route's RSC read on purpose. Every mutation on that page
+// reports success through `router.refresh()`, and a `queryFn` closing over the RSC
+// `bootstrap` prop would let TanStack pin the first payload — the refresh would still run
+// and the user would see nothing change (#2878 recorded exactly this and refused the
+// conversion). So the bootstrap keeps its shape and its callers (the RSC page and the
+// overview card), and a panel that wants server-side filtering calls the sibling below with
+// its normalized query, keyed by `qk.alertChannels(org, q)` / `qk.alertPolicies(org, q)`.
+//
+// Every one of them re-runs the SAME authorization the bootstrap does — `view_alerts` on the
+// `alert` resource — and is scoped to `actor.orgId`.
+
+/**
+ * The org's alert channels for `query`: rows filtered SERVER-SIDE in SQL + type/status facet
+ * counts over the org's UNFILTERED channels (lib/query/README.md, steps 5 + 6).
+ */
+export async function getAlertChannelsPage(
+	query: AlertChannelsQuery = {},
+): Promise<AlertChannelsPage> {
+	const actor = await authorize("view_alerts", { type: "alert" });
+	return queryAlertChannelsPage(actor.orgId, query);
+}
+
+/**
+ * The org's alert policies for `query`: rows filtered SERVER-SIDE in SQL + status/kind/channel
+ * facet counts over the org's UNFILTERED policies. The channel facet lists EVERY configured
+ * channel (even one no policy routes to), so a destination is selectable before it is used.
+ */
+export async function getAlertPoliciesPage(
+	query: AlertPoliciesQuery = {},
+): Promise<AlertPoliciesPage> {
+	const actor = await authorize("view_alerts", { type: "alert" });
+	return queryAlertPoliciesPage(actor.orgId, query);
+}
+
+/**
+ * The org's delivery ledger for `query`: filtered SERVER-SIDE in SQL and THEN windowed
+ * (newest first, 50 by default — the bootstrap's window), with status facet counts over the
+ * WHOLE ledger. The bootstrap's `deliveries` are the newest 50 and nothing else, so a status
+ * that last occurred 200 rows ago is invisible to it; here it is one filter away.
+ */
+export async function getAlertDeliveriesPage(
+	query: AlertDeliveriesQuery = {},
+): Promise<AlertDeliveriesPage> {
+	const actor = await authorize("view_alerts", { type: "alert" });
+	return queryAlertDeliveriesPage(actor.orgId, query);
 }
