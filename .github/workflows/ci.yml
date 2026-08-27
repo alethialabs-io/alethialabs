@@ -237,6 +237,13 @@ jobs:
       - name: Coverage ratchet — ee
         if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         run: node scripts/ts-coverage.mjs --project ee
+      # @repo/format joins ARMED on its first commit, at 61/61 statements. A pure-function
+      # package — no I/O, no clock except one injected baseline, no React — so 100% is the
+      # honest floor rather than an aspiration, and anything below it is a real gap. Floors
+      # recorded with ee/dist present, which is what `turbo run test` produces here.
+      - name: Coverage ratchet — packages/format
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project packages/format
       # Build smoke for the split-affected apps — catches transpilePackages /
       # standalone breakage on PRs. Build-only placeholder env so the console's
       # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
