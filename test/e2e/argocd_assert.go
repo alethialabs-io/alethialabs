@@ -1611,23 +1611,35 @@ func argoHardRefreshVerdict(ctx context.Context, kubeconfigPath, target, app str
 		return strings.TrimSpace(string(out)), err
 	}
 	if out, err := run("argocd", "app", "get", app, "--core", "--hard-refresh", "-o", "json"); err != nil {
-		if len(out) > 400 {
-			out = out[:400] + "…"
-		}
-		return fmt.Sprintf("  hard refresh: COULD NOT ASK (%v) — this does NOT decide between a stale manifest cache and a real normalisation difference: %s",
-			err, out)
+		return interpretHardRefresh("", err, out)
 	}
 	out, err := run("kubectl", "get", "applications.argoproj.io", app, "-o", "jsonpath={.status.sync.status}")
 	if err != nil {
-		return fmt.Sprintf("  hard refresh: re-read FAILED (%v) — cannot say whether the status survived it", err)
+		return interpretHardRefresh("", err, out)
 	}
-	switch strings.TrimSpace(out) {
+	return interpretHardRefresh(out, nil, "")
+}
+
+// interpretHardRefresh is the verdict half of argoHardRefreshVerdict, split out so the mapping is
+// testable without a cluster — the same shape interpretArgoDiff and interpretByoSyncPolicy use.
+//
+// `askErr` non-nil means the question could not be PUT, which is not an answer in either direction
+// and must never render like one.
+func interpretHardRefresh(syncStatus string, askErr error, detail string) string {
+	if askErr != nil {
+		if len(detail) > 400 {
+			detail = detail[:400] + "…"
+		}
+		return fmt.Sprintf("  hard refresh: COULD NOT ASK (%v) — this does NOT decide between a stale manifest cache and a real normalisation difference: %s",
+			askErr, detail)
+	}
+	switch strings.TrimSpace(syncStatus) {
 	case "Synced":
 		return "  hard refresh: the Application is now SYNCED — the OutOfSync was a STALE MANIFEST CACHE, not a difference. ArgoCD had reconciled recently but was comparing against a cached render."
 	case "":
 		return "  hard refresh: the sync status came back EMPTY — cannot say whether it survived"
 	default:
-		return "  hard refresh: still " + strings.TrimSpace(out) +
+		return "  hard refresh: still " + strings.TrimSpace(syncStatus) +
 			" — the status SURVIVES a full re-render, so ArgoCD believes live differs from desired while its own diff prints nothing. That is a normalisation difference and needs a fix, not a retry."
 	}
 }
