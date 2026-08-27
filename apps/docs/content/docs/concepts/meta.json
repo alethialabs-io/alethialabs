@@ -24,6 +24,7 @@
     "terraform-state",
     "gitops-argocd",
     "bring-your-own-iac",
+    "bring-your-own-charts",
     "promotions"
   ]
 }

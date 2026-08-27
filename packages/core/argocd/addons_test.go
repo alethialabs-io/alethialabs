@@ -303,3 +303,79 @@ func TestRenderAddOnApplicationResistsYAMLInjection(t *testing.T) {
 		})
 	}
 }
+
+// #2910: a git-source (BYO) Application was rendered with NO `syncPolicy.automated`, and nothing in
+// production ever syncs one — so a customer's chart got a namespace, a repository credential and a
+// hardened AppProject, then deployed nothing at all, silently. The only sync in the tree is the
+// e2e's `triggerArgoSync`, which meant the harness proved a path a customer does not have.
+//
+// These pin BOTH halves of the fix, because the two failure modes are opposite: rendering no
+// `automated` at all brings the silent no-op back, and rendering prune/selfHeal TRUE would start
+// deleting resources a customer removed from their chart and reverting their live edits.
+func TestRenderAddOnAutomatedSyncPolicy(t *testing.T) {
+	byo := func(a *types.AddOnInstall) {
+		a.Source = "git"
+		a.Path = "charts/acme"
+		a.ChartRepo = "https://github.com/acme/apps"
+		a.Project = "byo-acme"
+	}
+
+	t.Run("a BYO chart auto-syncs, with prune and selfHeal OFF", func(t *testing.T) {
+		a := sampleAddOn()
+		byo(&a)
+		manifest, err := RenderAddOnApplication(a)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+		// The presence of `automated` is what enables auto-sync at all — this is the assertion that
+		// fails if the nil ever comes back.
+		if !strings.Contains(manifest, "automated:") {
+			t.Fatalf("a BYO chart with no `automated` policy never syncs and deploys nothing\n---\n%s", manifest)
+		}
+		// `prune`/`selfHeal` have no omitempty, so they render explicitly rather than as a bare
+		// `automated: {}` — which keeps the manifest self-documenting about the trade.
+		if !strings.Contains(manifest, "prune: false") {
+			t.Errorf("BYO prune must be false — we do not delete a customer's workload because their chart stopped mentioning it\n---\n%s", manifest)
+		}
+		if !strings.Contains(manifest, "selfHeal: false") {
+			t.Errorf("BYO selfHeal must be false — ArgoCD must not fight an operator debugging their own chart\n---\n%s", manifest)
+		}
+	})
+
+	t.Run("a marketplace chart keeps prune and selfHeal ON", func(t *testing.T) {
+		// The catalog owns these, so the cluster should converge to what it declares. Asserted so
+		// the BYO change cannot be applied to both branches by accident.
+		a := sampleAddOn()
+		a.Source = ""
+		manifest, err := RenderAddOnApplication(a)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+		if !strings.Contains(manifest, "prune: true") || !strings.Contains(manifest, "selfHeal: true") {
+			t.Errorf("a marketplace add-on must keep prune+selfHeal on\n---\n%s", manifest)
+		}
+	})
+
+	t.Run("the two shapes differ", func(t *testing.T) {
+		// Guards the accident the sub-tests above cannot see individually: one branch edited to
+		// match the other would pass whichever assertion it now satisfies.
+		m := sampleAddOn()
+		m.Source = ""
+		marketplace, err := RenderAddOnApplication(m)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+		b := sampleAddOn()
+		byo(&b)
+		chart, err := RenderAddOnApplication(b)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+		if strings.Contains(chart, "prune: true") {
+			t.Errorf("the BYO shape picked up the marketplace policy\n---\n%s", chart)
+		}
+		if strings.Contains(marketplace, "prune: false") {
+			t.Errorf("the marketplace shape picked up the BYO policy\n---\n%s", marketplace)
+		}
+	})
+}

@@ -274,10 +274,41 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 	}
 	if source == "git" {
 		app.Spec.Source.Path = a.Path
+		// A BYO chart DEPLOYS, with prune and self-heal both off (#2910).
+		//
+		// This branch used to leave `automated` nil, reasoning that "an untrusted chart must not be
+		// self-healed or pruned without a deploy asking for it". That reasoning is right and it is
+		// preserved exactly — both sub-options are false below. What it did NOT justify is leaving
+		// the chart unsynced, and that is what nil meant: an Application with no `automated` policy
+		// never syncs on its own, and NOTHING in this codebase ever synced one. A customer's chart
+		// got a namespace, a repository credential and a hardened AppProject, and then deployed
+		// nothing at all — silently, with no error and no signal.
+		//
+		// It survived because the only sync in the tree is the e2e's `triggerArgoSync`, so the
+		// harness was proving a path a customer does not have.
+		//
+		// Presence of `automated` is what enables auto-sync; `prune` and `selfHeal` are independent
+		// sub-options that default to false. So this deploys the chart while keeping both
+		// protections the original comment asked for:
+		//
+		//   prune:false    a resource the customer REMOVES from their chart keeps running. That is
+		//                  a deliberate trade — we do not delete a customer's workload because
+		//                  their chart stopped mentioning it. It is also narrow: the Application
+		//                  carries resources-finalizer.argocd.argoproj.io, so DISABLING the add-on
+		//                  deletes the Application and cascades to its resources regardless. The
+		//                  only lingering case is removal from within a chart that stays enabled,
+		//                  which is documented on the BYO charts concept page.
+		//   selfHeal:false ArgoCD does not fight an operator who edits a resource live, which is
+		//                  exactly what someone debugging their own chart needs.
+		//
+		// The security boundary is unchanged and is not this field: it is the hardened AppProject
+		// (empty clusterResourceWhitelist, Role/RoleBinding/ServiceAccount blacklisted, locked to
+		// the declared repos and namespaces). Auto-sync does not widen what the chart may create.
+		app.Spec.SyncPolicy.Automated = &addonAutomated{Prune: false, SelfHeal: false}
 	} else {
 		app.Spec.Source.Chart = a.Chart
-		// A git (BYO) source is NOT automated: an untrusted chart must not be self-healed or pruned
-		// without a deploy asking for it. Marketplace charts are.
+		// A marketplace chart is ours: prune and self-heal so the cluster converges to what the
+		// catalog declares.
 		app.Spec.SyncPolicy.Automated = &addonAutomated{Prune: true, SelfHeal: true}
 	}
 
