@@ -1327,6 +1327,7 @@ jobs:
           #    compiled default, so nothing changes until a zone is actually delegated.
           ALETHIA_E2E_MAXCONFIG_DOMAIN_SUFFIX: ${{ vars.E2E_MAXCONFIG_DOMAIN_SUFFIX }}
           ALETHIA_E2E_MAXCONFIG_DOMAIN_SUFFIX_HETZNER: ${{ vars.E2E_MAXCONFIG_DOMAIN_SUFFIX_HETZNER }}
+          ALETHIA_E2E_GCP_EXTERNAL_DNS_SA: ${{ vars.E2E_GCP_EXTERNAL_DNS_SA }}
           # ── CLI-ONLY DEMO BAR — can the whole product be driven from the terminal?
           #
           #    Every other layer here asks whether the PLATFORM works. This one asks whether the

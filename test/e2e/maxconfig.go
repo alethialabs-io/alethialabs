@@ -776,12 +776,27 @@ var MaxConfigKinds = []MaxConfigKind{
 		Kind: "dns",
 		Doc:  "cloud-native DNS (Route 53). cloud_dns_enabled fires only when enabled AND no zone_id is brought.",
 		Apply: func(pc *types.ProjectConfig, provider string) {
+			// ACM is OFF. See MaxConfigDomain: a DNS-validated certificate cannot be
+			// issued for a zone nothing on the public internet delegates to us, so this
+			// is an EXPLICIT, documented exclusion rather than a silent one.
+			providerConfig := map[string]any{"acm_certificate": false}
+			// GCP ADOPTS a standing external-dns identity rather than using the per-deploy GSA
+			// the template would otherwise create. external-dns calls managedZones.List(PROJECT)
+			// before it writes anything, and `dns.managedZones.list` cannot be granted at zone
+			// scope at all — so the per-deploy identity can write records and never reach them,
+			// and the controller CrashLoopBackOffs on 403 while ArgoCD reports Synced (#2811).
+			//
+			// Empty leaves the template on its create-our-own path, which is the shape that
+			// FAILS. That is deliberate: a run whose maintainer has not applied infra/gcp-e2e
+			// should reproduce the customer's experience, not silently skip the assertion.
+			if provider == "gcp" {
+				if sa := strings.TrimSpace(os.Getenv(envGCPExternalDNSServiceAccount)); sa != "" {
+					providerConfig["external_dns_service_account_email"] = sa
+				}
+			}
 			pc.DNS = types.ProjectDNSConfig{
 				Enabled: true, DomainName: MaxConfigDomainFor(provider), ZoneID: "",
-				// ACM is OFF. See MaxConfigDomain: a DNS-validated certificate cannot be
-				// issued for a zone nothing on the public internet delegates to us, so this
-				// is an EXPLICIT, documented exclusion rather than a silent one.
-				ProviderConfig: map[string]any{"acm_certificate": false},
+				ProviderConfig: providerConfig,
 			}
 		},
 		Populated: func(pc *types.ProjectConfig) bool { return pc.DNS.Enabled },
@@ -840,6 +855,16 @@ const maxConfigDomainSuffix = "e2e.alethialabs.io"
 // zone — E2E_ACM_CERT_ZONE_ID / _ZONE_NAME name `e2e.alethialabs.io` and ACM has issued against it —
 // so moving every cloud at once would require those to move in the same step or aws would request a
 // certificate for a zone it does not hold. One cloud moves; the working path is left alone.
+// envGCPExternalDNSServiceAccount names the STANDING external-dns identity the GCP project
+// template adopts (var external_dns_service_account_email). It is created by infra/gcp-e2e and
+// exported as `e2e_gcp_external_dns_sa_email`; the customer equivalent comes from
+// infra/connector/gcp.
+//
+// GCP-only by construction, so it is written flat rather than through the <BASE>_<PROVIDER>
+// convention: that convention would index the bare base name too, and no workflow would ever set
+// a variable for the four clouds that do not need one.
+const envGCPExternalDNSServiceAccount = "ALETHIA_E2E_GCP_EXTERNAL_DNS_SA"
+
 const envMaxConfigDomainSuffix = "ALETHIA_E2E_MAXCONFIG_DOMAIN_SUFFIX"
 
 // maxConfigSuffixFor resolves the zone suffix for one provider: the per-provider override, then the

@@ -674,6 +674,35 @@ variable "external_secrets_service_account_email" {
   }
 }
 
+variable "external_dns_service_account_email" {
+  description = <<-EOT
+    OPTIONAL. Email of a PRE-EXISTING Google service account external-dns impersonates via Workload
+    Identity. REQUIRED for external-dns to function at all on GCP; empty leaves the template
+    creating a per-deploy GSA that can write records but cannot LIST zones, which external-dns does
+    unconditionally before it writes anything.
+
+    Why adoption rather than a per-deploy account: external-dns's Google provider calls
+    managedZones.List(PROJECT) on every reconcile, and `dns.managedZones.list` is a project-level
+    permission that `gcloud iam list-testable-permissions` does not offer at managed-zone scope at
+    all. So the grant it needs cannot be zone-scoped, and writing a project-level binding needs
+    resourcemanager.projects.setIamPolicy — which this template deliberately does not hold (#300),
+    and which is self-escalating. The standing GSA and its list-only custom role are created ONCE by
+    infra/connector/gcp during onboarding, exactly as service enablement is.
+
+    The account must already exist in var.project_id and the caller owns its lifecycle — this
+    template will not create, modify or destroy it. It is granted roles/dns.admin on THIS
+    environment's zone (a zone-scoped write the provisioner does hold), so sharing one identity
+    across environments in a project shares the ability to list zone NAMES and nothing else.
+  EOT
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.external_dns_service_account_email == "" || can(regex("^[^@]+@[^@]+\\.iam\\.gserviceaccount\\.com$", var.external_dns_service_account_email))
+    error_message = "external_dns_service_account_email must be a full service-account email (name@project.iam.gserviceaccount.com), not a bare account id."
+  }
+}
+
 # ── keyless Cloud SQL app identity adoption ────────────────────────────────────
 variable "cloud_sql_app_service_account_email" {
   description = <<-EOT

@@ -111,6 +111,46 @@ resource "google_project_iam_custom_role" "e2e_dns_zone_iam" {
   ]
 }
 
+# The standing external-dns identity and its one project-level permission. Mirrors the customer
+# connector's alethia-external-dns + alethiaDnsZoneList (infra/connector/gcp/main.tf) — the e2e must
+# prove the SHAPE a customer gets, not a privileged shortcut only CI can take.
+#
+# external-dns calls managedZones.List(PROJECT) unconditionally before it writes anything, and
+# `dns.managedZones.list` cannot be granted at zone scope at all. The provisioner is NOT given the
+# project-level setIamPolicy it would take to write this binding per environment — that verb is
+# self-escalating — so the identity stands here and the project template ADOPTS it via
+# external_dns_service_account_email (#2811).
+resource "google_service_account" "e2e_external_dns" {
+  project      = var.project_id
+  account_id   = "alethia-e2e-external-dns"
+  display_name = "Alethia e2e external-dns"
+  description  = "Standing identity external-dns impersonates via Workload Identity in e2e runs. Holds ONLY dns.managedZones.list project-wide; every record write is granted per-run at zone scope."
+}
+
+resource "google_project_iam_custom_role" "e2e_dns_zone_list" {
+  role_id     = "alethiaE2eDnsZoneList"
+  project     = var.project_id
+  title       = "Alethia e2e DNS Zone Lister"
+  description = "List Cloud DNS managed zones project-wide — the one permission external-dns needs that cannot be granted at zone scope. No record read, no write anywhere. Mirrors the customer connector's alethiaDnsZoneList."
+  permissions = [
+    "dns.managedZones.list",
+  ]
+}
+
+# Bound to the external-dns SA, NOT to the provisioner: the provisioner never gains a project-level
+# DNS read, and the thing that does gains nothing else.
+resource "google_project_iam_member" "e2e_external_dns_zone_list" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.e2e_dns_zone_list.id
+  member  = "serviceAccount:${google_service_account.e2e_external_dns.email}"
+}
+
+# The provisioner must be able to bind THIS account to the in-cluster KSA (Workload Identity) and
+# grant it the per-run zone. The first is iam.serviceAccounts.setIamPolicy, which roles/iam.
+# serviceAccountAdmin below already carries project-wide; the second is the zone-scoped
+# alethiaE2eDnsZoneIam above. Neither is new — recorded here because a reader asking "how does an
+# adopted account get its per-run grants?" should not have to reconstruct it.
+
 resource "google_project_iam_custom_role" "e2e_project_reader" {
   role_id     = "alethiaE2eProjectReader"
   project     = var.project_id
