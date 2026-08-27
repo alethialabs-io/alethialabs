@@ -205,6 +205,16 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 </details>
 
+### ⚠️ Contested — proven here, but a LATER run went red
+
+These cells read **proven** above, and an `e2e nightly … RED` issue was filed for them AFTER the run that proved them. The ledger only gains rows for runs somebody records, so a later failure files an issue and no row — PASS is durable and the failure is invisible. **Treat the ✅ for these cells as unconfirmed until somebody reads the run.** A later red may be a flake (one was `repo-server connection refused`) or a regression; nothing here guesses which, and nothing here downgrades the cell.
+
+| cell | proved by | contested by |
+|---|---|:---:|
+| `azure/floor` | `demos/proofs/azure/20260825T063447Z` | #2744 (2026-08-26) |
+| `gcp/floor` | `demos/proofs/gcp/20260825T105829Z` | #2743 (2026-08-26) |
+| `hetzner/floor` | `demos/proofs/hetzner/20260824T201636Z` | #2742 (2026-08-26) |
+
 ### The mechanical next
 
 **`gcp/maxconfig`** — failing. ledger 2026-08-27

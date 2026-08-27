@@ -737,12 +737,70 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		}
 	}
 
-	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, gateReality, cloudGates };
+	// `snapshot?.` — a self-test fixture may omit it entirely, and a crash here would take out
+	// every other check in the run.
+	const contested = contestedCells(grid, clouds, snapshot?.open_issues ?? []);
+	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, gateReality, cloudGates, contested };
 }
 
 // ───────────────────────────── rendering ─────────────────────────────
 
 /** @param {ReturnType<typeof derive>} v */
+
+// ── CONTESTED CELLS: proven in the ledger, but a LATER nightly filed a RED for it (#2952) ──
+//
+// The grid is ledger-driven and the ledger only gains rows somebody records. A nightly that goes
+// red files an ISSUE and produces no row — so PASS is durable and a later FAIL is invisible, and a
+// cell can read ✅ while its most recent attempt failed. That is a high-water mark presented as
+// current state, which is the quiet overstatement the whole proof grid exists to prevent.
+//
+// SURFACED, NEVER AUTO-DOWNGRADED, and never fatal. Whether a later red is a flake or a regression
+// needs somebody to read the run — the gcp one on 2026-08-26 was `repo-server connection refused`,
+// a transient — and guessing either way is worse than naming the contradiction. Making it an
+// integrity FAILURE would also red `pnpm check:programme` for every PR over a pre-existing
+// condition, forcing exactly the rushed judgement this is trying to avoid.
+//
+// Ordering is the whole test. A RED filed BEFORE its proving run is ordinary staleness (the cell
+// went green afterwards and nobody closed the issue) and is NOT contested — #2329, #2623 and #2624
+// were closed on exactly that reasoning on 2026-08-27.
+const RED_TITLE = /^e2e nightly:\s*(\S+)\s+RED\s*\(([\w-]+)\)\s*$/;
+
+/** Milliseconds for a proof bundle's timestamp. Two formats are in use — `20260825T192100Z` and
+ *  `2026-08-25T175213Z` — and an unparseable one returns null so the caller can fall back rather
+ *  than invent an ordering. */
+export function bundleStamp(bundle) {
+	if (typeof bundle !== "string") return null;
+	const tail = bundle.split("/").pop() ?? "";
+	let m = tail.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+	if (!m) m = tail.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+	if (!m) return null;
+	const [, y, mo, d, h, mi, sec] = m;
+	return Date.parse(`${y}-${mo}-${d}T${h}:${mi}:${sec}Z`);
+}
+
+/** Cells the ledger calls proven for which an OPEN `e2e nightly: … RED (…)` issue was filed AFTER
+ *  the proving evidence. Pure, so the ordering rule is testable without a board. */
+export function contestedCells(grid, clouds, openIssues) {
+	const out = [];
+	for (const issue of openIssues ?? []) {
+		const m = RED_TITLE.exec(String(issue.title ?? ""));
+		if (!m) continue;
+		const cloud = m[1].toLowerCase();
+		const dimension = canonicalDimension(m[2]);
+		if (!clouds.includes(cloud)) continue;
+		const cell = grid?.[cloud]?.[dimension];
+		if (!cell || cell.state !== STATE.proven) continue;
+		const filed = Date.parse(String(issue.createdAt ?? ""));
+		if (Number.isNaN(filed)) continue;
+		// Prefer the bundle's timestamp; a row date alone is a whole day, so compare against its END
+		// to avoid calling a same-day RED contested when it may have preceded the run.
+		const proved = bundleStamp(cell.row?.bundle) ?? (cell.row?.date ? Date.parse(`${cell.row.date}T23:59:59Z`) : null);
+		if (proved === null || !(filed > proved)) continue;
+		out.push({ cloud, dimension, issue: issue.number, filed: String(issue.createdAt), proved: cell.row?.bundle ?? cell.row?.date });
+	}
+	return out.sort((a, b) => a.cloud.localeCompare(b.cloud) || a.dimension.localeCompare(b.dimension));
+}
+
 export function render(v) {
 	const L = [];
 	const total = v.clouds.length * DIMENSIONS.length;
@@ -786,6 +844,30 @@ export function render(v) {
 		L.push(...evidence);
 		L.push("");
 		L.push("</details>");
+		L.push("");
+	}
+
+	// ── contested cells (#2952) ──
+	//
+	// Rendered right under the grid, next to the ✅s it qualifies, because a reader who takes the
+	// glyph at face value is exactly who needs it.
+	if (v.contested && v.contested.length > 0) {
+		L.push("### ⚠️ Contested — proven here, but a LATER run went red");
+		L.push("");
+		L.push(
+			"These cells read **proven** above, and an `e2e nightly … RED` issue was filed for them " +
+				"AFTER the run that proved them. The ledger only gains rows for runs somebody records, so a " +
+				"later failure files an issue and no row — PASS is durable and the failure is invisible. " +
+				"**Treat the ✅ for these cells as unconfirmed until somebody reads the run.** A later red may " +
+				"be a flake (one was `repo-server connection refused`) or a regression; nothing here guesses " +
+				"which, and nothing here downgrades the cell.",
+		);
+		L.push("");
+		L.push("| cell | proved by | contested by |");
+		L.push("|---|---|:---:|");
+		for (const c of v.contested) {
+			L.push(`| \`${c.cloud}/${c.dimension}\` | \`${c.proved}\` | #${c.issue} (${c.filed.slice(0, 10)}) |`);
+		}
 		L.push("");
 	}
 
@@ -1712,6 +1794,60 @@ function runSelfTest() {
 	ok("bundleKind: bare cloud/stamp is a path", bundleKind("hetzner/20260805T064043Z") === "path");
 	ok("bundleKind: nightly run tag", bundleKind("nightly-29895597616") === "run-tag");
 	ok("bundleKind: empty", bundleKind("") === "none");
+
+	// ── contested cells (#2952) — the ORDERING rule is the whole test ──
+	ok("bundleStamp: compact form", bundleStamp("demos/proofs/gcp/20260825T105829Z") === Date.parse("2026-08-25T10:58:29Z"));
+	ok("bundleStamp: hyphenated form", bundleStamp("demos/proofs/hetzner/2026-08-25T175213Z") === Date.parse("2026-08-25T17:52:13Z"));
+	ok("bundleStamp: unparseable is null, not 0", bundleStamp("demos/proofs/aws/nightly-123") === null);
+	ok("bundleStamp: non-string is null", bundleStamp(undefined) === null);
+
+	{
+		const provenAt = (bundle) => ({ state: STATE.proven, why: "", row: { date: "2026-08-25", bundle } });
+		const grid = {
+			gcp: { floor: provenAt("demos/proofs/gcp/20260825T105829Z"), maxconfig: { state: STATE.failing, why: "", row: null } },
+		};
+		const clouds = ["gcp"];
+		const red = (n, title, createdAt) => ({ number: n, title, createdAt, labels: [] });
+
+		// Filed AFTER the proving bundle → contested.
+		ok(
+			"contested: a RED filed after the proof is contested",
+			contestedCells(grid, clouds, [red(1, "e2e nightly: gcp RED (floor)", "2026-08-26T05:10:43Z")]).length === 1,
+		);
+		// Filed BEFORE it → ordinary staleness, NOT contested. This is the case that closed #2329,
+		// #2623 and #2624; calling it contested would invert the reasoning that closed them.
+		ok(
+			"contested: a RED filed before the proof is NOT contested",
+			contestedCells(grid, clouds, [red(2, "e2e nightly: gcp RED (floor)", "2026-08-24T00:00:00Z")]).length === 0,
+		);
+		// A cell the grid already calls failing has an open RED by construction — that is the Open
+		// REDs table's job, not this one's.
+		ok(
+			"contested: a RED on a FAILING cell is not contested",
+			contestedCells(grid, clouds, [red(3, "e2e nightly: gcp RED (maxconfig)", "2026-08-26T05:00:00Z")]).length === 0,
+		);
+		// An unknown cloud must not throw or invent a cell.
+		ok(
+			"contested: an unknown cloud is ignored",
+			contestedCells(grid, clouds, [red(4, "e2e nightly: nosuchcloud RED (floor)", "2026-08-26T05:00:00Z")]).length === 0,
+		);
+		// A title that is not the nightly's shape is ignored rather than parsed loosely.
+		ok(
+			"contested: an unrelated issue title is ignored",
+			contestedCells(grid, clouds, [red(5, "gcp floor is red", "2026-08-26T05:00:00Z")]).length === 0,
+		);
+		// A missing createdAt cannot be ordered, so it must not be guessed either way.
+		ok(
+			"contested: an undated issue is not contested",
+			contestedCells(grid, clouds, [{ number: 6, title: "e2e nightly: gcp RED (floor)", labels: [] }]).length === 0,
+		);
+		// The dimension alias the issues actually use (`byo`) must canonicalise to `gitops`.
+		const aliasGrid = { gcp: { gitops: provenAt("demos/proofs/gcp/20260825T105829Z") } };
+		ok(
+			"contested: the `byo` alias resolves to gitops",
+			contestedCells(aliasGrid, clouds, [red(7, "e2e nightly: gcp RED (byo)", "2026-08-26T05:00:00Z")]).length === 1,
+		);
+	}
 
 	if (fails > 0) {
 		console.error(`\nself-test: ${fails} check(s) FAILED`);
