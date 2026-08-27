@@ -560,3 +560,32 @@ func githubContentsURL(repo, sha, path string) (string, bool) {
 	}
 	return fmt.Sprintf("https://api.github.com/repos/%s/contents/%s?ref=%s", slug, strings.Trim(path, "/"), sha), true
 }
+
+// byoIacPosture is the drift posture a DETECT_DRIFT job persisted, plus the drifted resource types
+// the non-vacuity check needs.
+type byoIacPosture struct {
+	// TAGS ARE LOAD-BEARING. `encoding/json` matches a tag first and otherwise falls back to a
+	// CASE-INSENSITIVE match on the field NAME — which never matches an underscored key, so
+	// `in_sync` silently left InSync at its zero value while `drifted` and `details` decoded fine.
+	//
+	// The posture is written by drift.Analyze, which sets `InSync = Drifted == 0`, so
+	// `in_sync=false drifted=0` is a state it cannot produce. Every byo-iac run reported exactly
+	// that and died on "the baseline posture is not in-sync right after a clean apply" — the leg
+	// could never have passed, on any cloud. Verified against a real decode, not inferred.
+	InSync  bool `json:"in_sync"`
+	Drifted int  `json:"drifted"`
+	Details []struct {
+		Address string `json:"address"`
+		Type    string `json:"type"`
+		Kind    string `json:"kind"`
+	} `json:"details"`
+}
+
+// types returns the drifted resources' types, for the "it drifted on OUR resource" assertion.
+func (p byoIacPosture) types() []string {
+	out := make([]string, 0, len(p.Details))
+	for _, d := range p.Details {
+		out = append(out, d.Type)
+	}
+	return out
+}

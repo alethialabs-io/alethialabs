@@ -457,3 +457,48 @@ func httpGetStatus(ctx context.Context, url string) (int, error) {
 	defer resp.Body.Close()
 	return resp.StatusCode, nil
 }
+
+// ingressAddressVerdict turns the ArgoCD Ingress's load-balancer address into the sentence that
+// makes a `dns-not-resolving` failure decidable.
+//
+// #2591 is the whole reason this exists. That diagnosis is honest but AMBIGUOUS, and says so: the
+// hostname failing to resolve is BOTH the expected state while the load balancer is still coming up
+// (nothing has an address for external-dns to publish) AND what a broken zone or domain filter
+// looks like. Its proposed discriminator was another paid run at a longer timeout — which was run
+// on 2026-08-27 (33056356388), failed identically after 61 attempts across 10 minutes, and still
+// did not separate the two, because the budget was never the variable that mattered.
+//
+// The cluster already knows. If the Ingress has an address, external-dns had something to publish
+// and did not — its problem. If it has none, external-dns is blameless and the bug is upstream in
+// the ingress path. One read on an already-failing path replaces a whole class of re-runs.
+//
+// Pure, so the three outcomes are testable without a cluster: they are easy to collapse into each
+// other and two of them point at different teams.
+func ingressAddressVerdict(address string, err error) string {
+	if err != nil {
+		// "could not look" must never render like either verdict.
+		return "ingress address UNKNOWN (could not read the Ingress: " + err.Error() + ") — this does NOT distinguish the two causes below"
+	}
+	if strings.TrimSpace(address) == "" {
+		return "the ArgoCD Ingress has NO load-balancer address yet, so external-dns had nothing to publish — the fault is upstream in the ingress/load-balancer path, NOT in external-dns or the DNS zone"
+	}
+	return "the ArgoCD Ingress DOES have address " + strings.TrimSpace(address) +
+		", so external-dns had something to publish and did not write the record — look at external-dns: its domain filter, its zone, and its cloud credentials"
+}
+
+// readIngressAddress reads the ArgoCD Ingress's assigned load-balancer address, if any.
+//
+// Best-effort and bounded: this runs only when the day-2 probe has ALREADY failed, so it must never
+// be the reason a run hangs. An empty address with no error is a genuine finding, not a failure.
+func readIngressAddress(ctx context.Context, kubeconfigPath string) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", "argocd", "get", "ingress",
+		"-o", "jsonpath={.items[*].status.loadBalancer.ingress[*]['hostname','ip']}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}

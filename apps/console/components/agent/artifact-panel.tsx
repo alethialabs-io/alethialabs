@@ -20,6 +20,8 @@ import type {
 } from "@/lib/db/schema/enums";
 import type { GitopsDeployStatus } from "@/lib/gitops/deploy-status";
 import { Badge } from "@repo/ui/badge";
+import { CountPill } from "@repo/ui/count-pill";
+import { EmptyState } from "@repo/ui/empty";
 import { ScrollArea } from "@repo/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/tabs";
 import { getProvider, type CloudProviderSlug } from "@/lib/cloud-providers";
@@ -291,7 +293,7 @@ export function ArtifactPanel() {
 						<ScrollArea className="h-full">
 							<div className="p-4">
 								{!projectId ? (
-									<Empty text="Open a project to see its GitOps status." />
+									<EmptyState title="Open a project to see its GitOps status." className={PANEL_EMPTY} />
 								) : (
 									<DeployPane status={deploy} />
 								)}
@@ -309,9 +311,9 @@ export function ArtifactPanel() {
 						<ScrollArea className="h-full">
 							<div className="p-4">
 								{!jobId ? (
-									<Empty text="Open a job to stream its logs." />
+									<EmptyState title="Open a job to stream its logs." className={PANEL_EMPTY} />
 								) : logs.length === 0 ? (
-									<Empty text="Waiting for logs…" />
+									<EmptyState title="Waiting for logs…" className={PANEL_EMPTY} />
 								) : (
 									<div className="space-y-0.5 font-mono text-[11px] leading-relaxed">
 										{logs.map((l) => (
@@ -338,9 +340,16 @@ export function ArtifactPanel() {
 	);
 }
 
-function Empty({ text }: { text: string }) {
-	return <p className="py-8 text-center text-xs text-muted-foreground">{text}</p>;
-}
+/**
+ * Density tuning for `@repo/ui/empty`'s `EmptyState` inside this panel.
+ *
+ * The shared component is sized for a page: `p-6 md:p-12` and a `text-lg` headline. `md:` is a
+ * VIEWPORT breakpoint, so a 340px side panel on a desktop still gets 48px of padding around a
+ * headline wider than the column. The structure and semantics stay shared; only the scale is
+ * local, which is the difference between tuning a component and forking one.
+ */
+const PANEL_EMPTY =
+	"gap-2 p-8 md:p-8 [&_[data-slot=empty-title]]:text-xs [&_[data-slot=empty-title]]:font-normal [&_[data-slot=empty-title]]:text-muted-foreground [&_[data-slot=empty-description]]:text-xs";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
 	return (
@@ -378,7 +387,7 @@ function ListSection({
 }
 
 function ConfigPane({ project }: { project: ProjectDetail | null }) {
-	if (!project) return <Empty text="Loading…" />;
+	if (!project) return <EmptyState title="Loading…" className={PANEL_EMPTY} />;
 	const { components, cloudProvider } = project;
 	const c = components.cluster;
 	const n = components.network;
@@ -452,7 +461,7 @@ function ConfigPane({ project }: { project: ProjectDetail | null }) {
 }
 
 function CostPane({ cost }: { cost: { items: CostItem[]; total: number } | null }) {
-	if (!cost) return <Empty text="Open a project to estimate its cost." />;
+	if (!cost) return <EmptyState title="Open a project to estimate its cost." className={PANEL_EMPTY} />;
 	return (
 		<div>
 			<div className="space-y-1.5">
@@ -488,10 +497,24 @@ function CostPane({ cost }: { cost: { items: CostItem[]; total: number } | null 
 	);
 }
 
-function CountPill({ n, label }: { n: number; label: string }) {
+/**
+ * One plan-summary count tile (add / change / destroy / replace).
+ *
+ * The NUMBER is `@repo/ui/count-pill` — mono, tabular, thousands-separated. The bordered tile
+ * and its eyebrow caption stay here because the shared pill is the inline count that sits beside
+ * a section heading and takes no label; a plan summary needs four labelled tiles. So this is the
+ * composition the shared component was promoted for, not a second implementation of it.
+ */
+function PlanCountTile({ n, label }: { n: number; label: string }) {
 	return (
 		<div className="border border-border px-2.5 py-1.5 text-center">
-			<div className="font-mono text-base font-semibold">{n}</div>
+			<CountPill
+				count={n}
+				// In a tile the count IS the content, not a marginal annotation beside a heading,
+				// so the display size and weight are restored. Everything else — the mono face,
+				// tabular figures, locale separators, the null guard — comes from the component.
+				className="bg-transparent px-0 py-0 text-base font-semibold text-foreground"
+			/>
 			<div className="vx-eyebrow text-[8px]">{label}</div>
 		</div>
 	);
@@ -668,8 +691,8 @@ function PlanPane({
 	plan: PlanState | null;
 	jobId: string | undefined;
 }) {
-	if (!jobId) return <Empty text="Open a job to see its plan." />;
-	if (!plan) return <Empty text="Loading…" />;
+	if (!jobId) return <EmptyState title="Open a job to see its plan." className={PANEL_EMPTY} />;
+	if (!plan) return <EmptyState title="Loading…" className={PANEL_EMPTY} />;
 	return (
 		<div className="space-y-3">
 			{plan.verifyReport && <VerifyBlock report={plan.verifyReport} />}
@@ -678,11 +701,11 @@ function PlanPane({
 			{plan.planSummary ? (
 				<>
 					<div className="flex gap-2">
-						<CountPill n={plan.planSummary.counts.create} label="add" />
-						<CountPill n={plan.planSummary.counts.update} label="change" />
-						<CountPill n={plan.planSummary.counts.delete} label="destroy" />
+						<PlanCountTile n={plan.planSummary.counts.create} label="add" />
+						<PlanCountTile n={plan.planSummary.counts.update} label="change" />
+						<PlanCountTile n={plan.planSummary.counts.delete} label="destroy" />
 						{plan.planSummary.counts.replace > 0 && (
-							<CountPill n={plan.planSummary.counts.replace} label="replace" />
+							<PlanCountTile n={plan.planSummary.counts.replace} label="replace" />
 						)}
 					</div>
 					{plan.costSummary?.totalMonthlyCost != null && (
@@ -705,11 +728,14 @@ function PlanPane({
 					</div>
 				</>
 			) : (
-				<Empty
-					text={
-						plan.error
-							? `Plan failed: ${plan.error}`
-							: "No plan output yet — run a plan (deploy flow coming soon)."
+				// The one call site with two registers: a failure names the failure and then
+				// carries the reason, which is what `EmptyState`'s title/description split is
+				// for. The local `Empty({text})` could only ever run them together as one line.
+				<EmptyState
+					className={PANEL_EMPTY}
+					title={plan.error ? "Plan failed" : "No plan output yet"}
+					description={
+						plan.error ?? "Run a plan (deploy flow coming soon)."
 					}
 				/>
 			)}

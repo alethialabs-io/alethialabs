@@ -25,7 +25,7 @@ that has not been set up.
 | **hetzner** | ✅ `alethia-infra-tests` | ✅ **yes — `hetzner/floor` PASSED** | nothing |
 | **azure** | ✅ Azure for Students | ⚠️ untested — nothing structurally blocks it | a real run to settle the credit question |
 | **gcp** | ✅ `borislav1207@gmail.com` | ❌ **no** | **an open billing account** |
-| **alibaba** | ✅ RAM user `test` (AdministratorAccess) | ❌ **no** | the `AliyunCSDefaultRole` service-linked role |
+| **alibaba** | ✅ RAM user `test` (AdministratorAccess) | ⚠️ **unsettled** | ~~`AliyunCSDefaultRole`~~ **cleared 2026-08-25**; open question is whether a payment method is on file |
 
 Two of five are blocked on something only the account owner can do, and neither blocker is
 described anywhere in the tree. Both are cheap to clear.
@@ -185,6 +185,45 @@ account setup step, not a permissions problem.
 **Action: create `AliyunCSDefaultRole` once (ACK console authorization, or
 `ram:CreateServiceLinkedRole`).**
 
+> ### ✅ CLEARED 2026-08-25 — the role exists, and ACK answers
+>
+> Re-probed live 2026-08-27. The role was created **2026-08-25T06:53:08Z** — the day after this
+> section was written — with `AliyunCSDefaultRolePolicy` (a System policy) attached at 06:53:22Z:
+>
+> ```
+> $ aliyun ram GetRole --RoleName AliyunCSDefaultRole
+> Arn: acs:ram::5767983785483306:role/aliyuncsdefaultrole
+> AssumeRolePolicyDocument: Principal.Service = ["cs.aliyuncs.com"]
+> CreateDate: 2026-08-25T06:53:08Z
+>
+> $ aliyun cs GET /clusters --region eu-central-1
+> []                                            ← was EntityNotExist.Role
+> ```
+>
+> Both halves matter, for the same reason the GCP entry above spells out: the role EXISTING is
+> not the claim. The claim is that the API which refused now answers, and `[]` on the exact call
+> that used to 404 the role is what settles it.
+>
+> The federation is complete too, and was already correct — verified rather than assumed: the
+> OIDC provider `alethia-github-e2e` (issuer `token.actions.githubusercontent.com`, audience
+> `sts.aliyuncs.com`), the `alethia-e2e-nightly` role whose trust is **already a list** admitting
+> both `repo:…:ref:refs/heads/main` and `repo:…:environment:e2e-dev`, the Custom least-privilege
+> policy, and both `E2E_ALIBABA_*` repo variables. A `workflow_dispatch` from `dev` therefore
+> authenticates today (`e2e-nightly.yml:143` runs dispatches in the `e2e-dev` environment).
+>
+> **What is NOT settled is whether the account can SPEND**, which is a different column from
+> "authenticates" — the distinction this whole document exists to draw, and the one that hid the
+> GCP blocker for weeks. `QueryAccountBalance` (international endpoint) reports
+> `AvailableAmount: 0.00`, `CreditAmount: 0.00`, `Currency: USD`; the Expenses console shows
+> `Available Credit 0 USD`, no unpaid amount, and a billing chart flat at zero for twelve months.
+> On pay-as-you-go with a verified payment method on file that is entirely normal. With no
+> payment method it is a hard wall. A `RunInstances --DryRun` cleared image, instance type and
+> charge type and stopped on `InvalidSecurityGroupId` — the account holds 0 VPCs and 0 security
+> groups — so validation never reached the billing stage, and this is **unresolved**, not clean.
+>
+> Capacity, at least, is not the problem: `ecs.e-c1m2.large` is `Available` / `WithStock` in two
+> `eu-central-1` zones.
+
 Also standing, and unrelated to the above: `infra/templates/project/alibaba/modules/cr` creates
 `alicloud_cr_ee_instance` with `payment_type = "Subscription"` — the only prepaid resource in the
 repo, and the reason the weekly full-bar cron was removed. Any alibaba full bar buys a month.
@@ -230,10 +269,11 @@ catch it. Hetzner has the same shape, in a different provider's helper.
 Ranked by how much they unblock per minute spent:
 
 1. ~~**Attach an open GCP billing account to `itgix-adp`**~~ — **done 2026-08-25**, verified above.
-2. **Create `AliyunCSDefaultRole`** — unblocks a whole cloud. The ACK console prompt is one click,
-   but it is **also creatable by API**: `AliyunCSDefaultRolePolicy` is a System policy
-   (`AttachmentCount: 0`, which is itself the proof the role is absent), so it is a `ram:CreateRole`
-   with a `cs.aliyuncs.com` service trust plus an `AttachPolicyToRole`. Reversible via `DeleteRole`.
+2. ~~**Create `AliyunCSDefaultRole`**~~ — **done 2026-08-25**, verified above. What replaces it on
+   this list is smaller and is a *look*, not a change: **confirm a payment method is on file for
+   Alibaba**. Everything else on that cloud is armed, and a zero balance with no payment method
+   would stop it exactly the way a closed billing account stopped GCP — silently, with every
+   cheap read still succeeding.
 3. **Set the `HCLOUD_TOKEN` repo secret** — stops the hetzner leg green-skipping, so failures like
    #2458 are caught by CI instead of by hand. Scope it to the **`alethia-infra-tests`** project:
    #1579 warns that the account is shared with prod, which is true of the account and false of that

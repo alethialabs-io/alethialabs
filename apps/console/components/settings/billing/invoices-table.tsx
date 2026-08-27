@@ -13,68 +13,34 @@ import { useParams } from "next/navigation";
 import { useMemo } from "react";
 import type { InvoiceInfo } from "@/app/server/actions/billing";
 import { DataTable } from "@/components/data-table";
-import { cn } from "@repo/ui/utils";
+import { formatDate, formatMoney } from "@repo/format";
+import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 
-/** Maps an invoice status to the color-free badge variant + label. */
-function invoiceStatusBadge(status: InvoiceInfo["status"]): {
-	variant: string;
-	label: string;
-} {
-	switch (status) {
-		case "paid":
-			return { variant: "vx-status--active", label: "Paid" };
-		case "refunded":
-			return { variant: "vx-status--pending", label: "Refunded" };
-		case "void":
-			return { variant: "vx-status--failed", label: "Void" };
-	}
-}
+// An invoice status is not one of the product statuses `statusTier()` knows — "paid",
+// "refunded" and "void" would all fall through to `idle` — so the tier is stated here and
+// the SHARED badge renders it, in place of the file-local pill this used to hand-roll.
+const INVOICE_STATUS: Record<InvoiceInfo["status"], { tier: StatusTier; label: string }> = {
+	paid: { tier: "active", label: "Paid" },
+	refunded: { tier: "pending", label: "Refunded" },
+	void: { tier: "failed", label: "Void" },
+};
 
-/** A grayscale status pill for an invoice, matching the billing panel's `vx-status` look. */
+/** A grayscale status pill for an invoice. */
 export function InvoiceStatusBadge({ status }: { status: InvoiceInfo["status"] }) {
-	const s = invoiceStatusBadge(status);
-	return (
-		<span className={cn("vx-status", s.variant)}>
-			<span className="vx-status__dot" />
-			{s.label}
-		</span>
-	);
-}
-
-/** Smallest-unit amount → localized currency (e.g. cents → "$12.00"). */
-export function formatInvoiceAmount(total: number, currency: string): string {
-	return new Intl.NumberFormat(undefined, {
-		style: "currency",
-		currency: currency.toUpperCase(),
-	}).format(total / 100);
-}
-
-/** "1 Jul 2026" — the primary display date. */
-export function formatInvoiceDate(iso: string): string {
-	return new Date(iso).toLocaleDateString(undefined, {
-		day: "numeric",
-		month: "short",
-		year: "numeric",
-	});
-}
-
-/** "Jul 2026" — a month-level label used as the billing-period fallback. */
-function formatMonth(iso: string): string {
-	return new Date(iso).toLocaleDateString(undefined, {
-		month: "short",
-		year: "numeric",
-	});
+	const s = INVOICE_STATUS[status];
+	return <StatusBadge status={status} tier={s.tier} label={s.label} />;
 }
 
 /**
- * The billing period an invoice covers ("1 Jun – 1 Jul 2026"), falling back to the paid
- * month when the period isn't known.
+ * The billing period an invoice covers ("1 Jun 2026 – 1 Jul 2026"), falling back to the
+ * paid month when the period isn't known. Both halves render through the shared
+ * `formatDate`, so the period can no longer disagree with the "Paid" column beside it.
  */
 export function formatBillingPeriod(invoice: InvoiceInfo): string {
 	if (invoice.periodStart && invoice.periodEnd) {
-		return `${formatInvoiceDate(invoice.periodStart)} – ${formatInvoiceDate(invoice.periodEnd)}`;
+		return `${formatDate(invoice.periodStart)} – ${formatDate(invoice.periodEnd)}`;
 	}
-	return formatMonth(invoice.paidAt);
+	return formatDate(invoice.paidAt, "month");
 }
 
 /** Builds the inline-preview / download href for an invoice's PDF route. */
@@ -117,7 +83,7 @@ export function InvoicesTable({
 				header: "Paid",
 				cell: ({ row }) => (
 					<span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-						{formatInvoiceDate(row.original.paidAt)}
+						{formatDate(row.original.paidAt)}
 					</span>
 				),
 			},
@@ -141,7 +107,9 @@ export function InvoicesTable({
 				header: () => <div className="text-right">Total</div>,
 				cell: ({ row }) => (
 					<div className="text-right font-mono text-foreground">
-						{formatInvoiceAmount(row.original.total, row.original.currency)}
+						{/* `total` is ALREADY minor units ("Total in the smallest currency unit"),
+						    which is what formatMoney takes — no conversion. */}
+						{formatMoney(row.original.total, row.original.currency.toUpperCase())}
 					</div>
 				),
 			},

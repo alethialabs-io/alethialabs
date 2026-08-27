@@ -8,7 +8,7 @@
 // come from the bootstrap (registry); custom-role authoring is gated on the customRoles entitlement.
 
 import { Lock, Pencil, Plus, Shield, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
 	deleteRole,
@@ -18,13 +18,15 @@ import {
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
-import { SettingsSearch } from "@/components/settings/settings-ui";
 import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
 import {
 	useInvalidateRoles,
 	useRolesQuery,
 } from "@/lib/query/use-roles-query";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
+import { useRolesFilters } from "@/lib/stores/use-settings-filters";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -36,8 +38,19 @@ import {
 	AlertDialogTitle,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
+import { FacetFilter } from "@repo/ui/facet-filter";
+import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
+import { FilterSearch } from "@repo/ui/filter-search";
+import { PageHeader } from "@repo/ui/page-header";
 import { Spinner } from "@repo/ui/spinner";
 import { cn } from "@repo/ui/utils";
+import {
+	DEFAULT_ROLES_FILTERS,
+	filterBuiltins,
+	normalizeRolesQuery,
+	ROLE_KIND_OPTIONS,
+	showsKind,
+} from "./roles-filters";
 import { PermissionMatrix } from "./permission-matrix";
 import { RoleSheet } from "./role-sheet";
 
@@ -82,10 +95,23 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 	// Client entitlement mirrors the server bootstrap; the store hydrates it app-wide.
 	const entitled = useEntitlement("customRoles") || bootstrap.customRoles;
 
-	const [searchInput, setSearchInput] = useState("");
-	const search = useDebouncedValue(searchInput.trim());
-	const searching = search.length > 0;
-	const { data: custom = [], isFetching } = useRolesQuery(search);
+	// Filter state: the store is the source of truth, the URL mirrors it (shareable views),
+	// and the free text is debounced before it can reach a query key.
+	const filters = useRolesFilters((s) => s.filters);
+	const set = useRolesFilters((s) => s.set);
+	const reset = useRolesFilters((s) => s.reset);
+	useFilterUrlSync(useRolesFilters, DEFAULT_ROLES_FILTERS);
+	const search = useDebouncedValue(filters.search.trim());
+	const query = useMemo(
+		() => normalizeRolesQuery(filters, search),
+		[filters, search],
+	);
+	const searching = Boolean(query.search);
+
+	// Custom roles are filtered SERVER-SIDE by search (listRoles); the kind facet is a pure
+	// show/hide over two fixed buckets, so it never needs to reach the server.
+	const { data: customAll = [], isFetching } = useRolesQuery(query.search);
+	const custom = showsKind(query, "custom") ? customAll : [];
 	const invalidate = useInvalidateRoles();
 
 	const [selectedId, setSelectedId] = useState<string>(builtin[0]?.id ?? "");
@@ -94,9 +120,13 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 	const [deleting, setDeleting] = useState<RoleRow | null>(null);
 	const [upsellOpen, setUpsellOpen] = useState(false);
 
-	// Built-ins are only 4 → filter client-side; custom roles are filtered server-side.
-	const q = search.toLowerCase();
-	const builtinList = builtin.filter((r) => r.name.toLowerCase().includes(q));
+	// Built-ins ship with the page bootstrap, not the query, so they are narrowed by the pure
+	// `filterBuiltins` predicate rather than a server round-trip.
+	const builtinList = useMemo(
+		() => filterBuiltins(builtin, query),
+		[builtin, query],
+	);
+	const activeFilters = countActiveFilters(filters, DEFAULT_ROLES_FILTERS);
 
 	const selected =
 		[...builtin, ...custom].find((r) => r.id === selectedId) ?? builtin[0] ?? null;
@@ -129,63 +159,100 @@ export function RolesManager({ bootstrap }: { bootstrap: RolesBootstrap }) {
 
 	return (
 		<div>
-			{/* toolbar */}
-			<div className="mb-[14px] flex flex-wrap items-center justify-between gap-4">
-				<div className="flex items-center gap-3">
-					<SettingsSearch
-						value={searchInput}
-						onChange={setSearchInput}
-						placeholder="Search roles"
-						className="w-[240px]"
-					/>
-					{searching && isFetching ? (
+			<PageHeader
+				className="mb-4"
+				title="Roles"
+				description="Built-in roles plus the custom roles this organization defines."
+				count={builtinList.length + custom.length}
+				actions={
+					<Button size="sm" onClick={openCreate}>
+						{entitled ? <Plus size={13} /> : <Lock size={13} />}
+						Create role
+					</Button>
+				}
+			/>
+
+			<FilterBar
+				end={
+					searching && isFetching ? (
 						<Spinner className="size-3.5 text-text-tertiary" />
-					) : (
-						<span className="font-mono text-[11px] text-text-tertiary">
-							{builtin.length} built-in · {custom.length} custom
-						</span>
-					)}
-				</div>
-				<Button size="sm" onClick={openCreate}>
-					{entitled ? <Plus size={13} /> : <Lock size={13} />}
-					Create role
-				</Button>
-			</div>
+					) : undefined
+				}
+			>
+				<FilterSearch
+					value={filters.search}
+					onChange={(v) => set("search", v)}
+					placeholder="Search roles…"
+					className="w-[240px] max-w-[380px] flex-1"
+				/>
+				<FacetFilter
+					label="Kind"
+					icon={Shield}
+					options={ROLE_KIND_OPTIONS.map((o) => ({
+						value: o.value,
+						label: o.label,
+						hint: String(o.value === "builtin" ? builtin.length : customAll.length),
+					}))}
+					value={filters.kinds}
+					onChange={(next) => set("kinds", next)}
+					searchPlaceholder="Filter kind…"
+					emptyText="No kinds."
+				/>
+				<FilterBarReset count={activeFilters} onReset={reset} />
+			</FilterBar>
 
 			{/* master-detail */}
 			<div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
 				{/* rail */}
 				<div className="rounded-lg border border-border bg-surface p-2 shadow-sm">
-					<div className="px-2.5 py-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-text-tertiary">
-						Built-in
-					</div>
-					{builtinList.map((r) => (
-						<RailRow
-							key={r.id}
-							name={r.name}
-							count={r.permissionKeys.length}
-							active={selectedId === r.id}
-							onClick={() => setSelectedId(r.id)}
-						/>
-					))}
-					<div className="my-2 h-px bg-border" />
-					<div className="px-2.5 py-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-text-tertiary">
-						Custom
-					</div>
-					{custom.length === 0 ? (
-						<div className="px-2.5 py-2 text-[11.5px] text-text-tertiary">
-							{searching ? "No matching custom roles." : "No custom roles yet."}
-						</div>
-					) : (
-						custom.map((r) => (
-							<RailRow
-								key={r.id}
-								name={r.name}
-								count={r.permissionKeys.length}
-								active={selectedId === r.id}
-								onClick={() => setSelectedId(r.id)}
-							/>
-						))
+					{/* The Kind facet hides a whole bucket rather than emptying it — an
+					    unexplained empty "Built-in" heading reads as a broken fetch. */}
+					{showsKind(query, "builtin") && (
+						<>
+							<div className="px-2.5 py-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-text-tertiary">
+								Built-in
+							</div>
+							{builtinList.length === 0 ? (
+								<div className="px-2.5 py-2 text-[11.5px] text-text-tertiary">
+									No matching built-in roles.
+								</div>
+							) : (
+								builtinList.map((r) => (
+									<RailRow
+										key={r.id}
+										name={r.name}
+										count={r.permissionKeys.length}
+										active={selectedId === r.id}
+										onClick={() => setSelectedId(r.id)}
+									/>
+								))
+							)}
+						</>
+					)}
+					{showsKind(query, "builtin") && showsKind(query, "custom") && (
+						<div className="my-2 h-px bg-border" />
+					)}
+					{showsKind(query, "custom") && (
+						<>
+							<div className="px-2.5 py-2 font-mono text-[9.5px] uppercase tracking-[0.12em] text-text-tertiary">
+								Custom
+							</div>
+							{custom.length === 0 ? (
+								<div className="px-2.5 py-2 text-[11.5px] text-text-tertiary">
+									{searching ? "No matching custom roles." : "No custom roles yet."}
+								</div>
+							) : (
+								custom.map((r) => (
+									<RailRow
+										key={r.id}
+										name={r.name}
+										count={r.permissionKeys.length}
+										active={selectedId === r.id}
+										onClick={() => setSelectedId(r.id)}
+									/>
+								))
+							)}
+						</>
 					)}
 				</div>
 

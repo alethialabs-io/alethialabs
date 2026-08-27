@@ -9,7 +9,9 @@
 package e2e
 
 import (
+	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -380,5 +382,70 @@ func TestDay2AccessIsReservedInTheLadder(t *testing.T) {
 	if maxCfg.Ctx >= withURL.Ctx {
 		t.Errorf("max-config reserved the URL probe (ctx %s) even though it empties ALETHIA_E2E_ACM_CERT "+
 			"and therefore renders no ArgoCD URL for the probe to check", maxCfg.Ctx)
+	}
+}
+
+// #2591's ambiguity, made decidable. The three outcomes point at three different places, and the
+// failure mode this guards is them collapsing into each other — particularly "could not look"
+// reading like either verdict, which would send someone to the wrong team with confidence.
+func TestIngressAddressVerdict(t *testing.T) {
+	t.Run("an address means external-dns is at fault", func(t *testing.T) {
+		got := ingressAddressVerdict("k8s-argocd-abc123.us-east-1.elb.amazonaws.com", nil)
+		if !strings.Contains(got, "external-dns") || !strings.Contains(got, "DOES have address") {
+			t.Errorf("must point at external-dns and quote the address; got %q", got)
+		}
+		if strings.Contains(got, "upstream in the ingress") {
+			t.Errorf("must not also blame the ingress path; got %q", got)
+		}
+	})
+
+	t.Run("no address exonerates external-dns", func(t *testing.T) {
+		got := ingressAddressVerdict("", nil)
+		if !strings.Contains(got, "NO load-balancer address") {
+			t.Errorf("must say the address is absent; got %q", got)
+		}
+		// The load-bearing half: it must say external-dns is NOT the problem, or the reader keeps
+		// investigating the thing that is working.
+		if !strings.Contains(got, "NOT in external-dns") {
+			t.Errorf("must exonerate external-dns; got %q", got)
+		}
+	})
+
+	t.Run("a read failure is neither verdict", func(t *testing.T) {
+		got := ingressAddressVerdict("", errors.New("connection refused"))
+		if !strings.Contains(got, "UNKNOWN") || !strings.Contains(got, "does NOT distinguish") {
+			t.Errorf("a failure to look must say so explicitly; got %q", got)
+		}
+		// An error with an empty address must NOT be read as "no address", which is a real verdict.
+		if strings.Contains(got, "NO load-balancer address") {
+			t.Errorf("could-not-look rendered as a genuine finding; got %q", got)
+		}
+	})
+
+	t.Run("whitespace is not an address", func(t *testing.T) {
+		// jsonpath over zero items prints an empty or blank string; treating that as an address
+		// would blame external-dns for a load balancer that never came up.
+		if got := ingressAddressVerdict("   ", nil); !strings.Contains(got, "NO load-balancer address") {
+			t.Errorf("blank must read as absent; got %q", got)
+		}
+	})
+}
+
+// Covers the exec wrapper. Hermetic: kubectl absent or kubeconfig missing are both errors, and the
+// only contract asserted is that a failure to READ never returns an address — which would otherwise
+// blame external-dns for a load balancer nobody managed to look at.
+func TestReadIngressAddressUnreachableIsAnError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	addr, err := readIngressAddress(ctx, filepath.Join(t.TempDir(), "no-such-kubeconfig"))
+	if err == nil {
+		t.Fatal("an unreachable cluster must not report an ingress address")
+	}
+	if addr != "" {
+		t.Errorf("a failed read must return no address, got %q", addr)
+	}
+	// And it must flow into the verdict as "could not look", not as a finding.
+	if v := ingressAddressVerdict(addr, err); !strings.Contains(v, "UNKNOWN") {
+		t.Errorf("a failed read must render as UNKNOWN; got %q", v)
 	}
 }

@@ -34,6 +34,7 @@ import { AiUsageSection } from "@/components/settings/usage/ai-usage-section";
 import { Bars, Meter, Stat } from "@/components/settings/usage/usage-primitives";
 import { SettingsSection } from "@/components/settings/settings-ui";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { formatDate, formatMinutes, formatMoney } from "@repo/format";
 import { planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Card } from "@repo/ui/card";
@@ -173,7 +174,7 @@ export function UsagePanel() {
 					</span>
 					{usage && (
 						<span className="font-mono text-[11px] text-text-tertiary">
-							period to {new Date(usage.periodEnd).toLocaleDateString()}
+							period to {formatDate(usage.periodEnd)}
 						</span>
 					)}
 				</div>
@@ -219,8 +220,12 @@ export function UsagePanel() {
 							value={
 								usage ? (
 									<>
+										{/* `usedMinutes` is a FLOAT. Rendered raw it read `0.943` here and
+										    `0` after a local Math.round — the same quantity, two answers.
+										    formatMinutes owns the rounding for every readout in the app;
+										    the allowance stays a plain integer, as it is elsewhere. */}
 										<b className="font-medium text-text-primary">
-											{Math.round(usage.usedMinutes)}
+											{formatMinutes(usage.usedMinutes)}
 										</b>
 										{` / ${usage.includedMinutes}`}
 									</>
@@ -233,7 +238,9 @@ export function UsagePanel() {
 								!usage
 									? "managed runner usage this period"
 									: usage.overLimit
-										? `${Math.round(usage.overageMinutes)} min over · ~$${usage.overageCost.toFixed(2)} overage`
+										// `overageCost` is USD MAJOR units (lib/billing/usage.ts rounds it to
+										// cents), so it is scaled UP by 100 for formatMoney, which takes cents.
+										? `${formatMinutes(usage.overageMinutes)} over · ~${formatMoney(Math.round(usage.overageCost * 100))} overage`
 										: usage.approaching
 											? `${Math.round(usage.pct * 100)}% used — approaching included`
 											: `${Math.round(usage.pct * 100)}% of included · self-hosted is free`

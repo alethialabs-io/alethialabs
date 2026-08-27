@@ -89,6 +89,26 @@ const (
 	// A ceiling is closed; debt is a backlog item, and burying one inside the other is how it stops
 	// being counted. MaxConfigCell.Chart must name the chart, so the debt cannot be asserted vaguely.
 	DeferredInProduct MaxConfigCarriage = "deferred"
+	// ExcludedByCost — the product OFFERS this kind on this cloud and the deploy action accepts it;
+	// the HARNESS declines to provision it, because doing so buys a resource that is not billed by
+	// the hour.
+	//
+	// This is a statement about OUR SPEND, not about the cloud. Every clause of CloudCeiling's
+	// definition is false here — the canvas shows the kind, deploy accepts it, and a paying customer
+	// gets it — so recording it as a ceiling would be the exact decay this file already warns about
+	// one category over, with "we chose not to pay" hiding inside "the cloud cannot".
+	//
+	// It is not DeferredInProduct either. That verdict is DEBT: a chart we already ship backs the
+	// kind and only the mapping is missing, so somebody can pick it up. Nobody can pick this up.
+	// Alibaba Container Registry Enterprise Edition has NO pay-as-you-go model — DescribePricingModule
+	// for ProductCode=acr returns five pricing modules under Subscription and ZERO under PayAsYouGo —
+	// and the instance name carries the environment, so a full bar bought its own 150 USD/month
+	// subscription EVERY RUN, on the cloud that ranks fifth. There is no work that makes it cheaper.
+	//
+	// MaxConfigCell.Cost must state the price and the resource, for the same reason Chart is required
+	// above: the evidence is what stops the verdict decaying into a politer neighbour. A cost
+	// exclusion nobody can price is indistinguishable from a shrug.
+	ExcludedByCost MaxConfigCarriage = "cost"
 )
 
 // MaxConfigCell is ONE (kind × cloud) verdict. Build it with tofuCell / inClusterCell /
@@ -113,9 +133,14 @@ type MaxConfigCell struct {
 	// it is the evidence that turns "we haven't got round to it" into a debt item somebody can pick
 	// up, and requiring it stops the verdict from becoming a softer synonym for CloudCeiling.
 	Chart string
+	// Cost states what provisioning this kind on this cloud would BUY — the price and the resource.
+	// Required for ExcludedByCost and forbidden elsewhere, mirroring Chart above: it is the evidence
+	// that separates "we decline to pay for this" from "the cloud cannot do this", and a cost
+	// exclusion carrying no number is a shrug wearing a verdict's clothes.
+	Cost string
 	// Why is the documented reason for a non-tofu verdict. Required for CarriedInCluster,
-	// CloudCeiling and DeferredInProduct: an exclusion nobody can read is indistinguishable from an
-	// oversight.
+	// CloudCeiling, DeferredInProduct and ExcludedByCost: an exclusion nobody can read is
+	// indistinguishable from an oversight.
 	Why string
 	// ClusterProbe is an OPTIONAL SECOND assertion for an in-cluster cell, for the case where a
 	// converged Application does not actually prove the kind was delivered.
@@ -178,15 +203,25 @@ func ceilingCell(why string) MaxConfigCell {
 
 // deferredCell declares DEBT: the kind is hidden and rejected today, but `chart` — a chart this repo
 // already ships — backs it, so what is missing is the mapping, not a capability.
+// costExcludedCell declares a SPEND decision: the cloud offers the kind and the product ships it,
+// but the harness will not provision it because doing so buys something not billed by the hour.
+// `cost` must state the price and the resource — see MaxConfigCell.Cost.
+func costExcludedCell(cost, why string) MaxConfigCell {
+	return MaxConfigCell{Carriage: ExcludedByCost, Cost: cost, Why: why}
+}
+
 func deferredCell(chart, why string) MaxConfigCell {
 	return MaxConfigCell{Carriage: DeferredInProduct, Chart: chart, Why: why}
 }
 
 // Offered reports whether this cloud actually delivers the kind — i.e. whether the max-config
-// fixture should populate it and the real-apply assertion should look for it. The two exclusion
+// fixture should populate it and the real-apply assertion should look for it. The THREE exclusion
 // verdicts differ in WHY they exclude, never in what the harness does about them, so every "is this
-// kind seeded / asserted?" decision asks this rather than testing a carriage by name (which is how a
-// fourth verdict would otherwise have to be chased through five call sites).
+// kind seeded / asserted?" decision asks this rather than testing a carriage by name.
+//
+// That comment used to say "two", and end "(which is how a fourth verdict would otherwise have to be
+// chased through five call sites)". ExcludedByCost is that fourth verdict, and it needed no change
+// here — which is the design working.
 func (c MaxConfigCell) Offered() bool {
 	return c.Carriage == CarriedByTofu || c.Carriage == CarriedInCluster
 }
@@ -196,6 +231,10 @@ func (c MaxConfigCell) Offered() bool {
 // resource type would count nothing, an in-cluster cell with no Application would assert nothing,
 // and a ceiling with no reason is an oversight wearing a verdict's clothes.
 func (c MaxConfigCell) Validate() error {
+	if c.Cost != "" && c.Carriage != ExcludedByCost {
+		return fmt.Errorf("carriage %q must not name a Cost (%q) — only %q does, because only there is the price the whole claim",
+			c.Carriage, c.Cost, ExcludedByCost)
+	}
 	if c.Chart != "" && c.Carriage != DeferredInProduct {
 		return fmt.Errorf("carriage %q must not name a Chart (%q) — only %q does, because only there is the chart's existence the whole claim",
 			c.Carriage, c.Chart, DeferredInProduct)
@@ -251,10 +290,21 @@ func (c MaxConfigCell) Validate() error {
 		if c.Why == "" {
 			return fmt.Errorf("carriage %q needs a Why — undocumented debt is a silent gap wearing a verdict's clothes", c.Carriage)
 		}
+	case ExcludedByCost:
+		if c.Resource != "" || c.ArgoApp != "" || len(c.Signals) > 0 {
+			return fmt.Errorf("carriage %q must be empty of Resource/ArgoApp/Signals — the harness does not provision it, so there is nothing to assert in state", c.Carriage)
+		}
+		if c.Cost == "" {
+			return fmt.Errorf("carriage %q needs a Cost — the claim IS that provisioning this buys something, so an unpriced one is indistinguishable from %q",
+				c.Carriage, CloudCeiling)
+		}
+		if c.Why == "" {
+			return fmt.Errorf("carriage %q needs a Why — a spend decision nobody can read is a silent gap", c.Carriage)
+		}
 	case "":
-		return fmt.Errorf("no carriage: every (kind × cloud) cell must state a verdict — %q, %q, %q or %q. "+
+		return fmt.Errorf("no carriage: every (kind × cloud) cell must state a verdict — %q, %q, %q, %q or %q. "+
 			"An empty cell used to read as \"unmapped\" and was silently skipped, which is the defect this type exists to prevent",
-			CarriedByTofu, CarriedInCluster, CloudCeiling, DeferredInProduct)
+			CarriedByTofu, CarriedInCluster, CloudCeiling, DeferredInProduct, ExcludedByCost)
 	default:
 		return fmt.Errorf("unknown carriage %q", c.Carriage)
 	}
@@ -733,6 +783,12 @@ var MaxConfigKinds = []MaxConfigKind{
 			"Per-cloud gotcha: AWS emits provision_ecr as a plain boolean (the registry NAME is " +
 			"unused there).",
 		Apply: func(pc *types.ProjectConfig, provider string) {
+			// alibaba is ExcludedByCost (see the cell below). The verdict alone changes nothing — if
+			// the fixture still declared a registry the template would still buy a 150 USD/month
+			// Enterprise Edition subscription on every full bar. This is the line that stops the spend.
+			if provider == "alibaba" {
+				return
+			}
 			pc.ContainerRegistries = []types.ProjectContainerRegistryConfig{{Name: maxConfigRegistryName}}
 		},
 		Populated: func(pc *types.ProjectConfig) bool { return len(pc.ContainerRegistries) > 0 },
@@ -758,19 +814,29 @@ var MaxConfigKinds = []MaxConfigKind{
 		Hetzner: inClusterCell("addon-registry-"+maxConfigRegistryName,
 			hetznerNoManagedService+" (Harbor, goharbor chart; pulls authenticate with a project-scoped "+
 				"robot account minted in-cluster, and containerd trusts the host via a Talos mirror)"),
-		// Alibaba: the per-repo resource is the pushable thing — alicloud_cr_ee_instance/_namespace are
-		// the shared parents, and a project used to get a PAID EE instance with nowhere to push (#1837).
+		// Alibaba: the product provisions this kind and a paying customer gets it. The HARNESS does
+		// not buy one, and that is a spend decision rather than a limit — hence ExcludedByCost and
+		// not CloudCeiling, whose every clause ("the cloud genuinely cannot … the canvas hides it …
+		// the deploy action rejects it") is false here.
 		//
-		// ⚠️ COST WARNING — READ BEFORE DRIVING AN ALIBABA FULL BAR. Reaching alicloud_cr_ee_repo
-		// forces its parent alicloud_cr_ee_instance, which the module creates with
-		// payment_type = "Subscription", period = 1 (infra/templates/project/alibaba/modules/cr/main.tf):
-		// the ONLY subscription resource in the whole alibaba module tree. A prepaid instance is not
-		// released by `tofu destroy` the way a pay-as-you-go one is, so EVERY alibaba full-bar run
-		// leaves a standing monthly CR EE Basic instance behind, and the teardown reports clean.
-		// Recorded, not "fixed": the cell is CORRECT — the repo IS the pushable resource and this is
-		// what the product provisions today. Changing the payment type is a template decision with a
-		// blast radius outside this harness. Also in docs/testing/provisioning-e2e-parity.md.
-		Alibaba: tofuCell("alicloud_cr_ee_repo", "provision_cr", "cr_repos"),
+		// This cell used to be tofuCell("alicloud_cr_ee_repo", …) under a COST WARNING that told a
+		// reader not to drive an alibaba full bar. A warning nobody can enforce is not a control, and
+		// the warning was right: reaching alicloud_cr_ee_repo forces its parent
+		// alicloud_cr_ee_instance, and the whole point of #2333 is that it is unsettled whether
+		// `tofu destroy` releases a subscription at all — Alibaba's own ACR docs say it does not.
+		// So the fixture stops asking for a registry on alibaba (see the Apply above) and the verdict
+		// says so out loud. Nothing about the TEMPLATE changed: it still provisions EE for a customer.
+		Alibaba: costExcludedCell(
+			"alicloud_cr_ee_instance — 150 USD/month (Basic, eu-central-1; 1800/year, no term discount; "+
+				"Advanced 617; no tier below Basic), bought PER RUN because instance_name carries the environment",
+			"Container Registry Enterprise Edition has NO pay-as-you-go model — DescribePricingModule for "+
+				"ProductCode=acr returns five pricing modules under Subscription and ZERO under PayAsYouGo — so a "+
+				"registry cannot be rented by the hour on alibaba the way ECR/Artifact Registry/ACR can. Proving "+
+				"this one kind would cost ~98% of an alibaba full bar and leave a monthly commitment behind that "+
+				"the teardown cannot refund (#2333). The free Personal Edition is not a substitute: one instance "+
+				"per ACCOUNT, public preview, no SLA, no immutable tags, and BOTH its provider resources are "+
+				"deprecated since v1.276.0 and slated for removal.",
+		),
 	},
 	{
 		Kind: "dns",
@@ -1162,6 +1228,12 @@ type MaxConfigStateProof struct {
 	// ceiling list is how a backlog item stops being counted, and a run's verdict should be able to
 	// say "3 kinds this cloud cannot do, 2 kinds we have not wired" rather than "5 excluded".
 	Deferred []string
+	// CostExcluded are the kinds at ExcludedByCost — the cloud offers them and the product ships
+	// them, but the harness declines to provision them because doing so buys a non-hourly resource.
+	// Kept SEPARATE from Excluded for the same reason Deferred is: "the cloud cannot" and "we chose
+	// not to pay" are different sentences, and a run's verdict should be able to say which. Folding
+	// this into the ceiling list would put a 150 USD/month decision behind a capability claim.
+	CostExcluded []string
 	// Missing are the kinds that SHOULD have landed and did not, each named with what was looked for.
 	Missing []string
 }
@@ -1218,10 +1290,12 @@ func AssertMaxConfigKindsInState(stateBytes []byte, provider string, argoApps []
 			proof.Excluded = append(proof.Excluded, k.Kind)
 		case DeferredInProduct:
 			proof.Deferred = append(proof.Deferred, k.Kind)
+		case ExcludedByCost:
+			proof.CostExcluded = append(proof.CostExcluded, k.Kind)
 		}
 	}
 	if len(proof.ProvenInTofu)+len(proof.ProvenInCluster)+len(proof.Missing) == 0 {
-		return MaxConfigStateProof{}, fmt.Errorf("max-config on %q asserted NOTHING: every kind is excluded or deferred, so the run proves nothing — that is not a cloud the full bar can be driven on", provider)
+		return MaxConfigStateProof{}, fmt.Errorf("max-config on %q asserted NOTHING: every kind is excluded, deferred or cost-excluded, so the run proves nothing — that is not a cloud the full bar can be driven on", provider)
 	}
 	return proof, nil
 }

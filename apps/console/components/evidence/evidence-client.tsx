@@ -9,8 +9,10 @@
 // the result count. Read-only: the data is produced by the PLAN/DEPLOY + drift jobs.
 
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@repo/ui/button";
+import { CountPill } from "@repo/ui/count-pill";
 import { ErrorState } from "@/components/errors/error-state";
 import { DEFAULT_EVIDENCE_FILTERS } from "@/components/evidence/evidence-query";
 import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
@@ -21,7 +23,6 @@ import { EvidenceDrawer } from "./drawer/evidence-drawer";
 import type { EvidenceEnvRow } from "./evidence-derive";
 import { EvidenceNoMatch, EvidenceOnboarding } from "./evidence-empty";
 import { EvidenceFilterBar } from "./evidence-filter-bar";
-import { EvIcon } from "./evidence-status";
 import { EvidenceTable } from "./evidence-table";
 import { EvidenceWaivers } from "./evidence-waivers";
 import { downloadReceipt } from "./receipt-download";
@@ -44,13 +45,6 @@ export function EvidenceClient() {
 	// Row interaction.
 	const [drawerId, setDrawerId] = useState<string | null>(null);
 	const [drawerTab, setDrawerTab] = useState("report");
-	const [toast, setToast] = useState("");
-
-	useEffect(() => {
-		if (!toast) return;
-		const t = setTimeout(() => setToast(""), 2400);
-		return () => clearTimeout(t);
-	}, [toast]);
 
 	// The drawer opens only on a currently-visible row, so it's always in the grouped set.
 	const drawerRow = useMemo(() => {
@@ -70,7 +64,10 @@ export function EvidenceClient() {
 	/** Downloads the row's signed receipt and shows a confirmation toast. */
 	const download = (row: EvidenceEnvRow) => {
 		if (!row.verify?.receipt) return;
-		setToast(downloadReceipt(row.verify.receipt, row.verify.jobId));
+		// The shared `Toaster` (mounted bottom-center in `app/layout.tsx`) replaces the
+		// fixed-position z-index-95 div this page used to hand-roll — one toast surface, one
+		// dismiss affordance, one place in the layer scale.
+		toast.success(downloadReceipt(row.verify.receipt, row.verify.jobId));
 	};
 
 	// A fetch failure must not render as a blank page (or fall through to onboarding) — show the
@@ -120,19 +117,13 @@ export function EvidenceClient() {
 							<h2 className="font-display text-[15px] font-semibold tracking-tight text-text-primary">
 								Environments
 							</h2>
-							<span className="rounded-full border px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-text-secondary">
-								{result.resultCount}
-							</span>
+							<CountPill count={result.resultCount} />
 						</div>
 
 						{result.resultCount === 0 && filtersActive ? (
 							<EvidenceNoMatch onClear={reset} />
 						) : (
-							<EvidenceTable
-								org={org}
-								groups={result.groups}
-								onOpen={openDrawer}
-							/>
+							<EvidenceTable groups={result.groups} onOpen={openDrawer} />
 						)}
 
 						<div className="mt-6">
@@ -151,13 +142,6 @@ export function EvidenceClient() {
 				onClose={() => setDrawerId(null)}
 				onDownload={download}
 			/>
-
-			{toast && (
-				<div className="fixed bottom-6 left-1/2 z-[95] flex -translate-x-1/2 items-center gap-2 rounded-sm bg-ink px-4 py-2.5 text-[12.5px] text-ink-foreground shadow-lg">
-					<EvIcon name="check-circle" size={14} />
-					{toast}
-				</div>
-			)}
 		</div>
 	);
 }

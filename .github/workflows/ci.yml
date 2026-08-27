@@ -1078,8 +1078,15 @@ jobs:
       # script header — the floors carry a fingerprint of the environment that recorded them, and
       # a mismatch (including a different OS) demotes failures to warnings rather than blaming
       # coverage for a toolchain change.
+      #
+      # --require-verdict: every fail-open path in the script exits 0, which made "the ratchet
+      # passed" and "the ratchet never ran" the same green here (#2852). Two of those can fire on
+      # a runner — jq missing from an image, and a test step that wrote its profile somewhere
+      # else — and both announced themselves with `::warning::`, which nothing surfaces on a PR
+      # page. The flag turns any non-measuring path into exit 3, so this step asserts it actually
+      # got an answer. Local runs stay advisory: the flag is off by default.
       - name: Coverage ratchet (per package, no regressions)
-        run: bash scripts/go-coverage.sh --module ${{ matrix.module }}
+        run: bash scripts/go-coverage.sh --module ${{ matrix.module }} --require-verdict
       # Each Go module must be tidy STANDALONE (no go.work) — the CLI mirror + GoReleaser build
       # apps/cli outside the workspace, where go.work can't paper over a missing require. This guard
       # fails the PR instead of the (post-merge) mirror when go.mod/go.sum drift standalone.
@@ -1126,7 +1133,7 @@ jobs:
       # "missing" to demote the failure with. Recorded tofu:true, it demotes to a warning.
       - name: Coverage ratchet — test/e2e harness
         if: matrix.module == 'packages/core'
-        run: bash scripts/go-coverage.sh --module test/e2e
+        run: bash scripts/go-coverage.sh --module test/e2e --require-verdict
       - name: CLI logic-scope coverage gate (≥90%)
         if: matrix.module == 'apps/cli'
         working-directory: ${{ matrix.module }}

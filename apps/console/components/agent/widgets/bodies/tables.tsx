@@ -16,16 +16,23 @@ import {
 	TableHeader,
 	TableRow,
 } from "@repo/ui/table";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 
-/** Grayscale status: dot + mono label (never hue). */
-export function Status({ v }: { v: string | null | undefined }) {
-	return (
-		<span className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-			<span className="h-1.5 w-1.5 flex-none rounded-full bg-muted-foreground/70" />
-			{v ?? "—"}
-		</span>
-	);
+/**
+ * A status cell.
+ *
+ * This was a local dot-plus-label that drew the SAME grey dot for every value — a failed job
+ * and a running one were visually identical, which is the opposite of what a status column is
+ * for. `@repo/ui/status-badge` resolves the string to one of five grayscale tiers (fill, ring,
+ * hollow, notched, faint) and is what the rest of the console already renders, so the agent's
+ * tables now say the same thing the tables outside the agent do.
+ *
+ * `—` for a missing value is kept: it resolves to the `idle` tier, so an absent status reads as
+ * absent rather than borrowing the look of a real one.
+ */
+function Status({ v }: { v: string | null | undefined }) {
+	return <StatusBadge status={v ?? "—"} className="text-[10px]" />;
 }
 
 const TH = "vx-eyebrow h-auto py-2 text-[9px]";
