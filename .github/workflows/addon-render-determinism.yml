@@ -15,14 +15,14 @@ on:
   pull_request:
     paths:
       - "apps/console/lib/addons/**"
-      - "test/e2e/fixtures/addon_catalog.json"
+      - "test/e2e/fixtures/addon_catalog.*.json"
       - "scripts/addons/**"
       - ".github/workflows/addon-render-determinism.yml"
   push:
     branches: [dev]
     paths:
       - "apps/console/lib/addons/**"
-      - "test/e2e/fixtures/addon_catalog.json"
+      - "test/e2e/fixtures/addon_catalog.*.json"
       - "scripts/addons/**"
   workflow_dispatch:
 

@@ -49,7 +49,11 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-fixture="$repo_root/test/e2e/fixtures/addon_catalog.json"
+# Any ONE per-cloud fixture is enough here: the fixtures differ only in external-dns's `provider`
+# knob, and what this check reads — chart coordinates and the rendered resource shapes — is identical
+# across clouds. hetzner is chosen because it is the harness's own default cloud, so this file and
+# addonCatalogFixture() agree on which fixture "the" fixture is.
+fixture="$repo_root/test/e2e/fixtures/addon_catalog.hetzner.json"
 allowfile="$repo_root/scripts/addons/published-defaults-allowed.txt"
 
 command -v helm >/dev/null 2>&1 || { echo "check-published-defaults: helm is not installed" >&2; exit 2; }
