@@ -6,6 +6,14 @@
 //   · clicking an artifact silently created a chat named after it (or hijacked your last one)
 //   · the rail carried an orphan "Chats" row and an unpadded search box
 // These assert geometry and side-effects — the things a type-check can never see.
+//
+// Runs in the `elench-ai` PROJECT — the CI job `E2E (browser · Elench AI journeys · scripted
+// model)`. It used to have an `elench-ux` project of its own that no workflow ever invoked, so
+// "the reason this suite exists at all" ran nowhere (#2875). It belongs here on the evidence:
+// it takes the same shared `setup` persona and storageState, and the artifact test below sends
+// "Build a dashboard of my infrastructure" — the scripted `dashboard` scenario in
+// lib/config/ai-mock.ts, whose four blocks are the four widget cards it asserts. Against an
+// AI-off console that assertion can only ever 503, so this file needs ALETHIA_AI_MOCK=1.
 
 import { expect, test, type Page } from "@playwright/test";
 
