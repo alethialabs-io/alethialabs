@@ -74,7 +74,15 @@ yourself with `kubectl`, or [disable the add-on](#removing-a-chart), which remov
 **Self-heal is off, so changes you make in the cluster stick.** If you `kubectl edit` a resource
 your chart owns, ArgoCD reports the Application `OutOfSync` and leaves your change alone. That is
 what you want while debugging; it also means an `OutOfSync` BYO chart is informational, not an
-error. Re-deploy to bring it back to what the chart declares.
+error.
+
+To put it back, you have to give ArgoCD something to do — **a deploy on its own will not revert it**,
+because the chart is already at the revision it is meant to be at and there is nothing to sync. Any
+of these works:
+
+- push a commit to the tracked ref, which produces a new revision to sync;
+- delete the edited resource, and the next sync recreates it from the chart;
+- sync the Application from ArgoCD directly, which reapplies the current revision.
 
 ## What your chart may create
 

@@ -239,7 +239,10 @@ function NavMenu({
             background: "var(--surface)",
             boxShadow: "var(--shadow-lg)",
             padding: 14,
-            zIndex: 60,
+            // An overlay opened FROM the header, so it takes the overlay rung — not the
+            // frame's. At the old literal 60 it TIED with .vx-frame and won only on DOM
+            // order; now it outranks the whole chrome by number.
+            zIndex: "var(--z-overlay)",
             marginTop: 1,
           }}
         >
@@ -362,8 +365,9 @@ export function Header({
       style={{
         position: "sticky",
         top: 0,
-        zIndex: 50,
-        // The fixed `.vx-frame` (z-60) paints over this header (z-50), so the
+        zIndex: "var(--z-header)",
+        // The fixed `.vx-frame` still paints over this header — the layer scale in
+        // tokens.css keeps that order deliberately (--z-frame above --z-header) — so the
         // visible band starts at `--frame-inset`, not at 0. Without this the 62px
         // row centres at y=31 — 20.5px above the frame line, 31.5px below the
         // bottom rule — and the nav reads as sitting too high. Padding rather
