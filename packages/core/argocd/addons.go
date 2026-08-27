@@ -259,12 +259,40 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 			// marketplace add-ons) do not. Kubernetes also defaults resourceFieldRef.divisor to "1";
 			// ignore that API-server-only default so it cannot pin a Deployment-backed add-on OutOfSync.
 			// RespectIgnoreDifferences makes the sync honor both ignores too.
-			IgnoreDifferences: []addonIgnoreDifference{{
-				Group:             "apps",
-				Kind:              "Deployment",
-				JSONPointers:      []string{"/status/terminatingReplicas"},
-				JQPathExpressions: []string{".spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor"},
-			}},
+			IgnoreDifferences: []addonIgnoreDifference{
+				{
+					Group:             "apps",
+					Kind:              "Deployment",
+					JSONPointers:      []string{"/status/terminatingReplicas"},
+					JQPathExpressions: []string{".spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor"},
+				},
+				{
+					// `spec.preserveUnknownFields` was REMOVED in apiextensions.k8s.io/v1: the API
+					// server accepts `false` and does not persist it. A chart that still declares it
+					// therefore renders a field the cluster will never report back, and the
+					// Application is permanently OutOfSync on a value nobody can change.
+					//
+					// MEASURED, not guessed — this is the first field ArgoCD's own diff has ever
+					// named here, because that diagnostic could not run until #2907 and #2947.
+					// hetzner/addons run 33067969126:
+					//
+					//   ===== apiextensions.k8s.io/CustomResourceDefinition /analysisruns.argoproj.io =====
+					//   78a79
+					//   >   preserveUnknownFields: false
+					//
+					// five times, once per argo-rollouts CRD. Rendering the pinned chart confirms all
+					// five declare it, so desired has the field and live does not — the count and the
+					// direction both match.
+					//
+					// Scoped to the CRD kind rather than added to the Deployment entry above: this is
+					// a different resource and a different mechanism (a removed API field, not an
+					// API-server-managed default), and folding them together would hide which chart
+					// each one exists for.
+					Group:        "apiextensions.k8s.io",
+					Kind:         "CustomResourceDefinition",
+					JSONPointers: []string{"/spec/preserveUnknownFields"},
+				},
+			},
 			SyncPolicy: addonSyncPolicy{
 				SyncOptions:              []string{"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"},
 				ManagedNamespaceMetadata: namespaceMetadataFor(a.PodSecurity),
