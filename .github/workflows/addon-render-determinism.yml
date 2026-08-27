@@ -54,3 +54,10 @@ jobs:
         # never move — and a run that reports only the first would hide the second.
         if: always()
         run: bash scripts/addons/check-published-defaults.sh
+      - name: No add-on requests more memory than a node can give it
+        # `if: always()` for the same reason as its sibling: this is a THIRD independent property of
+        # the same render, and the three fail for unrelated causes. minio asked for the chart's
+        # default 16Gi and simply never scheduled — neither of the checks above can see that, because
+        # 16Gi is a constant (so the render is stable) and is not a credential.
+        if: always()
+        run: bash scripts/addons/check-resource-fit.sh
