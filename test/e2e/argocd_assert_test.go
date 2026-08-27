@@ -1133,11 +1133,46 @@ func TestInterpretByoSyncPolicy(t *testing.T) {
 		}
 	})
 
-	t.Run("unset sub-options are not read as false", func(t *testing.T) {
-		// A partial object must not be silently accepted: nil is Go's zero for *bool, and treating
-		// it as false is how a policy that says nothing passes a check for a policy that says no.
-		if err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{}); err == nil {
-			t.Error("prune/selfHeal unset must be rejected, not defaulted to false")
+	t.Run("an empty automated block is ACCEPTED — absent means false", func(t *testing.T) {
+		// REVERSED, with a measured reason. This asserted that `{}` must be rejected ("both must be
+		// explicitly false"), and that rule was unsatisfiable on a live cluster: hetzner/floor run
+		// 33092056761 read back
+		//
+		//	observed spec.syncPolicy.automated: {}
+		//
+		// from an Application whose manifest carried `prune: false` / `selfHeal: false`, verified at
+		// every step from the renderer to a throwaway-cluster round-trip.
+		//
+		// ArgoCD v3.1.8 declares `Prune bool json:"prune,omitempty"` and the same for SelfHeal,
+		// while giving `Enabled` a *bool precisely so absent/true/false stay distinguishable there.
+		// So false collapses to absent the moment ArgoCD serialises the object, and upstream's own
+		// meaning for absent IS false.
+		//
+		// The old intent survives intact below: what must never be accepted is prune/selfHeal
+		// TRUE, and true is non-zero, so omitempty cannot hide it.
+		if err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{}); err != nil {
+			t.Errorf("an empty automated block is auto-sync with prune/selfHeal off, which is the intended policy: %v", err)
+		}
+	})
+
+	t.Run("a HALF-set block still catches a true", func(t *testing.T) {
+		// The state omitempty actually produces for a bad policy: selfHeal survives because it is
+		// true, prune vanishes because it is false. Rejecting this is the whole remaining job.
+		yes := true
+		if err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{SelfHeal: &yes}); err == nil {
+			t.Error("selfHeal=true with prune omitted must still be rejected")
+		}
+		if err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{Prune: &yes}); err == nil {
+			t.Error("prune=true with selfHeal omitted must still be rejected")
+		}
+	})
+
+	t.Run("a MISSING automated block is still the #2910 regression", func(t *testing.T) {
+		// The distinction that survives all of the above, and the one the cell exists for: no
+		// `automated` at all means nothing ever syncs the chart. That is not the same as an empty
+		// one, and loosening the empty case must not loosen this.
+		if err := interpretByoSyncPolicy("addon-byo-e2e", nil); err == nil {
+			t.Error("a BYO Application with no automated policy deploys nothing and must be rejected")
 		}
 	})
 }
