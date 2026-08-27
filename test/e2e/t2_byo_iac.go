@@ -113,7 +113,7 @@ const byoIacBaselineMarker = "baseline"
 // module, so the leg refuses to run rather than reporting a green skip.
 var byoIacProbeResourceType = map[string]string{
 	"aws":     "aws_ssm_parameter",
-	"gcp":     "google_compute_project_metadata_item",
+	"gcp":     "google_storage_bucket",
 	"azure":   "azurerm_resource_group",
 	"alibaba": "alicloud_oss_bucket",
 	"hetzner": "hcloud_placement_group",
@@ -371,7 +371,14 @@ type byoIacMutationOpts struct {
 //	azure    az group update --set tags.<key> — reads, mutates in memory, writes back, so other
 //	         tags survive. --force-string stops the CLI's shell_safe_json_parse from coercing a
 //	         value that happens to look like JSON into a non-string.
-//	gcp      add-metadata — documented as "only metadata keys that are provided are mutated".
+//	gcp      buckets update --update-labels — merges into the existing label map, so the module's
+//	         `managed_by` label survives. It replaced `compute project-info add-metadata`, which
+//	         needed `compute.projects.setCommonInstanceMetadata` — a permission the e2e service
+//	         account did not have, and MUST NOT be given: project-common metadata includes
+//	         `ssh-keys`, so that verb grants SSH into every VM in a SHARED project, and the
+//	         credential in question is the one a customer's own OpenTofu runs under. A bucket label
+//	         is scoped to one bucket the module owns, and `roles/storage.admin` is already held, so
+//	         the scoped probe also needs no new grant at all (#2792).
 //	hetzner  add-label --overwrite — merges into the existing label map; WITHOUT --overwrite the
 //	         CLI refuses an existing key, which in CI would look like a broken probe.
 //
@@ -401,7 +408,7 @@ func byoIacMutationArgv(provider, target, newValue string, opts byoIacMutationOp
 	case "azure":
 		return []string{"az", "group", "update", "--name", target, "--force-string", "--set", "tags.drift_marker=" + newValue}, nil
 	case "gcp":
-		argv := []string{"gcloud", "compute", "project-info", "add-metadata", "--metadata", target + "=" + newValue}
+		argv := []string{"gcloud", "storage", "buckets", "update", "gs://" + target, "--update-labels=drift_marker=" + newValue}
 		if a := strings.TrimSpace(opts.Account); a != "" {
 			argv = append(argv, "--project", a)
 		}
