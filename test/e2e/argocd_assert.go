@@ -1023,11 +1023,55 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
 	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
+	target, err := argoServerDeployment(cctx, kubeconfigPath)
+	if err != nil {
+		return fmt.Sprintf("\n  ──── argocd app diff %s ────\n%v\n", app, err)
+	}
+
 	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
-		"-n", "argocd", "exec", "deploy/argocd-server", "--",
+		"-n", "argocd", "exec", target, "--",
 		"argocd", "app", "diff", app, "--core")
+	out, cerr := cmd.CombinedOutput()
+	return interpretArgoDiff(app, string(out), cerr)
+}
+
+// argoServerDeployment resolves the argocd-server Deployment BY LABEL rather than by name.
+//
+// It was hardcoded as `deploy/argocd-server`, and that name does not exist. ArgoCD is installed
+// with `helm upgrade --install argo-cd argo/argo-cd` (deploy.go), and the chart prefixes every
+// workload with the release name — the real Deployment is `argo-cd-argocd-server`. So EVERY diff
+// this function exists to produce came back
+//
+//	Error from server (NotFound): deployments.apps "argocd-server" not found
+//
+// which is why #2778's question — WHICH field differs — was still unanswered after three paid runs
+// with five Applications sitting Healthy+OutOfSync. The diagnostic was there and was never once
+// able to run.
+//
+// `app.kubernetes.io/name=argocd-server` is the chart's own label on that Deployment (verified
+// against the pinned 8.6.4 render), and unlike the resource name it does not move when the release
+// is renamed. A NAME would have to be re-guessed the next time the install command changes; this
+// does not.
+func argoServerDeployment(ctx context.Context, kubeconfigPath string) (string, error) {
+	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", "argocd", "get", "deploy",
+		"-l", "app.kubernetes.io/name=argocd-server",
+		"-o", "name")
 	out, err := cmd.CombinedOutput()
-	return interpretArgoDiff(app, string(out), err)
+	if err != nil {
+		return "", fmt.Errorf("could not resolve the argocd-server Deployment: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	// `-o name` prints `deployment.apps/<name>` per match. Take the first; more than one would mean
+	// two ArgoCD installs in one namespace, which is not a case this diagnostic needs to resolve.
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t, nil
+		}
+	}
+	// Empty output with exit 0. Reported as its own finding: "no ArgoCD server Deployment carries
+	// the label" and "kubectl failed" send someone to different places, and neither may render as
+	// "there is no diff".
+	return "", errors.New("no Deployment in namespace argocd carries app.kubernetes.io/name=argocd-server — cannot run `argocd app diff`")
 }
 
 // interpretArgoDiff turns `argocd app diff`'s output and exit status into a report section.

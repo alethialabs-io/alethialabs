@@ -11,7 +11,9 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -989,5 +991,45 @@ func TestCrashLooping(t *testing.T) {
 				t.Fatalf("crashLooping(%q) = %v, want %v", tc.line, got, tc.want)
 			}
 		})
+	}
+}
+
+// The `argocd app diff` dump execs into the argocd-server Deployment, and the name it used —
+// `argocd-server` — does not exist. The chart is installed as `helm upgrade --install argo-cd
+// argo/argo-cd`, so the real Deployment is `argo-cd-argocd-server`, and every diff came back
+// `Error from server (NotFound)`. Five Applications sat Healthy+OutOfSync across three PAID runs
+// with the differing field still unknown, because the diagnostic that would name it could never run.
+//
+// These pin the reporting contract rather than the exec: a resolution failure must read as "could
+// not ask", never as "nothing differs" — those are opposite findings and #2778 is explicit that a
+// GUESSED ignoreDifferences entry can mask real drift.
+func TestArgoDiffResolutionFailureIsNotSilence(t *testing.T) {
+	// interpretArgoDiff's "could not ask" branch, for contrast with the two real verdicts below.
+	got := interpretArgoDiff("addon-tempo", "", errors.New("could not resolve the argocd-server Deployment"))
+	if !strings.Contains(got, "addon-tempo") {
+		t.Errorf("the report must name the Application; got %q", got)
+	}
+	for _, forbidden := range []string{"no difference", "nothing differs", "in sync"} {
+		if strings.Contains(strings.ToLower(got), forbidden) {
+			t.Errorf("a failure to ASK rendered as a finding of no difference (%q): %s", forbidden, got)
+		}
+	}
+}
+
+func TestArgoDiffVerdictsAreDistinct(t *testing.T) {
+	// exit 1 WITH output is the success case — a diff was found. Anything that treats a non-nil
+	// error as a failure here throws away the only output the whole path exists to produce.
+	found := interpretArgoDiff("addon-tempo", "  spec:\n-   replicas: 1\n+   replicas: 2\n", &exec.ExitError{})
+	// exit 0 with no output: ArgoCD genuinely sees no difference despite the app reporting
+	// OutOfSync. Real and specific, and NOT the same as the case above or the one below.
+	none := interpretArgoDiff("addon-tempo", "", nil)
+	// Neither may be indistinguishable from a failure to look.
+	broken := interpretArgoDiff("addon-tempo", "", errors.New("boom"))
+
+	if found == none || found == broken || none == broken {
+		t.Errorf("the three outcomes must be distinguishable:\nfound=%q\nnone=%q\nbroken=%q", found, none, broken)
+	}
+	if !strings.Contains(found, "replicas") {
+		t.Errorf("the diff body must survive into the report; got %q", found)
 	}
 }
