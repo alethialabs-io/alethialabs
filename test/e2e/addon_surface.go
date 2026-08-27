@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -72,7 +73,88 @@ func AllCatalogAddOns() ([]types.AddOnInstall, error) {
 			return nil, fmt.Errorf("add-on catalog fixture entry %d is incomplete: %+v", i, a)
 		}
 	}
-	return addons, nil
+	return applyAddOnDebugOverrides(addons), nil
+}
+
+// envAddOnDebugValues opts one or more add-ons into extra diagnostic logging for a single run.
+const envAddOnDebugValues = "ALETHIA_E2E_ADDON_DEBUG"
+
+// applyAddOnDebugOverrides turns on per-add-on debug logging that MUST NOT ship in the catalog.
+//
+// #2866 is the case this exists for. falco crash-loops on Talos with
+//
+//	Opening 'syscall' source with modern BPF probe.
+//	An error occurred in an event source, forcing termination...
+//	Error: Initialization issues during scap_init
+//
+// and that is the LAST thing it says. #2895 raised the crash-loop dump to 400 lines with
+// `--previous` on the theory that the sub-errors were being truncated; the hetzner/addons run on
+// 2026-08-27 (33059349873) then showed the entire init sequence with nothing after scap_init at
+// all. The detail is not truncated — it is not emitted. scap lives in falco's `libs` layer, whose
+// logger is off by default.
+//
+// WHY NOT JUST SET IT IN THE CATALOG. The pinned falco chart's own values say of `libs_logger`:
+// "It is not recommended for production use." The catalog is what a CUSTOMER installs, so turning
+// debug logging on there to serve one investigation would ship it to every customer's cluster
+// forever. This is a run-scoped override instead: unset changes nothing, and setting it is a
+// deliberate act recorded in a repo variable.
+//
+// Deliberately a small fixed TABLE rather than free-form YAML from the environment. A run whose
+// add-on values can be rewritten arbitrarily from a variable is a run that can no longer be said to
+// have proven the catalog — the whole point of seeding from the generated fixture is that the e2e
+// installs what ships. Each entry here is one named, reviewable diagnostic.
+func applyAddOnDebugOverrides(addons []types.AddOnInstall) []types.AddOnInstall {
+	want := map[string]bool{}
+	for _, id := range strings.Split(os.Getenv(envAddOnDebugValues), ",") {
+		if t := strings.TrimSpace(id); t != "" {
+			want[t] = true
+		}
+	}
+	if len(want) == 0 {
+		return addons
+	}
+	for i := range addons {
+		if !want[addons[i].ID] {
+			continue
+		}
+		switch addons[i].ID {
+		case "falco":
+			// falco.libs_logger — the layer scap_init reports from (#2866).
+			mergeAddOnValues(&addons[i], map[string]interface{}{
+				"falco": map[string]interface{}{
+					"libs_logger": map[string]interface{}{"enabled": true, "severity": "debug"},
+				},
+			})
+		}
+	}
+	return addons
+}
+
+// mergeAddOnValues merges one level of override into an install's Values, creating the map when the
+// spec carries none. Shallow ON PURPOSE at the top level and recursive below it, so an override for
+// `falco.libs_logger` cannot drop the `falco.json_output` the catalog already set.
+func mergeAddOnValues(a *types.AddOnInstall, over map[string]interface{}) {
+	if a.Values == nil {
+		a.Values = map[string]interface{}{}
+	}
+	a.Values = deepMergeValues(a.Values, over)
+}
+
+// deepMergeValues merges src into dst, recursing into nested maps. Returns dst.
+func deepMergeValues(dst, src map[string]interface{}) map[string]interface{} {
+	for k, v := range src {
+		sub, isMap := v.(map[string]interface{})
+		if !isMap {
+			dst[k] = v
+			continue
+		}
+		existing, ok := dst[k].(map[string]interface{})
+		if !ok {
+			existing = map[string]interface{}{}
+		}
+		dst[k] = deepMergeValues(existing, sub)
+	}
+	return dst
 }
 
 // CatalogAddOn returns ONE add-on's install spec from the same generated fixture AllCatalogAddOns
