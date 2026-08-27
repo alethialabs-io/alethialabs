@@ -1022,6 +1022,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			if err := argocd.EnsureExternalDNSSecret("external-dns-hetzner", "token", os.Getenv("HCLOUD_TOKEN"), stdout, stderr); err != nil {
 				return nil, fmt.Errorf("failed to seed the hetzner external-dns secret: %w", err)
 			}
+		case "azure":
+			// NOT a credential — external-dns on Azure is keyless via workload identity. This is
+			// the azure.json its provider reads UNCONDITIONALLY before any flag is applied, and
+			// the only place `useWorkloadIdentityExtension` can be set at all (#2868).
+			if err := argocd.EnsureExternalDNSAzureConfig(facts.AzureSubscriptionID,
+				facts.AzureResourceGroup, facts.AzureTenantID, stdout, stderr); err != nil {
+				return nil, fmt.Errorf("failed to seed the azure external-dns config: %w", err)
+			}
 		}
 		renderedDir, renderErr := argocd.RenderApplications(argoTemplatesDir, facts)
 		if renderErr != nil {

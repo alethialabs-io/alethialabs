@@ -87,6 +87,63 @@ data:
 `, secretName, key, b64([]byte(token)))
 }
 
+// azureDNSConfigJSON builds the `azure.json` external-dns reads on Azure.
+//
+// WHY A FILE AND NOT FLAGS. external-dns v0.15.0 (chart 1.15.0) resolves its Azure settings in
+// provider/azure/config.go's getConfig(), which opens with an UNCONDITIONAL
+// `os.ReadFile(configFile)` and returns an error when it is absent — the flag overrides for
+// subscription and resource group are applied AFTER that read, so they cannot rescue it. On an
+// AKS cluster using workload identity there is no /etc/kubernetes/azure.json (that path is the
+// legacy in-tree cloud-provider's, which AKS does not lay down for us), so the controller dies
+// with `failed to read Azure config file` and CrashLoopBackOffs while the ArgoCD Application
+// still reports Synced — which is exactly how #2868 presented as a file-not-found rather than
+// an auth error.
+//
+// `useWorkloadIdentityExtension` is the load-bearing key and it is FILE-ONLY: there is no
+// corresponding flag anywhere in v0.15.0. Without it getCredentials() falls through workload
+// identity to MSI and authenticates as the node's kubelet identity, which holds no DNS rights.
+//
+// aadClientId is deliberately OMITTED. The azure.workload.identity/use pod label makes the
+// webhook inject AZURE_CLIENT_ID from the service account's client-id annotation, and azidentity
+// reads it from the environment when the config leaves it empty. Writing it here as well would
+// give the same fact two sources that can disagree. aadClientSecret is likewise absent: with it
+// empty, getCredentials() skips the service-principal branch — which is what makes this keyless.
+func azureDNSConfigJSON(subscriptionID, resourceGroup, tenantID string) string {
+	// Marshalled by hand, in a fixed key order, because this string is hashed into the
+	// Secret and a map's iteration order would make the manifest differ between deploys for
+	// no change in input — the render-nondeterminism class that keeps an add-on permanently
+	// OutOfSync (#2822, #2823).
+	return fmt.Sprintf(`{
+  "cloud": "AzurePublicCloud",
+  "tenantId": %q,
+  "subscriptionId": %q,
+  "resourceGroup": %q,
+  "useWorkloadIdentityExtension": true
+}
+`, tenantID, subscriptionID, resourceGroup)
+}
+
+// EnsureExternalDNSAzureConfig seeds the azure.json Secret the Azure external-dns mounts at
+// /etc/kubernetes (its default --azure-config-file path, so no extra arg is rendered). It
+// carries NO credential — four identifiers plus a mode flag; the token comes from the
+// federated workload identity at runtime. It is still a Secret rather than a ConfigMap because
+// the chart's extraVolumes mount is what the Application already knows how to reference, and
+// because a future non-keyless cloud would put aadClientSecret in this same file.
+//
+// Every value is required: DNSProvider() returns "" unless all four Azure facts are present, so
+// reaching here with an empty one means the render gate and this seeder have drifted apart.
+func EnsureExternalDNSAzureConfig(subscriptionID, resourceGroup, tenantID string, stdout, stderr io.Writer) error {
+	if subscriptionID == "" || resourceGroup == "" || tenantID == "" {
+		return fmt.Errorf("refusing to write an incomplete external-dns azure.json "+
+			"(subscription=%q resourceGroup=%q tenant=%q) — DNSProvider() should have skipped the app",
+			subscriptionID, resourceGroup, tenantID)
+	}
+	fmt.Fprintln(stdout, "Seeding external-dns azure.json config secret external-dns-azure...")
+	manifest := externalDNSSecretManifest("external-dns-azure", "azure.json",
+		azureDNSConfigJSON(subscriptionID, resourceGroup, tenantID))
+	return ApplyManifest(manifest, stdout, stderr)
+}
+
 // EnsureExternalDNSSecret applies the token Secret a connector-backed external-dns needs
 // (idempotent; re-applying refreshes a rotated token on every deploy). Callers must pass a
 // non-empty token — the render gate (DNSCredentialPresent) skips the app otherwise.
