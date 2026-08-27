@@ -139,7 +139,9 @@ flowchart LR
 `} />
 
 1. A tiered scheduler (`lib/drift/schedule` + `dispatch`) enqueues checks per environment on a cadence
-   (production most often) through the cron route `/api/internal/drift/sweep` (`sweepDriftSchedule`).
+   (production most often). `sweepDriftSchedule()` is driven **in-process** by the reconcile loop
+   (`lib/reconcile/loop.ts`); `/api/internal/drift/sweep` exposes the same sweep to an external
+   scheduler and is currently unwired.
 2. `DETECT_DRIFT` (migration `0044`) runs on the runner (`executeDriftDetection`) and posts the `Posture`.
 3. The job-status route persists it to **`environment_drift`** (migration `0051`, latest per environment)
    via `recordDriftPosture`.
