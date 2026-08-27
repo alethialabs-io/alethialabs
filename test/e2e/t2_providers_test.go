@@ -8,9 +8,10 @@
 // `go test ./...` in test/e2e catches a regression in the seam before the nightly does.
 //
 // The keystone is TestT2HetznerPathUnchanged: it asserts the hetzner row, resolved from
-// EXACTLY the env the current nightly sets, produces the SAME effective config the
-// pre-table hard-coded path did (region nbg1, cluster-ready "8m", wait 25m, overall ctx
-// 40m) — the guard that tonight's nightly behaves bit-for-bit as before.
+// EXACTLY the env the current nightly sets, produces the effective config the nightly is
+// expected to run with (region nbg1, cluster-ready "8m", wait 40m, overall ctx 55m) — so
+// the row cannot drift by accident. The wait was 25m until the `imager_image` snapshot
+// deadline blew twice; see that test for why it moved.
 package e2e
 
 import (
@@ -65,7 +66,7 @@ func TestT2ProviderTableComplete(t *testing.T) {
 		clusterReady string
 		waitTimeout  time.Duration
 	}{
-		"hetzner": {"nbg1", "8m", 25 * time.Minute},
+		"hetzner": {"nbg1", "8m", 40 * time.Minute},
 		"aws":     {"us-east-1", "15m", 50 * time.Minute},
 		"gcp":     {"europe-west3-a", "15m", 50 * time.Minute},
 		"azure":   {"westeurope", "15m", 50 * time.Minute},
@@ -261,8 +262,8 @@ func TestT2ResolveTimeouts(t *testing.T) {
 		if got := resolveT2ClusterReadyTimeout(hz); got != "8m" {
 			t.Errorf("hetzner cluster-ready = %q, want 8m", got)
 		}
-		if got := resolveT2WaitTimeout(hz); got != 25*time.Minute {
-			t.Errorf("hetzner wait = %v, want 25m", got)
+		if got := resolveT2WaitTimeout(hz); got != 40*time.Minute {
+			t.Errorf("hetzner wait = %v, want 40m", got)
 		}
 		if got := resolveT2ClusterReadyTimeout(aws); got != "15m" {
 			t.Errorf("aws cluster-ready = %q, want 15m", got)
@@ -287,8 +288,8 @@ func TestT2ResolveTimeouts(t *testing.T) {
 		clearT2Env(t)
 		t.Setenv("ALETHIA_E2E_T2_WAIT", "not-a-duration")
 		hz, _ := t2LookupProvider("hetzner")
-		if got := resolveT2WaitTimeout(hz); got != 25*time.Minute {
-			t.Errorf("malformed override wait = %v, want the 25m default", got)
+		if got := resolveT2WaitTimeout(hz); got != 40*time.Minute {
+			t.Errorf("malformed override wait = %v, want the 40m default", got)
 		}
 	})
 }
@@ -492,24 +493,30 @@ func TestT2MergeNetworkJSON(t *testing.T) {
 	})
 }
 
-// TestT2HetznerPathUnchanged is the keystone parity guard: resolving the hetzner row from
-// EXACTLY the env the current nightly sets must reproduce the pre-table hard-coded config
-// (region nbg1, cluster-ready "8m", wait 25m, overall ctx 40m, creds present). If a
-// future edit drifts any of these, tonight's nightly would change behavior — and this
-// fails first. It also proves that adding ALETHIA_E2E_REGION=nbg1 (the workflow change in
-// this PR) leaves the resolved region identical.
+// TestT2HetznerPathUnchanged is the keystone guard on the hetzner row: resolving it from EXACTLY
+// the env the nightly sets must produce the config below, so an edit that drifts any of these
+// fails here rather than in tonight's nightly. It also proves ALETHIA_E2E_REGION=nbg1 leaves the
+// resolved region identical.
+//
+// The wait was 25m and the ctx 40m — the values the pre-table hard-coded path used, pinned here so
+// the table could be proven bit-for-bit equivalent to it. That equivalence has now been
+// DELIBERATELY broken: `imager_image` blew a 15m snapshot deadline twice (#2458, and the scheduled
+// floor run 33080748841), so image.tf's create timeout is 25m and this wait has to contain it. See
+// the hetzner row in t2_providers.go for the arithmetic.
+//
+// The pin stays a pin. What this guard is worth is that the number cannot move by ACCIDENT — the
+// answer to a deliberate change is to update it here and say why, never to relax the assertion.
 func TestT2HetznerPathUnchanged(t *testing.T) {
 	hz, ok := t2LookupProvider("hetzner")
 	if !ok {
 		t.Fatal("hetzner row missing")
 	}
 
-	// The pre-table constants the hard-coded path used.
 	const (
 		wantRegion       = "nbg1"
 		wantClusterReady = "8m"
-		wantWait         = 25 * time.Minute
-		wantOverallCtx   = 40 * time.Minute // deploy wait 25m + argo 8m + 7m headroom
+		wantWait         = 40 * time.Minute
+		wantOverallCtx   = 55 * time.Minute // deploy wait 40m + argo 8m + 7m headroom
 	)
 
 	t.Run("current workflow env (legacy region name)", func(t *testing.T) {
