@@ -108,6 +108,7 @@
     "@repo/brand": "workspace:*",
     "@repo/format": "workspace:*",
     "@repo/email": "workspace:*",
+    "@repo/format": "workspace:*",
     "@repo/legal": "workspace:*",
     "@repo/plan-catalog": "workspace:*",
     "@repo/platform": "workspace:*",
