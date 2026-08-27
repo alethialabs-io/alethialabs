@@ -1033,3 +1033,64 @@ func TestArgoDiffVerdictsAreDistinct(t *testing.T) {
 		t.Errorf("the diff body must survive into the report; got %q", found)
 	}
 }
+
+// The three outcomes of resolving the argocd-server Deployment. Two of them are easy to collapse
+// into each other and they send someone to different places — "kubectl failed" versus "kubectl
+// succeeded and matched nothing" — and NEITHER may end up rendering as "there is no diff".
+func TestPickArgoServerDeployment(t *testing.T) {
+	t.Run("takes the first match", func(t *testing.T) {
+		got, err := pickArgoServerDeployment("deployment.apps/argo-cd-argocd-server\n", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The release-name prefix is the whole point: the hardcoded `argocd-server` never existed.
+		if got != "deployment.apps/argo-cd-argocd-server" {
+			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("two installs in one namespace still resolves", func(t *testing.T) {
+		got, err := pickArgoServerDeployment("deployment.apps/a-argocd-server\ndeployment.apps/b-argocd-server\n", nil)
+		if err != nil || got != "deployment.apps/a-argocd-server" {
+			t.Errorf("got %q, %v", got, err)
+		}
+	})
+
+	t.Run("kubectl failed is reported as a failure to ASK", func(t *testing.T) {
+		_, err := pickArgoServerDeployment("Error from server (Forbidden)", errors.New("exit 1"))
+		if err == nil {
+			t.Fatal("a kubectl failure must not resolve to a deployment")
+		}
+		// The stderr carries the actual reason (forbidden, no such namespace, bad kubeconfig) and
+		// those are three different remedies; a bare exit status is not actionable.
+		if !strings.Contains(err.Error(), "Forbidden") {
+			t.Errorf("the underlying reason must survive; got %v", err)
+		}
+	})
+
+	t.Run("matched nothing is its own finding, not a kubectl failure", func(t *testing.T) {
+		_, err := pickArgoServerDeployment("   \n", nil)
+		if err == nil {
+			t.Fatal("empty output must not resolve to a deployment")
+		}
+		if !strings.Contains(err.Error(), "app.kubernetes.io/name=argocd-server") {
+			t.Errorf("the message must name the label that matched nothing; got %v", err)
+		}
+	})
+}
+
+// Covers the exec wrapper's failure path. Hermetic by construction: whether kubectl is absent or
+// the kubeconfig does not exist, both are errors, and the contract asserted is only that a failure
+// to ASK never resolves to a deployment ref — which is what would silently send `kubectl exec` at
+// an empty target.
+func TestArgoServerDeploymentUnreachableIsAnError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	got, err := argoServerDeployment(ctx, filepath.Join(t.TempDir(), "no-such-kubeconfig"))
+	if err == nil {
+		t.Fatalf("an unreachable cluster must not resolve a deployment; got %q", got)
+	}
+	if got != "" {
+		t.Errorf("a failed resolution must return no target, got %q", got)
+	}
+}

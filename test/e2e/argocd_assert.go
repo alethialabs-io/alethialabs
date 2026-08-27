@@ -1058,19 +1058,28 @@ func argoServerDeployment(ctx context.Context, kubeconfigPath string) (string, e
 		"-l", "app.kubernetes.io/name=argocd-server",
 		"-o", "name")
 	out, err := cmd.CombinedOutput()
+	return pickArgoServerDeployment(string(out), err)
+}
+
+// pickArgoServerDeployment turns `kubectl get deploy -o name`'s output and exit status into either
+// a resource ref or a reason there is none.
+//
+// Split from the exec so the three outcomes are testable without a cluster, because two of them are
+// easy to collapse into each other and they send someone to different places: "kubectl failed" and
+// "kubectl succeeded and matched nothing" are different findings, and NEITHER may end up rendering
+// as "there is no diff".
+func pickArgoServerDeployment(raw string, err error) (string, error) {
 	if err != nil {
-		return "", fmt.Errorf("could not resolve the argocd-server Deployment: %v: %s", err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("could not resolve the argocd-server Deployment: %v: %s", err, strings.TrimSpace(raw))
 	}
 	// `-o name` prints `deployment.apps/<name>` per match. Take the first; more than one would mean
 	// two ArgoCD installs in one namespace, which is not a case this diagnostic needs to resolve.
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
 		if t := strings.TrimSpace(line); t != "" {
 			return t, nil
 		}
 	}
-	// Empty output with exit 0. Reported as its own finding: "no ArgoCD server Deployment carries
-	// the label" and "kubectl failed" send someone to different places, and neither may render as
-	// "there is no diff".
+	// Empty output with exit 0. Its own finding, deliberately.
 	return "", errors.New("no Deployment in namespace argocd carries app.kubernetes.io/name=argocd-server — cannot run `argocd app diff`")
 }
 
