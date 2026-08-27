@@ -1549,6 +1549,23 @@ uniform:
   - variable: kvstore_shard_count
     reason: ApsaraDB for Redis exposes shard_count as its own argument; azure's Managed Redis encodes topology in the SKU instead, so there is no equivalent knob to add there.
 
+  # ── external-dns identity adoption on GCP (#2811) ─────────────────────────────────
+  # Single-cloud because the PERMISSION MODEL is, not because gcp is ahead — this variable exists
+  # to work around a GCP-specific constraint the other four do not have.
+  #
+  # external-dns's Google provider calls managedZones.List(PROJECT) unconditionally before it
+  # writes anything, and `dns.managedZones.list` is a project-level permission that
+  # `gcloud iam list-testable-permissions` does not offer at managed-zone scope at all. So the
+  # per-deploy, zone-scoped identity the template creates everywhere else cannot work on gcp, and
+  # the fix is to ADOPT a standing account granted that one permission once, at onboarding.
+  #
+  # No other cloud needs an adopted identity: aws authenticates external-dns through an IRSA role
+  # whose Route 53 grants are already account-scoped, azure through a federated managed identity
+  # addressed by an azure.json the deploy path seeds, and hetzner through a Cloud API token. Adding
+  # the variable there would be an empty knob with nothing to point it at, not parity.
+  - variable: external_dns_service_account_email
+    reason: "GCP-only. external-dns needs project-level dns.managedZones.list, which cannot be granted at zone scope, so the identity must be adopted rather than created per deploy (#2811). aws (IRSA role), azure (federated identity + azure.json) and hetzner (API token) have no equivalent constraint and nothing to adopt."
+
   # ── In-cluster container registry (#2431) ─────────────────────────────────────────
   # Single-cloud because the SITUATION is, not because hetzner is ahead. Hetzner sells no container
   # registry, so a `registry` node there becomes an in-cluster Harbor exposed as a plain-HTTP

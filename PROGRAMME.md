@@ -317,7 +317,7 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 |---|---|
 | `infra/offer-exclusions.yaml` | exclusions: 25 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/config-carriage-exclusions.yaml` | exclusions: 31 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
-| `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 301 · uniform: 11 |
+| `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 301 · uniform: 12 |
 
 ### Provenance
 

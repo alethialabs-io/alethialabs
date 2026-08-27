@@ -231,6 +231,54 @@ resource "google_project_iam_custom_role" "dns_zone_iam" {
   ]
 }
 
+# ── external-dns's standing identity, and the ONE project-level read it needs ──────────────
+#
+# external-dns's Google provider calls managedZones.List(PROJECT) unconditionally on every
+# reconcile — including the first, before it writes anything. `dns.managedZones.list` is a
+# PROJECT-level permission: `gcloud iam list-testable-permissions` on a managed zone does not offer
+# it at all, so the zone-scoped roles/dns.admin the project template grants — correct as it is for
+# writes — can never satisfy it. The controller CrashLoopBackOffs on `Error 403: Forbidden` while
+# ArgoCD reports its Application Synced (#2811).
+#
+# WHY THIS LIVES HERE AND NOT IN THE PROJECT TEMPLATE. Writing a project-level IAM binding needs
+# resourcemanager.projects.setIamPolicy. That verb is self-escalating — a principal holding it can
+# grant itself owner — and it has no narrower form, no principal-pattern condition and no
+# per-role variant. It is therefore the same shape as serviceusage.services.enable, which was
+# refused (maintainer, 2026-08-03) on exactly this reasoning and made an onboarding step instead.
+# The provisioner gains NOTHING from this file; the customer grants it once, here, with the admin
+# credential they are already running.
+#
+# The GSA is STANDING (one per project, not per environment) for the same reason the role is:
+# a per-deploy identity would need a fresh project-level binding on every provision, which is the
+# privilege we are declining to hand out. Sharing it across environments shares the ability to list
+# zone NAMES and nothing else — every WRITE is still granted per environment, zone-scoped, by the
+# project template's roles/dns.admin binding on that environment's own zone.
+resource "google_service_account" "external_dns" {
+  account_id   = "alethia-external-dns"
+  display_name = "Alethia external-dns"
+  description  = "Standing identity external-dns impersonates via Workload Identity. Holds ONLY dns.managedZones.list project-wide; every record write is granted per-environment at zone scope."
+
+  depends_on = [google_project_service.apis]
+}
+
+# ONE permission. Not roles/dns.reader, which would also grant read of every record in every zone
+# in the project; this grants the zone NAMES and stops.
+resource "google_project_iam_custom_role" "dns_zone_list" {
+  role_id     = "alethiaDnsZoneList"
+  project     = var.project_id
+  title       = "Alethia DNS Zone Lister"
+  description = "List Cloud DNS managed zones project-wide — the one permission external-dns needs that cannot be granted at zone scope. No record read, no write anywhere."
+  permissions = [
+    "dns.managedZones.list",
+  ]
+}
+
+resource "google_project_iam_member" "external_dns_zone_list" {
+  project = var.project_id
+  role    = google_project_iam_custom_role.dns_zone_list.id
+  member  = "serviceAccount:${google_service_account.external_dns.email}"
+}
+
 resource "google_project_iam_custom_role" "storage_provisioner" {
   role_id     = "alethiaStorageProvisioner"
   project     = var.project_id
@@ -398,6 +446,11 @@ output "service_account_email" {
 output "cloud_sql_app_service_account_email" {
   description = "Keyless Cloud SQL app identity — set this as `cloud_sql_app_service_account_email` in Alethia to turn on password-free Cloud SQL auth. Leave it unset there and your apps keep using password authentication."
   value       = google_service_account.alethia_app_db.email
+}
+
+output "external_dns_service_account_email" {
+  description = "Standing external-dns identity — set this as `external_dns_service_account_email` in Alethia. REQUIRED whenever DNS is enabled: without it external-dns cannot list Cloud DNS zones and crash-loops on 403 while its Application reports Synced. It can list zone NAMES project-wide and nothing else; record writes are granted per-environment at zone scope."
+  value       = google_service_account.external_dns.email
 }
 
 output "project_number" {

@@ -172,6 +172,7 @@ view from the canvas, so a capability that is only a template variable is invisi
 | `eks_volume_iops` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `eks_volume_type` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
 | `enable_karpenter` | 🚫 | ✅ | 🚫 | 🚫 | 🚫 | baseline |  (#2004) |
+| `external_dns_service_account_email` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | uniform | GCP-only. external-dns needs project-level dns.managedZones.list, which cannot be granted at zone scope, so the identity must be adopted rather than created per deploy (#2811). aws (IRSA role), azure (federated identity + azure.json) and hetzner (API token) have no equivalent constraint and nothing to adopt. |
 | `external_secrets_identity_name` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `external_secrets_identity_resource_group` | 🚫 | 🚫 | ✅ | 🚫 | 🚫 | baseline |  (#2004) |
 | `external_secrets_service_account_email` | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | baseline |  (#2004) |

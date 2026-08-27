@@ -8,11 +8,41 @@
 # (iam.gke.io/gcp-service-account annotation). This is the GCP analogue of the
 # AWS IRSA role the EKS path uses.
 
+# ADOPTION (var.external_dns_service_account_email): when set, this template does NOT create the
+# GSA — it uses the caller's pre-existing one. Same shape as external_secrets below, and for a
+# reason that is specific and load-bearing (#2811).
+#
+# external-dns's Google provider calls managedZones.List(PROJECT) unconditionally on every
+# reconcile, including the first. `dns.managedZones.list` is a PROJECT-level permission and
+# `gcloud iam list-testable-permissions` on a managed zone does not offer it at all — so no
+# zone-scoped binding can ever satisfy external-dns, and the zone-scoped roles/dns.admin below,
+# correct as it is for WRITES, leaves the controller in CrashLoopBackOff on `Error 403: Forbidden`
+# while ArgoCD reports the Application Synced.
+#
+# The remedy is a project-level binding, and writing one needs resourcemanager.projects.
+# setIamPolicy — which the provisioner deliberately does NOT hold (#300 removed project-scoped IAM
+# across this template) and which is self-escalating: a principal that can write project IAM can
+# grant itself owner. That verb has no narrower form, so it follows the ruling already made for
+# serviceusage.services.enable — it becomes an ONBOARDING step the customer performs once.
+# infra/connector/gcp creates a standing external-dns GSA and grants it a custom role holding
+# exactly `dns.managedZones.list`, and this template adopts it.
+#
+# Empty (the default) keeps the create-our-own behaviour byte-identical. That path still cannot
+# list zones, so DNSProvider()/cert-manager continue to work exactly as before for everything that
+# does not need a project-level read — this is opt-in, and it is the only path that WORKS.
 resource "google_service_account" "external_dns" {
-  count        = var.provision_gke ? 1 : 0
+  count        = var.provision_gke && var.external_dns_service_account_email == "" ? 1 : 0
   project      = var.project_id
   account_id   = "extdns-${substr(sha256(local.gke_name), 0, 8)}"
   display_name = "external-dns (${var.project_name})"
+}
+
+# The adopted GSA. Read rather than created, so a wrong or absent email fails the PLAN loudly
+# instead of provisioning a cluster whose external-dns authenticates as nothing.
+data "google_service_account" "external_dns_adopted" {
+  count      = var.provision_gke && var.external_dns_service_account_email != "" ? 1 : 0
+  project    = var.project_id
+  account_id = var.external_dns_service_account_email
 }
 
 # Least-privilege: grant external-dns dns.admin on the PROJECT'S managed zone only,
@@ -34,12 +64,12 @@ resource "google_dns_managed_zone_iam_member" "external_dns_dns" {
   project      = var.project_id
   managed_zone = local.external_dns_zone
   role         = "roles/dns.admin"
-  member       = "serviceAccount:${google_service_account.external_dns[0].email}"
+  member       = "serviceAccount:${local.external_dns_sa_email}"
 }
 
 resource "google_service_account_iam_member" "external_dns_wi" {
   count              = var.provision_gke ? 1 : 0
-  service_account_id = google_service_account.external_dns[0].name
+  service_account_id = local.external_dns_sa_name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[external-dns/external-dns-sa]"
 
@@ -67,7 +97,7 @@ resource "google_service_account_iam_member" "external_dns_wi" {
 # that output is absent, so we never ship an issuer that cannot look its zone up.
 resource "google_service_account_iam_member" "cert_manager_wi" {
   count              = var.provision_gke ? 1 : 0
-  service_account_id = google_service_account.external_dns[0].name
+  service_account_id = local.external_dns_sa_name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[cert-manager/cert-manager]"
 
