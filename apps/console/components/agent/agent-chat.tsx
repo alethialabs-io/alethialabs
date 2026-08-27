@@ -16,9 +16,11 @@ import { motion } from "motion/react";
 import { Fragment, type ReactNode, useEffect, useState } from "react";
 import { Action, Actions } from "@/components/ai-elements/actions";
 import { ChatError } from "@/components/agent/chat-error";
-import { MessageResponse } from "@/components/ai-elements/message";
-import { Bubble, BubbleContent } from "@/components/ui/bubble";
-import { Message, MessageContent } from "@/components/ui/message";
+import {
+	Message,
+	MessageContent,
+	MessageResponse,
+} from "@/components/ai-elements/message";
 import {
 	MessageScroller,
 	MessageScrollerButton,
@@ -26,7 +28,7 @@ import {
 	MessageScrollerItem,
 	MessageScrollerProvider,
 	MessageScrollerViewport,
-} from "@/components/ui/message-scroller";
+} from "@/components/ai-elements/message-scroller";
 import {
 	Reasoning,
 	ReasoningContent,
@@ -41,7 +43,7 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion";
 import { ToolResultFrame } from "@/components/agent/tool-result-frame";
-import { Marker, MarkerContent } from "@/components/ui/marker";
+import { Marker, MarkerContent } from "@/components/ai-elements/marker";
 import {
 	AGENT_STEP_PART_TYPE,
 	agentStepDataSchema,
@@ -294,14 +296,19 @@ export function AgentChat({
 											animate={{ opacity: 1, y: 0 }}
 											transition={{ duration: 0.18, ease: "easeOut" }}
 										>
-											<Message align={isUser ? "end" : "start"}>
-												<MessageContent>
+											{/* `MessageContent` IS the user's bubble — the skin lives in the
+											    component (`group-[.is-user]:bg-secondary …`), which is why the
+											    separate `Bubble`/`BubbleContent` pair is gone. The two widths
+											    are pinned because the shared default (`max-w-[95%]`, `w-fit`)
+											    is tuned for a prose thread: the agent transcript renders tool
+											    frames and tables the assistant column must not shrink-wrap. */}
+											<Message
+												from={m.role}
+												className={isUser ? "max-w-[80%]" : "max-w-full"}
+											>
+												<MessageContent className={isUser ? undefined : "w-full"}>
 													{isUser ? (
-														<Bubble variant="secondary" align="end">
-															<BubbleContent className="rounded-none">
-																{partNodes}
-															</BubbleContent>
-														</Bubble>
+														partNodes
 													) : (
 														<div className="flex min-w-0 flex-col gap-2">
 															{partNodes}

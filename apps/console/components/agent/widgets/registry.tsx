@@ -11,6 +11,7 @@
 
 import type { ComponentType } from "react";
 import { z } from "zod";
+import { formatMinutes } from "@repo/format";
 import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
 import type { WidgetKind } from "@/types/jsonb.types";
 import {
@@ -184,7 +185,12 @@ function OrgUsageBody({ output }: WidgetBodyProps) {
 				{ label: "Plan", value: u.plan ?? "—" },
 				{
 					label: "Runner minutes",
-					value: `${u.used_minutes ?? 0} / ${u.included_minutes ?? 0}`,
+					// `read.ts` hands this back as a raw float, so the widget used to print
+					// `0.4166666666 / 200` where the org overview printed `0.943 / 200 min` —
+					// the same quantity, three renderings. BOTH sides go through the one
+					// formatter: a fractional minute is noise, and `0 min` (nothing has run)
+					// has to stay distinguishable from `<1 min` (something did).
+					value: `${formatMinutes(u.used_minutes ?? 0)} / ${formatMinutes(u.included_minutes ?? 0)}`,
 				},
 				{ label: "Overage", value: usd(u.overage_cost_usd) },
 				{

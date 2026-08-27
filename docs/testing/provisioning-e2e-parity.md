@@ -31,7 +31,7 @@ proof nor a ledger row; a later `RETRACTED` ledger row corrects any historical c
 | **GCP — GKE** | 🚫 [#1716] [#1714] [#1722] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
 | **Azure — AKS** | 🚫 [#1722] | ⏳ | ⏳ | ⏳ | ⏳ | ⏳ | ✅ | ⏳ |
 | **Hetzner — Talos** | 🚫 [#2058] | ⏳ (7 of 11 — see below) | — | — | — | — | ✅ | — | <!-- floor tracked by the nightly; the KINDS column is fully described in maxconfig.go: 4 tofu + 3 in-cluster (now actually seeded) + 2 ceilings + 2 deferred-debt; teardown ✅ re-verified by hand on the 20260805T064043Z run — account swept to zero -->
-| **Alibaba — ACK** | ⏳ | ⏳ ⚠️ | — | — | — | — | ⏳ | — | <!-- floor tracked by the nightly; all 11 kinds are CarriedByTofu in maxconfig.go. ⚠️ = a full bar leaves a standing prepaid CR EE instance; see the All-kinds column notes -->
+| **Alibaba — ACK** | ⏳ | ⏳ ⚠️ | — | — | — | — | ⏳ | — | <!-- floor tracked by the nightly; 10 of 11 kinds are CarriedByTofu in maxconfig.go and registry is ExcludedByCost (150 USD/month, no pay-as-you-go). ⚠️ = the bar proves 10 of 11 kinds; see the All-kinds column notes -->
 
 Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
 
@@ -74,14 +74,31 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
   then appended "(Vault is a marketplace add-on…)" — a sentence contradicting its own parenthesis,
   and the mechanism by which two backlog items stopped being counted.
 
-  ⚠️ **An Alibaba full bar buys a standing monthly subscription.** The `registry` cell is correct —
-  `alicloud_cr_ee_repo` is the pushable resource — but reaching it forces its parent
-  `alicloud_cr_ee_instance`, which `infra/templates/project/alibaba/modules/cr/main.tf` creates with
-  `payment_type = "Subscription"`, `period = 1`. It is the **only** subscription resource in the whole
-  Alibaba module tree. Do not drive an Alibaba full bar without budgeting for a monthly CR EE Basic
-  instance, and check afterwards whether one is standing.
+  ✅ **An Alibaba full bar no longer buys a standing monthly subscription.** It used to, and this
+  paragraph used to be a warning nobody could enforce: the `registry` cell was `CarriedByTofu` on
+  `alicloud_cr_ee_repo`, and reaching it forced its parent `alicloud_cr_ee_instance` —
+  `payment_type = "Subscription"`, `period = 1`, the **only** subscription resource in the whole
+  Alibaba module tree, and named per-environment so every run bought its own.
 
-  Whether teardown actually releases it is **unsettled, and deliberately stated as unsettled**
+  The price is why this stopped being a warning and became a verdict: **150 USD/month** (Basic,
+  eu-central-1; 1800/year with no term discount; Advanced 617; no tier below Basic), against about a
+  dollar for everything else in the bar. Enterprise Edition has **no pay-as-you-go model at all** —
+  `DescribePricingModule` for `ProductCode=acr` returns five pricing modules under `Subscription` and
+  **zero** under `PayAsYouGo` — so there is no cheaper way to rent it, and the free Personal Edition
+  is not a substitute (one instance per *account*, public preview, no SLA, no immutable tags, and
+  both its provider resources deprecated since v1.276.0 and slated for removal).
+
+  So `alibaba/registry` is now **`ExcludedByCost`** in `test/e2e/maxconfig.go` — a fifth carriage
+  verdict added for exactly this, because all three clauses of `CloudCeiling` ("the cloud genuinely
+  cannot … the canvas hides it … the deploy action rejects it") are false here. Alibaba offers a
+  registry, the canvas shows it, and a paying customer gets one. **The template is unchanged.** What
+  changed is that the max-config fixture no longer asks for a registry on Alibaba, so the harness
+  stops buying one. The grid prints the price beside the exclusion, so the decision can be re-taken
+  rather than inherited.
+
+  Whether teardown releases such an instance is still **unsettled, and deliberately stated as
+  unsettled** — it now affects only the CUSTOMER path and any instance a hand-driven run already
+  left standing, never a nightly
   (#2333, full reconciliation in
   [`docs/research/alibaba-cr-ee-subscription-release.md`](../research/alibaba-cr-ee-subscription-release.md)):
   the pinned provider (1.286.0) *does* call `RefundInstance` with `ImmediatelyRelease = "1"` on
@@ -90,11 +107,11 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
   Documentation cannot close that; a real teardown can. This entry previously asserted the
   pessimistic reading as fact.
 
-  What HAS changed: *"the teardown still reports clean"* is no longer true. `verify_swept` in
-  `scripts/e2e/alibaba-cleanup.sh` now discovers CR EE instances scoped to the run's ENV and **fails
-  the sweep** when one survives — so the next Alibaba run answers the question rather than hiding
-  it. Find an instance ⇒ the pessimistic reading is right and this warning stands as written. Find
-  none ⇒ the refund works and the full bar can be re-admitted to the campaign.
+  `verify_swept` in `scripts/e2e/alibaba-cleanup.sh` still discovers CR EE instances scoped to the
+  run's ENV and **fails the sweep** when one survives. It is KEPT, and it is worth more now rather
+  than less: the nightly no longer creates one, so anything it finds came from an older run, a
+  hand-driven bar, or a template change that reintroduced the purchase — all three of which are
+  exactly what you want a sweep to shout about.
 
   ⚠️ **A Hetzner full bar needs a second credential pair.** `bucket` on Hetzner is real Object
   Storage behind the `aminueza/minio` provider, which authenticates from `HETZNER_S3_ACCESS_KEY` /

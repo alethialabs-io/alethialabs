@@ -4,14 +4,40 @@
 // The recorded-waivers panel — the org-wide log of authorized, time-boxed control
 // overrides that let a fail-closed apply proceed deliberately. Read-only; produced when a
 // DEPLOY carries a jobs.verify_override.
+//
+// SHELL. Like the posture table, this was a hand-rolled CSS grid — four columns held in a
+// `grid-cols-[…]` string with no header row at all, so the columns were unlabelled and a
+// screen reader read the log as an undifferentiated stack of text. It now renders through the
+// shared `@repo/ui/table` primitives with real column headers. Not `DataTable`: the list is
+// server-produced, capped at 100 by the query, and never sorted or paginated client-side.
 
 import Link from "next/link";
+import { formatRelative } from "@repo/format";
+import { CountPill } from "@repo/ui/count-pill";
+import { EmptyState } from "@repo/ui/empty";
 import { FieldHelp } from "@repo/ui/field-help";
+import { StatusBadge } from "@repo/ui/status-badge";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@repo/ui/table";
 import { cn } from "@repo/ui/utils";
 import type { EvidenceWaiver } from "@/lib/queries/evidence";
-import { relTime } from "./evidence-derive";
 import { EVIDENCE_HELP } from "./evidence-help";
 import { EvIcon } from "./evidence-status";
+
+/** Cell padding — matches the posture table so the two panels read as one surface. */
+const CELL = "px-3 py-3.5 align-top first:pl-4 last:pr-4";
+
+/** The header cell treatment — mono micro-caps, shared with the posture table. */
+const HEAD = cn(
+	CELL,
+	"h-auto py-2.5 font-mono text-[9px] font-normal uppercase tracking-[0.13em] text-text-tertiary",
+);
 
 /** The recorded-waivers panel below the posture table. */
 export function EvidenceWaivers({
@@ -26,9 +52,9 @@ export function EvidenceWaivers({
 		<div className="overflow-hidden rounded-lg border bg-surface shadow-sm">
 			<div className="flex items-center gap-2.5 border-b px-4 py-3.5">
 				<EvIcon name="scroll" size={15} className="text-text-secondary" />
-				<span className="font-display text-[14px] font-semibold text-text-primary">
+				<h3 className="font-display text-[14px] font-semibold text-text-primary">
 					Recorded waivers
-				</span>
+				</h3>
 				<FieldHelp
 					title={EVIDENCE_HELP.waiver.title}
 					docsHref={EVIDENCE_HELP.waiver.docsHref}
@@ -37,8 +63,11 @@ export function EvidenceWaivers({
 				>
 					{EVIDENCE_HELP.waiver.body}
 				</FieldHelp>
-				<span className="rounded-full border px-2 py-px font-mono text-[10px] text-text-tertiary">
-					{active} active
+				{/* The count pill beside the section heading, per the filter standard. It counts
+				    the ACTIVE waivers, not every recorded one, so the word stays. */}
+				<span className="flex items-center gap-1.5 font-mono text-[10px] text-text-tertiary">
+					<CountPill count={active} />
+					active
 				</span>
 				<span className="flex-1" />
 				{waivers.length >= 100 && (
@@ -48,67 +77,97 @@ export function EvidenceWaivers({
 				)}
 			</div>
 			{waivers.length === 0 ? (
-				<div className="px-4 py-10 text-center font-mono text-[12px] text-text-disabled">
-					No waivers — every apply cleared the gate without an override.
-				</div>
+				<EmptyState
+					className="px-4 py-10 md:p-10"
+					title="No waivers"
+					description="Every apply cleared the gate without an override."
+				/>
 			) : (
-				waivers.map((w) => (
-					<div
-						key={w.jobId}
-						className="grid grid-cols-[minmax(180px,1fr)_minmax(220px,1.4fr)_150px_108px] items-start gap-4 border-b border-border-faint px-4 py-3.5 last:border-0"
-					>
-						<div className="flex min-w-0 flex-col gap-1.5">
-							<div className="text-[12.5px] font-medium text-text-primary">
-								{w.projectName ?? "—"}
-								{w.environmentName ? (
-									<span className="text-text-tertiary"> · {w.environmentName}</span>
-								) : null}
-							</div>
-							<div className="flex flex-wrap gap-1">
-								{w.controls.map((c) => (
-									<span
-										key={c}
-										className="rounded-xs border bg-surface-sunken px-1.5 py-0.5 font-mono text-[10px] text-text-secondary"
-									>
-										{c}
-									</span>
-								))}
-							</div>
-						</div>
-						<div className="text-[12px] leading-relaxed text-text-secondary">
-							{w.reason}
-						</div>
-						<div className="flex flex-col gap-0.5 font-mono text-[10.5px] text-text-tertiary">
-							<span className="text-text-secondary">{w.by}</span>
-							<span>{relTime(w.createdAt)}</span>
-							<Link
-								href={`/${org}/~/jobs/${w.jobId}`}
-								className="w-fit underline-offset-2 hover:text-text-primary hover:underline"
+				<Table className="min-w-[720px]">
+					{/* Auto layout, not `table-fixed`: the two prose columns need to breathe the
+					    way the `minmax()` tracks they replace did, so these widths are hints. */}
+					<colgroup>
+						<col className="w-[24%]" />
+						<col className="w-[38%]" />
+						<col className="w-[170px]" />
+						<col className="w-[128px]" />
+					</colgroup>
+					<TableHeader className="bg-surface-sunken">
+						<TableRow className="hover:bg-transparent">
+							<TableHead className={HEAD}>Waived</TableHead>
+							<TableHead className={HEAD}>Reason</TableHead>
+							<TableHead className={HEAD}>Recorded</TableHead>
+							<TableHead className={HEAD}>Status</TableHead>
+						</TableRow>
+					</TableHeader>
+					<TableBody>
+						{waivers.map((w) => (
+							<TableRow
+								key={w.jobId}
+								className="border-border-faint hover:bg-transparent"
 							>
-								View job
-							</Link>
-						</div>
-						<div className="flex flex-col items-start gap-1">
-							<span
-								className={cn(
-									"inline-flex items-center gap-1.5 font-mono text-[9.5px] uppercase tracking-wide",
-									w.active ? "text-text-secondary" : "text-text-disabled",
-								)}
-							>
-								<span
+								<TableCell className={cn(CELL, "whitespace-normal")}>
+									<div className="flex min-w-0 flex-col gap-1.5">
+										<div className="text-[12.5px] font-medium text-text-primary">
+											{w.projectName ?? "—"}
+											{w.environmentName ? (
+												<span className="text-text-tertiary">
+													{" · "}
+													{w.environmentName}
+												</span>
+											) : null}
+										</div>
+										<div className="flex flex-wrap gap-1">
+											{w.controls.map((c) => (
+												<span
+													key={c}
+													className="rounded-xs border bg-surface-sunken px-1.5 py-0.5 font-mono text-[10px] text-text-secondary"
+												>
+													{c}
+												</span>
+											))}
+										</div>
+									</div>
+								</TableCell>
+								<TableCell
 									className={cn(
-										"size-[7px] shrink-0 rounded-full",
-										w.active ? "bg-text-secondary" : "bg-border-strong",
+										CELL,
+										"whitespace-normal text-[12px] leading-relaxed text-text-secondary",
 									)}
-								/>
-								{w.active ? "Active" : "Expired"}
-							</span>
-							<span className="font-mono text-[10px] text-text-disabled">
-								{w.expiry ? `Expires ${relTime(w.expiry)}` : "No expiry"}
-							</span>
-						</div>
-					</div>
-				))
+								>
+									{w.reason}
+								</TableCell>
+								<TableCell className={CELL}>
+									<div className="flex flex-col gap-0.5 font-mono text-[10.5px] text-text-tertiary">
+										<span className="text-text-secondary">{w.by}</span>
+										<span>{formatRelative(w.createdAt)}</span>
+										<Link
+											href={`/${org}/~/jobs/${w.jobId}`}
+											className="w-fit underline-offset-2 hover:text-text-primary hover:underline"
+										>
+											View job
+										</Link>
+									</div>
+								</TableCell>
+								<TableCell className={CELL}>
+									<div className="flex flex-col items-start gap-1">
+										<StatusBadge
+											status={w.active ? "active" : "expired"}
+											tier={w.active ? "active" : "disabled"}
+											label={w.active ? "Active" : "Expired"}
+											className="text-[9.5px]"
+										/>
+										<span className="font-mono text-[10px] text-text-disabled">
+											{w.expiry
+												? `Expires ${formatRelative(w.expiry)}`
+												: "No expiry"}
+										</span>
+									</div>
+								</TableCell>
+							</TableRow>
+						))}
+					</TableBody>
+				</Table>
 			)}
 		</div>
 	);

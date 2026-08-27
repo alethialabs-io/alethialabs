@@ -7,6 +7,10 @@
 // the bottom while streaming, releases on scroll-up, and culls off-screen turns via
 // `content-visibility`. Imports rewired to `@repo/ui/*` and the registry's scrollbar-plugin /
 // logical-inset utilities trimmed for this grayscale/squared system.
+//
+// This is the transcript scroller. `./conversation` is a SECOND, weaker one (use-stick-to-bottom,
+// no culling, no scroll-to-message, no anchoring) still used by `support/cases/case-thread.tsx`;
+// retiring it is a follow-up owned by the support lane, not this file's job.
 
 import type * as React from "react";
 import {

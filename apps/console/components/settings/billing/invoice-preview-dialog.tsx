@@ -11,6 +11,7 @@
 import { Download, ExternalLink } from "lucide-react";
 import { useParams } from "next/navigation";
 import type { InvoiceInfo } from "@/app/server/actions/billing";
+import { formatDate, formatMoney } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import {
 	Dialog,
@@ -22,8 +23,6 @@ import {
 } from "@repo/ui/dialog";
 import {
 	formatBillingPeriod,
-	formatInvoiceAmount,
-	formatInvoiceDate,
 	InvoiceStatusBadge,
 	invoicePdfHref,
 } from "./invoices-table";
@@ -75,14 +74,15 @@ export function InvoicePreviewDialog({
 					<>
 						<div className="rounded-md border border-border bg-surface-sunken px-4 py-2">
 							<DetailRow label="Paid">
-								{formatInvoiceDate(invoice.paidAt)}
+								{formatDate(invoice.paidAt)}
 							</DetailRow>
 							<DetailRow label="Billing period">
 								{formatBillingPeriod(invoice)}
 							</DetailRow>
 							<DetailRow label="Total">
 								<span className="font-mono text-text-primary">
-									{formatInvoiceAmount(invoice.total, invoice.currency)}
+									{/* `total` is ALREADY minor units — formatMoney takes cents. */}
+									{formatMoney(invoice.total, invoice.currency.toUpperCase())}
 								</span>
 							</DetailRow>
 						</div>

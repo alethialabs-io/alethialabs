@@ -124,8 +124,17 @@ func TestRenderAddOnApplication_GitSource(t *testing.T) {
 	if strings.Contains(out, "chart: ") {
 		t.Errorf("git-source Application must not set a Helm `chart:`:\n%s", out)
 	}
-	if strings.Contains(out, "automated:") || strings.Contains(out, "selfHeal:") {
-		t.Errorf("BYO Application must be manual-sync (no automated/self-heal):\n%s", out)
+	// REVERSED by #2910, deliberately. This used to assert the Application carried NO `automated`
+	// block at all — "manual-sync". That was never a working state: an Application without
+	// `automated` syncs only when something triggers it, and nothing in production ever did, so a
+	// customer's chart deployed nothing at all and reported no error. The intent behind the old
+	// assertion was that an untrusted chart must not be PRUNED or SELF-HEALED, and that intent is
+	// kept exactly — both sub-options are false.
+	if !strings.Contains(out, "automated:") {
+		t.Errorf("BYO Application must auto-sync, or it deploys nothing (#2910):\n%s", out)
+	}
+	if !strings.Contains(out, "prune: false") || !strings.Contains(out, "selfHeal: false") {
+		t.Errorf("BYO Application must have prune and selfHeal explicitly false:\n%s", out)
 	}
 }
 

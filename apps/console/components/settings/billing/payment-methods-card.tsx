@@ -48,6 +48,11 @@ import {
 import { Skeleton } from "@repo/ui/skeleton";
 import { cn } from "@repo/ui/utils";
 
+// `formatBrand` and `formatExpiry` deliberately stay local rather than moving to
+// @repo/format: neither renders a QUANTITY. A card brand is a label to title-case, and a
+// card expiry is the `MM/YYYY` convention printed on the card itself — not one of the
+// package's date styles, which would turn "07/2027" into "July 2027".
+
 /** Title-case a Stripe card brand (e.g. "visa" → "Visa", "amex" → "Amex"). */
 function formatBrand(brand: string): string {
 	if (!brand) return "Card";

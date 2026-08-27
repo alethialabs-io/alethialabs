@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { formatBytes, formatDate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { format } from "date-fns";
 import { ArrowLeft, Download, Paperclip } from "lucide-react";
 import Link from "next/link";
 import { useEffect } from "react";
@@ -19,7 +19,7 @@ import {
 } from "@/lib/validations/support";
 import { CaseActions } from "./case-actions";
 import { CaseComposer } from "./case-composer";
-import { formatCaseNumber } from "./case-list-item";
+import { formatCaseNumber } from "./case-query";
 import { CaseSeverityBadge } from "./case-severity-badge";
 import { CaseStatusBadge } from "./case-status-badge";
 import { CaseThread } from "./case-thread";
@@ -31,13 +31,6 @@ interface StreamMessage {
 	author_name: string | null;
 	body: string;
 	created_at: string;
-}
-
-/** Humanises a byte count for the attachment list. */
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /**
@@ -125,9 +118,7 @@ export function CaseDetail({
 							<span aria-hidden>·</span>
 							<span>{SUPPORT_CATEGORY_LABELS[supportCase.category]}</span>
 							<span aria-hidden>·</span>
-							<span>
-								Opened {format(new Date(supportCase.created_at), "MMM d, yyyy")}
-							</span>
+							<span>Opened {formatDate(supportCase.created_at)}</span>
 						</div>
 						{/* Structured classification (Workstream B). The control shows a picker only
 						    for org:edit holders (org taxonomy is an admin action), else read-only chips. */}

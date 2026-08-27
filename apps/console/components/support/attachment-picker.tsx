@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { formatBytes } from "@repo/format";
 import { Paperclip, X } from "lucide-react";
 import { useId, useRef } from "react";
 import { Button } from "@repo/ui/button";
 import {
 	ATTACHMENT_ACCEPT,
-	formatBytes,
 	isAllowedAttachment,
 	MAX_ATTACHMENT_BYTES,
 } from "@/components/support/attachments";

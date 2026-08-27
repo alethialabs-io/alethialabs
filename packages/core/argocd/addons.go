@@ -259,12 +259,40 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 			// marketplace add-ons) do not. Kubernetes also defaults resourceFieldRef.divisor to "1";
 			// ignore that API-server-only default so it cannot pin a Deployment-backed add-on OutOfSync.
 			// RespectIgnoreDifferences makes the sync honor both ignores too.
-			IgnoreDifferences: []addonIgnoreDifference{{
-				Group:             "apps",
-				Kind:              "Deployment",
-				JSONPointers:      []string{"/status/terminatingReplicas"},
-				JQPathExpressions: []string{".spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor"},
-			}},
+			IgnoreDifferences: []addonIgnoreDifference{
+				{
+					Group:             "apps",
+					Kind:              "Deployment",
+					JSONPointers:      []string{"/status/terminatingReplicas"},
+					JQPathExpressions: []string{".spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor"},
+				},
+				{
+					// `spec.preserveUnknownFields` was REMOVED in apiextensions.k8s.io/v1: the API
+					// server accepts `false` and does not persist it. A chart that still declares it
+					// therefore renders a field the cluster will never report back, and the
+					// Application is permanently OutOfSync on a value nobody can change.
+					//
+					// MEASURED, not guessed — this is the first field ArgoCD's own diff has ever
+					// named here, because that diagnostic could not run until #2907 and #2947.
+					// hetzner/addons run 33067969126:
+					//
+					//   ===== apiextensions.k8s.io/CustomResourceDefinition /analysisruns.argoproj.io =====
+					//   78a79
+					//   >   preserveUnknownFields: false
+					//
+					// five times, once per argo-rollouts CRD. Rendering the pinned chart confirms all
+					// five declare it, so desired has the field and live does not — the count and the
+					// direction both match.
+					//
+					// Scoped to the CRD kind rather than added to the Deployment entry above: this is
+					// a different resource and a different mechanism (a removed API field, not an
+					// API-server-managed default), and folding them together would hide which chart
+					// each one exists for.
+					Group:        "apiextensions.k8s.io",
+					Kind:         "CustomResourceDefinition",
+					JSONPointers: []string{"/spec/preserveUnknownFields"},
+				},
+			},
 			SyncPolicy: addonSyncPolicy{
 				SyncOptions:              []string{"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"},
 				ManagedNamespaceMetadata: namespaceMetadataFor(a.PodSecurity),
@@ -274,10 +302,41 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 	}
 	if source == "git" {
 		app.Spec.Source.Path = a.Path
+		// A BYO chart DEPLOYS, with prune and self-heal both off (#2910).
+		//
+		// This branch used to leave `automated` nil, reasoning that "an untrusted chart must not be
+		// self-healed or pruned without a deploy asking for it". That reasoning is right and it is
+		// preserved exactly — both sub-options are false below. What it did NOT justify is leaving
+		// the chart unsynced, and that is what nil meant: an Application with no `automated` policy
+		// never syncs on its own, and NOTHING in this codebase ever synced one. A customer's chart
+		// got a namespace, a repository credential and a hardened AppProject, and then deployed
+		// nothing at all — silently, with no error and no signal.
+		//
+		// It survived because the only sync in the tree is the e2e's `triggerArgoSync`, so the
+		// harness was proving a path a customer does not have.
+		//
+		// Presence of `automated` is what enables auto-sync; `prune` and `selfHeal` are independent
+		// sub-options that default to false. So this deploys the chart while keeping both
+		// protections the original comment asked for:
+		//
+		//   prune:false    a resource the customer REMOVES from their chart keeps running. That is
+		//                  a deliberate trade — we do not delete a customer's workload because
+		//                  their chart stopped mentioning it. It is also narrow: the Application
+		//                  carries resources-finalizer.argocd.argoproj.io, so DISABLING the add-on
+		//                  deletes the Application and cascades to its resources regardless. The
+		//                  only lingering case is removal from within a chart that stays enabled,
+		//                  which is documented on the BYO charts concept page.
+		//   selfHeal:false ArgoCD does not fight an operator who edits a resource live, which is
+		//                  exactly what someone debugging their own chart needs.
+		//
+		// The security boundary is unchanged and is not this field: it is the hardened AppProject
+		// (empty clusterResourceWhitelist, Role/RoleBinding/ServiceAccount blacklisted, locked to
+		// the declared repos and namespaces). Auto-sync does not widen what the chart may create.
+		app.Spec.SyncPolicy.Automated = &addonAutomated{Prune: false, SelfHeal: false}
 	} else {
 		app.Spec.Source.Chart = a.Chart
-		// A git (BYO) source is NOT automated: an untrusted chart must not be self-healed or pruned
-		// without a deploy asking for it. Marketplace charts are.
+		// A marketplace chart is ours: prune and self-heal so the cluster converges to what the
+		// catalog declares.
 		app.Spec.SyncPolicy.Automated = &addonAutomated{Prune: true, SelfHeal: true}
 	}
 

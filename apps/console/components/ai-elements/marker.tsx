@@ -4,6 +4,9 @@
 
 // Vendored from the shadcn registry (`marker`, new-york-v4): inline conversation markers —
 // status updates, system notes, and labeled separators — composed with Message in threads.
+// Lives in `ai-elements/` because that is now the console's ONE chat-message family; the
+// upstream registry differs from the rest of this directory (AI Elements), which is why the
+// provenance note above matters when re-vendoring.
 // Imports rewired to `@repo/ui/*`; the upstream source is already hue-free so the grayscale
 // system needs no trim. Call sites size/typeset via `className` (keep the vendor diff minimal).
 
