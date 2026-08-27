@@ -340,20 +340,47 @@ func runT2ByoIac(t *testing.T, ctx context.Context, cp *ControlPlane, p byoIacPa
 	if destroyStatus != "SUCCESS" {
 		t.Fatalf("byo-iac: DESTROY terminal status = %q, want SUCCESS\n%s", destroyStatus, jobFailureDump(ctx, cp, destroyJobID))
 	}
-	// OpenTofu's http backend rewrites an EMPTIED state on destroy rather than DELETE-ing it, so
-	// the honest assertion is "a state object exists and manages nothing", not "no state object".
+	// What must be true here is that the proxy holds NO managed resource — because that is what
+	// makes detaching the BYO source safe. There are two ways OpenTofu's http backend gets there and
+	// BOTH satisfy it:
+	//
+	//	empty-write  it POSTs a state document with zero resources
+	//	delete       it issues an HTTP DELETE and the slot holds nothing at all
+	//
+	// This used to demand the first and fail the second — "expected an emptied state, not a missing
+	// one" — on the stated belief that the http backend "rewrites an EMPTIED state on destroy rather
+	// than DELETE-ing it". hetzner/floor run 33095422823 disproved that: the whole custody chain
+	// passed (gate → receipt → apply → 1 resource on the proxy → induced drift → healed → destroy
+	// SUCCESS, 1 resource destroyed) and the slot came back empty, so the leg failed with
+	// `state-cleared=false` having actually cleared the state.
+	//
+	// A DELETE is not a weaker outcome than an emptied document — for the property this step exists
+	// to prove, "nothing left to orphan", it is a STRONGER one.
+	//
+	// The reason this could not simply be relaxed to `len == 0` is that StateSnapshot returns raw
+	// BYTES: "cleared by a real destroy" and "nothing was ever written" are the same observation,
+	// and they mean opposite things. So the control plane now records HOW the slot became empty
+	// (StateClearedBy), and an empty slot with no clearing event recorded is still a failure — that
+	// is the vacuous case, and it must not pass.
 	postState := cp.StateSnapshot(deployJobID)
-	if len(postState) == 0 {
-		t.Fatal("byo-iac: the proxy holds no state object after destroy — expected an emptied state, not a missing one")
-	}
-	postCount, err := tfstateResourceCount(postState)
-	if err != nil {
-		t.Fatalf("byo-iac: parse the post-destroy proxy state: %v", err)
-	}
-	if postCount != 0 {
-		t.Fatalf("byo-iac: the post-destroy proxy state still records %d managed resource instance(s) — destroy did not clear live infrastructure, so detaching the BYO source would orphan it", postCount)
+	clearedBy := cp.StateClearedBy(deployJobID)
+	switch {
+	case len(postState) > 0:
+		postCount, err := tfstateResourceCount(postState)
+		if err != nil {
+			t.Fatalf("byo-iac: parse the post-destroy proxy state: %v", err)
+		}
+		if postCount != 0 {
+			t.Fatalf("byo-iac: the post-destroy proxy state still records %d managed resource instance(s) — destroy did not clear live infrastructure, so detaching the BYO source would orphan it", postCount)
+		}
+		summary.StateClearedBy = "empty-state-object"
+	case clearedBy != "":
+		summary.StateClearedBy = clearedBy
+	default:
+		t.Fatal("byo-iac: the proxy holds no state object after destroy AND recorded no clearing event — that is indistinguishable from state never having been written, so it is not proof the resources were reclaimed")
 	}
 	summary.StateCleared = true
+	t.Logf("byo-iac: state cleared on the proxy via %s", summary.StateClearedBy)
 
 	t.Logf("byo-iac PROVEN on %s: pinned clone → gate (blocks the bad module, passes this one) → signed receipt over the customer's own plan → apply → state on Alethia's proxy → induced out-of-band change → posture flipped → healed → destroyed → state cleared", p.provider)
 }
@@ -414,27 +441,6 @@ func byoIacSeedJob(ctx context.Context, cp *ControlPlane, jobID, jobType string,
 		return fmt.Errorf("seed %s job: %w", jobType, err)
 	}
 	return nil
-}
-
-// byoIacPosture is the drift posture a DETECT_DRIFT job persisted, plus the drifted resource types
-// the non-vacuity check needs.
-type byoIacPosture struct {
-	InSync  bool
-	Drifted int
-	Details []struct {
-		Address string `json:"address"`
-		Type    string `json:"type"`
-		Kind    string `json:"kind"`
-	}
-}
-
-// types returns the drifted resources' types, for the "it drifted on OUR resource" assertion.
-func (p byoIacPosture) types() []string {
-	out := make([]string, 0, len(p.Details))
-	for _, d := range p.Details {
-		out = append(out, d.Type)
-	}
-	return out
 }
 
 // byoIacDriftCheck seeds + drives ONE real DETECT_DRIFT job whose state slot is aliased onto the

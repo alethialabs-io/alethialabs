@@ -7,9 +7,27 @@ import { readFileSync } from "node:fs";
 const files = execFileSync("git", ["ls-files"], { encoding: "utf8" })
   .split("\n")
   .filter(Boolean);
+// Files permitted to mention `@alethia/ee` as a quoted string.
+//
+// The string rule below is deliberately BROAD — any quoted occurrence — and it must stay that
+// way. It is NOT a sloppy stand-in for the import-syntax rule beneath it. The one file that
+// genuinely loads the package does so through a VARIABLE, on purpose (lib/enterprise.ts:181-183):
+// it assigns the package name to `pkg` as a plain string, then calls
+// `createRequire(import.meta.url)(pkg)`,
+// so the bundler cannot statically resolve it in a community build. No `from`/`require(`/
+// `import(` pattern can see that, which means narrowing this rule to import syntax would let a
+// copy of the codebase's own idiom cross the boundary undetected. Measured, not assumed: a
+// resolution-syntax regex matches ZERO files in this repo, `lib/enterprise.ts` included.
+//
+// The cost of staying broad is that a file which merely NAMES the package — a manifest, a config
+// list, or a guard reasoning about whether ee/dist gets built — trips it. That is what this
+// allowlist is for, and it is the cheaper half of the trade.
 const allowedPackageReference = new Set([
+  // Genuinely resolves it (via the variable idiom above).
   "apps/console/lib/enterprise.ts",
+  // Names it as an external, never imports it.
   "apps/console/next.config.ts",
+  // Manifests and images.
   "apps/console/package.json",
   "apps/console/Dockerfile",
   "apps/console/README.md",
@@ -17,6 +35,10 @@ const allowedPackageReference = new Set([
   "scripts/box/env-mode.sh",
   "pnpm-workspace.yaml",
   "pnpm-lock.yaml",
+  // Reads dependency stanzas to decide whether a CI job builds ee/dist. Imports nothing: its
+  // whole import list is `node:fs` and `node:path`, and its occurrences are comments plus a
+  // property lookup on parsed JSON.
+  "scripts/check-floors-reproducible.mjs",
 ]);
 const violations = [];
 

@@ -23,7 +23,7 @@
 // Re-typing the mapping in Go would fix the run and create the drift this repo forbids (the mapper
 // owns chart coordinates, namespaces, sync-waves, the CNPG CRD gate, and value schemas that have
 // each broken in production once already — see hetzner-services.ts). So the fixture is DERIVED
-// through the real mapper on the same rail `addon_catalog.json` already uses, and the drift guard
+// through the real mapper on the same rail `addon_catalog.<cloud>.json` already uses, and the drift guard
 // makes a stale one a red CI check rather than a red nightly against a real cloud.
 //
 // It lives here (a normal module) rather than inside the `.mts` script so the guard test can import

@@ -41,9 +41,33 @@ const (
 	// (aws: 50m, test/e2e/t2_providers.go). The failing run reached its terminal status in 24m37s
 	// WITH the full 5m wait consumed, so the rest of the deploy spine costs ~20m; on the success
 	// path the post-ArgoCD work (infra-services + addonConvergeTimeout, itself 10m) still has to
-	// fit. 10m doubles the budget while leaving that headroom intact. Raise it per-run with the env
-	// override rather than by editing this constant.
-	DefaultArgoInstallTimeout = "10m"
+	// fit. Raise it per-run with the env override rather than by editing this constant.
+	//
+	// ── 10m → 15m, and the measurement that moved it. ──
+	//
+	// 10m was not enough on GKE. The scheduled floor run 33080748841 failed with
+	// `Error: context deadline exceeded`, and the namespace dump taken before teardown says exactly
+	// why — it is a PULL QUEUE, not a broken chart:
+	//
+	//	argo-cd-argocd-application-controller-0   0/1  ContainerCreating  10m
+	//	(every other argocd pod: 1/1 Running)
+	//
+	//	events:
+	//	  9m23s  Pulling  repo-server/dex/applicationset/server   quay.io/argoproj/argocd:v3.1.8
+	//	  6m35s  Pulling  application-controller-0                quay.io/argoproj/argocd:v3.1.8
+	//	  5m58s  Pulled   redis  …in 36.033s (3m25.557s INCLUDING WAITING)
+	//
+	// Six pods pull the same multi-hundred-MB image onto a cold cluster at once. Redis names the
+	// contention outright: 36s of pull behind 3m25s of queue. The application-controller did not
+	// even BEGIN pulling until ~3m30s after it was scheduled, and its node was flapping at the same
+	// time (`TaintManagerEviction: Cancelling deletion of Pod`, gke-metadata-server 0/1 with a
+	// restart, metrics-server 0/1 with two). So the deadline expired on a pull that was still
+	// making progress — the same shape as the 5m → 10m move, one cloud further along.
+	//
+	// 15m is the smallest step that covers the observed cost (≈3m30s of queue + a pull that is
+	// slow-but-working) and it stays inside gcp's 50m WaitTerminal with the ~20m spine and the 10m
+	// add-on convergence still fitting.
+	DefaultArgoInstallTimeout = "15m"
 	// ArgoInstallTimeoutEnv overrides DefaultArgoInstallTimeout (a Go duration, e.g. "20m").
 	ArgoInstallTimeoutEnv = "ALETHIA_ARGOCD_INSTALL_TIMEOUT"
 )

@@ -101,6 +101,10 @@ on:
         description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws; gcp/azure/alibaba/hetzner are unpriced, so dispatch those one at a time and watch them."
         type: boolean
         default: false
+      argo_timeout:
+        description: "ArgoCD convergence budget for THIS RUN ONLY, as a Go duration (e.g. 30m). Blank keeps vars.E2E_ARGO_TIMEOUT, and blank there keeps the derived default. This is the #2717 class (b) discriminator: falco/kube-prometheus-stack/loki/vault sit `Progressing` at the end of the budget, and `Progressing` is ALSO what a chart that will never converge looks like at any finite deadline. One run at a raised budget tells them apart — and a chart that is still Progressing with generous room is a ceiling, not a slow start."
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -1313,6 +1317,46 @@ jobs:
           ALETHIA_E2E_ACM_CERT_ZONE_NAME: ${{ vars.E2E_ACM_CERT_ZONE_NAME }}
           ALETHIA_E2E_ACM_CERT_TIMEOUT: ${{ vars.E2E_ACM_CERT_TIMEOUT }}
           ALETHIA_E2E_ACM_CERT_SUMMARY: ${{ runner.temp }}/acm-cert-summary.json
+          # ── Convergence budgets, so a "too slow" can be told apart from a "never". ──
+          #
+          #    These knobs already existed in the harness and were reachable ONLY from a laptop,
+          #    which made two open questions unanswerable from CI at any price:
+          #
+          #      * #2717 class (b) — falco/loki/vault sit `Progressing` at the end of the add-on
+          #        budget. Raising ALETHIA_E2E_ARGO_TIMEOUT for one run is what distinguishes "the
+          #        budget is short" from "this will never converge", and the second is a ceiling.
+          #      * #2591 — the day-2 ArgoCD-URL probe failed on the first run that ever had a URL.
+          #        Its 3m default was chosen when the probe could not run on ANY cloud, so it was
+          #        never sized against a real ALB plus external-dns plus Route53 propagation. The
+          #        cheap discriminator is one run at 10m; without this line there was no way to ask.
+          #
+          #    Unset resolves to "" and every reader falls back to its own default, so adding these
+          #    changes no behaviour until a variable is deliberately set — and the variable is the
+          #    audit trail for why a run had a non-standard budget.
+          # The DISPATCH INPUT WINS over the variable, and that ordering is the point. The comment
+          # above calls the variable "the audit trail for why a run had a non-standard budget" —
+          # true, and it is a STANDING one: a variable set to answer one question keeps answering it
+          # for every run afterwards, including the nightly, until somebody remembers to unset it.
+          # A silently-widened budget is exactly the kind of stale fact this repo keeps paying for.
+          #
+          # A dispatch input is scoped to the single run that asked, and the run's own inputs are a
+          # permanent audit trail on its page. The variable stays for a deliberate standing change.
+          ALETHIA_E2E_ARGO_TIMEOUT: ${{ inputs.argo_timeout || vars.E2E_ARGO_TIMEOUT }}
+          ALETHIA_E2E_DAY2_ACCESS_TIMEOUT: ${{ vars.E2E_DAY2_ACCESS_TIMEOUT }}
+          ALETHIA_E2E_DAY2_OFFER_TIMEOUT: ${{ vars.E2E_DAY2_OFFER_TIMEOUT }}
+          ALETHIA_E2E_KEYLESS_DB_DWELL: ${{ vars.E2E_KEYLESS_DB_DWELL }}
+          # ── Per-add-on diagnostic logging, for ONE run. ──
+          #
+          #    A comma-separated list of add-on ids whose entry in `applyAddOnDebugOverrides`
+          #    (test/e2e/addon_surface.go) should be applied. Today only `falco` has one: its
+          #    libs_logger, which is the layer `scap_init` reports from and is what #2866 needs to
+          #    tell "Talos forbids BPF" from "the chart is missing a mount".
+          #
+          #    NOT a catalog default, deliberately: the pinned falco chart's own values say
+          #    libs_logger "is not recommended for production use", and the catalog is what a
+          #    CUSTOMER installs. Unset changes nothing, so the run keeps proving the shipped
+          #    catalog until somebody deliberately sets the variable for one investigation.
+          ALETHIA_E2E_ADDON_DEBUG: ${{ vars.E2E_ADDON_DEBUG }}
           # ── The max-config DNS zone suffix, global and per-cloud. ──
           #
           #    Hetzner DNS REFUSES a `.io` zone outright — its API answers `unsupported tld
@@ -1327,6 +1371,7 @@ jobs:
           #    compiled default, so nothing changes until a zone is actually delegated.
           ALETHIA_E2E_MAXCONFIG_DOMAIN_SUFFIX: ${{ vars.E2E_MAXCONFIG_DOMAIN_SUFFIX }}
           ALETHIA_E2E_MAXCONFIG_DOMAIN_SUFFIX_HETZNER: ${{ vars.E2E_MAXCONFIG_DOMAIN_SUFFIX_HETZNER }}
+          ALETHIA_E2E_GCP_EXTERNAL_DNS_SA: ${{ vars.E2E_GCP_EXTERNAL_DNS_SA }}
           # ── CLI-ONLY DEMO BAR — can the whole product be driven from the terminal?
           #
           #    Every other layer here asks whether the PLATFORM works. This one asks whether the

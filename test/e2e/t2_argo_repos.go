@@ -179,7 +179,12 @@ func (c t2ArgoRepos) decide() (enabled bool, err error) {
 // byoAddon builds the bring-your-own git-source Helm add-on: a MANAGED add-on (so
 // RenderManagedAddOns renders its "addon-<id>" Application) with Source "git" (so it pulls from
 // the customer's chart repo via the per-repo "repo-byo-<hash>" credential and renders into the
-// hardened per-project AppProject). It carries MANUAL sync by design; the assertion triggers it.
+// hardened per-project AppProject).
+//
+// It AUTO-syncs, with prune and selfHeal both off (#2910). This comment used to say "MANUAL sync by
+// design; the assertion triggers it" — which described the behaviour #2939 deleted, and described
+// it approvingly. The harness triggering the sync was the defect: it was the only sync of a BYO
+// chart anywhere, so it proved a path a customer does not have.
 func (c t2ArgoRepos) byoAddon() types.AddOnInstall {
 	return types.AddOnInstall{
 		ID:        byoAddonID,
@@ -427,4 +432,140 @@ func renderSyncErrors(errs map[string]error) string {
 		fmt.Fprintf(&b, "\n    - %s: %v", name, errs[name])
 	}
 	return b.String()
+}
+
+// byoAutoSyncPolicy is the `syncPolicy.automated` block a BYO chart Application must carry.
+//
+// The pointers survive from when this checked "present but unset" separately. They are KEPT because
+// they still distinguish the two states that matter — `true` (a regression) from anything else — but
+// a nil sub-option is now read as FALSE, which is what ArgoCD itself means by it. See
+// interpretByoSyncPolicy.
+type byoAutoSyncPolicy struct {
+	Prune    *bool `json:"prune"`
+	SelfHeal *bool `json:"selfHeal"`
+}
+
+// interpretByoSyncPolicy is the verdict half of assertByoAutoSyncPolicy, split out so the three
+// outcomes are testable without a cluster.
+//
+// #2910: a BYO Application rendered with no `automated` policy never syncs, and NOTHING in
+// production syncs one — so the customer's chart deployed nothing, silently. The e2e's own
+// `triggerArgoSync` was the only sync of a BYO chart anywhere, which is exactly why the bug
+// survived: the harness proved a path the customer does not have.
+//
+// Both directions are checked. A missing policy is the regression that reintroduces the silent
+// no-op; prune or selfHeal being TRUE is the opposite regression, where Alethia starts deleting
+// resources a customer removed from their chart and reverting their live edits.
+func interpretByoSyncPolicy(app string, automated *byoAutoSyncPolicy) error {
+	if automated == nil {
+		return fmt.Errorf("BYO Application %s carries NO syncPolicy.automated — nothing in production ever syncs a BYO chart, so it would deploy nothing at all and report no error (#2910)", app)
+	}
+	// A NIL sub-option is FALSE, not "unset". This used to be an error — "both must be explicitly
+	// false" — and that rule could never be satisfied on a live cluster. hetzner/floor run
+	// 33092056761 is the proof, and it only produced one because the verdict was made to carry the
+	// object (#3026):
+	//
+	//	observed spec.syncPolicy.automated: {}
+	//	full spec.syncPolicy: {"automated":{},"syncOptions":["CreateNamespace=true", …]}
+	//
+	// Everything WE do is correct and was verified end to end: RenderAddOnApplication emits
+	// `prune: false` / `selfHeal: false` (addonAutomated has no omitempty), InjectCommonLabels
+	// round-trips through the YAML AST and preserves them, the runner `kubectl apply -f`s that
+	// file, argo-cd 8.6.4's Application CRD types both as plain booleans, and applying the exact
+	// manifest to a throwaway cluster reads BOTH fields straight back.
+	//
+	// ArgoCD erases them. Its own type at v3.1.8:
+	//
+	//	Prune    bool  `json:"prune,omitempty"`
+	//	SelfHeal bool  `json:"selfHeal,omitempty"`
+	//	Enabled  *bool `json:"enabled,omitempty"`
+	//
+	// `Enabled` is a POINTER precisely so absent/true/false stay distinguishable; prune and selfHeal
+	// deliberately are not. So the moment ArgoCD serialises the Application through its typed
+	// client, `false` becomes absent and the block collapses to `{}` — while `syncOptions`, being a
+	// non-empty slice, survives. Upstream's own semantic is therefore "absent means false", and a
+	// check demanding otherwise is a guard that can never go green.
+	//
+	// BOTH protections are kept, and they are the ones that still work: `true` is non-zero, so
+	// omitempty cannot erase it. A prune or selfHeal that is genuinely on WILL be seen.
+	if automated.Prune != nil && *automated.Prune {
+		return fmt.Errorf("BYO Application %s has prune=true — Alethia must not delete a customer's workload because their chart stopped declaring it (#2910)", app)
+	}
+	if automated.SelfHeal != nil && *automated.SelfHeal {
+		return fmt.Errorf("BYO Application %s has selfHeal=true — ArgoCD must not fight an operator editing their own chart's resources (#2910)", app)
+	}
+	return nil
+}
+
+// assertByoAutoSyncPolicy reads the live Application and checks it can actually sync itself.
+//
+// On a FAILING verdict it appends what it actually read. aws/day2 run 33074136555 is why: it
+// reported "prune/selfHeal unset" and stopped there, and that one sentence is consistent with two
+// causes that have opposite fixes —
+//
+//	the EMITTER regressed          → packages/core/argocd/addons.go rendered no sub-options
+//	something DROPPED them in-flight → the manifest carried `prune: false` and the stored object
+//	                                  does not, which would make this assertion unsatisfiable
+//
+// and nothing in the tree distinguishes them: at that run's own SHA the renderer sets
+// `&addonAutomated{Prune: false, SelfHeal: false}` with no `omitempty` on either field, ArgoCD
+// v3.1.8's Application CRD types both as a plain boolean, and the wave applier `kubectl apply -f`s
+// the rendered file without re-marshalling it. Every static half says the field should be there.
+// So the next failure has to carry the object, not a description of it.
+func assertByoAutoSyncPolicy(ctx context.Context, kubeconfigPath, app string) error {
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", "argocd", "get", "applications.argoproj.io", app,
+		"-o", "jsonpath={.spec.syncPolicy.automated}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("read %s syncPolicy: %w: %s", app, err, strings.TrimSpace(string(out)))
+	}
+	raw := strings.TrimSpace(string(out))
+	// jsonpath prints NOTHING for an absent field — which is the regression, not a read failure.
+	if raw == "" {
+		return withByoSyncEvidence(ctx, kubeconfigPath, app, `<absent>`, interpretByoSyncPolicy(app, nil))
+	}
+	var automated byoAutoSyncPolicy
+	if e := json.Unmarshal([]byte(raw), &automated); e != nil {
+		return fmt.Errorf("parse %s syncPolicy.automated %q: %w", app, raw, e)
+	}
+	return withByoSyncEvidence(ctx, kubeconfigPath, app, raw, interpretByoSyncPolicy(app, &automated))
+}
+
+// byoSyncEvidenceLimit caps the dumped spec. A proof bundle is read by a human after a failed run;
+// an unbounded Application spec (helm values are embedded as a literal block) would bury the
+// verdict it is attached to.
+const byoSyncEvidenceLimit = 4000
+
+// withByoSyncEvidence attaches the live `spec.syncPolicy` to a FAILING verdict, and only to a
+// failing one — a passing assertion stays silent.
+//
+// The evidence is strictly additive: if the dump cannot be read, the verdict is returned UNCHANGED
+// rather than downgraded to "could not check". A failed second kubectl says nothing about whether
+// the policy was right, and letting it mask the verdict would turn a real regression into a
+// shrug — the same collapse `interpretArgoDiff` keeps apart for an RBAC refusal.
+func withByoSyncEvidence(ctx context.Context, kubeconfigPath, app, observed string, verdict error) error {
+	if verdict == nil {
+		return nil
+	}
+	evidence := fmt.Sprintf("\n  observed spec.syncPolicy.automated: %s", observed)
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", "argocd", "get", "applications.argoproj.io", app,
+		"-o", "jsonpath={.spec.syncPolicy}")
+	out, err := cmd.CombinedOutput()
+	switch {
+	case err != nil:
+		evidence += fmt.Sprintf("\n  full spec.syncPolicy: UNREADABLE (%v) — the verdict above stands on the read that did succeed", err)
+	default:
+		dump := strings.TrimSpace(string(out))
+		if len(dump) > byoSyncEvidenceLimit {
+			dump = dump[:byoSyncEvidenceLimit] + fmt.Sprintf("… (truncated at %d bytes)", byoSyncEvidenceLimit)
+		}
+		evidence += fmt.Sprintf("\n  full spec.syncPolicy: %s", dump)
+	}
+	return fmt.Errorf("%w%s", verdict, evidence)
 }

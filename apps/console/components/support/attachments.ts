@@ -33,12 +33,9 @@ export function isAllowedAttachment(file: File): boolean {
 	);
 }
 
-/** Human-readable size, e.g. "2.3 MB" / "812 KB". */
-export function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+// `formatBytes` used to live here AND, byte-for-byte differently, in cases/case-detail.tsx —
+// two implementations of one idea, disagreeing above a gigabyte (this one printed
+// "1024.0 MB"). Both now call `formatBytes` from @repo/format; import it from there.
 
 /**
  * Uploads one file to an existing case's attachments endpoint. Resolves with the created

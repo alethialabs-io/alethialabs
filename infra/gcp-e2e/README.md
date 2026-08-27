@@ -121,6 +121,34 @@ gcloud compute instances  list --filter="labels.alethia_project-id=e2e-<run_id>-
 #    owns that edit) — the gate var already in place means cron picks it up.
 ```
 
+## The budget publisher binding needs ONE import (#1871)
+
+`google_pubsub_topic_iam_member.e2e_budget_publisher` is real in the cloud and absent from state:
+the Cloud Console's budget UI created it out of band, through a privileged path that does not
+require the principal to pre-exist. An apply without the import COLLIDES rather than converges —
+refresh cannot see a resource that is not in state.
+
+```bash
+tofu import 'google_pubsub_topic_iam_member.e2e_budget_publisher[0]' \
+  "projects/itgix-adp/topics/alethia-e2e-nightly-budget-alerts roles/pubsub.publisher serviceAccount:billing-budget-alert@system.gserviceaccount.com"
+```
+
+The `[0]` is not optional — the resource is `count`-gated on `budget_publisher_binding_enabled`.
+The id is space-separated: `projects/<p>/topics/<t> <role> <member>`.
+
+**The principal is `billing-budget-alert@`, not `billing-budgets@`.** #1871 measured that
+`billing-budgets@system.gserviceaccount.com` does not exist and concluded the grant was
+uncreatable. It was unaddressable — that was the wrong name. Verify before importing:
+
+```bash
+gcloud pubsub topics get-iam-policy \
+  projects/itgix-adp/topics/alethia-e2e-nightly-budget-alerts
+```
+
+**Why this matters more than a tidy state file:** gcp has NO pre-apply spend ceiling —
+`ALETHIA_COST_CEILING_MONTHLY_USD` is wired for aws alone — so this budget is gcp's only cost
+signal, and everything else rests on teardown working.
+
 ## The guaranteed sweeper — `scripts/e2e/gcp-cleanup.sh`
 
 The nightly runs it in an `always()` step (fail-closed: a GCP run with no executable sweeper is a

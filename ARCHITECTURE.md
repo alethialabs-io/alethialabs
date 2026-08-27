@@ -25,8 +25,8 @@ apps/console/
     (public)/auth/         sign-in, email confirmation
     api/                   auth, jobs, runners, CLI
     server/actions/        server actions, grouped by domain
-  components/              feature components (shadcn primitives live in @repo/ui;
-                           components/ui/ holds a few app-specific ones)
+  components/              feature components (ALL shadcn primitives live in @repo/ui;
+                           ai-elements/ is the one chat-message family)
   lib/
     db/                    Drizzle schema, migrations, client (getServiceDb/withActorScope)
     auth/                  Better Auth config, client, session helpers

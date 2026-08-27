@@ -306,9 +306,10 @@
 			"foundational": false,
 			"cells": {
 				"alibaba": {
-					"carriage": "tofu",
-					"offered": true,
-					"resource": "alicloud_cr_ee_repo"
+					"carriage": "cost",
+					"offered": false,
+					"why": "Container Registry Enterprise Edition has NO pay-as-you-go model — DescribePricingModule for ProductCode=acr returns five pricing modules under Subscription and ZERO under PayAsYouGo — so a registry cannot be rented by the hour on alibaba the way ECR/Artifact Registry/ACR can. Proving this one kind would cost ~98% of an alibaba full bar and leave a monthly commitment behind that the teardown cannot refund (#2333). The free Personal Edition is not a substitute: one instance per ACCOUNT, public preview, no SLA, no immutable tags, and BOTH its provider resources are deprecated since v1.276.0 and slated for removal.",
+					"cost": "alicloud_cr_ee_instance — 150 USD/month (Basic, eu-central-1; 1800/year, no term discount; Advanced 617; no tier below Basic), bought PER RUN because instance_name carries the environment"
 				},
 				"aws": {
 					"carriage": "tofu",

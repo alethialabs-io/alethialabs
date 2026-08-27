@@ -59,4 +59,32 @@ export const qk = {
 	classificationAssignmentsForKind: (kind: string, ids: string[]) =>
 		["classification", "assignments-batch", kind, ids] as const,
 	classificationCanEdit: () => ["classification", "can-edit"] as const,
+
+	// ── Surfaces joining the filter standard (#2871 seams) ──────────────────────────────
+	//
+	// Declared here, ahead of their consumers, because six lanes of the console consolidation
+	// each migrate a list page onto lib/query/README.md's pipeline and each needs a key. Six
+	// branches adding a line to one file is six conflicts; the seams issue owns the file so the
+	// lanes never touch it.
+	//
+	// All take the NORMALIZED filter object (the `normalize*Query()` step), never raw component
+	// state — an unsorted array or a stray whitespace fragments the cache into keys that never
+	// hit. `unknown` mirrors `jobsPage`/`activity`: the key factory does not need the shape, and
+	// typing it here would drag every page's query type into this module.
+	alertChannels: (org: string, query?: unknown) =>
+		query ? (["alerts", "channels", org, query] as const) : (["alerts", "channels", org] as const),
+	alertPolicies: (org: string, query?: unknown) =>
+		query ? (["alerts", "policies", org, query] as const) : (["alerts", "policies", org] as const),
+	connectors: (org: string, query?: unknown) =>
+		query ? (["connectors", org, query] as const) : (["connectors", org] as const),
+	teams: (org: string, query?: unknown) =>
+		query ? (["teams", org, query] as const) : (["teams", org] as const),
+	accessGrants: (org: string, query?: unknown) =>
+		query ? (["access", "grants", org, query] as const) : (["access", "grants", org] as const),
+	invoices: (org: string, query?: unknown) =>
+		query ? (["billing", "invoices", org, query] as const) : (["billing", "invoices", org] as const),
+	transactions: (org: string, query?: unknown) =>
+		query
+			? (["billing", "transactions", org, query] as const)
+			: (["billing", "transactions", org] as const),
 } as const;

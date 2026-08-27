@@ -2,23 +2,33 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The Invoices page body — the org's full mirrored-invoice history with a filter bar
-// (status facet + a time-range picker mapped to paidFrom/paidTo). Refetches server-side on
-// every filter change, renders the shared InvoicesTable, an empty state, and a skeleton
-// while loading, and owns the preview dialog. No TanStack Query here — this billing area uses
-// the plain useEffect + useState pattern (matching billing-panel.tsx).
+// The Invoices page body — the org's full mirrored-invoice history, on the console filter
+// standard (lib/query/README.md → "Server-side filters"): a URL-synced zustand store →
+// `normalizeInvoiceQuery` → `qk.invoices(org, q)` → `listInvoices`, which filters by status and
+// paid-date range SERVER-SIDE. Replaces the hand-rolled `useEffect` + `cancelled` flag the
+// standard explicitly forbids ("TanStack owns request lifecycle") and the ad-hoc Reset button.
+//
+// The status facet's counts come from a second query on the BASE key — the unfiltered universe
+// — because an option that disappears the moment you select it is unusable. There is no search
+// box: `InvoiceListParams` has no `search`, and inventing a client-side one over a
+// server-filtered list is the thing this standard exists to stop.
 
-import { CircleDot, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
-import {
-	type InvoiceInfo,
-	listInvoices,
-} from "@/app/server/actions/billing";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { CircleDot } from "lucide-react";
+import { useParams } from "next/navigation";
+import { useMemo, useState } from "react";
+import { type InvoiceInfo, listInvoices } from "@/app/server/actions/billing";
+import { ErrorState } from "@/components/errors/error-state";
 import { SettingsSection } from "@/components/settings/settings-ui";
+import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { qk } from "@/lib/query/keys";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
+import { useInvoiceFilters } from "@/lib/stores/use-settings-filters";
 import { Button } from "@repo/ui/button";
+import { CountPill } from "@repo/ui/count-pill";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { FacetFilter } from "@repo/ui/facet-filter";
+import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
 	type DateRange,
@@ -27,136 +37,132 @@ import {
 	presetRange,
 } from "@repo/ui/range";
 import { Skeleton } from "@repo/ui/skeleton";
+import { cn } from "@repo/ui/utils";
+import {
+	ALL_TIME_LABEL,
+	DEFAULT_INVOICE_FILTERS,
+	INVOICE_STATUS_OPTIONS,
+	invoiceStatusCounts,
+	normalizeInvoiceQuery,
+} from "./invoices-filters";
 import { InvoicePreviewDialog } from "./invoice-preview-dialog";
 import { InvoicesTable } from "./invoices-table";
 
-/** The status facet options (grayscale — no domain color). */
-const STATUS_OPTIONS = [
-	{ value: "paid", label: "Paid" },
-	{ value: "refunded", label: "Refunded" },
-	{ value: "void", label: "Void" },
-];
-
-/** Type guard narrowing a facet string to a concrete InvoiceInfo status. */
-function isInvoiceStatus(s: string): s is InvoiceInfo["status"] {
-	return s === "paid" || s === "refunded" || s === "void";
-}
-
 export function InvoicesPanel() {
-	const [rows, setRows] = useState<InvoiceInfo[] | null>(null);
+	const { org } = useParams<{ org: string }>();
 
-	// Filters. A null range means "no date constraint" (show everything); the pickers still
-	// need a concrete value to render, so they fall back to the default preset window.
-	const [statuses, setStatuses] = useState<string[]>([]);
-	const [range, setRange] = useState<DateRange | null>(null);
-	const [rangeLabel, setRangeLabel] = useState("All time");
+	// Filter state lives in the store; the URL mirrors it so a filtered view is shareable.
+	const filters = useInvoiceFilters((s) => s.filters);
+	const set = useInvoiceFilters((s) => s.set);
+	const patch = useInvoiceFilters((s) => s.patch);
+	const reset = useInvoiceFilters((s) => s.reset);
+	useFilterUrlSync(useInvoiceFilters, DEFAULT_INVOICE_FILTERS);
 
 	// The preview dialog (open state + selected invoice).
 	const [selected, setSelected] = useState<InvoiceInfo | null>(null);
 	const [previewOpen, setPreviewOpen] = useState(false);
 
-	const filtersActive = statuses.length > 0 || range !== null;
+	const query = useMemo(() => normalizeInvoiceQuery(filters), [filters]);
+	const activeFilters = countActiveFilters(filters, DEFAULT_INVOICE_FILTERS);
 
-	// The server-action params the current filters describe.
-	const filters = useMemo(
-		() => ({
-			status: statuses.filter(isInvoiceStatus),
-			paidFrom: range?.from.toISOString(),
-			paidTo: range?.to.toISOString(),
-		}),
-		[statuses, range],
+	// The filtered rows. `keepPreviousData` holds the current page on screen while the next
+	// one loads, and `isPlaceholderData` dims it — no skeleton flash on every facet click.
+	const invoices = useQuery({
+		queryKey: qk.invoices(org, query),
+		queryFn: () => listInvoices(query),
+		placeholderData: keepPreviousData,
+	});
+
+	// The UNFILTERED universe, purely for the facet counts. Same key the page prefetches.
+	const universe = useQuery({
+		queryKey: qk.invoices(org),
+		queryFn: () => listInvoices({}),
+		staleTime: 60_000,
+	});
+	const counts = useMemo(
+		() => invoiceStatusCounts(universe.data ?? []),
+		[universe.data],
 	);
 
-	// (Re)load whenever the filters change.
-	useEffect(() => {
-		let cancelled = false;
-		setRows(null);
-		listInvoices({
-			status: filters.status.length ? filters.status : undefined,
-			paidFrom: filters.paidFrom,
-			paidTo: filters.paidTo,
-		})
-			.then((next) => {
-				if (!cancelled) setRows(next);
-			})
-			.catch(() => {
-				if (cancelled) return;
-				setRows([]);
-				toast.error("Couldn't load invoices.");
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [filters]);
+	const rows = invoices.data ?? [];
 
-	/** Open the preview dialog for a row. */
-	function openPreview(row: InvoiceInfo) {
-		setSelected(row);
-		setPreviewOpen(true);
-	}
+	// A null window means "no date constraint"; the pickers still need a concrete value to
+	// render, so they fall back to the default preset without that becoming a filter.
+	const range: DateRange =
+		filters.from && filters.to
+			? { from: new Date(filters.from), to: new Date(filters.to) }
+			: presetRange(DEFAULT_PRESET);
 
 	/** Apply a picked time window as the paid-date filter. */
 	function applyRange(next: DateRange, label: string) {
-		setRange(next);
-		setRangeLabel(label);
+		patch({
+			from: next.from.toISOString(),
+			to: next.to.toISOString(),
+			rangeLabel: label,
+		});
 	}
-
-	/** Clear every active filter. */
-	function resetFilters() {
-		setStatuses([]);
-		setRange(null);
-		setRangeLabel("All time");
-	}
-
-	const reset = filtersActive ? (
-		<Button
-			variant="ghost"
-			size="sm"
-			className="h-7 text-[12px] text-text-tertiary"
-			onClick={resetFilters}
-		>
-			<X size={13} />
-			Reset
-		</Button>
-	) : undefined;
 
 	return (
-		<SettingsSection title="Invoices" action={reset}>
-			{/* filter bar */}
-			<div className="mb-4 flex flex-wrap items-center gap-2.5">
+		<SettingsSection
+			title="Invoices"
+			action={<CountPill count={invoices.isPending ? null : rows.length} />}
+		>
+			<FilterBar>
 				<FacetFilter
 					label="Status"
 					icon={CircleDot}
-					options={STATUS_OPTIONS}
-					value={statuses}
-					onChange={setStatuses}
+					options={INVOICE_STATUS_OPTIONS.map((o) => ({
+						value: o.value,
+						label: o.label,
+						hint: String(counts[o.value] ?? 0),
+					}))}
+					value={filters.statuses}
+					onChange={(next) => set("statuses", next)}
 					searchPlaceholder="Filter status…"
 					emptyText="No statuses."
 				/>
 				<QuickRangeFilter
-					label={rangeLabel}
-					value={range ?? presetRange(DEFAULT_PRESET)}
+					label={filters.rangeLabel || ALL_TIME_LABEL}
+					value={range}
 					onChange={applyRange}
 				/>
 				<DateRangeFilter
-					value={range ?? presetRange(DEFAULT_PRESET)}
+					value={range}
 					onChange={(r) => applyRange(r, formatRangeLabel(r))}
 				/>
-			</div>
+				<FilterBarReset count={activeFilters} onReset={reset} />
+			</FilterBar>
 
-			{rows === null ? (
-				<Skeleton className="h-56 w-full" />
-			) : (
-				<InvoicesTable
-					rows={rows}
-					onPreview={openPreview}
-					pageSize={20}
-					emptyMessage={
-						filtersActive
-							? "No invoices match these filters."
-							: "No invoices yet — invoices appear here after your first payment."
+			{invoices.isError ? (
+				// A fetch failure must not render as "no invoices yet" — that reads as a fact
+				// about the account rather than about the request.
+				<ErrorState
+					title="Couldn't load invoices"
+					description="Something went wrong fetching your invoice history. Check your connection and try again."
+					actions={
+						<Button variant="outline" size="sm" onClick={() => void invoices.refetch()}>
+							Retry
+						</Button>
 					}
 				/>
+			) : invoices.isPending ? (
+				<Skeleton className="h-56 w-full" />
+			) : (
+				<div className={cn(invoices.isPlaceholderData && "opacity-60")}>
+					<InvoicesTable
+						rows={rows}
+						onPreview={(row) => {
+							setSelected(row);
+							setPreviewOpen(true);
+						}}
+						pageSize={20}
+						emptyMessage={
+							activeFilters > 0
+								? "No invoices match these filters."
+								: "No invoices yet — invoices appear here after your first payment."
+						}
+					/>
+				</div>
 			)}
 
 			<InvoicePreviewDialog

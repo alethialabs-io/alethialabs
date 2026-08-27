@@ -421,7 +421,9 @@ const STRUCTURAL_GUARDED_PATHS = [
 	"apps/console/app/server/actions/projects.ts",
 	// console — named for the surface, outside every area (layer 2)
 	"apps/console/app/api/cli/cloud-identities/route.ts",
-	"apps/console/components/connector/aws-connection.tsx",
+	// Moved from components/connector/ when the two sibling directories merged (#2879). Layer 2 still
+	// matches the new path on "connectors", but the hard assertion has to name it exactly.
+	"apps/console/components/connectors/aws-connection.tsx",
 	"apps/console/lib/oidc/issuer.ts",
 	// packages/core — the Go ORIGINALS behind the generated console mirror
 	"packages/core/manifests/keyless.go",
@@ -460,12 +462,20 @@ const CONTENT_ANCHORED_PATHS = [
 /** Real paths that must stay OUT of scope — the half that stops "widen everything" from passing. */
 const OUT_OF_SCOPE_PATHS = [
 	"packages/ui/src/accordion.tsx",
-	"apps/console/components/ui/bubble.tsx",
+	// Was `components/ui/bubble.tsx` until the chat-message families merged (#2881). The
+	// replacement is the same KIND of fixture on purpose: a console UI primitive that is not
+	// named for the surface and holds no capability code, so it proves layer 2 does not widen
+	// into components/ wholesale.
+	"apps/console/components/ai-elements/message-scroller.tsx",
 	"apps/console/lib/db/migrations/meta/_journal.json",
 	// Prose carve-out, by TREE: named for the surface, but documentation, not a code path.
 	"apps/docs/content/docs/console/connectors/aws.mdx",
 	"apps/docs/content/docs/console/design-project/keyless-database-auth.mdx",
-	"apps/marketing/components/landing/home/sections/keyless.tsx",
+	// Was apps/marketing/components/landing/home/sections/keyless.tsx, deleted by #2079's
+	// homepage rebuild. The entry outlived the file and passed silently for months, because
+	// expectOutOfScope() read a missing file as "" and an empty file is trivially out of
+	// scope. Repointed to where that prose actually lives now.
+	"apps/marketing/components/landing/home/verify-receipt.tsx",
 	// Prose carve-out, by file SHAPE: named for the surface (`oidc`, `connector`), outside every prose
 	// tree, and prose or an illustrative example all the same. An example key pasted into one of these
 	// must not wedge a required check on a docs-only change.
@@ -473,7 +483,9 @@ const OUT_OF_SCOPE_PATHS = [
 	"infra/aws-oidc/backend.hcl.example",
 	"infra/aws-oidc/.gitignore",
 	"infra/connector-assets/bootstrap/terraform.tfvars.example",
-	"apps/console/components/connector/README.md",
+	// Moved with the two sibling connector directories (#2879). Still named for the surface
+	// (`connector`) and still prose, which is the pair this entry exists to keep testable.
+	"apps/console/components/connectors/README.md",
 ];
 
 /** Run the inline fixtures. Returns the process exit code. */
@@ -518,10 +530,31 @@ function runSelfTest() {
 	/** Hard-assert that a path is NOT in scope, reading its real content from the checkout. */
 	const expectOutOfScope = (file) => {
 		const abs = path.join(REPO_ROOT, file);
-		const content = fs.existsSync(abs) ? read(abs) : "";
+		// A MISSING fixture is a failure, not an empty file.
+		//
+		// This used to read `fs.existsSync(abs) ? read(abs) : ""`, so deleting a listed file
+		// silently degraded the assertion to "an empty file is out of scope" — trivially true for
+		// any content-anchored rule. The entry then sat in OUT_OF_SCOPE_PATHS looking like
+		// coverage while proving nothing.
+		//
+		// The sibling reportContentAnchored() only NOTES for the same case, and that asymmetry is
+		// deliberate: it reports on a LIVE security surface, where a refactor must not read as a
+		// regression. This is the gate's SELF-TEST, whose only job is to prove the gate still
+		// works — and a self-test that passes on a fixture that no longer exists misreports its
+		// own coverage. A path on a security carve-out list should cost an acknowledgement to
+		// delete.
+		if (!fs.existsSync(abs)) {
+			check(
+				`out of scope fixture exists: ${file}`,
+				false,
+				"this path is in OUT_OF_SCOPE_PATHS but no longer exists, so the assertion below cannot " +
+					"test anything. Drop the entry if the file is gone for good, or repoint it if the file moved.",
+			);
+			return;
+		}
 		check(
 			`out of scope: ${file}`,
-			!isRelevant(file, content),
+			!isRelevant(file, read(abs)),
 			"an unrelated path started matching — scope has been widened past the surface this gate is named for.",
 		);
 	};

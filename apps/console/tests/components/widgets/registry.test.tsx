@@ -52,7 +52,9 @@ const FIXTURES: Record<string, { output: unknown; expectText: string }> = {
 			running_jobs: 1,
 			max_concurrent_jobs: 2,
 		},
-		expectText: "12 / 200",
+		// Runner minutes render through `formatMinutes` (@repo/format) on BOTH sides of the
+		// slash — the raw `12 / 200` here was the agent widget's own divergent rendering.
+		expectText: "12 min / 3h 20m",
 	},
 	get_ai_usage: {
 		output: { tier: "ai_free", session_used: 3, session_budget: 10, weekly_used: 5, weekly_budget: 50, purchased_balance: 0 },

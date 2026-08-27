@@ -8,12 +8,12 @@
 // a dense, hairline-divided list (grayscale, mono meta) with a "Load more" affordance that
 // pages in older rows.
 
-import { format, formatDistanceToNow, parseISO } from "date-fns";
 import { Loader2, ScrollText } from "lucide-react";
 import { useMemo } from "react";
 import type { ActivityRow } from "@/app/server/actions/activity";
 import { useInfiniteScrollSentinel } from "@/lib/query/use-infinite-scroll";
 import { userInitials } from "@/lib/user-display";
+import { formatDate, formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { cn } from "@repo/ui/utils";
 import { type ActivityContext, describeEvent } from "./humanize-event";
@@ -22,7 +22,7 @@ import { type ActivityContext, describeEvent } from "./humanize-event";
 function byMonth(rows: ActivityRow[]): { month: string; rows: ActivityRow[] }[] {
 	const out: { month: string; rows: ActivityRow[] }[] = [];
 	for (const row of rows) {
-		const month = format(parseISO(row.ts), "LLLL yyyy");
+		const month = formatDate(row.ts, "month");
 		const last = out[out.length - 1];
 		if (last && last.month === month) last.rows.push(row);
 		else out.push({ month, rows: [row] });
@@ -122,10 +122,10 @@ export function ActivityFeed({
 									</span>
 									<time
 										dateTime={row.ts}
-										title={new Date(row.ts).toLocaleString()}
+										title={formatDate(row.ts, "datetime")}
 										className="shrink-0 whitespace-nowrap font-mono text-[11px] text-text-tertiary"
 									>
-										{formatDistanceToNow(parseISO(row.ts), { addSuffix: true })}
+										{formatRelative(row.ts)}
 									</time>
 								</li>
 							);

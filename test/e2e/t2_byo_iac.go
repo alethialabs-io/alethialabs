@@ -113,7 +113,7 @@ const byoIacBaselineMarker = "baseline"
 // module, so the leg refuses to run rather than reporting a green skip.
 var byoIacProbeResourceType = map[string]string{
 	"aws":     "aws_ssm_parameter",
-	"gcp":     "google_compute_project_metadata_item",
+	"gcp":     "google_storage_bucket",
 	"azure":   "azurerm_resource_group",
 	"alibaba": "alicloud_oss_bucket",
 	"hetzner": "hcloud_placement_group",
@@ -371,7 +371,14 @@ type byoIacMutationOpts struct {
 //	azure    az group update --set tags.<key> — reads, mutates in memory, writes back, so other
 //	         tags survive. --force-string stops the CLI's shell_safe_json_parse from coercing a
 //	         value that happens to look like JSON into a non-string.
-//	gcp      add-metadata — documented as "only metadata keys that are provided are mutated".
+//	gcp      buckets update --update-labels — merges into the existing label map, so the module's
+//	         `managed_by` label survives. It replaced `compute project-info add-metadata`, which
+//	         needed `compute.projects.setCommonInstanceMetadata` — a permission the e2e service
+//	         account did not have, and MUST NOT be given: project-common metadata includes
+//	         `ssh-keys`, so that verb grants SSH into every VM in a SHARED project, and the
+//	         credential in question is the one a customer's own OpenTofu runs under. A bucket label
+//	         is scoped to one bucket the module owns, and `roles/storage.admin` is already held, so
+//	         the scoped probe also needs no new grant at all (#2792).
 //	hetzner  add-label --overwrite — merges into the existing label map; WITHOUT --overwrite the
 //	         CLI refuses an existing key, which in CI would look like a broken probe.
 //
@@ -401,7 +408,7 @@ func byoIacMutationArgv(provider, target, newValue string, opts byoIacMutationOp
 	case "azure":
 		return []string{"az", "group", "update", "--name", target, "--force-string", "--set", "tags.drift_marker=" + newValue}, nil
 	case "gcp":
-		argv := []string{"gcloud", "compute", "project-info", "add-metadata", "--metadata", target + "=" + newValue}
+		argv := []string{"gcloud", "storage", "buckets", "update", "gs://" + target, "--update-labels=drift_marker=" + newValue}
 		if a := strings.TrimSpace(opts.Account); a != "" {
 			argv = append(argv, "--project", a)
 		}
@@ -473,7 +480,11 @@ type ByoIacSummary struct {
 	HealedInSync    bool     `json:"healed_in_sync"`
 	DestroyStatus   string   `json:"destroy_status"`
 	StateCleared    bool     `json:"state_cleared"`
-	Verdict         string   `json:"verdict"`
+	// StateClearedBy is HOW the proxy slot ended up holding no managed resource — "empty-state-object",
+	// "empty-write" or "delete". Recorded because all three satisfy the property, and a proof bundle
+	// that says only "cleared" cannot later answer "cleared how?" without another paid run.
+	StateClearedBy string `json:"state_cleared_by,omitempty"`
+	Verdict        string `json:"verdict"`
 }
 
 // byoIacVerdictPass reports whether every step that RAN passed non-vacuously. There is no partial
@@ -552,4 +563,33 @@ func githubContentsURL(repo, sha, path string) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("https://api.github.com/repos/%s/contents/%s?ref=%s", slug, strings.Trim(path, "/"), sha), true
+}
+
+// byoIacPosture is the drift posture a DETECT_DRIFT job persisted, plus the drifted resource types
+// the non-vacuity check needs.
+type byoIacPosture struct {
+	// TAGS ARE LOAD-BEARING. `encoding/json` matches a tag first and otherwise falls back to a
+	// CASE-INSENSITIVE match on the field NAME — which never matches an underscored key, so
+	// `in_sync` silently left InSync at its zero value while `drifted` and `details` decoded fine.
+	//
+	// The posture is written by drift.Analyze, which sets `InSync = Drifted == 0`, so
+	// `in_sync=false drifted=0` is a state it cannot produce. Every byo-iac run reported exactly
+	// that and died on "the baseline posture is not in-sync right after a clean apply" — the leg
+	// could never have passed, on any cloud. Verified against a real decode, not inferred.
+	InSync  bool `json:"in_sync"`
+	Drifted int  `json:"drifted"`
+	Details []struct {
+		Address string `json:"address"`
+		Type    string `json:"type"`
+		Kind    string `json:"kind"`
+	} `json:"details"`
+}
+
+// types returns the drifted resources' types, for the "it drifted on OUR resource" assertion.
+func (p byoIacPosture) types() []string {
+	out := make([]string, 0, len(p.Details))
+	for _, d := range p.Details {
+		out = append(out, d.Type)
+	}
+	return out
 }

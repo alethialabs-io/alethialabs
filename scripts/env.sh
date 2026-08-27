@@ -713,6 +713,14 @@ ALETHIA_RUNNER_BOOTSTRAP_TOKEN=$bootstrap_token
 
 OPENFGA_API_URL=http://localhost:8082
 ALETHIA_DEPLOYMENT_MODE=hosted
+# This box is a sandbox, and saying so is what makes the line above survivable. `hosted` is
+# deliberate — it is how the sandbox rehearses Stripe-driven billing — but no mail credential
+# is ever copied here, and packages/email correctly refuses to degrade a HOSTED deployment to
+# the development log fallback. Without this flag those two truths cancelled out and sign-in
+# was impossible on every branch env: the send returned 200, the throw was swallowed as a
+# background task, and no code appeared anywhere (#2953). The carve-out needs this AND a
+# non-production build, so a real deployment cannot open it.
+ALETHIA_SANDBOX=1
 ALETHIA_LICENSE_ACTIVE=false
 ALETHIA_RUNNER_OPERATOR=self
 PORT=$cport

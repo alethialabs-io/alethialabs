@@ -6,6 +6,25 @@
 Research answer for **#2333** (the Alibaba sweeper reports clean while a prepaid CR EE instance may
 still be standing). Checked 2026-08-11.
 
+> ### ⚠️ SCOPE CHANGED 2026-08-27 — this no longer affects the nightly
+>
+> The question below is still open and this file is still the record of it. What changed is **who it
+> can hurt**. `alibaba/registry` is now `ExcludedByCost` in `test/e2e/maxconfig.go`, and the
+> max-config fixture no longer asks for a registry on Alibaba — so **the nightly never creates a
+> Subscription instance**, and cannot leave one behind.
+>
+> The reason is the price this file never states: Basic is **150 USD/month** in eu-central-1, bought
+> per run, and Enterprise Edition has **no pay-as-you-go model** (`DescribePricingModule` for
+> `ProductCode=acr`: five modules under `Subscription`, zero under `PayAsYouGo`). The unsettled
+> refund question below is what made that spend unbounded rather than merely large.
+>
+> **The template is unchanged** — a real customer still gets Enterprise Edition — so the question
+> below now governs the CUSTOMER teardown path, and any instance an older or hand-driven run already
+> left standing. `verify_swept` in `scripts/e2e/alibaba-cleanup.sh` is kept for exactly those cases.
+>
+> It also means the empirical answer this file was waiting on **will not arrive from the nightly**.
+> Settling it now needs a deliberate, funded run — see #2333.
+
 Read against the provider version this repo actually resolves — `aliyun/alicloud` **1.286.0**,
 pinned at `infra/templates/project/alibaba/.terraform.lock.hcl:5` — not against `master`, and
 against Alibaba's own first-party product documentation.

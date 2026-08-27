@@ -11,7 +11,9 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -914,4 +916,399 @@ func TestDumpOutOfSyncResourcesIsANoOpWithNothingToDump(t *testing.T) {
 	if got := dumpOutOfSyncResources(t.Context(), "/nonexistent/kubeconfig", nil); got != "" {
 		t.Errorf("empty ref set produced output: %q", got)
 	}
+}
+
+// #2866: falco's `scap_init` sub-errors scrolled off a 40-line tail, so a paid run could not say
+// WHICH probe requirement the kernel refused. The longer tail and the `--previous` fetch are both
+// gated on this predicate, so a wrong answer here silently restores the old blindness — a pod that
+// is crash-looping but reads as healthy gets 40 lines and no crashed-instance log.
+func TestCrashLooping(t *testing.T) {
+	// Whitespace-split lines exactly as the custom-columns listing produces them:
+	// NS NAME PHASE READY RESTARTS REASON
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			// The shape that motivated this: falco on Talos, one container ready and one not.
+			"crashloopbackoff with restarts",
+			"falco addon-falco-2fqps Running false,true 10,0 CrashLoopBackOff",
+			true,
+		},
+		{
+			// Sampled mid-restart: the kubelet is not WAITING, so there is no reason at all, and
+			// only the restart count carries the signal.
+			"restarts but no reason yet",
+			"falco addon-falco-2fqps Running false,true 3,0 <none>",
+			true,
+		},
+		{
+			// The mirror case: killed once, backing off, count not yet meaningful.
+			"reason but no restarts yet",
+			"falco addon-falco-2fqps Pending false 0 CrashLoopBackOff",
+			true,
+		},
+		{
+			// A non-zero count in the SECOND container only — the reason a bare
+			// `fields[4] != "0"` string comparison is not enough.
+			"restart on a later container only",
+			"harbor addon-harbor-core-x Running true,false 0,7 <none>",
+			true,
+		},
+		{
+			// Unhealthy for a reason that is NOT a crash: the pod never started, so there is no
+			// previous instance to fetch and nothing scrolled off.
+			"pending on image pull is not a crash loop",
+			"velero addon-velero-x Pending false 0 ImagePullBackOff",
+			false,
+		},
+		{
+			"healthy pod",
+			"reloader addon-reloader-x Running true 0 <none>",
+			false,
+		},
+		{
+			"no restarts across several containers",
+			"harbor addon-harbor-core-x Running true,true 0,0 <none>",
+			false,
+		},
+		{
+			// This path runs while a run is ALREADY failing; a short line must not panic.
+			"truncated line",
+			"ns pod Running",
+			false,
+		},
+		{
+			"empty line",
+			"",
+			false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := crashLooping(strings.Fields(tc.line)); got != tc.want {
+				t.Fatalf("crashLooping(%q) = %v, want %v", tc.line, got, tc.want)
+			}
+		})
+	}
+}
+
+// The `argocd app diff` dump execs into the argocd-server Deployment, and the name it used —
+// `argocd-server` — does not exist. The chart is installed as `helm upgrade --install argo-cd
+// argo/argo-cd`, so the real Deployment is `argo-cd-argocd-server`, and every diff came back
+// `Error from server (NotFound)`. Five Applications sat Healthy+OutOfSync across three PAID runs
+// with the differing field still unknown, because the diagnostic that would name it could never run.
+//
+// These pin the reporting contract rather than the exec: a resolution failure must read as "could
+// not ask", never as "nothing differs" — those are opposite findings and #2778 is explicit that a
+// GUESSED ignoreDifferences entry can mask real drift.
+func TestArgoDiffResolutionFailureIsNotSilence(t *testing.T) {
+	// interpretArgoDiff's "could not ask" branch, for contrast with the two real verdicts below.
+	got := interpretArgoDiff("addon-tempo", "", errors.New("could not resolve the argocd-server Deployment"))
+	if !strings.Contains(got, "addon-tempo") {
+		t.Errorf("the report must name the Application; got %q", got)
+	}
+	for _, forbidden := range []string{"no difference", "nothing differs", "in sync"} {
+		if strings.Contains(strings.ToLower(got), forbidden) {
+			t.Errorf("a failure to ASK rendered as a finding of no difference (%q): %s", forbidden, got)
+		}
+	}
+}
+
+func TestArgoDiffVerdictsAreDistinct(t *testing.T) {
+	// exit 1 WITH output is the success case — a diff was found. Anything that treats a non-nil
+	// error as a failure here throws away the only output the whole path exists to produce.
+	found := interpretArgoDiff("addon-tempo", "  spec:\n-   replicas: 1\n+   replicas: 2\n", &exec.ExitError{})
+	// exit 0 with no output: ArgoCD genuinely sees no difference despite the app reporting
+	// OutOfSync. Real and specific, and NOT the same as the case above or the one below.
+	none := interpretArgoDiff("addon-tempo", "", nil)
+	// Neither may be indistinguishable from a failure to look.
+	broken := interpretArgoDiff("addon-tempo", "", errors.New("boom"))
+
+	if found == none || found == broken || none == broken {
+		t.Errorf("the three outcomes must be distinguishable:\nfound=%q\nnone=%q\nbroken=%q", found, none, broken)
+	}
+	if !strings.Contains(found, "replicas") {
+		t.Errorf("the diff body must survive into the report; got %q", found)
+	}
+}
+
+// The three outcomes of resolving the argocd-server Deployment. Two of them are easy to collapse
+// into each other and they send someone to different places — "kubectl failed" versus "kubectl
+// succeeded and matched nothing" — and NEITHER may end up rendering as "there is no diff".
+func TestPickArgoDiffWorkload(t *testing.T) {
+	t.Run("takes the first match", func(t *testing.T) {
+		got, err := pickArgoDiffWorkload("statefulset.apps/argo-cd-argocd-application-controller\n", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The release-name prefix is the whole point: the hardcoded `argocd-server` never existed.
+		if got != "statefulset.apps/argo-cd-argocd-application-controller" {
+			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("two installs in one namespace still resolves", func(t *testing.T) {
+		got, err := pickArgoDiffWorkload("statefulset.apps/a-argocd-application-controller\ndeployment.apps/b-argocd-application-controller\n", nil)
+		if err != nil || got != "statefulset.apps/a-argocd-application-controller" {
+			t.Errorf("got %q, %v", got, err)
+		}
+	})
+
+	t.Run("kubectl failed is reported as a failure to ASK", func(t *testing.T) {
+		_, err := pickArgoDiffWorkload("Error from server (Forbidden)", errors.New("exit 1"))
+		if err == nil {
+			t.Fatal("a kubectl failure must not resolve to a deployment")
+		}
+		// The stderr carries the actual reason (forbidden, no such namespace, bad kubeconfig) and
+		// those are three different remedies; a bare exit status is not actionable.
+		if !strings.Contains(err.Error(), "Forbidden") {
+			t.Errorf("the underlying reason must survive; got %v", err)
+		}
+	})
+
+	t.Run("matched nothing is its own finding, not a kubectl failure", func(t *testing.T) {
+		_, err := pickArgoDiffWorkload("   \n", nil)
+		if err == nil {
+			t.Fatal("empty output must not resolve to a deployment")
+		}
+		if !strings.Contains(err.Error(), "app.kubernetes.io/name=argocd-application-controller") {
+			t.Errorf("the message must name the label that matched nothing; got %v", err)
+		}
+	})
+}
+
+// Covers the exec wrapper's failure path. Hermetic by construction: whether kubectl is absent or
+// the kubeconfig does not exist, both are errors, and the contract asserted is only that a failure
+// to ASK never resolves to a deployment ref — which is what would silently send `kubectl exec` at
+// an empty target.
+func TestArgoDiffWorkloadUnreachableIsAnError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	got, err := argoDiffWorkload(ctx, filepath.Join(t.TempDir(), "no-such-kubeconfig"))
+	if err == nil {
+		t.Fatalf("an unreachable cluster must not resolve a deployment; got %q", got)
+	}
+	if got != "" {
+		t.Errorf("a failed resolution must return no target, got %q", got)
+	}
+}
+
+// #2910's verdicts. The distinction this pins is the whole bug: an ABSENT `automated` policy and one
+// PRESENT with both sub-options false look almost identical in a manifest and mean opposite things —
+// never synced at all, versus synced once and then left alone.
+func TestInterpretByoSyncPolicy(t *testing.T) {
+	yes, no := true, false
+
+	t.Run("absent is the regression, and says why", func(t *testing.T) {
+		err := interpretByoSyncPolicy("addon-byo-e2e", nil)
+		if err == nil {
+			t.Fatal("a missing automated policy must fail — it is the silent no-op")
+		}
+		// The message has to name the consequence, not just the field: a reader who only sees
+		// "syncPolicy.automated is nil" has no reason to think anything is broken.
+		if !strings.Contains(err.Error(), "deploy nothing") {
+			t.Errorf("the failure must say what it costs the customer; got %v", err)
+		}
+	})
+
+	t.Run("present with both false is correct", func(t *testing.T) {
+		if err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{Prune: &no, SelfHeal: &no}); err != nil {
+			t.Errorf("prune=false selfHeal=false is the intended policy, got %v", err)
+		}
+	})
+
+	t.Run("prune true is the opposite regression", func(t *testing.T) {
+		err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{Prune: &yes, SelfHeal: &no})
+		if err == nil {
+			t.Fatal("prune=true would delete a customer's workload once their chart stopped declaring it")
+		}
+	})
+
+	t.Run("selfHeal true is rejected too", func(t *testing.T) {
+		err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{Prune: &no, SelfHeal: &yes})
+		if err == nil {
+			t.Fatal("selfHeal=true would revert an operator debugging their own chart")
+		}
+	})
+
+	t.Run("an empty automated block is ACCEPTED — absent means false", func(t *testing.T) {
+		// REVERSED, with a measured reason. This asserted that `{}` must be rejected ("both must be
+		// explicitly false"), and that rule was unsatisfiable on a live cluster: hetzner/floor run
+		// 33092056761 read back
+		//
+		//	observed spec.syncPolicy.automated: {}
+		//
+		// from an Application whose manifest carried `prune: false` / `selfHeal: false`, verified at
+		// every step from the renderer to a throwaway-cluster round-trip.
+		//
+		// ArgoCD v3.1.8 declares `Prune bool json:"prune,omitempty"` and the same for SelfHeal,
+		// while giving `Enabled` a *bool precisely so absent/true/false stay distinguishable there.
+		// So false collapses to absent the moment ArgoCD serialises the object, and upstream's own
+		// meaning for absent IS false.
+		//
+		// The old intent survives intact below: what must never be accepted is prune/selfHeal
+		// TRUE, and true is non-zero, so omitempty cannot hide it.
+		if err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{}); err != nil {
+			t.Errorf("an empty automated block is auto-sync with prune/selfHeal off, which is the intended policy: %v", err)
+		}
+	})
+
+	t.Run("a HALF-set block still catches a true", func(t *testing.T) {
+		// The state omitempty actually produces for a bad policy: selfHeal survives because it is
+		// true, prune vanishes because it is false. Rejecting this is the whole remaining job.
+		yes := true
+		if err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{SelfHeal: &yes}); err == nil {
+			t.Error("selfHeal=true with prune omitted must still be rejected")
+		}
+		if err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{Prune: &yes}); err == nil {
+			t.Error("prune=true with selfHeal omitted must still be rejected")
+		}
+	})
+
+	t.Run("a MISSING automated block is still the #2910 regression", func(t *testing.T) {
+		// The distinction that survives all of the above, and the one the cell exists for: no
+		// `automated` at all means nothing ever syncs the chart. That is not the same as an empty
+		// one, and loosening the empty case must not loosen this.
+		if err := interpretByoSyncPolicy("addon-byo-e2e", nil); err == nil {
+			t.Error("a BYO Application with no automated policy deploys nothing and must be rejected")
+		}
+	})
+}
+
+// Covers the exec wrapper around interpretByoSyncPolicy. Hermetic: whether kubectl is absent or the
+// kubeconfig does not exist, both are errors, and the contract asserted is only that a failure to
+// READ never passes as a satisfied policy — which would let the #2910 regression through green.
+func TestAssertByoAutoSyncPolicyUnreachableIsAnError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	err := assertByoAutoSyncPolicy(ctx, filepath.Join(t.TempDir(), "no-such-kubeconfig"), "addon-byo-e2e")
+	if err == nil {
+		t.Fatal("an unreachable cluster must not report the sync policy as satisfied")
+	}
+}
+
+// The evidence attached to a FAILING sync-policy verdict. aws/day2 run 33074136555 reported
+// "prune/selfHeal unset" and nothing else, and that sentence fits two causes with opposite fixes —
+// the emitter regressed, or something dropped the fields between the manifest and the stored
+// object. What this asserts is that the next such failure carries the object itself.
+func TestByoSyncEvidence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	// Hermetic on purpose: no kubectl, or no kubeconfig, both land in the UNREADABLE branch.
+	badKube := filepath.Join(t.TempDir(), "no-such-kubeconfig")
+
+	t.Run("a passing verdict gains nothing", func(t *testing.T) {
+		if got := withByoSyncEvidence(ctx, badKube, "addon-byo-e2e", `{"prune":false,"selfHeal":false}`, nil); got != nil {
+			t.Errorf("a satisfied policy must stay silent, got %v", got)
+		}
+	})
+
+	t.Run("a failing verdict carries what was read", func(t *testing.T) {
+		verdict := errors.New("BYO Application addon-byo-e2e has syncPolicy.automated with prune/selfHeal unset")
+		got := withByoSyncEvidence(ctx, badKube, "addon-byo-e2e", "{}", verdict)
+		if got == nil {
+			t.Fatal("evidence must not swallow the verdict")
+		}
+		// The observed value is the whole point: `{}` and `{"prune":true}` produce the same
+		// sentence today and send a reader to different code.
+		if !strings.Contains(got.Error(), "observed spec.syncPolicy.automated: {}") {
+			t.Errorf("the observed block must be quoted verbatim; got %q", got)
+		}
+		if !errors.Is(got, verdict) {
+			t.Error("the verdict must survive wrapping — a caller matching on it still has to work")
+		}
+	})
+
+	t.Run("an unreadable dump does not become a verdict", func(t *testing.T) {
+		// The second kubectl failing says nothing about whether the policy was right. If it were
+		// allowed to overwrite the answer, a real #2910 regression would read as "could not check"
+		// — the fail-open shape, on the assertion that exists to catch it.
+		verdict := errors.New("BYO Application addon-byo-e2e carries NO syncPolicy.automated")
+		got := withByoSyncEvidence(ctx, badKube, "addon-byo-e2e", "<absent>", verdict)
+		if got == nil || !strings.Contains(got.Error(), "carries NO syncPolicy.automated") {
+			t.Fatalf("the original verdict must survive an unreadable dump; got %v", got)
+		}
+		if !strings.Contains(got.Error(), "UNREADABLE") {
+			t.Errorf("a failed dump must be LABELLED as unread, never rendered as an empty policy; got %q", got)
+		}
+	})
+}
+
+// The exact failure the controller fix exists for. hetzner/addons run 33059349873, once the
+// Deployment name was corrected, reached the pod and was refused by RBAC:
+//
+//	{"level":"fatal","msg":"services is forbidden: User \"system:serviceaccount:argocd:argocd-server\"
+//	  cannot list resource \"services\" …"}
+//	command terminated with exit code 20
+//
+// Exit 20 is not exit 1, so this must land in the "could not ask" branch — never in the one that
+// reports a diff, and never in the one that reports no difference. Getting that wrong would make an
+// RBAC refusal read as "ArgoCD sees nothing wrong", which is the opposite conclusion.
+func TestArgoDiffForbiddenIsNotNoDifference(t *testing.T) {
+	forbidden := `{"level":"fatal","msg":"services is forbidden: User \"system:serviceaccount:argocd:argocd-server\" cannot list resource \"services\" in API group \"\" in the namespace \"argocd\""}
+command terminated with exit code 20`
+	got := interpretArgoDiff("addon-tempo", forbidden, errors.New("command terminated with exit code 20"))
+
+	if !strings.Contains(got, "addon-tempo") {
+		t.Errorf("the report must name the Application; got %q", got)
+	}
+	// The underlying reason has to survive — "forbidden" is what tells a reader it is RBAC and not
+	// a broken chart, and those go to different fixes.
+	if !strings.Contains(got, "forbidden") {
+		t.Errorf("the RBAC reason must reach the report; got %q", got)
+	}
+	if same := interpretArgoDiff("addon-tempo", "", nil); got == same {
+		t.Errorf("a refusal rendered identically to a genuine no-difference finding:\n%q", got)
+	}
+}
+
+// The discriminator for "no difference, yet OutOfSync" — the verdict hetzner/addons run 33067969126
+// returned for harbor, kyverno, loki and tempo at once, while naming their OutOfSync resources.
+// Two causes with different fixes, and reporting the ambiguity without the evidence to resolve it is
+// what #2591's `dns-not-resolving` did before it cost a paid run to get past.
+func TestArgoSyncStaleness(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+	t.Run("older than the reconcile cadence reads as STALE", func(t *testing.T) {
+		got := argoSyncStaleness("addon-loki", now.Add(-5*time.Minute).Format(time.RFC3339), now)
+		if !strings.Contains(got, "STALE") {
+			t.Errorf("a 5m-old reconcile must read as stale; got %q", got)
+		}
+		// It must also say what to DO — the point is to stop the next reader guessing.
+		if !strings.Contains(got, "refresh") {
+			t.Errorf("must name the next step; got %q", got)
+		}
+	})
+
+	t.Run("inside the cadence reads as a genuine disagreement", func(t *testing.T) {
+		got := argoSyncStaleness("addon-loki", now.Add(-20*time.Second).Format(time.RFC3339), now)
+		if !strings.Contains(got, "FRESH") || !strings.Contains(got, "genuinely disagree") {
+			t.Errorf("a 20s-old reconcile must read as a real disagreement; got %q", got)
+		}
+		if strings.Contains(got, "STALE") {
+			t.Errorf("must not also claim staleness; got %q", got)
+		}
+	})
+
+	t.Run("a missing timestamp says it cannot tell, rather than picking", func(t *testing.T) {
+		// The failure this guards: defaulting to either verdict would send someone confidently to
+		// the wrong fix, which is worse than admitting the read failed.
+		for _, in := range []string{"", "   ", "not-a-timestamp"} {
+			got := argoSyncStaleness("addon-loki", in, now)
+			if !strings.Contains(got, "cannot say") {
+				t.Errorf("input %q must render as cannot-say; got %q", in, got)
+			}
+			if strings.Contains(got, "STALE") || strings.Contains(got, "FRESH") {
+				t.Errorf("input %q must not pick a verdict; got %q", in, got)
+			}
+		}
+	})
+
+	t.Run("the boundary is the reconcile cadence itself", func(t *testing.T) {
+		if got := argoSyncStaleness("a", now.Add(-argoReconcileInterval).Format(time.RFC3339), now); !strings.Contains(got, "STALE") {
+			t.Errorf("exactly at the cadence must read as stale; got %q", got)
+		}
+	})
 }
