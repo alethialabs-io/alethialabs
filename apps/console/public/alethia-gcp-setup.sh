@@ -107,6 +107,13 @@ upsert_role alethiaProjectReader "Alethia Project Reader" \
 # DNS-enabled environment — 48 minutes into a full bar, and invisible to every floor run.
 upsert_role alethiaDnsZoneIam "Alethia DNS Zone IAM" \
   "dns.managedZones.getIamPolicy,dns.managedZones.setIamPolicy"
+# The one permission external-dns needs that CANNOT be granted at zone scope: its Google provider
+# calls managedZones.List(PROJECT) unconditionally before it writes anything, and
+# `gcloud iam list-testable-permissions` on a managed zone does not offer dns.managedZones.list at
+# all. Granted to the standing external-dns account below, never to the provisioner. Deliberately
+# not roles/dns.reader, which would also expose every RECORD in every zone (#2811).
+upsert_role alethiaDnsZoneList "Alethia DNS Zone Lister" \
+  "dns.managedZones.list"
 
 echo ""
 echo "==> Granting least-privilege provisioning roles to the service account..."
@@ -170,6 +177,35 @@ for ROLE in roles/cloudsql.client roles/cloudsql.instanceUser; do
     --quiet >/dev/null
 done
 echo "    Granted Cloud SQL connect + IAM login."
+
+echo ""
+echo "==> Creating the standing external-dns identity..."
+# external-dns must LIST Cloud DNS zones before it writes a record, and that permission is
+# project-level — no zone-scoped binding can confer it. Writing the project binding needs
+# resourcemanager.projects.setIamPolicy, which is self-escalating and which the provisioner
+# deliberately does not hold, so it is granted ONCE here with your admin credential rather than
+# handed to Alethia. Same reasoning as service enablement. Matches infra/connector/gcp/main.tf.
+#
+# One account per project: every Alethia environment shares it. All it can do project-wide is list
+# zone NAMES — every record WRITE is granted per environment, scoped to that environment's own zone.
+EXTDNS_SA_NAME="alethia-external-dns"
+EXTDNS_SA_EMAIL="${EXTDNS_SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+if gcloud iam service-accounts describe "${EXTDNS_SA_EMAIL}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "    ${EXTDNS_SA_EMAIL} already exists."
+else
+  gcloud iam service-accounts create "${EXTDNS_SA_NAME}" \
+    --project="${PROJECT_ID}" \
+    --display-name="Alethia external-dns" \
+    --description="Impersonated by external-dns via GKE Workload Identity. Holds only dns.managedZones.list project-wide; every record write is granted per-environment at zone scope" \
+    --quiet >/dev/null
+  echo "    Created ${EXTDNS_SA_EMAIL}."
+fi
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${EXTDNS_SA_EMAIL}" \
+  --role="projects/${PROJECT_ID}/roles/alethiaDnsZoneList" \
+  --condition=None \
+  --quiet >/dev/null
+echo "    Granted zone-list (names only, no records)."
 
 echo ""
 echo "==> Creating Workload Identity Pool..."
@@ -239,6 +275,11 @@ echo ""
 echo "    cloud_sql_app_service_account_email: ${APP_DB_SA_EMAIL}"
 echo ""
 echo "  Leave it unset and your apps keep using password authentication."
+echo ""
+echo "  REQUIRED if you enable DNS — external-dns cannot list Cloud DNS zones without it,"
+echo "  and it will crash-loop on 403 while its Application still reports Synced:"
+echo ""
+echo "    external_dns_service_account_email: ${EXTDNS_SA_EMAIL}"
 echo ""
 echo "  (Advanced / Terraform: the full credential config is below and in ${OUTPUT_FILE}.)"
 echo ""

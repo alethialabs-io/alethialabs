@@ -20,3 +20,8 @@ output "e2e_gcp_project_number" {
   description = "The dedicated e2e project's number (the budget filter + WIF principal anchor)."
   value       = data.google_project.this.number
 }
+
+output "e2e_gcp_external_dns_sa_email" {
+  description = "Standing external-dns identity the project template adopts via external_dns_service_account_email. Without it external-dns cannot list Cloud DNS zones and crash-loops on 403 while ArgoCD reports Synced (#2811)."
+  value       = google_service_account.e2e_external_dns.email
+}

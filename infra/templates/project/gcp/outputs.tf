@@ -223,8 +223,8 @@ output "gcp_project_id" {
 }
 
 output "external_dns_service_account" {
-  description = "external-dns Google service account email (Workload Identity)"
-  value       = var.provision_gke ? google_service_account.external_dns[0].email : null
+  description = "external-dns Google service account email (Workload Identity). The adopted GSA when external_dns_service_account_email is set, otherwise the one this template created."
+  value       = var.provision_gke ? local.external_dns_sa_email : null
 }
 
 output "external_secrets_service_account" {

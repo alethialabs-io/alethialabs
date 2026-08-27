@@ -113,6 +113,24 @@ locals {
   # grant read ONE value: the two cannot disagree about which zone the project has.
   external_dns_zone = length(module.cloud_dns) > 0 ? module.cloud_dns[0].zone_name : (var.dns_provider == "native" ? var.cloud_dns_zone_name : "")
 
+  # The external-dns GSA this deploy uses: the caller's adopted one, or the one we created.
+  # Read by the zone-scoped grant, both Workload Identity bindings (external-dns AND cert-manager,
+  # which shares this identity) and the output — never the resource — so adoption cannot be
+  # honoured in one place and missed in another. A half-adopted deploy would grant the zone to one
+  # identity and bind the KSA to the other, and external-dns would authenticate successfully as a
+  # principal with no write anywhere.
+  external_dns_adopted = var.provision_gke && var.external_dns_service_account_email != ""
+  external_dns_sa_email = var.provision_gke ? (
+    local.external_dns_adopted
+    ? data.google_service_account.external_dns_adopted[0].email
+    : google_service_account.external_dns[0].email
+  ) : ""
+  external_dns_sa_name = var.provision_gke ? (
+    local.external_dns_adopted
+    ? data.google_service_account.external_dns_adopted[0].name
+    : google_service_account.external_dns[0].name
+  ) : ""
+
   # The external-secrets GSA this deploy uses: the caller's adopted one, or the one we created.
   # Everything that grants to, binds, or exports the ESO identity reads these — never the resource
   # directly — so adoption cannot be honoured in one place and missed in another. A half-adopted
