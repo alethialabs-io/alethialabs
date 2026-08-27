@@ -565,6 +565,19 @@ func githubContentsURL(repo, sha, path string) (string, bool) {
 	return fmt.Sprintf("https://api.github.com/repos/%s/contents/%s?ref=%s", slug, strings.Trim(path, "/"), sha), true
 }
 
+// byoIacHealConvergeWindow bounds how long the post-heal posture may take to read in-sync, and
+// byoIacHealPollInterval is how often it is re-read inside that window.
+//
+// Sized against what it exists to absorb: a SERVER-SET attribute that the heal's own write moves
+// (gcp's google_storage_bucket.updated), which settles in one provider read rather than minutes.
+// Deliberately small — a window wide enough to hide a genuinely stuck attribute would turn this
+// assertion into a wait for the answer it wants, and the heal is the step that proves detection is
+// worth anything.
+const (
+	byoIacHealConvergeWindow = 3 * time.Minute
+	byoIacHealPollInterval   = 30 * time.Second
+)
+
 // byoIacPosture is the drift posture a DETECT_DRIFT job persisted, plus the drifted resource types
 // the non-vacuity check needs.
 type byoIacPosture struct {
