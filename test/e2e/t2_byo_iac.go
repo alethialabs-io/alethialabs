@@ -480,7 +480,11 @@ type ByoIacSummary struct {
 	HealedInSync    bool     `json:"healed_in_sync"`
 	DestroyStatus   string   `json:"destroy_status"`
 	StateCleared    bool     `json:"state_cleared"`
-	Verdict         string   `json:"verdict"`
+	// StateClearedBy is HOW the proxy slot ended up holding no managed resource — "empty-state-object",
+	// "empty-write" or "delete". Recorded because all three satisfy the property, and a proof bundle
+	// that says only "cleared" cannot later answer "cleared how?" without another paid run.
+	StateClearedBy string `json:"state_cleared_by,omitempty"`
+	Verdict        string `json:"verdict"`
 }
 
 // byoIacVerdictPass reports whether every step that RAN passed non-vacuously. There is no partial
