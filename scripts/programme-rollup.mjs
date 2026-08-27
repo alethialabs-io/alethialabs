@@ -1728,6 +1728,23 @@ if (!executedDirectly) {
 	// imported — expose the helpers, touch nothing.
 } else if (process.argv.includes("--self-test")) {
 	runSelfTest();
+} else if (process.argv.includes("--epic-body")) {
+	// The tracking epic is a RENDERING of the generated grid, never a second board.
+	//
+	// That is the whole design constraint. This repo has fifteen boards already, and the one thing
+	// that must not happen is a sixteenth that is hand-kept and drifts from the ledger — a grid
+	// someone updates by hand is a grid that lies the first time a run lands while they are asleep.
+	//
+	// So this emits `render(derive(...))` VERBATIM — the same function, the same inputs, the same
+	// bytes PROGRAMME.md's generated half gets. It deliberately does not select or re-lay-out
+	// sections: a second renderer is a second thing to keep in step, and the epic drifting from the
+	// ledger would be indistinguishable from the ledger being wrong.
+	//
+	// stdout only, and no write: the caller pipes it to `gh issue edit --body-file -`. Nothing here
+	// touches PROGRAMME.md, so this is safe to run on a branch whose generated half is stale — and
+	// it does NOT run the integrity check, because the epic's job is to REPORT the state including
+	// a failing one, not to gate on it. `pnpm gen:programme` is the gate.
+	process.stdout.write(render(derive(readInputs())).trimEnd() + "\n");
 } else {
 	const view = derive(readInputs());
 	const generated = render(view);

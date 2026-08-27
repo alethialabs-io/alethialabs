@@ -59,6 +59,9 @@ permissions:
   # for facts a run had already demonstrated. `actions: read` answers the better question anyway:
   # whether a leg got PAST its gate, not whether a variable is present somewhere.
   actions: read
+  # Rewrites the pinned tracking epic's body (#2896) from the same render PROGRAMME.md gets, so the
+  # grid is watchable from the board without cloning. Nothing else in this workflow writes issues.
+  issues: write
 
 jobs:
   refresh:
@@ -93,6 +96,28 @@ jobs:
 
       - name: Render PROGRAMME.md
         run: node scripts/programme-rollup.mjs --write
+
+      # The tracking epic is a RENDERING of what was just rendered above — not a second board.
+      #
+      # THE NUMBER IS HARDCODED ON PURPOSE. Finding the epic by title or label is the shape that has
+      # already bitten this repo: a hand-edited title files a duplicate instead of updating, and the
+      # duplicate then renders a second, diverging grid that looks equally official. A number cannot
+      # drift. If the epic is ever replaced, changing it here is a one-line, deliberate edit.
+      #
+      # `continue-on-error`, because this is a REPORT. The snapshot refresh and its PR are the job;
+      # an issue write that fails (epic closed, locked, permission changed) must not cost the tree
+      # its refresh — and PROGRAMME.md, which is the actual entry point, is already correct by then.
+      - name: Refresh the tracking epic (#2896)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          {
+            cat .github/programme-epic-preamble.md
+            node scripts/programme-rollup.mjs --epic-body
+          } > /tmp/epic-body.md
+          gh issue edit 2896 --body-file /tmp/epic-body.md
 
       # `--write` exits 0 even when it found integrity failures (it writes, then reports). Re-running
       # in check mode is what surfaces them — and it must NOT abort the PR, because a PR carrying the
