@@ -1312,3 +1312,41 @@ func TestArgoSyncStaleness(t *testing.T) {
 		}
 	})
 }
+
+// TestInterpretHardRefresh pins the three-way verdict. The middle case is the one that matters:
+// failing to ASK the question must never render like either answer, because both answers send
+// somebody to a different fix and "could not tell" sends them to neither.
+func TestInterpretHardRefresh(t *testing.T) {
+	synced := interpretHardRefresh("Synced", nil, "")
+	if !strings.Contains(synced, "STALE MANIFEST CACHE") {
+		t.Errorf("a Synced re-read means the cache was stale; got %q", synced)
+	}
+
+	stuck := interpretHardRefresh("OutOfSync", nil, "")
+	if !strings.Contains(stuck, "SURVIVES") || !strings.Contains(stuck, "normalisation difference") {
+		t.Errorf("a surviving OutOfSync is a real finding; got %q", stuck)
+	}
+
+	// Could-not-ask must look like NEITHER of the two above.
+	cant := interpretHardRefresh("", errors.New("exec: no pod"), "boom")
+	if !strings.Contains(cant, "COULD NOT ASK") {
+		t.Errorf("a failed probe must say so; got %q", cant)
+	}
+	for _, leak := range []string{"STALE MANIFEST CACHE", "SURVIVES"} {
+		if strings.Contains(cant, leak) {
+			t.Errorf("could-not-ask leaked the %q verdict: %q", leak, cant)
+		}
+	}
+
+	// An empty status is not a Synced status.
+	empty := interpretHardRefresh("", nil, "")
+	if !strings.Contains(empty, "EMPTY") || strings.Contains(empty, "STALE MANIFEST CACHE") {
+		t.Errorf("an empty status must not read as Synced; got %q", empty)
+	}
+
+	// Long output is truncated rather than flooding a proof bundle.
+	long := interpretHardRefresh("", errors.New("x"), strings.Repeat("y", 900))
+	if len(long) > 700 {
+		t.Errorf("detail must be truncated, got %d chars", len(long))
+	}
+}
