@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { formatDate } from "@repo/format";
 import { Avatar, AvatarFallback } from "@repo/ui/avatar";
 import { cn } from "@repo/ui/utils";
-import { format } from "date-fns";
 import {
 	Conversation,
 	ConversationContent,
@@ -43,7 +43,9 @@ const ROLE_INITIALS: Record<SupportAuthorType, string> = {
 function ThreadMessage({ message }: { message: PublicMessage }) {
 	const isCustomer = message.author_type === "customer";
 	const label = message.author_name || ROLE_LABEL[message.author_type];
-	const timestamp = format(new Date(message.created_at), "MMM d, yyyy · HH:mm");
+	// `datetime` (not a raw date-fns pattern): this is a client component, and @repo/format's
+	// note on time zones applies — the style is the one meant for rendering after hydration.
+	const timestamp = formatDate(message.created_at, "datetime");
 
 	return (
 		<Message from={isCustomer ? "user" : "assistant"}>

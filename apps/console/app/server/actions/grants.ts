@@ -29,6 +29,11 @@ import {
 	team,
 	user,
 } from "@/lib/db/schema";
+import {
+	type AccessGrantQuery,
+	type AccessGrantsPage,
+	queryAccessGrantsPage,
+} from "@/lib/queries/access-grants";
 
 const VALID_KEYS: ReadonlySet<string> = new Set(PERMISSIONS.map((p) => p.key));
 
@@ -266,4 +271,28 @@ export async function listAccessGrants(projectId?: string): Promise<AccessGrantR
 		resourceId: r.resourceId,
 		createdAt: r.createdAt.toISOString(),
 	}));
+}
+
+/**
+ * The Access PAGE read (#2899): grants filtered SERVER-SIDE in SQL for `query`, plus
+ * scope/role/effect facet counts over the UNFILTERED grants of the same scope — the console
+ * filter standard's steps 5 + 6 (lib/query/README.md). Key it with `qk.accessGrants(org, q)`.
+ *
+ * `query.projectId` keeps the meaning it has in `listAccessGrants(projectId)`: it selects the
+ * UNIVERSE (the project-scoped Access surface), so the facets describe that project's grants
+ * — not the org's. Every other field is a filter and touches the rows only.
+ *
+ * `listAccessGrants(projectId?)` above is unchanged: its signature takes a string, and its
+ * callers (and their `qk.accessGrants(org)` cache) keep working. This is the `getJobs()` /
+ * `getJobsPage()` split, not a replacement.
+ *
+ * Authorization is IDENTICAL to `listAccessGrants`: `authorize("view", { type: "member" })`
+ * — enumerating grants requires `member:view` (viewers keep parity; non-members are denied),
+ * mirroring the CLI GET /api/cli/grants gate — and every predicate is scoped to `actor.orgId`.
+ */
+export async function getAccessGrantsPage(
+	query: AccessGrantQuery = {},
+): Promise<AccessGrantsPage> {
+	const actor = await authorize("view", { type: "member" });
+	return queryAccessGrantsPage(actor.orgId, query);
 }

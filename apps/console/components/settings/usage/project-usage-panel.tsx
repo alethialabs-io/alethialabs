@@ -26,6 +26,7 @@ import { Bars, Stat } from "@/components/settings/usage/usage-primitives";
 import { qk } from "@/lib/query/keys";
 import { globalHref } from "@/lib/routing";
 import { useActiveOrgSlug } from "@/lib/stores/use-workspace-store";
+import { formatMinutes } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
@@ -185,7 +186,9 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 						<Stat
 							label="Runner job-minutes"
 							value={
-								usage.data ? Math.round(usage.data.jobMinutes).toLocaleString() : "—"
+								// `jobMinutes` is a float; a local Math.round here was one of the four
+								// disagreeing minutes readouts. formatMinutes owns the rounding now.
+								usage.data ? formatMinutes(usage.data.jobMinutes) : "—"
 							}
 							sub={
 								usage.data

@@ -20,6 +20,11 @@ import {
 	user,
 } from "@/lib/db/schema";
 import { INVITE_ROLES, type InviteRoleOption } from "@/lib/members/roles";
+import {
+	type MembersPage,
+	type MembersQuery,
+	queryMembersPage,
+} from "@/lib/queries/members";
 
 export interface MemberRow {
 	/** member-row id (or the user id when synthesizing the personal owner). */
@@ -135,6 +140,29 @@ export async function getMembers(): Promise<MemberRow[]> {
 		teams: teamsByUser.get(r.userId) ?? [],
 		lastActiveAt: lastByUser.get(r.userId) ?? null,
 	}));
+}
+
+/**
+ * The Members PAGE read (#2899): member rows AND pending invitations filtered SERVER-SIDE
+ * in SQL for `query`, plus status/role/team facet counts over the org's UNFILTERED universe
+ * — the console filter standard's steps 5 + 6 (lib/query/README.md).
+ *
+ * The table is one list of two record kinds, so one call returns both: a `statuses: ["pending"]`
+ * selection is an invitations-only answer, and a team filter excludes invitations entirely
+ * (an invitation has no teams). The unfiltered `getMembers()` / `getInvitations()` above stay
+ * as they are — they are the shared universe reads (`qk.members(org)`, the activity log's
+ * author resolution, the manage-team dialog), mirroring `getJobs()` / `getJobsPage()`.
+ *
+ * Authorization is IDENTICAL to `getMembers()`: `currentActor()` resolves the caller's active
+ * tenancy and every predicate is scoped to `actor.orgId` (never a client-supplied org). The
+ * personal-workspace fallback (an org with no `member` rows shows you, the sole owner) is
+ * preserved, and `actor.userId` is the only thing that can synthesize it.
+ */
+export async function getMembersPage(
+	query: MembersQuery = {},
+): Promise<MembersPage> {
+	const actor = await currentActor();
+	return queryMembersPage(actor.orgId, actor.userId, query);
 }
 
 /** A pending invitation to the active org. */

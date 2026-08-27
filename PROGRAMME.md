@@ -87,7 +87,9 @@ overtaken is more useful than a gap.
   _test_ also ships the _product_ (release-please, the console and fleet deploys, the CLI release all
   trigger there). So: a GitHub Environment restricted to `dev`, trusted additionally by the e2e
   roles. `infra/aws-oidc` and `infra/azure-e2e` already support an `environment:` subject;
-  `infra/gcp-e2e` and `infra/alibaba-e2e` need their scalar subject widened to a list.
+  `infra/alibaba-e2e`'s trust was verified live on 2026-08-27 and is ALREADY a list, admitting
+  both `ref:refs/heads/main` and `environment:e2e-dev`; `infra/gcp-e2e` still needs its scalar
+  subject widened.
   **The compensating control is load-bearing**: a branch-protection ruleset on `dev` requiring
   CODEOWNERS review for `.github/workflows/**` and `infra/**` only. Widening the trust is dangerous
   precisely because Mergify auto-lands PRs and CODEOWNERS is advisory off `main`; two globs remove
@@ -165,7 +167,7 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**11 of 30 proof cells are proven.** 8 failing · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
+**8 of 30 proof cells are proven.** 8 failing · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -174,12 +176,12 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 | cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | **aws** | ✅ | ✅ | ❌ | ❌ | · | ❌ |
-| **gcp** | ✅ | ❌ | · | ✅ | · | ✅ |
-| **azure** | ✅ | ❌ | ❌ | ✅ | · | ✅ |
+| **gcp** | ⚠️ | ❌ | · | ✅ | · | ✅ |
+| **azure** | ⚠️ | ❌ | ❌ | ✅ | · | ✅ |
 | **alibaba** | · | · | · | · | · | · |
-| **hetzner** | ✅ | ❌ | ❌ | ✅ | · | ✅ |
+| **hetzner** | ⚠️ | ❌ | ❌ | ✅ | · | ✅ |
 
-Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · — ceiling · 🔶 deferred
+Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · ⚠️ contested · — ceiling · 🔶 deferred · 💰 cost
 
 <details><summary>Every cell that has any evidence at all</summary>
 
@@ -188,16 +190,16 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `aws/addons` **failing** — ledger 2026-08-26 (via the `full` composite run) (#2717)
 - `aws/gitops` **failing** — ledger 2026-08-26 (#2591)
 - `aws/day2` **failing** — ledger 2026-08-26 (#2717)
-- `gcp/floor` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T105829Z`
+- `gcp/floor` **contested** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T105829Z` — but #2743 is OPEN and was filed 2026-08-26, AFTER the 2026-08-25 run that proved it
 - `gcp/maxconfig` **failing** — ledger 2026-08-27 (#2811)
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
-- `azure/floor` **proven** — ledger 2026-08-25, bundle `demos/proofs/azure/20260825T063447Z`
+- `azure/floor` **contested** — ledger 2026-08-25, bundle `demos/proofs/azure/20260825T063447Z` — but #2744 is OPEN and was filed 2026-08-26, AFTER the 2026-08-25 run that proved it
 - `azure/maxconfig` **failing** — ledger 2026-08-27 (#2905)
 - `azure/addons` **failing** — ledger 2026-08-25 (via the `full` composite run)
 - `azure/gitops` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
 - `azure/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T235236Z`
-- `hetzner/floor` **proven** — ledger 2026-08-24, bundle `demos/proofs/hetzner/20260824T201636Z`
+- `hetzner/floor` **contested** — ledger 2026-08-24, bundle `demos/proofs/hetzner/20260824T201636Z` — but #2742 is OPEN and was filed 2026-08-26, AFTER the 2026-08-24 run that proved it
 - `hetzner/maxconfig` **failing** — ledger 2026-08-25 (via the `full` composite run) (#2568)
 - `hetzner/addons` **failing** — ledger 2026-08-27 (#2717)
 - `hetzner/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/2026-08-25T175213Z`
@@ -207,12 +209,15 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`gcp/maxconfig`** — failing. ledger 2026-08-27
+**`gcp/floor`** — contested. ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T105829Z` — but #2743 is OPEN and was filed 2026-08-26, AFTER the 2026-08-25 run that proved it
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
 <details><summary>The next 10</summary>
 
+1. `gcp/floor` — contested
+1. `azure/floor` — contested
+1. `hetzner/floor` — contested
 1. `gcp/maxconfig` — failing
 1. `azure/maxconfig` — failing
 1. `hetzner/maxconfig` — failing
@@ -220,15 +225,16 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 1. `azure/addons` — failing
 1. `hetzner/addons` — failing
 1. `aws/gitops` — failing
-1. `aws/day2` — failing
-1. `alibaba/floor` — never_run
-1. `alibaba/maxconfig` — never_run
 
 </details>
 
 ### Capability surface
 
-**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 48 carried by tofu · 5 carried in-cluster · 2 cloud ceilings · **0 deferred (our debt)**.
+**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 47 carried by tofu · 5 carried in-cluster · 2 cloud ceilings · **0 deferred (our debt)** · 1 excluded by cost.
+
+Excluded by **cost** — the cloud offers the kind and the product ships it, but provisioning it in the harness would buy something not billed by the hour. These are spend decisions, not capability limits, and the price is printed so the decision can be re-taken rather than inherited:
+
+- `alibaba/registry` → alicloud_cr_ee_instance — 150 USD/month (Basic, eu-central-1; 1800/year, no term discount; Advanced 617; no tier below Basic), bought PER RUN because instance_name carries the environment
 
 Cloud ceilings (the cloud genuinely does not offer the kind — not our debt):
 
@@ -289,6 +295,20 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | `azure/addons` | failing | **none** | ? |
 | `hetzner/maxconfig` | failing | #2568 | open |
 | `hetzner/addons` | failing | #2717 | open |
+
+### ⚠️ Contested — proven by the ledger, contradicted by an open red
+
+A nightly that goes red files an **issue** and writes **no ledger row**. So from the ledger's point of view that failure never happened, and a cell proven earlier stays ✅ forever: PASS is durable, a later FAIL is invisible. That makes the grid a **high-water mark** presented as current state, in the one direction that overstates — which is the thing this whole file exists to prevent.
+
+| cell | proven by a run dated | open red | filed |
+|---|:---:|---|:---:|
+| `azure/floor` | 2026-08-25 | #2744 | 2026-08-26 |
+| `gcp/floor` | 2026-08-25 | #2743 | 2026-08-26 |
+| `hetzner/floor` | 2026-08-24 | #2742 | 2026-08-26 |
+
+`contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the run, and guessing either way is worse than naming the contradiction. It claims only what is derivable — the two sources disagree, so the ✅ is not trustworthy right now.
+
+**Two human acts clear it, and either one is fine:** close the issue if that run was a flake, or append a `FAIL` row for it if it was not. The next derivation picks the answer up.
 
 ### Blocked on a human
 

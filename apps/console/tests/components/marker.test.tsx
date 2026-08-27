@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Vendor-drift guard for the shadcn `marker` component (components/ui/marker.tsx): the
+// Vendor-drift guard for the shadcn `marker` component (components/ai-elements/marker.tsx): the
 // transcript relies on its data-slot/data-variant contract, the separator hairlines, and
 // the decorative (aria-hidden) icon slot — assert those so an upstream re-vendor that
 // changes them fails loudly.
 
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ai-elements/marker";
 
 describe("Marker", () => {
 	it("renders the marker slot with the default variant", () => {

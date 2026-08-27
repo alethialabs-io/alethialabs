@@ -5,9 +5,9 @@
 // or the in-sync/never-scanned states. Purposeful empty state when no drift scan has
 // ever recorded a posture for this environment.
 
+import { formatRelative } from "@repo/format";
 import { cn } from "@repo/ui/utils";
 import type { EvidenceEnvRow } from "../evidence-derive";
-import { relTime } from "../evidence-derive";
 import { EVIDENCE_HELP } from "../evidence-help";
 import { kindTone, TONE_TEXT } from "../evidence-status";
 import { TabEmpty } from "./tab-empty";
@@ -30,8 +30,8 @@ export function DriftTab({ row }: { row: EvidenceEnvRow }) {
 		<div className="flex flex-col gap-3">
 			<div className="font-mono text-[11px] text-text-secondary">
 				{drift.inSync
-					? `In sync — no managed resource has drifted. Scanned ${relTime(drift.scannedAt)}.`
-					: `${drift.drifted} resource${drift.drifted === 1 ? "" : "s"} diverged from the provisioned state. Scanned ${relTime(drift.scannedAt)}.`}
+					? `In sync — no managed resource has drifted. Scanned ${formatRelative(drift.scannedAt)}.`
+					: `${drift.drifted} resource${drift.drifted === 1 ? "" : "s"} diverged from the provisioned state. Scanned ${formatRelative(drift.scannedAt)}.`}
 			</div>
 			{drift.details.length > 0 && (
 				<div className="flex flex-col overflow-hidden rounded-md border">

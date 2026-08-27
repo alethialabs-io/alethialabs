@@ -460,7 +460,11 @@ const CONTENT_ANCHORED_PATHS = [
 /** Real paths that must stay OUT of scope — the half that stops "widen everything" from passing. */
 const OUT_OF_SCOPE_PATHS = [
 	"packages/ui/src/accordion.tsx",
-	"apps/console/components/ui/bubble.tsx",
+	// Was `components/ui/bubble.tsx` until the chat-message families merged (#2881). The
+	// replacement is the same KIND of fixture on purpose: a console UI primitive that is not
+	// named for the surface and holds no capability code, so it proves layer 2 does not widen
+	// into components/ wholesale.
+	"apps/console/components/ai-elements/message-scroller.tsx",
 	"apps/console/lib/db/migrations/meta/_journal.json",
 	// Prose carve-out, by TREE: named for the surface, but documentation, not a code path.
 	"apps/docs/content/docs/console/connectors/aws.mdx",

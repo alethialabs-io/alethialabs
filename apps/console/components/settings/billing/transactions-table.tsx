@@ -14,42 +14,25 @@ import {
 } from "@/app/server/actions/billing";
 import { DataTable } from "@/components/data-table";
 import { SettingsSection } from "@/components/settings/settings-ui";
+import { formatDate, formatMoney } from "@repo/format";
 import { Skeleton } from "@repo/ui/skeleton";
-import { cn } from "@repo/ui/utils";
+import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 
-/** Smallest-unit amount → localized currency (negative renders as −$x). */
-function formatAmount(amount: number, currency: string): string {
-	return new Intl.NumberFormat(undefined, {
-		style: "currency",
-		currency: currency.toUpperCase(),
-		signDisplay: "auto",
-	}).format(amount / 100);
-}
-
-/** "1 Jun 2026" */
-function formatDate(iso: string): string {
-	return new Date(iso).toLocaleDateString(undefined, {
-		day: "numeric",
-		month: "short",
-		year: "numeric",
-	});
-}
-
-const STATUS: Record<TransactionInfo["status"], { variant: string; label: string }> = {
-	paid: { variant: "vx-status--active", label: "Paid" },
-	pending: { variant: "vx-status--pending", label: "Pending" },
-	failed: { variant: "vx-status--failed", label: "Failed" },
-	refunded: { variant: "vx-status--idle", label: "Refunded" },
+// A transaction outcome is not one of the product statuses `statusTier()` knows — "paid" and
+// "refunded" would both fall through to `idle` — so the tier is stated explicitly and the
+// SHARED badge renders it. This replaces a file-local `StatusBadge` that collided by name
+// with @repo/ui's and with the third one in settings/members/members-table.tsx.
+const STATUS: Record<TransactionInfo["status"], { tier: StatusTier; label: string }> = {
+	paid: { tier: "active", label: "Paid" },
+	pending: { tier: "pending", label: "Pending" },
+	failed: { tier: "failed", label: "Failed" },
+	refunded: { tier: "idle", label: "Refunded" },
 };
 
-function StatusBadge({ status }: { status: TransactionInfo["status"] }) {
+/** The grayscale pill for one transaction outcome. */
+function TransactionStatusBadge({ status }: { status: TransactionInfo["status"] }) {
 	const s = STATUS[status];
-	return (
-		<span className={cn("vx-status", s.variant)}>
-			<span className="vx-status__dot" />
-			{s.label}
-		</span>
-	);
+	return <StatusBadge status={status} tier={s.tier} label={s.label} />;
 }
 
 const columns: ColumnDef<TransactionInfo>[] = [
@@ -82,14 +65,16 @@ const columns: ColumnDef<TransactionInfo>[] = [
 	{
 		accessorKey: "status",
 		header: "Status",
-		cell: ({ row }) => <StatusBadge status={row.original.status} />,
+		cell: ({ row }) => <TransactionStatusBadge status={row.original.status} />,
 	},
 	{
 		accessorKey: "amount",
 		header: () => <div className="text-right">Amount</div>,
 		cell: ({ row }) => (
 			<div className="text-right font-mono text-foreground">
-				{formatAmount(row.original.amount, row.original.currency)}
+				{/* `amount` is ALREADY minor units (the Stripe charge amount), which is what
+				    formatMoney takes — no /100 here, and no *100 either. */}
+				{formatMoney(row.original.amount, row.original.currency.toUpperCase())}
 			</div>
 		),
 	},

@@ -77,19 +77,21 @@ const nextConfig: NextConfig = {
 		"/**/*": ["../../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**"],
 	},
 	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
+	// Every @repo/* here ships raw TypeScript from `src/`, so it is compiled by the app, not
+	// pre-built. A package added to package.json but forgotten HERE resolves in tests and dies
+	// in `next build` — which is why the list is worth reading before adding a dependency.
+	//
+	// The list is not self-explanatory: @repo/privacy and @repo/platform also ship raw TS, are
+	// NOT listed, and build fine. The asymmetric cost is what decides it — listing a package
+	// that does not need an entry costs nothing, omitting one that does breaks the build.
 	transpilePackages: [
 		"@repo/ui",
 		"@repo/brand",
+		"@repo/format",
 		"@repo/legal",
 		"@repo/plan-catalog",
 		"@repo/email",
 		"@repo/support",
-		// @repo/format ships raw TS with no build step, like @repo/ui above. The list is not
-		// consistent about this — @repo/privacy and @repo/platform also ship raw TS, are NOT
-		// listed, and build fine — so it is not obvious from the file whether a new package
-		// needs an entry. Listing one that does not need it costs nothing; omitting one that
-		// does breaks the console build, and every console lane imports this package.
-		"@repo/format",
 	],
 	// The enterprise package is loaded at runtime via createRequire (lib/enterprise.ts),
 	// never statically bundled — keep it external so a community build (where the

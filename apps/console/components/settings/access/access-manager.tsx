@@ -9,10 +9,11 @@
 // assignGrant / revokeGrant). The page header lives in the settings shell; without the
 // Enterprise `customRoles` entitlement the surface stays visible and shows the upsell.
 
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { formatDistanceToNow } from "date-fns";
-import { Info, MoreHorizontal, Plus, Shield } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Info, Layers, MoreHorizontal, Plus, Shield, ShieldAlert } from "lucide-react";
+import { useParams } from "next/navigation";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   type AccessGrantRow,
@@ -26,12 +27,16 @@ import { lookup } from "@/lib/typed-object";
 import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
-import {
-  SettingsSearch,
-  SettingsSelect,
-  StatCell,
-  StatStrip,
-} from "@/components/settings/settings-ui";
+// `SettingsSelect` survives here as a FORM control inside the grant builder. The console
+// filter standard bans Radix Selects from FILTER BARS, where a multi-select facet is the
+// right shape; picking one role to grant is a single-choice form field, which is what a
+// Select is for. The toolbar's old "All scopes" Select is gone.
+import { SettingsSelect } from "@/components/settings/settings-ui";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { qk } from "@/lib/query/keys";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
+import { useAccessFilters } from "@/lib/stores/use-settings-filters";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,17 +54,29 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
+import { EmptyState } from "@repo/ui/empty";
+import { FacetFilter } from "@repo/ui/facet-filter";
+import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
+import { FilterSearch } from "@repo/ui/filter-search";
+import { formatRelative } from "@repo/format";
+import { MultiCombobox } from "@repo/ui/multi-combobox";
+import { PageHeader } from "@repo/ui/page-header";
 import { Skeleton } from "@repo/ui/skeleton";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
 import { userInitials } from "@/lib/user-display";
+import {
+  accessFacetCounts,
+  DEFAULT_ACCESS_FILTERS,
+  EFFECT_OPTIONS,
+  filterGrants,
+  grantRoleLabel,
+  normalizeAccessQuery,
+  reachLabel,
+  SCOPE_LEVEL,
+} from "./access-filters";
 import { Combobox } from "./combobox";
 
-const SCOPE_LEVEL: Record<string, string> = {
-  org: "Org-wide",
-  project: "Project",
-  runner: "Runner",
-  cloud_identity: "Cloud identity",
-};
 const SCOPE_OPTIONS = [
   { value: "org", label: "Entire organization" },
   { value: "project", label: "A Project" },
@@ -67,48 +84,54 @@ const SCOPE_OPTIONS = [
   { value: "cloud_identity", label: "A cloud identity" },
 ];
 
-/** Qualitative inheritance reach for a scope (exact counts are a backend gap). */
-function reachLabel(resourceType: string): string {
-  switch (resourceType) {
-    case "org":
-      return "All Projects";
-    case "project":
-      return "This Project";
-    case "runner":
-      return "This runner";
-    case "cloud_identity":
-      return "This identity";
-    default:
-      return "—";
-  }
-}
-
 /**
  * The Access surface. When `projectId` is given the grants list, stats, and grant builder are scoped
  * to that single project (project-scoped Settings › Access); without it, the full org grants render.
  */
 export function AccessManager({ projectId }: { projectId?: string } = {}) {
   const entitled = useEntitlement("customRoles");
-  const [grants, setGrants] = useState<AccessGrantRow[] | null>(null);
-  const [options, setOptions] = useState<GrantOptions | null>(null);
-  const [search, setSearch] = useState("");
-  const [scopeFilter, setScopeFilter] = useState("all");
+  const { org } = useParams<{ org: string }>();
+  const qc = useQueryClient();
+
+  // Filter state: the store is the source of truth, the URL mirrors it (shareable views),
+  // and the free text is DEBOUNCED — this surface had none, so every keystroke re-ran the
+  // whole predicate. Fifteen `useState` calls collapse to one store plus two dialog flags.
+  const filters = useAccessFilters((s) => s.filters);
+  const set = useAccessFilters((s) => s.set);
+  const reset = useAccessFilters((s) => s.reset);
+  useFilterUrlSync(useAccessFilters, DEFAULT_ACCESS_FILTERS);
+  const search = useDebouncedValue(filters.search);
+  const query = useMemo(
+    () => normalizeAccessQuery(filters, search, projectId),
+    [filters, search, projectId],
+  );
+
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<AccessGrantRow | null>(null);
 
-  const load = useCallback(() => {
-    listAccessGrants(projectId)
-      .then(setGrants)
-      .catch(() => setGrants([]));
-    getGrantOptions()
-      .then(setOptions)
-      .catch(() => setOptions(null));
-  }, [projectId]);
-  useEffect(() => {
-    // Custom-scoped grants are Enterprise. Without the entitlement the server would
-    // reject the queries (requireAccessAdmin), so skip the load and show the upsell.
-    if (entitled) load();
-  }, [entitled, load]);
+  // Custom-scoped grants are Enterprise. Without the entitlement the server rejects these
+  // (requireAccessAdmin), so both queries stay disabled and the upsell renders instead.
+  //
+  // The key carries only `projectId` — the one axis `listAccessGrants` understands — so the
+  // fetched rows are the UNFILTERED universe for this scope, which is what the facet counts
+  // below must be computed over.
+  const grantsQuery = useQuery({
+    queryKey: qk.accessGrants(org, projectId ? { projectId } : undefined),
+    queryFn: () => listAccessGrants(projectId),
+    enabled: entitled,
+  });
+  const optionsQuery = useQuery({
+    queryKey: ["access", "grant-options", org] as const,
+    queryFn: () => getGrantOptions(),
+    enabled: entitled,
+    staleTime: 60_000,
+  });
+  const options: GrantOptions | null = optionsQuery.data ?? null;
+
+  const invalidate = useCallback(() => {
+    void qc.invalidateQueries({ queryKey: ["access", "grants", org] });
+    void qc.invalidateQueries({ queryKey: ["access", "grant-options", org] });
+  }, [qc, org]);
 
   // Resolve a scoped resource id → a friendly label via the option lists.
   const resourceLabel = useMemo(() => {
@@ -127,34 +150,27 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
       await revokeGrant(g.id);
       toast.success("Access revoked");
       setDeleting(null);
-      load();
+      invalidate();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't revoke access");
     }
   };
 
-  const all = useMemo(() => grants ?? [], [grants]);
-  const stats = {
-    total: all.length,
-    org: all.filter((g) => g.resourceType === "org").length,
-    project: all.filter((g) => g.resourceType === "project").length,
-  };
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return all.filter((g) => {
-      if (scopeFilter !== "all" && g.resourceType !== scopeFilter) return false;
-      if (q) {
-        const scope =
-          g.resourceType === "org"
-            ? "organization"
-            : resourceLabel(g.resourceType, g.resourceId);
-        if (!`${g.principalLabel} ${scope}`.toLowerCase().includes(q))
-          return false;
-      }
-      return true;
-    });
-  }, [all, scopeFilter, search, resourceLabel]);
+  const all = useMemo(() => grantsQuery.data ?? [], [grantsQuery.data]);
+  /** The label the Scope column shows — the search must match what the row displays. */
+  const scopeLabel = useCallback(
+    (g: AccessGrantRow) =>
+      g.resourceType === "org"
+        ? "organization"
+        : resourceLabel(g.resourceType, g.resourceId),
+    [resourceLabel],
+  );
+  const filtered = useMemo(
+    () => filterGrants(all, query, scopeLabel),
+    [all, query, scopeLabel],
+  );
+  const counts = useMemo(() => accessFacetCounts(all), [all]);
+  const activeFilters = countActiveFilters(filters, DEFAULT_ACCESS_FILTERS);
 
   const columns = useMemo<ColumnDef<AccessGrantRow>[]>(
     () => [
@@ -199,10 +215,10 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
                   {g.permissionKey ?? "—"}
                 </code>
               )}
+              {/* A deny is the one thing on this row that changes its meaning, so it reads
+                  through the SHARED status device rather than a local pill. */}
               {g.effect === "deny" && (
-                <span className="rounded-full border border-foreground px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-foreground">
-                  Deny
-                </span>
+                <StatusBadge status="deny" tier="failed" label="Deny" />
               )}
             </div>
           );
@@ -243,9 +259,7 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
         header: "Granted",
         cell: ({ row }) => (
           <span className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-            {formatDistanceToNow(new Date(row.original.createdAt), {
-              addSuffix: true,
-            })}
+            {formatRelative(row.original.createdAt)}
           </span>
         ),
       },
@@ -313,60 +327,80 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
 
       {!entitled ? (
         <FeatureUpsell feature="access" />
-      ) : grants === null ? (
+      ) : grantsQuery.isPending ? (
         <div className="space-y-3">
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-64 w-full" />
         </div>
       ) : (
         <>
-          <StatStrip>
-            <StatCell label="Grants" value={stats.total} sub="active" />
-            {projectId ? (
-              <StatCell
-                label="Principals"
-                value={new Set(all.map((g) => g.principalId)).size}
-                sub="with access"
-              />
-            ) : (
-              <StatCell label="Org-wide" value={stats.org} sub="grants" />
-            )}
-            <StatCell
-              label="Project-scoped"
-              value={stats.project}
-              sub="grants"
-            />
-          </StatStrip>
+          <PageHeader
+            className="mb-4"
+            title="Access"
+            description="Who is granted what, and where it applies."
+            count={filtered.length}
+            actions={
+              <Button size="sm" onClick={() => setCreating((v) => !v)}>
+                <Plus size={13} />
+                Add grant
+              </Button>
+            }
+          />
 
-          {/* toolbar */}
-          <div className="mb-[14px] flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <SettingsSearch
-                value={search}
-                onChange={setSearch}
-                placeholder="Search principal or scope"
-                className="w-[230px]"
+          <FilterBar>
+            <FilterSearch
+              value={filters.search}
+              onChange={(v) => set("search", v)}
+              placeholder="Search principal or scope…"
+              className="w-[240px] max-w-[380px] flex-1"
+            />
+            {/* Scope filter is meaningless when the list is already scoped to one project. */}
+            {!projectId && (
+              <FacetFilter
+                label="Scope"
+                icon={Layers}
+                options={Object.keys(SCOPE_LEVEL).map((value) => ({
+                  value,
+                  label: SCOPE_LEVEL[value] ?? value,
+                  hint: String(counts.scopes[value] ?? 0),
+                }))}
+                value={filters.scopes}
+                onChange={(next) => set("scopes", next)}
+                searchPlaceholder="Filter scope…"
+                emptyText="No scopes."
               />
-              {/* Scope filter is meaningless when the list is already scoped to one project. */}
-              {!projectId && (
-                <SettingsSelect
-                  aria-label="Filter by scope"
-                  className="w-[150px]"
-                  value={scopeFilter}
-                  onChange={setScopeFilter}
-                  options={[
-                    { value: "all", label: "All scopes" },
-                    { value: "org", label: "Org-wide" },
-                    { value: "project", label: "Project" },
-                  ]}
-                />
-              )}
-            </div>
-            <Button size="sm" onClick={() => setCreating((v) => !v)}>
-              <Plus size={13} />
-              Add grant
-            </Button>
-          </div>
+            )}
+            {/* Roles are an open-ended entity list (built-ins + every custom role + direct
+                permission grants), so this is a searchable MultiCombobox, not a facet popover. */}
+            <MultiCombobox
+              placeholder="All roles"
+              icon={Shield}
+              className="w-[190px]"
+              options={Object.keys(counts.roles)
+                .sort()
+                .map((value) => ({
+                  value,
+                  label: grantRoleLabel(value),
+                  hint: String(counts.roles[value] ?? 0),
+                }))}
+              value={filters.roles}
+              onChange={(next) => set("roles", next)}
+            />
+            <FacetFilter
+              label="Effect"
+              icon={ShieldAlert}
+              options={EFFECT_OPTIONS.map((o) => ({
+                value: o.value,
+                label: o.label,
+                hint: String(counts.effects[o.value] ?? 0),
+              }))}
+              value={filters.effects}
+              onChange={(next) => set("effects", next)}
+              searchPlaceholder="Filter effect…"
+              emptyText="No effects."
+            />
+            <FilterBarReset count={activeFilters} onReset={reset} />
+          </FilterBar>
 
           {/* inline grant builder */}
           {creating && options && (
@@ -377,12 +411,32 @@ export function AccessManager({ projectId }: { projectId?: string } = {}) {
               onCancel={() => setCreating(false)}
               onGranted={() => {
                 setCreating(false);
-                load();
+                invalidate();
               }}
             />
           )}
 
-          <DataTable columns={columns} data={filtered} pageSize={15} />
+          {filtered.length === 0 ? (
+            <EmptyState
+              className="border border-border bg-surface-sunken"
+              icon={<Shield />}
+              title={all.length === 0 ? "No grants yet" : "No matching grants"}
+              description={
+                all.length === 0
+                  ? "Add a grant to bind a member or team to a role."
+                  : "No grant matches these filters."
+              }
+              action={
+                all.length === 0 ? undefined : (
+                  <Button variant="outline" size="sm" onClick={reset}>
+                    Clear filters
+                  </Button>
+                )
+              }
+            />
+          ) : (
+            <DataTable columns={columns} data={filtered} pageSize={15} />
+          )}
         </>
       )}
 

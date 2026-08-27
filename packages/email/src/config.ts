@@ -132,7 +132,37 @@ export function getEmailConfig(): EmailConfig {
 	}
 
 	// Hosted deployments must not degrade transactional mail to the development log fallback.
-	if (env("ALETHIA_DEPLOYMENT_MODE") === "hosted" && !provider) {
+	//
+	// The SANDBOX carve-out below exists because that rule, keyed on `ALETHIA_DEPLOYMENT_MODE`
+	// alone, made sign-in impossible on every sandbox branch env (#2953). `scripts/env.sh` mints
+	// `hosted` so the sandbox rehearses hosted BILLING, and deliberately copies no mail
+	// credential — so this threw inside a Better Auth background task, the send returned 200,
+	// and the code was produced neither by mail nor by the log. Nothing was ever red.
+	//
+	// It needs BOTH conditions, which is what keeps it from being an escape hatch:
+	//
+	//   · ALETHIA_SANDBOX=1 — written only by scripts/env.sh. No deploy path writes it
+	//     (deploy-console.yml mints its own env and does not), and no operator has a reason to.
+	//   · NOT a production build. A real hosted deployment is one; the sandbox is not. So even
+	//     if the flag leaked into a production environment, the carve-out stays shut.
+	//
+	// A single flag would have been an escape hatch on the one guard whose whole value is
+	// refusing one. The conjunction is a statement about what the process IS, and a real
+	// deployment cannot satisfy it.
+	// Note the `!explicit`: the carve-out covers "no provider configured at all", which is what
+	// a sandbox is. Naming a provider and then not supplying its credentials is a
+	// misconfiguration in ANY environment, and logging instead of failing would hide it — so
+	// that case still throws, sandbox or not.
+	const sandboxDevFallback =
+		env("ALETHIA_SANDBOX") === "1" &&
+		process.env.NODE_ENV !== "production" &&
+		!explicit;
+
+	if (
+		env("ALETHIA_DEPLOYMENT_MODE") === "hosted" &&
+		!provider &&
+		!sandboxDevFallback
+	) {
 		throw new Error(
 			explicit
 				? `EMAIL_PROVIDER=${explicit} is configured without matching credentials.`
