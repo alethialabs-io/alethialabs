@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Info, Zap } from "lucide-react";
+import { formatMinutes } from "@repo/format";
 import { planMeta } from "@repo/plan-catalog";
 import { Button } from "@repo/ui/button";
 import { Skeleton } from "@repo/ui/skeleton";
@@ -26,6 +27,11 @@ import {
 } from "@/lib/billing/ai-usage-format";
 import { globalHref } from "@/lib/routing";
 import { useUpgradeSheet } from "@/components/org/upgrade-sheet-provider";
+import {
+  NEAR_LIMIT_RATIO,
+  formatUsagePercent,
+  usageRatio,
+} from "./usage-percent";
 import { UsageRing } from "./usage-ring";
 
 /** A gauge row: a metered resource with a real plan allowance. */
@@ -35,7 +41,11 @@ interface GaugeRow {
   limit: number;
   unit: string;
   tip: string;
-  /** Overrides the right-side readout (used for AI rows — a reset time, not raw counts). */
+  /**
+   * Overrides the right-side readout for rows whose raw counts are the wrong thing to print —
+   * AI rows show a reset time rather than credits, and runner minutes show a humanised
+   * duration rather than the unrounded float the meter actually holds.
+   */
   readout?: string;
 }
 
@@ -81,6 +91,11 @@ export function UsageCard({
             limit: usage.includedMinutes,
             unit: "min",
             tip: "Managed-runner compute minutes consumed this billing period.",
+            // `usedMinutes` is an unrounded float straight out of `extract(epoch from …) / 60.0`,
+            // so the default `toLocaleString()` readout printed "0.943 / 200 min" (#2876).
+            // The ALLOWANCE stays a plain minute count: it is the number the plan and the
+            // pricing page quote, and "3h 20m" would no longer be recognisable as "200 minutes".
+            readout: `${formatMinutes(usage.usedMinutes)} / ${usage.includedMinutes.toLocaleString()} min`,
           },
         ];
         // Concurrent jobs is only a gauge when the plan caps it (Enterprise is unlimited).
@@ -224,8 +239,9 @@ function UsageHeaderCta({
 
 /** One gauge row: ring + label (with info tooltip) + used/limit readout. */
 function UsageMeter({ row }: { row: GaugeRow }) {
-  const pct = row.limit > 0 ? Math.round((row.used / row.limit) * 100) : 0;
-  const near = pct >= 85;
+  // Percent and near-limit both come from the shared helpers the ring uses, so the caption,
+  // the arc and the ink weight cannot disagree about the same pair of numbers.
+  const near = usageRatio(row.used, row.limit) >= NEAR_LIMIT_RATIO;
   return (
     <div className="flex items-center gap-3 border-b border-border/60 py-2.5 last:border-b-0">
       <UsageRing used={row.used} limit={row.limit} />
@@ -235,7 +251,7 @@ function UsageMeter({ row }: { row: GaugeRow }) {
           <MetricTip tip={row.tip} />
         </div>
         <div className="mt-0.5 font-mono text-[10px] text-text-tertiary">
-          {pct}% used
+          {formatUsagePercent(row.used, row.limit)}% used
         </div>
       </div>
       <div
