@@ -136,15 +136,17 @@ func TestEnsureExternalSecretsStore(t *testing.T) {
 	}
 }
 
-// TestEnsureExternalDNSSecret covers the empty-token refusal and the seeding apply, and locks that
-// the token value never reaches the job log.
-func TestEnsureExternalDNSSecret(t *testing.T) {
+// TestEnsureExternalDNSCredential covers the empty-token refusal, the seeding apply, the
+// no-seed-needed path, and locks that the token value never reaches the job log.
+func TestEnsureExternalDNSCredential(t *testing.T) {
+	cloudflare := &InfraFacts{Provider: "aws", DNSConnector: "cloudflare", DNSCredentialPresent: true}
+
 	t.Run("refuses an empty token", func(t *testing.T) {
 		stub := newKubectlStub(t, 0)
 		var stdout, stderr bytes.Buffer
-		err := EnsureExternalDNSSecret("external-dns-cloudflare", "apiToken", "", &stdout, &stderr)
+		err := EnsureExternalDNSCredential(cloudflare, "", "", &stdout, &stderr)
 		if err == nil || !strings.Contains(err.Error(), "refusing to write an empty") {
-			t.Fatalf("EnsureExternalDNSSecret() error = %v, want an empty-token refusal", err)
+			t.Fatalf("EnsureExternalDNSCredential() error = %v, want an empty-token refusal", err)
 		}
 		if len(stub.calls()) != 0 {
 			t.Errorf("an empty token still shelled out: %v", stub.calls())
@@ -155,14 +157,43 @@ func TestEnsureExternalDNSSecret(t *testing.T) {
 		stub := newKubectlStub(t, 0)
 		var stdout, stderr bytes.Buffer
 		const token = "cf-token-must-not-be-logged"
-		if err := EnsureExternalDNSSecret("external-dns-cloudflare", "apiToken", token, &stdout, &stderr); err != nil {
-			t.Fatalf("EnsureExternalDNSSecret() error = %v, want nil", err)
+		if err := EnsureExternalDNSCredential(cloudflare, token, "", &stdout, &stderr); err != nil {
+			t.Fatalf("EnsureExternalDNSCredential() error = %v, want nil", err)
 		}
 		if !stub.calledWith("apply -f") {
 			t.Errorf("no kubectl apply was issued: %v", stub.calls())
 		}
 		if log := stdout.String() + stderr.String() + strings.Join(stub.calls(), " "); strings.Contains(log, token) {
 			t.Error("the external-dns token reached the job log or the command line")
+		}
+	})
+
+	// azure needs a Secret too, and it is the one that was missing entirely (#2868).
+	t.Run("seeds the azure config", func(t *testing.T) {
+		stub := newKubectlStub(t, 0)
+		var stdout, stderr bytes.Buffer
+		if err := EnsureExternalDNSCredential(azureFacts(), "", "", &stdout, &stderr); err != nil {
+			t.Fatalf("EnsureExternalDNSCredential() error = %v, want nil", err)
+		}
+		if !stub.calledWith("apply -f") {
+			t.Errorf("no kubectl apply was issued for azure: %v", stub.calls())
+		}
+		if !strings.Contains(stdout.String(), "external-dns-azure") {
+			t.Errorf("the azure seed was not announced: %q", stdout.String())
+		}
+	})
+
+	// aws authenticates through IRSA with nothing on disk. Seeding anything here would write a
+	// Secret nothing reads — and, before the switch moved out of the provisioner, this path was
+	// the one nothing could observe at all.
+	t.Run("seeds nothing when the provider needs no secret", func(t *testing.T) {
+		stub := newKubectlStub(t, 0)
+		var stdout, stderr bytes.Buffer
+		if err := EnsureExternalDNSCredential(&InfraFacts{Provider: "aws"}, "", "", &stdout, &stderr); err != nil {
+			t.Fatalf("EnsureExternalDNSCredential() error = %v, want nil", err)
+		}
+		if len(stub.calls()) != 0 {
+			t.Errorf("aws seeded a secret it does not read: %v", stub.calls())
 		}
 	})
 }

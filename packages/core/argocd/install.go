@@ -123,36 +123,75 @@ func azureDNSConfigJSON(subscriptionID, resourceGroup, tenantID string) string {
 `, tenantID, subscriptionID, resourceGroup)
 }
 
-// EnsureExternalDNSAzureConfig seeds the azure.json Secret the Azure external-dns mounts at
-// /etc/kubernetes (its default --azure-config-file path, so no extra arg is rendered). It
-// carries NO credential — four identifiers plus a mode flag; the token comes from the
-// federated workload identity at runtime. It is still a Secret rather than a ConfigMap because
-// the chart's extraVolumes mount is what the Application already knows how to reference, and
-// because a future non-keyless cloud would put aadClientSecret in this same file.
-//
-// Every value is required: DNSProvider() returns "" unless all four Azure facts are present, so
-// reaching here with an empty one means the render gate and this seeder have drifted apart.
-func EnsureExternalDNSAzureConfig(subscriptionID, resourceGroup, tenantID string, stdout, stderr io.Writer) error {
-	if subscriptionID == "" || resourceGroup == "" || tenantID == "" {
-		return fmt.Errorf("refusing to write an incomplete external-dns azure.json "+
-			"(subscription=%q resourceGroup=%q tenant=%q) — DNSProvider() should have skipped the app",
-			subscriptionID, resourceGroup, tenantID)
-	}
-	fmt.Fprintln(stdout, "Seeding external-dns azure.json config secret external-dns-azure...")
-	manifest := externalDNSSecretManifest("external-dns-azure", "azure.json",
-		azureDNSConfigJSON(subscriptionID, resourceGroup, tenantID))
-	return ApplyManifest(manifest, stdout, stderr)
+// ExternalDNSSeed is the Secret one cloud's external-dns needs to exist BEFORE the Application's
+// first sync. The zero value means "this provider needs no pre-seeded Secret", which is the
+// correct answer for aws and google — they authenticate through IRSA / Workload Identity with
+// nothing on disk.
+type ExternalDNSSeed struct {
+	SecretName string
+	Key        string
+	Value      string
 }
 
-// EnsureExternalDNSSecret applies the token Secret a connector-backed external-dns needs
-// (idempotent; re-applying refreshes a rotated token on every deploy). Callers must pass a
-// non-empty token — the render gate (DNSCredentialPresent) skips the app otherwise.
-func EnsureExternalDNSSecret(secretName, key, token string, stdout, stderr io.Writer) error {
-	if token == "" {
-		return fmt.Errorf("refusing to write an empty %s token secret", secretName)
+// Needed reports whether this provider needs a Secret seeded at all.
+func (s ExternalDNSSeed) Needed() bool { return s.SecretName != "" }
+
+// ExternalDNSSeedFor decides WHAT to seed for the deploy's DNS provider. It is PURE — no cluster,
+// no environment — so the whole decision is unit-tested, which is the point of splitting it from
+// the apply below: this used to be a `switch` inline in the provisioner's deploy path, where
+// nothing could reach it without a live cluster and every branch was measured as dead.
+//
+// It reads f.DNSProvider(), the SAME gate the render template and InfraServiceDecisions use, so a
+// provider the app is not rendered for can never have a Secret written for it.
+func ExternalDNSSeedFor(f *InfraFacts, cloudflareToken, hetznerToken string) (ExternalDNSSeed, error) {
+	switch f.DNSProvider() {
+	case "cloudflare":
+		if cloudflareToken == "" {
+			return ExternalDNSSeed{}, fmt.Errorf("refusing to write an empty external-dns-cloudflare token secret")
+		}
+		return ExternalDNSSeed{SecretName: "external-dns-cloudflare", Key: "apiToken", Value: cloudflareToken}, nil
+	case "webhook":
+		if hetznerToken == "" {
+			return ExternalDNSSeed{}, fmt.Errorf("refusing to write an empty external-dns-hetzner token secret")
+		}
+		return ExternalDNSSeed{SecretName: "external-dns-hetzner", Key: "token", Value: hetznerToken}, nil
+	case "azure":
+		// NOT a credential: external-dns on Azure is keyless via workload identity. This is the
+		// azure.json its provider reads unconditionally, and the only place
+		// useWorkloadIdentityExtension can be set at all (#2868).
+		//
+		// Every value is required, and DNSProvider() already returns "" unless all four Azure
+		// facts are present — so reaching here with an empty one means the render gate and this
+		// seeder have drifted apart, which is worth failing loudly rather than writing a config
+		// that reproduces #2868 with different empty fields.
+		if f.AzureSubscriptionID == "" || f.AzureResourceGroup == "" || f.AzureTenantID == "" {
+			return ExternalDNSSeed{}, fmt.Errorf("refusing to write an incomplete external-dns azure.json "+
+				"(subscription=%q resourceGroup=%q tenant=%q) — DNSProvider() should have skipped the app",
+				f.AzureSubscriptionID, f.AzureResourceGroup, f.AzureTenantID)
+		}
+		return ExternalDNSSeed{
+			SecretName: "external-dns-azure",
+			Key:        "azure.json",
+			Value:      azureDNSConfigJSON(f.AzureSubscriptionID, f.AzureResourceGroup, f.AzureTenantID),
+		}, nil
 	}
-	fmt.Fprintf(stdout, "Seeding external-dns credential secret %s...\n", secretName)
-	return ApplyManifest(externalDNSSecretManifest(secretName, key, token), stdout, stderr)
+	// aws (IRSA), google (Workload Identity), and every cloud whose app is not rendered at all.
+	return ExternalDNSSeed{}, nil
+}
+
+// EnsureExternalDNSCredential seeds whatever ExternalDNSSeedFor decides this deploy needs, before
+// the external-dns Application's first sync (mirrors ensureArgoRedisSecret's pre-seed). Idempotent:
+// re-applying refreshes a rotated token on every deploy.
+func EnsureExternalDNSCredential(f *InfraFacts, cloudflareToken, hetznerToken string, stdout, stderr io.Writer) error {
+	seed, err := ExternalDNSSeedFor(f, cloudflareToken, hetznerToken)
+	if err != nil {
+		return err
+	}
+	if !seed.Needed() {
+		return nil
+	}
+	fmt.Fprintf(stdout, "Seeding external-dns secret %s...\n", seed.SecretName)
+	return ApplyManifest(externalDNSSecretManifest(seed.SecretName, seed.Key, seed.Value), stdout, stderr)
 }
 
 // secretsSaaSCredentialManifest builds the namespace + credential Secret manifest a pluggable SaaS

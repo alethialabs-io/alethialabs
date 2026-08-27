@@ -47,10 +47,11 @@ func TestExternalDNSSecretManifest(t *testing.T) {
 	}
 }
 
-func TestEnsureExternalDNSSecretRefusesEmptyToken(t *testing.T) {
+func TestEnsureExternalDNSCredentialRefusesEmptyToken(t *testing.T) {
 	// Fail-closed: an empty token means the render gate should have skipped the app —
 	// writing an empty secret would just move the failure into the cluster.
-	if err := EnsureExternalDNSSecret("external-dns-hetzner", "token", "", io.Discard, io.Discard); err == nil {
+	hetzner := &InfraFacts{Provider: "hetzner", DNSCredentialPresent: true}
+	if err := EnsureExternalDNSCredential(hetzner, "", "", io.Discard, io.Discard); err == nil {
 		t.Fatalf("expected an error for an empty token")
 	}
 }

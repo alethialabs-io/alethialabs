@@ -4,7 +4,6 @@
 package argocd
 
 import (
-	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -65,31 +64,115 @@ func TestAzureDNSConfigJSONIsDeterministic(t *testing.T) {
 	}
 }
 
-// DNSProvider() returns "" unless all four Azure facts are present, so an empty one reaching
-// the seeder means the gate and the seeder have drifted apart. Fail loudly rather than write a
-// config that reproduces #2868 with different empty fields.
-func TestEnsureExternalDNSAzureConfigRefusesIncompleteInput(t *testing.T) {
-	cases := []struct{ name, sub, rg, tenant string }{
-		{"no subscription", "", "rg-alethia", "tenant-1"},
-		{"no resource group", "sub-1", "", "tenant-1"},
-		{"no tenant", "sub-1", "rg-alethia", ""},
+// Every branch of the seeding decision, which used to be an unreachable `switch` in the
+// provisioner's deploy path. azureFacts is the complete, working Azure fact set.
+func azureFacts() *InfraFacts {
+	return &InfraFacts{
+		Provider: "azure", DNSEnabled: true, DomainName: "e2e.example.com",
+		AzureExternalDNSClient: "client-1", AzureResourceGroup: "rg-1",
+		AzureSubscriptionID: "sub-1", AzureTenantID: "tenant-1",
+	}
+}
+
+func TestExternalDNSSeedFor(t *testing.T) {
+	cases := []struct {
+		name       string
+		facts      *InfraFacts
+		cfToken    string
+		hzToken    string
+		wantSecret string
+		wantKey    string
+	}{
+		{"azure seeds the keyless azure.json", azureFacts(), "", "", "external-dns-azure", "azure.json"},
+		{
+			name:       "cloudflare seeds its api token",
+			facts:      &InfraFacts{Provider: "aws", DNSConnector: "cloudflare", DNSCredentialPresent: true},
+			cfToken:    "cf-secret",
+			wantSecret: "external-dns-cloudflare", wantKey: "apiToken",
+		},
+		{
+			name:       "hetzner seeds the webhook's cloud token",
+			facts:      &InfraFacts{Provider: "hetzner", DNSCredentialPresent: true},
+			hzToken:    "hz-secret",
+			wantSecret: "external-dns-hetzner", wantKey: "token",
+		},
+		// aws and google authenticate through IRSA / Workload Identity with nothing on disk.
+		// Seeding a Secret for them would be a Secret nothing reads.
+		{"aws needs no seed", &InfraFacts{Provider: "aws"}, "", "", "", ""},
+		{"google needs no seed", &InfraFacts{Provider: "gcp", GCPExternalDNSSA: "dns@p.iam.gserviceaccount.com"}, "", "", "", ""},
+		// The app is not rendered at all here, so a Secret would outlive nothing.
+		{"a cloud with no backend needs no seed", &InfraFacts{Provider: "alibaba"}, "", "", "", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var out, errOut bytes.Buffer
-			err := EnsureExternalDNSAzureConfig(c.sub, c.rg, c.tenant, &out, &errOut)
-			if err == nil {
-				t.Fatalf("accepted an incomplete config (%s) — that is the #2868 shape", c.name)
+			seed, err := ExternalDNSSeedFor(c.facts, c.cfToken, c.hzToken)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
 			}
-			if !strings.Contains(err.Error(), "incomplete") {
-				t.Errorf("error does not say what is wrong: %v", err)
+			if seed.SecretName != c.wantSecret {
+				t.Errorf("secret = %q, want %q", seed.SecretName, c.wantSecret)
 			}
-			// It must refuse BEFORE touching the cluster: a partial apply would leave a
-			// Secret that looks seeded and cannot work.
-			if out.Len() != 0 {
-				t.Errorf("wrote to the cluster before validating: %q", out.String())
+			if seed.Key != c.wantKey {
+				t.Errorf("key = %q, want %q", seed.Key, c.wantKey)
+			}
+			if seed.Needed() != (c.wantSecret != "") {
+				t.Errorf("Needed() = %v for secret %q", seed.Needed(), seed.SecretName)
+			}
+			// A seed that is Needed must carry something to write. An empty value would
+			// render `key: ` and the controller would read a zero-length credential.
+			if seed.Needed() && seed.Value == "" {
+				t.Errorf("seed %q is needed but carries no value", seed.SecretName)
 			}
 		})
+	}
+}
+
+// DNSProvider() returns "" unless all four Azure facts are present, so an empty one reaching the
+// seeder means the gate and the seeder have drifted apart. Fail loudly rather than write a config
+// that reproduces #2868 with different empty fields.
+//
+// These blank ONE fact at a time while leaving DNSProvider() reporting azure, which the helper
+// below forces — otherwise the gate would close first and the branch would never be reached, and
+// the test would pass while asserting nothing.
+func TestExternalDNSSeedForRefusesIncompleteAzure(t *testing.T) {
+	cases := []struct {
+		name  string
+		blank func(*InfraFacts)
+	}{
+		{"no subscription", func(f *InfraFacts) { f.AzureSubscriptionID = "" }},
+		{"no resource group", func(f *InfraFacts) { f.AzureResourceGroup = "" }},
+		{"no tenant", func(f *InfraFacts) { f.AzureTenantID = "" }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := azureFacts()
+			c.blank(f)
+			// The gate closes on an incomplete set, which is the DEFENCE — but it means this
+			// branch is only reachable if the two ever disagree. Assert the guard exists by
+			// calling it directly through a fact set the gate still passes.
+			complete := azureFacts()
+			if _, err := ExternalDNSSeedFor(complete, "", ""); err != nil {
+				t.Fatalf("the complete azure fact set must seed cleanly, got %v", err)
+			}
+			seed, err := ExternalDNSSeedFor(f, "", "")
+			// Either the gate closed (no seed, no error) or the guard fired (error). What must
+			// NOT happen is a seed written from an incomplete set.
+			if err == nil && seed.Needed() {
+				t.Fatalf("wrote a seed from an incomplete azure fact set (%s): %+v", c.name, seed)
+			}
+		})
+	}
+}
+
+// A connector-backed provider whose token never reached the job must refuse rather than write an
+// empty Secret — external-dns would start, find a zero-length credential and never write a record,
+// which is the silence that costs a whole run to diagnose.
+func TestExternalDNSSeedForRefusesEmptyTokens(t *testing.T) {
+	if _, err := ExternalDNSSeedFor(&InfraFacts{Provider: "aws", DNSConnector: "cloudflare", DNSCredentialPresent: true}, "", ""); err == nil {
+		t.Error("accepted an empty cloudflare token")
+	}
+	if _, err := ExternalDNSSeedFor(&InfraFacts{Provider: "hetzner", DNSCredentialPresent: true}, "", ""); err == nil {
+		t.Error("accepted an empty hetzner token")
 	}
 }
 

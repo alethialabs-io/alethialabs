@@ -1010,26 +1010,16 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		// render below uses, so the console/CLI can show what shipped (and why a service
 		// was skipped) instead of guessing from output presence.
 		result.InfraServices = argocd.InfraServiceDecisions(facts)
-		// Connector-backed external-dns providers read a token Secret that must exist
-		// before the Application's first sync (mirrors ensureArgoRedisSecret's pre-seed).
-		switch facts.DNSProvider() {
-		case "cloudflare":
-			token := vc.ConnectorCredentialFor("dns", "cloudflare")["api_token"]
-			if err := argocd.EnsureExternalDNSSecret("external-dns-cloudflare", "apiToken", token, stdout, stderr); err != nil {
-				return nil, fmt.Errorf("failed to seed the cloudflare external-dns secret: %w", err)
-			}
-		case "webhook":
-			if err := argocd.EnsureExternalDNSSecret("external-dns-hetzner", "token", os.Getenv("HCLOUD_TOKEN"), stdout, stderr); err != nil {
-				return nil, fmt.Errorf("failed to seed the hetzner external-dns secret: %w", err)
-			}
-		case "azure":
-			// NOT a credential — external-dns on Azure is keyless via workload identity. This is
-			// the azure.json its provider reads UNCONDITIONALLY before any flag is applied, and
-			// the only place `useWorkloadIdentityExtension` can be set at all (#2868).
-			if err := argocd.EnsureExternalDNSAzureConfig(facts.AzureSubscriptionID,
-				facts.AzureResourceGroup, facts.AzureTenantID, stdout, stderr); err != nil {
-				return nil, fmt.Errorf("failed to seed the azure external-dns config: %w", err)
-			}
+		// external-dns may need a Secret to exist BEFORE the Application's first sync — a
+		// connector token on cloudflare/hetzner, the keyless azure.json on azure, nothing at all
+		// on aws and google. WHICH, and with what contents, is decided by argocd.ExternalDNSSeedFor:
+		// a pure function reading the same DNSProvider() gate the render does. It lives there
+		// rather than as a `switch` here because nothing in this function is reachable without a
+		// live cluster, so every branch of that switch was measured as dead code (#2868).
+		if err := argocd.EnsureExternalDNSCredential(facts,
+			vc.ConnectorCredentialFor("dns", "cloudflare")["api_token"],
+			os.Getenv("HCLOUD_TOKEN"), stdout, stderr); err != nil {
+			return nil, fmt.Errorf("failed to seed the external-dns secret: %w", err)
 		}
 		renderedDir, renderErr := argocd.RenderApplications(argoTemplatesDir, facts)
 		if renderErr != nil {
