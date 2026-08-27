@@ -70,14 +70,35 @@ type t2Provider struct {
 // secret + region into e2e-nightly.yml (per-cloud waves A1–A3). hetzner is the only row
 // the nightly runs today.
 var t2ProviderTable = map[string]t2Provider{
-	// Talos on cheap Hetzner Cloud ARM VMs — the fastest-booting target, so the tightest
-	// timeouts. HCLOUD_TOKEN is the single API token the hcloud/imager/talos providers
-	// authenticate from — for everything EXCEPT Object Storage; see hetznerS3CredEnv.
+	// Talos on cheap Hetzner Cloud VMs — the fastest-BOOTING target. HCLOUD_TOKEN is the single
+	// API token the hcloud/imager/talos providers authenticate from — for everything EXCEPT
+	// Object Storage; see hetznerS3CredEnv.
+	//
+	// ── Why 40m and not the 25m this row carried until now. ──
+	//
+	// The boot is fast; the IMAGE BUILD in front of it is not, and it is the widest term in a
+	// hetzner deploy. `imager_image` boots a rescue server, writes the Talos raw.xz into it and
+	// snapshots the disk before any cluster exists (infra/templates/project/hetzner/image.tf).
+	// Successful builds take ~5m, but the snapshot step is FLAKY AT ITS DEADLINE and has now blown
+	// past a 15m tofu timeout twice — #2458 on 2026-08-24, and the scheduled floor run
+	// 33080748841 on 2026-08-27, both with `failed to create snapshot: context deadline exceeded:
+	// remaining running actions`. "Remaining running actions" is Hetzner still working when the
+	// provider gave up.
+	//
+	// image.tf's create timeout goes to 25m in the same change, and this number has to CONTAIN it:
+	// 25m image + ~8m cluster does not fit in 25m of deploy-wait, so raising one without the other
+	// would just move where the run dies — which is exactly what image.tf's own comment warned
+	// about ("if this ever starts biting at 15m, the deploy-wait is the number to revisit").
+	//
+	// This is a deadline change, not a fix. The durable fix is to stop rebuilding a byte-identical
+	// snapshot on every run (#3027): the image is a pure function of talos_version + architecture +
+	// location, and caching it removes both the 5–15m and the flake. That change touches the
+	// label-scoped sweeper in an account SHARED WITH PROD, so it is not folded in here.
 	"hetzner": {
 		name:                "hetzner",
 		defaultRegion:       "nbg1",
 		clusterReadyTimeout: "8m",
-		waitTimeout:         25 * time.Minute,
+		waitTimeout:         40 * time.Minute,
 		teardownTimeout:     15 * time.Minute,
 		credsPresent:        hetznerCredsPresent,
 	},

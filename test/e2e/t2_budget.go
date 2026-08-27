@@ -18,7 +18,9 @@ import (
 // job 90m) beside a comment asserting "All three exceed the ctx so the ctx cancels first". Both the
 // comment and the ordering were wrong:
 //
-//  1. The stated 40m base is HETZNER's — 25m waitTimeout + 8m ArgoCD + 7m headroom. Every managed
+//  1. The stated 40m base is HETZNER's — 25m waitTimeout + 8m ArgoCD + 7m headroom, the numbers as
+//     they stood then (hetzner's waitTimeout is 40m now, so that base is 55m; the arithmetic below
+//     is derived and needed no edit for it). Every managed
 //     cloud has a 50m waitTimeout (t2ProviderTable), and the soak is on by default from the workflow
 //     (`vars.E2E_SOAK || '10m'` ⇒ 10m + 15m headroom). So a managed floor leg's real ctx is
 //     50 + 8 + 25 + 7 = 90m, against a 75m STEP CAP. The ctx could not cancel first on any of the
