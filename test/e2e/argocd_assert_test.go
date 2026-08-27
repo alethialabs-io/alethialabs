@@ -1037,27 +1037,27 @@ func TestArgoDiffVerdictsAreDistinct(t *testing.T) {
 // The three outcomes of resolving the argocd-server Deployment. Two of them are easy to collapse
 // into each other and they send someone to different places — "kubectl failed" versus "kubectl
 // succeeded and matched nothing" — and NEITHER may end up rendering as "there is no diff".
-func TestPickArgoServerDeployment(t *testing.T) {
+func TestPickArgoDiffWorkload(t *testing.T) {
 	t.Run("takes the first match", func(t *testing.T) {
-		got, err := pickArgoServerDeployment("deployment.apps/argo-cd-argocd-server\n", nil)
+		got, err := pickArgoDiffWorkload("statefulset.apps/argo-cd-argocd-application-controller\n", nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		// The release-name prefix is the whole point: the hardcoded `argocd-server` never existed.
-		if got != "deployment.apps/argo-cd-argocd-server" {
+		if got != "statefulset.apps/argo-cd-argocd-application-controller" {
 			t.Errorf("got %q", got)
 		}
 	})
 
 	t.Run("two installs in one namespace still resolves", func(t *testing.T) {
-		got, err := pickArgoServerDeployment("deployment.apps/a-argocd-server\ndeployment.apps/b-argocd-server\n", nil)
-		if err != nil || got != "deployment.apps/a-argocd-server" {
+		got, err := pickArgoDiffWorkload("statefulset.apps/a-argocd-application-controller\ndeployment.apps/b-argocd-application-controller\n", nil)
+		if err != nil || got != "statefulset.apps/a-argocd-application-controller" {
 			t.Errorf("got %q, %v", got, err)
 		}
 	})
 
 	t.Run("kubectl failed is reported as a failure to ASK", func(t *testing.T) {
-		_, err := pickArgoServerDeployment("Error from server (Forbidden)", errors.New("exit 1"))
+		_, err := pickArgoDiffWorkload("Error from server (Forbidden)", errors.New("exit 1"))
 		if err == nil {
 			t.Fatal("a kubectl failure must not resolve to a deployment")
 		}
@@ -1069,11 +1069,11 @@ func TestPickArgoServerDeployment(t *testing.T) {
 	})
 
 	t.Run("matched nothing is its own finding, not a kubectl failure", func(t *testing.T) {
-		_, err := pickArgoServerDeployment("   \n", nil)
+		_, err := pickArgoDiffWorkload("   \n", nil)
 		if err == nil {
 			t.Fatal("empty output must not resolve to a deployment")
 		}
-		if !strings.Contains(err.Error(), "app.kubernetes.io/name=argocd-server") {
+		if !strings.Contains(err.Error(), "app.kubernetes.io/name=argocd-application-controller") {
 			t.Errorf("the message must name the label that matched nothing; got %v", err)
 		}
 	})
@@ -1083,14 +1083,42 @@ func TestPickArgoServerDeployment(t *testing.T) {
 // the kubeconfig does not exist, both are errors, and the contract asserted is only that a failure
 // to ASK never resolves to a deployment ref — which is what would silently send `kubectl exec` at
 // an empty target.
-func TestArgoServerDeploymentUnreachableIsAnError(t *testing.T) {
+func TestArgoDiffWorkloadUnreachableIsAnError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	got, err := argoServerDeployment(ctx, filepath.Join(t.TempDir(), "no-such-kubeconfig"))
+	got, err := argoDiffWorkload(ctx, filepath.Join(t.TempDir(), "no-such-kubeconfig"))
 	if err == nil {
 		t.Fatalf("an unreachable cluster must not resolve a deployment; got %q", got)
 	}
 	if got != "" {
 		t.Errorf("a failed resolution must return no target, got %q", got)
+	}
+}
+
+// The exact failure the controller fix exists for. hetzner/addons run 33059349873, once the
+// Deployment name was corrected, reached the pod and was refused by RBAC:
+//
+//	{"level":"fatal","msg":"services is forbidden: User \"system:serviceaccount:argocd:argocd-server\"
+//	  cannot list resource \"services\" …"}
+//	command terminated with exit code 20
+//
+// Exit 20 is not exit 1, so this must land in the "could not ask" branch — never in the one that
+// reports a diff, and never in the one that reports no difference. Getting that wrong would make an
+// RBAC refusal read as "ArgoCD sees nothing wrong", which is the opposite conclusion.
+func TestArgoDiffForbiddenIsNotNoDifference(t *testing.T) {
+	forbidden := `{"level":"fatal","msg":"services is forbidden: User \"system:serviceaccount:argocd:argocd-server\" cannot list resource \"services\" in API group \"\" in the namespace \"argocd\""}
+command terminated with exit code 20`
+	got := interpretArgoDiff("addon-tempo", forbidden, errors.New("command terminated with exit code 20"))
+
+	if !strings.Contains(got, "addon-tempo") {
+		t.Errorf("the report must name the Application; got %q", got)
+	}
+	// The underlying reason has to survive — "forbidden" is what tells a reader it is RBAC and not
+	// a broken chart, and those go to different fixes.
+	if !strings.Contains(got, "forbidden") {
+		t.Errorf("the RBAC reason must reach the report; got %q", got)
+	}
+	if same := interpretArgoDiff("addon-tempo", "", nil); got == same {
+		t.Errorf("a refusal rendered identically to a genuine no-difference finding:\n%q", got)
 	}
 }

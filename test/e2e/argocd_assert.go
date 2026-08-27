@@ -1012,8 +1012,8 @@ const argoDiffExitCodeMeansDiff = 1
 //
 // ArgoCD already computes this diff; nothing was asking it for the answer. `argocd app diff --core`
 // runs the API-server logic in-process against the in-cluster API, so it needs no ArgoCD login and
-// no port-forward — it is executed inside the argocd-server pod, where the ServiceAccount already
-// has the RBAC and the repo-server is reachable for manifest rendering.
+// no port-forward — it is executed inside the argocd APPLICATION-CONTROLLER pod, whose
+// ServiceAccount has the RBAC and from which the repo-server is reachable for manifest rendering.
 //
 // Best-effort on an ALREADY-FAILING path. It must never be why a run hangs or an error is lost, and
 // — the point of the constant above — "the command reported a difference" must never be mistaken
@@ -1023,7 +1023,7 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
 	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
-	target, err := argoServerDeployment(cctx, kubeconfigPath)
+	target, err := argoDiffWorkload(cctx, kubeconfigPath)
 	if err != nil {
 		return fmt.Sprintf("\n  ──── argocd app diff %s ────\n%v\n", app, err)
 	}
@@ -1035,52 +1035,61 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
 	return interpretArgoDiff(app, string(out), cerr)
 }
 
-// argoServerDeployment resolves the argocd-server Deployment BY LABEL rather than by name.
+// argoDiffWorkload resolves the pod to run `argocd app diff --core` in, BY LABEL.
 //
-// It was hardcoded as `deploy/argocd-server`, and that name does not exist. ArgoCD is installed
-// with `helm upgrade --install argo-cd argo/argo-cd` (deploy.go), and the chart prefixes every
-// workload with the release name — the real Deployment is `argo-cd-argocd-server`. So EVERY diff
-// this function exists to produce came back
+// TWO bugs here, and the second was hidden behind the first.
 //
-//	Error from server (NotFound): deployments.apps "argocd-server" not found
+// It was hardcoded `deploy/argocd-server`, which does not exist: ArgoCD is installed with
+// `helm upgrade --install argo-cd argo/argo-cd` (deploy.go) and the chart prefixes every workload
+// with the release name, so the real one is `argo-cd-argocd-server`. Every diff came back
+// `Error from server (NotFound)`, which is why #2778's question — WHICH field differs — went
+// unanswered across four paid runs.
 //
-// which is why #2778's question — WHICH field differs — was still unanswered after three paid runs
-// with five Applications sitting Healthy+OutOfSync. The diagnostic was there and was never once
-// able to run.
+// Fixing the name exposed the real wall (hetzner/addons run 33059349873):
 //
-// `app.kubernetes.io/name=argocd-server` is the chart's own label on that Deployment (verified
-// against the pinned 8.6.4 render), and unlike the resource name it does not move when the release
-// is renamed. A NAME would have to be re-guessed the next time the install command changes; this
-// does not.
-func argoServerDeployment(ctx context.Context, kubeconfigPath string) (string, error) {
+//	services is forbidden: User "system:serviceaccount:argocd:argocd-server"
+//	  cannot list resource "services" in API group "" in the namespace "argocd"   (exit 20)
+//
+// `--core` runs the API-server logic IN-PROCESS, so it needs the cluster permissions the API server
+// would have had — and the argocd-server ServiceAccount does not have them. Verified against the
+// pinned 8.6.4 chart rather than guessed: the server's Role grants secrets, configmaps,
+// argoproj.io resources and events, and nothing else. The APPLICATION-CONTROLLER's ClusterRole is
+// apiGroups ['*'], resources ['*'], verbs ['*'] — it has to be, because it reconciles arbitrary
+// customer resources. Every ArgoCD component runs the same image, so the `argocd` binary is there.
+//
+// So the diff runs in the controller. Both workload kinds are asked for because the chart renders
+// the controller as a StatefulSet in this configuration and other configurations use a Deployment;
+// selecting on the label rather than a name or a kind survives both, and survives a release rename.
+func argoDiffWorkload(ctx context.Context, kubeconfigPath string) (string, error) {
 	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
-		"-n", "argocd", "get", "deploy",
-		"-l", "app.kubernetes.io/name=argocd-server",
+		"-n", "argocd", "get", "statefulset,deployment",
+		"-l", "app.kubernetes.io/name=argocd-application-controller",
 		"-o", "name")
 	out, err := cmd.CombinedOutput()
-	return pickArgoServerDeployment(string(out), err)
+	return pickArgoDiffWorkload(string(out), err)
 }
 
-// pickArgoServerDeployment turns `kubectl get deploy -o name`'s output and exit status into either
-// a resource ref or a reason there is none.
+// pickArgoDiffWorkload turns `kubectl get statefulset,deployment -o name`'s output and exit status
+// into either a resource ref or a reason there is none.
 //
 // Split from the exec so the three outcomes are testable without a cluster, because two of them are
 // easy to collapse into each other and they send someone to different places: "kubectl failed" and
 // "kubectl succeeded and matched nothing" are different findings, and NEITHER may end up rendering
 // as "there is no diff".
-func pickArgoServerDeployment(raw string, err error) (string, error) {
+func pickArgoDiffWorkload(raw string, err error) (string, error) {
 	if err != nil {
-		return "", fmt.Errorf("could not resolve the argocd-server Deployment: %v: %s", err, strings.TrimSpace(raw))
+		return "", fmt.Errorf("could not resolve the argocd application-controller workload: %v: %s", err, strings.TrimSpace(raw))
 	}
 	// `-o name` prints `deployment.apps/<name>` per match. Take the first; more than one would mean
 	// two ArgoCD installs in one namespace, which is not a case this diagnostic needs to resolve.
+	// `statefulset,deployment` also means one kind matching and the other not is normal, not an error.
 	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
 		if t := strings.TrimSpace(line); t != "" {
 			return t, nil
 		}
 	}
 	// Empty output with exit 0. Its own finding, deliberately.
-	return "", errors.New("no Deployment in namespace argocd carries app.kubernetes.io/name=argocd-server — cannot run `argocd app diff`")
+	return "", errors.New("no StatefulSet or Deployment in namespace argocd carries app.kubernetes.io/name=argocd-application-controller — cannot run `argocd app diff`")
 }
 
 // interpretArgoDiff turns `argocd app diff`'s output and exit status into a report section.
