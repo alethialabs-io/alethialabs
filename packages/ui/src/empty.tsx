@@ -104,6 +104,47 @@ function EmptyContent({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * The whole empty state in one call — the shape every page actually wanted.
+ *
+ * The parts above have existed and been used in four places, while SIX more empty states were
+ * written locally across the console, two of them near-identical `EmptyState({canManage, action})`
+ * in sibling files. The parts were not the problem; the absence of a composed default was, because
+ * assembling five components correctly is more work than writing a div.
+ *
+ * This is a convenience OVER the parts, not a replacement for them: anything needing a different
+ * arrangement still composes `Empty` + `EmptyHeader` + … directly, and existing callers are
+ * untouched.
+ */
+function EmptyState({
+  icon,
+  title,
+  description,
+  action,
+  className,
+  ...props
+}: Omit<React.ComponentProps<"div">, "title"> & {
+  /** A lucide icon element, rendered in a muted tile. Omit for a text-only state. */
+  icon?: React.ReactNode
+  /** What is not here — a noun phrase ("No runners yet"), not a sentence. */
+  title: React.ReactNode
+  /** Why it is empty, or what to do about it. One line. */
+  description?: React.ReactNode
+  /** The single next step, usually a Button. Omit when the viewer cannot act. */
+  action?: React.ReactNode
+}) {
+  return (
+    <Empty className={className} {...props}>
+      <EmptyHeader>
+        {icon ? <EmptyMedia variant="icon">{icon}</EmptyMedia> : null}
+        <EmptyTitle>{title}</EmptyTitle>
+        {description ? <EmptyDescription>{description}</EmptyDescription> : null}
+      </EmptyHeader>
+      {action ? <EmptyContent>{action}</EmptyContent> : null}
+    </Empty>
+  )
+}
+
 export {
   Empty,
   EmptyHeader,
@@ -111,4 +152,5 @@ export {
   EmptyDescription,
   EmptyContent,
   EmptyMedia,
+  EmptyState,
 }
