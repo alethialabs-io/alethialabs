@@ -129,7 +129,7 @@ export ALETHIA_VERIFY_ACCESS_ANALYZER=1
 | 1 | Override **authorization** — `recordVerifyOverride` (PDP-gated) → `jobs.verify_override` (migration 0043) → runner `buildVerifyOverride` → gate | **Done, tested** |
 | 2 | Registry SSOT + read-only MCP route | **Done, tested** |
 | 2 | Drift **core** (`Analyze`) | **Done, tested** |
-| 2 | Drift **end-to-end** — `DETECT_DRIFT` (migration 0044) → `tofu PlanRefreshOnly` → `RunDriftDetection` → runner → `execution_metadata.drift_posture`; `detectDrift` action; tiered **scheduler** (`lib/drift/schedule` + `dispatch`) + cron route (`/api/internal/drift/sweep`, `ALETHIA_CRON_SECRET`) | **Done, tested** (only the platform cron trigger is ops config) |
+| 2 | Drift **end-to-end** — `DETECT_DRIFT` (migration 0044) → `tofu PlanRefreshOnly` → `RunDriftDetection` → runner → `execution_metadata.drift_posture`; `detectDrift` action; tiered **scheduler** (`lib/drift/schedule` + `dispatch`) + cron route (`/api/internal/drift/sweep`, `ALETHIA_CRON_SECRET`) | **Done, tested** (driven in-process by the reconcile loop's `drift-schedule` reconciler, `lib/reconcile/loop.ts:91`; the cron ROUTE stays available for an external scheduler and is currently unwired — #2874) |
 | 3 | `ReVerify` + `RunRemediationLoop` + Access Analyzer seam/control/adapter | **Done, tested** |
 | 3 | AI-audit **explanation** (`lib/ai/explain-findings` + `explainJobFindings` action) + agent **executor core** (`lib/agent/executor`: system prompt + per-agent tool scoping) | **Done, tested** (injected model) |
 | 3 | Agent runtime — CRUD actions (`createAgent`/`listAgents`/`getAgent`) + **agent-scoped chat route** (`/api/agent/[agentId]`, reuses the tested executor core + memory namespace) | **Done** (integration code at codebase parity; cores unit-tested) |
@@ -169,8 +169,10 @@ or is ops/by-design:
   `access-analyzer:CheckAccessNotGranted` at runtime to exercise end-to-end.
 - **Supervisor/colony**: frozen by plan A4 until a metered parallel-read case exists.
 
-(The drift scheduler is now built; only the platform cron that POSTs `/api/internal/drift/sweep` on a
-cadence is deployment config.)
+(The drift scheduler is built AND driven: `lib/reconcile/loop.ts:91` calls `sweepDriftSchedule()` on its
+own cadence. `/api/internal/drift/sweep` is a second, optional door for an external scheduler — nothing
+POSTs it today. #2874 verified that across the console, the Go CLI and runner, `infra/`, `deploy/` and
+`.github/`, and documented every route in that family so this does not need re-deriving.)
 
 ---
 
