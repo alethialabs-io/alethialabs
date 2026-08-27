@@ -114,8 +114,11 @@ Full pipeline, JSONB typing and drizzle-zod: **`.claude/skills/db-pipeline/SKILL
 - `react-hook-form` for all forms (never raw `useState`); `zod` for all user input.
 - Group components by feature/domain (`components/connector/`), not by type.
 - Renamed component files are **deleted**, not left as re-exports.
-- Tailwind + the shared shadcn/ui system in `@repo/ui` — import `@repo/ui/button`.
-  `apps/console/components/ui/` still exists but holds only a few app-specific primitives.
+- Tailwind + the shared shadcn/ui system in `@repo/ui` — import `@repo/ui/button`. There is no
+  longer a `components/ui/` in the console (#2881 emptied it), and `components.json` points
+  `aliases.ui` at `@repo/ui` so `shadcn add` cannot recreate one.
+- The console has ONE chat-message family: `apps/console/components/ai-elements/`. Both the agent
+  transcript and support threads render through it.
 - Shared web code is **promoted** to `packages/<name>` (npm scope `@repo/*`), never duplicated
   across apps.
 - List-page filters follow the console filter standard (`apps/console/lib/query/README.md`).
