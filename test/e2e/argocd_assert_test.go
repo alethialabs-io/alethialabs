@@ -11,7 +11,9 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -989,5 +991,106 @@ func TestCrashLooping(t *testing.T) {
 				t.Fatalf("crashLooping(%q) = %v, want %v", tc.line, got, tc.want)
 			}
 		})
+	}
+}
+
+// The `argocd app diff` dump execs into the argocd-server Deployment, and the name it used —
+// `argocd-server` — does not exist. The chart is installed as `helm upgrade --install argo-cd
+// argo/argo-cd`, so the real Deployment is `argo-cd-argocd-server`, and every diff came back
+// `Error from server (NotFound)`. Five Applications sat Healthy+OutOfSync across three PAID runs
+// with the differing field still unknown, because the diagnostic that would name it could never run.
+//
+// These pin the reporting contract rather than the exec: a resolution failure must read as "could
+// not ask", never as "nothing differs" — those are opposite findings and #2778 is explicit that a
+// GUESSED ignoreDifferences entry can mask real drift.
+func TestArgoDiffResolutionFailureIsNotSilence(t *testing.T) {
+	// interpretArgoDiff's "could not ask" branch, for contrast with the two real verdicts below.
+	got := interpretArgoDiff("addon-tempo", "", errors.New("could not resolve the argocd-server Deployment"))
+	if !strings.Contains(got, "addon-tempo") {
+		t.Errorf("the report must name the Application; got %q", got)
+	}
+	for _, forbidden := range []string{"no difference", "nothing differs", "in sync"} {
+		if strings.Contains(strings.ToLower(got), forbidden) {
+			t.Errorf("a failure to ASK rendered as a finding of no difference (%q): %s", forbidden, got)
+		}
+	}
+}
+
+func TestArgoDiffVerdictsAreDistinct(t *testing.T) {
+	// exit 1 WITH output is the success case — a diff was found. Anything that treats a non-nil
+	// error as a failure here throws away the only output the whole path exists to produce.
+	found := interpretArgoDiff("addon-tempo", "  spec:\n-   replicas: 1\n+   replicas: 2\n", &exec.ExitError{})
+	// exit 0 with no output: ArgoCD genuinely sees no difference despite the app reporting
+	// OutOfSync. Real and specific, and NOT the same as the case above or the one below.
+	none := interpretArgoDiff("addon-tempo", "", nil)
+	// Neither may be indistinguishable from a failure to look.
+	broken := interpretArgoDiff("addon-tempo", "", errors.New("boom"))
+
+	if found == none || found == broken || none == broken {
+		t.Errorf("the three outcomes must be distinguishable:\nfound=%q\nnone=%q\nbroken=%q", found, none, broken)
+	}
+	if !strings.Contains(found, "replicas") {
+		t.Errorf("the diff body must survive into the report; got %q", found)
+	}
+}
+
+// The three outcomes of resolving the argocd-server Deployment. Two of them are easy to collapse
+// into each other and they send someone to different places — "kubectl failed" versus "kubectl
+// succeeded and matched nothing" — and NEITHER may end up rendering as "there is no diff".
+func TestPickArgoServerDeployment(t *testing.T) {
+	t.Run("takes the first match", func(t *testing.T) {
+		got, err := pickArgoServerDeployment("deployment.apps/argo-cd-argocd-server\n", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The release-name prefix is the whole point: the hardcoded `argocd-server` never existed.
+		if got != "deployment.apps/argo-cd-argocd-server" {
+			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("two installs in one namespace still resolves", func(t *testing.T) {
+		got, err := pickArgoServerDeployment("deployment.apps/a-argocd-server\ndeployment.apps/b-argocd-server\n", nil)
+		if err != nil || got != "deployment.apps/a-argocd-server" {
+			t.Errorf("got %q, %v", got, err)
+		}
+	})
+
+	t.Run("kubectl failed is reported as a failure to ASK", func(t *testing.T) {
+		_, err := pickArgoServerDeployment("Error from server (Forbidden)", errors.New("exit 1"))
+		if err == nil {
+			t.Fatal("a kubectl failure must not resolve to a deployment")
+		}
+		// The stderr carries the actual reason (forbidden, no such namespace, bad kubeconfig) and
+		// those are three different remedies; a bare exit status is not actionable.
+		if !strings.Contains(err.Error(), "Forbidden") {
+			t.Errorf("the underlying reason must survive; got %v", err)
+		}
+	})
+
+	t.Run("matched nothing is its own finding, not a kubectl failure", func(t *testing.T) {
+		_, err := pickArgoServerDeployment("   \n", nil)
+		if err == nil {
+			t.Fatal("empty output must not resolve to a deployment")
+		}
+		if !strings.Contains(err.Error(), "app.kubernetes.io/name=argocd-server") {
+			t.Errorf("the message must name the label that matched nothing; got %v", err)
+		}
+	})
+}
+
+// Covers the exec wrapper's failure path. Hermetic by construction: whether kubectl is absent or
+// the kubeconfig does not exist, both are errors, and the contract asserted is only that a failure
+// to ASK never resolves to a deployment ref — which is what would silently send `kubectl exec` at
+// an empty target.
+func TestArgoServerDeploymentUnreachableIsAnError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	got, err := argoServerDeployment(ctx, filepath.Join(t.TempDir(), "no-such-kubeconfig"))
+	if err == nil {
+		t.Fatalf("an unreachable cluster must not resolve a deployment; got %q", got)
+	}
+	if got != "" {
+		t.Errorf("a failed resolution must return no target, got %q", got)
 	}
 }
