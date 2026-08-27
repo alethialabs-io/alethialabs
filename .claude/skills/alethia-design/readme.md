@@ -4,7 +4,7 @@
 > **Alethia** — the product/platform: a multi-cloud Kubernetes control plane.
 > Configure infrastructure visually. Deploy from the terminal. Zero credentials stored.
 
-A sophisticated, **grayscale-first** design language. Structure, type, and a disciplined neutral ink ramp carry the system; one conversion blue is reserved for a single acquisition CTA. The mood is editorial-technical: instrument-panel density, mono eyebrow labels, and a dark-signature surface. The interim brand mark is the **bracketed point** `[ · ]` — a focal point held inside brackets (*aletheia*, Greek for **truth / unconcealment** — the moment scattered things come into focus).
+A sophisticated, **grayscale-first** design language. Structure, type, and a disciplined neutral ink ramp carry the system. There is no accent hue: a conversion blue was once reserved for a single acquisition CTA and has been removed. The mood is editorial-technical: instrument-panel density, mono eyebrow labels, and a dark-signature surface. The interim brand mark is the **bracketed point** `[ · ]` — a focal point held inside brackets (*aletheia*, Greek for **truth / unconcealment** — the moment scattered things come into focus).
 
 ---
 
@@ -57,7 +57,7 @@ How Alethia Labs writes: terse, declarative, and technically confident in its ow
 
 ## 3 · Visual foundations
 
-- **Color:** A 16-step neutral ink ramp (`--gray-0` → `--black`, OKLCH, zero chroma) drives everything. **Conversion blue `#2563EB` is the one Alethia hue**, reserved for at most one primary acquisition CTA per view. Two themes: dark is the signature; light serves the console, docs, and dense data. Tokens: `tokens/colors.css`.
+- **Color:** A 16-step neutral ink ramp (`--gray-0` → `--black`, OKLCH, zero chroma) drives everything, and it is the WHOLE palette. **There is no accent hue.** `#2563EB` appears in `tokens/colors.css` as `--cta` and is dead — `packages/brand/src/tokens.css` records its removal and the reason. Two themes: dark is the signature; light serves the console, docs, and dense data. Tokens: `tokens/colors.css`.
 - **Status without color:** the defining rule. State reads through **dot fill + shape + a mono label**, never hue — solid (active), haloed (processing), ring (idle), hollow-center (failed), faint (disabled), blinking (live). See `StatusBadge`.
 - **Type:** three voices. **Space Grotesk** (display / headlines / wordmark, tracking −0.02 to −0.04em), **Geist** (UI + body, 14px base), **Geist Mono** (terminal, data readouts, the uppercase eyebrow label, the LABS tag). Tokens: `tokens/typography.css`.
 - **Logo:** the interim **bracketed point** `[ · ]` — a focal dot inside square brackets, drawn in `currentColor` so it inherits the ink. Lockup: mark + **Alethia** (Space Grotesk) + **LABS** (tracked mono). The symbol remains on clearance hold; owned-surface display is allowed, public downloads and partner authorization are not.
