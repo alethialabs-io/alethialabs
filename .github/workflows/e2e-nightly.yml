@@ -101,6 +101,10 @@ on:
         description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws; gcp/azure/alibaba/hetzner are unpriced, so dispatch those one at a time and watch them."
         type: boolean
         default: false
+      argo_timeout:
+        description: "ArgoCD convergence budget for THIS RUN ONLY, as a Go duration (e.g. 30m). Blank keeps vars.E2E_ARGO_TIMEOUT, and blank there keeps the derived default. This is the #2717 class (b) discriminator: falco/kube-prometheus-stack/loki/vault sit `Progressing` at the end of the budget, and `Progressing` is ALSO what a chart that will never converge looks like at any finite deadline. One run at a raised budget tells them apart — and a chart that is still Progressing with generous room is a ceiling, not a slow start."
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -1329,7 +1333,15 @@ jobs:
           #    Unset resolves to "" and every reader falls back to its own default, so adding these
           #    changes no behaviour until a variable is deliberately set — and the variable is the
           #    audit trail for why a run had a non-standard budget.
-          ALETHIA_E2E_ARGO_TIMEOUT: ${{ vars.E2E_ARGO_TIMEOUT }}
+          # The DISPATCH INPUT WINS over the variable, and that ordering is the point. The comment
+          # above calls the variable "the audit trail for why a run had a non-standard budget" —
+          # true, and it is a STANDING one: a variable set to answer one question keeps answering it
+          # for every run afterwards, including the nightly, until somebody remembers to unset it.
+          # A silently-widened budget is exactly the kind of stale fact this repo keeps paying for.
+          #
+          # A dispatch input is scoped to the single run that asked, and the run's own inputs are a
+          # permanent audit trail on its page. The variable stays for a deliberate standing change.
+          ALETHIA_E2E_ARGO_TIMEOUT: ${{ inputs.argo_timeout || vars.E2E_ARGO_TIMEOUT }}
           ALETHIA_E2E_DAY2_ACCESS_TIMEOUT: ${{ vars.E2E_DAY2_ACCESS_TIMEOUT }}
           ALETHIA_E2E_DAY2_OFFER_TIMEOUT: ${{ vars.E2E_DAY2_OFFER_TIMEOUT }}
           ALETHIA_E2E_KEYLESS_DB_DWELL: ${{ vars.E2E_KEYLESS_DB_DWELL }}
