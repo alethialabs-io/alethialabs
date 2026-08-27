@@ -1032,7 +1032,13 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
 		"-n", "argocd", "exec", target, "--",
 		"argocd", "app", "diff", app, "--core")
 	out, cerr := cmd.CombinedOutput()
-	return interpretArgoDiff(app, string(out), cerr)
+	report := interpretArgoDiff(app, string(out), cerr)
+	// Only on the ambiguous verdict, and only there: an empty diff against an OutOfSync status is
+	// the one outcome that cannot be acted on without knowing whether the status is stale.
+	if strings.Contains(report, "reports NO difference") {
+		report += argoSyncStaleness(app, readArgoReconciledAt(ctx, kubeconfigPath, app), time.Now()) + "\n"
+	}
+	return report
 }
 
 // argoDiffWorkload resolves the pod to run `argocd app diff --core` in, BY LABEL.
@@ -1120,12 +1126,75 @@ func interpretArgoDiff(app, raw string, err error) string {
 
 	if text == "" {
 		// Exit 0 and nothing printed: ArgoCD itself sees no difference, even though the Application
-		// reports OutOfSync. That is a real and quite specific finding — a stale sync status, or a
-		// diff that lives only in ArgoCD's normalisation — and it deserves to be said out loud
-		// rather than silently rendering as an empty section.
+		// reports OutOfSync. Real and specific — but AMBIGUOUS between two causes with different
+		// fixes, and saying so without separating them is where this stopped being useful.
+		//
+		// hetzner/addons run 33067969126 hit it on four Applications at once (harbor, kyverno, loki,
+		// tempo) while naming their OutOfSync resources — kyverno's five CronJobs, loki's
+		// StatefulSet. So the status is specific and the diff is empty, and the two candidates are:
+		//
+		//   stale status   the controller reconciles on its own cadence, so `status.sync` can lag
+		//                  the cluster. Then the diff is right and the status is old.
+		//   normalisation  the diff applies something the status does not, so they genuinely
+		//                  disagree about the same moment.
+		//
+		// `status.reconciledAt` against the diff's own timestamp separates them, and the caller
+		// appends it — see argoSyncStaleness. Naming the ambiguity without the evidence to resolve
+		// it is what #2591's `dns-not-resolving` did, and that cost a paid run to get past.
 		return fmt.Sprintf("\n  ──── argocd app diff %s: reports NO difference, yet the Application is OutOfSync ────\n", app)
 	}
 	return fmt.Sprintf("\n  ──── argocd app diff %s ────\n%s\n", app, truncateDiff(text))
+}
+
+// argoSyncStaleness turns an Application's reconcile timestamp into the sentence that separates a
+// STALE sync status from a genuine diff/status disagreement.
+//
+// The pair only appears together on the "no difference, yet OutOfSync" path, where the two causes
+// need different fixes: a stale status means the harness read too early and should refresh or wait;
+// a fresh status that still disagrees with an empty diff means ArgoCD's own normalisation differs
+// between the two, which is a real ArgoCD-level finding.
+//
+// Pure, so the three outcomes are testable without a cluster. `age` is the gap between the last
+// reconcile and now.
+func argoSyncStaleness(app string, reconciledAt string, now time.Time) string {
+	t := strings.TrimSpace(reconciledAt)
+	if t == "" {
+		return fmt.Sprintf("      %s: no status.reconciledAt — cannot say whether the status is stale", app)
+	}
+	parsed, err := time.Parse(time.RFC3339, t)
+	if err != nil {
+		return fmt.Sprintf("      %s: unparseable status.reconciledAt %q — cannot say whether the status is stale", app, t)
+	}
+	age := now.Sub(parsed).Round(time.Second)
+	// ArgoCD's default reconciliation is every 3 minutes, so anything close to or beyond that is
+	// plausibly just a status the controller has not refreshed yet.
+	if age >= argoReconcileInterval {
+		return fmt.Sprintf(
+			"      %s: last reconciled %s ago (>= ArgoCD's ~%s cadence) — the OutOfSync status is plausibly STALE and the empty diff is current; re-read after a refresh before treating this as a real disagreement",
+			app, age, argoReconcileInterval)
+	}
+	return fmt.Sprintf(
+		"      %s: last reconciled %s ago (< ArgoCD's ~%s cadence) — the status is FRESH, so an empty diff and an OutOfSync status genuinely disagree; that is an ArgoCD normalisation difference, not a timing artefact",
+		app, age, argoReconcileInterval)
+}
+
+// argoReconcileInterval is ArgoCD's default `timeout.reconciliation`. Used only to judge whether a
+// sync status is old enough to be suspect, never to wait on.
+const argoReconcileInterval = 3 * time.Minute
+
+// readArgoReconciledAt reads an Application's last reconcile timestamp. Best-effort: this runs on an
+// already-failing path and an empty string is handled by argoSyncStaleness as "cannot say".
+func readArgoReconciledAt(ctx context.Context, kubeconfigPath, app string) string {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", "argocd", "get", "applications.argoproj.io", app,
+		"-o", "jsonpath={.status.reconciledAt}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // maxArgoDiffBytes caps one Application's diff. A CRD's openAPIV3Schema is enormous, and the useful

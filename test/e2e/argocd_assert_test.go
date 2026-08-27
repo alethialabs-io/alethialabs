@@ -1181,3 +1181,52 @@ command terminated with exit code 20`
 		t.Errorf("a refusal rendered identically to a genuine no-difference finding:\n%q", got)
 	}
 }
+
+// The discriminator for "no difference, yet OutOfSync" — the verdict hetzner/addons run 33067969126
+// returned for harbor, kyverno, loki and tempo at once, while naming their OutOfSync resources.
+// Two causes with different fixes, and reporting the ambiguity without the evidence to resolve it is
+// what #2591's `dns-not-resolving` did before it cost a paid run to get past.
+func TestArgoSyncStaleness(t *testing.T) {
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+
+	t.Run("older than the reconcile cadence reads as STALE", func(t *testing.T) {
+		got := argoSyncStaleness("addon-loki", now.Add(-5*time.Minute).Format(time.RFC3339), now)
+		if !strings.Contains(got, "STALE") {
+			t.Errorf("a 5m-old reconcile must read as stale; got %q", got)
+		}
+		// It must also say what to DO — the point is to stop the next reader guessing.
+		if !strings.Contains(got, "refresh") {
+			t.Errorf("must name the next step; got %q", got)
+		}
+	})
+
+	t.Run("inside the cadence reads as a genuine disagreement", func(t *testing.T) {
+		got := argoSyncStaleness("addon-loki", now.Add(-20*time.Second).Format(time.RFC3339), now)
+		if !strings.Contains(got, "FRESH") || !strings.Contains(got, "genuinely disagree") {
+			t.Errorf("a 20s-old reconcile must read as a real disagreement; got %q", got)
+		}
+		if strings.Contains(got, "STALE") {
+			t.Errorf("must not also claim staleness; got %q", got)
+		}
+	})
+
+	t.Run("a missing timestamp says it cannot tell, rather than picking", func(t *testing.T) {
+		// The failure this guards: defaulting to either verdict would send someone confidently to
+		// the wrong fix, which is worse than admitting the read failed.
+		for _, in := range []string{"", "   ", "not-a-timestamp"} {
+			got := argoSyncStaleness("addon-loki", in, now)
+			if !strings.Contains(got, "cannot say") {
+				t.Errorf("input %q must render as cannot-say; got %q", in, got)
+			}
+			if strings.Contains(got, "STALE") || strings.Contains(got, "FRESH") {
+				t.Errorf("input %q must not pick a verdict; got %q", in, got)
+			}
+		}
+	})
+
+	t.Run("the boundary is the reconcile cadence itself", func(t *testing.T) {
+		if got := argoSyncStaleness("a", now.Add(-argoReconcileInterval).Format(time.RFC3339), now); !strings.Contains(got, "STALE") {
+			t.Errorf("exactly at the cadence must read as stale; got %q", got)
+		}
+	})
+}
