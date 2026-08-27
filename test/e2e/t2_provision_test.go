@@ -567,8 +567,20 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		if e := assertRepoCredentialSecret(ctx, kc, repos.byoSecretName()); e != nil {
 			t.Fatalf("A0.6 repo-byo credential: %v", e)
 		}
-		t.Logf("A0.6: repo-apps (apps) + repo-byo (%s) derived + credentialed; converging (BYO synced over its CR)...", byoApp)
-		if e := AssertArgoReposConverge(ctx, kc, assertedApps, []string{byoApp}, ArgoAssertTimeout()); e != nil {
+		// The BYO Application must carry an auto-sync policy BEFORE we wait on it (#2910). Asserted
+		// first, and separately from convergence, because the two failures are worth telling apart:
+		// a missing policy is a product regression that would otherwise surface only as a 19-minute
+		// convergence timeout with no cause named.
+		if e := assertByoAutoSyncPolicy(ctx, kc, byoApp); e != nil {
+			t.Fatalf("A0.6 BYO chart sync policy: %v", e)
+		}
+		// NO manual-sync list. It used to be `[]string{byoApp}`, and that was the harness syncing a
+		// BYO chart on the customer's behalf — the only sync of one anywhere in the codebase. It
+		// MASKED #2910 for the whole life of the feature: production never synced these, so the
+		// chart never deployed, and the e2e proved a path a customer does not have. The chart must
+		// now converge unaided, which is what a customer actually gets.
+		t.Logf("A0.6: repo-apps (apps) + repo-byo (%s) derived + credentialed; converging (BYO auto-syncs, unaided)...", byoApp)
+		if e := AssertArgoReposConverge(ctx, kc, assertedApps, nil, ArgoAssertTimeout()); e != nil {
 			t.Fatalf("A0.6 ArgoCD-with-repos convergence failed: %v", e)
 		}
 		// Not vacuous: both repo-sourced apps must MANAGE ≥1 resource — an empty repo/chart

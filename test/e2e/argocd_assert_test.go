@@ -1094,3 +1094,62 @@ func TestArgoServerDeploymentUnreachableIsAnError(t *testing.T) {
 		t.Errorf("a failed resolution must return no target, got %q", got)
 	}
 }
+
+// #2910's verdicts. The distinction this pins is the whole bug: an ABSENT `automated` policy and one
+// PRESENT with both sub-options false look almost identical in a manifest and mean opposite things —
+// never synced at all, versus synced once and then left alone.
+func TestInterpretByoSyncPolicy(t *testing.T) {
+	yes, no := true, false
+
+	t.Run("absent is the regression, and says why", func(t *testing.T) {
+		err := interpretByoSyncPolicy("addon-byo-e2e", nil)
+		if err == nil {
+			t.Fatal("a missing automated policy must fail — it is the silent no-op")
+		}
+		// The message has to name the consequence, not just the field: a reader who only sees
+		// "syncPolicy.automated is nil" has no reason to think anything is broken.
+		if !strings.Contains(err.Error(), "deploy nothing") {
+			t.Errorf("the failure must say what it costs the customer; got %v", err)
+		}
+	})
+
+	t.Run("present with both false is correct", func(t *testing.T) {
+		if err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{Prune: &no, SelfHeal: &no}); err != nil {
+			t.Errorf("prune=false selfHeal=false is the intended policy, got %v", err)
+		}
+	})
+
+	t.Run("prune true is the opposite regression", func(t *testing.T) {
+		err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{Prune: &yes, SelfHeal: &no})
+		if err == nil {
+			t.Fatal("prune=true would delete a customer's workload once their chart stopped declaring it")
+		}
+	})
+
+	t.Run("selfHeal true is rejected too", func(t *testing.T) {
+		err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{Prune: &no, SelfHeal: &yes})
+		if err == nil {
+			t.Fatal("selfHeal=true would revert an operator debugging their own chart")
+		}
+	})
+
+	t.Run("unset sub-options are not read as false", func(t *testing.T) {
+		// A partial object must not be silently accepted: nil is Go's zero for *bool, and treating
+		// it as false is how a policy that says nothing passes a check for a policy that says no.
+		if err := interpretByoSyncPolicy("addon-byo-e2e", &byoAutoSyncPolicy{}); err == nil {
+			t.Error("prune/selfHeal unset must be rejected, not defaulted to false")
+		}
+	})
+}
+
+// Covers the exec wrapper around interpretByoSyncPolicy. Hermetic: whether kubectl is absent or the
+// kubeconfig does not exist, both are errors, and the contract asserted is only that a failure to
+// READ never passes as a satisfied policy — which would let the #2910 regression through green.
+func TestAssertByoAutoSyncPolicyUnreachableIsAnError(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	err := assertByoAutoSyncPolicy(ctx, filepath.Join(t.TempDir(), "no-such-kubeconfig"), "addon-byo-e2e")
+	if err == nil {
+		t.Fatal("an unreachable cluster must not report the sync policy as satisfied")
+	}
+}
