@@ -48,8 +48,9 @@ const programmeExportPath = "generated/programme.json"
 // CONTRACT with the rollup, and it should be readable on its own.
 type programmeCell struct {
 	// Carriage is the MaxConfigCarriage verdict verbatim ("tofu" | "in_cluster" | "ceiling" |
-	// "deferred"). The rollup maps the two exclusions to programme states and must be able to tell
-	// them apart — a ceiling is about the cloud, deferral is about us.
+	// "deferred" | "cost"). The rollup maps the three exclusions to programme states and must be able
+	// to tell them apart — a ceiling is about the cloud, deferral is about us, and cost is about our
+	// spend on a kind the cloud DOES offer.
 	Carriage string `json:"carriage"`
 	// Offered mirrors MaxConfigCell.Offered() so the rollup never re-derives "does this cloud
 	// deliver this kind" by testing carriage names. One deriver, every consumer.
@@ -59,6 +60,10 @@ type programmeCell struct {
 	// Chart names the shipped chart that backs a DeferredInProduct kind — the evidence that makes it
 	// debt rather than a ceiling.
 	Chart string `json:"chart,omitempty"`
+	// Cost states what provisioning an ExcludedByCost kind would buy — the evidence that makes it a
+	// spend decision rather than a ceiling. Carried so a reader of the grid sees the price, not just
+	// the exclusion.
+	Cost string `json:"cost,omitempty"`
 	// Resource / ArgoApp are what a real apply must produce, carried so the ledger can say what
 	// evidence a cell would need.
 	Resource string `json:"resource,omitempty"`
@@ -125,6 +130,7 @@ func buildProgrammeExport(t *testing.T) programmeExport {
 				Offered:  cell.Offered(),
 				Why:      cell.Why,
 				Chart:    cell.Chart,
+				Cost:     cell.Cost,
 				Resource: cell.Resource,
 				ArgoApp:  cell.ArgoApp,
 			}
@@ -263,6 +269,7 @@ func projectedCarriage(cell MaxConfigCell) string {
 		Offered:  cell.Offered(),
 		Why:      cell.Why,
 		Chart:    cell.Chart,
+		Cost:     cell.Cost,
 		Resource: cell.Resource,
 		ArgoApp:  cell.ArgoApp,
 	}.Carriage
