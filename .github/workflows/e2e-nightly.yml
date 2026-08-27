@@ -1333,6 +1333,18 @@ jobs:
           ALETHIA_E2E_DAY2_ACCESS_TIMEOUT: ${{ vars.E2E_DAY2_ACCESS_TIMEOUT }}
           ALETHIA_E2E_DAY2_OFFER_TIMEOUT: ${{ vars.E2E_DAY2_OFFER_TIMEOUT }}
           ALETHIA_E2E_KEYLESS_DB_DWELL: ${{ vars.E2E_KEYLESS_DB_DWELL }}
+          # ── Per-add-on diagnostic logging, for ONE run. ──
+          #
+          #    A comma-separated list of add-on ids whose entry in `applyAddOnDebugOverrides`
+          #    (test/e2e/addon_surface.go) should be applied. Today only `falco` has one: its
+          #    libs_logger, which is the layer `scap_init` reports from and is what #2866 needs to
+          #    tell "Talos forbids BPF" from "the chart is missing a mount".
+          #
+          #    NOT a catalog default, deliberately: the pinned falco chart's own values say
+          #    libs_logger "is not recommended for production use", and the catalog is what a
+          #    CUSTOMER installs. Unset changes nothing, so the run keeps proving the shipped
+          #    catalog until somebody deliberately sets the variable for one investigation.
+          ALETHIA_E2E_ADDON_DEBUG: ${{ vars.E2E_ADDON_DEBUG }}
           # ── The max-config DNS zone suffix, global and per-cloud. ──
           #
           #    Hetzner DNS REFUSES a `.io` zone outright — its API answers `unsupported tld
