@@ -98,16 +98,40 @@ pnpm -F console test:e2e:ui
 When `CI` is unset, the `webServer` reuses the `pnpm dev:up` console. When `CI` is set, Playwright
 boots the built console itself with `next start` and tees stdout to `$DEV_CONSOLE_LOG`.
 
-## CI
+## Which project runs where
 
-The `e2e-browser` job in `.github/workflows/ci.yml` runs the hero path only (`--project=hero`), off
-the fast path in its own parallel job: a `postgres:17` service + `pnpm -F console db:migrate` (same
-as the Integration job), `pnpm -F console build`, `playwright install`, then the spec. OpenFGA is
-left unset so the community `PostgresRbacPDP` is the authz engine — no extra service needed.
+Every spec here belongs to exactly one Playwright project, and every project is either invoked by a
+workflow or explicitly marked as running nowhere. `playwright.config.ts` asserts both on **every**
+invocation — including the two gating CI jobs — so a spec cannot be added into a hole again (#2875).
 
-## The other specs
+| project | specs | where it runs |
+|---|---|---|
+| `setup` | `fixtures/auth.setup.ts` | dependency of `hero`-adjacent projects; never invoked alone |
+| `hero` | `hero-happy-path.spec.ts` | `ci.yml` → **E2E (browser · Playwright hero path)** — required |
+| `elench-ai` | `elench-ai.spec.ts`, `elench-ux.spec.ts` | `ci.yml` → **E2E (browser · Elench AI journeys · scripted model)** — required |
+| `elench-live` | `elench-live.spec.ts` | `e2e-ai-nightly.yml` — real model, never gating |
+| `canvas` | `architecture-canvas.spec.ts` | **nowhere yet** — needs a non-required job |
+| `console` | `account-settings`, `activity`, `billing`, `connectors`, `elench-agent`, `evidence`, `usage` | **nowhere yet** — needs a non-required job |
+| `qa` | `flows/*.spec.ts` | **nowhere yet** — see `apps/console/docs/qa/README.md` |
 
-The remaining `*.spec.ts` in this directory are older per-surface smokes that self-sign-up via the
-auth fixture. They are **not** part of the CI gate (only `--project=hero` runs) and some may lag the
-current console (e.g. routes that were renamed). Treat the hero path as the maintained, green
-contract; revive the others as needed.
+The `e2e-browser` job runs `--project=hero` off the fast path in its own parallel job: a
+`postgres:17` service + `pnpm -F console db:migrate` (same as the Integration job), `pnpm -F console
+build`, `playwright install`, then the spec. OpenFGA is left unset so the community
+`PostgresRbacPDP` is the authz engine — no extra service needed. The `e2e-elench-ai` job is the same
+shape with `ALETHIA_AI_MOCK=1`.
+
+### The three that run nowhere
+
+They are real specs against the current routes — not rot — but nothing executes them, so **nothing
+here may be cited as coverage** until it has a job:
+
+- **`canvas`** cannot simply be folded into `hero`: that project runs a *fresh* context (signing in
+  is the hero spec's first act) and these need the `setup` persona's `storageState`.
+- **`console`** specs each drive a full email-OTP signup. Better Auth caps OTP issuance at **5 per
+  60s per IP** (`lib/config/auth.ts`), and at roughly a minute per signup seven of them would about
+  double the hero job — so they cannot be poured into a gating check.
+- **`qa`** is 320 tests never executed against the current console, and `global-setup.ts` does not
+  create the `member` persona several of them require. It needs `ALETHIA_QA_E2E=1`.
+
+Running `pnpm -F console test:e2e` with no `--project` runs *everything*, `qa` included; pass
+`--project=<name>` for anything narrower.
