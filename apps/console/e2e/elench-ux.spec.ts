@@ -6,12 +6,60 @@
 //   · clicking an artifact silently created a chat named after it (or hijacked your last one)
 //   · the rail carried an orphan "Chats" row and an unpadded search box
 // These assert geometry and side-effects — the things a type-check can never see.
+//
+// Runs in the `elench-ai` PROJECT — the CI job `E2E (browser · Elench AI journeys · scripted
+// model)`. It used to have an `elench-ux` project of its own that no workflow ever invoked, so
+// "the reason this suite exists at all" ran nowhere (#2875). It belongs here on the evidence:
+// it takes the same shared `setup` persona and storageState, and the artifact test below sends
+// "Build a dashboard of my infrastructure" — the scripted `dashboard` scenario in
+// lib/config/ai-mock.ts, whose four blocks are the four widget cards it asserts. Against an
+// AI-off console that assertion can only ever 503, so this file needs ALETHIA_AI_MOCK=1.
 
 import { expect, test, type Page } from "@playwright/test";
+import { closeDb, db, orgIdBySlug } from "./helpers/db";
+import { seedProject } from "./helpers/seed";
 
 const composer = (page: Page) => page.getByTestId("elench-composer");
 const menu = (page: Page) => page.getByTestId("mention-menu");
 const list = (page: Page) => page.getByTestId("mention-menu-list");
+
+/**
+ * Gives the persona's org enough taggable resources to overflow the @-mention menu.
+ *
+ * The scroll test below cannot assert scrolling against whatever the org happens to hold, and
+ * for this persona that is NOTHING. `searchMentions` merges only the org's OWN projects,
+ * clusters, jobs, connectors, runners, identities and artifacts — and filters connectors to
+ * the connected ones (`app/server/actions/mentions.ts`: "Only connected connectors are
+ * taggable"). That filter landed in 3bfb88fc on 2026-07-15, one day after this spec was
+ * written against the assumption that "the connector catalog alone comfortably overflows the
+ * menu". The catalog has not fed this menu since. Nothing caught it because the `elench-ux`
+ * project ran in no job — which is the dead zone this PR closes.
+ *
+ * So the test owns its fixture. Projects are the cheapest mention source (a direct insert, no
+ * cloud identity, no deploy), and 12 comfortably overflows a menu whose max height is at most
+ * 320px against ~36px rows, while staying under MAX_RESULTS = 40.
+ */
+async function seedTaggableResources(page: Page, count: number): Promise<void> {
+	await page.goto("/");
+	const slug = new URL(page.url()).pathname.split("/").filter(Boolean)[0];
+	if (!slug) throw new Error(`could not read an org slug from ${page.url()}`);
+
+	const orgId = await orgIdBySlug(slug);
+	if (!orgId) throw new Error(`no organization row for slug ${slug}`);
+
+	const rows = await db()<{ userId: string }[]>`
+		select "userId" from member where "organizationId" = ${orgId} limit 1`;
+	const userId = rows[0]?.userId;
+	if (!userId) throw new Error(`organization ${slug} has no member to own seeded projects`);
+
+	for (let i = 0; i < count; i++) {
+		await seedProject({ userId, orgId }, { name: `e2e-mention-${i}` });
+	}
+}
+
+test.afterAll(async () => {
+	await closeDb();
+});
 
 async function openElench(page: Page): Promise<void> {
 	await page.goto("/");
@@ -19,6 +67,29 @@ async function openElench(page: Page): Promise<void> {
 	await page.getByRole("button", { name: /expand to full screen/i }).click();
 	await expect(page.getByTestId("elench-modal")).toBeVisible();
 	await expect(composer(page)).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * Opens Elench on a GUARANTEED-EMPTY thread.
+ *
+ * `openElench` lands on whatever thread is active, and the whole suite shares one persona
+ * and org across four workers — so "active" routinely means a thread another test just
+ * finished talking in. Any test that COUNTS something the transcript produces has to start
+ * from a known grid, or it is measuring the persona's history.
+ *
+ * That is not hypothetical: the artifact test below asserted four widget cards from the
+ * scripted dashboard's four blocks and got five. The fifth was "Connectors", pinned by an
+ * `edit the @connectors thing` turn earlier on the same thread — there was never a fifth
+ * block, there was a second turn. The sidebar in that run held seven chats, five of them
+ * the same prompt, all within a minute.
+ */
+async function openFreshChat(page: Page): Promise<void> {
+	await openElench(page);
+	await page.getByRole("button", { name: "New chat" }).click();
+	await expect(composer(page)).toBeVisible();
+	// The grid belongs to the thread, so a new one starts with nothing on it. Asserting
+	// that here is what makes the count downstream mean "this turn produced four".
+	await expect(page.getByTestId("widget-card")).toHaveCount(0);
 }
 
 test.describe("Elench composer · @-mention menu", () => {
@@ -48,16 +119,32 @@ test.describe("Elench composer · @-mention menu", () => {
 	});
 
 	test("the results list actually scrolls", async ({ page }) => {
+		// Seed BEFORE opening: the menu reads the org's own resources, and this persona's org is
+		// empty by construction. Without this the list holds zero rows and cannot overflow, so the
+		// assertion below would be measuring the fixture, not the container.
+		await seedTaggableResources(page, 12);
+
 		await openElench(page);
 		const editor = composer(page);
 		await editor.click();
 		await editor.pressSequentially("@");
 
 		await expect(menu(page)).toBeVisible();
-		// Wait for the (debounced, async) results to land before measuring — the connector
-		// catalog alone comfortably overflows the menu's max height.
-		const rows = list(page).getByRole("button");
-		await expect.poll(async () => rows.count()).toBeGreaterThan(7);
+
+		// Wait for the (debounced, async) results to land AND overflow the menu's max height.
+		//
+		// This used to poll a row count past a magic 7 on the default 5s budget, and it failed
+		// while the UI was perfectly fine: the mention search is debounced and can be the first
+		// hit on a cold route when four workers start at once. Polling the OVERFLOW says what
+		// the test actually needs — a list that does not overflow cannot demonstrate scrolling,
+		// and a row count was only ever a proxy for that. If it never overflows, the failure is
+		// now about the thing the test is named after.
+		await expect
+			.poll(
+				async () => list(page).evaluate((el) => el.scrollHeight - el.clientHeight),
+				{ timeout: 30_000 },
+			)
+			.toBeGreaterThan(0);
 
 		const metrics = await list(page).evaluate((el) => ({
 			scrollHeight: el.scrollHeight,
@@ -187,7 +274,8 @@ test.describe("Elench artifacts", () => {
 	test("clicking an artifact opens a viewer and does NOT create a chat", async ({
 		page,
 	}) => {
-		await openElench(page);
+		// A fresh thread, so the four cards below are THIS turn's four and not the org's history.
+		await openFreshChat(page);
 
 		// Seed one artifact through the real pipeline.
 		const editor = composer(page);
