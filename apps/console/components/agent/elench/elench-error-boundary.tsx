@@ -45,7 +45,7 @@ export class ElenchErrorBoundary extends Component<Props, State> {
 				// --z-overlay, not --z-toast: this reads like a toast, but it has always sat at 50
 				// and the named scale records today's values rather than re-layering them. If it
 				// should outrank toasts, that is a deliberate visual change, not a rename.
-				<div className="fixed right-4 top-4 z-(--z-overlay) flex max-w-sm flex-col gap-2 border border-border bg-background p-4 shadow-lg">
+				<div className="fixed right-4 top-4 z-[var(--z-overlay)] flex max-w-sm flex-col gap-2 border border-border bg-background p-4 shadow-lg">
 					<span className="text-sm font-medium text-foreground">
 						The assistant hit an error
 					</span>

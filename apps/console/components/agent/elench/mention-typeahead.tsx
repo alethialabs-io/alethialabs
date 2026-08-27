@@ -139,7 +139,7 @@ export function MentionTypeaheadPlugin({
 					<div
 						data-testid="mention-menu"
 						style={{ maxHeight }}
-						className="absolute bottom-full left-0 z-(--z-overlay) mb-2 flex w-full flex-col border border-border bg-popover shadow-md"
+						className="absolute bottom-full left-0 z-[var(--z-overlay)] mb-2 flex w-full flex-col border border-border bg-popover shadow-md"
 					>
 						<div className="vx-eyebrow flex flex-none items-center gap-1.5 border-b border-border px-2.5 py-1.5 text-[9px]">
 							Tag a resource

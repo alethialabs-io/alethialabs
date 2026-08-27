@@ -111,7 +111,7 @@ export function SaveArtifactButton({
         // enclosing fullscreen Elench Dialog, so it has to out-rank that dialog's --z-overlay to
         // paint above the grid — at an equal z the later-painted grid swallows the Save click.
         // That is exactly what --z-overlay-nested names (packages/brand/src/tokens.css).
-        className="z-(--z-overlay-nested) w-[240px] rounded-none p-2"
+        className="z-[var(--z-overlay-nested)] w-[240px] rounded-none p-2"
       >
         <div className="vx-eyebrow pb-1.5 text-[9px]">
           {kind === "widget"
@@ -198,7 +198,7 @@ export function ArtifactBrowser({ threadId }: { threadId: string | null }) {
         container={bodyContainer()}
         // Same reason as SaveArtifactButton: a nested overlay that must sit above the enclosing
         // fullscreen dialog so the grid can't intercept clicks on artifact rows.
-        className="z-(--z-overlay-nested) w-[260px] rounded-none p-2"
+        className="z-[var(--z-overlay-nested)] w-[260px] rounded-none p-2"
       >
         <div className="vx-eyebrow pb-1.5 text-[9px]">Saved artifacts</div>
         {items === null ? (
