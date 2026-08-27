@@ -40,6 +40,11 @@ const DOCS = [
 	"CONTRIBUTING.md",
 	"README.md",
 	".claude/COORDINATION.md",
+	// TESTING.md states the testing bar and names scripts, projects and spec files. It was NOT
+	// checked until #2883, and it had drifted in exactly the ways this guard catches: it named
+	// seven e2e specs that #2875 deleted and listed a `chromium` project that no longer exists.
+	// A doc that defines the bar is precisely the one an instance acts on before reading code.
+	"TESTING.md",
 	...safeReaddir(".claude/skills")
 		.map((d) => `.claude/skills/${d}/SKILL.md`)
 		.filter((p) => existsSync(join(ROOT, p))),
