@@ -35,6 +35,7 @@
     "check:floors-reproducible": "node scripts/check-floors-reproducible.mjs",
     "check:var-utility-shadowing": "node scripts/check-var-utility-shadowing.mjs",
     "check:legal-hashes": "node scripts/check-legal-document-hashes.mjs",
+    "check:e2e-knob-reach": "node scripts/check-e2e-knob-reach.mjs",
     "check:e2e-spend-guard": "node scripts/check-e2e-spend-guard.mjs",
     "check:hetzner-lb-location": "node scripts/check-hetzner-lb-location.mjs",
     "check:open-core": "node scripts/check-open-core-boundary.mjs",

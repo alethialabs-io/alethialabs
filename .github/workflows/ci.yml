@@ -923,6 +923,14 @@ jobs:
         run: |
           node scripts/check-e2e-spend-guard.mjs --self-test
           node scripts/check-e2e-spend-guard.mjs
+      # A knob the harness READS that no dispatch can SET is a scenario nobody can run at any price,
+      # and it fails silently: the code is written, its unit tests pass, and every run takes the
+      # default forever. #2775 found the BYO-IaC custody chain had never executed for exactly that
+      # reason. #2591 and #2717 then each named a discriminating experiment — raise the day-2 URL
+      # timeout, raise the ArgoCD convergence budget — that could not be dispatched at all.
+      # Hermetic: reads test/e2e/**.go, the nightly workflow and the resolver. No gh, no cloud.
+      - name: E2E knob reachability (a knob nothing can set is a scenario nobody can run)
+        run: node scripts/check-e2e-knob-reach.mjs
       # hcloud-cloud-controller-manager refuses to create a Load Balancer unless it is told WHERE.
       # The hetzner template told it nothing, so every `type: LoadBalancer` Service sat Pending —
       # SILENTLY, because a pending Service logs no error anyone surfaces. That silence is what let
