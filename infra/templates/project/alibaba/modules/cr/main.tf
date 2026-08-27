@@ -16,11 +16,38 @@ terraform {
 }
 
 # Container Registry Enterprise Edition instance.
+#
+# `payment_type = "Subscription"` is not a choice — ACR Enterprise Edition has NO pay-as-you-go
+# model. Verified against the billing API rather than assumed: `DescribePricingModule` for
+# `ProductCode=acr` returns five pricing modules under `SubscriptionType=Subscription` and ZERO
+# under `PayAsYouGo`. So this resource is the only prepaid thing in the repository because the
+# product gives no alternative, not because nobody looked.
+#
+# It is also not cheap, and the number belongs next to the resource rather than in a board:
+# Basic in eu-central-1 is **150 USD/month** (1800/year, no term discount; Advanced is 617/month;
+# there is no tier below Basic). `instance_name` is `cr-<project>-<environment>`, so a full bar
+# buys ONE OF THESE PER RUN.
+#
+# `renewal_status = "ManualRenewal"` is the blast-radius cap, and it is load-bearing precisely
+# because the teardown story is unsettled. #2333 (docs/research/alibaba-cr-ee-subscription-release.md)
+# records that the provider's Delete calls `RefundInstance` with `ImmediatelyRelease = "1"` while
+# Alibaba's own ACR documentation states Terraform cannot release a subscription instance — and
+# nothing has settled which wins. Under the pessimistic reading a leaked instance is a RECURRING
+# 150 USD/month; pinned to manual renewal it is 150 USD ONCE. The argument was previously unset
+# anywhere in infra/, so the account-level renewal default applied — which is not a decision
+# anyone made.
+#
+# `ManualRenewal`, NOT `NotRenewal`: the provider validates this argument against exactly
+# [AutoRenewal ManualRenewal] and rejects anything else. `NotRenewal` is the value Alibaba's own
+# SetRenewal API takes and it is NOT accepted here — `tofu validate` refuses it outright, which is
+# how this was caught rather than shipped. Manual renewal means renewal requires a deliberate human
+# action, so the practical effect is the same: nothing renews on its own.
 resource "alicloud_cr_ee_instance" "this" {
-  payment_type  = "Subscription"
-  period        = 1
-  instance_type = "Basic"
-  instance_name = var.instance_name
+  payment_type   = "Subscription"
+  period         = 1
+  instance_type  = "Basic"
+  instance_name  = var.instance_name
+  renewal_status = "ManualRenewal"
 }
 
 # Namespace inside the CR EE instance.
