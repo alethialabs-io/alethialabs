@@ -22,17 +22,17 @@ import {
 } from "@/app/(private)/dashboard/providers/extra-cloud-actions";
 import { isEnumMember } from "@/lib/coerce";
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
-import { CONNECTOR_DOCS_BASE } from "@/components/connector/connector-assets";
+import { CONNECTOR_DOCS_BASE } from "@/components/connectors/connector-assets";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
-import { AwsConnection } from "@/components/connector/aws-connection";
-import { AzureConnection } from "@/components/connector/azure-connection";
-import { GcpConnection } from "@/components/connector/gcp-connection";
-import { HetznerConnection } from "@/components/connector/hetzner-connection";
+import { AwsConnection } from "@/components/connectors/aws-connection";
+import { AzureConnection } from "@/components/connectors/azure-connection";
+import { GcpConnection } from "@/components/connectors/gcp-connection";
+import { HetznerConnection } from "@/components/connectors/hetzner-connection";
 import {
 	AlibabaConnection,
 	TokenCloudConnection,
-} from "@/components/connector/extra-cloud-connection";
+} from "@/components/connectors/extra-cloud-connection";
 import {
 	Sheet,
 	SheetContent,
