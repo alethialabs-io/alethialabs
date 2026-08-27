@@ -1,0 +1,18 @@
+{
+  "enabled": false,
+  "provider": "azure",
+  "duration_seconds": 0,
+  "liveness_checks": 0,
+  "liveness_failures": 0,
+  "drift_job_status": "",
+  "drift_in_sync": false,
+  "drift_drifted": 0,
+  "drift_state_resources": 0,
+  "drift_state_reads": 0,
+  "pvc_checked": false,
+  "pvc_bound": false,
+  "pvc_volume_id": "",
+  "pvc_sweep_tag_ok": false,
+  "addon_reread_ok": false,
+  "verdict": "soak: skipped"
+}
