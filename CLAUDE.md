@@ -112,15 +112,51 @@ Full pipeline, JSONB typing and drizzle-zod: **`.claude/skills/db-pipeline/SKILL
   interface in `apps/console/types/jsonb.types.ts`.
 - All functions get a brief JSDoc saying what they do.
 - `react-hook-form` for all forms (never raw `useState`); `zod` for all user input.
-- Group components by feature/domain (`components/connector/`), not by type.
+- Group components by feature/domain (`components/connectors/`), not by type.
 - Renamed component files are **deleted**, not left as re-exports.
 - Tailwind + the shared shadcn/ui system in `@repo/ui` — import `@repo/ui/button`.
   `apps/console/components/ui/` still exists but holds only a few app-specific primitives.
 - Shared web code is **promoted** to `packages/<name>` (npm scope `@repo/*`), never duplicated
   across apps.
-- List-page filters follow the console filter standard (`apps/console/lib/query/README.md`).
-  No stat-card strips.
 - Never start coding without a plan and explicit approval.
+
+### The console's shared surface — reach for these BEFORE writing one
+
+Each line below replaced between two and six hand-rolled copies. The rule is the same every
+time: **if two pages disagree about how something looks or reads, the user is being told the
+product is two products.**
+
+| Need | Use | Never |
+|---|---|---|
+| A duration, date, size, quota or amount | `@repo/format` | a local `formatDate`, `toFixed`, or `/ 1024` |
+| A page or section heading | `@repo/ui/page-header` — `PageHeader`, with `level` | a bespoke `<h1>` + description block |
+| An empty list, tab or panel | `@repo/ui/empty` — `EmptyState` | a one-off centred div |
+| A status pill | `@repo/ui/status-badge` | a `<Badge>` plus a local colour map |
+| A table | `DataTable`, or `@repo/ui/table` for shapes it cannot express | a `<div className="grid">` |
+| A layer above the page | a `--z-*` token from `packages/brand/src/tokens.css` | a bare `z-50` or `z-[95]` |
+| A list-page filter | the console filter standard, **both halves** | a per-page filter language |
+
+Three of those deserve their reason stated, because the reason is what makes them stick:
+
+**Minutes are read by a person.** `0.943 minutes / 200 minutes` is a number the code happens to
+hold, not an answer to "how much have I used". `formatMinutes` / `formatQuota` decide once —
+`<1 min`, `47 min`, `2h 15m` — so a plan card and a usage table cannot disagree.
+
+**A `<div className="grid">` is not a table.** It reads to a screen reader as a stack of
+buttons. There were three shells and a fourth with no header row at all, so its columns were
+unlabelled.
+
+**The filter standard has a server half.** `apps/console/lib/query/README.md` is the client
+half; `apps/console/lib/queries/` holds the `query*Page` builders and `facets.ts`. A facet's
+counts come from the **unfiltered** universe — every builder issues a filtered rows pass and a
+separate facet pass that sees only the scope predicates. Filter in memory and the option you
+just picked disappears, which makes the filter bar un-un-selectable.
+
+No stat-card strips.
+
+Two mechanical checks back this up rather than restating it: `pnpm -F console check:dead-code`
+fails on an unreferenced module or an unused dependency, and `pnpm -F console check:action-boundary`
+on a server action that escapes its boundary.
 
 ## 7. The harness itself
 
