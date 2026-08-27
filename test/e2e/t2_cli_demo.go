@@ -418,14 +418,21 @@ var CLIDemoSteps = []DemoStep{
 		Reach:  CloudManual,
 		Clouds: []string{"gcp"},
 		Issue:  "#1871",
-		Why: "billing-budgets@system.gserviceaccount.com needs a publisher binding that must be granted out of band " +
-			"in the Cloud Console before the binding can be imported. Until then the budget's alerts are " +
-			"undeliverable — the stack's own cost guard is the one resource that does not come up",
+		Why: "billing-budget-alert@system.gserviceaccount.com needs a publisher binding that must be granted " +
+			"out of band in the Cloud Console before the binding can be imported. Until then the budget's " +
+			"alerts are undeliverable — the stack's own cost guard is the one resource that does not come up",
 		SatisfiedBy: &CeilingProbe{
 			Kind: ProbeEnvTruthy,
-			// UNSATISFIED today, and correctly so — #1871 is open and the binding does not exist.
-			// A probe that cannot yet be satisfied is still worth declaring: it names what
-			// completion looks like, where omitting one names nothing at all.
+			// SATISFIED. #1871 is closed, the import is applied, and the binding is live — verified
+			// against the cloud rather than the plan:
+			//
+			//	$ gcloud pubsub topics get-iam-policy …/alethia-e2e-nightly-budget-alerts
+			//	roles/pubsub.publisher -> serviceAccount:billing-budget-alert@system.gserviceaccount.com
+			//
+			// This comment said "#1871 is open and the binding does not exist", which had been false
+			// since the import landed. The agent is `billing-budget-alert@`, not `billing-budgets@` —
+			// the wrong name is what made it look uncreatable in the first place (#2955), so it is
+			// corrected in the Why above too rather than left to mislead the next reader.
 			Env:    []string{"ALETHIA_E2E_GCP_BUDGET_PUBLISHER_GRANTED"},
 			Expect: "grant billing-budgets@system.gserviceaccount.com the Pub/Sub publisher binding in the Cloud Console budget UI, `tofu import` it behind budget_publisher_binding_enabled, then set the E2E_GCP_BUDGET_PUBLISHER_GRANTED repo variable (#1871)",
 		},
