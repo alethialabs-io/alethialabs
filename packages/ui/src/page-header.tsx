@@ -22,6 +22,7 @@ function PageHeader({
 	description,
 	count,
 	actions,
+	level = 1,
 	className,
 	...props
 }: Omit<React.ComponentProps<"div">, "title"> & {
@@ -33,7 +34,22 @@ function PageHeader({
 	count?: number | null;
 	/** Buttons for this page. Right-aligned, and they wrap under the title on narrow screens. */
 	actions?: React.ReactNode;
+	/**
+	 * Heading level. `1` for the page's own title; `2`/`3` for a section heading on a page that
+	 * already has one.
+	 *
+	 * This is a prop rather than a fixed `<h1>` because the first version WAS fixed, and three
+	 * lanes hit it within an hour: the alerts hub stacks three of these on one route and would
+	 * have rendered three `<h1>`s, and the evidence page declined to adopt the component at all
+	 * rather than give itself a second one. A consumer cannot fix a hardcoded tag, so it stopped
+	 * being the component's decision.
+	 *
+	 * The visual size does NOT change with the level — a section heading here is still a section
+	 * heading, and tying type scale to document outline is how headings get chosen for their looks.
+	 */
+	level?: 1 | 2 | 3;
 }) {
+	const Heading = `h${level}` as const;
 	return (
 		<div
 			data-slot="page-header"
@@ -42,9 +58,9 @@ function PageHeader({
 		>
 			<div className="flex min-w-0 flex-col gap-1">
 				<div className="flex items-center gap-2">
-					<h1 data-slot="page-header-title" className="truncate text-lg font-medium tracking-tight">
+					<Heading data-slot="page-header-title" className="truncate text-lg font-medium tracking-tight">
 						{title}
-					</h1>
+					</Heading>
 					<CountPill count={count} />
 				</div>
 				{description ? (

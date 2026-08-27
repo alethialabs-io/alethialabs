@@ -8,6 +8,7 @@ import {
 	formatDate,
 	formatDuration,
 	formatMinutes,
+	formatQuota,
 	formatMoney,
 	formatRelative,
 } from "../src/index";
@@ -55,6 +56,35 @@ describe("formatMinutes", () => {
 		expect(formatMinutes(-5)).toBe("0 min");
 		expect(formatMinutes(Number.NaN)).toBe("0 min");
 		expect(formatMinutes(Number.POSITIVE_INFINITY)).toBe("0 min");
+	});
+});
+
+describe("formatQuota", () => {
+	// This exists because formatMinutes alone did not make the call sites agree — and they
+	// immediately did not. Two independent migrations produced `<1 min / 200 min` and
+	// `12 min / 3h 20m` from the same helper, which is the original bug one layer up.
+	it("humanises the USED side and leaves the allowance recognisable", () => {
+		expect(formatQuota(0.943, 200)).toBe("<1 min / 200 min");
+		expect(formatQuota(12, 200)).toBe("12 min / 200 min");
+		expect(formatQuota(135, 200)).toBe("2h 15m / 200 min");
+	});
+
+	// 200 is the number the plan and the pricing page quote. `3h 20m` is arithmetically the
+	// same and unrecognisable to someone checking whether they are near their limit.
+	it("never converts the allowance to hours", () => {
+		expect(formatQuota(1, 200)).not.toContain("3h");
+		expect(formatQuota(1, 20_000)).toBe("1 min / 20,000 min");
+	});
+
+	it("survives the states a fresh org and a broken row actually produce", () => {
+		expect(formatQuota(0, 200)).toBe("0 min / 200 min");
+		expect(formatQuota(0, 0)).toBe("0 min / 0 min");
+		expect(formatQuota(Number.NaN, 200)).toBe("0 min / 200 min");
+		expect(formatQuota(5, Number.NaN)).toBe("5 min / 0 min");
+	});
+
+	it("renders over-quota rather than clamping — the overage is the point", () => {
+		expect(formatQuota(250, 200)).toBe("4h 10m / 200 min");
 	});
 });
 

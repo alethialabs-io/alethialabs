@@ -49,6 +49,32 @@ export function formatMinutes(minutes: number): string {
 }
 
 /**
+ * A consumed-against-allowance readout: `<1 min / 200 min`.
+ *
+ * This exists because `formatMinutes` alone is not enough to make the four call sites agree, and
+ * they immediately did not. Two independent migrations reached two different answers from the same
+ * helper — one rendered `<1 min / 200 min`, the other `12 min / 3h 20m` — which is the exact
+ * disagreement the package was created to end, reappearing one layer up.
+ *
+ * The rule, and why:
+ *   - The USED side is humanised. It is a measurement, and three decimal places of a minute is
+ *     noise (`0.943 / 200 min` was the reported bug).
+ *   - The ALLOWANCE side is NOT. `200` is the number the plan and the pricing page quote, so it is
+ *     effectively a proper noun; `3h 20m` is arithmetically identical and unrecognisable to the
+ *     person checking whether they are near their limit.
+ *
+ * So: one function, one answer. A caller that wants something else should say why in a comment
+ * rather than assembling its own pair — that is how four renderings happened the first time.
+ *
+ * @param usedMinutes minutes consumed; may be fractional.
+ * @param includedMinutes the plan's allowance, in whole minutes.
+ */
+export function formatQuota(usedMinutes: number, includedMinutes: number): string {
+	const included = Number.isFinite(includedMinutes) && includedMinutes > 0 ? Math.round(includedMinutes) : 0;
+	return `${formatMinutes(usedMinutes)} / ${included.toLocaleString(LOCALE)} min`;
+}
+
+/**
  * An elapsed millisecond span as `42s` or `1m 12s`.
  *
  * Ported verbatim from `apps/console/lib/jobs/format.ts`, which was already the right shape and
