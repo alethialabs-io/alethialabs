@@ -19,17 +19,17 @@ import {
 	Step,
 	StoredNote,
 	VerifySection,
-} from "@/components/connector/connection-ui";
+} from "@/components/connectors/connection-ui";
 import {
 	type VerifyOutcome,
 	useConnectionTest,
-} from "@/components/connector/use-connection-test";
+} from "@/components/connectors/use-connection-test";
 import { FieldHelp } from "@repo/ui/field-help";
 import { CopyButton } from "@repo/ui/copy-button";
 import {
 	ALETHIA_ISSUER_URL,
 	connectorAssetUrl,
-} from "@/components/connector/connector-assets";
+} from "@/components/connectors/connector-assets";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { CheckCircle2, Download, ExternalLink, Terminal } from "lucide-react";
 import { useState } from "react";
