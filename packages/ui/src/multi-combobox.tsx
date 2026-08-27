@@ -134,7 +134,7 @@ export function MultiCombobox({
       {open && (
         <div
           className={cn(
-            "absolute top-full z-50 mt-1 min-w-[200px] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md",
+            "absolute top-full z-(--z-overlay) mt-1 min-w-[200px] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md",
             align === "end" ? "right-0" : "left-0",
           )}
         >

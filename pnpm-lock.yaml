@@ -335,6 +335,9 @@ importers:
       '@repo/email':
         specifier: workspace:*
         version: link:../../packages/email
+      '@repo/format':
+        specifier: workspace:*
+        version: link:../../packages/format
       '@repo/legal':
         specifier: workspace:*
         version: link:../../packages/legal

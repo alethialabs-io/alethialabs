@@ -21,7 +21,7 @@ import { Button } from "./button"
  * a CSS animation on the closed state, so tw-animate-css still drives enter/exit).
  */
 const dialogContentVariants = cva(
-  "fixed z-50 bg-background shadow-lg duration-200 outline-none data-[closed]:animate-out data-[closed]:fade-out-0 data-[closed]:zoom-out-95 data-[open]:animate-in data-[open]:fade-in-0 data-[open]:zoom-in-95",
+  "fixed z-(--z-overlay) bg-background shadow-lg duration-200 outline-none data-[closed]:animate-out data-[closed]:fade-out-0 data-[closed]:zoom-out-95 data-[open]:animate-in data-[open]:fade-in-0 data-[open]:zoom-in-95",
   {
     variants: {
       size: {
@@ -70,7 +70,7 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-overlay data-[closed]:animate-out data-[closed]:fade-out-0 data-[open]:animate-in data-[open]:fade-in-0",
+        "fixed inset-0 z-(--z-overlay) bg-overlay data-[closed]:animate-out data-[closed]:fade-out-0 data-[open]:animate-in data-[open]:fade-in-0",
         className
       )}
       {...props}
