@@ -5,6 +5,7 @@
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
+import { connectorState } from "@/components/connectors/connectors-query";
 import { Button } from "@repo/ui/button";
 import { TableCell, TableRow } from "@repo/ui/table";
 import { cn } from "@repo/ui/utils";
@@ -43,22 +44,21 @@ export function ConnectorRow({
 	isConnecting,
 }: ConnectorRowProps) {
 	const isConnected = integration.connected;
+	// One ladder for the wording, shared with the card and the Status facet. See connectors-query.ts.
+	const state = connectorState(integration, platformConfigured);
 	// "Coming soon" only when NOT already connected — a connected account keeps its Manage → disconnect
 	// path even if the connector is later marked coming_soon. See connector-card.tsx.
-	const isComingSoon = integration.status === "coming_soon" && !isConnected;
+	const isComingSoon = state.health === "coming_soon";
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
 	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a
 	// connect can only fail, so the row is honest about it instead of offering a doomed connect.
-	const platformUnavailable =
-		(isCloud || isGit) && !platformConfigured && !isConnected;
+	const platformUnavailable = state.health === "unavailable";
 	const needsReconnection =
 		integration.token_health === "expired" ||
 		integration.token_health === "refresh_failed";
 	const cloudFailed = integration.cloud_health === "failed";
 	const cloudTesting = integration.cloud_health === "testing";
-	// Authenticated, but missing provisioning permissions. Still connected — see connector-card.tsx.
-	const cloudDegraded = integration.cloud_health === "degraded";
 	const accountCount = integration.accounts?.length ?? 0;
 
 	return (
@@ -86,10 +86,18 @@ export function ConnectorRow({
 					    the cell grows to the full un-wrapped description (the 150+ char Hetzner blurb was
 					    the worst offender) and tips the whole table into horizontal scroll. */}
 					<div className="min-w-0 max-w-[16rem] sm:max-w-[24rem] lg:max-w-[32rem]">
-						<div className="truncate text-sm font-medium text-foreground">
+						{/* `title` carries the full string for the names the clamp eats — the card
+						    solves this with a two-line title, but a table row has one line to give. */}
+						<div
+							className="truncate text-sm font-medium text-foreground"
+							title={integration.name}
+						>
 							{integration.name}
 						</div>
-						<div className="truncate text-xs text-muted-foreground">
+						<div
+							className="truncate text-xs text-muted-foreground"
+							title={integration.description}
+						>
 							{integration.description}
 						</div>
 					</div>
@@ -103,7 +111,7 @@ export function ConnectorRow({
 							"size-2 shrink-0 rounded-full",
 							isConnected
 								? "bg-foreground ring-4 ring-muted/60"
-								: cloudFailed && !platformUnavailable
+								: state.destructive
 									? "bg-destructive/70"
 									: "border-[1.5px] border-border",
 						)}
@@ -112,24 +120,10 @@ export function ConnectorRow({
 					<span
 						className={cn(
 							"text-xs text-muted-foreground",
-							cloudFailed && !platformUnavailable && "text-destructive",
+							state.destructive && "text-destructive",
 						)}
 					>
-						{isComingSoon
-							? "Coming soon"
-							: platformUnavailable
-								? "Not enabled on this instance"
-								: needsReconnection
-									? "Needs reconnection"
-									: isConnected
-										? cloudDegraded
-											? "Limited permissions"
-											: "Connected"
-										: cloudFailed
-											? "Verification failed"
-											: cloudTesting
-												? "Verifying…"
-												: "Not connected"}
+						{state.label}
 					</span>
 				</div>
 			</TableCell>
