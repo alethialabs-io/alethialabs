@@ -256,8 +256,8 @@ func runT2ByoIac(t *testing.T, ctx context.Context, cp *ControlPlane, p byoIacPa
 	// ── (3) BASELINE posture: in_sync over the deploy's real state, before anything is touched. ──
 	posture := byoIacDriftCheck(t, ctx, cp, p, snap, deployJobID, wait, "baseline")
 	if !posture.InSync || posture.Drifted != 0 {
-		t.Fatalf("byo-iac: the baseline posture is not in-sync right after a clean apply: in_sync=%t drifted=%d details=%v",
-			posture.InSync, posture.Drifted, posture.types())
+		t.Fatalf("byo-iac: the baseline posture is not in-sync right after a clean apply: in_sync=%t drifted=%d details=%s",
+			posture.InSync, posture.Drifted, posture.detail())
 	}
 	summary.BaselineInSync = true
 
@@ -316,8 +316,8 @@ func runT2ByoIac(t *testing.T, ctx context.Context, cp *ControlPlane, p byoIacPa
 
 	posture = byoIacDriftCheck(t, ctx, cp, p, snap, deployJobID, wait, "post-heal")
 	if !posture.InSync || posture.Drifted != 0 {
-		t.Fatalf("byo-iac: the environment did NOT heal — after re-applying the same pinned commit the posture is still drifted (in_sync=%t drifted=%d %v)",
-			posture.InSync, posture.Drifted, posture.types())
+		t.Fatalf("byo-iac: the environment did NOT heal — after re-applying the same pinned commit the posture is still drifted (in_sync=%t drifted=%d %s)",
+			posture.InSync, posture.Drifted, posture.detail())
 	}
 	summary.HealedInSync = true
 	t.Log("byo-iac: healed — the same pinned commit re-converged the out-of-band change and the posture is in-sync again")
@@ -488,8 +488,11 @@ func byoIacDriftCheck(t *testing.T, ctx context.Context, cp *ControlPlane, p byo
 	if meta.DriftPosture == nil {
 		t.Fatalf("byo-iac %s drift: no drift_posture in execution_metadata — the drift path did not persist a posture\nraw: %s", label, metaRaw)
 	}
-	t.Logf("byo-iac %s drift: job %s SUCCESS — in_sync=%t drifted=%d %v",
-		label, driftJobID, meta.DriftPosture.InSync, meta.DriftPosture.Drifted, meta.DriftPosture.types())
+	// Logged on EVERY check, not only on the failing one: the interesting comparison is between
+	// the baseline, post-mutation and post-heal postures, and a reader who only gets the last one
+	// cannot see whether the attribute that drifted is the one the mutation touched.
+	t.Logf("byo-iac %s drift: job %s SUCCESS — in_sync=%t drifted=%d %s",
+		label, driftJobID, meta.DriftPosture.InSync, meta.DriftPosture.Drifted, meta.DriftPosture.detail())
 	return *meta.DriftPosture
 }
 
