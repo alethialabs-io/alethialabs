@@ -192,7 +192,7 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
       those three cells asserted Applications that could not exist and a Hetzner full-bar run was
       **red by construction**. That was recorded as an inherent blocker on the grounds that
       hand-mirroring `hetznerDataServicesToAddOns` into Go is the drift this repo forbids — true, but
-      not the only option: the specs are **generated** on the same rail `addon_catalog.json` already
+      not the only option: the specs are **generated** on the same rail `addon_catalog.<cloud>.json` already
       uses.
 
       | | |

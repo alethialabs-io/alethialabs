@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Go e2e harness seeds the FULL add-on surface (all 19 charts) from a GENERATED fixture —
-// `test/e2e/fixtures/addon_catalog.json`, produced by `pnpm -F console export:addon-catalog` from
+// `test/e2e/fixtures/addon_catalog.<cloud>.json`, produced by `pnpm -F console export:addon-catalog` from
 // catalog.ts via the real `resolveAddOnInstall`.
 //
 // This guard is what makes that safe. catalog.ts is the SSOT for chart coordinates; a fixture that

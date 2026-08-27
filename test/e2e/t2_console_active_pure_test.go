@@ -93,7 +93,7 @@ func TestA05SeedIsFaithfulToTheConsoleFixture(t *testing.T) {
 	if diffs := a05SnapshotFidelity(norm, fixture); len(diffs) != 0 {
 		t.Fatalf("the harness's seeded snapshot has drifted from the console fixture.\n"+
 			"divergences: %v\n"+
-			"the seed derives from test/e2e/fixtures/addon_catalog.json and the fixture from "+
+			"the seed derives from test/e2e/fixtures/addon_catalog.<cloud>.json and the fixture from "+
 			"test/e2e/fixtures/t2_config_snapshot.hetzner.json — both are GENERATED, so regenerate "+
 			"whichever is stale:\n"+
 			"  pnpm -F console export:addon-catalog\n"+
@@ -124,7 +124,7 @@ func TestA05SeedCarriesResolvedAddOnValues(t *testing.T) {
 		t.Fatalf("reloader seeded with EMPTY values — the console resolves its catalog knob defaults "+
 			"(catalog.ts toValues) and emits {reloader:{watchGlobally,deployment:{replicas}}}. "+
 			"A hand-written literal drifted this way once (#643 → #1965); derive from "+
-			"CatalogAddOn/addon_catalog.json instead. got: %+v", reloader.Values)
+			"CatalogAddOn/addon_catalog.<cloud>.json instead. got: %+v", reloader.Values)
 	}
 }
 

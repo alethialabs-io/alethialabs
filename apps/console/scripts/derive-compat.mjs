@@ -44,7 +44,10 @@ import { parse as parseYaml } from "yaml";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../../..");
 const MATRIX_PATH = resolve(repoRoot, "packages/core/compat/matrix.json");
-const FIXTURE_PATH = resolve(repoRoot, "test/e2e/fixtures/addon_catalog.json");
+// Any ONE per-cloud fixture is enough: the fixtures differ only in external-dns's `provider` knob,
+// and the chart coordinates this derives from are identical across clouds. hetzner because it is the
+// harness's own default cloud, so every reader agrees on which fixture "the" fixture is.
+const FIXTURE_PATH = resolve(repoRoot, "test/e2e/fixtures/addon_catalog.hetzner.json");
 const GEN_MATRIX = resolve(here, "gen-matrix.mjs");
 
 const argv = process.argv.slice(2);

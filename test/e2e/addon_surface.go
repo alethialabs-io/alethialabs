@@ -177,7 +177,7 @@ func deepMergeValues(dst, src map[string]interface{}) map[string]interface{} {
 //
 // It exists so the LEAN tier stops restating what the generated artifact already holds. The lean
 // seed used to be a hand-written literal (chart coordinates plus `Values: map[string]interface{}{}`),
-// and on 2026-07-16 #643 gave reloader real knob defaults: catalog.ts, addon_catalog.json and
+// and on 2026-07-16 #643 gave reloader real knob defaults: catalog.ts, addon_catalog.<cloud>.json and
 // t2_config_snapshot.hetzner.json were all regenerated, the Go literal was not, and it emitted empty
 // values for ~3 weeks while claiming in its own doc comment to emit "the exact camelCase shape the
 // console's resolveAddOnInstall emits". Deriving makes that drift class UNREPRESENTABLE rather than
