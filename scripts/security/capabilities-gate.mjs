@@ -421,7 +421,9 @@ const STRUCTURAL_GUARDED_PATHS = [
 	"apps/console/app/server/actions/projects.ts",
 	// console — named for the surface, outside every area (layer 2)
 	"apps/console/app/api/cli/cloud-identities/route.ts",
-	"apps/console/components/connector/aws-connection.tsx",
+	// Moved from components/connector/ when the two sibling directories merged (#2879). Layer 2 still
+	// matches the new path on "connectors", but the hard assertion has to name it exactly.
+	"apps/console/components/connectors/aws-connection.tsx",
 	"apps/console/lib/oidc/issuer.ts",
 	// packages/core — the Go ORIGINALS behind the generated console mirror
 	"packages/core/manifests/keyless.go",
@@ -481,7 +483,9 @@ const OUT_OF_SCOPE_PATHS = [
 	"infra/aws-oidc/backend.hcl.example",
 	"infra/aws-oidc/.gitignore",
 	"infra/connector-assets/bootstrap/terraform.tfvars.example",
-	"apps/console/components/connector/README.md",
+	// Moved with the two sibling connector directories (#2879). Still named for the surface
+	// (`connector`) and still prose, which is the pair this entry exists to keep testable.
+	"apps/console/components/connectors/README.md",
 ];
 
 /** Run the inline fixtures. Returns the process exit code. */

@@ -9,7 +9,7 @@ import { test, expect } from "./fixtures/auth";
 test.describe("Connectors page", () => {
 	test("loads the connectors browser", async ({ authedPage: page, orgSlug }) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await expect(page.getByPlaceholder(/search connectors/i)).toBeVisible();
+		await expect(page.getByLabel(/search connectors/i)).toBeVisible();
 		// The group-filter Select (Radix trigger → combobox role) and a known connector.
 		await expect(page.getByRole("combobox")).toBeVisible();
 		await expect(page.getByText("GitHub").first()).toBeVisible();
@@ -17,7 +17,7 @@ test.describe("Connectors page", () => {
 
 	test("search filters connectors", async ({ authedPage: page, orgSlug }) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await page.getByPlaceholder(/search connectors/i).fill("GitHub");
+		await page.getByLabel(/search connectors/i).fill("GitHub");
 		await expect(page.getByText("GitHub").first()).toBeVisible();
 		await expect(page.getByText("Datadog")).toHaveCount(0);
 	});
@@ -51,7 +51,7 @@ test.describe("Connectors page", () => {
 		orgSlug,
 	}) => {
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await expect(page.getByPlaceholder(/search connectors/i)).toBeVisible();
+		await expect(page.getByLabel(/search connectors/i)).toBeVisible();
 		await expect(page.getByText(/verification failed/i)).toHaveCount(0);
 		await expect(
 			page.getByRole("button", { name: /re-verify/i }),
@@ -67,7 +67,7 @@ test.describe("Connectors page", () => {
 	}) => {
 		// Trigger the eager placeholder creation.
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await expect(page.getByPlaceholder(/search connectors/i)).toBeVisible();
+		await expect(page.getByLabel(/search connectors/i)).toBeVisible();
 
 		// Back on the overview, open the setup guide from the topbar.
 		await page.goto(`/${orgSlug}`);

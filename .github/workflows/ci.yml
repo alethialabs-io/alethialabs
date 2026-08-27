@@ -670,6 +670,19 @@ jobs:
         run: pnpm -F console check:marketing-routes
       - name: tsconfig.build.json excludes every un-shipped file (pruned-image type-check)
         run: pnpm -F console check:tsconfig-build
+      # Dead code in the console (knip). The script first asserts that every `entry` glob in
+      # apps/console/knip.json still matches at least one file on disk, and FAILS if one does
+      # not: a knip run that resolves no entry points treats nothing as reachable, so it can
+      # report a clean bill of health while having analysed nothing. "Nothing found" and
+      # "nothing wrong" must not share an exit code.
+      #
+      # Fatal today: unused files, unused (dev)dependencies, unlisted/unresolved imports,
+      # unlisted binaries, duplicate exports. Unused EXPORTS and TYPES are `warn` in knip.json
+      # — they are printed on every run but do not fail it, because the console carries a
+      # ~580-strong backlog of them that this lane's scope (knip.json + package.json) cannot
+      # delete. Ratchet those two rules to "error" once that backlog is cleared.
+      - name: Dead code — unused files, deps and binaries in the console (knip)
+        run: pnpm -F console check:dead-code
       - name: Drizzle migration history is unforked (linear snapshot chain)
         run: pnpm -F console check:migrations
       - name: Every canvas offer is buildable on every cloud, or documented (offer parity)
