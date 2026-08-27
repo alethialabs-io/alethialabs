@@ -141,14 +141,27 @@ const nightlyDrift = policy({
 
 const POLICIES: PolicyDTO[] = [deployFailures, authzDenials, nightlyDrift];
 
-const sentDelivery = delivery({ id: "d1", status: "sent", title: "Cluster ready" });
+// event_key is overridden on every fixture, not left to the factory default. The default is
+// "job.failed", and a search test for that string matched all three rows while asserting one —
+// the fixture defeated its own assertion. Distinct keys make the search test able to fail.
+const sentDelivery = delivery({
+	id: "d1",
+	status: "sent",
+	title: "Cluster ready",
+	event_key: "cluster.ready",
+});
 const failedDelivery = delivery({
 	id: "d2",
 	status: "failed",
 	title: "Webhook 500",
 	event_key: "job.failed",
 });
-const deadDelivery = delivery({ id: "d3", status: "dead", title: "Webhook 500" });
+const deadDelivery = delivery({
+	id: "d3",
+	status: "dead",
+	title: "Webhook 500",
+	event_key: "deploy.succeeded",
+});
 
 const DELIVERIES: DeliveryDTO[] = [sentDelivery, failedDelivery, deadDelivery];
 
