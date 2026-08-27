@@ -855,6 +855,11 @@ jobs:
       # so the gate passes forever while looking exactly like a gate that is holding.
       - name: Floors fingerprint is reproducible by the job that enforces it
         run: pnpm check:floors-reproducible
+      # Tailwind's `z-(--var)` shorthand generates NOTHING for z-index and fails silently —
+      # measured in a browser: the sibling `origin-(--transform-origin)` on the same element
+      # resolved while the z one produced `z-index: auto`. An invisible layering bug.
+      - name: No z-index utility uses the silently-empty (--var) shorthand
+        run: pnpm check:z-utility-syntax
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
