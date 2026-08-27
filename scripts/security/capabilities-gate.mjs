@@ -479,7 +479,9 @@ const OUT_OF_SCOPE_PATHS = [
 	"infra/aws-oidc/backend.hcl.example",
 	"infra/aws-oidc/.gitignore",
 	"infra/connector-assets/bootstrap/terraform.tfvars.example",
-	"apps/console/components/connector/README.md",
+	// Moved with the two sibling connector directories (#2879). Still named for the surface
+	// (`connector`) and still prose, which is the pair this entry exists to keep testable.
+	"apps/console/components/connectors/README.md",
 ];
 
 /** Run the inline fixtures. Returns the process exit code. */
