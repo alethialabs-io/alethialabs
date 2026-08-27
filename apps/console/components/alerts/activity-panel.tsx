@@ -3,71 +3,42 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Alerts hub · Activity panel (ported from the Alethia Labs design "alerts-hub").
-// The durable delivery ledger: a status filter segment + a table. Bound to the real
-// DeliveryDTO (event/status/attempts/when/error) — the design's per-policy and
-// per-channel columns aren't in the DTO yet, so they're omitted.
+// The durable delivery ledger: the standard filter bar (search + delivery-status chips,
+// see alerts-filter-bar.tsx) over a table. Bound to the real DeliveryDTO
+// (event/status/attempts/when/error) — the design's per-policy and per-channel columns
+// aren't in the DTO yet, so they're omitted.
+//
+// The result count is NOT in the bar: it renders in the count pill beside the section
+// heading, which is where the console filter standard puts it.
 
-import { useState } from "react";
-import type { AlertsBootstrap, DeliveryDTO } from "@/app/server/actions/alerts";
+import type { AlertsBootstrap } from "@/app/server/actions/alerts";
+import { ActivityFilterBar } from "@/components/alerts/alerts-filter-bar";
+import type { ActivityView } from "@/components/alerts/alerts-filters";
+import { deliveryBadge } from "@/components/alerts/alerts-status";
 import { ClassificationChips } from "@/components/classification/classification-chips";
-import type { AlertDeliveryStatus } from "@/lib/db/schema/enums";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
-import { cn } from "@repo/ui/utils";
-
-type Filter = "all" | "delivered" | "failed";
-
-const STATUS_LABEL: Record<AlertDeliveryStatus, string> = {
-	pending: "Pending",
-	sent: "Sent",
-	failed: "Failed",
-	dead: "Dead",
-};
-
-function isFailed(d: DeliveryDTO): boolean {
-	return d.status === "failed" || d.status === "dead";
-}
+import { StatusBadge } from "@repo/ui/status-badge";
 
 /** Delivery activity log. */
-export function ActivityPanel({ bootstrap }: { bootstrap: AlertsBootstrap }) {
+export function ActivityPanel({
+	bootstrap,
+	view,
+}: {
+	bootstrap: AlertsBootstrap;
+	/** The filter standard's resolved view — rows, facets, active-filter count. */
+	view: ActivityView;
+}) {
 	const { deliveries } = bootstrap;
 	// One batched query hydrates every delivery row's classification chips (read-only).
 	const { data: classMap = {} } = useAssignmentsForKind(
 		"alert_delivery",
 		deliveries.map((d) => d.id),
 	);
-	const [filter, setFilter] = useState<Filter>("all");
-
-	const rows = deliveries.filter((d) => {
-		if (filter === "failed") return isFailed(d);
-		if (filter === "delivered") return d.status === "sent";
-		return true;
-	});
+	const { rows, facets } = view;
 
 	return (
 		<div>
-			{/* toolbar */}
-			<div className="mb-4 flex flex-wrap items-center gap-3">
-				<div className="inline-flex gap-0.5 rounded-md border border-border bg-muted/30 p-[3px]">
-					{(["all", "delivered", "failed"] as const).map((f) => (
-						<button
-							key={f}
-							type="button"
-							onClick={() => setFilter(f)}
-							className={cn(
-								"rounded px-3 py-1.5 font-medium text-[12.5px] capitalize transition-colors",
-								filter === f
-									? "bg-card text-foreground shadow-sm"
-									: "text-muted-foreground hover:text-foreground",
-							)}
-						>
-							{f}
-						</button>
-					))}
-				</div>
-				<span className="font-mono text-[11px] text-muted-foreground">
-					{rows.length} of {deliveries.length} events
-				</span>
-			</div>
+			<ActivityFilterBar facets={facets} />
 
 			{/* table */}
 			<div className="overflow-hidden rounded-lg border border-border shadow-sm">
@@ -79,7 +50,7 @@ export function ActivityPanel({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 				</div>
 				{rows.length === 0 ? (
 					<div className="px-5 py-8 text-center text-muted-foreground/70 text-sm">
-						No matching activity.
+						No activity matches these filters.
 					</div>
 				) : (
 					rows.map((d) => (
@@ -88,13 +59,10 @@ export function ActivityPanel({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 							className="grid grid-cols-[2fr_1fr_auto_1.2fr] items-center gap-4 border-b border-border px-5 py-3 last:border-b-0 hover:bg-muted/30"
 						>
 							<div className="flex min-w-0 items-center gap-3">
-								<span
-									className={cn(
-										"h-2 w-2 flex-none rounded-full",
-										isFailed(d)
-											? "bg-foreground shadow-[inset_0_0_0_2.5px_var(--color-card)]"
-											: "bg-foreground",
-									)}
+								<StatusBadge
+									{...deliveryBadge(d.status)}
+									showLabel={false}
+									className="shrink-0"
 								/>
 								<div className="min-w-0">
 									<div className="truncate text-[13px]">{d.title}</div>
@@ -109,8 +77,9 @@ export function ActivityPanel({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 									/>
 								</div>
 							</div>
+							{/* The dot already carries the tier; the column carries only its word. */}
 							<div className="font-mono text-[11px] uppercase text-muted-foreground">
-								{STATUS_LABEL[d.status]}
+								{deliveryBadge(d.status).label}
 							</div>
 							<div className="font-mono text-[11px] text-muted-foreground">
 								{d.attempts}
