@@ -12,7 +12,9 @@
 // the git-token pattern) and seeds a k8s Secret in-cluster, which the chart consumes via the
 // def's `secretValues` wiring (existingSecret / secretKeyRef).
 
-import { randomBytes } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
+
+import { hashSync } from "bcryptjs";
 
 import { decryptSecret, encryptSecret } from "@/lib/crypto/secrets";
 import type { AddOnDef } from "@/lib/addons/types";
@@ -144,6 +146,37 @@ export function mergeAddonSecrets(
  */
 export function randomCredential(bytes = 24): string {
 	return randomBytes(bytes).toString("base64url");
+}
+
+/**
+ * A fresh 2048-bit RSA private key in PKCS#1 PEM, for a chart that would otherwise generate an
+ * EPHEMERAL keypair at render time.
+ *
+ * Only the KEY is minted, deliberately — harbor's `core.secretName` Secret is mounted
+ * `subPath: tls.key`, so the certificate half is never read, and generating a self-signed X.509
+ * would mean an ASN.1 encoder that node's stdlib does not provide (#2823).
+ */
+export function randomRsaPrivateKeyPem(): string {
+	return generateKeyPairSync("rsa", {
+		modulusLength: 2048,
+		privateKeyEncoding: { type: "pkcs1", format: "pem" },
+		publicKeyEncoding: { type: "pkcs1", format: "pem" },
+	}).privateKey;
+}
+
+/**
+ * One htpasswd line, `user:<bcrypt hash>`, for a registry that authenticates against an htpasswd
+ * file.
+ *
+ * BCRYPT IS NOT A PREFERENCE. docker distribution's htpasswd access controller accepts bcrypt
+ * only, so the apr1/MD5 form in harbor's own values.yaml example would be rejected. Helm's
+ * `htpasswd` template function produces bcrypt for the same reason — and re-salts on every call,
+ * which is exactly the render non-determinism this replaces.
+ *
+ * The cost is `hashSync` at a work factor: ~50-100ms, once, at enable time only.
+ */
+export function htpasswdLine(username: string, password: string): string {
+	return `${username}:${hashSync(password, 10)}`;
 }
 
 /**
