@@ -1,0 +1,22 @@
+{
+  "provider": "hetzner",
+  "region": "nbg1",
+  "cluster": "alethia-nl-33114945230-1",
+  "run_tag": "nightly-33114945230-1",
+  "outcome": "success",
+  "deploy_stage": "argocd-ready",
+  "git_sha": "98bbef1",
+  "captured_at": "20260827T210204Z",
+  "resources_added": 18,
+  "resources_destroyed": 1,
+  "cluster_live_at_capture": false,
+  "nodes_ready": 0,
+  "argocd_total": 0,
+  "argocd_healthy_synced": 0,
+  "argocd_verdict": "Healthy+Synced (T2-asserted)",
+  "receipt_signed": true,
+  "receipt_plan_sha256": "ce439087472b",
+  "destroyed": true,
+  "duration_seconds": 931,
+  "verdict": "hetzner: ✅ apply(18 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1)"
+}
