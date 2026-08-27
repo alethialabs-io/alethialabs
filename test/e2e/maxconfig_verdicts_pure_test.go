@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -161,6 +162,87 @@ func deferredCellNamesAShippedChart(cell MaxConfigCell, catalog []types.AddOnIns
 	if !strings.Contains(cell.Why, "DEBT") {
 		return fmt.Errorf("is %s but its Why never says DEBT — the reason a reader takes away must be "+
 			"\"we have not wired this\", not \"the cloud cannot\": %q", DeferredInProduct, cell.Why)
+	}
+	return nil
+}
+
+// TestMaxConfigCostCellsNameTheirPrice is the ExcludedByCost twin of the guard above, and it exists
+// for the same reason: a verdict whose distinguishing claim can be made without evidence stops being
+// load-bearing, and this one sits one word away from CloudCeiling.
+//
+// The claim ExcludedByCost makes is narrow and checkable: the cloud DOES offer this kind, and the
+// harness declines to buy it because it cannot be rented by the hour. Both halves are guarded:
+//
+//   - Cost must name WHAT would be bought and WHAT IT COSTS, as "<resource> — <amount> <currency>…".
+//     "expensive" is a shrug; a number is a fact somebody can re-check against the billing API, and
+//     re-checking is the point — the price that justified this exclusion can change.
+//   - Why must say that no pay-as-you-go option exists. That is the whole difference between "this
+//     is dear" and "this cannot be rented", and requiring the phrase forces whoever writes the cell
+//     to have actually LOOKED. Alibaba's registry earned this verdict only because
+//     DescribePricingModule returns zero PayAsYouGo modules for ProductCode=acr; without that check
+//     the honest verdict would have been "we have not got round to affording it", which is not a
+//     verdict at all.
+//
+// Like its twin it is self-tested on synthetic cells, unconditionally, so it keeps its teeth if the
+// table ever holds no cost exclusions — which is the state we would prefer to be in.
+func TestMaxConfigCostCellsNameTheirPrice(t *testing.T) {
+	for _, provider := range maxConfigClouds() {
+		for _, k := range MaxConfigKinds {
+			cell := maxConfigCell(t, k, provider)
+			if cell.Carriage != ExcludedByCost {
+				continue
+			}
+			if verr := costExcludedCellNamesItsPrice(cell); verr != nil {
+				t.Errorf("kind %q on %s: %v", k.Kind, provider, verr)
+			}
+		}
+	}
+
+	t.Run("the rule still rejects what it exists to reject", func(t *testing.T) {
+		good := costExcludedCell(
+			"alicloud_cr_ee_instance — 150 USD/month, bought per run",
+			"Enterprise Edition has no pay-as-you-go model, so it cannot be rented by the hour.",
+		)
+		if verr := costExcludedCellNamesItsPrice(good); verr != nil {
+			t.Errorf("a well-formed cost cell was rejected: %v — the rule has drifted off the shape it is meant to admit", verr)
+		}
+		for name, bad := range map[string]MaxConfigCell{
+			"names no amount at all":            costExcludedCell("alicloud_cr_ee_instance — expensive", "no pay-as-you-go model"),
+			"names no resource before the dash": costExcludedCell("150 USD/month", "no pay-as-you-go model"),
+			"has no dash separating the two":    costExcludedCell("alicloud_cr_ee_instance 150 USD", "no pay-as-you-go model"),
+			"a Why that never rules out hourly billing": costExcludedCell(
+				"alicloud_cr_ee_instance — 150 USD/month", "it is dear and we would rather not"),
+			"no cost at all": {Carriage: ExcludedByCost, Why: "no pay-as-you-go model"},
+		} {
+			if verr := costExcludedCellNamesItsPrice(bad); verr == nil {
+				t.Errorf("a cost cell that %s was accepted — the guard would not catch the decay it exists to catch", name)
+			}
+		}
+	})
+}
+
+// costExcludedCellPrice matches an amount with a currency, in either order, so "150 USD/month" and
+// "USD 150" both read as a price and "expensive" does not.
+var costExcludedCellPrice = regexp.MustCompile(`(?i)(\d+(\.\d+)?\s*(USD|EUR)|(USD|EUR)\s*\d+(\.\d+)?)`)
+
+// costExcludedCellNamesItsPrice reports why an ExcludedByCost cell fails to justify its verdict
+// (nil = it does). Split out of the table walk so it can be self-tested on synthetic cells.
+func costExcludedCellNamesItsPrice(cell MaxConfigCell) error {
+	resource, price, found := strings.Cut(cell.Cost, " — ")
+	if !found || strings.TrimSpace(resource) == "" {
+		return fmt.Errorf("is %s but its Cost %q does not name WHAT would be bought before the price — "+
+			"the form is \"<resource> — <amount> <currency>…\", so a reader knows which resource to go and price",
+			ExcludedByCost, cell.Cost)
+	}
+	if !costExcludedCellPrice.MatchString(price) {
+		return fmt.Errorf("is %s but its Cost names no amount and currency (%q) — an unpriced exclusion "+
+			"cannot be re-checked against the billing API, which makes it indistinguishable from a %s",
+			ExcludedByCost, cell.Cost, CloudCeiling)
+	}
+	if !strings.Contains(strings.ToLower(cell.Why), "pay-as-you-go") {
+		return fmt.Errorf("is %s but its Why never rules out pay-as-you-go (%q) — the verdict claims the kind "+
+			"cannot be RENTED, not merely that it is dear, and that claim has to have been checked",
+			ExcludedByCost, cell.Why)
 	}
 	return nil
 }
@@ -304,10 +386,13 @@ func TestAssertMaxConfigKindsInStateRefusesAnUndescribedCloud(t *testing.T) {
 	}
 }
 
-// TestAssertMaxConfigKindsInStateAccountsForEveryKind proves the three verdicts are each ASSERTED,
-// per cloud, and that dropping the evidence flips the kind to Missing. Hetzner is the interesting
-// row — it is the only cloud using all three carriages — and it is exactly the cloud the previous
-// implementation reported as eleven-times-unmapped and then congratulated.
+// TestAssertMaxConfigKindsInStateAccountsForEveryKind proves every verdict is ASSERTED, per cloud,
+// and that dropping the evidence flips the kind to Missing. Hetzner is the interesting row — it uses
+// the most carriages — and it is exactly the cloud the previous implementation reported as
+// eleven-times-unmapped and then congratulated.
+//
+// The total is the load-bearing line: it caught ExcludedByCost falling through the accounting the
+// first time that verdict was added, which is precisely what it is for.
 func TestAssertMaxConfigKindsInStateAccountsForEveryKind(t *testing.T) {
 	for _, provider := range maxConfigClouds() {
 		t.Run(provider, func(t *testing.T) {
@@ -321,10 +406,10 @@ func TestAssertMaxConfigKindsInStateAccountsForEveryKind(t *testing.T) {
 			if len(proof.Missing) > 0 {
 				t.Errorf("a state carrying every tofu resource and every in-cluster Application still reported missing kinds: %v", proof.Missing)
 			}
-			total := len(proof.ProvenInTofu) + len(proof.ProvenInCluster) + len(proof.Excluded) + len(proof.Deferred)
+			total := len(proof.ProvenInTofu) + len(proof.ProvenInCluster) + len(proof.Excluded) + len(proof.Deferred) + len(proof.CostExcluded)
 			if total != len(MaxConfigKinds) {
-				t.Errorf("accounted for %d kinds (%d tofu + %d in-cluster + %d excluded + %d deferred), want all %d — a kind fell through the accounting",
-					total, len(proof.ProvenInTofu), len(proof.ProvenInCluster), len(proof.Excluded), len(proof.Deferred), len(MaxConfigKinds))
+				t.Errorf("accounted for %d kinds (%d tofu + %d in-cluster + %d excluded + %d deferred + %d cost-excluded), want all %d — a kind fell through the accounting",
+					total, len(proof.ProvenInTofu), len(proof.ProvenInCluster), len(proof.Excluded), len(proof.Deferred), len(proof.CostExcluded), len(MaxConfigKinds))
 			}
 
 			// Teeth: an EMPTY-but-valid state and no Applications must make every offered kind Missing,
