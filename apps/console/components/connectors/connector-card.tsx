@@ -5,7 +5,9 @@
 import type { ConnectorWithConnection } from "@/app/server/actions/connectors";
 import { GitProviderIcon } from "@/components/connectors/git-provider-icon";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
+import { connectorState } from "@/components/connectors/connectors-query";
 import { Button } from "@repo/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
 import { Check, Loader2, RefreshCw } from "lucide-react";
 
@@ -54,25 +56,23 @@ export function ConnectorCard({
 	onSelect,
 }: ConnectorCardProps) {
 	const isConnected = integration.connected;
+	// The status wording and the filter bucket both come from `connectorState` — one ladder, so
+	// a tile can never say something the Status facet disagrees with.
+	const state = connectorState(integration, platformConfigured);
 	// "Coming soon" only when NOT already connected. A connector can be marked coming_soon (e.g. DO/Civo
 	// lack provisioning templates) yet still have a live account from before — that account must keep
 	// its Manage → disconnect path, so a connected one is treated as a normal connection everywhere.
-	const isComingSoon = integration.status === "coming_soon" && !isConnected;
+	const isComingSoon = state.health === "coming_soon";
 	const isGit = integration.category === "git";
 	const isCloud = integration.category === "cloud";
 	// A managed cloud missing platform creds, or a git provider with no registered OAuth app: a
 	// connect can only fail, so the tile is honest about it (self-hosters: see the docs to enable).
-	const platformUnavailable =
-		(isCloud || isGit) && !platformConfigured && !isConnected;
+	const platformUnavailable = state.health === "unavailable";
 	const needsReconnection =
 		integration.token_health === "expired" ||
 		integration.token_health === "refresh_failed";
 	const cloudFailed = integration.cloud_health === "failed";
 	const cloudTesting = integration.cloud_health === "testing";
-	// Authenticated, but the probe found provisioning permissions missing. NOT a failure — the
-	// connection works; it just can't see everything we'd provision into, so it stays "connected"
-	// and says so rather than reporting an unqualified green.
-	const cloudDegraded = integration.cloud_health === "degraded";
 	const accountCount = integration.accounts?.length ?? 0;
 	// A connected, healthy card is a pick target in pick mode (the whole card selects).
 	const isPick =
@@ -115,9 +115,22 @@ export function ConnectorCard({
 					)}
 				</div>
 				<div className="min-w-0 flex-1">
-					<div className="truncate text-sm font-medium text-foreground">
-						{integration.name}
-					</div>
+					{/* Two lines, not a wider clamp: at the 280px grid minimum a single truncated line
+					    ate the identity of exactly the connectors that need it most — "GitHub Enterprise
+					    Contai…", "Amazon ECR (cross-acco…", "Azure Container Registry …". Names longer
+					    than two lines still clamp, so the tooltip carries the full name either way. */}
+					<Tooltip>
+						<TooltipTrigger
+							render={
+								<div className="line-clamp-2 text-sm font-medium leading-snug text-foreground [overflow-wrap:anywhere]">
+									{integration.name}
+								</div>
+							}
+						/>
+						<TooltipContent className="max-w-[240px]">
+							{integration.name}
+						</TooltipContent>
+					</Tooltip>
 					<p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">
 						{integration.description}
 					</p>
@@ -134,8 +147,11 @@ export function ConnectorCard({
 				/>
 			</div>
 
-			<div className="mt-auto flex items-center justify-between gap-2 border-t border-border/40 pt-3">
-				<div className="flex min-w-0 items-center gap-1.5 font-mono text-[10px] text-muted-foreground">
+			<div className="mt-auto flex items-start justify-between gap-2 border-t border-border/40 pt-3">
+				{/* Wraps rather than truncates. "Verification failed" used to render as
+				    "Verification…" on a Hetzner tile — a clipped status is worse than a taller
+				    card, because the clipped half is the part that says what went wrong. */}
+				<div className="flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10px] leading-tight text-muted-foreground">
 					{isCloud && isConnected && (
 						<span className="rounded-full border border-border/60 px-1.5 py-0.5">
 							{accountCount} {accountCount === 1 ? "account" : "accounts"}
@@ -146,27 +162,8 @@ export function ConnectorCard({
 							Org
 						</span>
 					)}
-					<span
-						className={cn(
-							"truncate",
-							cloudFailed && !platformUnavailable && "text-destructive",
-						)}
-					>
-						{isComingSoon
-							? "Coming soon"
-							: platformUnavailable
-								? "Not enabled on this instance"
-								: needsReconnection
-									? "Needs reconnection"
-									: isConnected
-										? cloudDegraded
-											? "Limited permissions"
-											: "Connected"
-										: cloudFailed
-											? "Verification failed"
-											: cloudTesting
-												? "Verifying…"
-												: "Not connected"}
+					<span className={cn(state.destructive && "text-destructive")}>
+						{state.label}
 					</span>
 				</div>
 
