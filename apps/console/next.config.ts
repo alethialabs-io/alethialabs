@@ -77,7 +77,20 @@ const nextConfig: NextConfig = {
 		"/**/*": ["../../node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/**"],
 	},
 	// Shared workspace packages ship raw TS/TSX — Next must transpile them.
-	transpilePackages: ["@repo/ui", "@repo/brand", "@repo/legal", "@repo/plan-catalog", "@repo/email", "@repo/support"],
+	transpilePackages: [
+		"@repo/ui",
+		"@repo/brand",
+		"@repo/legal",
+		"@repo/plan-catalog",
+		"@repo/email",
+		"@repo/support",
+		// @repo/format ships raw TS with no build step, like @repo/ui above. The list is not
+		// consistent about this — @repo/privacy and @repo/platform also ship raw TS, are NOT
+		// listed, and build fine — so it is not obvious from the file whether a new package
+		// needs an entry. Listing one that does not need it costs nothing; omitting one that
+		// does breaks the console build, and every console lane imports this package.
+		"@repo/format",
+	],
 	// The enterprise package is loaded at runtime via createRequire (lib/enterprise.ts),
 	// never statically bundled — keep it external so a community build (where the
 	// package is absent) doesn't try to resolve it.
