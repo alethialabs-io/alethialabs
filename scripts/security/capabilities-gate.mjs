@@ -421,7 +421,9 @@ const STRUCTURAL_GUARDED_PATHS = [
 	"apps/console/app/server/actions/projects.ts",
 	// console — named for the surface, outside every area (layer 2)
 	"apps/console/app/api/cli/cloud-identities/route.ts",
-	"apps/console/components/connector/aws-connection.tsx",
+	// Moved from components/connector/ when the two sibling directories merged (#2879). Layer 2 still
+	// matches the new path on "connectors", but the hard assertion has to name it exactly.
+	"apps/console/components/connectors/aws-connection.tsx",
 	"apps/console/lib/oidc/issuer.ts",
 	// packages/core — the Go ORIGINALS behind the generated console mirror
 	"packages/core/manifests/keyless.go",
