@@ -96,8 +96,8 @@ provider/identity/pricing selections, workspace/org context. Anything that is a
   `use-setup-guide-store`.
 - Keep (design-surface state in `components/design-project/`, driven by in-canvas user
   actions rather than navigation — same category as `use-canvas-store`):
-  `use-pricing-store` (region prices + create-form submit state),
   `use-cloud-provider-store` (selected provider/identity + its cached resources).
+  (`use-pricing-store` was on this list and is gone — #2873 found nothing imported it.)
 - Slimmed to UI state: `use-jobs-store` (filters/pagination), `use-projects-store`
   (favorite ids).
 - Removed (list data → queries): `use-clusters-store`, `use-runners-store`,

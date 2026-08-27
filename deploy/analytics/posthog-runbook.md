@@ -155,11 +155,13 @@ replace Odoo** (ledger, invoices, VAT, statutory filing stay in Odoo). Setup (no
 
 ## 14. Feature flags & experiments
 
-Wired: `lib/analytics/flags.ts` → `useFeatureFlag("key")` (React) + `isFeatureEnabled("key")` (imperative),
-evaluated against the identified person + org group. To use: create a flag in **Feature flags**, target a
-cohort (e.g. *Paying* orgs or a % rollout), then gate a surface with `const on = useFeatureFlag("new-x")`.
-Promote to an **Experiment** to A/B against a metric (e.g. `deploy_succeeded`). Nothing is gated yet — the
-helper is ready for the first rollout.
+**Not wired.** `lib/analytics/flags.ts` held `useFeatureFlag("key")` / `isFeatureEnabled("key")` and was
+deleted in #2873: nothing in the console ever imported it, and an un-imported helper is not a mechanism —
+it is a file that makes this page read as if flags were available. They are not.
+
+PostHog flags still evaluate server-side against the identified person + org group, so re-adding the
+client helpers is small. But do it as part of the first rollout that actually needs one, and re-write this
+section then — otherwise the next reader inherits the same false "ready" that this note replaced.
 
 ## 15. Cost control (set this once)
 
