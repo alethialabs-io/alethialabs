@@ -37,13 +37,57 @@ type GIT struct {
 	Token     string
 }
 
-// NewGIT creates a new GIT wrapper.
+// NewGIT creates a GIT wrapper for a TOKEN-LESS clone, PRESERVING the caller's transport.
+//
+// Every caller in the tree reaches this constructor on exactly one branch — `if token != "" {
+// NewGITWithToken(...) } else { NewGIT(...) }` — and iac_scan.go says what that branch means out
+// loud: "No git token (%v); attempting public clone." A public clone is anonymous https.
+//
+// This used to call transformURLToSSH, so it rewrote the caller's https URL into
+// `git@host:owner/repo.git` before anything else saw it. isHTTPTransport then answered false,
+// getAuth took the getSSHAuthMethod branch, and the clone died on a box with no agent:
+//
+//	BYO IaC clone/checkout failed: failed to clone repository
+//	'git@github.com:alethialabs-io/enterprise-demo.git':
+//	error creating SSH agent: "SSH agent requested but SSH_AUTH_SOCK not-specified"
+//
+// (gcp/maxconfig run 33051613329 — the BYO-IaC fallback teardown, #2905. The DEPLOY of the same
+// repo in the same run logged `cloning https://github.com/alethialabs-io/enterprise-demo` and
+// worked, because it had a token and took the other branch. The repo is PUBLIC and needs no token
+// at all; the only difference was which constructor ran.)
+//
+// #2035 fixed getAuth to return nil for an http(s) remote — correctly — but that fix could never be
+// REACHED from this constructor, because by then the URL was no longer http(s). Its tests build
+// `&GIT{RepoURL: url}` directly, which is why they passed while this path stayed broken.
+//
+// An explicit transport is the caller's choice and is now kept: https stays https (anonymous), ssh
+// and scp-shorthand stay ssh (still agent-authenticated — see
+// TestGetAuth_SSHRemoteStillUsesTheAgent), file:// stays file://. Only a bare `host/owner/repo`
+// is completed, to https, which is the assumption isHTTPTransport already documents.
 func NewGIT(repoURL string, localPath string, dryRun bool) *GIT {
 	return &GIT{
-		RepoURL:   transformURLToSSH(repoURL),
+		RepoURL:   normalizeRepoURL(repoURL),
 		LocalPath: localPath,
 		DryRun:    dryRun,
 	}
+}
+
+// normalizeRepoURL completes a bare `host/owner/repo` to https and otherwise returns the URL
+// untouched. It never changes an explicit transport into another one.
+//
+// The name is not new: isHTTPTransport's own comment has referred to "normalizeRepoURL" for as long
+// as it has existed, describing exactly this behaviour. Until now no such function existed and the
+// constructor did the opposite, so the comment described an intent the code contradicted.
+func normalizeRepoURL(rawURL string) string {
+	u := strings.TrimSpace(rawURL)
+	if u == "" {
+		return u
+	}
+	// scp-like shorthand (git@host:owner/repo) and any explicit scheme://.
+	if strings.HasPrefix(u, "git@") || strings.Contains(u, "://") {
+		return u
+	}
+	return "https://" + u
 }
 
 // NewGITWithToken creates a GIT wrapper that uses HTTPS + token auth.
@@ -54,35 +98,6 @@ func NewGITWithToken(repoURL string, localPath string, dryRun bool, token string
 		DryRun:    dryRun,
 		Token:     token,
 	}
-}
-
-// transformURLToSSH converts an HTTP/HTTPS URL to SSH format.
-func transformURLToSSH(rawURL string) string {
-	// If URL is already in SSH format, return as is.
-	if strings.HasPrefix(rawURL, "git@") {
-		return rawURL
-	}
-	// A file:// transport (used by local-fixture tests and on-box mirrors) is a
-	// real git transport and must pass through untouched — it has no host to SSH to.
-	if strings.HasPrefix(rawURL, "file://") {
-		return rawURL
-	}
-
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		fmt.Printf("Warning: Failed to parse Git URL '%s': %v. Returning original URL.\n", rawURL, err)
-		return rawURL
-	}
-
-	// Construct the SSH URL: git@host:path/to/repo.git
-	sshURL := fmt.Sprintf("git@%s:%s", u.Host, strings.TrimPrefix(u.Path, "/"))
-
-	// Ensure it ends with .git
-	if !strings.HasSuffix(sshURL, ".git") {
-		sshURL += ".git"
-	}
-
-	return sshURL
 }
 
 // transformURLToHTTPS converts an SSH or scp-like URL to HTTPS format so token (HTTP
@@ -155,10 +170,10 @@ func (g *GIT) getAuth() (transport.AuthMethod, error) {
 
 // isHTTPTransport reports whether rawURL is fetched over http(s) rather than ssh.
 //
-// normalizeRepoURL has already turned a bare `host/owner/repo` into https, and an scp-style
-// `git@host:owner/repo` into ssh://, so by the time this is asked the scheme is explicit. The
-// scp-style form is still matched defensively for a RepoURL set directly on the struct rather than
-// through the constructor.
+// normalizeRepoURL has already completed a bare `host/owner/repo` to https, so by the time this is
+// asked the transport is explicit. The scp-style `git@host:owner/repo` form is matched here
+// directly — normalizeRepoURL preserves it verbatim rather than rewriting it to ssh://, so this is
+// the branch that classifies it, not a defensive leftover.
 func isHTTPTransport(rawURL string) bool {
 	u := strings.TrimSpace(rawURL)
 	switch {
