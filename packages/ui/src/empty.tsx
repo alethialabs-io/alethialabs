@@ -65,10 +65,23 @@ function EmptyMedia({
   )
 }
 
-/** The empty state's headline. */
-function EmptyTitle({ className, ...props }: React.ComponentProps<"div">) {
+/**
+ * The empty state's headline.
+ *
+ * Renders a `<div>` by default and takes a `level` to render a real heading instead. The default
+ * is the div because an empty state can appear inside a card, a drawer or a table cell, where an
+ * `<h3>` would inject a phantom entry into the document outline. But converting a page's empty
+ * state to this component was silently DEMOTING an `<h3>` to a div — an a11y regression a consumer
+ * could not fix, found while migrating the evidence page. Pass `level` when this heads a region.
+ */
+function EmptyTitle({
+  className,
+  level,
+  ...props
+}: React.ComponentProps<"div"> & { level?: 1 | 2 | 3 | 4 | 5 | 6 }) {
+  const Tag = level ? (`h${level}` as const) : "div"
   return (
-    <div
+    <Tag
       data-slot="empty-title"
       className={cn("text-lg font-medium tracking-tight", className)}
       {...props}
@@ -104,6 +117,50 @@ function EmptyContent({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+/**
+ * The whole empty state in one call — the shape every page actually wanted.
+ *
+ * The parts above have existed and been used in four places, while SIX more empty states were
+ * written locally across the console, two of them near-identical `EmptyState({canManage, action})`
+ * in sibling files. The parts were not the problem; the absence of a composed default was, because
+ * assembling five components correctly is more work than writing a div.
+ *
+ * This is a convenience OVER the parts, not a replacement for them: anything needing a different
+ * arrangement still composes `Empty` + `EmptyHeader` + … directly, and existing callers are
+ * untouched.
+ */
+function EmptyState({
+  icon,
+  level,
+  title,
+  description,
+  action,
+  className,
+  ...props
+}: Omit<React.ComponentProps<"div">, "title"> & {
+  /** Heading level for the title, when this empty state heads a region. Omit inside a card. */
+  level?: 1 | 2 | 3 | 4 | 5 | 6
+  /** A lucide icon element, rendered in a muted tile. Omit for a text-only state. */
+  icon?: React.ReactNode
+  /** What is not here — a noun phrase ("No runners yet"), not a sentence. */
+  title: React.ReactNode
+  /** Why it is empty, or what to do about it. One line. */
+  description?: React.ReactNode
+  /** The single next step, usually a Button. Omit when the viewer cannot act. */
+  action?: React.ReactNode
+}) {
+  return (
+    <Empty className={className} {...props}>
+      <EmptyHeader>
+        {icon ? <EmptyMedia variant="icon">{icon}</EmptyMedia> : null}
+        <EmptyTitle level={level}>{title}</EmptyTitle>
+        {description ? <EmptyDescription>{description}</EmptyDescription> : null}
+      </EmptyHeader>
+      {action ? <EmptyContent>{action}</EmptyContent> : null}
+    </Empty>
+  )
+}
+
 export {
   Empty,
   EmptyHeader,
@@ -111,4 +168,5 @@ export {
   EmptyDescription,
   EmptyContent,
   EmptyMedia,
+  EmptyState,
 }

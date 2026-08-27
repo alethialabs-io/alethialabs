@@ -630,6 +630,38 @@
 }
 
 
+/* ── Layer scale ─────────────────────────────────────────────────────────────
+   Every z-index in the system, named. Before this there were none: the chrome
+   hardcoded 55/58/60 here, @repo/ui hardcoded 50 across six overlay primitives,
+   and the console reached for `z-[6]`, `z-[60]` and `z-[95]` when those did not
+   fit. An unnamed scale cannot be reasoned about, so each new surface picked a
+   number by trying one until it looked right.
+
+   THESE ARE TODAY'S VALUES, DELIBERATELY. Naming them is not the moment to
+   re-layer the app — that would move surfaces relative to each other with no
+   way to tell a fix from a regression. Renumbering is a separate, visual change.
+
+   One collision is inherited and recorded rather than silently resolved:
+   --z-overlay-nested and --z-frame are both 60. That is already true on `dev`
+   (`z-[60]` in the agent's artifact controls vs `.vx-frame`), and it is harmless
+   only because the console does not wear the page frame. If the console ever
+   adopts the chrome, this is the line that has to move first.
+
+   `--z-overlay` sits at the same 50 as `--z-header`. Also inherited. The reason
+   overlays still paint above the header is DOM order in the portal, not z-index
+   — which is exactly the kind of accident this scale exists to make visible. */
+:root {
+  --z-sticky-head: 6;      /* a sticky table header inside a scroll container */
+  --z-raised: 10;          /* in-flow lift: canvas controls, table chrome, badges */
+  --z-header: 50;          /* the site header bar */
+  --z-overlay: 50;         /* dialog · sheet · popover · dropdown · tooltip · hover-card */
+  --z-rail: 55;            /* .vx-rail */
+  --z-grain: 58;           /* .vx-grain */
+  --z-frame: 60;           /* .vx-frame */
+  --z-overlay-nested: 60;  /* an overlay opened from inside another overlay */
+  --z-toast: 95;           /* toasts outrank everything; they report on it */
+}
+
 /* ── Page chrome ─────────────────────────────────────────────────────────────
    The hairline frame inset from the viewport and the two vertical edge rails.
    Fixed, decorative, non-interactive: what makes a page read as an instrument
@@ -638,7 +670,7 @@
 .vx-grain {
   position: fixed;
   inset: 0;
-  z-index: 58;
+  z-index: var(--z-grain);
   pointer-events: none;
   opacity: 0.4;
   mix-blend-mode: overlay;
@@ -660,12 +692,12 @@
   inset: var(--frame-inset);
   border: 1px solid var(--border);
   pointer-events: none;
-  z-index: 60;
+  z-index: var(--z-frame);
 }
 .vx-rail {
   position: fixed;
   left: 17px;
-  z-index: 55;
+  z-index: var(--z-rail);
   font-size: 10px;
   letter-spacing: 0.24em;
   text-transform: uppercase;

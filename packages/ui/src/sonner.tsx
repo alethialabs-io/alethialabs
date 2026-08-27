@@ -33,6 +33,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-text": "var(--popover-foreground)",
           "--normal-border": "var(--border)",
           "--border-radius": "var(--radius)",
+          // sonner defaults to z-index 999999, which is not a layer so much as a refusal to
+          // participate in one — and it made `--z-toast` a token with zero consumers, i.e. a
+          // named layer that was pure fiction. Pinning it here is what makes the scale real.
+          zIndex: "var(--z-toast)",
         } as React.CSSProperties
       }
       {...props}
