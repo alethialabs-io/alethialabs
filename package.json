@@ -31,6 +31,7 @@
     "check:docs-contract": "node scripts/check-docs-contract.mjs",
     "check:addon-render": "bash scripts/addons/check-render-determinism.sh",
     "check:addon-published-defaults": "bash scripts/addons/check-published-defaults.sh",
+    "check:addon-resource-fit": "bash scripts/addons/check-resource-fit.sh",
     "check:theme-inline": "node scripts/check-theme-inline-overrides.mjs",
     "check:floors-reproducible": "node scripts/check-floors-reproducible.mjs",
     "check:var-utility-shadowing": "node scripts/check-var-utility-shadowing.mjs",

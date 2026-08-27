@@ -1,0 +1,7 @@
+# Add-ons that render a pod whose memory request exceeds the per-pod ceiling.
+#
+# One id per line, each with the reason. See scripts/addons/check-resource-fit.sh.
+#
+# RATCHETED IN BOTH DIRECTIONS: an entry that now fits fails (remove it, so the list only shrinks),
+# and an entry no longer in the catalog fails. Empty today — minio (16Gi) and loki's chunks-cache
+# (9830Mi) were the two that shipped, and both were lowered rather than declared.

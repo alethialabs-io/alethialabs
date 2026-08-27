@@ -335,6 +335,15 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			read: { replicas: 0 },
 			write: { replicas: 0 },
 			backend: { replicas: 0 },
+			// The chunks-cache memcached sizes its memory REQUEST from `allocatedMemory`, whose
+			// chart default is 8192 (MB) — so the pod asks for 9830Mi. On a 16 GB node that is not
+			// merely large, it crowds out most of the rest of the surface, and in
+			// hetzner/addons run 33051626972 the loki pod never scheduled at all:
+			// `0/7 nodes are available: … 6 Insufficient memory`.
+			//
+			// A SingleBinary, filesystem-backed starter install does not need an eight-gigabyte
+			// chunk cache. 1024 MB keeps the cache doing its job at a size a default node can hold.
+			chunksCache: { allocatedMemory: 1024 },
 		},
 		configSchema: z.object({
 			/** Log retention in days (0 = keep forever). */
@@ -907,7 +916,24 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "minio",
 		version: "5.2.0",
 		namespace: "minio",
-		defaultValues: { mode: "standalone" },
+		// The chart's own default is `resources.requests.memory: 16Gi` — verified in minio 5.2.0's
+		// values.yaml, not inferred. A cpx32 node is 16 GB TOTAL, so after kubelet and system
+		// reserve there is no node in any default Alethia pool that can hold this pod, on any
+		// cloud. It does not run slowly; it never schedules:
+		//
+		//   Warning FailedScheduling  0/7 nodes are available:
+		//     1 node(s) had untolerated taint(s), 6 Insufficient memory.
+		//
+		// (hetzner/addons run 33051626972 — minio sat Pending for the whole budget and the Application
+		// reported Degraded.) 512Mi suits the `standalone` mode this catalog ships; a user who wants a
+		// production cache can raise it through the raw values escape hatch.
+		//
+		// Same class as #2846 — a chart default shipped unexamined — and invisible for the same
+		// reason: it is a CONSTANT, so the render never drifts and no sync status ever objects.
+		defaultValues: {
+			mode: "standalone",
+			resources: { requests: { memory: "512Mi" } },
+		},
 		configSchema: z.object({
 			/** Persistent volume size for MinIO (GiB). */
 			storageGb: z.coerce.number().int().min(5).max(2000).default(50),
