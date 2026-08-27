@@ -12,6 +12,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useMemo, useTransition } from "react";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
+import { PageHeader } from "@repo/ui/page-header";
 import {
 	Table,
 	TableBody,
@@ -116,14 +118,13 @@ export function OverviewClient({
 
 				{/* Right column — projects list. */}
 				<div>
-					<div className="mb-3 flex items-center gap-2.5">
-						<span className="font-display text-[15px] font-semibold tracking-tight">
-							Projects
-						</span>
-						<span className="rounded-full border px-2 py-0.5 font-mono text-[10.5px] text-muted-foreground">
-							{ordered.length}
-						</span>
-					</div>
+					{/* The count is the FILTERED result count, in the shared count pill beside the
+					    heading — where the console filter standard requires result counts to live. */}
+					<PageHeader
+						title="Projects"
+						count={ordered.length}
+						className="mb-3"
+					/>
 
 					<div
 						className={
@@ -131,13 +132,46 @@ export function OverviewClient({
 						}
 					>
 						{totalCount === 0 ? (
-							<EmptyState orgSlug={orgSlug} />
+							<EmptyState
+								icon={<Boxes />}
+								title="No projects yet"
+								description="Create your first project to provision infrastructure — it becomes a project you can manage here."
+								action={
+									<Link href={globalHref(orgSlug, "new")}>
+										<Button size="sm" className="h-8 gap-1.5 text-xs">
+											<Plus className="h-3.5 w-3.5" />
+											Create a Project
+										</Button>
+									</Link>
+								}
+							/>
 						) : ordered.length === 0 ? (
-							<p className="py-10 text-center text-sm text-muted-foreground">
-								{filtered
-									? "No projects match your filters."
-									: "No projects yet."}
-							</p>
+							// The org HAS projects; this view just resolved to none. Never say "no projects
+							// yet" here — that reads as data loss rather than an active filter.
+							<EmptyState
+								title={
+									filtered ? "No projects match your filters" : "No projects yet"
+								}
+								description={
+									filtered
+										? "Widen or clear the search, cloud and repository filters."
+										: undefined
+								}
+								action={
+									filtered ? (
+										<Button
+											variant="outline"
+											size="sm"
+											className="h-8 text-xs"
+											onClick={() =>
+												onChange({ q: "", clouds: [], repos: [] })
+											}
+										>
+											Clear filters
+										</Button>
+									) : undefined
+								}
+							/>
 						) : state.view === "table" ? (
 							<div className="overflow-x-auto rounded-xl border border-border/60">
 								<Table>
@@ -185,30 +219,6 @@ export function OverviewClient({
 					</div>
 				</div>
 			</div>
-		</div>
-	);
-}
-
-/** First-run state when the org has no projects at all. */
-function EmptyState({ orgSlug }: { orgSlug: string }) {
-	return (
-		<div className="flex flex-col items-center justify-center py-16 text-center">
-			<div className="mb-4 rounded-full bg-muted/50 p-3">
-				<Boxes className="h-7 w-7 text-muted-foreground" />
-			</div>
-			<h3 className="mb-1 text-sm font-medium text-foreground">
-				No projects yet
-			</h3>
-			<p className="mb-4 max-w-sm text-xs text-muted-foreground">
-				Create your first project to provision infrastructure — it becomes a project
-				you can manage here.
-			</p>
-			<Link href={globalHref(orgSlug, "new")}>
-				<Button size="sm" className="h-8 gap-1.5 text-xs">
-					<Plus className="h-3.5 w-3.5" />
-					Create a Project
-				</Button>
-			</Link>
 		</div>
 	);
 }
