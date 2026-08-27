@@ -107,17 +107,20 @@ variable "e2e_monthly_budget_usd" {
 
 variable "budget_publisher_binding_enabled" {
   description = <<-EOT
-    Whether to manage the roles/pubsub.publisher grant to billing-budgets@system.gserviceaccount.com
-    on the budget-alerts topic. Defaults FALSE because the principal does not exist on a billing
-    account that has never had one, and no API we have found creates it — proven, not assumed: the
-    notifying budget applied on 2026-08-03 and the binding still failed hours later behind an
-    explicit depends_on (#1871). Leaving it declared unconditionally would mean this stack could
-    never converge, blocking every unrelated change behind an uncreatable resource.
+    Whether to manage the roles/pubsub.publisher grant to the billing-budgets service agent on the
+    budget-alerts topic.
 
-    Set to true ONLY after the grant exists out of band (Cloud Console), then `tofu import` the
-    binding. While it is false the `budget_alerts_are_deliverable` check warns on every plan, so the
-    missing cost guard is stated out loud rather than silently skipped.
+    Defaults TRUE since 2026-08-27. It was false because the grant could not be created: #1871
+    proved `billing-budgets@system.gserviceaccount.com` does not exist on a billing account that
+    has never had one, and no API we found creates it. That principal was simply the WRONG NAME.
+    The Console's budget UI grants `billing-budget-alert@system.gserviceaccount.com`, which does
+    exist, and that binding is live on this project's topic today — so the grant was never
+    uncreatable, it was unaddressable.
+
+    Set to false only if a project genuinely has no such binding and cannot get one; the
+    `budget_alerts_are_deliverable` check then warns on every plan, so a missing cost guard is
+    stated out loud rather than silently skipped.
   EOT
   type        = bool
-  default     = false
+  default     = true
 }
