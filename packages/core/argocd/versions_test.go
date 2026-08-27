@@ -3,7 +3,10 @@
 
 package argocd
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestResolvedArgoHelmRepo(t *testing.T) {
 	if got := ResolvedArgoHelmRepo(); got != DefaultArgoHelmRepo {
@@ -45,5 +48,24 @@ func TestResolvedArgoInstallTimeout(t *testing.T) {
 		if got := ResolvedArgoInstallTimeout(); got != DefaultArgoInstallTimeout {
 			t.Errorf("override %q = %q, want the default %q", bad, got, DefaultArgoInstallTimeout)
 		}
+	}
+}
+
+// The DEFAULT is the value that actually ships, and nothing above validates it: every assertion in
+// TestResolvedArgoInstallTimeout compares the resolver's answer TO THE CONSTANT, so a typo'd
+// constant satisfies all of them and the suite stays green. It would then fail on a real cloud, at
+// spend, as an instant "ArgoCD install failed" — precisely the misdiagnosis the resolver's own
+// validation exists to prevent, arriving through the one input the validation never sees.
+//
+// The floor is not a style preference. 33080748841 measured ~3m30s of image-pull QUEUE before the
+// application-controller began pulling at all, so a default under 5m cannot cover a cold cluster
+// even when nothing is wrong, and would re-create #1734.
+func TestDefaultArgoInstallTimeoutIsUsable(t *testing.T) {
+	d, err := time.ParseDuration(DefaultArgoInstallTimeout)
+	if err != nil {
+		t.Fatalf("DefaultArgoInstallTimeout %q does not parse as a Go duration — helm would reject it and the failure would read as a broken chart: %v", DefaultArgoInstallTimeout, err)
+	}
+	if d < 5*time.Minute {
+		t.Errorf("DefaultArgoInstallTimeout = %v, which cannot cover a cold cluster's image-pull queue (measured ~3m30s before the application-controller starts pulling)", d)
 	}
 }
