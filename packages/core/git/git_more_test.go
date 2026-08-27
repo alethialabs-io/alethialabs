@@ -45,11 +45,19 @@ func TestTransformURLToHTTPSEdgeCases(t *testing.T) {
 	}
 }
 
-// TestGetAuthWithoutTokenRequiresSSHAgent pins the token-less branch of getAuth: it
-// delegates to the SSH agent, and surfaces a wrapped error when no agent is reachable.
+// TestGetAuthWithoutTokenRequiresSSHAgent pins the token-less branch of getAuth on an SSH remote:
+// it delegates to the SSH agent, and surfaces a wrapped error when no agent is reachable.
+//
+// The URL used to be `https://github.com/acme/repo.git`, and the test passed — because NewGIT
+// rewrote it to scp-style SSH, which is the #2905 defect itself. So this test PINNED THE BUG: it
+// asserted that a token-less clone of an https repo demands an SSH agent, which is the opposite of
+// the "attempting public clone" behaviour every caller of NewGIT intends.
+//
+// The intent in the name is sound and is kept exactly — an ssh remote with no agent must fail
+// loudly rather than silently going anonymous. It just has to be asserted against an SSH URL.
 func TestGetAuthWithoutTokenRequiresSSHAgent(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
-	g := NewGIT("https://github.com/acme/repo.git", t.TempDir(), false)
+	g := NewGIT("git@github.com:acme/repo.git", t.TempDir(), false)
 	auth, err := g.getAuth()
 	if err == nil {
 		t.Fatalf("getAuth without an SSH agent = %v, want an error", auth)

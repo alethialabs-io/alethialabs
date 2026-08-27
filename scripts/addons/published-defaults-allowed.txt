@@ -26,8 +26,8 @@ harbor.POSTGRES_PASSWORD
 # W4.5 design exists to prevent. A default password reachable only from inside the namespace is the
 # lesser problem. Fixing it properly needs an upstream chart change. See #2848.
 
-harbor.REGISTRY_CREDENTIAL_PASSWORD
-# `harbor_registry_password`, how harbor's core authenticates to its own registry. Part of #2823's
-# rotation fix rather than #2846's: pinning it requires `registry.credentials.existingSecret`, which
-# also requires minting the bcrypt htpasswd that the registry side reads. Needs the dependency
-# decision in #2823.
+# harbor.REGISTRY_CREDENTIAL_PASSWORD left this list on 2026-08-27 (#2823). The dependency decision
+# it was waiting on resolved to `bcryptjs`: docker distribution's htpasswd access controller takes
+# bcrypt only, so minting REGISTRY_PASSWD alongside its REGISTRY_HTPASSWD needed a hasher the
+# workspace did not have. With `registry.credentials.existingSecret` wired, the chart no longer
+# renders its published `harbor_registry_password` at all.

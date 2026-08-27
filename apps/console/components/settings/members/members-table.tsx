@@ -8,16 +8,15 @@
 // reactivate (real PDP grant revoke), remove, invite, cancel. The page header + gate
 // live in members/page.tsx.
 
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { formatDistanceToNow } from "date-fns";
-import { MoreHorizontal, Plus, Shield } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { MoreHorizontal, Plus, Shield, Users } from "lucide-react";
+import { useParams } from "next/navigation";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   getInvitations,
   getMembers,
-  type InvitationRow,
-  type MemberRow,
   setMemberSuspended,
 } from "@/app/server/actions/members";
 import { getCollaborationAccess } from "@/app/server/actions/billing";
@@ -27,13 +26,12 @@ import { DataTable } from "@/components/data-table";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
 import { InviteMemberDialog } from "@/components/settings/members/invite-member-dialog";
 import { UpgradeDialog } from "@/components/settings/upgrade/upgrade-dialog";
-import {
-  SettingsSearch,
-  SettingsSelect,
-  SettingsTabs,
-  StatCell,
-  StatStrip,
-} from "@/components/settings/settings-ui";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { qk } from "@/lib/query/keys";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
+import { useMembersFilters } from "@/lib/stores/use-settings-filters";
+import { formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import {
   DropdownMenu,
@@ -41,6 +39,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@repo/ui/dropdown-menu";
+import { EmptyState } from "@repo/ui/empty";
+import { FacetFilter } from "@repo/ui/facet-filter";
+import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
+import { FilterSearch } from "@repo/ui/filter-search";
+import { MultiCombobox } from "@repo/ui/multi-combobox";
+import { PageHeader } from "@repo/ui/page-header";
 import {
   Select,
   SelectContent,
@@ -49,47 +53,49 @@ import {
   SelectValue,
 } from "@repo/ui/select";
 import { Skeleton } from "@repo/ui/skeleton";
+import { StatusBadge, type StatusTier } from "@repo/ui/status-badge";
 import { authClient } from "@/lib/auth/client";
 import { toOrgRole } from "@/lib/authz/org-access-control";
 import { userInitials } from "@/lib/user-display";
-import { cn } from "@repo/ui/utils";
+import {
+  ASSIGNABLE_ROLE_OPTIONS,
+  DEFAULT_MEMBERS_FILTERS,
+  filterMembers,
+  MEMBER_ROLE_FILTER_OPTIONS,
+  MEMBER_STATUS_OPTIONS,
+  type MemberRowView,
+  membersFacetCounts,
+  normalizeMembersQuery,
+} from "./members-filters";
 
-const ROLE_OPTIONS = ["admin", "operator", "viewer"] as const;
-type Tab = "all" | "active" | "pending" | "suspended";
+// A member's lifecycle state is not one of the product statuses `statusTier()` knows —
+// "suspended" would fall through to `idle` by accident rather than by decision — so the tier
+// is stated here and the SHARED badge renders it. This replaces a file-local `StatusBadge`
+// that collided by name with @repo/ui's and with the one in billing/transactions-table.tsx.
+const MEMBER_STATUS_TIER: Record<MemberRowView["status"], StatusTier> = {
+  active: "active",
+  pending: "pending",
+  suspended: "idle",
+};
 
-interface RowView {
-  /** Unique row id (= key) — satisfies DataTable's `{ id?: string }` constraint. */
-  id: string;
-  key: string;
-  kind: "member" | "invite";
-  refId: string;
-  name: string;
-  meta: string;
-  avatar: string;
-  role: string;
-  teams: string[];
-  status: "active" | "pending" | "suspended";
-  activity: string;
-  isYou: boolean;
-}
-
-/** The status dot+label, mapped onto the global `.vx-status` device. */
-function StatusBadge({ status }: { status: RowView["status"] }) {
-  const variant =
-    status === "active"
-      ? "vx-status--active"
-      : status === "pending"
-        ? "vx-status--pending"
-        : "vx-status--idle";
+/** The grayscale pill for one member's lifecycle state. */
+function MemberStatusBadge({ status }: { status: MemberRowView["status"] }) {
   return (
-    <span className={cn("vx-status", variant)}>
-      <span className="vx-status__dot" />
-      <span className="capitalize">{status}</span>
-    </span>
+    <StatusBadge
+      status={status}
+      tier={MEMBER_STATUS_TIER[status]}
+      label={<span className="capitalize">{status}</span>}
+    />
   );
 }
 
-/** A compact, borderless shadcn Select for a member's role. */
+/**
+ * A compact, borderless Select for a member's role.
+ *
+ * This is a FORM control that performs a mutation, not a filter — the console filter
+ * standard bans Radix Selects from filter bars, and the role FILTER above is a facet. The two
+ * option lists are deliberately different: `owner` is filterable but not assignable.
+ */
 function RoleSelect({
   value,
   disabled,
@@ -109,7 +115,7 @@ function RoleSelect({
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        {ROLE_OPTIONS.map((ro) => (
+        {ASSIGNABLE_ROLE_OPTIONS.map((ro) => (
           <SelectItem key={ro} value={ro} className="text-xs capitalize">
             {ro}
           </SelectItem>
@@ -123,34 +129,49 @@ export function MembersTable() {
   const canManage = useEntitlement("organizations");
   const { data: session } = authClient.useSession();
   const myId = session?.user?.id;
+  const { org } = useParams<{ org: string }>();
+  const qc = useQueryClient();
 
-  const [members, setMembers] = useState<MemberRow[] | null>(null);
-  const [invites, setInvites] = useState<InvitationRow[]>([]);
-  const [tab, setTab] = useState<Tab>("all");
-  const [search, setSearch] = useState("");
-  const [roleFilter, setRoleFilter] = useState("all");
+  // Filter state: the store is the source of truth, the URL mirrors it (shareable views),
+  // and the free text is debounced. The role filter is a FACET, not the Radix Select it used
+  // to be — Selects are banned from filter bars by the console filter standard.
+  const filters = useMembersFilters((s) => s.filters);
+  const set = useMembersFilters((s) => s.set);
+  const reset = useMembersFilters((s) => s.reset);
+  useFilterUrlSync(useMembersFilters, DEFAULT_MEMBERS_FILTERS);
+  const search = useDebouncedValue(filters.search);
+  const query = useMemo(
+    () => normalizeMembersQuery(filters, search),
+    [filters, search],
+  );
+
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const membersQuery = useQuery({
+    queryKey: qk.members(org),
+    queryFn: () => getMembers(),
+  });
+  const invitesQuery = useQuery({
+    queryKey: ["members", org, "invitations"] as const,
+    queryFn: () => getInvitations(),
+  });
   // Inviting is the paid (Pro) value — viewing members is always open. The billing-backed
   // `canInvite` gate (card-backed/paid) decides whether the Invite button opens the form
   // or the Pro upsell; the server enforces it again in `beforeCreateInvitation`.
-  const [canInvite, setCanInvite] = useState(false);
+  const collaboration = useQuery({
+    queryKey: ["members", org, "collaboration-access"] as const,
+    queryFn: () => getCollaborationAccess(),
+    staleTime: 60_000,
+  });
+  const canInvite = collaboration.data?.canInvite ?? false;
+  // Memoized, not `data ?? []` inline: a fresh `[]` every render would re-key the batched
+  // classification query below on each paint while the fetch is still in flight.
+  const members = useMemo(() => membersQuery.data ?? [], [membersQuery.data]);
+  const invites = useMemo(() => invitesQuery.data ?? [], [invitesQuery.data]);
 
   const load = useCallback(() => {
-    getMembers()
-      .then(setMembers)
-      .catch(() => setMembers([]));
-    getInvitations()
-      .then(setInvites)
-      .catch(() => setInvites([]));
-  }, []);
-  useEffect(() => {
-    load();
-  }, [load]);
-  useEffect(() => {
-    getCollaborationAccess()
-      .then((a) => setCanInvite(a.canInvite))
-      .catch(() => setCanInvite(false));
-  }, []);
+    void qc.invalidateQueries({ queryKey: ["members", org] });
+  }, [qc, org]);
 
   const changeRole = useCallback(
     async (memberId: string, value: string) => {
@@ -189,9 +210,8 @@ export function MembersTable() {
     [load],
   );
 
-  const rows = useMemo<RowView[]>(() => {
-    if (!members) return [];
-    const memberRows: RowView[] = members.map((m) => ({
+  const rows = useMemo<MemberRowView[]>(() => {
+    const memberRows: MemberRowView[] = members.map((m) => ({
       id: `m:${m.id}`,
       key: `m:${m.id}`,
       kind: "member",
@@ -202,12 +222,10 @@ export function MembersTable() {
       role: m.role,
       teams: m.teams,
       status: m.status === "suspended" ? "suspended" : "active",
-      activity: m.lastActiveAt
-        ? formatDistanceToNow(new Date(m.lastActiveAt), { addSuffix: true })
-        : "—",
+      activity: m.lastActiveAt ? formatRelative(m.lastActiveAt) : "—",
       isYou: m.userId === myId,
     }));
-    const inviteRows: RowView[] = invites.map((i) => ({
+    const inviteRows: MemberRowView[] = invites.map((i) => ({
       id: `i:${i.id}`,
       key: `i:${i.id}`,
       kind: "invite",
@@ -231,22 +249,10 @@ export function MembersTable() {
     rows.filter((r) => r.kind === "member").map((r) => r.refId),
   );
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (tab !== "all" && r.status !== tab) return false;
-      if (roleFilter !== "all" && r.role !== roleFilter) return false;
-      if (q && !`${r.name} ${r.meta}`.toLowerCase().includes(q)) return false;
-      return true;
-    });
-  }, [rows, tab, roleFilter, search]);
-
-  const activeCount =
-    members?.filter((m) => m.status !== "suspended").length ?? 0;
-  const suspendedCount =
-    members?.filter((m) => m.status === "suspended").length ?? 0;
-  const pendingCount = invites.length;
-  const seatCount = (members?.length ?? 0) + pendingCount;
+  const filtered = useMemo(() => filterMembers(rows, query), [rows, query]);
+  // Facet counts are over the UNFILTERED rows, so an option cannot disappear as you select it.
+  const counts = useMemo(() => membersFacetCounts(rows), [rows]);
+  const activeFilters = countActiveFilters(filters, DEFAULT_MEMBERS_FILTERS);
 
   const toggle = useCallback((key: string) => {
     setSelected((prev) => {
@@ -292,7 +298,7 @@ export function MembersTable() {
     load();
   }
 
-  const selectCols: ColumnDef<RowView>[] = canManage
+  const selectCols: ColumnDef<MemberRowView>[] = canManage
     ? [
         {
           id: "select",
@@ -310,7 +316,7 @@ export function MembersTable() {
         },
       ]
     : [];
-  const actionCols: ColumnDef<RowView>[] = canManage
+  const actionCols: ColumnDef<MemberRowView>[] = canManage
     ? [
         {
           id: "actions",
@@ -374,7 +380,7 @@ export function MembersTable() {
       ]
     : [];
 
-  const columns: ColumnDef<RowView>[] = [
+  const columns: ColumnDef<MemberRowView>[] = [
     ...selectCols,
     {
       id: "member",
@@ -471,7 +477,7 @@ export function MembersTable() {
     {
       accessorKey: "status",
       header: "Status",
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      cell: ({ row }) => <MemberStatusBadge status={row.original.status} />,
     },
     {
       accessorKey: "activity",
@@ -486,7 +492,7 @@ export function MembersTable() {
     ...actionCols,
   ];
 
-  if (members === null) {
+  if (membersQuery.isPending) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-20 w-full" />
@@ -497,47 +503,13 @@ export function MembersTable() {
 
   return (
     <div>
-      {/* stats */}
-      <StatStrip>
-        <StatCell label="Seats" value={seatCount} sub="used" />
-        <StatCell label="Active" value={activeCount} sub="members" />
-        <StatCell label="Pending invites" value={pendingCount} sub="awaiting" />
-        <StatCell label="Suspended" value={suspendedCount} sub="no access" />
-      </StatStrip>
-
-      {/* toolbar */}
-      <div className="mb-[14px] flex flex-wrap items-center justify-between gap-4">
-        <SettingsTabs
-          value={tab}
-          onChange={setTab}
-          tabs={[
-            { value: "all", label: "All", count: seatCount },
-            { value: "active", label: "Active", count: activeCount },
-            { value: "pending", label: "Pending", count: pendingCount },
-            { value: "suspended", label: "Suspended", count: suspendedCount },
-          ]}
-        />
-        <div className="flex items-center gap-[10px]">
-          <SettingsSearch
-            value={search}
-            onChange={setSearch}
-            placeholder="Search name or email"
-            className="w-[218px]"
-          />
-          <SettingsSelect
-            aria-label="Filter by role"
-            className="w-[130px]"
-            value={roleFilter}
-            onChange={setRoleFilter}
-            options={[
-              { value: "all", label: "All roles" },
-              { value: "owner", label: "Owner" },
-              { value: "admin", label: "Admin" },
-              { value: "operator", label: "Operator" },
-              { value: "viewer", label: "Viewer" },
-            ]}
-          />
-          {canInvite ? (
+      <PageHeader
+        className="mb-4"
+        title="Members"
+        description="Organization members and pending invitations."
+        count={filtered.length}
+        actions={
+          canInvite ? (
             <InviteMemberDialog
               onInvited={load}
               trigger={
@@ -557,9 +529,66 @@ export function MembersTable() {
                 </Button>
               }
             />
-          )}
-        </div>
-      </div>
+          )
+        }
+      />
+
+      {/* The stat-card strip that used to sit here is gone (banned by CLAUDE.md §6). Every
+          figure it carried — seats, active, pending, suspended — is now the Status facet's
+          option counts, computed over the same unfiltered rows, so nothing was lost. */}
+      <FilterBar>
+        <FilterSearch
+          value={filters.search}
+          onChange={(v) => set("search", v)}
+          placeholder="Search name or email…"
+          className="w-[240px] max-w-[380px] flex-1"
+        />
+        <FacetFilter
+          label="Status"
+          icon={Users}
+          options={MEMBER_STATUS_OPTIONS.map((o) => ({
+            value: o.value,
+            label: o.label,
+            hint: String(counts.statuses[o.value] ?? 0),
+          }))}
+          value={filters.statuses}
+          onChange={(next) => set("statuses", next)}
+          searchPlaceholder="Filter status…"
+          emptyText="No statuses."
+        />
+        <FacetFilter
+          label="Role"
+          icon={Shield}
+          options={MEMBER_ROLE_FILTER_OPTIONS.map((o) => ({
+            value: o.value,
+            label: o.label,
+            hint: String(counts.roles[o.value] ?? 0),
+          }))}
+          value={filters.roles}
+          onChange={(next) => set("roles", next)}
+          searchPlaceholder="Filter role…"
+          emptyText="No roles."
+        />
+        {/* Teams are an open-ended entity list, so this is a searchable combobox rather than
+            a fixed facet popover — the same split the standard draws for authors/projects. */}
+        {Object.keys(counts.teams).length > 0 && (
+          <MultiCombobox
+            placeholder="All teams"
+            icon={Users}
+            className="w-[180px]"
+            options={Object.keys(counts.teams)
+              .sort()
+              .map((t) => ({
+                value: t,
+                label: t,
+                hint: String(counts.teams[t] ?? 0),
+              }))}
+            value={filters.teams}
+            onChange={(next) => set("teams", next)}
+          />
+        )}
+        <FilterBarReset count={activeFilters} onReset={reset} />
+      </FilterBar>
 
       {/* bulk bar */}
       {canManage && selected.size > 0 && (
@@ -591,7 +620,27 @@ export function MembersTable() {
         </div>
       )}
 
-      <DataTable columns={columns} data={filtered} pageSize={20} />
+      {filtered.length === 0 ? (
+        <EmptyState
+          className="border border-border bg-surface-sunken"
+          icon={<Users />}
+          title={rows.length === 0 ? "No members yet" : "No matching members"}
+          description={
+            rows.length === 0
+              ? "Invite a teammate to collaborate in this organization."
+              : "No member or invitation matches these filters."
+          }
+          action={
+            rows.length === 0 ? undefined : (
+              <Button variant="outline" size="sm" onClick={reset}>
+                Clear filters
+              </Button>
+            )
+          }
+        />
+      ) : (
+        <DataTable columns={columns} data={filtered} pageSize={20} />
+      )}
     </div>
   );
 }

@@ -211,7 +211,7 @@ func TestByoIacMutationArgvPerCloudFlags(t *testing.T) {
 	cases := map[string][]string{
 		"aws":     {"aws", "ssm", "put-parameter", "--name", "/a/b", "--type", "String", "--value", "drifted-1", "--overwrite"},
 		"azure":   {"az", "group", "update", "--name", "/a/b", "--force-string", "--set", "tags.drift_marker=drifted-1"},
-		"gcp":     {"gcloud", "compute", "project-info", "add-metadata", "--metadata", "/a/b=drifted-1", "--project", "proj-123"},
+		"gcp":     {"gcloud", "storage", "buckets", "update", "gs:///a/b", "--update-labels=drift_marker=drifted-1", "--project", "proj-123"},
 		"alibaba": {"aliyun", "oss", "bucket-tagging", "--method", "put", "--region", "eu-central-1", "oss:///a/b", "drift_marker#drifted-1"},
 		"hetzner": {"hcloud", "placement-group", "add-label", "--overwrite", "/a/b", "drift_marker=drifted-1"},
 	}
@@ -458,4 +458,58 @@ func TestGithubContentsURL(t *testing.T) {
 			t.Errorf("%q was treated as a github contents target", repo)
 		}
 	}
+}
+
+// The decode that made the byo-iac drift leg unpassable on every cloud.
+//
+// `byoIacPosture` carried no JSON tags. `encoding/json` matches a tag first and otherwise falls
+// back to a CASE-INSENSITIVE match on the field NAME — which never matches an underscored key. So
+// `drifted` and `details` decoded correctly while `in_sync` silently left InSync at false, and the
+// baseline assertion ("not in-sync right after a clean apply") failed every single time.
+//
+// The giveaway was in the output all along: drift.Analyze sets `InSync = Drifted == 0`, so
+// `in_sync=false drifted=0` is a posture it cannot produce.
+func TestByoIacPostureDecodesInSync(t *testing.T) {
+	t.Run("in_sync survives the decode", func(t *testing.T) {
+		var p byoIacPosture
+		if err := json.Unmarshal([]byte(`{"in_sync":true,"drifted":0,"details":[]}`), &p); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if !p.InSync {
+			t.Error("in_sync decoded as false — the underscored key did not reach InSync, which is the bug this pins")
+		}
+		if p.Drifted != 0 {
+			t.Errorf("drifted = %d, want 0", p.Drifted)
+		}
+	})
+
+	t.Run("a drifted posture decodes its details", func(t *testing.T) {
+		var p byoIacPosture
+		raw := `{"in_sync":false,"drifted":1,"details":[{"address":"google_storage_bucket.drift_probe","type":"google_storage_bucket","kind":"modified"}]}`
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if p.InSync {
+			t.Error("in_sync=false must decode as false")
+		}
+		if p.Drifted != 1 || len(p.Details) != 1 {
+			t.Fatalf("drifted=%d details=%d, want 1 and 1", p.Drifted, len(p.Details))
+		}
+		// The drift assertion is "it drifted on OUR resource", so the type has to survive.
+		if got := p.types(); len(got) != 1 || got[0] != "google_storage_bucket" {
+			t.Errorf("types() = %v, want [google_storage_bucket]", got)
+		}
+	})
+
+	t.Run("in_sync=false with drifted=0 is the shape the bug produced", func(t *testing.T) {
+		// Not asserting behaviour — documenting the fingerprint, so anyone who sees it again knows
+		// to suspect a decode rather than the cloud. drift.Analyze cannot emit it.
+		var p byoIacPosture
+		if err := json.Unmarshal([]byte(`{"drifted":0,"details":[]}`), &p); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if p.InSync {
+			t.Error("an ABSENT in_sync must decode false, so the fingerprint stays recognisable")
+		}
+	})
 }

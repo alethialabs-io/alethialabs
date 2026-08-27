@@ -237,6 +237,13 @@ jobs:
       - name: Coverage ratchet — ee
         if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
         run: node scripts/ts-coverage.mjs --project ee
+      # @repo/format joins ARMED on its first commit, at 61/61 statements. A pure-function
+      # package — no I/O, no clock except one injected baseline, no React — so 100% is the
+      # honest floor rather than an aspiration, and anything below it is a real gap. Floors
+      # recorded with ee/dist present, which is what `turbo run test` produces here.
+      - name: Coverage ratchet — packages/format
+        if: ${{ !cancelled() && steps.unit.outcome == 'success' }}
+        run: node scripts/ts-coverage.mjs --project packages/format
       # Build smoke for the split-affected apps — catches transpilePackages /
       # standalone breakage on PRs. Build-only placeholder env so the console's
       # strict zod config modules pass validation (mirrors apps/console/Dockerfile;
@@ -663,6 +670,19 @@ jobs:
         run: pnpm -F console check:marketing-routes
       - name: tsconfig.build.json excludes every un-shipped file (pruned-image type-check)
         run: pnpm -F console check:tsconfig-build
+      # Dead code in the console (knip). The script first asserts that every `entry` glob in
+      # apps/console/knip.json still matches at least one file on disk, and FAILS if one does
+      # not: a knip run that resolves no entry points treats nothing as reachable, so it can
+      # report a clean bill of health while having analysed nothing. "Nothing found" and
+      # "nothing wrong" must not share an exit code.
+      #
+      # Fatal today: unused files, unused (dev)dependencies, unlisted/unresolved imports,
+      # unlisted binaries, duplicate exports. Unused EXPORTS and TYPES are `warn` in knip.json
+      # — they are printed on every run but do not fail it, because the console carries a
+      # ~580-strong backlog of them that this lane's scope (knip.json + package.json) cannot
+      # delete. Ratchet those two rules to "error" once that backlog is cleared.
+      - name: Dead code — unused files, deps and binaries in the console (knip)
+        run: pnpm -F console check:dead-code
       - name: Drizzle migration history is unforked (linear snapshot chain)
         run: pnpm -F console check:migrations
       - name: Every canvas offer is buildable on every cloud, or documented (offer parity)
@@ -842,6 +862,12 @@ jobs:
       # Hermetic: no suites, no network, no installed tree.
       - name: TS coverage ratchet (arithmetic · fail-open set · merge-safe layout · scope)
         run: node scripts/ts-coverage.mjs --self-test
+      # The self-test above proves the ratchet's ARITHMETIC. This proves its PREMISE: that the
+      # environment each committed floors file records is one the enforcing job can actually
+      # reproduce. A recorded axis the job can never match demotes every regression to a warning,
+      # so the gate passes forever while looking exactly like a gate that is holding.
+      - name: Floors fingerprint is reproducible by the job that enforces it
+        run: pnpm check:floors-reproducible
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
         run: node scripts/decompose-validate.mjs --self-test
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
@@ -910,6 +936,14 @@ jobs:
         run: |
           node scripts/check-e2e-spend-guard.mjs --self-test
           node scripts/check-e2e-spend-guard.mjs
+      # A knob the harness READS that no dispatch can SET is a scenario nobody can run at any price,
+      # and it fails silently: the code is written, its unit tests pass, and every run takes the
+      # default forever. #2775 found the BYO-IaC custody chain had never executed for exactly that
+      # reason. #2591 and #2717 then each named a discriminating experiment — raise the day-2 URL
+      # timeout, raise the ArgoCD convergence budget — that could not be dispatched at all.
+      # Hermetic: reads test/e2e/**.go, the nightly workflow and the resolver. No gh, no cloud.
+      - name: E2E knob reachability (a knob nothing can set is a scenario nobody can run)
+        run: node scripts/check-e2e-knob-reach.mjs
       # hcloud-cloud-controller-manager refuses to create a Load Balancer unless it is told WHERE.
       # The hetzner template told it nothing, so every `type: LoadBalancer` Service sat Pending —
       # SILENTLY, because a pending Service logs no error anyone surfaces. That silence is what let
@@ -1044,8 +1078,15 @@ jobs:
       # script header — the floors carry a fingerprint of the environment that recorded them, and
       # a mismatch (including a different OS) demotes failures to warnings rather than blaming
       # coverage for a toolchain change.
+      #
+      # --require-verdict: every fail-open path in the script exits 0, which made "the ratchet
+      # passed" and "the ratchet never ran" the same green here (#2852). Two of those can fire on
+      # a runner — jq missing from an image, and a test step that wrote its profile somewhere
+      # else — and both announced themselves with `::warning::`, which nothing surfaces on a PR
+      # page. The flag turns any non-measuring path into exit 3, so this step asserts it actually
+      # got an answer. Local runs stay advisory: the flag is off by default.
       - name: Coverage ratchet (per package, no regressions)
-        run: bash scripts/go-coverage.sh --module ${{ matrix.module }}
+        run: bash scripts/go-coverage.sh --module ${{ matrix.module }} --require-verdict
       # Each Go module must be tidy STANDALONE (no go.work) — the CLI mirror + GoReleaser build
       # apps/cli outside the workspace, where go.work can't paper over a missing require. This guard
       # fails the PR instead of the (post-merge) mirror when go.mod/go.sum drift standalone.
@@ -1092,7 +1133,7 @@ jobs:
       # "missing" to demote the failure with. Recorded tofu:true, it demotes to a warning.
       - name: Coverage ratchet — test/e2e harness
         if: matrix.module == 'packages/core'
-        run: bash scripts/go-coverage.sh --module test/e2e
+        run: bash scripts/go-coverage.sh --module test/e2e --require-verdict
       - name: CLI logic-scope coverage gate (≥90%)
         if: matrix.module == 'apps/cli'
         working-directory: ${{ matrix.module }}

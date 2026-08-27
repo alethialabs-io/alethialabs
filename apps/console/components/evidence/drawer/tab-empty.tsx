@@ -4,7 +4,21 @@
 // The shared per-tab empty state of the evidence drawer — every tab is always
 // rendered, so a tab without data explains what's missing and how it comes to exist
 // (never a silently blank sheet).
+//
+// Composed from the `@repo/ui/empty` PARTS rather than the one-call `EmptyState`, which is
+// what that module documents for a different arrangement: this state lives in a 560px drawer,
+// carries a "Learn more →" docs affordance alongside its optional action, and wants a tighter
+// type scale than a full-page state. The parts give it the shared structure and slots without
+// pretending the page-level sizing fits.
 
+import {
+	Empty,
+	EmptyContent,
+	EmptyDescription,
+	EmptyHeader,
+	EmptyMedia,
+	EmptyTitle,
+} from "@repo/ui/empty";
 import { EvIcon, type IconKey } from "../evidence-status";
 
 /** A purposeful empty state for one drawer tab: icon, headline, one honest sentence, and a
@@ -24,22 +38,32 @@ export function TabEmpty({
 	action?: React.ReactNode;
 }) {
 	return (
-		<div className="rounded-md border border-dashed px-6 py-10 text-center">
-			<EvIcon name={icon} size={20} className="mx-auto mb-2.5 text-text-tertiary" />
-			<div className="text-[13px] font-medium text-text-primary">{title}</div>
-			<p className="mx-auto mt-1 max-w-[40ch] text-[12px] leading-relaxed text-text-tertiary">
-				{description}
-			</p>
-			{docsHref && (
-				<a
-					href={docsHref}
-					className="mt-3 inline-flex items-center gap-1 border-b border-border-strong pb-0.5 font-mono text-[11px] text-text-secondary transition-colors hover:border-text-primary hover:text-text-primary"
-				>
-					Learn more
-					<EvIcon name="arrow-right" size={11} />
-				</a>
+		<Empty className="gap-3 rounded-md border border-dashed px-6 py-10 md:p-10">
+			<EmptyHeader className="gap-1">
+				<EmptyMedia className="mb-1.5 text-text-tertiary">
+					<EvIcon name={icon} size={20} />
+				</EmptyMedia>
+				<EmptyTitle className="text-[13px] font-medium text-text-primary">
+					{title}
+				</EmptyTitle>
+				<EmptyDescription className="max-w-[40ch] text-[12px] leading-relaxed text-text-tertiary">
+					{description}
+				</EmptyDescription>
+			</EmptyHeader>
+			{(docsHref || action) && (
+				<EmptyContent className="gap-3">
+					{docsHref && (
+						<a
+							href={docsHref}
+							className="inline-flex items-center gap-1 border-b border-border-strong pb-0.5 font-mono text-[11px] text-text-secondary transition-colors hover:border-text-primary hover:text-text-primary"
+						>
+							Learn more
+							<EvIcon name="arrow-right" size={11} />
+						</a>
+					)}
+					{action}
+				</EmptyContent>
 			)}
-			{action && <div className="mt-4">{action}</div>}
-		</div>
+		</Empty>
 	);
 }

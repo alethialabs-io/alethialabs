@@ -31,7 +31,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..");
-const CATALOG = join(ROOT, "test", "e2e", "fixtures", "addon_catalog.json");
+// Any ONE per-cloud fixture is enough here: the fixtures differ only in external-dns's `provider`
+// knob, and what this check reads — each add-on's chart repo, name and pinned version — is identical
+// across clouds. hetzner because it is the harness's own default cloud, so this file agrees with
+// addonCatalogFixture() and with the three scripts/addons/ checks on which fixture "the" fixture is.
+const CATALOG = join(ROOT, "test", "e2e", "fixtures", "addon_catalog.hetzner.json");
 // The Hetzner in-cluster data services are NOT marketplace add-ons — they are synthesized per
 // component by hetznerDataServicesToAddOns — so nothing here ever rendered them, even though they
 // are the charts most likely to break: the mapper hand-translates a value schema per chart, and

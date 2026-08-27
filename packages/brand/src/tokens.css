@@ -630,6 +630,57 @@
 }
 
 
+/* ── Layer scale ─────────────────────────────────────────────────────────────
+   Every z-index in the system, named. Before this there were none: the chrome
+   hardcoded 55/58/60 here, @repo/ui hardcoded 50 across six overlay primitives,
+   and the console reached for `z-[6]`, `z-[60]` and `z-[95]` when those did not
+   fit. An unnamed scale cannot be reasoned about, so each new surface picked a
+   number by trying one until it looked right.
+
+   The first version of this block NAMED today's numbers and changed none of
+   them, so the diff carried no behaviour. Eleven lanes then used it, and three
+   hit the same wall: there was no rung between --z-raised (10) and the overlays
+   (50), so a lane needing "one above the handle it overlaps" had to leave a bare
+   `z-20`; and two pairs collided outright — overlay/header at 50, and
+   overlay-nested/frame at 60. An overlay beat the header only by portal DOM
+   order, which is precisely the accident a named scale exists to remove.
+
+   So this is renumbered, with gaps. Renumbering IS a visual change, which is why
+   it is one deliberate step rather than a side effect: every rung has room to
+   grow, each pair that must outrank the other now does so by number, and nothing
+   needs to know its neighbour's value to sit above it.
+
+   Rung spacing is 10 below the chrome and 100 above it. That is not decoration:
+   the sub-chrome layers are in-flow lifts that occasionally need one step, while
+   the chrome-and-above layers are whole categories that should never interleave.
+
+   Values are NOT ordered by their old numbers — read the comments, not the
+   arithmetic. The only relationships that matter are the ones written here. */
+:root {
+  /* In-flow lifts. Ordered, closely spaced, never above the chrome. */
+  --z-sticky-head: 10;     /* a sticky table header inside a scroll region */
+  --z-raised: 20;          /* canvas controls, table chrome, an overlapping badge */
+  --z-sticky-bar: 30;      /* an in-page sticky action bar (the rung that was missing) */
+
+  /* Page chrome. Its INTERNAL order is preserved exactly as it shipped —
+     header < rail < grain < frame — because none of it was reported broken and
+     renumbering is not licence to reshuffle. The grain and the frame paint over
+     the header on purpose (they are pointer-events:none, so they cover it
+     without blocking it); site-header.tsx documents the frame case. */
+  --z-header: 100;         /* the site header bar */
+  --z-rail: 110;           /* .vx-rail */
+  --z-grain: 120;          /* .vx-grain */
+  --z-frame: 130;          /* .vx-frame */
+
+  /* Interaction. Above ALL chrome, by number now rather than by portal order:
+     a dropdown opened from the header has to cover the header. */
+  --z-overlay: 200;        /* dialog · sheet · popover · dropdown · tooltip · hover-card */
+  --z-overlay-nested: 210; /* an overlay opened from inside another overlay */
+
+  /* Reports on everything above, so it outranks everything above. */
+  --z-toast: 300;
+}
+
 /* ── Page chrome ─────────────────────────────────────────────────────────────
    The hairline frame inset from the viewport and the two vertical edge rails.
    Fixed, decorative, non-interactive: what makes a page read as an instrument
@@ -638,7 +689,7 @@
 .vx-grain {
   position: fixed;
   inset: 0;
-  z-index: 58;
+  z-index: var(--z-grain);
   pointer-events: none;
   opacity: 0.4;
   mix-blend-mode: overlay;
@@ -660,12 +711,12 @@
   inset: var(--frame-inset);
   border: 1px solid var(--border);
   pointer-events: none;
-  z-index: 60;
+  z-index: var(--z-frame);
 }
 .vx-rail {
   position: fixed;
   left: 17px;
-  z-index: 55;
+  z-index: var(--z-rail);
   font-size: 10px;
   letter-spacing: 0.24em;
   text-transform: uppercase;

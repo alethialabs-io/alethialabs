@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 )
@@ -19,7 +20,8 @@ import (
 // enough to give the ArgoCD health assertion teeth but is nowhere near the maintainer's
 // FULLY-TESTED bar: "every single add-on we have available" must install and converge.
 //
-// AllCatalogAddOns loads all 18, from the GENERATED fixture `fixtures/addon_catalog.json` — which
+// AllCatalogAddOns loads all 18, from the GENERATED per-cloud fixture
+// `fixtures/addon_catalog.<cloud>.json` — which
 // is produced from apps/console/lib/addons/catalog.ts (the SSOT) via the real `resolveAddOnInstall`
 // (`pnpm -F console export:addon-catalog`), and kept honest by catalog-export.test.ts, which reds CI
 // if the fixture drifts from the catalog. Re-typing the chart coordinates here in Go would have gone
@@ -35,13 +37,26 @@ func AllAddOnsEnabled() bool {
 	return os.Getenv("ALETHIA_E2E_ALL_ADDONS") == "1"
 }
 
-// addonCatalogFixture is the generated all-add-ons fixture (see the package comment).
+// addonCatalogFixture is the generated all-add-ons fixture FOR THIS RUN'S CLOUD (see the package
+// comment).
+//
+// Per-cloud because some knobs are only correct relative to the target. external-dns is the measured
+// case: its `provider` knob defaults to `cloudflare`, so the single cloud-agnostic fixture this
+// replaced installed external-dns pointed at Cloudflare on every cloud, with no Cloudflare token. It
+// could not converge and never could — so the 18-chart cell was testing the fixture, not the chart
+// (#2717 class (c)).
+//
+// The cloud is resolved the SAME way the rest of the harness resolves it — `ALETHIA_E2E_PROVIDER`,
+// defaulting to hetzner (t2_provision_test.go). A second, differently-defaulted answer to "which
+// cloud is this" is exactly how two files come to disagree; the pure tests read the hetzner fixture,
+// which is fine because they assert structure rather than provider knobs.
 func addonCatalogFixture() (string, error) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("cannot locate the e2e package directory")
 	}
-	return filepath.Join(filepath.Dir(thisFile), "fixtures", "addon_catalog.json"), nil
+	cloud := t2Env(envE2EProvider, "hetzner")
+	return filepath.Join(filepath.Dir(thisFile), "fixtures", "addon_catalog."+cloud+".json"), nil
 }
 
 // AllCatalogAddOns returns every marketplace add-on as the runner-facing install spec the console
@@ -72,7 +87,88 @@ func AllCatalogAddOns() ([]types.AddOnInstall, error) {
 			return nil, fmt.Errorf("add-on catalog fixture entry %d is incomplete: %+v", i, a)
 		}
 	}
-	return addons, nil
+	return applyAddOnDebugOverrides(addons), nil
+}
+
+// envAddOnDebugValues opts one or more add-ons into extra diagnostic logging for a single run.
+const envAddOnDebugValues = "ALETHIA_E2E_ADDON_DEBUG"
+
+// applyAddOnDebugOverrides turns on per-add-on debug logging that MUST NOT ship in the catalog.
+//
+// #2866 is the case this exists for. falco crash-loops on Talos with
+//
+//	Opening 'syscall' source with modern BPF probe.
+//	An error occurred in an event source, forcing termination...
+//	Error: Initialization issues during scap_init
+//
+// and that is the LAST thing it says. #2895 raised the crash-loop dump to 400 lines with
+// `--previous` on the theory that the sub-errors were being truncated; the hetzner/addons run on
+// 2026-08-27 (33059349873) then showed the entire init sequence with nothing after scap_init at
+// all. The detail is not truncated — it is not emitted. scap lives in falco's `libs` layer, whose
+// logger is off by default.
+//
+// WHY NOT JUST SET IT IN THE CATALOG. The pinned falco chart's own values say of `libs_logger`:
+// "It is not recommended for production use." The catalog is what a CUSTOMER installs, so turning
+// debug logging on there to serve one investigation would ship it to every customer's cluster
+// forever. This is a run-scoped override instead: unset changes nothing, and setting it is a
+// deliberate act recorded in a repo variable.
+//
+// Deliberately a small fixed TABLE rather than free-form YAML from the environment. A run whose
+// add-on values can be rewritten arbitrarily from a variable is a run that can no longer be said to
+// have proven the catalog — the whole point of seeding from the generated fixture is that the e2e
+// installs what ships. Each entry here is one named, reviewable diagnostic.
+func applyAddOnDebugOverrides(addons []types.AddOnInstall) []types.AddOnInstall {
+	want := map[string]bool{}
+	for _, id := range strings.Split(os.Getenv(envAddOnDebugValues), ",") {
+		if t := strings.TrimSpace(id); t != "" {
+			want[t] = true
+		}
+	}
+	if len(want) == 0 {
+		return addons
+	}
+	for i := range addons {
+		if !want[addons[i].ID] {
+			continue
+		}
+		switch addons[i].ID {
+		case "falco":
+			// falco.libs_logger — the layer scap_init reports from (#2866).
+			mergeAddOnValues(&addons[i], map[string]interface{}{
+				"falco": map[string]interface{}{
+					"libs_logger": map[string]interface{}{"enabled": true, "severity": "debug"},
+				},
+			})
+		}
+	}
+	return addons
+}
+
+// mergeAddOnValues merges one level of override into an install's Values, creating the map when the
+// spec carries none. Shallow ON PURPOSE at the top level and recursive below it, so an override for
+// `falco.libs_logger` cannot drop the `falco.json_output` the catalog already set.
+func mergeAddOnValues(a *types.AddOnInstall, over map[string]interface{}) {
+	if a.Values == nil {
+		a.Values = map[string]interface{}{}
+	}
+	a.Values = deepMergeValues(a.Values, over)
+}
+
+// deepMergeValues merges src into dst, recursing into nested maps. Returns dst.
+func deepMergeValues(dst, src map[string]interface{}) map[string]interface{} {
+	for k, v := range src {
+		sub, isMap := v.(map[string]interface{})
+		if !isMap {
+			dst[k] = v
+			continue
+		}
+		existing, ok := dst[k].(map[string]interface{})
+		if !ok {
+			existing = map[string]interface{}{}
+		}
+		dst[k] = deepMergeValues(existing, sub)
+	}
+	return dst
 }
 
 // CatalogAddOn returns ONE add-on's install spec from the same generated fixture AllCatalogAddOns
@@ -81,7 +177,7 @@ func AllCatalogAddOns() ([]types.AddOnInstall, error) {
 //
 // It exists so the LEAN tier stops restating what the generated artifact already holds. The lean
 // seed used to be a hand-written literal (chart coordinates plus `Values: map[string]interface{}{}`),
-// and on 2026-07-16 #643 gave reloader real knob defaults: catalog.ts, addon_catalog.json and
+// and on 2026-07-16 #643 gave reloader real knob defaults: catalog.ts, addon_catalog.<cloud>.json and
 // t2_config_snapshot.hetzner.json were all regenerated, the Go literal was not, and it emitted empty
 // values for ~3 weeks while claiming in its own doc comment to emit "the exact camelCase shape the
 // console's resolveAddOnInstall emits". Deriving makes that drift class UNREPRESENTABLE rather than

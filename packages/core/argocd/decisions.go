@@ -3,7 +3,10 @@
 
 package argocd
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // InfraServiceDecision is a machine-readable record of whether a post-apply infra
 // service was installed on the cluster, and — when it was skipped — WHY plus the
@@ -105,7 +108,15 @@ func externalDNSSkipReason(f *InfraFacts) string {
 	case "gcp":
 		return "workload identity output not present (external_dns_service_account) — external-dns would ship with an empty identity, so it is skipped."
 	case "azure":
-		return "workload identity output not present (external_dns_client_id) — external-dns would ship with an empty identity, so it is skipped."
+		// FOUR outputs gate azure, not one. Naming only the identity sent the reader at the
+		// managed identity when the missing fact was the resource group — and the pod that
+		// shipped before this gate existed died on a config FILE, so a reason mentioning
+		// identity would have been actively misleading (#2868). Report what is actually absent.
+		if missing := f.missingAzureDNSOutputs(); len(missing) > 0 {
+			return fmt.Sprintf("azure output(s) not present (%s) — external-dns's azure provider "+
+				"reads all of them from /etc/kubernetes/azure.json before it can start, so it is "+
+				"skipped rather than shipped to CrashLoopBackOff.", strings.Join(missing, ", "))
+		}
 	}
 	if f.DNSConnector == "cloudflare" {
 		return "the Cloudflare DNS connector is selected but its api_token did not reach the job — reconnect the Cloudflare DNS connector."

@@ -7,7 +7,7 @@
 // `statusTier` resolver, tier/label/showLabel overrides, and case-insensitivity.
 
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { StatusBadge, statusTier } from "../src/status-badge";
 
 /** Returns the outer `.vx-status` element wrapping the given label text. */
@@ -134,5 +134,43 @@ describe("StatusBadge", () => {
 		expect(badge).toHaveClass("vx-status");
 		expect(badge).toHaveClass("vx-status--active");
 		expect(badge).toHaveClass("extra-class");
+	});
+
+	// The failure this guards is not a crash — it is a badge that renders perfectly and means
+	// nothing. STATUS_TIER is keyed on the infrastructure vocabulary; a domain with its own
+	// words (support cases: open / pending_support / resolved / closed) gets "idle" for every
+	// one, so an open urgent case and a closed one look identical. Nobody files that as a bug.
+	describe("an unmapped status", () => {
+		it("resolves to idle, and says so in development", () => {
+			const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+			expect(statusTier("pending_customer")).toBe("idle");
+			expect(warn).toHaveBeenCalledOnce();
+			expect(warn.mock.calls[0]?.[0]).toContain("pending_customer");
+			warn.mockRestore();
+		});
+
+		it("warns once per distinct status, not once per row", () => {
+			const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+			statusTier("brand_new_status");
+			statusTier("brand_new_status");
+			statusTier("brand_new_status");
+			expect(warn).toHaveBeenCalledOnce();
+			warn.mockRestore();
+		});
+
+		it("stays silent when the caller passes an explicit tier — the documented escape", () => {
+			const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+			const { container } = render(<StatusBadge status="resolved" tier="disabled" />);
+			expect(container.querySelector(".vx-status--disabled")).not.toBeNull();
+			expect(warn).not.toHaveBeenCalled();
+			warn.mockRestore();
+		});
+
+		it("does not warn for a status that IS mapped", () => {
+			const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+			expect(statusTier("FAILED")).toBe("failed");
+			expect(warn).not.toHaveBeenCalled();
+			warn.mockRestore();
+		});
 	});
 });

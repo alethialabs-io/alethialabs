@@ -57,10 +57,34 @@ const STATUS_TIER: Record<string, StatusTier> = {
 
 /**
  * Resolves a product status string to its grayscale visual tier.
+ *
+ * The `idle` fallback is deliberate — a badge must render something rather than throw in a table
+ * row — but it is also SILENT, and that silence has teeth. `STATUS_TIER` is keyed on the
+ * infrastructure vocabulary (active/queued/failed/…); a domain with its own words gets `idle` for
+ * every one of them and looks plausible while saying nothing. Support cases are the worked
+ * example: not one of `open`, `pending_support`, `pending_customer`, `resolved`, `closed` is in
+ * the map, so a naive migration renders an open urgent case and a closed one identically.
+ *
+ * So: `statusTier()` is for statuses in the map. Any other vocabulary must pass an explicit
+ * `tier` to {@link StatusBadge}. In development an unrecognised status warns once, because the
+ * failure mode is a badge that renders fine and means nothing — nobody files that as a bug.
  */
 export function statusTier(status: string): StatusTier {
-	return STATUS_TIER[status.toLowerCase()] ?? "idle";
+	const tier = STATUS_TIER[status.toLowerCase()];
+	if (tier) return tier;
+	if (process.env.NODE_ENV !== "production" && !warnedStatuses.has(status)) {
+		warnedStatuses.add(status);
+		console.warn(
+			`[StatusBadge] "${status}" is not in STATUS_TIER, so it renders as "idle" — visually ` +
+				`identical to every other unmapped status. Pass an explicit \`tier\` prop, or add it ` +
+				`to STATUS_TIER if it belongs to the shared vocabulary.`,
+		);
+	}
+	return "idle";
 }
+
+/** Warn once per distinct status, so a list of 200 rows does not produce 200 identical lines. */
+const warnedStatuses = new Set<string>();
 
 interface StatusBadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
 	/** Product status (e.g. "ACTIVE", "PROCESSING", "FAILED"). */

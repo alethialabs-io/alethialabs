@@ -4,10 +4,10 @@
 # THIS LIST IS A RATCHET. The check fails if an entry here becomes deterministic, so a fix cannot
 # land without also shrinking the list. Add a line only with the issue that tracks its removal.
 
-harbor   # 2823 — genCA/genSignedCert for expose.tls AND an EPHEMERAL core token-signing keypair,
-         #        plus randAlphaNum for core.secret/xsrfKey, jobservice.secret, registry.secret and
-         #        a per-render bcrypt salt in the registry htpasswd. The rotating checksum/secret
-         #        annotations roll core, jobservice, registry and trivy on every reconcile.
+# harbor left this list on 2026-08-27 (#2823): every value it minted per render is now pinned to
+# the add-on Secret via the chart's own `existingSecret` knobs, and expose.tls.certSource is `none`
+# rather than `auto`, so nothing calls genCA/genSignedCert/randAlphaNum. The ratchet MEASURED the
+# result — 34 differing lines to 0, byte-identical.
 
 # minio left this list on 2026-08-26: with the fixture now carrying its secretRef, the chart
 # receives `existingSecret` and stops minting per render. The ratchet MEASURED that independently

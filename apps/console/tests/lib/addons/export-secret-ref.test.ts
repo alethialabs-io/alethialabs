@@ -18,9 +18,13 @@ import { describe, expect, it } from "vitest";
 import { ADDON_CATALOG } from "@/lib/addons/catalog";
 import { exportCatalogSpecs } from "@/lib/addons/catalog-export";
 
+// hetzner: any cloud carries the same minted-secret shapes (only external-dns's `provider` knob is
+// per-cloud), and hetzner is the harness's own default, so this agrees with addonCatalogFixture().
+const EXPORT_CLOUD = "hetzner" as const;
+
 const FIXTURE = resolve(
 	__dirname,
-	"../../../../../test/e2e/fixtures/addon_catalog.json",
+	`../../../../../test/e2e/fixtures/addon_catalog.${EXPORT_CLOUD}.json`,
 );
 
 /** Add-ons that mint a secret at enable time, read from the catalog rather than restated here. */
@@ -34,7 +38,7 @@ describe("exported specs carry a secretRef for minting add-ons (#2835)", () => {
 	});
 
 	it.each(MINTING)("%s exports a secretRef with its minted keys", (id) => {
-		const spec = exportCatalogSpecs().find((s) => s.id === id);
+		const spec = exportCatalogSpecs(EXPORT_CLOUD).find((s) => s.id === id);
 		expect(spec, `${id} missing from the export`).toBeDefined();
 		expect(spec?.secretRef).toBeDefined();
 		expect(spec?.secretRef?.keys.length).toBeGreaterThan(0);
@@ -44,7 +48,7 @@ describe("exported specs carry a secretRef for minting add-ons (#2835)", () => {
 
 	it("minio's chart is wired at the Secret rather than left to generate its own", () => {
 		// The actual defect: with no existingSecret the chart mints rootUser/rootPassword per render.
-		const minio = exportCatalogSpecs().find((s) => s.id === "minio");
+		const minio = exportCatalogSpecs(EXPORT_CLOUD).find((s) => s.id === "minio");
 		expect(minio?.values.existingSecret).toBe("alethia-addon-minio");
 		expect(minio?.secretRef?.keys).toEqual(["rootPassword"]);
 		// The username is NOT a secret and pairs in through staticData.
@@ -53,7 +57,7 @@ describe("exported specs carry a secretRef for minting add-ons (#2835)", () => {
 
 	it("an add-on that mints nothing still exports no secretRef", () => {
 		// The narrowing that keeps this change from handing every add-on a Secret it never asked for.
-		const reloader = exportCatalogSpecs().find((s) => s.id === "reloader");
+		const reloader = exportCatalogSpecs(EXPORT_CLOUD).find((s) => s.id === "reloader");
 		expect(reloader?.secretRef).toBeUndefined();
 	});
 
@@ -61,7 +65,7 @@ describe("exported specs carry a secretRef for minting add-ons (#2835)", () => {
 		// The whole safety argument in one assertion. `resolveAddOnInstall` strips secret knobs
 		// before validation, so the marker used to signal presence must not survive into the output
 		// — nor may anything that looks like a credential.
-		const json = JSON.stringify(exportCatalogSpecs());
+		const json = JSON.stringify(exportCatalogSpecs(EXPORT_CLOUD));
 		expect(json).not.toContain("e2e-fixture-presence-marker");
 	});
 
@@ -71,6 +75,6 @@ describe("exported specs carry a secretRef for minting add-ons (#2835)", () => {
 		// inferred from the exporter.
 		const onDisk = readFileSync(FIXTURE, "utf8");
 		expect(onDisk).not.toContain("e2e-fixture-presence-marker");
-		expect(JSON.parse(onDisk)).toEqual(exportCatalogSpecs());
+		expect(JSON.parse(onDisk)).toEqual(exportCatalogSpecs(EXPORT_CLOUD));
 	});
 });

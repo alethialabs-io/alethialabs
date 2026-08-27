@@ -17,7 +17,7 @@ import {
 	ToolInput,
 	ToolOutput,
 } from "@/components/ai-elements/tool";
-import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ai-elements/marker";
 
 /** Tool-part states in which the call is still doing work (marker dot pulses). */
 const RUNNING_STATES = new Set<ToolUIPart["state"]>([

@@ -67,6 +67,27 @@ interface DataTableProps<TData extends { id?: string }, TValue> {
 	loadMore?: { hasMore: boolean; onLoadMore: () => void };
 }
 
+/**
+ * THE console table shell.
+ *
+ * There were three. This one (TanStack-powered), the raw `@repo/ui/table` primitives, and a
+ * hand-rolled CSS-grid table with its own column-template constant and sticky header inside
+ * `components/evidence/`. Three shells meant three row heights, three header treatments and
+ * three answers to "what does an empty table look like" — and the grid one was not a `<table>`
+ * at all, so a screen reader read it as a stack of buttons.
+ *
+ * The convergence is a layer, not a single component:
+ *
+ * - **`DataTable` (this file)** is the default. Reach for it whenever the rows are a flat list
+ *   the client can hold in memory: it brings sorting, client filtering, pagination or a
+ *   "Show more" window, an empty row, and one row-click contract.
+ * - **The `@repo/ui/table` primitives** are the shell underneath — `DataTable` renders through
+ *   them, so a table built on them directly inherits the same padding, borders, hover and
+ *   selected states. Compose them directly only for the shapes TanStack's flat row model cannot
+ *   express: interleaved group header rows, or server-side filtering that must not be re-run
+ *   client-side. `components/evidence/evidence-table.tsx` is the worked example and says why.
+ * - **A `<div className="grid">` is not a table.** There is no third option.
+ */
 export function DataTable<TData extends { id?: string }, TValue>({
 	columns,
 	data,
@@ -130,9 +151,15 @@ export function DataTable<TData extends { id?: string }, TValue>({
 		resetKey: visibleRowCount,
 	});
 
+	// `--z-raised` IS the 10 the sticky header used to hardcode (packages/brand/src/tokens.css).
+	// Naming the layer is deliberately not the moment to move it.
 	const tableEl = (
 		<Table>
-			<TableHeader className={scrollHeight ? "sticky top-0 z-10 bg-background" : undefined}>
+			<TableHeader
+				className={
+					scrollHeight ? "sticky top-0 z-[var(--z-raised)] bg-background" : undefined
+				}
+			>
 				{table.getHeaderGroups().map((headerGroup) => (
 					<TableRow key={headerGroup.id}>
 						{headerGroup.headers.map((header) => (

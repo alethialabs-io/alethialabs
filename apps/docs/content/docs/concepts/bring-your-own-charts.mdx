@@ -1,0 +1,135 @@
+---
+title: Bring Your Own Charts
+description: Point an add-on at a Helm chart in your own git repository — Alethia deploys it through ArgoCD under a hardened project that confines it to its own namespace, auto-syncs it, and never prunes or reverts what you change.
+---
+
+# Bring Your Own Charts
+
+Alethia's add-on marketplace installs charts from public Helm registries. **Bring-your-own charts**
+let you install a Helm chart from **your own git repository** instead, alongside marketplace add-ons
+in the same cluster.
+
+Your chart is not Alethia's code, so it runs under a deliberately narrower contract than a
+marketplace add-on. This page is that contract: what gets deployed, what your chart is allowed to
+create, what Alethia will and will not do to it afterwards, and how to remove it.
+
+<Callout type="info">
+  **A BYO chart is a Helm chart in git.** It is a different thing from
+  [Bring Your Own IaC](/docs/concepts/bring-your-own-iac), which points an environment at your own
+  **OpenTofu root module** and provisions the infrastructure itself. They can be used together;
+  neither requires the other.
+</Callout>
+
+## What happens when you enable one
+
+Each deploy, Alethia:
+
+1. creates the destination **namespace**, because your chart is not permitted to create one itself
+   (see [What your chart may create](#what-your-chart-may-create));
+2. registers a **repository credential** for your chart's repo, in a Secret scoped to that repo
+   alone — no BYO chart can read another's token, or the apps repo's;
+3. applies a hardened **ArgoCD AppProject** that confines the chart; and
+4. applies the **Application**, which then syncs on its own.
+
+Nothing about this is a one-time setup. The Application is re-applied on every deploy, so a change
+to any of the above takes effect on your next deploy rather than needing the add-on removed and
+re-added.
+
+## A push to the tracked ref deploys
+
+Your chart is attached at a git **ref**, and a ref is usually a branch — the default is `HEAD`.
+ArgoCD watches that ref, so **a commit to it deploys, on its own, without an Alethia deploy and
+without an approval step.** That is ordinary GitOps, and for most people it is the point: your
+chart repo is the source of truth and the cluster follows it.
+
+It is worth being deliberate about, though, because it means write access to that branch is
+effectively deploy access to that namespace.
+
+<Callout type="warn">
+  **Attach a tag or a commit SHA if you want deploys to be explicit.** The `ref` accepts any git
+  revision, so pinning it to `v1.4.2` or a full SHA means the cluster changes only when you change
+  the ref — pushing to your branch then does nothing until you do. Use a branch when you want
+  continuous delivery; use a tag or SHA when you want a release step.
+</Callout>
+
+What a push **cannot** do is escape the chart's confinement — every sync is validated against the
+same hardened project, so a new commit is held to exactly the rules in
+[What your chart may create](#what-your-chart-may-create).
+
+## Sync behaviour
+
+Your chart is deployed automatically. Two things Alethia deliberately does **not** do:
+
+| | Marketplace add-on | Your chart |
+|---|:---:|:---:|
+| Deployed automatically | yes | **yes** |
+| Prune — delete resources no longer declared | yes | **no** |
+| Self-heal — revert changes made in the cluster | yes | **no** |
+
+**Prune is off, so a resource you delete from your chart keeps running.** If you remove a Deployment
+from the chart and deploy, the old Deployment is still there. This is deliberate: Alethia will not
+delete a workload of yours because your chart stopped mentioning it. To remove it, either delete it
+yourself with `kubectl`, or [disable the add-on](#removing-a-chart), which removes everything.
+
+**Self-heal is off, so changes you make in the cluster stick.** If you `kubectl edit` a resource
+your chart owns, ArgoCD reports the Application `OutOfSync` and leaves your change alone. That is
+what you want while debugging; it also means an `OutOfSync` BYO chart is informational, not an
+error.
+
+To put it back, you have to give ArgoCD something to do — **a deploy on its own will not revert it**,
+because the chart is already at the revision it is meant to be at and there is nothing to sync. Any
+of these works:
+
+- push a commit to the tracked ref, which produces a new revision to sync;
+- delete the edited resource, and the next sync recreates it from the chart;
+- sync the Application from ArgoCD directly, which reapplies the current revision.
+
+## What your chart may create
+
+The AppProject Alethia applies is default-deny. Your chart may create **namespaced** resources in
+its **own destination namespace** and nothing else:
+
+- **No cluster-scoped resources.** No `Namespace`, `ClusterRole`, `ClusterRoleBinding`,
+  `CustomResourceDefinition`, `StorageClass`, or any other cluster-scoped kind. A chart that
+  declares one fails its sync with a message naming the resource.
+- **No `Role`, `RoleBinding` or `ServiceAccount`,** even namespaced ones — a chart that could mint
+  its own identity could grant itself more than this project allows.
+- **Only the repositories you declared.** The project is locked to your chart's repo, so an
+  Application cannot be re-pointed at a source you did not configure.
+- **Only its own namespace.** The project's destinations list that namespace and no other.
+
+<Callout type="warn">
+  **If your chart needs a cluster-scoped resource, it cannot be a BYO chart as-is.** The usual
+  answers are to split the cluster-scoped part out and have an operator apply it once, or to request
+  the capability as a marketplace add-on. Relaxing the project for one chart would relax it for
+  every chart in the environment.
+</Callout>
+
+## Removing a chart
+
+Disabling the add-on deletes its Application, and the Application carries ArgoCD's
+`resources-finalizer.argocd.argoproj.io` finalizer — so deletion **cascades to everything the chart
+created**, including resources that prune would have left behind. The namespace Alethia created for
+it remains.
+
+So the two removal paths differ, and the difference is worth remembering:
+
+- **Remove a resource from the chart** → it keeps running (prune is off).
+- **Disable the add-on** → everything the chart created is deleted.
+
+## Troubleshooting
+
+**The Application is `OutOfSync` and I did not change anything.** Some charts render a value that
+differs on every render — a generated password, a timestamp, a self-signed certificate. ArgoCD
+compares each render against the cluster, so such a chart is permanently `OutOfSync`. Pin the value
+in your chart, usually through an `existingSecret`-style option, and it settles.
+
+**The Application is `Missing`.** Its resources do not exist. Check the sync result in ArgoCD: the
+most common causes are a resource the project forbids (see
+[What your chart may create](#what-your-chart-may-create)) and a chart path that does not exist at
+the configured revision.
+
+**The Application is `Progressing` and stays there.** ArgoCD is waiting for a workload to become
+ready. Check the pods: a pod stuck `Pending` with `Insufficient memory` or `Insufficient cpu` is
+asking for more than any node in your cluster can give it, which no amount of waiting fixes — lower
+the request or provision a larger node type.

@@ -5,6 +5,12 @@
 // ink weight (heavier stroke + primary text), never hue — matching the design system's
 // no-color rule.
 
+import {
+	NEAR_LIMIT_RATIO,
+	formatUsagePercent,
+	usageRatio,
+} from "./usage-percent";
+
 /** A small circular percent gauge. `used`/`limit` drive the arc; the center shows %. */
 export function UsageRing({
 	used,
@@ -15,11 +21,14 @@ export function UsageRing({
 	limit: number;
 	size?: number;
 }) {
-	const pct = limit > 0 ? Math.min(used / limit, 1) : 0;
-	const near = pct >= 0.85;
+	const ratio = usageRatio(used, limit);
+	const near = ratio >= NEAR_LIMIT_RATIO;
+	// The ARC clamps — a circle cannot draw more than a full turn — but the label does not, so an
+	// overage still reads as "125" over a full ring instead of silently flattening to "100".
+	const arc = Math.min(ratio, 1);
 	const r = (size - 6) / 2;
 	const circumference = 2 * Math.PI * r;
-	const offset = circumference * (1 - pct);
+	const offset = circumference * (1 - arc);
 	const strokeWidth = near ? 4 : 3.2;
 
 	return (
@@ -64,7 +73,7 @@ export function UsageRing({
 				fontWeight={near ? 600 : 400}
 				fill={near ? "var(--text-primary)" : "var(--text-tertiary)"}
 			>
-				{Math.round(pct * 100)}
+				{formatUsagePercent(used, limit)}
 			</text>
 		</svg>
 	);

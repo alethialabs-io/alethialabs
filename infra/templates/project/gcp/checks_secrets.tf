@@ -7,10 +7,16 @@
 
 # The external-secrets GSA must exist whenever GKE is provisioned — without it the gcpsm
 # ClusterSecretStore is (correctly) not rendered and ExternalSecrets can never sync.
+#
+# Reads the LOCAL, not the resource. It used to read google_service_account.external_secrets[0]
+# behind a `try(..., "")`, which resolves to "" on the ADOPTION path (count 0) — so the check
+# reported "no email" for a deploy whose identity was present and correct, and it would have fired
+# the first time anybody set external_secrets_service_account_email. Nobody ever had, which is the
+# only reason it looked green. The local is the same value every consumer uses.
 check "external_secrets_gsa_present" {
   assert {
-    condition     = !var.provision_gke || length(trimspace(try(google_service_account.external_secrets[0].email, ""))) > 0
-    error_message = "provision_gke is true but the external-secrets Google service account reported no email — the ESO ClusterSecretStore cannot authenticate."
+    condition     = !var.provision_gke || length(trimspace(local.external_secrets_sa_email)) > 0
+    error_message = "provision_gke is true but the external-secrets Google service account resolved to no email — the ESO ClusterSecretStore cannot authenticate."
   }
 }
 

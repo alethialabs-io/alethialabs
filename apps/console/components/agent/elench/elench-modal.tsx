@@ -184,7 +184,7 @@ export function ElenchModal({
 									type="button"
 									aria-label="Open sidebar"
 									onClick={() => setSidebarOpen(true)}
-									className="absolute left-4 top-4 z-10 flex size-8 items-center justify-center rounded-none border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+									className="absolute left-4 top-4 z-[var(--z-raised)] flex size-8 items-center justify-center rounded-none border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
 								>
 									<PanelLeft className="h-4 w-4" />
 								</button>
@@ -200,7 +200,7 @@ export function ElenchModal({
 										closeArtifact();
 										closeGrid();
 									}}
-									className="absolute right-14 top-4 z-10 flex size-8 items-center justify-center rounded-none border border-border bg-background text-foreground shadow-sm transition-colors hover:bg-muted"
+									className="absolute right-14 top-4 z-[var(--z-raised)] flex size-8 items-center justify-center rounded-none border border-border bg-background text-foreground shadow-sm transition-colors hover:bg-muted"
 								>
 									<LayoutGrid className="h-4 w-4" />
 								</button>
@@ -209,7 +209,7 @@ export function ElenchModal({
 								type="button"
 								aria-label="Minimize to panel"
 								onClick={minimize}
-								className="absolute right-4 top-4 z-10 flex size-8 items-center justify-center rounded-none border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+								className="absolute right-4 top-4 z-[var(--z-raised)] flex size-8 items-center justify-center rounded-none border border-border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
 							>
 								<Minimize2 className="h-4 w-4" />
 							</button>
@@ -275,7 +275,7 @@ export function ElenchModal({
 									onPointerDown={onHandleDown}
 									onPointerMove={onHandleMove}
 									onPointerUp={onHandleUp}
-									className="group/split relative z-10 -mx-1 flex w-3 flex-none cursor-col-resize items-center justify-center"
+									className="group/split relative z-[var(--z-raised)] -mx-1 flex w-3 flex-none cursor-col-resize items-center justify-center"
 								>
 									<span className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border" />
 									<span className="pointer-events-none h-12 w-1 rounded-full bg-muted-foreground/25 transition-colors group-hover/split:bg-muted-foreground/60" />
@@ -290,6 +290,11 @@ export function ElenchModal({
 									{artifact ? <ArtifactPanel /> : <WidgetGrid />}
 								</div>
 								{collapsed && (
+									// z-20 is the ONE layer here that the named scale cannot express: its job is
+									// "one step above the --z-raised drag handle it overlaps", and the scale has
+									// no rung between --z-raised (10) and --z-header/--z-overlay (50). Naming it
+									// --z-overlay would move it 40 rungs — a re-layering, which tokens.css says
+									// is a separate, visual change. Left as a literal, deliberately.
 									<button
 										type="button"
 										aria-label="Expand panel"

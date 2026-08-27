@@ -144,10 +144,27 @@ function currentEnv(projectDir) {
 		// every failure to a warning on the next Node patch release — silently disarming the gate.
 		node: process.versions.node.split(".")[0],
 		coverage_provider: coverageProviderVersion(projectDir),
-		// The console resolves EE scope only when this dist exists. CI's `typescript` job never
-		// builds it (apps/console depends on @alethia/enterprise-api, not @alethia/ee, so turbo's
-		// `test.dependsOn: ["^build"]` never reaches it); `pnpm dev:up` on a maintainer's Mac DOES.
-		// So this is a genuine local-vs-CI divergence, not a hypothetical one.
+		// The console resolves EE scope only when this dist exists, so it changes which statements
+		// execute in lib/enterprise.ts and therefore what the numbers mean.
+		//
+		// The divergence is NOT local-vs-CI. It is turbo-vs-direct, and it runs the other way from
+		// what this comment used to claim:
+		//
+		//   pnpm exec turbo run test   -> dist PRESENT   (ci.yml:138, and a laptop running turbo)
+		//   pnpm -F console test       -> dist ABSENT    (scripts/env.sh, i.e. `pnpm env:check`)
+		//
+		// apps/console declares @alethia/ee under **optionalDependencies**, and turbo.json declares
+		// `test.dependsOn: ["^build"]` — so turbo builds the dist as part of the test task. That is
+		// why no explicit `Build @alethia/ee` step appears in the `typescript` job even though the
+		// floors are reachable there. ci.yml (~:186) carries the measured evidence; it is not
+		// restated here, so the two cannot drift apart again.
+		//
+		// This comment previously asserted the exact opposite, and that is the part worth keeping:
+		// an inverted rationale on a fingerprint key does not merely mislead, it SURVIVES
+		// verification — a reader who checks finds ci.yml listing both explicit ee builds in other
+		// jobs and concludes the comment was right. Two sessions did exactly that on 2026-08-26 and
+		// both got it backwards. scripts/check-floors-reproducible.mjs now answers the question
+		// mechanically rather than leaving it to prose.
 		ee_dist: existsSync(path.join(ROOT, "ee/dist/index.js")),
 		edition: process.env.ALETHIA_EDITION ?? "unset",
 	};

@@ -6,7 +6,6 @@
 // action filters + groups the roll-up here, off the request path). The UI's visual layer
 // maps the returned `tone`/`iconKey` to grayscale Tailwind tokens + lucide icons.
 
-import { formatDistanceToNow } from "date-fns";
 import { providerKey } from "@/components/evidence/evidence-query";
 import type {
 	EvidenceEnvRow,
@@ -23,12 +22,6 @@ export type Tone = "good" | "warn" | "bad" | "unknown" | "muted";
 /** An environment is "stale" once its freshest proof is older than this (days). */
 export const STALE_DAYS = 7;
 const STALE_MS = STALE_DAYS * 24 * 60 * 60 * 1000;
-
-/** Relative-time label from an ISO timestamp (e.g. "3 hours ago"), or "—" when absent. */
-export function relTime(iso: string | null): string {
-	if (!iso) return "—";
-	return formatDistanceToNow(new Date(iso), { addSuffix: true });
-}
 
 /** The freshest proof timestamp on a row (max of verify / drift / security), or null. */
 export function lastChecked(row: EvidenceEnvRow): string | null {

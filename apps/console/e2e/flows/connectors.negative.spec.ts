@@ -16,7 +16,7 @@ test.describe.configure({ timeout: 120_000 });
 /** Navigates to the connectors board and waits for the search box. */
 async function gotoConnectors(page: import("@playwright/test").Page, orgSlug: string) {
 	await page.goto(`/${orgSlug}/~/connectors`, { waitUntil: "commit" });
-	await expect(page.getByPlaceholder(/search connectors/i)).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByLabel(/search connectors/i)).toBeVisible({ timeout: 60_000 });
 }
 
 test.describe("Connectors — not-enabled managed cloud", () => {
@@ -26,7 +26,7 @@ test.describe("Connectors — not-enabled managed cloud", () => {
 	// Azure and skip if it happens to be connected in the shared org.
 	test("Azure shows 'Not enabled on this instance' without platform creds", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Microsoft Azure");
+		await owner.page.getByLabel(/search connectors/i).fill("Microsoft Azure");
 		await expect(owner.page.getByText("Microsoft Azure").first()).toBeVisible();
 		const connected = await owner.page.getByRole("button", { name: "Manage" }).count();
 		test.skip(connected > 0, "Azure is connected (seeded) in the shared org");
@@ -39,7 +39,7 @@ test.describe("Connectors — not-enabled managed cloud", () => {
 		owner,
 	}) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Microsoft Azure");
+		await owner.page.getByLabel(/search connectors/i).fill("Microsoft Azure");
 		await expect(owner.page.getByText("Microsoft Azure").first()).toBeVisible();
 		const connected = await owner.page.getByRole("button", { name: "Manage" }).count();
 		test.skip(connected > 0, "Azure is connected (seeded) in the shared org");
@@ -59,7 +59,7 @@ test.describe("Connectors — connect-sheet validation", () => {
 			{ provider: "hetzner", name: `e2e-htz-neg-${Date.now()}` },
 		);
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Hetzner");
+		await owner.page.getByLabel(/search connectors/i).fill("Hetzner");
 		await owner.page.getByRole("button", { name: "Manage" }).first().click();
 		await owner.page
 			.getByRole("dialog")
@@ -75,7 +75,7 @@ test.describe("Connectors — connect-sheet validation", () => {
 		owner,
 	}) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Datadog");
+		await owner.page.getByLabel(/search connectors/i).fill("Datadog");
 		await owner.page.getByRole("button", { name: "Connect" }).click();
 		const sheet = owner.page.getByRole("dialog");
 		// Fill only the API Key; Application Key is still required.
@@ -90,7 +90,7 @@ test.describe("Connectors — member permissions (read-only)", () => {
 
 	test("a member without manage rights sees no Connect/Manage actions", async ({ member }) => {
 		await gotoConnectors(member.page, member.orgSlug);
-		await member.page.getByPlaceholder(/search connectors/i).fill("Datadog");
+		await member.page.getByLabel(/search connectors/i).fill("Datadog");
 		await expect(member.page.getByRole("button", { name: "Connect" })).toHaveCount(0);
 	});
 });
