@@ -1154,6 +1154,53 @@ func TestAssertByoAutoSyncPolicyUnreachableIsAnError(t *testing.T) {
 	}
 }
 
+// The evidence attached to a FAILING sync-policy verdict. aws/day2 run 33074136555 reported
+// "prune/selfHeal unset" and nothing else, and that sentence fits two causes with opposite fixes —
+// the emitter regressed, or something dropped the fields between the manifest and the stored
+// object. What this asserts is that the next such failure carries the object itself.
+func TestByoSyncEvidence(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	// Hermetic on purpose: no kubectl, or no kubeconfig, both land in the UNREADABLE branch.
+	badKube := filepath.Join(t.TempDir(), "no-such-kubeconfig")
+
+	t.Run("a passing verdict gains nothing", func(t *testing.T) {
+		if got := withByoSyncEvidence(ctx, badKube, "addon-byo-e2e", `{"prune":false,"selfHeal":false}`, nil); got != nil {
+			t.Errorf("a satisfied policy must stay silent, got %v", got)
+		}
+	})
+
+	t.Run("a failing verdict carries what was read", func(t *testing.T) {
+		verdict := errors.New("BYO Application addon-byo-e2e has syncPolicy.automated with prune/selfHeal unset")
+		got := withByoSyncEvidence(ctx, badKube, "addon-byo-e2e", "{}", verdict)
+		if got == nil {
+			t.Fatal("evidence must not swallow the verdict")
+		}
+		// The observed value is the whole point: `{}` and `{"prune":true}` produce the same
+		// sentence today and send a reader to different code.
+		if !strings.Contains(got.Error(), "observed spec.syncPolicy.automated: {}") {
+			t.Errorf("the observed block must be quoted verbatim; got %q", got)
+		}
+		if !errors.Is(got, verdict) {
+			t.Error("the verdict must survive wrapping — a caller matching on it still has to work")
+		}
+	})
+
+	t.Run("an unreadable dump does not become a verdict", func(t *testing.T) {
+		// The second kubectl failing says nothing about whether the policy was right. If it were
+		// allowed to overwrite the answer, a real #2910 regression would read as "could not check"
+		// — the fail-open shape, on the assertion that exists to catch it.
+		verdict := errors.New("BYO Application addon-byo-e2e carries NO syncPolicy.automated")
+		got := withByoSyncEvidence(ctx, badKube, "addon-byo-e2e", "<absent>", verdict)
+		if got == nil || !strings.Contains(got.Error(), "carries NO syncPolicy.automated") {
+			t.Fatalf("the original verdict must survive an unreadable dump; got %v", got)
+		}
+		if !strings.Contains(got.Error(), "UNREADABLE") {
+			t.Errorf("a failed dump must be LABELLED as unread, never rendered as an empty policy; got %q", got)
+		}
+	})
+}
+
 // The exact failure the controller fix exists for. hetzner/addons run 33059349873, once the
 // Deployment name was corrected, reached the pod and was refused by RBAC:
 //
