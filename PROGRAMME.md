@@ -167,7 +167,7 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**8 of 30 proof cells are proven.** 8 failing · 0 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
+**8 of 30 proof cells are proven.** 7 failing · 1 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -176,7 +176,7 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 | cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | **aws** | ✅ | ✅ | ❌ | ❌ | · | ❌ |
-| **gcp** | ⚠️ | ❌ | · | ✅ | · | ✅ |
+| **gcp** | ⚠️ | ♻️ | · | ✅ | · | ✅ |
 | **azure** | ⚠️ | ❌ | ❌ | ✅ | · | ✅ |
 | **alibaba** | · | · | · | · | · | · |
 | **hetzner** | ⚠️ | ❌ | ❌ | ✅ | · | ✅ |
@@ -191,7 +191,7 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `aws/gitops` **failing** — ledger 2026-08-26 (#2591)
 - `aws/day2` **failing** — ledger 2026-08-26 (#2717)
 - `gcp/floor` **contested** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T105829Z` — but #2743 is OPEN and was filed 2026-08-26, AFTER the 2026-08-25 run that proved it
-- `gcp/maxconfig` **failing** — ledger 2026-08-27 (#2811)
+- `gcp/maxconfig` **stale** — ledger 2026-08-27 — but #2811 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#2811)
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
 - `azure/floor` **contested** — ledger 2026-08-25, bundle `demos/proofs/azure/20260825T063447Z` — but #2744 is OPEN and was filed 2026-08-26, AFTER the 2026-08-25 run that proved it
@@ -209,16 +209,16 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`gcp/floor`** — contested. ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T105829Z` — but #2743 is OPEN and was filed 2026-08-26, AFTER the 2026-08-25 run that proved it
+**`gcp/maxconfig`** — stale. ledger 2026-08-27 — but #2811 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
 <details><summary>The next 10</summary>
 
+1. `gcp/maxconfig` — stale
 1. `gcp/floor` — contested
 1. `azure/floor` — contested
 1. `hetzner/floor` — contested
-1. `gcp/maxconfig` — failing
 1. `azure/maxconfig` — failing
 1. `hetzner/maxconfig` — failing
 1. `aws/addons` — failing
@@ -266,11 +266,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ? unknown | not observed, and the inventory was not readable |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ? unknown | not observed, and the inventory was not readable |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ? unknown | not observed, and the inventory was not readable |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ? unknown | not observed, and the inventory was not readable |
-| **hetzner** | `HCLOUD_TOKEN` | ? unknown | not observed, and the inventory was not readable |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33080748841 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 33080748841 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 33080748841 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33080748841 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 33080748841 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -279,9 +279,9 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | floor | `(the cloud gate alone)` | n/a | real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set |
 | all kinds | `ALETHIA_E2E_MAX_CONFIG` | ✅ by dimension: `ALETHIA_E2E_MAX_CONFIG` | every kind this cloud offers lands in tofu state (or converges as its named Application) |
 | 18 add-ons | `ALETHIA_E2E_ALL_ADDONS` | ✅ by dimension: `ALETHIA_E2E_ALL_ADDONS` | all 18 marketplace add-ons Healthy+Synced |
-| GitOps repos | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ? unknown: `E2E_ARGO_APPS_REPO`<br>? unknown: `E2E_GIT_TOKEN` | a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource |
+| GitOps repos | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ✅ wired: `E2E_ARGO_APPS_REPO`<br>✅ wired: `E2E_GIT_TOKEN` | a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource |
 | BYO-IaC | `ALETHIA_E2E_BYO_IAC` | ✅ by dimension: `ALETHIA_E2E_BYO_IAC` | a customer OpenTofu root module is refused when unsafe, applied through the state proxy, drifts, heals and destroys — with state cleared |
-| day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>? unknown: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
+| day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>✅ wired: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
 
 ### Open REDs
 
@@ -290,11 +290,15 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | `aws/addons` | failing | #2717 | open |
 | `aws/gitops` | failing | #2591 | open |
 | `aws/day2` | failing | #2717 | open |
-| `gcp/maxconfig` | failing | #2811 | ? |
-| `azure/maxconfig` | failing | #2905 | ? |
+| `gcp/maxconfig` | stale | #2811 | ⛔ **CLOSED** |
+| `azure/maxconfig` | failing | #2905 | open |
 | `azure/addons` | failing | **none** | ? |
 | `hetzner/maxconfig` | failing | #2568 | open |
 | `hetzner/addons` | failing | #2717 | open |
+
+♻️ **1 cell(s) cite a CLOSED issue**, so they are rendered `stale` rather than `failing`: the cause is fixed and what they need is a **re-run**, not a fix. They rank first in the mechanical next for exactly that reason — it is the cheapest action on the board.
+
+The ledger row itself is not wrong and is not rewritten (it is append-only, and it was true when written). What was wrong was reading it as open work — the same defect that had the parity board citing four closed issues as live floor blockers.
 
 ### ⚠️ Contested — proven by the ledger, contradicted by an open red
 
@@ -324,7 +328,6 @@ A nightly that goes red files an **issue** and writes **no ledger row**. So from
 - #2462 — infra(e2e): make the e2e-dev OIDC trust widening authoritative — four applies, currently hand-applied
 - #2283 — probe(alibaba-cr): does an AUTO scan rule fire with no VPC endpoint? (#2265 shipped the wiring, not the proof)
 - #2099 — e2e nightly: gcp RED (full-bar)
-- #1871 — fix(gcp-e2e): the billing budget's alerts are undeliverable — the publisher binding cannot be created
 - #1513 — feat(keyless): GA — default-on rollout and delete ALETHIA_KEYLESS_DB_AUTH_ENABLED
 - #1450 — test(e2e): azure-mysql keyless real-apply on Azure (main-gated)
 - #1268 — test(e2e): cross-account keyless cloud-SM in-cluster read — AWS/GCP/Azure/Alibaba (main-gated)
@@ -351,7 +354,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-08-26T09:24:06Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-08-27T15:44:51Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
