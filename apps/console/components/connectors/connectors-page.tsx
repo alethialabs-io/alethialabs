@@ -15,13 +15,21 @@ import { disconnectExtraCloud } from "@/app/(private)/dashboard/providers/extra-
 import { deleteProviderToken } from "@/app/server/actions/identities";
 import {
 	deleteConnectorCredential,
-	type ConnectorGroup,
+	getConnectorsWithStatus,
 	type ConnectorWithConnection,
 } from "@/app/server/actions/connectors";
 import { ConnectorCard } from "@/components/connectors/connector-card";
 import { ConnectorRow } from "@/components/connectors/connector-row";
 import { ConnectorDetailSheet } from "@/components/connectors/connector-detail-sheet";
-import { ApiKeyConnection } from "@/components/connector/api-key-connection";
+import { ConnectorsFilterBar } from "@/components/connectors/connectors-filter-bar";
+import {
+	DEFAULT_CONNECTOR_FILTERS,
+	GROUP_META,
+	buildConnectorsView,
+	isPristineQuery,
+	normalizeConnectorQuery,
+} from "@/components/connectors/connectors-query";
+import { ApiKeyConnection } from "@/components/connectors/api-key-connection";
 import {
 	ConnectSheetHeader,
 	EXTRA_CLOUDS,
@@ -29,6 +37,10 @@ import {
 } from "@/components/cloud-connect/use-cloud-connect";
 import { getConnectorProviderBySlug } from "@/lib/connectors/registry.generated";
 import { connectRoute } from "@/lib/connectors/helpers";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { qk } from "@/lib/query/keys";
+import { useConnectorFilters } from "@/lib/stores/use-connector-filters";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -40,14 +52,9 @@ import {
 	AlertDialogTitle,
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
-import { Input } from "@repo/ui/input";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@repo/ui/select";
+import { CountPill } from "@repo/ui/count-pill";
+import { EmptyState } from "@repo/ui/empty";
+import { PageHeader } from "@repo/ui/page-header";
 import { Sheet, SheetContent } from "@repo/ui/sheet";
 import {
 	Table,
@@ -57,24 +64,13 @@ import {
 	TableRow,
 } from "@repo/ui/table";
 import { ViewToggle, type ViewMode } from "@repo/ui/view-toggle";
+import { cn } from "@repo/ui/utils";
 import { authClient } from "@/lib/auth/client";
 import { track, captureException } from "@/lib/analytics/track";
-import type { GitProvider as PublicGitProvider } from "@/lib/db/schema";
-import {
-	Activity,
-	BookOpen,
-	Cloud,
-	Container,
-	GitBranch,
-	Globe,
-	KeyRound,
-	Loader2,
-	Package,
-	Search,
-	Unplug,
-} from "lucide-react";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import { BookOpen, Loader2, SearchX, Unplug } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 /**
@@ -106,73 +102,6 @@ interface ConnectorsPageProps {
 	platformConfigured?: Record<string, boolean>;
 }
 
-type GroupFilter = "all" | ConnectorGroup;
-
-const GROUP_META: {
-	id: ConnectorGroup;
-	label: string;
-	description: string;
-	icon: typeof Cloud;
-	docsHref: string;
-}[] = [
-	{
-		id: "clouds",
-		label: "Clouds",
-		description:
-			"Provider accounts Alethia provisions into, via short-lived federated credentials.",
-		icon: Cloud,
-		docsHref: "/docs/console/connectors",
-	},
-	{
-		id: "source",
-		label: "Source",
-		description:
-			"Git providers Alethia reads repositories from and wires GitOps deployments through.",
-		icon: GitBranch,
-		docsHref: "/docs/console/connectors/git-providers",
-	},
-	{
-		id: "registries",
-		label: "Registries",
-		description:
-			"Container registries clusters pull from. Pull credentials are injected & rotated automatically.",
-		icon: Container,
-		docsHref: "/docs/console/connectors/pluggable",
-	},
-	{
-		id: "chart_repos",
-		label: "Chart Repos",
-		description:
-			"Private Helm chart repositories (OCI or HTTPS) ArgoCD pulls add-on & BYO charts from. Repo credentials are seeded automatically at deploy.",
-		icon: Package,
-		docsHref: "/docs/console/connectors/pluggable",
-	},
-	{
-		id: "secrets",
-		label: "Secrets",
-		description:
-			"External secret stores Projects read secrets from at deploy time — fetched just-in-time, never written to state.",
-		icon: KeyRound,
-		docsHref: "/docs/console/connectors/pluggable",
-	},
-	{
-		id: "observability",
-		label: "Observability",
-		description:
-			"External destinations Alethia ships cluster metrics, logs, and traces to.",
-		icon: Activity,
-		docsHref: "/docs/console/connectors/pluggable",
-	},
-	{
-		id: "dns",
-		label: "DNS",
-		description:
-			"DNS providers Alethia manages records and certificates through.",
-		icon: Globe,
-		docsHref: "/docs/console/connectors/pluggable",
-	},
-];
-
 export function ConnectorsPage({
 	orgSlug,
 	canManage,
@@ -184,25 +113,88 @@ export function ConnectorsPage({
 	platformConfigured,
 }: ConnectorsPageProps) {
 	const router = useRouter();
-	// Passive refresh: pick up sweep-driven connection-status changes (connected → degraded/disconnected,
-	// or backfilled inventory) without a manual reload. Soft-refresh only while the tab is visible.
-	useEffect(() => {
-		const id = setInterval(() => {
-			if (document.visibilityState === "visible") router.refresh();
-		}, 30_000);
-		return () => clearInterval(id);
-	}, [router]);
-	// Deep-link: `?type=cloud` (from the overview "Add new → Cloud") opens filtered to Clouds.
+	const queryClient = useQueryClient();
 	const searchParams = useSearchParams();
-	const initialGroup: GroupFilter =
-		searchParams.get("type") === "cloud" ? "clouds" : "all";
-	const [activeGroup, setActiveGroup] = useState<GroupFilter>(initialGroup);
-	const [searchQuery, setSearchQuery] = useState("");
+
 	const [viewMode, setViewMode] = useState<ViewMode>("card");
 	const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
 	const [detailOpen, setDetailOpen] = useState(false);
 
+	// ── The console filter standard (lib/query/README.md → "Server-side filters") ──────────
+	// store → URL sync → debounce → normalize → key. The bar used to be a Radix <Select>
+	// plus a raw <Input>, both banned; neither survived a navigation or a shared link.
+	const filters = useConnectorFilters((s) => s.filters);
+	const patchFilters = useConnectorFilters((s) => s.patch);
+	const resetFilters = useConnectorFilters((s) => s.reset);
+	useFilterUrlSync(useConnectorFilters, DEFAULT_CONNECTOR_FILTERS);
+	const debouncedSearch = useDebouncedValue(filters.search);
+	const query = useMemo(
+		() => normalizeConnectorQuery({ ...filters, search: debouncedSearch }),
+		[filters, debouncedSearch],
+	);
+
+	// Deep-link: `?type=cloud` (from the overview "Add new → Cloud") lands filtered to Clouds.
+	// Declared after the URL sync so the store is already hydrated from the URL when it runs.
+	const typeHandledRef = useRef(false);
+	useEffect(() => {
+		if (typeHandledRef.current) return;
+		typeHandledRef.current = true;
+		if (searchParams.get("type") === "cloud") patchFilters({ groups: ["clouds"] });
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only deep link
+	}, []);
+
+	// The board's rows + facet counts. The key carries the NORMALIZED query so two equivalent
+	// filter states share one cache entry.
+	//
+	// NOTE (follow-up, out of this lane's scope): `getConnectorsWithStatus()` takes no
+	// arguments, so the selection and the facet tally run in the queryFn rather than in SQL.
+	// `selectConnectors`/`buildConnectorFacets` are pure and take the same normalized query the
+	// action would, so moving them server-side is a signature change in
+	// `app/server/actions/connectors.ts` and nothing here.
+	const { data: view, isPlaceholderData } = useQuery({
+		queryKey: qk.connectors(orgSlug, query),
+		queryFn: async () =>
+			buildConnectorsView(
+				await getConnectorsWithStatus(),
+				query,
+				platformConfigured ?? {},
+			),
+		placeholderData: keepPreviousData,
+		staleTime: 30_000,
+		// The pristine view is already on the wire as this RSC's props — seed it rather than
+		// re-fetching a list the page was rendered with.
+		initialData: isPristineQuery(query)
+			? () => buildConnectorsView(integrations, query, platformConfigured ?? {})
+			: undefined,
+	});
+
+	/** Re-read the board after a mutation: the RSC props AND every cached connectors key. */
+	const refreshBoard = useCallback(() => {
+		router.refresh();
+		void queryClient.invalidateQueries({ queryKey: qk.connectors(orgSlug) });
+	}, [router, queryClient, orgSlug]);
+
+	// Passive refresh: pick up sweep-driven connection-status changes (connected → degraded/
+	// disconnected, or backfilled inventory) without a manual reload, while the tab is visible.
+	useEffect(() => {
+		const id = setInterval(() => {
+			if (document.visibilityState === "visible") refreshBoard();
+		}, 30_000);
+		return () => clearInterval(id);
+	}, [refreshBoard]);
+
+	// Connect/disconnect flows OUTSIDE this file (the cloud-connect sheets) refresh the route
+	// rather than this query. New props are the signal that they did, so the cached views are
+	// re-read too — otherwise a freshly connected cloud kept reading "Not connected".
+	const lastIntegrationsRef = useRef(integrations);
+	useEffect(() => {
+		if (lastIntegrationsRef.current === integrations) return;
+		lastIntegrationsRef.current = integrations;
+		void queryClient.invalidateQueries({ queryKey: qk.connectors(orgSlug) });
+	}, [integrations, orgSlug, queryClient]);
+
 	// Cloud connect flow (AWS/GCP/Azure/extra) — shared with the create-project cloud picker.
+	// Seeded from the RSC props, which are the freshest copy of the catalog on the page.
 	const cloudConnect = useCloudConnect({
 		integrations,
 		awsSetup: awsSetupProp,
@@ -219,8 +211,11 @@ export function ConnectorsPage({
 	const [isDisconnecting, setIsDisconnecting] = useState(false);
 	const [connectingSlug, setConnectingSlug] = useState<string | null>(null);
 
+	const rows = view?.rows ?? [];
+	const facets = view?.facets ?? { groups: [], health: [], vendors: [] };
+
 	// The selected connector is derived from the live list (by slug) so the manage
-	// sheet reflects fresh data after a router.refresh() (disconnect / rename / add).
+	// sheet reflects fresh data after a refresh (disconnect / rename / add).
 	const selectedIntegration = useMemo(
 		() => integrations.find((i) => i.slug === selectedSlug) ?? null,
 		[integrations, selectedSlug],
@@ -229,25 +224,6 @@ export function ConnectorsPage({
 	/** Looks up a connector by slug — used to glyph the connect-sheet headers. */
 	const bySlug = (slug: string | null | undefined) =>
 		slug ? integrations.find((i) => i.slug === slug) : undefined;
-
-	const groupCounts = useMemo(() => {
-		const counts: Record<string, number> = { all: integrations.length };
-		for (const i of integrations) counts[i.group] = (counts[i.group] ?? 0) + 1;
-		return counts;
-	}, [integrations]);
-
-	const filtered = useMemo(() => {
-		const q = searchQuery.trim().toLowerCase();
-		return integrations.filter((i) => {
-			if (activeGroup !== "all" && i.group !== activeGroup) return false;
-			if (!q) return true;
-			return (
-				i.name.toLowerCase().includes(q) ||
-				i.description.toLowerCase().includes(q) ||
-				i.organization.toLowerCase().includes(q)
-			);
-		});
-	}, [integrations, activeGroup, searchQuery]);
 
 	/** Initiates the connect flow (or adds another cloud account). */
 	const handleConnect = async (integration: ConnectorWithConnection) => {
@@ -333,7 +309,7 @@ export function ConnectorsPage({
 		try {
 			await reverifyCloudIdentity(integration.reverify_identity_id);
 			toast.success(`Re-verifying ${integration.name}…`);
-			router.refresh();
+			refreshBoard();
 		} catch (err) {
 			toast.error(
 				err instanceof Error ? err.message : `Failed to re-verify ${integration.name}`,
@@ -349,7 +325,7 @@ export function ConnectorsPage({
 		try {
 			await reverifyCloudIdentity(identityId);
 			toast.success("Re-verifying…");
-			router.refresh();
+			refreshBoard();
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to re-verify");
 		}
@@ -360,7 +336,7 @@ export function ConnectorsPage({
 		try {
 			await renameCloudIdentity(identityId, name);
 			toast.success("Account renamed.");
-			router.refresh();
+			refreshBoard();
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : "Failed to rename");
 		}
@@ -402,7 +378,7 @@ export function ConnectorsPage({
 			}
 			toast.success(`Disconnected ${integration.name}.`);
 			setDisconnectTarget(null);
-			router.refresh();
+			refreshBoard();
 		} catch (err) {
 			console.error("Disconnect error:", err);
 			// Surface the real reason. A ForbiddenError and a provider mismatch used to render as the
@@ -417,164 +393,140 @@ export function ConnectorsPage({
 		}
 	};
 
-	const visibleGroups = GROUP_META.filter(
-		(g) => activeGroup === "all" || g.id === activeGroup,
-	);
-
 	return (
 		<>
 			<div className="space-y-6">
-				{/* top bar — group filter + search + view toggle + docs */}
-				<div className="flex items-center gap-3">
-					<Select
-						value={activeGroup}
-						onValueChange={(v) =>
-							setActiveGroup(
-								v === "all"
-									? "all"
-									: (GROUP_META.find((g) => g.id === v)?.id ?? "all"),
-							)
-						}
-					>
-						<SelectTrigger className="h-9 w-44 shrink-0 rounded-md border-border/60 bg-muted/20">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{(
-								[
-									{ id: "all", label: "All" },
-									...GROUP_META.map((g) => ({
-										id: g.id,
-										label: g.label,
-									})),
-								] satisfies { id: GroupFilter; label: string }[]
-							).map((opt) => (
-								<SelectItem key={opt.id} value={opt.id}>
-									<span className="flex w-full items-center justify-between gap-3">
-										<span>{opt.label}</span>
-										<span className="font-mono text-[10px] text-muted-foreground">
-											{groupCounts[opt.id] ?? 0}
-										</span>
+				<PageHeader
+					title="Connectors"
+					description="Credentials Alethia acts through — cloud accounts, git providers, registries, chart repos, secret stores, observability sinks and DNS."
+					count={rows.length}
+				/>
+
+				<ConnectorsFilterBar
+					facets={facets}
+					end={
+						<>
+							<ViewToggle value={viewMode} onChange={setViewMode} />
+							<a
+								href="/docs/concepts/connectors"
+								target="_blank"
+								rel="noopener noreferrer"
+								title="What are connectors?"
+								className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground transition-colors hover:text-foreground"
+							>
+								<BookOpen className="size-4" />
+								<span className="sr-only">What are connectors?</span>
+							</a>
+						</>
+					}
+				/>
+
+				{/* Dim while a newly-keyed view is still resolving — keepPreviousData keeps the
+				    previous rows on screen instead of flashing a skeleton. */}
+				<div className={cn("space-y-6", isPlaceholderData && "opacity-60")}>
+					{GROUP_META.map((group) => {
+						const items = rows.filter((i) => i.group === group.id);
+						if (items.length === 0) return null;
+						const connected = items.filter((i) => i.connected).length;
+						const Icon = group.icon;
+						return (
+							<section key={group.id} className="space-y-3.5">
+								<div className="flex items-center gap-3">
+									<span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground">
+										<Icon className="size-3.5" />
 									</span>
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-					<div className="relative flex-1">
-						<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-						<Input
-							placeholder="Search connectors"
-							value={searchQuery}
-							onChange={(e) => setSearchQuery(e.target.value)}
-							className="h-9 border-border/60 bg-muted/20 pl-9 text-sm"
+									<h2 className="font-display text-[15px] font-semibold tracking-tight">
+										{group.label}
+									</h2>
+									<CountPill count={items.length} />
+									<a
+										href={group.docsHref}
+										target="_blank"
+										rel="noopener noreferrer"
+										title={`Learn about ${group.label.toLowerCase()} connectors`}
+										className="text-muted-foreground/70 transition-colors hover:text-foreground"
+									>
+										<BookOpen className="size-3.5" />
+									</a>
+									<span className="hidden max-w-[52ch] text-xs text-muted-foreground md:inline">
+										{group.description}
+									</span>
+									<span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+										{connected} connected
+									</span>
+								</div>
+
+								{viewMode === "card" ? (
+									<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
+										{items.map((integration) => (
+											<ConnectorCard
+												key={integration.id}
+												integration={integration}
+												canManage={canManage}
+												platformConfigured={
+													platformConfigured?.[integration.slug] ?? true
+												}
+												isConnecting={
+													connectingSlug === integration.slug ||
+													cloudConnect.connectingSlug === integration.slug
+												}
+												onConnect={() => handleConnect(integration)}
+												onManage={() => openManage(integration)}
+												onReverify={() => handleReverify(integration)}
+											/>
+										))}
+									</div>
+								) : (
+									<div className="overflow-hidden rounded-xl border border-border/60">
+										<Table>
+											<TableHeader>
+												<TableRow className="hover:bg-transparent">
+													<TableHead>Connector</TableHead>
+													<TableHead>Status</TableHead>
+													<TableHead>Details</TableHead>
+													<TableHead className="text-right">Action</TableHead>
+												</TableRow>
+											</TableHeader>
+											<TableBody>
+												{items.map((integration) => (
+													<ConnectorRow
+														key={integration.id}
+														integration={integration}
+														canManage={canManage}
+														platformConfigured={
+															platformConfigured?.[integration.slug] ?? true
+														}
+														isConnecting={
+															connectingSlug === integration.slug ||
+															cloudConnect.connectingSlug === integration.slug
+														}
+														onConnect={() => handleConnect(integration)}
+														onManage={() => openManage(integration)}
+														onReverify={() => handleReverify(integration)}
+													/>
+												))}
+											</TableBody>
+										</Table>
+									</div>
+								)}
+							</section>
+						);
+					})}
+
+					{rows.length === 0 && (
+						<EmptyState
+							className="border"
+							icon={<SearchX />}
+							title="No connectors match"
+							description={`None of the ${view?.total ?? integrations.length} connectors in the catalog match these filters.`}
+							action={
+								<Button variant="outline" onClick={resetFilters}>
+									Reset filters
+								</Button>
+							}
 						/>
-					</div>
-					<ViewToggle value={viewMode} onChange={setViewMode} />
-					<a
-						href="/docs/concepts/connectors"
-						target="_blank"
-						rel="noopener noreferrer"
-						title="What are connectors?"
-						className="flex size-9 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground transition-colors hover:text-foreground"
-					>
-						<BookOpen className="size-4" />
-						<span className="sr-only">What are connectors?</span>
-					</a>
+					)}
 				</div>
-
-				{visibleGroups.map((group) => {
-					const items = filtered.filter((i) => i.group === group.id);
-					if (items.length === 0) return null;
-					const connected = items.filter((i) => i.connected).length;
-					const Icon = group.icon;
-					return (
-						<section key={group.id} className="space-y-3.5">
-							<div className="flex items-center gap-3">
-								<span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground">
-									<Icon className="size-3.5" />
-								</span>
-								<h2 className="font-display text-[15px] font-semibold tracking-tight">
-									{group.label}
-								</h2>
-								<a
-									href={group.docsHref}
-									target="_blank"
-									rel="noopener noreferrer"
-									title={`Learn about ${group.label.toLowerCase()} connectors`}
-									className="text-muted-foreground/70 transition-colors hover:text-foreground"
-								>
-									<BookOpen className="size-3.5" />
-								</a>
-								<span className="hidden max-w-[52ch] text-xs text-muted-foreground md:inline">
-									{group.description}
-								</span>
-								<span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
-									{connected} / {items.length} connected
-								</span>
-							</div>
-
-							{viewMode === "card" ? (
-								<div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(280px,1fr))]">
-									{items.map((integration) => (
-										<ConnectorCard
-											key={integration.id}
-											integration={integration}
-											canManage={canManage}
-											platformConfigured={
-												platformConfigured?.[integration.slug] ?? true
-											}
-											isConnecting={
-													connectingSlug === integration.slug ||
-													cloudConnect.connectingSlug === integration.slug
-												}
-											onConnect={() => handleConnect(integration)}
-											onManage={() => openManage(integration)}
-											onReverify={() => handleReverify(integration)}
-										/>
-									))}
-								</div>
-							) : (
-								<div className="overflow-hidden rounded-xl border border-border/60">
-									<Table>
-										<TableHeader>
-											<TableRow className="hover:bg-transparent">
-												<TableHead>Connector</TableHead>
-												<TableHead>Status</TableHead>
-												<TableHead>Details</TableHead>
-												<TableHead className="text-right">Action</TableHead>
-											</TableRow>
-										</TableHeader>
-										<TableBody>
-											{items.map((integration) => (
-												<ConnectorRow
-													key={integration.id}
-													integration={integration}
-													canManage={canManage}
-													platformConfigured={
-														platformConfigured?.[integration.slug] ?? true
-													}
-													isConnecting={
-													connectingSlug === integration.slug ||
-													cloudConnect.connectingSlug === integration.slug
-												}
-													onConnect={() => handleConnect(integration)}
-													onManage={() => openManage(integration)}
-													onReverify={() => handleReverify(integration)}
-												/>
-											))}
-										</TableBody>
-									</Table>
-								</div>
-							)}
-						</section>
-					);
-				})}
-
-				{filtered.length === 0 && (
-					<div className="py-14 text-center text-sm text-muted-foreground">
-						No connectors match your search.
-					</div>
-				)}
 			</div>
 
 			<ConnectorDetailSheet
@@ -582,6 +534,11 @@ export function ConnectorsPage({
 				open={detailOpen}
 				onOpenChange={setDetailOpen}
 				canManage={canManage}
+				platformConfigured={
+					selectedIntegration
+						? (platformConfigured?.[selectedIntegration.slug] ?? true)
+						: true
+				}
 				isConnecting={
 					selectedIntegration
 						? connectingSlug === selectedIntegration.slug
@@ -610,7 +567,7 @@ export function ConnectorsPage({
 				onOpenChange={(open) => {
 					if (!open) {
 						setApiKeySlug(null);
-						router.refresh();
+						refreshBoard();
 					}
 				}}
 			>
