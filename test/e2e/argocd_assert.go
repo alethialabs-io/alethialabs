@@ -38,6 +38,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -708,6 +709,16 @@ func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 		// full describe each is long — this is the already-failing path, not a report.
 		maxWorkloadsDescribed = 4
 		maxLogLines           = "40"
+		// A CRASH-LOOPING container gets a much longer tail, because 40 lines is measured to be
+		// too few for exactly the case that matters most. falco on Talos dies at
+		// `Error: Initialization issues during scap_init`, and scap_init's specific sub-errors —
+		// the half that says WHICH probe requirement the kernel refused — scrolled off the top of
+		// the 40-line window (#2866). The run cost a cloud apply and still could not distinguish
+		// "Talos forbids BPF from containers" from "the chart is missing a mount".
+		//
+		// It is not the default because the reason 40 exists is still right: a chart with seven
+		// workloads must not bury the failing one. A crash-looping pod IS the failing one.
+		maxCrashLogLines = "400"
 	)
 	// ArgoCD's tracking label, tried FIRST because it needs no extra API calls.
 	//
@@ -822,8 +833,22 @@ func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 				fmt.Fprintf(&b, "\n  events for %s/%s:\n%s\n", ns, pod, ev[i:])
 			}
 		}
-		if logs, err := run(30*time.Second, "logs", "-n", ns, pod, "--all-containers", "--tail", maxLogLines); err == nil && strings.TrimSpace(logs) != "" {
-			fmt.Fprintf(&b, "\n  last %s log lines for %s/%s:\n%s\n", maxLogLines, ns, pod, logs)
+		// A restarting pod's CURRENT container may not have reached its failure yet — or may have
+		// produced nothing at all — so its live log can be empty while the crashed instance's log
+		// holds the entire diagnosis. `--previous` is the only way to read that one, and asking for
+		// it on a pod that has never restarted is an error, which is why it is gated on the restart
+		// count rather than attempted unconditionally.
+		tail := maxLogLines
+		if crashLooping(fields) {
+			tail = maxCrashLogLines
+			if prev, err := run(30*time.Second, "logs", "-n", ns, pod, "--all-containers",
+				"--previous", "--tail", tail); err == nil && strings.TrimSpace(prev) != "" {
+				fmt.Fprintf(&b, "\n  last %s log lines for %s/%s (PREVIOUS, crashed instance):\n%s\n",
+					tail, ns, pod, prev)
+			}
+		}
+		if logs, err := run(30*time.Second, "logs", "-n", ns, pod, "--all-containers", "--tail", tail); err == nil && strings.TrimSpace(logs) != "" {
+			fmt.Fprintf(&b, "\n  last %s log lines for %s/%s:\n%s\n", tail, ns, pod, logs)
 		}
 	}
 	if shown == 0 {
@@ -833,6 +858,36 @@ func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 		fmt.Fprintf(&b, "  every pod is Running and ready — the Degraded health is NOT pod readiness\n")
 	}
 	return b.String()
+}
+
+// crashLooping reports whether a pod line from the `custom-columns` listing above describes a
+// container that has died at least once.
+//
+// It reads the RESTARTS and REASON columns, and either one alone is enough. Both are needed
+// because they catch different moments of the same failure: `CrashLoopBackOff` is only set while
+// the kubelet is WAITING between attempts, so a pod sampled mid-restart shows a restart count and
+// no reason at all; and a container killed once but not yet backed off shows the reason before the
+// count is meaningful.
+//
+// RESTARTS is `containerStatuses[*].restartCount`, so for a multi-container pod it arrives as
+// `10,0` — any non-zero entry counts. A missing column renders as `<none>`, which parses as zero
+// and is correctly not a crash loop.
+//
+// `fields` is the whitespace-split line; a line too short to carry these columns is not a crash
+// loop rather than a panic, because this whole path runs while a run is ALREADY failing and must
+// not turn a diagnostic into a second failure.
+func crashLooping(fields []string) bool {
+	if len(fields) > 5 && strings.Contains(fields[5], "CrashLoopBackOff") {
+		return true
+	}
+	if len(fields) > 4 {
+		for _, n := range strings.Split(fields[4], ",") {
+			if v, err := strconv.Atoi(strings.TrimSpace(n)); err == nil && v > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // outOfSyncRef identifies one OutOfSync resource well enough to fetch it from the cluster.
