@@ -14,12 +14,12 @@ import {
 	Step,
 	StoredNote,
 	VerifySection,
-} from "@/components/connector/connection-ui";
+} from "@/components/connectors/connection-ui";
 import {
 	type VerifyOutcome,
 	useConnectionTest,
-} from "@/components/connector/use-connection-test";
-import { connectorAssetUrl } from "@/components/connector/connector-assets";
+} from "@/components/connectors/use-connection-test";
+import { connectorAssetUrl } from "@/components/connectors/connector-assets";
 import { GCP_PROJECT_ID_REGEX } from "@/lib/cloud-providers/gcp-wif";
 import { Download, ExternalLink, Terminal } from "lucide-react";
 import { useState } from "react";
