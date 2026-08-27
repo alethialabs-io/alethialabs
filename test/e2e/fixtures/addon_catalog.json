@@ -275,6 +275,9 @@
 			"backend": {
 				"replicas": 0
 			},
+			"chunksCache": {
+				"allocatedMemory": 1024
+			},
 			"singleBinary": {
 				"persistence": {
 					"size": "10Gi"
@@ -292,6 +295,11 @@
 		"namespace": "minio",
 		"values": {
 			"mode": "standalone",
+			"resources": {
+				"requests": {
+					"memory": "512Mi"
+				}
+			},
 			"persistence": {
 				"size": "50Gi"
 			},
