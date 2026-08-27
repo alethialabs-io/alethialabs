@@ -5,9 +5,44 @@ import * as React from "react"
 
 import { cn } from "./utils"
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+/**
+ * A table, in a wrapper that does NOT trap a sticky header.
+ *
+ * The wrapper used to be `overflow-x-auto`, and per spec `overflow-x: auto` computes `overflow-y`
+ * to `auto` as well. That made it a vertical scroll container which never scrolls — so
+ * `sticky top-0` on a `<thead>` stuck to a box with no overflow and did nothing. **Every sticky
+ * table header in the console was inert, and always had been.**
+ *
+ * `overflow-x: clip` is the fix rather than removing the wrapper: unlike `auto` and `scroll`, clip
+ * does NOT force the other axis, so `overflow-y` stays `visible`, the wrapper stops being a scroll
+ * container, and a sticky header sticks against the PAGE — the header follows you down a long
+ * list, which is what it was always claiming to do. It also drops the phantom horizontal scrollbar
+ * these tables were carrying.
+ *
+ * @param scroll opt back into horizontal scrolling for a genuinely wide table. This re-creates the
+ *   trap by definition, so a scrolling table must also give the wrapper a height (via `className`)
+ *   if it wants a sticky header — otherwise do not put `sticky` on its `<thead>` at all. A table
+ *   must not claim a behaviour it does not have.
+ */
+function Table({
+  className,
+  containerClassName,
+  scroll = false,
+  ...props
+}: React.ComponentProps<"table"> & {
+  scroll?: boolean
+  containerClassName?: string
+}) {
   return (
-    <div data-slot="table-container" className="relative w-full overflow-x-auto">
+    <div
+      data-slot="table-container"
+      data-scroll={scroll || undefined}
+      className={cn(
+        "relative w-full",
+        scroll ? "overflow-x-auto" : "overflow-x-clip",
+        containerClassName,
+      )}
+    >
       <table
         data-slot="table"
         className={cn("w-full caption-bottom text-sm", className)}

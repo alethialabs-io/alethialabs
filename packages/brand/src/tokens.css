@@ -637,29 +637,48 @@
    fit. An unnamed scale cannot be reasoned about, so each new surface picked a
    number by trying one until it looked right.
 
-   THESE ARE TODAY'S VALUES, DELIBERATELY. Naming them is not the moment to
-   re-layer the app — that would move surfaces relative to each other with no
-   way to tell a fix from a regression. Renumbering is a separate, visual change.
+   The first version of this block NAMED today's numbers and changed none of
+   them, so the diff carried no behaviour. Eleven lanes then used it, and three
+   hit the same wall: there was no rung between --z-raised (10) and the overlays
+   (50), so a lane needing "one above the handle it overlaps" had to leave a bare
+   `z-20`; and two pairs collided outright — overlay/header at 50, and
+   overlay-nested/frame at 60. An overlay beat the header only by portal DOM
+   order, which is precisely the accident a named scale exists to remove.
 
-   One collision is inherited and recorded rather than silently resolved:
-   --z-overlay-nested and --z-frame are both 60. That is already true on `dev`
-   (`z-[60]` in the agent's artifact controls vs `.vx-frame`), and it is harmless
-   only because the console does not wear the page frame. If the console ever
-   adopts the chrome, this is the line that has to move first.
+   So this is renumbered, with gaps. Renumbering IS a visual change, which is why
+   it is one deliberate step rather than a side effect: every rung has room to
+   grow, each pair that must outrank the other now does so by number, and nothing
+   needs to know its neighbour's value to sit above it.
 
-   `--z-overlay` sits at the same 50 as `--z-header`. Also inherited. The reason
-   overlays still paint above the header is DOM order in the portal, not z-index
-   — which is exactly the kind of accident this scale exists to make visible. */
+   Rung spacing is 10 below the chrome and 100 above it. That is not decoration:
+   the sub-chrome layers are in-flow lifts that occasionally need one step, while
+   the chrome-and-above layers are whole categories that should never interleave.
+
+   Values are NOT ordered by their old numbers — read the comments, not the
+   arithmetic. The only relationships that matter are the ones written here. */
 :root {
-  --z-sticky-head: 6;      /* a sticky table header inside a scroll container */
-  --z-raised: 10;          /* in-flow lift: canvas controls, table chrome, badges */
-  --z-header: 50;          /* the site header bar */
-  --z-overlay: 50;         /* dialog · sheet · popover · dropdown · tooltip · hover-card */
-  --z-rail: 55;            /* .vx-rail */
-  --z-grain: 58;           /* .vx-grain */
-  --z-frame: 60;           /* .vx-frame */
-  --z-overlay-nested: 60;  /* an overlay opened from inside another overlay */
-  --z-toast: 95;           /* toasts outrank everything; they report on it */
+  /* In-flow lifts. Ordered, closely spaced, never above the chrome. */
+  --z-sticky-head: 10;     /* a sticky table header inside a scroll region */
+  --z-raised: 20;          /* canvas controls, table chrome, an overlapping badge */
+  --z-sticky-bar: 30;      /* an in-page sticky action bar (the rung that was missing) */
+
+  /* Page chrome. Its INTERNAL order is preserved exactly as it shipped —
+     header < rail < grain < frame — because none of it was reported broken and
+     renumbering is not licence to reshuffle. The grain and the frame paint over
+     the header on purpose (they are pointer-events:none, so they cover it
+     without blocking it); site-header.tsx documents the frame case. */
+  --z-header: 100;         /* the site header bar */
+  --z-rail: 110;           /* .vx-rail */
+  --z-grain: 120;          /* .vx-grain */
+  --z-frame: 130;          /* .vx-frame */
+
+  /* Interaction. Above ALL chrome, by number now rather than by portal order:
+     a dropdown opened from the header has to cover the header. */
+  --z-overlay: 200;        /* dialog · sheet · popover · dropdown · tooltip · hover-card */
+  --z-overlay-nested: 210; /* an overlay opened from inside another overlay */
+
+  /* Reports on everything above, so it outranks everything above. */
+  --z-toast: 300;
 }
 
 /* ── Page chrome ─────────────────────────────────────────────────────────────

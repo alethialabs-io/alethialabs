@@ -465,7 +465,11 @@ const OUT_OF_SCOPE_PATHS = [
 	// Prose carve-out, by TREE: named for the surface, but documentation, not a code path.
 	"apps/docs/content/docs/console/connectors/aws.mdx",
 	"apps/docs/content/docs/console/design-project/keyless-database-auth.mdx",
-	"apps/marketing/components/landing/home/sections/keyless.tsx",
+	// Was apps/marketing/components/landing/home/sections/keyless.tsx, deleted by #2079's
+	// homepage rebuild. The entry outlived the file and passed silently for months, because
+	// expectOutOfScope() read a missing file as "" and an empty file is trivially out of
+	// scope. Repointed to where that prose actually lives now.
+	"apps/marketing/components/landing/home/verify-receipt.tsx",
 	// Prose carve-out, by file SHAPE: named for the surface (`oidc`, `connector`), outside every prose
 	// tree, and prose or an illustrative example all the same. An example key pasted into one of these
 	// must not wedge a required check on a docs-only change.
@@ -518,10 +522,31 @@ function runSelfTest() {
 	/** Hard-assert that a path is NOT in scope, reading its real content from the checkout. */
 	const expectOutOfScope = (file) => {
 		const abs = path.join(REPO_ROOT, file);
-		const content = fs.existsSync(abs) ? read(abs) : "";
+		// A MISSING fixture is a failure, not an empty file.
+		//
+		// This used to read `fs.existsSync(abs) ? read(abs) : ""`, so deleting a listed file
+		// silently degraded the assertion to "an empty file is out of scope" — trivially true for
+		// any content-anchored rule. The entry then sat in OUT_OF_SCOPE_PATHS looking like
+		// coverage while proving nothing.
+		//
+		// The sibling reportContentAnchored() only NOTES for the same case, and that asymmetry is
+		// deliberate: it reports on a LIVE security surface, where a refactor must not read as a
+		// regression. This is the gate's SELF-TEST, whose only job is to prove the gate still
+		// works — and a self-test that passes on a fixture that no longer exists misreports its
+		// own coverage. A path on a security carve-out list should cost an acknowledgement to
+		// delete.
+		if (!fs.existsSync(abs)) {
+			check(
+				`out of scope fixture exists: ${file}`,
+				false,
+				"this path is in OUT_OF_SCOPE_PATHS but no longer exists, so the assertion below cannot " +
+					"test anything. Drop the entry if the file is gone for good, or repoint it if the file moved.",
+			);
+			return;
+		}
 		check(
 			`out of scope: ${file}`,
-			!isRelevant(file, content),
+			!isRelevant(file, read(abs)),
 			"an unrelated path started matching — scope has been widened past the surface this gate is named for.",
 		);
 	};

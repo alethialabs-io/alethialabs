@@ -662,6 +662,11 @@ jobs:
         run: pnpm check:var-utility-shadowing
       - name: Authz scope (PDP, not ad-hoc user_id)
         run: pnpm -F console check:authz-scope
+      # Tailwind's `z-(--var)` shorthand generates NOTHING for z-index and fails silently —
+      # measured in a browser: the sibling `origin-(--transform-origin)` on the same element
+      # resolved while the z one produced `z-index: auto`. An invisible layering bug.
+      - name: No z-index utility uses the silently-empty (--var) shorthand
+        run: pnpm check:z-utility-syntax
       - name: Guard — revalidatePath targets resolve to real routes
         run: pnpm -F console check:revalidate-paths
       - name: Guard — no unauthorized "use server" action files
