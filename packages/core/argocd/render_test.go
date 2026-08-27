@@ -714,3 +714,58 @@ func keysOf(files map[string]string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// TestExternalDNS_AWSMatchesTheParentZone is the regression guard for the defect that made every
+// AWS Ingress unresolvable while external-dns reported Healthy.
+//
+// Route53 zone discovery filters the account's hosted zones through the SAME domainFilter external
+// -dns uses for records (provider/aws/aws.go:339, v0.15.0), and `matchFilter` accepts a zone only
+// when it EQUALS a filter or sits BELOW it. Alethia hands external-dns the per-environment
+// subdomain (`demo.example.com`), while the customer's delegated zone is the parent
+// (`example.com`) — so without `--aws-zone-match-parent` the controller finds ZERO zones, writes
+// nothing, and looks perfectly healthy doing it.
+//
+// Measured on aws/gitops run 33095437088: the Ingress carried its ALB address for the whole
+// 10-minute probe and no record appeared.
+func TestExternalDNS_AWSMatchesTheParentZone(t *testing.T) {
+	aws := renderAll(t, BuildFromOutputs(map[string]interface{}{
+		"eks_cluster_name":          "eks-demo",
+		"eks_irsa_external_dns_arn": "arn:aws:iam::acct-123:role/x",
+	}, cfg("aws")))["external-dns.yaml"]
+	if aws == "" {
+		t.Fatal("aws external-dns did not render at all — every assertion below would pass vacuously")
+	}
+	if !strings.Contains(aws, "--aws-zone-match-parent") {
+		t.Errorf("aws external-dns must pass --aws-zone-match-parent, or a cluster whose domain sits UNDER the customer's hosted zone finds no zone at all:\n%s", aws)
+	}
+	// The flag widens zone DISCOVERY; it must not widen which records are published. If the
+	// domainFilter ever stopped being the per-environment name, the parent zone would become
+	// fair game for records this deploy does not own.
+	if !strings.Contains(aws, "- demo.example.com") {
+		t.Errorf("aws external-dns must still bound its records by the per-environment domainFilter:\n%s", aws)
+	}
+
+	// A flag that does not exist on the other providers must not be rendered for them — external-dns
+	// exits on an unknown flag, which would turn a DNS gap into a CrashLoopBackOff.
+	for name, facts := range map[string]*InfraFacts{
+		"gcp": BuildFromOutputs(map[string]interface{}{
+			"gke_cluster_name":             "gke-demo",
+			"external_dns_service_account": "extdns@proj.iam.gserviceaccount.com",
+		}, cfg("gcp")),
+		"azure": BuildFromOutputs(map[string]interface{}{
+			"aks_cluster_name":       "aks-demo",
+			"external_dns_client_id": "client-guid",
+			"resource_group_name":    "rg-alethia-demo",
+			"azure_subscription_id":  "00000000-0000-0000-0000-0000000000aa",
+			"azure_tenant_id":        "00000000-0000-0000-0000-0000000000bb",
+		}, cfg("azure")),
+	} {
+		body := renderAll(t, facts)["external-dns.yaml"]
+		if body == "" {
+			t.Fatalf("%s external-dns did not render — the negative check would pass vacuously", name)
+		}
+		if strings.Contains(body, "aws-zone-match-parent") {
+			t.Errorf("%s external-dns must NOT carry the aws-only flag:\n%s", name, body)
+		}
+	}
+}
