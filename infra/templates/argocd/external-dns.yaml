@@ -86,6 +86,37 @@ spec:
         {{- end }}
         domainFilters:
           - {{ .DomainName }}
+        {{- if eq .DNSProvider "aws" }}
+        {{- /* WITHOUT this, external-dns finds ZERO zones and silently writes nothing.
+
+               Route53 zone discovery filters the account's hosted zones through the SAME
+               domainFilter set above (provider/aws/aws.go:339 in v0.15.0):
+
+                 if !p.domainFilter.Match(zone.Name) { if !p.zoneMatchParent { …skip… } }
+
+               and `matchFilter` only accepts a zone that EQUALS a filter or sits BELOW it —
+               never a zone ABOVE it. So a cluster on `prod.example.com` whose records live in
+               the customer's `example.com` zone matches nothing: dot counts differ, and
+               HasSuffix("example.com", ".prod.example.com") is false.
+
+               That is the normal shape, not an edge case. A customer delegates one zone and
+               runs many clusters under it, and Alethia hands external-dns the per-environment
+               subdomain as its filter. The controller then reports Healthy — it is running
+               fine, it simply has no zone to write into — while every Ingress it should
+               publish stays unresolvable.
+
+               MEASURED on aws/gitops run 33095437088. The Ingress had its ALB address
+               (k8s-argocd-argocdar-…elb.amazonaws.com) for the full 10-minute probe and no
+               record ever appeared. The ACM certificate issued in the same run, which looks
+               contradictory and is not: tofu writes the validation CNAME
+               (module.acm[0].aws_route53_record.cert_validation), never external-dns.
+
+               `--aws-zone-match-parent` is upstream's flag for exactly this. It widens ZONE
+               DISCOVERY only; which records get published is still bounded by domainFilters,
+               so the blast radius inside the parent zone is unchanged. */}}
+        extraArgs:
+          - --aws-zone-match-parent
+        {{- end }}
         txtOwnerId: {{ .Environment }}-{{ .Region }}-{{ .DNSZoneID }}
   destination:
     server: https://kubernetes.default.svc
