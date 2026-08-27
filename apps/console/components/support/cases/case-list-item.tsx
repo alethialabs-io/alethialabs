@@ -1,18 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { formatRelative } from "@repo/format";
 import { cn } from "@repo/ui/utils";
-import { formatDistanceToNow } from "date-fns";
 import Link from "next/link";
 import type { CaseListItem as CaseListItemData } from "@/lib/queries/support";
 import { SUPPORT_CATEGORY_LABELS } from "@/lib/validations/support";
 import { CaseSeverityBadge } from "./case-severity-badge";
 import { CaseStatusBadge } from "./case-status-badge";
+import { formatCaseNumber } from "./case-query";
 
-/** Formats a case number as the zero-padded `CASE-000123` reference. */
-export function formatCaseNumber(caseNumber: number): string {
-	return `CASE-${String(caseNumber).padStart(6, "0")}`;
-}
+// `formatCaseNumber` moved to the pure `case-query` module (the search predicate there
+// matches on the same reference, and a filter helper must not import a React component to
+// get it). Re-exported here only because two modules outside this change's scope —
+// components/shell/notifications-popover.tsx and hooks/use-support-toasts.ts — still import
+// it from this path; delete this line once they point at ./case-query.
+export { formatCaseNumber };
 
 /**
  * A single row in the "My cases" list: the case reference + subject, its status and
@@ -59,11 +62,7 @@ export function CaseListItem({
 				<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
 					<span>{SUPPORT_CATEGORY_LABELS[item.category]}</span>
 					<span aria-hidden>·</span>
-					<span>
-						{formatDistanceToNow(new Date(item.last_message_at), {
-							addSuffix: true,
-						})}
-					</span>
+					<span>{formatRelative(item.last_message_at)}</span>
 					{/* Whose case — shown only on rows the caller didn't open (i.e. an admin
 					    viewing the whole org's cases); their own rows stay uncluttered. */}
 					{!item.is_mine && item.requester_name && (
