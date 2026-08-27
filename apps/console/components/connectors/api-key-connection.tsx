@@ -14,7 +14,7 @@ import {
 } from "@repo/ui/form";
 import { Input } from "@repo/ui/input";
 import { FieldHelp } from "@repo/ui/field-help";
-import { StatusCallout, StoredNote } from "@/components/connector/connection-ui";
+import { StatusCallout, StoredNote } from "@/components/connectors/connection-ui";
 import type { ConnectorProviderMeta } from "@/lib/connectors/registry.generated";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
