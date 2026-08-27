@@ -416,27 +416,6 @@ func byoIacSeedJob(ctx context.Context, cp *ControlPlane, jobID, jobType string,
 	return nil
 }
 
-// byoIacPosture is the drift posture a DETECT_DRIFT job persisted, plus the drifted resource types
-// the non-vacuity check needs.
-type byoIacPosture struct {
-	InSync  bool
-	Drifted int
-	Details []struct {
-		Address string `json:"address"`
-		Type    string `json:"type"`
-		Kind    string `json:"kind"`
-	}
-}
-
-// types returns the drifted resources' types, for the "it drifted on OUR resource" assertion.
-func (p byoIacPosture) types() []string {
-	out := make([]string, 0, len(p.Details))
-	for _, d := range p.Details {
-		out = append(out, d.Type)
-	}
-	return out
-}
-
 // byoIacDriftCheck seeds + drives ONE real DETECT_DRIFT job whose state slot is aliased onto the
 // deploy's, so its refresh-only plan reconciles the deploy's REAL recorded state, and returns the
 // posture the runner persisted. It asserts the mechanics (SUCCESS, a non-empty state read, a
