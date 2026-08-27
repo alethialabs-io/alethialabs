@@ -16,10 +16,50 @@
 // AI-off console that assertion can only ever 503, so this file needs ALETHIA_AI_MOCK=1.
 
 import { expect, test, type Page } from "@playwright/test";
+import { closeDb, db, orgIdBySlug } from "./helpers/db";
+import { seedProject } from "./helpers/seed";
 
 const composer = (page: Page) => page.getByTestId("elench-composer");
 const menu = (page: Page) => page.getByTestId("mention-menu");
 const list = (page: Page) => page.getByTestId("mention-menu-list");
+
+/**
+ * Gives the persona's org enough taggable resources to overflow the @-mention menu.
+ *
+ * The scroll test below cannot assert scrolling against whatever the org happens to hold, and
+ * for this persona that is NOTHING. `searchMentions` merges only the org's OWN projects,
+ * clusters, jobs, connectors, runners, identities and artifacts — and filters connectors to
+ * the connected ones (`app/server/actions/mentions.ts`: "Only connected connectors are
+ * taggable"). That filter landed in 3bfb88fc on 2026-07-15, one day after this spec was
+ * written against the assumption that "the connector catalog alone comfortably overflows the
+ * menu". The catalog has not fed this menu since. Nothing caught it because the `elench-ux`
+ * project ran in no job — which is the dead zone this PR closes.
+ *
+ * So the test owns its fixture. Projects are the cheapest mention source (a direct insert, no
+ * cloud identity, no deploy), and 12 comfortably overflows a menu whose max height is at most
+ * 320px against ~36px rows, while staying under MAX_RESULTS = 40.
+ */
+async function seedTaggableResources(page: Page, count: number): Promise<void> {
+	await page.goto("/");
+	const slug = new URL(page.url()).pathname.split("/").filter(Boolean)[0];
+	if (!slug) throw new Error(`could not read an org slug from ${page.url()}`);
+
+	const orgId = await orgIdBySlug(slug);
+	if (!orgId) throw new Error(`no organization row for slug ${slug}`);
+
+	const rows = await db()<{ userId: string }[]>`
+		select "userId" from member where "organizationId" = ${orgId} limit 1`;
+	const userId = rows[0]?.userId;
+	if (!userId) throw new Error(`organization ${slug} has no member to own seeded projects`);
+
+	for (let i = 0; i < count; i++) {
+		await seedProject({ userId, orgId }, { name: `e2e-mention-${i}` });
+	}
+}
+
+test.afterAll(async () => {
+	await closeDb();
+});
 
 async function openElench(page: Page): Promise<void> {
 	await page.goto("/");
@@ -79,6 +119,11 @@ test.describe("Elench composer · @-mention menu", () => {
 	});
 
 	test("the results list actually scrolls", async ({ page }) => {
+		// Seed BEFORE opening: the menu reads the org's own resources, and this persona's org is
+		// empty by construction. Without this the list holds zero rows and cannot overflow, so the
+		// assertion below would be measuring the fixture, not the container.
+		await seedTaggableResources(page, 12);
+
 		await openElench(page);
 		const editor = composer(page);
 		await editor.click();
