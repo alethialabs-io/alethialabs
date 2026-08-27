@@ -428,3 +428,63 @@ func renderSyncErrors(errs map[string]error) string {
 	}
 	return b.String()
 }
+
+// byoAutoSyncPolicy is the `syncPolicy.automated` block a BYO chart Application must carry.
+//
+// A POINTER, because the whole of #2910 is the difference between "absent" and "present with both
+// sub-options false". Those two serialise almost identically to a careless reader and mean opposite
+// things: absent is never synced at all, present-with-false is synced once and then left alone.
+type byoAutoSyncPolicy struct {
+	Prune    *bool `json:"prune"`
+	SelfHeal *bool `json:"selfHeal"`
+}
+
+// interpretByoSyncPolicy is the verdict half of assertByoAutoSyncPolicy, split out so the three
+// outcomes are testable without a cluster.
+//
+// #2910: a BYO Application rendered with no `automated` policy never syncs, and NOTHING in
+// production syncs one — so the customer's chart deployed nothing, silently. The e2e's own
+// `triggerArgoSync` was the only sync of a BYO chart anywhere, which is exactly why the bug
+// survived: the harness proved a path the customer does not have.
+//
+// Both directions are checked. A missing policy is the regression that reintroduces the silent
+// no-op; prune or selfHeal being TRUE is the opposite regression, where Alethia starts deleting
+// resources a customer removed from their chart and reverting their live edits.
+func interpretByoSyncPolicy(app string, automated *byoAutoSyncPolicy) error {
+	if automated == nil {
+		return fmt.Errorf("BYO Application %s carries NO syncPolicy.automated — nothing in production ever syncs a BYO chart, so it would deploy nothing at all and report no error (#2910)", app)
+	}
+	if automated.Prune == nil || automated.SelfHeal == nil {
+		return fmt.Errorf("BYO Application %s has syncPolicy.automated with prune/selfHeal unset; both must be explicitly false", app)
+	}
+	if *automated.Prune {
+		return fmt.Errorf("BYO Application %s has prune=true — Alethia must not delete a customer's workload because their chart stopped declaring it (#2910)", app)
+	}
+	if *automated.SelfHeal {
+		return fmt.Errorf("BYO Application %s has selfHeal=true — ArgoCD must not fight an operator editing their own chart's resources (#2910)", app)
+	}
+	return nil
+}
+
+// assertByoAutoSyncPolicy reads the live Application and checks it can actually sync itself.
+func assertByoAutoSyncPolicy(ctx context.Context, kubeconfigPath, app string) error {
+	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", "argocd", "get", "applications.argoproj.io", app,
+		"-o", "jsonpath={.spec.syncPolicy.automated}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("read %s syncPolicy: %w: %s", app, err, strings.TrimSpace(string(out)))
+	}
+	raw := strings.TrimSpace(string(out))
+	// jsonpath prints NOTHING for an absent field — which is the regression, not a read failure.
+	if raw == "" {
+		return interpretByoSyncPolicy(app, nil)
+	}
+	var automated byoAutoSyncPolicy
+	if e := json.Unmarshal([]byte(raw), &automated); e != nil {
+		return fmt.Errorf("parse %s syncPolicy.automated %q: %w", app, raw, e)
+	}
+	return interpretByoSyncPolicy(app, &automated)
+}
