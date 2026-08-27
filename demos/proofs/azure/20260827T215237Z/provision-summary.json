@@ -1,0 +1,22 @@
+{
+  "provider": "azure",
+  "region": "swedencentral",
+  "cluster": "alethia-nl-33117780266-1",
+  "run_tag": "nightly-33117780266-1",
+  "outcome": "success",
+  "deploy_stage": "argocd-ready",
+  "git_sha": "165bc4c",
+  "captured_at": "20260827T215237Z",
+  "resources_added": 29,
+  "resources_destroyed": 1,
+  "cluster_live_at_capture": false,
+  "nodes_ready": 0,
+  "argocd_total": 0,
+  "argocd_healthy_synced": 0,
+  "argocd_verdict": "Healthy+Synced (T2-asserted)",
+  "receipt_signed": true,
+  "receipt_plan_sha256": "fb0a436d1b02",
+  "destroyed": true,
+  "duration_seconds": 1822,
+  "verdict": "azure: ✅ apply(29 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1)"
+}
