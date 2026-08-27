@@ -118,8 +118,39 @@ type addonIgnoreDifference struct {
 type addonSyncPolicy struct {
 	// Automated is nil for git (BYO) sources — an untrusted chart is not self-healed or pruned
 	// automatically. The template expressed the same split with an if/else.
-	Automated   *addonAutomated `yaml:"automated,omitempty"`
-	SyncOptions []string        `yaml:"syncOptions"`
+	Automated *addonAutomated `yaml:"automated,omitempty"`
+	// ManagedNamespaceMetadata labels the namespace ArgoCD creates under CreateNamespace=true.
+	// Nil unless the add-on declares a Pod Security level (#2837).
+	ManagedNamespaceMetadata *addonNamespaceMetadata `yaml:"managedNamespaceMetadata,omitempty"`
+	SyncOptions              []string                `yaml:"syncOptions"`
+}
+
+// addonNamespaceMetadata carries the labels ArgoCD stamps on the namespace it creates for an
+// Application. Used only to widen Pod Security admission for an add-on that genuinely needs host
+// access, and ONLY on that add-on's own namespace.
+type addonNamespaceMetadata struct {
+	Labels map[string]string `yaml:"labels,omitempty"`
+}
+
+// podSecurityEnforceLabel is the upstream label the PodSecurity admission plugin reads.
+const podSecurityEnforceLabel = "pod-security.kubernetes.io/enforce"
+
+// validPodSecurityLevels are the three levels the upstream label accepts. An add-on asking for
+// anything else is IGNORED rather than rendered: a typo must not silently become a namespace label
+// the API server rejects, taking the whole Application's sync down with it.
+var validPodSecurityLevels = map[string]bool{
+	"privileged": true,
+	"baseline":   true,
+	"restricted": true,
+}
+
+// namespaceMetadataFor renders an add-on's declared Pod Security level into namespace labels, or
+// nil when it declares none (leave the namespace unlabelled and the cluster default in force).
+func namespaceMetadataFor(level string) *addonNamespaceMetadata {
+	if !validPodSecurityLevels[level] {
+		return nil
+	}
+	return &addonNamespaceMetadata{Labels: map[string]string{podSecurityEnforceLabel: level}}
 }
 
 type addonAutomated struct {
@@ -235,7 +266,8 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 				JQPathExpressions: []string{".spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor"},
 			}},
 			SyncPolicy: addonSyncPolicy{
-				SyncOptions: []string{"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"},
+				SyncOptions:              []string{"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"},
+				ManagedNamespaceMetadata: namespaceMetadataFor(a.PodSecurity),
 			},
 			RevisionHistory: 3,
 		},

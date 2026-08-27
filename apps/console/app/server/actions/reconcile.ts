@@ -19,7 +19,7 @@ import { gitopsStatusReportSchema } from "@/lib/gitops/deploy-status";
 import { newTraceparent } from "@/lib/observability/trace";
 import { structuralHash } from "@/lib/promotions/diff";
 import { notifyScaler } from "@/lib/scaler";
-import { getLatestProbesByEnv } from "./probes";
+import { getLatestProbesByEnv } from "@/lib/probes/persistence";
 import { getProjectAsFormData } from "./projects";
 
 /** Circuit breaker: stop auto-healing an env after this many consecutive failed deploys. */

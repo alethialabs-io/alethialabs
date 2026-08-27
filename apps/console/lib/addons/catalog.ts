@@ -16,7 +16,12 @@ import {
 	type ChartWorkloadOverlay,
 	composeChartOverlay,
 } from "./chart-overlay";
-import { hasStoredSecret, secretFieldKeys, stripAddonSecrets } from "./secrets";
+import {
+	hasStoredSecret,
+	randomCredential,
+	secretFieldKeys,
+	stripAddonSecrets,
+} from "./secrets";
 import type { AddOnDef, AddOnInstallSpec, AddOnMode } from "./types";
 
 /**
@@ -154,6 +159,12 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "kube-prometheus-stack",
 		version: "61.9.0",
 		namespace: "monitoring",
+		// #2837: the bundled prometheus-node-exporter DaemonSet needs hostNetwork, hostPID and three
+		// hostPaths to read node metrics at all — every one forbidden by PodSecurity `baseline`, which
+		// Talos enforces on every namespace but kube-system. This is the more dangerous of the two,
+		// because the operator and Grafana come up fine and the stack LOOKS healthy; it is only the
+		// node metrics that are silently missing.
+		podSecurity: "privileged",
 		defaultValues: {
 			grafana: { enabled: true },
 			// Keep the footprint small by default; the knobs below tune it.
@@ -170,7 +181,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			grafana: z.boolean().default(true),
 			/** Grafana admin username (paired with the password in the same admin Secret). */
 			adminUser: z.string().min(1).default("admin"),
-			/** Grafana admin password (secret — encrypted at rest; empty = chart-generated). */
+			/** Grafana admin password (secret — encrypted at rest; empty = Alethia mints one, #2846). */
 			adminPassword: z.string().default(""),
 			/** Deploy Alertmanager alongside Prometheus. */
 			alertmanager: z.boolean().default(true),
@@ -196,7 +207,14 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		// (`grafana.admin.existingSecret` + userKey/passwordKey — verified via
 		// `helm template kube-prometheus-stack --version 61.9.0`). The password rides the
 		// #640 runner-seeded Secret; the username is not a secret, so it pairs in via
-		// secretStaticData. No stored password ⇒ no wiring (chart generates its own).
+		// secretStaticData.
+		//
+		// This comment used to end "No stored password ⇒ no wiring (chart generates its own)".
+		// IT DOES NOT. Decoding the rendered Secret at the catalog's own values gives
+		// `admin-user: admin` / `admin-password: prom-operator` — the goharbor-style published
+		// default, a constant sitting in the chart's values.yaml on GitHub. Because it is a
+		// CONSTANT the render never drifts, so nothing ever flagged it: the Application reports
+		// Healthy while Grafana accepts a password anyone can look up (#2846).
 		secretValues: (refs) =>
 			refs.adminPassword
 				? {
@@ -210,6 +228,11 @@ export const ADDON_CATALOG: AddOnDef[] = [
 					}
 				: {},
 		secretStaticData: (c) => ({ adminUser: c.adminUser }),
+		// #2846: a blank field must not mean "accept the chart's published default". Minting here
+		// sets `hasStoredSecret`, which makes resolveAddOnInstall emit a secretRef, which makes the
+		// wiring above point Grafana at a real credential instead of `prom-operator`.
+		generateSecrets: (present): Record<string, string> =>
+			present.has("adminPassword") ? {} : { adminPassword: randomCredential() },
 		fields: [
 			{
 				key: "retentionDays",
@@ -255,7 +278,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "Grafana admin password",
 				type: "secret",
 				secret: true,
-				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Empty = the chart generates one.",
+				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Leave it empty and Alethia mints one for you, ONCE — read it back with `kubectl -n monitoring get secret alethia-addon-kube-prometheus-stack`. It is not regenerated on a later save.",
 			},
 			{
 				key: "alertmanager",
@@ -714,6 +737,11 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		chart: "falco",
 		version: "4.9.0",
 		namespace: "falco",
+		// #2837: falco mounts ten hostPaths and runs `privileged: true` — every one of those is
+		// forbidden by PodSecurity `baseline`, which Talos enforces on every namespace but
+		// kube-system. Without this its DaemonSet is created, its pods are REJECTED, and it reports
+		// Progressing forever having monitored nothing.
+		podSecurity: "privileged",
 		configSchema: z.object({
 			/** Syscall capture driver. `auto` picks the best available for the kernel. */
 			driver: z.enum(["auto", "modern_ebpf", "ebpf", "kmod"]).default("auto"),
@@ -885,7 +913,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			mode: z.enum(["standalone", "distributed"]).default("standalone"),
 			/** Root (admin) username — paired with the password in the same Secret. */
 			rootUser: z.string().min(3).default("admin"),
-			/** Root password (secret — encrypted at rest; empty = chart-generated). */
+			/** Root password (secret — encrypted at rest; empty = Alethia mints one, #2822). */
 			rootPassword: z.string().default(""),
 		}),
 		toValues: (c) => ({
@@ -898,6 +926,14 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		secretValues: (refs) =>
 			refs.rootPassword ? { existingSecret: refs.rootPassword.name } : {},
 		secretStaticData: (c) => ({ rootUser: c.rootUser }),
+		// #2822: with no `existingSecret`, the minio chart mints a random rootUser AND rootPassword
+		// on EVERY render — verified by rendering 5.2.0 twice and diffing, which differs. ArgoCD
+		// re-renders on every reconcile, so the Secret is permanently OutOfSync and the credentials
+		// rotate under a running workload: anything that authenticated once stops working, with
+		// nothing to say why. A blank field therefore mints here instead, which sets
+		// `existingSecret` and stops the render moving.
+		generateSecrets: (present): Record<string, string> =>
+			present.has("rootPassword") ? {} : { rootPassword: randomCredential() },
 		fields: [
 			{ key: "storageGb", label: "Storage (GiB)", type: "number", default: 50, min: 5, max: 2000 },
 			{
@@ -916,7 +952,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "Root password",
 				type: "secret",
 				secret: true,
-				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Empty = the chart generates one.",
+				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Leave it empty and Alethia mints one for you, ONCE — read it back with `kubectl -n minio get secret alethia-addon-minio`. It is not regenerated on a later save.",
 			},
 		],
 		syncWave: 2,
@@ -942,8 +978,29 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			exposeType: z
 				.enum(["ingress", "clusterIP", "nodePort", "loadBalancer"])
 				.default("ingress"),
-			/** Harbor admin password (secret — encrypted at rest; empty = chart default). */
+			/** Harbor admin password (secret — encrypted at rest; empty = Alethia mints one, #2846). */
 			adminPassword: z.string().default(""),
+			/**
+			 * Harbor's data-encryption key (secret, MINTED — never shown in the form).
+			 *
+			 * The chart's default is the literal string `not-a-secure-key`, and this is the key
+			 * Harbor encrypts data at rest with — including the credentials of every registry it
+			 * replicates from. The key name is dictated by the chart: "If using
+			 * existingSecretSecretKey, the key must be secretKey".
+			 */
+			secretKey: z
+				.string()
+				// The 16-char rule is the CHART's, not a style preference — Harbor refuses to start
+				// on any other length. `generated: true` keeps this out of the form, but hidden is
+				// not unsettable: `enableAddon` validates the incoming values before stripping
+				// secrets, and every server action is reachable as a POST. So the invariant is
+				// enforced here rather than resting on the fact that our own minting happens to
+				// produce 16.
+				.refine((v) => v === "" || v.length === 16, {
+					message:
+						"Harbor's data-encryption key must be exactly 16 characters (leave it blank and Alethia mints one).",
+				})
+				.default(""),
 		}),
 		// RECREATE, NOT ROLLINGUPDATE — and this is a default rather than a knob on purpose.
 		//
@@ -978,13 +1035,27 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		// Harbor reads HARBOR_ADMIN_PASSWORD from `existingSecretAdminPassword` at the key
 		// named by `existingSecretAdminPasswordKey` — verified via `helm template harbor
 		// --version 1.15.1`. Rides the #640 runner-seeded Secret.
-		secretValues: (refs) =>
-			refs.adminPassword
+		secretValues: (refs) => ({
+			...(refs.adminPassword
 				? {
 						existingSecretAdminPassword: refs.adminPassword.name,
 						existingSecretAdminPasswordKey: "adminPassword",
 					}
-				: {},
+				: {}),
+			// The key NAME is not ours to choose — the chart requires literally `secretKey`.
+			...(refs.secretKey ? { existingSecretSecretKey: refs.secretKey.name } : {}),
+		}),
+		// #2846: a blank field must not mean "ship the chart's published default". Both of these
+		// are constants in goharbor's values.yaml on GitHub — `Harbor12345` and `not-a-secure-key`
+		// — so leaving them unset shipped a registry whose admin login and data-encryption key are
+		// public knowledge. Because they are CONSTANTS the render never drifted, so no sync status
+		// and no determinism check could ever have noticed.
+		generateSecrets: (present): Record<string, string> => {
+			const out: Record<string, string> = {};
+			if (!present.has("adminPassword")) out.adminPassword = randomCredential();
+			if (!present.has("secretKey")) out.secretKey = randomCredential(12);
+			return out;
+		},
 		fields: [
 			{ key: "storageGb", label: "Registry storage (GiB)", type: "number", default: 50, min: 10, max: 2000 },
 			{
@@ -1004,7 +1075,16 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "Admin password",
 				type: "secret",
 				secret: true,
-				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Empty = the chart default (change it on first login).",
+				help: "Stored encrypted; delivered to the cluster as a k8s Secret — never in the manifest. Leave it empty and Alethia mints one for you, ONCE — read it back with `kubectl -n harbor get secret alethia-addon-harbor`. It is not regenerated on a later save.",
+			},
+			{
+				// MINTED, never shown: the chart dictates the key name, and changing it after
+				// install makes Harbor unable to decrypt anything it has already stored.
+				key: "secretKey",
+				label: "Data encryption key",
+				type: "secret",
+				secret: true,
+				generated: true,
 			},
 		],
 		syncWave: 2,
@@ -1193,6 +1273,9 @@ export function resolveAddOnInstall(row: {
 		namespace: def.namespace,
 		values,
 		syncWave: def.syncWave,
+		// #2837: only when the add-on asks. An absent field leaves the namespace unlabelled and the
+		// cluster's own default in force.
+		...(def.podSecurity ? { podSecurity: def.podSecurity } : {}),
 		...(secretKeys.length > 0
 			? {
 					secretRef: {

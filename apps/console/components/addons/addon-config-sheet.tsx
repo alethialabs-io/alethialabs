@@ -404,9 +404,11 @@ export function AddonConfigSheet({
             </div>
 
             {/* Schema'd knobs — discriminated on field type (enum/secret/nested + scalars). */}
-            {item.fields.map((f) =>
-              renderField(f, f.key, item.install?.values?.[f.key]),
-            )}
+            {item.fields
+              // `generated` knobs are minted for the user and have no form (#2846): the chart
+              // dictates their key names, and nobody has an opinion about a CSRF key's value.
+              .filter((f) => !f.generated)
+              .map((f) => renderField(f, f.key, item.install?.values?.[f.key]))}
 
             {/* Advanced — raw Helm values */}
             <Collapsible>

@@ -253,7 +253,7 @@ describe("addChannel", () => {
 			created_by: "user-1",
 			secret: null,
 		});
-		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/alerts");
+		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/alerts", "page");
 	});
 
 	it("encrypts the secret for a webhook channel and stores the envelope", async () => {
@@ -316,7 +316,7 @@ describe("updateChannel", () => {
 		const written = setSpy.mock.calls[0][0];
 		expect(written.is_verified).toBe(false);
 		expect("secret" in written).toBe(false);
-		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/alerts");
+		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/alerts", "page");
 	});
 
 	it("re-encrypts and writes the secret when new fields arrive", async () => {
@@ -344,7 +344,7 @@ describe("channel toggles", () => {
 		const { whereSpy } = mockDb();
 		await deleteChannel("ch-1");
 		expect(whereSpy).toHaveBeenCalled();
-		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/alerts");
+		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/alerts", "page");
 	});
 
 	it("setChannelEnabled toggles enabled without resetting verification", async () => {
@@ -407,7 +407,7 @@ describe("createPolicy", () => {
 		expect(valuesSpy.mock.calls[0][0]).toMatchObject({ org_id: "org-1", name: "P", created_by: "user-1" });
 		expect(valuesSpy.mock.calls[1][0]).toEqual([{ rule_id: "rule-1", channel_id: UUID, min_severity: null }]);
 		expect(invalidateOrgRules).toHaveBeenCalledWith("org-1");
-		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/alerts");
+		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/alerts", "page");
 	});
 
 	it("rejects authz.* patterns without the advancedAlerting entitlement", async () => {
@@ -465,6 +465,6 @@ describe("updatePolicy / togglePolicy / deletePolicy", () => {
 		await deletePolicy("rule-1");
 		expect(whereSpy).toHaveBeenCalled();
 		expect(invalidateOrgRules).toHaveBeenCalledWith("org-1");
-		expect(revalidatePath).toHaveBeenCalledWith("/dashboard/alerts");
+		expect(revalidatePath).toHaveBeenCalledWith("/[org]/~/alerts", "page");
 	});
 });

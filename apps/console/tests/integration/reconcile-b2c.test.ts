@@ -13,7 +13,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { finalizeDeployment } from "@/app/server/actions/deployments";
+import { finalizeDeployment } from "@/lib/jobs/finalize-deployment";
 import { maybeAutoHeal } from "@/app/server/actions/reconcile";
 import { getServiceDb } from "@/lib/db";
 import { setEnvStatus, transitionEnv } from "@/lib/db/env-status";

@@ -15,7 +15,7 @@ import { beforeAll, afterAll, expect, it } from "vitest";
 import {
 	getLatestProbesByEnv,
 	recordProbeResult,
-} from "@/app/server/actions/probes";
+} from "@/lib/probes/persistence";
 import { getServiceDb } from "@/lib/db";
 import {
 	environmentProbes,

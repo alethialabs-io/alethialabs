@@ -377,6 +377,9 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 	var lastErr error
 	var lastLosers []string
 	var lastRefs []outOfSyncRef
+	// Carried so the deadline dump can tell an OutOfSync loser (which HAS a diff to fetch) from a
+	// Degraded-but-Synced one (which does not).
+	var lastObserved map[string]argoAppState
 	for {
 		raw, err := kubectlGetArgoApps(ctx, kubeconfigPath)
 		if err != nil {
@@ -384,10 +387,10 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 			// deadline — unlike ReadAddOnHealth's best-effort Unknown, a persistent failure
 			// here must FAIL, not soften.
 			lastErr = fmt.Errorf("listing ArgoCD Applications failed: %w", err)
-			lastLosers, lastRefs = nil, nil
+			lastLosers, lastRefs, lastObserved = nil, nil, nil
 		} else if observed, perr := parseArgoApps(raw); perr != nil {
 			lastErr = fmt.Errorf("parsing ArgoCD Applications failed: %w", perr)
-			lastLosers, lastRefs = nil, nil
+			lastLosers, lastRefs, lastObserved = nil, nil, nil
 		} else {
 			losers, everr := evaluateArgoApps(observed, expected)
 			if everr == nil {
@@ -395,10 +398,12 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 			}
 			lastErr, lastLosers = everr, losers
 			lastRefs = refsForLosers(observed, losers)
+			lastObserved = observed
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ArgoCD Applications did not all reach Healthy+Synced within %s:\n%v%s",
-				timeout, lastErr, describeArgoApps(ctx, kubeconfigPath, lastLosers)+dumpOutOfSyncResources(ctx, kubeconfigPath, lastRefs))
+				timeout, lastErr,
+				argoDeadlineDump(ctx, kubeconfigPath, lastObserved, lastLosers, lastRefs))
 		}
 		select {
 		case <-ctx.Done():
@@ -698,11 +703,19 @@ func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 	const (
 		// Three was enough for a Deployment; a DaemonSet on a multi-node cluster can have every pod
 		// unhappy for one reason, and seeing only three of them hides whether it is one node or all.
-		maxPods     = 6
-		maxLogLines = "40"
+		maxPods = 6
+		// A chart with several workloads (harbor has seven) must not bury the failing one, but a
+		// full describe each is long — this is the already-failing path, not a report.
+		maxWorkloadsDescribed = 4
+		maxLogLines           = "40"
 	)
-	// ArgoCD labels every resource it manages with the Application's name. That is how the pods are
-	// found without knowing which namespace the chart chose.
+	// ArgoCD's tracking label, tried FIRST because it needs no extra API calls.
+	//
+	// It is not reliable on its own, and the comment that used to sit here said it was: "ArgoCD
+	// labels every resource it manages with the Application's name". ArgoCD labels the WORKLOAD.
+	// Pods come from the workload's own template, so they carry this label only when the chart
+	// happens to put it there. falco's chart does; minio's uses `app`/`release`, so run
+	// 32970696343 reported "NONE match" for a Deployment that was running the whole time.
 	selector := "app.kubernetes.io/instance=" + app
 	run := func(timeout time.Duration, args ...string) (string, error) {
 		cctx, cancel := context.WithTimeout(ctx, timeout)
@@ -722,6 +735,36 @@ func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 		return fmt.Sprintf("\n──── pods for %s: could not list (%v) ────\n", app, err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
+
+	// Nothing under the tracking label. Before concluding anything about the cluster, ask each
+	// workload for the selector IT owns its pods by — definitionally correct for whatever the
+	// chart chose, so it cannot go stale the way a hard-coded label does.
+	workloads, wlErr := managedWorkloads(ctx, kubeconfigPath, app)
+	if len(lines) == 1 && lines[0] == "" && wlErr == nil {
+		for _, w := range workloads {
+			derived, derr := podSelectorFor(ctx, kubeconfigPath, w)
+			if derr != nil {
+				continue
+			}
+			alt, aerr := run(30*time.Second, "get", "pods", "-n", w.Namespace, "-l", derived, "--no-headers",
+				"-o", "custom-columns=NS:.metadata.namespace,NAME:.metadata.name,PHASE:.status.phase,"+
+					"READY:.status.containerStatuses[*].ready,RESTARTS:.status.containerStatuses[*].restartCount,"+
+					"REASON:.status.containerStatuses[*].state.waiting.reason")
+			if aerr != nil {
+				continue
+			}
+			altLines := strings.Split(strings.TrimSpace(alt), "\n")
+			if len(altLines) == 1 && altLines[0] == "" {
+				continue
+			}
+			// Say which selector worked. The next reader needs to know the tracking label was the
+			// wrong question, not that the first attempt was noise.
+			lines = altLines
+			selector = derived + " (from " + w.String() + "; the ArgoCD tracking label matched nothing)"
+			break
+		}
+	}
+
 	if len(lines) == 1 && lines[0] == "" {
 		// NO PODS. That is a DIFFERENT fact from "they are all fine" — but on its own it is ALSO
 		// ambiguous, and the first run to hit it proved so.
@@ -736,8 +779,20 @@ func dumpUnhealthyPods(ctx context.Context, kubeconfigPath, app string) string {
 		// The third would have this dump confidently blame a chart for something the harness got
 		// wrong. So ask ArgoCD what it thinks it manages: the Application's own `.status.resources`
 		// is the authority, and it distinguishes all three.
-		return fmt.Sprintf("\n──── pods for %s: NONE match %s ────%s\n", app, selector,
-			describeManagedWorkloads(ctx, kubeconfigPath, app))
+		// #2829: and even after all three are distinguished, "the workload exists and produced no
+		// pods" still arrives with no cause. Nothing ever asked the WORKLOAD. Its status and events
+		// are the only remaining place the answer can be, so dump them.
+		var b strings.Builder
+		fmt.Fprintf(&b, "\n──── pods for %s: NONE match %s, nor any workload's OWN selector ────%s\n",
+			app, selector, describeManagedWorkloads(ctx, kubeconfigPath, app))
+		for i, w := range workloads {
+			if i >= maxWorkloadsDescribed {
+				fmt.Fprintf(&b, "\n  … %d more workload(s) not described\n", len(workloads)-i)
+				break
+			}
+			b.WriteString(describeWorkload(ctx, kubeconfigPath, w))
+		}
+		return b.String()
 	}
 
 	var b strings.Builder
@@ -821,6 +876,152 @@ func (r outOfSyncRef) kubectlTarget() string {
 //
 // Best-effort and hard-capped: this runs on an ALREADY-FAILING path, so it must never be the reason
 // a run hangs or an error is lost.
+// argoDeadlineDump is EVERY diagnostic a timed-out ArgoCD wait should carry, in one place.
+//
+// It exists because there are two of these waits — AssertArgoAppsHealthy here, and the A0.6
+// repo-apps wait in t2_argo_repos.go — each with its own hand-assembled dump. #2834 added the
+// desired-vs-live diff to this file's caller and not the other one, so hetzner/maxconfig run
+// 32993552300 timed out with five OutOfSync StatefulSets and printed no diff at all: the run went
+// through the OTHER wait, which A0.6 enables.
+//
+// That is the whole argument for a single function. Two call sites assembling the same list by hand
+// will drift, and the drift is invisible until a run needs the missing half — by which point it has
+// already cost a real apply.
+func argoDeadlineDump(
+	ctx context.Context,
+	kubeconfigPath string,
+	observed map[string]argoAppState,
+	losers []string,
+	refs []outOfSyncRef,
+) string {
+	return describeArgoApps(ctx, kubeconfigPath, losers) +
+		dumpOutOfSyncResources(ctx, kubeconfigPath, refs) +
+		dumpArgoAppDiffs(ctx, kubeconfigPath, observed, losers)
+}
+
+// dumpArgoAppDiffs asks ArgoCD for the desired-vs-live diff of every OUT-OF-SYNC loser.
+//
+// Scoped to OutOfSync on purpose: a Degraded-but-Synced Application (external-dns crash-looping,
+// falco scheduling nothing) has no diff to show, and running the render for it would spend the
+// budget without adding a line.
+func dumpArgoAppDiffs(ctx context.Context, kubeconfigPath string, observed map[string]argoAppState, losers []string) string {
+	// One `--core` diff renders the chart, so this is the most expensive thing on the failing path.
+	const maxDiffedApps = 8
+
+	outOfSync := outOfSyncLosers(observed, losers)
+	if len(outOfSync) == 0 {
+		// Distinguishable from "we did not look": every loser is Degraded or Progressing while
+		// Synced, so there is genuinely no diff to fetch.
+		return "\n──── argocd app diff: no loser is OutOfSync, so there is no diff to show ────\n"
+	}
+	var b strings.Builder
+	b.WriteString("\n──── ArgoCD's OWN desired-vs-live diff, per OutOfSync Application ────\n")
+	for i, name := range outOfSync {
+		if i >= maxDiffedApps {
+			fmt.Fprintf(&b, "\n  … %d more OutOfSync Application(s) not diffed\n", len(outOfSync)-i)
+			break
+		}
+		b.WriteString(dumpArgoAppDiff(ctx, kubeconfigPath, name))
+	}
+	return b.String()
+}
+
+// outOfSyncLosers narrows the losing Applications to the ones an ArgoCD diff can say anything
+// about. Pure, so the narrowing is testable: diffing the wrong set either wastes the budget or
+// silently omits the app whose field is the whole question.
+func outOfSyncLosers(observed map[string]argoAppState, losers []string) []string {
+	var out []string
+	for _, name := range losers {
+		if st, ok := observed[name]; ok && st.Sync == "OutOfSync" {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// argoDiffExitCodeMeansDiff is the exit status `argocd app diff` uses to say "there IS a diff" —
+// the same convention `diff(1)` uses. It is a VERDICT, not a failure, and treating it as one is how
+// a dump ends up reporting nothing on precisely the runs it was written for.
+const argoDiffExitCodeMeansDiff = 1
+
+// dumpArgoAppDiff prints ArgoCD's own desired-vs-live diff for an Application.
+//
+// WHY. Every diagnostic before this one names the OBJECT that is OutOfSync and, since #2778, which
+// of its fields ArgoCD does not own. Neither names the FIELD THAT ACTUALLY DIFFERS. After three
+// runs, seven Applications across argo-rollouts, kyverno, loki, tempo and harbor still sat
+// Healthy+OutOfSync with `every field is ArgoCD-owned — no foreign default to blame`, and the field
+// was still unknown. #2778 is explicit that a guessed `ignoreDifferences` entry can MASK REAL DRIFT,
+// so guessing is not an option — which makes the missing field a harness gap, not a patience
+// problem.
+//
+// ArgoCD already computes this diff; nothing was asking it for the answer. `argocd app diff --core`
+// runs the API-server logic in-process against the in-cluster API, so it needs no ArgoCD login and
+// no port-forward — it is executed inside the argocd-server pod, where the ServiceAccount already
+// has the RBAC and the repo-server is reachable for manifest rendering.
+//
+// Best-effort on an ALREADY-FAILING path. It must never be why a run hangs or an error is lost, and
+// — the point of the constant above — "the command reported a difference" must never be mistaken
+// for "the command failed".
+func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
+	// Generous: --core renders the manifests through the repo-server, which pulls the chart.
+	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", "argocd", "exec", "deploy/argocd-server", "--",
+		"argocd", "app", "diff", app, "--core")
+	out, err := cmd.CombinedOutput()
+	return interpretArgoDiff(app, string(out), err)
+}
+
+// interpretArgoDiff turns `argocd app diff`'s output and exit status into a report section.
+//
+// Split out from the exec so the three outcomes can be tested without a cluster, because they are
+// easy to collapse into each other and two of them are opposite findings:
+//
+//	exit 1 + output   → A DIFF WAS FOUND. The success case, and the whole point of the command.
+//	exit 0 + no output → ArgoCD sees no difference even though the app reports OutOfSync. Real,
+//	                     specific, and NOT the same as "we could not look".
+//	anything else      → we could not ask. Must never render like "nothing differs".
+func interpretArgoDiff(app, raw string, err error) string {
+	text := strings.TrimSpace(raw)
+
+	if err != nil {
+		var exit *exec.ExitError
+		// Exit 1 WITH output is the success case: a diff was found and printed.
+		if !(errors.As(err, &exit) && exit.ExitCode() == argoDiffExitCodeMeansDiff && text != "") {
+			// Say what went wrong rather than printing nothing — "could not ask" and "nothing
+			// differs" are opposite findings and must not render the same.
+			if text == "" {
+				text = "(no output)"
+			}
+			return fmt.Sprintf("\n  ──── argocd app diff %s: could NOT be read (%v) ────\n  %s\n",
+				app, err, truncateDiff(text))
+		}
+	}
+
+	if text == "" {
+		// Exit 0 and nothing printed: ArgoCD itself sees no difference, even though the Application
+		// reports OutOfSync. That is a real and quite specific finding — a stale sync status, or a
+		// diff that lives only in ArgoCD's normalisation — and it deserves to be said out loud
+		// rather than silently rendering as an empty section.
+		return fmt.Sprintf("\n  ──── argocd app diff %s: reports NO difference, yet the Application is OutOfSync ────\n", app)
+	}
+	return fmt.Sprintf("\n  ──── argocd app diff %s ────\n%s\n", app, truncateDiff(text))
+}
+
+// maxArgoDiffBytes caps one Application's diff. A CRD's openAPIV3Schema is enormous, and the useful
+// part of a diff is the top.
+const maxArgoDiffBytes = 4000
+
+func truncateDiff(text string) string {
+	if len(text) <= maxArgoDiffBytes {
+		return text
+	}
+	return text[:maxArgoDiffBytes] + "\n… (diff truncated)"
+}
+
 func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []outOfSyncRef) string {
 	const (
 		// 17 OutOfSync refs against a cap of 8 on run 32959867406 — "… 9 more not shown" hid more
@@ -1016,38 +1217,180 @@ func refsForLosers(observed map[string]argoAppState, losers []string) []outOfSyn
 //
 // Best-effort on an already-failing path: an error is reported as an inability to check, never as an
 // absence.
-func describeManagedWorkloads(ctx context.Context, kubeconfigPath, app string) string {
+// managedWorkload is one pod-producing resource an Application says it created.
+type managedWorkload struct {
+	Kind      string
+	Name      string
+	Namespace string
+	Health    string
+}
+
+func (w managedWorkload) String() string {
+	return fmt.Sprintf("%s/%s in %s %s", w.Kind, w.Name, w.Namespace, w.Health)
+}
+
+// podProducingKinds are the kinds worth chasing for pods. A ConfigMap tells us nothing on a
+// failing path.
+var podProducingKinds = map[string]bool{
+	"DaemonSet": true, "Deployment": true, "StatefulSet": true,
+	"Job": true, "CronJob": true, "ReplicaSet": true,
+}
+
+// managedWorkloads reads the pod-producing resources an Application believes it created, from
+// `.status.resources` — ArgoCD's own record of what it applied.
+func managedWorkloads(ctx context.Context, kubeconfigPath, app string) ([]managedWorkload, error) {
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
 		"get", "applications.argoproj.io", "-n", "argocd", app,
-		"-o", "jsonpath={range .status.resources[*]}{.kind}/{.name} {.health.status}{\"\\n\"}{end}",
+		"-o", "jsonpath={range .status.resources[*]}{.kind}|{.name}|{.namespace}|{.health.status}{\"\\n\"}{end}",
 	).Output()
+	if err != nil {
+		return nil, err
+	}
+	return parseManagedWorkloads(string(out)), nil
+}
+
+// parseManagedWorkloads turns the `kind|name|namespace|health` lines into workloads, keeping only
+// the pod-producing kinds. Split out from the kubectl call so it can be tested without a cluster.
+func parseManagedWorkloads(raw string) []managedWorkload {
+	var ws []managedWorkload
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+		parts := strings.Split(strings.TrimSpace(line), "|")
+		// A namespace is required: it is how the pod query is scoped, and a workload without one
+		// would silently widen the search to every namespace.
+		if len(parts) < 3 || !podProducingKinds[parts[0]] || parts[1] == "" || parts[2] == "" {
+			continue
+		}
+		w := managedWorkload{Kind: parts[0], Name: parts[1], Namespace: parts[2]}
+		if len(parts) > 3 {
+			w.Health = parts[3]
+		}
+		ws = append(ws, w)
+	}
+	sort.Slice(ws, func(a, b int) bool { return ws[a].String() < ws[b].String() })
+	return ws
+}
+
+// podSelectorFor asks a workload for the label selector IT uses to own its pods.
+//
+// This is the authoritative answer, and the reason this function exists: the pod-template labels
+// are the CHART's choice, not ArgoCD's, so no single hard-coded selector can be right for every
+// chart. Reading `.spec.selector.matchLabels` cannot go stale, because it is definitionally the
+// selector the workload itself matches on.
+func podSelectorFor(ctx context.Context, kubeconfigPath string, w managedWorkload) (string, error) {
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"get", strings.ToLower(w.Kind), "-n", w.Namespace, w.Name,
+		"-o", "jsonpath={.spec.selector.matchLabels}",
+	).Output()
+	if err != nil {
+		return "", err
+	}
+	sel, err := selectorFromMatchLabels(string(out))
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", w, err)
+	}
+	return sel, nil
+}
+
+// selectorFromMatchLabels turns a `.spec.selector.matchLabels` JSON object into a kubectl `-l`
+// selector. Split out from the kubectl call so it can be tested without a cluster.
+//
+// An EMPTY or absent matchLabels is an ERROR, never an empty selector: `kubectl get pods -l ""`
+// matches EVERYTHING in the namespace, so returning "" here would turn "I could not determine the
+// selector" into a dump of unrelated pods presented as this workload's.
+func selectorFromMatchLabels(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", errors.New("no .spec.selector.matchLabels")
+	}
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(trimmed), &labels); err != nil {
+		return "", fmt.Errorf("unreadable matchLabels: %w", err)
+	}
+	if len(labels) == 0 {
+		return "", errors.New("empty matchLabels")
+	}
+	// Deterministic order: this string appears in a log a human compares between runs.
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		if k == "" || labels[k] == "" {
+			return "", fmt.Errorf("matchLabels has a blank key or value: %q=%q", k, labels[k])
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, k+"="+labels[k])
+	}
+	return strings.Join(pairs, ","), nil
+}
+
+// describeManagedWorkloads reports the workload-bearing resources an Application says it manages,
+// so "no pods" can be read correctly rather than assumed.
+//
+// It exists because "no pods matched my selector" is a statement about the SELECTOR as much as about
+// the cluster, and a dump that cannot tell those apart will eventually blame a chart for a harness
+// bug. ArgoCD's `.status.resources` is what it believes it created, so:
+//
+//	a DaemonSet/Deployment IS listed, and no pods    → the workload exists and produced none. Real.
+//	nothing workload-bearing is listed               → the chart rendered none. Also real, different.
+//	resources listed but the selector found nothing  → suspect the SELECTOR, not the chart.
+//
+// Best-effort on an already-failing path: an error is reported as an inability to check, never as an
+// absence.
+func describeManagedWorkloads(ctx context.Context, kubeconfigPath, app string) string {
+	ws, err := managedWorkloads(ctx, kubeconfigPath, app)
 	if err != nil {
 		return fmt.Sprintf("\n  (could not read what %s manages: %v — so whether the workload exists is UNKNOWN)", app, err)
 	}
-
-	var workloads []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		// The kinds that produce pods. A ConfigMap telling us nothing is noise on a failing path.
-		for _, kind := range []string{"DaemonSet/", "Deployment/", "StatefulSet/", "Job/", "CronJob/", "ReplicaSet/"} {
-			if strings.HasPrefix(line, kind) {
-				workloads = append(workloads, line)
-				break
-			}
-		}
-	}
-
-	if len(workloads) == 0 {
+	if len(ws) == 0 {
 		return "\n  ArgoCD lists NO workload-bearing resource for this Application — the chart rendered none," +
 			"\n  so there is nothing to produce a pod. Not a scheduling problem."
 	}
-	sort.Strings(workloads)
-	return fmt.Sprintf("\n  but ArgoCD says it manages %d workload(s), so either they produced no pods or this"+
-		"\n  selector is wrong — check the label before blaming the chart:\n    %s",
-		len(workloads), strings.Join(workloads, "\n    "))
+	names := make([]string, 0, len(ws))
+	for _, w := range ws {
+		names = append(names, w.String())
+	}
+	return fmt.Sprintf("\n  ArgoCD says it manages %d workload(s):\n    %s",
+		len(ws), strings.Join(names, "\n    "))
+}
+
+// describeWorkload dumps a workload's own status and events — what actually explains a workload
+// that exists and has produced no pods.
+//
+// hetzner `addons` run 32970696343 is the case: falco's DaemonSet was listed, its pod-template
+// labels were CORRECT, and the dump still could not say why zero pods existed, because nothing
+// ever asked the DaemonSet. `desiredNumberScheduled: 0` and a FailedPlacement event are both in
+// here, and they mean different things.
+func describeWorkload(ctx context.Context, kubeconfigPath string, w managedWorkload) string {
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"describe", strings.ToLower(w.Kind), "-n", w.Namespace, w.Name).CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("\n  (could not describe %s: %v)\n", w, err)
+	}
+	text := string(out)
+	// The status/events tail, not the spec — the Application above already rendered the spec.
+	if i := strings.Index(text, "Pod Template:"); i > 0 {
+		text = text[:i] + "…\n" + tailAfter(text, "Events:")
+	}
+	const maxWorkloadDescribe = 2500
+	if len(text) > maxWorkloadDescribe {
+		text = text[:maxWorkloadDescribe] + "\n… (truncated)"
+	}
+	return fmt.Sprintf("\n  ──── %s ────\n%s\n", w, text)
+}
+
+// tailAfter returns everything from `marker` onward, or "" when the marker is absent — so a
+// missing Events block reads as absent rather than silently returning the whole document.
+func tailAfter(text, marker string) string {
+	if i := strings.Index(text, marker); i >= 0 {
+		return text[i:]
+	}
+	return ""
 }
