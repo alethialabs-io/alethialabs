@@ -379,3 +379,43 @@ func TestRenderAddOnAutomatedSyncPolicy(t *testing.T) {
 		}
 	})
 }
+
+// The CRD ignore that #2907/#2947 finally made it possible to measure. `spec.preserveUnknownFields`
+// was REMOVED in apiextensions.k8s.io/v1 — the API server accepts `false` and does not persist it —
+// so a chart still declaring it renders a field the cluster never reports back, and the Application
+// sits OutOfSync forever on a value nobody can change. argo-rollouts declares it on all five of its
+// CRDs, which is exactly the five ArgoCD's diff named on hetzner/addons run 33067969126.
+func TestRenderAddOnIgnoresRemovedCRDField(t *testing.T) {
+	a := sampleAddOn()
+	manifest, err := RenderAddOnApplication(a)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	for _, want := range []string{
+		"group: apiextensions.k8s.io",
+		"kind: CustomResourceDefinition",
+		"/spec/preserveUnknownFields",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Errorf("manifest missing %q\n---\n%s", want, manifest)
+		}
+	}
+
+	// The Deployment entry must SURVIVE. Both are ignoreDifferences and it would be easy to replace
+	// rather than append — that would silently reintroduce the terminatingReplicas diff #2778 fixed.
+	for _, want := range []string{
+		"kind: Deployment",
+		"/status/terminatingReplicas",
+		".spec.template.spec.containers[]?.env[]?.valueFrom.resourceFieldRef.divisor",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Errorf("the pre-existing Deployment ignore was lost: missing %q\n---\n%s", want, manifest)
+		}
+	}
+
+	// RespectIgnoreDifferences is what makes the SYNC honour them, not just the diff view. Without
+	// it the entries above change the display and nothing else.
+	if !strings.Contains(manifest, "RespectIgnoreDifferences=true") {
+		t.Errorf("ignoreDifferences without RespectIgnoreDifferences only changes the view\n---\n%s", manifest)
+	}
+}
