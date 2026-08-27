@@ -9,7 +9,7 @@
 // the caller can't manage; security
 // (authz.*) events are locked without the advancedAlerting entitlement.
 
-import { Bell, Plus, Search, Trash2 } from "lucide-react";
+import { Bell, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
@@ -24,6 +24,9 @@ import {
 	ChannelRouting,
 } from "@/components/alerts/channel-routing";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
+import { PoliciesFilterBar } from "@/components/alerts/alerts-filter-bar";
+import type { PoliciesView } from "@/components/alerts/alerts-filters";
+import { policyBadge } from "@/components/alerts/alerts-status";
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import { useAssignmentsForKind } from "@/lib/query/use-classification-query";
@@ -36,11 +39,12 @@ import {
 import { PolicySheet } from "@/components/alerts/policy-sheet";
 import { isSeverity, toMinSeverity } from "@/components/alerts/policy-shared";
 import { ThrottleField } from "@/components/alerts/throttle-field";
-import { isSecurityKey } from "@/lib/alerts/catalog";
 import { useAlertsSection } from "@/lib/stores/use-alerts-section";
 import type { PolicyInput } from "@/lib/validations/alerts";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { Switch } from "@repo/ui/switch";
 import { Textarea } from "@repo/ui/textarea";
 import { cn } from "@repo/ui/utils";
@@ -78,6 +82,8 @@ function draftFrom(p: PolicyDTO): Draft {
 
 interface PoliciesPanelProps {
 	bootstrap: AlertsBootstrap;
+	/** The filter standard's resolved view — rows, facets, active-filter count. */
+	view: PoliciesView;
 	onChanged: () => void;
 	onOpenChannel: (id?: string) => void;
 }
@@ -85,6 +91,7 @@ interface PoliciesPanelProps {
 /** Policies master-detail. */
 export function PoliciesPanel({
 	bootstrap,
+	view,
 	onChanged,
 	onOpenChannel,
 }: PoliciesPanelProps) {
@@ -92,7 +99,6 @@ export function PoliciesPanel({
 	const selectedId = useAlertsSection((s) => s.selectedPolicyId);
 	const setSelectedId = useAlertsSection((s) => s.setSelectedPolicyId);
 
-	const [query, setQuery] = useState("");
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState<Draft | null>(null);
 	const [saving, setSaving] = useState(false);
@@ -101,9 +107,7 @@ export function PoliciesPanel({
 
 	const selected =
 		policies.find((p) => p.id === selectedId) ?? policies[0] ?? null;
-	const filtered = policies.filter(
-		(p) => !query.trim() || p.name.toLowerCase().includes(query.toLowerCase()),
-	);
+	const { rows, facets } = view;
 	// One batched query hydrates every rail row's classification chips.
 	const { data: classMap = {} } = useAssignmentsForKind(
 		"alert_rule",
@@ -201,27 +205,15 @@ export function PoliciesPanel({
 	return (
 		<div>
 			{policies.length === 0 ? (
-				<EmptyState canManage={canManage} action={newPolicyBtn} />
+				<EmptyState
+					icon={<Bell />}
+					title="No policies yet"
+					description={`A policy watches a set of events and routes matches to your channels.${canManage ? " Create one to start." : ""}`}
+					action={canManage ? newPolicyBtn : undefined}
+				/>
 			) : (
 				<>
-					{/* toolbar */}
-					<div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-						<div className="flex items-center gap-3">
-							<div className="relative w-[230px]">
-								<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-								<Input
-									value={query}
-									onChange={(e) => setQuery(e.target.value)}
-									placeholder="Search policies"
-									className="h-9 border-border/60 bg-muted/20 pl-9 text-sm"
-								/>
-							</div>
-							<span className="font-mono text-[10px] text-muted-foreground">
-								{policies.length} policies
-							</span>
-						</div>
-						{newPolicyBtn}
-					</div>
+					<PoliciesFilterBar facets={facets} action={newPolicyBtn} />
 
 					{/* master-detail */}
 					<div className="flex flex-wrap items-start gap-4">
@@ -229,12 +221,12 @@ export function PoliciesPanel({
 							<div className="px-4 py-3 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/70">
 								Policies
 							</div>
-							{filtered.length === 0 ? (
+							{rows.length === 0 ? (
 								<div className="px-4 py-4 text-muted-foreground/70 text-xs">
-									No policies match.
+									No policies match these filters.
 								</div>
 							) : (
-								filtered.map((p) => (
+								rows.map((p) => (
 									<button
 										key={p.id}
 										type="button"
@@ -250,14 +242,7 @@ export function PoliciesPanel({
 												: "border-l-transparent",
 										)}
 									>
-										<span
-											className={cn(
-												"size-2 flex-none rounded-full",
-												p.enabled
-													? "bg-foreground ring-4 ring-muted/60"
-													: "border-[1.5px] border-border",
-											)}
-										/>
+										<StatusBadge {...policyBadge(p)} showLabel={false} />
 										<span className="min-w-0 flex-1">
 											<span className="block truncate font-medium text-[13px]">
 												{p.name}
@@ -346,30 +331,6 @@ export function PoliciesPanel({
 					setDeleteTarget(null);
 				}}
 			/>
-		</div>
-	);
-}
-
-function EmptyState({
-	canManage,
-	action,
-}: {
-	canManage: boolean;
-	action: React.ReactNode;
-}) {
-	return (
-		<div className="flex flex-col items-center justify-center py-16 text-center">
-			<div className="mb-4 flex size-11 items-center justify-center rounded-full bg-muted/50 text-muted-foreground">
-				<Bell className="size-5" />
-			</div>
-			<h3 className="mb-1 font-medium text-sm text-foreground">
-				No policies yet
-			</h3>
-			<p className="max-w-sm text-muted-foreground text-xs">
-				A policy watches a set of events and routes matches to your channels.
-				{canManage ? " Create one to start." : ""}
-			</p>
-			{canManage && <div className="mt-4">{action}</div>}
 		</div>
 	);
 }
@@ -495,9 +456,7 @@ function PolicyDetail({
 					</div>
 				</div>
 				<div className="flex flex-none items-center gap-2">
-					<span className="font-mono text-[10px] text-muted-foreground">
-						{policy.enabled ? "Enabled" : "Off"}
-					</span>
+					<StatusBadge {...policyBadge(policy)} className="text-[10px]" />
 					<Switch
 						checked={policy.enabled}
 						disabled={!canManage || ed}
