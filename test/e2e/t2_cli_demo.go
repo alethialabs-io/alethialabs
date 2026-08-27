@@ -30,6 +30,20 @@ package e2e
 // kinds hide inside a "the cloud cannot do this" sentence (see maxconfig.go's DeferredInProduct).
 //
 // Opt-in via ALETHIA_E2E_CLI_DEMO=1.
+//
+// ⚠️ THIS BAR REDS THE PROVISIONING CELL, NOT JUST THE CLI BOARD. The workflow runs the CLI-only
+// demo step inside the SAME job as the real-cloud provisioning proof (e2e-nightly.yml, "CLI-only
+// demo bar (reachability — no cloud, no spend)"), so a FAILING bar fails the job, and the nightly
+// rollup records that leg as RED however well the cluster itself came up.
+//
+// gcp/maxconfig run 33107356336 is the worked example: A0.6 proven, all five Applications
+// Healthy+Synced, ALL ELEVEN max-config kinds in tofu state, day-2 access proven on nine nodes —
+// and the leg still went red, partly because ONE ceiling below said "nobody has done this" about
+// work that had in fact been done and merely never attested.
+//
+// So an unsatisfied ceiling here is not a scoreboard footnote; it is a spend decision. Keep the
+// SatisfiedBy probes honest in BOTH directions: a ceiling that is met and still reads unmet burns a
+// paid run, and one that reads met while unmet turns a cloud gap into a green cell.
 
 import (
 	"fmt"

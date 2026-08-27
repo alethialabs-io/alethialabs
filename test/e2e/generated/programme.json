@@ -513,7 +513,7 @@
 			"id": "gcp-budget-publisher",
 			"title": "Grant the GCP billing-budgets agent its Pub/Sub publisher binding",
 			"reach": "cloud_manual",
-			"why": "billing-budgets@system.gserviceaccount.com needs a publisher binding that must be granted out of band in the Cloud Console before the binding can be imported. Until then the budget's alerts are undeliverable — the stack's own cost guard is the one resource that does not come up",
+			"why": "billing-budget-alert@system.gserviceaccount.com needs a publisher binding that must be granted out of band in the Cloud Console before the binding can be imported. Until then the budget's alerts are undeliverable — the stack's own cost guard is the one resource that does not come up",
 			"issue": "#1871",
 			"clouds": [
 				"gcp"
