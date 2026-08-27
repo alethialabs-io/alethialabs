@@ -29,7 +29,7 @@
     "check:tofu-lockfiles": "node scripts/check-tofu-lockfiles.mjs",
     "check:migrations": "node scripts/check-migrations.mjs",
     "check:compat": "node scripts/check-compat.mjs",
-    "check:dead-code": "node -e \"const{globSync}=require('node:fs');if(typeof globSync!=='function'){console.error('check:dead-code: fs.globSync is unavailable (needs Node >=22) — refusing to run knip without a verified entry surface');process.exit(1)}const e=require('./knip.json').entry;const dead=e.filter(g=>globSync(g).length===0);if(dead.length){console.error('check:dead-code: knip entry pattern(s) match NO files: '+dead.join(', ')+'. knip would then analyse nothing and report nothing — which is NOT the same as nothing being wrong.');process.exit(1)}console.error('check:dead-code: '+e.length+' entry patterns resolve to '+e.reduce((n,g)=>n+globSync(g).length,0)+' paths')\" && knip --no-progress",
+    "check:dead-code": "node scripts/check-dead-code.mjs",
     "gen:connectors": "node scripts/gen-connectors.mjs",
     "gen:docs-index": "node scripts/gen-docs-index.mjs",
     "gen:catalog": "node scripts/gen-catalog.mjs",

@@ -11,31 +11,70 @@
     "app/globals.css",
     "vitest.mutation.config.ts"
   ],
-  "project": ["**/*.{ts,tsx,mts,mjs,js,jsx}", "**/*.css"],
-  "ignoreDependencies": ["@repo/assets", "@react-email/ui", "@stryker-mutator/api"],
-  "ignoreBinaries": ["helm"],
+  "project": [
+    "**/*.{ts,tsx,mts,mjs,js,jsx}",
+    "**/*.css"
+  ],
+  "ignoreDependencies": [
+    "@repo/assets",
+    "@react-email/ui",
+    "@stryker-mutator/api"
+  ],
+  "ignoreBinaries": [
+    "helm"
+  ],
   "ignoreIssues": {
-    "app/server/actions/colony.ts": ["files"],
-    "app/server/actions/privacy/cases.ts": ["files"],
-    "app/server/actions/verify.ts": ["files"],
-    "components/agent/chat-top-bar.tsx": ["files"],
-    "components/billing/plan-chooser.tsx": ["files"],
-    "components/billing/plan-picker.tsx": ["files"],
-    "components/breadcrumb-nav.tsx": ["files"],
-    "components/create-project/scan-review-notice.tsx": ["files"],
-    "components/design-project/canvas/nodes/zone-node.tsx": ["files"],
-    "components/design-project/container-platform-selector.tsx": ["files"],
-    "components/design-project/help-tooltip.tsx": ["files"],
-    "components/plan/plan-summary-bar.tsx": ["files"],
-    "components/plan/plan-tab.tsx": ["files"],
-    "components/plan/resource-card.tsx": ["files"],
-    "components/plan/use-plan.ts": ["files"],
-    "components/settings/settings-card.tsx": ["files"],
-    "components/settings/upgrade/use-current-plan.ts": ["files"],
-    "lib/analytics/flags.ts": ["files"],
-    "lib/query/prefetch-classification.ts": ["files"],
-    "lib/stores/use-pricing-store.ts": ["files"],
-    "lib/validations/capabilities.ts": ["files"]
+    "app/server/actions/colony.ts": [
+      "files"
+    ],
+    "app/server/actions/privacy/cases.ts": [
+      "files"
+    ],
+    "app/server/actions/verify.ts": [
+      "files"
+    ],
+    "components/agent/chat-top-bar.tsx": [
+      "files"
+    ],
+    "components/billing/plan-chooser.tsx": [
+      "files"
+    ],
+    "components/billing/plan-picker.tsx": [
+      "files"
+    ],
+    "components/breadcrumb-nav.tsx": [
+      "files"
+    ],
+    "components/create-project/scan-review-notice.tsx": [
+      "files"
+    ],
+    "components/design-project/canvas/nodes/zone-node.tsx": [
+      "files"
+    ],
+    "components/design-project/container-platform-selector.tsx": [
+      "files"
+    ],
+    "components/design-project/help-tooltip.tsx": [
+      "files"
+    ],
+    "components/plan/plan-summary-bar.tsx": [
+      "files"
+    ],
+    "components/plan/plan-tab.tsx": [
+      "files"
+    ],
+    "components/plan/resource-card.tsx": [
+      "files"
+    ],
+    "components/plan/use-plan.ts": [
+      "files"
+    ],
+    "components/settings/settings-card.tsx": [
+      "files"
+    ],
+    "components/settings/upgrade/use-current-plan.ts": [
+      "files"
+    ]
   },
   "rules": {
     "files": "error",
