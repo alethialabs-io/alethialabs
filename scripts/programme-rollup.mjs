@@ -299,6 +299,10 @@ export const STATE = {
 	// `failing` (open work) and from `never_run` (never attempted): it has been attempted, and what it
 	// is waiting for is the cheapest possible action.
 	stale: "stale",
+	// The ledger's surviving claim is PASS, and an OPEN nightly-red issue for the same cell was
+	// filed AFTER the run that proved it. Neither source is wrong on its own terms and this state
+	// takes no side: it says the two disagree and that the ✅ is not currently trustworthy.
+	contested: "contested",
 	ceiling: "ceiling",
 	deferred: "deferred",
 };
@@ -309,6 +313,7 @@ const STATE_GLYPH = {
 	blocked: "⛔",
 	never_run: "·",
 	stale: "♻️",
+	contested: "⚠️",
 	ceiling: "—",
 	deferred: "🔶",
 };
@@ -385,6 +390,10 @@ export function deriveBoard(snapshot) {
 			gateState: () => "unknown",
 			observedGate: () => null,
 			needsHuman: [],
+			// Empty, not "no contradictions". With no snapshot there is nothing to contradict the
+			// ledger WITH, and the check below is skipped rather than reported as clean — absence of
+			// evidence must not render as evidence of absence in a file whose point is trust.
+			openRedIssues: [],
 		};
 	}
 	// Newest-first in the snapshot, so the FIRST entry per cloud is the most recent observation.
@@ -457,6 +466,22 @@ export function deriveBoard(snapshot) {
 		 */
 		observedGate: (cloud) => observations.get(cloud) ?? null,
 		needsHuman: [...open.values()].filter((i) => (i.labels ?? []).includes("needs:human")),
+		/**
+		 * Every OPEN nightly-red issue, parsed out of its title, as `{cloud, dimension, number, date}`.
+		 *
+		 * The ledger cannot see these. A nightly that goes red files an issue and writes NO ledger
+		 * row, so from the ledger's point of view the failure never happened and a cell proven
+		 * earlier stays proven forever. That makes the grid a HIGH-WATER MARK rather than current
+		 * state, in the direction that overstates. This is the only source that can contradict it.
+		 *
+		 * `matrix` is skipped deliberately: those issues say "no per-leg proof" and are about the
+		 * matrix job itself, not about any cloud's cell.
+		 */
+		openRedIssues: [...open.values()].flatMap((i) => {
+			const m = /^e2e nightly:\s*(\S+)\s+RED\s*\(([^)·]+?)\s*(?:·[^)]*)?\)/.exec(i.title ?? "");
+			if (!m || m[1] === "matrix") return [];
+			return [{ cloud: m[1], dimension: m[2].trim(), number: i.number, date: String(i.createdAt ?? "").slice(0, 10) }];
+		}),
 	};
 }
 
@@ -674,6 +699,50 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		notes.push(`\`${r.cloud}/${r.dimension}\` is ${r.state} but names no issue — an unfiled red is an unowned red.`);
 	}
 
+	// ── CONTESTED: a cell the ledger calls PROVEN with an open RED filed after the proving run ──
+	//
+	// The ledger's rule — a cell is proven when the surviving claim is PASS and its bundle exists —
+	// is correct on its own terms, and it is a ONE-WAY RATCHET. Ledger rows are written for runs
+	// somebody records; a nightly that goes red files an ISSUE and produces no row. So a later
+	// failure cannot downgrade a cell: from the ledger's point of view it never happened.
+	//
+	// PASS is durable, a later FAIL is invisible. That makes the grid a high-water mark presented as
+	// current state — the exact quiet overstatement the proof grid exists to prevent. It was not
+	// theoretical: PROGRAMME.md read 11 proven / 8 failing while the board held 15 open nightly REDs,
+	// four of them against cells the grid called proven (`gcp/floor` #2743, `azure/floor` #2744,
+	// `hetzner/floor` #2742, `aws/floor` #2329).
+	//
+	// It does NOT say the cell FAILED, and it is not an integrity failure. Two deliberate choices:
+	//
+	// · Not `failing`. Whether a later red is a flake or a regression needs someone to read the run.
+	//   The gcp one really was an ArgoCD repo-server refusing a connection, which is probably
+	//   transient — and "probably transient" is a judgement, not a derivation. `contested` claims
+	//   only what is derivable: the two sources disagree, so the ✅ is not trustworthy right now.
+	//
+	// · Not a build failure. `programme-rollup.mjs` is a required check with no path filter, so an
+	//   integrity failure here reds EVERY pull request in the repo — for a contradiction no PR
+	//   author can resolve and that only the nightly can clear. That is the fail-open rule this
+	//   repo already applies to its other repo-wide gates. The rendered state is the better lever
+	//   anyway: PROGRAMME.md's status half is generated and diff-gated, so a cell going ⚠️ shows up
+	//   in the tree and in the diff of the very next PR, which is where a reader actually looks.
+	//
+	// Resolution is one of two human acts: close the issue if that run was a flake, or append a
+	// FAIL row for it if it was not. Either one clears the ⚠️ on the next derivation.
+	const contested = [];
+	for (const red of board.openRedIssues) {
+		const dim = canonicalDimension(red.dimension);
+		const cell = grid[red.cloud]?.[dim];
+		if (!cell || cell.state !== STATE.proven) continue;
+		const provenOn = cell.row?.date ?? "";
+		if (!provenOn || red.date <= provenOn) continue;
+		grid[red.cloud][dim] = {
+			...cell,
+			state: STATE.contested,
+			why: `${cell.why} — but #${red.number} is OPEN and was filed ${red.date}, AFTER the ${provenOn} run that proved it`,
+		};
+		contested.push({ cloud: red.cloud, dimension: dim, issue: `#${red.number}`, provenOn, redFiledOn: red.date });
+	}
+
 	// Gate reality, three-valued.
 	const gateReality = DIMENSIONS.map((d) => ({
 		...d,
@@ -713,7 +782,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 
 
 	// ── tallies ──
-	const tally = { proven: 0, failing: 0, blocked: 0, never_run: 0, stale: 0 };
+	const tally = { proven: 0, failing: 0, blocked: 0, never_run: 0, stale: 0, contested: 0 };
 	for (const cloud of clouds) {
 		for (const d of DIMENSIONS) tally[grid[cloud][d.id].state]++;
 	}
@@ -724,7 +793,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	const next = [];
 	// `stale` first: its cause is already fixed, so a re-run is the cheapest action on the board and it
 	// either converts the cell to proven or produces a real, current diagnosis.
-	for (const st of [STATE.stale, STATE.failing]) {
+	for (const st of [STATE.stale, STATE.contested, STATE.failing]) {
 		for (const d of DIMENSIONS) {
 			for (const cloud of clouds) {
 				if (grid[cloud][d.id].state === st) next.push({ cloud, dimension: d.id, state: st, why: grid[cloud][d.id].why });
@@ -737,7 +806,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		}
 	}
 
-	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, gateReality, cloudGates };
+	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, gateReality, cloudGates };
 }
 
 // ───────────────────────────── rendering ─────────────────────────────
@@ -945,6 +1014,37 @@ export function render(v) {
 			);
 			L.push("");
 		}
+	}
+
+	// ── contested ──
+	//
+	// Rendered even when empty is NOT the choice here — an empty section would train a reader to
+	// scroll past it. It appears only when the two sources actually disagree, and when it appears
+	// it says which act clears it.
+	if (v.contested.length > 0) {
+		L.push("### ⚠️ Contested — proven by the ledger, contradicted by an open red");
+		L.push("");
+		L.push(
+			"A nightly that goes red files an **issue** and writes **no ledger row**. So from the ledger's point of " +
+				"view that failure never happened, and a cell proven earlier stays ✅ forever: PASS is durable, a later " +
+				"FAIL is invisible. That makes the grid a **high-water mark** presented as current state, in the one " +
+				"direction that overstates — which is the thing this whole file exists to prevent.",
+		);
+		L.push("");
+		L.push("| cell | proven by a run dated | open red | filed |");
+		L.push("|---|:---:|---|:---:|");
+		for (const c of v.contested) {
+			L.push(`| \`${c.cloud}/${c.dimension}\` | ${c.provenOn} | ${c.issue} | ${c.redFiledOn} |`);
+		}
+		L.push("");
+		L.push(
+			"`contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the " +
+				"run, and guessing either way is worse than naming the contradiction. It claims only what is " +
+				"derivable — the two sources disagree, so the ✅ is not trustworthy right now.\n\n" +
+				"**Two human acts clear it, and either one is fine:** close the issue if that run was a flake, or " +
+				"append a `FAIL` row for it if it was not. The next derivation picks the answer up.",
+		);
+		L.push("");
 	}
 
 	L.push("### Blocked on a human");
@@ -1444,6 +1544,62 @@ function runSelfTest() {
 	// An issue beyond the fetch limit is `unknown`, NOT `open` — guessing open would hide a stale cite.
 	r = derive({ ...base, ledgerText: hdr + failRow, snapshot: snap([9999], [8888]) });
 	ok("an issue in neither list is unknown, never assumed open", r.reds[0]?.issueState === "unknown", JSON.stringify(r.reds[0]));
+
+	// CONTESTED. A nightly red files an issue and writes NO ledger row, so the ledger cannot see it
+	// and a cell proven earlier stays ✅ forever — a high-water mark presented as current state.
+	{
+		const passRow = row("2026-08-01", "aws", "floor", "PASS", "demos/proofs/aws/x");
+		/** A snapshot carrying one titled nightly-red issue. */
+		const redSnap = (title, createdAt, number = 7001) => ({
+			...snap(),
+			open_issues: [{ number, title, labels: [], createdAt }],
+		});
+
+		r = derive({ ...base, ledgerText: hdr + passRow, snapshot: redSnap("e2e nightly: aws RED (floor)", "2026-08-02T00:00:00Z") });
+		ok("a PROVEN cell with an open red filed AFTER it becomes `contested`", r.grid.aws.floor.state === "contested", r.grid.aws.floor.state);
+		ok("...and the tally stops counting it as proven", r.tally.proven === 0 && r.tally.contested === 1, JSON.stringify(r.tally));
+		ok("...and it names the issue and both dates", /#7001/.test(r.grid.aws.floor.why) && /2026-08-02/.test(r.grid.aws.floor.why) && /2026-08-01/.test(r.grid.aws.floor.why), r.grid.aws.floor.why);
+		ok("...and it is NOT an integrity failure (this gate reds every PR in the repo)", r.failures.length === 0, JSON.stringify(r.failures));
+		ok("...and it ranks in the mechanical next", r.next.some((n) => n.state === "contested"), JSON.stringify(r.next.slice(0, 2)));
+		ok("...and it renders a section naming the two acts that clear it", /Contested/.test(render(r)) && /close the issue/.test(render(r)));
+
+		// A red filed BEFORE the proving run is the ordinary case: the run that proved it came after,
+		// so there is no contradiction. Getting this backwards would flag every proven cell that ever
+		// had a red, which is most of them.
+		r = derive({ ...base, ledgerText: hdr + passRow, snapshot: redSnap("e2e nightly: aws RED (floor)", "2026-07-01T00:00:00Z") });
+		ok("a red filed BEFORE the proving run does not contest it", r.grid.aws.floor.state === "proven", r.grid.aws.floor.state);
+
+		// Same day is not a contradiction either — dates here are day-granular, and a cell can
+		// legitimately be re-driven green on the day it failed.
+		r = derive({ ...base, ledgerText: hdr + passRow, snapshot: redSnap("e2e nightly: aws RED (floor)", "2026-08-01T23:00:00Z") });
+		ok("a same-day red does not contest (dates are day-granular)", r.grid.aws.floor.state === "proven", r.grid.aws.floor.state);
+
+		// A CLOSED red cannot contest anything — closing it is one of the two acts that clears this.
+		r = derive({
+			...base,
+			ledgerText: hdr + passRow,
+			snapshot: { ...snap(), closed_issues: [{ number: 7001, title: "e2e nightly: aws RED (floor)", labels: [], createdAt: "2026-08-02T00:00:00Z" }] },
+		});
+		ok("a CLOSED red does not contest — closing it is how you clear this", r.grid.aws.floor.state === "proven", r.grid.aws.floor.state);
+
+		// The DIMENSION has to match. A red against a different cell must not contest this one.
+		r = derive({ ...base, ledgerText: hdr + passRow, snapshot: redSnap("e2e nightly: aws RED (day2)", "2026-08-02T00:00:00Z") });
+		ok("a red against a DIFFERENT dimension does not contest this cell", r.grid.aws.floor.state === "proven", r.grid.aws.floor.state);
+
+		// `matrix` is a pseudo-cloud: those issues say "no per-leg proof" and are about the matrix job
+		// itself. Treating it as a cloud would contest nothing that exists, or worse, throw.
+		r = derive({ ...base, ledgerText: hdr + passRow, snapshot: redSnap("e2e nightly: matrix RED (floor · no per-leg proof)", "2026-08-02T00:00:00Z") });
+		ok("a `matrix` red is not a cloud and contests nothing", r.grid.aws.floor.state === "proven", r.grid.aws.floor.state);
+
+		// With NO snapshot there is nothing to contradict the ledger WITH. Absence of evidence must
+		// not render as evidence of absence.
+		r = derive({ ...base, ledgerText: hdr + passRow, snapshot: null });
+		ok("with NO snapshot a proven cell is never contested", r.grid.aws.floor.state === "proven", r.grid.aws.floor.state);
+
+		// And a red against a FAILING cell changes nothing — that cell already says so.
+		r = derive({ ...base, ledgerText: hdr + failRow, snapshot: redSnap("e2e nightly: aws RED (floor)", "2026-08-02T00:00:00Z") });
+		ok("a red against an already-failing cell leaves it failing", r.grid.aws.floor.state === "failing", r.grid.aws.floor.state);
+	}
 
 	// Composite crediting, the OTHER half: once a repo-gated dimension's gates are wired, its layer
 	// really does run inside a full bar, so the composite must credit it again. Without this the
