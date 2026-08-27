@@ -12,6 +12,7 @@ package e2e
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 )
 
