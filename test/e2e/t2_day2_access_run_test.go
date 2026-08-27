@@ -79,7 +79,17 @@ func runT2Day2Access(t *testing.T, ctx context.Context, kc string, p day2AccessP
 		summary.ArgoURLReachable = ok
 		summary.ArgoURLDiagnosis = diagnosis
 		if uerr != nil {
-			t.Logf("day-2 access: ArgoCD URL not reachable: %v\n  diagnosis: %s", uerr, diagnosis)
+			// Asked ONLY on the failing path, and only for the ambiguous diagnosis: #2591's
+			// `dns-not-resolving` cannot tell "the load balancer has no address yet" from
+			// "external-dns is not writing", and the cluster already knows which. Appended to the
+			// diagnosis so it reaches the summary and the proof bundle, not just this log line.
+			if strings.Contains(diagnosis, "dns-not-resolving") {
+				addr, aerr := readIngressAddress(ctx, kc)
+				verdict := ingressAddressVerdict(addr, aerr)
+				summary.ArgoURLDiagnosis = diagnosis + " — " + verdict
+				t.Logf("day-2 access: %s", verdict)
+			}
+			t.Logf("day-2 access: ArgoCD URL not reachable: %v\n  diagnosis: %s", uerr, summary.ArgoURLDiagnosis)
 		}
 	}
 
