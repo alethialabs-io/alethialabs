@@ -15,41 +15,72 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 )
 
+// TestConstructorsAndURLTransforms pins what each constructor does to the URL it is handed.
+//
+// NewGIT is the TOKEN-LESS branch of every caller in the tree, and it used to rewrite an https URL
+// into scp-style SSH — which sent getAuth down getSSHAuthMethod and killed the "attempting public
+// clone" fallback on any box without an agent (#2905). It now preserves the caller's transport, so
+// each case below is a transport that must survive unchanged.
 func TestConstructorsAndURLTransforms(t *testing.T) {
 	tests := []struct {
 		name string
 		in   string
 		want string
 	}{
-		{"https becomes ssh", "https://github.com/acme/repo", "git@github.com:acme/repo.git"},
-		{"http becomes ssh", "http://github.com/acme/repo.git", "git@github.com:acme/repo.git"},
-		{"ssh shorthand untouched", "git@github.com:acme/repo.git", "git@github.com:acme/repo.git"},
+		{"https preserved — anonymous public clone", "https://github.com/acme/repo", "https://github.com/acme/repo"},
+		{"http preserved", "http://github.com/acme/repo.git", "http://github.com/acme/repo.git"},
+		{"ssh shorthand preserved — still agent-authenticated", "git@github.com:acme/repo.git", "git@github.com:acme/repo.git"},
+		{"ssh:// preserved", "ssh://git@github.com/acme/repo.git", "ssh://git@github.com/acme/repo.git"},
 		{"file transport untouched", "file:///tmp/repo", "file:///tmp/repo"},
-		{"unparseable returned unchanged", "://bad", "://bad"},
+		{"a bare host/path is completed to https", "github.com/acme/repo", "https://github.com/acme/repo"},
+		{"whitespace trimmed", "  https://github.com/acme/repo  ", "https://github.com/acme/repo"},
+		{"empty stays empty", "", ""},
+		{"unparseable scheme returned unchanged", "://bad", "://bad"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := transformURLToSSH(tt.in); got != tt.want {
-				t.Fatalf("transformURLToSSH(%q) = %q, want %q", tt.in, got, tt.want)
+			if got := normalizeRepoURL(tt.in); got != tt.want {
+				t.Fatalf("normalizeRepoURL(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
 	}
 
+	// The constructor, not just the helper. #2035's tests build &GIT{RepoURL: url} directly, which
+	// is precisely why they stayed green while this path was broken — so assert through NewGIT and
+	// all the way to the auth decision it produces.
 	g := NewGIT("https://github.com/acme/repo", "/tmp/repo", true)
-	if g.RepoURL != "git@github.com:acme/repo.git" || g.LocalPath != "/tmp/repo" || !g.DryRun {
+	if g.RepoURL != "https://github.com/acme/repo" || g.LocalPath != "/tmp/repo" || !g.DryRun {
 		t.Fatalf("NewGIT returned unexpected wrapper: %#v", g)
+	}
+	tailIsolateAmbientGit(t) // an ambient SSH_AUTH_SOCK would let the OLD behaviour pass here
+	auth, err := g.getAuth()
+	if err != nil {
+		t.Fatalf("NewGIT on a token-less https remote must resolve auth, got %v", err)
+	}
+	if auth != nil {
+		t.Fatalf("NewGIT on a token-less https remote must be ANONYMOUS (nil auth), got %T — this is #2905", auth)
+	}
+
+	// The SSH transport is not collateral damage: a caller that asks for ssh still gets it, and
+	// still needs an agent.
+	sshG := NewGIT("git@github.com:acme/repo.git", "/tmp/repo", true)
+	if sshG.RepoURL != "git@github.com:acme/repo.git" {
+		t.Fatalf("an scp-shorthand URL must be preserved, got %q", sshG.RepoURL)
+	}
+	if _, err := sshG.getAuth(); err == nil {
+		t.Fatal("an ssh remote with no agent must fail rather than silently going anonymous")
 	}
 
 	withToken := NewGITWithToken("github.com/acme/repo.git", "/tmp/repo", false, "tok")
 	if withToken.RepoURL != "https://github.com/acme/repo.git" || withToken.Token != "tok" {
 		t.Fatalf("NewGITWithToken returned unexpected wrapper: %#v", withToken)
 	}
-	auth, err := withToken.getAuth()
+	tokenAuth, err := withToken.getAuth()
 	if err != nil {
 		t.Fatalf("getAuth with token: %v", err)
 	}
-	if auth.Name() != "http-basic-auth" {
-		t.Fatalf("auth name = %q, want http-basic-auth", auth.Name())
+	if tokenAuth.Name() != "http-basic-auth" {
+		t.Fatalf("auth name = %q, want http-basic-auth", tokenAuth.Name())
 	}
 }
 
