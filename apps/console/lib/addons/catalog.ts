@@ -18,7 +18,9 @@ import {
 } from "./chart-overlay";
 import {
 	hasStoredSecret,
+	htpasswdLine,
 	randomCredential,
+	randomRsaPrivateKeyPem,
 	secretFieldKeys,
 	stripAddonSecrets,
 } from "./secrets";
@@ -1001,6 +1003,27 @@ export const ADDON_CATALOG: AddOnDef[] = [
 						"Harbor's data-encryption key must be exactly 16 characters (leave it blank and Alethia mints one).",
 				})
 				.default(""),
+			/**
+			 * Harbor's inter-service secrets and its own registry credential (#2823). All MINTED,
+			 * never shown, and never a knob — a user has no reason to choose any of them.
+			 *
+			 * THE KEY NAMES ARE THE CHART'S, NOT OURS. A field key becomes the k8s Secret's data
+			 * key verbatim (`resolveAddOnInstall` builds `refs[key] = {name, key}`), and for four
+			 * of these the chart reads a HARDCODED key that no value can redirect:
+			 *   `secret`            core-dpl.yaml    `key: secret` under core.existingSecret
+			 *   `REGISTRY_PASSWD`   core-dpl.yaml    under registry.credentials.existingSecret
+			 *   `REGISTRY_HTPASSWD` registry-dpl.yaml mounted `items: - key: REGISTRY_HTPASSWD`
+			 *   `tls.key`           core-dpl.yaml    mounted `subPath: tls.key`
+			 * The other three have a companion `*Key` value, and are named to match anyway so the
+			 * mapping stays readable against the chart.
+			 */
+			secret: z.string().default(""),
+			CSRF_KEY: z.string().default(""),
+			JOBSERVICE_SECRET: z.string().default(""),
+			REGISTRY_HTTP_SECRET: z.string().default(""),
+			REGISTRY_PASSWD: z.string().default(""),
+			REGISTRY_HTPASSWD: z.string().default(""),
+			"tls.key": z.string().default(""),
 		}),
 		// RECREATE, NOT ROLLINGUPDATE — and this is a default rather than a knob on purpose.
 		//
@@ -1030,21 +1053,77 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			persistence: {
 				persistentVolumeClaim: { registry: { size: `${c.storageGb}Gi` } },
 			},
-			expose: { type: c.exposeType },
+			expose: {
+				type: c.exposeType,
+				// certSource `auto` — the chart default — calls genSignedCert on every render, so
+				// the ingress TLS Secret and the pod-template checksums that hash it move every
+				// time ArgoCD reconciles (#2823). `none` is the chart's own documented answer for
+				// "the ingress controller already has a certificate", which on every Alethia
+				// cluster it does: cert-manager is the platform TLS mechanism and terminates at
+				// the ingress. TLS stays ENABLED, so `externalURL` remains https — which is why
+				// this is `none` and not `tls.enabled: false`, the other deterministic option.
+				tls: { enabled: true, certSource: "none" },
+			},
 		}),
 		// Harbor reads HARBOR_ADMIN_PASSWORD from `existingSecretAdminPassword` at the key
 		// named by `existingSecretAdminPasswordKey` — verified via `helm template harbor
 		// --version 1.15.1`. Rides the #640 runner-seeded Secret.
-		secretValues: (refs) => ({
-			...(refs.adminPassword
-				? {
-						existingSecretAdminPassword: refs.adminPassword.name,
-						existingSecretAdminPasswordKey: "adminPassword",
-					}
-				: {}),
+		// Every rotating value harbor generates at render time, wired to the ONE add-on Secret
+		// instead (#2823). Measured, not reasoned: rendering the pinned chart twice with these
+		// values differs on 0 lines, down from 34.
+		//
+		// This is the `existingSecret` route rather than the "pass the value through" route the
+		// issue first proposed, and it is strictly better — no credential reaches the rendered
+		// manifest at all, so nothing lands in `config_snapshot`. It also retires
+		// `harbor.REGISTRY_CREDENTIAL_PASSWORD` from published-defaults-allowed.txt: pinning
+		// registry.credentials is what stops the chart shipping its published
+		// `harbor_registry_password`.
+		secretValues: (refs) => {
+			const core: Record<string, string> = {};
+			const jobservice: Record<string, string> = {};
+			const registry: Record<string, unknown> = {};
+			const out: Record<string, unknown> = {};
+
+			if (refs.adminPassword) {
+				out.existingSecretAdminPassword = refs.adminPassword.name;
+				out.existingSecretAdminPasswordKey = "adminPassword";
+			}
 			// The key NAME is not ours to choose — the chart requires literally `secretKey`.
-			...(refs.secretKey ? { existingSecretSecretKey: refs.secretKey.name } : {}),
-		}),
+			if (refs.secretKey) out.existingSecretSecretKey = refs.secretKey.name;
+
+			// core: `secret` (hardcoded key), CSRF_KEY, and the token-signing private key. The
+			// last one is why this matters beyond tidiness — it signs the registry's auth tokens,
+			// so rotating it silently invalidates every `docker pull` credential ever issued.
+			if (refs.secret) core.existingSecret = refs.secret.name;
+			if (refs.CSRF_KEY) {
+				core.existingXsrfSecret = refs.CSRF_KEY.name;
+				core.existingXsrfSecretKey = "CSRF_KEY";
+			}
+			if (refs["tls.key"]) core.secretName = refs["tls.key"].name;
+
+			if (refs.JOBSERVICE_SECRET) {
+				jobservice.existingSecret = refs.JOBSERVICE_SECRET.name;
+				jobservice.existingSecretKey = "JOBSERVICE_SECRET";
+			}
+
+			if (refs.REGISTRY_HTTP_SECRET) {
+				registry.existingSecret = refs.REGISTRY_HTTP_SECRET.name;
+				registry.existingSecretKey = "REGISTRY_HTTP_SECRET";
+			}
+			// One knob covers both REGISTRY_PASSWD and REGISTRY_HTPASSWD — the chart reads them
+			// from the same Secret at those two hardcoded keys — so it is wired on either ref
+			// being present rather than on one arbitrarily chosen as the trigger.
+			if (refs.REGISTRY_PASSWD || refs.REGISTRY_HTPASSWD) {
+				registry.credentials = {
+					existingSecret: (refs.REGISTRY_PASSWD ?? refs.REGISTRY_HTPASSWD).name,
+				};
+			}
+
+			if (Object.keys(core).length > 0) out.core = core;
+			if (Object.keys(jobservice).length > 0) out.jobservice = jobservice;
+			if (Object.keys(registry).length > 0) out.registry = registry;
+			return out;
+		},
 		// #2846: a blank field must not mean "ship the chart's published default". Both of these
 		// are constants in goharbor's values.yaml on GitHub — `Harbor12345` and `not-a-secure-key`
 		// — so leaving them unset shipped a registry whose admin login and data-encryption key are
@@ -1054,6 +1133,33 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			const out: Record<string, string> = {};
 			if (!present.has("adminPassword")) out.adminPassword = randomCredential();
 			if (!present.has("secretKey")) out.secretKey = randomCredential(12);
+			// #2823. Each of these replaces a value the chart would otherwise mint per render.
+			if (!present.has("secret")) out.secret = randomCredential();
+			if (!present.has("CSRF_KEY")) out.CSRF_KEY = randomCredential();
+			if (!present.has("JOBSERVICE_SECRET")) {
+				out.JOBSERVICE_SECRET = randomCredential();
+			}
+			if (!present.has("REGISTRY_HTTP_SECRET")) {
+				out.REGISTRY_HTTP_SECRET = randomCredential();
+			}
+			if (!present.has("tls.key")) out["tls.key"] = randomRsaPrivateKeyPem();
+			// BOTH OR NEITHER. REGISTRY_HTPASSWD is the bcrypt of REGISTRY_PASSWD, and
+			// `generateSecrets` is handed the set of keys that are present, never their values —
+			// so minting one against a stored other is not something this can do correctly.
+			// Minting them as a pair keeps the only reachable states consistent: both absent on a
+			// fresh enable (or an upgrade from before this landed), both present afterwards.
+			// Neither is user-settable, so no third state exists.
+			if (!present.has("REGISTRY_PASSWD") && !present.has("REGISTRY_HTPASSWD")) {
+				const registryPassword = randomCredential();
+				out.REGISTRY_PASSWD = registryPassword;
+				// The username is the CHART's default (`registry.credentials.username`), which we
+				// do not override — the htpasswd line has to name the same user harbor's core
+				// authenticates as, or the registry rejects it.
+				out.REGISTRY_HTPASSWD = htpasswdLine(
+					"harbor_registry_user",
+					registryPassword,
+				);
+			}
 			return out;
 		},
 		fields: [
@@ -1082,6 +1188,61 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				// install makes Harbor unable to decrypt anything it has already stored.
 				key: "secretKey",
 				label: "Data encryption key",
+				type: "secret",
+				secret: true,
+				generated: true,
+			},
+			// #2823 — harbor's inter-service secrets. All `generated`, so none of them renders a
+			// form control; they are declared as FIELDS because that is what makes them
+			// secret-typed, and only a secret-typed field is minted, encrypted at rest, kept out
+			// of `config_snapshot`, and delivered as a Secret ref rather than a Helm value.
+			{
+				key: "secret",
+				label: "Core secret",
+				type: "secret",
+				secret: true,
+				generated: true,
+			},
+			{
+				key: "CSRF_KEY",
+				label: "CSRF key",
+				type: "secret",
+				secret: true,
+				generated: true,
+			},
+			{
+				key: "JOBSERVICE_SECRET",
+				label: "Jobservice secret",
+				type: "secret",
+				secret: true,
+				generated: true,
+			},
+			{
+				key: "REGISTRY_HTTP_SECRET",
+				label: "Registry HTTP secret",
+				type: "secret",
+				secret: true,
+				generated: true,
+			},
+			{
+				key: "REGISTRY_PASSWD",
+				label: "Registry credential",
+				type: "secret",
+				secret: true,
+				generated: true,
+			},
+			{
+				key: "REGISTRY_HTPASSWD",
+				label: "Registry htpasswd",
+				type: "secret",
+				secret: true,
+				generated: true,
+			},
+			{
+				// The token-signing private key. Rotating it invalidates every auth token the
+				// registry has issued, which is why it is pinned rather than left to the chart.
+				key: "tls.key",
+				label: "Token-signing key",
 				type: "secret",
 				secret: true,
 				generated: true,

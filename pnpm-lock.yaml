@@ -389,6 +389,9 @@ importers:
       ai:
         specifier: ^6.0.258
         version: 6.0.258(zod@4.4.3)
+      bcryptjs:
+        specifier: ^3.0.2
+        version: 3.0.3
       better-auth:
         specifier: ^1.7.1
         version: 1.7.1(@opentelemetry/api@1.9.1)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@opentelemetry/api@1.9.1)(kysely@0.29.4)(postgres@3.4.9))(next@16.3.1(@babel/core@7.28.6)(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vitest@2.1.9(@types/node@20.19.43)(jsdom@29.1.1(@noble/hashes@2.3.0))(lightningcss@1.32.0)(terser@5.50.0))
@@ -6400,6 +6403,10 @@ packages:
   baseline-browser-mapping@2.11.18:
     resolution: {integrity: sha512-1iEmLEYSiE1SeBoAfPo/Mnx3PzfzHUkDK61ASkCpuk3YXugYLH5DYK1SzqV55F8FMI6s0F+/tCP7Polz1QRjxw==}
     engines: {node: '>=6.0.0'}
+    hasBin: true
+
+  bcryptjs@3.0.3:
+    resolution: {integrity: sha512-GlF5wPWnSa/X5LKM1o0wz0suXIINz1iHRLvTS+sLyi7XPbe5ycmYI3DlZqVGZZtDgl4DmasFg7gOB3JYbphV5g==}
     hasBin: true
 
   before-after-hook@4.0.0:
@@ -15992,6 +15999,8 @@ snapshots:
   base64id@2.0.0: {}
 
   baseline-browser-mapping@2.11.18: {}
+
+  bcryptjs@3.0.3: {}
 
   before-after-hook@4.0.0: {}
 
