@@ -1,0 +1,16 @@
+# Add-ons this check CANNOT reach, one id per line, each with the reason.
+#
+# The method compares our render against the chart rendered at ITS OWN defaults. A chart that
+# refuses to render without values has no such reference, so there is nothing to compare — a real
+# limit rather than a fault.
+#
+# RATCHETED IN BOTH DIRECTIONS. A new entry fails (coverage shrank, and a silently shrinking
+# denominator is how a guard checks less while still printing OK); a stale entry also fails
+# (coverage grew, so the list must record it). See check-published-defaults.sh.
+
+loki
+# `Error: template: loki/templates/write/statefulset-write.yaml` — the chart requires a storage
+# configuration and refuses to template without one.
+
+opentelemetry-collector
+# `[ERROR] 'image.repository' must be set` — the chart mandates an explicit image.

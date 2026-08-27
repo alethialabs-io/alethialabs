@@ -293,7 +293,7 @@ export async function createFleetPool(input: FleetPoolCreateInput): Promise<Flee
 		.values(toInsertRow(data))
 		.returning();
 	wakeFleetScaler();
-	revalidatePath("/dashboard/runners");
+	revalidatePath("/[org]/~/runners", "page");
 	return row;
 }
 
@@ -311,7 +311,7 @@ export async function updateFleetPool(
 		.where(eq(fleetPools.id, id))
 		.returning();
 	wakeFleetScaler();
-	revalidatePath("/dashboard/runners");
+	revalidatePath("/[org]/~/runners", "page");
 	return row;
 }
 
@@ -327,7 +327,7 @@ export async function setFleetPoolEnabled(id: string, enabled: boolean): Promise
 		.where(eq(fleetPools.id, id))
 		.returning();
 	wakeFleetScaler();
-	revalidatePath("/dashboard/runners");
+	revalidatePath("/[org]/~/runners", "page");
 	return row;
 }
 
@@ -349,7 +349,7 @@ export async function deleteFleetPool(id: string): Promise<{ success: true }> {
 		.set({ deleting: true, enabled: false, updated_at: new Date() })
 		.where(eq(fleetPools.id, id));
 	wakeFleetScaler();
-	revalidatePath("/dashboard/runners");
+	revalidatePath("/[org]/~/runners", "page");
 	return { success: true };
 }
 

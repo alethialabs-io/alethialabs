@@ -655,6 +655,10 @@ jobs:
         run: pnpm check:var-utility-shadowing
       - name: Authz scope (PDP, not ad-hoc user_id)
         run: pnpm -F console check:authz-scope
+      - name: Guard — revalidatePath targets resolve to real routes
+        run: pnpm -F console check:revalidate-paths
+      - name: Guard — no unauthorized "use server" action files
+        run: pnpm -F console check:action-boundary
       - name: Marketing routes ⇄ reservation ⇄ Caddy in sync
         run: pnpm -F console check:marketing-routes
       - name: tsconfig.build.json excludes every un-shipped file (pruned-image type-check)

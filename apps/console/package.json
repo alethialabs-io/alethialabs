@@ -11,6 +11,8 @@
     "check:no-supabase": "node scripts/check-no-supabase-data.mjs",
     "check:ee-boundary": "node scripts/check-ee-boundary.mjs",
     "check:authz-scope": "node scripts/check-authz-scope.mjs",
+    "check:revalidate-paths": "node scripts/check-revalidate-paths.mjs",
+    "check:action-boundary": "node scripts/check-action-boundary.mjs",
     "check:marketing-routes": "node scripts/check-marketing-routes.mjs",
     "check:tsconfig-build": "node scripts/check-tsconfig-build-excludes.mjs",
     "check:offer-parity": "node scripts/check-offer-parity.mjs",

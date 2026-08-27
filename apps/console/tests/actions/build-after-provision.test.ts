@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/db", () => ({ getServiceDb: vi.fn() }));
 
-import { enqueueBuildAfterProvision } from "@/app/server/actions/builds";
+import { enqueueBuildAfterProvision } from "@/lib/jobs/finalize-build";
 import { getServiceDb } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 

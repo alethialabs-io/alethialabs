@@ -48,6 +48,19 @@ export type AddOnRequirement = "ingress" | "domain" | "storage";
 /** The kind of a configurable add-on knob. `enum` = a fixed choice (carries `options`); `secret`
  * = a credential persisted encrypted-at-rest (EncryptedSecret), never plaintext; `nested` = a
  * one-level group of scalar sub-fields (e.g. `resources.requests.{cpu,memory}`). */
+/**
+ * The Pod Security Standards levels, most permissive first. A finite, externally-defined set — the
+ * three levels the upstream `pod-security.kubernetes.io/enforce` label accepts.
+ */
+export const ADDON_POD_SECURITY_LEVELS = [
+	"privileged",
+	"baseline",
+	"restricted",
+] as const;
+
+/** One Pod Security Standards level. */
+export type AddOnPodSecurityLevel = (typeof ADDON_POD_SECURITY_LEVELS)[number];
+
 export type AddOnFieldType =
 	| "number"
 	| "boolean"
@@ -75,6 +88,19 @@ export interface AddOnField {
 	fields?: AddOnField[];
 	/** Convenience flag equal to `type === "secret"` — persisted encrypted-at-rest, never plaintext. */
 	secret?: boolean;
+	/**
+	 * This field is MINTED by `generateSecrets` and never shown in the configure form (#2846).
+	 *
+	 * Some charts read a credential from a Secret under a key THEY choose — harbor's data-encryption
+	 * key must be stored under literally `secretKey`, and the chart says so. Such a field has to
+	 * exist so `secretFieldKeys` includes it and the runner seeds it, but putting `secretKey` in a
+	 * marketplace form would be noise at best: nobody has an opinion about its value, and changing
+	 * it after install makes harbor unable to decrypt everything it has already stored.
+	 *
+	 * A `generated` field is therefore machine-owned. It still travels the ordinary secret path —
+	 * encrypted at rest, stripped before validation, delivered by secretRef — it simply has no UI.
+	 */
+	generated?: boolean;
 }
 
 const addOnFieldOption = z.object({ value: z.string(), label: z.string() });
@@ -165,6 +191,44 @@ export interface AddOnDef<Schema extends z.ZodTypeAny = z.ZodTypeAny> {
 	 * MUST NOT return credential material — this rides the config snapshot.
 	 */
 	secretStaticData?: (config: z.infer<Schema>) => Record<string, string>;
+	/**
+	 * The Pod Security Standards level this add-on's OWN namespace must allow (#2837).
+	 *
+	 * Talos — which every hetzner cluster runs — enables the PodSecurity admission plugin with
+	 * `enforce: baseline` and exempts only `kube-system`. Baseline forbids privileged containers,
+	 * host namespaces and hostPath volumes, so a chart that needs any of those has its DaemonSet
+	 * ADMITTED and its pods REJECTED: `desiredNumberScheduled > 0`, zero pods, Progressing forever,
+	 * and nothing in the Application saying why.
+	 *
+	 * Declaring it here rather than relaxing the cluster is the point. It is scoped to this add-on's
+	 * own namespace, so enabling falco does not weaken the namespace next door; it is visible, which
+	 * is what a user deciding whether to install a node-level agent should be told; and an add-on
+	 * that does not ask for host access still cannot get it.
+	 *
+	 * Omitted means "do not label the namespace" — the cluster's own default applies, which is the
+	 * right answer for every add-on that runs as an ordinary workload.
+	 */
+	podSecurity?: AddOnPodSecurityLevel;
+	/**
+	 * Mints values for secret knobs the user left unset, at ENABLE time (#2822, #2823).
+	 *
+	 * Some charts generate their own credential when none is supplied — and they do it at RENDER
+	 * time, with `randAlphaNum` or `genCA`. ArgoCD re-renders on every reconcile, so such a chart
+	 * is PERMANENTLY OutOfSync, and the value it depends on rotates underneath the running
+	 * workload. For those add-ons "leave it blank" cannot mean "let the chart decide"; it has to
+	 * mean "Alethia decides once", so the rendered manifest stops moving.
+	 *
+	 * Called with the set of secret keys that ALREADY have a stored value, and returns plaintext
+	 * for the keys it wants to fill — the caller encrypts them and never persists them otherwise.
+	 * Returning a key that is already present is ignored, so an existing credential is never
+	 * rotated by a reconfigure.
+	 *
+	 * It receives the present set (rather than being called per field) because generated
+	 * credentials are often CORRELATED: a keypair whose halves must both be minted together, or a
+	 * password and the hash derived from it. Only the definition knows which of its keys travel as
+	 * a group.
+	 */
+	generateSecrets?: (present: ReadonlySet<string>) => Record<string, string>;
 	/** Serializable descriptors for the surfaced knobs (mirror `configSchema`) — drive the
 	 * client configure form. Empty for add-ons with no knobs. */
 	fields: AddOnField[];
@@ -246,6 +310,11 @@ export interface AddOnInstallSpec {
 	 * NEVER contains a secret-typed knob's value (W4.5) — only SecretKeyRef wiring. */
 	values: Record<string, unknown>;
 	syncWave: number;
+	/** The Pod Security Standards level this add-on's namespace must allow (#2837). The renderer
+	 * turns it into `syncPolicy.managedNamespaceMetadata.labels`, so ArgoCD labels the namespace it
+	 * creates. Absent = leave the namespace unlabelled and let the cluster's default stand.
+	 * Mirrors the Go `AddOnInstall.PodSecurity`. */
+	podSecurity?: AddOnPodSecurityLevel;
 	/** The k8s Secret the runner seeds pre-sync for this add-on's secret knobs (W4.5).
 	 * Absent when the add-on has no secret-typed field with a stored value. */
 	secretRef?: AddOnSecretRef;

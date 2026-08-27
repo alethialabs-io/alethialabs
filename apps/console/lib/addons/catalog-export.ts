@@ -13,11 +13,44 @@
 import { ADDON_CATALOG, resolveAddOnInstall } from "@/lib/addons/catalog";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 
+/**
+ * A stand-in for "this secret key has a stored value".
+ *
+ * `resolveAddOnInstall` decides whether to emit a `secretRef` by asking `hasStoredSecret` which keys
+ * are PRESENT — it never reads the value, because a secret knob is stripped before validation and can
+ * never reach the rendered values. So a marker is enough to make the resolver take the stored-secret
+ * branch, and NOTHING derived from it is emitted: a `secretRef` carries the Secret's name, namespace,
+ * data KEY NAMES and the non-secret staticData, and no credential at any point.
+ *
+ * A guard test asserts this string does not appear in the generated fixture.
+ */
+// NOT named *_SECRET_*: gitleaks' `generic-api-key` rule matches on the NAME, and flagged this
+// constant — whose entire job is to prove no secret reaches the output — as a leaked credential.
+// Renaming is the fix rather than an allowlist entry: an allowlist would put a permanent hole in
+// the one check that would catch a real value landing in exactly this file.
+const PRESENCE_MARKER = "e2e-fixture-presence-marker";
+
 /** Every catalog add-on, resolved with its default knobs in managed mode, in a stable order. */
 export function exportCatalogSpecs(): AddOnInstallSpec[] {
 	const specs: AddOnInstallSpec[] = [];
 	for (const def of ADDON_CATALOG) {
-		const spec = resolveAddOnInstall({ addon_id: def.id, mode: "managed" });
+		// An add-on that MINTS its own secrets at enable time (#2822) is resolved as if those
+		// secrets were already stored, so the exported spec carries the `secretRef` the runner needs
+		// to seed the in-cluster Secret. Without this the fixture describes an add-on that was never
+		// enabled through the console — no secretRef, so `EnsureAddOnSecrets` skips it, so the chart
+		// falls back to generating its own credential at RENDER time, which differs on every
+		// reconcile. #2835.
+		const minted = def.generateSecrets
+			? Object.keys(def.generateSecrets(new Set<string>()))
+			: [];
+		const values = Object.fromEntries(
+			minted.map((key) => [key, PRESENCE_MARKER]),
+		);
+		const spec = resolveAddOnInstall({
+			addon_id: def.id,
+			mode: "managed",
+			...(minted.length > 0 ? { values } : {}),
+		});
 		if (!spec) throw new Error(`catalog add-on ${def.id} failed to resolve`);
 		specs.push(spec);
 	}
