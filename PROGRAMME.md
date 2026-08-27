@@ -181,7 +181,7 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 | **alibaba** | · | · | · | · | · | · |
 | **hetzner** | ⚠️ | ❌ | ❌ | ✅ | · | ✅ |
 
-Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · ⚠️ contested · — ceiling · 🔶 deferred
+Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · ⚠️ contested · — ceiling · 🔶 deferred · 💰 cost
 
 <details><summary>Every cell that has any evidence at all</summary>
 
@@ -230,7 +230,11 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 
 ### Capability surface
 
-**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 48 carried by tofu · 5 carried in-cluster · 2 cloud ceilings · **0 deferred (our debt)**.
+**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 47 carried by tofu · 5 carried in-cluster · 2 cloud ceilings · **0 deferred (our debt)** · 1 excluded by cost.
+
+Excluded by **cost** — the cloud offers the kind and the product ships it, but provisioning it in the harness would buy something not billed by the hour. These are spend decisions, not capability limits, and the price is printed so the decision can be re-taken rather than inherited:
+
+- `alibaba/registry` → alicloud_cr_ee_instance — 150 USD/month (Basic, eu-central-1; 1800/year, no term discount; Advanced 617; no tier below Basic), bought PER RUN because instance_name carries the environment
 
 Cloud ceilings (the cloud genuinely does not offer the kind — not our debt):
 

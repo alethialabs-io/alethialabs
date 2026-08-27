@@ -40,8 +40,14 @@
 //                (MaxConfigCarriage.DeferredInProduct). Kept apart from `ceiling` because a ceiling
 //                is about the cloud and deferral is about us; merging them is how hetzner's
 //                registry→Harbor and secret→Vault stopped being counted.
+//   `cost`       OUR SPEND — the cloud offers the kind and the product ships it, but provisioning it
+//                buys something not billed by the hour, so the harness declines
+//                (MaxConfigCarriage.ExcludedByCost). Kept apart from `ceiling` for the same reason
+//                deferral is: a ceiling says the cloud cannot, and this says we would rather not pay.
+//                Reading it as a ceiling would let a 150 USD/month decision hide inside a capability
+//                claim — the exact substitution the two above were separated to prevent.
 //
-// The two hand-asserted verdicts (`ceiling`, `deferred`) are NOT authored here — they are read from
+// The three hand-asserted verdicts (`ceiling`, `deferred`, `cost`) are NOT authored here — they are read from
 // the Go tables that already own and validate them, via test/e2e/generated/programme.json. One
 // deriver, every consumer.
 //
@@ -305,6 +311,7 @@ export const STATE = {
 	contested: "contested",
 	ceiling: "ceiling",
 	deferred: "deferred",
+	cost: "cost",
 };
 
 const STATE_GLYPH = {
@@ -316,6 +323,7 @@ const STATE_GLYPH = {
 	contested: "⚠️",
 	ceiling: "—",
 	deferred: "🔶",
+	cost: "💰",
 };
 
 /**
@@ -623,9 +631,10 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	}
 
 	// ── the 11-kind carriage grid, straight from the Go mirror ──
-	const carriage = { tofu: 0, in_cluster: 0, ceiling: 0, deferred: 0 };
+	const carriage = { tofu: 0, in_cluster: 0, ceiling: 0, deferred: 0, cost: 0 };
 	const deferredCells = [];
 	const ceilingCells = [];
+	const costCells = [];
 	for (const k of spine.kinds) {
 		for (const cloud of clouds) {
 			const cell = k.cells[cloud];
@@ -636,6 +645,9 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 			carriage[cell.carriage] = (carriage[cell.carriage] ?? 0) + 1;
 			if (cell.carriage === "deferred") deferredCells.push({ cloud, kind: k.kind, chart: cell.chart, why: cell.why });
 			if (cell.carriage === "ceiling") ceilingCells.push({ cloud, kind: k.kind, why: cell.why });
+			// NOT folded into ceilingCells: the price is the whole point of this verdict, and a reader
+			// deciding whether to fund the cell needs the number, not the exclusion.
+			if (cell.carriage === "cost") costCells.push({ cloud, kind: k.kind, cost: cell.cost, why: cell.why });
 		}
 	}
 
@@ -806,7 +818,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		}
 	}
 
-	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, gateReality, cloudGates };
+	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, costCells, gateReality, cloudGates };
 }
 
 // ───────────────────────────── rendering ─────────────────────────────
@@ -888,7 +900,8 @@ export function render(v) {
 	L.push(
 		`**Proof grid (${v.kindCount} provisionable kinds × ${v.clouds.length} clouds = ${carriageTotal} cells):** ` +
 			`${v.carriage.tofu} carried by tofu · ${v.carriage.in_cluster} carried in-cluster · ` +
-			`${v.carriage.ceiling} cloud ceilings · **${v.carriage.deferred} deferred (our debt)**.`,
+			`${v.carriage.ceiling} cloud ceilings · **${v.carriage.deferred} deferred (our debt)** · ` +
+			`${v.carriage.cost} excluded by cost.`,
 	);
 	L.push("");
 	if (v.deferredCells.length > 0) {
@@ -899,6 +912,16 @@ export function render(v) {
 		);
 		L.push("");
 		for (const d of v.deferredCells) L.push(`- \`${d.cloud}/${d.kind}\` → chart **${d.chart}**`);
+		L.push("");
+	}
+	if (v.costCells.length > 0) {
+		L.push(
+			"Excluded by **cost** — the cloud offers the kind and the product ships it, but provisioning it " +
+				"in the harness would buy something not billed by the hour. These are spend decisions, not " +
+				"capability limits, and the price is printed so the decision can be re-taken rather than inherited:",
+		);
+		L.push("");
+		for (const c of v.costCells) L.push(`- \`${c.cloud}/${c.kind}\` → ${c.cost}`);
 		L.push("");
 	}
 	if (v.ceilingCells.length > 0) {
