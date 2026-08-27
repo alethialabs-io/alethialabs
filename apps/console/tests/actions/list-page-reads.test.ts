@@ -63,14 +63,21 @@ import { queryTeamsPage } from "@/lib/queries/teams";
 
 const ACTOR = { orgId: "org-real", userId: "user-real" };
 
-/** A query object carrying the fields a hostile client would try to smuggle a tenancy in. */
+/**
+ * A query object carrying the fields a hostile client would try to smuggle a tenancy in.
+ *
+ * Declared as a variable rather than passed inline on purpose: TypeScript's excess-property
+ * check only fires on a fresh object literal, so this reaches the actions with its extra keys
+ * intact — which is the whole point. An inline literal would be rejected at compile time and
+ * the runtime assertion would never get to run.
+ */
 const HOSTILE = {
 	search: "x",
 	orgId: "org-someone-elses",
 	org_id: "org-someone-elses",
 	userId: "user-someone-elses",
 	actor: { orgId: "org-someone-elses" },
-} as never;
+};
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -89,7 +96,7 @@ describe("the alerts hub's three page reads", () => {
 		it(`${name}: asks for view_alerts on an alert, and scopes to the ACTOR's org`, async () => {
 			vi.mocked(builder).mockResolvedValue({ rows: [] } as never);
 
-			await action(HOSTILE);
+			await action(HOSTILE as never);
 
 			expect(authorize).toHaveBeenCalledWith("view_alerts", { type: "alert" });
 			expect(builder).toHaveBeenCalledWith("org-real", HOSTILE);
@@ -123,7 +130,8 @@ describe("getAccessGrantsPage", () => {
 
 	it("passes projectId through as the universe selector, still under the actor's org", async () => {
 		vi.mocked(queryAccessGrantsPage).mockResolvedValue({ rows: [] } as never);
-		await getAccessGrantsPage({ projectId: "p1", ...HOSTILE });
+		const hostileWithProject = { ...HOSTILE, projectId: "p1" };
+		await getAccessGrantsPage(hostileWithProject);
 		const [orgId, query] = vi.mocked(queryAccessGrantsPage).mock.calls[0];
 		expect(orgId).toBe("org-real");
 		expect(query).toMatchObject({ projectId: "p1" });
