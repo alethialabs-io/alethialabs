@@ -12,31 +12,31 @@
 // pinned to a `projectId` (project settings) the feed locks to that project and hides the facet.
 
 import { Boxes, Download, ListFilter, Users } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-	type ActivityQuery,
 	type ActivityRow,
 	getActivityExportCsv,
 } from "@/app/server/actions/activity";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
-import {
-	normalizeActivityQuery,
-	useActivityQuery,
-	useMembersQuery,
-} from "@/lib/query/use-activity-query";
+import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { useActivityQuery, useMembersQuery } from "@/lib/query/use-activity-query";
 import { ErrorState } from "@/components/errors/error-state";
 import { useEntitlement } from "@/components/settings/enterprise-gate";
-import { SettingsSearch } from "@/components/settings/settings-ui";
 import { UpgradeOrgSheet } from "@/components/org/upgrade-org-sheet";
 import { useProjectsQuery } from "@/lib/query/use-projects-query";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
+import { useActivityFilters } from "@/lib/stores/use-settings-filters";
 import {
 	useActiveOrgSlug,
 	useWorkspaceStore,
 } from "@/lib/stores/use-workspace-store";
 import { Button } from "@repo/ui/button";
+import { CountPill } from "@repo/ui/count-pill";
 import { DateRangeFilter } from "@repo/ui/date-range-filter";
 import { FacetFilter } from "@repo/ui/facet-filter";
+import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
+import { FilterSearch } from "@repo/ui/filter-search";
 import { GroupedFilterSheet } from "@repo/ui/grouped-filter-sheet";
 import { QuickRangeFilter } from "@repo/ui/quick-range-filter";
 import {
@@ -47,6 +47,11 @@ import {
 	RANGE_PRESETS,
 } from "@repo/ui/range";
 import { Skeleton } from "@repo/ui/skeleton";
+import {
+	activityQueryFrom,
+	activityRange,
+	DEFAULT_ACTIVITY_FILTERS,
+} from "./activity-filters";
 import { ActivityFeed } from "./activity-feed";
 import { type ActivityContext, EVENT_GROUPS } from "./humanize-event";
 
@@ -57,21 +62,9 @@ const DAY = 86_400_000;
 const RETENTION_GRACE = 3_600_000;
 const SEARCH_DEBOUNCE = 300;
 
-/** Splits the event-type tokens into the resource-type + decision filters the query takes. */
-function splitEventTokens(tokens: string[]): {
-	resourceTypes: string[];
-	decision: boolean | null;
-} {
-	const resourceTypes = tokens
-		.filter((t) => t.startsWith("type:"))
-		.map((t) => t.slice(5));
-	const results = tokens
-		.filter((t) => t.startsWith("result:"))
-		.map((t) => t.slice(7));
-	// One side selected → that decision; both/none → no constraint.
-	const decision = results.length === 1 ? results[0] === "allow" : null;
-	return { resourceTypes, decision };
-}
+/** The default range picker's trigger label. */
+const DEFAULT_RANGE_LABEL =
+	RANGE_PRESETS.find((p) => p.id === DEFAULT_PRESET)?.label ?? "Last 7 days";
 
 /** The org Activity feed. Pass `projectId` (a project id) to scope it to a single project's
  * events — used by `/{org}/{project}/settings/activity`; the Project facet is then hidden. */
@@ -87,16 +80,24 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 	// from the shared query cache; members from theirs — no fetch-into-state effect).
 	const { data: members = [] } = useMembersQuery();
 
-	// Filters.
-	const [search, setSearch] = useState("");
-	const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE);
-	const [range, setRange] = useState<DateRange>(() => presetRange(DEFAULT_PRESET));
-	const [rangeLabel, setRangeLabel] = useState(
-		RANGE_PRESETS.find((p) => p.id === DEFAULT_PRESET)?.label ?? "Last 7 days",
+	// Filter state: the store is the source of truth, the URL mirrors it (shareable views),
+	// and the free text is debounced before it can reach a query key. Nine `useState` calls
+	// collapse to one store plus the two that are genuinely not filters (export + upgrade).
+	const filters = useActivityFilters((s) => s.filters);
+	const set = useActivityFilters((s) => s.set);
+	const patch = useActivityFilters((s) => s.patch);
+	const reset = useActivityFilters((s) => s.reset);
+	useFilterUrlSync(useActivityFilters, DEFAULT_ACTIVITY_FILTERS);
+	const debouncedSearch = useDebouncedValue(filters.search, SEARCH_DEBOUNCE);
+
+	// The default window is resolved ONCE. Resolving it per render would move `to` forward
+	// every time and produce a query key that never settles, refetching on every paint.
+	const [defaultRange] = useState<DateRange>(() => presetRange(DEFAULT_PRESET));
+	const range = useMemo(
+		() => activityRange(filters, defaultRange),
+		[filters, defaultRange],
 	);
-	const [actorIds, setActorIds] = useState<string[]>([]);
-	const [projectIds, setProjectIds] = useState<string[]>([]);
-	const [eventTokens, setEventTokens] = useState<string[]>([]);
+	const rangeLabel = filters.rangeLabel || DEFAULT_RANGE_LABEL;
 
 	const [exporting, setExporting] = useState(false);
 	const [upgradeOpen, setUpgradeOpen] = useState(false);
@@ -127,23 +128,16 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 	// key, so equal filters hit the cache (the standard). When the feed is locked to a
 	// `projectId` (project settings) that scope is forced; otherwise the Project facet
 	// drives the `resourceIds` (the selected project ids), keeping scoping server-side.
-	const query = useMemo<ActivityQuery>(() => {
-		const { resourceTypes, decision } = splitEventTokens(eventTokens);
-		const resourceIds = projectId
-			? [projectId]
-			: projectIds.length
-				? projectIds
-				: undefined;
-		return normalizeActivityQuery({
-			from: range.from.toISOString(),
-			to: range.to.toISOString(),
-			actorIds,
-			resourceTypes,
-			decision,
-			resourceIds,
-			search: debouncedSearch,
-		});
-	}, [range, actorIds, projectIds, eventTokens, debouncedSearch, projectId]);
+	const query = useMemo(
+		() =>
+			activityQueryFrom({
+				filters,
+				range,
+				search: debouncedSearch,
+				pinnedProjectId: projectId,
+			}),
+		[filters, range, debouncedSearch, projectId],
+	);
 
 	// Cursor-paginated fetch, filters in the key, keepPreviousData across filter changes —
 	// replaces the raw `useEffect` + `cancelled`-flag chain (forbidden by the standard).
@@ -168,18 +162,24 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 
 	/** Apply a picked range, or prompt upgrade when it predates the plan's retention. */
 	const applyRange = useCallback(
-		(next: DateRange, label?: string) => {
+		(next: DateRange, label: string) => {
 			const minFrom = Date.now() - retentionDays * DAY - RETENTION_GRACE;
 			if (next.from.getTime() < minFrom) {
 				setUpgradeOpen(true);
 				return;
 			}
-			setRange(next);
-			if (label !== undefined) setRangeLabel(label);
+			patch({
+				from: next.from.toISOString(),
+				to: next.to.toISOString(),
+				rangeLabel: label,
+			});
 		},
-		[retentionDays],
+		[retentionDays, patch],
 	);
 
+	// Facet options come from the org's FULL member / project lists (their own shared query
+	// caches), never from the rows on screen — an option that vanished as you selected it
+	// would make the facet unusable. That is the standard's unfiltered-universe rule.
 	const userOptions = useMemo(
 		() =>
 			members.map((m) => ({
@@ -193,6 +193,7 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 		() => projects.map((p) => ({ value: p.id, label: p.project_name })),
 		[projects],
 	);
+	const activeFilters = countActiveFilters(filters, DEFAULT_ACTIVITY_FILTERS);
 
 	async function onExport() {
 		setExporting(true);
@@ -225,13 +226,41 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 					.
 				</p>
 			)}
-			{/* filter bar */}
-			<div className="mb-4 flex flex-wrap items-center gap-2.5">
-				<SettingsSearch
-					value={search}
-					onChange={setSearch}
-					placeholder="Search actor, action or resource"
-					className="w-[240px] flex-1"
+			{/* The result count lives beside the heading, never as prose in the bar. This feed is
+			    cursor-paginated, so it counts the rows LOADED so far — "42" here means 42 on
+			    screen, and "Load more" moves it. */}
+			<div className="mb-3 flex items-center gap-2">
+				<h2 className="font-display text-[14.5px] font-semibold tracking-[-0.01em] text-text-primary">
+					Activity
+				</h2>
+				<CountPill count={loading ? null : rows.length} />
+			</div>
+
+			<FilterBar
+				end={
+					// `end` is the primitive's slot for a page-level action; export dumps the
+					// WHOLE org log, so it only belongs on the org-scoped feed.
+					!projectId ? (
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={!canExport || exporting}
+							title={
+								canExport ? undefined : "Activity export requires the Enterprise plan"
+							}
+							onClick={() => void onExport()}
+						>
+							<Download size={13} />
+							Export CSV
+						</Button>
+					) : undefined
+				}
+			>
+				<FilterSearch
+					value={filters.search}
+					onChange={(v) => set("search", v)}
+					placeholder="Search actor, action or resource…"
+					className="w-[240px] max-w-[380px] flex-1"
 				/>
 				<QuickRangeFilter
 					label={rangeLabel}
@@ -246,8 +275,8 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 					label="User"
 					icon={Users}
 					options={userOptions}
-					value={actorIds}
-					onChange={setActorIds}
+					value={filters.actorIds}
+					onChange={(next) => set("actorIds", next)}
 					searchPlaceholder="Search members…"
 					emptyText="No members."
 				/>
@@ -257,8 +286,8 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 						label="Project"
 						icon={Boxes}
 						options={projectOptions}
-						value={projectIds}
-						onChange={setProjectIds}
+						value={filters.projectIds}
+						onChange={(next) => set("projectIds", next)}
 						searchPlaceholder="Search projects…"
 						emptyText="No projects."
 					/>
@@ -267,27 +296,13 @@ export function ActivityLog({ projectId }: { projectId?: string } = {}) {
 					label="Events"
 					icon={ListFilter}
 					groups={EVENT_GROUPS}
-					value={eventTokens}
-					onChange={setEventTokens}
+					value={filters.eventTokens}
+					onChange={(next) => set("eventTokens", next)}
 					title="Filter by event"
 					description="Show only the event types you care about."
 				/>
-				{/* Export dumps the whole org log, so it only belongs on the org-scoped feed. */}
-				{!projectId && (
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={!canExport || exporting}
-						title={
-							canExport ? undefined : "Activity export requires the Enterprise plan"
-						}
-						onClick={() => void onExport()}
-					>
-						<Download size={13} />
-						Export CSV
-					</Button>
-				)}
-			</div>
+				<FilterBarReset count={activeFilters} onReset={reset} />
+			</FilterBar>
 
 			{activity.isError ? (
 				// A fetch failure must not render as an empty activity feed.

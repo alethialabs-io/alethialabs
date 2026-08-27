@@ -8,24 +8,25 @@
 // fake SCIM card (which advertised a /scim/v2 URL that never existed) are gone — SCIM is an honest
 // "talk to us" note instead.
 
-import { CheckCircle2, KeyRound, Pencil, Plus, Trash2, XCircle } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle2, KeyRound, Pencil, Plus, ShieldCheck, Trash2, XCircle } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
 	deleteSsoProvider,
 	requestSsoDomainVerification,
 	type SsoBootstrap,
-	type SsoFilter,
 	type SsoProviderRow,
 	type SsoTestResult,
 	testSsoProvider,
 	verifySsoDomain,
 } from "@/app/server/actions/sso";
-import { SettingsSearch } from "@/components/settings/settings-ui";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
 import { legalUrl } from "@/lib/legal";
 import { useInvalidateSso, useSsoProvidersQuery } from "@/lib/query/use-sso-query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useFilterUrlSync } from "@/hooks/use-filter-url-sync";
+import { countActiveFilters } from "@/lib/stores/create-filter-store";
+import { useSsoFilters } from "@/lib/stores/use-settings-filters";
 import {
 	AlertDialog,
 	AlertDialogAction,
@@ -38,58 +39,53 @@ import {
 } from "@repo/ui/alert-dialog";
 import { Button } from "@repo/ui/button";
 import { CopyButton } from "@repo/ui/copy-button";
+import { EmptyState } from "@repo/ui/empty";
 import { FacetFilter } from "@repo/ui/facet-filter";
+import { FilterBar, FilterBarReset } from "@repo/ui/filter-bar";
+import { FilterSearch } from "@repo/ui/filter-search";
+import { PageHeader } from "@repo/ui/page-header";
 import { Spinner } from "@repo/ui/spinner";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { cn } from "@repo/ui/utils";
+import {
+	DEFAULT_SSO_FILTERS,
+	normalizeSsoQuery,
+	SSO_STATUS_OPTIONS,
+	SSO_TYPE_OPTIONS,
+	ssoFacetCounts,
+} from "./sso-filters";
 import { ProviderSheet } from "./provider-sheet";
-
-const TYPE_OPTIONS = [
-	{ value: "oidc", label: "OIDC" },
-	{ value: "saml", label: "SAML" },
-	{ value: "unknown", label: "Misconfigured" },
-];
-const STATUS_OPTIONS = [
-	{ value: "verified", label: "Verified" },
-	{ value: "pending", label: "Pending" },
-];
-
-/** Narrows the facet's string[] to the action's unions (the server re-validates regardless). */
-function toFilter(
-	search: string,
-	types: string[],
-	statuses: string[],
-): SsoFilter {
-	const t = types.filter(
-		(x): x is NonNullable<SsoFilter["types"]>[number] =>
-			x === "oidc" || x === "saml" || x === "unknown",
-	);
-	const s = statuses.filter(
-		(x): x is NonNullable<SsoFilter["statuses"]>[number] =>
-			x === "verified" || x === "pending",
-	);
-	return {
-		search: search || undefined,
-		types: t.length ? t : undefined,
-		statuses: s.length ? s : undefined,
-	};
-}
 
 export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 	const { canManage, slug, origin } = bootstrap;
 	const invalidate = useInvalidateSso();
 
-	const [searchInput, setSearchInput] = useState("");
-	const search = useDebouncedValue(searchInput.trim());
-	const [types, setTypes] = useState<string[]>([]);
-	const [statuses, setStatuses] = useState<string[]>([]);
+	// Filter state: the store is the source of truth, the URL mirrors it (shareable views),
+	// and the free text is debounced before it can reach a query key. Eleven `useState` calls
+	// collapse to one store plus the four that hold selection / dialog state, not filters.
+	const filters = useSsoFilters((s) => s.filters);
+	const set = useSsoFilters((s) => s.set);
+	const reset = useSsoFilters((s) => s.reset);
+	useFilterUrlSync(useSsoFilters, DEFAULT_SSO_FILTERS);
+	const search = useDebouncedValue(filters.search);
+	const query = useMemo(
+		() => normalizeSsoQuery(filters, search),
+		[filters, search],
+	);
+
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const [editing, setEditing] = useState<SsoProviderRow | null>(null);
 	const [deleting, setDeleting] = useState<SsoProviderRow | null>(null);
 
-	const { data: providers = [], isFetching } = useSsoProvidersQuery(
-		toFilter(search, types, statuses),
-	);
+	// Filtered SERVER-SIDE by `listSsoProviders`.
+	const { data: providers = [], isFetching } = useSsoProvidersQuery(query);
+	// The UNFILTERED universe, purely for the facet counts — the base key, which the page
+	// prefetches. An option whose count came from the current result would disappear the
+	// moment you selected it, which is exactly what the standard forbids.
+	const { data: universe = [] } = useSsoProvidersQuery();
+	const counts = useMemo(() => ssoFacetCounts(universe), [universe]);
+	const activeFilters = countActiveFilters(filters, DEFAULT_SSO_FILTERS);
 
 	// Enterprise gate — the whole surface is replaced by the upsell.
 	if (!bootstrap.sso) return <FeatureUpsell feature="sso" />;
@@ -116,36 +112,83 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 
 	return (
 		<div className="space-y-4">
-			<div className="flex flex-wrap items-center justify-between gap-3">
-				<div className="flex flex-wrap items-center gap-2">
-					<SettingsSearch
-						value={searchInput}
-						onChange={setSearchInput}
-						placeholder="Search providers"
-						className="w-[220px]"
-					/>
-					<FacetFilter
-						label="Protocol"
-						options={TYPE_OPTIONS}
-						value={types}
-						onChange={setTypes}
-					/>
-					<FacetFilter
-						label="Status"
-						options={STATUS_OPTIONS}
-						value={statuses}
-						onChange={setStatuses}
-					/>
-					{isFetching && <Spinner className="size-3.5 text-text-tertiary" />}
-				</div>
-				<Button size="sm" disabled={!canManage} onClick={connect}>
-					<Plus size={13} />
-					Connect provider
-				</Button>
-			</div>
+			<PageHeader
+				title="Single sign-on"
+				description="Identity providers your members can sign in through."
+				count={providers.length}
+				actions={
+					<Button size="sm" disabled={!canManage} onClick={connect}>
+						<Plus size={13} />
+						Connect provider
+					</Button>
+				}
+			/>
+
+			<FilterBar
+				end={isFetching ? <Spinner className="size-3.5 text-text-tertiary" /> : undefined}
+			>
+				<FilterSearch
+					value={filters.search}
+					onChange={(v) => set("search", v)}
+					placeholder="Search providers…"
+					className="w-[240px] max-w-[380px] flex-1"
+				/>
+				<FacetFilter
+					label="Protocol"
+					icon={KeyRound}
+					options={SSO_TYPE_OPTIONS.map((o) => ({
+						value: o.value,
+						label: o.label,
+						hint: String(counts.types[o.value] ?? 0),
+					}))}
+					value={filters.types}
+					onChange={(next) => set("types", next)}
+					searchPlaceholder="Filter protocol…"
+					emptyText="No protocols."
+				/>
+				<FacetFilter
+					label="Status"
+					icon={ShieldCheck}
+					options={SSO_STATUS_OPTIONS.map((o) => ({
+						value: o.value,
+						label: o.label,
+						hint: String(counts.statuses[o.value] ?? 0),
+					}))}
+					value={filters.statuses}
+					onChange={(next) => set("statuses", next)}
+					searchPlaceholder="Filter status…"
+					emptyText="No statuses."
+				/>
+				<FilterBarReset count={activeFilters} onReset={reset} />
+			</FilterBar>
 
 			{providers.length === 0 ? (
-				<EmptyState canManage={canManage} onConnect={connect} />
+				<EmptyState
+					className="border border-border bg-surface"
+					icon={<KeyRound />}
+					title={
+						activeFilters > 0
+							? "No matching providers"
+							: "No identity provider connected"
+					}
+					description={
+						activeFilters > 0
+							? "No identity provider matches these filters."
+							: "Connect your IdP (Okta, Entra ID, OneLogin…) so your team signs in with SSO."
+					}
+					action={
+						activeFilters > 0 ? (
+							<Button variant="outline" size="sm" onClick={reset}>
+								Clear filters
+							</Button>
+						) : (
+							<Button size="sm" disabled={!canManage} onClick={connect}>
+								<Plus size={13} />
+								Connect provider
+							</Button>
+						)
+					}
+				/>
 			) : (
 				<div className="grid grid-cols-1 gap-4 lg:grid-cols-[280px_1fr]">
 					<div className="rounded-lg border border-border bg-surface p-2 shadow-sm">
@@ -169,13 +212,14 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 										{p.type === "unknown" ? "misconfigured" : p.type} · {p.domain}
 									</span>
 								</span>
-								{p.domainVerified ? (
-									<CheckCircle2 size={14} className="shrink-0 text-text-secondary" />
-								) : (
-									<span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 font-mono text-[9px] uppercase text-text-tertiary">
-										pending
-									</span>
-								)}
+								{/* Domain verification is the thing that gates sign-in, so it reads
+								    through the SHARED status device rather than a local pill. */}
+								<StatusBadge
+									className="shrink-0"
+									status={p.domainVerified ? "verified" : "pending"}
+									tier={p.domainVerified ? "active" : "pending"}
+									label={p.domainVerified ? "Verified" : "Pending"}
+								/>
 							</button>
 						))}
 					</div>
@@ -249,30 +293,6 @@ export function SsoManager({ bootstrap }: { bootstrap: SsoBootstrap }) {
 					</AlertDialogFooter>
 				</AlertDialogContent>
 			</AlertDialog>
-		</div>
-	);
-}
-
-function EmptyState({
-	canManage,
-	onConnect,
-}: {
-	canManage: boolean;
-	onConnect: () => void;
-}) {
-	return (
-		<div className="flex flex-col items-center justify-center rounded-lg border border-border bg-surface px-6 py-16 text-center shadow-sm">
-			<KeyRound size={22} className="text-text-tertiary" />
-			<p className="mt-3 text-[14px] font-medium text-text-primary">
-				No identity provider connected
-			</p>
-			<p className="mt-1 max-w-sm text-[12.5px] text-text-secondary">
-				Connect your IdP (Okta, Entra ID, OneLogin…) so your team signs in with SSO.
-			</p>
-			<Button size="sm" className="mt-4" disabled={!canManage} onClick={onConnect}>
-				<Plus size={13} />
-				Connect provider
-			</Button>
 		</div>
 	);
 }
@@ -355,9 +375,12 @@ function ProviderDetail({
 							<span className="text-[15px] font-semibold text-text-primary">
 								{p.providerId}
 							</span>
-							<span className="rounded-full border border-border-strong px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.1em] text-text-secondary">
-								{p.domainVerified ? "Connected" : "Pending domain"}
-							</span>
+							{/* Third local status pill in this file, folded into the shared device. */}
+							<StatusBadge
+								status={p.domainVerified ? "connected" : "pending"}
+								tier={p.domainVerified ? "active" : "pending"}
+								label={p.domainVerified ? "Connected" : "Pending domain"}
+							/>
 						</div>
 						<p className="mt-1 font-mono text-[11.5px] text-text-tertiary">
 							{p.type === "saml"
