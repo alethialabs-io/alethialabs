@@ -314,10 +314,46 @@ func runT2ByoIac(t *testing.T, ctx context.Context, cp *ControlPlane, p byoIacPa
 		t.Fatalf("byo-iac: heal DEPLOY terminal status = %q, want SUCCESS\n%s", healStatus, jobFailureDump(ctx, cp, healJobID))
 	}
 
-	posture = byoIacDriftCheck(t, ctx, cp, p, snap, deployJobID, wait, "post-heal")
-	if !posture.InSync || posture.Drifted != 0 {
-		t.Fatalf("byo-iac: the environment did NOT heal — after re-applying the same pinned commit the posture is still drifted (in_sync=%t drifted=%d %s)",
-			posture.InSync, posture.Drifted, posture.detail())
+	// The heal is the one posture read that is allowed a CONVERGENCE WINDOW, and gcp is why.
+	//
+	// gcp/byo-iac run 33112940610, with #3076's attribute detail attached, showed the heal working
+	// and the verdict still failing:
+	//
+	//	post-mutation … attrs=effective_labels.drift_marker,labels.drift_marker,
+	//	                      terraform_labels.drift_marker,updated
+	//	post-heal     … attrs=updated
+	//
+	// Every label the mutation touched reverted. What remained was `updated` — GCS's SERVER-SET
+	// last-modified timestamp, which the heal's own write moves. It is not configurable, so no
+	// customer intent governs it and no re-apply can converge it in the same instant it is written.
+	// The baseline read is in-sync precisely because nothing had written to the bucket yet.
+	//
+	// So the honest assertion is "converges within a bounded window", not "is converged the
+	// microsecond the apply returns". Polling also DISCRIMINATES, which a single read cannot: if a
+	// later read clears, the residue was a write-timestamp settling; if it never clears, the
+	// attribute list in the failure names what is structurally stuck. Either way the next reader
+	// gets an answer instead of a retry.
+	//
+	// Deliberately NOT applied to the baseline or post-mutation reads. Baseline asserts a clean
+	// apply is ALREADY in-sync — polling there would let a genuinely dirty apply pass by waiting.
+	// Post-mutation asserts the detector FLIPS, and waiting for drift to appear would soften the
+	// single most important negative this leg exists to catch.
+	healDeadline := time.Now().Add(byoIacHealConvergeWindow)
+	for attempt := 1; ; attempt++ {
+		posture = byoIacDriftCheck(t, ctx, cp, p, snap, deployJobID, wait, fmt.Sprintf("post-heal(%d)", attempt))
+		if posture.InSync && posture.Drifted == 0 {
+			if attempt > 1 {
+				t.Logf("byo-iac: the heal converged on attempt %d — the residue was a settling write, not a stuck attribute", attempt)
+			}
+			break
+		}
+		if time.Now().After(healDeadline) {
+			t.Fatalf("byo-iac: the environment did NOT heal — after re-applying the same pinned commit and %s of reconciling, the posture is still drifted (in_sync=%t drifted=%d %s)",
+				byoIacHealConvergeWindow, posture.InSync, posture.Drifted, posture.detail())
+		}
+		t.Logf("byo-iac: post-heal still drifted (%s) — re-reading in %s; a server-set timestamp settles, a real difference does not",
+			posture.detail(), byoIacHealPollInterval)
+		time.Sleep(byoIacHealPollInterval)
 	}
 	summary.HealedInSync = true
 	t.Log("byo-iac: healed — the same pinned commit re-converged the out-of-band change and the posture is in-sync again")
