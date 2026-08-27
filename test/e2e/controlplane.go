@@ -78,6 +78,14 @@ type ControlPlane struct {
 	states            map[string]*stateEntry
 	stateAlias        map[string]string
 	stateReadNonEmpty map[string]int
+	// stateClearedBy records HOW a storage key's state last became empty — "delete" (tofu issued
+	// an HTTP DELETE) or "empty-write" (it POSTed a zero-length body). A non-empty write clears
+	// the record, so this always describes the CURRENT emptiness rather than a historical one.
+	//
+	// It exists because `StateSnapshot` returns raw bytes, so "cleared by destroy" and "never
+	// written" are the same observation — and those mean opposite things about whether live
+	// infrastructure was orphaned. See the byo-iac state-cleared assertion.
+	stateClearedBy map[string]string
 }
 
 type stateEntry struct {
@@ -102,6 +110,7 @@ func NewControlPlane(ctx context.Context, dbURL string) (*ControlPlane, error) {
 		states:            map[string]*stateEntry{},
 		stateAlias:        map[string]string{},
 		stateReadNonEmpty: map[string]int{},
+		stateClearedBy:    map[string]string{},
 	}, nil
 }
 
@@ -741,6 +750,19 @@ func (cp *ControlPlane) StateSnapshot(jobID string) []byte {
 	return out
 }
 
+// StateClearedBy reports HOW jobID's state slot last became empty: "delete" when tofu issued an
+// HTTP DELETE against the backend, "empty-write" when it POSTed a zero-length body, and "" when the
+// slot has never been emptied (which includes "was never written at all").
+//
+// The distinction is the whole point. `StateSnapshot` returns raw bytes, so a slot cleared by a real
+// destroy and a slot nothing ever wrote are the SAME observation — and they mean opposite things:
+// one is proof that live infrastructure was reclaimed, the other is proof of nothing.
+func (cp *ControlPlane) StateClearedBy(jobID string) string {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	return cp.stateClearedBy[cp.resolveStateKeyLocked(jobID)]
+}
+
 // StateReadsNonEmpty is how many times jobID's tofu run GET a NON-EMPTY state object from
 // the backend — proof a drift/refresh run actually read real recorded state rather than
 // sailing over an empty slot (which would yield a vacuous in-sync posture).
@@ -772,11 +794,17 @@ func (cp *ControlPlane) handleState(w http.ResponseWriter, r *http.Request) {
 			cp.states[key] = e
 		}
 		e.state = b
+		if len(b) == 0 {
+			cp.stateClearedBy[key] = "empty-write"
+		} else {
+			delete(cp.stateClearedBy, key)
+		}
 		w.WriteHeader(http.StatusOK)
 	case http.MethodDelete:
 		if e != nil {
 			e.state = nil
 		}
+		cp.stateClearedBy[key] = "delete"
 		w.WriteHeader(http.StatusOK)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
