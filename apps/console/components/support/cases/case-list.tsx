@@ -167,7 +167,7 @@ export function CaseList({
 							</EmptyMedia>
 							<EmptyTitle>No cases match these filters</EmptyTitle>
 							<EmptyDescription>
-								Nothing in this view matches what you've selected.
+								Nothing in this view matches what you&apos;ve selected.
 							</EmptyDescription>
 						</EmptyHeader>
 						<EmptyContent>
