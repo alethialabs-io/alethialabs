@@ -1037,6 +1037,7 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
 	// the one outcome that cannot be acted on without knowing whether the status is stale.
 	if strings.Contains(report, "reports NO difference") {
 		report += argoSyncStaleness(app, readArgoReconciledAt(ctx, kubeconfigPath, app), time.Now()) + "\n"
+		report += argoHardRefreshVerdict(cctx, kubeconfigPath, target, app) + "\n"
 	}
 	return report
 }
@@ -1579,4 +1580,54 @@ func tailAfter(text, marker string) string {
 		return text[i:]
 	}
 	return ""
+}
+
+// argoHardRefreshVerdict asks ArgoCD to recompute the Application from scratch and reports whether
+// the OutOfSync status SURVIVES that.
+//
+// It answers the one thing `reports NO difference` + a fresh `reconciledAt` still cannot. A fresh
+// reconcile is not a fresh RENDER: ArgoCD caches generated manifests per repo revision, so a
+// reconcile can be seconds old and still be comparing against a cached desired state. `--hard-refresh`
+// discards that cache and regenerates. So:
+//
+//	Synced after a hard refresh    the OutOfSync was a stale MANIFEST CACHE. The cluster already
+//	                              matched; nothing about the chart or the cluster needs changing,
+//	                              and the harness should refresh before asserting.
+//	still OutOfSync               ArgoCD genuinely believes live differs from desired while its own
+//	                              diff prints nothing — a normalisation difference, and a real
+//	                              finding worth an issue rather than a retry.
+//
+// That distinction is worth a paid run on its own: as of 2026-08-28 every OutOfSync resource across
+// two runs and eight charts (valkey, rabbitmq, a CNPG Cluster, three harbor StatefulSets, loki,
+// tempo) is a StatefulSet or a PVC-owning CR, and it blocks maxconfig and addons on every cloud.
+//
+// Best-effort, like everything else on this path: it runs only on an already-failing verdict, it is
+// bounded by the caller's context, and every failure to ASK renders as "could not tell" rather than
+// as either answer.
+func argoHardRefreshVerdict(ctx context.Context, kubeconfigPath, target, app string) string {
+	run := func(args ...string) (string, error) {
+		full := append([]string{"--kubeconfig", kubeconfigPath, "-n", "argocd", "exec", target, "--"}, args...)
+		out, err := exec.CommandContext(ctx, "kubectl", full...).CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	if out, err := run("argocd", "app", "get", app, "--core", "--hard-refresh", "-o", "json"); err != nil {
+		if len(out) > 400 {
+			out = out[:400] + "…"
+		}
+		return fmt.Sprintf("  hard refresh: COULD NOT ASK (%v) — this does NOT decide between a stale manifest cache and a real normalisation difference: %s",
+			err, out)
+	}
+	out, err := run("kubectl", "get", "applications.argoproj.io", app, "-o", "jsonpath={.status.sync.status}")
+	if err != nil {
+		return fmt.Sprintf("  hard refresh: re-read FAILED (%v) — cannot say whether the status survived it", err)
+	}
+	switch strings.TrimSpace(out) {
+	case "Synced":
+		return "  hard refresh: the Application is now SYNCED — the OutOfSync was a STALE MANIFEST CACHE, not a difference. ArgoCD had reconciled recently but was comparing against a cached render."
+	case "":
+		return "  hard refresh: the sync status came back EMPTY — cannot say whether it survived"
+	default:
+		return "  hard refresh: still " + strings.TrimSpace(out) +
+			" — the status SURVIVES a full re-render, so ArgoCD believes live differs from desired while its own diff prints nothing. That is a normalisation difference and needs a fix, not a retry."
+	}
 }
