@@ -86,3 +86,4 @@ audit trail; git history is the timeline. Parity board:
 | 2026-08-27 | 7108a7e | hetzner | floor | **PASS** | hetzner: ✅ apply(18 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/hetzner/20260827T192915Z` | — |
 | 2026-08-27 | 21d1051 | azure | byo-iac | **PASS** | azure: ✅ apply(29 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/azure/20260827T204358Z` | — |
 | 2026-08-27 | 98bbef1 | hetzner | byo-iac | **PASS** | hetzner: ✅ apply(18 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/hetzner/20260827T210204Z` | — |
+| 2026-08-27 | 98bbef1 | azure | maxconfig | **PASS** | azure: ✅ apply(57 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/azure/20260827T211849Z` | — |
