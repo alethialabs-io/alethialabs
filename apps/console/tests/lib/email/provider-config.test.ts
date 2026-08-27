@@ -27,6 +27,7 @@ const EMAIL_KEYS = [
 	"AUTH_EMAIL_FROM",
 	"EMAIL_FROM",
 	"ALETHIA_DEPLOYMENT_MODE",
+	"ALETHIA_SANDBOX",
 ] as const;
 
 const saved: Record<string, string | undefined> = {};
@@ -52,6 +53,8 @@ afterEach(() => {
 		if (saved[k] === undefined) delete process.env[k];
 		else process.env[k] = saved[k];
 	}
+	// The sandbox carve-out below stubs NODE_ENV, which the loop above cannot restore.
+	vi.unstubAllEnvs();
 });
 
 describe("getEmailConfig — provider selection", () => {
@@ -133,6 +136,67 @@ describe("getEmailConfig — provider selection", () => {
 		await expect(loadConfig()).rejects.toThrow(
 			"EMAIL_PROVIDER=resend is configured without matching credentials.",
 		);
+	});
+
+	describe("the sandbox carve-out (#2953)", () => {
+		// A sandbox env mints ALETHIA_DEPLOYMENT_MODE=hosted on purpose — that is how it
+		// rehearses Stripe-driven billing — and deliberately carries no mail credential. Without
+		// the carve-out those two truths cancelled out and sign-in was impossible on every branch
+		// env: this threw inside a Better Auth background task, the send returned 200, and no code
+		// appeared by mail OR in the log.
+		//
+		// The whole value of the guard is that it refuses to degrade, so the carve-out is tested
+		// from both sides: it must open for a sandbox, and it must stay SHUT for everything that
+		// merely looks like one.
+
+		it("allows the development log fallback for a real sandbox", async () => {
+			process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
+			process.env.ALETHIA_SANDBOX = "1";
+
+			const config = await loadConfig();
+			expect(config.provider).toBeNull();
+		});
+
+		it("stays shut in a PRODUCTION build even if the flag leaks in", async () => {
+			// The second condition is what makes this a carve-out rather than an escape hatch:
+			// a real hosted deployment is a production build and cannot satisfy it.
+			process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
+			process.env.ALETHIA_SANDBOX = "1";
+			vi.stubEnv("NODE_ENV", "production");
+
+			await expect(loadConfig()).rejects.toThrow(
+				"Hosted deployments require an explicit, credentialed EMAIL_PROVIDER.",
+			);
+		});
+
+		it("stays shut for any value other than exactly \"1\"", async () => {
+			process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
+			for (const value of ["true", "yes", "0", "", " 1"]) {
+				process.env.ALETHIA_SANDBOX = value;
+				await expect(loadConfig()).rejects.toThrow(
+					"Hosted deployments require an explicit, credentialed EMAIL_PROVIDER.",
+				);
+			}
+		});
+
+		it("still fails closed on a MISMATCHED provider, sandbox or not", async () => {
+			// The carve-out is for "no provider configured at all". Naming a provider and then
+			// not giving it credentials is a misconfiguration in any environment, and silently
+			// logging instead would hide it.
+			process.env.ALETHIA_DEPLOYMENT_MODE = "hosted";
+			process.env.ALETHIA_SANDBOX = "1";
+			process.env.EMAIL_PROVIDER = "resend";
+
+			await expect(loadConfig()).rejects.toThrow(
+				"EMAIL_PROVIDER=resend is configured without matching credentials.",
+			);
+		});
+
+		it("does not change a self-managed deployment, which never threw", async () => {
+			process.env.ALETHIA_SANDBOX = "1";
+			const config = await loadConfig();
+			expect(config.provider).toBeNull();
+		});
 	});
 
 	it("uses default from-addresses and lets EMAIL_FROM/AUTH_EMAIL_FROM override", async () => {
