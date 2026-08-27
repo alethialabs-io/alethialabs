@@ -189,7 +189,7 @@ func (cp *ControlPlane) SeedRunner(ctx context.Context, ownerUserID, ownerOrgID 
 //
 // BOTH tiers now read that ONE generated artifact. The lean seed used to be a hand-written literal
 // beside it, and the two drifted the moment they could: #643 (2026-07-16) gave reloader real knob
-// defaults, regenerated catalog.ts + addon_catalog.json + t2_config_snapshot.hetzner.json, and left
+// defaults, regenerated catalog.ts + addon_catalog.<cloud>.json + t2_config_snapshot.hetzner.json, and left
 // this literal emitting `Values: map[string]interface{}{}` — contradicting the promise three lines
 // up that this is "the exact camelCase shape the console's resolveAddOnInstall emits". Deriving both
 // tiers from the same SSOT makes that unrepresentable instead of merely detectable (#1965).

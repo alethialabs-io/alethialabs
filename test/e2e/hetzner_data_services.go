@@ -23,7 +23,7 @@ package e2e
 // value schemas that have each broken in production once (bitnami/valkey deleted from its index;
 // bitnami/rabbitmq's image relocated to a 404). A Go copy of that list would have gone stale the
 // first time someone bumped a chart, and the drift would only surface as a red nightly against a
-// real cloud. So the specs come from a GENERATED fixture on the same rail addon_catalog.json uses:
+// real cloud. So the specs come from a GENERATED fixture on the same rail addon_catalog.<cloud>.json uses:
 //
 //	SSOT          apps/console/lib/cloud-providers/hetzner-services.ts
 //	generator     pnpm -F console export:hetzner-data-services

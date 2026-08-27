@@ -20,7 +20,8 @@ import (
 // enough to give the ArgoCD health assertion teeth but is nowhere near the maintainer's
 // FULLY-TESTED bar: "every single add-on we have available" must install and converge.
 //
-// AllCatalogAddOns loads all 18, from the GENERATED fixture `fixtures/addon_catalog.json` — which
+// AllCatalogAddOns loads all 18, from the GENERATED per-cloud fixture
+// `fixtures/addon_catalog.<cloud>.json` — which
 // is produced from apps/console/lib/addons/catalog.ts (the SSOT) via the real `resolveAddOnInstall`
 // (`pnpm -F console export:addon-catalog`), and kept honest by catalog-export.test.ts, which reds CI
 // if the fixture drifts from the catalog. Re-typing the chart coordinates here in Go would have gone
@@ -36,13 +37,26 @@ func AllAddOnsEnabled() bool {
 	return os.Getenv("ALETHIA_E2E_ALL_ADDONS") == "1"
 }
 
-// addonCatalogFixture is the generated all-add-ons fixture (see the package comment).
+// addonCatalogFixture is the generated all-add-ons fixture FOR THIS RUN'S CLOUD (see the package
+// comment).
+//
+// Per-cloud because some knobs are only correct relative to the target. external-dns is the measured
+// case: its `provider` knob defaults to `cloudflare`, so the single cloud-agnostic fixture this
+// replaced installed external-dns pointed at Cloudflare on every cloud, with no Cloudflare token. It
+// could not converge and never could — so the 18-chart cell was testing the fixture, not the chart
+// (#2717 class (c)).
+//
+// The cloud is resolved the SAME way the rest of the harness resolves it — `ALETHIA_E2E_PROVIDER`,
+// defaulting to hetzner (t2_provision_test.go). A second, differently-defaulted answer to "which
+// cloud is this" is exactly how two files come to disagree; the pure tests read the hetzner fixture,
+// which is fine because they assert structure rather than provider knobs.
 func addonCatalogFixture() (string, error) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		return "", fmt.Errorf("cannot locate the e2e package directory")
 	}
-	return filepath.Join(filepath.Dir(thisFile), "fixtures", "addon_catalog.json"), nil
+	cloud := t2Env(envE2EProvider, "hetzner")
+	return filepath.Join(filepath.Dir(thisFile), "fixtures", "addon_catalog."+cloud+".json"), nil
 }
 
 // AllCatalogAddOns returns every marketplace add-on as the runner-facing install spec the console
@@ -163,7 +177,7 @@ func deepMergeValues(dst, src map[string]interface{}) map[string]interface{} {
 //
 // It exists so the LEAN tier stops restating what the generated artifact already holds. The lean
 // seed used to be a hand-written literal (chart coordinates plus `Values: map[string]interface{}{}`),
-// and on 2026-07-16 #643 gave reloader real knob defaults: catalog.ts, addon_catalog.json and
+// and on 2026-07-16 #643 gave reloader real knob defaults: catalog.ts, addon_catalog.<cloud>.json and
 // t2_config_snapshot.hetzner.json were all regenerated, the Go literal was not, and it emitted empty
 // values for ~3 weeks while claiming in its own doc comment to emit "the exact camelCase shape the
 // console's resolveAddOnInstall emits". Deriving makes that drift class UNREPRESENTABLE rather than
