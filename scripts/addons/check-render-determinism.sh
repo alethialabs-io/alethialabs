@@ -38,7 +38,11 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-fixture="$repo_root/test/e2e/fixtures/addon_catalog.json"
+# Any ONE per-cloud fixture is enough: this check renders each CHART at its pinned coordinates to
+# prove the render is deterministic, and the chart/repo/version fields are identical across clouds
+# (only external-dns's `provider` knob differs). hetzner is chosen because it is the harness's own
+# default cloud, so this file and addonCatalogFixture() agree on which fixture "the" fixture is.
+fixture="$repo_root/test/e2e/fixtures/addon_catalog.hetzner.json"
 allowfile="$repo_root/scripts/addons/render-nondeterministic.txt"
 
 command -v helm >/dev/null 2>&1 || { echo "check-render-determinism: helm is not installed" >&2; exit 2; }
