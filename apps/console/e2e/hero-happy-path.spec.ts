@@ -48,8 +48,8 @@ test.describe("Hero happy-path", () => {
 		//    (AWS) is offered — the entry point to connecting an account. Actually verifying a cloud
 		//    needs real creds, so the hero path asserts the surface, not a live connection.
 		await page.goto(`/${orgSlug}/~/connectors`);
-		await expect(page.getByPlaceholder(/search connectors/i)).toBeVisible();
-		await page.getByPlaceholder(/search connectors/i).fill("AWS");
+		await expect(page.getByLabel(/search connectors/i)).toBeVisible();
+		await page.getByLabel(/search connectors/i).fill("AWS");
 		await expect(page.getByText("AWS").first()).toBeVisible();
 
 		// 4. Design a project. The two-step create flow: on `~/new` pick a source, then Configure it.
