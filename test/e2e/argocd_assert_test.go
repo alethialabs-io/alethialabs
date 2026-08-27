@@ -915,3 +915,79 @@ func TestDumpOutOfSyncResourcesIsANoOpWithNothingToDump(t *testing.T) {
 		t.Errorf("empty ref set produced output: %q", got)
 	}
 }
+
+// #2866: falco's `scap_init` sub-errors scrolled off a 40-line tail, so a paid run could not say
+// WHICH probe requirement the kernel refused. The longer tail and the `--previous` fetch are both
+// gated on this predicate, so a wrong answer here silently restores the old blindness — a pod that
+// is crash-looping but reads as healthy gets 40 lines and no crashed-instance log.
+func TestCrashLooping(t *testing.T) {
+	// Whitespace-split lines exactly as the custom-columns listing produces them:
+	// NS NAME PHASE READY RESTARTS REASON
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{
+			// The shape that motivated this: falco on Talos, one container ready and one not.
+			"crashloopbackoff with restarts",
+			"falco addon-falco-2fqps Running false,true 10,0 CrashLoopBackOff",
+			true,
+		},
+		{
+			// Sampled mid-restart: the kubelet is not WAITING, so there is no reason at all, and
+			// only the restart count carries the signal.
+			"restarts but no reason yet",
+			"falco addon-falco-2fqps Running false,true 3,0 <none>",
+			true,
+		},
+		{
+			// The mirror case: killed once, backing off, count not yet meaningful.
+			"reason but no restarts yet",
+			"falco addon-falco-2fqps Pending false 0 CrashLoopBackOff",
+			true,
+		},
+		{
+			// A non-zero count in the SECOND container only — the reason a bare
+			// `fields[4] != "0"` string comparison is not enough.
+			"restart on a later container only",
+			"harbor addon-harbor-core-x Running true,false 0,7 <none>",
+			true,
+		},
+		{
+			// Unhealthy for a reason that is NOT a crash: the pod never started, so there is no
+			// previous instance to fetch and nothing scrolled off.
+			"pending on image pull is not a crash loop",
+			"velero addon-velero-x Pending false 0 ImagePullBackOff",
+			false,
+		},
+		{
+			"healthy pod",
+			"reloader addon-reloader-x Running true 0 <none>",
+			false,
+		},
+		{
+			"no restarts across several containers",
+			"harbor addon-harbor-core-x Running true,true 0,0 <none>",
+			false,
+		},
+		{
+			// This path runs while a run is ALREADY failing; a short line must not panic.
+			"truncated line",
+			"ns pod Running",
+			false,
+		},
+		{
+			"empty line",
+			"",
+			false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := crashLooping(strings.Fields(tc.line)); got != tc.want {
+				t.Fatalf("crashLooping(%q) = %v, want %v", tc.line, got, tc.want)
+			}
+		})
+	}
+}
