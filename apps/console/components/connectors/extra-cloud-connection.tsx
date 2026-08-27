@@ -22,15 +22,15 @@ import {
 	Step,
 	StoredNote,
 	VerifySection,
-} from "@/components/connector/connection-ui";
+} from "@/components/connectors/connection-ui";
 import {
 	ALETHIA_ISSUER_URL,
 	connectorAssetUrl,
-} from "@/components/connector/connector-assets";
+} from "@/components/connectors/connector-assets";
 import {
 	type VerifyOutcome,
 	useConnectionTest,
-} from "@/components/connector/use-connection-test";
+} from "@/components/connectors/use-connection-test";
 import { Download, ExternalLink, Terminal } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
