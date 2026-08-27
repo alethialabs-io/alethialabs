@@ -19,11 +19,11 @@ import {
 	Step,
 	StoredNote,
 	VerifySection,
-} from "@/components/connector/connection-ui";
+} from "@/components/connectors/connection-ui";
 import {
 	type VerifyOutcome,
 	useConnectionTest,
-} from "@/components/connector/use-connection-test";
+} from "@/components/connectors/use-connection-test";
 import { Archive, ExternalLink, ServerCog } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";

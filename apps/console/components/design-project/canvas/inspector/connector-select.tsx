@@ -27,7 +27,7 @@ import {
 	SelectValue,
 } from "@repo/ui/select";
 import { ConnectorIcon } from "@/components/connectors/connector-icon";
-import { ProviderConfigFields } from "@/components/connector/provider-config-fields";
+import { ProviderConfigFields } from "@/components/connectors/provider-config-fields";
 import { useConnectedProviders } from "@/components/design-project/connectors-context";
 import {
 	getConnectorProviderBySlug,
