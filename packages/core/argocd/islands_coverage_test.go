@@ -58,13 +58,37 @@ func TestDNSProvider_FullMatrix(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "azure with client id renders azure",
-			f:    InfraFacts{Provider: "azure", AzureExternalDNSClient: "00000000-0000-0000-0000-000000000000"},
+			name: "azure with the full identity+addressing set renders azure",
+			f: InfraFacts{Provider: "azure", AzureExternalDNSClient: "00000000-0000-0000-0000-000000000000",
+				AzureResourceGroup: "rg-alethia", AzureSubscriptionID: "sub-1", AzureTenantID: "tenant-1"},
 			want: "azure",
 		},
 		{
 			name: "azure without client id fails closed",
-			f:    InfraFacts{Provider: "azure", AzureExternalDNSClient: ""},
+			f: InfraFacts{Provider: "azure", AzureExternalDNSClient: "",
+				AzureResourceGroup: "rg-alethia", AzureSubscriptionID: "sub-1", AzureTenantID: "tenant-1"},
+			want: "",
+		},
+		// The three addressing facts, each alone. Identity without addressing is the exact
+		// shape that shipped in #2868: the pod authenticates and then dies reading a config
+		// file AKS never wrote, while ArgoCD reports the Application Synced. A skip is the
+		// honest outcome, the same one the missing-GSA and missing-token branches take.
+		{
+			name: "azure without a resource group fails closed",
+			f: InfraFacts{Provider: "azure", AzureExternalDNSClient: "client-1",
+				AzureResourceGroup: "", AzureSubscriptionID: "sub-1", AzureTenantID: "tenant-1"},
+			want: "",
+		},
+		{
+			name: "azure without a subscription fails closed",
+			f: InfraFacts{Provider: "azure", AzureExternalDNSClient: "client-1",
+				AzureResourceGroup: "rg-alethia", AzureSubscriptionID: "", AzureTenantID: "tenant-1"},
+			want: "",
+		},
+		{
+			name: "azure without a tenant fails closed",
+			f: InfraFacts{Provider: "azure", AzureExternalDNSClient: "client-1",
+				AzureResourceGroup: "rg-alethia", AzureSubscriptionID: "sub-1", AzureTenantID: ""},
 			want: "",
 		},
 		{

@@ -65,6 +65,24 @@ spec:
         {{- if eq .DNSProvider "azure" }}
         podLabels:
           azure.workload.identity/use: "true"
+        {{- /* external-dns's azure provider reads /etc/kubernetes/azure.json (its default
+               --azure-config-file) UNCONDITIONALLY — v0.15.0's getConfig() os.ReadFile()s it
+               and errors out BEFORE applying --azure-resource-group/--azure-subscription-id,
+               so the flags alone cannot replace it. AKS lays no such file down on a
+               workload-identity cluster, which is why #2868 presented as file-not-found while
+               the Application still read Synced. The Secret is seeded by the deploy path
+               before this app's first sync, exactly like the hetzner/cloudflare tokens above;
+               it holds four identifiers and useWorkloadIdentityExtension, never a secret.
+               `secretConfiguration` would do this in-chart but is DEPRECATED in 1.15.0 and
+               would inline the ids into this Application spec. */}}
+        extraVolumes:
+          - name: azure-config
+            secret:
+              secretName: external-dns-azure
+        extraVolumeMounts:
+          - name: azure-config
+            mountPath: /etc/kubernetes
+            readOnly: true
         {{- end }}
         domainFilters:
           - {{ .DomainName }}

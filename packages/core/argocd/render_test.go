@@ -77,6 +77,12 @@ func TestBuildFromOutputs_PerCloudCluster(t *testing.T) {
 		"external_dns_client_id":     "client-guid",
 		"external_secrets_client_id": "extsec-guid",
 		"key_vault_uri":              "https://demo-kv.vault.azure.net/",
+		// The addressing half external-dns cannot work without. All three are emitted
+		// UNCONDITIONALLY by infra/templates/project/azure/outputs.tf, so a fixture without
+		// them was never a shape a real deploy produces — it only looked like one (#2868).
+		"resource_group_name":   "rg-alethia-demo",
+		"azure_subscription_id": "00000000-0000-0000-0000-0000000000aa",
+		"azure_tenant_id":       "00000000-0000-0000-0000-0000000000bb",
 	}, cfg("azure"))
 	if az.ClusterName != "aks-demo" || az.AzureExternalDNSClient == "" {
 		t.Errorf("azure facts wrong: %+v", az)
@@ -240,6 +246,9 @@ func TestRender_AzureFederatedIdentity(t *testing.T) {
 	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
 		"aks_cluster_name":       "aks-demo",
 		"external_dns_client_id": "client-guid",
+		"resource_group_name":    "rg-alethia-demo",
+		"azure_subscription_id":  "00000000-0000-0000-0000-0000000000aa",
+		"azure_tenant_id":        "00000000-0000-0000-0000-0000000000bb",
 	}, cfg("azure")))
 	dns := files["external-dns.yaml"]
 	if !strings.Contains(dns, "provider: azure") {
@@ -250,6 +259,35 @@ func TestRender_AzureFederatedIdentity(t *testing.T) {
 	}
 	if !strings.Contains(dns, "azure.workload.identity/use") {
 		t.Errorf("azure external-dns pod should opt into workload identity")
+	}
+	// The identity half above is what SHIPPED, and it was not enough: the provider reads
+	// /etc/kubernetes/azure.json unconditionally, so without this mount the pod
+	// CrashLoopBackOffs on file-not-found while the Application still reports Synced (#2868).
+	// Asserted on the mount path specifically — that is the default --azure-config-file, and
+	// mounting anywhere else would render, sync, and fail identically.
+	if !strings.Contains(dns, "secretName: external-dns-azure") {
+		t.Errorf("azure external-dns must mount the seeded azure.json secret:\n%s", dns)
+	}
+	if !strings.Contains(dns, "mountPath: /etc/kubernetes") {
+		t.Errorf("azure external-dns must mount azure.json at the default --azure-config-file path:\n%s", dns)
+	}
+	// Parity in the other direction: the mount is azure-only. Rendered from the same
+	// template, so a stray `extraVolumes` outside the azure branch would reach every cloud
+	// and mount a Secret the deploy path never seeds there.
+	for name, otherFacts := range map[string]*InfraFacts{
+		"aws": BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo"}, cfg("aws")),
+		"gcp": BuildFromOutputs(map[string]interface{}{
+			"gke_cluster_name":             "gke-demo",
+			"external_dns_service_account": "extdns@proj.iam.gserviceaccount.com",
+		}, cfg("gcp")),
+	} {
+		other := renderAll(t, otherFacts)["external-dns.yaml"]
+		if other == "" {
+			t.Fatalf("%s external-dns did not render at all — the negative check below would pass vacuously", name)
+		}
+		if strings.Contains(other, "external-dns-azure") {
+			t.Errorf("%s external-dns must not mount the azure config secret:\n%s", name, other)
+		}
 	}
 	if _, ok := files["aws-load-balancer-controller.yaml"]; ok {
 		t.Errorf("ALB controller must NOT render on Azure")
