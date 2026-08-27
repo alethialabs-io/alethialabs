@@ -59,6 +59,12 @@
 #   scripts/go-coverage.sh --module apps/runner --print         # "<pkg> <covered> <total>", exit 0
 #   scripts/go-coverage.sh --module apps/runner --profile p.out # override the profile path
 #   scripts/go-coverage.sh --self-test                          # offline fixtures; no go, no network
+#   scripts/go-coverage.sh --module apps/runner --require-verdict   # exit 3 if it did NOT measure
+#
+# EXIT CODES: 0 = measured and passed, 1 = measured and below floor, 2 = USAGE error, 3 = NO
+# VERDICT (only with --require-verdict; without it a non-measuring path still exits 0). "The
+# check never ran" and "the code is fine" must not be the same green in CI — and 3 is distinct
+# from 2 because a bad invocation and a check that could not run are different problems.
 #
 # Run it from anywhere: it cd's to the repo root itself, so the fix command printed on failure is
 # absolute and needs no `cd` puzzle from whoever hits it.
@@ -72,7 +78,9 @@ export LC_ALL=C
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
-MODULE="" PROFILE="" MODE="check"
+# REQUIRE_VERDICT defaults OFF so a laptop run stays advisory and bootstrap stays inert.
+# CI turns it on, because there a green must mean "measured and fine", never "never ran".
+MODULE="" PROFILE="" MODE="check" REQUIRE_VERDICT=0
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -84,7 +92,8 @@ while [ $# -gt 0 ]; do
 	--accept-regression) MODE="accept"; shift ;;
 	--print) MODE="print"; shift ;;
 	--self-test) MODE="self-test"; shift ;;
-	-h | --help) sed -n '2,80p' "$0"; exit 0 ;;
+	--require-verdict) REQUIRE_VERDICT=1; shift ;;
+	-h | --help) sed -n '2,73p' "$0"; exit 0 ;;
 	*) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
 	esac
 done
@@ -360,6 +369,47 @@ a/two" "$(jq -r '.packages | keys[]' "$tmp/f.json")" "floors: package keys are s
 		_a "$(awk '/"a\/two": \{/{print NR+1}' "$tmp/f.json")" "$(printf '%s' "$ann" | sed -n 's/.*,line=\([0-9]*\)::.*/\1/p')" "annotation: line= points at the package's \"covered\" line"
 	fi
 
+	# ── E. exit codes: a skip must not look like a pass (#2852) ───────────────────────────────
+	# These run the script as a SUBPROCESS, because the thing under test is its exit code and
+	# nothing else can observe that. Both directions for each path: without the flag the skip
+	# still exits 0 (a laptop run stays advisory, bootstrap stays inert), with it the same skip
+	# exits 2. `|| rc=$?` is required — `set -e` would otherwise abort the self-test on the
+	# non-zero we are deliberately provoking.
+	local rc
+
+	# F1 needs a module that EXISTS and is unarmed — a bootstrapping module. It has to live under
+	# $ROOT because --module is repo-relative, so the fixture is created and removed here. Note
+	# the module must be real: a path with no go.mod exits 2 (usage), not 3, which is the
+	# distinction this block is testing and is why the two codes are different.
+	local boot="$ROOT/.go-coverage-selftest-$$"
+	mkdir -p "$boot" && printf 'module example.com/selftest\n\ngo 1.24\n' >"$boot/go.mod"
+	rc=0; bash "$0" --module "$(basename "$boot")" >/dev/null 2>&1 || rc=$?
+	_a "0" "$rc" "exit: an unarmed module exits 0 by default (bootstrap stays inert)"
+	rc=0; bash "$0" --module "$(basename "$boot")" --require-verdict >/dev/null 2>&1 || rc=$?
+	_a "3" "$rc" "exit: an unarmed module exits 3 under --require-verdict"
+	rm -rf "$boot"
+
+	# A path that is not a Go module at all is a USAGE error (2), not a no-verdict (3), with or
+	# without the flag. Two problems, two codes — collapsing them is the defect being fixed.
+	rc=0; bash "$0" --module scripts/lib --require-verdict >/dev/null 2>&1 || rc=$?
+	_a "2" "$rc" "exit: a non-module path is a usage error (2), never a no-verdict (3)"
+
+	# F4, via a real armed module pointed at a profile that does not exist. This is the path a
+	# test step writing its profile elsewhere takes, and the one that made "the tests never ran"
+	# and "coverage is fine" the same green in CI.
+	rc=0; bash "$0" --module packages/core --profile "$tmp/__absent__.out" >/dev/null 2>&1 || rc=$?
+	_a "0" "$rc" "exit: a missing coverprofile exits 0 by default"
+	rc=0; bash "$0" --module packages/core --profile "$tmp/__absent__.out" --require-verdict >/dev/null 2>&1 || rc=$?
+	_a "3" "$rc" "exit: a missing coverprofile exits 3 under --require-verdict"
+
+	# And the message has to name the reason, or a 2 in a job log is a riddle.
+	local msg
+	msg=$(bash "$0" --module packages/core --profile "$tmp/__absent__.out" --require-verdict 2>&1 || true)
+	case "$msg" in
+	*"NO VERDICT"*"coverprofile"*) echo "ok   - exit: the no-verdict error names the cause" ;;
+	*) echo "FAIL - exit: the no-verdict error does not name the cause: $msg" >&2; fails=$((fails + 1)) ;;
+	esac
+
 	echo
 	if [ "$fails" -eq 0 ]; then
 		echo "self-test: all passed"
@@ -464,30 +514,54 @@ esac
 
 # ── CHECK (what CI runs) ──────────────────────────────────────────────────────────────────────
 # Every branch before the comparison is fail-OPEN. See the header for why.
+#
+# EXIT CODES. Every skip below is individually correct and stays. What changed (#2852) is that
+# they are no longer indistinguishable from a pass:
+#
+#   0  measured, and nothing regressed          — a VERDICT
+#   1  measured, and something is below floor   — a VERDICT
+#   2  usage error (already taken: no --module, not a Go module, jq missing for --update)
+#   3  did NOT measure (any F-path, or a demote) — NO verdict, only under --require-verdict
+#
+# Without --require-verdict a non-measuring path still exits 0, so a laptop run stays advisory
+# and bootstrap stays inert. CI passes the flag, because there the number is supposed to be
+# authoritative and "the tests never ran" must not read the same as "coverage is fine".
+#
+# The two that can genuinely fire in CI are the reason this exists: F2 (a runner image without
+# jq silently disarms the ratchet) and F4 (a test step that wrote its profile somewhere else).
+# Both printed `::warning::`, which nothing surfaces on a PR page.
+no_verdict() {
+	if [ "$REQUIRE_VERDICT" = "1" ]; then
+		echo "::error::$MODULE: coverage ratchet produced NO VERDICT — $1"
+		echo "  --require-verdict was passed, so this is a failure rather than a silent pass." >&2
+		exit 3
+	fi
+	exit 0
+}
 
 # F1 — no floors file yet. The ratchet is not armed for this module. Bootstrap must be inert.
-[ -f "$ROOT/$FLOORS" ] || { notice "no $FLOORS — coverage ratchet not armed for $MODULE"; exit 0; }
+[ -f "$ROOT/$FLOORS" ] || { notice "no $FLOORS — coverage ratchet not armed for $MODULE"; no_verdict "no $FLOORS, so the ratchet is not armed for this module"; }
 
 # F2 — jq unavailable. A required check must not depend on a tool being installed.
-command -v jq >/dev/null 2>&1 || { warn "jq unavailable — coverage ratchet SKIPPED for $MODULE"; exit 0; }
+command -v jq >/dev/null 2>&1 || { warn "jq unavailable — coverage ratchet SKIPPED for $MODULE"; no_verdict "jq is unavailable on this runner"; }
 
 # F3 — floors unparseable. The likeliest cause is a hand-resolved merge conflict leaving
 # `<<<<<<< HEAD` in the file. That must never red every PR in the repo.
 jq -e '.packages' "$ROOT/$FLOORS" >/dev/null 2>&1 || {
 	warn "$FLOORS is not valid JSON or has no .packages (a hand-resolved merge conflict?) — ratchet SKIPPED. Re-run: scripts/go-coverage.sh --module $MODULE --update"
-	exit 0
+	no_verdict "$FLOORS is not valid JSON or has no .packages"
 }
 
 # F4 — no profile. The only way to reach this is that the `go test` step already failed and
 # failed the job. Failing twice adds noise and misattributes the cause.
-[ -s "$PROFILE_ABS" ] || { warn "no coverprofile at $PROFILE — ratchet SKIPPED for $MODULE"; exit 0; }
+[ -s "$PROFILE_ABS" ] || { warn "no coverprofile at $PROFILE — ratchet SKIPPED for $MODULE"; no_verdict "there is no coverprofile at $PROFILE"; }
 
 # F5 — unrecognised mode line (a future Go release, or -race forcing atomic).
-NOW=$(measure "$PROFILE_ABS" "$MODPATH") || { warn "$PROFILE has an unrecognised 'mode:' line — ratchet SKIPPED"; exit 0; }
+NOW=$(measure "$PROFILE_ABS" "$MODPATH") || { warn "$PROFILE has an unrecognised 'mode:' line — ratchet SKIPPED"; no_verdict "$PROFILE has an unrecognised 'mode:' line"; }
 
 # F6 — the profile parsed to nothing (truncated, interrupted, disk full). Left alone this would
 # read as "every package collapsed to 0%" and red them all at once.
-[ -n "$NOW" ] || { warn "$PROFILE parsed to zero packages (truncated?) — ratchet SKIPPED"; exit 0; }
+[ -n "$NOW" ] || { warn "$PROFILE parsed to zero packages (truncated?) — ratchet SKIPPED"; no_verdict "$PROFILE parsed to zero packages"; }
 
 # F7 — TOOLCHAIN DRIFT. If the recording environment had something this one lacks, coverage is
 # not comparable and every failure is demoted. Measured: tofu is worth 15 points on
@@ -582,7 +656,13 @@ if [ -n "$DEMOTE" ] || [ -n "$SUSPECT" ]; then
 		[ -n "$p" ] || continue
 		echo "  (demoted) $p  floor $(pct "$fc" "$ft")  now $(pct "$c" "$t")"
 	done
-	exit 0
+	# A demote is the subtlest no-verdict of the seven: packages ARE below their floors, and the
+	# script is saying it does not trust its own numbers enough to blame the code. That is right —
+	# a truncated profile must never be reported as a coverage collapse — but it is not a pass.
+	# On a Mac `os(Linux!=Darwin)` demotes unconditionally, so every local run lands here and was
+	# reporting 0; #2845 sat 0.03 below its floor and the author caught it only by reading the
+	# number.
+	no_verdict "$fails package(s) are below their floor but the result was demoted (toolchain drift or a partial profile), so this run cannot say whether the code regressed"
 fi
 
 printf '%s' "$FAILROWS" | while read -r p c t fc ft; do
