@@ -3,17 +3,39 @@ SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 SPDX-License-Identifier: AGPL-3.0-only
 -->
 
-# Cloud connect sheets
+# Connectors
 
-This directory holds the **connect sheets** — the per-cloud flows a user runs to give Alethia
-provisioning access to their cloud account. They render inside a right-side `Sheet` on the
-connectors board (`components/connectors/`) and in the create-project cloud picker.
+One directory for the whole connector surface: the **board** (`/{org}/~/connectors`) and the
+**connect sheets** the board opens.
+
+It was two. `components/connector/` held the sheets and `components/connectors/` held the board,
+which meant a connector's tile and the flow that tile launches lived in sibling directories, and
+`connectors-page.tsx` had to import across the seam. They solve one problem, so they are one
+directory (#2879). No re-export shims were left behind — per `CLAUDE.md` §6 a renamed component
+file is deleted, not aliased.
+
+## File map
+
+### The board
+
+| File | Role |
+|------|------|
+| `connectors-page.tsx` | The client page. Owns the filter pipeline, the connect/disconnect/re-verify handlers, the manage drawer and the confirm dialog. |
+| `connectors-query.ts` | **Pure filter/query plumbing.** `connectorState()` (the one status ladder), `GROUP_META`, `normalizeConnectorQuery()`, `selectConnectors()`, `buildConnectorFacets()`, `buildConnectorsView()`. No React, no server imports. |
+| `connectors-filter-bar.tsx` | The filter bar: `FilterSearch` + `FilterChipGroup` (status) + `FacetFilter` (group) + `MultiCombobox` (vendor) + `FilterBarReset`. |
+| `connector-card.tsx` | One connector as a tile (card view). Also used by the create-project cloud picker. |
+| `connector-row.tsx` | The same connector as a table row (table view). |
+| `connector-detail-sheet.tsx` | The manage drawer, on `@repo/ui/detail-sheet`. |
+| `connector-icon.tsx`, `git-provider-icon.tsx` | Logo rendering with monogram / mono fallbacks. |
+
+### The connect sheets
+
+These are the per-cloud flows a user runs to give Alethia provisioning access. They render inside a
+right-side `Sheet` on the board and in the create-project cloud picker.
 
 Design: the **grayscale design system** (`@repo/ui` on `@repo/brand/tokens.css`). No cards, no
 shadows, no colored status fills — flat hairline `Separator`-divided sections, status shown as an
 icon + label. All sheets share one scaffold, so they look identical bar their copy and fields.
-
-## The two auth families
 
 | Family | Clouds | Badge | Stored |
 |--------|--------|-------|--------|
@@ -23,16 +45,45 @@ icon + label. All sheets share one scaffold, so they look identical bar their co
 The keyless clouds trust the Alethia OIDC issuer directly and Alethia federates in with a
 short-lived minted assertion; the token clouds have no federation, so a scoped token is the ceiling.
 
-## File map
-
 | File | Role |
 |------|------|
 | `connection-ui.tsx` | **The shared scaffold.** Exports `ConnectSheetShell` (badge + intro + "How this works" popover + hairline sections), `MethodTabs` (segmented setup-method control), `Step`, `VerifySection` (+ `ConnectionTestStatus`/`StatusCallout`), and `StoredNote`. Change the look here → every sheet updates. Keep the exported props stable. |
 | `{aws,gcp,azure,hetzner,extra-cloud,api-key}-connection.tsx` | **Per-cloud sheets.** Each composes the scaffold, renders its own fields, and calls an injected `onComplete`/`onSave`/`onCompleteFromIds` handler. `extra-cloud-connection.tsx` exports both `AlibabaConnection` (RAM role ARN) and `TokenCloudConnection` (generic token cloud). |
 | `use-connection-test.ts` | The instant server-side verify hook. `useConnectionTest()` runs a save+verify round trip and exposes `state` (`idle`/`saving`/`success`/`failed`) → drives the shared status UI. Handlers return a `VerifyOutcome` (`verified`, `status`, `error`, `missingPermissions`). |
+| `provider-config-fields.tsx` | The generic `provider_config` field renderer (also used by the canvas inspector). |
 | `connector-assets.ts` | `connectorAssetUrl()` (setup script / template URLs), `CONNECTOR_DOCS_BASE`, `connectorDocsHref()` (maps a connector → its `/docs/console/connectors/*` page), and the pre-filled issuer/client-id env constants. |
 | `../cloud-connect/use-cloud-connect.tsx` | **The host hook.** Owns the sheet open/close state, seeds/inits a pending identity, wires the per-provider save handlers to the server actions, and renders every `<Sheet>` + `ConnectSheetHeader`. Callers use `openConnect(integration)` + render `sheets`. |
 | `../../lib/cloud-providers/gcp-wif.ts` | Pure WIF helper — `buildWifConfig(projectId, projectNumber)` + the fixed pool/provider/SA constants + `GCP_PROJECT_ID_REGEX`. No server deps, so the server verify **and** the client sheet import the same builder. |
+
+## One status ladder
+
+`connectorState(integration, platformConfigured)` in `connectors-query.ts` is the **only** place
+that decides what a connector's state is called. It returns both the words the tile prints
+("Verification failed", "Limited permissions", "Verifying…") and the coarser bucket the Status
+facet filters on (`connected` · `attention` · `disconnected` · `unavailable` · `coming_soon`).
+
+The card, the row, the detail sheet and the filter bar all read it. Before, the card and the row
+each carried their own copy of the same nested ternary — so a wording change had to be made twice,
+and a filter written against either one could disagree with the other.
+
+## Filtering
+
+The board follows the console filter standard (`apps/console/lib/query/README.md` →
+"Server-side filters"):
+
+```
+use-connector-filters (zustand)  →  useFilterUrlSync  →  useDebouncedValue (search)
+  →  normalizeConnectorQuery()  →  qk.connectors(org, query)  →  useQuery
+```
+
+Facet counts are computed over the **unfiltered** catalog, so an option never disappears as you
+select it. The Radix `<Select>` that used to drive the group filter is gone — it is banned from
+filter bars.
+
+**Known gap:** `getConnectorsWithStatus()` takes no arguments, so `selectConnectors()` and
+`buildConnectorFacets()` run in the query function rather than in SQL. Both are pure and take the
+same normalized query object a server-side implementation would, so moving them is a signature
+change in `app/server/actions/connectors.ts` and nothing in this directory.
 
 ## The GCP "assembled config" pattern
 

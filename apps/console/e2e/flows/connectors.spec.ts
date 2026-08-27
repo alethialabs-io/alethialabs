@@ -24,7 +24,7 @@ test.describe.configure({ timeout: 120_000 });
 /** Navigates to the org connectors board and waits for the search box to render. */
 async function gotoConnectors(page: import("@playwright/test").Page, orgSlug: string) {
 	await page.goto(`/${orgSlug}/~/connectors`, { waitUntil: "commit" });
-	await expect(page.getByPlaceholder(/search connectors/i)).toBeVisible({ timeout: 60_000 });
+	await expect(page.getByLabel(/search connectors/i)).toBeVisible({ timeout: 60_000 });
 }
 
 /** Selects a group in the top-bar filter Select (Radix combobox → option). */
@@ -85,7 +85,7 @@ test.describe("Connectors — browse & filter", () => {
 
 	test("search filters connectors by name", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Datadog");
+		await owner.page.getByLabel(/search connectors/i).fill("Datadog");
 		await expect(owner.page.getByText("Datadog").first()).toBeVisible();
 		await expect(owner.page.getByText("GitHub")).toHaveCount(0);
 	});
@@ -93,14 +93,14 @@ test.describe("Connectors — browse & filter", () => {
 	test("search matches on the provider organization too", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
 		// "HashiCorp" is the organization behind Vault, not in its display name.
-		await owner.page.getByPlaceholder(/search connectors/i).fill("HashiCorp");
+		await owner.page.getByLabel(/search connectors/i).fill("HashiCorp");
 		await expect(owner.page.getByText("HashiCorp Vault").first()).toBeVisible();
 		await expect(owner.page.getByText("Amazon Web Services")).toHaveCount(0);
 	});
 
 	test("no-match search shows the empty-state copy", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("zzz-no-such-connector");
+		await owner.page.getByLabel(/search connectors/i).fill("zzz-no-such-connector");
 		await expect(
 			owner.page.getByText("No connectors match your search."),
 		).toBeVisible();
@@ -108,7 +108,7 @@ test.describe("Connectors — browse & filter", () => {
 
 	test("clearing the search restores the full board", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		const search = owner.page.getByPlaceholder(/search connectors/i);
+		const search = owner.page.getByLabel(/search connectors/i);
 		await search.fill("Datadog");
 		await expect(owner.page.getByText("GitHub")).toHaveCount(0);
 		await search.fill("");
@@ -144,7 +144,7 @@ test.describe("Connectors — browse & filter", () => {
 test.describe("Connectors — connect sheets (open + validate, no submit)", () => {
 	test("api-key connector opens its credential sheet", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Datadog");
+		await owner.page.getByLabel(/search connectors/i).fill("Datadog");
 		await owner.page.getByRole("button", { name: "Connect" }).click();
 		await expect(owner.page.getByRole("heading", { name: "Connect Datadog" })).toBeVisible();
 		await expect(owner.page.getByText("API Key", { exact: false }).first()).toBeVisible();
@@ -152,7 +152,7 @@ test.describe("Connectors — connect sheets (open + validate, no submit)", () =
 
 	test("api-key sheet blocks submit and shows required-field errors", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Datadog");
+		await owner.page.getByLabel(/search connectors/i).fill("Datadog");
 		await owner.page.getByRole("button", { name: "Connect" }).click();
 		const sheet = owner.page.getByRole("dialog");
 		// Submit empty → registry-driven inline validation (no server call).
@@ -171,7 +171,7 @@ test.describe("Connectors — connect sheets (open + validate, no submit)", () =
 		async ({ owner }) => {
 			await seedHetzner(owner, `e2e-htz-open-${Date.now()}`);
 			await gotoConnectors(owner.page, owner.orgSlug);
-			await owner.page.getByPlaceholder(/search connectors/i).fill("Hetzner");
+			await owner.page.getByLabel(/search connectors/i).fill("Hetzner");
 			await owner.page.getByRole("button", { name: "Manage" }).first().click();
 			await owner.page
 				.getByRole("dialog")
@@ -195,7 +195,7 @@ test.describe("Connectors — connected cloud & manage sheet (seeded)", () => {
 			{ provider: "aws", name },
 		);
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Amazon Web Services");
+		await owner.page.getByLabel(/search connectors/i).fill("Amazon Web Services");
 		await expect(owner.page.getByText("Connected").first()).toBeVisible({ timeout: 10_000 });
 		await expect(owner.page.getByRole("button", { name: "Manage" }).first()).toBeVisible();
 	});
@@ -207,7 +207,7 @@ test.describe("Connectors — connected cloud & manage sheet (seeded)", () => {
 			{ provider: "aws", name },
 		);
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Amazon Web Services");
+		await owner.page.getByLabel(/search connectors/i).fill("Amazon Web Services");
 		await owner.page.getByRole("button", { name: "Manage" }).first().click();
 		const sheet = owner.page.getByRole("dialog");
 		await expect(
@@ -226,7 +226,7 @@ test.describe("Connectors — connected cloud & manage sheet (seeded)", () => {
 			{ provider: "aws", name },
 		);
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Amazon Web Services");
+		await owner.page.getByLabel(/search connectors/i).fill("Amazon Web Services");
 		await owner.page.getByRole("button", { name: "Manage" }).first().click();
 		const sheet = owner.page.getByRole("dialog");
 		await expect(sheet.getByText("Org-wide")).toBeVisible();
@@ -239,7 +239,7 @@ test.describe("Connectors — connected cloud & manage sheet (seeded)", () => {
 			{ provider: "aws", name },
 		);
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Amazon Web Services");
+		await owner.page.getByLabel(/search connectors/i).fill("Amazon Web Services");
 		await owner.page.getByRole("button", { name: "Manage" }).first().click();
 		const sheet = owner.page.getByRole("dialog");
 		await expect(
@@ -254,7 +254,7 @@ test.describe("Connectors — connected cloud & manage sheet (seeded)", () => {
 			{ provider: "aws", name },
 		);
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Amazon Web Services");
+		await owner.page.getByLabel(/search connectors/i).fill("Amazon Web Services");
 		await owner.page.getByRole("button", { name: "Manage" }).first().click();
 		const sheet = owner.page.getByRole("dialog");
 		// The account row: name div → (min-w-0 flex-1) → row div holding the icon buttons.
@@ -282,7 +282,7 @@ test.describe("Connectors — connected cloud & manage sheet (seeded)", () => {
 			{ provider: "aws", name },
 		);
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("Amazon Web Services");
+		await owner.page.getByLabel(/search connectors/i).fill("Amazon Web Services");
 		await owner.page.getByRole("button", { name: "Manage" }).first().click();
 		const sheet = owner.page.getByRole("dialog");
 		const nameEl = sheet.getByText(name, { exact: true });
@@ -305,7 +305,7 @@ test.describe("Connectors — connected cloud & manage sheet (seeded)", () => {
 test.describe("Connectors — git connector", () => {
 	test("an unconnected git connector offers a Connect action", async ({ owner }) => {
 		await gotoConnectors(owner.page, owner.orgSlug);
-		await owner.page.getByPlaceholder(/search connectors/i).fill("GitHub");
+		await owner.page.getByLabel(/search connectors/i).fill("GitHub");
 		await expect(owner.page.getByText("GitHub").first()).toBeVisible();
 		// Don't click — the git Connect kicks off an OAuth redirect off-app.
 		await expect(
