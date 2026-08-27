@@ -436,9 +436,10 @@ func renderSyncErrors(errs map[string]error) string {
 
 // byoAutoSyncPolicy is the `syncPolicy.automated` block a BYO chart Application must carry.
 //
-// A POINTER, because the whole of #2910 is the difference between "absent" and "present with both
-// sub-options false". Those two serialise almost identically to a careless reader and mean opposite
-// things: absent is never synced at all, present-with-false is synced once and then left alone.
+// The pointers survive from when this checked "present but unset" separately. They are KEPT because
+// they still distinguish the two states that matter — `true` (a regression) from anything else — but
+// a nil sub-option is now read as FALSE, which is what ArgoCD itself means by it. See
+// interpretByoSyncPolicy.
 type byoAutoSyncPolicy struct {
 	Prune    *bool `json:"prune"`
 	SelfHeal *bool `json:"selfHeal"`
@@ -459,13 +460,38 @@ func interpretByoSyncPolicy(app string, automated *byoAutoSyncPolicy) error {
 	if automated == nil {
 		return fmt.Errorf("BYO Application %s carries NO syncPolicy.automated — nothing in production ever syncs a BYO chart, so it would deploy nothing at all and report no error (#2910)", app)
 	}
-	if automated.Prune == nil || automated.SelfHeal == nil {
-		return fmt.Errorf("BYO Application %s has syncPolicy.automated with prune/selfHeal unset; both must be explicitly false", app)
-	}
-	if *automated.Prune {
+	// A NIL sub-option is FALSE, not "unset". This used to be an error — "both must be explicitly
+	// false" — and that rule could never be satisfied on a live cluster. hetzner/floor run
+	// 33092056761 is the proof, and it only produced one because the verdict was made to carry the
+	// object (#3026):
+	//
+	//	observed spec.syncPolicy.automated: {}
+	//	full spec.syncPolicy: {"automated":{},"syncOptions":["CreateNamespace=true", …]}
+	//
+	// Everything WE do is correct and was verified end to end: RenderAddOnApplication emits
+	// `prune: false` / `selfHeal: false` (addonAutomated has no omitempty), InjectCommonLabels
+	// round-trips through the YAML AST and preserves them, the runner `kubectl apply -f`s that
+	// file, argo-cd 8.6.4's Application CRD types both as plain booleans, and applying the exact
+	// manifest to a throwaway cluster reads BOTH fields straight back.
+	//
+	// ArgoCD erases them. Its own type at v3.1.8:
+	//
+	//	Prune    bool  `json:"prune,omitempty"`
+	//	SelfHeal bool  `json:"selfHeal,omitempty"`
+	//	Enabled  *bool `json:"enabled,omitempty"`
+	//
+	// `Enabled` is a POINTER precisely so absent/true/false stay distinguishable; prune and selfHeal
+	// deliberately are not. So the moment ArgoCD serialises the Application through its typed
+	// client, `false` becomes absent and the block collapses to `{}` — while `syncOptions`, being a
+	// non-empty slice, survives. Upstream's own semantic is therefore "absent means false", and a
+	// check demanding otherwise is a guard that can never go green.
+	//
+	// BOTH protections are kept, and they are the ones that still work: `true` is non-zero, so
+	// omitempty cannot erase it. A prune or selfHeal that is genuinely on WILL be seen.
+	if automated.Prune != nil && *automated.Prune {
 		return fmt.Errorf("BYO Application %s has prune=true — Alethia must not delete a customer's workload because their chart stopped declaring it (#2910)", app)
 	}
-	if *automated.SelfHeal {
+	if automated.SelfHeal != nil && *automated.SelfHeal {
 		return fmt.Errorf("BYO Application %s has selfHeal=true — ArgoCD must not fight an operator editing their own chart's resources (#2910)", app)
 	}
 	return nil
