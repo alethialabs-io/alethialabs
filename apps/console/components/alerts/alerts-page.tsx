@@ -3,19 +3,35 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // The Alerts hub (dataroom/spec/mvp/25): a single page with the three surfaces stacked
-// vertically — Policies, Channels, Activity. No page header, KPIs or tabs; navigation is
-// the secondary "Alerts" sidebar (components/shell/sidebar-drill.tsx), whose items
-// anchor-scroll to these sections and highlight via the shared use-alerts-section store.
-// Each section has a connectors-style group header (icon + title + inline description +
-// Docs link). The whole surface is gated behind the `alerting` entitlement (Pro+); below
-// that we show the upsell.
+// vertically — Policies, Channels, Activity. No KPIs or tabs; navigation is the secondary
+// "Alerts" sidebar (components/shell/sidebar-drill.tsx), whose items anchor-scroll to these
+// sections and highlight via the shared use-alerts-section store. Each section opens with
+// the shared `PageHeader` (icon + title + description + a Docs link), carrying the filtered
+// result count in its count pill — where the console filter standard requires counts to be.
+// The whole surface is gated behind the `alerting` entitlement (Pro+); below that we show
+// the upsell.
+//
+// This page also OWNS the filter pipeline for all three panels (alerts-filters.ts): the
+// hooks mount once here, so the URL-sync effects don't run per panel, and each panel is
+// handed its resolved view.
 
 import { coerceEnum } from "@/lib/coerce";
-import { Activity, BookOpen, type LucideIcon, ShieldAlert, Webhook } from "lucide-react";
+import {
+	Activity,
+	BookOpen,
+	type LucideIcon,
+	ShieldAlert,
+	Webhook,
+} from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import type { AlertsBootstrap } from "@/app/server/actions/alerts";
 import { ActivityPanel } from "@/components/alerts/activity-panel";
+import {
+	useActivityView,
+	useChannelsView,
+	usePoliciesView,
+} from "@/components/alerts/alerts-filters";
 import { ChannelsPanel } from "@/components/alerts/channels-panel";
 import { PoliciesPanel } from "@/components/alerts/policies-panel";
 import { FeatureUpsell } from "@/components/settings/upgrade/feature-upsell";
@@ -23,6 +39,7 @@ import {
 	type AlertsSection,
 	useAlertsSection,
 } from "@/lib/stores/use-alerts-section";
+import { PageHeader } from "@repo/ui/page-header";
 
 const SECTIONS: AlertsSection[] = ["policies", "channels", "activity"];
 
@@ -33,6 +50,11 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 	const setSelectedPolicyId = useAlertsSection((s) => s.setSelectedPolicyId);
 	const setSelectedChannelId = useAlertsSection((s) => s.setSelectedChannelId);
 	const visible = useRef<Map<string, boolean>>(new Map());
+
+	// The console filter standard, resolved once for the whole hub (see alerts-filters.ts).
+	const policiesView = usePoliciesView(bootstrap.policies, bootstrap.channels);
+	const channelsView = useChannelsView(bootstrap.channels);
+	const activityView = useActivityView(bootstrap.deliveries);
 
 	// Scroll-spy: the top-most in-view section drives the sidebar highlight. Also honour a
 	// deep-link hash (e.g. arriving at …/alerts#channels) once on mount.
@@ -93,79 +115,78 @@ export function AlertsPage({ bootstrap }: { bootstrap: AlertsBootstrap }) {
 	return (
 		<div className="mx-auto w-full max-w-[1200px] space-y-12">
 			<section id="policies" className="scroll-mt-4">
-				<SectionHeader
-					icon={ShieldAlert}
-					title="Policies"
+				<PageHeader
+					className="mb-4"
+					title={sectionTitle(ShieldAlert, "Policies")}
 					description="A policy watches a set of events and routes them to channels."
-					docsHref="/docs/console/alerts#policies"
+					count={policiesView.rows.length}
+					actions={<DocsLink href="/docs/console/alerts#policies" />}
 				/>
 				<PoliciesPanel
 					bootstrap={bootstrap}
+					view={policiesView}
 					onChanged={refresh}
 					onOpenChannel={openChannel}
 				/>
 			</section>
 
 			<section id="channels" className="scroll-mt-4">
-				<SectionHeader
-					icon={Webhook}
-					title="Channels"
+				<PageHeader
+					className="mb-4"
+					title={sectionTitle(Webhook, "Channels")}
 					description="Channels are where alerts go — webhooks, Slack, Rocket.Chat or email."
-					docsHref="/docs/console/alerts#channels"
+					count={channelsView.rows.length}
+					actions={<DocsLink href="/docs/console/alerts#channels" />}
 				/>
 				<ChannelsPanel
 					bootstrap={bootstrap}
+					view={channelsView}
 					onChanged={refresh}
 					onOpenPolicy={openPolicy}
 				/>
 			</section>
 
 			<section id="activity" className="scroll-mt-4">
-				<SectionHeader
-					icon={Activity}
-					title="Activity"
+				<PageHeader
+					className="mb-4"
+					title={sectionTitle(Activity, "Activity")}
 					description="The delivery ledger — every notification routed, with retry status."
-					docsHref="/docs/console/alerts#activity"
+					count={activityView.rows.length}
+					actions={<DocsLink href="/docs/console/alerts#activity" />}
 				/>
-				<ActivityPanel bootstrap={bootstrap} />
+				<ActivityPanel bootstrap={bootstrap} view={activityView} />
 			</section>
 		</div>
 	);
 }
 
-function SectionHeader({
-	icon: Icon,
-	title,
-	description,
-	docsHref,
-}: {
-	icon: LucideIcon;
-	title: string;
-	description: string;
-	docsHref: string;
-}) {
+/**
+ * The section's icon tile, inline in the PageHeader title. The hub identifies its three
+ * surfaces by icon (the connectors-style group header), and `title` is the only slot that
+ * sits on the heading line — so the tile rides there rather than reviving a local header.
+ */
+function sectionTitle(Icon: LucideIcon, text: string) {
 	return (
-		<div className="mb-4 flex items-start justify-between gap-4">
-			<div className="flex items-center gap-2.5">
-				<span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground">
-					<Icon className="size-4" />
-				</span>
-				<div>
-					<h2 className="font-display font-semibold text-[15px] tracking-tight">
-						{title}
-					</h2>
-					<p className="text-muted-foreground text-xs">{description}</p>
-				</div>
-			</div>
-			<a
-				href={docsHref}
-				target="_blank"
-				rel="noreferrer"
-				className="flex shrink-0 items-center gap-1.5 rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5 text-muted-foreground text-xs transition-colors hover:text-foreground"
-			>
-				<BookOpen className="size-3.5" />
-				Docs
-			</a>
-		</div>
+		<span className="inline-flex items-center gap-2.5">
+			<span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/20 text-muted-foreground">
+				<Icon className="size-4" />
+			</span>
+			{text}
+		</span>
+	);
+}
+
+/** The per-section "Docs" link, rendered in the PageHeader's actions slot. */
+function DocsLink({ href }: { href: string }) {
+	return (
+		<a
+			href={href}
+			target="_blank"
+			rel="noreferrer"
+			className="flex shrink-0 items-center gap-1.5 rounded-md border border-border/60 bg-muted/20 px-2.5 py-1.5 text-muted-foreground text-xs transition-colors hover:text-foreground"
+		>
+			<BookOpen className="size-3.5" />
+			Docs
+		</a>
 	);
 }

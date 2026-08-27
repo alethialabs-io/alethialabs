@@ -8,7 +8,7 @@
 // enable switch that confirms on disable, the unified ChannelVerify re-verify control, and
 // a confirmed Delete. "Used by" cross-links into the Policies section.
 
-import { Plus, Search, Send, Trash2 } from "lucide-react";
+import { Plus, Send, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -19,6 +19,9 @@ import {
 	updateChannel,
 } from "@/app/server/actions/alerts";
 import { ChannelIcon } from "@/components/alerts/channel-icon";
+import { ChannelsFilterBar } from "@/components/alerts/alerts-filter-bar";
+import type { ChannelsView } from "@/components/alerts/alerts-filters";
+import { channelBadge, policyBadge } from "@/components/alerts/alerts-status";
 import { ClassificationChips } from "@/components/classification/classification-chips";
 import { ClassificationControl } from "@/components/classification/classification-control";
 import type { AssignedValue } from "@/lib/queries/classification";
@@ -31,15 +34,13 @@ import { FieldHelp } from "@/components/alerts/field-help";
 import { RecipientsEditor } from "@/components/alerts/recipients-editor";
 import { useAlertsSection } from "@/lib/stores/use-alerts-section";
 import { Button } from "@repo/ui/button";
+import { EmptyState } from "@repo/ui/empty";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
+import { StatusBadge } from "@repo/ui/status-badge";
 import { Switch } from "@repo/ui/switch";
 import { cn } from "@repo/ui/utils";
 
-function statusLabel(c: ChannelDTO): string {
-	if (!c.enabled) return "Paused";
-	return c.is_verified ? "Verified" : "Not verified";
-}
 function targetOf(c: ChannelDTO): string {
 	if (c.type === "email")
 		return c.recipients.length
@@ -54,6 +55,8 @@ function sameRecipients(a: string[], b: string[]): boolean {
 
 interface ChannelsPanelProps {
 	bootstrap: AlertsBootstrap;
+	/** The filter standard's resolved view — rows, facets, active-filter count. */
+	view: ChannelsView;
 	onChanged: () => void;
 	onOpenPolicy: (id?: string) => void;
 }
@@ -61,6 +64,7 @@ interface ChannelsPanelProps {
 /** Channels master-detail. */
 export function ChannelsPanel({
 	bootstrap,
+	view,
 	onChanged,
 	onOpenPolicy,
 }: ChannelsPanelProps) {
@@ -68,7 +72,6 @@ export function ChannelsPanel({
 	const selectedId = useAlertsSection((s) => s.selectedChannelId);
 	const setSelectedId = useAlertsSection((s) => s.setSelectedChannelId);
 
-	const [query, setQuery] = useState("");
 	const [sheetOpen, setSheetOpen] = useState(false);
 	const [deleteTarget, setDeleteTarget] = useState<ChannelDTO | null>(null);
 
@@ -79,12 +82,7 @@ export function ChannelsPanel({
 		"alert_channel",
 		channels.map((c) => c.id),
 	);
-	const filtered = channels.filter(
-		(c) =>
-			!query.trim() ||
-			c.name.toLowerCase().includes(query.toLowerCase()) ||
-			c.type.includes(query.toLowerCase()),
-	);
+	const { rows, facets } = view;
 
 	const doDelete = async (c: ChannelDTO) => {
 		try {
@@ -109,27 +107,15 @@ export function ChannelsPanel({
 	return (
 		<div>
 			{channels.length === 0 ? (
-				<EmptyState canManage={canManage} action={addBtn} />
+				<EmptyState
+					icon={<Send />}
+					title="No channels yet"
+					description={`Channels are where alerts get delivered — Slack, email, Rocket.Chat or a signed webhook.${canManage ? " Add one to start." : ""}`}
+					action={canManage ? addBtn : undefined}
+				/>
 			) : (
 				<>
-					{/* toolbar */}
-					<div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-						<div className="flex items-center gap-3">
-							<div className="relative w-[230px]">
-								<Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-								<Input
-									value={query}
-									onChange={(e) => setQuery(e.target.value)}
-									placeholder="Search channels"
-									className="h-9 border-border/60 bg-muted/20 pl-9 text-sm"
-								/>
-							</div>
-							<span className="font-mono text-[10px] text-muted-foreground">
-								{channels.length} channels
-							</span>
-						</div>
-						{addBtn}
-					</div>
+					<ChannelsFilterBar facets={facets} action={addBtn} />
 
 					{/* master-detail */}
 					<div className="flex flex-wrap items-start gap-4">
@@ -137,12 +123,12 @@ export function ChannelsPanel({
 							<div className="px-4 py-3 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/70">
 								Configured channels
 							</div>
-							{filtered.length === 0 ? (
+							{rows.length === 0 ? (
 								<div className="px-4 py-4 text-muted-foreground/70 text-xs">
-									No channels match.
+									No channels match these filters.
 								</div>
 							) : (
-								filtered.map((c) => (
+								rows.map((c) => (
 									<ChannelRow
 										key={c.id}
 										channel={c}
@@ -239,34 +225,8 @@ function ChannelRow({
 					className="mt-1 flex"
 				/>
 			</span>
-			<StatusDot
-				tone={!channel.enabled ? "idle" : channel.is_verified ? "ok" : "idle"}
-			/>
+			<StatusBadge {...channelBadge(channel)} showLabel={false} />
 		</button>
-	);
-}
-
-function EmptyState({
-	canManage,
-	action,
-}: {
-	canManage: boolean;
-	action: React.ReactNode;
-}) {
-	return (
-		<div className="flex flex-col items-center justify-center py-16 text-center">
-			<div className="mb-4 flex size-11 items-center justify-center rounded-full bg-muted/50 text-muted-foreground">
-				<Send className="size-5" />
-			</div>
-			<h3 className="mb-1 font-medium text-sm text-foreground">
-				No channels yet
-			</h3>
-			<p className="max-w-sm text-muted-foreground text-xs">
-				Channels are where alerts get delivered — Slack, email, Rocket.Chat or a
-				signed webhook.{canManage ? " Add one to start." : ""}
-			</p>
-			{canManage && <div className="mt-4">{action}</div>}
-		</div>
 	);
 }
 
@@ -405,12 +365,7 @@ function ChannelDetail({
 						/>
 					</div>
 				</div>
-				<span className="flex flex-none items-center gap-1.5 font-mono text-[10px] uppercase text-muted-foreground">
-					<StatusDot
-						tone={!channel.enabled ? "idle" : channel.is_verified ? "ok" : "idle"}
-					/>
-					{statusLabel(channel)}
-				</span>
+				<StatusBadge {...channelBadge(channel)} className="flex-none text-[10px]" />
 			</div>
 
 			{/* meta */}
@@ -576,7 +531,7 @@ function ChannelDetail({
 								onClick={() => onOpenPolicy(p.id)}
 								className="flex items-center gap-2 rounded-full border border-border/60 px-3 py-1 text-muted-foreground text-xs transition-colors hover:border-foreground/30 hover:text-foreground"
 							>
-								<StatusDot tone={p.enabled ? "ok" : "idle"} />
+								<StatusBadge {...policyBadge(p)} showLabel={false} />
 								{p.name} →
 							</button>
 						))}
@@ -667,19 +622,6 @@ function ChannelTile({
 		>
 			<ChannelIcon type={type} active={active} size={size === "lg" ? 22 : 16} />
 		</span>
-	);
-}
-
-function StatusDot({ tone }: { tone: "ok" | "idle" }) {
-	return (
-		<span
-			className={cn(
-				"size-2 flex-none rounded-full",
-				tone === "ok"
-					? "bg-foreground ring-4 ring-muted/60"
-					: "border-[1.5px] border-border",
-			)}
-		/>
 	);
 }
 
