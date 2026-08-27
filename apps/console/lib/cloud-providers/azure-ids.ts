@@ -5,7 +5,7 @@
  * The three GUIDs an Azure connection is made of — parsing them out of the setup script's output,
  * and rejecting the mis-pastes that are otherwise only caught by a confusing round-trip failure.
  *
- * Shared by the connect form (`components/connector/azure-connection.tsx`) and the server action
+ * Shared by the connect form (`components/connectors/azure-connection.tsx`) and the server action
  * (`saveAzureIdentity`), which the CLI also reaches — so the form is not the only boundary.
  */
 
