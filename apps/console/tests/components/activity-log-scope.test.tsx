@@ -22,8 +22,15 @@ vi.mock("@/lib/stores/use-workspace-store", () => ({
 }));
 // The activity feed now fetches through TanStack (filters in the key), whose hooks read
 // the org from the route params.
+// ActivityLog now runs the documented filter pipeline, and `useFilterUrlSync` reads the router,
+// the pathname and the search params to mirror non-default filters into the URL. A mock that
+// returns only `useParams` makes the component throw before it renders anything — so these are
+// the pipeline's dependencies, not decoration.
 vi.mock("next/navigation", () => ({
 	useParams: () => ({ org: "acme" }),
+	useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+	usePathname: () => "/acme/~/settings/activity",
+	useSearchParams: () => new URLSearchParams(),
 }));
 
 /** Renders under a fresh QueryClient (retries off so a mock rejection fails fast). */
