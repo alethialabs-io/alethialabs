@@ -53,7 +53,13 @@ export function ConnectorsFilterBar({
 				value={filters.search}
 				onChange={(v) => set("search", v)}
 				placeholder="Filter connectors…"
-				ariaLabel="Filter connectors by name, vendor or description"
+				// "Search connectors" — the ACCESSIBLE NAME is the stable e2e hook, and the four
+				// connector specs target it. Placeholder copy is presentation and moves with the
+				// filter standard; the a11y name must not, or a copy edit silently reds the gating
+				// hero path (which is exactly what happened here). Same split as
+				// support/cases/case-filter-bar.tsx and jobs-client.tsx, which kept a `Search <noun>`
+				// ariaLabel when their placeholder became `Filter …`.
+				ariaLabel="Search connectors"
 				className="w-[200px] max-w-[320px] flex-1"
 			/>
 

@@ -14,21 +14,6 @@ which meant a connector's tile and the flow that tile launches lived in sibling 
 directory (#2879). No re-export shims were left behind — per `CLAUDE.md` §6 a renamed component
 file is deleted, not aliased.
 
-> **Required follow-up — two importers outside this lane's scope still point at the old path.**
-> #2879's `scope:` is `components/connectors/**`, `components/connector/**` and
-> `lib/stores/use-connector-filters.ts`; the two files below belong to other lanes and were
-> deliberately left untouched. `@/components/connector/` no longer resolves, so until they are
-> updated the console does not type-check. Each is a one-word edit — `connector/` → `connectors/`:
->
-> - `apps/console/components/cloud-connect/use-cloud-connect.tsx` — lines 25, 28, 29, 30, 31, 35
->   (`connector-assets`, `aws-connection`, `azure-connection`, `gcp-connection`,
->   `hetzner-connection`, `extra-cloud-connection`)
-> - `apps/console/components/design-project/canvas/inspector/connector-select.tsx` — line 30
->   (`provider-config-fields`)
->
-> One prose reference is stale but harmless: `apps/console/lib/cloud-providers/azure-ids.ts:8`
-> names `components/connector/azure-connection.tsx` in a comment.
-
 ## File map
 
 ### The board
