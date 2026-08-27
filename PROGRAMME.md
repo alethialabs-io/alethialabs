@@ -87,7 +87,9 @@ overtaken is more useful than a gap.
   _test_ also ships the _product_ (release-please, the console and fleet deploys, the CLI release all
   trigger there). So: a GitHub Environment restricted to `dev`, trusted additionally by the e2e
   roles. `infra/aws-oidc` and `infra/azure-e2e` already support an `environment:` subject;
-  `infra/gcp-e2e` and `infra/alibaba-e2e` need their scalar subject widened to a list.
+  `infra/alibaba-e2e`'s trust was verified live on 2026-08-27 and is ALREADY a list, admitting
+  both `ref:refs/heads/main` and `environment:e2e-dev`; `infra/gcp-e2e` still needs its scalar
+  subject widened.
   **The compensating control is load-bearing**: a branch-protection ruleset on `dev` requiring
   CODEOWNERS review for `.github/workflows/**` and `infra/**` only. Widening the trust is dangerous
   precisely because Mergify auto-lands PRs and CODEOWNERS is advisory off `main`; two globs remove
