@@ -128,6 +128,7 @@
     "@better-auth/cimd": "^1.7.1",
     "@better-auth/mcp": "^1.7.1",
     "@better-auth/oauth-provider": "^1.7.1",
+    "bcryptjs": "^3.0.2",
     "better-auth": "^1.7.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

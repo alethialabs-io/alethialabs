@@ -87,11 +87,32 @@
 				}
 			},
 			"expose": {
-				"type": "ingress"
+				"type": "ingress",
+				"tls": {
+					"enabled": true,
+					"certSource": "none"
+				}
 			},
 			"existingSecretAdminPassword": "alethia-addon-harbor",
 			"existingSecretAdminPasswordKey": "adminPassword",
-			"existingSecretSecretKey": "alethia-addon-harbor"
+			"existingSecretSecretKey": "alethia-addon-harbor",
+			"core": {
+				"existingSecret": "alethia-addon-harbor",
+				"existingXsrfSecret": "alethia-addon-harbor",
+				"existingXsrfSecretKey": "CSRF_KEY",
+				"secretName": "alethia-addon-harbor"
+			},
+			"jobservice": {
+				"existingSecret": "alethia-addon-harbor",
+				"existingSecretKey": "JOBSERVICE_SECRET"
+			},
+			"registry": {
+				"existingSecret": "alethia-addon-harbor",
+				"existingSecretKey": "REGISTRY_HTTP_SECRET",
+				"credentials": {
+					"existingSecret": "alethia-addon-harbor"
+				}
+			}
 		},
 		"syncWave": 2,
 		"secretRef": {
@@ -99,7 +120,14 @@
 			"namespace": "harbor",
 			"keys": [
 				"adminPassword",
-				"secretKey"
+				"secretKey",
+				"secret",
+				"CSRF_KEY",
+				"JOBSERVICE_SECRET",
+				"REGISTRY_HTTP_SECRET",
+				"REGISTRY_PASSWD",
+				"REGISTRY_HTPASSWD",
+				"tls.key"
 			]
 		}
 	},

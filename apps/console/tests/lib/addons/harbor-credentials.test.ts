@@ -12,6 +12,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getAddOn } from "@/lib/addons/catalog";
 import type { AddOnDef } from "@/lib/addons/types";
 
+// Every secret harbor mints, sorted. #2846 established the first two; #2823 added the seven that
+// the chart would otherwise generate at RENDER time. Written out rather than derived from the def
+// so that adding a field to the catalog has to be a deliberate change here too — a test that asks
+// the catalog what it contains cannot notice the catalog gaining something.
+const MINTED_KEYS = [
+	"CSRF_KEY",
+	"JOBSERVICE_SECRET",
+	"REGISTRY_HTPASSWD",
+	"REGISTRY_HTTP_SECRET",
+	"REGISTRY_PASSWD",
+	"adminPassword",
+	"secret",
+	"secretKey",
+	"tls.key",
+];
+
 const KEY = randomBytes(32).toString("base64");
 const ORIGINAL_ENV = { ...process.env };
 
@@ -34,7 +50,7 @@ describe("harbor default credentials (#2846)", () => {
 		const { getAddOn: get, generateAddonSecrets } = await load();
 		const def = get("harbor") as AddOnDef;
 		const stored = generateAddonSecrets(def, {});
-		expect(Object.keys(stored).sort()).toEqual(["adminPassword", "secretKey"]);
+		expect(Object.keys(stored).sort()).toEqual(MINTED_KEYS);
 	});
 
 	it("wires BOTH existing-secret pointers, so neither chart default survives", async () => {
@@ -54,7 +70,7 @@ describe("harbor default credentials (#2846)", () => {
 		expect(enabled?.values.existingSecretAdminPassword).toBe("alethia-addon-harbor");
 		expect(enabled?.values.existingSecretAdminPasswordKey).toBe("adminPassword");
 		expect(enabled?.values.existingSecretSecretKey).toBe("alethia-addon-harbor");
-		expect(enabled?.secretRef?.keys.sort()).toEqual(["adminPassword", "secretKey"]);
+		expect(enabled?.secretRef?.keys.sort()).toEqual(MINTED_KEYS);
 	});
 
 	it("the data-encryption key is exactly 16 characters, as the chart demands", async () => {
@@ -145,5 +161,129 @@ describe("the 16-character rule is enforced, not merely produced", () => {
 		if (!result.success) {
 			expect(JSON.stringify(result.error.issues)).toContain("16 characters");
 		}
+	});
+});
+
+// #2823: harbor also regenerated seven values on EVERY render — the token-signing keypair, the
+// ingress TLS cert, core's secret and CSRF key, jobservice's secret, the registry's HTTP secret
+// and a re-salted registry htpasswd. ArgoCD re-renders on every reconcile, so the Application sat
+// permanently OutOfSync and the `checksum/secret` pod-template annotations rolled core, jobservice,
+// registry and trivy forever. The rotating token key is the load-bearing one: it signs the
+// registry's auth tokens, so rotating it invalidates every `docker pull` credential ever issued.
+describe("harbor render determinism (#2823)", () => {
+	it("points every rotating value at the add-on Secret instead of a chart default", async () => {
+		const { getAddOn: get, resolveAddOnInstall, generateAddonSecrets } = await load();
+		const def = get("harbor") as AddOnDef;
+		const enabled = resolveAddOnInstall({
+			addon_id: "harbor",
+			mode: "managed",
+			values: generateAddonSecrets(def, {}),
+		});
+		const v = enabled?.values as Record<string, Record<string, unknown>>;
+
+		// The four keys the chart HARDCODES, so the Secret's data key must match exactly.
+		expect(v.core.existingSecret).toBe("alethia-addon-harbor"); // reads `secret`
+		expect(v.core.secretName).toBe("alethia-addon-harbor"); // mounts subPath tls.key
+		expect((v.registry.credentials as Record<string, unknown>).existingSecret).toBe(
+			"alethia-addon-harbor",
+		); // reads REGISTRY_PASSWD + REGISTRY_HTPASSWD
+
+		// The three with a companion *Key value.
+		expect(v.core.existingXsrfSecretKey).toBe("CSRF_KEY");
+		expect(v.jobservice.existingSecretKey).toBe("JOBSERVICE_SECRET");
+		expect(v.registry.existingSecretKey).toBe("REGISTRY_HTTP_SECRET");
+
+		// certSource `auto` is what called genSignedCert every render.
+		expect((v.expose.tls as Record<string, unknown>).certSource).toBe("none");
+		// …and TLS stays ENABLED, so `externalURL` remains https. `tls.enabled: false` would also
+		// be deterministic and would silently make the advertised scheme wrong.
+		expect((v.expose.tls as Record<string, unknown>).enabled).toBe(true);
+	});
+
+	it("mints the registry htpasswd as bcrypt OF the registry password it stores", async () => {
+		// Not a formatting nicety: docker distribution's htpasswd access controller accepts bcrypt
+		// only, and the line must name `registry.credentials.username`, which we leave at the
+		// chart's default. A mismatch here fails at `docker login`, not at deploy.
+		const { getAddOn: get, generateAddonSecrets } = await load();
+		const { decryptSecret } = await import("@/lib/crypto/secrets");
+		const { compareSync } = await import("bcryptjs");
+		const def = get("harbor") as AddOnDef;
+		const stored = generateAddonSecrets(def, {});
+
+		const password = decryptSecret(stored.REGISTRY_PASSWD as never).REGISTRY_PASSWD;
+		const line = decryptSecret(stored.REGISTRY_HTPASSWD as never).REGISTRY_HTPASSWD;
+		const [user, ...rest] = line.split(":");
+		const hash = rest.join(":");
+
+		expect(user).toBe("harbor_registry_user");
+		expect(hash).toMatch(/^\$2[aby]\$/);
+		expect(compareSync(password, hash)).toBe(true);
+		// The salt is what made the chart's own htpasswd non-deterministic, so prove the stored
+		// hash verifies the stored password and NOT a different one.
+		expect(compareSync(`${password}x`, hash)).toBe(false);
+	});
+
+	it("mints a real RSA private key for the token signer", async () => {
+		const { createPrivateKey } = await import("node:crypto");
+		const { getAddOn: get, generateAddonSecrets } = await load();
+		const { decryptSecret } = await import("@/lib/crypto/secrets");
+		const def = get("harbor") as AddOnDef;
+		const stored = generateAddonSecrets(def, {});
+		const pem = decryptSecret(stored["tls.key"] as never)["tls.key"];
+
+		expect(pem).toContain("BEGIN RSA PRIVATE KEY");
+		const key = createPrivateKey(pem);
+		expect(key.asymmetricKeyType).toBe("rsa");
+		expect(key.asymmetricKeyDetails?.modulusLength).toBe(2048);
+	});
+
+	it("carries every stored value forward, so a reconfigure never rotates one", async () => {
+		// The whole point: a value that changes is a value that rolls harbor's pods and breaks its
+		// issued tokens. A save of an unrelated knob must not touch any of these.
+		const { getAddOn: get, generateAddonSecrets } = await load();
+		const { decryptSecret } = await import("@/lib/crypto/secrets");
+		const def = get("harbor") as AddOnDef;
+		const first = generateAddonSecrets(def, {});
+		const second = generateAddonSecrets(def, first);
+		for (const key of MINTED_KEYS) {
+			expect(
+				decryptSecret(second[key] as never)[key],
+				`${key} rotated on re-save`,
+			).toBe(decryptSecret(first[key] as never)[key]);
+		}
+	});
+
+	it("REGISTRY_PASSWD and REGISTRY_HTPASSWD are minted as a pair", async () => {
+		// `generateSecrets` is handed the set of keys that are PRESENT, never their values, so it
+		// cannot mint an htpasswd matching a password it cannot read. Minting them together is
+		// what keeps the two consistent — mint one alone and `docker login` fails silently.
+		const { getAddOn: get, generateAddonSecrets } = await load();
+		const def = get("harbor") as AddOnDef;
+		const both = generateAddonSecrets(def, {});
+		const carried = generateAddonSecrets(def, both);
+
+		// Present already → neither is re-minted.
+		expect(carried.REGISTRY_PASSWD).toEqual(both.REGISTRY_PASSWD);
+		expect(carried.REGISTRY_HTPASSWD).toEqual(both.REGISTRY_HTPASSWD);
+		// Absent → both appear.
+		expect(Object.keys(both)).toContain("REGISTRY_PASSWD");
+		expect(Object.keys(both)).toContain("REGISTRY_HTPASSWD");
+	});
+
+	it("no minted value reaches the resolved spec — only refs to them", async () => {
+		const { getAddOn: get, resolveAddOnInstall, generateAddonSecrets } = await load();
+		const { decryptSecret } = await import("@/lib/crypto/secrets");
+		const def = get("harbor") as AddOnDef;
+		const stored = generateAddonSecrets(def, {});
+		const json = JSON.stringify(
+			resolveAddOnInstall({ addon_id: "harbor", mode: "managed", values: stored }),
+		);
+		for (const key of MINTED_KEYS) {
+			expect(json, `${key} leaked into the spec`).not.toContain(
+				decryptSecret(stored[key] as never)[key],
+			);
+		}
+		// And the chart's published registry credential is gone with them (#2846's class).
+		expect(json).not.toContain("harbor_registry_password");
 	});
 });
