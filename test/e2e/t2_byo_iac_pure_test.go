@@ -211,7 +211,7 @@ func TestByoIacMutationArgvPerCloudFlags(t *testing.T) {
 	cases := map[string][]string{
 		"aws":     {"aws", "ssm", "put-parameter", "--name", "/a/b", "--type", "String", "--value", "drifted-1", "--overwrite"},
 		"azure":   {"az", "group", "update", "--name", "/a/b", "--force-string", "--set", "tags.drift_marker=drifted-1"},
-		"gcp":     {"gcloud", "compute", "project-info", "add-metadata", "--metadata", "/a/b=drifted-1", "--project", "proj-123"},
+		"gcp":     {"gcloud", "storage", "buckets", "update", "gs:///a/b", "--update-labels=drift_marker=drifted-1", "--project", "proj-123"},
 		"alibaba": {"aliyun", "oss", "bucket-tagging", "--method", "put", "--region", "eu-central-1", "oss:///a/b", "drift_marker#drifted-1"},
 		"hetzner": {"hcloud", "placement-group", "add-label", "--overwrite", "/a/b", "drift_marker=drifted-1"},
 	}
