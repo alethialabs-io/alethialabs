@@ -230,7 +230,16 @@ func (f *InfraFacts) DNSProvider() string {
 		}
 		return "google"
 	case "azure":
-		if f.AzureExternalDNSClient == "" {
+		// The SAME four facts CertManagerSolver() requires, and for the same reason: the
+		// azure provider reads a config FILE (see azureDNSConfigJSON), and v0.15.0's
+		// getConfig() os.ReadFile()s it unconditionally before it applies any flag
+		// override. A pod given the identity annotation but no resource group or
+		// subscription does not fail an auth check — it dies on
+		// `failed to read Azure config file '/etc/kubernetes/azure.json'` and
+		// CrashLoopBackOffs, while ArgoCD reports the Application Synced. Checking only
+		// the client id here is what let that ship (#2868).
+		if f.AzureExternalDNSClient == "" || f.AzureResourceGroup == "" ||
+			f.AzureSubscriptionID == "" || f.AzureTenantID == "" {
 			return ""
 		}
 		return "azure"
@@ -247,6 +256,32 @@ func (f *InfraFacts) DNSProvider() string {
 	default:
 		return ""
 	}
+}
+
+// missingAzureDNSOutputs names the azure template outputs external-dns needs and this deploy
+// did not get, in the order outputs.tf declares them. It exists so the SKIP REASON can say
+// which fact is absent instead of guessing at the identity — the four are checked in one place
+// (DNSProvider) and reported from another (externalDNSSkipReason), and the two drifting apart
+// is what made #2868's predecessor reason wrong rather than merely vague.
+//
+// Returns nil when all four are present, which is the "then why did the gate close?" case: the
+// caller falls through to the generic reason rather than claiming nothing is missing.
+func (f *InfraFacts) missingAzureDNSOutputs() []string {
+	var missing []string
+	for _, o := range []struct {
+		output string
+		value  string
+	}{
+		{"external_dns_client_id", f.AzureExternalDNSClient},
+		{"resource_group_name", f.AzureResourceGroup},
+		{"azure_subscription_id", f.AzureSubscriptionID},
+		{"azure_tenant_id", f.AzureTenantID},
+	} {
+		if o.value == "" {
+			missing = append(missing, o.output)
+		}
+	}
+	return missing
 }
 
 // certManagerDNS01Solvers maps a cloud to the cert-manager DNS01 solver stanza that can
