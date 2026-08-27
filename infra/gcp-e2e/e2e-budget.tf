@@ -99,7 +99,10 @@ resource "google_pubsub_topic_iam_member" "e2e_budget_publisher" {
   project = var.project_id
   topic   = google_pubsub_topic.e2e_budget.name
   role    = "roles/pubsub.publisher"
-  member  = "serviceAccount:billing-budgets@system.gserviceaccount.com"
+  # billing-budget-ALERT, not billing-budgets. #1871 concluded the agent was uncreatable after
+  # `billing-budgets@system.gserviceaccount.com does not exist`; the name was wrong, not the plan.
+  # This one exists and the Console grants exactly it — verified live on this topic.
+  member = "serviceAccount:billing-budget-alert@system.gserviceaccount.com"
 
   depends_on = [google_billing_budget.e2e_nightly]
 }
@@ -116,7 +119,7 @@ resource "google_pubsub_topic_iam_member" "e2e_budget_publisher" {
 check "budget_alerts_are_deliverable" {
   assert {
     condition     = var.budget_publisher_binding_enabled
-    error_message = "COST GUARD INCOMPLETE (#1871): the budget 'alethia-e2e-nightly' evaluates thresholds but CANNOT DELIVER them — billing-budgets@system.gserviceaccount.com holds no publish rights on ${google_pubsub_topic.e2e_budget.name}, and the principal does not exist to be granted any. Cost control on the gcp nightly currently rests on teardown working. Grant the role once via the Cloud Console, then set budget_publisher_binding_enabled = true and import the binding."
+    error_message = "COST GUARD INCOMPLETE (#1871): the budget 'alethia-e2e-nightly' evaluates thresholds but CANNOT DELIVER them — billing-budget-alert@system.gserviceaccount.com holds no publish rights on ${google_pubsub_topic.e2e_budget.name}. gcp has NO pre-apply spend ceiling (that is wired for aws only), so this budget is its only cost signal and cost control otherwise rests entirely on teardown working. Grant the role via the Cloud Console budget UI, then set budget_publisher_binding_enabled = true and import the binding."
   }
 }
 
