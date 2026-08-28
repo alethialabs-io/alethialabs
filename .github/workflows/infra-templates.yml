@@ -117,15 +117,81 @@ jobs:
       # refuse what they claim to refuse. `validate` cannot do this: it never evaluates a
       # precondition, so a guard that can't fail looks identical to one that works. A cloud with no
       # *.tftest.hcl is skipped rather than failed — the suites land per cloud as each is written.
+      #
+      # A FETCH FAILURE IS NOT A RENDER FAILURE (#2754).
+      #
+      # `tofu test` here is NOT hermetic, on one cloud. hetzner's template holds four
+      # `data "helm_template"` sources pointing at two third-party hosts — charts.hetzner.cloud
+      # and helm.cilium.io — and a data source is evaluated at plan, so every run fetches an
+      # index.yaml and a chart tarball live from someone else's server. aws and gcp render from
+      # local chart paths; alibaba, azure and local render nothing. hetzner is the only cloud
+      # exposed, which is exactly the distribution of the flake.
+      #
+      # `helm` is deliberately left unmocked in checks_dns_and_network.tftest.hcl, because
+      # checks_data.tf and csi.tf assert real properties of the rendered manifests and a mock
+      # hands them empty strings. That trade is defensible; what is not is that a TCP reset on
+      # a third-party host then reads as a template defect:
+      #
+      #   Error: looks like "https://charts.hetzner.cloud" is not a valid chart repository or
+      #   cannot be reached: … read: connection reset by peer
+      #   with data.helm_template.hcloud_ccm, on cilium.tf line 111
+      #
+      # That is the whole of #2754 — "a fetch failure is indistinguishable from a render
+      # failure". It went red on the staging→main promotion PR #3117 while the same commit
+      # passed on azure, gcp, alibaba and local, and blocked a production promotion.
+      #
+      # So: retry ONLY a network-shaped failure, and say so out loud. Anything else — a failed
+      # assertion, a bad plan, a broken mock — is a real verdict and fails on the FIRST attempt,
+      # because retrying a genuine failure is how a gate quietly stops gating. A retry emits a
+      # ::warning:: naming the host, so the flake stays visible and countable in the run rather
+      # than being silently absorbed; exhausting the retries emits an error that names it a
+      # FETCH failure, so the next person does not go looking at the template.
+      #
+      # The durable fix is to stop fetching third-party charts in CI at all (#2754). This makes
+      # the failure honest and non-blocking in the meantime; it does not close that issue.
       - name: OpenTofu Test (mocked providers, no creds)
         working-directory: infra/templates/project/${{ matrix.cloud }}
+        env:
+          TOFU_TEST_FETCH_ATTEMPTS: "3"
         run: |
           if ! ls ./*.tftest.hcl >/dev/null 2>&1; then
             echo "::notice::no *.tftest.hcl for ${{ matrix.cloud }} — skipping"
             exit 0
           fi
           tofu version
-          tofu test
+
+          # Network-shaped, not failure-shaped. Every alternative here names a transport problem
+          # reaching a chart repository; none of them can be produced by a template that renders.
+          fetch_err='not a valid chart repository or cannot be reached|connection reset by peer|TLS handshake timeout|no such host|i/o timeout|Client\.Timeout exceeded|unexpected EOF|EOF$|temporary failure in name resolution|502 Bad Gateway|503 Service Unavailable'
+
+          attempt=1
+          while :; do
+            # `tee` so the run stays readable while the output is also inspected. PIPESTATUS[0],
+            # not $?, because a pipeline reports the LAST command's status — tee always succeeds,
+            # so `$?` here would report every failing test run as a pass.
+            set -o pipefail
+            tofu test 2>&1 | tee /tmp/tofu-test.log
+            rc=${PIPESTATUS[0]}
+            set +o pipefail
+            [ "$rc" -eq 0 ] && break
+
+            if ! grep -qEi "$fetch_err" /tmp/tofu-test.log; then
+              echo "::error title=tofu test failed::${{ matrix.cloud }}: this is a TEST failure, not a fetch failure — not retrying."
+              exit "$rc"
+            fi
+
+            host="$(grep -oE 'https://[a-zA-Z0-9._-]+' /tmp/tofu-test.log | head -1)"
+            host="${host:-a chart repository}"
+
+            if [ "$attempt" -ge "$TOFU_TEST_FETCH_ATTEMPTS" ]; then
+              echo "::error title=chart fetch failed (#2754)::${{ matrix.cloud }}: could not REACH ${host} in ${TOFU_TEST_FETCH_ATTEMPTS} attempts. This is a FETCH failure — the template was never evaluated, so it says nothing about the template. See #2754."
+              exit "$rc"
+            fi
+
+            echo "::warning title=chart fetch flake (#2754)::${{ matrix.cloud }}: attempt ${attempt}/${TOFU_TEST_FETCH_ATTEMPTS} could not reach ${host} — a live third-party fetch, not a template failure. Retrying in $((attempt * 10))s."
+            sleep $((attempt * 10))
+            attempt=$((attempt + 1))
+          done
 
       - name: IaC checks (fmt + tflint + Trivy)
         uses: ./.github/actions/iac-checks
