@@ -80,7 +80,7 @@ import {
 	dbEngineFamily,
 	DEFAULT_K8S_VERSION,
 	getProvider,
-	dnsTldUnsupportedReasonForCloud,
+	dnsZoneUnsupportedReasonForCloud,
 	keylessUnavailableReasonForCloud,
 	wafUnavailableReasonForCloud,
 } from "@/lib/cloud-providers";
@@ -1038,7 +1038,7 @@ async function buildConfigSnapshot(
 			!dns.zone_id &&
 			(!dns.provider || dns.provider === "native")
 		) {
-			const reason = dnsTldUnsupportedReasonForCloud(
+			const reason = dnsZoneUnsupportedReasonForCloud(
 				identity.provider,
 				dns.domain_name,
 			);

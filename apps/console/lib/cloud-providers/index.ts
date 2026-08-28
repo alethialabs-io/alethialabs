@@ -45,9 +45,9 @@ export {
 	normalizeWafEnabled,
 } from "./waf";
 export {
-	dnsTldUnsupportedReason,
-	dnsTldUnsupportedReasonForCloud,
-} from "./dns-tld";
+	dnsZoneUnsupportedReason,
+	dnsZoneUnsupportedReasonForCloud,
+} from "./dns-zone-support";
 export {
 	KEYLESS_CELLS,
 	type KeylessCell,
