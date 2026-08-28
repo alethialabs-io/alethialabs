@@ -59,11 +59,17 @@
 # Requires: the Azure CLI `az` (authenticated — OIDC `azure/login` in CI).
 set -euo pipefail
 
-# ── The three-state probe contract (CLEAN / LEAKED / UNVERIFIABLE), shared by all five cloud
+# ── The probe contract (CLEAN / LEAKED / UNVERIFIABLE / UNATTRIBUTABLE), shared by all five cloud
 #    sweepers. Read scripts/e2e/lib/sweep-probe.sh before touching any list below: `az … -o tsv
 #    2>/dev/null | grep … || true` launders the CLI's exit status three times over, so an expired
 #    login, a throttle or a wrong subscription answered every list with "nothing" and exit 0 —
-#    which verify_swept reads as an empty subscription. ──
+#    which verify_swept reads as an empty subscription.
+#
+#    A FOURTH state was added after #3138 gated the third one over a case that was not a probe
+#    failure: UNATTRIBUTABLE — the probe DID get an answer, and the answer is that something
+#    exists which by design cannot be tied to this run. Reported loudly, never gates. Only
+#    hetzner produces one today (#2463); the taxonomy is shared so the next cloud does not have
+#    to re-derive it, and every sweeper's --self-test asserts both halves. ──
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"

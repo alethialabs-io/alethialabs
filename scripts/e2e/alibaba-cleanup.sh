@@ -49,11 +49,17 @@
 # Requires: the `aliyun` CLI (authenticated — keyless AssumeRoleWithOIDC in CI) + jq.
 set -euo pipefail
 
-# ── The three-state probe contract (CLEAN / LEAKED / UNVERIFIABLE), shared by all five cloud
+# ── The probe contract (CLEAN / LEAKED / UNVERIFIABLE / UNATTRIBUTABLE), shared by all five cloud
 #    sweepers. Read scripts/e2e/lib/sweep-probe.sh before touching any lister below: `ali … 2>/dev/null
 #    | jq … 2>/dev/null | grep -v '^$' || true` launders the CLI's exit status FOUR times over —
 #    and the jq stage adds one the other clouds do not have, because jq exits 0 on empty input, so
-#    a non-JSON error page becomes an empty id list and a clean-looking teardown. ──
+#    a non-JSON error page becomes an empty id list and a clean-looking teardown.
+#
+#    A FOURTH state was added after #3138 gated the third one over a case that was not a probe
+#    failure: UNATTRIBUTABLE — the probe DID get an answer, and the answer is that something
+#    exists which by design cannot be tied to this run. Reported loudly, never gates. Only
+#    hetzner produces one today (#2463); the taxonomy is shared so the next cloud does not have
+#    to re-derive it, and every sweeper's --self-test asserts both halves. ──
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"

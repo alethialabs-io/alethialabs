@@ -77,11 +77,17 @@
 # Requires: awscli v2 (digest-pinned in the workflow), configured creds (OIDC in CI), jq.
 set -euo pipefail
 
-# ── The three-state probe contract (CLEAN / LEAKED / UNVERIFIABLE), shared by all five cloud
+# ── The probe contract (CLEAN / LEAKED / UNVERIFIABLE / UNATTRIBUTABLE), shared by all five cloud
 #    sweepers. Read scripts/e2e/lib/sweep-probe.sh before touching any probe below: every
 #    `aws … 2>/dev/null | … || true` in this file laundered the API's exit status THREE times over,
 #    so a broken credential made all eighteen resource types report clean at once and this script
-#    announced "no billable resources remain" over a live Aurora cluster. ──
+#    announced "no billable resources remain" over a live Aurora cluster.
+#
+#    A FOURTH state was added after #3138 gated the third one over a case that was not a probe
+#    failure: UNATTRIBUTABLE — the probe DID get an answer, and the answer is that something
+#    exists which by design cannot be tied to this run. Reported loudly, never gates. Only
+#    hetzner produces one today (#2463); the taxonomy is shared so the next cloud does not have
+#    to re-derive it, and every sweeper's --self-test asserts both halves. ──
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"

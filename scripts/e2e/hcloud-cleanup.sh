@@ -44,20 +44,23 @@
 #   3  INTERNAL: empty selector reached a scoped call
 #   4  UNVERIFIABLE: a type could not be looked at, so nothing here proves the account is empty
 #
-# UNATTRIBUTABLE is a FIFTH state with NO exit code of its own: the probe answered, and the answer
+# UNATTRIBUTABLE is a FOURTH probe state with NO exit code of its own: the probe answered, and the answer
 # is that something exists which by design carries nothing tying it to this run (the imager upload
 # helpers — see report_imager_helpers). It is reported loudly and never gates, because a condition
 # this script can never resolve would red every run forever. #3138 gated it and hetzner went
 # permanently red; see scripts/e2e/lib/sweep-probe.sh's header for the boundary.
 set -euo pipefail
 
-# ── The three-state probe contract, shared by all five cloud sweepers.
+# ── The probe contract (CLEAN / LEAKED / UNVERIFIABLE / UNATTRIBUTABLE), shared by all five sweepers.
 #
-# CLEAN / LEAKED / UNVERIFIABLE, with the exit code gated on the third. #2549 was diagnosed and
-# fixed HERE, in this file, for exactly two probes — and never generalised: not to the other four
-# clouds, and not even to list_ids twenty lines below, which every purge and the whole of
-# verify_swept run through. scripts/e2e/lib/sweep-probe.sh is that fix, generalised, and it now
-# gates the exit code instead of only warning. ──
+# The exit code is gated on UNVERIFIABLE and NOT on UNATTRIBUTABLE. #2549 was diagnosed and fixed
+# HERE, in this file, for exactly two probes — and never generalised: not to the other four clouds,
+# and not even to list_ids twenty lines below, which every purge and the whole of verify_swept run
+# through. scripts/e2e/lib/sweep-probe.sh is that fix, generalised, and it gates.
+#
+# #3138 then over-applied it: the imager upload helpers are not a failed probe, and gating on them
+# made this leg red on every run. That is the fourth state, and the boundary between the two is in
+# sweep-probe.sh's header — read it before adding a note to either ledger. ──
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"
@@ -860,8 +863,9 @@ if [ "$SELF_TEST" = "1" ]; then
 	# Every purge and every row of verify_swept reads this one function. It laundered its status the
 	# same way the load-balancer fallback above did, so a broken token made all eight resource types
 	# report "none" at once and the script printed "verified complete". These three cases are the
-	# three states, end to end: the stub's OUTPUT and its EXIT CODE are varied independently, because
-	# varying only the output is exactly the test that would pass with the fix removed.
+	# three states this function can reach, end to end: the stub's OUTPUT and its EXIT CODE are varied
+	# independently, because varying only the output is exactly the test that would pass with the fix
+	# removed. (The fourth, UNATTRIBUTABLE, has no list_ids path — see st_imager_finalize.)
 	#
 	# $ST_LIST / $ST_LIST_RC drive the generic `hcloud <type> list` stub. The S3 and zone paths are
 	# short-circuited so they cannot contribute an unverifiable of their own and mask the result.
