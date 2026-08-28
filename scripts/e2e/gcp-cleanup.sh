@@ -66,6 +66,29 @@
 # Requires: the `gcloud` CLI, authenticated (WIF in CI).
 set -euo pipefail
 
+# ── The three-state probe contract (CLEAN / LEAKED / UNVERIFIABLE), shared by all five cloud
+#    sweepers. Read scripts/e2e/lib/sweep-probe.sh before touching any list below: `gc … 2>/dev/null
+#    | grep -v '^[[:space:]]*$' || true` launders the CLI's exit status three times over, so an
+#    expired credential answered every list with "nothing" and exit 0 — which verify_swept reads as
+#    a clean project. ──
+E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+# shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
+. "${E2E_LIB_DIR}/sweep-probe.sh"
+probe_reset
+
+# ── `--self-test` exercises the three-state probe contract against a stubbed `gcloud` and exits.
+# It sets its own ENV/REGION so the guards below are left exactly as they protect the real path,
+# and shadows `gc` with a shell function so nothing authenticates and no CLI is needed. ──
+SELF_TEST=0
+if [ "${1:-}" = "--self-test" ]; then
+	SELF_TEST=1
+	ALETHIA_E2E_ENV="selftest-4177-1"
+	ALETHIA_E2E_REGION="europe-west3"
+	# The probe retries are a real-cloud kindness (a transient 5xx must not red a healthy teardown)
+	# and pure dead time against a stub. The retry LOOP is still exercised; it just does not wait.
+	PROBE_RETRY_DELAY=0
+fi
+
 ENV="${ALETHIA_E2E_ENV:-}"
 # Region is AUTHORITATIVE from ALETHIA_E2E_REGION only. A silent fallback to an ambient region that
 # differs from where the run provisioned would make the regional scoping wrong. It may be a REGION
@@ -124,7 +147,9 @@ if [ -z "$REGION" ]; then
 	exit 2
 fi
 
-if ! command -v gcloud >/dev/null 2>&1; then
+# The self-test shadows `gc` with a shell function, so it needs no binary — and the CI runner that
+# runs it has none. Requiring it here would make the hermetic test unrunnable where it is meant to run.
+if [ "$SELF_TEST" != "1" ] && ! command -v gcloud >/dev/null 2>&1; then
 	echo "✗ the 'gcloud' CLI is not installed." >&2
 	echo "  Install it: https://cloud.google.com/sdk/docs/install." >&2
 	exit 2
@@ -137,7 +162,7 @@ CLUSTER_LOCATION="" # the cluster's zone or region (zonal in T2)
 NETWORK=""         # the run's VPC name (vpc-<short>-<ENV>-<project>) — secondary bind for LB/firewall
 
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
-if [ "$PREFLIGHT" != "1" ]; then
+if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
 	echo "→ gcp belt-and-suspenders cleanup in ${REGION}, scope alethia_project-id=${PID_LABEL}"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 fi
@@ -150,6 +175,19 @@ gc() {
 	else
 		gcloud "$@"
 	fi
+}
+
+# gc_list <type> <gcloud args…> — every scoped LIST in this file goes through here.
+#
+# It captures gcloud's REAL exit status before anything filters it, and records the resource type
+# as UNVERIFIABLE when the call did not answer. The `2>/dev/null | grep -v '' || true` shape this
+# replaces reported an expired credential, a disabled API and a throttle as an empty list and exit
+# 0 — indistinguishable from a project with nothing in it, which is exactly what verify_swept then
+# announced.
+gc_list() {
+	local ptype="$1"
+	shift
+	probe_run "$ptype" gc "$@" | grep -v '^[[:space:]]*$' || true
 }
 
 # assert_scope fails closed if the scope ever became empty (defensive — the guards above already
@@ -203,9 +241,9 @@ retry_delete() {
 # list_gke_clusters — "name<TAB>location" for GKE clusters carrying THIS run's project-id label.
 list_gke_clusters() {
 	assert_scope
-	gc container clusters list \
+	gc_list gke-cluster container clusters list \
 		--filter="resourceLabels.alethia_project-id=${PID_LABEL}" \
-		--format="value(name,location)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+		--format="value(name,location)"
 }
 
 # ── Discover THIS run's GKE cluster (for the out-of-band secondary sweeps) + its VPC. First the
@@ -224,10 +262,10 @@ discover_cluster() {
 		# name matching `gke-<short>-<ENV>[-<project>]` reconstructs the cluster prefix. When the
 		# project_name is known we anchor on it (tightest); otherwise take the gke-…-<ENV>- prefix.
 		if [ -n "$PROJECT_NAME" ]; then
-			cand="$(gc compute instances list --format="value(name)" 2>/dev/null |
+			cand="$(gc_list instance compute instances list --format="value(name)" |
 				grep -oE "gke-[a-z0-9]+-${ENV}-${PROJECT_NAME}" | head -n1 || true)"
 		else
-			cand="$(gc compute instances list --format="value(name)" 2>/dev/null |
+			cand="$(gc_list instance compute instances list --format="value(name)" |
 				grep -E -- "-${ENV}-" | grep -oE "gke-[a-z0-9]+-${ENV}-[a-z0-9-]+" |
 				sed -E 's/-[a-z0-9]+-[a-z0-9]+-grp$//; s/-default-pool.*$//' | sort -u | head -n1 || true)"
 		fi
@@ -239,7 +277,7 @@ discover_cluster() {
 		echo "  · cluster (secondary scope): ${CLUSTER}${CLUSTER_LOCATION:+ @ ${CLUSTER_LOCATION}}  · vpc: ${NETWORK}"
 	else
 		# No cluster ⇒ still try to bind LB/network residue to a VPC named with our ENV.
-		NETWORK="$(gc compute networks list --format="value(name)" 2>/dev/null |
+		NETWORK="$(gc_list network compute networks list --format="value(name)" |
 			grep -E "^vpc-.*-${ENV}-" | head -n1 || true)"
 		echo "  · no GKE cluster found for ENV ${ENV} (already gone, or nothing out-of-band to sweep)${NETWORK:+ · vpc: ${NETWORK}}"
 	fi
@@ -267,23 +305,23 @@ build_lb_filter() {
 #       a still-referenced backend. Bound to the run's VPC/ENV. ──
 list_forwarding_rules() { # name<TAB>region ("" region ⇒ global)
 	assert_scope
-	gc compute forwarding-rules list --filter="$(build_lb_filter)" \
-		--format="value(name,region.basename())" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list forwarding-rule compute forwarding-rules list --filter="$(build_lb_filter)" \
+		--format="value(name,region.basename())"
 }
 list_backend_services() { # name<TAB>region
 	assert_scope
-	gc compute backend-services list --filter="$(build_lb_filter)" \
-		--format="value(name,region.basename())" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list backend-service compute backend-services list --filter="$(build_lb_filter)" \
+		--format="value(name,region.basename())"
 }
 list_target_pools() { # name<TAB>region (target pools are always regional)
 	assert_scope
-	gc compute target-pools list --filter="$(build_lb_filter)" \
-		--format="value(name,region.basename())" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list target-pool compute target-pools list --filter="$(build_lb_filter)" \
+		--format="value(name,region.basename())"
 }
 list_firewalls() { # name (firewall rules are global)
 	assert_scope
-	gc compute firewall-rules list --filter="$(build_lb_filter)" \
-		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list firewall compute firewall-rules list --filter="$(build_lb_filter)" \
+		--format="value(name)"
 }
 
 sweep_load_balancers() {
@@ -351,8 +389,8 @@ sweep_gke() {
 # ── 3. Orphan node instances (out-of-band; only when the cluster delete leaked them). ──
 list_orphan_instances() { # name<TAB>zone
 	assert_scope
-	gc compute instances list --filter="$(build_node_filter)" \
-		--format="value(name,zone.basename())" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list instance compute instances list --filter="$(build_node_filter)" \
+		--format="value(name,zone.basename())"
 }
 sweep_instances() {
 	assert_scope
@@ -380,8 +418,8 @@ list_pvc_disks() { # name<TAB>zone<TAB>region
 		# most CSI disks carry only GKE's cluster label). Honest limitation — see verify_swept notice.
 		f="labels.alethia_project-id=${PID_LABEL} AND name~^pvc-"
 	fi
-	gc compute disks list --filter="$f" \
-		--format="value(name,zone.basename(),region.basename())" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list pvc-disk compute disks list --filter="$f" \
+		--format="value(name,zone.basename(),region.basename())"
 }
 sweep_pvc_disks() {
 	assert_scope
@@ -405,23 +443,23 @@ sweep_pvc_disks() {
 #       labels (addresses do), else by the unique `-<ENV>-` name embedding. ──
 list_addresses() { # name<TAB>region ("" ⇒ global)
 	assert_scope
-	gc compute addresses list --filter="labels.alethia_project-id=${PID_LABEL} OR name~-${ENV}-" \
-		--format="value(name,region.basename())" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list address compute addresses list --filter="labels.alethia_project-id=${PID_LABEL} OR name~-${ENV}-" \
+		--format="value(name,region.basename())"
 }
 list_routers() { # name<TAB>region
 	assert_scope
-	gc compute routers list --filter="name~-${ENV}-" \
-		--format="value(name,region.basename())" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list router compute routers list --filter="name~-${ENV}-" \
+		--format="value(name,region.basename())"
 }
 list_subnets() { # name<TAB>region
 	assert_scope
-	gc compute networks subnets list --filter="name~-${ENV}-" \
-		--format="value(name,region.basename())" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list subnet compute networks subnets list --filter="name~-${ENV}-" \
+		--format="value(name,region.basename())"
 }
 list_networks() { # name
 	assert_scope
-	gc compute networks list --filter="name~-${ENV}-" \
-		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list network compute networks list --filter="name~-${ENV}-" \
+		--format="value(name)"
 }
 sweep_network() {
 	assert_scope
@@ -505,25 +543,25 @@ sweep_network() {
 list_sql_instances() {
 	assert_scope
 	# Cloud SQL exposes labels as settings.userLabels, NOT labels.
-	gc sql instances list --filter="settings.userLabels.alethia_project-id=${PID_LABEL}" \
-		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list cloud-sql sql instances list --filter="settings.userLabels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)"
 }
 list_redis_instances() {
 	assert_scope
-	gc redis instances list --region "${REGION}" \
+	gc_list memorystore redis instances list --region "${REGION}" \
 		--filter="labels.alethia_project-id=${PID_LABEL}" \
-		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+		--format="value(name)"
 }
 list_buckets() {
 	assert_scope
-	gc storage buckets list --filter="labels.alethia_project-id=${PID_LABEL}" \
-		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list bucket storage buckets list --filter="labels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)"
 }
 list_artifact_repos() {
 	assert_scope
-	gc artifacts repositories list --location "${REGION}" \
+	gc_list artifact-repo artifacts repositories list --location "${REGION}" \
 		--filter="labels.alethia_project-id=${PID_LABEL}" \
-		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+		--format="value(name)"
 }
 # NON-BILLABLE residue (still reclaimed — a stale one blocks re-creating the same name)
 list_firestore_dbs() {
@@ -533,22 +571,22 @@ list_firestore_dbs() {
 	# without it, the same `-<ENV>-` embedding every other unlabellable lookup in this file uses.
 	local f="name~-${ENV}-"
 	[ -n "$PROJECT_NAME" ] && f="name~^(.*/)?${PROJECT_NAME}-${ENV}-firestore\$"
-	gc firestore databases list --filter="$f" --format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list firestore firestore databases list --filter="$f" --format="value(name)"
 }
 list_pubsub_topics() {
 	assert_scope
-	gc pubsub topics list --filter="labels.alethia_project-id=${PID_LABEL}" \
-		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list pubsub-topic pubsub topics list --filter="labels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)"
 }
 list_secrets() {
 	assert_scope
-	gc secrets list --filter="labels.alethia_project-id=${PID_LABEL}" \
-		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list secret secrets list --filter="labels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)"
 }
 list_dns_zones() {
 	assert_scope
-	gc dns managed-zones list --filter="labels.alethia_project-id=${PID_LABEL}" \
-		--format="value(name)" 2>/dev/null | grep -v '^[[:space:]]*$' || true
+	gc_list dns-zone dns managed-zones list --filter="labels.alethia_project-id=${PID_LABEL}" \
+		--format="value(name)"
 }
 
 sweep_managed_services() {
@@ -612,6 +650,24 @@ verify_swept() {
 	return 0
 }
 
+# ── finalize_verification — THE EXIT-CODE CONTRACT.
+#
+#   0  every probe answered, and nothing billable for this run survived.
+#   1  a LEAK: the API listed something still standing and billing.
+#   4  UNVERIFIABLE: at least one probe could not answer, so nothing here proves the project is
+#      empty. This runs on the `always()` teardown path the T2 harness defers to as the guarantee,
+#      so "could not look" has to red the step rather than pass as a line in a log.
+#
+# A confirmed leak outranks "could not check", so verify_swept runs first.
+finalize_verification() {
+	if ! verify_swept; then
+		return 1
+	fi
+	probe_gate gcp "run ${ENV}" || return 4
+	echo "✓ gcp cleanup verified complete for run ${ENV} — no billable resources remain"
+	return 0
+}
+
 # ── sweep_env <env> — the full scope-locked sweep + verify for ONE run's ENV. Sets the
 #    ENV/PID_LABEL/CLUSTER/NETWORK globals the sweep functions read, then runs them in the same
 #    strict dependency order as the normal path. Returns verify_swept's status (0 clean / 1 leak);
@@ -644,15 +700,18 @@ list_orphan_envs() {
 	local vals v oenv
 	vals="$(
 		{
-			gc container clusters list --format="value(resourceLabels.alethia_project-id)" 2>/dev/null
-			gc compute disks list --format="value(labels.alethia_project-id)" 2>/dev/null
-			gc compute addresses list --format="value(labels.alethia_project-id)" 2>/dev/null
+			# Through gc_list, so a listing that FAILS is recorded rather than folded into "no
+			# orphans". The preflight does not gate on it (it never blocks its caller), but it warns
+			# — "nothing to sweep" and "could not look" are not the same report.
+			gc_list orphan-scan container clusters list --format="value(resourceLabels.alethia_project-id)"
+			gc_list orphan-scan compute disks list --format="value(labels.alethia_project-id)"
+			gc_list orphan-scan compute addresses list --format="value(labels.alethia_project-id)"
 			# The managed services too, now that they are discoverable by label. Without these a run
 			# killed AFTER its GKE cluster went but BEFORE Cloud SQL did left an orphan no preflight
 			# could ever name — the compute half found nothing, so the whole ENV went unswept while
 			# a db-custom instance billed by the hour.
-			gc sql instances list --format="value(settings.userLabels.alethia_project-id)" 2>/dev/null
-			gc storage buckets list --format="value(labels.alethia_project-id)" 2>/dev/null
+			gc_list orphan-scan sql instances list --format="value(settings.userLabels.alethia_project-id)"
+			gc_list orphan-scan storage buckets list --format="value(labels.alethia_project-id)"
 		} | grep -E '^e2e-' | sort -u || true
 	)"
 	while IFS= read -r v; do
@@ -715,9 +774,71 @@ if [ "$PREFLIGHT" = "1" ]; then
 	if [ "$residual" = "1" ]; then
 		echo "⚠ preflight finished with residual orphans (see warnings above) — continuing (best-effort, non-fatal)"
 	else
+		# ⚠️ Not "the project is clean" — "every orphan this preflight could SEE is swept". The
+		# discovery listings can fail too, and preflight is explicitly non-blocking, so the honest
+		# report here is a warning; the always() teardown is what gates.
+		probe_warn_unverifiable gcp "the preflight orphan scan"
 		echo "✓ preflight complete — all prior-run e2e orphans swept"
 	fi
 	exit 0 # preflight never blocks the provisioning run
+fi
+
+# ── Self-test. `gc` is stubbed, so this touches no project and needs no credentials. What is under
+# test is the THREE-STATE contract: an empty project and a project this script could not look at
+# must not produce the same answer, and the second must not exit 0.
+#
+# $ST_OUT and $ST_RC are varied INDEPENDENTLY on purpose. Every list in this file used to read
+# `gc … 2>/dev/null | grep -v '' || true`, and the OUTPUT half of that always worked — a test that
+# varies only the output passes just as happily with the fix removed. ──
+if [ "$SELF_TEST" = "1" ]; then
+	st_fails=0
+	gc() {
+		if [ -n "$ST_OUT" ]; then printf '%s\n' "$ST_OUT"; fi
+		if [ "$ST_RC" -ne 0 ]; then printf '%s\n' "${ST_ERR:-ERROR: (gcloud) request failed}" >&2; fi
+		return "$ST_RC"
+	}
+
+	echo "→ gcp-cleanup.sh self-test (ENV=${ENV})"
+	st_case() { # <name> <output> <rc> <expected finalize rc> <expect unverifiable: yes|no>
+		probe_reset
+		ST_OUT="$2" ST_RC="$3" ST_ERR="ERROR: (gcloud.container.clusters.list) Your credentials have expired"
+		CLUSTER="" CLUSTER_LOCATION="" NETWORK=""
+		local rc=0 unv=no
+		finalize_verification >/dev/null 2>&1 || rc=$?
+		probe_has_unverifiable && unv=yes
+		if [ "$rc" = "$4" ] && [ "$unv" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$4/unverifiable=$5, got rc=${rc}/unverifiable=${unv}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_case "an empty project, honestly listed, is CLEAN and exits 0" "" 0 0 no
+	st_case "a surviving billable resource is a LEAK and exits 1" "gke-ew3-x-alethia" 0 1 no
+	# THE REGRESSION. Before this change the case below and the case above-above were byte-identical:
+	# empty stdout, exit 0, "no billable resources remain".
+	st_case "a list that FAILED is UNVERIFIABLE and exits 4, NOT 0" "" 1 4 yes
+
+	# The type NAMES the report, so a human knows what to check by hand. A ledger that only said
+	# "something failed" would send them to look at everything.
+	probe_reset
+	ST_OUT="" ST_RC=1 ST_ERR="PERMISSION_DENIED"
+	list_sql_instances >/dev/null 2>&1 || true
+	case "$(probe_unverifiable_types)" in
+	*cloud-sql*) echo "  ✓ the ledger names the resource type that could not be checked" ;;
+	*)
+		echo "  ✗ the ledger names the resource type that could not be checked — got '$(probe_unverifiable_types)'" >&2
+		st_fails=$((st_fails + 1))
+		;;
+	esac
+	unset -f gc
+
+	if [ "$st_fails" -ne 0 ]; then
+		echo "✗ gcp-cleanup.sh self-test: ${st_fails} failure(s)" >&2
+		exit 1
+	fi
+	echo "✓ gcp-cleanup.sh self-test passed"
+	exit 0
 fi
 
 # ── Orchestrate, in strict dependency order. ──
@@ -735,7 +856,6 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 echo "→ verifying nothing billable for run ${ENV} survived…"
-if ! verify_swept; then
-	exit 1
-fi
-echo "✓ gcp cleanup verified complete for run ${ENV} — no billable resources remain"
+st_rc=0
+finalize_verification || st_rc=$?
+exit "$st_rc"
