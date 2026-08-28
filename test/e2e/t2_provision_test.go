@@ -542,8 +542,13 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// A withheld add-on is still installed and still observed — it is only not REQUIRED to
 	// converge, because it cannot at catalog defaults (see addon_exclusions.go). The withheld set
 	// is logged on every run, green ones included, so a passing verdict never hides its own scope.
-	assertedApps, withheldApps := PartitionExcludedAddOns(expectedApps)
-	t.Logf("%s", DescribeWithheldAddOns(withheldApps))
+	//
+	// Split PER CLOUD, which is why `provider` is passed: since #3048 resolved each cloud's native
+	// external-dns provider through the emitter, an add-on can be unable to converge on one cloud
+	// and converge fine on another — external-dns was measured Healthy+Synced on hetzner and is
+	// withheld only on aws/gcp/azure/alibaba.
+	assertedApps, withheldApps := PartitionExcludedAddOns(provider, expectedApps)
+	t.Logf("%s", DescribeWithheldAddOns(provider, withheldApps))
 	t.Logf("asserting ArgoCD Applications reach Healthy+Synced: %v", assertedApps)
 
 	if reposEnabled {
@@ -599,7 +604,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// The exclusions RATCHET. A withheld add-on that reached Healthy+Synced means the reason it was
 	// withheld no longer holds, and leaving it on the list would make every later run assert less
 	// than it could. One read, not a poll: staleness does not resolve by waiting.
-	if err := AssertNoStaleAddOnExclusions(ctx, kc, withheldApps); err != nil {
+	if err := AssertNoStaleAddOnExclusions(ctx, kc, provider, withheldApps); err != nil {
 		t.Fatalf("stale add-on exclusion: %v", err)
 	}
 	t.Logf("all %d asserted ArgoCD Applications are Healthy+Synced (%d withheld)", len(assertedApps), len(withheldApps))
