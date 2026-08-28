@@ -43,15 +43,24 @@
 #   2  refused to run (missing/implausible cluster name, no token, missing CLI)
 #   3  INTERNAL: empty selector reached a scoped call
 #   4  UNVERIFIABLE: a type could not be looked at, so nothing here proves the account is empty
+#
+# UNATTRIBUTABLE is a FOURTH probe state with NO exit code of its own: the probe answered, and the answer
+# is that something exists which by design carries nothing tying it to this run (the imager upload
+# helpers — see report_imager_helpers). It is reported loudly and never gates, because a condition
+# this script can never resolve would red every run forever. #3138 gated it and hetzner went
+# permanently red; see scripts/e2e/lib/sweep-probe.sh's header for the boundary.
 set -euo pipefail
 
-# ── The three-state probe contract, shared by all five cloud sweepers.
+# ── The probe contract (CLEAN / LEAKED / UNVERIFIABLE / UNATTRIBUTABLE), shared by all five sweepers.
 #
-# CLEAN / LEAKED / UNVERIFIABLE, with the exit code gated on the third. #2549 was diagnosed and
-# fixed HERE, in this file, for exactly two probes — and never generalised: not to the other four
-# clouds, and not even to list_ids twenty lines below, which every purge and the whole of
-# verify_swept run through. scripts/e2e/lib/sweep-probe.sh is that fix, generalised, and it now
-# gates the exit code instead of only warning. ──
+# The exit code is gated on UNVERIFIABLE and NOT on UNATTRIBUTABLE. #2549 was diagnosed and fixed
+# HERE, in this file, for exactly two probes — and never generalised: not to the other four clouds,
+# and not even to list_ids twenty lines below, which every purge and the whole of verify_swept run
+# through. scripts/e2e/lib/sweep-probe.sh is that fix, generalised, and it gates.
+#
+# #3138 then over-applied it: the imager upload helpers are not a failed probe, and gating on them
+# made this leg red on every run. That is the fourth state, and the boundary between the two is in
+# sweep-probe.sh's header — read it before adding a note to either ledger. ──
 E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
 # shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
 . "${E2E_LIB_DIR}/sweep-probe.sh"
@@ -440,6 +449,38 @@ s3_available() {
 #
 # The two listings are account-wide, which is safe precisely because they are READS. Nothing here
 # deletes, and that is the whole design.
+#
+# ── WHY THIS IS UNATTRIBUTABLE AND NOT UNVERIFIABLE (#3138's one wrong call) ─────────────────────
+#
+# #3138 recorded this through probe_note_unverifiable, which gates. Both listings SUCCEED; the
+# answer is simply that an unlabelled resource exists. So the hetzner leg exited 4 on every run —
+# 33172643012's only ledger entry was `imager-upload-helpers(unlabelled, cannot attribute)` — and
+# a step that is red every night is a step nobody reads, which is the same defect class #3138 was
+# written to remove.
+#
+# The discriminator is not "how noisy is it". It is: did the probe get an answer, and does this
+# sweeper still owe an action? Here reporting IS the whole contract — the design forbids deleting —
+# so nothing is left undone and there is nothing an exit code could usefully demand.
+#
+# The FAILURE path is untouched and still gates. `probe_run` writes the UNVERIFIABLE ledger itself
+# when `hcloud server list` cannot answer, and that entry is a file write, so the `| grep` below
+# cannot launder it. A dead token here still exits 4; only a successful listing that found something
+# is downgraded.
+#
+# ── WHO ELSE WOULD SEE ONE OF THESE (measured 2026-08-28: nobody) ───────────────────────────────
+#
+# e2e-orphan-reaper.yml (`17 7 * * *`) is the only standing watcher of this account, and its hetzner
+# leg runs this script's PREFLIGHT. PREFLIGHT discovery is `list_orphan_clusters`, which selects on
+# `labels["alethia_project-id"]` starting with `e2e-` — and an imager helper carries NO LABELS AT
+# ALL, so it is invisible to that query by construction. Worse, on the common day the preflight
+# finds no orphan it `exit 0`s before the purge sequence this function is part of ever runs, so it
+# never looked. Nothing else lists them: the label selector cannot reach them, `tofu destroy` has
+# them in no state file (#2458), and no alarm keys on the name.
+#
+# That is why the preflight now calls this function on its no-orphans path (see the PREFLIGHT block
+# below): it makes the daily reaper the standing observer, which is the only thing that watches this
+# account when no nightly is running. #2463 is where the real fix lives — a label from the provider
+# would let the ordinary selector reach them and retire this function entirely.
 report_imager_helpers() {
 	local servers keys found
 	servers="$(probe_run imager-upload-helpers hcloud server list -o noheader -o columns=id,name | grep -F 'hcloud-upload-image-' || true)"
@@ -459,8 +500,8 @@ report_imager_helpers() {
 		echo "  · imager upload helpers: none present"
 		return 0
 	fi
-	echo "::warning::hcloud-upload-image-* server(s)/ssh-key(s) exist and were NOT swept. The imager provider creates them unlabelled, so this label-scoped script cannot attribute them to a run. If no image build is in flight they are leaked (a stopped server still bills) — remove them by hand. See #2463."
-	probe_note_unverifiable imager-upload-helpers "unlabelled, cannot attribute"
+	echo "::warning::hcloud-upload-image-* server(s)/ssh-key(s) exist and were NOT swept. The imager provider creates them unlabelled, so this label-scoped script cannot attribute them to a run. If no image build is in flight they are leaked (a stopped server still bills) — remove them by hand. Nothing else watches for them: the reaper's preflight discovery selects on the alethia_project-id label these do not carry. See #2463."
+	probe_note_unattributable imager-upload-helpers "unlabelled by the imager provider — cannot be tied to this run"
 }
 
 sweep_object_storage() {
@@ -555,7 +596,17 @@ if [ "$PREFLIGHT" = "1" ]; then
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 	orphans="$(list_orphan_clusters || true)"
 	if [ -z "$orphans" ]; then
-		echo "✓ preflight: no prior-run e2e orphans — nothing to sweep"
+		# THE ONE TYPE THIS EARLY EXIT WOULD OTHERWISE STEP OVER. list_orphan_clusters selects on
+		# `labels["alethia_project-id"]` — the imager upload helpers carry NO labels at all, so they
+		# are invisible to it by construction, and on the quiet day this branch runs the daily reaper
+		# would exit 0 having never looked at the one resource type nothing else watches for. Read
+		# only; the function never deletes. On the branch below, the per-orphan child sweep reports
+		# them already, so this is not duplicated there.
+		report_imager_helpers
+		# Reports BOTH states: the unattributable finding, and — if the listing itself failed —
+		# the fact that it could not answer. Preflight never blocks its caller, so both warn.
+		probe_warn_unverifiable hcloud "the preflight scan"
+		echo "✓ preflight: no prior-run e2e orphans — nothing to sweep$(probe_clean_suffix)"
 		exit 0
 	fi
 	# shellcheck disable=SC2086
@@ -686,7 +737,9 @@ finalize_verification() {
 		return 1
 	fi
 	probe_gate hcloud "${SELECTOR}" || return 4
-	echo "✓ hcloud cleanup verified complete for ${SELECTOR} — no labelled resources remain"
+	# probe_clean_suffix is EMPTY on a genuinely clean run and carries the unattributable finding
+	# otherwise, so this sentence can never read as "the account is empty" when it is not.
+	echo "✓ hcloud cleanup verified complete for ${SELECTOR} — no labelled resources remain$(probe_clean_suffix)"
 	return 0
 }
 
@@ -700,8 +753,12 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_fails=0
 	hcloud() {
 		case "$1 ${2:-}" in
-		"server list") printf '%s\n' "$ST_SERVERS" ;;
-		"ssh-key list") printf '%s\n' "$ST_KEYS" ;;
+		# ST_SERVERS_RC / ST_KEYS_RC exist for the same reason ST_LBS_RC does, and they carry the
+		# whole imager distinction: a listing that ANSWERED "here is an unlabelled server" and one
+		# that COULD NOT ANSWER produce the same empty-or-not stdout and must resolve to different
+		# states. Without an independent exit code this pair cannot be told apart in a test.
+		"server list") printf '%s\n' "$ST_SERVERS"; return "${ST_SERVERS_RC:-0}" ;;
+		"ssh-key list") printf '%s\n' "$ST_KEYS"; return "${ST_KEYS_RC:-0}" ;;
 		"network list") printf '%s\n' "$ST_NETWORK" ;;
 		# ST_LBS_RC lets a case make the CLI FAIL rather than merely return nothing. Without it the
 		# stub can only ever produce the two OUTPUTS, and "empty because it worked" and "empty
@@ -714,26 +771,40 @@ if [ "$SELF_TEST" = "1" ]; then
 		*) : ;;
 		esac
 	}
-	st_imager_case() { # <name> <servers> <keys> <expect UNVERIFIABLE to mention imager: yes|no>
+	# ── THE IMAGER HELPERS, and the boundary #3138 put in the wrong place. ───────────────────────
+	#
+	# BOTH ledgers are asserted on every case, never just one. "It is unattributable" passes if
+	# everything is unattributable, which is how a dead token would stop gating; "it is not
+	# unverifiable" passes if nothing is recorded at all, which is how the finding would vanish. The
+	# pair is the assertion. The exit-code half is st_imager_finalize below.
+	st_imager_case() { # <name> <servers> <keys> <expect UNATTRIBUTABLE: yes|no> <expect UNVERIFIABLE: yes|no> [servers rc]
 		probe_reset
 		ST_SERVERS="$2"
 		ST_KEYS="$3"
-		report_imager_helpers >/dev/null 2>&1
-		local got=no
-		case "$(probe_unverifiable_types)" in *imager-upload-helpers*) got=yes ;; esac
-		if [ "$got" = "$4" ]; then
+		ST_SERVERS_RC="${6:-0}"
+		ST_KEYS_RC=0
+		report_imager_helpers >/dev/null 2>&1 || true
+		local una=no unv=no
+		case "$(probe_unattributable_types)" in *imager-upload-helpers*) una=yes ;; esac
+		case "$(probe_unverifiable_types)" in *imager-upload-helpers*) unv=yes ;; esac
+		if [ "$una" = "$4" ] && [ "$unv" = "$5" ]; then
 			echo "  ✓ $1"
 		else
-			echo "  ✗ $1 — expected imager-in-UNVERIFIABLE=$4, got $got" >&2
+			echo "  ✗ $1 — expected unattributable=$4/unverifiable=$5, got unattributable=${una}/unverifiable=${unv}" >&2
 			st_fails=$((st_fails + 1))
 		fi
+		ST_SERVERS_RC=0
 	}
 
 	echo "→ hcloud-cleanup.sh self-test"
-	st_imager_case "a leaked upload server is reported unverified" "163477937 hcloud-upload-image-77b49987" "" yes
-	st_imager_case "a leaked upload ssh-key alone is enough" "" "117831479 hcloud-upload-image-77b49987" yes
-	st_imager_case "an empty account raises nothing" "" "" no
-	st_imager_case "an unrelated server is not mistaken for one" "163000000 alethia-prod-web" "" no
+	st_imager_case "a leaked upload server is UNATTRIBUTABLE, not unverifiable" "163477937 hcloud-upload-image-77b49987" "" yes no
+	st_imager_case "a leaked upload ssh-key alone is enough" "" "117831479 hcloud-upload-image-77b49987" yes no
+	st_imager_case "an empty account raises nothing at all" "" "" no no
+	st_imager_case "an unrelated server is not mistaken for one" "163000000 alethia-prod-web" "" no no
+	# THE HALF THAT MUST NOT MOVE. Downgrading the FINDING does not downgrade the FAILURE: a
+	# `hcloud server list` that cannot answer is still UNVERIFIABLE and still gates, and the `| grep`
+	# in report_imager_helpers cannot launder that because probe_run writes a FILE, not a status.
+	st_imager_case "a listing that COULD NOT ANSWER is still UNVERIFIABLE" "" "" no yes 1
 
 	# #2549: "none" must mean NONE, not "could not look". A CCM load balancer is bound to a run ONLY
 	# through its private-network attachment, and `tofu destroy` deletes that network FIRST — so the
@@ -792,8 +863,9 @@ if [ "$SELF_TEST" = "1" ]; then
 	# Every purge and every row of verify_swept reads this one function. It laundered its status the
 	# same way the load-balancer fallback above did, so a broken token made all eight resource types
 	# report "none" at once and the script printed "verified complete". These three cases are the
-	# three states, end to end: the stub's OUTPUT and its EXIT CODE are varied independently, because
-	# varying only the output is exactly the test that would pass with the fix removed.
+	# three states this function can reach, end to end: the stub's OUTPUT and its EXIT CODE are varied
+	# independently, because varying only the output is exactly the test that would pass with the fix
+	# removed. (The fourth, UNATTRIBUTABLE, has no list_ids path — see st_imager_finalize.)
 	#
 	# $ST_LIST / $ST_LIST_RC drive the generic `hcloud <type> list` stub. The S3 and zone paths are
 	# short-circuited so they cannot contribute an unverifiable of their own and mask the result.
@@ -836,6 +908,54 @@ if [ "$SELF_TEST" = "1" ]; then
 	# Case 4 pins the precedence: a confirmed leak still outranks "could not check" (rc 1, not 4),
 	# but the ledger must ALSO record that the list failed, or the leak count is understated.
 	st_verify_case "a FAILED list that also listed a row is a LEAK *and* unverifiable" "4711" 1 1 yes
+
+	# ── RUN 33172643012, REPLAYED END TO END. ────────────────────────────────────────────────────
+	#
+	# That run swept everything it owned, listed nothing labelled cluster=<name>, and still died on
+	# `##[error]hcloud cleanup UNVERIFIED … Process completed with exit code 4` — with exactly one
+	# ledger entry, `imager-upload-helpers(unlabelled, cannot attribute)`, from two listings that had
+	# both SUCCEEDED. Every hetzner leg red, every night, for a resource this script is designed not
+	# to touch.
+	#
+	# The exit code is the assertion that matters, and the ✓ line is asserted alongside it: exit 0
+	# is only correct if the finding is still impossible to miss. If the two states are ever
+	# collapsed again this case goes red on the FIRST field.
+	st_imager_finalize() { # <name> <servers> <expected finalize rc> <expect the ✓ line to name it: yes|no>
+		probe_reset
+		ST_SERVERS="$2"
+		ST_KEYS=""
+		# `hcloud server list` is issued by BOTH report_imager_helpers (account-wide, unfiltered)
+		# and list_ids (scope-locked). They are told apart on `--selector`, which is the only thing
+		# that distinguishes them in the real script either.
+		hcloud() {
+			case "$*" in
+			*--selector*) return 0 ;; # scope-locked: nothing labelled survived — the sweep worked
+			"server list"*) printf '%s\n' "$ST_SERVERS" ;;
+			"ssh-key list"*) printf '%s\n' "$ST_KEYS" ;;
+			*) : ;;
+			esac
+		}
+		report_imager_helpers >/dev/null 2>&1 || true
+		local rc=0 out named=no
+		# STDOUT ONLY. The ::warning:: goes to stderr and would match either way, so 2>&1 here would
+		# let the ✓ line silently lose its qualifier and still pass — and the ✓ line is the sentence
+		# a reader converts into "the account is empty".
+		out="$(finalize_verification 2>/dev/null)" || rc=$?
+		case "$out" in *UNATTRIBUTABLE*) named=yes ;; esac
+		if [ "$rc" = "$3" ] && [ "$named" = "$4" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$3/named=$4, got rc=${rc}/named=${named}" >&2
+			echo "      output was: ${out}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_imager_finalize "a swept run whose ONLY finding is an imager helper exits 0, not 4" \
+		"163477937 hcloud-upload-image-77b49987" 0 yes
+	# The other direction, on the same path: with nothing present the ✓ line stays exactly as it was,
+	# so a clean run cannot start crying wolf and teaching people to ignore the qualifier.
+	st_imager_finalize "a clean run's ✓ line is unchanged and mentions nothing" "" 0 no
+
 	unset -f s3_available
 
 	unset -f hcloud
