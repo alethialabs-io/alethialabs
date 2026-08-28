@@ -385,36 +385,63 @@ func RequireAllAddOnsExpected(expected []string) error {
 // every Application actually present) and a `kubectl describe` of each loser — enough
 // to diagnose a red run from logs alone. An empty expected set is refused outright
 // (see DeriveExpectedArgoApps).
-func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected []string, timeout time.Duration) error {
-	if len(expected) == 0 {
-		return errors.New("refusing a VACUOUS ArgoCD health assertion: the expected Application set is empty")
-	}
-	deadline := time.Now().Add(timeout)
+//
+// # Why it persists its own counts (#2688)
+//
+// The proof bundle's ArgoCD numbers used to come from `demos/proofs/capture-proof.sh`, which
+// runs AFTER the tier's t.Cleanup has torn the cluster down — so it counted a cluster that no
+// longer existed and wrote 0/0 for every run. A PASS bundle and a FAIL bundle were therefore
+// NUMERICALLY IDENTICAL, and the only thing distinguishing them was the prose "(T2-asserted)",
+// which is a claim rather than a measurement.
+//
+// The counts exist HERE, at the moment the assertion is made, and nowhere else afterwards. So
+// they are written here, on EVERY exit path — converged, timed out, cancelled, or refused as
+// vacuous. Writing only on success would reproduce the original defect in a new place: a
+// missing file reads as "nothing went wrong" exactly as 0/0 did.
+func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected []string, timeout time.Duration) (err error) {
+	// Declared before the vacuity check so the deferred write covers that exit too — a run that
+	// asserted over an empty set must leave evidence that it asserted nothing.
 	var lastErr error
 	var lastLosers []string
 	var lastRefs []outOfSyncRef
 	// Carried so the deadline dump can tell an OutOfSync loser (which HAS a diff to fetch) from a
 	// Degraded-but-Synced one (which does not).
 	var lastObserved map[string]argoAppState
+	if path := os.Getenv(ArgoSummaryEnv); path != "" {
+		defer func() {
+			s := newArgoConvergenceSummary(expected, lastObserved, lastLosers, timeout, err)
+			if werr := writeArgoSummary(path, s); werr != nil {
+				// Never fatal: the assertion's verdict is the test's, not this file's. But it is
+				// never silent either — a bundle that quietly lost its numbers is the defect.
+				fmt.Fprintf(os.Stderr, "argocd assert: could not write the convergence summary to %s: %v\n", path, werr)
+			}
+		}()
+	}
+	if len(expected) == 0 {
+		return errors.New("refusing a VACUOUS ArgoCD health assertion: the expected Application set is empty")
+	}
+	deadline := time.Now().Add(timeout)
 	for {
-		raw, err := kubectlGetArgoApps(ctx, kubeconfigPath)
-		if err != nil {
+		raw, rerr := kubectlGetArgoApps(ctx, kubeconfigPath)
+		if rerr != nil {
 			// A read hiccup (apiserver blip, CRD not yet registered) is retried until the
 			// deadline — unlike ReadAddOnHealth's best-effort Unknown, a persistent failure
 			// here must FAIL, not soften.
-			lastErr = fmt.Errorf("listing ArgoCD Applications failed: %w", err)
+			lastErr = fmt.Errorf("listing ArgoCD Applications failed: %w", rerr)
 			lastLosers, lastRefs, lastObserved = nil, nil, nil
 		} else if observed, perr := parseArgoApps(raw); perr != nil {
 			lastErr = fmt.Errorf("parsing ArgoCD Applications failed: %w", perr)
 			lastLosers, lastRefs, lastObserved = nil, nil, nil
 		} else {
 			losers, everr := evaluateArgoApps(observed, expected)
+			// Recorded on the WINNING path too, not just the losing one: on success the
+			// deferred summary is the whole point, and `observed` is only in scope here.
+			lastLosers, lastObserved = losers, observed
 			if everr == nil {
 				return nil
 			}
-			lastErr, lastLosers = everr, losers
+			lastErr = everr
 			lastRefs = refsForLosers(observed, losers)
-			lastObserved = observed
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ArgoCD Applications did not all reach Healthy+Synced within %s:\n%v%s",
@@ -427,6 +454,81 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 		case <-time.After(argoPollInterval):
 		}
 	}
+}
+
+// ArgoSummaryEnv names the file AssertArgoAppsHealthy writes its convergence counts to. It
+// follows the six ALETHIA_E2E_*_SUMMARY paths capture-proof.sh already folds into a bundle
+// (soak, day-2 access, day-2 offer, byo-iac, acm-cert, keyless-db) — same shape, same scrub,
+// same "counts and booleans, never a secret" rule.
+const ArgoSummaryEnv = "ALETHIA_E2E_ARGOCD_SUMMARY"
+
+// ArgoConvergenceSummary is the machine-readable result of the ArgoCD convergence assertion,
+// written to ArgoSummaryEnv so a proof bundle carries what was MEASURED rather than what was
+// claimed. Counts and names only — an Application name is not a secret, and nothing else is
+// recorded.
+//
+// HealthySynced and ObservedTotal are POINTERS on purpose. When the Application list could not
+// be read at all there is no honest number to write, and `0` would be indistinguishable from
+// "read fine, nothing converged" — which is precisely the ambiguity #2688 was filed about. A
+// `null` says "not measured"; a `0` says "measured, and it was zero".
+type ArgoConvergenceSummary struct {
+	AssertedAt string `json:"asserted_at"`
+	// Outcome is one of: converged · unconverged · unreadable · vacuous.
+	Outcome string `json:"outcome"`
+	// ExpectedTotal is the size of the derived expected set — the field #2671 needs in order to
+	// tell a full-scope add-on sweep from a floor run wearing its name.
+	ExpectedTotal  int      `json:"expected_total"`
+	HealthySynced  *int     `json:"healthy_synced"`
+	ObservedTotal  *int     `json:"observed_total"`
+	Losers         []string `json:"losers"`
+	TimeoutSeconds int      `json:"timeout_seconds"`
+	Verdict        string   `json:"verdict"`
+}
+
+// newArgoConvergenceSummary renders the assertion's own state into the summary. It derives the
+// converged count as `len(expected) - len(losers)` rather than re-walking the observed map,
+// so the number can never disagree with the verdict the assertion actually returned — the
+// count and the pass/fail decision are computed from one source, not two that can drift.
+func newArgoConvergenceSummary(expected []string, observed map[string]argoAppState, losers []string, timeout time.Duration, err error) ArgoConvergenceSummary {
+	s := ArgoConvergenceSummary{
+		AssertedAt:     time.Now().UTC().Format(time.RFC3339),
+		ExpectedTotal:  len(expected),
+		Losers:         append([]string(nil), losers...),
+		TimeoutSeconds: int(timeout.Seconds()),
+	}
+	sort.Strings(s.Losers)
+	switch {
+	case len(expected) == 0:
+		s.Outcome = "vacuous"
+		s.Verdict = "refused: the expected Application set was empty, so this run asserted nothing"
+		return s
+	case observed == nil:
+		// No successful read in the whole poll window. Leave both counts null.
+		s.Outcome = "unreadable"
+		s.Verdict = fmt.Sprintf("no ArgoCD Application list could be read within %s; %d expected", timeout, len(expected))
+		return s
+	}
+	hs := len(expected) - len(losers)
+	ot := len(observed)
+	s.HealthySynced, s.ObservedTotal = &hs, &ot
+	if err == nil {
+		s.Outcome = "converged"
+		s.Verdict = fmt.Sprintf("%d of %d expected Applications Healthy+Synced", hs, len(expected))
+		return s
+	}
+	s.Outcome = "unconverged"
+	s.Verdict = fmt.Sprintf("%d of %d expected Applications Healthy+Synced within %s; %d did not converge: %s",
+		hs, len(expected), timeout, len(s.Losers), strings.Join(s.Losers, ", "))
+	return s
+}
+
+// writeArgoSummary persists the summary as indented JSON, mirroring writeAccessSummary.
+func writeArgoSummary(path string, s ArgoConvergenceSummary) error {
+	b, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
 // Budget shape for ArgoAssertTimeout. The flat 8m these replace was set for the LEAN surface and
