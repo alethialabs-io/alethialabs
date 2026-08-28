@@ -117,12 +117,38 @@ type Posture struct {
 
 // Analyze summarises the drift in a refresh-only plan. A nil plan (or one with no
 // drift section) yields an in-sync posture. Pure and deterministic.
+//
+// It consults the plan alone. A caller that can also produce the workspace's provider
+// schemas should call AnalyzeWithSchemas instead: without them, a provider-computed
+// read-only attribute (a server-set timestamp, an ARN, a generation counter) is reported
+// as drift on every scan, forever, because only an apply could rewrite state and a
+// refresh-only check never applies (#3099).
 func Analyze(plan *tfjson.Plan) *Posture {
+	return AnalyzeWithSchemas(plan, nil)
+}
+
+// AnalyzeWithSchemas is Analyze with one extra piece of evidence: the schemas of the
+// providers the plan's workspace uses, as `tofu providers schema -json` returns them.
+//
+// The schemas are used for exactly one thing — telling an attribute configuration CAN
+// set apart from one it CANNOT. An attribute the schema marks Computed and neither
+// Optional nor Required has no config path into it, so no configured intent governs it
+// and no apply converges it; those deltas are dismissed as ReasonComputedAttribute. See
+// normalize.go's Tier 3 for the full argument and its limits.
+//
+// Passing nil is not an error and not a degraded mode with different rules: it is the
+// absence of evidence, and the schema-aware tier simply never fires. A nil-schema call is
+// verdict-for-verdict identical to Analyze — which is what lets an existing caller adopt
+// this incrementally without any posture changing under it.
+//
+// Pure and deterministic in both arguments.
+func AnalyzeWithSchemas(plan *tfjson.Plan, schemas *tfjson.ProviderSchemas) *Posture {
 	p := &Posture{InSync: true}
 	if plan == nil {
 		return p
 	}
 	cfg := indexConfig(plan)
+	schemaIdx := indexSchemas(schemas)
 	for _, rc := range plan.ResourceDrift {
 		if rc == nil || rc.Change == nil {
 			continue
@@ -134,7 +160,7 @@ func Analyze(plan *tfjson.Plan) *Posture {
 		if rc.Change.Actions.NoOp() {
 			continue
 		}
-		v := examine(rc, cfg)
+		v := examine(rc, cfg, schemaIdx)
 		if !v.Drift {
 			p.NormalizedDetails = append(p.NormalizedDetails, NormalizedResource{
 				Address:    rc.Address,

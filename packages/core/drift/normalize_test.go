@@ -5,6 +5,7 @@ package drift
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -601,5 +602,372 @@ func TestAzureRefreshNoiseFixture(t *testing.T) {
 	}
 	for addr := range want {
 		t.Errorf("expected normalized address missing from the posture: %q", addr)
+	}
+}
+
+// ── The schema-aware tier ────────────────────────────────────────────────────────────
+//
+// Same discipline as the tables above: the attribute is held fixed at
+// `google_storage_bucket.updated` — the real residue from #3099 — and the delta is held
+// fixed at a timestamp advancing. What varies is the ONE thing the tier is allowed to
+// read: the provider schema's settability flags. A rule that keyed on the attribute
+// NAME, on the resource TYPE, or on the value looking like a timestamp would pass every
+// row of Table A–G and fail here.
+
+const gcpProvider = "registry.terraform.io/hashicorp/google"
+
+// providerDrift is updateDrift plus the provider SOURCE ADDRESS, which is half the schema
+// lookup key. A drift entry without it can never match a schema, which is itself a case
+// worth testing (see TestSchemaTierFailsClosed).
+func providerDrift(provider, addr, typ string, before, after map[string]any) *tfjson.ResourceChange {
+	rc := updateDrift(addr, typ, before, after)
+	rc.ProviderName = provider
+	return rc
+}
+
+// schemasFor builds a provider-schema document carrying one resource type's top-level
+// attributes — the schema mirror of planWithConfig. Only what the tier reads is present.
+func schemasFor(provider, typ string, attrs map[string]*tfjson.SchemaAttribute) *tfjson.ProviderSchemas {
+	return &tfjson.ProviderSchemas{
+		FormatVersion: "1.0",
+		Schemas: map[string]*tfjson.ProviderSchema{
+			provider: {ResourceSchemas: map[string]*tfjson.Schema{
+				typ: {Block: &tfjson.SchemaBlock{Attributes: attrs}},
+			}},
+		},
+	}
+}
+
+// bucketTimestampDrift is the delta this whole tier exists for: GCS's server-set
+// last-modified timestamp advanced, and nothing else about the bucket differs.
+func bucketTimestampDrift() *tfjson.ResourceChange {
+	return providerDrift(gcpProvider, "google_storage_bucket.evidence", "google_storage_bucket",
+		map[string]any{
+			"name":     "alethia-e2e-evidence",
+			"location": "EU",
+			"labels":   map[string]any{"alethia:project-id": "p1"},
+			"updated":  "2026-08-27T10:14:03.921Z",
+		},
+		map[string]any{
+			"name":     "alethia-e2e-evidence",
+			"location": "EU",
+			"labels":   map[string]any{"alethia:project-id": "p1"},
+			"updated":  "2026-08-27T10:19:47.508Z",
+		})
+}
+
+// ── Table H — same attribute, same delta, varying only SETTABILITY ────────────────────
+//
+// All eight combinations of Computed/Optional/Required, exhaustively. Exactly ONE is
+// dismissed. The rows that matter most are the Optional+Computed ones: that is the shape
+// `tags`, `min_tls_version` and `public_network_access_enabled` have, so a predicate that
+// tested `Computed` alone would go green on row 1 and silence every out-of-band scalar
+// flip this package exists to surface.
+func TestTableH_SettabilityDiscriminates(t *testing.T) {
+	cases := []struct {
+		computed  bool
+		optional  bool
+		required  bool
+		wantDrift bool
+	}{
+		{computed: true, wantDrift: false}, // the only dismissal: no config path at all
+		{computed: true, optional: true, wantDrift: true},
+		{computed: true, required: true, wantDrift: true},
+		{computed: true, optional: true, required: true, wantDrift: true},
+		{optional: true, wantDrift: true},
+		{required: true, wantDrift: true},
+		{optional: true, required: true, wantDrift: true},
+		{wantDrift: true}, // no flags at all — absence of evidence is not computedness
+	}
+	for _, tc := range cases {
+		name := fmt.Sprintf("computed=%v optional=%v required=%v", tc.computed, tc.optional, tc.required)
+		t.Run(name, func(t *testing.T) {
+			schemas := schemasFor(gcpProvider, "google_storage_bucket", map[string]*tfjson.SchemaAttribute{
+				"updated": {Computed: tc.computed, Optional: tc.optional, Required: tc.required},
+			})
+			p := AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), schemas)
+			wantReason := ReasonComputedAttribute
+			if tc.wantDrift {
+				wantReason = ""
+			}
+			assertDrift(t, p, tc.wantDrift, wantReason)
+		})
+	}
+}
+
+// TestComputedAttributeNamesTheAttribute pins that a dismissal on this tier still writes
+// an audit record naming what it set aside. A silent dismissal is the failure mode the
+// whole NormalizedDetails shape exists to prevent.
+func TestComputedAttributeNamesTheAttribute(t *testing.T) {
+	schemas := schemasFor(gcpProvider, "google_storage_bucket", map[string]*tfjson.SchemaAttribute{
+		"updated": {Computed: true},
+	})
+	p := AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), schemas)
+	assertDrift(t, p, false, ReasonComputedAttribute)
+	got := p.NormalizedDetails[0].Attributes
+	if len(got) != 1 || got[0] != "updated" {
+		t.Fatalf("Attributes = %v, want [updated]", got)
+	}
+	if p.NormalizedDetails[0].Type != "google_storage_bucket" {
+		t.Errorf("Type = %q, want google_storage_bucket", p.NormalizedDetails[0].Type)
+	}
+}
+
+// ── Table I — the narrowings, each one alone standing between a dismissal and drift ───
+//
+// Every row uses the SAME computed-only schema flags as the dismissed row of Table H.
+// One thing differs per row, and each one must be enough to keep the delta as drift.
+func TestTableI_SchemaTierNarrowings(t *testing.T) {
+	computedOnly := map[string]*tfjson.SchemaAttribute{"updated": {Computed: true}}
+
+	t.Run("nil schema document — the fail-closed baseline", func(t *testing.T) {
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), nil), true, "")
+	})
+	t.Run("plain Analyze never fires the tier", func(t *testing.T) {
+		assertDrift(t, Analyze(planWithConfig(nil, bucketTimestampDrift())), true, "")
+	})
+	t.Run("schema document carrying no providers", func(t *testing.T) {
+		p := AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()),
+			&tfjson.ProviderSchemas{FormatVersion: "1.0"})
+		assertDrift(t, p, true, "")
+	})
+	t.Run("a nil provider entry is skipped, not dereferenced", func(t *testing.T) {
+		doc := schemasFor(gcpProvider, "google_storage_bucket", computedOnly)
+		doc.Schemas["registry.terraform.io/hashicorp/null"] = nil
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), doc), false, ReasonComputedAttribute)
+	})
+	t.Run("a nil resource schema is skipped, not dereferenced", func(t *testing.T) {
+		doc := schemasFor(gcpProvider, "google_storage_bucket", computedOnly)
+		doc.Schemas[gcpProvider].ResourceSchemas["google_storage_bucket_object"] = nil
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), doc), false, ReasonComputedAttribute)
+	})
+	t.Run("a resource schema with a nil block is skipped", func(t *testing.T) {
+		doc := schemasFor(gcpProvider, "google_storage_bucket", computedOnly)
+		doc.Schemas[gcpProvider].ResourceSchemas["google_storage_bucket"] = &tfjson.Schema{}
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), doc), true, "")
+	})
+	t.Run("a DIFFERENT provider's schema does not match", func(t *testing.T) {
+		doc := schemasFor("registry.terraform.io/hashicorp/azurerm", "google_storage_bucket", computedOnly)
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), doc), true, "")
+	})
+	t.Run("a drift entry with no provider name cannot match", func(t *testing.T) {
+		rc := bucketTimestampDrift()
+		rc.ProviderName = ""
+		doc := schemasFor(gcpProvider, "google_storage_bucket", computedOnly)
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, rc), doc), true, "")
+	})
+	t.Run("a DIFFERENT resource type does not match", func(t *testing.T) {
+		doc := schemasFor(gcpProvider, "google_storage_bucket_object", computedOnly)
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), doc), true, "")
+	})
+	t.Run("the attribute is absent from an otherwise matching schema", func(t *testing.T) {
+		doc := schemasFor(gcpProvider, "google_storage_bucket", map[string]*tfjson.SchemaAttribute{
+			"self_link": {Computed: true},
+		})
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), doc), true, "")
+	})
+	t.Run("a nil attribute entry is not a computed attribute", func(t *testing.T) {
+		doc := schemasFor(gcpProvider, "google_storage_bucket", map[string]*tfjson.SchemaAttribute{
+			"updated": nil,
+		})
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), doc), true, "")
+	})
+	t.Run("the plan's sensitivity mask vetoes the dismissal", func(t *testing.T) {
+		rc := bucketTimestampDrift()
+		rc.Change.AfterSensitive = map[string]any{"updated": true}
+		doc := schemasFor(gcpProvider, "google_storage_bucket", computedOnly)
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, rc), doc), true, "")
+	})
+	t.Run("the SCHEMA's own sensitive flag vetoes the dismissal", func(t *testing.T) {
+		doc := schemasFor(gcpProvider, "google_storage_bucket", map[string]*tfjson.SchemaAttribute{
+			"updated": {Computed: true, Sensitive: true},
+		})
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, bucketTimestampDrift()), doc), true, "")
+	})
+	t.Run("depth 0 only — a nested computed attribute stays drift", func(t *testing.T) {
+		rc := providerDrift(gcpProvider, "google_storage_bucket.b", "google_storage_bucket",
+			map[string]any{"versioning": []any{map[string]any{"updated": "a"}}},
+			map[string]any{"versioning": []any{map[string]any{"updated": "b"}}})
+		doc := schemasFor(gcpProvider, "google_storage_bucket", map[string]*tfjson.SchemaAttribute{
+			"versioning": {Computed: true},
+			"updated":    {Computed: true},
+		})
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, rc), doc), true, "")
+	})
+}
+
+// TestSchemaTierFailsClosed states the fail-closed rule as its own claim rather than
+// leaving it implied by the rows above: with no schema evidence the new reason must never
+// appear in a posture, whatever the plan contains. This is the property that lets the
+// azure golden fixture (TestAzureRefreshNoiseFixture) pass byte-for-byte unchanged.
+func TestSchemaTierFailsClosed(t *testing.T) {
+	plans := map[string]*tfjson.Plan{
+		"the bucket residue": planWithConfig(nil, bucketTimestampDrift()),
+		"the azure fixture":  loadPlan(t, "azure_refresh_noise.json"),
+		"the drifted golden": loadPlan(t, "drifted.json"),
+	}
+	noEvidence := map[string]*tfjson.ProviderSchemas{
+		"nil document":       nil,
+		"document, no types": {FormatVersion: "1.0"},
+	}
+	for name, plan := range plans {
+		for shape, schemas := range noEvidence {
+			t.Run(name+" / "+shape, func(t *testing.T) {
+				for _, n := range AnalyzeWithSchemas(plan, schemas).NormalizedDetails {
+					if n.Reason == ReasonComputedAttribute {
+						t.Fatalf("%s: dismissed on the schema tier with NO schema evidence", n.Address)
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestAzureFixtureIdenticalWithAndWithoutSchemas is the golden-fixture guard stated as an
+// equality rather than as an absence: adding an unrelated provider's schemas must not move
+// a single verdict. If this fails, the index is firing on resources it never matched.
+func TestAzureFixtureIdenticalWithAndWithoutSchemas(t *testing.T) {
+	doc := schemasFor(gcpProvider, "google_storage_bucket", map[string]*tfjson.SchemaAttribute{
+		"updated": {Computed: true},
+	})
+	base, err := json.Marshal(Analyze(loadPlan(t, "azure_refresh_noise.json")))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	withSchemas, err := json.Marshal(AnalyzeWithSchemas(loadPlan(t, "azure_refresh_noise.json"), doc))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(base) != string(withSchemas) {
+		t.Fatalf("posture changed when unrelated schemas were supplied:\n without: %s\n with:    %s", base, withSchemas)
+	}
+}
+
+// TestSchemaTierIsAllOrNothing pins that the schema tier buys no partial forgiveness. A
+// resource whose computed-only timestamp moved AND whose settable label was stripped
+// out-of-band stays drift, and names BOTH paths — reporting only the label would describe
+// a diff nobody could reconcile against the plan.
+func TestSchemaTierIsAllOrNothing(t *testing.T) {
+	rc := providerDrift(gcpProvider, "google_storage_bucket.evidence", "google_storage_bucket",
+		map[string]any{"updated": "t0", "labels": map[string]any{"alethia:project-id": "p1"}},
+		map[string]any{"updated": "t1", "labels": map[string]any{"alethia:project-id": "mallory"}})
+	doc := schemasFor(gcpProvider, "google_storage_bucket", map[string]*tfjson.SchemaAttribute{
+		"updated": {Computed: true},
+		"labels":  {Optional: true, Computed: true},
+	})
+	p := AnalyzeWithSchemas(planWithConfig(nil, rc), doc)
+	assertDrift(t, p, true, "")
+	want := []string{"labels.alethia:project-id", "updated"}
+	got := p.Details[0].Attributes
+	if len(got) != len(want) {
+		t.Fatalf("Attributes = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Attributes = %v, want %v (sorted)", got, want)
+		}
+	}
+}
+
+// TestWeakestReasonIsReported pins the audit rule across all three tiers: a resource
+// dismissed on a mixture is recorded under the WEAKEST justification it used, so the trail
+// never overstates how firm the dismissal was.
+func TestWeakestReasonIsReported(t *testing.T) {
+	const addr = "google_storage_bucket.evidence"
+	doc := schemasFor(gcpProvider, "google_storage_bucket", map[string]*tfjson.SchemaAttribute{
+		"updated": {Computed: true},
+	})
+	t.Run("empty_collection + computed_attribute reports computed_attribute", func(t *testing.T) {
+		rc := providerDrift(gcpProvider, addr, "google_storage_bucket",
+			map[string]any{"updated": "t0", "cors": nil},
+			map[string]any{"updated": "t1", "cors": []any{}})
+		assertDrift(t, AnalyzeWithSchemas(planWithConfig(nil, rc), doc), false, ReasonComputedAttribute)
+	})
+	t.Run("computed_attribute + undeclared_collection reports undeclared_collection", func(t *testing.T) {
+		rc := providerDrift(gcpProvider, addr, "google_storage_bucket",
+			map[string]any{"updated": "t0", "cors": nil},
+			map[string]any{"updated": "t1", "cors": []any{"x"}})
+		// The resource must be IN the configuration for the config-aware tier to be live,
+		// declaring something other than `cors`.
+		plan := planWithConfig(map[string][]string{addr: {"location"}}, rc)
+		assertDrift(t, AnalyzeWithSchemas(plan, doc), false, ReasonUndeclaredCollection)
+	})
+	// The two rules OVERLAP inside a SINGLE leaf: an attribute with no config path is
+	// necessarily undeclared, so a computed-only collection materialising from null
+	// qualifies under both. Here `cors` is that leaf, and it is the only one — so the
+	// weaker reason cannot be arriving from a sibling.
+	t.Run("one leaf qualifying under BOTH reports the weaker one", func(t *testing.T) {
+		rc := providerDrift(gcpProvider, addr, "google_storage_bucket",
+			map[string]any{"cors": nil}, map[string]any{"cors": []any{"x"}})
+		bothApply := schemasFor(gcpProvider, "google_storage_bucket", map[string]*tfjson.SchemaAttribute{
+			"cors": {Computed: true},
+		})
+		plan := planWithConfig(map[string][]string{addr: {"location"}}, rc)
+		p := AnalyzeWithSchemas(plan, bothApply)
+		assertDrift(t, p, false, ReasonUndeclaredCollection)
+		if len(p.NormalizedDetails[0].Attributes) != 1 {
+			t.Fatalf("want exactly one leaf, got %v", p.NormalizedDetails[0].Attributes)
+		}
+	})
+}
+
+// TestReasonStrengthCoversEveryReason is the mechanical half of the ordering above: an
+// unranked reason sorts as the weakest possible, so a new reason added without a rank can
+// only ever understate a dismissal. This fails the day someone adds one and forgets.
+func TestReasonStrengthCoversEveryReason(t *testing.T) {
+	for _, r := range []NormalizedReason{ReasonEmptyCollection, ReasonUndeclaredCollection, ReasonComputedAttribute} {
+		if reasonStrength(r) == 0 {
+			t.Errorf("reason %q has no strength rank — it would sort below every real one", r)
+		}
+	}
+	if reasonStrength("something_new") != 0 {
+		t.Error("an unknown reason must rank as the weakest possible")
+	}
+}
+
+// TestSchemasNeverIncreaseDrift pins the one-directional property the caller in
+// packages/core/provisioner/drift.go relies on to make the schema fetch CONDITIONAL: it
+// runs the cheap schema-free pass first and only pays for `tofu providers schema -json`
+// when that pass already reported drift.
+//
+// That reordering is only sound if schema evidence can never move a resource the other
+// way — from dismissed to drifted. It cannot, by construction: AnalyzeWithSchemas ADDS a
+// dismissal tier and removes none, so `normalizing` returns ok wherever it did before.
+// This states it as a property over every fixture and every schema shape rather than
+// leaving it as a claim in a comment, because the day someone makes a tier subtractive the
+// caller would start skipping the fetch on a plan that needed it.
+func TestSchemasNeverIncreaseDrift(t *testing.T) {
+	// A schema deliberately built to be as permissive as this tier allows: every
+	// attribute any fixture touches, marked computed-only.
+	permissive := map[string]*tfjson.SchemaAttribute{}
+	for _, a := range []string{
+		"updated", "labels", "tags", "cors", "conf", "list", "block", "note",
+		"backup_window", "placement_group_id", "network", "ingress", "service_endpoints",
+	} {
+		permissive[a] = &tfjson.SchemaAttribute{Computed: true}
+	}
+	plans := map[string]*tfjson.Plan{
+		"azure fixture":  loadPlan(t, "azure_refresh_noise.json"),
+		"drifted golden": loadPlan(t, "drifted.json"),
+		"in sync golden": loadPlan(t, "in_sync.json"),
+		"bucket residue": planWithConfig(nil, bucketTimestampDrift()),
+	}
+	for name, plan := range plans {
+		t.Run(name, func(t *testing.T) {
+			base := Analyze(plan)
+			for _, provider := range []string{gcpProvider, "registry.terraform.io/hashicorp/azurerm", "registry.terraform.io/hashicorp/aws"} {
+				for _, typ := range []string{"google_storage_bucket", "azurerm_subnet", "aws_security_group", "a", "hcloud_server"} {
+					got := AnalyzeWithSchemas(plan, schemasFor(provider, typ, permissive))
+					if got.Drifted > base.Drifted {
+						t.Fatalf("%s/%s: Drifted went %d -> %d — schema evidence must only ever dismiss",
+							provider, typ, base.Drifted, got.Drifted)
+					}
+					if got.Drifted+got.Normalized != base.Drifted+base.Normalized {
+						t.Fatalf("%s/%s: %d resources examined with schemas, %d without — a resource was lost",
+							provider, typ, got.Drifted+got.Normalized, base.Drifted+base.Normalized)
+					}
+				}
+			}
+		})
 	}
 }
