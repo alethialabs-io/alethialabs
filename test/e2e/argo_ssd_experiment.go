@@ -69,17 +69,61 @@
 // that provably began after the annotation was persisted.
 //
 // `metadata.generation` cannot be that gate: the apiserver bumps it only for changes OUTSIDE
-// `metadata`, and this is an annotation. It is read and reported anyway, for the opposite reason —
-// if it MOVES during the window, something changed the Application's spec under the experiment and
-// the observation is no longer attributable to the flip.
+// `metadata`, and this is an annotation.
+//
+// # Why the attribution gate is the spec CONTENT and not metadata.generation
+//
+// The first version of this experiment disqualified any window in which `metadata.generation`
+// moved, reasoning that a bump means the spec changed under the experiment. On hetzner/addons run
+// 33185250586 that gate fired on BOTH subjects — 83→85 on addon-tempo, 91→93 on addon-harbor —
+// and returned COULD NOT ASK while the data underneath showed both Applications going
+// `OutOfSync → Synced` under the flip. That is the third inconclusive run on this question.
+//
+// EXACTLY +2 on both subjects, in a window in which the experiment forces EXACTLY two reconciles,
+// is the tell. On an argo-cd Application, `metadata.generation` is a status-write counter, not a
+// spec-change counter, and the reason is two primary sources deep:
+//
+//  1. argo-cd's Application CRD declares `subresources: {}` — no `status` subresource. (Verified in
+//     `manifests/crds/application-crd.yaml` at v3.3.9, the version chart 9.5.11 bundles; see
+//     packages/core/argocd/versions.go.) The application-controller therefore persists status with
+//     a merge patch on the MAIN resource, not on a status endpoint.
+//  2. apiextensions-apiserver's `customResourceStrategy.PrepareForUpdate` increments the generation
+//     whenever the object's NON-METADATA content differs semantically from the old object's — and
+//     with no status subresource, `.status` is part of that content.
+//
+// So every reconcile that writes `status.reconciledAt` bumps the generation, and `.operation` —
+// also top-level, also non-metadata — bumps it again on each auto-sync these add-ons run. This
+// experiment DELIBERATELY forces two reconciles (settle, then the confirming re-compare), so the
+// old gate was not merely likely to fire: it was unsatisfiable by construction. It could never have
+// returned a verdict on any run, and the appearance of rigour cost three of them.
+//
+// Note what is NOT the explanation, because the obvious wrong answer here reads identically: the
+// apiserver does compare rather than blindly increment, so a byte-identical re-apply does not bump
+// the counter — and nothing re-applies these Applications anyway. They are `kubectl apply`-ed once
+// per deploy by the runner (packages/core/argocd/waves.go `ApplyAddOnsInWaves`, from
+// packages/core/provisioner/deploy.go), with no app-of-apps parent and no cadence. Blaming a
+// phantom re-apply would have made the gate look like bad luck instead of a design error.
+//
+// What the attribution argument actually needs is that the controller compared the SAME desired
+// state before and after. So the experiment captures `.spec` on both reads and compares the
+// CONTENT: canonical JSON (map keys sorted, numbers preserved verbatim, array order left alone
+// because order is semantic in an Application spec). Identical content means the bump came from the
+// status the controller itself wrote, and the verdict stands — said out loud in the report, never
+// silently. Different content is still COULD NOT ASK, and now NAMES the paths that differ, so the
+// next reader learns what interfered instead of guessing.
+//
+// The generation is still read and still reported. It is evidence in the freshness line; it is no
+// longer the gate.
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -154,9 +198,19 @@ type ssdSnapshot struct {
 	// restoring by writing an empty string.
 	CompareOptions    string
 	HasCompareOptions bool
-	// Generation is metadata.generation — reported, never used as the freshness gate. See the
-	// package comment.
+	// Generation is metadata.generation — reported, and used as neither the freshness gate nor the
+	// attribution gate. See the package comment.
 	Generation int64
+	// Spec is `.spec` rendered as CANONICAL JSON — map keys sorted, so two reads of the same desired
+	// state compare equal regardless of how either was serialised. It is a string and not a decoded
+	// map on purpose: ssdSnapshot must stay comparable (see the type comment), and a canonical
+	// string is exactly as strong a comparison as a deep equality on the value it came from.
+	//
+	// HasSpec distinguishes "the spec was read and is empty" from "the spec was not there", because
+	// two unreadable specs would otherwise compare EQUAL and pass the attribution gate on no
+	// evidence at all.
+	Spec    string
+	HasSpec bool
 	// Sync is status.sync.status; ReconciledAt is status.reconciledAt, the freshness gate.
 	Sync         string
 	ReconciledAt string
@@ -173,6 +227,10 @@ type ssdAppJSON struct {
 		Generation  int64             `json:"generation"`
 		Annotations map[string]string `json:"annotations"`
 	} `json:"metadata"`
+	// Spec is held RAW and canonicalised separately. Decoding it into a typed struct would silently
+	// drop every field the struct does not name — and a field this file does not know about is
+	// exactly the kind of spec change the attribution gate exists to catch.
+	Spec   json.RawMessage `json:"spec"`
 	Status struct {
 		ReconciledAt string `json:"reconciledAt"`
 		Sync         struct {
@@ -191,14 +249,164 @@ func parseSSDSnapshot(raw []byte) (ssdSnapshot, error) {
 		return ssdSnapshot{}, fmt.Errorf("could not decode the Application: %w", err)
 	}
 	value, present := app.Metadata.Annotations[ssdCompareOptionsAnnotation]
+	var spec string
+	var hasSpec bool
+	if len(app.Spec) > 0 && !bytes.Equal(bytes.TrimSpace(app.Spec), []byte("null")) {
+		canonical, cerr := ssdCanonicalJSON(app.Spec)
+		if cerr != nil {
+			// An unreadable spec is an error and not a silent absence: the attribution gate treats a
+			// missing spec as COULD NOT ASK, and a decode failure that reached it as an empty string
+			// would be indistinguishable from an Application that genuinely has no spec.
+			return ssdSnapshot{}, fmt.Errorf("could not canonicalise the Application's .spec: %w", cerr)
+		}
+		spec, hasSpec = canonical, true
+	}
 	return ssdSnapshot{
 		CompareOptions:     value,
 		HasCompareOptions:  present,
 		Generation:         app.Metadata.Generation,
+		Spec:               spec,
+		HasSpec:            hasSpec,
 		Sync:               strings.TrimSpace(app.Status.Sync.Status),
 		ReconciledAt:       strings.TrimSpace(app.Status.ReconciledAt),
 		OperationStartedAt: strings.TrimSpace(app.Status.OperationState.StartedAt),
 	}, nil
+}
+
+// ssdCanonicalJSON re-renders arbitrary JSON so that two renderings of the same CONTENT are the
+// same string. Pure.
+//
+// Three deliberate choices:
+//
+//   - Map keys are sorted, which `encoding/json` does for a `map[string]any` for free. This is the
+//     normalisation the whole refinement turns on: a re-apply that re-serialises the same fields in
+//     a different order must not read as a spec change.
+//   - Numbers are kept as `json.Number`, i.e. verbatim source text. Decoding to float64 and back
+//     would round a large integer into a different one, which is a spec change this gate invented.
+//   - Array ORDER is preserved. In an Application spec order is semantic — `sources`, `valueFiles`,
+//     `ignoreDifferences` all mean something different reordered — so sorting arrays here would
+//     hide a real change behind a normalisation.
+func ssdCanonicalJSON(raw []byte) (string, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var value any
+	if err := dec.Decode(&value); err != nil {
+		return "", err
+	}
+	out, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// maxSSDSpecDiffPaths caps how many differing paths the report names. A spec that was replaced
+// wholesale would otherwise print the entire object into a run log; the first few paths already
+// tell the reader what interfered.
+const maxSSDSpecDiffPaths = 8
+
+// ssdSpecDiffPaths names the dotted paths at which two canonical spec renderings differ. Pure.
+//
+// It exists so that a COULD NOT ASK is actionable. "the spec moved" tells the next reader to guess;
+// "spec.source.targetRevision (\"1.2.3\" → \"1.2.4\")" tells them what to go and look at.
+//
+// It never returns an empty slice for two inputs that differ: an unlocatable difference is reported
+// as one, because a differ that reports nothing found would read exactly like a differ that found
+// nothing wrong.
+func ssdSpecDiffPaths(before, after string) []string {
+	if before == after {
+		return nil
+	}
+	decode := func(s string) (any, error) {
+		dec := json.NewDecoder(strings.NewReader(s))
+		dec.UseNumber()
+		var v any
+		err := dec.Decode(&v)
+		return v, err
+	}
+	b, berr := decode(before)
+	a, aerr := decode(after)
+	if berr != nil || aerr != nil {
+		return []string{"spec (the captured renderings differ but could not be re-read for a path-level diff)"}
+	}
+	var paths []string
+	ssdWalkSpecDiff("spec", b, a, &paths)
+	if len(paths) == 0 {
+		return []string{"spec (the canonical renderings differ but no path-level difference could be located)"}
+	}
+	return paths
+}
+
+// ssdWalkSpecDiff appends the paths at which `before` and `after` disagree, depth-first and in
+// sorted key order so two runs over the same pair report the same list. Pure.
+func ssdWalkSpecDiff(path string, before, after any, out *[]string) {
+	if len(*out) >= maxSSDSpecDiffPaths {
+		return
+	}
+	beforeMap, beforeIsMap := before.(map[string]any)
+	afterMap, afterIsMap := after.(map[string]any)
+	if beforeIsMap && afterIsMap {
+		for _, key := range ssdSortedKeyUnion(beforeMap, afterMap) {
+			beforeValue, inBefore := beforeMap[key]
+			afterValue, inAfter := afterMap[key]
+			switch {
+			case inBefore && !inAfter:
+				*out = append(*out, fmt.Sprintf("%s.%s (removed)", path, key))
+			case !inBefore && inAfter:
+				*out = append(*out, fmt.Sprintf("%s.%s (added: %s)", path, key, ssdRenderValue(afterValue)))
+			default:
+				ssdWalkSpecDiff(path+"."+key, beforeValue, afterValue, out)
+			}
+			if len(*out) >= maxSSDSpecDiffPaths {
+				return
+			}
+		}
+		return
+	}
+	beforeSlice, beforeIsSlice := before.([]any)
+	afterSlice, afterIsSlice := after.([]any)
+	if beforeIsSlice && afterIsSlice {
+		if len(beforeSlice) != len(afterSlice) {
+			*out = append(*out, fmt.Sprintf("%s (%d → %d entries)", path, len(beforeSlice), len(afterSlice)))
+			return
+		}
+		for i := range beforeSlice {
+			ssdWalkSpecDiff(fmt.Sprintf("%s[%d]", path, i), beforeSlice[i], afterSlice[i], out)
+			if len(*out) >= maxSSDSpecDiffPaths {
+				return
+			}
+		}
+		return
+	}
+	if !reflect.DeepEqual(before, after) {
+		*out = append(*out, fmt.Sprintf("%s (%s → %s)", path, ssdRenderValue(before), ssdRenderValue(after)))
+	}
+}
+
+// ssdSortedKeyUnion returns every key in either map, once, in sorted order. Pure.
+func ssdSortedKeyUnion(a, b map[string]any) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	keys := make([]string, 0, len(a)+len(b))
+	for _, m := range []map[string]any{a, b} {
+		for key := range m {
+			if !seen[key] {
+				seen[key] = true
+				keys = append(keys, key)
+			}
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// ssdRenderValue renders one spec value compactly for the diff line, truncated so a replaced
+// sub-object cannot flood the run log. Pure.
+func ssdRenderValue(v any) string {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return truncateValue(string(raw), 80)
 }
 
 // ssdAnnotationPatch is the merge patch shape. A *string so a nil marshals to `null`, which is how
@@ -304,11 +512,37 @@ func describeSSDExperiment(obs ssdObservation) string {
 // ssdFreshness renders what was read, and when the cluster last recomputed it. Pure.
 func ssdFreshness(obs ssdObservation) string {
 	return fmt.Sprintf(
-		"\n      [freshness] metadata.generation %d→%d (an annotation does not bump it; a change here would mean the SPEC moved under the experiment) · status.reconciledAt %s → %s (settle) → %s (verdict read here) · status.sync.status %s→%s · status.operationState.startedAt %s→%s",
+		"\n      [freshness] metadata.generation %d→%d (a STATUS-write counter on this CRD, not a spec-change one — argo-cd's Application has no status subresource, so every reconcile bumps it) · .spec %s · status.reconciledAt %s → %s (settle) → %s (verdict read here) · status.sync.status %s→%s · status.operationState.startedAt %s→%s",
 		obs.Before.Generation, obs.After.Generation,
+		ssdSpecState(obs),
 		ssdOrNone(obs.Before.ReconciledAt), ssdOrNone(obs.Settle.ReconciledAt), ssdOrNone(obs.After.ReconciledAt),
 		orUnknown(obs.Before.Sync), orUnknown(obs.After.Sync),
 		ssdOrNone(obs.Before.OperationStartedAt), ssdOrNone(obs.After.OperationStartedAt))
+}
+
+// ssdSpecState renders what the attribution gate actually saw, on EVERY verdict including the
+// could-not-ask ones. Pure.
+//
+// The gate is the one thing a reader cannot re-derive from the other numbers, so it must never be
+// the field that is omitted when the probe is unsure.
+func ssdSpecState(obs ssdObservation) string {
+	switch {
+	case !obs.Before.HasSpec && !obs.After.HasSpec:
+		return "NOT READ on either side (two unread specs are not an unchanged spec)"
+	case !obs.Before.HasSpec:
+		return "NOT READ before the flip"
+	case !obs.After.HasSpec:
+		return "NOT READ at verdict time"
+	case !obs.Settle.HasSpec:
+		return "NOT READ at the settle read (so a spec that moved and moved back cannot be excluded)"
+	case obs.Before.Spec != obs.After.Spec:
+		return "content CHANGED by the verdict read, at " + strings.Join(ssdSpecDiffPaths(obs.Before.Spec, obs.After.Spec), " · ")
+	// Reported separately, because a spec that moved and moved BACK is invisible in a first/last
+	// comparison and is exactly the case the mid-window read exists to catch.
+	case obs.Settle.Spec != obs.Before.Spec:
+		return "content CHANGED at the settle read and reverted by the verdict read, at " + strings.Join(ssdSpecDiffPaths(obs.Before.Spec, obs.Settle.Spec), " · ")
+	}
+	return "content UNCHANGED across all three reads (canonical JSON, map keys sorted)"
 }
 
 // ssdOrNone renders an absent timestamp as "(none)" rather than as nothing. A freshness line that
@@ -350,8 +584,26 @@ func ssdVerdict(obs ssdObservation) string {
 		// The false negative this whole three-read chain exists to prevent. See ssdObservation.
 		return fmt.Sprintf("COULD NOT ASK — the confirming re-compare did not complete (waited %s). Exactly one reconcile landed after the patch, and it may have been one already IN FLIGHT when the annotation was written — a comparison made with the OLD compare-options. Reading a verdict off it would credit or blame a flip that was never in it.", ssdExperimentWait)
 	}
-	if obs.After.Generation != obs.Before.Generation {
-		return "COULD NOT ASK — metadata.generation moved during the window, so the Application's SPEC changed under the experiment. Whatever the status now says is not attributable to the compare-option."
+	// The attribution gate is the spec CONTENT, and metadata.generation is not consulted in either
+	// direction: a bump over identical content is the controller's own status write and passes, and
+	// a content change under a static counter is disqualifying anyway. Making the counter the gate
+	// is what returned COULD NOT ASK on run 33185250586 with the answer sitting in the data.
+	//
+	// Compared at ALL THREE reads, not just the first and the last. A spec that changed after the
+	// flip and changed back before the verdict would leave Before and After equal while the
+	// controller compared something else in between; the settle read is the one instant that would
+	// have seen it.
+	for _, stage := range []struct {
+		name string
+		snap ssdSnapshot
+	}{{"the settle read", obs.Settle}, {"the verdict read", obs.After}} {
+		if !obs.Before.HasSpec || !stage.snap.HasSpec {
+			return fmt.Sprintf("COULD NOT ASK — the Application's .spec could not be read before the flip or at %s, so a spec change under the experiment could be neither shown nor excluded. Without that, a status change is not attributable to the compare-option.", stage.name)
+		}
+		if obs.Before.Spec != stage.snap.Spec {
+			return fmt.Sprintf("COULD NOT ASK — the Application's .spec CONTENT changed between the pre-flip read and %s (not merely its generation counter), so the controller was not comparing the same desired state throughout. Whatever the status now says is not attributable to the compare-option. Differing paths: %s.",
+				stage.name, strings.Join(ssdSpecDiffPaths(obs.Before.Spec, stage.snap.Spec), " · "))
+		}
 	}
 	switch obs.After.Sync {
 	case "":
@@ -363,12 +615,26 @@ func ssdVerdict(obs ssdObservation) string {
 			// same class of error as reading a stale status: a verdict the evidence does not carry.
 			return "COULD NOT ASK — the Application is Synced, but a SYNC OPERATION also started inside the window (status.operationState.startedAt moved), and these add-ons run automated sync with selfHeal. Synced is therefore not attributable to the diff strategy alone. Re-run to get a window with no operation in it."
 		}
-		return fmt.Sprintf("FLIP WOULD FIX IT — after the annotation was set, the controller re-compared and now reports %s Synced, with NO sync operation in the window. Nothing about the cluster or the chart changed: the ONLY difference is the diff strategy the controller used. This is argo-cd's own comparison agreeing that live matches desired, which is the evidence #2717 needs before `ServerSideDiff=true` may be flipped for the product.", obs.App)
+		return fmt.Sprintf("FLIP WOULD FIX IT — after the annotation was set, the controller re-compared and now reports %s Synced, with NO sync operation in the window. Nothing about the cluster or the chart changed: the ONLY difference is the diff strategy the controller used. This is argo-cd's own comparison agreeing that live matches desired, which is the evidence #2717 needs before `ServerSideDiff=true` may be flipped for the product.%s", obs.App, ssdGenerationNote(obs))
 	case "OutOfSync":
-		return fmt.Sprintf("FLIP WOULD NOT FIX IT — after the annotation was set, the controller re-compared and %s is STILL OutOfSync. argo-cd's own server-side comparison agrees with its structured-merge one, so the diff strategy is NOT the cause and flipping `ServerSideDiff=true` for the product would fix nothing. #2717 needs a different answer, and the real difference is still unnamed.", obs.App)
+		return fmt.Sprintf("FLIP WOULD NOT FIX IT — after the annotation was set, the controller re-compared and %s is STILL OutOfSync. argo-cd's own server-side comparison agrees with its structured-merge one, so the diff strategy is NOT the cause and flipping `ServerSideDiff=true` for the product would fix nothing. #2717 needs a different answer, and the real difference is still unnamed.%s", obs.App, ssdGenerationNote(obs))
 	default:
 		return fmt.Sprintf("COULD NOT ASK — the post-flip status.sync.status is %q, which is neither Synced nor OutOfSync.", obs.After.Sync)
 	}
+}
+
+// ssdGenerationNote is the sentence a verdict owes its reader when metadata.generation moved and
+// the verdict was reached anyway. Pure; empty when the counter did not move.
+//
+// It is not decoration. The previous gate refused this exact window, so a reader who remembers that
+// refusal must be told, in the verdict itself, that the counter moved and WHY that is no longer
+// disqualifying — rather than having to reconstruct it from the freshness line.
+func ssdGenerationNote(obs ssdObservation) string {
+	if obs.After.Generation == obs.Before.Generation {
+		return ""
+	}
+	return fmt.Sprintf(" metadata.generation DID move (%d→%d) in the window, but the `.spec` content is identical after canonicalisation. argo-cd's Application CRD has NO status subresource, so every status the controller writes counts as a non-metadata change and bumps the counter — this experiment forces two reconciles, so the counter must move. It did not move because the desired state changed, and the verdict stands.",
+		obs.Before.Generation, obs.After.Generation)
 }
 
 // ssdRestoreFailed is the marker a reader must be able to grep for. A silently modified Application
