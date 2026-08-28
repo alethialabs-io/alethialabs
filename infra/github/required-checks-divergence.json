@@ -1,0 +1,39 @@
+{
+  "_doc": [
+    "DECLARED divergences between .mergify.yml's `check-success=` conditions and the required checks",
+    "the `protect-dev` ruleset asks for in variables.tf. Read by scripts/ci/check-required-checks.mjs.",
+    "",
+    "ONLY ONE DIRECTION CAN BE DECLARED, and the asymmetry is the point.",
+    "",
+    "A check Mergify waits for that the ruleset does not yet require is SAFE — Mergify simply holds",
+    "the PR until it is green — and it is the repo's documented order: list it here first, apply the",
+    "ruleset after, so that a PR which genuinely fails the new gate is held visibly rather than",
+    "queued and then refused. `capabilities-security` and `Build console images (no push)` both went",
+    "in that way. That state is temporary by design, which is exactly why it has to be written down:",
+    "an undeclared lead is indistinguishable from a forgotten one, and this pair has now been out of",
+    "step for a month twice (#2606, #3180).",
+    "",
+    "The reverse — a check the ruleset requires and Mergify does not wait for — is NOT declarable and",
+    "the guard refuses to accept a record for it. protect-dev has no bypass actors, so Mergify's",
+    "merge is refused by GitHub after the queue has already decided the PR is ready: a stuck entry",
+    "with nothing red to explain it. There is no state of the world in which that is what someone",
+    "meant, and an escape hatch for it would only make it a habit.",
+    "",
+    "SHRINK-ONLY. A record that no longer corresponds to a real divergence is an integrity failure,",
+    "the same rule demos/proofs/ledger-baseline.json and infra/template-parity-exclusions.yaml carry:",
+    "a record for something that does not exist is the same stale-evidence shape it was meant to",
+    "expose. Deleting this file does not silence the guard — absent means empty, so every undeclared",
+    "lead becomes a failure.",
+    "",
+    "EMPTY IS THE CORRECT STEADY STATE. It is empty today because the two lists agree exactly.",
+    "Add a record only while a check is deliberately ahead of the ruleset, and delete it in the PR",
+    "that lands the apply."
+  ],
+  "mergify_leads": {
+    "_doc": [
+      "Contexts required by .mergify.yml that `protect-dev` does not require yet.",
+      "Each record: {context, reason, issue} — the issue being the one that tracks the apply."
+    ],
+    "records": []
+  }
+}

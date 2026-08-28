@@ -1141,6 +1141,15 @@ jobs:
       - name: ...and that check's own parser is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:workflow-shape -- --self-test
+      # Three lists of required checks have to agree and nothing compared them (#3180). The
+      # dangerous direction is a check the protect-dev ruleset requires that .mergify.yml does not
+      # wait for: the queue decides the PR is ready, GitHub refuses the merge, and nothing is red.
+      - name: The required-check lists agree (HCL vs Mergify)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:required-checks
+      - name: ...and that check's own parser is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:required-checks -- --self-test
       - name: The guards job is a bag of independent checks, not a pipeline
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/check-guards-independent.mjs

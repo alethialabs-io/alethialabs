@@ -29,6 +29,7 @@ on:
 permissions:
   contents: read
   actions: read # read each workflow's recent run conclusions
+  administration: read # read the branch rulesets' required status checks (#3180)
   issues: write # upsert the one tracking issue
 
 concurrency:
@@ -151,5 +152,87 @@ jobs:
             --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
           if [ -n "$existing" ]; then
             gh issue close "$existing" --comment "No workflow has failed its last 3 runs as of $(date -u +%Y-%m-%d). Closing; this reopens itself if that changes."
+            echo "closed #$existing"
+          fi
+
+  # ── THE OTHER QUESTION NOBODY WAS ASKING: does the HCL match the live rulesets? ────────────────
+  #
+  # Same premise as the job above, different subject. Three lists of required checks have to agree —
+  # infra/github/variables.tf, .mergify.yml, and the rulesets GitHub actually enforces — and the
+  # third is not in the tree, so no PR-time guard can see it. Measured 2026-08-28: the live
+  # protect-dev ruleset was last updated 2026-07-29 and required 9 contexts against the HCL's 11, so
+  # the repository had been carrying written-down requirements that nothing enforced, for a month.
+  #
+  # THE PR-TIME HALF IS THE ONE THAT FAILS. check-required-checks.mjs runs in ci.yml's guards job and
+  # reds a PR that puts the two in-tree lists out of step. This job covers only the half a guard
+  # cannot: the fix for live drift is a `tofu apply` in infra/github/, which is the maintainer's.
+  #
+  # It is a deduped ISSUE rather than a log line for the reason this whole file exists — the first
+  # occurrence survived because it was written down in a comment nobody re-read. A report nobody
+  # reads is the same thing with more steps.
+  #
+  # A SEPARATE JOB, not a step in the one above, so that neither can blind the other.
+  required-checks-drift:
+    name: Required checks vs the live rulesets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # `|| code=$?` rather than a bare call: a `run:` step is `bash -e`, so a non-zero exit would
+      # abort the step before the report could be read, and exit 2 here MEANS something.
+      - name: Compare the HCL against the live rulesets
+        id: drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          code=0
+          node scripts/ci/check-required-checks.mjs --live > drift.md || code=$?
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          { echo '## Required checks'; echo; cat drift.md; } >> "$GITHUB_STEP_SUMMARY"
+          # 0 agree · 2 drift · anything else means it could not LOOK, which is not "no drift" and
+          # must not render as one. That one does fail the job, unlike everything else in this file.
+          if [ "$code" != "0" ] && [ "$code" != "2" ]; then
+            echo "::error::could not read the live rulesets — this job is blind, not clean"
+            exit 1
+          fi
+
+      - name: Open or update the drift issue
+        if: steps.drift.outputs.code == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "ci: the live branch rulesets do not require what infra/github says they do"
+        run: |
+          set -euo pipefail
+          # --body-file, not an inline string: an indented continuation inside a double-quoted shell
+          # string carries its leading whitespace into the issue, and markdown renders 4+ spaces as a
+          # code block. The report job above has that wart; this one does not inherit it.
+          {
+            cat drift.md
+            printf '\n_Refreshed by `.github/workflows/workflow-health.yml` on %s. It closes itself once an apply lands._\n' "$(date -u +%Y-%m-%d)"
+          } > body.md
+          # Dedup by LABEL. GitHub's search index lags by minutes and a --search-only dedup has
+          # already filed a duplicate in this repo.
+          existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
+            --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file body.md
+            echo "updated #$existing"
+          else
+            gh issue create --title "$TITLE" --label "wave:hygiene" --body-file body.md
+          fi
+
+      - name: Close it when an apply has landed
+        if: steps.drift.outputs.code == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "ci: the live branch rulesets do not require what infra/github says they do"
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
+            --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Every ruleset now requires exactly what infra/github declares, as of $(date -u +%Y-%m-%d). Closing; this reopens itself if that changes."
             echo "closed #$existing"
           fi

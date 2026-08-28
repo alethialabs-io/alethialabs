@@ -34,6 +34,7 @@
     "check:addon-resource-fit": "bash scripts/addons/check-resource-fit.sh",
     "check:theme-inline": "node scripts/check-theme-inline-overrides.mjs",
     "check:workflow-shape": "node scripts/ci/check-workflow-shape.mjs",
+    "check:required-checks": "node scripts/ci/check-required-checks.mjs",
     "check:floors-reproducible": "node scripts/check-floors-reproducible.mjs",
     "check:var-utility-shadowing": "node scripts/check-var-utility-shadowing.mjs",
     "check:legal-hashes": "node scripts/check-legal-document-hashes.mjs",
