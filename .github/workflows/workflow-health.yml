@@ -54,12 +54,51 @@ jobs:
           echo "[" >> runs.json
           first=1
           for wf in $(ls .github/workflows/*.yml | xargs -n1 basename); do
-            c="$(gh run list --workflow="$wf" --limit 5 --json conclusion \
-                  -q '[.[].conclusion] | map(select(. != null)) | @json' 2>/dev/null || echo '[]')"
-            [ -z "$c" ] && c='[]'
+            # ONE fetch of (id, conclusion) pairs, filtered once. The conclusions array and the
+            # substantive-job array below are BOTH derived from this same filtered list, because
+            # they are read positionally downstream — deriving them from two separate queries would
+            # let them fall out of step and silently attribute one run's job state to another's
+            # conclusion.
+            runs="$(gh run list --workflow="$wf" --limit 5 --json databaseId,conclusion \
+                     -q '[.[] | select(.conclusion != null)]' 2>/dev/null || echo '[]')"
+            [ -z "$runs" ] && runs='[]'
+            c="$(printf '%s' "$runs" | jq -c '[.[].conclusion]')"
+
+            # A workflow may declare which job carries its meaning (#2506). A RUN conclusion cannot
+            # see a job that never ran: e2e-ai-nightly gates its only substantive job on a secret,
+            # so without the key `preflight` succeeds, `e2e-live` skips, and the run concludes
+            # `success` — green because it did nothing. Undeclared workflows are judged exactly as
+            # before; 35 workflows have legitimately-conditional jobs and flagging all of them would
+            # be triaged into silence in a week.
+            sub="$(sed -n 's/^[[:space:]]*WORKFLOW_HEALTH_SUBSTANTIVE_JOB:[[:space:]]*//p' \
+                    ".github/workflows/$wf" | head -1 | sed 's/^"//; s/"$//' || true)"
+            subj='null'; states='[]'
+            if [ -n "$sub" ]; then
+              subj="$(printf '%s' "$sub" | jq -Rc .)"
+              states="$(
+                printf '%s' "$runs" | jq -r '.[].databaseId' | while read -r id; do
+                  [ -n "$id" ] || continue
+                  st="$(gh run view "$id" --json jobs 2>/dev/null \
+                        | jq -r --arg n "$sub" '[.jobs[] | select(.name == $n) | .conclusion] | .[0] // "absent"' \
+                        2>/dev/null || echo absent)"
+                  # `absent` is "we did not see this job in that run", which is NOT evidence that it
+                  # skipped — a job added after an old run is absent from it for an innocent reason.
+                  # The classifier keeps the two apart; flattening them here would decide the
+                  # question before it reached the code that reasons about it.
+                  case "$st" in
+                    skipped) echo skipped ;;
+                    absent|null|"") echo absent ;;
+                    *) echo ran ;;
+                  esac
+                done | jq -Rsc 'split("\n") | map(select(length > 0))'
+              )"
+              [ -z "$states" ] && states='[]'
+            fi
+
             [ "$first" -eq 0 ] && echo "," >> runs.json
             first=0
-            printf '{"name":"%s","conclusions":%s}' "${wf%.yml}" "$c" >> runs.json
+            printf '{"name":"%s","conclusions":%s,"substantiveJob":%s,"substantive":%s}' \
+              "${wf%.yml}" "$c" "$subj" "$states" >> runs.json
           done
           echo "]" >> runs.json
 
@@ -69,10 +108,10 @@ jobs:
           set -euo pipefail
           report="$(node scripts/ci/workflow-health.mjs --input runs.json)"
           echo "$report"
-          count="$(printf '%s' "$report" | sed -n 's/^UNHEALTHY_COUNT=//p')"
+          count="$(printf '%s' "$report" | sed -n 's/^ACTIONABLE_COUNT=//p')"
           echo "count=${count:-0}" >> "$GITHUB_OUTPUT"
           # The body drops the machine-readable tail; the issue gets prose only.
-          printf '%s' "$report" | sed '/^UNHEALTHY_COUNT=/d' > report.md
+          printf '%s' "$report" | sed '/^ACTIONABLE_COUNT=/d' > report.md
           { echo '## Workflow health'; echo; cat report.md; } >> "$GITHUB_STEP_SUMMARY"
 
       # Title-deduped, like the nightly rollup's. One long-lived issue that gets updated, never a
@@ -82,7 +121,7 @@ jobs:
         if: steps.assess.outputs.count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
-          TITLE: "ci: workflows red on every recent run"
+          TITLE: "ci: workflows red on every recent run, or green without running"
         run: |
           set -euo pipefail
           body="$(cat report.md)"
@@ -95,7 +134,7 @@ jobs:
             --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --body "$body"
-            gh issue comment "$existing" --body "Still red on $(date -u +%Y-%m-%d) — see the updated body."
+            gh issue comment "$existing" --body "Still actionable on $(date -u +%Y-%m-%d) — red, or green without running. See the updated body."
             echo "updated #$existing"
           else
             gh issue create --title "$TITLE" --label "wave:hygiene" --body "$body"
@@ -105,7 +144,7 @@ jobs:
         if: steps.assess.outputs.count == '0'
         env:
           GH_TOKEN: ${{ github.token }}
-          TITLE: "ci: workflows red on every recent run"
+          TITLE: "ci: workflows red on every recent run, or green without running"
         run: |
           set -euo pipefail
           existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
