@@ -130,3 +130,50 @@ describe("GET /api/health — status scheme", () => {
 		expect(body.db.reachable).toBe(false);
 	});
 });
+
+// ── which build is answering (#2812) ────────────────────────────────────────────────────────
+//
+// A sandbox env runs the dev server and `.next` is excluded from the rsync, so the box keeps its
+// own compile cache across pushes. A stale cache serves the PREVIOUS module while `env:push` and
+// `env:up` both report success — an aria-label fix once sat invisible across two restarts, and a
+// visual pass can confirm something that is not on the page.
+//
+// The id rides on the LIVENESS response on purpose: that path is always public and never touches
+// the database, so `pnpm env:verify` can ask "is this my tree?" without a credential and without
+// costing a query. It must stay out of the deep document, which is bearer-gated.
+describe("GET /api/health — build identity", () => {
+	const saved = process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID;
+	afterEach(() => {
+		if (saved === undefined) delete process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID;
+		else process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID = saved;
+	});
+
+	it("liveness reports the build it was compiled with", async () => {
+		process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID = "tree-abc123";
+		const res = await GET(new Request("http://local/api/health?shallow=1"));
+		expect(await res.json()).toMatchObject({ status: "ok", mode: "live", build: "tree-abc123" });
+	});
+
+	it("...on the ?probe=live alias too", async () => {
+		process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID = "tree-abc123";
+		const res = await GET(new Request("http://local/api/health?probe=live"));
+		expect((await res.json()).build).toBe("tree-abc123");
+	});
+
+	// NULL, not "unknown". A production image and a local run carry no boot id, and inventing a
+	// placeholder would let `env:verify` compare two fabrications and call them equal — the same
+	// absence-as-measurement collapse that made proof bundles unfalsifiable in #2688.
+	it("is null when no build id was compiled in, never a placeholder", async () => {
+		delete process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID;
+		const body = await (await GET(new Request("http://local/api/health?shallow=1"))).json();
+		expect(body.build).toBeNull();
+		expect(body).toMatchObject({ status: "ok", mode: "live" });
+	});
+
+	// The liveness path must stay free of the topology detail the deep path gates behind a bearer.
+	it("adding it did not widen the liveness payload", async () => {
+		process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID = "tree-abc123";
+		const body = await (await GET(new Request("http://local/api/health?shallow=1"))).json();
+		expect(Object.keys(body).sort()).toEqual(["build", "mode", "status", "ts"]);
+	});
+});

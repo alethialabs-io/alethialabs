@@ -737,6 +737,56 @@ cmd_down() {
   echo "✓ released '$slug_' (its database is kept — env:up --fresh drops it)"
 }
 
+# The same hash scripts/box/env-mode.sh computes, for YOUR working tree (#2812).
+#
+# BSD stat here, GNU find -printf there, and both must agree exactly: paths relative to the repo
+# root, size, and mtime in WHOLE SECONDS. rsync -a preserves size and mtime, so an unchanged file
+# hashes identically on both machines. Sub-second precision or an absolute path would differ for
+# reasons unrelated to the code, and the check would cry wolf on every run.
+tree_stamp() {
+  (cd "$ROOT" && find apps packages -type f \
+    \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.json' -o -name '*.mjs' \) \
+    -not -path '*/node_modules/*' -not -path '*/.next/*' -print0 2>/dev/null |
+    xargs -0 stat -f '%N %z %m' 2>/dev/null |
+    LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1)
+}
+
+# ── Is the page in my browser the code on my disk? ──
+#
+# The box is the only place anything visual can be checked, and the compile cache there can serve
+# the PREVIOUS module while env:push and env:up both report success (#2812). env-mode.sh drops
+# that cache whenever the pushed tree changed, so this should always agree — this is how you
+# CONFIRM it rather than assume it, before trusting a visual pass.
+cmd_verify() {
+  need jq
+  local slug_ url served local_
+  slug_="$(slug)"
+  local cport
+  cport="$(ssh_box "$REMOTE/bin/env-registry.sh list" | jq -r --arg s "$slug_" '.[$s].consolePort // empty')"
+  [ -n "$cport" ] || die "no environment for '$slug_' — run: pnpm env:up"
+  url="https://$(env_fqdn "$slug_" "$cport")"
+  local_="$(tree_stamp)"
+  served="$(curl -fsS --max-time 20 "$url/api/health?shallow=1" 2>/dev/null | jq -r '.build // empty')"
+  if [ -z "$served" ]; then
+    echo "$slug_ did not report a build — it may still be starting, or predate this check." >&2
+    echo "    Bring it up again (pnpm env:up) and retry." >&2
+    exit 1
+  fi
+  if [ "$served" = "$local_" ]; then
+    echo "OK  $url is serving YOUR tree"
+    echo "    tree: $local_"
+    return 0
+  fi
+  echo "MISMATCH  $url is serving a different tree than the one on your disk." >&2
+  echo "    yours:  $local_" >&2
+  echo "    served: $served" >&2
+  echo "" >&2
+  echo "    Do not trust a visual check against that page — it is not your code." >&2
+  echo "    Most often you simply edited after the last push. Fix it with:" >&2
+  echo "        pnpm env:push && pnpm env:up" >&2
+  exit 1
+}
+
 cmd_status() {
   need jq
   local ip domain
@@ -1118,6 +1168,7 @@ push)
   ;;
 down) cmd_down ;;
 status) cmd_status ;;
+verify) cmd_verify ;;
 logs) cmd_logs ;;
 open) cmd_open ;;
 ssh) cmd_ssh ;;
