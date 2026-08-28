@@ -1143,7 +1143,10 @@ finalize_verification() {
 		return 1
 	fi
 	probe_gate aws "run ${ENV}" || return 4
-	echo "✓ aws cleanup verified complete for run ${ENV} — no billable resources remain"
+	# probe_clean_suffix is EMPTY on a genuinely clean run and carries any UNATTRIBUTABLE finding
+	# otherwise, so this sentence can never read as "the account is empty" when it is not. Shared
+	# by all five sweepers — the taxonomy is one contract, not five that drift.
+	echo "✓ aws cleanup verified complete for run ${ENV} — no billable resources remain$(probe_clean_suffix)"
 	return 0
 }
 
@@ -1488,6 +1491,45 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_verify_case "an empty account, honestly listed, is CLEAN and exits 0" "" 0 0 no
 	st_verify_case "a surviving resource is a LEAK and exits 1" "i-0abc123" 0 1 no
 	st_verify_case "an API that FAILED is UNVERIFIABLE and exits 4, NOT 0" "" 254 4 yes
+
+	# ── CLOUD PARITY FOR THE FOURTH STATE (#3138 follow-up). ─────────────────────────────────────
+	#
+	# The four-state taxonomy is ONE contract, in scripts/e2e/lib/sweep-probe.sh. Every sweeper
+	# asserts it here rather than trusting that sourcing the library is enough, because the thing
+	# that actually breaks is a CALLER — a "✓ verified complete" line that forgot the qualifier, or a
+	# finalize_verification reading the wrong ledger. hetzner is the only cloud with an
+	# unattributable resource today (the imager upload helpers, #2463); the next one must not have to
+	# re-derive the answer, and must not be able to ship the loud half without the non-gating half.
+	#
+	# BOTH halves, because either alone is satisfiable by the wrong change: an UNATTRIBUTABLE finding
+	# must not move the exit code, AND an API failure must still move it to 4.
+	st_parity() { # <name> <rc> <the ✓ line (STDOUT) names it: yes|no> <unverifiable: yes|no> <the annotation (STDERR) names it: yes|no>
+		local rc=0 out named=no ann=no unv=no errf
+		# STDOUT AND STDERR ARE READ SEPARATELY, and that is the point of this helper. The ::warning::
+		# goes to stderr and would match either way, so folding them together with 2>&1 would let the
+		# ✓ line silently lose its qualifier — "verified complete — no billable resources remain",
+		# full stop, over an account that still holds something — and this test would not notice.
+		errf="$(mktemp "${TMPDIR:-/tmp}/alethia-st-parity.XXXXXX")"
+		out="$(finalize_verification 2>"$errf")" || rc=$?
+		case "$out" in *UNATTRIBUTABLE*) named=yes ;; esac
+		if grep -q 'UNATTRIBUTABLE' "$errf"; then ann=yes; fi
+		rm -f "$errf"
+		probe_has_unverifiable && unv=yes
+		if [ "$rc" = "$2" ] && [ "$named" = "$3" ] && [ "$unv" = "$4" ] && [ "$ann" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$2/✓-line=$3/unverifiable=$4/annotation=$5, got rc=${rc}/✓-line=${named}/unverifiable=${unv}/annotation=${ann}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	probe_reset
+	ST_OUT="" ST_RC=0 ST_ERR="" CLUSTER=""
+	probe_note_unattributable imager-upload-helpers "unlabelled — cannot be tied to this run"
+	st_parity "an UNATTRIBUTABLE finding is reported loudly and does NOT gate" 0 yes no yes
+	probe_reset
+	ST_OUT="" ST_RC=254 ST_ERR="An error occurred (ExpiredToken) when calling the operation" CLUSTER=""
+	probe_note_unattributable imager-upload-helpers "unlabelled — cannot be tied to this run"
+	st_parity "…and it never masks an API failure, which still exits 4" 4 no yes yes
 
 	# probe_confirm's split, wired into a real probe rather than only unit-tested in the library.
 	# A deleted cluster answers ResourceNotFoundException and that IS the answer "gone"; a throttle

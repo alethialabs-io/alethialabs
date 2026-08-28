@@ -629,7 +629,10 @@ finalize_verification() {
 		return 1
 	fi
 	probe_gate alibaba "run ${ENV}" || return 4
-	echo "✓ alibaba cleanup verified complete for run ${ENV} — no billable resources remain"
+	# probe_clean_suffix is EMPTY on a genuinely clean run and carries any UNATTRIBUTABLE finding
+	# otherwise, so this sentence can never read as "the account is empty" when it is not. Shared
+	# by all five sweepers — the taxonomy is one contract, not five that drift.
+	echo "✓ alibaba cleanup verified complete for run ${ENV} — no billable resources remain$(probe_clean_suffix)"
 	return 0
 }
 
@@ -786,6 +789,47 @@ if [ "$SELF_TEST" = "1" ]; then
 	# THE REGRESSION. Before this change the case below and the first case were byte-identical:
 	# empty stdout, exit 0, "no billable resources remain".
 	st_case "a call that FAILED is UNVERIFIABLE and exits 4, NOT 0" "" 1 4 yes
+
+	# ── CLOUD PARITY FOR THE FOURTH STATE (#3138 follow-up). ─────────────────────────────────────
+	#
+	# The four-state taxonomy is ONE contract, in scripts/e2e/lib/sweep-probe.sh. Every sweeper
+	# asserts it here rather than trusting that sourcing the library is enough, because the thing
+	# that actually breaks is a CALLER — a "✓ verified complete" line that forgot the qualifier, or a
+	# finalize_verification reading the wrong ledger. hetzner is the only cloud with an
+	# unattributable resource today (the imager upload helpers, #2463); the next one must not have to
+	# re-derive the answer, and must not be able to ship the loud half without the non-gating half.
+	#
+	# BOTH halves, because either alone is satisfiable by the wrong change: an UNATTRIBUTABLE finding
+	# must not move the exit code, AND an API failure must still move it to 4.
+	st_parity() { # <name> <rc> <the ✓ line (STDOUT) names it: yes|no> <unverifiable: yes|no> <the annotation (STDERR) names it: yes|no>
+		local rc=0 out named=no ann=no unv=no errf
+		# STDOUT AND STDERR ARE READ SEPARATELY, and that is the point of this helper. The ::warning::
+		# goes to stderr and would match either way, so folding them together with 2>&1 would let the
+		# ✓ line silently lose its qualifier — "verified complete — no billable resources remain",
+		# full stop, over an account that still holds something — and this test would not notice.
+		errf="$(mktemp "${TMPDIR:-/tmp}/alethia-st-parity.XXXXXX")"
+		out="$(finalize_verification 2>"$errf")" || rc=$?
+		case "$out" in *UNATTRIBUTABLE*) named=yes ;; esac
+		if grep -q 'UNATTRIBUTABLE' "$errf"; then ann=yes; fi
+		rm -f "$errf"
+		probe_has_unverifiable && unv=yes
+		if [ "$rc" = "$2" ] && [ "$named" = "$3" ] && [ "$unv" = "$4" ] && [ "$ann" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$2/✓-line=$3/unverifiable=$4/annotation=$5, got rc=${rc}/✓-line=${named}/unverifiable=${unv}/annotation=${ann}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	probe_reset
+	ST_OUT='{}' ST_RC=0 ST_CR='{"Instances":[]}' ST_ERR=""
+	CLUSTER_ID="" CLUSTER_NAME=""
+	probe_note_unattributable imager-upload-helpers "unlabelled — cannot be tied to this run"
+	st_parity "an UNATTRIBUTABLE finding is reported loudly and does NOT gate" 0 yes no yes
+	probe_reset
+	ST_OUT="" ST_RC=1 ST_CR="" ST_ERR="ERROR: SDK.InvalidCredential specified access key is not found"
+	CLUSTER_ID="" CLUSTER_NAME=""
+	probe_note_unattributable imager-upload-helpers "unlabelled — cannot be tied to this run"
+	st_parity "…and it never masks an API failure, which still exits 4" 4 no yes yes
 	# THE JQ HALF, which no other cloud in this repo has. jq exits 0 on empty input and its own
 	# parse failure was swallowed by `2>/dev/null || true`, so an HTML error page or a truncated
 	# body — an exit-0 response that is not JSON — produced an empty id list and a clean teardown.
