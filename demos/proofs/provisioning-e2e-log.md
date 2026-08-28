@@ -93,3 +93,4 @@ audit trail; git history is the timeline. Parity board:
 | 2026-08-28 | 5f3a95e | gcp | maxconfig | **PASS** | gcp: ✅ apply(45 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/gcp/20260828T124233Z` | — |
 | 2026-08-28 | 2e07a17 | aws | floor | **PASS** | aws: ✅ apply(125 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/aws/20260828T125612Z` | — |
 | 2026-08-28 | f50f804 | aws | gitops | **PASS** | aws: ✅ apply(125 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/aws/20260828T142417Z` | — |
+| 2026-08-28 | f75af2a | aws | byo-iac | **PASS** | aws: ✅ apply(125 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted, UNMEASURED)→destroyed(1) | `demos/proofs/aws/20260828T155743Z` | — |
