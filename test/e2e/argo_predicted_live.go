@@ -6,8 +6,17 @@
 //
 // # The two computations are not the same computation
 //
-// This was read out of argo-cd v3.1.8 (the version argo-cd chart 8.6.4 bundles — see
-// packages/core/argocd/versions.go), not inferred:
+// PROVENANCE, and it is a FIXED POINT IN THE PAST: the two excerpts below were read out of the
+// argo-cd source tree at v3.1.8 — the version argo-cd chart 8.6.4 bundled — not inferred. The pin
+// has since moved to chart 9.5.11 → argo-cd v3.3.9 (#3128, packages/core/argocd/versions.go), and
+// this comment has NOT been re-read against that tree. It records where the mechanism was
+// established, not what the cluster is running.
+//
+// Which is why nothing this file EMITS names a version from a literal any more: the running
+// controller's own image tag is read from the cluster (readArgoControllerVersion) and reported, and
+// when it cannot be read the message names no version at all. A hardcoded "v3.1.8" survived the pin
+// bump here and told a reader that a run had used the old ArgoCD when it had not —
+// TestArgoPredictedLiveEmitsNoHardcodedVersion pins that it cannot come back.
 //
 //	controller/state.go, CompareAppState:
 //	    if app.Spec.SyncPolicy != nil &&
@@ -74,7 +83,10 @@ import (
 )
 
 // argoSSAFieldManager is the field manager argo-cd applies under when `ServerSideApply=true`.
-// Verbatim from argo-cd v3.1.8 common/common.go:
+// Verbatim from common/common.go in the argo-cd tree at v3.1.8 — provenance, a fixed point in the
+// past; the pin is now chart 9.5.11 → v3.3.9. The constant is a compatibility contract rather than
+// a version fact (changing it would orphan every field argo-cd already owns), so unlike the
+// version in the report it is deliberately a literal:
 //
 //	// ArgoCDSSAManager is the default argocd manager name used by server-side apply syncs
 //	ArgoCDSSAManager = "argocd-controller"
@@ -93,19 +105,74 @@ type argoAppDiffStrategySpec struct {
 //
 // Host kubectl, not the pod: the controller image ships `argocd` and not `kubectl` (#3100), and
 // this is a plain status read.
-func readArgoDiffStrategy(ctx context.Context, kubeconfigPath, app string) string {
+//
+// `workload` is the application-controller resource ref (`statefulset.apps/...`), resolved by
+// argoDiffWorkload. It is asked for its running IMAGE, because the version that matters to this
+// report is the version of the process that produced the sync status — not a constant in this repo,
+// which is what went stale.
+func readArgoDiffStrategy(ctx context.Context, kubeconfigPath, workload, app string) string {
+	version := readArgoControllerVersion(ctx, kubeconfigPath, workload)
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
 		"-n", "argocd", "get", "applications.argoproj.io", app, "-o", "json").Output()
 	if err != nil {
-		return describeArgoDiffStrategy(argoAppDiffStrategySpec{}, err)
+		return describeArgoDiffStrategy(argoAppDiffStrategySpec{}, version, err)
 	}
 	spec, perr := parseArgoDiffStrategySpec(out)
 	if perr != nil {
-		return describeArgoDiffStrategy(argoAppDiffStrategySpec{}, perr)
+		return describeArgoDiffStrategy(argoAppDiffStrategySpec{}, version, perr)
 	}
-	return describeArgoDiffStrategy(spec, nil)
+	return describeArgoDiffStrategy(spec, version, nil)
+}
+
+// readArgoControllerVersion returns the argo-cd version the application-controller is RUNNING,
+// taken from its container image tag, or "" when it cannot be read.
+//
+// Why the cluster and not `argocd.DefaultArgoChartVersion`: that constant is a CHART version, so
+// naming an argo-cd version from it needs a chart→appVersion table that nothing checks, and
+// `ALETHIA_ARGOCD_CHART_VERSION` can override the pin at run time anyway. The image tag is what the
+// process reporting the sync status actually is. Reading it cannot go stale, and — the point — when
+// it cannot be read the caller says so instead of naming a version.
+func readArgoControllerVersion(ctx context.Context, kubeconfigPath, workload string) string {
+	if strings.TrimSpace(workload) == "" {
+		return ""
+	}
+	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", "argocd", "get", workload,
+		"-o", "jsonpath={.spec.template.spec.containers[*].image}").Output()
+	if err != nil {
+		return ""
+	}
+	return argoVersionFromImages(string(out))
+}
+
+// argoVersionFromImages pulls the tag out of the first usable container image reference. Pure.
+//
+// A digest-only reference (`…/argocd@sha256:…`) carries no version and must return "" rather than
+// something that reads like one — the whole defect being fixed here is a report that names a
+// version it does not know. Registry ports (`registry:5000/argocd:v3.3.9`) are why the tag is taken
+// from the last path segment and not from the first colon.
+func argoVersionFromImages(raw string) string {
+	for _, image := range strings.Fields(raw) {
+		if at := strings.Index(image, "@"); at >= 0 {
+			image = image[:at]
+		}
+		segment := image
+		if slash := strings.LastIndex(segment, "/"); slash >= 0 {
+			segment = segment[slash+1:]
+		}
+		colon := strings.LastIndex(segment, ":")
+		if colon < 0 {
+			continue
+		}
+		if tag := strings.TrimSpace(segment[colon+1:]); tag != "" {
+			return tag
+		}
+	}
+	return ""
 }
 
 // parseArgoDiffStrategySpec pulls the sync options and the compare-options annotation out of an
@@ -137,10 +204,24 @@ func parseArgoDiffStrategySpec(raw []byte) (argoAppDiffStrategySpec, error) {
 // yet the Application is OutOfSync" — reads as a contradiction inside ArgoCD, and for a
 // ServerSideApply Application it is not one: the two answers come from two different diff
 // algorithms, and only one of them decided the sync status.
-func describeArgoDiffStrategy(spec argoAppDiffStrategySpec, readErr error) string {
+//
+// `version` is the argo-cd version READ FROM THE RUNNING CONTROLLER, or "" when the cluster could
+// not be asked. It is a parameter and not a constant because a literal here went stale the moment
+// the chart pin moved (8.6.4 → 9.5.11, i.e. v3.1.8 → v3.3.9) and then reported the OLD version on
+// every run — convincing a reader that a run had used the pre-bump ArgoCD when it had not. When the
+// version is unknown this says nothing about a version at all: "we did not read it" and "it is
+// v3.1.8" are different findings, and the second one was false.
+func describeArgoDiffStrategy(spec argoAppDiffStrategySpec, version string, readErr error) string {
 	const lead = "  diff strategy: "
 	if readErr != nil {
 		return lead + fmt.Sprintf("COULD NOT ASK (%v) — without the Application's syncOptions this cannot say whether `argocd app diff` ran the same comparison the controller did.", readErr)
+	}
+	// Rendered into the structured-merge branch below. Never a fallback literal.
+	var controller string
+	if v := strings.TrimSpace(version); v != "" {
+		controller = "argo-cd " + v + "'s controller (version read from the running application-controller image)"
+	} else {
+		controller = "the controller (its argo-cd version could NOT be read from the cluster, so this names none)"
 	}
 	ssa := false
 	for _, o := range spec.SyncOptions {
@@ -157,7 +238,7 @@ func describeArgoDiffStrategy(spec argoAppDiffStrategySpec, readErr error) strin
 	case serverSideDiff:
 		return lead + "ServerSideApply=true WITH compare-options ServerSideDiff=true, so the controller compared live against an API-server dry-run apply. `argocd app diff` still compares client-side and cannot reproduce that — its empty output is not evidence the controller saw nothing."
 	default:
-		return lead + "ServerSideApply=true and NO ServerSideDiff=true, so argo-cd v3.1.8's controller compared with STRUCTURED-MERGE diff (controller/state.go: `SyncOptions.HasOption(\"ServerSideApply=true\")` → `WithStructuredMergeDiff(true)`), a strategy argo-cd's own docs mark Feature Discontinued. `argocd app diff` builds no WithStructuredMergeDiff/WithGVKParser/WithManager (cmd/argocd/commands/app.go findandPrintDiff) and so ran the plain client-side diff. THE EMPTY DIFF AND THE OutOfSync ARE TWO DIFFERENT ALGORITHMS, not a contradiction."
+		return lead + "ServerSideApply=true and NO ServerSideDiff=true, so " + controller + " compared with STRUCTURED-MERGE diff (controller/state.go: `SyncOptions.HasOption(\"ServerSideApply=true\")` → `WithStructuredMergeDiff(true)`), a strategy argo-cd's own docs mark Feature Discontinued. `argocd app diff` builds no WithStructuredMergeDiff/WithGVKParser/WithManager (cmd/argocd/commands/app.go findandPrintDiff) and so ran the plain client-side diff. THE EMPTY DIFF AND THE OutOfSync ARE TWO DIFFERENT ALGORITHMS, not a contradiction."
 	}
 }
 
