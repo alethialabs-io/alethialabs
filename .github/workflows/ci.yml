@@ -1154,6 +1154,12 @@ jobs:
           bash .claude/hooks/guard-compose.sh --self-test
           bash .claude/hooks/guard-merge.sh --self-test
           bash .claude/hooks/guard-iac.sh --self-test
+          # guard-worktree had NO self-test, alone among the four, and it is the one with the most
+          # moving parts — two rules, a quote-stripped scan, a target resolver and a fail-closed
+          # fall-through. Every defect fixed in #3192 was found by tripping over it in ordinary
+          # work; two had been shipped for weeks. It builds a real main checkout and a real linked
+          # worktree in a tmpdir, so it stays hermetic.
+          bash .claude/hooks/guard-worktree.sh --self-test
       - name: Hook scripts parse
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |

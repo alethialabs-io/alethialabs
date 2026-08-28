@@ -15,6 +15,126 @@
 # Wired for Bash AND Write|Edit|MultiEdit|NotebookEdit|EnterWorktree (see .claude/settings.json).
 # Exit 2 = block the tool call and surface stderr to the model. Exit 0 = allow.
 # Mirrors .claude/hooks/guard-compose.sh.
+# ── --self-test ───────────────────────────────────────────────────────────────────────────────
+#
+# This guard had NONE, alone among the four in .claude/hooks/, and it is the one with the most
+# moving parts: two rules, a quote-stripped scan, a target resolver, and a fail-closed fall-through.
+# Every defect fixed here (#3192) was found by tripping over it in ordinary work rather than by
+# anything checking, and two of them had been shipped for weeks.
+#
+# Builds a REAL main checkout and a REAL linked worktree in a tmpdir, then feeds the hook the same
+# JSON the harness does. Hermetic: no network, no shared box, no repo state.
+if [ "${1:-}" = "--self-test" ]; then
+	# Two shellcheck notes are deliberate here, not oversights:
+	#   SC1007 — `ALETHIA_ALLOW_MAIN_COMMIT='' bash "$self"` CLEARS the override for the child,
+	#            the same idiom guard-merge.sh's self-test uses.
+	#   SC2016 — the single-quoted `$W` in the fixtures is the WHOLE POINT: these cases exist
+	#            to prove the hook handles an UNEXPANDED variable. Expanding it would delete
+	#            the test.
+	# shellcheck disable=SC1007,SC2016
+	self="${BASH_SOURCE[0]}"
+	case "$self" in /*) ;; *) self="$PWD/$self" ;; esac
+	tmp="$(mktemp -d)"
+	trap 'rm -rf "$tmp"' EXIT
+	main="$tmp/main"
+	mkdir -p "$main"
+	(
+		cd "$main" || exit 1
+		git init -q .
+		git config user.email t@t.test
+		git config user.name t
+		echo x >f
+		git add f
+		git -c commit.gpgsign=false commit -qm init
+		git worktree add -q "$tmp/wt-mine" -b feat/mine
+	) >/dev/null 2>&1 || {
+		echo "self-test: could not build the git fixture" >&2
+		exit 1
+	}
+
+	pass=0
+	fail=0
+	t() { # <block|allow> <label> <command>
+		local got rc out
+		out="$(printf '{"tool_name":"Bash","tool_input":{"command":%s}}' \
+			"$(printf '%s' "$3" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" |
+			CLAUDE_PROJECT_DIR="$main" ALETHIA_ALLOW_MAIN_COMMIT='' bash "$self" 2>&1)"
+		rc=$?
+		[ "$rc" = 2 ] && got=block || got=allow
+		if [ "$got" = "$1" ]; then
+			pass=$((pass + 1))
+			printf '  ok   - %s\n' "$2"
+		else
+			fail=$((fail + 1))
+			printf '  FAIL - %s (want=%s got=%s)\n    %s\n' "$2" "$1" "$got" "$out" >&2
+		fi
+	}
+	# Asserts on the MESSAGE, not just the verdict — a refusal that names the wrong cause is the
+	# defect this round is about, and a verdict-only test cannot see it.
+	says() { # <substring> <label> <command>
+		local out
+		out="$(printf '{"tool_name":"Bash","tool_input":{"command":%s}}' \
+			"$(printf '%s' "$3" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" |
+			CLAUDE_PROJECT_DIR="$main" ALETHIA_ALLOW_MAIN_COMMIT='' bash "$self" 2>&1)"
+		case "$out" in
+		*"$1"*)
+			pass=$((pass + 1))
+			printf '  ok   - %s\n' "$2"
+			;;
+		*)
+			fail=$((fail + 1))
+			printf '  FAIL - %s (message did not mention "%s")\n    %s\n' "$2" "$1" "$out" >&2
+			;;
+		esac
+	}
+
+	echo "guard-worktree --self-test"
+
+	# ── R-MAIN: the rule this hook exists for. Regressing any of these is the whole cost. ──
+	t block  'a bare commit in the main checkout'            'git commit -m x'
+	t block  'git add -A in the main checkout'               'git add -A'
+	t block  'a rebase in the main checkout'                 'git rebase origin/dev'
+	t block  'global options do not hide it'                 'git --no-pager commit -m x'
+	t block  '-c does not hide it either'                    'git -c user.name=x commit -m x'
+	t block  'a SUBDIRECTORY of the main checkout is still the main checkout' \
+		"git -C $main/sub commit -m x"
+	# Quote-stripping exists for exactly this, and it must survive the command-position fix.
+	t block  'sh -c smuggling is still caught'               'sh -c "git commit -m x"'
+	t block  'bash -lc smuggling too'                        'bash -lc "git commit -m x"'
+
+	# ── allowed: a worktree is not the main checkout ──
+	t allow  'a commit in a linked worktree'                 "git -C $tmp/wt-mine commit -m x"
+	t allow  'add -A in a linked worktree'                   "git -C $tmp/wt-mine add -A"
+	# THE REGRESSION (#3192): the subcommand need not sit straight after the path.
+	t allow  'global options between -C and the subcommand'  "git -C $tmp/wt-mine -c core.editor=true rebase --continue"
+	t allow  'cd into a worktree, then commit'               "cd $tmp/wt-mine && git commit -m x"
+	# Unwinding a rebase is never blocked, or you could get stuck mid-rebase.
+	t allow  'rebase --continue'                             'git rebase --continue'
+	t allow  'rebase --abort'                                'git rebase --abort'
+
+	# ── #3192: prose is not a command ──
+	# Each of these blocked before, and none of them was going to write anything.
+	t allow  'an issue title describing a commit'            'gh issue create --title "guard refuses a `git -C \"$W\"` commit and blames the main checkout"'
+	t allow  'a grep pattern containing the shape'           'grep -n "git commit\|git add -A\|git rebase" file.sh'
+	t allow  'a heredoc mentioning it in prose'              'echo "then run git commit -m x" >> notes.md'
+	t allow  'a path that merely contains the word'          'ls apps/console/lib/git-commit-helper.ts'
+
+	# ── #3192: unresolvable ≠ the main checkout ──
+	t block  'an unexpanded variable still refuses'          'git -C "$W" commit -F msg.txt'
+	says 'unexpanded shell variable' 'the refusal NAMES the unexpanded variable' 'git -C "$W" commit -F msg.txt'
+	says 'NOT a claim that you were writing into the main checkout' \
+		'...and explicitly disclaims the main checkout'      'git -C "$W" commit -F msg.txt'
+	says 'shared main checkout' 'a REAL main-checkout write still says so' 'git commit -m x'
+
+	echo
+	if [ "$fail" -ne 0 ]; then
+		echo "guard-worktree --self-test: $fail failed, $pass passed" >&2
+		exit 1
+	fi
+	echo "guard-worktree --self-test: all $pass passed"
+	exit 0
+fi
+
 input="$(cat)"
 
 # Resolve the helper relative to THIS FILE, not to CLAUDE_PROJECT_DIR: the project dir may point at
@@ -231,16 +351,49 @@ cmd_scan="$(printf '%s' "$cmd_text" |
 git_pre='([[:space:]]+(-C[[:space:]]+[^[:space:];&|]+|-c[[:space:]]+[^[:space:];&|]+|--git-dir=[^[:space:];&|]+|--work-tree=[^[:space:];&|]+|--no-pager|--no-replace-objects|--literal-pathspecs))*'
 # End-of-token: whitespace, a quote, a backslash (JSON escaping), or end of string.
 tok='([[:space:]]|"|\\|$)'
-trigger="git${git_pre}[[:space:]]+commit${tok}"
-trigger="${trigger}|git${git_pre}[[:space:]]+add[[:space:]]+(-A|--all|\.)${tok}"
-trigger="${trigger}|git${git_pre}[[:space:]]+rebase${tok}"
+# COMMAND POSITION, and it is what stops this guard firing on prose (#3192).
+#
+# Quote-stripping above is deliberate and must stay: `sh -c "git commit"` has to be caught, and it
+# only is because the quotes are gone before matching. The cost was that ANY text containing the
+# shape matched too — and it fired four times in one session on things that were not commands:
+#
+#   gh issue create --title "... a `git -C \"$VAR\"` commit ..."   ← an issue title
+#   grep -n "git commit\|git add\|git rebase" file                 ← a search pattern
+#
+# Both are exactly the trigger shape after stripping. Blocking them is not conservative, it is
+# wrong: nothing was going to be written, and the message then names a checkout the command never
+# touched, which sends the reader to check something that was never at risk.
+#
+# So `git` must sit where a command starts: beginning of input, after a separator (; & | newline),
+# or immediately after a shell's `-c` — that last one is what keeps `sh -c "git commit"` caught.
+# A `git` preceded by anything else is being TALKED ABOUT, not run.
+# Note this runs on the RAW command text, quotes intact — the stripping further down is for
+# target resolution only. A quote can therefore sit between the shell and the word, and the
+# FIRST version of this fix missed that and let `sh -c "git commit"` straight through. Its own
+# self-test caught it on the first run, which is the argument for the self-test as much as for
+# the rule.
+#
+# A quote counts as a command position ONLY after a shell's -c. That is what separates
+#     sh -c "git commit …"        ← opens a COMMAND context. Still caught.
+#     grep -n "git commit" f.sh   ← opens a STRING. Not a command, and never was.
+# Keying on the quote alone would have kept every grep pattern blocked; keying on the shell too
+# is what makes the difference legible to a regex.
+# The separator must not be BACKSLASH-ESCAPED, or a grep pattern reads as a pipeline:
+#     grep -n "git commit\|git rebase" f.sh
+# `\|` is one literal alternation character to grep and looks exactly like a shell pipe here.
+# That single case was the last false positive left, and it is the one that blocked me from
+# searching this very file while fixing it.
+cmd_pos='(^|^[;&|][[:space:]]*|[^\\][;&|][[:space:]]*|(^|[[:space:]])(sh|bash|zsh|dash)[[:space:]]+-[a-z]*c[[:space:]]*["'"'"']?)'
+trigger="${cmd_pos}git${git_pre}[[:space:]]+commit${tok}"
+trigger="${trigger}|${cmd_pos}git${git_pre}[[:space:]]+add[[:space:]]+(-A|--all|\.)${tok}"
+trigger="${trigger}|${cmd_pos}git${git_pre}[[:space:]]+rebase${tok}"
 
 if ! printf '%s' "$cmd_scan" | grep -Eq "$trigger"; then
 	exit 0
 fi
 
 # Which verb tripped it — used only to make the block message name the right thing.
-if printf '%s' "$cmd_scan" | grep -Eq "git${git_pre}[[:space:]]+rebase${tok}"; then
+if printf '%s' "$cmd_scan" | grep -Eq "${cmd_pos}git${git_pre}[[:space:]]+rebase${tok}"; then
 	verb="rebase in"
 else
 	verb="commit into"
@@ -269,9 +422,13 @@ fi
 # guard would then be unusable and the first thing anyone did would be to disable it.
 scan="$(printf '%s' "$input" | tr -d '\42\47\134')" # drop  "  '  \  (incl. JSON escaping)
 
+# The subcommand does not have to come straight after the path: `git -C <path> -c core.editor=true
+# rebase --continue` is an ordinary thing to type, and requiring adjacency here meant it resolved
+# NO target and fell through to the block — telling the operator to work in a worktree while they
+# were already doing exactly that. `git_pre` is reused so this stays in step with the trigger.
 target="$(printf '%s' "$scan" |
-	grep -oE 'git[[:space:]]+-C[[:space:]]+[^[:space:];&|]+[[:space:]]+(commit|add|rebase)' |
-	tail -1 | sed -E 's/^git[[:space:]]+-C[[:space:]]+//; s/[[:space:]]+(commit|add|rebase)$//')"
+	grep -oE "git[[:space:]]+-C[[:space:]]+[^[:space:];&|]+${git_pre}[[:space:]]+(commit|add|rebase)" |
+	tail -1 | sed -E 's/^git[[:space:]]+-C[[:space:]]+//' | sed -E 's/[[:space:]].*$//')"
 
 if [ -z "$target" ]; then
 	# The part of the command up to the commit/add/rebase keyword — the effective cwd lives here.
@@ -330,6 +487,28 @@ if [ -n "$target" ]; then
 		exit 0
 	fi
 fi
+
+# --- UNRESOLVABLE ≠ THE MAIN CHECKOUT (#3192) -----------------------------------------------------
+#
+# A `git -C "$W" commit` names a directory this hook cannot know: it is a PreToolUse gate, so it
+# runs BEFORE any shell expands `$W`, and it sees the four characters `"$W"`. `git -C '$W' rev-parse`
+# fails, no worktree is confirmed, and the fall-through below then declares that the command "would
+# commit into the shared main checkout" — which is not something this hook established, and in the
+# usual case is false.
+#
+# Refusing is still right. A hook that guessed at unexpanded shell would be worse than one that
+# stops. What was wrong was the DIAGNOSIS: it asserted a cause, and then prescribed the very remedy
+# the operator was already applying ("work in your own worktree… `git -C ../wt-<name> …` is allowed"),
+# which reads as though they had done nothing of the sort. Hit five times in one session; twice the
+# reader re-checked a correctly-set variable before suspecting the message.
+#
+# So say what could not be determined, and how to get past it. The refusal is unchanged.
+case "$target" in
+*'$'* | *'`'*)
+	echo "BLOCKED: the target of \`git -C\` could not be resolved — it contains an unexpanded shell variable (\`$target\`), and this hook runs BEFORE the shell expands it, so it cannot tell which repository you mean. Write the path literally: \`git -C /abs/path/to/wt-<name> …\`. Refusing here is deliberate — guessing at unexpanded shell would be worse — and this is NOT a claim that you were writing into the main checkout." >&2
+	exit 2
+	;;
+esac
 
 # --- Fall-through: no confirmed worktree ⇒ the original main-checkout guard, unchanged -------------
 dir="${CLAUDE_PROJECT_DIR:-$PWD}"
