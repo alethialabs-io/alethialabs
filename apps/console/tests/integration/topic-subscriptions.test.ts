@@ -22,7 +22,7 @@ import {
 	projectTopics,
 	topicSubscriptions,
 } from "@/lib/db/schema";
-import { describeIfDb } from "./db";
+import { APP_ROLE_DISTINCT, describeIfDb } from "./db";
 
 const ORG = randomUUID();
 const USER = randomUUID();
@@ -31,10 +31,6 @@ const USER_OTHER = randomUUID();
 const PROJ = randomUUID();
 const ENV = randomUUID();
 const TOPIC = randomUUID();
-
-const APP_ROLE_DISTINCT =
-	(process.env.ALETHIA_APP_DATABASE_URL ?? "") !== "" &&
-	process.env.ALETHIA_APP_DATABASE_URL !== process.env.ALETHIA_DATABASE_URL;
 
 describeIfDb("topic_subscriptions — reader parity, RLS, cascade", () => {
 	beforeAll(async () => {

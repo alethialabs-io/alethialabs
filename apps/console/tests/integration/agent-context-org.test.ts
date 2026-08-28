@@ -14,17 +14,13 @@ import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { getServiceDb } from "@/lib/db";
 import { agentContext } from "@/lib/db/schema";
 import { readAgentContext } from "@/lib/ai/project-knowledge";
-import { describeIfDb } from "./db";
+import { APP_ROLE_DISTINCT, describeIfDb } from "./db";
 
 const ORG = randomUUID();
 const M1 = randomUUID(); // author of a legacy personal org-level row
 const M2 = randomUUID(); // a co-member who did NOT write anything
 const ORG_OTHER = randomUUID();
 const M3 = randomUUID();
-
-const APP_ROLE_DISTINCT =
-	(process.env.ALETHIA_APP_DATABASE_URL ?? "") !== "" &&
-	process.env.ALETHIA_APP_DATABASE_URL !== process.env.ALETHIA_DATABASE_URL;
 
 const M1_ACTOR = { userId: M1, orgId: ORG };
 const M2_ACTOR = { userId: M2, orgId: ORG };
