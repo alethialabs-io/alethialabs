@@ -27,7 +27,7 @@ import {
 	serviceBindings,
 } from "@/lib/db/schema";
 import type { ServiceBinding } from "@/types/jsonb.types";
-import { describeIfDb } from "./db";
+import { APP_ROLE_DISTINCT, describeIfDb } from "./db";
 
 const ORG = randomUUID();
 const USER = randomUUID();
@@ -38,10 +38,6 @@ const ENV = randomUUID();
 const SVC = randomUUID();
 const ADDON = randomUUID();
 const CW = randomUUID();
-
-const APP_ROLE_DISTINCT =
-	(process.env.ALETHIA_APP_DATABASE_URL ?? "") !== "" &&
-	process.env.ALETHIA_APP_DATABASE_URL !== process.env.ALETHIA_DATABASE_URL;
 
 // The canonical bindings the writer stores and the reader must reconstruct byte-for-byte. `db` is a
 // BYO-IaC target (#824 — exercises target_address + output_keys + multiple ordered injections);
