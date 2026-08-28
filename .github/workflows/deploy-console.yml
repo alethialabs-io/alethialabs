@@ -280,6 +280,15 @@ jobs:
           SMOKE_CONTAINER: smoke-${{ matrix.image }}
           # Ceiling, not an expected duration — see the note above.
           SMOKE_BOOT_TIMEOUT_S: "90"
+          # HOW LONG TO KEEP WATCHING AFTER THE FIRST LINE. This is the assertion, not a courtesy.
+          #
+          # next's standalone `start-server.js` prints the `▲ Next.js` banner and `✓ Ready in X`
+          # BEFORE it requires the app bundle — its own source says so. The @swc/helpers crash this
+          # step exists to catch therefore arrives AFTER the first line. A probe that stopped at
+          # first output would read banner → break → grep finds nothing → green, on the exact
+          # incident it was written for. So first output starts a settle window; it never ends the
+          # observation.
+          SMOKE_SETTLE_S: "10"
         run: |
           set -uo pipefail
           docker rm -f "$SMOKE_CONTAINER" >/dev/null 2>&1 || true
@@ -299,36 +308,67 @@ jobs:
             exit 1
           fi
 
+          MODULE_ERR='Cannot find module|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND'
+          started_at=$SECONDS
+          deadline=$((SECONDS + SMOKE_BOOT_TIMEOUT_S))
           logs=""
-          waited=0
-          while [ "$waited" -lt "$SMOKE_BOOT_TIMEOUT_S" ]; do
-            logs="$(docker logs "$SMOKE_CONTAINER" 2>&1 || true)"
-            [ -n "$logs" ] && break
-            # An exited container will never speak again — stop waiting and report why.
+          settle_until=""
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            # `docker logs` merges the CONTAINER's stdout and stderr — and node writes an uncaught
+            # module error to stderr, so both are needed. But `docker`'s OWN failure must not be
+            # mistaken for container output: on a daemon hiccup `2>&1` would capture "Error response
+            # from daemon: …", which is non-empty text the container never said. Gate on the exit
+            # code, which is docker's, and treat its failure as "nothing observed yet".
+            if ! logs="$(docker logs "$SMOKE_CONTAINER" 2>&1)"; then
+              logs=""
+            fi
+
+            # A module error is decisive the instant it appears — stop and report it.
+            printf '%s' "$logs" | grep -qE "$MODULE_ERR" && break
+
+            # An exited container can produce no further output; waiting longer learns nothing.
             [ "$(docker inspect -f '{{.State.Status}}' "$SMOKE_CONTAINER" 2>/dev/null || echo unknown)" = "exited" ] && break
+
+            # First output STARTS the settle window rather than ending the watch — see SMOKE_SETTLE_S.
+            if [ -n "$logs" ]; then
+              [ -z "$settle_until" ] && settle_until=$((SECONDS + SMOKE_SETTLE_S))
+              [ "$SECONDS" -ge "$settle_until" ] && break
+            fi
             sleep 1
-            waited=$((waited + 1))
           done
+          waited=$((SECONDS - started_at))
+          status="$(docker inspect -f '{{.State.Status}}' "$SMOKE_CONTAINER" 2>/dev/null || echo unknown)"
           state="$(docker inspect -f '{{.State.Status}} (exit {{.State.ExitCode}})' "$SMOKE_CONTAINER" 2>/dev/null || echo 'unknown (exit ?)')"
           docker rm -f "$SMOKE_CONTAINER" >/dev/null 2>&1 || true
 
           # The assertion. `Cannot find module` / MODULE_NOT_FOUND means the image is unrunnable no
           # matter what else is true, and no env var can explain it away.
-          if printf '%s' "$logs" | grep -qE "Cannot find module|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND"; then
+          if printf '%s' "$logs" | grep -qE "$MODULE_ERR"; then
             echo "::error::${{ matrix.image }}: the pushed image cannot resolve its modules — the standalone bundle is incomplete."
-            printf '%s\n' "$logs" | grep -E "Cannot find module|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|path:" | head -10
+            printf '%s\n' "$logs" | grep -E "$MODULE_ERR|path:" | head -10
             exit 1
           fi
 
           # Vacuity guard: no logs at all means the probe learned nothing, and "learned nothing"
           # must not read as "nothing wrong" — that is the exact shape this step exists to end.
-          # Still fail-closed; it now takes ${SMOKE_BOOT_TIMEOUT_S}s of silence, not 12, and says
-          # what the container was doing when we gave up.
+          # Still fail-closed; it now takes up to ${SMOKE_BOOT_TIMEOUT_S}s of silence, not 12, and
+          # says what the container was doing when we gave up.
           if [ -z "$logs" ]; then
             echo "::error::${{ matrix.image }}: container produced NO output in ${waited}s (state: ${state}) — cannot conclude the image starts."
             exit 1
           fi
-          echo "✓ ${{ matrix.image }}: no module-resolution failure (first output after ${waited}s, state: ${state})"
+
+          # A container that spoke and then DIED has not started. Every image this step probes is a
+          # long-running server (console-migrate, the one that legitimately exits, is excluded
+          # above), so anything but `running` here is a crash — including a crash-loop whose stack
+          # trace we simply did not match. Without this the exit code was decorative: a container
+          # could print one line, die, and still be reported as starting.
+          if [ "$status" != "running" ]; then
+            echo "::error::${{ matrix.image }}: container produced output but is ${state} after ${waited}s — it started and did not stay up."
+            printf '%s\n' "$logs" | tail -20
+            exit 1
+          fi
+          echo "✓ ${{ matrix.image }}: starts and resolves its modules (watched ${waited}s, state: ${state})"
 
   # Shared runner BASE — the Go binary + tofu + infracost + kubectl/helm + user + shared templates that all
   # four runner images used to re-download 4×. Built once per arch (native, by digest) then stitched into a
