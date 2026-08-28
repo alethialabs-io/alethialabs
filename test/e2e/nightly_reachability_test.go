@@ -19,6 +19,10 @@
 package e2e
 
 import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -178,11 +182,6 @@ func TestScenarioEnablesReachTheNightly(t *testing.T) {
 // provisioning-e2e.sh writes its real one bare.
 var goTestRunTarget = regexp.MustCompile(`-run\s+"([^"]+)"|-run\s+([^\s"'\\]+)`)
 
-// goTestFuncDecl matches a Go test function declaration in any *_test.go file, under ANY build tag.
-// Tags are deliberately ignored: the question this guard asks is whether the function EXISTS, and a
-// tag-gated harness is exactly the shape every one of these scripts invokes.
-var goTestFuncDecl = regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]*)\s*\(`)
-
 // scriptRunTargetSkipDirs are trees that hold no first-party Go and are expensive to walk.
 var scriptRunTargetSkipDirs = map[string]bool{
 	".git": true, "node_modules": true, ".next": true, ".turbo": true,
@@ -237,6 +236,7 @@ func TestScriptRunTargetsResolveToRealTests(t *testing.T) {
 	}
 
 	declared := map[string]bool{}
+	fset := token.NewFileSet()
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // an unreadable tree is not this guard's business
@@ -250,12 +250,29 @@ func TestScriptRunTargetsResolveToRealTests(t *testing.T) {
 		if !strings.HasSuffix(d.Name(), "_test.go") {
 			return nil
 		}
-		src, rerr := os.ReadFile(path)
-		if rerr != nil {
-			return nil
+		// PARSED, not matched, for the same reason as the scenario guard below: `^func (Test\w*)\s*\(`
+		// also matches a line inside a raw string literal or a block comment, and here that error
+		// runs the PERMISSIVE way — a test name that exists only in prose joins `declared`, and a
+		// script naming a function nobody wrote then resolves. That is the green-on-blindness
+		// direction, on the guard whose whole subject is #1047: registry-e2e.sh ran
+		// `-run "TestT2XacctRegistry"` for months against a function that existed in no file.
+		//
+		// Only the top-level declarations are read, so this does not walk each tree; measured at
+		// well under a second across the repository. `parser.ParseFile` needs no build tags and gets
+		// none: whether the function EXISTS is the question, and every one of these harnesses is
+		// tag-gated.
+		f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if perr != nil {
+			// Reported rather than skipped. A test file that does not parse is one whose functions
+			// this guard cannot see, and passing over it silently is how the guard reports green on
+			// exactly what it excluded.
+			return fmt.Errorf("parse %s: %w", path, perr)
 		}
-		for _, m := range goTestFuncDecl.FindAllStringSubmatch(string(src), -1) {
-			declared[m[1]] = true
+		for _, decl := range f.Decls {
+			fn, isFunc := decl.(*ast.FuncDecl)
+			if isFunc && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, "Test") {
+				declared[fn.Name.Name] = true
+			}
 		}
 		return nil
 	})
@@ -345,87 +362,62 @@ func TestScenarioApplyToSnapshotIsCalled(t *testing.T) {
 	dir := filepath.Dir(thisFile)
 	self := filepath.Base(thisFile)
 
-	// Receiver may be a POINTER and may be named anything. The first version matched only
-	// `func (c X) applyToSnapshot(` — a single-letter VALUE receiver. `func (cfg X)` and
-	// `func (c *X)` are both idiomatic Go no reviewer would flag, and either would have dropped the
-	// scenario out of `defined` entirely, so the guard would report green on a completely unwired
-	// scenario. Which is #1773, the thing it exists to catch.
-	definer := scenarioDefinerRe
-	// The assembler's DECLARATION, anchored at line start so a mention in prose or a string cannot
-	// nominate a file as the assembler.
-	assemblerDecl := scenarioAssemblerRe
-	caller := scenarioCallerRe
-
-	defined := map[string]string{}
-	called := map[string]bool{}
-	sig := ""
-	sigFile := ""
-
+	// PARSE, DO NOT MATCH. Every question below used to be a regex over the file's text, and every
+	// one of them was wrong at least once; scanScenarioWiring answers them from the syntax tree. The
+	// argument for each is in that function's header.
+	fset := token.NewFileSet()
+	files := map[string]*ast.File{}
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
 			return err
 		}
 		base := filepath.Base(path)
 		// SKIP THIS FILE. The first version did not, and it self-satisfied: the literal
-		// `"func t2DeploySnapshot("` appears in this very function, so the guard nominated ITSELF as
-		// the assembler, then matched its own comment `repos.applyToSnapshot(full)` and set
-		// called["repos"] permanently. t2ArgoRepos was exempt forever and the len(called)==0
-		// non-vacuity fatal was unreachable — the guard failed in the same way it was built to catch.
+		// `"func t2DeploySnapshot("` appears in this very file, so the guard nominated ITSELF as the
+		// assembler and then matched its own prose. Parsing makes a MENTION harmless, so this is no
+		// longer load-bearing for that — but this file's fixtures below declare their own
+		// t2DeploySnapshot inside string literals, and more to the point a guard that scans itself is
+		// answering a question about the wrong program.
 		if base == self {
 			return nil
 		}
-		src, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
+		// BUILD TAGS ARE DELIBERATELY IGNORED, which parsing gives for free: the harness lives behind
+		// `//go:build e2e_t2` and the question is whether the wiring EXISTS, not whether this build
+		// includes it. `go vet` skipping a tagged file is a mistake this repo has already made.
+		f, parseErr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if parseErr != nil {
+			// Not skipped. A file this guard cannot read is a file whose scenarios it cannot see, and
+			// silently passing over it is the exact green-on-blindness failure the guard exists to
+			// catch — pointed at itself.
+			return fmt.Errorf("parse %s: %w", base, parseErr)
 		}
-		// Comments are stripped before any match: a call written in prose is not a call.
-		text := stripGoComments(string(src))
-
-		for _, m := range definer.FindAllStringSubmatch(text, -1) {
-			defined[m[1]] = base
-		}
-		if m := assemblerDecl.FindStringSubmatch(text); m != nil {
-			if sig != "" && sigFile != base {
-				// Two files declaring it is not a thing to resolve by last-write-wins; that is how a
-				// stray file could silently blank `sig` and produce five wrong diagnoses at once.
-				t.Fatalf("t2DeploySnapshot is declared in both %s and %s — this guard cannot tell which assembles the snapshot", sigFile, base)
-			}
-			sig, sigFile = m[1], base
-			for _, c := range caller.FindAllStringSubmatch(text, -1) {
-				called[c[1]] = true
-			}
-		}
+		files[base] = f
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walk %s: %v", dir, err)
 	}
 
+	w := scanScenarioWiring(files)
+	defined, called, paramOf := w.defined, w.called, w.paramOf
+	if w.dupFile != "" {
+		// Two files declaring it is not a thing to resolve by last-write-wins; that is how a stray
+		// file could silently blank the signature and produce several wrong diagnoses at once.
+		t.Fatalf("%s is declared in both %s and %s — this guard cannot tell which assembles the snapshot",
+			scenarioAssemblerName, w.assemblerFile, w.dupFile)
+	}
+
 	if len(defined) == 0 {
 		t.Fatal("found no applyToSnapshot definitions at all — this guard is scanning the wrong tree " +
 			"and would pass over any number of unwired scenarios")
 	}
-	if sig == "" {
+	if w.assemblerFile == "" {
 		t.Fatal("found no t2DeploySnapshot declaration — either it was renamed or this guard stopped " +
 			"finding it; both make every result below meaningless, so this fails rather than passes")
 	}
 	if len(called) == 0 {
-		t.Fatal("found no applyToSnapshot CALLS in t2DeploySnapshot — either every scenario is unwired " +
-			"or the scan is broken; both make this guard vacuous, so it fails rather than passes")
-	}
-
-	// Resolve each scenario TYPE to the variable the assembler receives it as, by reading
-	// t2DeploySnapshot's own parameter list. Matching type names against variable names by string
-	// similarity does not work — `t2ArgoRepos` arrives as `repos`, `secretsXacctConfig` as `xacct` —
-	// and a guard that guesses wrong either cries wolf or gets loosened until it catches nothing.
-	//
-	// `(?:,|$)` and not `(?:,|\))`: the captured signature is the parameter list WITHOUT its closing
-	// paren, so a `\)` branch is dead and only a trailing comma could ever terminate a parameter.
-	// The LAST parameter was therefore unresolvable — and the end of the signature is exactly where
-	// the next scenario gets appended, as acmCert was.
-	paramOf := map[string]string{}
-	for _, m := range scenarioParamRe.FindAllStringSubmatch(sig, -1) {
-		paramOf[m[2]] = m[1]
+		t.Fatal("found no applyToSnapshot CALLS inside t2DeploySnapshot — either every scenario is " +
+			"unwired or the scan is broken; both make this guard vacuous, so it fails rather than passes")
 	}
 
 	for typeName, file := range defined {
@@ -446,176 +438,332 @@ func TestScenarioApplyToSnapshotIsCalled(t *testing.T) {
 	}
 }
 
-// stripGoComments removes // and /* */ comments so a call or a declaration written in PROSE cannot
-// satisfy this file's guards. Naive about both inside string literals, which can only make the
-// guards stricter — the safe direction for a check whose job is to refuse a claim.
-// The four patterns the scenario guard matches with, at package scope so the guard and the tests
-// below share ONE definition. They were locals, which meant every property they are relied on for —
-// a pointer receiver, a multi-character receiver name, an anchored declaration, a LAST parameter
-// with no trailing comma — could only be exercised by running the whole WalkDir against the real
-// tree. Three of the four were wrong at some point and nothing failed.
-var (
-	// Receiver may be a POINTER and may be named anything.
-	scenarioDefinerRe = regexp.MustCompile(`func \(\s*[A-Za-z_][A-Za-z0-9_]*\s+\*?([A-Za-z_][A-Za-z0-9_]*)\s*\) applyToSnapshot\(`)
-	// The assembler's DECLARATION, anchored at line start so prose cannot nominate a file.
-	scenarioAssemblerRe = regexp.MustCompile(`(?m)^func t2DeploySnapshot\(([\s\S]*?)\)\s*\(`)
-	scenarioCallerRe    = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\.applyToSnapshot\(`)
-	// `(?:,|$)` and not `(?:,|\))`: sig is the parameter list WITHOUT its closing paren, so a `\)`
-	// branch is dead and the LAST parameter — where the next scenario gets appended — never resolved.
-	scenarioParamRe = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:,|$)`)
+// The two identifiers this guard is about, named once. They are the harness's contract with the
+// nightly: a scenario type gets an applyToSnapshot method, and the assembler calls it.
+const (
+	scenarioMethodName    = "applyToSnapshot"
+	scenarioAssemblerName = "t2DeploySnapshot"
 )
 
-func stripGoComments(src string) string {
-	var out strings.Builder
-	out.Grow(len(src))
-	for i := 0; i < len(src); i++ {
-		switch c := src[i]; {
-		case c == '"' || c == '`':
-			// Copy the whole literal verbatim. A raw string cannot contain an escape, and an
-			// interpreted one cannot span a line, so the two are terminated differently.
-			quote := c
-			out.WriteByte(c)
-			for i++; i < len(src); i++ {
-				if quote == '"' && src[i] == '\\' && i+1 < len(src) {
-					out.WriteByte(src[i])
-					i++
-					out.WriteByte(src[i])
-					continue
-				}
-				out.WriteByte(src[i])
-				if src[i] == quote || (quote == '"' && src[i] == '\n') {
-					break
-				}
-			}
-		case c == '/' && i+1 < len(src) && src[i+1] == '/':
-			for i < len(src) && src[i] != '\n' {
-				i++
-			}
-			if i < len(src) {
-				out.WriteByte('\n') // keep line numbering intact
-			}
-		case c == '/' && i+1 < len(src) && src[i+1] == '*':
-			for i += 2; i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/'); i++ {
-				if src[i] == '\n' {
-					out.WriteByte('\n')
-				}
-			}
-			i++ // land on the '/' of the closing pair; the loop's i++ steps past it
-		default:
-			out.WriteByte(c)
-		}
-	}
-	return out.String()
-}
-
-// ── the scenario guard's own parts, tested (#2566) ──────────────────────────────────────────
+// ── the scanning half, in go/ast rather than in regexes ───────────────────────────────────────────
 //
-// #2581 fixed four defects in the guard above and verified each by hand — deleting a real call from
-// the real assembler, moving acmCert to the last position — then reverted the mutation. None of it
-// survived the commit, so the guard that had already failed silently once was left with its
-// discriminating branch unexercised again. These are those checks, kept.
+// WHY THE REGEXES WENT. Four defects were fixed in #2581 and a fifth in #2599, and all five are the
+// same shape — a regex that does not describe Go:
+//
+//   · `func \(([a-z]) (\w+)\) applyToSnapshot\(` missed `func (cfg X)` and `func (c *X)`. Both are
+//     idiomatic, no reviewer would flag either, and both silently dropped a scenario out of the
+//     `defined` set — so the guard reported GREEN on a completely unwired scenario, which is #1773.
+//   · `([a-zA-Z0-9_]+) ([a-zA-Z0-9_]+)(?:,|\))` could never resolve the LAST parameter, because the
+//     captured signature had no closing paren for the `\)` branch to reach. The end of the parameter
+//     list is exactly where the next scenario gets appended, as acmCert was.
+//   · `strings.Contains(text, "func t2DeploySnapshot(")` nominated any file that merely MENTIONED
+//     the name — including this guard's own source, which made it exempt every scenario forever.
+//   · `stripGoComments` treated `//` and `/*` inside string literals as comments, so a glob like
+//     `"**/*.go"` could delete a real definition out from under the matcher.
+//
+// Each was fixed by making a pattern more careful, and the next one would have been fixed the same
+// way. The failure mode never changed: the guard reports green on a scenario it failed to SEE, which
+// is the exact defect it exists to catch.
+//
+// go/parser answers all four exactly. A receiver is `FuncDecl.Recv`, in every form there is. A
+// parameter list is `FuncType.Params`, last entry included, grouped names included. A declaration is
+// a `FuncDecl` and never a mention. And comments and string literals are already distinguished by
+// the tokeniser, so `stripGoComments` — a small parser, hand-written in front of a hand-written
+// matcher — disappears entirely rather than getting another fix.
+//
+// ONE THING GOT STRICTER RATHER THAN JUST EXACTER. "Calls only count from the assembler" used to be
+// a FILE-level approximation: every `x.applyToSnapshot(` anywhere in the file that declared
+// t2DeploySnapshot counted. Now only calls inside that function's own body do. A call from a
+// neighbouring helper in the same file no longer exempts a scenario from the wiring it is supposed
+// to have.
 
-func TestStripGoCommentsIgnoresStringLiterals(t *testing.T) {
-	for _, tc := range []struct{ name, src, want, absent string }{
-		{
-			name:   "a line comment outside a string is removed",
-			src:    "a := 1 // applyToSnapshot(\nb := 2",
-			absent: "applyToSnapshot",
-		},
-		{
-			name:   "a block comment outside a string is removed",
-			src:    "a := 1\n/* func (c X) applyToSnapshot( */\nb := 2",
-			absent: "applyToSnapshot",
-		},
-		{
-			// THE HAZARD. `//` inside a URL is ordinary, and cutting the line at it truncates real
-			// code — including, in the worst case, a definition, which drops that scenario out of
-			// `defined` entirely and exempts it silently. That is the #1773 failure mode.
-			name: "a '//' inside an interpreted string is not a comment",
-			src:  `u := "https://example.com/x"` + "\n",
-			want: "https://example.com/x",
-		},
-		{
-			// A glob is the realistic way `/*` reaches a string. Non-greedy `/\*.*?\*/` would open a
-			// comment here and swallow everything up to the next `*/` anywhere in the file.
-			name: "a '/*' inside a string does not open a comment",
-			src:  "g := \"**/*.go\"\nfunc (c acmCertConfig) applyToSnapshot(s any) {}\nh := \"a*/b\"",
-			want: "applyToSnapshot",
-		},
-		{
-			name: "a raw string literal is copied verbatim",
-			src:  "r := `a // b /* c */ d`\n",
-			want: "a // b /* c */ d",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := stripGoComments(tc.src)
-			if tc.want != "" && !strings.Contains(got, tc.want) {
-				t.Errorf("stripGoComments dropped %q:\nin:  %q\nout: %q", tc.want, tc.src, got)
-			}
-			if tc.absent != "" && strings.Contains(got, tc.absent) {
-				t.Errorf("stripGoComments kept %q, which was inside a comment:\nout: %q", tc.absent, got)
-			}
-		})
+// scenarioWiring is what the applyToSnapshot guard needs to know about the harness, extracted from
+// the syntax tree rather than from the text.
+type scenarioWiring struct {
+	// defined maps a scenario TYPE name to the file that gives it an applyToSnapshot method.
+	defined map[string]string
+	// paramOf maps a scenario type name to the parameter name t2DeploySnapshot receives it as.
+	// `t2ArgoRepos` arrives as `repos` and `secretsXacctConfig` as `xacct`, so this cannot be
+	// guessed from string similarity — a guard that guesses either cries wolf or gets loosened
+	// until it catches nothing.
+	paramOf map[string]string
+	// called is the set of parameter names on which applyToSnapshot is called INSIDE the assembler.
+	called map[string]bool
+	// assemblerFile is the file declaring t2DeploySnapshot; empty when none was found.
+	assemblerFile string
+	// dupFile is a second file declaring it. Two declarations is not a thing to resolve by
+	// last-write-wins — that is how a stray file could silently blank the signature and produce
+	// several wrong diagnoses at once.
+	dupFile string
+}
+
+// baseTypeName reduces a type expression to the identifier a scenario is known by: `*T` → `T`,
+// `pkg.T` → `T`, `T[X]` → `T`. Anything with no identifier at its root (a func type, a map, a
+// channel) is not a scenario type and yields "".
+func baseTypeName(e ast.Expr) string {
+	switch t := e.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		return baseTypeName(t.X)
+	case *ast.SelectorExpr:
+		return t.Sel.Name
+	case *ast.IndexExpr: // a generic instantiation, T[X]
+		return baseTypeName(t.X)
+	case *ast.IndexListExpr: // T[X, Y]
+		return baseTypeName(t.X)
+	default:
+		return ""
 	}
 }
 
-func TestScenarioDefinerMatchesEveryReceiverForm(t *testing.T) {
-	// Each of these is idiomatic Go no reviewer would flag, and the first version matched only the
-	// first. A scenario written either of the other two ways never entered `defined`, so the guard
-	// reported green on a completely unwired scenario — #1773 again.
-	for _, tc := range []struct{ name, src, want string }{
-		{"single-letter value receiver", "func (c acmCertConfig) applyToSnapshot(", "acmCertConfig"},
-		{"multi-character receiver", "func (cfg acmCertConfig) applyToSnapshot(", "acmCertConfig"},
-		{"pointer receiver", "func (c *acmCertConfig) applyToSnapshot(", "acmCertConfig"},
-		{"pointer + multi-character", "func (cfg *acmCertConfig) applyToSnapshot(", "acmCertConfig"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m := scenarioDefinerRe.FindStringSubmatch(tc.src)
-			if m == nil {
-				t.Fatalf("no match for %q — a scenario written this way would be silently exempt", tc.src)
-			}
-			if m[1] != tc.want {
-				t.Errorf("captured %q, want the receiver TYPE %q", m[1], tc.want)
-			}
-		})
+// scanScenarioWiring reads the parsed harness. Keyed by file BASE NAME so the assertions can name
+// the file, and so the test below can drive it with fixtures instead of a directory.
+func scanScenarioWiring(files map[string]*ast.File) *scenarioWiring {
+	w := &scenarioWiring{
+		defined: map[string]string{},
+		paramOf: map[string]string{},
+		called:  map[string]bool{},
 	}
+	// Sorted, so a duplicate-declaration diagnosis names the same two files every run rather than
+	// whichever the map handed back first.
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, base := range names {
+		file := files[base]
+		for _, decl := range file.Decls {
+			fn, isFunc := decl.(*ast.FuncDecl)
+			if !isFunc {
+				continue
+			}
+			// A METHOD named applyToSnapshot. Recv carries the receiver in every form Go allows —
+			// value or pointer, named anything or nothing — so there is no pattern to get wrong.
+			if fn.Recv != nil && len(fn.Recv.List) == 1 && fn.Name.Name == scenarioMethodName {
+				if typeName := baseTypeName(fn.Recv.List[0].Type); typeName != "" {
+					w.defined[typeName] = base
+				}
+				continue
+			}
+			if fn.Recv != nil || fn.Name.Name != scenarioAssemblerName {
+				continue
+			}
+			// The assembler's DECLARATION. A FuncDecl is never a mention, so the guard can no longer
+			// nominate a file — its own included — for talking about the function.
+			if w.assemblerFile != "" && w.assemblerFile != base {
+				w.dupFile = base
+				continue
+			}
+			w.assemblerFile = base
+			if fn.Type.Params != nil {
+				for _, field := range fn.Type.Params.List {
+					typeName := baseTypeName(field.Type)
+					if typeName == "" {
+						continue
+					}
+					// `for _, name := range field.Names` covers BOTH the grouped form
+					// (`a, b scenarioConfig`) and the last parameter, which the regex could not
+					// reach at all. An unnamed parameter has no Names and is simply not a binding.
+					for _, name := range field.Names {
+						w.paramOf[typeName] = name.Name
+					}
+				}
+			}
+			// Calls inside the assembler's OWN BODY, which is the stricter half: a call from a
+			// neighbouring helper in the same file used to count and no longer does.
+			if fn.Body != nil {
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					call, isCall := n.(*ast.CallExpr)
+					if !isCall {
+						return true
+					}
+					sel, isSel := call.Fun.(*ast.SelectorExpr)
+					if !isSel || sel.Sel.Name != scenarioMethodName {
+						return true
+					}
+					if recv, isIdent := sel.X.(*ast.Ident); isIdent {
+						w.called[recv.Name] = true
+					}
+					return true
+				})
+			}
+		}
+	}
+	return w
 }
 
-func TestScenarioAssemblerIsAnchoredToADeclaration(t *testing.T) {
-	// The guard nominated its own file as the assembler because it matched the literal anywhere.
-	// Anchoring is what makes a mention in prose or in a string not a declaration.
-	if m := scenarioAssemblerRe.FindStringSubmatch("func t2DeploySnapshot(a A, b B) (X, error) {"); m == nil {
-		t.Fatal("the real declaration must match")
+// The questions the retired regexes were asked, put to the extractor instead. Every one of these is
+// a defect that actually shipped, so they are ported rather than dropped: a rewrite that quietly
+// stops asking is how a fixed bug comes back.
+func parseWiringFixture(t *testing.T, src string) *scenarioWiring {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "fixture.go", src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("fixture does not parse: %v", err)
 	}
-	for _, notADecl := range []string{
-		`// see func t2DeploySnapshot(a A) (X, error) {`,
-		`	s := "func t2DeploySnapshot(a A) (X, error) {"`,
-		`x := someFunc t2DeploySnapshot(a A) (X, error) {`,
+	return scanScenarioWiring(map[string]*ast.File{"fixture.go": file})
+}
+
+// #2581's first defect. `func (cfg X)` and `func (c *X)` are idiomatic Go no reviewer would flag,
+// and the original pattern — a single-letter VALUE receiver — matched neither, dropping the
+// scenario out of `defined` entirely so the guard reported green on an unwired one.
+func TestScenarioDefinerReadsEveryReceiverForm(t *testing.T) {
+	for _, recv := range []string{
+		"c acmCertConfig",
+		"cfg acmCertConfig",
+		"c *acmCertConfig",
+		"cfg *acmCertConfig",
+		"acmCertConfig",   // an unnamed receiver is legal and still defines the method
+		"_ acmCertConfig", // and so is a blank one
 	} {
-		if scenarioAssemblerRe.MatchString(notADecl) {
-			t.Errorf("a non-declaration nominated a file as the assembler: %q", notADecl)
+		src := "package e2e\nfunc (" + recv + ") applyToSnapshot(s *snap) {}\n"
+		w := parseWiringFixture(t, src)
+		if _, ok := w.defined["acmCertConfig"]; !ok {
+			t.Errorf("receiver %q: acmCertConfig not recorded as defining applyToSnapshot", recv)
 		}
 	}
 }
 
-func TestScenarioParamResolvesTheLastParameter(t *testing.T) {
-	// `sig` is captured WITHOUT its closing paren, so the old `(?:,|\))` alternation had a dead
-	// branch and only a trailing comma terminated a parameter. The end of the signature is exactly
-	// where the next scenario gets appended — which is where acmCert went.
-	for _, sig := range []string{
-		"a TypeA, b TypeB, acmCert acmCertConfig",
-		"\n\ta TypeA,\n\tacmCert acmCertConfig,\n",
+// #2581's third defect. The assembler used to be nominated by `strings.Contains` on its own name,
+// so any file MENTIONING it — this guard's own source above all — became the assembler, and the
+// calls "found" there exempted scenarios forever.
+func TestScenarioAssemblerIsADeclarationAndNeverAMention(t *testing.T) {
+	w := parseWiringFixture(t, `package e2e
+
+// t2DeploySnapshot assembles the snapshot; this sentence is not a declaration.
+const doc = "func t2DeploySnapshot(cfg acmCertConfig) {"
+
+func notTheAssembler() { _ = "t2DeploySnapshot" }
+`)
+	if w.assemblerFile != "" {
+		t.Errorf("a mention in a comment and a string literal nominated %q as the assembler", w.assemblerFile)
+	}
+	if len(w.paramOf) != 0 {
+		t.Errorf("parameters were read out of prose: %v", w.paramOf)
+	}
+}
+
+// #2581's second defect, and the one with a name attached: the LAST parameter could never be
+// resolved, and the end of the parameter list is exactly where the next scenario gets appended —
+// as acmCert was.
+func TestScenarioParamsResolveIncludingTheLast(t *testing.T) {
+	w := parseWiringFixture(t, `package e2e
+
+func t2DeploySnapshot(repos t2ArgoRepos, xacct secretsXacctConfig, cert acmCertConfig) (*snap, error) {
+	return nil, nil
+}
+`)
+	for typeName, want := range map[string]string{
+		"t2ArgoRepos":        "repos",
+		"secretsXacctConfig": "xacct",
+		"acmCertConfig":      "cert", // the last one
 	} {
-		// Keyed by TYPE, valued by the parameter NAME — the direction the guard uses to turn a
-		// scenario's type into the variable the assembler calls it on. (I had this backwards first;
-		// the regex was right and the test was wrong.)
-		paramOf := map[string]string{}
-		for _, m := range scenarioParamRe.FindAllStringSubmatch(sig, -1) {
-			paramOf[m[2]] = m[1]
+		if got := w.paramOf[typeName]; got != want {
+			t.Errorf("%s resolved to %q, want %q", typeName, got, want)
 		}
-		if paramOf["acmCertConfig"] != "acmCert" {
-			t.Errorf("the LAST parameter did not resolve in %q: got %#v", sig, paramOf)
+	}
+}
+
+// A shape the regex never handled at all, rather than handled wrongly. Grouped parameters are
+// ordinary Go, and a scenario appended into a group would have been invisible.
+func TestScenarioParamsResolveGroupedAndPointerForms(t *testing.T) {
+	w := parseWiringFixture(t, `package e2e
+
+func t2DeploySnapshot(a, b scenarioCfg, c *ptrCfg) {}
+`)
+	// Both names bind the same type; recording either proves the group was walked. The guard only
+	// needs one of them to exist, and asserting a specific winner would pin an arbitrary choice.
+	if got := w.paramOf["scenarioCfg"]; got != "a" && got != "b" {
+		t.Errorf("grouped parameters not resolved: %q", got)
+	}
+	if got := w.paramOf["ptrCfg"]; got != "c" {
+		t.Errorf("pointer parameter resolved to %q, want \"c\"", got)
+	}
+}
+
+// #2599's defect, retired rather than fixed again. `stripGoComments` was a hand-written comment
+// stripper in front of a hand-written matcher — a small parser, written twice, badly — and it read
+// `//` and `/*` INSIDE string literals as the start of a comment. The tokeniser has always known
+// the difference, so the whole function is gone and this asserts why it can be.
+func TestCallsInCommentsAndStringsDoNotCount(t *testing.T) {
+	w := parseWiringFixture(t, `package e2e
+
+func (c acmCertConfig) applyToSnapshot(s *snap) {}
+
+func t2DeploySnapshot(cert acmCertConfig) {
+	// cert.applyToSnapshot(s) — described, not called
+	_ = "cert.applyToSnapshot(s)"
+	_ = `+"`cert.applyToSnapshot(s)`"+`
+	/* cert.applyToSnapshot(s) */
+	_ = "a glob like **/*.go used to break the stripper"
+}
+`)
+	if w.called["cert"] {
+		t.Error("a call written in a comment or a string literal counted as a call")
+	}
+	if _, ok := w.defined["acmCertConfig"]; !ok {
+		t.Error("the real definition was lost — the string literal containing */ broke the scan")
+	}
+}
+
+// The half that got STRICTER rather than merely exacter. "Calls only count from the assembler" was
+// a file-level approximation: any call anywhere in the file that declared t2DeploySnapshot counted,
+// so a neighbouring helper could exempt a scenario from the wiring it is supposed to have.
+func TestOnlyCallsInsideTheAssemblerCount(t *testing.T) {
+	w := parseWiringFixture(t, `package e2e
+
+func (c acmCertConfig) applyToSnapshot(s *snap) {}
+
+func someHelper(cert acmCertConfig, s *snap) { cert.applyToSnapshot(s) }
+
+func t2DeploySnapshot(cert acmCertConfig) {}
+`)
+	if w.called["cert"] {
+		t.Error("a call from a neighbouring function in the same file counted as assembler wiring")
+	}
+}
+
+// baseTypeName's branches, because an extractor's unexercised branch is exactly where a scenario
+// goes missing — which is the whole failure mode this guard exists to prevent, one level down.
+func TestBaseTypeNameReducesEveryFormAScenarioCanTake(t *testing.T) {
+	for src, want := range map[string]string{
+		"package e2e\nfunc (c acmCertConfig) applyToSnapshot() {}\n":     "acmCertConfig",
+		"package e2e\nfunc (c *acmCertConfig) applyToSnapshot() {}\n":    "acmCertConfig",
+		"package e2e\nfunc (c acmCertConfig[T]) applyToSnapshot() {}\n":  "acmCertConfig",
+		"package e2e\nfunc (c *acmCertConfig[T]) applyToSnapshot() {}\n": "acmCertConfig",
+	} {
+		w := parseWiringFixture(t, src)
+		if _, ok := w.defined[want]; !ok {
+			t.Errorf("%q did not reduce to %q; got %v", src, want, w.defined)
 		}
+	}
+
+	// A receiver with no identifier at its root is not a scenario type, and must not be recorded as
+	// an empty-string key — a "" entry would be reported as a scenario nobody can find.
+	w := parseWiringFixture(t, "package e2e\ntype fn func()\nfunc (c fn) applyToSnapshot() {}\n")
+	if _, bad := w.defined[""]; bad {
+		t.Error("an unresolvable receiver was recorded under the empty type name")
+	}
+}
+
+func TestCallsInsideTheAssemblerAreFound(t *testing.T) {
+	w := parseWiringFixture(t, `package e2e
+
+func (c acmCertConfig) applyToSnapshot(s *snap) {}
+
+func t2DeploySnapshot(cert acmCertConfig) {
+	if true {
+		for range []int{1} {
+			cert.applyToSnapshot(nil)
+		}
+	}
+}
+`)
+	if !w.called["cert"] {
+		t.Error("a call nested inside the assembler's body was not found — Inspect must walk the whole body")
 	}
 }
