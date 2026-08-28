@@ -12,6 +12,7 @@ vi.mock("@/lib/reconcile/converge", () => ({ convergeEnvStatuses: vi.fn(async ()
 vi.mock("@/lib/reconcile/reap", () => ({ reapExpiredEphemeralEnvs: vi.fn(async () => ({ reaped: 0, expired: 0 })) }));
 vi.mock("@/lib/drift/dispatch", () => ({ sweepDriftSchedule: vi.fn(async () => ({ enqueued: 0 })) }));
 vi.mock("@/lib/probes/dispatch", () => ({ sweepProbeSchedule: vi.fn(async () => ({ enqueued: 0 })) }));
+vi.mock("@/lib/reconcile/ai-holds", () => ({ releaseStrandedAiHolds: vi.fn(async () => ({ released: 0 })) }));
 vi.mock("@/lib/reconcile/gc", () => ({
 	gcJobLogs: vi.fn(async () => ({ deleted: 0 })),
 	gcFleetActions: vi.fn(async () => ({ deleted: 0 })),
@@ -25,6 +26,7 @@ import {
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
 import { sweepDriftSchedule } from "@/lib/drift/dispatch";
 import { sweepProbeSchedule } from "@/lib/probes/dispatch";
+import { releaseStrandedAiHolds } from "@/lib/reconcile/ai-holds";
 import { gcAuthzActivityLog, gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
 import { __resetHeartbeats, getHeartbeats } from "@/lib/reconcile/heartbeat";
 import { startReconcileLoop, tick } from "@/lib/reconcile/loop";
@@ -76,6 +78,7 @@ describe("tick — fan-out", () => {
 		expect(gcJobLogs).toHaveBeenCalledTimes(1);
 		expect(gcFleetActions).toHaveBeenCalledTimes(1);
 		expect(gcAuthzActivityLog).toHaveBeenCalledTimes(1);
+		expect(releaseStrandedAiHolds).toHaveBeenCalledTimes(1);
 		// Each ran under a heartbeat.
 		const tasks = getHeartbeats().map((h) => h.task).sort();
 		expect(tasks).toEqual([
@@ -86,6 +89,7 @@ describe("tick — fan-out", () => {
 			"gc-fleet-actions",
 			"gc-job-logs",
 			"probe-schedule",
+			"release-ai-holds",
 		]);
 	});
 

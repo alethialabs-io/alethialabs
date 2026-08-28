@@ -1030,6 +1030,13 @@
       "when": 1787738241707,
       "tag": "0146_heavy_firebird",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1787928696802,
+      "tag": "0147_wooden_amphibian",
+      "breakpoints": true
     }
   ]
 }
