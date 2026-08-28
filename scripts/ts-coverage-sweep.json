@@ -1,0 +1,30 @@
+{
+  "_doc": [
+    "The set of vitest projects that declare a coverage block, recorded by NAME. Read by",
+    "scripts/ts-coverage.mjs --self-test.",
+    "",
+    "WHY A SET AND NOT A COUNT (#2724). This replaced `emitting.length >= 3`, a hand-typed floor",
+    "that had to be edited by hand every time the thing it counted changed, and whose failure mode",
+    "was silence. It went slack twice within hours of being written: #2695 set it at exactly 3,",
+    "#2720 correctly added apps/marketing and ee (real count 5), #2724 was filed, and by the time it",
+    "was fixed packages/format had made it 6 — so a tripwire written to catch ONE project leaving",
+    "the sweep was tolerating THREE.",
+    "",
+    "A set cannot go slack the way a floor can. A project that disappears is named, so the failure",
+    "says which one instead of only that the number is smaller. A project that appears also fails,",
+    "asking for this file to be updated in a reviewed diff — which is the same ratchet discipline",
+    "coverage-floors.json already uses for the numbers themselves, applied to the sweep that guards",
+    "them.",
+    "",
+    "TO UPDATE: add or remove the project here in the same PR that adds or removes its coverage",
+    "block, and say which in the message. That diff is the review."
+  ],
+  "coverage_emitting_projects": [
+    "apps/console",
+    "apps/marketing",
+    "ee",
+    "packages/format",
+    "packages/plan-catalog",
+    "packages/ui"
+  ]
+}
