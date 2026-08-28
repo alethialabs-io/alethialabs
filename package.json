@@ -57,6 +57,7 @@
     "env:push": "bash scripts/env.sh push",
     "env:down": "bash scripts/env.sh down",
     "env:status": "bash scripts/env.sh status",
+    "env:verify": "bash scripts/env.sh verify",
     "env:logs": "bash scripts/env.sh logs",
     "env:open": "bash scripts/env.sh open",
     "env:ssh": "bash scripts/env.sh ssh",

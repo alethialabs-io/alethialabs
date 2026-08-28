@@ -131,6 +131,58 @@ else
 fi
 /opt/alethia/bin/env-registry.sh store "$SLUG" "$STORE_ID"
 
+# ── Compile freshness (#2812) ─────────────────────────────────────────────────────
+#
+# THE FAILURE. `.next` is excluded from the rsync, so this box keeps its own compile cache across
+# pushes. A stale cache serves the PREVIOUS module while `env:push` and `env:up` both report
+# success. An aria-label fix once sat invisible across two restarts; it was only caught because
+# someone happened to be reading childNodes and expected something specific. A vaguer check —
+# "does the page look right" — would have passed. And it cuts both ways: a stale build makes a
+# FIXED thing still look broken, and a BROKEN thing still look fixed.
+#
+# This box is the only place anything visual can be verified. CI proves a change parses,
+# type-checks and resolves its imports; it proves nothing about rendering. So a browser silently
+# showing a previous bundle is a hole underneath the last line of defence.
+#
+# WHY PREVENTION AND NOT A PROBE. The obvious fix is to bake an id into the bundle and compare it
+# after boot. It does not work, and the reason is worth writing down so nobody rebuilds it: the id
+# would have to arrive via NEXT_PUBLIC_* (inlined at compile time), Next invalidates its cache when
+# an env file changes, so the id and the cache move together and the probe passes by construction —
+# including when a COMPONENT is stale, which is the actual reported failure. A check that cannot
+# fail is worse than none: it would have signed off the very bug it was written for.
+#
+# So: key on the SOURCE TREE. If what was pushed differs from what was compiled, drop the compile
+# cache. Unchanged restarts stay fast; a changed tree always gets a real compile.
+#
+# Metadata, not content: rsync updates size and mtime on every file it replaces, so path+size+mtime
+# moves whenever a file arrives. Hashing bytes would cost seconds per boot to answer the same
+# question. `sort` because find's order is not stable across runs.
+# PATHS ARE RELATIVE AND MTIMES ARE WHOLE SECONDS, on both sides. The laptop computes the same
+# hash (env.sh → tree_stamp) and the two are compared by `pnpm env:verify`; an absolute path or a
+# sub-second float would differ between the two machines for reasons that have nothing to do with
+# the code, and the check would cry wolf on every run. rsync -a preserves size and mtime, so a
+# file that arrived unchanged hashes the same on both.
+TREE_STAMP_FILE="$REPO/.next-tree-stamp"
+TREE_STAMP="$(cd "$REPO" && find apps packages -type f \
+  \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.json' -o -name '*.mjs' \) \
+  -not -path '*/node_modules/*' -not -path '*/.next/*' -printf '%p %s %T@\n' 2>/dev/null |
+  awk '{printf "%s %s %d\n", $1, $2, $3}' | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+if [ "$TREE_STAMP" != "$(cat "$TREE_STAMP_FILE" 2>/dev/null || true)" ]; then
+  log "Source changed since the last boot — dropping the compile cache"
+  rm -rf "$REPO/apps/console/.next"
+  printf '%s\n' "$TREE_STAMP" >"$TREE_STAMP_FILE"
+else
+  log "Source unchanged since the last boot — keeping the compile cache"
+fi
+
+# Surfaced on /api/health?shallow=1 so the loop is closed at the other end too: `pnpm env:status`
+# prints the tree the served page was compiled from, and it is the same hash env.sh computes for
+# YOUR working tree. Equal means the page in your browser is the tree on your disk.
+touch apps/console/.env.local
+grep -v '^NEXT_PUBLIC_ALETHIA_BUILD_ID=' apps/console/.env.local >apps/console/.env.local.tmp || true
+printf 'NEXT_PUBLIC_ALETHIA_BUILD_ID=%s\n' "$TREE_STAMP" >>apps/console/.env.local.tmp
+mv apps/console/.env.local.tmp apps/console/.env.local
+
 # ── Tunnel ───────────────────────────────────────────────────────────────────────
 log "Cloudflare tunnel"
 /opt/alethia/bin/env-tunnel.sh
@@ -156,6 +208,11 @@ for _ in $(seq 1 150); do
     curl -fsS -o /dev/null "http://localhost:$CPORT/login" 2>/dev/null; then
     echo
     echo "  ✓ $SLUG is up   $URL"
+    # The tree the SERVED page was compiled from. Compare it to what env.sh prints for your
+    # working tree: equal means the browser is showing the code on your disk. This is reported
+    # rather than asserted here, because the assertion belongs where the two trees can both be
+    # seen — on the laptop, in env.sh.
+    echo "    tree:  $TREE_STAMP"
     echo "    logs:  pnpm env:logs        (sign-in codes are printed here)"
     exit 0
   fi
