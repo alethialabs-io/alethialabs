@@ -1017,6 +1017,13 @@ jobs:
           #    sweep-tag hard-fail, and an add-on health re-read. Its machine-readable summary is
           #    written for the A0.4 proof/verdict capture. ──
           ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
+          # ── ArgoCD convergence counts (#2688). Written by AssertArgoAppsHealthy at the moment
+          #    it asserts, because that is the ONLY moment the numbers exist: the proof capture
+          #    runs after t.Cleanup has destroyed the cluster, so it counted a cluster that was
+          #    gone and wrote 0/0 for every run — making a PASS bundle and a FAIL bundle
+          #    numerically identical. Unconditional, not gated on a var: this is the base T2
+          #    assertion's own evidence, not an opt-in scenario. ──
+          ALETHIA_E2E_ARGOCD_SUMMARY: ${{ runner.temp }}/argocd-summary.json
           # ── ArgoCD-WITH-REPOS + BYO Helm proof (BYOC A0.6). Opt-in, ON TOP of the base T2
           #    proof: only activates when a maintainer sets the repo VARS + the git-token SECRET.
           #    The proof is cloud-agnostic (it works over ArgoCD CRs, never an ingress URL), so it
@@ -1580,6 +1587,11 @@ jobs:
           # Day-2 soak summary (BYOC A0.3), written by the T2 test; folded into the bundle +
           # step-summary verdict when present (absent ⇒ the capture is unchanged).
           ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
+          # ArgoCD convergence counts (#2688), written by the T2 assertion at the SAME path the t2
+          # step set. This is the one summary the capture must NOT be indifferent to: it is what
+          # makes a PASS bundle numerically different from a FAIL one. Absent ⇒ the capture says so
+          # rather than falling back to 0/0, which is the defect this replaces.
+          ALETHIA_E2E_ARGOCD_SUMMARY: ${{ runner.temp }}/argocd-summary.json
           ALETHIA_E2E_SECRETS_XACCT_SUMMARY: ${{ runner.temp }}/secrets-xacct-summary.json
           # Keyless DB auth summary (#1511), written by the T2 layer at the SAME path the t2 step
           # set; folded into the bundle + step-summary verdict, with the rotation dwell beside it so
