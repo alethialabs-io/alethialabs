@@ -1454,6 +1454,21 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 	}
 	defer os.RemoveAll(valuesDir)
 
+	// Health probes the node can actually satisfy — applied UNCONDITIONALLY, before any per-cloud
+	// branch below. The chart's own defaults (timeoutSeconds 1, failureThreshold 3) restart-loop
+	// argocd-server and argocd-repo-server on a small burstable node, which is a property of the
+	// NODE, not of DNS, of a certificate or of a cloud — so it cannot live inside the ingress
+	// branch that only some projects take. See argocd.InstallProbeValues for the measurement.
+	//
+	// Written FIRST so a per-cloud `-f` appended later still wins on any key it also sets (helm
+	// merges values files left to right). Today there is no overlap; the ordering is what keeps it
+	// true if one ever appears.
+	probesPath := filepath.Join(valuesDir, "argocd-probes.yaml")
+	if wErr := os.WriteFile(probesPath, []byte(argocd.InstallProbeValues()), 0o600); wErr != nil {
+		return fmt.Errorf("failed to write the ArgoCD probe values: %w", wErr)
+	}
+	installCmd += " -f " + utils.ShellQuote(probesPath)
+
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
 		// FAIL CLOSED on a domain that is not a domain. `vc.DNS.DomainName` is free-text project
 		// data (console `config-schema.ts` `domain_name`, type `text`, no pattern) and nothing
