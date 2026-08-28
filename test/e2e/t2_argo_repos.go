@@ -471,10 +471,11 @@ func interpretByoSyncPolicy(app string, automated *byoAutoSyncPolicy) error {
 	// Everything WE do is correct and was verified end to end: RenderAddOnApplication emits
 	// `prune: false` / `selfHeal: false` (addonAutomated has no omitempty), InjectCommonLabels
 	// round-trips through the YAML AST and preserves them, the runner `kubectl apply -f`s that
-	// file, argo-cd 8.6.4's Application CRD types both as plain booleans, and applying the exact
+	// file, argo-cd 9.5.11's Application CRD types both as plain booleans, and applying the exact
 	// manifest to a throwaway cluster reads BOTH fields straight back.
 	//
-	// ArgoCD erases them. Its own type at v3.1.8:
+	// ArgoCD erases them. Its own type, byte-identical at v3.1.8 and at v3.3.9 (re-read on the
+	// 8.6.4 → 9.5.11 bump, #2717, rather than carried forward):
 	//
 	//	Prune    bool  `json:"prune,omitempty"`
 	//	SelfHeal bool  `json:"selfHeal,omitempty"`
@@ -509,7 +510,8 @@ func interpretByoSyncPolicy(app string, automated *byoAutoSyncPolicy) error {
 //
 // and nothing in the tree distinguishes them: at that run's own SHA the renderer sets
 // `&addonAutomated{Prune: false, SelfHeal: false}` with no `omitempty` on either field, ArgoCD
-// v3.1.8's Application CRD types both as a plain boolean, and the wave applier `kubectl apply -f`s
+// v3.1.8's Application CRD types both as a plain boolean (and v3.3.9's does the same — re-read on
+// the 9.5.11 bump), and the wave applier `kubectl apply -f`s
 // the rendered file without re-marshalling it. Every static half says the field should be there.
 // So the next failure has to carry the object, not a description of it.
 func assertByoAutoSyncPolicy(ctx context.Context, kubeconfigPath, app string) error {

@@ -1096,7 +1096,8 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string, refs []out
 //
 // `--core` runs the API-server logic IN-PROCESS, so it needs the cluster permissions the API server
 // would have had — and the argocd-server ServiceAccount does not have them. Verified against the
-// pinned 8.6.4 chart rather than guessed: the server's Role grants secrets, configmaps,
+// pinned chart rather than guessed — and RE-verified on the 8.6.4 → 9.5.11 bump (#2717), where the
+// rendered Role is unchanged: the server's Role grants secrets, configmaps,
 // argoproj.io resources and events, and nothing else. The APPLICATION-CONTROLLER's ClusterRole is
 // apiGroups ['*'], resources ['*'], verbs ['*'] — it has to be, because it reconciles arbitrary
 // customer resources. Every ArgoCD component runs the same image, so the `argocd` binary is there.
@@ -1204,8 +1205,9 @@ func argoSyncStaleness(app string, reconciledAt string, now time.Time) string {
 		return fmt.Sprintf("      %s: unparseable status.reconciledAt %q — cannot say whether the status is stale", app, t)
 	}
 	age := now.Sub(parsed).Round(time.Second)
-	// ArgoCD's default reconciliation is every 3 minutes, so anything close to or beyond that is
-	// plausibly just a status the controller has not refreshed yet.
+	// One WORST-CASE reconcile cycle, so anything close to or beyond it is plausibly just a status
+	// the controller has not refreshed yet. See argoReconcileInterval for where the number comes
+	// from — it is no longer a flat 3m on the shipped chart.
 	if age >= argoReconcileInterval {
 		return fmt.Sprintf(
 			"      %s: last reconciled %s ago (>= ArgoCD's ~%s cadence) — the OutOfSync status is plausibly STALE and the empty diff is current; re-read after a refresh before treating this as a real disagreement",
@@ -1216,8 +1218,16 @@ func argoSyncStaleness(app string, reconciledAt string, now time.Time) string {
 		app, age, argoReconcileInterval)
 }
 
-// argoReconcileInterval is ArgoCD's default `timeout.reconciliation`. Used only to judge whether a
-// sync status is old enough to be suspect, never to wait on.
+// argoReconcileInterval is the WORST-CASE gap between two reconciles on the shipped argo-cd chart.
+// Used only to judge whether a sync status is old enough to be suspect, never to wait on.
+//
+// The value is unchanged at 3m across the 8.6.4 → 9.5.11 bump, but its derivation is not, and the
+// old comment ("ArgoCD's default reconciliation is every 3 minutes") is no longer true. 8.6.4's
+// argocd-cm set `timeout.reconciliation: 180s` with no jitter. 9.5.11 sets
+// `timeout.reconciliation: 120s` plus `timeout.reconciliation.jitter: 60s`, so the cadence is now a
+// 120s–180s band. 3m is still the right bound BECAUSE it is the top of that band: this constant
+// exists to avoid calling a status stale when it is merely young, so it must be the longest a fresh
+// status can legitimately go unrefreshed, not the typical one.
 const argoReconcileInterval = 3 * time.Minute
 
 // readArgoReconciledAt reads an Application's last reconcile timestamp. Best-effort: this runs on an

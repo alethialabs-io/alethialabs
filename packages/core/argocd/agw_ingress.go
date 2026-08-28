@@ -16,7 +16,7 @@ const AGWIngressClassName = "azure-application-gateway"
 // ArgoCDTLSSecretName is the Secret cert-manager writes the issued certificate into and AGIC lifts
 // onto the gateway listener.
 //
-// ⚠️ This name is the CHART'S, not ours. argo-cd 8.6.4 documents `server.ingress.tls` as: "TLS
+// ⚠️ This name is the CHART'S, not ours. argo-cd 9.5.11 documents `server.ingress.tls` as: "TLS
 // certificate will be retrieved from a TLS secret `argocd-server-tls`" — there is no values key to
 // override it (the chart has `tls` as a bool and no `tlsSecret`). So this constant RECORDS the
 // chart's choice for the Go side to reason about; it does not set it. If the chart ever renames it,
@@ -61,9 +61,13 @@ func AGWArgoServerValues(host, issuer string) (string, error) {
 	var b strings.Builder
 	// `tls: true` is the whole TLS contract with this chart. It renders `spec.tls` for `hostname`
 	// with secretName argocd-server-tls, which is what makes cert-manager mint a Certificate (the
-	// annotation names the issuer) and what AGIC then reads. Verified against argo-cd 8.6.4's own
+	// annotation names the issuer) and what AGIC then reads. Verified against argo-cd 9.5.11's own
 	// values.yaml rather than assumed — an invented key like `tlsSecret` is accepted silently by
 	// helm and renders no TLS block at all.
+	//
+	// RE-VERIFIED on the 8.6.4 → 9.5.11 bump (#2717): `tls` is still a bool with no `tlsSecret`
+	// companion, and rendering these values against both charts yields an identical Ingress apart
+	// from the chart/version labels.
 	fmt.Fprintf(&b, `configs:
   params:
     server.insecure: "true"
