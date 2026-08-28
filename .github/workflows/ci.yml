@@ -890,6 +890,13 @@ jobs:
       - name: Worktree landed-detection (squash merges; merged-PR-plus-new-commit is NOT landed)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-landed-test.sh
+      # A `feat/<name>` left on the remote by a MERGED PR made `pnpm wt <name>` start the new work on
+      # the old tip while printing "(off origin/dev)". Measured at 125 commits behind, and the
+      # resulting PR would have REVERTED two files with a diff that read as deliberate. The fixture
+      # squash-merges, because `--is-ancestor` cannot see a squash and would let the bug pass.
+      - name: Worktree start-point honesty (a landed remote branch is not a base)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/worktree-base-test.sh
       - name: Board claim arbitration (earliest-lease-wins) + PR predicates
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/claim-work.sh --self-test
