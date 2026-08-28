@@ -73,8 +73,29 @@ const (
 	// SSOT for the coupling is packages/core/compat/matrix.json → components[argocd]; the couplings
 	// drift test refuses a pin that is not a recorded release there.
 	//
-	// This is expected to fix the OutOfSync class. It is NOT proven until an addons run says so —
-	// the mechanism and the ancestry are established, the outcome on a live cluster is not.
+	// ── MEASURED: hetzner/addons run 33162842830, SHA d4655228 (contains #3128) ──
+	//
+	// The bump cleared MOST of the class and is worth keeping on its own: kyverno (batch/CronJob),
+	// loki (a volumeClaimTemplates StatefulSet) and falco all reached Healthy+Synced, and
+	// external-dns passed. FOUR StatefulSets did not — addon-harbor-{database,redis,trivy} and
+	// addon-tempo — so the pin is a partial fix, not the fix.
+	//
+	// TWO CLAIMS ABOVE ARE NOW KNOWN TO BE WEAKER THAN THEY READ, and they are corrected here
+	// rather than deleted, because the ancestry work they record is still sound:
+	//
+	//	#24844 may never have been load-bearing on OUR path. Its whole content is a bump to
+	//	  structured-merge-diff#306, which touches only `typed/remove.go` (`RemoveItems`) — called
+	//	  from `removeWebhookMutation`, a SERVER-SIDE-DIFF-only function. We do not run server-side
+	//	  diff. Worse, upstream REVERTED #306: structured-merge-diff#334 ("Revert #306 … due to the
+	//	  severity of the bug"), tagged v6.4.2 and backported to v6.3.3, and the underlying
+	//	  structured-merge-diff#305 is still OPEN. argo-cd master already carries the revert.
+	//	"v3.3 is the lowest SUPPORTED minor that clears all three" is still true, and buys less
+	//	  than it sounds: the structured-merge-diff functions in gitops-engine/pkg/diff/diff.go are
+	//	  byte-identical from v3.3.9 through v3.5.2 and master (one cosmetic `bytes.Equal`). NO
+	//	  RELEASED ARGO-CD FIXES THE SURVIVING STATEFULSET CLASS, so do not spend a run on another
+	//	  chart bump expecting it to.
+	//
+	// The remaining lever is the compare-option, not the pin — see the long note in addons.go.
 	DefaultArgoChartVersion = "9.5.11"
 	// ArgoHelmRepoEnv overrides DefaultArgoHelmRepo.
 	ArgoHelmRepoEnv = "ALETHIA_ARGOCD_HELM_REPO"
