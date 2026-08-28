@@ -26,6 +26,34 @@ jobs can't assume). Both `github_repo` and `github_branch` are variables, so swi
 to an org repo later is a var change. The account-wide GitHub OIDC provider is **adopted**
 (a `data` source), not re-created — it already exists from `infra/email-ses/bootstrap`.
 
+## Inputs: what is committed and what is not
+
+`terraform.tfvars` is **committed**. That is deliberate and it is a fix, not an oversight: every
+value in it is already public (they are repo variables), and the file being gitignored is what made
+a bare `tofu apply` dangerous. On a checkout without it every variable fell back to a default that
+did not match the live account. Measured against the account on 2026-08-28:
+
+| variable | default | live | a bare apply would |
+|---|---|---|---|
+| `e2e_dns_zone_name` | `""` | `e2e.alethialabs.io` | plan the **destruction** of a zone delegated at Cloudflare |
+| `e2e_github_environment` | `""` | `e2e-dev` | narrow the OIDC trust to ref-only, killing every `workflow_dispatch` from `dev` |
+| `e2e_monthly_budget_usd` | `100` | `50` | silently double a ceiling the maintainer had set |
+
+Two controls now make that unrepeatable, and both were tested by driving the failing input rather
+than by reading the code:
+
+- `aws_route53_zone.e2e` carries `lifecycle { prevent_destroy = true }`. `tofu plan` with
+  `e2e_dns_zone_name=""` exits **1** with *"Resource instance cannot be destroyed"* — a plan-time
+  refusal, not a mid-apply error.
+- `e2e_budget_alert_emails` is **required, with no default**. It holds personal addresses, so it is
+  the one input that cannot live in a public repo; put it in the gitignored `emails.auto.tfvars`.
+  Without it `tofu plan` exits **1** with *"No value for required variable"* instead of silently
+  unsubscribing the maintainer from their own cost alerts.
+
+So a fresh clone needs exactly two files: `backend.hcl` (from `backend.hcl.example`) and
+`emails.auto.tfvars`.
+
+
 ## Apply (once, with an admin identity)
 
 This is a bootstrap: it creates IAM, so it needs admin the first time (like
