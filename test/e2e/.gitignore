@@ -1,0 +1,5 @@
+
+# `go build ./cmd/t2budget` output. A 13MB Mach-O arm64 binary was committed here on
+# 2026-08-10 and shipped in every clone of a public repo since. The source is
+# test/e2e/cmd/t2budget; build it, do not commit it.
+/t2budget
