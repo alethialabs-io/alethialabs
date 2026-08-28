@@ -343,7 +343,8 @@ var CLIDemoSteps = []DemoStep{
 	//    It can: the runner fetches a token at job time from the job owner's LINKED OAUTH ACCOUNT
 	//    (`/api/jobs/{id}/git-token`), and that route's authorized-repo set already covers both the
 	//    BYO chart repos and the BYO IaC repo. So these are genuinely CLIDriven, and the inert flag
-	//    is a separate defect rather than a gap in CLI coverage. ──
+	//    was a separate defect rather than a gap in CLI coverage — REMOVED in #2788, which also put
+	//    the OAuth answer into the attach verbs' own help, where the user asking the question is. ──
 	{
 		ID:    "chart-attach",
 		Title: "Attach a bring-your-own Helm chart to an environment",
