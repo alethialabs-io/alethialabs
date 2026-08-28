@@ -26,6 +26,30 @@ const (
 	// structured-merge-diff failed to build a typed value for ANY live Deployment on a 1.33+ cluster
 	// → `sync=Unknown` and GitOps never converged. All project templates default to K8s 1.35, so this
 	// affected every cloud (#1165).
+	//
+	// ── THIS PIN IS STALE, AND THE STALENESS IS A KNOWN BLOCKER (#2717). ──
+	//
+	// 8.6.4 bundles v3.1.8, released 2025-09-30. As of 2026-08-28 the argo-cd chart is at 10.4.1
+	// (v3.5.2) and even the release-3.1 line has reached v3.1.16. Two fixes we need are on the far
+	// side of that gap, and both were verified against the commit graph rather than release notes:
+	//
+	//	v3.2.0  argo-cd#23978 — `argocd app diff --server-side-diff`. v3.1.x's CLI builds its diff
+	//	        config with no WithStructuredMergeDiff, no WithGVKParser and no WithManager, so it
+	//	        CANNOT reproduce the controller's comparison for a ServerSideApply Application. That
+	//	        is why #2717's diff has printed nothing across six paid runs.
+	//	v3.3.0  argo-cd#24844 (structured-merge-diff#306) — "structured merge diff fix for null
+	//	        metadata field". `git compare` says the merge commit is an ancestor of v3.3.0,
+	//	        v3.4.0 and v3.5.2 and NOT of v3.1.8, v3.1.16 or v3.2.0.
+	//
+	// Without them, every StatefulSet with `volumeClaimTemplates` and every CronJob in the add-on
+	// catalog is permanently OutOfSync on this pin — measured, 6 of 6 with volumeClaimTemplates and
+	// 0 of 2 without, on hetzner/addons run 33149451505. See addons.go's SyncOptions comment for
+	// the mechanism and for the two workarounds that do NOT work on 8.6.4.
+	//
+	// A bump is a control-plane change and wants its own measured PR: a new
+	// packages/core/compat/matrix.json entry (the couplings drift test enforces it), and a re-read
+	// of the chart values contracts that gke_ingress.go, agw_ingress.go and t2_argo_repos.go each
+	// document as "verified against argo-cd 8.6.4".
 	DefaultArgoChartVersion = "8.6.4"
 	// ArgoHelmRepoEnv overrides DefaultArgoHelmRepo.
 	ArgoHelmRepoEnv = "ALETHIA_ARGOCD_HELM_REPO"
