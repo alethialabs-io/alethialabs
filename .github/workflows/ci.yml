@@ -642,6 +642,16 @@ jobs:
         run: pnpm check:open-core
       - name: No @theme inline variable is overridden (inert responsive ladder)
         run: pnpm check:theme-inline
+      # The `"use client"` on @repo/ui/button, and the note explaining it. Its absence produced
+      # "Element type is invalid … got: undefined" on two separate pages and cost two long bisects —
+      # tsc, eslint and the type checker are all blind to it, so only a production build sees it, at
+      # request time. The note that says "keep it that way" then named two callers and one of them
+      # was a DIFFERENT `buttonVariants` from fumadocs, in an app that does not even declare
+      # @repo/ui. This derives the claim from the tree instead of restating it (#2677).
+      - name: '@repo/ui/button keeps its client boundary, and its callers are client modules'
+        run: pnpm check:ui-client-boundary
+      - name: ...and that check is not silently blind
+        run: pnpm check:ui-client-boundary -- --self-test
       - name: Runner self-image is baked, matches its job, and is multi-arch
         run: pnpm check:runner-self-image
       - name: Community edition type-checks without enterprise activation
