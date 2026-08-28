@@ -102,7 +102,7 @@ on:
         type: boolean
         default: false
       argo_timeout:
-        description: "ArgoCD convergence budget for THIS RUN ONLY, as a Go duration (e.g. 30m). Blank keeps vars.E2E_ARGO_TIMEOUT, and blank there keeps the derived default. This is the #2717 class (b) discriminator: falco/kube-prometheus-stack/loki/vault sit `Progressing` at the end of the budget, and `Progressing` is ALSO what a chart that will never converge looks like at any finite deadline. One run at a raised budget tells them apart — and a chart that is still Progressing with generous room is a ceiling, not a slow start."
+        description: "ArgoCD convergence budget for THIS RUN ONLY, as a Go duration (e.g. 45m). Blank keeps vars.E2E_ARGO_TIMEOUT, and blank there keeps the derived default — which is now the MEASURED 35m for the 18-chart surface, not the 19m30s guess this input was added to test. It answered #2717 class (b) on run 33107415369: kube-prometheus-stack, loki and vault were slow, not stuck (all three cleared by 35m); falco and harbor were still Progressing and are real defects. Keep it for the next question of the same shape — a chart still Progressing with generous room is a ceiling, not a slow start."
         type: string
         default: ""
 
@@ -163,7 +163,11 @@ jobs:
     # below) — a real ctx of 90m against a 75m step cap. The step killed the process before the ctx
     # could cancel, which loses the named scenario failure AND skips the in-process t.Cleanup
     # teardown, leaking the cluster to the sweeper. Do not hand-tune these; run t2budget.
-    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 265 || 160 }}
+    #
+    # 160 → 180 (fabric 265 → 275) with #2717's measured ArgoCD budget. See the step cap below for
+    # the arithmetic; the two move together, and TestArgoBudgetCeilingFitsTheWorkflowCaps now holds
+    # them to it offline instead of leaving it to t2budget on a paid run.
+    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 275 || 180 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -980,7 +984,7 @@ jobs:
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 250 || 145 }}
+        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 260 || 165 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -1322,9 +1326,12 @@ jobs:
           #    These knobs already existed in the harness and were reachable ONLY from a laptop,
           #    which made two open questions unanswerable from CI at any price:
           #
-          #      * #2717 class (b) — falco/loki/vault sit `Progressing` at the end of the add-on
-          #        budget. Raising ALETHIA_E2E_ARGO_TIMEOUT for one run is what distinguishes "the
-          #        budget is short" from "this will never converge", and the second is a ceiling.
+          #      * #2717 class (b) — falco/loki/vault sat `Progressing` at the end of the add-on
+          #        budget. Raising ALETHIA_E2E_ARGO_TIMEOUT for one run distinguished "the budget is
+          #        short" from "this will never converge". ANSWERED, run 33107415369: the budget was
+          #        short. kube-prometheus-stack, loki and vault all cleared by 35m, which is now the
+          #        derived default for the 18-chart surface (test/e2e/argocd_assert.go). falco and
+          #        harbor were still Progressing at 35m and are the genuine ceilings.
           #      * #2591 — the day-2 ArgoCD-URL probe failed on the first run that ever had a URL.
           #        Its 3m default was chosen when the probe could not run on ANY cloud, so it was
           #        never sized against a real ALB plus external-dns plus Route53 propagation. The
@@ -1436,11 +1443,27 @@ jobs:
           # to ctx 197m, which needed step 207m / job 222m even BEFORE teardown was reserved. It has
           # never been dispatched (E2E_FABRIC_DEMO is unset), so t2budget had no run in which to say
           # so — measured here with `-step-cap-minutes 999` rather than inferred.
+          #
+          # 145/160 -> 165/180 (fabric 250/260 -> 260/275) for #2717: the ArgoCD convergence budget
+          # for the 18-chart surface is now the MEASURED 35m (hetzner/addons run 33107415369) rather
+          # than a derived-and-never-observed 19m30s, and its ceiling is 40m. Raising that budget
+          # alone would only have moved where an `addons` run dies — 145 could not contain it — so
+          # the caps move with it. The arithmetic, at the CEILING so a growing catalog needs no edit
+          # here (aws/gcp/azure/alibaba `full`, the widest real dimension):
+          #
+          #   ctx = deploy-wait 50 + argocd-converge 40 + soak 25 + day2-access 3 + headroom 7 = 125
+          #   go  = ctx + teardown 30 + 5 = 160  ·  step = go + 5 = 165  ·  job = step + 15 = 180
+          #
           # This is the outer GitHub-level backstop, NOT the effective bound on a cheap leg: the
           # ladder is per-provider and per-dimension, so a floor run is still killed by its own
           # ~100m go-timeout. This pair only binds if every finer timeout has already failed.
-          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 250 || 145 }}
-          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 265 || 160 }}
+          #
+          # TestArgoBudgetCeilingFitsTheWorkflowCaps (test/e2e/argo_budget_pure_test.go) now proves
+          # this offline on every PR, across every cloud x dimension, and additionally holds these
+          # two to being the SAME expressions as the `timeout-minutes:` above — which the
+          # "if you change one, change both" instruction asked for and nothing enforced.
+          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 260 || 165 }}
+          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 275 || 180 }}
           # Where the go-test stream is teed so capture-proof.sh can put the ASSERTIONS in the
           # committed bundle. ALETHIA_E2E_T2_RUNNER_LOG above is the RUNNER's deployment log — a
           # different stream, which carries no `--- PASS` and no A0.x decision lines.
