@@ -25,7 +25,41 @@ const (
 	// does not declare materialised from null. The provider's Read now returns a value
 	// its Create did not record; no configured intent governs the attribute.
 	ReasonUndeclaredCollection NormalizedReason = "undeclared_collection"
+	// ReasonComputedAttribute — a top-level attribute the PROVIDER SCHEMA marks
+	// Computed and neither Optional nor Required: read-only, server-set, not settable
+	// from configuration at all. No configured intent can govern it and no apply can
+	// converge it.
+	ReasonComputedAttribute NormalizedReason = "computed_attribute"
 )
+
+// reasonStrength ranks how firm each dismissal is, so examine can report the WEAKEST
+// justification a resource actually used rather than the strongest. Higher is firmer.
+//
+// The ordering is an argument, not a preference:
+//
+//   - empty_collection (3) needs no external evidence at all. It is a cardinality
+//     identity — null and [] both denote ∅ — so it is true by construction.
+//   - computed_attribute (2) rests on ONE fact read from the provider's own published
+//     schema: the attribute has no config path into it. Firm, but it is a fact about a
+//     document we fetched, and a wrong or stale schema would weaken it.
+//   - undeclared_collection (1) rests on the absence of a config expression PLUS an
+//     inference about how the provider's Read behaved at create time. Two links, the
+//     second unverifiable from the plan.
+//
+// An unranked value sorts as the weakest possible, so adding a reason and forgetting to
+// rank it can only understate a dismissal, never overstate one.
+func reasonStrength(r NormalizedReason) int {
+	switch r {
+	case ReasonEmptyCollection:
+		return 3
+	case ReasonComputedAttribute:
+		return 2
+	case ReasonUndeclaredCollection:
+		return 1
+	default:
+		return 0
+	}
+}
 
 // NormalizedResource is one resource whose EVERY refresh delta was representational.
 //
@@ -79,7 +113,7 @@ type verdict struct {
 // A resource is dismissed only when EVERY differing leaf is representational. One real
 // delta anywhere and the whole resource stays drift with its original Kind; resources
 // are never partially forgiven.
-func examine(rc *tfjson.ResourceChange, cfg configIndex) verdict {
+func examine(rc *tfjson.ResourceChange, cfg configIndex, schemas schemaIndex) verdict {
 	act := rc.Change.Actions
 	asDrift := verdict{Drift: true, Kind: classify(act)}
 
@@ -102,6 +136,18 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex) verdict {
 	declared, addrFound := cfg[tfaddr.ConfigAddress(rc.Address)]
 	configKnown := cfg != nil && addrFound
 
+	// Fail-closed on the provider schema, identically: no schema document, a provider we
+	// have no schema for, or a resource type absent from it, and the schema-aware tier
+	// never fires. Every existing caller that passes no schema therefore reaches exactly
+	// the verdicts it reached before — which is what keeps the azure fixture pinned.
+	attrSchema, typeFound := schemas[schemaKey{provider: rc.ProviderName, resourceType: rc.Type}]
+	ev := evidence{
+		declared:    declared,
+		configKnown: configKnown,
+		attrSchema:  attrSchema,
+		schemaKnown: schemas != nil && typeFound,
+	}
+
 	// Every differing leaf path, computed BEFORE the dismissal loop so the drift branch can
 	// name them too. A resource that stays drift is the case somebody has to diagnose, and
 	// naming only the resource makes that a cloud round-trip (#2503): the addresses were
@@ -119,11 +165,11 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex) verdict {
 	reason := ReasonEmptyCollection
 	attrs := make([]string, 0, len(leaves))
 	for _, d := range leaves {
-		r, ok := d.normalizing(declared, configKnown)
+		r, ok := d.normalizing(ev)
 		if !ok {
 			return asDrift
 		}
-		if r == ReasonUndeclaredCollection {
+		if reasonStrength(r) < reasonStrength(reason) {
 			reason = r
 		}
 		attrs = append(attrs, d.path)
@@ -160,7 +206,41 @@ func examine(rc *tfjson.ResourceChange, cfg configIndex) verdict {
 // boundary already declared honestly. It is also PERMANENT per attribute — a dismissal
 // writes no state, so every later refresh sees the same null before-side and dismisses
 // again.
-func (d leafDelta) normalizing(declared map[string]struct{}, configKnown bool) (NormalizedReason, bool) {
+//
+// Tier 3 — a top-level attribute the PROVIDER SCHEMA marks `Computed && !Optional &&
+// !Required`, not sensitive. That predicate is the whole tier, and it is deliberately the
+// narrowest reading of "computed" the schema admits:
+//
+//   - Required means configuration MUST set it. Never dismissed.
+//   - Optional means configuration MAY set it. Optional+Computed — `tags`,
+//     `min_tls_version`, `public_network_access_enabled` — is the overwhelmingly common
+//     shape, and it is exactly the shape an out-of-band scalar flip takes. Never
+//     dismissed. Dismissing it would silence what this package exists to surface.
+//   - Computed alone means there is NO config path into the attribute at all. The
+//     provider fills it from the API on every Read: `google_storage_bucket.updated`,
+//     an ARN, a self_link, a generation counter.
+//
+// Why it cannot hide a real out-of-band change: "out-of-band" is a claim about
+// DIVERGENCE FROM INTENT, and an attribute no configuration can express carries no
+// intent to diverge from. Nobody — operator or attacker — can set `updated` to a chosen
+// value; it is a fact the API reports about the object, not a knob on it. And the
+// converse matters more: because a refresh-only plan never applies, a computed-only
+// attribute that differs once differs FOREVER. It is not a signal that decays, it is a
+// stuck bit that makes the whole posture unreadable (#3099 — every gcp cell red on one
+// timestamp). A detector that is permanently wrong on an unactionable field is how the
+// actionable fields stop being read.
+//
+// The narrowings that remain load-bearing: not sensitive (a computed SECRET rotating —
+// a generated password, a CA key — is precisely the event to surface, and both the plan's
+// sensitivity mask and the schema's own Sensitive flag veto the dismissal); depth 0, the
+// same limitation Tier 2 states, because nested attributes need block-order
+// reconciliation this does not attempt — the motivating attribute is depth 0.
+//
+// Unlike Tiers 1 and 2 this tier does NOT constrain the delta's shape: any change to a
+// computed-only attribute qualifies, in either direction, scalar or collection. That is
+// the point — a timestamp advancing is a scalar delta with both sides non-null, which
+// neither earlier tier can express.
+func (d leafDelta) normalizing(ev evidence) (NormalizedReason, bool) {
 	beforeNull := !d.beforeSet || d.before == nil
 	afterNull := !d.afterSet || d.after == nil
 
@@ -172,14 +252,71 @@ func (d leafDelta) normalizing(declared map[string]struct{}, configKnown bool) (
 		return ReasonEmptyCollection, true
 	}
 
+	// Tier 2 is tried before Tier 3 even though Tier 3 is the firmer rule, and
+	// deliberately so. The two OVERLAP: an attribute with no config path into it is
+	// necessarily undeclared, so a computed-only collection materialising from null
+	// qualifies under both. Where a leaf could be dismissed either way the audit record
+	// must carry the WEAKER justification — the same rule examine applies across leaves,
+	// applied here within one.
+	if r, ok := d.undeclaredCollection(ev, beforeNull); ok {
+		return r, true
+	}
+	return d.computedOnly(ev)
+}
+
+// undeclaredCollection is Tier 2's predicate. beforeNull is passed rather than recomputed
+// so the two callers cannot drift apart on what "null" means.
+func (d leafDelta) undeclaredCollection(ev evidence, beforeNull bool) (NormalizedReason, bool) {
 	switch {
-	case !configKnown, d.depth != 0, d.sensitive, !beforeNull, !isCollection(d.after):
+	case !ev.configKnown, d.depth != 0, d.sensitive, !beforeNull, !isCollection(d.after):
 		return "", false
 	}
-	if _, ok := declared[d.root]; ok {
+	if _, ok := ev.declared[d.root]; ok {
 		return "", false
 	}
 	return ReasonUndeclaredCollection, true
+}
+
+// computedOnly is Tier 3's predicate, kept as its own function so the three schema flags
+// read as one expression rather than as clauses in a longer switch.
+func (d leafDelta) computedOnly(ev evidence) (NormalizedReason, bool) {
+	if !ev.schemaKnown || d.depth != 0 || d.sensitive {
+		return "", false
+	}
+	attr, ok := ev.attrSchema[d.root]
+	if !ok || attr == nil {
+		return "", false
+	}
+	if attr.Sensitive {
+		return "", false
+	}
+	// The predicate, verbatim and positive: computed, and settable from configuration by
+	// neither route.
+	if attr.Computed && !attr.Optional && !attr.Required {
+		return ReasonComputedAttribute, true
+	}
+	return "", false
+}
+
+// evidence is what one resource's dismissal tiers are allowed to consult, threaded from
+// Analyze through examine so no tier can reach for anything examine did not resolve.
+//
+// Both *Known flags exist for the same reason and behave identically: missing evidence
+// must never WIDEN what we dismiss. A tier whose evidence is absent does not guess and
+// does not fall back to a laxer rule — it simply does not fire, and the delta stays drift.
+type evidence struct {
+	// declared is the set of top-level attribute names this resource's configuration
+	// declares. Meaningful only when configKnown.
+	declared map[string]struct{}
+	// configKnown is true when the plan carried a configuration section AND this
+	// resource's address resolved inside it.
+	configKnown bool
+	// attrSchema is the provider's top-level attribute schema for this resource type.
+	// Meaningful only when schemaKnown.
+	attrSchema map[string]*tfjson.SchemaAttribute
+	// schemaKnown is true when a provider-schema document was supplied AND it covered
+	// this resource's provider and type.
+	schemaKnown bool
 }
 
 // isCollection reports whether v is a list or a map. Scalars are never collections.
@@ -366,5 +503,51 @@ func indexConfig(plan *tfjson.Plan) configIndex {
 		}
 	}
 	walk(plan.Config.RootModule, "")
+	return out
+}
+
+// schemaKey identifies one resource schema. Keyed on the provider SOURCE ADDRESS as well
+// as the type — `registry.terraform.io/hashicorp/google` + `google_storage_bucket` —
+// because a resource type name is only conventionally provider-unique, and a mirror or a
+// fork can publish the same type name with different flags. ResourceChange.ProviderName
+// carries the same fully-qualified address the schema document is keyed by, so this is a
+// lookup rather than an inference.
+type schemaKey struct {
+	provider     string
+	resourceType string
+}
+
+// schemaIndex maps a resource schema to its TOP-LEVEL attributes. Nested blocks are
+// deliberately not indexed: the schema-aware tier is depth-0 only, so indexing deeper
+// would build a structure nothing may read.
+type schemaIndex map[schemaKey]map[string]*tfjson.SchemaAttribute
+
+// indexSchemas flattens a `providers schema -json` document into the lookup examine
+// needs. Returns nil when no schema document was supplied or it carries no providers,
+// which callers treat as "no schema evidence" — the schema-aware tier then never fires,
+// rather than guessing at which attributes are computed.
+//
+// The document is large (hundreds of MB on azurerm) but this index is not: it holds one
+// pointer per top-level attribute of each resource type, into memory the decoder already
+// allocated.
+func indexSchemas(doc *tfjson.ProviderSchemas) schemaIndex {
+	if doc == nil || len(doc.Schemas) == 0 {
+		return nil
+	}
+	out := schemaIndex{}
+	for provider, ps := range doc.Schemas {
+		if ps == nil {
+			continue
+		}
+		for typ, sch := range ps.ResourceSchemas {
+			if sch == nil || sch.Block == nil || len(sch.Block.Attributes) == 0 {
+				continue
+			}
+			out[schemaKey{provider: provider, resourceType: typ}] = sch.Block.Attributes
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
 	return out
 }
