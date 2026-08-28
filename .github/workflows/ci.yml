@@ -963,6 +963,7 @@ jobs:
       # bundle, so row and bundle agree by construction; these fixtures pin that, including the
       # end-to-end case where the caller passes a DIFFERENT sha and it must not reach the ledger.
       - name: Ledger rows name the commit the run executed (not the rollup job's HEAD)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/provisioning-e2e.sh --self-test
       # Which dimension a nightly proved decides the tracking issue's TITLE, and the title is the
       # dedup key: keyed on the cloud alone, the floor and the weekly full bar collapse onto one
