@@ -49,6 +49,20 @@ export const ACTIONS = [
 	// channels/rules/deliveries vs mutate them.
 	"view_alerts",
 	"manage_alerts",
+	// Queue an AUDIT job against a project: judge a plan JSON or a set of manifests and write a
+	// signed verify_result into the project's feed.
+	//
+	// ITS OWN ACTION, not a reuse of `plan` (#2697). Two things make it distinct. It is reachable by
+	// the MODEL — `audit_infrastructure` in lib/ai/tools/scanner.ts takes `projectId` as a free
+	// optional string — so it is the verb an agent can be talked into exercising, and a verb that an
+	// agent holds should be nameable and revocable on its own. And it SPENDS: an audit is a metered
+	// job whose result is readable by everyone who can see the project. Folding that into `plan`
+	// would mean no grant can ever say "may plan, may not audit", which is a distinction an operator
+	// of someone else's infrastructure will eventually want.
+	//
+	// Costs no migration: `permission.action` is `text`, not a pg enum, and lib/authz/seed.ts syncs
+	// the registry into the DB idempotently at boot.
+	"audit",
 	// Cloud-identity connection verify (server-side; re-run via the "Re-verify" affordance).
 	"test",
 	// Support cases: post a reply to a case thread vs triage/assign/resolve (staff).
@@ -82,7 +96,7 @@ export interface PermissionDef {
  *  not listed here is not a permission and can never be granted. */
 const MATRIX: Partial<Record<Resource, readonly Action[]>> = {
 	org: ["view", "edit", "manage_billing", "manage_tokens"],
-	project: ["view", "create", "edit", "plan", "deploy", "destroy"],
+	project: ["view", "create", "edit", "plan", "deploy", "destroy", "audit"],
 	runner: ["view", "create", "edit", "destroy", "deploy"],
 	cloud_identity: ["view", "manage_identities", "test"],
 	job: ["view", "create", "edit"],
@@ -143,7 +157,7 @@ export const BUILT_IN_ROLES: Record<BuiltInRole, PermissionKey[] | "*"> = {
 	operator: PERMISSIONS.filter(
 		(p) =>
 			(arrayIncludes(
-				["view", "create", "edit", "plan", "deploy", "destroy"],
+				["view", "create", "edit", "plan", "deploy", "destroy", "audit"],
 				p.action,
 			) &&
 				!["cloud_identity", "member", "billing", "activity", "fleet"].includes(p.resource)) ||

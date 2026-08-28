@@ -168,7 +168,7 @@ export async function queueEnvironmentAudit(
 	projectId: string,
 	environmentId: string,
 ): Promise<{ jobId: string }> {
-	const actor = await authorize("plan", { type: "project", id: projectId });
+	const actor = await authorize("audit", { type: "project", id: projectId });
 	await assertEnvInOrg(projectId, environmentId, actor.orgId);
 
 	const db = getServiceDb();
