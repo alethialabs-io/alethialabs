@@ -61,6 +61,25 @@ const DIVERGENCE = "infra/github/required-checks-divergence.json";
 /** The ruleset Mergify's dev queue is the counterpart of. The other two have no queue. */
 const DEV_RULESET = "protect-dev";
 
+// WHICH BRANCHES, AND WHY NOT `/rulesets`.
+//
+// The first version of this read `GET /repos/{o}/{r}/rulesets`, which needs Administration:read —
+// a scope `GITHUB_TOKEN` cannot be granted at all. It also tried to ask for it via a
+// `permissions: administration: read` key that does not exist, and an unknown key makes Actions
+// REJECT the whole file at load time: zero jobs, a run named after the file path rather than the
+// workflow, and dev red on 16034c6d.
+//
+// `GET /repos/{o}/{r}/rules/branches/{branch}` answers the same question — the required contexts
+// actually in force — and is readable with plain repo read. It is also strictly better here: it
+// returns the EFFECTIVE rules for one branch, so an unrelated repo ruleset can no longer be
+// compared against this list, and a ruleset that is disabled or in `evaluate` mode simply does
+// not appear rather than rendering as agreement.
+const RULESET_BRANCHES = [
+	["dev", "protect-dev"],
+	["staging", "protect-staging"],
+	["main", "protect-main"],
+];
+
 /**
  * Strip HCL comments without eating a `#` that sits inside a string literal.
  *
@@ -276,13 +295,15 @@ export function compare({ hclAll, devExcluded, wiring, mergifyBlocks, divergence
  */
 export function readLiveRulesets(repo, run = (args) => execFileSync("gh", args, { encoding: "utf8" })) {
 	try {
-		const list = JSON.parse(run(["api", `repos/${repo}/rulesets`]));
-		if (!Array.isArray(list) || list.length === 0) return { rulesets: null, error: "the rulesets endpoint returned no rulesets at all" };
-		const rulesets = list.map((r) => {
-			const full = JSON.parse(run(["api", `repos/${repo}/rulesets/${r.id}`]));
-			const checks = (full.rules ?? []).filter((x) => x.type === "required_status_checks").flatMap((x) => (x.parameters?.required_status_checks ?? []).map((c) => c.context));
-			return { id: r.id, name: full.name, updated_at: full.updated_at, checks };
-		});
+		const rulesets = [];
+		for (const [branch, name] of RULESET_BRANCHES) {
+			const rules = JSON.parse(run(["api", `repos/${repo}/rules/branches/${branch}`]));
+			if (!Array.isArray(rules)) return { rulesets: null, error: `the rules endpoint returned no array for \`${branch}\`` };
+			const checks = rules
+				.filter((x) => x.type === "required_status_checks")
+				.flatMap((x) => (x.parameters?.required_status_checks ?? []).map((c) => c.context));
+			rulesets.push({ name, branch, checks });
+		}
 		return { rulesets, error: null };
 	} catch (e) {
 		return { rulesets: null, error: String(e.message ?? e).split("\n")[0] };
@@ -296,7 +317,7 @@ export function compareLive({ rulesets, hclAll, devExcluded }) {
 		const expected = rs.name === DEV_RULESET ? hclAll.filter((c) => !devExcluded.includes(c)) : hclAll;
 		const missing = expected.filter((c) => !rs.checks.includes(c));
 		const extra = rs.checks.filter((c) => !expected.includes(c));
-		rows.push({ name: rs.name, updated_at: rs.updated_at, missing, extra, live: rs.checks.length, expected: expected.length });
+		rows.push({ name: rs.name, branch: rs.branch, missing, extra, live: rs.checks.length, expected: expected.length });
 	}
 	return rows;
 }
@@ -485,7 +506,7 @@ function main() {
 		for (const row of compareLive({ rulesets, hclAll, devExcluded })) {
 			const agree = row.missing.length === 0 && row.extra.length === 0;
 			drifted = drifted || !agree;
-			console.log(`- **${row.name}** — live ${row.live}, HCL ${row.expected}, last updated ${row.updated_at}${agree ? " · agrees" : ""}`);
+			console.log(`- **${row.name}** (branch \`${row.branch}\`) — live ${row.live}, HCL ${row.expected}${agree ? " · agrees" : ""}`);
 			if (row.missing.length) console.log(`  - the HCL requires, the ruleset does NOT: ${row.missing.map((c) => `\`${c}\``).join(", ")} — an unapplied requirement enforces nothing`);
 			if (row.extra.length) console.log(`  - the ruleset requires, the HCL does NOT: ${row.extra.map((c) => `\`${c}\``).join(", ")} — an apply would REMOVE these`);
 		}
