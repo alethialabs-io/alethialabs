@@ -37,6 +37,9 @@
 
 set -euo pipefail
 
+# A chart we could not REACH is not a chart that renders wrongly (#2754) — see the lib header.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/chart-fetch.sh"
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Any ONE per-cloud fixture is enough: this check renders each CHART at its pinned coordinates to
 # prove the render is deterministic, and the chart/repo/version fields are identical across clouds
@@ -91,27 +94,48 @@ is_declared() { printf '%s\n' "$declared" | grep -qx "$1"; }
 while read -r id repo chart version ns; do
   helm repo add "rd-$id" "$repo" >/dev/null 2>&1 || true
 done < "$workdir/charts.txt"
-helm repo update >/dev/null 2>&1 || true
+chart_fetch_repo_update "$workdir/repo-update.err" || true
 
 nondet=""
 fixed=""
 failed=""
+unreachable=""
 
 while read -r id repo chart version ns; do
   [ -n "$id" ] || continue
-  for i in 1 2; do
-    # --kube-version pins the capability set, so a differing render is the CHART's own
-    # non-determinism and not a difference in what helm believes the cluster supports.
-    helm template "addon-$id" "rd-$id/$chart" \
-      --version "$version" --namespace "$ns" \
-      --values "$workdir/$id.values.json" \
-      --kube-version 1.30.0 \
-      > "$workdir/$id.$i.yaml" 2> "$workdir/$id.$i.err" || true
+  # Both renders are retried together on a network-shaped miss: this check compares them to
+  # each other, so one fetched half and one empty half is not a comparison. Only the FETCH is
+  # retried — a chart that downloads and then renders wrongly fails on the first attempt.
+  render_pair() {
+    local i
+    for i in 1 2; do
+      helm template "addon-$id" "rd-$id/$chart" \
+        --version "$version" --namespace "$ns" \
+        --values "$workdir/$id.values.json" \
+        --kube-version 1.30.0 \
+        > "$workdir/$id.$i.yaml" 2> "$workdir/$id.$i.err" || true
+    done
+    [ -s "$workdir/$id.1.yaml" ]
+  }
+  attempt=1
+  while :; do
+    render_pair && break
+    if [ "$attempt" -ge "$CHART_FETCH_ATTEMPTS" ] || ! chart_fetch_is_net_err "$workdir/$id.1.err"; then
+      break
+    fi
+    sleep $((attempt * 5))
+    attempt=$((attempt + 1))
   done
 
   if [ ! -s "$workdir/$id.1.yaml" ]; then
-    failed="$failed $id"
-    echo "RENDER FAILED  $id — $(head -1 "$workdir/$id.1.err" | cut -c1-120)"
+    # #2754: say WHICH it was. An unreachable host says nothing about the chart.
+    if chart_fetch_is_net_err "$workdir/$id.1.err"; then
+      unreachable="$unreachable $id"
+      echo "COULD NOT FETCH $id — $(chart_fetch_host "$workdir/$id.1.err") unreachable after ${CHART_FETCH_ATTEMPTS} attempts: $(head -1 "$workdir/$id.1.err" | cut -c1-100)"
+    else
+      failed="$failed $id"
+      echo "RENDER FAILED  $id — $(head -1 "$workdir/$id.1.err" | cut -c1-120)"
+    fi
     continue
   fi
 
@@ -147,6 +171,13 @@ echo
 echo "checked $total add-on(s)"
 
 status=0
+if [ -n "$unreachable" ]; then
+  echo "FAIL: chart(s) could not be FETCHED:$unreachable" >&2
+  echo "      This is a fetch failure against a third-party host, not a statement about the" >&2
+  echo "      catalogue — the chart was never rendered, so nothing was measured. See #2754." >&2
+  exit 1
+fi
+
 if [ -n "$failed" ]; then
   echo "FAIL: chart(s) did not render at all:$failed" >&2
   status=1
