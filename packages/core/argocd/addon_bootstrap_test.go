@@ -218,3 +218,96 @@ func TestVaultAddOnHostAgreesWithTheGeneratedFixture(t *testing.T) {
 		t.Fatalf("found %d vault specs in the generated fixture, want exactly 1 — this test asserted nothing", found)
 	}
 }
+
+// TestEnsureAddOnBootstrapsAppliesOnlyWhatAsks drives the whole apply path against a recording
+// kubectl, which is the only way to see the ORDER — and the order is the part that can be quietly
+// wrong.
+//
+// The DELETE must come first and must name the Job this add-on renders. A completed Job cannot be
+// re-applied (its fields are immutable), so without the delete a re-deploy silently never re-runs
+// the bootstrap and a Vault whose pod restarted stays sealed. And a delete naming the WRONG Job
+// would fail in exactly the same silent way, which is why the name is derived from the add-on id.
+func TestEnsureAddOnBootstrapsAppliesOnlyWhatAsks(t *testing.T) {
+	stub := newKubectlStub(t, 0)
+	var stdout, stderr strings.Builder
+
+	addons := []types.AddOnInstall{
+		{ID: "velero", Mode: "managed", Namespace: "velero"}, // no bootstrap — must be untouched
+		vaultBootstrapInstall(),
+	}
+	EnsureAddOnBootstraps(addons, "ghcr.io/alethialabs/runner:abc123", &stdout, &stderr)
+
+	calls := stub.calls()
+	if len(calls) != 2 {
+		t.Fatalf("kubectl was called %d time(s), want exactly 2 (one delete, one apply): %v", len(calls), calls)
+	}
+	if !strings.Contains(calls[0], "delete job alethia-bootstrap-vault -n vault") {
+		t.Errorf("first call = %q, want the delete of this add-on's own Job", calls[0])
+	}
+	if !strings.Contains(calls[1], "apply") {
+		t.Errorf("second call = %q, want the apply", calls[1])
+	}
+	// An add-on with no bootstrap must produce NO kubectl at all — the count above is what proves
+	// velero was skipped rather than merely rendering nothing.
+	if strings.Contains(strings.Join(calls, " "), "velero") {
+		t.Errorf("an add-on with no bootstrap reached kubectl: %v", calls)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("a clean run wrote to stderr: %s", stderr.String())
+	}
+}
+
+// A bootstrap that cannot be RENDERED must be reported and skipped, not panic and not silently
+// vanish — and the rest of the list must still run. A deploy whose cluster is otherwise up must not
+// fail on one add-on's bad spec, but nobody may have to guess that it did not run.
+func TestEnsureAddOnBootstrapsReportsAnUnrenderableSpec(t *testing.T) {
+	stub := newKubectlStub(t, 0)
+	var stdout, stderr strings.Builder
+
+	broken := vaultBootstrapInstall()
+	broken.ID = "vault-two"
+	broken.Bootstrap.Kind = "not-a-kind"
+	EnsureAddOnBootstraps([]types.AddOnInstall{broken, vaultBootstrapInstall()},
+		"img", &stdout, &stderr)
+
+	if !strings.Contains(stderr.String(), "vault-two") {
+		t.Errorf("stderr does not name the add-on whose bootstrap was skipped: %q", stderr.String())
+	}
+	// The GOOD one still ran. A loop that abandoned the rest on the first bad entry would leave
+	// every later add-on unbootstrapped with only one warning to show for it.
+	if got := strings.Join(stub.calls(), " "); !strings.Contains(got, "alethia-bootstrap-vault ") {
+		t.Errorf("the well-formed bootstrap did not run after a broken one: %v", stub.calls())
+	}
+}
+
+// An apply that FAILS is reported and does not stop the deploy. The cluster is up; the add-on's own
+// health is what reports the consequence, and it reports it honestly.
+func TestEnsureAddOnBootstrapsSurvivesAFailedApply(t *testing.T) {
+	newKubectlStub(t, 0, stubRule{Match: "apply", Exit: 1})
+	var stdout, stderr strings.Builder
+
+	EnsureAddOnBootstraps([]types.AddOnInstall{vaultBootstrapInstall()}, "img", &stdout, &stderr)
+
+	if !strings.Contains(stderr.String(), "bootstrap apply failed") {
+		t.Errorf("a failed apply was not reported: %q", stderr.String())
+	}
+}
+
+// Nothing to do must do nothing — no kubectl, no output. Every add-on surface but the marketplace
+// Vault is this case, so a loop that shelled out unconditionally would run a delete per add-on on
+// every deploy in the product.
+func TestEnsureAddOnBootstrapsIsSilentWithNothingToDo(t *testing.T) {
+	stub := newKubectlStub(t, 0)
+	var stdout, stderr strings.Builder
+
+	EnsureAddOnBootstraps(nil, "img", &stdout, &stderr)
+	EnsureAddOnBootstraps([]types.AddOnInstall{{ID: "loki", Mode: "managed", Namespace: "monitoring"}},
+		"img", &stdout, &stderr)
+
+	if got := stub.calls(); len(got) != 0 {
+		t.Errorf("kubectl ran with no bootstrap to perform: %v", got)
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Errorf("output with nothing to do: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
