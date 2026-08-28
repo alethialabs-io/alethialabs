@@ -193,10 +193,32 @@ describe("harbor render determinism (#2823)", () => {
 		expect(v.jobservice.existingSecretKey).toBe("JOBSERVICE_SECRET");
 		expect(v.registry.existingSecretKey).toBe("REGISTRY_HTTP_SECRET");
 
-		// certSource `auto` is what called genSignedCert every render.
+		// The DEFAULT path exposes over clusterIP, so there is no ingress TLS Secret for
+		// genSignedCert to re-mint and TLS is off — enabling it would promise an https
+		// `externalURL` that nothing terminates.
+		expect(v.expose.type).toBe("clusterIP");
+		expect((v.expose.tls as Record<string, unknown>).enabled).toBe(false);
+	});
+
+	// #2823's actual fix lives on the INGRESS path, and that is where it is asserted — the default
+	// changed to clusterIP (an Ingress no controller claims never gets a load-balancer address, so
+	// ArgoCD held addon-harbor Progressing forever), and asserting the default alone would have
+	// silently stopped covering the non-determinism this suite exists for.
+	it("keeps certSource none on the INGRESS path, where genSignedCert would otherwise re-mint every render", async () => {
+		const { getAddOn: get, resolveAddOnInstall, generateAddonSecrets } = await load();
+		const def = get("harbor") as AddOnDef;
+		const enabled = resolveAddOnInstall({
+			addon_id: "harbor",
+			mode: "managed",
+			values: { ...generateAddonSecrets(def, {}), exposeType: "ingress" },
+		});
+		const v = enabled?.values as Record<string, Record<string, unknown>>;
+
+		expect(v.expose.type).toBe("ingress");
+		// certSource `auto` — the chart default — is what called genSignedCert every render.
 		expect((v.expose.tls as Record<string, unknown>).certSource).toBe("none");
-		// …and TLS stays ENABLED, so `externalURL` remains https. `tls.enabled: false` would also
-		// be deterministic and would silently make the advertised scheme wrong.
+		// …and TLS stays ENABLED here, so `externalURL` remains https. `tls.enabled: false` would
+		// also be deterministic and would silently make the advertised scheme wrong.
 		expect((v.expose.tls as Record<string, unknown>).enabled).toBe(true);
 	});
 

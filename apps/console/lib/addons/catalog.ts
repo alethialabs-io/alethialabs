@@ -1304,10 +1304,23 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		configSchema: z.object({
 			/** Persistent volume size for the registry store (GiB). */
 			storageGb: z.coerce.number().int().min(10).max(2000).default(50),
-			/** How the registry is exposed outside the cluster. */
+			/**
+			 * How the registry is exposed outside the cluster.
+			 *
+			 * DEFAULT clusterIP, NOT the chart's `ingress` — the same call, for the same measured
+			 * reason, that `hetznerRegistryValues` already makes for the `registry` KIND: an ingress
+			 * needs an ingress controller AND a resolvable host, and the chart's default host
+			 * `core.harbor.domain` resolves nowhere. An add-on installed at catalog defaults carries
+			 * no domain, so the cluster network is the only address it truly has.
+			 *
+			 * This is not cosmetic. ArgoCD's Ingress health check reports **Progressing** until
+			 * `.status.loadBalancer` is populated, and nothing populates it for an Ingress no
+			 * controller has claimed — so `addon-harbor` sat Healthy-pods/Progressing-app forever,
+			 * holding the whole add-on cell red. See the toValues comment for the proof.
+			 */
 			exposeType: z
 				.enum(["ingress", "clusterIP", "nodePort", "loadBalancer"])
-				.default("ingress"),
+				.default("clusterIP"),
 			/** Harbor admin password (secret — encrypted at rest; empty = Alethia mints one, #2846). */
 			adminPassword: z.string().default(""),
 			/**
@@ -1383,14 +1396,30 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			},
 			expose: {
 				type: c.exposeType,
-				// certSource `auto` — the chart default — calls genSignedCert on every render, so
-				// the ingress TLS Secret and the pod-template checksums that hash it move every
-				// time ArgoCD reconciles (#2823). `none` is the chart's own documented answer for
-				// "the ingress controller already has a certificate", which on every Alethia
-				// cluster it does: cert-manager is the platform TLS mechanism and terminates at
-				// the ingress. TLS stays ENABLED, so `externalURL` remains https — which is why
-				// this is `none` and not `tls.enabled: false`, the other deterministic option.
-				tls: { enabled: true, certSource: "none" },
+				// ── WHY THE TLS BLOCK FOLLOWS exposeType RATHER THAN BEING FIXED ──
+				//
+				// On the INGRESS path, `certSource: none` is load-bearing and stays: the chart
+				// default `auto` calls genSignedCert on every render, so the ingress TLS Secret and
+				// the pod-template checksums that hash it move every time ArgoCD reconciles
+				// (#2823). `none` is the chart's own documented answer for "the ingress controller
+				// already has a certificate", and TLS stays ENABLED so `externalURL` remains https
+				// — which is why it is `none` and not `tls.enabled: false`.
+				//
+				// That comment used to add "which on every Alethia cluster it does: cert-manager is
+				// the platform TLS mechanism". THAT IS NOT TRUE, and it matters here: cert-manager
+				// installs CONDITIONALLY — `CertManagerEnabled` is `ManagedCertificate && DNSEnabled
+				// && DomainName != "" && CertManagerSolver() != ""` (infra_facts.go). A cluster with
+				// no managed certificate has no cert-manager and no terminating certificate, so on
+				// the default path there is nothing for `certSource: none` to defer to.
+				//
+				// Off the ingress path there is no ingress TLS Secret at all, so #2823's
+				// non-determinism cannot arise and enabling TLS would only promise an https
+				// `externalURL` that nothing terminates. `hetznerRegistryValues` reaches the same
+				// pair — clusterIP with tls disabled — for the `registry` kind.
+				tls:
+					c.exposeType === "ingress"
+						? { enabled: true, certSource: "none" }
+						: { enabled: false },
 			},
 		}),
 		// Harbor reads HARBOR_ADMIN_PASSWORD from `existingSecretAdminPassword` at the key
