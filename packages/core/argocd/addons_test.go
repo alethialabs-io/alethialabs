@@ -111,6 +111,14 @@ func TestRenderAddOnServerSideApply(t *testing.T) {
 			if !strings.Contains(manifest, "- RespectIgnoreDifferences=true") {
 				t.Errorf("%s manifest missing RespectIgnoreDifferences=true\n---\n%s", tc.name, manifest)
 			}
+			// ServerSideApply=true ALSO selects the diff strategy, and the one it selects
+			// (structured-merge) cannot reproduce the API-server defaults inside a StatefulSet's
+			// volumeClaimTemplates — which pinned harbor/tempo/vault OutOfSync forever. This
+			// annotation overrides the COMPARISON only. It must travel with ServerSideApply on both
+			// shapes, so the two are asserted in the same test rather than in separate ones.
+			if !strings.Contains(manifest, "argocd.argoproj.io/compare-options: ServerSideDiff=true") {
+				t.Errorf("%s manifest missing the ServerSideDiff compare-option\n---\n%s", tc.name, manifest)
+			}
 		})
 	}
 }

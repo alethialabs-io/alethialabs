@@ -230,9 +230,18 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 		APIVersion: "argoproj.io/v1alpha1",
 		Kind:       "Application",
 		Metadata: addonAppMeta{
-			Name:        AddOnAppName(a.ID),
-			Namespace:   "argocd",
-			Annotations: map[string]string{"argocd.argoproj.io/sync-wave": strconv.Itoa(a.SyncWave)},
+			Name:      AddOnAppName(a.ID),
+			Namespace: "argocd",
+			Annotations: map[string]string{
+				"argocd.argoproj.io/sync-wave": strconv.Itoa(a.SyncWave),
+				// Server-Side Diff. MEASURED, not chosen — see the SyncPolicy comment below for the
+				// mechanism and for the run that settled it. `ServerSideApply=true` also selects the
+				// diff STRATEGY, and the one it selects (structured-merge) cannot reproduce the
+				// fields the API server materialises inside a StatefulSet's volumeClaimTemplates, so
+				// those Applications sat Healthy-but-OutOfSync forever. This annotation overrides
+				// only the comparison; the apply is untouched.
+				"argocd.argoproj.io/compare-options": "ServerSideDiff=true",
+			},
 			Labels: map[string]string{
 				"alethia.io/managed-by":   "addon-marketplace",
 				"alethia.io/addon-id":     a.ID,
@@ -381,24 +390,50 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 				//	  ("Default to SSD with SSA and remove SMD") is open: upstream is RETIRING this
 				//	  strategy, not fixing it.
 				//
-				// So `ServerSideDiff=true` is the leading candidate and is NOT flipped here yet.
-				// The reason is the discipline this issue has already broken twice: our
-				// predicted-live probe measured that a `kubectl apply --server-side --dry-run=server
-				// --field-manager=argocd-controller` predicts all four live StatefulSets EXACTLY,
-				// but that is OUR reproduction, not argo-cd's — argo-cd's own server-side path also
-				// applies normalizers and removeWebhookMutation.
+				// ── THE MEASUREMENT WAS TAKEN, AND `ServerSideDiff=true` IS NOW SET ──
 				//
-				// Asking the CLI for that comparison does not work and cannot be made to: it
-				// refuses `--server-side-diff` unless the Application ALREADY carries the
-				// annotation under evaluation, and its RPC needs a cluster REST config that the
-				// `--core` path inside the controller pod does not have (#3140, hetzner/addons run
-				// 33172643012). So test/e2e/argo_ssd_experiment.go asks for the OUTCOME instead:
-				// it sets `compare-options: ServerSideDiff=true` on ONE already-failing
-				// Application inside the e2e run, watches whether the controller then reports it
-				// Synced, and removes the annotation again. That is argo-cd's own verdict on the
-				// real cluster, and it turns this from a bet across all 17 add-ons into a
-				// measurement — hetzner being the cheap cloud to take it on. Nothing in THIS file
-				// changes until that measurement says FLIP WOULD FIX IT.
+				// It is set as a compare-option ANNOTATION in the Metadata literal above, not as a
+				// syncOption here: it overrides the COMPARISON only. `ServerSideApply=true` below is
+				// deliberately unchanged, so the apply is exactly what it was.
+				//
+				// The bar this had to clear was never "an argument that it should work". Our own
+				// predicted-live probe measured that a `kubectl apply --server-side
+				// --dry-run=server --field-manager=argocd-controller` predicts all four live
+				// StatefulSets EXACTLY — but that is OUR reproduction, and argo-cd's server-side
+				// path also applies normalizers and removeWebhookMutation. The ruling was that only
+				// argo-cd's OWN comparison could authorise the flip.
+				//
+				// Asking the CLI for it does not work and cannot be made to: it refuses
+				// `--server-side-diff` unless the Application ALREADY carries the annotation under
+				// evaluation, and its RPC needs a cluster REST config the `--core` path inside the
+				// controller pod does not have (#3140, hetzner/addons run 33172643012). So
+				// test/e2e/argo_ssd_experiment.go asked for the OUTCOME instead — it sets the
+				// annotation on one already-failing Application, watches what the controller then
+				// reports, and removes it again.
+				//
+				// hetzner/addons run 33199532768 returned FLIP WOULD FIX IT on BOTH subjects:
+				//
+				//	addon-tempo   OutOfSync → Synced, no sync operation in the window
+				//	addon-harbor  OutOfSync → Synced, no sync operation in the window
+				//
+				// with `.spec` content identical across the window in both cases (metadata.generation
+				// moved 82→84 and 89→91, which is the status-write counter #3203 established is not
+				// a spec-change signal). Nothing about the cluster or the charts changed; the only
+				// difference was the diff strategy.
+				//
+				// Reproduced independently, off the metered path, on kind + the pinned argo-cd
+				// chart 9.5.11 (v3.3.9) driven through RenderAddOnApplication: addon-tempo comes up
+				// Healthy/OutOfSync on apps/StatefulSet/addon-tempo and goes to Synced with zero
+				// residual OutOfSync resources the moment the annotation lands.
+				//
+				// AND — the property no version of this experiment tested, because it is the one
+				// that matters to whoever is on call — the flip does NOT blind the diff. On that
+				// same rig, with ServerSideDiff on and the Application Synced, changing the live
+				// StatefulSet's container image out from under argo-cd put it straight back to
+				// OutOfSync naming that StatefulSet. That is the whole reason an ignoreDifferences
+				// on volumeClaimTemplates was refused twice: suppressing the symptom would have
+				// bought the same green by making argo-cd stop looking, and drift would have gone
+				// undetected forever.
 				//
 				// Removing ServerSideApply is NOT an option — see the package comment: it is what
 				// keeps kube-prometheus-stack's CRDs under the 262144-byte annotation limit.
