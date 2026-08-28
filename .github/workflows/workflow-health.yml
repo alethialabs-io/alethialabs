@@ -29,7 +29,6 @@ on:
 permissions:
   contents: read
   actions: read # read each workflow's recent run conclusions
-  administration: read # read the branch rulesets' required status checks (#3180)
   issues: write # upsert the one tracking issue
 
 concurrency:
