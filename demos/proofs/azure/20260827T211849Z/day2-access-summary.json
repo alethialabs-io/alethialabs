@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "provider": "azure",
+  "endpoint_surfaced": true,
+  "endpoint": "https://aks-sec-33115079834-1-alethia-nl-2jb7sxqv.hcp.swedencentral.azmk8s.io:443",
+  "kube_reachable": true,
+  "kube_authorized": true,
+  "auth_action": "* / *",
+  "ready_nodes": 3,
+  "argocd_url_checked": false,
+  "argocd_url": "",
+  "argocd_url_reachable": false,
+  "verdict": "✅ day2-access: endpoint surfaced=true · kube reachable=true authorized=true (can-i * / *) · nodes ready=3 · argocd-url: n/a (no ingress on this cloud yet — access via port-forward)"
+}

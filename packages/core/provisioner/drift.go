@@ -138,6 +138,43 @@ func RunDriftDetection(ctx context.Context, params DriftParams) (*drift.Posture,
 	}
 
 	posture := drift.Analyze(planJSON)
+
+	// Provider schemas tell the normalizer which attributes have no config path into them
+	// at all — server-set, read-only fields such as google_storage_bucket.updated. Without
+	// them a refresh-only check reports such a field as drift on EVERY scan, forever,
+	// because only an apply rewrites state and this step never applies (#3099).
+	//
+	// Fetched only when the schema-free pass already reported drift, which is what makes
+	// the cost acceptable. The reordering is safe because the schema evidence is
+	// one-directional: it can only move a resource from drifted to dismissed, never the
+	// reverse (drift.AnalyzeWithSchemas adds a dismissal tier and removes none), so an
+	// in-sync posture cannot become drifted by learning more. drift's
+	// TestSchemasNeverIncreaseDrift pins that invariant.
+	//
+	// Cost, and why there is no cache. The workdir is already `init`-ed, so this is a
+	// local plugin RPC against the downloaded provider binaries: no network egress, no
+	// cloud API call. It is still multi-second and hundreds of megabytes of JSON on a
+	// large provider (azurerm), which is why the output is silenced
+	// (tofu.ProvidersSchema) and why it runs at most once per drift job. A cache keyed on
+	// provider+version would never see a second hit — RunDriftDetection builds a fresh
+	// temp workdir, analyses one plan and returns, and for BYO IaC the whole call runs
+	// inside a per-job container sandbox (apps/runner/internal/agent/stage.go,
+	// runDriftStage) that is torn down after it. Fetching HERE rather than in the runner
+	// parent also means nothing new crosses the sandbox boundary — only the marshalled
+	// Posture ever does.
+	//
+	// Best-effort, exactly like the outputs read below: a failure must NOT fail the drift
+	// check. Without a schema the schema-aware tier fails closed and never fires, so the
+	// posture stays the one already computed above.
+	if !posture.InSync {
+		schemas, schemaErr := tf.ProvidersSchema(ctx)
+		if schemaErr != nil {
+			fmt.Fprintf(stderr, "Warning: could not read provider schemas; computed-attribute normalization is off for this run: %v\n", schemaErr)
+		} else {
+			posture = drift.AnalyzeWithSchemas(planJSON, schemas)
+		}
+	}
+
 	if b, mErr := json.Marshal(posture); mErr == nil {
 		fmt.Fprintf(stdout, "Drift posture: %s\n", string(b))
 	}

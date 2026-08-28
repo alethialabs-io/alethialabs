@@ -297,6 +297,24 @@ func (t *TofuCLI) ShowPlanJSON(ctx context.Context, planFile string) (*tfjson.Pl
 	return t.tf.ShowPlanFile(ctx, planFile)
 }
 
+// ProvidersSchema returns the schema of every provider the workdir uses. The workdir must
+// already be initialised — this is a local plugin RPC against the downloaded provider
+// binaries, so it costs no network egress and no cloud API call.
+//
+// The output is SILENCED for the same reason ShowPlanJSON's is, plus one of its own: an
+// azurerm schema dump is hundreds of megabytes of JSON. Streamed to the lifecycle writer it
+// would land in the console job log and in execution_metadata, which is how a job log stops
+// being readable at all. The decoded value reaches the caller from terraform-exec's internal
+// parse buffer; the raw JSON never touches the writer.
+//
+// It is not fast — multi-second on a large provider — so callers should invoke it at most
+// once per run and treat a failure as "no schema" rather than as a failure of the run.
+func (t *TofuCLI) ProvidersSchema(ctx context.Context) (*tfjson.ProviderSchemas, error) {
+	fmt.Println("Reading provider schemas...")
+	defer t.silenceStdout()()
+	return t.tf.ProvidersSchema(ctx)
+}
+
 func OverrideTfvarsFromMap(dir string, tfvars map[string]interface{}) (string, error) {
 	tfvarsPath := filepath.Join(dir, "tofu.tfvars.json")
 

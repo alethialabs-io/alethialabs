@@ -513,3 +513,47 @@ func TestByoIacPostureDecodesInSync(t *testing.T) {
 		}
 	})
 }
+
+// TestByoIacPostureDetail is the guard on the field this leg used to throw away.
+//
+// drift.Analyze has always emitted `attributes` (the paths that actually differed). byoIacPosture
+// did not decode it, so every drift verdict named a resource TYPE and nothing else — and
+// gcp/maxconfig run 33107356336 died on "the environment did NOT heal … [google_storage_bucket]",
+// which cannot separate "the label did not revert" from "something else on the bucket will not
+// converge". Those go to different fixes.
+func TestByoIacPostureDetail(t *testing.T) {
+	var p byoIacPosture
+	if err := json.Unmarshal([]byte(`{
+	  "in_sync": false, "drifted": 1,
+	  "details": [{"address":"google_storage_bucket.drift_probe","type":"google_storage_bucket",
+	               "kind":"update","attributes":["labels.drift_marker","effective_labels"]}]
+	}`), &p); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := p.detail()
+	for _, want := range []string{
+		"google_storage_bucket.drift_probe", // the ADDRESS, not just the type
+		"(update)",
+		"labels.drift_marker",
+		"effective_labels",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("detail() must carry %q, got %s", want, got)
+		}
+	}
+
+	// "the analyzer reported no attribute paths" must not render like "we forgot to ask" — that
+	// ambiguity is the whole reason this field was invisible for so long.
+	var bare byoIacPosture
+	if err := json.Unmarshal([]byte(`{"in_sync":false,"drifted":1,
+	  "details":[{"address":"a.b","type":"t","kind":"update"}]}`), &bare); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.Contains(bare.detail(), "<none reported>") {
+		t.Errorf("an empty attribute list must say so explicitly, got %s", bare.detail())
+	}
+
+	if got := (byoIacPosture{}).detail(); got != "[]" {
+		t.Errorf("an empty posture renders %q, want []", got)
+	}
+}

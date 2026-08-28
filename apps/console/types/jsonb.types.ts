@@ -869,7 +869,10 @@ export interface DriftResource {
 
 // Why a refresh delta was dismissed as representational rather than counted as drift.
 // Mirrors the Go `drift.NormalizedReason` (packages/core/drift/normalize.go).
-export type DriftNormalizedReason = "empty_collection" | "undeclared_collection";
+export type DriftNormalizedReason =
+	| "empty_collection"
+	| "undeclared_collection"
+	| "computed_attribute";
 
 // One resource whose every refresh delta was representational — a difference in how the
 // provider encodes a value, not a difference in the infrastructure.

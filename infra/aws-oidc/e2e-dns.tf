@@ -56,6 +56,17 @@ resource "aws_route53_zone" "e2e" {
   # No `force_destroy`. This zone is long-lived by design and its name servers are referenced by a
   # delegation held in ANOTHER provider's control plane — destroying it silently breaks a record
   # this stack cannot see or repair.
+  #
+  # `prevent_destroy` because the comment above was not enough. `count` is driven by a variable whose
+  # default is "", and terraform.tfvars is gitignored — so on any checkout without it, a bare apply
+  # plans this zone for DESTRUCTION. Measured 2026-08-28: the live zone holds 5 records and its NS
+  # set is delegated at Cloudflare, so a replacement would resolve for nobody until re-delegated by
+  # hand. This makes that a PLAN-time refusal with a readable message instead of a mid-apply error.
+  # Tearing the zone down deliberately is a code edit, which is the correct weight for the action.
+  lifecycle {
+    prevent_destroy = true
+  }
+
   tags = {
     ManagedBy = "alethia-infra"
     Stack     = "aws-oidc"

@@ -1,0 +1,31 @@
+{
+  "enabled": true,
+  "provider": "hetzner",
+  "repo": "https://github.com/alethialabs-io/enterprise-demo",
+  "ref": "main",
+  "path": "iac/drift/hetzner",
+  "pinned_commit_sha": "ab54450f2a7a16203db1ea32af4f43be0d8fc303",
+  "gate_blocked_non_allowlisted": true,
+  "clone_at_pinned_commit_logged": true,
+  "gate_passed_logged": true,
+  "deploy_status": "SUCCESS",
+  "receipt_plan_sha256": "5cd04bd6c4d7827836b6a0d1f0363f88dda775ef06c739998a845ff3603d4fa9",
+  "state_on_proxy": true,
+  "state_resources": 1,
+  "no_cluster_name_output": true,
+  "alethia_context": "alethia-nl/33114945230-1",
+  "drift_target": "alethia-byo-e2e33114",
+  "baseline_in_sync": true,
+  "mutation_applied": true,
+  "drifted_count": 1,
+  "drifted_types": [
+    "hcloud_placement_group"
+  ],
+  "drifted_is_probe_resource": true,
+  "heal_status": "SUCCESS",
+  "healed_in_sync": true,
+  "destroy_status": "SUCCESS",
+  "state_cleared": true,
+  "state_cleared_by": "delete",
+  "verdict": "✅ byo-iac on hetzner: iac/drift/hetzner@ab54450f2a7a… https://github.com/alethialabs-io/enterprise-demo · gate-blocks-bad=true · pinned-clone-logged=true · receipt=5cd04bd6c4d7… · state-on-proxy=true(1 res) · no-cluster-output=true · ctx=alethia-nl/33114945230-1 · drift baseline-in-sync=true → induced(alethia-byo-e2e33114)=1[hcloud_placement_group] → healed-in-sync=true · destroy=SUCCESS state-cleared=true"
+}

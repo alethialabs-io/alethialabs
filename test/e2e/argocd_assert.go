@@ -418,22 +418,50 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 // then inherited, unchanged, by the full 18-chart one — which is what killed the first real hetzner
 // run of the 18-add-on set (#2062) with velero still `Missing`. The surface is knowable at runtime,
 // so derive from it rather than picking a bigger constant and hoping.
+//
+// THE RATE AND THE CEILING ARE MEASURED, not estimated (#2717). The first derivation was itself a
+// guess — 6m + 45s/chart, clamped at 20m — and it produced 19m30s for the 18-chart surface. Run
+// 33107415369 (hetzner/addons) was dispatched with ALETHIA_E2E_ARGO_TIMEOUT=35m purely to tell
+// "slow" from "never converges", and it answered: kube-prometheus-stack, loki and vault were all
+// `Progressing` at 19m30s and all THREE had cleared by 35m. So 19m30s was not a budget, it was a
+// verdict — every `addons` and `full` run failed on the clock before it could reach a real defect.
+// The constants below are set so the 18-chart surface derives 35m, the number that actually
+// converged, rather than a number that was never observed to.
 const (
 	// argoBudgetBase covers ArgoCD itself: repo-server clone, the first reconcile loop, and the
-	// app-of-apps landing before any add-on chart is pulled.
-	argoBudgetBase = 6 * time.Minute
-	// argoBudgetPerAddOn is per chart in the surface. Sub-minute because ArgoCD syncs applications
-	// in PARALLEL — this buys headroom for pull + CRD establish contending on a small node, not a
-	// serial install. At the lean tier it lands the total on ~8m, i.e. exactly today's behaviour.
-	argoBudgetPerAddOn = 45 * time.Second
+	// app-of-apps landing before any add-on chart is pulled. Raised 6m → 8m so it EQUALS the floor:
+	// the lean tier now derives its historical 8m from the base itself rather than from a clamp, so
+	// the value a lean run gets no longer depends on which of the two happens to be larger.
+	argoBudgetBase = 8 * time.Minute
+	// argoBudgetPerAddOn is per chart in the surface. ArgoCD syncs applications in PARALLEL, so this
+	// is not a serial install cost — it is the marginal pull + CRD-establish + rollout contention one
+	// more chart adds on a small node pool. The old 6m+45s pair was a guess, and across 18 charts it
+	// under-bought by 15m30s; 90s is the rate that lands the measured surface on its measured
+	// convergence:
+	//
+	//	8m + 18 × 90s = 8m + 27m = 35m   ← run 33107415369
+	argoBudgetPerAddOn = 90 * time.Second
 	// argoBudgetFloor never lets a derived value come out SHORTER than the constant it replaced,
 	// so no existing scenario gets tighter as a side effect of this change.
 	argoBudgetFloor = 8 * time.Minute
-	// argoBudgetCeiling stays under the smallest parent bound in t2_providers.go (hetzner's 25m
-	// waitTimeout). Budgeting past the timeout that CANCELS you buys nothing — the run dies at the
-	// parent instead, with a less useful message. That parent is the real ceiling, not the go-test
-	// cap, which is why this is pinned by a test rather than left as a comment.
-	argoBudgetCeiling = 20 * time.Minute
+	// argoBudgetCeiling is the clamp on catalog growth, and it is deliberately NO LONGER tied to any
+	// provider's waitTimeout. That justification was wrong in two independent ways: it quoted 25m
+	// when hetzner's row has said 40m since #3027's deadline change, and — the part that matters —
+	// waitTimeout never bounded this wait at all. It bounds cp.WaitTerminal, a DIFFERENT and EARLIER
+	// poll; both are separate summed terms of the one ctx ResolveT2Budget builds (t2_budget.go), so
+	// no waitTimeout can ever cancel an Argo wait.
+	//
+	// What actually contains this wait is that ctx, and above it the step and job `timeout-minutes`
+	// in .github/workflows/e2e-nightly.yml — the two rungs GitHub evaluates before the step body
+	// runs, which is why cmd/t2budget verifies them at the top of the step. So the ceiling is set to
+	// what those caps hold, and TestArgoBudgetCeilingFitsTheWorkflowCaps reads the caps out of the
+	// workflow and proves it offline, on every PR, instead of on a paid run.
+	//
+	// 40m = the measured 35m plus a 5m margin, which at 90s/chart leaves the derivation unclamped
+	// through 21 charts. At 22 it clamps, and a human raises this constant and the two caps in one
+	// change — which is the whole job of a clamp: make catalog growth a decision somebody takes,
+	// rather than a ladder that silently walks past a cap nobody re-derived.
+	argoBudgetCeiling = 40 * time.Minute
 )
 
 // ArgoAssertTimeout is the bound for AssertArgoAppsHealthy: ALETHIA_E2E_ARGO_TIMEOUT when set,
@@ -1037,6 +1065,7 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
 	// the one outcome that cannot be acted on without knowing whether the status is stale.
 	if strings.Contains(report, "reports NO difference") {
 		report += argoSyncStaleness(app, readArgoReconciledAt(ctx, kubeconfigPath, app), time.Now()) + "\n"
+		report += argoHardRefreshVerdict(cctx, kubeconfigPath, target, app) + "\n"
 	}
 	return report
 }
@@ -1579,4 +1608,76 @@ func tailAfter(text, marker string) string {
 		return text[i:]
 	}
 	return ""
+}
+
+// argoHardRefreshVerdict asks ArgoCD to recompute the Application from scratch and reports whether
+// the OutOfSync status SURVIVES that.
+//
+// It answers the one thing `reports NO difference` + a fresh `reconciledAt` still cannot. A fresh
+// reconcile is not a fresh RENDER: ArgoCD caches generated manifests per repo revision, so a
+// reconcile can be seconds old and still be comparing against a cached desired state. `--hard-refresh`
+// discards that cache and regenerates. So:
+//
+//	Synced after a hard refresh    the OutOfSync was a stale MANIFEST CACHE. The cluster already
+//	                              matched; nothing about the chart or the cluster needs changing,
+//	                              and the harness should refresh before asserting.
+//	still OutOfSync               ArgoCD genuinely believes live differs from desired while its own
+//	                              diff prints nothing — a normalisation difference, and a real
+//	                              finding worth an issue rather than a retry.
+//
+// That distinction is worth a paid run on its own: as of 2026-08-28 every OutOfSync resource across
+// two runs and eight charts (valkey, rabbitmq, a CNPG Cluster, three harbor StatefulSets, loki,
+// tempo) is a StatefulSet or a PVC-owning CR, and it blocks maxconfig and addons on every cloud.
+//
+// Best-effort, like everything else on this path: it runs only on an already-failing verdict, it is
+// bounded by the caller's context, and every failure to ASK renders as "could not tell" rather than
+// as either answer.
+func argoHardRefreshVerdict(ctx context.Context, kubeconfigPath, target, app string) string {
+	// The hard refresh runs INSIDE the application-controller pod (it needs --core plus
+	// repo-server reachability); the status is then read from OUTSIDE it.
+	//
+	// That split is not stylistic. The first attempt exec'd BOTH commands in the pod and the second
+	// one died with `exec: "kubectl": executable file not found in $PATH` — the controller image
+	// ships `argocd` and not `kubectl`. The probe reported COULD NOT ASK rather than inventing a
+	// verdict, which is the fail-safe working, but it answered nothing. `readArgoReconciledAt`
+	// already reads Application status with the HOST kubectl; this now does the same.
+	inPod := func(args ...string) (string, error) {
+		full := append([]string{"--kubeconfig", kubeconfigPath, "-n", "argocd", "exec", target, "--"}, args...)
+		out, err := exec.CommandContext(ctx, "kubectl", full...).CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	if out, err := inPod("argocd", "app", "get", app, "--core", "--hard-refresh", "-o", "json"); err != nil {
+		return interpretHardRefresh("", err, out)
+	}
+	raw, err := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", "argocd", "get", "applications.argoproj.io", app,
+		"-o", "jsonpath={.status.sync.status}").CombinedOutput()
+	if err != nil {
+		return interpretHardRefresh("", err, strings.TrimSpace(string(raw)))
+	}
+	return interpretHardRefresh(strings.TrimSpace(string(raw)), nil, "")
+}
+
+// interpretHardRefresh is the verdict half of argoHardRefreshVerdict, split out so the mapping is
+// testable without a cluster — the same shape interpretArgoDiff and interpretByoSyncPolicy use.
+//
+// `askErr` non-nil means the question could not be PUT, which is not an answer in either direction
+// and must never render like one.
+func interpretHardRefresh(syncStatus string, askErr error, detail string) string {
+	if askErr != nil {
+		if len(detail) > 400 {
+			detail = detail[:400] + "…"
+		}
+		return fmt.Sprintf("  hard refresh: COULD NOT ASK (%v) — this does NOT decide between a stale manifest cache and a real normalisation difference: %s",
+			askErr, detail)
+	}
+	switch strings.TrimSpace(syncStatus) {
+	case "Synced":
+		return "  hard refresh: the Application is now SYNCED — the OutOfSync was a STALE MANIFEST CACHE, not a difference. ArgoCD had reconciled recently but was comparing against a cached render."
+	case "":
+		return "  hard refresh: the sync status came back EMPTY — cannot say whether it survived"
+	default:
+		return "  hard refresh: still " + strings.TrimSpace(syncStatus) +
+			" — the status SURVIVES a full re-render, so ArgoCD believes live differs from desired while its own diff prints nothing. That is a normalisation difference and needs a fix, not a retry."
+	}
 }
