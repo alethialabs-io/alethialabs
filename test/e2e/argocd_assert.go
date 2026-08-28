@@ -1163,6 +1163,11 @@ func dumpArgoAppDiffs(ctx context.Context, kubeconfigPath string, observed map[s
 		}
 		b.WriteString(dumpArgoAppDiff(ctx, kubeconfigPath, name, observed[name].OutOfSyncRefs))
 	}
+	// The one comparison no diagnostic above can make: argo-cd's own verdict on whether live
+	// matches desired under Server-Side Diff. Not asked as a diff — #3140 proved the CLI cannot
+	// answer that — but run as an OUTCOME on one or two of these same Applications, and reverted.
+	// See argo_ssd_experiment.go.
+	b.WriteString(argoSSDExperiment(ctx, kubeconfigPath, outOfSync))
 	return b.String()
 }
 
@@ -1206,11 +1211,10 @@ const argoDiffExitCodeMeansDiff = 1
 func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string, refs []outOfSyncRef) string {
 	// Generous: --core renders the manifests through the repo-server, which pulls the chart, and on
 	// the empty-diff branch it ALSO fetches the whole Application's manifests and server-side
-	// dry-runs them (argo_predicted_live.go), then runs argo-cd's OWN server-side diff
-	// (argo_server_side_diff.go) — a THIRD manifest render. kyverno renders ~50k lines, so this is
-	// not a fast path — it is the only path that can name the field, and it runs only on an
-	// already-failing run. The budget is shared: a probe that runs out of it says COULD NOT ASK,
-	// which is the correct answer and not a silent pass.
+	// dry-runs them (argo_predicted_live.go) — a SECOND manifest render. kyverno renders ~50k
+	// lines, so this is not a fast path — it is the only path that can name the field, and it runs
+	// only on an already-failing run. The budget is shared: a probe that runs out of it says COULD
+	// NOT ASK, which is the correct answer and not a silent pass.
 	cctx, cancel := context.WithTimeout(ctx, 300*time.Second)
 	defer cancel()
 
@@ -1235,7 +1239,6 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string, refs []out
 		// contradiction), the second reproduces a server-side comparison and names the fields.
 		report += readArgoDiffStrategy(cctx, kubeconfigPath, target, app) + "\n"
 		report += argoPredictedLiveDiff(cctx, kubeconfigPath, target, app, refs) + "\n"
-		report += argoServerSideDiff(cctx, kubeconfigPath, target, app) + "\n"
 	}
 	return report
 }
