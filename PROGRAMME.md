@@ -234,7 +234,7 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 
 ### Capability surface
 
-**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 47 carried by tofu · 5 carried in-cluster · 2 cloud ceilings · **0 deferred (our debt)** · 1 excluded by cost.
+**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 47 carried by tofu · 6 carried in-cluster · 1 cloud ceilings · **0 deferred (our debt)** · 1 excluded by cost.
 
 Excluded by **cost** — the cloud offers the kind and the product ships it, but provisioning it in the harness would buy something not billed by the hour. These are spend decisions, not capability limits, and the price is printed so the decision can be re-taken rather than inherited:
 
@@ -242,10 +242,9 @@ Excluded by **cost** — the cloud offers the kind and the product ships it, but
 
 Cloud ceilings (the cloud genuinely does not offer the kind — not our debt):
 
-- `hetzner/topic`
 - `hetzner/nosql`
 
-**Parity grid (19 canvas NodeKinds × 5 clouds):** hetzner refuses 2 (topic, nosql); every other cloud backs all 19.
+**Parity grid (19 canvas NodeKinds × 5 clouds):** hetzner refuses 1 (nosql); every other cloud backs all 19.
 
 ### Driven from the CLI
 

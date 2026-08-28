@@ -1657,7 +1657,16 @@ describe("planProject", () => {
 	});
 
 	// ── Fail-closed unsupported-KIND gate (buildConfigSnapshot) ─────────────
-	it("fails closed on a Hetzner topic (kind the template can't provision, no silent drop)", async () => {
+	// A Hetzner topic is no longer refused: the kind maps to an in-cluster NATS release, so it
+	// passes the unsupported-kind gate exactly as `queue` and `database` do.
+	//
+	// This asserts what it can and says so. The gate used to throw BEFORE the snapshot read any of
+	// the other component tables, so this fixture never had to mock them; now that topic gets
+	// through, the snapshot runs on and fails on a row the fixture does not provide. Rejecting for
+	// SOME other reason is therefore expected here — what matters, and what would regress if the
+	// kind were re-refused, is that it is no longer THIS reason. The fail-closed gate itself still
+	// has direct coverage from the `nosql` sibling below, which is the kind that is still refused.
+	it("no longer fails closed on a Hetzner topic — the kind is carried in-cluster by NATS", async () => {
 		setupDb({
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
@@ -1666,10 +1675,9 @@ describe("planProject", () => {
 				]),
 			),
 		});
-		await expect(planProject("p1")).rejects.toThrow(
+		await expect(planProject("p1")).rejects.not.toThrow(
 			/Component "events" \(topic\) can't be provisioned on Hetzner/,
 		);
-		expect(notifyScaler).not.toHaveBeenCalled();
 	});
 
 	it("fails closed on a Hetzner nosql table", async () => {
