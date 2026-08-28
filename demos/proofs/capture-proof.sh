@@ -280,16 +280,71 @@ fi
 #    These are non-secret (an ed25519 signature over the plan sha + per-control verdicts) and
 #    are the headline "inspected, not vacuous" artifact. The runner already scrubbed the
 #    metadata at the source (A0.0); we pull only these two sub-objects and scrub again. ──
+#
+#    WHICH DEPLOY JOB — `LIMIT 1` WITH NO `ORDER BY` IS NOT A CHOICE, IT IS A COIN TOSS.
+#
+#    A T2 run writes SEVERAL DEPLOY rows: the cluster apply, the BYO-IaC apply, and a heal. The
+#    old query was `WHERE job_type='DEPLOY' LIMIT 1` — no ordering, no filter — so Postgres was
+#    free to return any of them, and the two pulls could even return DIFFERENT rows. Three
+#    consecutive proof bundles committed evidence for the wrong job:
+#
+#      aws/20260828T125612Z   receipt.json is the BYO-IaC apply's (plan 518bc1b06763…) while
+#                             VERDICT.txt names the floor plan (57afd9885b42…)
+#      aws/20260828T125612Z   verify-result.json says pass=3 not_evaluable=0; the floor deploy's
+#                             own gate line in the SAME bundle says pass=2 not_evaluable=2
+#      gcp/20260828T124233Z   a BYO row has no verify_receipt → null → the drop loop below
+#      gcp/20260828T120037Z   deleted the file, so VERDICT.txt asserts signed=true over a
+#                             bundle that ships no receipt at all
+#
+#    A signature over a plan the bundle does not claim verifies nothing about the cell being
+#    proven, and it is worse than no receipt, because it looks like one.
+#
+#    So: pin to the job whose receipt covers THE PLAN THIS BUNDLE REPORTS — $receipt_plan_sha,
+#    read from the runner log above and printed in VERDICT.txt and provision-summary.json — and
+#    pull BOTH artifacts from that single id so they cannot disagree with each other.
 if [ -n "${ALETHIA_DATABASE_URL:-}" ] && command -v psql >/dev/null 2>&1; then
-	psql "$ALETHIA_DATABASE_URL" -tAc \
-		"SELECT COALESCE(execution_metadata->'verify_receipt','null') FROM public.jobs WHERE job_type='DEPLOY' LIMIT 1" \
-		2>/dev/null | scrub_stream >"$out/receipt.json" || true
-	psql "$ALETHIA_DATABASE_URL" -tAc \
-		"SELECT COALESCE(execution_metadata->'verify_result','null') FROM public.jobs WHERE job_type='DEPLOY' LIMIT 1" \
-		2>/dev/null | scrub_stream >"$out/verify-result.json" || true
-	# Drop empty/null pulls so the bundle only carries real evidence.
+	receipt_job=""
+	# Hex-only by construction (grep -oE '[0-9a-f]+$' above), re-checked here because this value
+	# is interpolated into SQL.
+	if printf '%s' "$receipt_plan_sha" | grep -qE '^[0-9a-f]{16,128}$'; then
+		receipt_job="$(psql "$ALETHIA_DATABASE_URL" -tAc \
+			"SELECT id FROM public.jobs
+			  WHERE job_type='DEPLOY'
+			    AND execution_metadata->'verify_receipt'->'receipt'->>'plan_sha256' = '$receipt_plan_sha'
+			  ORDER BY created_at ASC LIMIT 1" 2>/dev/null | tr -d '[:space:]' || true)"
+	fi
+	# Fallback: the EARLIEST DEPLOY that actually carries a receipt — the cluster apply, which is
+	# seeded before the BYO-IaC one. Still deterministic and still a single job for both
+	# artifacts, but it is not the pinned plan, so say so rather than letting it pass as one.
+	if [ -z "$receipt_job" ]; then
+		receipt_job="$(psql "$ALETHIA_DATABASE_URL" -tAc \
+			"SELECT id FROM public.jobs
+			  WHERE job_type='DEPLOY' AND execution_metadata ? 'verify_receipt'
+			  ORDER BY created_at ASC LIMIT 1" 2>/dev/null | tr -d '[:space:]' || true)"
+		if [ -n "$receipt_job" ] && [ -n "$receipt_plan_sha" ]; then
+			echo "::warning::capture-proof: no DEPLOY job carries a receipt for plan ${receipt_plan_sha}; fell back to the earliest receipt-bearing DEPLOY job. The committed receipt may not cover the plan this bundle reports."
+		fi
+	fi
+
+	if [ -n "$receipt_job" ]; then
+		psql "$ALETHIA_DATABASE_URL" -tAc \
+			"SELECT COALESCE(execution_metadata->'verify_receipt','null') FROM public.jobs WHERE id='$receipt_job'" \
+			2>/dev/null | scrub_stream >"$out/receipt.json" || true
+		psql "$ALETHIA_DATABASE_URL" -tAc \
+			"SELECT COALESCE(execution_metadata->'verify_result','null') FROM public.jobs WHERE id='$receipt_job'" \
+			2>/dev/null | scrub_stream >"$out/verify-result.json" || true
+	else
+		echo "::warning::capture-proof: no DEPLOY job in the control-plane DB carries a verify_receipt — this bundle ships no receipt.json or verify-result.json."
+	fi
+
+	# Drop empty/null pulls so the bundle only carries real evidence — but SAY SO. VERDICT.txt's
+	# receipt line is derived from the runner log, not from these files, so a silent drop leaves
+	# a bundle asserting `signed=true` with nothing behind it and no signal anywhere.
 	for f in receipt.json verify-result.json; do
-		[ -f "$out/$f" ] && { [ ! -s "$out/$f" ] || grep -qx 'null' "$out/$f"; } && rm -f "$out/$f"
+		if [ -f "$out/$f" ] && { [ ! -s "$out/$f" ] || grep -qx 'null' "$out/$f"; }; then
+			rm -f "$out/$f"
+			echo "::warning::capture-proof: $f is empty/null for the selected DEPLOY job and was dropped — this bundle does not carry it."
+		fi
 	done
 fi
 
