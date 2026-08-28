@@ -114,7 +114,7 @@ func encodeByoDocs(what string, docs ...any) (string, error) {
 //
 // Deliberately not a URL allowlist. BYO chart repos legitimately arrive as `https://`, `ssh://`,
 // `git@host:path` and bare paths, and a wrong allowlist REFUSES a repo that would have worked —
-// worse than the gap it closes, which is the trade-off dns-tld.ts settles the same way. A control
+// worse than the gap it closes, which is the trade-off dns-zone-support.ts settles the same way. A control
 // character is part of none of those forms, and it is the only thing that lets a value leave its
 // scalar. Marshalling already makes injection structurally impossible; this refuses the absurd
 // value outright so it fails here rather than later and more confusingly.
