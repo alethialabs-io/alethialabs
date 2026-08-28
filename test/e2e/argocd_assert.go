@@ -1004,7 +1004,7 @@ func dumpArgoAppDiffs(ctx context.Context, kubeconfigPath string, observed map[s
 			fmt.Fprintf(&b, "\n  … %d more OutOfSync Application(s) not diffed\n", len(outOfSync)-i)
 			break
 		}
-		b.WriteString(dumpArgoAppDiff(ctx, kubeconfigPath, name))
+		b.WriteString(dumpArgoAppDiff(ctx, kubeconfigPath, name, observed[name].OutOfSyncRefs))
 	}
 	return b.String()
 }
@@ -1046,9 +1046,12 @@ const argoDiffExitCodeMeansDiff = 1
 // Best-effort on an ALREADY-FAILING path. It must never be why a run hangs or an error is lost, and
 // — the point of the constant above — "the command reported a difference" must never be mistaken
 // for "the command failed".
-func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
-	// Generous: --core renders the manifests through the repo-server, which pulls the chart.
-	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string, refs []outOfSyncRef) string {
+	// Generous: --core renders the manifests through the repo-server, which pulls the chart, and on
+	// the empty-diff branch it ALSO fetches the whole Application's manifests and server-side
+	// dry-runs them (argo_predicted_live.go). kyverno renders ~50k lines, so this is not a fast path
+	// — it is the only path that can name the field, and it runs only on an already-failing run.
+	cctx, cancel := context.WithTimeout(ctx, 300*time.Second)
 	defer cancel()
 
 	target, err := argoDiffWorkload(cctx, kubeconfigPath)
@@ -1066,6 +1069,12 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
 	if strings.Contains(report, "reports NO difference") {
 		report += argoSyncStaleness(app, readArgoReconciledAt(ctx, kubeconfigPath, app), time.Now()) + "\n"
 		report += argoHardRefreshVerdict(cctx, kubeconfigPath, target, app) + "\n"
+		// #3093's hard refresh answered "the OutOfSync is real, not a stale cache" and could not go
+		// further. These two do: the first says WHICH comparison the controller ran (an empty
+		// `argocd app diff` on a ServerSideApply Application is a different algorithm, not a
+		// contradiction), the second reproduces a server-side comparison and names the fields.
+		report += readArgoDiffStrategy(cctx, kubeconfigPath, app) + "\n"
+		report += argoPredictedLiveDiff(cctx, kubeconfigPath, target, app, refs) + "\n"
 	}
 	return report
 }
