@@ -55,8 +55,15 @@
 #   ALETHIA_E2E_REGION=...     — region override (else the workflow's per-cloud cheap default).
 set -uo pipefail
 
-cloud="${1:?usage: provisioning-e2e.sh <aws|gcp|azure|alibaba|hetzner> <floor|maxconfig|addons|gitops|byo-iac|day2|full>}"
-dimension="${2:?usage: provisioning-e2e.sh <cloud> <floor|maxconfig|addons|gitops|byo-iac|day2|full>}"
+# `--self-test` exercises the pure helpers below without a cloud or a run. The positional args are
+# placeholders in that mode — nothing downstream of the self-test block executes.
+if [ "${1:-}" = "--self-test" ]; then
+  cloud="hetzner"
+  dimension="floor"
+else
+  cloud="${1:?usage: provisioning-e2e.sh <aws|gcp|azure|alibaba|hetzner> <floor|maxconfig|addons|gitops|byo-iac|day2|full>}"
+  dimension="${2:?usage: provisioning-e2e.sh <cloud> <floor|maxconfig|addons|gitops|byo-iac|day2|full>}"
+fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 ledger="$root/demos/proofs/provisioning-e2e-log.md"
@@ -100,11 +107,123 @@ append_ledger() {
   echo "recorded: $verdict → ${bundle} (ledger appended)" >&2
 }
 
+# ── The sha a RECORD_ONLY row carries must be the sha the RUN executed, and only the bundle
+#    knows it (#2718).
+#
+#    The nightly's rollup step takes `git rev-parse --short HEAD` in the ROLLUP job and passes it
+#    as RECORD_SHA for every leg's row. The bundle's own `git_sha` was stamped in the LEG job. Any
+#    merge landing between the two separates them, and the row then names a commit its run never
+#    executed.
+#
+#    That is not theoretical: measured across the ledger, seven rows disagree with their own bundle,
+#    and the drift runs BOTH ways — four rows name a newer commit, three an older — which is what
+#    rules out "the row is simply written later". Two of them back cells the grid renders PROVEN.
+#
+#    So read it from the artefact rather than re-deriving it. The bundle is the run's own record;
+#    taking the sha from it makes the row and the bundle agree BY CONSTRUCTION rather than by
+#    coincidence, which is the property #3151's guard checks.
+#
+#    RECORD_SHA stays as the fallback, because a run-tag bundle (`nightly-<run_id>`) is a CI
+#    artifact with nothing committed to read. Falling back is announced, never silent — a row whose
+#    sha could not be sourced from its own evidence is exactly the row worth noticing.
+record_sha_from_bundle() {
+  local ref="$1" summary
+  # Mirrors bundleKind() in scripts/programme-rollup.mjs: a committed PATH is readable here, a run
+  # tag is not. Kept in step with it deliberately — if the two disagree about what a path is, this
+  # silently stops sourcing and the guard silently stops having anything to check.
+  case "$ref" in
+    demos/proofs/*) summary="$root/$ref/provision-summary.json" ;;
+    */[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) summary="$root/demos/proofs/$ref/provision-summary.json" ;;
+    *) return 1 ;;
+  esac
+  [ -r "$summary" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  local s
+  s="$(jq -r '.git_sha // empty' "$summary" 2>/dev/null || true)"
+  # `unknown` is capture-proof.sh's own fallback when `git rev-parse` failed inside the run. It is
+  # an absence wearing a value, so it must not be copied into the ledger as though it were one.
+  [ -n "$s" ] && [ "$s" != "unknown" ] || return 1
+  printf '%s' "$s"
+}
+
+if [ "${1:-}" = "--self-test" ]; then
+  fails=0
+  _t() {
+    if [ "$3" = "$4" ]; then echo "  ✓ $1"; else echo "  ✗ $1 — expected '$4', got '$3'" >&2; fails=$((fails + 1)); fi
+  }
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  # A bundle under a FAKE root, so the self-test can never read or write a real proof.
+  real_root="$root"
+  root="$tmp"
+  mk() { # mk <relative-bundle> <git_sha-json-fragment>
+    mkdir -p "$tmp/$1"
+    printf '{"outcome":"success",%s}\n' "$2" >"$tmp/$1/provision-summary.json"
+  }
+  echo "provisioning-e2e --self-test"
+
+  mk "demos/proofs/gcp/20260825T200519Z" '"git_sha":"f3cb966"'
+  _t "a committed bundle path yields the run's own sha" ".git_sha" \
+    "$(record_sha_from_bundle "demos/proofs/gcp/20260825T200519Z" || echo NONE)" "f3cb966"
+  # The ledger also carries the short `<cloud>/<stamp>` form; bundleKind() in programme-rollup.mjs
+  # accepts it, so this must too — otherwise the sourcing silently stops for half the rows and the
+  # fallback takes over without anyone noticing.
+  _t "the short <cloud>/<stamp> form resolves too" ".git_sha" \
+    "$(record_sha_from_bundle "gcp/20260825T200519Z" || echo NONE)" "f3cb966"
+
+  # An absence must NOT be copied into the ledger as though it were a measurement.
+  mk "demos/proofs/aws/20260101T000000Z" '"git_sha":"unknown"'
+  _t "'unknown' is refused, not recorded" "return" \
+    "$(record_sha_from_bundle "demos/proofs/aws/20260101T000000Z" || echo NONE)" "NONE"
+  mk "demos/proofs/aws/20260102T000000Z" '"outcome":"failure"'
+  _t "a bundle with no git_sha is refused" "return" \
+    "$(record_sha_from_bundle "demos/proofs/aws/20260102T000000Z" || echo NONE)" "NONE"
+  _t "a run-tag bundle has nothing to read" "return" \
+    "$(record_sha_from_bundle "nightly-33174498549" || echo NONE)" "NONE"
+  _t "a path that does not exist is refused" "return" \
+    "$(record_sha_from_bundle "demos/proofs/gcp/29990101T000000Z" || echo NONE)" "NONE"
+
+  # END TO END: the row must carry the BUNDLE's sha even when the caller insists otherwise. This is
+  # the regression — the nightly rollup passes its own HEAD for every leg, and that is how four
+  # surviving claims came to name a commit their run never executed.
+  ledger="$tmp/ledger.md"
+  printf '%s\n' "provisioning-e2e.sh appends new rows below this line" >"$ledger"
+  RECORD_BUNDLE="demos/proofs/gcp/20260825T200519Z"
+  if record_sha="$(record_sha_from_bundle "$RECORD_BUNDLE")"; then :; else record_sha="09911316"; fi
+  append_ledger "$record_sha" "PASS" "detail" "$RECORD_BUNDLE" "—" 2>/dev/null
+  row="$(tail -1 "$ledger")"
+  case "$row" in
+    *" f3cb966 "*) echo "  ✓ the appended row carries the bundle's sha, not the caller's" ;;
+    *) echo "  ✗ the appended row does not carry the bundle's sha: $row" >&2; fails=$((fails + 1)) ;;
+  esac
+  case "$row" in
+    *09911316*) echo "  ✗ the caller's sha leaked into the row: $row" >&2; fails=$((fails + 1)) ;;
+    *) echo "  ✓ the caller's disagreeing sha did not reach the ledger" ;;
+  esac
+
+  root="$real_root"
+  if [ "$fails" -ne 0 ]; then
+    echo "provisioning-e2e --self-test: $fails assertion(s) FAILED" >&2
+    exit 1
+  fi
+  echo "provisioning-e2e --self-test: OK"
+  exit 0
+fi
+
 # ── RECORD_ONLY: append from an existing bundle (nightly rollup path) ───────────────────────────
 if [[ -n "${RECORD_ONLY:-}" ]]; then
-  append_ledger "${RECORD_SHA:-$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)}" \
+  : "${RECORD_BUNDLE:?RECORD_ONLY needs RECORD_BUNDLE}"
+  if record_sha="$(record_sha_from_bundle "$RECORD_BUNDLE")"; then
+    if [ -n "${RECORD_SHA:-}" ] && [ "$RECORD_SHA" != "$record_sha" ]; then
+      echo "::notice::provisioning-e2e.sh: RECORD_SHA=${RECORD_SHA} disagrees with the bundle's own git_sha=${record_sha}; recording the bundle's, which is the commit the run actually executed (#2718)." >&2
+    fi
+  else
+    record_sha="${RECORD_SHA:-$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+    echo "::warning::provisioning-e2e.sh: could not read a git_sha from bundle '${RECORD_BUNDLE}' — falling back to ${record_sha}, which is NOT necessarily the commit the run executed (#2718)." >&2
+  fi
+  append_ledger "$record_sha" \
     "${RECORD_VERDICT:?RECORD_ONLY needs RECORD_VERDICT}" "${RECORD_DETAIL:-}" \
-    "${RECORD_BUNDLE:?RECORD_ONLY needs RECORD_BUNDLE}" "${RECORD_ISSUE:-—}"
+    "$RECORD_BUNDLE" "${RECORD_ISSUE:-—}"
   exit 0
 fi
 
