@@ -250,23 +250,67 @@ jobs:
       # is worth less than none. This asserts one thing that is never acceptable: the runtime could
       # not RESOLVE a module. Placeholder env mirrors the Dockerfile's build stage so a config
       # complaint is not mistaken for a packaging one.
+      # WAIT FOR THE ANSWER, DO NOT SLEEP A FIXED BUDGET.
+      #
+      # This step used to `sleep 12` and read `docker logs` exactly ONCE. That single read cannot
+      # distinguish the two things it is standing between:
+      #
+      #   the image never boots        → no output, and there never will be any
+      #   the image boots slower than 12s → no output YET
+      #
+      # Both produced the identical "container produced NO output in 12s". On 2026-08-27 that fired
+      # on `marketing` at 38841e91 while console, admin, docs and blog passed the SAME probe in the
+      # SAME run, and marketing had passed the previous six runs with no change to `apps/marketing`
+      # — a slow boot, read as a broken image. The cost is not one red job: `deploy` needs every
+      # build job, so a single flaky read SKIPS THE PRODUCTION DEPLOY. Across the last 14 runs on
+      # main the deploy job actually ran 3 times.
+      #
+      # So: poll to a generous ceiling and return the INSTANT there is output. A healthy image still
+      # answers in about a second — the ceiling is only what we are willing to wait before calling
+      # silence an answer, and raising it costs nothing when nothing is wrong. This is the same
+      # "a deadline is not a rejection" shape as #3028 and #3030.
+      #
+      # It also stops waiting on a container that has EXITED, which can produce no further output,
+      # and reports the container's state in the failure — the old message said only that the probe
+      # learned nothing, never whether the process died, so the failure was not diagnosable.
       - name: Smoke — the image resolves its modules
         if: matrix.image != 'console-migrate'
         env:
           IMG: ${{ env.IMAGE_PREFIX }}/${{ matrix.image }}:${{ github.sha }}
+          SMOKE_CONTAINER: smoke-${{ matrix.image }}
+          # Ceiling, not an expected duration — see the note above.
+          SMOKE_BOOT_TIMEOUT_S: "90"
         run: |
           set -uo pipefail
-          docker run -d --name smoke-${{ matrix.image }} \
+          docker rm -f "$SMOKE_CONTAINER" >/dev/null 2>&1 || true
+
+          # `docker run` failing is its own outcome. The old script had no `-e` and swallowed the
+          # follow-on `docker logs` failure with `|| true`, so a container that never started
+          # reported as "produced NO output" — the same message as a broken bundle.
+          if ! docker run -d --name "$SMOKE_CONTAINER" \
             -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 \
             -e BETTER_AUTH_SECRET=smoke -e BETTER_AUTH_URL=http://localhost:3000 \
             -e ALETHIA_DATABASE_URL=postgres://smoke:smoke@127.0.0.1:5432/smoke \
             -e ALETHIA_APP_DATABASE_URL=postgres://smoke:smoke@127.0.0.1:5432/smoke \
             -e ALETHIA_STORAGE_ENDPOINT=http://127.0.0.1:8333 \
             -e ALETHIA_STORAGE_ACCESS_KEY_ID=smoke -e ALETHIA_STORAGE_SECRET_ACCESS_KEY=smoke \
-            "$IMG" >/dev/null
-          sleep 12
-          logs="$(docker logs smoke-${{ matrix.image }} 2>&1 || true)"
-          docker rm -f smoke-${{ matrix.image }} >/dev/null 2>&1 || true
+            "$IMG" >/dev/null; then
+            echo "::error::${{ matrix.image }}: docker run failed — the container never started, so the image was never probed."
+            exit 1
+          fi
+
+          logs=""
+          waited=0
+          while [ "$waited" -lt "$SMOKE_BOOT_TIMEOUT_S" ]; do
+            logs="$(docker logs "$SMOKE_CONTAINER" 2>&1 || true)"
+            [ -n "$logs" ] && break
+            # An exited container will never speak again — stop waiting and report why.
+            [ "$(docker inspect -f '{{.State.Status}}' "$SMOKE_CONTAINER" 2>/dev/null || echo unknown)" = "exited" ] && break
+            sleep 1
+            waited=$((waited + 1))
+          done
+          state="$(docker inspect -f '{{.State.Status}} (exit {{.State.ExitCode}})' "$SMOKE_CONTAINER" 2>/dev/null || echo 'unknown (exit ?)')"
+          docker rm -f "$SMOKE_CONTAINER" >/dev/null 2>&1 || true
 
           # The assertion. `Cannot find module` / MODULE_NOT_FOUND means the image is unrunnable no
           # matter what else is true, and no env var can explain it away.
@@ -278,11 +322,13 @@ jobs:
 
           # Vacuity guard: no logs at all means the probe learned nothing, and "learned nothing"
           # must not read as "nothing wrong" — that is the exact shape this step exists to end.
+          # Still fail-closed; it now takes ${SMOKE_BOOT_TIMEOUT_S}s of silence, not 12, and says
+          # what the container was doing when we gave up.
           if [ -z "$logs" ]; then
-            echo "::error::${{ matrix.image }}: container produced NO output in 12s — cannot conclude the image starts."
+            echo "::error::${{ matrix.image }}: container produced NO output in ${waited}s (state: ${state}) — cannot conclude the image starts."
             exit 1
           fi
-          echo "✓ ${{ matrix.image }}: no module-resolution failure"
+          echo "✓ ${{ matrix.image }}: no module-resolution failure (first output after ${waited}s, state: ${state})"
 
   # Shared runner BASE — the Go binary + tofu + infracost + kubectl/helm + user + shared templates that all
   # four runner images used to re-download 4×. Built once per arch (native, by digest) then stitched into a
