@@ -987,13 +987,18 @@ jobs:
       # a build that fails mid-resource never lands in state — so the destroy pass cannot see them
       # either. A stopped Hetzner server still bills. They cannot be swept safely (the account is
       # shared, and a CONCURRENT run's upload server matches the same prefix), so they are REPORTED.
-      # What is asserted here is the decision, not the printing: whether UNVERIFIABLE gets set, since
-      # that is what turns "verified complete" into a warning. Both directions — an empty account
-      # must NOT raise it, or the warning stops meaning anything. Hermetic: `hcloud` is stubbed.
+      #
+      # WHICH STATE they are reported AS is what this step decides, and #3138 got it wrong: it
+      # recorded them as UNVERIFIABLE, which gates, so every hetzner leg exited 4 on a sweep that had
+      # worked (run 33172643012). Both listings SUCCEED here — the answer is simply that an
+      # unlabelled resource exists — so this is UNATTRIBUTABLE: loud, and non-gating. The self-test
+      # asserts BOTH ledgers on every case and replays 33172643012 end to end through the exit code,
+      # because "it is unattributable" alone passes if a dead credential became unattributable too.
+      # Hermetic: `hcloud` is stubbed.
       - name: hcloud sweeper reports what it cannot attribute (imager upload helpers)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/hcloud-cleanup.sh --self-test
-      # ── The three-state probe contract, and the reason all five sweepers are asserted here now.
+      # ── The four-state probe contract, and the reason all five sweepers are asserted here now.
       #
       # Every cloud verified teardown with `<cli> … 2>/dev/null | tr | grep -v '^$' || true`. Three
       # launderings in one line: the redirect drops the reason, the pipe substitutes the LAST
@@ -1005,20 +1010,27 @@ jobs:
       #
       # This is the `always()` teardown path test/e2e/t2_provision_test.go defers to as "the
       # guarantee" — the in-process destroy is allowed to fail BECAUSE the sweeper will catch it.
-      # If the sweeper cannot see, nothing does. So each self-test asserts all three states end to
-      # end, varying the stub's OUTPUT and its EXIT CODE independently: a test that varies only the
+      # If the sweeper cannot see, nothing does. So each self-test asserts every state end to end,
+      # varying the stub's OUTPUT and its EXIT CODE independently: a test that varies only the
       # output passes just as happily with the fix removed, because output was the half that
-      # already worked. Hermetic — every CLI is stubbed, no credentials, no cloud, no spend.
+      # already worked.
+      #
+      # The FOURTH state is the boundary that fix overshot. UNVERIFIABLE means the probe could not
+      # get an answer and it gates; UNATTRIBUTABLE means it DID get one, and the answer is that
+      # something exists which by design cannot be tied to this run, so it is reported loudly and
+      # does not gate — otherwise the step is red every night and stops being read. Each sweeper
+      # asserts both halves, because either alone is satisfiable by the wrong change.
+      # Hermetic — every CLI is stubbed, no credentials, no cloud, no spend.
       - name: Sweeper probe contract (an API that did not answer is not an empty account)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/lib/sweep-probe.sh --self-test
-      - name: GCP sweeper three-state verification
+      - name: GCP sweeper four-state verification
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/gcp-cleanup.sh --self-test
-      - name: Azure sweeper three-state verification
+      - name: Azure sweeper four-state verification
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/azure-cleanup.sh --self-test
-      - name: Alibaba sweeper three-state verification
+      - name: Alibaba sweeper four-state verification
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/alibaba-cleanup.sh --self-test
       # Which workflows are red, and have been red for a while. The classifier is the load-bearing
