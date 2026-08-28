@@ -48,6 +48,9 @@
 
 set -euo pipefail
 
+# A chart we could not REACH is not a chart shipping a bad default (#2754) — see the lib header.
+. "$(dirname "${BASH_SOURCE[0]}")/lib/chart-fetch.sh"
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Any ONE per-cloud fixture is enough here: the fixtures differ only in external-dns's `provider`
 # knob, and what this check reads — chart coordinates and the rendered resource shapes — is identical
@@ -106,11 +109,12 @@ while read -r id repo chart version ns; do
   [ -n "$id" ] || continue
   helm repo add "pd-$id" "$repo" >/dev/null 2>&1 || true
 done < "$workdir/charts.txt"
-helm repo update >/dev/null 2>&1 || true
+chart_fetch_repo_update "$workdir/repo-update.err" || true
 
 undeclared=""
 stale=""
 failed=""
+unreachable=""
 unreadable=""
 uncomparable=""
 new_uncheckable=""
@@ -123,15 +127,35 @@ while read -r id repo chart version ns; do
 
   # OURS: the chart as the runner would install it. THEIRS: the same chart at its own defaults —
   # the published reference, which is why no maintained list of bad values is needed.
-  helm template "addon-$id" "pd-$id/$chart" --version "$version" -n "$ns" \
-    --values "$workdir/$id.values.json" --kube-version 1.30.0 \
-    > "$workdir/$id.ours.yaml" 2> "$workdir/$id.err" || true
+  # Only the FETCH is retried: a chart that downloads and then renders wrongly still fails on
+  # the first attempt, so the guard is not weakened. See scripts/addons/lib/chart-fetch.sh.
+  render_ours() {
+    helm template "addon-$id" "pd-$id/$chart" --version "$version" -n "$ns" \
+      --values "$workdir/$id.values.json" --kube-version 1.30.0 \
+      > "$workdir/$id.ours.yaml" 2> "$workdir/$id.err" || true
+    [ -s "$workdir/$id.ours.yaml" ]
+  }
+  attempt=1
+  while :; do
+    render_ours && break
+    if [ "$attempt" -ge "$CHART_FETCH_ATTEMPTS" ] || ! chart_fetch_is_net_err "$workdir/$id.err"; then
+      break
+    fi
+    sleep $((attempt * 5))
+    attempt=$((attempt + 1))
+  done
   helm template "addon-$id" "pd-$id/$chart" --version "$version" -n "$ns" \
     --kube-version 1.30.0 > "$workdir/$id.theirs.yaml" 2>> "$workdir/$id.err" || true
 
   if [ ! -s "$workdir/$id.ours.yaml" ]; then
-    failed="$failed $id"
-    echo "RENDER FAILED  $id — $(head -1 "$workdir/$id.err" | cut -c1-110)"
+    # #2754: an unreachable host says nothing about the add-on's defaults.
+    if chart_fetch_is_net_err "$workdir/$id.err"; then
+      unreachable="$unreachable $id"
+      echo "COULD NOT FETCH $id — $(chart_fetch_host "$workdir/$id.err") unreachable after ${CHART_FETCH_ATTEMPTS} attempts"
+    else
+      failed="$failed $id"
+      echo "RENDER FAILED  $id — $(head -1 "$workdir/$id.err" | cut -c1-110)"
+    fi
     continue
   fi
   if [ ! -s "$workdir/$id.theirs.yaml" ]; then
@@ -301,6 +325,13 @@ if [ -n "$now_checkable" ]; then
   echo "      Coverage grew — drop them so the list can only shrink." >&2
   status=1
 fi
+if [ -n "$unreachable" ]; then
+  echo "FAIL: chart(s) could not be FETCHED:$unreachable" >&2
+  echo "      This is a fetch failure against a third-party host, not a statement about the" >&2
+  echo "      add-on's defaults — the chart was never rendered, so nothing was compared. See #2754." >&2
+  exit 1
+fi
+
 if [ -n "$failed" ]; then
   echo "FAIL: chart(s) did not render at all:$failed" >&2
   status=1
