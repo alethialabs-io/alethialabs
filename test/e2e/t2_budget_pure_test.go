@@ -204,12 +204,18 @@ func TestT2ProviderTableTeardownBudgets(t *testing.T) {
 	}
 	// The split is the whole point of #2729 — one number for both was hetzner's, charged to clouds
 	// whose teardown is a different animal (an EKS internet gateway was still detaching at 13m30s).
+	//
+	// The managed number is 45m, not 30m, because 30m was MEASURED to be the worst possible length:
+	// aws/floor run 33155063965 spent every second of it and was SIGINT'd with the internet gateway
+	// at 19m50s and three subnets at 17m0s — all still inside the AWS provider's own 20m delete
+	// ceiling, so the destroy was ~3m from an error that would have NAMED the dependency. See the
+	// teardownTimeout field comment in t2_providers.go for the full breakdown of where the 30m went.
 	want := map[string]time.Duration{
 		"hetzner": 15 * time.Minute,
-		"aws":     30 * time.Minute,
-		"gcp":     30 * time.Minute,
-		"azure":   30 * time.Minute,
-		"alibaba": 30 * time.Minute,
+		"aws":     45 * time.Minute,
+		"gcp":     45 * time.Minute,
+		"azure":   45 * time.Minute,
+		"alibaba": 45 * time.Minute,
 	}
 	for cloud, d := range want {
 		p, ok := t2LookupProvider(cloud)
@@ -230,14 +236,20 @@ func TestT2TeardownOverride(t *testing.T) {
 	if !ok {
 		t.Fatal("no aws provider row")
 	}
-	t.Setenv("ALETHIA_E2E_T2_TEARDOWN", "45m")
-	if got := resolveT2TeardownTimeout(aws); got != 45*time.Minute {
-		t.Errorf("override = %s, want 45m", got)
+	// The probe value must DIFFER from the row default, or "the override won" and "the override was
+	// ignored" produce the same number and this test passes without testing anything. It used to be
+	// 45m; the aws row is now 45m, so it moves rather than quietly going vacuous.
+	if aws.teardownTimeout == 70*time.Minute {
+		t.Fatal("the override probe value equals the aws row default — this test would be vacuous")
 	}
-	for _, bad := range []string{"forty-five", "45", "", "  "} {
+	t.Setenv("ALETHIA_E2E_T2_TEARDOWN", "70m")
+	if got := resolveT2TeardownTimeout(aws); got != 70*time.Minute {
+		t.Errorf("override = %s, want 70m", got)
+	}
+	for _, bad := range []string{"seventy", "70", "", "  "} {
 		t.Setenv("ALETHIA_E2E_T2_TEARDOWN", bad)
-		if got := resolveT2TeardownTimeout(aws); got != 30*time.Minute {
-			t.Errorf("override %q = %s, want the aws row default 30m", bad, got)
+		if got := resolveT2TeardownTimeout(aws); got != aws.teardownTimeout {
+			t.Errorf("override %q = %s, want the aws row default %s", bad, got, aws.teardownTimeout)
 		}
 	}
 }
