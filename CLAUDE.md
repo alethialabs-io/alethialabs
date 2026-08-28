@@ -20,8 +20,9 @@ Do not include any Co-Authored-By or attribution lines in commit messages.
 - **Never work in a worktree another live instance holds.** Check with `pnpm wt:who`.
 - **Never target `staging` or `main` with a PR**, and never push to them. Feature work goes to
   `dev`; the maintainer promotes `dev → staging → main`.
-- **Never run `tofu apply`, `terraform apply`, or a destructive `plan -destroy`.** Humans apply.
-  The one exception is when the maintainer instructs a specific named operation.
+- **Never run `tofu apply`, `terraform apply`, or a destructive `plan -destroy` on your own
+  initiative.** The one exception is a specific named operation the maintainer has instructed,
+  under a plan they have reviewed.
 - **Never run the app on this Mac.** See §3.
 - **Never generate a migration on a stale branch, or in two worktrees at once.** See §5.
 - **Escape hatches are the maintainer's, not yours**: `--no-verify`,
