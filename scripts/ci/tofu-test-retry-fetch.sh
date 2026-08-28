@@ -209,8 +209,25 @@ while :; do
     exit "$rc"
   fi
 
-  host="$(grep -oE 'https://[a-zA-Z0-9._-]+' "$log" | head -1)"
-  host="${host:-a chart repository}"
+  # `|| true` IS LOAD-BEARING, and its absence made this whole script silent.
+  #
+  # `set -e` is on from the line above (this script enables it after the tee pipeline), and
+  # `pipefail` is on from the top. A network error that names no scheme'd URL — the ordinary
+  # shape of a DNS failure, `dial tcp: lookup charts.hetzner.cloud …: no such host` — makes
+  # grep exit 1, so the pipeline exits 1, so the ASSIGNMENT fails, so errexit kills the script
+  # right here. Measured on the shipped version: one attempt, exit 1, and ZERO `::error` and
+  # ZERO `::warning` — no retry, no classification, no message of any kind.
+  #
+  # That is the exact failure this file exists to prevent, produced by the file itself: the
+  # reader gets a red step whose only content is tofu's own output, with nothing saying the
+  # host was unreachable. `${host:-…}` below could never fire, because the script was already
+  # dead.
+  #
+  # It went unnoticed because every fixture in the self-test emitted an error containing
+  # `https://charts.hetzner.cloud`. The stub covered the shape I had in front of me, not the
+  # shape space — a URL-less fetch error is now a case below.
+  host="$(grep -oE 'https://[a-zA-Z0-9._-]+' "$log" | head -1 || true)"
+  host="${host:-an upstream chart repository}"
 
   if [ "$attempt" -ge "$attempts" ]; then
     echo "::error title=chart fetch failed (#2489)::${cloud}: could not REACH ${host} in ${attempts} attempts. This is a FETCH failure — the template was never evaluated, so it says nothing about the template. See #2489."
