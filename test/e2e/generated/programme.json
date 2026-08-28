@@ -197,9 +197,10 @@
 					"resource": "google_pubsub_topic"
 				},
 				"hetzner": {
-					"carriage": "ceiling",
-					"offered": false,
-					"why": "Hetzner has no such service, and this repo offers no chart for the kind either (unsupported-kinds.ts: \"no clean single-chart OSS equal\") — hidden on the canvas and REJECTED at deploy (unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner)"
+					"carriage": "in_cluster",
+					"offered": true,
+					"why": "Hetzner has no managed equivalent; the console synthesizes an in-cluster chart (hetzner-services.ts) which the runner installs as an ArgoCD Application — nothing reaches tofu state (NATS with JetStream, nats-io chart)",
+					"argo_app": "addon-topic-events"
 				}
 			}
 		},
@@ -231,7 +232,7 @@
 				"hetzner": {
 					"carriage": "ceiling",
 					"offered": false,
-					"why": "Hetzner has no such service, and this repo offers no chart for the kind either (unsupported-kinds.ts: \"no clean single-chart OSS equal\") — hidden on the canvas and REJECTED at deploy (unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner)"
+					"why": "Hetzner has no such service, and this repo offers no chart wired for the kind either — hidden on the canvas and REJECTED at deploy (unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner)"
 				}
 			}
 		},
