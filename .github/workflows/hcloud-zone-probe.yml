@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# THE ONE EXPERIMENT THAT SETTLES #2843, on demand.
+#
+# `apps/console/lib/cloud-providers/dns-zone-support.ts` gates deploys on which zone names Hetzner
+# Cloud DNS will host, and every observation behind it varied depth and TLD TOGETHER — so the gate
+# refuses on the half the data is monotone in and hedges the other. This runs the five names that
+# separate them, then deletes every one of them.
+#
+# MANUAL ONLY, and that is deliberate rather than timid. It talks to the live API, so it should run
+# when someone wants the answer, not on a schedule where a token change turns into a nightly red.
+# It is also the only reason this exists as a workflow at all: the e2e project's HCLOUD_TOKEN lives
+# here, and a maintainer laptop's only hcloud contexts are PRODUCTION — which is exactly why #2843
+# left the question open rather than probing from one.
+#
+# The script's own header carries the safety argument: it creates only names it generated, deletes
+# by the id each create returned (never by name, never from a listing), and cleans up on EXIT.
+
+name: hcloud zone probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "probe" to run. It creates and then deletes five DNS zones in the e2e project.'
+        required: true
+        default: ""
+
+permissions:
+  contents: read
+  issues: write # post the result where the question was asked
+
+concurrency:
+  group: hcloud-zone-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Which zone names does Hetzner accept?
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # A dispatch input rather than an environment approval: this is cheap and self-cleaning, but it
+      # is still a live API write, and a mis-click should not make one.
+      - name: Confirm
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRM" != "probe" ]; then
+            echo "::error title=not confirmed::type \"probe\" in the confirm input to run this."
+            exit 1
+          fi
+
+      - name: Probe, and delete everything it creates
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          set -euo pipefail
+          bash scripts/e2e/probe-hcloud-zone-support.sh | tee probe.md
+          cat probe.md >> "$GITHUB_STEP_SUMMARY"
+
+      # The answer goes on the issue, because a job summary is unfindable a week later and this is a
+      # measurement someone will want to cite when they change the gate.
+      - name: Post the result to #2843
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ ! -s probe.md ]; then
+            echo "no probe output to post"
+            exit 0
+          fi
+          {
+            cat probe.md
+            printf '\n_Measured by [run %s](%s/%s/actions/runs/%s) via `.github/workflows/hcloud-zone-probe.yml`._\n' \
+              "${GITHUB_RUN_NUMBER}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}"
+          } > comment.md
+          gh issue comment 2843 --body-file comment.md
