@@ -1,0 +1,82 @@
+{
+  "_doc": [
+    "GRANDFATHERED ledger rows whose `git sha` column does not match the `git_sha` recorded inside",
+    "their own proof bundle. Read by scripts/programme-rollup.mjs. SHRINK-ONLY: a mismatch that is",
+    "not listed here is an integrity failure, and a record here that no longer corresponds to a real",
+    "mismatch is ALSO an integrity failure — a stale acknowledgement is the same shape as the thing",
+    "it was meant to expose.",
+    "",
+    "WHY RECORDS AND NOT A COUNT. A ceiling of 'four' lets a fifth mismatch move in the moment one of",
+    "these is superseded. Each row is named, so the ratchet can only ever be satisfied by the specific",
+    "rows it was declared for. This mirrors infra/template-parity-exclusions.yaml, whose own header",
+    "makes the same argument: a record for something that does not exist is exactly the stale-record",
+    "shape the ratchet refuses.",
+    "",
+    "SURVIVING CLAIMS ONLY. Seven rows in the ledger mismatch, but three of them have been superseded",
+    "and are no longer anyone's evidence. The guard walks the collapsed view for the same reason the",
+    "BLOCKED-vs-spent rule does — firing on a corrected row punishes the supersession convention this",
+    "repo asks people to follow. So exactly one record per cell can ever match, and a duplicate is",
+    "refused rather than absorbed.",
+    "",
+    "WHY THESE ARE NOT SIMPLY FIXED. The ledger is append-only and is never corrected in place",
+    "(PROGRAMME.md §3). The remedy is a RETRACTED row that supersedes the wrong one plus a re-record,",
+    "which is a proof decision with its own evidence — not a lint. These are recorded so the NEXT one",
+    "cannot arrive unseen.",
+    "",
+    "THE DRIFT RUNS BOTH WAYS, which is what rules out every benign explanation. hetzner/full and the",
+    "two gcp rows name a commit NEWER than the run; aws/full names one OLDER. 'The row is written",
+    "after the code moved' cannot cover both. The mechanism is structural: provisioning-e2e.sh takes",
+    "`git rev-parse --short HEAD` in the ROLLUP job while the bundle's git_sha is stamped in the LEG",
+    "job, so any merge landing between them separates the two.",
+    "",
+    "TWO OF THESE BACK CELLS THE GRID RENDERS PROVEN — gcp/byo (gitops) and gcp/day2. That is why this",
+    "is a guard and not a note: a PASS naming a commit its run never executed is unverifiable in",
+    "precisely the way an expiring CI run tag was, and every 2026-07-22 row was retracted for that."
+  ],
+  "acknowledged": [
+    {
+      "date": "2026-08-25",
+      "cloud": "hetzner",
+      "dimension": "full",
+      "verdict": "FAIL",
+      "row_sha": "29d4074e",
+      "bundle_sha": "7050809",
+      "bundle": "demos/proofs/hetzner/20260825T130348Z",
+      "drift": "row is 5 commits NEWER than the run",
+      "issue": "#2718"
+    },
+    {
+      "date": "2026-08-25",
+      "cloud": "gcp",
+      "dimension": "byo",
+      "verdict": "PASS",
+      "row_sha": "09911316",
+      "bundle_sha": "f3cb966",
+      "bundle": "demos/proofs/gcp/20260825T200519Z",
+      "drift": "row is 2 commits NEWER than the run — and this row backs a cell the grid renders PROVEN",
+      "issue": "#2718"
+    },
+    {
+      "date": "2026-08-26",
+      "cloud": "gcp",
+      "dimension": "day2",
+      "verdict": "PASS",
+      "row_sha": "09911316",
+      "bundle_sha": "f3cb966",
+      "bundle": "demos/proofs/gcp/20260825T210602Z",
+      "drift": "row is 2 commits NEWER than the run — and this row backs a cell the grid renders PROVEN",
+      "issue": "#2718"
+    },
+    {
+      "date": "2026-08-26",
+      "cloud": "aws",
+      "dimension": "full",
+      "verdict": "FAIL",
+      "row_sha": "d75143fc",
+      "bundle_sha": "e322317",
+      "bundle": "demos/proofs/aws/20260825T220300Z",
+      "drift": "row is 1 commit OLDER than the run",
+      "issue": "#2718"
+    }
+  ]
+}
