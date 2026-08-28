@@ -418,22 +418,50 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 // then inherited, unchanged, by the full 18-chart one — which is what killed the first real hetzner
 // run of the 18-add-on set (#2062) with velero still `Missing`. The surface is knowable at runtime,
 // so derive from it rather than picking a bigger constant and hoping.
+//
+// THE RATE AND THE CEILING ARE MEASURED, not estimated (#2717). The first derivation was itself a
+// guess — 6m + 45s/chart, clamped at 20m — and it produced 19m30s for the 18-chart surface. Run
+// 33107415369 (hetzner/addons) was dispatched with ALETHIA_E2E_ARGO_TIMEOUT=35m purely to tell
+// "slow" from "never converges", and it answered: kube-prometheus-stack, loki and vault were all
+// `Progressing` at 19m30s and all THREE had cleared by 35m. So 19m30s was not a budget, it was a
+// verdict — every `addons` and `full` run failed on the clock before it could reach a real defect.
+// The constants below are set so the 18-chart surface derives 35m, the number that actually
+// converged, rather than a number that was never observed to.
 const (
 	// argoBudgetBase covers ArgoCD itself: repo-server clone, the first reconcile loop, and the
-	// app-of-apps landing before any add-on chart is pulled.
-	argoBudgetBase = 6 * time.Minute
-	// argoBudgetPerAddOn is per chart in the surface. Sub-minute because ArgoCD syncs applications
-	// in PARALLEL — this buys headroom for pull + CRD establish contending on a small node, not a
-	// serial install. At the lean tier it lands the total on ~8m, i.e. exactly today's behaviour.
-	argoBudgetPerAddOn = 45 * time.Second
+	// app-of-apps landing before any add-on chart is pulled. Raised 6m → 8m so it EQUALS the floor:
+	// the lean tier now derives its historical 8m from the base itself rather than from a clamp, so
+	// the value a lean run gets no longer depends on which of the two happens to be larger.
+	argoBudgetBase = 8 * time.Minute
+	// argoBudgetPerAddOn is per chart in the surface. ArgoCD syncs applications in PARALLEL, so this
+	// is not a serial install cost — it is the marginal pull + CRD-establish + rollout contention one
+	// more chart adds on a small node pool. The old 6m+45s pair was a guess, and across 18 charts it
+	// under-bought by 15m30s; 90s is the rate that lands the measured surface on its measured
+	// convergence:
+	//
+	//	8m + 18 × 90s = 8m + 27m = 35m   ← run 33107415369
+	argoBudgetPerAddOn = 90 * time.Second
 	// argoBudgetFloor never lets a derived value come out SHORTER than the constant it replaced,
 	// so no existing scenario gets tighter as a side effect of this change.
 	argoBudgetFloor = 8 * time.Minute
-	// argoBudgetCeiling stays under the smallest parent bound in t2_providers.go (hetzner's 25m
-	// waitTimeout). Budgeting past the timeout that CANCELS you buys nothing — the run dies at the
-	// parent instead, with a less useful message. That parent is the real ceiling, not the go-test
-	// cap, which is why this is pinned by a test rather than left as a comment.
-	argoBudgetCeiling = 20 * time.Minute
+	// argoBudgetCeiling is the clamp on catalog growth, and it is deliberately NO LONGER tied to any
+	// provider's waitTimeout. That justification was wrong in two independent ways: it quoted 25m
+	// when hetzner's row has said 40m since #3027's deadline change, and — the part that matters —
+	// waitTimeout never bounded this wait at all. It bounds cp.WaitTerminal, a DIFFERENT and EARLIER
+	// poll; both are separate summed terms of the one ctx ResolveT2Budget builds (t2_budget.go), so
+	// no waitTimeout can ever cancel an Argo wait.
+	//
+	// What actually contains this wait is that ctx, and above it the step and job `timeout-minutes`
+	// in .github/workflows/e2e-nightly.yml — the two rungs GitHub evaluates before the step body
+	// runs, which is why cmd/t2budget verifies them at the top of the step. So the ceiling is set to
+	// what those caps hold, and TestArgoBudgetCeilingFitsTheWorkflowCaps reads the caps out of the
+	// workflow and proves it offline, on every PR, instead of on a paid run.
+	//
+	// 40m = the measured 35m plus a 5m margin, which at 90s/chart leaves the derivation unclamped
+	// through 21 charts. At 22 it clamps, and a human raises this constant and the two caps in one
+	// change — which is the whole job of a clamp: make catalog growth a decision somebody takes,
+	// rather than a ladder that silently walks past a cap nobody re-derived.
+	argoBudgetCeiling = 40 * time.Minute
 )
 
 // ArgoAssertTimeout is the bound for AssertArgoAppsHealthy: ALETHIA_E2E_ARGO_TIMEOUT when set,
