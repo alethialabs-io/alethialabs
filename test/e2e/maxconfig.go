@@ -914,7 +914,7 @@ const maxConfigDomainSuffix = "e2e.alethialabs.io"
 //
 // It exists because HETZNER CANNOT USE THE DEFAULT AT ALL. Hetzner DNS refuses to host a `.io`
 // zone — its API answers `unsupported tld (invalid_input)`, 422, measured against the live API and
-// recorded in apps/console/lib/cloud-providers/dns-tld.ts. So hetzner/maxconfig and hetzner/full
+// recorded in apps/console/lib/cloud-providers/dns-zone-support.ts. So hetzner/maxconfig and hetzner/full
 // were blocked on the TLD of a constant, on every run, whatever else was fixed.
 //
 // PER-PROVIDER rather than one global switch, deliberately. aws's certificate path is wired to THIS
@@ -998,7 +998,7 @@ func MaxConfigDomainFor(provider string) string {
 //
 // WHY, and a CORRECTION to what this repo already believed (#2843).
 //
-// `apps/console/lib/cloud-providers/dns-tld.ts` records four probes against the live Hetzner API:
+// `apps/console/lib/cloud-providers/dns-zone-support.ts` records five probes against the live Hetzner
 //
 //	probe-hcloud.alethialabs.io   → unsupported tld (422)   3 labels, .io
 //	probe1.e2e.alethialabs.io     → unsupported tld (422)   4 labels, .io
