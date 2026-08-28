@@ -46,6 +46,28 @@ queue_rules:
       # Listed here BEFORE it is required in branch protection, deliberately — see the note at the
       # bottom of this file.
       - "check-success=capabilities-security"
+      # THE CHECK WHOSE ABSENCE COST 26 DAYS OF PRODUCTION DEPLOYS (#2606).
+      #
+      # The console image was only ever built by deploy-console.yml, on a push to MAIN — i.e. AFTER
+      # the merge. So a 2026-07-30 cross-app import rode dev → staging → main behind ten green checks
+      # and then broke every production deploy until it was found. ci.yml cannot catch it: ci
+      # installs the FULL workspace, the image installs `--filter console...`, and the bug exists
+      # only in the pruned graph.
+      #
+      # SAFE to require, and the reason matters because a required check that does not always report
+      # WEDGES the queue: validate-console.yml carries no `paths:` filter and no job-level `if:` — it
+      # self-gates its STEPS on a dorny/paths-filter, so the job always runs and always reports,
+      # passing in seconds when no app path changed. One job, not a matrix, so there is exactly one
+      # context to name. (Measured: it reported `pass` in 9s on a PR touching only shell + workflow
+      # files.) A plain `check-success=` is therefore correct here — no `or:`/`check-skipped=`
+      # wrapper, which would be a dead condition.
+      #
+      # Listed here BEFORE branch protection requires it, deliberately, for the reason at the bottom
+      # of this file: the other order queues a PR that genuinely fails the gate and then has GitHub
+      # reject it at merge time, which is a stuck queue entry with no visible cause.
+      # infra/github/variables.tf ALREADY names it; that stack has never been applied (#1625's shape,
+      # a second time). Applying it is the maintainer's half — see #2606.
+      - "check-success=Build console images (no push)"
       # `cla` is deliberately NOT listed here — it belongs in branch protection, not in Mergify.
       #
       # #1653 added it and wedged the whole dev queue. Mergify's conditions gate the SPECULATIVE
@@ -79,6 +101,8 @@ merge_protections:
       - "check-success=Docs prose (Vale · Diátaxis + plain-language)"
       - "check-success=Authz / open-core guards"
       - "check-success=capabilities-security"
+      # Same check, same reason — see the long note in the dev queue's merge_conditions above.
+      - "check-success=Build console images (no push)"
       # `cla` intentionally absent — see merge_conditions above; it is enforced by the branch ruleset.
 
 # Auto-queue: automatically queues + squash-merges a matching PR once the merge_protections
