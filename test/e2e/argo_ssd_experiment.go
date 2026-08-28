@@ -1,8 +1,22 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The experiment that can settle #2717: set `compare-options: ServerSideDiff=true` on ONE
+// The experiment that settled #2717: set `compare-options: ServerSideDiff=true` on ONE
 // already-failing Application, inside the e2e run only, and watch what the Application DOES.
+//
+// # IT HAS RUN, AND THE PRODUCT HAS BEEN FLIPPED
+//
+// hetzner/addons run 33199532768 returned FLIP WOULD FIX IT on BOTH subjects (addon-tempo and
+// addon-harbor: OutOfSync → Synced, no sync operation in the window, `.spec` content identical
+// across it). `packages/core/argocd/addons.go` now renders the compare-option on every add-on
+// Application, so THE PREMISE OF THIS EXPERIMENT NO LONGER HOLDS on a normal run: the subject
+// already carries the annotation, and `runSSDExperiment` correctly returns COULD NOT ASK saying
+// exactly that ("there is no flip to measure").
+//
+// That is the intended end state, not a regression. The code is kept because it is the instrument
+// that would have to be re-run if the flip were ever reverted or if a future argo-cd pin changed
+// the strategy again — and because a COULD NOT ASK naming the annotation is a far better thing for
+// the next reader to find than a deleted file and a closed issue.
 //
 // # Why an OUTCOME and not a diff
 //
