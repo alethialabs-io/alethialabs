@@ -230,7 +230,7 @@ func TestGKEBackendConfigManifest(t *testing.T) {
 // GKE waits on a BackendConfig nobody rendered and the ingress stalls).
 //
 // TLS comes from a cert-manager Secret now, not `pre-shared-cert` (#1858). `tls: true` is the whole
-// contract with argo-cd 8.6.4 — verified against the chart's values.yaml, which has no `tlsSecret`
+// contract with argo-cd 9.5.11 — verified against the chart's values.yaml, which has no `tlsSecret`
 // key — and `allow-http: "false"` is asserted alongside it because cert-manager issues
 // ASYNCHRONOUSLY: without it the load balancer would answer plaintext :80 for the ArgoCD API during
 // the window before the Secret lands.

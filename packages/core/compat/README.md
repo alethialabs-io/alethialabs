@@ -70,7 +70,8 @@ The matrix feeds a **two-gate** design (epic #1186), neither wired by this seam:
 
 `matrix.json` seeds the known couplings from the code they previously hid in:
 
-- **ArgoCD ↔ K8s** — `8.6.4`→`v3.1.8`→`≥1.33`; `7.1.3`→`v2.11`→`≤1.32` (`argocd/versions.go`, #1165).
+- **ArgoCD ↔ K8s** — `9.5.11`→`v3.3.9`→`≥1.33` (shipped); `8.6.4`→`v3.1.8`→`≥1.33`;
+  `7.1.3`→`v2.11`→`≤1.32` (`argocd/versions.go`, #1165 for the floor, #2717 for the 8.6.4→9.5.11 bump).
 - **Talos ↔ K8s** — `v1.13.6`→`1.31–1.36` (`cloud/hetzner_provider.go`, `hetzner/variables.tf`).
 - **Cilium ↔ K8s** — `1.19.6`→`≤1.35` (`hetzner/cilium.tf`).
 - **hcloud-CSI ↔ K8s** — `2.22.0`→`1.34–1.36` (`hetzner/csi.tf`).
