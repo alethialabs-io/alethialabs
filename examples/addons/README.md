@@ -40,10 +40,16 @@ The file name and the `provider:` value are not the same thing and are not meant
 `external-dns/gcp.yaml` sets `provider: google`, because that is what the chart calls it. The file is
 named for the cloud you are on; the value is named for the API being called.
 
-## An absent file is a documented ceiling
+## An absent file is a documented ceiling — and it has to stay falsifiable
 
 An add-on that genuinely **cannot** work on a cloud has no file for it, and that add-on's own README
-says why. Velero on hetzner is the standing example: its `provider` knob is `aws | gcp | azure`, so
-there is no valid selection — not a missing credential, a missing choice.
+says why. That absence is a fact, not work somebody forgot.
 
-That absence is a fact, not work somebody forgot.
+It is also a claim, and a claim can be wrong. Velero on hetzner was the standing example here: its
+`provider` knob is `aws | gcp | azure`, so — the argument went — there was no valid selection. The
+argument was false. Those are the names of velero's **plugins**, not of clouds, and the `aws` plugin
+speaks S3 to any store that does, Hetzner Object Storage included. What was actually missing was a
+place to put the endpoint. `examples/addons/velero/hetzner.yaml` exists now.
+
+So a ceiling recorded here must name **which layer** it is a ceiling in — the cloud, the chart, or
+our own offer — because a ceiling in the third is a to-do wearing a fact's clothes.

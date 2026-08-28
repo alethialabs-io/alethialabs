@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -113,6 +114,19 @@ type vaultBootstrapOpts struct {
 	ESOCredSecret string
 	ESONamespace  string
 	ESOCredKey    string
+	// InitOnly stops after initialise + unseal + enable the KV mount: no secrets are seeded and no
+	// ESO token is minted.
+	//
+	// This is the MARKETPLACE Vault (#2717) — a Vault the CUSTOMER runs, not the platform's carrier
+	// for Hetzner's `secret` kind. It has no ESO store to credential and no canvas secrets to seed;
+	// what it needs is simply to be OPEN, because the chart ships no init hook and a sealed Vault
+	// never passes its readiness probe.
+	//
+	// An EXPLICIT flag rather than "no --secrets and no --eso-secret were passed". Inferring it
+	// would make a renderer that forgot an argument look identical to one that meant this, and the
+	// difference is a Vault that silently seeds nothing. validate() refuses the two together for the
+	// same reason.
+	InitOnly bool
 }
 
 // RunVaultBootstrap parses the flags and runs the bootstrap.
@@ -127,6 +141,7 @@ func RunVaultBootstrap(ctx context.Context, args []string) error {
 	fs.StringVar(&o.ESOCredSecret, "eso-secret", "", "Secret the ClusterSecretStore reads the token from")
 	fs.StringVar(&o.ESONamespace, "eso-namespace", "", "namespace of that Secret")
 	fs.StringVar(&o.ESOCredKey, "eso-key", "token", "data key inside the ESO credential Secret")
+	fs.BoolVar(&o.InitOnly, "init-only", false, "initialise, unseal and enable the KV mount, then stop (the marketplace Vault: no secrets seeded, no ESO token minted)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -146,17 +161,44 @@ func RunVaultBootstrap(ctx context.Context, args []string) error {
 }
 
 func (o vaultBootstrapOpts) validate() error {
-	missing := []string{}
-	for name, v := range map[string]string{
+	required := map[string]string{
 		"--api-base": o.APIBase, "--state-secret": o.StateSecret,
-		"--state-namespace": o.StateNamespace, "--eso-secret": o.ESOCredSecret,
-		"--eso-namespace": o.ESONamespace, "--eso-key": o.ESOCredKey,
-	} {
+		"--state-namespace": o.StateNamespace,
+	}
+	if o.InitOnly {
+		// FAIL LOUD on the combination rather than quietly ignoring the extra arguments. A caller
+		// that passed both meant one of the two things and got the other, and the one it did not
+		// mean — seeding nothing — leaves every ExternalSecret resolving nothing, days later.
+		extra := []string{}
+		for name, v := range map[string]string{
+			"--eso-secret": o.ESOCredSecret, "--eso-namespace": o.ESONamespace,
+		} {
+			if strings.TrimSpace(v) != "" {
+				extra = append(extra, name)
+			}
+		}
+		if len(o.Secrets) > 0 {
+			extra = append(extra, "--secrets")
+		}
+		if len(extra) > 0 {
+			sort.Strings(extra)
+			return fmt.Errorf("vault-bootstrap: --init-only cannot be combined with %s: "+
+				"init-only seeds nothing and mints no ESO token, so those arguments would be silently ignored",
+				strings.Join(extra, ", "))
+		}
+	} else {
+		required["--eso-secret"] = o.ESOCredSecret
+		required["--eso-namespace"] = o.ESONamespace
+		required["--eso-key"] = o.ESOCredKey
+	}
+	missing := []string{}
+	for name, v := range required {
 		if strings.TrimSpace(v) == "" {
 			missing = append(missing, name)
 		}
 	}
 	if len(missing) > 0 {
+		sort.Strings(missing)
 		return fmt.Errorf("vault-bootstrap: missing required flag(s): %s", strings.Join(missing, ", "))
 	}
 	return nil
@@ -240,6 +282,16 @@ func vaultBootstrap(
 
 	if err := client.EnableKV(ctx, rootToken, vaultKVMount); err != nil {
 		return fmt.Errorf("vault-bootstrap: enable kv: %w", err)
+	}
+	// The MARKETPLACE Vault stops here: it is the customer's Vault, so there is nothing of ours to
+	// seed and no ESO store of ours to credential. Root is still revoked by the defer above — the
+	// owner mints an operator token on demand with `vault operator generate-root`, which needs the
+	// unseal key this Job just stored and is auditable each time. A root token left alive in a
+	// cluster is a standing unrestricted credential nobody meant to create, and that is no less true
+	// when the cluster belongs to the customer.
+	if o.InitOnly {
+		fmt.Fprintf(os.Stdout, "vault-bootstrap: initialised, unsealed, KV v2 mounted at %s/, root token revoked\n", vaultKVMount)
+		return nil
 	}
 	seeded := 0
 	for _, spec := range o.Secrets {

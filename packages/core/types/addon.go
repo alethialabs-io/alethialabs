@@ -73,6 +73,46 @@ type AddOnInstall struct {
 	// existingSecret ref — and writes them into Values at the declared paths. Nil for non-BYO
 	// add-ons or a BYO chart with no bound workloads. Mirrors the TS `AddOnInstallSpec.workloads`.
 	Workloads []ChartWorkloadBinding `json:"workloads,omitempty"`
+	// Bootstrap is a one-shot, in-cluster operation the runner performs AFTER this add-on's
+	// Application has been applied. Nil for every add-on that needs none. Mirrors the TS
+	// `AddOnInstallSpec.bootstrap`.
+	Bootstrap *AddOnBootstrap `json:"bootstrap,omitempty"`
+}
+
+// AddOnBootstrapKind names a one-shot bootstrap the runner knows how to perform.
+//
+// A typed kind over a closed set, not a free string, because the runner DISPATCHES on it: an
+// unrecognised kind is an ERROR rather than a skip. A skipped bootstrap is invisible — the deploy
+// stays green, the add-on sits Progressing forever, and nothing says why.
+type AddOnBootstrapKind string
+
+const (
+	// AddOnBootstrapVaultInit initialises and unseals a freshly installed HashiCorp Vault, and
+	// enables its KV v2 mount.
+	//
+	// A fresh Vault is SEALED: its readiness probe fails (`vault status` exits 2), no pod is ever
+	// Ready, and the Application sits Progressing at any budget. The chart ships no bootstrap of its
+	// own — upstream's position is that initialising is an operator act — so without this the
+	// marketplace offers a one-click install that cannot come up, on every cloud.
+	AddOnBootstrapVaultInit AddOnBootstrapKind = "vault-init"
+)
+
+// AddOnBootstrap describes a one-shot bootstrap the runner runs from INSIDE the cluster.
+//
+// ── What may travel in this struct ──────────────────────────────────────────────────────────────
+//
+// Names, namespaces and addresses. Nothing else. It rides the DEPLOY job's config snapshot, which
+// is persisted in Postgres, so it carries nothing a credential could be derived from — the same
+// contract AddOnSecretRef holds. Key material the bootstrap needs is MINTED INSIDE the pod and
+// written straight to a Secret in the cluster; it never enters the runner process, the job log, or
+// execution_metadata.
+type AddOnBootstrap struct {
+	// Kind selects the bootstrap. Unknown kinds are refused.
+	Kind AddOnBootstrapKind `json:"kind"`
+	// APIBase is the in-cluster API root the Job talks to (scheme + host + port, no path).
+	APIBase string `json:"apiBase"`
+	// StateSecret is the Secret the Job writes its state into, in the add-on's own namespace.
+	StateSecret string `json:"stateSecret"`
 }
 
 // ChartWorkloadBinding is one described BYO-chart workload's runtime-resolvable overlay: its W3
