@@ -66,6 +66,21 @@ import path from "node:path";
 
 const SNAPSHOT = "docs/testing/programme-snapshot.json";
 const LEDGER = "demos/proofs/provisioning-e2e-log.md";
+/**
+ * How many marketplace add-ons the generated catalog carries. `undefined` when it cannot be read —
+ * NOT a default. A default here would be a number nobody measured, quietly deciding whether a proof
+ * counts.
+ */
+function addOnCatalogCount() {
+	try {
+		const c = JSON.parse(fs.readFileSync(ADDON_CATALOG, "utf8"));
+		return Array.isArray(c) && c.length > 0 ? c.length : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+const ADDON_CATALOG = "test/e2e/fixtures/addon_catalog.hetzner.json";
 const LEDGER_BASELINE = "demos/proofs/ledger-baseline.json";
 const SPINE = "test/e2e/generated/programme.json";
 const WORKFLOW = ".github/workflows/e2e-nightly.yml";
@@ -100,7 +115,32 @@ const END = "<!-- END GENERATED: programme-rollup -->";
 const DIMENSIONS = [
 	{ id: "floor", label: "floor", gate: "(the cloud gate alone)", gates: [], what: "real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set" },
 	{ id: "maxconfig", label: "all kinds", gate: "ALETHIA_E2E_MAX_CONFIG", gates: [{ name: "ALETHIA_E2E_MAX_CONFIG", kind: "derived" }], what: "every kind this cloud offers lands in tofu state (or converges as its named Application)" },
-	{ id: "addons", label: "18 add-ons", gate: "ALETHIA_E2E_ALL_ADDONS", gates: [{ name: "ALETHIA_E2E_ALL_ADDONS", kind: "derived" }], what: "all 18 marketplace add-ons Healthy+Synced" },
+	{
+		id: "addons",
+		label: "18 add-ons",
+		gate: "ALETHIA_E2E_ALL_ADDONS",
+		gates: [{ name: "ALETHIA_E2E_ALL_ADDONS", kind: "derived" }],
+		what: "all 18 marketplace add-ons Healthy+Synced",
+		// THE ONE DIMENSION WHOSE COMPOSITE CREDIT COULD NEVER BE WITHHELD (#2671).
+		//
+		// `compositeCreditsFor` asks "were this dimension's REPO gates wired?", and `addons` has no repo
+		// gate — its only gate is `derived`. `[].every(…)` is `true`, so the credit was unconditionally
+		// granted, on every cloud, forever. The guard built to withhold this credit was structurally
+		// incapable of withholding THIS one.
+		//
+		// That is fine while the assertion is trustworthy, and it was not. `argoAddOnCount` sized the
+		// convergence BUDGET from the catalog while the assertion sized its SCOPE from the observed
+		// applications, so a run that saw 4 Applications passed a sweep this column advertises as 18.
+		// #2642 fixed the assertion. The CREDITING side stayed wrong in both directions: before that fix
+		// a `full` PASS made `addons` proven from a floor-sized sweep, and after it the shrunken run
+		// FAILS and the composite lands that failure on `addons` — a cell then reading "we exercised
+		// add-ons and they failed" when the run died on drift with six Applications in scope.
+		//
+		// So the dimension states its own requirement and the credit is refused unless the bundle shows
+		// it was met. Gate wiring answers "was the layer switched on?"; this answers "did the layer
+		// assert what this column claims?", and those come apart.
+		asserts: assertsFullAddOnSweep,
+	},
 	// RENAMED from `byo`, and the rename IS the correction. This column asserts A0.6 — a customer
 	// apps-DESTINATION repo plus a BYO Helm chart converging as ArgoCD Applications, each managing at
 	// least one real resource. Under the old label ("BYO-IaC", "customer IaC/charts applied, and
@@ -256,6 +296,46 @@ export function gateReached(observation) {
  * written, and rewriting history to match a corrected label is the more expensive error.
  * @type {Map<string, string>}
  */
+/**
+ * Did this run assert the WHOLE marketplace add-on surface? `"yes"` · `"no"` · `"unknown"`.
+ *
+ * THREE-VALUED, AND THE THIRD VALUE IS THE POINT. Bundles in this tree come in three shapes and
+ * collapsing any of them onto a boolean gets one of the two failures this exists to prevent:
+ *
+ *   · pre-#2688 bundles carry `argocd_total: 0` and `argocd_healthy_synced: 0` for EVERY run,
+ *     passing and failing alike, because capture-proof.sh counted the cluster AFTER teardown had
+ *     already removed it. Reading that 0 as an observation refuses every historical credit.
+ *   · older bundles still carry neither field. Reading absent as "fine" reinstates the hole.
+ *   · post-#2688 bundles carry the ASSERTION-TIME counts, written by AssertArgoAppsHealthy before
+ *     the cleanup runs, and `null` where nothing was measured.
+ *
+ * SO IT READS THE ASSERTED FIELDS, NOT THE CAPTURED ONES, and this is where #2671's own suggestion
+ * has been overtaken: it proposed `argocd_total`, which is exactly the capture-time field that
+ * #2688 made `null` on purpose. A check written against it today would find `null` in every new
+ * bundle — the newest bundle in the tree carries `argocd_total: null` beside
+ * `argocd_healthy_synced_asserted: 8` — and, written the obvious way, credit the dimension anyway.
+ * That is this repo's dominant defect class landing inside the fix for it.
+ *
+ * `unknown` REFUSES the credit and says which bundle could not be measured. Refusing is the safe
+ * direction here for the same reason the run-tag rule is: a PASS nobody can check is not a proof,
+ * and the cost of being wrong is a cell that reads `never_run` until somebody re-runs it.
+ */
+export function assertsFullAddOnSweep(summary, required) {
+	if (!summary || typeof summary !== "object") return "unknown";
+	const expected = summary.argocd_expected_total;
+	const asserted = summary.argocd_healthy_synced_asserted;
+	const outcome = summary.argocd_assert_outcome;
+	// Neither assertion-time field present at all: a bundle written before #2688 taught the harness to
+	// record what it asserted. Not measurable, in either direction.
+	if (typeof expected !== "number" && typeof asserted !== "number") return "unknown";
+	if (typeof expected !== "number" || typeof asserted !== "number") return "unknown";
+	// The harness's own word for "the assertion did not run or could not read the cluster". Trusting
+	// the counts beside it would be trusting numbers it has just disclaimed.
+	if (outcome !== undefined && outcome !== "converged") return "unknown";
+	if (!Number.isFinite(required) || required <= 0) return "unknown";
+	return expected >= required && asserted >= required ? "yes" : "no";
+}
+
 export const DIMENSION_ALIASES = new Map(DIMENSIONS.flatMap((d) => (d.aliases ?? []).map((a) => [a, d.id])));
 
 /** Resolve a ledger row's dimension token to its column id. */
@@ -359,9 +439,14 @@ const STATE_GLYPH = {
  * it anyway promotes a scenario that never executed to `proven` — the exact green-skip-as-proof
  * failure that retracted every 2026-07-22 row.
  *
+ * `compositeRefusedWhy` carries the caller's reason when there is one. There is more than one way to
+ * refuse the credit now (#2671 added "the bundle does not show the assertion this column claims"),
+ * and the hardcoded sentence below would confidently name the wrong cause for every new reason — a
+ * refusal that names a cause it did not establish is a defect this file has already shipped twice.
+ *
  * @returns {{state: string, why: string, row: object|null}}
  */
-export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCredits = true }) {
+export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCredits = true, compositeRefusedWhy = null }) {
 	const direct = claims.get(`${cloud}/${dimension}`) ?? null;
 	const compositeClaim = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
 	const composite = compositeCredits ? compositeClaim : null;
@@ -373,7 +458,9 @@ export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCr
 		const why =
 			compositeClaim === null
 				? "no surviving ledger claim"
-				: `no surviving ledger claim — this cloud's \`${COMPOSITE}\` run does NOT count for this dimension, whose layer green-skips until its repo gate is set`;
+				: compositeRefusedWhy
+					? `no surviving ledger claim — ${compositeRefusedWhy}`
+					: `no surviving ledger claim — this cloud's \`${COMPOSITE}\` run does NOT count for this dimension, whose layer green-skips until its repo gate is set`;
 		return { state: STATE.neverRun, why, row: null };
 	}
 	const via = direct === null ? ` (via the \`${COMPOSITE}\` composite run)` : "";
@@ -516,9 +603,11 @@ export function deriveBoard(snapshot) {
 	};
 }
 
-export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot, ledgerBaseline = {} }) {
+export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot, ledgerBaseline = {}, assertRequirements = {} }) {
 	const failures = [];
 	const notes = [];
+	/** Cells whose composite credit was refused for want of a MEASUREMENT, not for a verdict. */
+	const unmeasuredComposites = [];
 	const { rows, errors } = parseLedger(ledgerText);
 	failures.push(...errors);
 	const claims = collapseLedger(rows);
@@ -544,6 +633,11 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	//   repo gates      the switch IS composed, but a repo variable a human must set is unset, so the
 	//                   layer green-skipped inside the run. `unknown` is NOT `wired`, so a missing
 	//                   snapshot fails closed rather than buying a proof.
+	//
+	//   asserts()       the switch was on and the layer ran, but the BUNDLE does not show it
+	//                   asserting what this dimension claims. This one is per-CLOUD, because the
+	//                   evidence is a bundle and each cloud has its own — which is why the credit is
+	//                   computed inside the loop rather than once per dimension (#2671).
 	const compositeCreditsFor = new Map(
 		DIMENSIONS.map((d) => [
 			d.id,
@@ -553,7 +647,32 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	for (const cloud of clouds) {
 		grid[cloud] = {};
 		for (const d of DIMENSIONS) {
-			grid[cloud][d.id] = deriveCell({ cloud, dimension: d.id, claims, bundleExists, compositeCredits: compositeCreditsFor.get(d.id) });
+			let credits = compositeCreditsFor.get(d.id);
+			// The default message names the repo-gate cause, which is the ONLY cause it could have had
+			// before this. A refusal that names a cause it did not establish is the defect this file
+			// has now been fixed for twice, so every new refusal carries its own sentence.
+			let refusedWhy;
+			if (credits && typeof d.asserts === "function") {
+				const compositeClaim = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
+				const bundle = compositeClaim && bundleKind(compositeClaim.bundle) === "path" ? compositeClaim.bundle : null;
+				const summary = bundle ? readBundleSummary(path.join(bundlePath(bundle), "provision-summary.json")) : null;
+				const verdict = d.asserts(summary, assertRequirements[d.id]);
+				if (verdict === "no") {
+					credits = false;
+					refusedWhy =
+						`this cloud's \`${COMPOSITE}\` run did not assert what this column claims — its own bundle ` +
+						`\`${bundle}\` records a smaller add-on sweep than the ${assertRequirements[d.id]} the catalog carries, ` +
+						`so crediting it would promote a floor-sized run to a full one`;
+				} else if (verdict === "unknown") {
+					credits = false;
+					refusedWhy =
+						`this cloud's \`${COMPOSITE}\` run cannot be shown to have asserted what this column claims — ` +
+						`${bundle ? `its bundle \`${bundle}\` records no assertion-time add-on counts` : "it has no committed bundle to read"}. ` +
+						`Unmeasured is not proven: re-run it, or record a direct claim for this dimension`;
+					unmeasuredComposites.push(`${cloud}/${d.id}${bundle ? ` (\`${bundle}\`)` : ""}`);
+				}
+			}
+			grid[cloud][d.id] = deriveCell({ cloud, dimension: d.id, claims, bundleExists, compositeCredits: credits, compositeRefusedWhy: refusedWhy });
 		}
 	}
 
@@ -1009,6 +1128,16 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		}
 	}
 
+	// A refusal for want of a MEASUREMENT is not the same as a cell nobody ran, and the grid renders
+	// them identically (`never_run`). Saying which is which is the difference between "nobody has
+	// tried this" and "somebody did and we cannot check it" — the second is one dispatch from proven.
+	if (unmeasuredComposites.length > 0) {
+		notes.push(
+			`${unmeasuredComposites.length} cell(s) could have been credited from a \`${COMPOSITE}\` run but its bundle records no assertion-time evidence: ` +
+				`${unmeasuredComposites.join(", ")}. Unmeasured is not proven — but it is not never-run either, and a re-run closes it.`,
+		);
+	}
+
 	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, costCells, gateReality, cloudGates };
 }
 
@@ -1409,6 +1538,12 @@ function readInputs() {
 		// silence it is not a ratchet — removing the file must make the guard louder (every
 		// mismatch becomes a failure), never quieter.
 		ledgerBaseline: fs.existsSync(LEDGER_BASELINE) ? JSON.parse(fs.readFileSync(LEDGER_BASELINE, "utf8")) : {},
+		// WHAT EACH DIMENSION'S CLAIM REQUIRES, read from the same generated fixture the harness seeds
+		// rather than hardcoded here. `addons` says "18 add-ons" in its label and the number has to
+		// come from the catalog, or the two drift and the guard measures against a stale figure —
+		// which is the class of defect it was written to catch. A catalog that cannot be read yields
+		// `undefined`, and the predicate treats that as `unknown`: refusing to credit, never guessing.
+		assertRequirements: { addons: addOnCatalogCount() },
 		bundleExists: (p) => fs.existsSync(p),
 		// Tolerant on purpose: an absent or unreadable summary means "cannot check", which is not the
 		// same as "checked and fine". The rule below simply does not fire, rather than inventing a
@@ -1698,6 +1833,77 @@ function runSelfTest() {
 		ok("no baseline at all means every unfiled red fails", r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
 	}
 
+	// ── the composite must not credit a dimension its own bundle does not evidence (#2671) ────────
+	//
+	// `addons` is the one dimension whose composite credit could never be withheld: its only gate is
+	// `derived`, so the repo-gate filter leaves an empty array and `[].every(…)` is true. The
+	// negatives below are therefore the entire content of the fix — a rule that credits everything is
+	// what was already there.
+	{
+		const FULL = "demos/proofs/aws/full";
+		const at = (v) => (p) => (p === `${FULL}/provision-summary.json` ? v : null);
+		const run = (summary, required = 18) =>
+			derive({
+				...base,
+				ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", FULL),
+				readBundleSummary: typeof summary === "function" ? summary : at(summary),
+				assertRequirements: { addons: required },
+			});
+		const converged = (n) => ({ argocd_assert_outcome: "converged", argocd_expected_total: n, argocd_healthy_synced_asserted: n });
+
+		// The predicate, alone. Each of these is a bundle shape that exists in the tree today.
+		ok("a run that asserted the whole catalog says yes", assertsFullAddOnSweep(converged(18), 18) === "yes");
+		ok("a run that asserted MORE than the catalog says yes", assertsFullAddOnSweep(converged(24), 18) === "yes");
+		ok("a run that asserted a floor-sized set says no", assertsFullAddOnSweep(converged(6), 18) === "no", "the #2642 shape: 6 Applications passing a sweep advertised as 18");
+		// THE TRAP #2671 NAMES BY NUMBER. Every pre-#2688 bundle carries these zeros, on passing and
+		// failing runs alike, because capture-proof.sh counted the cluster after teardown removed it.
+		// Reading them as an observation would refuse every historical credit on a measurement nobody
+		// took; reading their absence as fine reinstates the hole. Both are wrong, so it is `unknown`.
+		ok("a pre-#2688 bundle's captured zeros are UNKNOWN, not a small sweep", assertsFullAddOnSweep({ argocd_total: 0, argocd_healthy_synced: 0 }, 18) === "unknown");
+		ok("a bundle with neither field is unknown", assertsFullAddOnSweep({ outcome: "success" }, 18) === "unknown");
+		// The field #2671 itself proposed. It is null by design in every post-#2688 bundle, so a check
+		// written against it would find nothing and — written the obvious way — credit anyway.
+		ok("the capture-time field alone is unknown, whatever it says", assertsFullAddOnSweep({ argocd_total: null, argocd_healthy_synced: null }, 18) === "unknown");
+		ok("the harness's own 'unmeasured' verdict is believed over the numbers beside it", assertsFullAddOnSweep({ ...converged(18), argocd_assert_outcome: "unmeasured" }, 18) === "unknown");
+		ok("an unreadable summary is unknown", assertsFullAddOnSweep(null, 18) === "unknown");
+		// An unreadable catalog must not silently become a requirement of zero, which every run meets.
+		ok("an unknown requirement is unknown, never satisfied", assertsFullAddOnSweep(converged(18), undefined) === "unknown");
+		ok("...and neither is a requirement of zero", assertsFullAddOnSweep(converged(0), 0) === "unknown");
+		// Half-measured is not measured: expected without asserted says what was hoped for, not seen.
+		ok("expected without asserted is unknown", assertsFullAddOnSweep({ argocd_assert_outcome: "converged", argocd_expected_total: 18 }, 18) === "unknown");
+
+		// End to end, through derive().
+		r = run(converged(18));
+		ok("a full run that asserted the catalog credits addons", r.grid.aws.addons.state === "proven", r.grid.aws.addons.why);
+		r = run(converged(6));
+		ok("a full run that asserted six does NOT credit addons", r.grid.aws.addons.state === "never_run", r.grid.aws.addons.why);
+		// A refusal that names a cause it did not establish is the defect this file has shipped twice.
+		// The repo-gate sentence is wrong here — `addons` has no repo gate — so it must not appear.
+		ok("...and the refusal names the assertion, not the repo gate", /did not assert what this column claims/.test(r.grid.aws.addons.why), r.grid.aws.addons.why);
+		ok("...and does NOT blame a repo gate it has no repo gate to blame", !/repo gate is set/.test(r.grid.aws.addons.why), r.grid.aws.addons.why);
+		ok("...and names the bundle, so the claim can be checked", r.grid.aws.addons.why.includes(FULL), r.grid.aws.addons.why);
+
+		r = run(() => null);
+		ok("an unmeasurable bundle refuses the credit", r.grid.aws.addons.state === "never_run", r.grid.aws.addons.why);
+		ok("...saying it cannot be SHOWN, not that it failed", /cannot be shown to have asserted/.test(r.grid.aws.addons.why), r.grid.aws.addons.why);
+		// `never_run` renders identically for "nobody tried" and "somebody did and we cannot check".
+		// The note is the only thing that separates them, and the second is one dispatch from proven.
+		ok("...and it is reported, so unmeasured is not silently never-run", r.notes.some((n) => /no assertion-time evidence/.test(n) && /aws\/addons/.test(n)), JSON.stringify(r.notes));
+
+		// The other dimensions must be untouched: this is a per-dimension declaration, not a new
+		// blanket requirement that every composite credit carry a bundle measurement.
+		ok("a dimension that declares no requirement is credited as before", r.grid.aws.maxconfig.state === "proven", r.grid.aws.maxconfig.why);
+
+		// A DIRECT claim is the more specific statement and never passes through this at all.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", FULL) + row("2026-08-02", "aws", "addons", "PASS", "demos/proofs/aws/addons"),
+			readBundleSummary: at(converged(6)),
+			assertRequirements: { addons: 18 },
+		});
+		ok("a DIRECT addons claim is unaffected by the composite's evidence", r.grid.aws.addons.state === "proven", r.grid.aws.addons.why);
+	}
+
 	// RETRACTED supersession — voids the claim rather than replacing it.
 	r = derive({
 		...base,
@@ -1723,7 +1929,18 @@ function runSelfTest() {
 
 	// The composite: a `full` PASS is evidence for every dimension the full bar ACTUALLY EXERCISES.
 	// `base` carries no snapshot, so every gate reads `unknown` — which is deliberately NOT `wired`.
-	r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full") });
+	// The fixture now carries ASSERTION-TIME evidence, because "exercises" gained a third condition in
+	// #2671: a dimension may also declare what its own claim requires, and `addons` does. Without the
+	// counts below this assertion fails on `addons` — correctly, which is the whole point of that
+	// change and the reason this fixture had to grow rather than the rule shrink.
+	const FULL_SWEEP = { argocd_assert_outcome: "converged", argocd_expected_total: 18, argocd_healthy_synced_asserted: 18 };
+	const sweepAt = (b, v) => (p) => (p === `${b}/provision-summary.json` ? v : null);
+	r = derive({
+		...base,
+		ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full"),
+		readBundleSummary: sweepAt("demos/proofs/aws/full", FULL_SWEEP),
+		assertRequirements: { addons: 18 },
+	});
 	// "Exercises" now has TWO conditions, not one. A dimension is exercised by the full bar only if
 	// `full` composes its switch at all (composedByFull) AND every repo-kind gate it declares is
 	// wired. The first condition is new: byo-iac is declared out of the composite entirely, so no
