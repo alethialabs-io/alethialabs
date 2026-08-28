@@ -1144,6 +1144,7 @@ func TestInterpretByoSyncPolicy(t *testing.T) {
 		// every step from the renderer to a throwaway-cluster round-trip.
 		//
 		// ArgoCD v3.1.8 declares `Prune bool json:"prune,omitempty"` and the same for SelfHeal,
+		// and SyncPolicyAutomated is byte-identical at v3.3.9, the version the 9.5.11 chart bundles,
 		// while giving `Enabled` a *bool precisely so absent/true/false stay distinguishable there.
 		// So false collapses to absent the moment ArgoCD serialises the object, and upstream's own
 		// meaning for absent IS false.

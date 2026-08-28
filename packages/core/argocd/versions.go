@@ -20,37 +20,62 @@ import (
 const (
 	// DefaultArgoHelmRepo is the argo-helm chart repository.
 	DefaultArgoHelmRepo = "https://argoproj.github.io/argo-helm"
-	// DefaultArgoChartVersion is the pinned argo-cd chart version. 8.6.4 bundles ArgoCD v3.1.8, whose
-	// gitops-engine carries the Kubernetes 1.33+ OpenAPI schema (Deployment/ReplicaSet
-	// `.status.terminatingReplicas`, KEP-3973). The prior 7.1.3 (v2.11) predated that field, so its
-	// structured-merge-diff failed to build a typed value for ANY live Deployment on a 1.33+ cluster
-	// → `sync=Unknown` and GitOps never converged. All project templates default to K8s 1.35, so this
-	// affected every cloud (#1165).
+	// DefaultArgoChartVersion is the pinned argo-cd chart version. 9.5.11 bundles ArgoCD v3.3.9.
 	//
-	// ── THIS PIN IS STALE, AND THE STALENESS IS A KNOWN BLOCKER (#2717). ──
+	// ── Why this is 9.5.11 and not 8.6.4, and not 10.4.1 either ──
 	//
-	// 8.6.4 bundles v3.1.8, released 2025-09-30. As of 2026-08-28 the argo-cd chart is at 10.4.1
-	// (v3.5.2) and even the release-3.1 line has reached v3.1.16. Two fixes we need are on the far
-	// side of that gap, and both were verified against the commit graph rather than release notes:
+	// The previous pin, 8.6.4 → v3.1.8 (2025-09-30), kept every add-on StatefulSet that owns
+	// `volumeClaimTemplates` permanently OutOfSync while `argocd app diff` printed nothing (#2717).
+	// The mechanism is settled from argo-cd's own source: every add-on Application sets
+	// `ServerSideApply=true` (addons.go), so the CONTROLLER compares with structured-merge diff
+	// while the CLI runs the plain client-side diff — two different algorithms, not a contradiction.
+	// Structured-merge diff on v3.1.8 mishandles the fields the API server materialises into an
+	// embedded ObjectMeta, which is why the correlation was 6 of 6 StatefulSets WITH
+	// volumeClaimTemplates OutOfSync and 0 of 2 without, on hetzner/addons run 33149451505.
 	//
-	//	v3.2.0  argo-cd#23978 — `argocd app diff --server-side-diff`. v3.1.x's CLI builds its diff
-	//	        config with no WithStructuredMergeDiff, no WithGVKParser and no WithManager, so it
-	//	        CANNOT reproduce the controller's comparison for a ServerSideApply Application. That
-	//	        is why #2717's diff has printed nothing across six paid runs.
-	//	v3.3.0  argo-cd#24844 (structured-merge-diff#306) — "structured merge diff fix for null
-	//	        metadata field". `git compare` says the merge commit is an ancestor of v3.3.0,
-	//	        v3.4.0 and v3.5.2 and NOT of v3.1.8, v3.1.16 or v3.2.0.
+	// Three upstream defects had to be cleared, each verified against the actual git trees (the
+	// GitHub `compare` API for ancestry, and the tree itself for the dependency pins) rather than
+	// read off release notes or dates:
 	//
-	// Without them, every StatefulSet with `volumeClaimTemplates` and every CronJob in the add-on
-	// catalog is permanently OutOfSync on this pin — measured, 6 of 6 with volumeClaimTemplates and
-	// 0 of 2 without, on hetzner/addons run 33149451505. See addons.go's SyncOptions comment for
-	// the mechanism and for the two workarounds that do NOT work on 8.6.4.
+	//	argo-cd#24844   "structured merge diff fix for null metadata field" — the fix for the class
+	//	                above. It is nothing but a dependency bump, so ancestry alone would not be
+	//	                proof: merge commit 96038ba2 is an ancestor of v3.3.0 and v3.3.9 and NOT of
+	//	                v3.1.8, v3.1.16 or v3.2.0, AND `gitops-engine/go.mod` at v3.3.9 pins
+	//	                sigs.k8s.io/structured-merge-diff/v6 v6.3.1-0.20251003215857-446d8398e19c,
+	//	                whose commit IS structured-merge-diff#306's merge commit 446d8398e19c.
+	//	argo-cd#24423   ServerSideDiff + `ignoreDifferences` → empty diff, resource still OutOfSync.
+	//	                Still OPEN as a tracker, but a maintainer closed it on substance ("already
+	//	                fixed in #17362"), and #17362's fix is gitops-engine#747 (`skipFullNormalize`).
+	//	                We carry two ignoreDifferences entries AND `RespectIgnoreDifferences=true`, so
+	//	                this one lands on us. From v3.3.0 argo-cd vendors gitops-engine in-tree
+	//	                (`replace … => ./gitops-engine`), and v3.3.9's gitops-engine/pkg/diff/diff.go
+	//	                carries `WithSkipFullNormalize(true)`. v3.1.8's external gitops-engine pin
+	//	                e48120133eec does NOT have it — the tree was read, not the pin's date.
+	//	argo-cd#25184   a Server-Side Diff regression on `spec.template.metadata.creationTimestamp`
+	//	                INTRODUCED at v3.2.0 — the same symptom shape we are trying to leave. CLOSED
+	//	                by argo-cd#25210, merge commit 728f2e74, an ancestor of v3.3.0/v3.3.9 and NOT
+	//	                of v3.2.0. So the fix is in and the regression is not.
 	//
-	// A bump is a control-plane change and wants its own measured PR: a new
-	// packages/core/compat/matrix.json entry (the couplings drift test enforces it), and a re-read
-	// of the chart values contracts that gke_ingress.go, agw_ingress.go and t2_argo_repos.go each
-	// document as "verified against argo-cd 8.6.4".
-	DefaultArgoChartVersion = "8.6.4"
+	// v3.2.1 also clears all three on paper (its gitops-engine pin 13d5172d IS #25184's cherry-pick,
+	// and Go's MVS already selects the fixed structured-merge-diff from the root go.mod). It is
+	// deliberately NOT taken: argo-cd supports the last three minors (SECURITY.md), which with v3.5
+	// current means 3.3/3.4/3.5 — v3.2 is EOL, and replacing one stale pin with another is the
+	// mistake this change exists to undo. v3.3 is therefore the lowest SUPPORTED minor that clears
+	// all three, and 9.5.11 is the last argo-helm release on it (9.5.12 moves to v3.4.1).
+	//
+	// The K8s 1.33 floor from #1165 is unchanged and still recorded in the matrix: v3.1.8's
+	// gitops-engine first carried the 1.33+ OpenAPI schema (Deployment/ReplicaSet
+	// `.status.terminatingReplicas`, KEP-3973); the pre-#1165 7.1.3 (v2.11) predated it, so its
+	// structured-merge-diff could not build a typed value for ANY live Deployment on a 1.33+ cluster
+	// → `sync=Unknown`. All project templates default to K8s 1.35, so that affected every cloud.
+	// v3.3.9 is strictly newer, and the chart still declares `kubeVersion: >=1.25.0-0`.
+	//
+	// SSOT for the coupling is packages/core/compat/matrix.json → components[argocd]; the couplings
+	// drift test refuses a pin that is not a recorded release there.
+	//
+	// This is expected to fix the OutOfSync class. It is NOT proven until an addons run says so —
+	// the mechanism and the ancestry are established, the outcome on a live cluster is not.
+	DefaultArgoChartVersion = "9.5.11"
 	// ArgoHelmRepoEnv overrides DefaultArgoHelmRepo.
 	ArgoHelmRepoEnv = "ALETHIA_ARGOCD_HELM_REPO"
 	// ArgoChartVersionEnv overrides DefaultArgoChartVersion.

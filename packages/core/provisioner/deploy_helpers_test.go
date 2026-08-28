@@ -860,7 +860,7 @@ func TestArgocdURLDecisionMatchesWhatInstallArgoCDEmitsOnAzure(t *testing.T) {
 
 						// When it IS emitted, the two things that make it a WORKING ingress rather
 						// than a rendered one must both be present. `tls: true` is the whole TLS
-						// contract with argo-cd 8.6.4 (there is no tlsSecret key), and without the
+						// contract with argo-cd 9.5.11 (there is no tlsSecret key), and without the
 						// issuer annotation cert-manager never mints the Secret — the listener
 						// would serve the gateway's default certificate forever, silently.
 						if emitted {
@@ -962,7 +962,7 @@ func TestArgocdURLDecisionMatchesWhatInstallArgoCDEmitsOnGCP(t *testing.T) {
 						}
 
 						if emitted {
-							// `tls: true` is the whole TLS contract with argo-cd 8.6.4, and without
+							// `tls: true` is the whole TLS contract with argo-cd 9.5.11, and without
 							// the issuer annotation cert-manager never mints the Secret. With
 							// allow-http=false the Ingress would then serve NOTHING — not plaintext
 							// — which is a silent outage rather than a downgrade.

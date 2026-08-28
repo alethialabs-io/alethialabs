@@ -100,11 +100,17 @@ func GKEArgoServerValues(host, issuer, backendConfig string) (string, error) {
 		return "", fmt.Errorf("refusing to render a GKE ArgoCD Ingress with no cert-manager issuer — the TLS secret would never be created and the Ingress would serve the ArgoCD API over plain HTTP")
 	}
 	var b strings.Builder
-	// `tls: true` is the whole TLS contract with argo-cd 8.6.4: it renders `spec.tls` for `hostname`
+	// `tls: true` is the whole TLS contract with argo-cd 9.5.11: it renders `spec.tls` for `hostname`
 	// with secretName argocd-server-tls, which is what makes cert-manager mint a Certificate (the
 	// annotation names the issuer) and what the GCE ingress controller then reads. Verified against
 	// the chart's own values.yaml — there is no `tlsSecret` key, and helm accepts an invented key
 	// silently while rendering no TLS block at all.
+	//
+	// RE-VERIFIED on the 8.6.4 → 9.5.11 bump (#2717) rather than carried forward: `server.ingress`
+	// still declares `tls` as a bool defaulting to false, still documents "TLS certificate will be
+	// retrieved from a TLS secret `argocd-server-tls`", and still has no `tlsSecret` key. Rendering
+	// these exact values against both charts produces a byte-identical Ingress apart from the
+	// `helm.sh/chart` and `app.kubernetes.io/version` labels.
 	//
 	// `allow-http: "false"` is KEPT and matters more now, not less. cert-manager issues
 	// asynchronously, so there is a window after the Ingress appears and before the Secret lands;
