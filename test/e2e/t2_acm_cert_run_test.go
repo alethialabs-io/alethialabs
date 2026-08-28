@@ -84,7 +84,12 @@ func runT2AcmCert(t *testing.T, ctx context.Context, cp *ControlPlane, p acmCert
 	}
 	if arn == "" {
 		summary.Detail = "acm_certificate_arn absent from execution_metadata — the template output did not reach the product"
-		t.Fatalf("acm-cert: %s", summary.Detail)
+		// Name what DID arrive. #3042 burned a full AWS provision on a bare "absent": the ARN was
+		// in `outputs.acm_certificate_arn` the whole time and the message could not say so. The
+		// paths searched are acmCertMetaPaths; printing the key set makes the next absence — a
+		// runner that never posted, versus a key that moved — readable from the log alone.
+		t.Fatalf("acm-cert: %s. Searched %v; execution_metadata carried: %s",
+			summary.Detail, acmCertMetaPaths, acmCertMetaKeys(p.metaRaw))
 	}
 	summary.CertARN = arn
 
