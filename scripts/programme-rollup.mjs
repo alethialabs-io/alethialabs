@@ -66,7 +66,7 @@ import path from "node:path";
 
 const SNAPSHOT = "docs/testing/programme-snapshot.json";
 const LEDGER = "demos/proofs/provisioning-e2e-log.md";
-const SHA_BASELINE = "demos/proofs/ledger-sha-baseline.json";
+const LEDGER_BASELINE = "demos/proofs/ledger-baseline.json";
 const SPINE = "test/e2e/generated/programme.json";
 const WORKFLOW = ".github/workflows/e2e-nightly.yml";
 // The fidelity table moved OUT of the workflow's inline `env:` and into the resolver (#2356), so a
@@ -516,7 +516,7 @@ export function deriveBoard(snapshot) {
 	};
 }
 
-export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot, ledgerShaBaseline = { acknowledged: [] } }) {
+export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot, ledgerBaseline = {} }) {
 	const failures = [];
 	const notes = [];
 	const { rows, errors } = parseLedger(ledgerText);
@@ -645,11 +645,11 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	// punishes the supersession convention this repo is asking people to follow.
 	//
 	// SHRINK-ONLY, keyed on IDENTITY not on a count. Each grandfathered row is named in
-	// demos/proofs/ledger-sha-baseline.json; a mismatch that is not named fails, and a name that no
-	// longer matches a real mismatch fails too. A bare ceiling of "7" would let an eighth mismatch
-	// move in the moment one of these is retracted.
+	// demos/proofs/ledger-baseline.json under `sha_drift`; a mismatch that is not named fails, and a
+	// name that no longer matches a real mismatch fails too. A bare ceiling of "7" would let an eighth
+	// mismatch move in the moment one of these is retracted.
 	{
-		const ackList = Array.isArray(ledgerShaBaseline?.acknowledged) ? ledgerShaBaseline.acknowledged : [];
+		const ackList = Array.isArray(ledgerBaseline?.sha_drift?.records) ? ledgerBaseline.sha_drift.records : [];
 		const ackKey = (o) => `${o.cloud}/${o.dimension}@${o.row_sha ?? o.sha}→${o.bundle_sha}`;
 		// Built by hand rather than `new Map(entries)` so a DUPLICATE key is reported instead of
 		// silently overwritten. The first draft of this baseline listed the hetzner/full RETRACTED
@@ -660,7 +660,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		for (const a of ackList) {
 			const k = ackKey(a);
 			if (unmatchedAck.has(k)) {
-				failures.push(`${SHA_BASELINE}: duplicate record for \`${k}\`. Only surviving claims are checked, so one record per cell is the most that can ever match; the extra can never be satisfied and would pad the ratchet.`);
+				failures.push(`${LEDGER_BASELINE}: duplicate record for \`${k}\`. Only surviving claims are checked, so one record per cell is the most that can ever match; the extra can never be satisfied and would pad the ratchet.`);
 				continue;
 			}
 			unmatchedAck.set(k, a);
@@ -688,12 +688,12 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 					`\`${r.bundle}/provision-summary.json\` says the run executed \`${bundleSha}\`. ` +
 					`A ${r.verdict} naming a commit its run never executed cannot be checked against the tree. ` +
 					`The ledger is append-only — supersede the row with a RETRACTED naming it, then re-record with the sha the bundle carries. ` +
-					`If this row is genuinely to be grandfathered, name it in ${SHA_BASELINE} with the reason.`,
+					`If this row is genuinely to be grandfathered, name it in ${LEDGER_BASELINE} with the reason.`,
 			);
 		}
 		for (const [key, a] of unmatchedAck) {
 			failures.push(
-				`${SHA_BASELINE}: the acknowledged mismatch \`${key}\` no longer corresponds to a surviving claim whose sha disagrees with its bundle. ` +
+				`${LEDGER_BASELINE}: the acknowledged mismatch \`${key}\` no longer corresponds to a surviving claim whose sha disagrees with its bundle. ` +
 					`Either it was superseded (delete the record — this ratchet only shrinks) or the row/bundle it named has moved. ` +
 					`A record for a mismatch that does not exist is the same stale-evidence shape the record was meant to expose.` +
 					(a.issue ? ` Filed as ${a.issue}.` : ""),
@@ -786,7 +786,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 			const c = grid[cloud][d.id];
 			if (c.state !== STATE.failing && c.state !== STATE.blocked) continue;
 			const issue = c.row?.issue ?? "";
-			reds.push({ cloud, dimension: d.id, state: c.state, issue, issueState: board.issueState(issue), why: c.why });
+			reds.push({ cloud, dimension: d.id, state: c.state, issue, issueState: board.issueState(issue), why: c.why, row: c.row });
 		}
 	}
 
@@ -811,10 +811,95 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		};
 		r.state = STATE.stale;
 	}
-	// A red with NO issue at all is genuinely unowned, and unlike a closed citation that IS fixable —
-	// file one. Kept a note rather than a failure while the ledger still holds pre-convention rows.
-	for (const r of reds.filter((x) => x.issue === "")) {
-		notes.push(`\`${r.cloud}/${r.dimension}\` is ${r.state} but names no issue — an unfiled red is an unowned red.`);
+	// ── UNFILED REDS: an unowned red is the one state the grid cannot RANK ────────────────────────
+	//
+	// A closed citation is information — the cause is fixed, the cell needs a re-run, and `stale`
+	// above says exactly that. A red with NO citation is the opposite: it carries a verdict and no
+	// diagnosis, so nothing downstream can do anything with it.
+	//
+	// That is a ranking defect, not a tidiness one. PROGRAMME.md's "mechanical next" orders failing
+	// cells ABOVE never-run ones on the argument that a red already has a diagnosed cause and is
+	// therefore cheaper to advance. An uncited red enters that ordering carrying none, so it is
+	// ranked above work that is genuinely readier, on a property it does not have. It reads as work
+	// while being nobody's — strictly worse than a never-run cell, which at least advertises what it
+	// is.
+	//
+	// This was a `notes.push` until #3157, "kept a note rather than a failure while the ledger still
+	// holds pre-convention rows". That was right when it was written and wrong afterwards for a
+	// reason worth stating: until #3151 reconnected the advisory channel, `notes` was WRITE-ONLY —
+	// pushed to here, returned from derive(), and dropped. So the compromise position was not "a
+	// quieter guard", it was no guard at all, and nothing stopped the next one arriving.
+	//
+	// SHRINK-ONLY, keyed on the ROW rather than the cell. Each grandfathered red is named in
+	// demos/proofs/ledger-baseline.json under `unfiled_reds`; an uncited red that is not named fails,
+	// and a name that no longer matches an uncited red fails too. The key carries the row's date and
+	// sha, so a record cannot launder the NEXT uncited row for the same cell — which is the only
+	// thing it could plausibly be padded with.
+	//
+	// WHY GRANDFATHERING IS NEEDED AT ALL, and why it is not a loophole: the ledger is append-only
+	// and is never corrected in place, so a row already in the file CANNOT be given a citation. Its
+	// remedy lands on the next row for that cell, which needs a run. A rule that fired on those
+	// would be unfixable-by-construction, which is how a guard trains people to route around it. A
+	// row being written NOW, by contrast, is trivially fixable — fill the last column — which is the
+	// case this rule is actually for.
+	//
+	// AND IT IS SATISFIABLE BY CONSTRUCTION, which is what makes promoting it fair rather than
+	// merely stricter. scripts/e2e/provisioning-e2e.sh files or updates the tracking issue BEFORE it
+	// appends the row, precisely so the number is available to write into the last column — it was
+	// reordered for that reason, and its comment says so. So the ordinary path already cites. The
+	// only way an uncited FAIL row is produced today is the one documented failure branch, where
+	// `gh issue create` did not succeed and the script emits "the ledger row will cite none". That
+	// branch is a warning in a run log nobody reads afterwards; here it becomes a red, at the point
+	// where the row is being brought into the tree by scripts/e2e/commit-proof.sh and a human can
+	// still put the number in.
+	{
+		const recs = Array.isArray(ledgerBaseline?.unfiled_reds?.records) ? ledgerBaseline.unfiled_reds.records : [];
+		const redKey = (o) => `${o.cloud}/${o.dimension}@${o.date ?? ""}@${o.row_sha ?? ""}`;
+		// Built by hand rather than `new Map(entries)` for the same reason the sha ratchet is: a
+		// duplicate must be REPORTED, not silently overwritten. One record per cell is the ceiling —
+		// only surviving claims are walked — so a second can never be satisfied and exists only to
+		// pad the list.
+		const unmatched = new Map();
+		for (const rec of recs) {
+			const k = redKey(rec);
+			if (unmatched.has(k)) {
+				failures.push(
+					`${LEDGER_BASELINE}: duplicate unfiled-red record for \`${k}\`. Only surviving claims are checked, so one record per cell is the most that can ever match; the extra can never be satisfied and would pad the ratchet.`,
+				);
+				continue;
+			}
+			unmatched.set(k, rec);
+		}
+		for (const r of reds.filter((x) => x.issue === "")) {
+			const key = redKey({ cloud: r.cloud, dimension: r.dimension, date: r.row?.date, row_sha: r.row?.sha });
+			const rec = unmatched.get(key);
+			if (rec) {
+				unmatched.delete(key);
+				// Grandfathered, never silenced. The whole point of the record is that somebody DOES
+				// own this — it just cannot be written into a row that is already in the file.
+				notes.push(
+					`\`${r.cloud}/${r.dimension}\` is ${r.state} and its ledger row names no issue. Grandfathered in ${LEDGER_BASELINE}` +
+						(rec.issue ? `, owned by ${rec.issue}` : "") +
+						`: ${rec.reason ?? "no reason recorded"}. The citation lands when this cell is next recorded.`,
+				);
+				continue;
+			}
+			failures.push(
+				`${LEDGER}${r.row?.line ? `:${r.row.line}` : ""}: ${r.cloud}/${r.dimension} is ${r.state} and names no issue in its last column. ` +
+					`An unfiled red is an unowned red: it enters the "mechanical next" ranking above never-run cells on the claim that a red carries a diagnosed cause, and this one carries none. ` +
+					`If this is the row you are writing — or bringing in with scripts/e2e/commit-proof.sh — put the issue number in its last column. ` +
+					`If no issue exists, file one — the nightly convention is \`e2e nightly: ${r.cloud} RED (${r.dimension})\`, which this script already parses. ` +
+					`If the row predates the convention and cannot be corrected (the ledger is append-only), name it in ${LEDGER_BASELINE} under \`unfiled_reds\` with the issue that does own it.`,
+			);
+		}
+		for (const [key, rec] of unmatched) {
+			failures.push(
+				`${LEDGER_BASELINE}: the unfiled-red record \`${key}\` no longer corresponds to a red whose surviving row names no issue. ` +
+					`Either the cell was re-recorded WITH a citation, or it is no longer red — delete the record, this ratchet only shrinks. ` +
+					`A record for a violation that does not exist is the same stale-evidence shape the record was meant to expose.` +
+					(rec.issue ? ` It named ${rec.issue}.` : ""),
+			);
+		}
 	}
 
 	// ── CONTESTED: a cell the ledger calls PROVEN with an open RED filed after the proving run ──
@@ -1323,7 +1408,7 @@ function readInputs() {
 		// ABSENT MEANS EMPTY, not "skip the rule". A ratchet whose baseline file can be deleted to
 		// silence it is not a ratchet — removing the file must make the guard louder (every
 		// mismatch becomes a failure), never quieter.
-		ledgerShaBaseline: fs.existsSync(SHA_BASELINE) ? JSON.parse(fs.readFileSync(SHA_BASELINE, "utf8")) : { acknowledged: [] },
+		ledgerBaseline: fs.existsSync(LEDGER_BASELINE) ? JSON.parse(fs.readFileSync(LEDGER_BASELINE, "utf8")) : {},
 		bundleExists: (p) => fs.existsSync(p),
 		// Tolerant on purpose: an absent or unreadable summary means "cannot check", which is not the
 		// same as "checked and fine". The rule below simply does not fire, rather than inventing a
@@ -1436,9 +1521,14 @@ function runSelfTest() {
 
 		// ONE DIRECTION: a FAIL on a run that never spent overstates the damage, which costs nobody
 		// a proof. It is deliberately not refused.
+		//
+		// This is the one assertion in the file that demands `failures` be EMPTY rather than free of
+		// one pattern, which is worth keeping — it catches any new rule that fires on an ordinary
+		// row. That is exactly what it did when #3157 landed, so the fixture now cites an issue, as
+		// a real FAIL row must.
 		r = derive({
 			...base,
-			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "FAIL", AT),
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "FAIL", AT, "#2718"),
 			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: { outcome: "failure", deploy_stage: "prerequisites" } }),
 		});
 		ok("a FAIL on a run that did not spend is NOT refused", r.failures.length === 0, JSON.stringify(r.failures));
@@ -1521,17 +1611,17 @@ function runSelfTest() {
 		ok("an unreadable summary is not compared either", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
 
 		// The ratchet.
-		const ack = (o) => ({ acknowledged: [{ cloud: "gcp", dimension: "floor", row_sha: "09911316", bundle_sha: "f3cb966", ...o }] });
-		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("f3cb966"), ledgerShaBaseline: ack({}) });
+		const ack = (o) => ({ sha_drift: { records: [{ cloud: "gcp", dimension: "floor", row_sha: "09911316", bundle_sha: "f3cb966", ...o }] } });
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("f3cb966"), ledgerBaseline: ack({}) });
 		ok("an acknowledged mismatch is grandfathered", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
 
 		// Shrink-only: the record must stop being accepted once the row it names agrees.
-		r = derive({ ...base, ledgerText: hdr + shaRow("f3cb966", AT), readBundleSummary: at("f3cb966"), ledgerShaBaseline: ack({}) });
+		r = derive({ ...base, ledgerText: hdr + shaRow("f3cb966", AT), readBundleSummary: at("f3cb966"), ledgerBaseline: ack({}) });
 		ok("a record for a mismatch that no longer exists is an integrity failure", r.failures.some((f) => /no longer corresponds/.test(f)), JSON.stringify(r.failures));
 
 		// A record must not grandfather a DIFFERENT mismatch than the one it names — otherwise one
 		// acknowledgement launders every future drift on that cell.
-		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("9999999"), ledgerShaBaseline: ack({}) });
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("9999999"), ledgerBaseline: ack({}) });
 		ok("an acknowledgement does not cover a mismatch against a different bundle sha", r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
 
 		// A duplicate can never be satisfied — only surviving claims are checked, so one record per
@@ -1540,13 +1630,72 @@ function runSelfTest() {
 			...base,
 			ledgerText: hdr + shaRow("09911316", AT),
 			readBundleSummary: at("f3cb966"),
-			ledgerShaBaseline: { acknowledged: [...ack({}).acknowledged, ...ack({}).acknowledged] },
+			ledgerBaseline: { sha_drift: { records: [...ack({}).sha_drift.records, ...ack({}).sha_drift.records] } },
 		});
 		ok("a duplicate baseline record is an integrity failure", r.failures.some((f) => /duplicate record/.test(f)), JSON.stringify(r.failures));
 
 		// Deleting the baseline must make the guard LOUDER, never quieter.
-		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("f3cb966"), ledgerShaBaseline: undefined });
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("f3cb966"), ledgerBaseline: undefined });
 		ok("no baseline at all means every mismatch fails", r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+	}
+
+	// ── the unfiled-red ratchet (#3157) ───────────────────────────────────────────────────────────
+	//
+	// The negatives are the ones that matter here. A rule that fires on every red is not a check —
+	// three of the four reds in the tree the day this landed were correctly cited — and a baseline
+	// that a stale record can pad is not a ratchet.
+	{
+		const UNCITED = /names no issue in its last column/;
+		const STALE = /no longer corresponds to a red whose surviving row names no issue/;
+		const redRow = (issue) => row("2026-08-01", "aws", "floor", "FAIL", "demos/proofs/aws/20260801T000000Z", issue);
+		// `abc1234` is what `row()` stamps; the key pins the ROW, not just the cell.
+		const rec = (o) => ({ unfiled_reds: { records: [{ cloud: "aws", dimension: "floor", date: "2026-08-01", row_sha: "abc1234", ...o }] } });
+
+		r = derive({ ...base, ledgerText: hdr + redRow("—") });
+		ok("a red whose row names no issue is an integrity failure", r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+		// A refusal that does not say what to do next is how a guard teaches people to route around
+		// it. Both remedies must be in the message: the one for a row you are writing, and the one
+		// for a row the append-only ledger will not let you touch.
+		ok("...and it names the cell and the ledger line", r.failures.some((f) => /aws\/floor/.test(f) && /provisioning-e2e-log\.md:\d+/.test(f)), JSON.stringify(r.failures));
+		ok("...and tells you to fill the last column", r.failures.some((f) => /put the issue number in its last column/.test(f)), JSON.stringify(r.failures));
+		ok("...and gives the exact title to file under", r.failures.some((f) => /e2e nightly: aws RED \(floor\)/.test(f)), JSON.stringify(r.failures));
+		ok("...and names the grandfathering escape for a row that cannot be corrected", r.failures.some((f) => /unfiled_reds/.test(f)), JSON.stringify(r.failures));
+
+		// The two negatives that keep it from being a rule that fires on everything.
+		r = derive({ ...base, ledgerText: hdr + redRow("#3098") });
+		ok("a red that cites an issue raises nothing", !r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+		r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "floor", "PASS", "demos/proofs/aws/20260801T000000Z", "—") });
+		ok("a PROVEN cell with no issue raises nothing — only reds need an owner", !r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+
+		// BLOCKED is a red too: the harness refused before spending, and that refusal has a cause
+		// somebody owns. Excluding it would leave the cheapest-to-diagnose state unowned.
+		r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "floor", "BLOCKED", "demos/proofs/aws/20260801T000000Z", "—") });
+		ok("a BLOCKED cell with no issue is also unowned", r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+
+		// The ratchet.
+		r = derive({ ...base, ledgerText: hdr + redRow("—"), ledgerBaseline: rec({ issue: "#3098", reason: "predates the convention" }) });
+		ok("a grandfathered unfiled red is not a failure", !r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+		// Grandfathered is not silenced. The record exists because somebody DOES own the red, and a
+		// reader who cannot see that has the same problem the rule was written to fix.
+		ok("...but it is still reported, naming its owner", r.notes.some((n) => /aws\/floor/.test(n) && /#3098/.test(n)), JSON.stringify(r.notes));
+
+		// A record must pin the ROW. Keyed on the cell alone, one acknowledgement would launder
+		// every future uncited row for that cell — which is exactly what a re-run produces.
+		r = derive({ ...base, ledgerText: hdr + redRow("—"), ledgerBaseline: rec({ row_sha: "9999999" }) });
+		ok("a record does not cover a DIFFERENT row for the same cell", r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+
+		// Shrink-only, both ways it can go stale: the cell gets cited, or the cell stops being red.
+		r = derive({ ...base, ledgerText: hdr + redRow("#3098"), ledgerBaseline: rec({}) });
+		ok("a record for a red that is now cited is an integrity failure", r.failures.some((f) => STALE.test(f)), JSON.stringify(r.failures));
+		r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "floor", "PASS", "demos/proofs/aws/20260801T000000Z", "—"), ledgerBaseline: rec({}) });
+		ok("a record for a cell that is no longer red is an integrity failure", r.failures.some((f) => STALE.test(f)), JSON.stringify(r.failures));
+
+		r = derive({ ...base, ledgerText: hdr + redRow("—"), ledgerBaseline: { unfiled_reds: { records: [...rec({}).unfiled_reds.records, ...rec({}).unfiled_reds.records] } } });
+		ok("a duplicate unfiled-red record is an integrity failure", r.failures.some((f) => /duplicate unfiled-red record/.test(f)), JSON.stringify(r.failures));
+
+		// Deleting the baseline must make the guard LOUDER, never quieter.
+		r = derive({ ...base, ledgerText: hdr + redRow("—"), ledgerBaseline: undefined });
+		ok("no baseline at all means every unfiled red fails", r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
 	}
 
 	// RETRACTED supersession — voids the claim rather than replacing it.
