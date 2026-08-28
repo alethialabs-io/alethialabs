@@ -1,14 +1,19 @@
 # Velero on Azure — backups to Blob Storage.
 #
-# WITHOUT A BUCKET, VELERO INSTALLS AND BACKS UP NOTHING. `toValues` emits the
-# `configuration.backupStorageLocation` block only when `bucket` is set, so at catalog defaults the
-# controller comes up with no backup location at all — running, healthy-looking, and useless. That is
-# what this file exists to prevent.
+# WITHOUT A BUCKET, VELERO INSTALLS AND BACKS UP NOTHING. At catalog defaults the controller comes up
+# with no backup location at all — running, healthy-looking, and useless. That is what this file
+# exists to prevent.
+#
+# The object-store PLUGIN is no longer your problem: the catalog now installs
+# velero-plugin-for-{aws,gcp,microsoft-azure} as an init container for whichever `provider` you pick.
+# It used to install none, and the chart needs one — so every velero this marketplace shipped before
+# that could not have taken a backup even with everything below filled in correctly.
 
 provider: azure
 
-# An S3 bucket you own. Velero writes backup tarballs and metadata here; give it versioning and a
-# lifecycle rule, because a backup store with no retention grows without bound.
+# A bucket you own, OUTSIDE this cluster's lifecycle — a backup store destroyed with the cluster it
+# backs up is not a backup store. Velero writes backup tarballs and metadata here; give it versioning
+# and a lifecycle rule, because a backup store with no retention grows without bound.
 bucket: my-velero-backups
 
 # The bucket's region. Velero needs it explicitly — it does not discover it.
