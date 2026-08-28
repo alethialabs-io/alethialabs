@@ -234,6 +234,43 @@ function notArmed(code, message) {
  *
  * @returns {Map<string, {covered: number, total: number}>}
  */
+/**
+ * Per-FILE covered/total for one directory, straight from the coverage artefact.
+ *
+ * WHY (#3079). The failure line says a directory "fell to 54.6% from 54.6% (957/1753 vs
+ * 958/1753)". One statement, out of 1753, somewhere in 31 files. That is true and nearly
+ * unactionable: the reader's first move is to guess which file, and on a promotion PR the
+ * directory is often one the diff never touched — so the honest answer is "none of them, this
+ * wobbled", which costs an investigation to reach.
+ *
+ * Naming the files turns a directory-shaped number into a place to look. It cannot say WHICH
+ * statement moved (the floors record a ratio, not a per-file baseline), so it deliberately does
+ * not pretend to: it prints the breakdown and lets the reader compare against the diff they
+ * already have.
+ *
+ * @returns {{file: string, covered: number, total: number}[]} sorted by uncovered count, worst first
+ */
+function perFileBreakdown(projectDir, dir) {
+	try {
+		const raw = JSON.parse(readFileSync(coveragePath(projectDir), "utf8"));
+		const abs = path.resolve(ROOT, projectDir);
+		const out = [];
+		for (const [file, data] of Object.entries(raw)) {
+			const rel = path.relative(abs, file);
+			if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
+			const owner = path.dirname(rel) === "" ? "." : path.dirname(rel);
+			if (owner !== dir) continue;
+			const s = Object.values(data?.s ?? {});
+			out.push({ file: path.basename(rel), covered: s.filter((n) => n > 0).length, total: s.length });
+		}
+		return out.sort((a, b) => b.total - b.covered - (a.total - a.covered));
+	} catch {
+		// A breakdown we cannot produce is not a reason to change the verdict, and an empty list
+		// renders as "not available" rather than as "no files".
+		return [];
+	}
+}
+
 function measureOrFailOpen(projectDir, project) {
 	const cov = coveragePath(projectDir);
 	// F2 — no artefact. The only ways here: the `Unit tests` step already failed (and already
@@ -386,8 +423,33 @@ function runCheck(project) {
 		"",
 		`  ts-coverage: ${failures.length} directory(ies) lost coverage in ${project}`,
 		"",
-		...failures.map((f) => `    ${f.dir}  ${formatPct(f.floor)} -> ${formatPct(f.now)}   (${f.floor.covered}/${f.floor.total} -> ${f.now.covered}/${f.now.total})`),
+		...failures.flatMap((f) => {
+			const head = `    ${f.dir}  ${formatPct(f.floor)} -> ${formatPct(f.now)}   (${f.floor.covered}/${f.floor.total} -> ${f.now.covered}/${f.now.total})`;
+			const files = perFileBreakdown(projectDir, f.dir);
+			if (files.length === 0) return [head];
+			// Only the files with something uncovered can account for a drop; a fully covered file
+			// cannot have lost anything, and listing it buries the ones that could.
+			const movers = files.filter((x) => x.covered < x.total);
+			if (movers.length === 0) return [head];
+			return [
+				head,
+				...movers.slice(0, 8).map((x) => `        ${x.file}  ${x.covered}/${x.total}`),
+				...(movers.length > 8 ? [`        … and ${movers.length - 8} more with uncovered statements`] : []),
+			];
+		}),
 		"",
+		// A ONE-STATEMENT MOVE WITH AN UNCHANGED TOTAL IS THE SIGNATURE OF NOISE (#3079), and
+		// saying so is not permission to ignore it — it is the difference between "you regressed"
+		// and "this wobbled", which the reader would otherwise spend an investigation establishing.
+		...(failures.some((f) => f.now.total === f.floor.total && Math.abs(f.now.covered - f.floor.covered) === 1)
+			? [
+					"  NOTE: a directory above moved by exactly ONE statement with its total unchanged.",
+					"  That is the shape of a nondeterministic test rather than a real regression (#3079) —",
+					"  especially if your diff does not touch that directory. Re-run before assuming it is",
+					"  yours; if a re-run is green, say so on #3079 rather than lowering the floor.",
+					"",
+				]
+			: []),
 		"  Add tests until the ratio is back at or above its floor. If the drop is intended and",
 		"  correct, record it deliberately:",
 		"",
