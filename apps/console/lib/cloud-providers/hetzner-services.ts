@@ -14,8 +14,13 @@
  * with zero Go changes: the renderer is generic over (chartRepo, chart, version, namespace,
  * values). Chart coordinates live here and are swappable without touching the pipeline.
  *
- * v1 scope: Postgres (CloudNativePG), Redis→Valkey, queue→RabbitMQ. Topic (SNS) and NoSQL
- * (DynamoDB) have no clean single-chart OSS equal and are deferred (hidden on the canvas).
+ * Coverage: Postgres→CloudNativePG, Redis→Valkey, queue→RabbitMQ, registry→Harbor,
+ * secret→Vault, topic→NATS. `nosql` is the ONE kind Hetzner still refuses — see unsupported-kinds.ts.
+ *
+ * WHAT "CARRYING A KIND" MEANS HERE, because it is the thing most easily misread: each node
+ * becomes one SERVER release, not one server-side object. A `queue` node is a RabbitMQ release,
+ * not an AMQP queue; a `database` node is a Postgres cluster, not a schema. `topic` follows that
+ * same rule — a NATS release whose SUBJECTS are the topics. That is why it needed no bootstrap Job.
  */
 
 import type { AddOnInstallSpec } from "@/lib/addons/types";
@@ -35,6 +40,7 @@ const NS = {
 	queue: "queues",
 	registry: "registries",
 	secret: "secrets",
+	topic: "topics",
 	operators: "cnpg-system",
 } as const;
 
@@ -126,6 +132,25 @@ export const HETZNER_CHARTS = {
 		chart: "vault",
 		version: "0.28.1",
 	},
+	/**
+	 * NATS — the SNS / Pub-Sub / Service Bus analogue, one release per `topic` node, from the
+	 * NATS project's OWN chart (nats-io/k8s), which ships the official `nats` image.
+	 *
+	 * WHY NATS AND NOT KAFKA. A topic here is publish/subscribe fanout, which is core NATS'
+	 * native model: a subject IS the topic, and a subscriber is a client that asks for it. Kafka
+	 * (Strimzi) and Pulsar are log/stream systems that reach the same behaviour through a heavier
+	 * broker, an operator and a CR — and Strimzi is not a Helm chart delivering a cluster, it is
+	 * an operator plus a CR, which the note on RabbitMQ above explains this rail cannot yet
+	 * deliver health for. NATS is one chart, one release, one Application, health readable.
+	 *
+	 * JetStream (persistence) is ON, because a topic whose messages vanish on a pod restart is a
+	 * different product from the one the managed clouds sell.
+	 */
+	nats: {
+		chartRepo: "https://nats-io.github.io/k8s/helm/charts/",
+		chart: "nats",
+		version: "2.14.6",
+	},
 } as const;
 
 /** Node kinds Hetzner supports in v1 (the canvas hides the rest for Hetzner). */
@@ -178,12 +203,20 @@ interface SecretInput {
 	name: string;
 }
 
+/** A `topic` node. One NATS release per node; the SUBJECT is the topic and needs no server-side
+ *  object, exactly as a `queue` node is one RabbitMQ release rather than one AMQP queue. */
+interface TopicInput {
+	name: string;
+	storage_gb?: number | null;
+}
+
 interface HetznerDataServices {
 	databases?: DatabaseInput[];
 	caches?: CacheInput[];
 	queues?: QueueInput[];
 	registries?: RegistryInput[];
 	secrets?: SecretInput[];
+	topics?: TopicInput[];
 }
 
 /** Clamp a positive integer with a default, guarding null/NaN/negatives. */
@@ -215,6 +248,7 @@ export function hetznerDataServicesToAddOns(
 	const queues = services.queues ?? [];
 	const registries = services.registries ?? [];
 	const secrets = services.secrets ?? [];
+	const topics = services.topics ?? [];
 
 	// Secrets → ONE Vault for the project (never one per node: a `secret` node is a KV entry, not a
 	// server). syncWave 0 because the ClusterSecretStore over it, and every ExternalSecret that
@@ -274,6 +308,22 @@ export function hetznerDataServicesToAddOns(
 			version: HETZNER_CHARTS.cnpgCluster.version,
 			namespace: NS.postgres,
 			values: { cluster },
+			syncWave: 1,
+		});
+	}
+
+	// Topics → NATS, one release per node (sync-wave 1). No operator and no CRD gate: the chart
+	// delivers a plain StatefulSet, so unlike CNPG there is nothing for a later wave to wait
+	// on.
+	for (const topic of topics) {
+		specs.push({
+			id: `topic-${topic.name}`,
+			mode: "managed",
+			chartRepo: HETZNER_CHARTS.nats.chartRepo,
+			chart: HETZNER_CHARTS.nats.chart,
+			version: HETZNER_CHARTS.nats.version,
+			namespace: NS.topic,
+			values: hetznerTopicValues(topic),
 			syncWave: 1,
 		});
 	}
@@ -511,6 +561,36 @@ export function hetznerQueueValues(
 			enabled: true,
 			size: `${posInt(queue.storage_gb, 8)}Gi`,
 			storageClass: HCLOUD_STORAGE_CLASS,
+		},
+	};
+}
+
+/**
+ * Helm values for one topic node — a NATS server with JetStream file storage.
+ *
+ * JetStream is ON deliberately. Core NATS delivers a subject to whoever is connected and forgets
+ * it; SNS, Pub/Sub and Service Bus all retain until delivery, so a topic that dropped every
+ * message on a pod restart would be a different product wearing the same name. File storage is
+ * sized from the node's `storage_gb` and clamped to hcloud's 10 GiB minimum volume.
+ *
+ * Keys verified against `helm show values nats/nats --version 2.14.6`, never guessed — the chart
+ * nests persistence under `jetstream.fileStore.pvc`, which is not where the older 0.x charts (or
+ * any Bitnami repackage) put it.
+ */
+export function hetznerTopicValues(topic: TopicInput): Record<string, unknown> {
+	return {
+		config: {
+			jetstream: {
+				enabled: true,
+				fileStore: {
+					enabled: true,
+					pvc: {
+						enabled: true,
+						size: `${Math.max(posInt(topic.storage_gb, HCLOUD_MIN_VOLUME_GB), HCLOUD_MIN_VOLUME_GB)}Gi`,
+						storageClassName: HCLOUD_STORAGE_CLASS,
+					},
+				},
+			},
 		},
 	};
 }
