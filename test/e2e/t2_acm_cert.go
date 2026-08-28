@@ -55,6 +55,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -262,9 +263,39 @@ var acmCertARNPattern = regexp.MustCompile(`^arn:aws[a-z-]*:acm:[a-z0-9-]+:\d{12
 
 func isACMCertARN(s string) bool { return acmCertARNPattern.MatchString(strings.TrimSpace(s)) }
 
+// acmCertMetaPaths are the places a tofu output can legitimately appear in a deploy job's
+// execution_metadata, MOST-SPECIFIC-FIRST. The nested `outputs.` rows are the real surface and the
+// reason this list exists at all (#3042).
+//
+// The runner does NOT promote arbitrary tofu outputs to the top level of execution_metadata. A
+// handful of facts it needs by name are lifted (`cluster_name`, `cluster_endpoint`, `argocd_url` —
+// buildDeployMetadata in apps/runner/internal/agent/runner.go); everything else lands WHOLESALE
+// under the `outputs` key, scrubbed of credential-bearing names but otherwise verbatim
+// (`metadata["outputs"] = scrubSensitiveOutputs(result.Outputs)`). `acm_certificate_arn` is not on
+// the lifted list and is not credential-bearing, so its one and only home is
+// `execution_metadata.outputs.acm_certificate_arn` — which the console reads as the deploy's
+// outputs (apps/console/lib/jobs/finalize-deployment.ts, `meta.outputs`).
+//
+// Run 33155063965 spent a full AWS provision to learn that: the template emitted
+// `acm_certificate_arn = "arn:aws:acm:…"` in the apply's root outputs, the runner used it in-process
+// to gate the ArgoCD ALB ingress, and this assertion still reported "the template output did not
+// reach the product" — because it only ever looked at the top level.
+//
+// The top-level rows are kept ahead of nothing in particular: they cost one map lookup and they mean
+// a future promotion (the `cluster_endpoint` treatment) does not silently stop being asserted.
+var acmCertMetaPaths = [][]string{
+	{"outputs", "acm_certificate_arn"},
+	{"outputs", "acmCertificateArn"},
+	{"acm_certificate_arn"},
+	{"acmCertificateArn"},
+}
+
 // parseACMCertARN pulls the certificate ARN out of the deploy job's execution_metadata. Absent is
 // not an error at this layer — the caller decides whether absence is fatal — but a PRESENT value
 // that is not an ACM ARN is, because that means something else claimed the field.
+//
+// It reads every path in acmCertMetaPaths, so the assertion tracks where the runner ACTUALLY writes
+// tofu outputs rather than where a reader hoped they would be.
 func parseACMCertARN(metaRaw []byte) (string, error) {
 	if len(metaRaw) == 0 {
 		return "", nil
@@ -273,21 +304,74 @@ func parseACMCertARN(metaRaw []byte) (string, error) {
 	if err := json.Unmarshal(metaRaw, &meta); err != nil {
 		return "", fmt.Errorf("execution_metadata is not JSON: %w", err)
 	}
-	for _, key := range []string{"acm_certificate_arn", "acmCertificateArn"} {
-		v, ok := meta[key]
+	for _, path := range acmCertMetaPaths {
+		s, ok := acmCertMetaString(meta, path)
 		if !ok {
 			continue
 		}
-		s, ok := v.(string)
-		if !ok || strings.TrimSpace(s) == "" {
-			continue
-		}
 		if !isACMCertARN(s) {
-			return "", fmt.Errorf("execution_metadata.%s is not an ACM certificate ARN: %q", key, s)
+			return "", fmt.Errorf("execution_metadata.%s is not an ACM certificate ARN: %q",
+				strings.Join(path, "."), s)
 		}
-		return strings.TrimSpace(s), nil
+		return s, nil
 	}
 	return "", nil
+}
+
+// acmCertMetaString walks a dotted path through the metadata and returns the trimmed string it
+// names. Reports false for a missing path, a non-object on the way down, a non-string leaf, or a
+// blank one — every "not present" shape, so the caller's absence branch stays one branch.
+//
+// The leaf tolerates BOTH a bare scalar and tofu's `{"value": …}` envelope, mirroring
+// argocd.ExtractOutput (packages/core/argocd/infra_facts.go), which the runner itself uses to read
+// this same key. TofuCLI.Output unwraps the envelope today, so the bare form is what actually lands;
+// accepting both means a change of mind there cannot turn a real certificate into a silent absence.
+func acmCertMetaString(meta map[string]any, path []string) (string, bool) {
+	var cur any = meta
+	for _, key := range path {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return "", false
+		}
+		cur, ok = m[key]
+		if !ok {
+			return "", false
+		}
+	}
+	if m, ok := cur.(map[string]any); ok {
+		cur = m["value"]
+	}
+	s, ok := cur.(string)
+	if !ok {
+		return "", false
+	}
+	s = strings.TrimSpace(s)
+	return s, s != ""
+}
+
+// acmCertMetaKeys lists what the metadata DID carry — its top-level keys plus the keys under
+// `outputs` — so an absent ARN is reported with the evidence that names the next hop instead of
+// costing another paid AWS run to localise. Sorted, so two runs' failures are comparable.
+func acmCertMetaKeys(metaRaw []byte) string {
+	var meta map[string]any
+	if len(metaRaw) == 0 || json.Unmarshal(metaRaw, &meta) != nil {
+		return "(execution_metadata absent or not JSON)"
+	}
+	top := make([]string, 0, len(meta))
+	for k := range meta {
+		top = append(top, k)
+	}
+	sort.Strings(top)
+	out := "top-level " + strings.Join(top, ",")
+	if o, ok := meta["outputs"].(map[string]any); ok {
+		nested := make([]string, 0, len(o))
+		for k := range o {
+			nested = append(nested, k)
+		}
+		sort.Strings(nested)
+		return out + " · outputs." + strings.Join(nested, ",outputs.")
+	}
+	return out + " · NO `outputs` object — the runner's buildDeployMetadata post did not land"
 }
 
 type acmCertSummary struct {
