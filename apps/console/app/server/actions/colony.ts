@@ -15,6 +15,26 @@ import { meteringFailed, recordAiUsage } from "@/lib/billing/ai-quota";
 import { getAiModel, isAiConfigured } from "@/lib/config/ai";
 
 /**
+ * The most model calls one metered colony turn may make.
+ *
+ * Matched to `stopWhen: stepCountIs(8)`, which every other metered AI entry point in this console
+ * already uses (agent route, per-agent route, project assistant, support ask). A colony round and
+ * an agent step are the same unit of spend against the same kind of hold, so they get the same
+ * ceiling rather than a second number argued from scratch.
+ */
+const COLONY_MAX_ROUNDS = 8;
+
+/**
+ * The most objectives a colony accepts.
+ *
+ * Equal to COLONY_MAX_ROUNDS on purpose: the supervisor runs at most one task per round, so an
+ * objective beyond this could never be reached. Accepting it would return a `SupervisorResult`
+ * whose `completed` list silently omits work the caller asked for — an unreachable objective is
+ * worse than a refused one, because only the refusal is visible.
+ */
+const COLONY_MAX_OBJECTIVES = COLONY_MAX_ROUNDS;
+
+/**
  * Run a small colony: delegate each objective to an LLM-backed sub-agent under the
  * deterministic supervisor (Magentic ledger + stall→re-plan). The supervisor decides
  * control flow; the model only does each task. Intended for breadth-first READ
@@ -34,6 +54,30 @@ export async function runColonyTasks(
 	}
 	if (objectives.length === 0) {
 		throw new Error("at least one objective is required");
+	}
+	// ── ONE metered turn is worth at most COLONY_MAX_ROUNDS model calls (#2698). ──
+	//
+	// `assertAiAllowed` below reserves ONE provisional hold for the whole colony. Before this cap,
+	// the number of model calls that hold paid for was set by the CALLER: `runSupervisor` derives
+	// `maxRounds` as `initialTasks.length * 3` when no explicit value is passed, so the ceiling was
+	// computed from the very array it was supposed to bound. A caller passing 200 objectives bought
+	// up to 600 model calls against a single ≈$0.10 reservation.
+	//
+	// This is a `"use server"` export, so the caller is anything that can reach the RPC surface —
+	// and the array arrives as an unvalidated `string[]`.
+	//
+	// The number is not invented. Every other metered AI entry point in this console bounds its turn
+	// at `stopWhen: stepCountIs(8)` — the agent route, the per-agent route, the project assistant and
+	// support ask, all four. A colony round is the same unit of spend as an agent step, so it gets
+	// the same budget rather than a new one argued from scratch.
+	if (objectives.length > COLONY_MAX_OBJECTIVES) {
+		// REFUSED, not truncated. Silently running 8 of 20 surveys and returning a result shaped like
+		// a complete one is the failure this repo keeps paying for elsewhere — the caller cannot tell
+		// an answer from a partial answer, and neither can the reader of the result.
+		throw new Error(
+			`a colony takes at most ${COLONY_MAX_OBJECTIVES} objectives (got ${objectives.length}); ` +
+				"it runs as ONE metered turn under a single budget hold. Split the work across turns.",
+		);
 	}
 
 	// Budget-gate the run. Surface a clean budget message (never a raw AiBudgetError) so the
@@ -67,7 +111,12 @@ export async function runColonyTasks(
 	const holdId = charge.settle ? charge.holdId : undefined;
 	let result: SupervisorResult;
 	try {
-		result = await runSupervisor(tasks, runner);
+		// EXPLICIT, not derived. Leaving `maxRounds` unset lets the supervisor compute it as
+		// `initialTasks.length * 3` — the ceiling derived from the input it is meant to bound. The
+		// objectives cap above and this bound are two different guarantees and both are needed: the
+		// cap keeps unreachable work from being silently accepted, this keeps the spend of a single
+		// hold bounded even if the cap is ever raised without the budget being revisited.
+		result = await runSupervisor(tasks, runner, { maxRounds: COLONY_MAX_ROUNDS });
 	} catch (e) {
 		await recordAiUsage({
 			orgId: actor.orgId,
