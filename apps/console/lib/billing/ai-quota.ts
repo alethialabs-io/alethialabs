@@ -329,6 +329,11 @@ export async function recordAiUsage(input: {
 				output_tokens: input.outputTokens ?? null,
 				cached_input_tokens: input.cachedInputTokens ?? null,
 				cost_micros: costMicros,
+				// The hold is no longer outstanding. This is what makes `settled_at IS NULL` an exact
+				// predicate for the stranded-hold sweep rather than a heuristic (#2683) — and it is
+				// stamped on the SAME statement that releases the headroom, so the two can never
+				// disagree about whether this turn settled.
+				settled_at: new Date(),
 			})
 			.where(eq(aiUsageLedger.id, input.holdId));
 	} else {
@@ -347,6 +352,11 @@ export async function recordAiUsage(input: {
 				output_tokens: input.outputTokens ?? null,
 				cached_input_tokens: input.cachedInputTokens ?? null,
 				cost_micros: costMicros,
+				// Settled on arrival: this path books a completed action, it never reserves. Stamping
+				// here is what keeps `settled_at IS NULL` meaning EXACTLY "an outstanding hold" — leave
+				// it null and every fixed-charge row would look strandable to the sweep, which would
+				// then release real charges to zero.
+				settled_at: new Date(),
 			});
 	}
 
