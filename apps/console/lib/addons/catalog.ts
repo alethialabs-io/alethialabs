@@ -760,6 +760,29 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			// with no backup location is not a configuration velero can act on.
 			const snapshots = c.snapshotsEnabled && Boolean(c.bucket) && !c.s3Url;
 			return {
+				// 4. THE CHART'S CRD-UPGRADE HOOK IS DEAD WEIGHT UNDER ARGOCD, AND ITS IMAGE NO
+				//    LONGER EXISTS. With `upgradeCRDs` at its default `true` the chart emits a Job
+				//    whose container is `docker.io/bitnami/kubectl:<the CLUSTER's minor>` — the tag
+				//    is derived from the cluster, not pinned. Bitnami withdrew their public Docker
+				//    Hub catalog, so on a 1.35 cluster that resolves to `bitnami/kubectl:1.35`,
+				//    which does not exist:
+				//
+				//      Failed to pull image "docker.io/bitnami/kubectl:1.35":
+				//        code = NotFound ... -> ErrImagePull -> ImagePullBackOff (x218)
+				//
+				//    The Job is a pre-upgrade hook, so ArgoCD waits on it and syncs NOTHING: every
+				//    resource reads Missing and the add-on never converges. Measured on
+				//    hetzner/addons run 33199532768 — `addon-velero: health=Missing sync=OutOfSync`
+				//    with all 20 resources "could not fetch".
+				//
+				//    Turning the hook OFF is the fix rather than re-pinning the image, because under
+				//    ArgoCD the hook has nothing to do: ArgoCD renders with `--include-crds` and
+				//    applies the CRDs as ordinary managed resources. Verified by rendering the
+				//    pinned chart both ways — `upgradeCRDs=false` emits ZERO kubectl references and
+				//    still carries all THIRTEEN velero CRDs. Pinning a replacement image would have
+				//    kept a Docker Hub pull, a rate limit and a second version to track, to run a
+				//    Job whose work ArgoCD has already done.
+				upgradeCRDs: false,
 				// The plugin binary, copied into the shared `plugins` emptyDir before velero starts.
 				initContainers: [
 					{
