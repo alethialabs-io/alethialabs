@@ -894,6 +894,14 @@ jobs:
       # whatever diff is nearby. These fixtures are hermetic — no network, no gh, no token.
       - name: Nightly rollup derivation (a red leg is never "not enabled")
         run: bash scripts/e2e/nightly-rollup.sh --self-test
+      # The row the rollup appends must name the commit the RUN executed, not the commit the rollup
+      # job happens to be sitting on. Those are different jobs, so any merge between them separates
+      # the two — and seven ledger rows already disagree with their own bundle, in BOTH directions,
+      # two of them backing cells the grid renders proven (#2718). The sha is now read from the
+      # bundle, so row and bundle agree by construction; these fixtures pin that, including the
+      # end-to-end case where the caller passes a DIFFERENT sha and it must not reach the ledger.
+      - name: Ledger rows name the commit the run executed (not the rollup job's HEAD)
+        run: bash scripts/e2e/provisioning-e2e.sh --self-test
       # Which dimension a nightly proved decides the tracking issue's TITLE, and the title is the
       # dedup key: keyed on the cloud alone, the floor and the weekly full bar collapse onto one
       # issue and the second red filed is silently dropped — which is how the full bar ran unwatched
