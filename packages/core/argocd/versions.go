@@ -92,7 +92,7 @@ const (
 	// path the post-ArgoCD work (infra-services + addonConvergeTimeout, itself 10m) still has to
 	// fit. Raise it per-run with the env override rather than by editing this constant.
 	//
-	// ── 10m → 15m, and the measurement that moved it. ──
+	// ── 10m → 15m (#3030), and the measurement that moved it. SUPERSEDED — see 15m → 20m below. ──
 	//
 	// 10m was not enough on GKE. The scheduled floor run 33080748841 failed with
 	// `Error: context deadline exceeded`, and the namespace dump taken before teardown says exactly
@@ -116,7 +116,60 @@ const (
 	// 15m is the smallest step that covers the observed cost (≈3m30s of queue + a pull that is
 	// slow-but-working) and it stays inside gcp's 50m WaitTerminal with the ~20m spine and the 10m
 	// add-on convergence still fitting.
-	DefaultArgoInstallTimeout = "15m"
+	//
+	// ── 15m → 20m, and why the deadline alone was never going to be the fix. ──
+	//
+	// 15m failed on gcp floor run 33156252646, and the namespace dump names TWO independent causes.
+	// Only ONE of them is a deadline; the other is fixed alongside this, in InstallProbeValues.
+	//
+	// The node is an `e2-small` — 2 SHARED vCPU, 2 GiB — on a 20 GB pd-standard disk, and FIVE of
+	// the seven argocd pods landed on the same one. What the kubelet recorded there:
+	//
+	//	Pulled  redis  …in 6m29.827s (11m48.225s including waiting). Image size: 16855420 bytes
+	//	Pulled  dex init (argocd)     …in 4m17.749s (5m16.349s including waiting)
+	//	Pulled  server / repo-server  …in ~6s      (5m19s   including waiting)
+	//	7m57s  Normal  Killing  argocd-server       Container server failed liveness probe, will be restarted
+	//	   6s  Normal  Killing  argocd-repo-server  Container repo-server failed liveness probe, will be restarted
+	//
+	//	at the 15m deadline:
+	//	  argocd-dex-server    0/1  PodInitializing  15m          ← still pulling its SECOND image
+	//	  argocd-repo-server   1/1  Running          2 restarts (117s ago)
+	//	  argocd-server        1/1  Running          1 restart  (7m51s ago)
+	//
+	// 16.9 MB of redis took 6m29s of PULL — ~43 KB/s. That is the number that sets the scale here,
+	// and it is not the same shape as 33080748841's queue: this disk is genuinely saturated.
+	//
+	// Two things follow, and BOTH had to change:
+	//
+	//  1. The restarts. repo-server's second liveness kill landed SIX SECONDS before the deadline,
+	//     which no deadline can survive — a kill resets the pod's readiness, so a longer wait just
+	//     buys a thrashing install more time to thrash. That half is InstallProbeValues.
+	//  2. The pulls. dex was NOT probe-killed — it has no probes (the chart disables them) and it
+	//     was in PodInitializing, pulling ghcr.io/dexidp/dex, which it only STARTED at ~t+10m37s.
+	//     Nothing about probe tuning helps that. That half is this number.
+	//
+	// Why 20m and not "round it up". With the kills removed, server and repo-server become Ready at
+	// ~t+7m30s (their containers started at t+5m51s and t+6m48s) instead of restart-looping, and
+	// redis was Ready at t+12m27s. Dex is then the only pole left, and it had been pulling for
+	// ~4m20s at the deadline with the five competing pulls already finished — so the install
+	// converges somewhere around t+14–17m. 15m sat INSIDE that band, which is exactly why it failed
+	// by seconds rather than by minutes. 20m clears the top of it with a few minutes to spare.
+	//
+	// The ceiling is unchanged and still binds: gcp's WaitTerminal is 50m (test/e2e/t2_providers.go),
+	// and this same run measured the rest of the spine directly — the runner claimed the job at
+	// 08:43:19 and failed at 09:14:47, i.e. 31m28s WITH the full 15m wait consumed, so everything
+	// before ArgoCD costs ~16m30s. 16m30s + 20m + the 10m addonConvergeTimeout = ~46m30s, which
+	// fits. 25m would not, so the next step after this one is NOT another minute of deadline — it
+	// is the node shape (the gcp floor's `e2-small` / 20 GB pd-standard, a per-run cost and the
+	// maintainer's call) or the env override, ALETHIA_ARGOCD_INSTALL_TIMEOUT.
+	//
+	// Deliberately still a FLAT constant, not scaled from the project config. The thing that
+	// actually varies here is node image-pull throughput — a function of disk type, machine size,
+	// registry and how many pods share the node — and the runner holds NONE of that at this point:
+	// it has tofu outputs and a ProjectConfig, neither of which names a disk class. A formula over
+	// the inputs we DO have would be a guess wearing the costume of a measurement, and the honest
+	// per-run knob already exists.
+	DefaultArgoInstallTimeout = "20m"
 	// ArgoInstallTimeoutEnv overrides DefaultArgoInstallTimeout (a Go duration, e.g. "20m").
 	ArgoInstallTimeoutEnv = "ALETHIA_ARGOCD_INSTALL_TIMEOUT"
 )
