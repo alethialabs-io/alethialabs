@@ -66,8 +66,14 @@ mock_provider "minio" {}
 # On 2026-08-28 a TCP reset from charts.hetzner.cloud failed `check (hetzner)` on the staging→main
 # promotion PR #3117, reading as a template defect while the same commit passed on every other
 # cloud. `.github/workflows/infra-templates.yml` now retries a network-shaped failure and refuses
-# to call it a test failure; a genuine assertion failure still fails on the first attempt. Making
-# these renders hermetic is #2754 and would retire both this note and that retry.
+# to call it a test failure; a genuine assertion failure still fails on the first attempt, and the
+# shapes it will retry are in scripts/ci/chart-fetch-network-errors.txt, shared with the add-on
+# chart render check so the two cannot drift apart on what counts as a flake.
+#
+# Making these renders hermetic is #2489 — and NOT #2754, which this note used to name. #2754 is
+# the same class on a different job (the add-on chart render check) and was closed by a PR that
+# only ever touched this one, so for a while the tree routed a reader to a closed issue for the
+# durable fix. Nothing about the trade above changes; only where to go next.
 
 variables {
   project_name = "acme"
