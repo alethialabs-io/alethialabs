@@ -222,13 +222,65 @@ else
 	git fetch -q origin dev 2>/dev/null || true
 	base="origin/dev"
 	git rev-parse --verify -q "$base" >/dev/null 2>&1 || base="dev"
-	if git show-ref --verify -q "refs/heads/$branch" ||
-		git show-ref --verify -q "refs/remotes/origin/$branch"; then
+
+	# ── WHERE THE BRANCH STARTS, decided rather than defaulted ────────────────────────────────────
+	#
+	# This used to be "if the branch exists anywhere, check it out; else branch off $base" — and it
+	# printed "(off $base)" in BOTH cases. The second half of that sentence was a lie in the first
+	# case, and it is the dangerous kind: a `feat/<name>` left on the REMOTE by a MERGED PR is a
+	# perfectly ordinary thing for this repo to have (Mergify does not delete branches, and 13 such
+	# branches exist today), so `pnpm wt <name>` for a name used once before silently started the new
+	# work on the old, landed tip.
+	#
+	# MEASURED, on this repo, while fixing #2843: `pnpm wt hetzner-zone-depth` reported
+	# "created ../wt-hetzner-zone-depth on feat/hetzner-zone-depth (off origin/dev)" and put the
+	# worktree 125 COMMITS BEHIND dev, on the branch of merged PR #2844. The reflog says it plainly:
+	# `branch: Created from refs/remotes/origin/feat/hetzner-zone-depth`. Two files edited in that
+	# tree would have been REVERTED by the resulting PR, and the diff would have read as deliberate.
+	# It was caught only because a script the work needed was missing from the tree.
+	#
+	# `--is-ancestor` cannot see this: every dev PR lands as a SQUASH, so a landed branch is never an
+	# ancestor of dev — 0 of the 13 remote feat/* branches pass that test. wt_branch_landed() asks the
+	# question properly and already exists, for `wt:prune`. The create path simply never asked it, so
+	# the same fact was known in one place and guessed in another.
+	start="$base"
+	start_why="off $base"
+	if git show-ref --verify -q "refs/heads/$branch"; then
+		# A LOCAL branch is yours and is almost always a resume. Reused, but never silently: the
+		# staleness line below is what makes "resume" distinguishable from "start".
+		start="$branch"
+		start_why="resuming your existing local branch"
+	elif git show-ref --verify -q "refs/remotes/origin/$branch"; then
+		if wt_branch_landed "$(git rev-parse --show-toplevel)" "origin/$branch" "$base"; then
+			# Landed work is ALREADY in $base. Starting from it can only rewind the tree, so this is
+			# not a question worth asking anybody — it is corrected, and said out loud.
+			echo "⚠ origin/$branch exists but has already LANDED ($WT_LANDED_WHY)."
+			echo "  Starting from $base instead — its work is in there, and branching off the old tip"
+			echo "  would silently rewind every file this worktree touches."
+		else
+			# Unlanded remote work is somebody's live branch. Continue it, and name what it is.
+			start="origin/$branch"
+			start_why="continuing origin/$branch, which has NOT landed ($WT_LANDED_WHY)"
+		fi
+	fi
+
+	if [ "$start" = "$branch" ]; then
 		git worktree add "$dir" "$branch"
 	else
-		git worktree add "$dir" -b "$branch" "$base"
+		git worktree add "$dir" -b "$branch" "$start"
 	fi
-	echo "✓ created $dir on $branch (off $base)"
+	echo "✓ created $dir on $branch ($start_why)"
+
+	# ALWAYS report the distance, on every path. The failure above was invisible because nothing
+	# printed a number — and a number is the only thing that distinguishes "off origin/dev" from
+	# "off something that was origin/dev in July".
+	behind="$(git -C "$dir" rev-list --count "HEAD..$base" 2>/dev/null || echo "?")"
+	if [ "$behind" = "0" ]; then
+		echo "  at $(git -C "$dir" rev-parse --short HEAD) — level with $base"
+	else
+		echo "⚠ at $(git -C "$dir" rev-parse --short HEAD) — $behind commit(s) BEHIND $base."
+		echo "  Bring it forward before you build on it, from inside $dir."
+	fi
 	# Own it from birth, before anything can be written into it.
 	wt_lease_acquire "$dir" >/dev/null || true
 fi
