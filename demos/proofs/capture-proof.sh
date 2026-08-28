@@ -304,13 +304,24 @@ fi
 #    pull BOTH artifacts from that single id so they cannot disagree with each other.
 if [ -n "${ALETHIA_DATABASE_URL:-}" ] && command -v psql >/dev/null 2>&1; then
 	receipt_job=""
-	# Hex-only by construction (grep -oE '[0-9a-f]+$' above), re-checked here because this value
-	# is interpolated into SQL.
-	if printf '%s' "$receipt_plan_sha" | grep -qE '^[0-9a-f]{16,128}$'; then
+	# $receipt_plan_sha IS A PREFIX, NOT THE SHA. The runner logs `plan sha256 <12 hex>` — a
+	# TRUNCATED display form — while the receipt stores the full 64. The first version of this
+	# pin got that wrong twice over and was inert on every real run: a `{16,128}` length guard
+	# rejected the 12-char value outright, so the query never ran, and had it run, `= '<12>'`
+	# against a 64-char column could not have matched either. Every bundle silently took the
+	# fallback while the code read as though it were pinning. Caught on #3169, not by the tests
+	# I wrote — those used a 16-char fixture and a stub that matched on the SHAPE of the query
+	# rather than on the shape of the data.
+	#
+	# So: accept 8-64 hex, and compare by PREFIX. 12 hex is 48 bits — ample against the handful
+	# of DEPLOY rows in one run, and `ORDER BY created_at ASC` settles a tie deterministically.
+	# `LIKE` is safe here because the value is hex-validated on the line below, so it cannot
+	# carry `%` or `_`.
+	if printf '%s' "$receipt_plan_sha" | grep -qE '^[0-9a-f]{8,64}$'; then
 		receipt_job="$(psql "$ALETHIA_DATABASE_URL" -tAc \
 			"SELECT id FROM public.jobs
 			  WHERE job_type='DEPLOY'
-			    AND execution_metadata->'verify_receipt'->'receipt'->>'plan_sha256' = '$receipt_plan_sha'
+			    AND execution_metadata->'verify_receipt'->'receipt'->>'plan_sha256' LIKE '$receipt_plan_sha%'
 			  ORDER BY created_at ASC LIMIT 1" 2>/dev/null | tr -d '[:space:]' || true)"
 	fi
 	# Fallback: the EARLIEST DEPLOY that actually carries a receipt — the cluster apply, which is
