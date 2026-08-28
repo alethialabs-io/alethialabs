@@ -101,4 +101,7 @@ runs:
         echo "running ${#tests[@]} test file(s)"
         # -backend=false: no state and no credentials; providers still download.
         tofu init -backend=false -input=false
-        tofu test
+        # Via the shared runner, not a bare `tofu test`: this is the SECOND place `tofu test` runs
+        # against the same directory, so a chart-fetch flake guarded only in infra-templates.yml
+        # would still red the identical check here, one step later. See the script for #2754.
+        "${{ github.workspace }}/scripts/ci/tofu-test-retry-fetch.sh" "$(basename "${{ inputs.working-directory }}")"
