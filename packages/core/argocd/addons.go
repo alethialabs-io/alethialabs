@@ -386,10 +386,19 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 				// predicted-live probe measured that a `kubectl apply --server-side --dry-run=server
 				// --field-manager=argocd-controller` predicts all four live StatefulSets EXACTLY,
 				// but that is OUR reproduction, not argo-cd's — argo-cd's own server-side path also
-				// applies normalizers and removeWebhookMutation. test/e2e/argo_server_side_diff.go
-				// now asks argo-cd itself (`argocd app diff --core --server-side-diff`) on the same
-				// already-failing path. Its answer turns this from a bet across all 17 add-ons into
-				// a measurement, and hetzner is the cheap cloud to take it on.
+				// applies normalizers and removeWebhookMutation.
+				//
+				// Asking the CLI for that comparison does not work and cannot be made to: it
+				// refuses `--server-side-diff` unless the Application ALREADY carries the
+				// annotation under evaluation, and its RPC needs a cluster REST config that the
+				// `--core` path inside the controller pod does not have (#3140, hetzner/addons run
+				// 33172643012). So test/e2e/argo_ssd_experiment.go asks for the OUTCOME instead:
+				// it sets `compare-options: ServerSideDiff=true` on ONE already-failing
+				// Application inside the e2e run, watches whether the controller then reports it
+				// Synced, and removes the annotation again. That is argo-cd's own verdict on the
+				// real cluster, and it turns this from a bet across all 17 add-ons into a
+				// measurement — hetzner being the cheap cloud to take it on. Nothing in THIS file
+				// changes until that measurement says FLIP WOULD FIX IT.
 				//
 				// Removing ServerSideApply is NOT an option — see the package comment: it is what
 				// keeps kube-prometheus-stack's CRDs under the 262144-byte annotation limit.
