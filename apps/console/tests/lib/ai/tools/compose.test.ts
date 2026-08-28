@@ -62,7 +62,7 @@ describe("catalogTools.list_services", () => {
 		expect(out.services.find((s) => s.kind === "repositories")?.serviceNames).toBeNull();
 	});
 
-	it("flags kinds Hetzner can't provision (unsupportedOn) so the agent won't propose them", async () => {
+	it("flags the one kind Hetzner still cannot provision (unsupportedOn) so the agent will not propose it", async () => {
 		const out = (await run(catalogTools().list_services, {})) as {
 			services: Array<{
 				kind: string;
@@ -71,17 +71,16 @@ describe("catalogTools.list_services", () => {
 			}>;
 		};
 		const svc = (kind: string) => out.services.find((s) => s.kind === kind);
-		// Every hidden Hetzner kind (UNSUPPORTED_KINDS_BY_PROVIDER) is listed on Hetzner. bucket
-		// is NATIVE there (Object Storage), and registry is DELIVERED in-cluster since #2431
-		// (Harbor + a minted pull robot), so neither is flagged.
-		for (const kind of ["topic", "nosql"]) {
-			expect(svc(kind)?.unsupportedOn).toContain("hetzner");
-			// …and on no managed cloud (they're all supported there).
-			expect(svc(kind)?.unsupportedOn).not.toContain("aws");
-		}
+		// nosql is the ONE kind still flagged on Hetzner. topic left the list when it was wired to
+		// an in-cluster NATS release, as registry (#2431) and secret (#2432) did before it.
+		expect(svc("nosql")?.unsupportedOn).toContain("hetzner");
+		expect(svc("nosql")?.unsupportedOn).not.toContain("aws");
+		expect(svc("topic")?.unsupportedOn).toEqual([]);
 		expect(svc("bucket")?.unsupportedOn).not.toContain("hetzner");
-		// Fielded unsupported kinds also report 'unsupported' as their Hetzner deployment mode…
-		expect(svc("topic")?.deployment?.hetzner).toBe("unsupported");
+		// The MODE is asserted too, not just `unsupportedOn`: topic must read as in-cluster on
+		// Hetzner, which is the half that would silently regress if the derivation broke.
+		expect(svc("topic")?.deployment?.hetzner).toBe("in-cluster-helm");
+		expect(svc("nosql")?.deployment?.hetzner).toBe("unsupported");
 		expect(svc("nosql")?.deployment?.aws).toBe("managed");
 		// …while supported Hetzner kinds keep their real mode and an empty unsupportedOn there.
 		// (cluster/network are no longer addable services — W2 made them env settings.)

@@ -13,7 +13,7 @@
 //     drifts from this module.
 //
 // WHY THIS EXISTS AT ALL. Hetzner's `database`/`cache`/`queue`/`registry` are `CarriedInCluster` in the
-// max-config table: nothing lands in tofu state, and the proof is the named ArgoCD Application
+// max-config table (now also `topic`): nothing lands in tofu state, and the proof is the named ArgoCD Application
 // reaching Healthy+Synced. But the runner only renders an Application for an add-on that RIDES THE
 // SNAPSHOT, and the Go harness seeds add-ons from the marketplace catalog alone — which never holds
 // the Hetzner data services, because they are synthesized per component, not chosen from a
@@ -53,6 +53,9 @@ export const E2E_MAX_CONFIG_HETZNER_COMPONENTS = {
 	queues: [{ name: "jobs" }],
 	registries: [{ name: "app-images" }],
 	secrets: [{ name: "api-key" }],
+	// Mirrors MaxConfigKinds' topic Apply on the hetzner column: maxConfigTopicName is "events".
+	// Same read-back guard as every row above.
+	topics: [{ name: "events" }],
 } as const;
 
 /**
@@ -83,6 +86,7 @@ export interface HetznerDataServiceFixture {
 		queues: { name: string }[];
 		registries: { name: string }[];
 		secrets: { name: string }[];
+		topics: { name: string }[];
 	};
 	/** The install specs a Hetzner deploy of those components would carry. */
 	addons: AddOnInstallSpec[];
@@ -118,6 +122,9 @@ export function exportHetznerDataServiceFixture(): HetznerDataServiceFixture {
 		})),
 		secrets: E2E_MAX_CONFIG_HETZNER_COMPONENTS.secrets.map((s) => ({
 			name: s.name,
+		})),
+		topics: E2E_MAX_CONFIG_HETZNER_COMPONENTS.topics.map((t) => ({
+			name: t.name,
 		})),
 	};
 	return {
