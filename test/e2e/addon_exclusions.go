@@ -102,17 +102,29 @@ var addOnExclusions = map[string]AddOnExclusion{
 			"Initialising and unsealing is a customer operation with a customer's key material.",
 		Issue: "#2717",
 	},
-	"velero": {
-		Kind: NeedsUserConfig,
-		Why: "backups need a real object-store BUCKET plus credentials for it. With the catalog's " +
-			"empty `bucket` default `toValues` emits no backupStorageLocation at all, so nothing " +
-			"can reconcile — measured health=Missing on run 33124236998. It is also the one add-on " +
-			"with a cloud-shaped gap: the `provider` enum is aws|gcp|azure, so on hetzner AND on " +
-			"alibaba there is no valid choice even WITH a bucket. (alibaba joined the fixture " +
-			"clouds in #3048; it has the same gap hetzner does and the note used to name only " +
-			"hetzner.)",
-		Issue: "#2717",
-	},
+	// velero is NOT here any more, and the reason it left is worth more than the entry was.
+	//
+	// The recorded Why said backups need a bucket a customer supplies, and that nothing could
+	// reconcile without one — measured health=Missing on run 33124236998. The first half is still
+	// true and is a deliberate product decision (a bucket inside the cluster's OpenTofu state is a
+	// bucket `tofu destroy` deletes, so Alethia does not create one). The second half was a DEFECT
+	// wearing a ceiling's clothes: the catalog emitted no `configuration` block when `bucket` was
+	// empty, which left the CHART's default in place — a BackupStorageLocation with a null
+	// `provider` and an empty `bucket`. The CRD marks both required, so the API server rejected the
+	// document and the whole Application failed to sync. Missing was not "unconfigured"; it was
+	// "invalid". The catalog now emits an EMPTY location list, and an unconfigured velero installs,
+	// runs, and reports Healthy+Synced — which is the same bar every other add-on here is held to.
+	//
+	// The cloud-shaped half is closed too, and was never cloud-shaped: aws|gcp|azure are velero's
+	// PLUGIN names, not cloud names, and the aws plugin speaks S3 to any store that does. `s3Url` +
+	// `s3ForcePathStyle` are now catalog knobs, so hetzner (Object Storage) and alibaba (OSS) have a
+	// valid selection.
+	//
+	// WHAT THIS CELL NOW CLAIMS FOR VELERO, stated so a green run is not read as more: the chart
+	// installs, the object-store plugin loads, and the controller converges AT CATALOG DEFAULTS —
+	// which means with no backup location. It does not claim a backup completes. No add-on in this
+	// dimension claims its own end-to-end function; asserting one would need a bucket and a
+	// credential the fixture must not carry.
 	// NOT hetzner — MEASURED. Run 33124236998 (hetzner · `addons`, 2026-08-28, the first sweep
 	// after #3048) reported `addon-external-dns: health=Healthy sync=Synced`. It escaped the
 	// stale-exclusion ratchet only because that run t.Fatal'd at the convergence assertion in

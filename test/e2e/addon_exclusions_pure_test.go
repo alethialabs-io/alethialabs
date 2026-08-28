@@ -90,14 +90,16 @@ func TestPartitionExcludedAddOnsLosesNothing(t *testing.T) {
 			t.Errorf("%q appears %d times across the two halves, want exactly 1", n, seen[n])
 		}
 	}
-	for _, n := range []string{argocd.AddOnAppName("vault"), argocd.AddOnAppName("velero"), argocd.AddOnAppName("external-dns")} {
+	for _, n := range []string{argocd.AddOnAppName("vault"), argocd.AddOnAppName("external-dns")} {
 		if !contains(withheld, n) {
 			t.Errorf("%q is in addOnExclusions but was not withheld", n)
 		}
 	}
 	// A non-excluded add-on and the repo app-of-apps must still be asserted, or the exclusion
-	// mechanism would be quietly withholding the whole surface.
-	for _, n := range []string{"apps", argocd.AddOnAppName("kyverno"), argocd.AddOnAppName("loki")} {
+	// mechanism would be quietly withholding the whole surface. velero is deliberately in this
+	// half: its exclusion came off when the catalog stopped rendering an invalid
+	// BackupStorageLocation at defaults, and this line is what would notice it creeping back.
+	for _, n := range []string{"apps", argocd.AddOnAppName("kyverno"), argocd.AddOnAppName("loki"), argocd.AddOnAppName("velero")} {
 		if !contains(asserted, n) {
 			t.Errorf("%q carries no exclusion but was not asserted", n)
 		}
@@ -238,11 +240,11 @@ func TestExternalDnsExclusionIsPerCloud(t *testing.T) {
 	}
 }
 
-// TestUnscopedExclusionsApplyToEveryCloud — vault and velero carry no Clouds list, and an empty
-// list must keep meaning "everywhere". If it ever came to mean "nowhere", both would silently stop
-// being withheld and every cloud would start asserting two charts that cannot converge.
+// TestUnscopedExclusionsApplyToEveryCloud — vault carries no Clouds list, and an empty list must
+// keep meaning "everywhere". If it ever came to mean "nowhere", it would silently stop being
+// withheld and every cloud would start asserting a chart that cannot converge.
 func TestUnscopedExclusionsApplyToEveryCloud(t *testing.T) {
-	for _, id := range []string{"vault", "velero"} {
+	for _, id := range []string{"vault"} {
 		if len(addOnExclusions[id].Clouds) != 0 {
 			t.Fatalf("%s now carries a Clouds list; this test no longer covers what it claims", id)
 		}

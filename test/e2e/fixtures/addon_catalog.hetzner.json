@@ -468,8 +468,25 @@
 		"version": "7.2.1",
 		"namespace": "velero",
 		"values": {
-			"snapshotsEnabled": true,
-			"deployNodeAgent": false
+			"initContainers": [
+				{
+					"name": "velero-plugin",
+					"image": "velero/velero-plugin-for-aws:v1.10.1",
+					"imagePullPolicy": "IfNotPresent",
+					"volumeMounts": [
+						{
+							"mountPath": "/target",
+							"name": "plugins"
+						}
+					]
+				}
+			],
+			"snapshotsEnabled": false,
+			"deployNodeAgent": false,
+			"configuration": {
+				"backupStorageLocation": [],
+				"volumeSnapshotLocation": []
+			}
 		},
 		"syncWave": 3
 	}

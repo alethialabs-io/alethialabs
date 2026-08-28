@@ -152,6 +152,62 @@ const EXTERNAL_DNS_PROVIDERS: Record<ExternalDnsProvider, ExternalDnsProviderAut
 	azure: { label: "Azure DNS", saAnnotation: "azure.workload.identity/client-id" },
 };
 
+/**
+ * The object-store PLUGINS velero can talk to a backup location through.
+ *
+ * These ids are velero's own `BackupStorageLocation.spec.provider` values, not cloud names — the
+ * distinction the catalog previously blurred and that made velero read as un-offerable on two
+ * clouds. `aws` is the S3 plugin, and it speaks the S3 API to ANY store that does: Hetzner Object
+ * Storage, Alibaba OSS, MinIO, Ceph. Upstream says so directly — "Velero's AWS Object Store plugin
+ * uses Amazon's Go SDK to connect to the AWS S3 API. Some third-party storage providers also support
+ * the S3 API" (velero.io/docs/v1.14/supported-providers). What that needs is an ENDPOINT, which is
+ * why `s3Url` and `s3ForcePathStyle` are knobs below.
+ */
+const VELERO_PROVIDER_IDS = ["aws", "gcp", "azure"] as const;
+
+/** One velero object-store provider id. */
+export type VeleroProvider = (typeof VELERO_PROVIDER_IDS)[number];
+
+/** How one velero object-store provider is installed and described. */
+interface VeleroProviderPlugin {
+	/** The choice's label in the configure form. */
+	label: string;
+	/** The plugin container image, copied into the velero pod by an init container. */
+	image: string;
+}
+
+/**
+ * Provider → its plugin image, PINNED.
+ *
+ * WHY THIS EXISTS — and it is not a refinement. The velero chart ships `initContainers: []` and says
+ * so in its own values.yaml: "Init containers to add to the Velero deployment's pod spec. **At least
+ * one plugin provider image is required.**" The catalog set no initContainers at all, so every
+ * velero this marketplace has ever installed came up with NO object-store plugin — a `velero server`
+ * that cannot talk to S3, GCS or Blob and therefore cannot take a single backup, on any cloud, even
+ * with a bucket, a region and a credentials file all correctly supplied. It reported Healthy while
+ * doing it, because the deployment's probes are an HTTP GET on /metrics.
+ *
+ * The tag is pinned against the chart's OWN velero image (7.2.1 → velero v1.14.1) through upstream's
+ * compatibility table, where plugin v1.10.x ↔ velero v1.14.x
+ * (github.com/vmware-tanzu/velero-plugin-for-{aws,gcp,microsoft-azure} README). A bump of `version`
+ * above must be re-checked against that table — an off-by-one major here is a plugin that loads and
+ * then refuses every call.
+ */
+const VELERO_PROVIDERS: Record<VeleroProvider, VeleroProviderPlugin> = {
+	aws: {
+		label: "S3 — AWS, or any S3-compatible store",
+		image: "velero/velero-plugin-for-aws:v1.10.1",
+	},
+	gcp: {
+		label: "Google Cloud Storage",
+		image: "velero/velero-plugin-for-gcp:v1.10.1",
+	},
+	azure: {
+		label: "Azure Blob Storage",
+		image: "velero/velero-plugin-for-microsoft-azure:v1.10.1",
+	},
+};
+
 export const ADDON_CATALOG: AddOnDef[] = [
 	defineAddOn({
 		id: "kube-prometheus-stack",
@@ -514,21 +570,27 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		category: "backup",
 		icon: "Archive",
 		summary:
-			"Cluster backup + restore + migration to an object-store backup location — set the provider, bucket, and region below.",
+			"Cluster backup + restore + migration to an object-store backup location — S3 (including S3-compatible stores), GCS or Azure Blob.",
 		docsUrl: "https://velero.io/docs/latest/",
 		license: "Apache-2.0",
 		chartRepo: "https://vmware-tanzu.github.io/helm-charts",
 		chart: "velero",
 		version: "7.2.1",
 		namespace: "velero",
-		defaultValues: { snapshotsEnabled: true },
 		configSchema: z.object({
-			/** Object-store provider for the backup location (the velero plugin's provider name). */
-			provider: z.enum(["aws", "gcp", "azure"]).default("aws"),
+			/** Object-store PLUGIN for the backup location — velero's own provider name, not a cloud. */
+			provider: z.enum(VELERO_PROVIDER_IDS).default("aws"),
 			/** Backup bucket name. Empty = no backup location configured (velero installs unconfigured). */
 			bucket: z.string().default(""),
-			/** Bucket region (AWS/S3-compatible). */
+			/** Bucket region. Required by the S3 plugin; ignored by gcp. */
 			region: z.string().default(""),
+			/**
+			 * S3 endpoint URL for a NON-AWS S3-compatible store (Hetzner Object Storage, Alibaba OSS,
+			 * MinIO, Ceph). Empty = AWS's own endpoint. `provider: aws` only.
+			 */
+			s3Url: z.string().default(""),
+			/** Address buckets as `<endpoint>/<bucket>` rather than `<bucket>.<endpoint>`. */
+			s3ForcePathStyle: z.boolean().default(false),
 			/** Also back up file volumes (deploys the node-agent DaemonSet). */
 			deployNodeAgent: z.boolean().default(false),
 			/** Take cloud volume snapshots alongside object-store backups. */
@@ -537,25 +599,77 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			 * mounted from the runner-seeded Secret's `cloud` key, never inlined). */
 			cloud: z.string().default(""),
 		}),
-		toValues: (c) => ({
-			snapshotsEnabled: c.snapshotsEnabled,
-			deployNodeAgent: c.deployNodeAgent,
-			...(c.bucket
-				? {
-						configuration: {
-							backupStorageLocation: [
+		// ── Three facts about this chart that the values below exist to honour ─────────────────
+		//
+		// 1. NO PLUGIN, NO BACKUPS. `initContainers` is empty upstream and the chart's own comment
+		//    says at least one plugin image is required. See VELERO_PROVIDERS above.
+		//
+		// 2. AN UNCONFIGURED VELERO MUST STILL RENDER A VALID MANIFEST. The chart's default
+		//    `configuration.backupStorageLocation` is a one-element list of EMPTY placeholders, so
+		//    emitting no `configuration` at all — which is what this entry used to do when `bucket`
+		//    was blank — renders `provider: <null>` and `bucket: ""`. The BackupStorageLocation CRD
+		//    marks `provider` and `objectStorage.bucket` required, so the API server REJECTS the
+		//    document and the whole Application fails to sync: measured health=Missing on the add-on
+		//    sweep (#2717 run 33124236998), and the reason the catalog's own claim — "empty bucket =
+		//    velero installs unconfigured" — was false. An EMPTY LIST is what the template wants:
+		//    `{{- range .Values.configuration.backupStorageLocation }}` over nothing renders nothing.
+		//
+		// 3. AN S3-COMPATIBLE ENDPOINT HAS NO SNAPSHOT API. `s3Url` points the aws plugin at a bucket
+		//    somebody else runs; it does not give it an EC2 API to snapshot volumes with. So a
+		//    VolumeSnapshotLocation is emitted only for a plugin talking to its own cloud — offering
+		//    a snapshot location that can never take a snapshot is the class of dead offer the
+		//    external-dns work above exists to stop repeating.
+		toValues: (c) => {
+			const plugin = VELERO_PROVIDERS[c.provider];
+			// S3 endpoint knobs are the aws plugin's; gcp and azure have no such config keys, and a
+			// stray one on their BSL is silently ignored rather than rejected — which is worse.
+			const s3 =
+				c.provider === "aws"
+					? {
+							...(c.s3Url ? { s3Url: c.s3Url } : {}),
+							...(c.s3ForcePathStyle ? { s3ForcePathStyle: true } : {}),
+						}
+					: {};
+			const config = { ...(c.region ? { region: c.region } : {}), ...s3 };
+			// Volume snapshots need the plugin's own cloud (fact 3 above), and a snapshot location
+			// with no backup location is not a configuration velero can act on.
+			const snapshots = c.snapshotsEnabled && Boolean(c.bucket) && !c.s3Url;
+			return {
+				// The plugin binary, copied into the shared `plugins` emptyDir before velero starts.
+				initContainers: [
+					{
+						name: "velero-plugin",
+						image: plugin.image,
+						imagePullPolicy: "IfNotPresent",
+						volumeMounts: [{ mountPath: "/target", name: "plugins" }],
+					},
+				],
+				snapshotsEnabled: snapshots,
+				deployNodeAgent: c.deployNodeAgent,
+				configuration: {
+					backupStorageLocation: c.bucket
+						? [
 								{
 									name: "default",
 									provider: c.provider,
 									bucket: c.bucket,
 									default: true,
+									...(Object.keys(config).length > 0 ? { config } : {}),
+								},
+							]
+						: [],
+					volumeSnapshotLocation: snapshots
+						? [
+								{
+									name: "default",
+									provider: c.provider,
 									...(c.region ? { config: { region: c.region } } : {}),
 								},
-							],
-						},
-					}
-				: {}),
-		}),
+							]
+						: [],
+				},
+			};
+		},
 		// Velero mounts `credentials.existingSecret` at /credentials and every provider env
 		// (AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, …) points at the
 		// fixed `cloud` KEY inside it — verified via `helm template velero --version 7.2.1`.
@@ -566,17 +680,40 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		fields: [
 			{
 				key: "provider",
-				label: "Backup provider",
+				label: "Object-store plugin",
 				type: "enum",
 				default: "aws",
-				options: [
-					{ value: "aws", label: "AWS S3 / S3-compatible" },
-					{ value: "gcp", label: "Google Cloud Storage" },
-					{ value: "azure", label: "Azure Blob" },
-				],
+				help: "Velero's own provider name, not a cloud. The S3 plugin talks to any store that speaks the S3 API — set the endpoint below for one that is not AWS.",
+				// Derived from the table, so a plugin added there cannot be missing here — the
+				// descriptor↔schema guard (tests/lib/addons/field-descriptors.test.ts) checks the
+				// other direction, that every option the form offers is one the schema accepts.
+				options: VELERO_PROVIDER_IDS.map((id) => ({
+					value: id,
+					label: VELERO_PROVIDERS[id].label,
+				})),
 			},
-			{ key: "bucket", label: "Backup bucket", type: "string", default: "" },
-			{ key: "region", label: "Region (AWS/S3)", type: "string", default: "" },
+			{
+				key: "bucket",
+				label: "Backup bucket",
+				type: "string",
+				default: "",
+				help: "A bucket you own, OUTSIDE this cluster's lifecycle — a backup store destroyed with the cluster it backs up is not a backup store. Leave empty to install velero now and configure the location later.",
+			},
+			{ key: "region", label: "Region", type: "string", default: "" },
+			{
+				key: "s3Url",
+				label: "S3 endpoint URL (S3-compatible stores)",
+				type: "string",
+				default: "",
+				help: "For a non-AWS S3 store, e.g. https://fsn1.your-objectstorage.com (Hetzner Object Storage) or https://oss-eu-central-1.aliyuncs.com (Alibaba OSS). Leave empty for AWS S3. Volume snapshots are unavailable against an S3-compatible endpoint.",
+			},
+			{
+				key: "s3ForcePathStyle",
+				label: "Path-style bucket addressing",
+				type: "boolean",
+				default: false,
+				help: "Required by most S3-compatible stores, including Hetzner Object Storage and MinIO.",
+			},
 			{ key: "deployNodeAgent", label: "Back up file volumes (node-agent)", type: "boolean", default: false },
 			{ key: "snapshotsEnabled", label: "Volume snapshots", type: "boolean", default: true },
 			{
