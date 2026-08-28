@@ -41,7 +41,7 @@
 		"mode": "managed",
 		"chartRepo": "https://falcosecurity.github.io/charts",
 		"chart": "falco",
-		"version": "4.9.0",
+		"version": "9.1.0",
 		"namespace": "falco",
 		"values": {
 			"driver": {
