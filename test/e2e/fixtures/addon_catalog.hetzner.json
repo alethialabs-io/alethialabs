@@ -476,6 +476,7 @@
 		"version": "7.2.1",
 		"namespace": "velero",
 		"values": {
+			"upgradeCRDs": false,
 			"initContainers": [
 				{
 					"name": "velero-plugin",
