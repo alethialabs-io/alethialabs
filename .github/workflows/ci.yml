@@ -1118,6 +1118,17 @@ jobs:
       # The 73 `if:` lines fix today. This keeps them: the next check appended without one would
       # otherwise rejoin the veto chain at the bottom, where it is also the step most likely to be
       # skipped, and nothing would say so.
+      # A workflow file can be VALID YAML and REJECTED by Actions: a step with no `run:` and no
+      # `uses:` is a well-formed mapping that Actions refuses, producing a run with ZERO JOBS. None
+      # of the nine required checks then reports, so the PR does not go red — it sits BLOCKED with an
+      # EMPTY rollup, which reads like "CI hasn't started". `yaml.parse()` passes on that input,
+      # which is exactly why parsing is not validation (#2670).
+      - name: Every workflow step has a run or a uses (Actions rejects the file otherwise)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:workflow-shape
+      - name: ...and that check's own parser is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:workflow-shape -- --self-test
       - name: The guards job is a bag of independent checks, not a pipeline
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/check-guards-independent.mjs
