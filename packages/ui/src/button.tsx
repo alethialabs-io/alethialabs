@@ -10,10 +10,21 @@
    home page and again on /open-source, and neither tsc, eslint nor the type checker
    can see it — only a production build at request time.
 
-   `buttonVariants` is exported from here and CALLED in two places; both are already
-   client components (apps/docs/components/ai/page-actions.tsx, packages/ui/calendar.tsx),
-   so promoting this file to a client module costs nothing. Keep it that way: a server
-   component cannot call a value imported from a client module. */
+   `buttonVariants` is exported from here and imported in exactly ONE place —
+   packages/ui/src/calendar.tsx, which is itself a client component — so promoting this
+   file to a client module costs nothing. Keep it that way: a server component cannot
+   call a value imported from a client module.
+
+   The earlier version of this note named a second caller,
+   apps/docs/components/ai/page-actions.tsx. That file imports a DIFFERENT
+   `buttonVariants`, from fumadocs-ui/components/ui/button, and apps/docs does not
+   declare @repo/ui as a dependency at all — under pnpm's isolated node_modules an
+   undeclared import does not resolve, so it could not have been this export even by
+   accident. The rule was right and its evidence was half wrong, which is worse than no
+   evidence: the next person to widen this file's surface would have checked two callers,
+   found one of them irrelevant, and had no way to tell whether the rule or the citation
+   was the stale half. The claim is now checked rather than asserted — see
+   `pnpm check:ui-client-boundary`. */
 "use client";
 
 import { Button as ButtonPrimitive } from "@base-ui-components/react/button"

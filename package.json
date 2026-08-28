@@ -33,6 +33,7 @@
     "check:addon-published-defaults": "bash scripts/addons/check-published-defaults.sh",
     "check:addon-resource-fit": "bash scripts/addons/check-resource-fit.sh",
     "check:theme-inline": "node scripts/check-theme-inline-overrides.mjs",
+    "check:ui-client-boundary": "node scripts/check-ui-client-boundary.mjs",
     "check:workflow-shape": "node scripts/ci/check-workflow-shape.mjs",
     "check:required-checks": "node scripts/ci/check-required-checks.mjs",
     "check:floors-reproducible": "node scripts/check-floors-reproducible.mjs",
