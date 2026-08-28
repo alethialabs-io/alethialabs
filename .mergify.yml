@@ -31,7 +31,9 @@ queue_rules:
       - base = dev
       - "-draft"
     merge_conditions:
-      # The 9 protect-dev required checks (quoted — names contain `·`, `(`, `)`, `/`).
+      # The protect-dev required checks (quoted — names contain `·`, `(`, `)`, `/`).
+      # This list, the merge_protections list below and infra/github/variables.tf must agree;
+      # scripts/ci/check-required-checks.mjs compares them and fails the PR when they do not (#3180).
       - "check-success=TypeScript (lint · types · test · docs)"
       - "check-success=Go (build · vet · test · lint) (packages/core)"
       - "check-success=Go (build · vet · test · lint) (apps/cli)"
@@ -68,25 +70,39 @@ queue_rules:
       # infra/github/variables.tf ALREADY names it; that stack has never been applied (#1625's shape,
       # a second time). Applying it is the maintainer's half — see #2606.
       - "check-success=Build console images (no push)"
-      # `cla` is deliberately NOT listed here — it belongs in branch protection, not in Mergify.
+      # THE CONTRIBUTION GATE, WHICH USED TO BE LEFT OUT OF THIS FILE ON PURPOSE (#3180).
       #
-      # #1653 added it and wedged the whole dev queue. Mergify's conditions gate the SPECULATIVE
-      # branch, and the draft PR Mergify opens for it carries a `mergify[bot]`-authored commit
-      # alongside the real ones — so the CLA was being evaluated over a commit set that includes
-      # Mergify's own merge. Allowlisting mergify[bot] (#1667) did not reliably clear it either:
-      # those speculative drafts kept resolving a STALE cla.yml, logging the pre-fix allowlist long
-      # after the fix was on `dev`, so the first run on each new draft failed and ejected the PR.
+      # The history is worth keeping, because the reason it was excluded was real. #1653 added the
+      # old `cla` context here and wedged the whole dev queue: Mergify's conditions gate the
+      # SPECULATIVE branch, whose draft PR carries a `mergify[bot]`-authored commit alongside the
+      # real ones, so the CLA was evaluated over a commit set including Mergify's own merge.
+      # Allowlisting mergify[bot] (#1667) did not reliably clear it either — those drafts kept
+      # resolving a STALE cla.yml, logging the pre-fix allowlist long after the fix was on `dev`, so
+      # the first run on each new draft failed and ejected the PR.
       #
-      # The deeper point is that the speculative branch is the wrong subject. A CLA is a property of
-      # the PR's OWN commits, which is exactly what a required status check on the branch ruleset
-      # evaluates. Enforcement therefore lives in `infra/github/variables.tf`
-      # (`required_status_checks`) — where it gates the real PR and never sees mergify[bot].
+      # NEITHER HALF OF THAT CAUSE CAN RECUR, and both were fixed structurally rather than by
+      # exclusion. cla.yml is now a `pull_request_target` workflow, which by definition resolves the
+      # workflow file from the PR's BASE branch — so a speculative draft based on `dev` runs `dev`'s
+      # cla.yml and the stale-resolution half is gone by construction. And the gate no longer reads
+      # the commit set at all: it keys on `github.event.pull_request.user.login`, with
+      # `mergify[bot]` in the trusted list, so Mergify's own commit is not a subject.
+      #
+      # LEAVING IT OUT IS NOW THE HAZARD, which is the reverse of the 2026 position. It is in
+      # `required_status_checks` for protect-dev, protect-dev has NO bypass actors, and Mergify
+      # merges through the API like anyone else — so a condition the ruleset requires and this file
+      # does not wait for produces a PR that queues, reports nothing red, and is refused at merge
+      # time. That is a stuck entry with no visible cause, and it is exactly what the pending
+      # `infra/github` apply (#2606) would have triggered.
+      #
+      # Verified rather than assumed: it reported `pass` in 5s on #3179, an ordinary dev PR.
+      - "check-success=contribution-legal"
     # SQUASH matches feature→dev convention (promotions dev→staging→main stay human `--merge`).
     merge_method: squash
 
 # Merge protections: `auto_merge_conditions` below only fires once a merge_protections rule's
 # `success_conditions` all pass. Without this block there were no success_conditions to satisfy, so
-# auto-merge never triggered (the bug). This rule requires the 9 protect-dev checks on every PR into `dev`.
+# auto-merge never triggered (the bug). This rule requires the protect-dev checks on every PR into `dev`,
+# and must stay identical to the queue's merge_conditions above — check-required-checks.mjs enforces that.
 merge_protections:
   - name: dev required CI
     if:
@@ -103,7 +119,9 @@ merge_protections:
       - "check-success=capabilities-security"
       # Same check, same reason — see the long note in the dev queue's merge_conditions above.
       - "check-success=Build console images (no push)"
-      # `cla` intentionally absent — see merge_conditions above; it is enforced by the branch ruleset.
+      # Also the same reason: required by protect-dev, so this file has to wait for it or the merge
+      # is refused after the queue has already decided. See merge_conditions above.
+      - "check-success=contribution-legal"
 
 # Auto-queue: automatically queues + squash-merges a matching PR once the merge_protections
 # success_conditions above pass. The current, non-deprecated auto-merge mechanism (no @mergifyio command).
