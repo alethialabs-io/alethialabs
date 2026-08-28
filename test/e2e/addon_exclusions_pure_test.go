@@ -76,7 +76,7 @@ func TestPartitionExcludedAddOnsLosesNothing(t *testing.T) {
 		argocd.AddOnAppName("loki"),
 		argocd.AddOnAppName("external-dns"),
 	}
-	// aws, where all three exclusions apply — the shape this test was written against.
+	// aws, where every remaining exclusion applies — the shape this test was written against.
 	asserted, withheld := PartitionExcludedAddOns("aws", expected)
 	if got, want := len(asserted)+len(withheld), len(expected); got != want {
 		t.Fatalf("partition returned %d names for %d inputs — the split dropped or duplicated one", got, want)
@@ -90,14 +90,23 @@ func TestPartitionExcludedAddOnsLosesNothing(t *testing.T) {
 			t.Errorf("%q appears %d times across the two halves, want exactly 1", n, seen[n])
 		}
 	}
-	for _, n := range []string{argocd.AddOnAppName("vault"), argocd.AddOnAppName("velero"), argocd.AddOnAppName("external-dns")} {
+	for _, n := range []string{argocd.AddOnAppName("external-dns")} {
 		if !contains(withheld, n) {
 			t.Errorf("%q is in addOnExclusions but was not withheld", n)
 		}
 	}
 	// A non-excluded add-on and the repo app-of-apps must still be asserted, or the exclusion
-	// mechanism would be quietly withholding the whole surface.
-	for _, n := range []string{"apps", argocd.AddOnAppName("kyverno"), argocd.AddOnAppName("loki")} {
+	// mechanism would be quietly withholding the whole surface. vault and velero are deliberately
+	// in this half: both exclusions came off in the same pass — velero's when the catalog stopped
+	// rendering an invalid BackupStorageLocation at defaults, vault's when the runner gained the
+	// init/unseal bootstrap — and these are the lines that would notice either creeping back.
+	for _, n := range []string{
+		"apps",
+		argocd.AddOnAppName("kyverno"),
+		argocd.AddOnAppName("loki"),
+		argocd.AddOnAppName("velero"),
+		argocd.AddOnAppName("vault"),
+	} {
 		if !contains(asserted, n) {
 			t.Errorf("%q carries no exclusion but was not asserted", n)
 		}
@@ -108,8 +117,12 @@ func TestPartitionExcludedAddOnsLosesNothing(t *testing.T) {
 // decides the verdict — a test that only varied which add-on was withheld would pass against a
 // check that fired on any state at all.
 func TestStaleExclusionsOnlyFireOnHealthyAndSynced(t *testing.T) {
-	vault := argocd.AddOnAppName("vault")
-	withheld := []string{vault}
+	// external-dns is the subject because it is the only exclusion left after vault's and velero's
+	// came off. Nothing in this test depends on WHICH add-on it is — the axis under test is the
+	// observed state — but it must be a really-withheld one, or every case would trivially report
+	// "not stale" and the test would pass against a check that never fires at all.
+	app := argocd.AddOnAppName("external-dns")
+	withheld := []string{app}
 	cases := []struct {
 		name      string
 		state     argoAppState
@@ -123,7 +136,7 @@ func TestStaleExclusionsOnlyFireOnHealthyAndSynced(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := staleExclusions(map[string]argoAppState{vault: tc.state}, "aws", withheld)
+			got := staleExclusions(map[string]argoAppState{app: tc.state}, "aws", withheld)
 			if gotStale := len(got) > 0; gotStale != tc.wantStale {
 				t.Errorf("health=%s sync=%s: stale=%v, want %v (%v)",
 					tc.state.Health, tc.state.Sync, gotStale, tc.wantStale, got)
@@ -135,9 +148,9 @@ func TestStaleExclusionsOnlyFireOnHealthyAndSynced(t *testing.T) {
 		t.Errorf("an absent Application was reported stale: %v", got)
 	}
 	// And the message must name the add-on, or a red run cannot be acted on.
-	got := staleExclusions(map[string]argoAppState{vault: {Health: "Healthy", Sync: "Synced"}}, "aws", withheld)
-	if len(got) != 1 || !strings.Contains(got[0], vault) {
-		t.Errorf("stale entry %v does not name %q", got, vault)
+	got := staleExclusions(map[string]argoAppState{app: {Health: "Healthy", Sync: "Synced"}}, "aws", withheld)
+	if len(got) != 1 || !strings.Contains(got[0], app) {
+		t.Errorf("stale entry %v does not name %q", got, app)
 	}
 }
 
@@ -149,9 +162,9 @@ func TestDescribeWithheldAddOnsIsNotVacuous(t *testing.T) {
 	if !strings.Contains(empty, "no add-ons withheld") {
 		t.Errorf("empty description = %q, want it to state plainly that nothing was withheld", empty)
 	}
-	vault := argocd.AddOnAppName("vault")
-	got := DescribeWithheldAddOns("aws", []string{vault})
-	for _, want := range []string{vault, string(NeedsUserConfig), "#2717", "SEALED"} {
+	app := argocd.AddOnAppName("external-dns")
+	got := DescribeWithheldAddOns("aws", []string{app})
+	for _, want := range []string{app, string(NeedsUserConfig), "#2717", "CUSTOMER action"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("description does not mention %q:\n%s", want, got)
 		}
@@ -238,20 +251,32 @@ func TestExternalDnsExclusionIsPerCloud(t *testing.T) {
 	}
 }
 
-// TestUnscopedExclusionsApplyToEveryCloud — vault and velero carry no Clouds list, and an empty
-// list must keep meaning "everywhere". If it ever came to mean "nowhere", both would silently stop
-// being withheld and every cloud would start asserting two charts that cannot converge.
+// TestUnscopedExclusionsApplyToEveryCloud — an EMPTY Clouds list must keep meaning "everywhere".
+// If it ever came to mean "nowhere", every unscoped exclusion would silently stop being withheld
+// and every cloud would start asserting a chart nobody decided to assert.
+//
+// It tests `appliesTo` directly rather than through the map, because as of vault's and velero's
+// removal there is no unscoped ENTRY left to test through. A test that quietly became vacuous when
+// its only subject was deleted is the "found nothing / nothing is wrong" shape this repo keeps
+// paying for — so the property is pinned on the predicate, which cannot be emptied out from under
+// it, and the map's own scoping stays covered by TestExternalDnsExclusionIsPerCloud.
 func TestUnscopedExclusionsApplyToEveryCloud(t *testing.T) {
-	for _, id := range []string{"vault", "velero"} {
-		if len(addOnExclusions[id].Clouds) != 0 {
-			t.Fatalf("%s now carries a Clouds list; this test no longer covers what it claims", id)
+	unscoped := AddOnExclusion{Kind: NeedsUserConfig, Why: "a synthetic entry", Issue: "#2717"}
+	scoped := AddOnExclusion{Kind: NeedsUserConfig, Why: "a synthetic entry", Issue: "#2717", Clouds: []string{"aws"}}
+	for _, cloud := range []string{"aws", "gcp", "azure", "alibaba", "hetzner"} {
+		if !unscoped.appliesTo(cloud) {
+			t.Errorf("an exclusion naming no clouds does not apply to %s, but an empty list means "+
+				"every cloud", cloud)
 		}
-		app := argocd.AddOnAppName(id)
-		for _, cloud := range []string{"aws", "gcp", "azure", "alibaba", "hetzner"} {
-			if _, withheld := PartitionExcludedAddOns(cloud, []string{app}); !contains(withheld, app) {
-				t.Errorf("%s is not withheld on %s, but its exclusion names no clouds and so "+
-					"applies to all of them", app, cloud)
-			}
+	}
+	// And the other direction, or the test would pass against an appliesTo that returned true
+	// unconditionally — which would make every exclusion global and the Clouds field decorative.
+	if !scoped.appliesTo("aws") {
+		t.Error("an exclusion naming aws does not apply to aws")
+	}
+	for _, cloud := range []string{"gcp", "hetzner"} {
+		if scoped.appliesTo(cloud) {
+			t.Errorf("an exclusion naming only aws also applies to %s", cloud)
 		}
 	}
 }
