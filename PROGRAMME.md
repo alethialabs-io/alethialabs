@@ -167,7 +167,7 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**12 of 30 proof cells are proven.** 4 failing · 3 stale (cause fixed, needs a re-run) · 0 blocked · 9 never run.
+**17 of 30 proof cells are proven.** 4 failing · 1 stale (cause fixed, needs a re-run) · 0 blocked · 8 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -175,8 +175,8 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 
 | cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ⚠️ | ✅ | ❌ | ♻️ | · | ❌ |
-| **gcp** | ⚠️ | ♻️ | · | ✅ | · | ✅ |
+| **aws** | ✅ | ✅ | ❌ | ✅ | · | ❌ |
+| **gcp** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
 | **azure** | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
 | **alibaba** | · | · | · | · | · | · |
 | **hetzner** | ✅ | ♻️ | ❌ | ✅ | ✅ | ✅ |
@@ -185,14 +185,15 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 <details><summary>Every cell that has any evidence at all</summary>
 
-- `aws/floor` **contested** — ledger 2026-08-24, bundle `demos/proofs/aws/20260824T211529Z` — but #3042 is OPEN and was filed 2026-08-27, AFTER the 2026-08-24 run that proved it
+- `aws/floor` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T125612Z`
 - `aws/maxconfig` **proven** — ledger 2026-08-26, bundle `demos/proofs/aws/20260826T114712Z`
 - `aws/addons` **failing** — ledger 2026-08-26 (via the `full` composite run) (#2717)
-- `aws/gitops` **stale** — ledger 2026-08-26 — but #2591 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#2591)
+- `aws/gitops` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T142417Z`
 - `aws/day2` **failing** — ledger 2026-08-26 (#2717)
-- `gcp/floor` **contested** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T105829Z` — but #2743 is OPEN and was filed 2026-08-26, AFTER the 2026-08-25 run that proved it
-- `gcp/maxconfig` **stale** — ledger 2026-08-27 — but #2811 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#2811)
+- `gcp/floor` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T120037Z`
+- `gcp/maxconfig` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T124233Z`
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
+- `gcp/byo-iac` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T110456Z`
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
 - `azure/floor` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T215237Z`
 - `azure/maxconfig` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T211849Z`
@@ -211,22 +212,22 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`gcp/maxconfig`** — stale. ledger 2026-08-27 — but #2811 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix
+**`hetzner/maxconfig`** — stale. ledger 2026-08-25 (via the `full` composite run) — but #2568 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
 <details><summary>The next 10</summary>
 
-1. `gcp/maxconfig` — stale
 1. `hetzner/maxconfig` — stale
-1. `aws/gitops` — stale
-1. `aws/floor` — contested
-1. `gcp/floor` — contested
 1. `aws/addons` — failing
 1. `azure/addons` — failing
 1. `hetzner/addons` — failing
 1. `aws/day2` — failing
 1. `alibaba/floor` — never_run
+1. `alibaba/maxconfig` — never_run
+1. `gcp/addons` — never_run
+1. `alibaba/addons` — never_run
+1. `alibaba/gitops` — never_run
 
 </details>
 
@@ -290,29 +291,14 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | cell | state | issue | issue state |
 |---|---|---|:---:|
 | `aws/addons` | failing | #2717 | open |
-| `aws/gitops` | stale | #2591 | ⛔ **CLOSED** |
 | `aws/day2` | failing | #2717 | open |
-| `gcp/maxconfig` | stale | #2811 | ⛔ **CLOSED** |
 | `azure/addons` | failing | **none** | ? |
 | `hetzner/maxconfig` | stale | #2568 | ⛔ **CLOSED** |
 | `hetzner/addons` | failing | #2717 | open |
 
-♻️ **3 cell(s) cite a CLOSED issue**, so they are rendered `stale` rather than `failing`: the cause is fixed and what they need is a **re-run**, not a fix. They rank first in the mechanical next for exactly that reason — it is the cheapest action on the board.
+♻️ **1 cell(s) cite a CLOSED issue**, so they are rendered `stale` rather than `failing`: the cause is fixed and what they need is a **re-run**, not a fix. They rank first in the mechanical next for exactly that reason — it is the cheapest action on the board.
 
 The ledger row itself is not wrong and is not rewritten (it is append-only, and it was true when written). What was wrong was reading it as open work — the same defect that had the parity board citing four closed issues as live floor blockers.
-
-### ⚠️ Contested — proven by the ledger, contradicted by an open red
-
-A nightly that goes red files an **issue** and writes **no ledger row**. So from the ledger's point of view that failure never happened, and a cell proven earlier stays ✅ forever: PASS is durable, a later FAIL is invisible. That makes the grid a **high-water mark** presented as current state, in the one direction that overstates — which is the thing this whole file exists to prevent.
-
-| cell | proven by a run dated | open red | filed |
-|---|:---:|---|:---:|
-| `aws/floor` | 2026-08-24 | #3042 | 2026-08-27 |
-| `gcp/floor` | 2026-08-25 | #2743 | 2026-08-26 |
-
-`contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the run, and guessing either way is worse than naming the contradiction. It claims only what is derivable — the two sources disagree, so the ✅ is not trustworthy right now.
-
-**Two human acts clear it, and either one is fine:** close the issue if that run was a flake, or append a `FAIL` row for it if it was not. The next derivation picks the answer up.
 
 ### Blocked on a human
 
@@ -357,7 +343,7 @@ Live board snapshot: taken **2026-08-27T19:16:22Z** — refreshed by `.github/wo
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
-Ledger rows read: **49** · surviving claims: **21** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
+Ledger rows read: **54** · surviving claims: **22** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
 
 _Generated by `scripts/programme-rollup.mjs`. Do not edit below the marker — run `pnpm gen:programme`._
 

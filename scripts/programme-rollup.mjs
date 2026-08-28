@@ -66,6 +66,7 @@ import path from "node:path";
 
 const SNAPSHOT = "docs/testing/programme-snapshot.json";
 const LEDGER = "demos/proofs/provisioning-e2e-log.md";
+const SHA_BASELINE = "demos/proofs/ledger-sha-baseline.json";
 const SPINE = "test/e2e/generated/programme.json";
 const WORKFLOW = ".github/workflows/e2e-nightly.yml";
 // The fidelity table moved OUT of the workflow's inline `env:` and into the resolver (#2356), so a
@@ -176,6 +177,28 @@ export function parseLedger(text) {
  * and were later RETRACTED because no bundle had ever existed.
  * @returns {"path"|"run-tag"|"none"}
  */
+/**
+ * Do a ledger row's sha and its bundle's sha name the same commit?
+ *
+ * BOTH DIRECTIONS, because the two are abbreviated independently and to different lengths — the
+ * ledger carries 7- and 8-character forms side by side (`7050809` next to `29d4074e`), so a
+ * one-way `startsWith` would call half the real matches a mismatch and the other half a match
+ * depending only on which side happened to be shorter.
+ *
+ * A minimum length is required so that emptiness, `unknown`, or a truncated cell cannot agree with
+ * everything. Anything shorter than a git short-sha is not a comparison, it is a coincidence.
+ * @param {string} rowSha
+ * @param {string} bundleSha
+ */
+export function shasAgree(rowSha, bundleSha) {
+	const a = (rowSha ?? "").trim().toLowerCase();
+	const b = (bundleSha ?? "").trim().toLowerCase();
+	const MIN = 7;
+	if (a.length < MIN || b.length < MIN) return false;
+	if (!/^[0-9a-f]+$/.test(a) || !/^[0-9a-f]+$/.test(b)) return false;
+	return a.startsWith(b) || b.startsWith(a);
+}
+
 export function bundleKind(ref) {
 	if (!ref) return "none";
 	if (ref.startsWith(`${PROOFS_DIR}/`) || /^[a-z]+\/\d{8}T\d{6}Z$/.test(ref)) return "path";
@@ -493,7 +516,7 @@ export function deriveBoard(snapshot) {
 	};
 }
 
-export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot }) {
+export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot, ledgerShaBaseline = { acknowledged: [] } }) {
 	const failures = [];
 	const notes = [];
 	const { rows, errors } = parseLedger(ledgerText);
@@ -597,6 +620,89 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 					`${summary.outcome ? ` and \`outcome: "${summary.outcome}"\`` : ""}${spent}. ` +
 					`BLOCKED means the harness refused BEFORE spending; a run that reached '${SPENDING_STAGE}' spent and broke, which is FAIL. ` +
 					`The ledger is append-only — supersede the row with a RETRACTED naming it, then re-record as FAIL.`,
+			);
+		}
+	}
+
+	// ── INTEGRITY: a surviving claim's `git sha` must match the sha inside its OWN bundle ──
+	//
+	// A proof row says "this cell was proven, at this commit, and here is the bundle". Nothing
+	// checked that the last two agreed, and they frequently do not: measured across the whole
+	// ledger, 29 rows match, 7 do not, and 15 name no committed bundle to compare against.
+	//
+	// The drift RUNS BOTH WAYS, which is what rules out every benign explanation. Four rows name a
+	// commit NEWER than the run and three name one OLDER, so "the row is written after the code
+	// moved" cannot cover it. The mechanism is structural: `provisioning-e2e.sh` takes
+	// `git rev-parse --short HEAD` in the ROLLUP job while the bundle's `git_sha` is stamped in the
+	// LEG job, so any merge landing between them separates the two.
+	//
+	// It matters most where it is least visible. Two of the seven back cells the grid renders
+	// PROVEN. A PASS naming a commit its run never executed is unverifiable in precisely the way an
+	// expiring CI run tag was — and every 2026-07-22 row was retracted for that.
+	//
+	// SURVIVING CLAIMS ONLY, for the same reason the BLOCKED-vs-spent rule above walks `claims`:
+	// the ledger is append-only, a corrected row stays in the file forever, and firing on a corpse
+	// punishes the supersession convention this repo is asking people to follow.
+	//
+	// SHRINK-ONLY, keyed on IDENTITY not on a count. Each grandfathered row is named in
+	// demos/proofs/ledger-sha-baseline.json; a mismatch that is not named fails, and a name that no
+	// longer matches a real mismatch fails too. A bare ceiling of "7" would let an eighth mismatch
+	// move in the moment one of these is retracted.
+	{
+		const ackList = Array.isArray(ledgerShaBaseline?.acknowledged) ? ledgerShaBaseline.acknowledged : [];
+		const ackKey = (o) => `${o.cloud}/${o.dimension}@${o.row_sha ?? o.sha}→${o.bundle_sha}`;
+		// Built by hand rather than `new Map(entries)` so a DUPLICATE key is reported instead of
+		// silently overwritten. The first draft of this baseline listed the hetzner/full RETRACTED
+		// row and its FAIL replacement separately; both render the same key, `new Map` kept one, and
+		// the redundant record was accepted without a word. A ratchet that quietly absorbs a record
+		// it is not using can be padded — which is the one thing a shrink-only list must not allow.
+		const unmatchedAck = new Map();
+		for (const a of ackList) {
+			const k = ackKey(a);
+			if (unmatchedAck.has(k)) {
+				failures.push(`${SHA_BASELINE}: duplicate record for \`${k}\`. Only surviving claims are checked, so one record per cell is the most that can ever match; the extra can never be satisfied and would pad the ratchet.`);
+				continue;
+			}
+			unmatchedAck.set(k, a);
+		}
+		let unstamped = 0;
+		for (const r of claims.values()) {
+			if (!r || bundleKind(r.bundle) !== "path") continue;
+			const summary = readBundleSummary(path.join(bundlePath(r.bundle), "provision-summary.json"));
+			const bundleSha = summary && typeof summary === "object" ? summary.git_sha : undefined;
+			// `unknown` is capture-proof.sh's own fallback when `git rev-parse` fails, so it is an
+			// absence wearing a value. Counted and reported, never compared — comparing against it
+			// would manufacture a mismatch out of a missing measurement.
+			if (typeof bundleSha !== "string" || bundleSha === "" || bundleSha === "unknown") {
+				unstamped++;
+				continue;
+			}
+			if (shasAgree(r.sha, bundleSha)) continue;
+			const key = `${r.cloud}/${r.dimension}@${r.sha}→${bundleSha}`;
+			if (unmatchedAck.has(key)) {
+				unmatchedAck.delete(key);
+				continue;
+			}
+			failures.push(
+				`${LEDGER}:${r.line}: ${r.cloud}/${r.dimension} is recorded at \`${r.sha}\`, but its own bundle ` +
+					`\`${r.bundle}/provision-summary.json\` says the run executed \`${bundleSha}\`. ` +
+					`A ${r.verdict} naming a commit its run never executed cannot be checked against the tree. ` +
+					`The ledger is append-only — supersede the row with a RETRACTED naming it, then re-record with the sha the bundle carries. ` +
+					`If this row is genuinely to be grandfathered, name it in ${SHA_BASELINE} with the reason.`,
+			);
+		}
+		for (const [key, a] of unmatchedAck) {
+			failures.push(
+				`${SHA_BASELINE}: the acknowledged mismatch \`${key}\` no longer corresponds to a surviving claim whose sha disagrees with its bundle. ` +
+					`Either it was superseded (delete the record — this ratchet only shrinks) or the row/bundle it named has moved. ` +
+					`A record for a mismatch that does not exist is the same stale-evidence shape the record was meant to expose.` +
+					(a.issue ? ` Filed as ${a.issue}.` : ""),
+			);
+		}
+		if (unstamped > 0) {
+			notes.push(
+				`${unstamped} surviving claim(s) name a committed bundle that carries no usable \`git_sha\`, so their row sha could not be checked at all. ` +
+					`That is not a pass — it is an unmeasured cell.`,
 			);
 		}
 	}
@@ -1214,6 +1320,10 @@ function readInputs() {
 		workflowText: need(WORKFLOW),
 		resolverText: need(RESOLVER),
 		unsupportedText: need(UNSUPPORTED_KINDS),
+		// ABSENT MEANS EMPTY, not "skip the rule". A ratchet whose baseline file can be deleted to
+		// silence it is not a ratchet — removing the file must make the guard louder (every
+		// mismatch becomes a failure), never quieter.
+		ledgerShaBaseline: fs.existsSync(SHA_BASELINE) ? JSON.parse(fs.readFileSync(SHA_BASELINE, "utf8")) : { acknowledged: [] },
 		bundleExists: (p) => fs.existsSync(p),
 		// Tolerant on purpose: an absent or unreadable summary means "cannot check", which is not the
 		// same as "checked and fine". The rule below simply does not fire, rather than inventing a
@@ -1370,6 +1480,73 @@ function runSelfTest() {
 			readBundleSummary: summaries({ "nightly-32850686520/provision-summary.json": spent }),
 		});
 		ok("a run-tag bundle is not reconciled", !r.failures.some((f) => /recorded BLOCKED/.test(f)), JSON.stringify(r.failures));
+	}
+
+	// ── A row's sha vs its own bundle's sha (#2718). ──
+	//
+	// The negatives carry the weight. A rule that fires on every row is not a check, and a
+	// baseline that can be padded is not a ratchet.
+	{
+		ok("shasAgree: identical", shasAgree("abc1234", "abc1234"), "");
+		ok("shasAgree: the LONGER row sha extends the bundle's", shasAgree("abc12345", "abc1234"), "");
+		ok("shasAgree: the LONGER bundle sha extends the row's", shasAgree("abc1234", "abc12345"), "");
+		ok("shasAgree: different commits disagree", !shasAgree("abc1234", "def5678"), "");
+		// Without a minimum length an empty or truncated cell agrees with everything, and the guard
+		// reports green on exactly the rows it cannot read.
+		ok("shasAgree: an empty sha agrees with nothing", !shasAgree("", "abc1234"), "");
+		ok("shasAgree: a too-short prefix is a coincidence, not a match", !shasAgree("abc", "abc1234"), "");
+		ok("shasAgree: 'unknown' is not a sha", !shasAgree("unknown", "abc1234"), "");
+
+		const AT = "demos/proofs/gcp/20260825T200519Z";
+		const at = (git_sha) => (p) => (p === `${AT}/provision-summary.json` ? { outcome: "success", git_sha } : null);
+		const shaRow = (sha, bundle) => `| 2026-08-25 | ${sha} | gcp | floor | **PASS** | detail | \`${bundle}\` | — |\n`;
+		const MISMATCH = /is recorded at .* but its own bundle/;
+
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("f3cb966") });
+		ok("a row naming a commit its run never executed is an integrity failure", r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+		ok("...and the message names both shas", r.failures.some((f) => /09911316/.test(f) && /f3cb966/.test(f)), JSON.stringify(r.failures));
+
+		// The positive case, both abbreviation lengths — the ledger carries 7- and 8-char forms side
+		// by side, so a one-way comparison would call half the real matches a mismatch.
+		r = derive({ ...base, ledgerText: hdr + shaRow("f3cb966", AT), readBundleSummary: at("f3cb9661234") });
+		ok("a row whose sha is a PREFIX of its bundle's raises nothing", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+		r = derive({ ...base, ledgerText: hdr + shaRow("f3cb9661234", AT), readBundleSummary: at("f3cb966") });
+		ok("a row whose sha EXTENDS its bundle's raises nothing", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+
+		// An absent measurement is not a pass. It must not fail the build, and it must not be silent.
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("unknown") });
+		ok("a bundle whose sha is 'unknown' is not compared", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+		ok("...but it is reported as unmeasured", r.notes.some((n) => /no usable `git_sha`/.test(n)), JSON.stringify(r.notes));
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: () => null });
+		ok("an unreadable summary is not compared either", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+
+		// The ratchet.
+		const ack = (o) => ({ acknowledged: [{ cloud: "gcp", dimension: "floor", row_sha: "09911316", bundle_sha: "f3cb966", ...o }] });
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("f3cb966"), ledgerShaBaseline: ack({}) });
+		ok("an acknowledged mismatch is grandfathered", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+
+		// Shrink-only: the record must stop being accepted once the row it names agrees.
+		r = derive({ ...base, ledgerText: hdr + shaRow("f3cb966", AT), readBundleSummary: at("f3cb966"), ledgerShaBaseline: ack({}) });
+		ok("a record for a mismatch that no longer exists is an integrity failure", r.failures.some((f) => /no longer corresponds/.test(f)), JSON.stringify(r.failures));
+
+		// A record must not grandfather a DIFFERENT mismatch than the one it names — otherwise one
+		// acknowledgement launders every future drift on that cell.
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("9999999"), ledgerShaBaseline: ack({}) });
+		ok("an acknowledgement does not cover a mismatch against a different bundle sha", r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+
+		// A duplicate can never be satisfied — only surviving claims are checked, so one record per
+		// cell is the ceiling. Absorbing it silently would let the list be padded.
+		r = derive({
+			...base,
+			ledgerText: hdr + shaRow("09911316", AT),
+			readBundleSummary: at("f3cb966"),
+			ledgerShaBaseline: { acknowledged: [...ack({}).acknowledged, ...ack({}).acknowledged] },
+		});
+		ok("a duplicate baseline record is an integrity failure", r.failures.some((f) => /duplicate record/.test(f)), JSON.stringify(r.failures));
+
+		// Deleting the baseline must make the guard LOUDER, never quieter.
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("f3cb966"), ledgerShaBaseline: undefined });
+		ok("no baseline at all means every mismatch fails", r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
 	}
 
 	// RETRACTED supersession — voids the claim rather than replacing it.
@@ -1936,6 +2113,19 @@ if (!executedDirectly) {
 
 	const intentViolations = intentHalfViolations(existing);
 	const integrity = [...view.failures, ...intentViolations];
+
+	// ── ADVISORIES ──
+	//
+	// `notes` was pushed to and never read. One note has been generated since it was written — "an
+	// unfiled red is an unowned red" — and nobody has ever seen it, because the array was returned
+	// and dropped. A finding routed into a channel with no outlet is indistinguishable from no
+	// finding, which is the exact failure mode this file exists to prevent one level up.
+	//
+	// Advisories are NOT integrity failures and must not gate the build: an unfiled red is a
+	// bookkeeping gap, not a lying cell. They are printed on every run and annotated in CI.
+	for (const n of view.notes) {
+		console.error(`::warning::programme-rollup: ${n}`);
+	}
 
 	if (process.argv.includes("--write")) {
 		fs.writeFileSync(TARGET, splice(existing, generated));

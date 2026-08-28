@@ -49,10 +49,25 @@ mock_provider "talos" {}
 mock_provider "imager" {}
 mock_provider "minio" {}
 
-# `helm` is deliberately NOT mocked. Its only use here is the offline `data "helm_template"`
-# renderer, and checks_data.tf / csi.tf assert real properties of the rendered manifests (the CSI
-# driver, the default StorageClass, HCLOUD_VOLUME_EXTRA_LABELS). Mocking it hands those guards
-# empty strings and they fail on every run — for the mock, not for the template.
+# `helm` is deliberately NOT mocked. checks_data.tf / csi.tf assert real properties of the rendered
+# manifests (the CSI driver, the default StorageClass, HCLOUD_VOLUME_EXTRA_LABELS). Mocking it hands
+# those guards empty strings and they fail on every run — for the mock, not for the template.
+#
+# THAT TRADE HAS A PRICE, AND IT IS NOT "offline". This comment used to call `data "helm_template"`
+# an offline renderer. "Offline" is true of the CLUSTER — these render with no kubeconfig and
+# resolve at plan time, which is what cilium.tf and csi.tf mean by it — and false of the NETWORK.
+# Three of them (cilium.tf:40, cilium.tf:111, csi.tf:38) carry
+# `repository = "https://charts.hetzner.cloud"` or `https://helm.cilium.io`, a data source is
+# evaluated at plan, and so every `tofu test` on this cloud fetches an index.yaml and a chart
+# tarball live from a third party. hetzner is the ONLY cloud that does this: no other project
+# template declares a `helm_template` at all (aws/main.tf and gcp/main.tf only mention one in
+# prose). That is exactly the distribution of the flake it causes.
+#
+# On 2026-08-28 a TCP reset from charts.hetzner.cloud failed `check (hetzner)` on the staging→main
+# promotion PR #3117, reading as a template defect while the same commit passed on every other
+# cloud. `.github/workflows/infra-templates.yml` now retries a network-shaped failure and refuses
+# to call it a test failure; a genuine assertion failure still fails on the first attempt. Making
+# these renders hermetic is #2754 and would retire both this note and that retry.
 
 variables {
   project_name = "acme"

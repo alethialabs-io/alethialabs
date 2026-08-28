@@ -20,7 +20,9 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -56,6 +58,31 @@ type t2Provider struct {
 	// resources down in seconds, while aws/byo run 32909287152 passed every assertion and
 	// was still recorded FAIL because an EKS cluster's NAT-gateway/VPC dependency chain had
 	// an internet gateway `Still destroying... [13m30s elapsed]` when the ceiling hit (#2729).
+	//
+	// ── What this window has to be BIG ENOUGH FOR, which is not "a destroy that works". ──
+	//
+	// A window that expires does not merely leave resources behind — it takes the DIAGNOSIS with
+	// it. terraform-exec cancels with SIGINT (packages/core/tofu: cmd.Cancel = Signal(os.Interrupt)),
+	// so the only thing the teardown can report is `tofu destroy failed: signal: interrupt`, which
+	// names no resource, no dependency and no cloud error. The destroy's OWN verdict — the named
+	// `DependencyViolation` that says which ENI is still attached — is one the harness can only
+	// receive by outliving the provider's per-resource delete ceilings.
+	//
+	// aws/floor run 33155063965 is the measurement. The window was 30m and it was spent, to the
+	// second, like this:
+	//
+	//	  ~9m20s  workdir prep + `tofu init` + state pull + refresh of 130 resources + plan render
+	//	 20m40s  the destroy apply, still running when the ctx cancelled:
+	//	           eks_managed_node_group  destroyed after  8m11s
+	//	           eks_cluster             destroyed after  4m1s
+	//	           internet_gateway        Still destroying... 19m50s  (started ~50s into the apply)
+	//	           subnet.public[0..2]     Still destroying... 17m0s   (started ~3m40s into it)
+	//
+	// The internet gateway and the subnets were inside the AWS provider's own 20m delete ceiling,
+	// so the destroy was roughly THREE MINUTES from returning a named error of its own. 30m is
+	// therefore not "nearly enough" — it is the one length that guarantees the least useful
+	// outcome. 45m clears the observed ~33m-to-verdict with the same order of margin the other
+	// rungs carry, and costs nothing on a destroy that finishes: this is a ceiling, not a dwell.
 	teardownTimeout time.Duration
 	// credsPresent reports whether this provider's credentials are wired into the
 	// environment, and (when not) a human message naming exactly what to set. It is a
@@ -117,7 +144,7 @@ var t2ProviderTable = map[string]t2Provider{
 		defaultRegion:       "us-east-1",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
-		teardownTimeout:     30 * time.Minute,
+		teardownTimeout:     45 * time.Minute,
 		credsPresent: func() (bool, string) {
 			ready := t2Truthy(os.Getenv("ALETHIA_E2E_AWS_READY"))
 			hasHandle := os.Getenv("AWS_ACCESS_KEY_ID") != "" || os.Getenv("AWS_ROLE_ARN") != ""
@@ -133,7 +160,7 @@ var t2ProviderTable = map[string]t2Provider{
 		defaultRegion:       "europe-west3-a",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
-		teardownTimeout:     30 * time.Minute,
+		teardownTimeout:     45 * time.Minute,
 		credsPresent: func() (bool, string) {
 			return t2AllEnvPresent([]string{"GOOGLE_APPLICATION_CREDENTIALS"}),
 				"GOOGLE_APPLICATION_CREDENTIALS is unset (path to the GCP service-account key file)"
@@ -163,7 +190,7 @@ var t2ProviderTable = map[string]t2Provider{
 		defaultRegion:       "westeurope",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
-		teardownTimeout:     30 * time.Minute,
+		teardownTimeout:     45 * time.Minute,
 		credsPresent: func() (bool, string) {
 			return t2AllEnvPresent([]string{"ARM_CLIENT_ID", "ARM_TENANT_ID", "ARM_SUBSCRIPTION_ID"}),
 				"Azure credentials are incomplete — set ARM_CLIENT_ID, ARM_TENANT_ID and ARM_SUBSCRIPTION_ID"
@@ -176,7 +203,7 @@ var t2ProviderTable = map[string]t2Provider{
 		defaultRegion:       "eu-central-1",
 		clusterReadyTimeout: "15m",
 		waitTimeout:         50 * time.Minute,
-		teardownTimeout:     30 * time.Minute,
+		teardownTimeout:     45 * time.Minute,
 		credsPresent: func() (bool, string) {
 			static := os.Getenv("ALICLOUD_ACCESS_KEY") != ""
 			oidc := os.Getenv("ALICLOUD_OIDC_TOKEN_FILE") != "" && os.Getenv("ALICLOUD_ROLE_ARN") != ""
@@ -783,4 +810,34 @@ func t2SweeperName(provider string) string {
 		return s
 	}
 	return fmt.Sprintf("(no sweeper mapped for provider %q)", provider)
+}
+
+// t2TeardownFailureLine renders what the t.Cleanup destroy prints when it did not succeed.
+//
+// There are TWO failures wearing one message, and the difference is the whole diagnosis:
+//
+//	the destroy REPORTED   → tofu reached a verdict; derr names the resource and the cloud error
+//	the WINDOW expired     → tofu reached no verdict at all
+//
+// The second is invisible in derr. terraform-exec cancels its child with SIGINT rather than SIGKILL
+// (packages/core/tofu sets cmd.Cancel = Signal(os.Interrupt)), so a window that runs out produces
+// exactly `tofu destroy failed: signal: interrupt` — a sentence with no resource, no dependency and
+// no cloud error in it. aws/floor run 33155063965 printed that line and it was read, twice, as a
+// destroy that errored; it was a destroy that was still working, ~3m short of its own answer.
+//
+// So the ctx's own error is what decides the wording, not the text of derr: a destroy killed at the
+// deadline is reported AS a deadline, with the window that expired, the knob that widens it and the
+// sweeper that still cleans up. Pure and untagged so it is proven on every PR without a cloud.
+func t2TeardownFailureLine(provider string, window time.Duration, ctxErr, derr error) string {
+	sweeper := t2SweeperName(provider)
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
+		return fmt.Sprintf(
+			"teardown WINDOW EXPIRED after %s — the destroy was interrupted mid-flight and never "+
+				"reported a verdict of its own, so %q names nothing. Widen it with "+
+				"ALETHIA_E2E_T2_TEARDOWN, or raise this cloud's teardownTimeout in t2ProviderTable "+
+				"(and the workflow caps that reserve it). The %s sweeper is the guarantee that the "+
+				"cloud is left clean; it is NOT a substitute for the destroy's own error.",
+			window, derr, sweeper)
+	}
+	return fmt.Sprintf("teardown RunDestroy failed (workflow %s is the guarantee): %v", sweeper, derr)
 }

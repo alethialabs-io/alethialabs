@@ -294,6 +294,114 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 				},
 			},
 			SyncPolicy: addonSyncPolicy{
+				// `ServerSideApply=true` ALSO PICKS THE DIFF STRATEGY, and on the pinned argo-cd it
+				// picks a broken one. This is the cause of #2717's "OutOfSync while `argocd app
+				// diff` prints nothing", read out of argo-cd v3.1.8 (chart 8.6.4) rather than
+				// guessed:
+				//
+				//	controller/state.go, CompareAppState:
+				//	  if app.Spec.SyncPolicy.SyncOptions.HasOption("ServerSideApply=true") {
+				//	      diffConfigBuilder.WithStructuredMergeDiff(true)
+				//	  }
+				//
+				// Structured-merge diff predicts the apply CLIENT-side, so it drops the fields the
+				// API server materialises into an embedded ObjectMeta — a StatefulSet's
+				// `spec.volumeClaimTemplates[]` comes back with apiVersion, kind,
+				// `metadata.creationTimestamp: null`, `status.phase` and `spec.volumeMode` that the
+				// chart never wrote, and the prediction is permanently unequal to live
+				// (argoproj/argo-cd#11143, #11106, #16707, #18568). argo-cd's own docs mark the
+				// strategy "Feature Discontinued … after different issues were identified by the
+				// community".
+				//
+				// ── WHAT THE CHART PIN DID AND DID NOT FIX (hetzner/addons run 33162842830) ──
+				//
+				// The 8.6.4 → 9.5.11 bump (v3.1.8 → v3.3.9, #3128) cleared MOST of the class:
+				// kyverno's CronJobs, loki's StatefulSet and falco all went Healthy+Synced. FOUR
+				// StatefulSets did not — addon-harbor-{database,redis,trivy} and addon-tempo.
+				//
+				// The asymmetry names the shape, and it was found by RENDERING the pinned charts
+				// rather than by reasoning. Every `volumeClaimTemplates` entry that stays OutOfSync
+				// declares `metadata.annotations` with a NULL value and carries no `apiVersion` /
+				// `kind` on the embedded PVC; both entries that now pass declare apiVersion + kind
+				// and have no null-valued key at all:
+				//
+				//	loki 6.6.0    - apiVersion: v1              SYNCED
+				//	                kind: PersistentVolumeClaim
+				//	                metadata: {name: storage}
+				//	minio 5.2.0   same shape                    SYNCED
+				//	tempo 1.10.3  - metadata:                   OutOfSync
+				//	                  name: storage
+				//	                  annotations:      <- null
+				//	                spec:
+				//	                  storageClassName: <- null
+				//	harbor 1.15.1 - metadata:                   OutOfSync  (x3: database, redis, trivy)
+				//	                  name: …
+				//	                  labels: {…}
+				//	                  annotations:      <- null
+				//
+				// Two fields co-vary across those six, so this NARROWS to a pair rather than naming
+				// one. Note harbor's registry/jobservice Deployments carry `strategy.rollingUpdate:
+				// null` and are SYNCED — so an explicit null is not by itself enough; it is a null
+				// (or a missing TypeMeta) inside the embedded PVC of a volumeClaimTemplate.
+				//
+				// ── ONE FIX THAT LOOKS RIGHT AND IS NOT ──
+				//
+				//   an ignoreDifferences on volumeClaimTemplates — refuted twice on #2717 already.
+				//     It suppresses a diff on fields argo-cd itself authored, and it would hide a
+				//     real change to a storage request forever.
+				//
+				// ── AND ONE THAT WAS REFUTED FOR A REASON THAT NO LONGER HOLDS ──
+				//
+				// This comment used to rule out compare-options `ServerSideDiff=true` on
+				// argoproj/argo-cd#24423 (ServerSideDiff PLUS ignoreDifferences → empty diff,
+				// resource still OutOfSync). THAT RULING WAS PIN-SPECIFIC AND IS NOW STALE: #24423's
+				// fix is gitops-engine#747 (`skipFullNormalize`), absent from the gitops-engine
+				// commit v3.1.8 pinned and PRESENT in v3.3.9's in-tree copy — `Normalize()` there
+				// reads `if !o.skipFullNormalize`, and `Diff` sets it on the serverSideDiff path.
+				// Re-read at the v3.3.9 tag, not inferred from dates.
+				//
+				// What the v3.3.9 tree says about the strategy actually in use:
+				//
+				//	controller/state.go still does `WithStructuredMergeDiff(true)` for
+				//	  ServerSideApply=true — unchanged at v3.3.9, v3.5.2 AND master.
+				//	gitops-engine/pkg/diff/diff.go `statefulSetWorkaround` — whose own doc comment
+				//	  says "StatefulSet requires special handling since it embeds
+				//	  PersistentVolumeClaim … K8S API server applies additional default field which
+				//	  we cannot reproduce on client side" — is reachable ONLY from the client-side
+				//	  three-way path. The structured-merge path gets no such compensation.
+				//	The SMD functions are BYTE-IDENTICAL from v3.3.9 to master bar one cosmetic
+				//	  `bytes.Equal`. So NO ARGO-CD VERSION ABOVE v3.3.9 FIXES THIS — another chart
+				//	  bump is not the lever, and argo-helm has no v3.3.10+ chart anyway (9.5.12
+				//	  jumps to v3.4.1).
+				//	argo-cd#24791 — StatefulSet permanently OutOfSync on
+				//	  `.spec.volumeClaimTemplates[].metadata.creationTimestamp` with SSA +
+				//	  RespectIgnoreDifferences + an explicit ignore rule — was CLOSED by the
+				//	  maintainers with "enable ServerSideDiff", not by a PR. #16707 confirms the same
+				//	  volumeClaimTemplates symptom still reproducing on v3.3.2. argo-cd#29103
+				//	  ("Default to SSD with SSA and remove SMD") is open: upstream is RETIRING this
+				//	  strategy, not fixing it.
+				//
+				// So `ServerSideDiff=true` is the leading candidate and is NOT flipped here yet.
+				// The reason is the discipline this issue has already broken twice: our
+				// predicted-live probe measured that a `kubectl apply --server-side --dry-run=server
+				// --field-manager=argocd-controller` predicts all four live StatefulSets EXACTLY,
+				// but that is OUR reproduction, not argo-cd's — argo-cd's own server-side path also
+				// applies normalizers and removeWebhookMutation.
+				//
+				// Asking the CLI for that comparison does not work and cannot be made to: it
+				// refuses `--server-side-diff` unless the Application ALREADY carries the
+				// annotation under evaluation, and its RPC needs a cluster REST config that the
+				// `--core` path inside the controller pod does not have (#3140, hetzner/addons run
+				// 33172643012). So test/e2e/argo_ssd_experiment.go asks for the OUTCOME instead:
+				// it sets `compare-options: ServerSideDiff=true` on ONE already-failing
+				// Application inside the e2e run, watches whether the controller then reports it
+				// Synced, and removes the annotation again. That is argo-cd's own verdict on the
+				// real cluster, and it turns this from a bet across all 17 add-ons into a
+				// measurement — hetzner being the cheap cloud to take it on. Nothing in THIS file
+				// changes until that measurement says FLIP WOULD FIX IT.
+				//
+				// Removing ServerSideApply is NOT an option — see the package comment: it is what
+				// keeps kube-prometheus-stack's CRDs under the 262144-byte annotation limit.
 				SyncOptions:              []string{"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"},
 				ManagedNamespaceMetadata: namespaceMetadataFor(a.PodSecurity),
 			},

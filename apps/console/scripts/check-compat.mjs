@@ -13,9 +13,10 @@
 //     standardizes on a SINGLE minor across clouds (#1212), so the guard asserts
 //     the defaults are identical and evaluates the shipped set against that one.
 //   • ArgoCD chart — packages/core/argocd/argocd.DefaultArgoChartVersion (the one
-//     component the matrix records multiple releases for: the current 8.6.4 AND the
-//     historical-incompatible 7.1.3, so "which is shipped" must come from the pin,
-//     not the matrix). Mirrors compat/couplings_drift_test.go:TestCouplingArgoCD.
+//     component the matrix records multiple releases for: the current 9.5.11, the
+//     superseded 8.6.4 and the historical-incompatible 7.1.3, so "which is shipped"
+//     must come from the pin, not the matrix). Mirrors
+//     compat/couplings_drift_test.go:TestCouplingArgoCD.
 //   • Every other platform component — its single recorded matrix release.
 //   • Every marketplace add-on — its recorded `addon_k8s[id]` window (add-on
 //     windows are version-independent, keyed by id).

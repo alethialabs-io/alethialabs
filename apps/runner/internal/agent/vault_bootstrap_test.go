@@ -736,3 +736,129 @@ func TestGenerateSecretValueBoundsTheLength(t *testing.T) {
 		t.Errorf("an absurd length produced %d characters, want the %d ceiling", len(got), vaultSeedMaxLength)
 	}
 }
+
+// ── the MARKETPLACE Vault: --init-only (#2717) ─────────────────────────────────────────────────
+
+// vaultInitOnlyOpts is the marketplace add-on's invocation: a Vault the CUSTOMER runs, with no ESO
+// store of ours to credential and no canvas secrets of ours to seed.
+func vaultInitOnlyOpts() vaultBootstrapOpts {
+	return vaultBootstrapOpts{
+		APIBase:        "http://addon-vault.vault.svc.cluster.local:8200",
+		StateSecret:    "alethia-vault-addon-state",
+		StateNamespace: "vault",
+		InitOnly:       true,
+	}
+}
+
+// The whole point of the mode, asserted on the axis that decides it — the CALL ORDER. It must stop
+// after the KV mount and it must STILL revoke root: a root token left alive in a cluster is a
+// standing unrestricted credential nobody meant to create, and that is no less true when the cluster
+// belongs to the customer.
+func TestVaultBootstrapInitOnlyStopsAfterKVAndStillRevokesRoot(t *testing.T) {
+	v := newFakeVault()
+	state := newMemState(nil)
+
+	// seedESOToken must never be reached; a call would mean an ESO credential was seeded into a
+	// customer's Vault namespace on the marketplace path.
+	seeded := false
+	seed := func(context.Context, string) error { seeded = true; return nil }
+
+	if err := vaultBootstrap(context.Background(), vaultInitOnlyOpts(), v, state, seed); err != nil {
+		t.Fatalf("vaultBootstrap: %v", err)
+	}
+	want := []string{"health", "init", "unseal:unseal-key", "enablekv:secret", "revoke:root-token"}
+	if strings.Join(v.calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("call order =\n  %v\nwant\n  %v", v.calls, want)
+	}
+	if seeded {
+		t.Error("--init-only seeded an ESO credential")
+	}
+	if len(v.puts) != 0 {
+		t.Errorf("--init-only wrote %d secret(s) into a customer's Vault: %v", len(v.puts), v.puts)
+	}
+	// The unseal key must survive, or the Vault it just opened can never be opened again.
+	if state.data[vaultUnsealKeyField] != "unseal-key" {
+		t.Errorf("state = %v, want the unseal key persisted under %q", state.data, vaultUnsealKeyField)
+	}
+	if state.data[vaultInitializedField] != "true" {
+		t.Error("state does not record that init happened, so a lost volume would look like a fresh install")
+	}
+}
+
+// The data-loss guard is not a property of the ESO path — it must hold on the marketplace path too,
+// where the Vault being emptied is a CUSTOMER's.
+func TestVaultBootstrapInitOnlyStillRefusesToReinitialiseAfterStorageLoss(t *testing.T) {
+	v := newFakeVault()
+	v.initialized = false
+	state := newMemState(map[string]string{vaultInitializedField: "true", vaultUnsealKeyField: "old-key"})
+
+	err := vaultBootstrap(context.Background(), vaultInitOnlyOpts(), v, state, noopSeed)
+	if err == nil {
+		t.Fatal("re-initialised a Vault whose storage was lost; every stored secret would be discarded")
+	}
+	for _, c := range v.calls {
+		if c == "init" {
+			t.Fatal("init was called after the storage-loss guard should have refused")
+		}
+	}
+}
+
+// A re-deploy re-runs the Job. It must unseal a restarted Vault and do nothing else — root was
+// revoked the first time, so there is no token to configure with and nothing left to configure.
+func TestVaultBootstrapInitOnlyUnsealsAfterARestart(t *testing.T) {
+	v := newFakeVault()
+	v.initialized = true
+	v.sealed = true
+	state := newMemState(map[string]string{vaultInitializedField: "true", vaultUnsealKeyField: "stored-key"})
+
+	if err := vaultBootstrap(context.Background(), vaultInitOnlyOpts(), v, state, noopSeed); err != nil {
+		t.Fatalf("vaultBootstrap: %v", err)
+	}
+	want := []string{"health", "unseal:stored-key"}
+	if strings.Join(v.calls, ",") != strings.Join(want, ",") {
+		t.Fatalf("call order =\n  %v\nwant\n  %v", v.calls, want)
+	}
+}
+
+// --init-only and the seeding flags are MUTUALLY EXCLUSIVE, and the combination is refused rather
+// than resolved. A caller that passed both meant one of two things and would silently get the other
+// — and the one it did not mean, seeding nothing, surfaces days later as an ExternalSecret that
+// resolves nothing.
+//
+// Varying WHICH flag collides, because a single case would pass against a check that fired on any
+// argument at all.
+func TestRunVaultBootstrapRefusesInitOnlyWithSeedingFlags(t *testing.T) {
+	base := []string{"--init-only", "--api-base", "http://v", "--state-secret", "s", "--state-namespace", "n"}
+	for name, extra := range map[string][]string{
+		"--secrets":       {"--secrets", "api-key:32:0"},
+		"--eso-secret":    {"--eso-secret", "tok"},
+		"--eso-namespace": {"--eso-namespace", "external-secrets-operator"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := RunVaultBootstrap(context.Background(), append(append([]string{}, base...), extra...))
+			if err == nil {
+				t.Fatalf("--init-only with %s was accepted; the argument would be silently ignored", name)
+			}
+			if !strings.Contains(err.Error(), "--init-only cannot be combined with") ||
+				!strings.Contains(err.Error(), name) {
+				t.Errorf("error %q does not name the colliding flag %s", err, name)
+			}
+		})
+	}
+}
+
+// --init-only still needs the three flags that locate the Vault and its state Secret. Without the
+// state Secret in particular the key has nowhere to go, and Vault shows it exactly once.
+func TestRunVaultBootstrapInitOnlyStillRequiresItsOwnFlags(t *testing.T) {
+	err := RunVaultBootstrap(context.Background(), []string{"--init-only", "--api-base", "http://v"})
+	if err == nil || !strings.Contains(err.Error(), "missing required flag") {
+		t.Fatalf("error = %v, want a missing-flag report", err)
+	}
+	// And it must NOT ask for the ESO flags it refuses to accept — an error demanding a flag that
+	// is itself rejected is an instruction nobody can follow.
+	for _, never := range []string{"--eso-secret", "--eso-namespace", "--eso-key"} {
+		if strings.Contains(err.Error(), never) {
+			t.Errorf("--init-only reports %s as missing, but passing it is refused: %v", never, err)
+		}
+	}
+}

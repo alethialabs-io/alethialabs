@@ -88,3 +88,8 @@ audit trail; git history is the timeline. Parity board:
 | 2026-08-27 | 98bbef1 | hetzner | byo-iac | **PASS** | hetzner: ✅ apply(18 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/hetzner/20260827T210204Z` | — |
 | 2026-08-27 | 98bbef1 | azure | maxconfig | **PASS** | azure: ✅ apply(57 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/azure/20260827T211849Z` | — |
 | 2026-08-27 | 165bc4c | azure | floor | **PASS** | azure: ✅ apply(29 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/azure/20260827T215237Z` | — |
+| 2026-08-28 | d465522 | gcp | byo-iac | **PASS** | gcp: ✅ apply(24 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/gcp/20260828T110456Z` | — |
+| 2026-08-28 | 0bea00b | gcp | floor | **PASS** | gcp: ✅ apply(24 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/gcp/20260828T120037Z` | — |
+| 2026-08-28 | 5f3a95e | gcp | maxconfig | **PASS** | gcp: ✅ apply(45 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/gcp/20260828T124233Z` | — |
+| 2026-08-28 | 2e07a17 | aws | floor | **PASS** | aws: ✅ apply(125 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/aws/20260828T125612Z` | — |
+| 2026-08-28 | f50f804 | aws | gitops | **PASS** | aws: ✅ apply(125 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1) | `demos/proofs/aws/20260828T142417Z` | — |

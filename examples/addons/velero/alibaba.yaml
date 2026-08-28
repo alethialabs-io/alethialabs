@@ -1,0 +1,37 @@
+# Velero on Alibaba Cloud — backups to OSS over its S3-compatible API.
+#
+# Same correction as hetzner.yaml: `provider` names velero's PLUGIN, not the cloud. Alibaba Cloud OSS
+# "supports a subset of Amazon S3 API operations, so you can use S3-compatible SDKs and tools to
+# access OSS" (alibabacloud.com/help/en/oss/developer-reference/compatibility-with-amazon-s3), so the
+# `aws` plugin reaches it once it is given the endpoint.
+#
+# HONEST STATUS: this configuration is derived from Alibaba's published S3-compatibility contract and
+# has NOT been exercised by an Alethia e2e run. It is here because a documented starting point beats
+# a blank where the product does have an answer — not as a measured result.
+
+provider: aws
+
+# A bucket you own, in the same region as the cluster. Keep it outside the cluster's lifecycle.
+bucket: my-velero-backups
+
+# OSS regions are named `oss-<region>`; it must match the endpoint below.
+region: oss-eu-central-1
+
+# The OSS S3-compatible endpoint for that region.
+s3Url: https://oss-eu-central-1.aliyuncs.com
+
+# MUST stay false. Alibaba is explicit: "OSS supports only virtual-hosted style… Path-style requests
+# are denied." Turning this on does not degrade — every request is rejected.
+s3ForcePathStyle: false
+
+# OFF. The S3 plugin has no ECS disk-snapshot API behind an OSS endpoint; see hetzner.yaml.
+snapshotsEnabled: false
+
+# ON, for the same reason: with no snapshot path this is the only way volume data is backed up.
+deployNodeAgent: true
+
+# REQUIRES CREDENTIALS, which is why this file is incomplete on purpose.
+#
+# Set `cloud` in the configure form to an AWS-style credentials file holding a RAM user's OSS
+# AccessKey pair. It is stored encrypted at rest and mounted from a runner-seeded Secret's `cloud`
+# key — never inlined into values, and never written to a file like this one.

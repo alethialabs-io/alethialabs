@@ -15,16 +15,12 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb, type Tx, withScope } from "@/lib/db";
 import { supportCases } from "@/lib/db/schema";
-import { describeIfDb } from "./db";
+import { APP_ROLE_DISTINCT, describeIfDb } from "./db";
 
 const ORG = randomUUID(); // one shared org
 const USER_A = randomUUID(); // member who opens caseA
 const USER_B = randomUUID(); // member who opens caseB
 const ORG_OTHER = randomUUID(); // a different org (isolation control)
-
-const APP_ROLE_DISTINCT =
-	(process.env.ALETHIA_APP_DATABASE_URL ?? "") !== "" &&
-	process.env.ALETHIA_APP_DATABASE_URL !== process.env.ALETHIA_DATABASE_URL;
 
 /** Scope a read to (owner, org) with the tiered support-visibility flag explicitly set. */
 function withSupportAll<T>(

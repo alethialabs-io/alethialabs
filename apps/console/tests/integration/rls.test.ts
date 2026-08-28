@@ -25,16 +25,12 @@ import {
 	projectEnvironments,
 	projects,
 } from "@/lib/db/schema";
-import { describeIfDb } from "./db";
+import { APP_ROLE_DISTINCT, describeIfDb } from "./db";
 
 const ORG_A = randomUUID();
 const ORG_B = randomUUID();
 
 // The app role is only a real RLS boundary when it differs from the service role.
-const APP_ROLE_DISTINCT =
-	(process.env.ALETHIA_APP_DATABASE_URL ?? "") !== "" &&
-	process.env.ALETHIA_APP_DATABASE_URL !== process.env.ALETHIA_DATABASE_URL;
-
 describeIfDb("RLS tenant isolation", () => {
 	beforeAll(async () => {
 		const db = getServiceDb();

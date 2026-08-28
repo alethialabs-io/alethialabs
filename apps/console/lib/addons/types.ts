@@ -229,6 +229,16 @@ export interface AddOnDef<Schema extends z.ZodTypeAny = z.ZodTypeAny> {
 	 * a group.
 	 */
 	generateSecrets?: (present: ReadonlySet<string>) => Record<string, string>;
+	/**
+	 * The one-shot in-cluster bootstrap this add-on needs after its Application is applied, or
+	 * `null` when the user's knobs say it needs none.
+	 *
+	 * A function of the parsed config rather than a constant, because whether a bootstrap is
+	 * WANTED is a user decision (vault's "initialise automatically" switch) and whether it is
+	 * SUPPORTED can depend on another knob (a Raft cluster needs every node unsealed, which is not
+	 * what this rail does). Returning null in both cases keeps one answer in one place.
+	 */
+	bootstrap?: (config: z.infer<Schema>) => AddOnBootstrap | null;
 	/** Serializable descriptors for the surfaced knobs (mirror `configSchema`) — drive the
 	 * client configure form. Empty for add-ons with no knobs. */
 	fields: AddOnField[];
@@ -323,6 +333,45 @@ export interface AddOnInstallSpec {
 	 * `values` at the declared value-paths (a keyless existingSecret ref for a credential facet,
 	 * a literal for endpoint/port). Absent for non-BYO add-ons. Mirrors the Go `AddOnInstall.Workloads`. */
 	workloads?: ChartWorkloadBindingSpec[];
+	/** A one-shot in-cluster bootstrap the runner runs after this add-on's Application is applied.
+	 * Absent for every add-on that needs none. Mirrors the Go `AddOnInstall.Bootstrap`. */
+	bootstrap?: AddOnBootstrap;
+}
+
+/**
+ * The one-shot bootstraps the runner knows how to perform for an add-on, as a closed set.
+ *
+ * A closed set and not a free string, because the runner DISPATCHES on it: an unknown kind is
+ * refused rather than skipped, so a typo in a catalog entry fails loudly instead of shipping a
+ * marketplace add-on whose promised bootstrap silently never runs.
+ */
+export const ADDON_BOOTSTRAP_KINDS = ["vault-init"] as const;
+
+/** One bootstrap kind. */
+export type AddOnBootstrapKind = (typeof ADDON_BOOTSTRAP_KINDS)[number];
+
+/**
+ * A one-shot bootstrap the runner runs INSIDE the cluster after the add-on's Application is
+ * applied.
+ *
+ * WHY THE RUNNER AND NOT A CHART HOOK. Some charts install a component that is not usable until
+ * someone performs a one-time operation against its API — a freshly installed HashiCorp Vault is
+ * SEALED, and neither the chart nor ArgoCD can open it. The API answers only on the cluster
+ * network, so the runner (which holds a kubeconfig and no route to a ClusterIP) cannot do it
+ * directly either. It applies a Job instead, and the Job does it from inside.
+ *
+ * WHAT MAY TRAVEL HERE. Names, namespaces and addresses only. This struct rides the DEPLOY job's
+ * config snapshot, which is persisted in Postgres — so it carries nothing a credential could be
+ * derived from, exactly like `AddOnSecretRef`. Any key material the bootstrap needs is MINTED
+ * INSIDE the pod and written straight to a Secret in the cluster; it never enters the runner
+ * process, the job log, or this object.
+ */
+export interface AddOnBootstrap {
+	kind: AddOnBootstrapKind;
+	/** The in-cluster API base the Job talks to (scheme + host + port, no path). */
+	apiBase: string;
+	/** The Secret the Job writes its state into, in the add-on's own namespace. */
+	stateSecret: string;
 }
 
 /** One described BYO-chart workload's runtime-resolvable binding overlay (its W3 bindings + the
