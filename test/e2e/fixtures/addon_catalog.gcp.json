@@ -87,10 +87,9 @@
 				}
 			},
 			"expose": {
-				"type": "ingress",
+				"type": "clusterIP",
 				"tls": {
-					"enabled": true,
-					"certSource": "none"
+					"enabled": false
 				}
 			},
 			"existingSecretAdminPassword": "alethia-addon-harbor",
