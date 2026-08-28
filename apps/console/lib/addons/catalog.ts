@@ -163,6 +163,43 @@ const EXTERNAL_DNS_PROVIDERS: Record<ExternalDnsProvider, ExternalDnsProviderAut
  * the S3 API" (velero.io/docs/v1.14/supported-providers). What that needs is an ENDPOINT, which is
  * why `s3Url` and `s3ForcePathStyle` are knobs below.
  */
+/**
+ * The marketplace Vault's in-cluster API root, and the Secret its bootstrap keeps state in.
+ *
+ * ⚠️ DERIVED, NOT CHOSEN, and a drift here does not error — it resolves nowhere, and the only
+ * symptom is a Vault that stays sealed with a Job retrying against a name that does not exist.
+ * Three facts compose into this string, each verified against `helm template addon-vault
+ * hashicorp/vault --version 0.28.1`:
+ *
+ *   1. ArgoCD names the Helm release after the Application, and the Application is `addon-` + the
+ *      catalog id (packages/core/argocd/addons.go `AddOnAppName`).
+ *   2. The chart's `vault.fullname` returns the RELEASE NAME unchanged when it already contains the
+ *      chart name — `addon-vault` does — so the server Service is `addon-vault`, not
+ *      `addon-vault-vault`.
+ *   3. That Service sets `publishNotReadyAddresses: true`, which is the only reason this address
+ *      works AT ALL for the bootstrap: a sealed Vault fails its readiness probe (`vault status`
+ *      exits 2), so an ordinary Service would carry no endpoints and the Job could never reach the
+ *      Vault it exists to unseal.
+ *
+ * A Go test reads the value back out of the generated fixture rather than restating it, the same
+ * way `hetznerVaultHost()` is pinned for the platform Vault.
+ */
+const VAULT_ADDON_ID = "vault";
+const VAULT_ADDON_NAMESPACE = "vault";
+const VAULT_ADDON_API_BASE = `http://addon-${VAULT_ADDON_ID}.${VAULT_ADDON_NAMESPACE}.svc.cluster.local:8200`;
+
+/**
+ * Where the bootstrap keeps the unseal key.
+ *
+ * Deliberately NOT `alethia-addon-vault`, the #640 runner-seeded secret-knob Secret. Those carry
+ * `alethia.io/managed-by=addon-marketplace` + an add-on-id label, and `PruneAddOnSecrets` deletes
+ * every labelled Secret whose add-on is no longer enabled. The Job writes this one with no ArgoCD
+ * and no marketplace labels, so nothing sweeps it — which is the property that matters: deleting
+ * the unseal key leaves a Vault nobody can ever open, and that is unrecoverable rather than merely
+ * broken. Separate name as well as separate labels, so the two cannot be confused by a reader.
+ */
+const VAULT_ADDON_STATE_SECRET = "alethia-vault-addon-state";
+
 const VELERO_PROVIDER_IDS = ["aws", "gcp", "azure"] as const;
 
 /** One velero object-store provider id. */
@@ -489,11 +526,85 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			ui: z.boolean().default(true),
 			/** High-availability (Raft) server instead of a single standalone pod. */
 			ha: z.boolean().default(false),
+			/**
+			 * Run `vault operator init` + unseal once, from inside the cluster, and enable KV v2.
+			 * Off means the operator does it themselves and the pod stays sealed until they do.
+			 */
+			initialize: z.boolean().default(true),
+			/** The Agent sidecar injector — a cluster-wide mutating admission webhook. */
+			injector: z.boolean().default(false),
 		}),
+		// ── injector: false, and the reason is measured in the chart, not a preference ─────────
+		//
+		// The chart's default is TRUE, and it installs a MutatingWebhookConfiguration with
+		// `caBundle: ""` plus an injector whose ClusterRole grants `patch` on
+		// `mutatingwebhookconfigurations` — because with `injector.certs.secretName: null` it runs in
+		// "automatic management mode", generates its own certificate and writes the bundle into the
+		// webhook itself (hashicorp/vault-helm 0.28.1 values.yaml + injector-clusterrole.yaml).
+		//
+		// Under an ArgoCD Application with `selfHeal: true` that is not a cosmetic diff, it is a
+		// FIGHT: ArgoCD heals `caBundle` back to the empty string the chart declares, the injector
+		// re-patches it, forever. The Application never reaches Synced and the injector's webhook is
+		// intermittently unusable. The same class the render-determinism check exists for (#2822,
+		// #2823), arrived at from the other direction — a value the CLUSTER rotates rather than one
+		// the render does.
+		//
+		// It is also a second answer to a question the product already answers: secrets reach
+		// workloads through external-secrets-operator here, and the platform Vault turns the injector
+		// off for exactly that reason (apps/console/lib/cloud-providers/hetzner-services.ts).
+		//
+		// A knob rather than a hard-coded false, because a customer's Vault is theirs and Agent
+		// injection is a legitimate way to use it. The field help states the consequence.
 		toValues: (c) => ({
 			ui: { enabled: c.ui },
+			injector: { enabled: c.injector },
 			server: { ha: { enabled: c.ha } },
 		}),
+		// ── Why a marketplace Vault needs a bootstrap at all ──────────────────────────────────
+		//
+		// A freshly installed Vault is SEALED and UNINITIALISED. Nothing in the chart changes that:
+		// hashicorp/vault-helm 0.28.1 has no init hook of any kind (its `server.postStart` comment
+		// offers the idea and its values ship `[]`), because upstream's position is that
+		// initialising is an operator act. So the marketplace was offering a one-click install of a
+		// product that cannot come up — `vault status` exits 2, the readiness probe never passes,
+		// no pod is ever Ready, and the Application sits Progressing at any budget.
+		//
+		// AUTO-UNSEAL IS NOT AN ALTERNATIVE TO THIS, and that is the finding that shaped the
+		// design. A cloud-KMS seal (`awskms` / `gcpckms` / `azurekeyvault`) removes the need to hold
+		// an unseal key across RESTARTS; it does not initialise anything. `vault operator init` is
+		// still required exactly once, and it still has to be run by somebody. A user who owns a KMS
+		// key can already reach that seal today through the Advanced values YAML, which deep-merges
+		// over `server.standalone.config` — and this Job then does the one thing they still cannot
+		// automate. Alethia does not provision the KMS key or the workload identity for it: a
+		// marketplace add-on is a chart plus user config and can see neither the project's cloud nor
+		// its IaC outputs (the same wall that moved cert-manager onto the platform rail above).
+		//
+		// ── The custody statement ─────────────────────────────────────────────────────────────
+		//
+		// With the default Shamir seal, SOMETHING must hold the unseal key across restarts, and it
+		// is a Kubernetes Secret in the customer's own cluster. Against a cluster-admin, an etcd
+		// backup or a volume snapshot, that buys nothing over a plain Secret — the same honest
+		// accounting packages/core/argocd/vault.go makes for the platform Vault, and it must be said
+		// wherever this is described. What it does buy is a Vault that WORKS: audit, leases,
+		// revocation and rotation, on a cluster the customer already fully controls.
+		//
+		// The ROOT TOKEN is revoked before the Job exits, so no standing unrestricted credential is
+		// created. The owner mints one on demand with `vault operator generate-root`, which requires
+		// the stored unseal key — Vault's own documented path, and auditable each time.
+		//
+		// ── Why not on HA ─────────────────────────────────────────────────────────────────────
+		//
+		// Raft means three replicas, each of which must be joined and unsealed. This rail unseals
+		// ONE node, so on `ha` it would open a third of a cluster and report success. It returns
+		// null instead, and the field help says so.
+		bootstrap: (c) =>
+			c.initialize && !c.ha
+				? {
+						kind: "vault-init",
+						apiBase: VAULT_ADDON_API_BASE,
+						stateSecret: VAULT_ADDON_STATE_SECRET,
+					}
+				: null,
 		fields: [
 			{ key: "ui", label: "Enable Vault UI", type: "boolean", default: true },
 			{
@@ -501,6 +612,20 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "High availability (Raft)",
 				type: "boolean",
 				default: false,
+			},
+			{
+				key: "initialize",
+				label: "Initialise and unseal automatically",
+				type: "boolean",
+				default: true,
+				help: `A new Vault starts sealed and cannot come up on its own. With this on, Alethia runs \`vault operator init\` and unseals it once from inside the cluster, enables KV v2 at secret/, and revokes the root token. The unseal key is written to the "${VAULT_ADDON_STATE_SECRET}" Secret in this cluster and nowhere else — mint an operator token with \`vault operator generate-root\`. Not available with high availability (Raft), where every node needs unsealing. Turn it off to hold the key yourself.`,
+			},
+			{
+				key: "injector",
+				label: "Agent sidecar injector",
+				type: "boolean",
+				default: false,
+				help: "Off by default. The injector installs a cluster-wide mutating admission webhook and then rewrites that webhook's CA bundle itself, which GitOps continuously heals back — so the add-on never reaches Synced while it is on. Secrets already reach workloads through external-secrets-operator.",
 			},
 		],
 		syncWave: 2,
@@ -1598,6 +1723,7 @@ export function resolveAddOnInstall(row: {
 	);
 	const secretWiring =
 		secretKeys.length > 0 && def.secretValues ? def.secretValues(refs, config) : {};
+	const bootstrap = def.bootstrap ? def.bootstrap(config) : null;
 	// Precedence (low → high): chart defaults → schema knobs → secret wiring → the user's raw
 	// Helm-values YAML. Unparseable raw YAML is ignored (the save-time action validates it) so
 	// it never blocks a deploy.
@@ -1617,6 +1743,11 @@ export function resolveAddOnInstall(row: {
 		// #2837: only when the add-on asks. An absent field leaves the namespace unlabelled and the
 		// cluster's own default in force.
 		...(def.podSecurity ? { podSecurity: def.podSecurity } : {}),
+		// The one-shot in-cluster bootstrap this add-on's knobs ask for (a sealed Vault's init +
+		// unseal). Derived from the PARSED config, so a stored row that fails validation falls back
+		// to the schema defaults here exactly as `values` does — the two can never disagree about
+		// which configuration was resolved.
+		...(bootstrap ? { bootstrap } : {}),
 		...(secretKeys.length > 0
 			? {
 					secretRef: {

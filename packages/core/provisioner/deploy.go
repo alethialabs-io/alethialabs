@@ -1254,6 +1254,16 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			if gitErr := writeAddOnGitOps(ctx, vc, params.GitAccessToken, facts.Labels, stdout, stderr); gitErr != nil {
 				fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
 			}
+			// One-shot in-cluster bootstraps for the add-ons that ask for one — today, initialising
+			// and unsealing a marketplace Vault (#2717).
+			//
+			// HERE, and the position is load-bearing in both directions. AFTER the Applications are
+			// applied, because the Job talks to a Service that does not exist until then. BEFORE
+			// WaitAddOnsHealthy below, because a sealed Vault never becomes Healthy — waiting first
+			// would burn the whole add-on budget and then unseal it too late to be observed. The
+			// apply does not block on the Job finishing; the wait that follows is what sees the
+			// result.
+			argocd.EnsureAddOnBootstraps(vc.AddOns, selfimage.Ref(), stdout, stderr)
 		}
 		// Prune managed add-ons the user disabled (removed from the desired set). Runs even
 		// when vc.AddOns is empty, so disabling the last add-on still cleans it up.

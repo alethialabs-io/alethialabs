@@ -450,9 +450,17 @@
 			},
 			"ui": {
 				"enabled": true
+			},
+			"injector": {
+				"enabled": false
 			}
 		},
-		"syncWave": 2
+		"syncWave": 2,
+		"bootstrap": {
+			"kind": "vault-init",
+			"apiBase": "http://addon-vault.vault.svc.cluster.local:8200",
+			"stateSecret": "alethia-vault-addon-state"
+		}
 	},
 	{
 		"id": "velero",

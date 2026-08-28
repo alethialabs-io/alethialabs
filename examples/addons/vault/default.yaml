@@ -1,0 +1,53 @@
+# HashiCorp Vault — the same everywhere.
+#
+# None of these knobs depends on the cloud, so there is one file rather than five. The values below
+# are the catalog defaults, written out with their reasoning; copy and change what you disagree with.
+
+# Alethia runs `vault operator init` and unseals the server ONCE, from a one-shot Job inside the
+# cluster, then mounts KV v2 at secret/ and REVOKES the root token.
+#
+# Without this the add-on installs a Vault that is sealed and uninitialised. That is not a
+# misconfiguration you can fix from the console — `vault status` exits 2, the readiness probe never
+# passes, no pod is ever Ready, and the Application sits Progressing forever. The chart ships no init
+# hook of its own; upstream's position is that initialising is an operator act.
+#
+# WHERE THE KEY GOES, stated plainly because it is the part that matters. The seal is Shamir and the
+# unseal key is written to the "alethia-vault-addon-state" Secret in this cluster's `vault`
+# namespace. It goes nowhere else — not to Alethia, not to the job log, not into the deploy's config
+# snapshot. Against a cluster-admin, an etcd backup or a volume snapshot that buys nothing over a
+# plain Secret; what it buys is a Vault that works, on a cluster you already control.
+#
+# NO STANDING ROOT TOKEN is created: the Job revokes the one `init` returns before it exits. To get
+# an operator credential, use the unseal key with Vault's own procedure:
+#
+#     vault operator generate-root -init            # prints a nonce and an OTP
+#     vault operator generate-root -nonce=<nonce>   # paste the unseal key
+#     vault operator generate-root -decode=<encoded token> -otp=<otp>
+#
+# Set this to false to hold the key yourself. The Vault then comes up sealed and stays that way until
+# you initialise it — which is correct if that is what you want, and confusing if it is not.
+initialize: true
+
+# Single node. Raft HA means three replicas, three volumes and an unseal apiece, and `initialize`
+# does not cover it: this rail unseals ONE node, so it is not emitted when ha is on. Turning HA on
+# means taking the bootstrap on yourself.
+ha: false
+
+# The web UI, as a ClusterIP Service. No ingress is created — reach it with `kubectl port-forward`,
+# or route to it yourself.
+ui: true
+
+# The Agent sidecar injector, OFF — and this is a change from the chart's own default.
+#
+# The injector installs a cluster-wide mutating admission webhook and then PATCHES that webhook's CA
+# bundle itself at runtime (with `injector.certs.secretName` unset it generates its own certificate;
+# its ClusterRole grants `patch` on mutatingwebhookconfigurations). The add-on's Application syncs
+# with selfHeal, so GitOps writes the empty bundle the chart declares back over it, the injector
+# re-patches, and the two never agree — the add-on never reaches Synced.
+#
+# It is also a second delivery path for something the platform already delivers: secrets reach
+# workloads through external-secrets-operator here.
+#
+# Turn it on if you specifically want Agent injection and can live with the Application reporting
+# OutOfSync.
+injector: false
