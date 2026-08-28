@@ -50,7 +50,13 @@ alethia iac attach -p shop -e dev \
 | `--path` | No | Path to the module within the repo. |
 | `--ref` | No | Git ref (branch, tag or SHA). |
 | `--var key=value` | No | A scalar tfvar. Repeatable. |
-| `--git-credential-id` | No | Credential for a private repository. |
+
+<Callout type="info">
+  **A private repository needs no credential flag.** The runner fetches a short-lived token at job
+  time from your linked GitHub or GitLab account, scoped to the repositories this project declares,
+  and refreshed per job — so nothing is stored against the source. Link that account once in the
+  console and private repositories work.
+</Callout>
 
 An environment holds **at most one** source, so re-attaching replaces it.
 

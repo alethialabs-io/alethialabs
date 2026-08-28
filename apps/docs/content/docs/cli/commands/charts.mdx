@@ -59,7 +59,13 @@ alethia chart attach api -p shop --repo https://github.com/acme/charts \
 | `--namespace` | No | Destination namespace. |
 | `--set key=value` | No | A chart value. Repeatable; JSON-typed when it parses. |
 | `--values-file` | No | Raw Helm values YAML override. |
-| `--git-credential-id` | No | Credential for a private repository. |
+
+<Callout type="info">
+  **A private repository needs no credential flag.** The runner fetches a short-lived token at job
+  time from your linked GitHub or GitLab account, scoped to the repositories this project declares,
+  and refreshed per job — so nothing is stored against the chart. Link that account once in the
+  console and private repositories work.
+</Callout>
 
 Re-attaching the same id **updates** it, so this is also how you move a chart to a new ref. The
 success line echoes the id the server stored — it slugifies what you send, and that is the id the
