@@ -1,35 +1,13 @@
-# Copy to terraform.tfvars (gitignored) or pass via TF_VAR_* env in the bootstrap
-# workflow. Defaults already target the current repo + account.
-
-github_repo   = "alethialabs-io/alethialabs" # after the org transfer
-github_branch = "main"
-
-# Runner ECR/ECS scoping (eu-west-1 dev fleet). Adjust when the fleet moves.
-runner_aws_region     = "eu-west-1"
-runner_ecr_repository = "alethia-runner-dev-runner"
-runner_ecs_cluster    = "alethia-runner-dev-eu-west-1-cluster"
-runner_ecs_service    = "alethia-runner-dev-eu-west-1-service"
-
-# Optional: allow an admin principal to assume the roles for local apply.
-# admin_principal_arns = ["arn:aws:iam::270587882865:role/YourAdminRole"]
-
-# ── E2E nightly provisioning role (BYOC A1.1) ──
-# The region the e2e nightly is hard-locked to (must NOT be a prod region). Default us-east-1.
-# e2e_region = "us-east-1"
-# The branch the nightly runs on (schedule ⇒ default branch). The OIDC sub binds exactly to it.
-# e2e_github_branch = "main"
-# Monthly cost ceiling (USD) — alerts at 50/80/100% actual + 100% forecast.
-# e2e_monthly_budget_usd = 100
-# Emails subscribed to the budget SNS topic + notified directly by the Budget.
-e2e_budget_alert_emails = ["ops@alethialabs.io"]
-# The stable public zone the nightly's ACM/cert proof validates against (#1773). Creating it is
-# only half the job: its four name servers must then be delegated at Cloudflare, which holds
-# alethialabs.io. Leave unset to create no zone at all.
-# e2e_dns_zone_name = "e2e.alethialabs.io"
-
-# ── Federating a workflow_dispatch from `dev` (the cadence unblock) ──
-# The scheduled nightly federates by REF (main). Set this to ALSO trust the branch-restricted
-# `e2e-dev` GitHub environment, so a dispatch can drive a real apply from `dev` without a promotion
-# to `main` (which would also ship the product). It ADDS an exact subject; it never replaces the ref.
-# Safe ONLY because `e2e-dev` has a single deployment-branch policy: `dev`.
-e2e_github_environment = "e2e-dev"
+# terraform.tfvars is now COMMITTED (it holds only values that are already public), so there is
+# nothing to copy for the ordinary case — `tofu plan` works from a fresh clone.
+#
+# The ONE file you must create is emails.auto.tfvars, which is gitignored because it holds
+# personal addresses and this repo is public:
+#
+#   e2e_budget_alert_emails = ["you@example.com"]
+#
+# It is a REQUIRED variable with no default, deliberately. It feeds BOTH the Budget's direct
+# subscribers and the SNS subscriptions, so a default of [] made a bare apply silently
+# unsubscribe the maintainer from their own cost alerts. Pass [] explicitly to opt out.
+#
+# You also need backend.hcl (see backend.hcl.example) for the remote state.
