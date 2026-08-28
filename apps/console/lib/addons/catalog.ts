@@ -751,7 +751,13 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		license: "Apache-2.0",
 		chartRepo: "https://falcosecurity.github.io/charts",
 		chart: "falco",
-		version: "4.9.0",
+		// chart 9.1.0 → falco 0.44.1. #2866: on Talos the modern eBPF probe died at `scap_init`,
+		// which read as a Talos ceiling and is not one — it is falcosecurity/falco#3813, where a
+		// stricter BPF verifier pushed `recvmmsg`/`sendmmsg` past the 1M verified-instruction
+		// limit on modern kernels. Fixed upstream by falcosecurity/libs#2893, first shipped in
+		// falco 0.44.0 (chart 9.0.0). The same jump also mounts `driver.sysfsMountPath`
+		// (/sys/kernel) for modern_ebpf, which chart 4.9.0 never did.
+		version: "9.1.0",
 		namespace: "falco",
 		// #2837: falco mounts ten hostPaths and runs `privileged: true` — every one of those is
 		// forbidden by PodSecurity `baseline`, which Talos enforces on every namespace but
@@ -759,8 +765,15 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		// Progressing forever having monitored nothing.
 		podSecurity: "privileged",
 		configSchema: z.object({
-			/** Syscall capture driver. `auto` picks the best available for the kernel. */
-			driver: z.enum(["auto", "modern_ebpf", "ebpf", "kmod"]).default("auto"),
+			/**
+			 * Syscall capture driver. `auto` picks the best available for the kernel.
+			 *
+			 * The legacy `ebpf` probe is NOT offered: falco 0.44.0 removed it
+			 * (falcosecurity/falco#3796), and chart 9.x `fail`s the render outright on
+			 * `driver.kind=ebpf` rather than degrading — so offering it would ship a knob that
+			 * cannot even template. `gvisor` went the same way and was never offered.
+			 */
+			driver: z.enum(["auto", "modern_ebpf", "kmod"]).default("auto"),
 			/** Emit events as JSON (recommended for log pipelines). */
 			jsonOutput: z.boolean().default(false),
 			/** Deploy Falcosidekick to fan out alerts to external destinations. */
@@ -780,7 +793,6 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				options: [
 					{ value: "auto", label: "Auto" },
 					{ value: "modern_ebpf", label: "Modern eBPF" },
-					{ value: "ebpf", label: "eBPF" },
 					{ value: "kmod", label: "Kernel module" },
 				],
 			},

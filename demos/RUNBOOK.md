@@ -223,9 +223,13 @@ repeatable evidence rather than a live demo:
 
 ```bash
 gh variable set E2E_FABRIC_DEMO --body 1
-gh workflow run e2e-nightly.yml -r main -f provider=aws     # then gcp, azure, hetzner — ONE AT A TIME
+gh workflow run e2e-nightly.yml --ref dev -f provider=aws   # then gcp, azure, hetzner — ONE AT A TIME
 gh variable delete E2E_FABRIC_DEMO                          # ← do not skip this
 ```
+
+**The ref must be `dev`.** A dispatch declares the `e2e-dev` environment, and that environment's
+deployment-branch policy is a single custom policy, `dev` — any other ref is refused GitHub-side
+before the job starts.
 
 Roughly **$6 for four proofs**. Deleting the variable afterwards is not optional: while it is
 non-empty, every leg's job cap rises to 210 minutes on **all five clouds**, and on the nightly cron

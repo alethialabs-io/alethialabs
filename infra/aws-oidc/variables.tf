@@ -98,9 +98,8 @@ variable "e2e_monthly_budget_usd" {
 }
 
 variable "e2e_budget_alert_emails" {
-  description = "Email addresses subscribed to the e2e budget SNS topic + notified directly by the Budget. Empty = SNS topic only (wire an automation/kill-switch later)."
+  description = "Email addresses subscribed to the e2e budget SNS topic + notified directly by the Budget. REQUIRED, deliberately: this value feeds BOTH the Budget's direct subscribers and the SNS subscriptions, so defaulting it to [] made a bare apply silently unsubscribe the maintainer from their own cost alerts. It holds personal addresses, so it is the one input that cannot live in this public repo — supply it via the gitignored emails.auto.tfvars (see README). Pass [] explicitly to opt out."
   type        = list(string)
-  default     = []
 }
 
 # ── Runner-release role resource scoping (release-runner / deploy-fleet-aws) ──

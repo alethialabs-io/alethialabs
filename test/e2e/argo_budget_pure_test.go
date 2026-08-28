@@ -1,19 +1,34 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// The ArgoCD wait budget, pinned against the surface it is derived from (#2062).
+// The ArgoCD wait budget, pinned against the surface it is derived from (#2062) and against the
+// caps that actually contain it (#2717).
 //
 // The flat 8m this replaced was chosen for the LEAN add-on tier and then inherited unchanged by
 // the full 18-chart one. That is what killed the first real hetzner run of the 18-add-on set: the
 // cluster was up, 7 nodes Ready, the receipt verified — and the assertion gave up with velero
-// still `Missing`. A budget is only meaningful relative to the work it bounds, so these tests pin
-// BOTH ends: it must grow with the surface, and it must stay under the parent that would cancel it.
+// still `Missing`. Its replacement was a GUESS in the same shape — 6m + 45s/chart clamped at 20m,
+// i.e. 19m30s for 18 charts — and run 33107415369 measured that guess short by 15m30s.
 //
-// UNTAGGED: pure arithmetic over the provider table and the generated catalog fixture — no cloud,
-// no cluster, no credentials.
+// A budget is only meaningful relative to two things: the work it bounds, and the cap it has to fit
+// inside. So these tests pin both ends — it must grow with the surface and land on the MEASURED
+// convergence, and its ceiling must fit the step/job `timeout-minutes` read out of the real
+// workflow. The old second half pinned it against a provider's waitTimeout, which never bounded
+// this wait at all (see argoBudgetCeiling in argocd_assert.go).
+//
+// UNTAGGED: pure arithmetic over the provider table, the generated catalog fixture, the dimension
+// resolver and the workflow file — no cloud, no cluster, no credentials.
 package e2e
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,23 +63,265 @@ func TestArgoBudgetFullSurfaceExceedsWhatKilledTheHetznerRun(t *testing.T) {
 	}
 }
 
-// The budget must stay under the SMALLEST parent bound in t2_providers.go. Budgeting past the
-// timeout that cancels you buys nothing: the run dies at the parent instead, with a worse message.
-// Derived from the real table so a provider whose waitTimeout is lowered reds this test rather
-// than silently making the Argo budget unreachable.
-func TestArgoBudgetStaysUnderEveryProviderWaitTimeout(t *testing.T) {
-	if len(t2ProviderTable) == 0 {
-		t.Fatal("t2ProviderTable is empty — this test would be vacuous")
+// argoMeasuredFullSurfaceBudget is the ONE number in this file that came from a cloud rather than
+// from arithmetic: hetzner/addons run 33107415369, dispatched with ALETHIA_E2E_ARGO_TIMEOUT=35m.
+// kube-prometheus-stack, loki and vault were all `Progressing` at the derived 19m30s and all three
+// were Healthy by 35m.
+const argoMeasuredFullSurfaceBudget = 35 * time.Minute
+
+// The full surface must derive the budget that was MEASURED to converge, not merely "more than the
+// lean tier". This is the test that would have been red for the whole life of the 19m30s guess:
+// every `addons` and `full` run was failing on the clock, before it could reach a real defect, and
+// nothing offline said so.
+//
+// It is deliberately an EQUALITY. Tuning base or per-add-on without re-deciding what the surface is
+// known to need is how the previous guess survived four paid runs.
+func TestArgoBudgetFullSurfaceIsTheMeasuredConvergence(t *testing.T) {
+	if got := argoBudgetFor(expectedCatalogSize); got != argoMeasuredFullSurfaceBudget {
+		t.Errorf("argoBudgetFor(%d) = %s, want the measured %s (hetzner/addons run 33107415369)\n"+
+			"  base %s + %d x %s = %s\n"+
+			"If the catalog size changed, re-derive; if the rate changed, say which run measured it.",
+			expectedCatalogSize, got, argoMeasuredFullSurfaceBudget,
+			argoBudgetBase, expectedCatalogSize, argoBudgetPerAddOn,
+			argoBudgetBase+time.Duration(expectedCatalogSize)*argoBudgetPerAddOn)
 	}
-	for name, p := range t2ProviderTable {
-		if p.waitTimeout <= 0 {
-			t.Errorf("provider %q has no waitTimeout", name)
-			continue
+	// …and the ceiling must not be the thing producing that answer. A clamped value would make the
+	// equality above true while the derivation itself was still wrong.
+	if unclamped := argoBudgetBase + time.Duration(expectedCatalogSize)*argoBudgetPerAddOn; unclamped > argoBudgetCeiling {
+		t.Errorf("the real catalog derives %s, which the %s ceiling CLAMPS — the surface has outgrown the clamp",
+			unclamped, argoBudgetCeiling)
+	}
+}
+
+// ── The ceiling, pinned against what actually contains it. ─────────────────────────────────────
+//
+// THIS REPLACES TestArgoBudgetStaysUnderEveryProviderWaitTimeout, and the reason is worth stating
+// because the old test PASSED while being wrong. It asserted `argoBudgetCeiling < waitTimeout` for
+// every provider, on the stated ground that "the Argo wait can outlive the job wait that cancels
+// it". No waitTimeout cancels the Argo wait: it bounds cp.WaitTerminal, an earlier and separate
+// poll, and the two are separate SUMMED terms of the single ctx ResolveT2Budget builds. The test's
+// own comment quoted hetzner at 25m, which the provider row stopped saying at #3027. So it pinned
+// the wrong number against the wrong bound, and its green was worth nothing.
+//
+// What genuinely bounds this wait, in order: the ctx (already proven by TestT2BudgetLadderHolds),
+// then the step and job `timeout-minutes` in e2e-nightly.yml. Those two are the rungs GitHub
+// evaluates BEFORE the step body runs, so nothing in Go can derive them — which is why cmd/t2budget
+// verifies them at the top of the step, and why raising the Argo budget without raising them just
+// moves where the run dies, later and after the spend. This test moves that check to PR time.
+
+// t2WorkflowCaps is one `timeout-minutes` pair as e2e-nightly.yml expresses it: the fabric-demo
+// branch and the ordinary one.
+type t2WorkflowCaps struct{ fabric, plain int }
+
+// e2eNightlyCaps reads the step and job caps out of the real workflow, and additionally holds the
+// workflow to its own "if you change one, change both" instruction: T2_STEP_CAP_MINUTES /
+// T2_JOB_CAP_MINUTES are passed to cmd/t2budget, and each must be the SAME expression as the
+// `timeout-minutes:` it claims to mirror. Nothing checked that before; a pair that drifted would
+// make t2budget verify a cap the run does not actually have.
+func e2eNightlyCaps(t *testing.T) (step, job t2WorkflowCaps) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(e2ePackageDir(t), "..", "..", ".github", "workflows", "e2e-nightly.yml"))
+	if err != nil {
+		t.Fatalf("read e2e-nightly.yml: %v", err)
+	}
+	wf := string(raw)
+
+	read := func(name string) t2WorkflowCaps {
+		re := regexp.MustCompile(regexp.QuoteMeta(name) + `: \$\{\{ vars\.E2E_FABRIC_DEMO != '' && (\d+) \|\| (\d+) \}\}`)
+		m := re.FindStringSubmatch(wf)
+		if m == nil {
+			t.Fatalf("no %s expression of the expected shape in e2e-nightly.yml — this guard would be vacuous", name)
 		}
-		if argoBudgetCeiling >= p.waitTimeout {
-			t.Errorf("argoBudgetCeiling %s >= provider %q waitTimeout %s — the Argo wait can outlive the job wait that cancels it",
-				argoBudgetCeiling, name, p.waitTimeout)
+		fabric, _ := strconv.Atoi(m[1])
+		plain, _ := strconv.Atoi(m[2])
+		if fabric <= 0 || plain <= 0 {
+			t.Fatalf("%s parsed as fabric=%d plain=%d", name, fabric, plain)
 		}
+		// The `timeout-minutes:` this value claims to mirror must be verbatim the same expression.
+		mirror := fmt.Sprintf("timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && %d || %d }}", fabric, plain)
+		if !strings.Contains(wf, mirror) {
+			t.Errorf("%s says fabric=%d plain=%d but no `%s` appears in e2e-nightly.yml —\n"+
+				"the cap cmd/t2budget verifies is not the cap GitHub enforces", name, fabric, plain, mirror)
+		}
+		return t2WorkflowCaps{fabric: fabric, plain: plain}
+	}
+	return read("T2_STEP_CAP_MINUTES"), read("T2_JOB_CAP_MINUTES")
+}
+
+// e2eDimensions asks scripts/e2e/resolve-dimension.sh — the SSOT the workflow itself calls — which
+// dimensions exist and what each one turns on. Shelling out rather than restating the table is the
+// point: a dimension added there is covered here for free, and a hand-kept copy is how the workflow
+// and the harness disagreed about the soak in the first place (#2356).
+func e2eDimensions(t *testing.T) (dims []string, fidelity map[string]map[string]string) {
+	t.Helper()
+	resolver := filepath.Join(e2ePackageDir(t), "..", "..", "scripts", "e2e", "resolve-dimension.sh")
+	run := func(args ...string) string {
+		out, err := exec.Command("bash", append([]string{resolver}, args...)...).Output()
+		if err != nil {
+			t.Fatalf("resolve-dimension.sh %v: %v", args, err)
+		}
+		return string(out)
+	}
+	dims = strings.Fields(run("--dimensions"))
+	if len(dims) == 0 {
+		t.Fatal("resolve-dimension.sh --dimensions returned nothing — this guard would be vacuous")
+	}
+	fidelity = make(map[string]map[string]string, len(dims))
+	for _, d := range dims {
+		kv := map[string]string{}
+		for _, line := range strings.Split(run("--fidelity", d), "\n") {
+			if line = strings.TrimSpace(line); line == "" {
+				continue
+			}
+			k, v, ok := strings.Cut(line, "=")
+			if !ok {
+				t.Fatalf("resolve-dimension.sh --fidelity %s emitted %q, not NAME=value", d, line)
+			}
+			kv[k] = v
+		}
+		fidelity[d] = kv
+	}
+	return dims, fidelity
+}
+
+// argoCapProbeEnv is every switch this guard sets or clears, so an ambient value from the developer's
+// shell cannot decide what the test covers.
+func argoCapProbeEnv() []string {
+	vars := append(T2BudgetScenarioEnv(),
+		"ALETHIA_E2E_ALL_ADDONS", "ALETHIA_E2E_MAX_CONFIG", "ALETHIA_E2E_ARGO_REPOS_REQUIRE",
+		"ALETHIA_E2E_BYO_IAC", "ALETHIA_E2E_ARGO_TIMEOUT", "ALETHIA_E2E_DAY2_ACCESS_TIMEOUT",
+		"ALETHIA_E2E_T2_WAIT", "ALETHIA_E2E_T2_TEARDOWN", envAcmCert)
+	sort.Strings(vars)
+	return vars
+}
+
+// TestArgoBudgetCeilingFitsTheWorkflowCaps is the real pin on argoBudgetCeiling: for every cloud and
+// every DIMENSION the programme actually drives, the ladder must fit the step and job caps in
+// e2e-nightly.yml — evaluated at the CEILING, so the caps hold the whole clamp range and a catalog
+// that grows to it needs no workflow edit.
+//
+// Deliberately per real dimension, not over the scenario powerset. The powerset is not a shape
+// anything runs: it resolves to a >5h ladder for aws by stacking keyless-db, both placements and the
+// fabric demo into one apply, and sizing the caps for it would make them meaningless. The same
+// choice the workflow's own cap comment records ("MEASURED, per real dimension rather than a
+// cartesian product"), made once here instead of by hand each time.
+//
+// The two postures the dimension table cannot express are set to their WIDEST: day-2 access on
+// (vars.E2E_DAY2_ACCESS) and the ACM certificate on (vars.E2E_ACM_CERT, which only adds its term
+// when max-config is off — so it lands on `day2` and `addons`, never on `full`).
+func TestArgoBudgetCeilingFitsTheWorkflowCaps(t *testing.T) {
+	stepCap, jobCap := e2eNightlyCaps(t)
+	dims, fidelity := e2eDimensions(t)
+	clouds := t2LadderClouds()
+	if len(clouds) == 0 {
+		t.Fatal("no provider rows — this guard would be vacuous")
+	}
+
+	var checked int
+	var worstStep, worstJob T2Budget
+	for _, fabricOn := range []bool{false, true} {
+		caps := struct{ step, job int }{stepCap.plain, jobCap.plain}
+		branch := "ordinary"
+		if fabricOn {
+			caps = struct{ step, job int }{stepCap.fabric, jobCap.fabric}
+			branch = "fabric-demo"
+		}
+		for _, dim := range dims {
+			for _, cloud := range clouds {
+				name := fmt.Sprintf("%s/%s/%s", branch, cloud, dim)
+				t.Run(name, func(t *testing.T) {
+					for _, v := range argoCapProbeEnv() {
+						t.Setenv(v, "")
+					}
+					for k, v := range fidelity[dim] {
+						t.Setenv(k, v)
+					}
+					t.Setenv("ALETHIA_E2E_DAY2_ACCESS", "1")
+					t.Setenv(envAcmCert, "1")
+					if fabricOn {
+						t.Setenv(envFabricDemo, "1")
+					}
+					// The dimensions that seed the full add-on surface are the only ones that can
+					// reach the ceiling, so only those are evaluated at it. Forcing 40m onto a lean
+					// dimension would size the caps for a budget it can never derive.
+					if fidelity[dim]["ALETHIA_E2E_ALL_ADDONS"] == "1" {
+						t.Setenv("ALETHIA_E2E_ARGO_TIMEOUT", argoBudgetCeiling.String())
+					}
+
+					b, err := ResolveT2Budget(cloud, "ladder")
+					if err != nil {
+						t.Fatalf("ResolveT2Budget: %v", err)
+					}
+					checked++
+					if b.Step > worstStep.Step {
+						worstStep = b
+					}
+					if b.Job > worstJob.Job {
+						worstJob = b
+					}
+					if got := int(b.Step.Minutes()); got > caps.step {
+						t.Errorf("step needs %dm but the %s cap is %dm — the run would be KILLED mid-scenario\n  %s\n"+
+							"Raise T2_STEP_CAP_MINUTES *and* the step's timeout-minutes in .github/workflows/e2e-nightly.yml.",
+							got, branch, caps.step, b.Describe())
+					}
+					if got := int(b.Job.Minutes()); got > caps.job {
+						t.Errorf("job needs %dm but the %s cap is %dm\n  %s\n"+
+							"Raise T2_JOB_CAP_MINUTES *and* the job's timeout-minutes in .github/workflows/e2e-nightly.yml.",
+							got, branch, caps.job, b.Describe())
+					}
+				})
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("checked zero cloud x dimension combinations")
+	}
+	t.Logf("checked %d cloud x dimension x branch ladders against step %d/%d and job %d/%d (plain/fabric)",
+		checked, stepCap.plain, stepCap.fabric, jobCap.plain, jobCap.fabric)
+	t.Logf("widest step: %s", worstStep.Describe())
+	t.Logf("widest job:  %s", worstJob.Describe())
+}
+
+// The caps must not be sized by luck. A cap far larger than any real ladder is a cap nobody will
+// notice has stopped meaning anything, so the ordinary branch is held to a bounded slack over the
+// widest dimension it must contain. This is the half of the pin that would catch a ceiling LOWERED
+// without lowering the caps — the direction TestArgoBudgetCeilingFitsTheWorkflowCaps cannot see.
+func TestWorkflowCapsAreNotWildlyOversized(t *testing.T) {
+	const maxSlackMinutes = 30
+	stepCap, jobCap := e2eNightlyCaps(t)
+	dims, fidelity := e2eDimensions(t)
+
+	var widest T2Budget
+	for _, dim := range dims {
+		for _, cloud := range t2LadderClouds() {
+			for _, v := range argoCapProbeEnv() {
+				t.Setenv(v, "")
+			}
+			for k, v := range fidelity[dim] {
+				t.Setenv(k, v)
+			}
+			t.Setenv("ALETHIA_E2E_DAY2_ACCESS", "1")
+			t.Setenv(envAcmCert, "1")
+			if fidelity[dim]["ALETHIA_E2E_ALL_ADDONS"] == "1" {
+				t.Setenv("ALETHIA_E2E_ARGO_TIMEOUT", argoBudgetCeiling.String())
+			}
+			b, err := ResolveT2Budget(cloud, "ladder")
+			if err != nil {
+				t.Fatalf("%s/%s: %v", cloud, dim, err)
+			}
+			if b.Step > widest.Step {
+				widest = b
+			}
+		}
+	}
+	if slack := stepCap.plain - int(widest.Step.Minutes()); slack > maxSlackMinutes {
+		t.Errorf("the ordinary step cap is %dm against a widest real ladder of %s — %dm of slack.\n  %s\n"+
+			"A cap this loose no longer bounds anything; lower it to the ladder it exists for.",
+			stepCap.plain, widest.Step, slack, widest.Describe())
+	}
+	if slack := jobCap.plain - int(widest.Job.Minutes()); slack > maxSlackMinutes {
+		t.Errorf("the ordinary job cap is %dm against a widest real ladder of %s — %dm of slack",
+			jobCap.plain, widest.Job, slack)
 	}
 }
 

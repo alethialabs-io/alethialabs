@@ -103,10 +103,11 @@ It provisions **real, billable** infrastructure, so it is **off until you opt in
    real. Until the secret exists, the job **skips cleanly (green) with a loud warning** —
    never a false red, and never a false green (nothing is claimed to be proven).
 
-**Cost:** one tiny Talos cluster — 1 control-plane + 1 worker on the cheapest `cax11`
-(ARM) servers — up for ~15–25 min, then destroyed. On the order of a few euro-cents per
-run. If your Hetzner project lacks ARM quota (common on brand-new accounts), switch the
-template/provider defaults to an `cpx*` (amd64) type; nightly region defaults to `nbg1`
+**Cost:** one tiny Talos cluster — 1 control-plane + 1 worker on `cpx22` (2 vCPU / 4 GB,
+amd64) servers — up for ~15–25 min, then destroyed. On the order of a few euro-cents per
+run. **Not `cax11`/ARM:** `infra/templates/project/hetzner/variables.tf` defaults both node
+types to `cpx22` because cax11 is capacity-unreliable and cpx11 is retired, so `amd64` in a
+build log is the configured path and not a bug. Nightly region defaults to `nbg1`
 (overridable via the `region` dispatch input).
 
 **Adding a provider (aws/azure):** extend the `matrix.provider` list and the `case` in

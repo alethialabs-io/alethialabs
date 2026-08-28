@@ -565,6 +565,19 @@ func githubContentsURL(repo, sha, path string) (string, bool) {
 	return fmt.Sprintf("https://api.github.com/repos/%s/contents/%s?ref=%s", slug, strings.Trim(path, "/"), sha), true
 }
 
+// byoIacHealConvergeWindow bounds how long the post-heal posture may take to read in-sync, and
+// byoIacHealPollInterval is how often it is re-read inside that window.
+//
+// Sized against what it exists to absorb: a SERVER-SET attribute that the heal's own write moves
+// (gcp's google_storage_bucket.updated), which settles in one provider read rather than minutes.
+// Deliberately small — a window wide enough to hide a genuinely stuck attribute would turn this
+// assertion into a wait for the answer it wants, and the heal is the step that proves detection is
+// worth anything.
+const (
+	byoIacHealConvergeWindow = 3 * time.Minute
+	byoIacHealPollInterval   = 30 * time.Second
+)
+
 // byoIacPosture is the drift posture a DETECT_DRIFT job persisted, plus the drifted resource types
 // the non-vacuity check needs.
 type byoIacPosture struct {
@@ -582,7 +595,47 @@ type byoIacPosture struct {
 		Address string `json:"address"`
 		Type    string `json:"type"`
 		Kind    string `json:"kind"`
+		// Attributes is the list of attribute paths that ACTUALLY differed. drift.Analyze has
+		// always emitted it (packages/core/drift/drift.go:88, `json:"attributes,omitempty"`) and
+		// this struct simply did not decode it — so every drift verdict this leg has ever produced
+		// named a resource TYPE and threw away the one field that says what moved.
+		//
+		// gcp/maxconfig run 33107356336 is what that costs. The custody chain passed to the last
+		// step and then reported
+		//
+		//	the environment did NOT heal — still drifted (in_sync=false drifted=1 [google_storage_bucket])
+		//
+		// after an apply that had logged "Modifying... Modifications complete". Type alone cannot
+		// separate "the label did not revert" from "something else on the bucket will not converge",
+		// and those go to different fixes. hetzner heals fine, so it is gcp-shaped either way.
+		Attributes []string `json:"attributes,omitempty"`
 	} `json:"details"`
+}
+
+// detail renders the drifted resources with everything the analyzer gave us — address, kind and the
+// attribute paths — for a failure message that can be acted on without paying for another run.
+func (p byoIacPosture) detail() string {
+	if len(p.Details) == 0 {
+		return "[]"
+	}
+	out := make([]string, 0, len(p.Details))
+	for _, d := range p.Details {
+		s := d.Address
+		if s == "" {
+			s = d.Type
+		}
+		if d.Kind != "" {
+			s += " (" + d.Kind + ")"
+		}
+		if len(d.Attributes) > 0 {
+			s += " attrs=" + strings.Join(d.Attributes, ",")
+		} else {
+			// Distinguish "the analyzer reported no attribute paths" from "we did not ask".
+			s += " attrs=<none reported>"
+		}
+		out = append(out, s)
+	}
+	return "[" + strings.Join(out, " | ") + "]"
 }
 
 // types returns the drifted resources' types, for the "it drifted on OUR resource" assertion.

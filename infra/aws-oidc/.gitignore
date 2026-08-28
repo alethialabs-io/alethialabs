@@ -1,6 +1,15 @@
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
 backend.hcl
-terraform.tfvars
 *.tfvars.json
+
+# emails.auto.tfvars holds personal addresses and this repo is public. It is the ONE input
+# that cannot be committed, and it is a REQUIRED variable so its absence fails loudly.
+emails.auto.tfvars
+
+# terraform.tfvars is committed HERE on purpose, overriding `**/terraform.tfvars` in
+# infra/.gitignore. Every value in it is already public, and its absence is what let a bare
+# apply revert three settings to defaults that did not match the live account. See README.md.
+!terraform.tfvars

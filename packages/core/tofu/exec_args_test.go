@@ -39,6 +39,9 @@ case "$1" in
     # -detailed-exitcode: 2 means "there are changes", which is not a failure.
     exit 2
     ;;
+  providers)
+    echo '{"format_version":"1.0","provider_schemas":{"registry.terraform.io/hashicorp/google":{"resource_schemas":{"google_storage_bucket":{"version":0,"block":{"attributes":{"updated":{"type":"string","description":"FAKE-SCHEMA-MARKER","computed":true},"labels":{"type":["map","string"],"optional":true,"computed":true}}}}}}}}'
+    ;;
   show)
     if [ -n "$4" ]; then
       echo '{"format_version":"1.2","terraform_version":"1.9.0","resource_changes":[{"address":"terraform_data.probe","mode":"managed","type":"terraform_data","name":"probe","provider_name":"terraform.io/builtin/terraform","change":{"actions":["create"],"before":null,"after":{}}}]}'
@@ -327,5 +330,44 @@ func TestOutput_ReturnsValuesWithoutStreamingThem(t *testing.T) {
 	// The lifecycle writer must be restored for the next command.
 	if tf.stdout != io.Writer(logBuf) {
 		t.Fatal("Output did not restore the lifecycle writer")
+	}
+}
+
+// TestProvidersSchema_DecodesWithoutStreamingIt covers the schema read the drift normalizer's
+// computed-attribute tier depends on (#3099).
+//
+// Two properties, and the second is why the wrapper exists at all: the flags decode, AND the
+// payload never reaches the job-log writer. A real `providers schema -json` is hundreds of
+// megabytes on azurerm — streamed to the log it would land in the console job log and in
+// execution_metadata, and there would be no job log left to read.
+func TestProvidersSchema_DecodesWithoutStreamingIt(t *testing.T) {
+	tf, logBuf, invocations := fakeTofuCLI(t)
+
+	doc, err := tf.ProvidersSchema(context.Background())
+	if err != nil {
+		t.Fatalf("ProvidersSchema: %v\nlog: %s", err, logBuf)
+	}
+	ps := doc.Schemas["registry.terraform.io/hashicorp/google"]
+	if ps == nil {
+		t.Fatalf("ProvidersSchema = %+v, want the google provider", doc)
+	}
+	attrs := ps.ResourceSchemas["google_storage_bucket"].Block.Attributes
+	if got := attrs["updated"]; got == nil || !got.Computed || got.Optional || got.Required {
+		t.Fatalf("updated = %+v, want computed-only — the flags the tier reads", got)
+	}
+	if got := attrs["labels"]; got == nil || !got.Computed || !got.Optional {
+		t.Fatalf("labels = %+v, want optional+computed", got)
+	}
+
+	if argv := strings.Join(invocations(), "\n"); !strings.Contains(argv, "providers schema") {
+		t.Fatalf("argv %q is not a providers-schema read", argv)
+	}
+	if strings.Contains(logBuf.String(), "FAKE-SCHEMA-MARKER") {
+		t.Fatalf("the schema payload reached the job-log writer:\n%s", logBuf)
+	}
+	// The lifecycle writer must be restored for the next command, or every later line of the
+	// drift log goes to io.Discard.
+	if tf.stdout != io.Writer(logBuf) {
+		t.Fatal("ProvidersSchema did not restore the lifecycle writer")
 	}
 }

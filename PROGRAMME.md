@@ -167,7 +167,7 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**7 of 30 proof cells are proven.** 4 failing · 4 stale (cause fixed, needs a re-run) · 0 blocked · 11 never run.
+**12 of 30 proof cells are proven.** 4 failing · 3 stale (cause fixed, needs a re-run) · 0 blocked · 9 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -177,9 +177,9 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | **aws** | ⚠️ | ✅ | ❌ | ♻️ | · | ❌ |
 | **gcp** | ⚠️ | ♻️ | · | ✅ | · | ✅ |
-| **azure** | ⚠️ | ♻️ | ❌ | ✅ | · | ✅ |
+| **azure** | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
 | **alibaba** | · | · | · | · | · | · |
-| **hetzner** | ⚠️ | ♻️ | ❌ | ✅ | · | ✅ |
+| **hetzner** | ✅ | ♻️ | ❌ | ✅ | ✅ | ✅ |
 
 Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · ⚠️ contested · — ceiling · 🔶 deferred · 💰 cost
 
@@ -194,15 +194,17 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `gcp/maxconfig` **stale** — ledger 2026-08-27 — but #2811 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#2811)
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
-- `azure/floor` **contested** — ledger 2026-08-25, bundle `demos/proofs/azure/20260825T063447Z` — but #3043 is OPEN and was filed 2026-08-27, AFTER the 2026-08-25 run that proved it
-- `azure/maxconfig` **stale** — ledger 2026-08-27 — but #2905 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#2905)
+- `azure/floor` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T215237Z`
+- `azure/maxconfig` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T211849Z`
 - `azure/addons` **failing** — ledger 2026-08-25 (via the `full` composite run)
 - `azure/gitops` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
+- `azure/byo-iac` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T204358Z`
 - `azure/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T235236Z`
-- `hetzner/floor` **contested** — ledger 2026-08-24, bundle `demos/proofs/hetzner/20260824T201636Z` — but #3041 is OPEN and was filed 2026-08-27, AFTER the 2026-08-24 run that proved it
+- `hetzner/floor` **proven** — ledger 2026-08-27, bundle `demos/proofs/hetzner/20260827T192915Z`
 - `hetzner/maxconfig` **stale** — ledger 2026-08-25 (via the `full` composite run) — but #2568 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#2568)
 - `hetzner/addons` **failing** — ledger 2026-08-27 (#2717)
 - `hetzner/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/2026-08-25T175213Z`
+- `hetzner/byo-iac` **proven** — ledger 2026-08-27, bundle `demos/proofs/hetzner/20260827T210204Z`
 - `hetzner/day2` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/20260825T192100Z`
 
 </details>
@@ -216,15 +218,15 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 <details><summary>The next 10</summary>
 
 1. `gcp/maxconfig` — stale
-1. `azure/maxconfig` — stale
 1. `hetzner/maxconfig` — stale
 1. `aws/gitops` — stale
 1. `aws/floor` — contested
 1. `gcp/floor` — contested
-1. `azure/floor` — contested
-1. `hetzner/floor` — contested
 1. `aws/addons` — failing
 1. `azure/addons` — failing
+1. `hetzner/addons` — failing
+1. `aws/day2` — failing
+1. `alibaba/floor` — never_run
 
 </details>
 
@@ -266,11 +268,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33080748841 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 33080748841 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33095437088 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 33107356336 |
 | **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 33080748841 |
 | **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33080748841 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 33092056761 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 33107342500 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -291,12 +293,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | `aws/gitops` | stale | #2591 | ⛔ **CLOSED** |
 | `aws/day2` | failing | #2717 | open |
 | `gcp/maxconfig` | stale | #2811 | ⛔ **CLOSED** |
-| `azure/maxconfig` | stale | #2905 | ⛔ **CLOSED** |
 | `azure/addons` | failing | **none** | ? |
 | `hetzner/maxconfig` | stale | #2568 | ⛔ **CLOSED** |
 | `hetzner/addons` | failing | #2717 | open |
 
-♻️ **4 cell(s) cite a CLOSED issue**, so they are rendered `stale` rather than `failing`: the cause is fixed and what they need is a **re-run**, not a fix. They rank first in the mechanical next for exactly that reason — it is the cheapest action on the board.
+♻️ **3 cell(s) cite a CLOSED issue**, so they are rendered `stale` rather than `failing`: the cause is fixed and what they need is a **re-run**, not a fix. They rank first in the mechanical next for exactly that reason — it is the cheapest action on the board.
 
 The ledger row itself is not wrong and is not rewritten (it is append-only, and it was true when written). What was wrong was reading it as open work — the same defect that had the parity board citing four closed issues as live floor blockers.
 
@@ -306,9 +307,7 @@ A nightly that goes red files an **issue** and writes **no ledger row**. So from
 
 | cell | proven by a run dated | open red | filed |
 |---|:---:|---|:---:|
-| `azure/floor` | 2026-08-25 | #3043 | 2026-08-27 |
 | `aws/floor` | 2026-08-24 | #3042 | 2026-08-27 |
-| `hetzner/floor` | 2026-08-24 | #3041 | 2026-08-27 |
 | `gcp/floor` | 2026-08-25 | #2743 | 2026-08-26 |
 
 `contested` takes **no side**. Whether a later red is a flake or a regression needs someone to read the run, and guessing either way is worse than naming the contradiction. It claims only what is derivable — the two sources disagree, so the ✅ is not trustworthy right now.
@@ -354,11 +353,11 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-08-27T16:45:49Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-08-27T19:16:22Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
-Ledger rows read: **44** · surviving claims: **19** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
+Ledger rows read: **49** · surviving claims: **21** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
 
 _Generated by `scripts/programme-rollup.mjs`. Do not edit below the marker — run `pnpm gen:programme`._
 

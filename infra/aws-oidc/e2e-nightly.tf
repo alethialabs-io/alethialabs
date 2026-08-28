@@ -289,6 +289,50 @@ data "aws_iam_policy_document" "e2e_nightly" {
     # containment guarantee).
   }
 
+  # ── BYO-IaC probe: the CUSTOMER's module, not ours ───────────────────────────────────────────
+  #
+  # The BYO-IaC leg applies a customer OpenTofu module through Alethia's state proxy, and that
+  # module's drift probe on aws is an SSM parameter:
+  #
+  #   resource "aws_ssm_parameter" "drift_probe" {
+  #     name = "/alethia/byo-iac/${local.suffix}/drift_marker"   # enterprise-demo, iac/drift/aws
+  #
+  # Without this the whole leg dies at the first apply, and NOT only the byo-iac cell — the
+  # scenario is gated by a repo VARIABLE (E2E_BYO_IAC), so it runs inside EVERY dimension and its
+  # failure reds aws/floor, aws/gitops, aws/day2 and aws/addons alike. Measured on aws/floor run
+  # 33108886725:
+  #
+  #   AccessDeniedException: User: …assumed-role/alethia-e2e-nightly/GitHubActions is not
+  #   authorized to perform: ssm:PutParameter on resource:
+  #   arn:aws:ssm:us-east-1:…:parameter/alethia/byo-iac/e2e33108/drift_marker
+  #
+  # SCOPED TO THE PROBE PREFIX, deliberately, rather than added to the `"ssm:*"`-style list above.
+  # This is the one grant on this role that exists to let an UNTRUSTED, customer-authored module
+  # write something, so it gets the narrowest resource ARN in the file: one parameter path, no
+  # wildcards above it. `DescribeParameters` is listed separately because it is an account-level
+  # call that does not accept a parameter ARN — AWS rejects the statement otherwise.
+  statement {
+    sid    = "ByoIacProbeParameters"
+    effect = "Allow"
+    actions = [
+      "ssm:PutParameter",
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:DeleteParameter",
+      "ssm:ListTagsForResource",
+      "ssm:AddTagsToResource",
+      "ssm:RemoveTagsFromResource",
+    ]
+    resources = ["arn:aws:ssm:${var.e2e_region}:${data.aws_caller_identity.current.account_id}:parameter/alethia/byo-iac/*"]
+  }
+
+  statement {
+    sid       = "ByoIacProbeDescribe"
+    effect    = "Allow"
+    actions   = ["ssm:DescribeParameters"]
+    resources = ["*"]
+  }
+
   # Teardown discovery + label sweep: the nightly cleanup (BYOC A1.3) uses
   # resourcegroupstaggingapi to find + verify every resource tagged for this run.
   statement {
