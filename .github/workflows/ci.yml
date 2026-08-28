@@ -281,6 +281,13 @@ jobs:
       # silently go dark (SOC2 CC6.1).
       OPENFGA_TEST_API_URL: http://localhost:8082
       ALETHIA_PDP_PARITY_REQUIRE: "1"
+      # The same rule one level up, for the tier itself (#2669). 55 files gate on `describeIfDb`; if
+      # the probe in tests/integration/db.ts cannot reach Postgres they ALL no-op and this REQUIRED
+      # check goes green having run no RLS assertion at all. Until now the only thing stopping that
+      # was the ordering of the steps below — `Migrate the test database` reds the job first — which
+      # is an accident of sequence, not a check, and it would vanish the moment those steps were made
+      # independent. This makes the requirement explicit and order-free.
+      ALETHIA_INTEGRATION_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
