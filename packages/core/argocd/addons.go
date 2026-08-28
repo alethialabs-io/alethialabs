@@ -294,6 +294,44 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 				},
 			},
 			SyncPolicy: addonSyncPolicy{
+				// `ServerSideApply=true` ALSO PICKS THE DIFF STRATEGY, and on the pinned argo-cd it
+				// picks a broken one. This is the cause of #2717's "OutOfSync while `argocd app
+				// diff` prints nothing", read out of argo-cd v3.1.8 (chart 8.6.4) rather than
+				// guessed:
+				//
+				//	controller/state.go, CompareAppState:
+				//	  if app.Spec.SyncPolicy.SyncOptions.HasOption("ServerSideApply=true") {
+				//	      diffConfigBuilder.WithStructuredMergeDiff(true)
+				//	  }
+				//
+				// Structured-merge diff predicts the apply CLIENT-side, so it drops the fields the
+				// API server materialises into an embedded ObjectMeta — a StatefulSet's
+				// `spec.volumeClaimTemplates[]` comes back with apiVersion, kind,
+				// `metadata.creationTimestamp: null`, `status.phase` and `spec.volumeMode` that the
+				// chart never wrote, and the prediction is permanently unequal to live
+				// (argoproj/argo-cd#11143, #11106, #16707, #18568). argo-cd's own docs mark the
+				// strategy "Feature Discontinued … after different issues were identified by the
+				// community".
+				//
+				// TWO FIXES THAT LOOK RIGHT AND ARE NOT, so that nobody spends a run on them again:
+				//
+				//   an ignoreDifferences on volumeClaimTemplates — refuted twice on #2717 already.
+				//     It suppresses a diff on fields argo-cd itself authored, and it would hide a
+				//     real change to a storage request forever.
+				//   compare-options `ServerSideDiff=true` — the documented replacement, and stable
+				//     since v3.1.0, but argoproj/argo-cd#24423 (OPEN, reported on v3.1.1/v3.1.3) is
+				//     exactly this combination: ServerSideDiff PLUS ignoreDifferences yields an
+				//     empty diff with the resource still OutOfSync. Its fix is gitops-engine #747
+				//     (`skipFullNormalize`), which is absent from the gitops-engine commit v3.1.8
+				//     pins. We carry two ignoreDifferences entries and RespectIgnoreDifferences,
+				//     so we would land squarely in it.
+				//
+				// The real fix is the chart pin: PR #24844 (structured-merge-diff#306, "fix:
+				// structured merge diff fix for null metadata field") first ships in argo-cd
+				// v3.3.0, and the CLI's `--server-side-diff` in v3.2.0. See versions.go.
+				//
+				// Removing ServerSideApply is NOT an option — see the package comment: it is what
+				// keeps kube-prometheus-stack's CRDs under the 262144-byte annotation limit.
 				SyncOptions:              []string{"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"},
 				ManagedNamespaceMetadata: namespaceMetadataFor(a.PodSecurity),
 			},
