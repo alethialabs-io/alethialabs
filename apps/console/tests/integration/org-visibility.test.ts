@@ -16,7 +16,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb, withActorScope, withOwnerScope } from "@/lib/db";
 import { jobs, projectEnvironments, projects, runners } from "@/lib/db/schema";
-import { describeIfDb } from "./db";
+import { APP_ROLE_DISTINCT, describeIfDb } from "./db";
 
 // One org, two DISTINCT members (M1 creates, M2 is the co-member who reads). A third member in a
 // different org is the cross-tenant control.
@@ -25,10 +25,6 @@ const M1 = randomUUID();
 const M2 = randomUUID();
 const ORG_OTHER = randomUUID();
 const M3 = randomUUID();
-
-const APP_ROLE_DISTINCT =
-	(process.env.ALETHIA_APP_DATABASE_URL ?? "") !== "" &&
-	process.env.ALETHIA_APP_DATABASE_URL !== process.env.ALETHIA_DATABASE_URL;
 
 let orgProjectId = "";
 let otherProjectId = "";
