@@ -987,6 +987,19 @@ jobs:
       # obviously-fake literals only.
       - name: Proof-scrub denylist (non-vacuous, and no false positive on a tofu plan JSON)
         run: bash demos/proofs/scrub.sh --self-test
+      # The scrub above decides what a bundle may PUBLISH. This decides whether a bundle SAYS
+      # ANYTHING — and until #2688 it did not. capture-proof.sh runs after the tier's t.Cleanup has
+      # destroyed the cluster, so its live probe counted a cluster that was gone and wrote 0/0 on
+      # every run: a PASS bundle and a FAIL bundle were numerically identical, and the only thing
+      # telling them apart was the word "(T2-asserted)". Every bundle from 2026-08-25 onward carried
+      # `nodes_ready:0, argocd_total:0, argocd_healthy_synced:0`, with no counter-example.
+      #
+      # Nothing in CI could see that, because the JSON's SHAPE was always right — only its values
+      # were vacuous. So this self-test drives the real script end to end into a temp dir and
+      # compares two bundles it actually wrote, rather than asserting against a fixture that would
+      # have matched the broken output just as well.
+      - name: Proof bundle distinguishes a PASS from a FAIL (never 0/0 on both)
+        run: bash demos/proofs/capture-proof.sh --self-test
       # PROGRAMME.md is the one file a session reads to know where the MVP programme stands, so its
       # status half is DERIVED and diff-gated — the numbers cannot be typed. This is the guard's own
       # guard (fixtures for RETRACTED supersession, an expiring CI run tag masquerading as a proof,
