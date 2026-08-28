@@ -37,6 +37,14 @@ import (
 //     closed gap (t2_cli_demo_run_test.go), for the same reason: an exclusion left standing after
 //     the thing starts working understates the product.
 //
+// AN EXCLUSION IS PER CLOUD, and that is not a generalisation for its own sake — it is what the
+// tree turned out to require. #3048 made the add-on fixture per cloud and resolved external-dns's
+// NATIVE provider through the real emitter, and hetzner's resolved shape (the webhook sidecar)
+// CONVERGES where aws/gcp/azure/alibaba's do not. A global list would have had to either red the
+// hetzner run for an exclusion that is no longer true, or withhold on four clouds a fact measured
+// on one. Neither is a thing this file may say. Both properties above still hold per cloud: the
+// WHY is still enforced, and the ratchet still fires on the clouds an entry actually claims.
+//
 // This is NOT the place for a chart that merely fails. "Broken" and "needs a customer" are
 // different facts, and only the second one belongs here.
 
@@ -58,8 +66,25 @@ type AddOnExclusion struct {
 	// Why must say what a CUSTOMER would have to supply, in enough detail that a reader can decide
 	// whether the exclusion is still true without re-deriving it.
 	Why string
-	// Issue is the tracking issue, so an exclusion cannot become permanent by being forgotten.
+	// Issue is the tracking issue, so an exclusion cannot become permanent by being forgotten. It
+	// must be OPEN: a CLOSED issue defeats the whole point of the field, and that is not
+	// hypothetical — external-dns cited #2734 for two days after #2777 closed it by fixing the very
+	// gap the Why described.
 	Issue string
+	// Clouds narrows the exclusion to the clouds it is actually TRUE on. Empty means every cloud.
+	//
+	// This exists because the fixture went per-cloud in #3048 and the truth went with it. Before
+	// that, one cloud-agnostic fixture pointed external-dns at Cloudflare everywhere, so one global
+	// answer was the right shape. Now each cloud gets its own native provider, and hetzner's
+	// resolves to a shape that CONVERGES while the others do not — a fact a global list cannot
+	// express without lying about one cloud or the other.
+	//
+	// A POSITIVE list, not an exemption list, so a cloud nobody has measured is ASSERTED rather
+	// than silently inheriting an exclusion derived from a different cloud's behaviour. That is the
+	// fail-loud direction: an unmeasured cloud that cannot converge reds with the chart named,
+	// which is a question someone can answer, whereas a silently-inherited exclusion is the
+	// monotonic growth this whole file exists to prevent.
+	Clouds []string
 }
 
 // addOnExclusions is keyed on the CATALOG ID (not the Application name), because that is the
@@ -70,7 +95,8 @@ var addOnExclusions = map[string]AddOnExclusion{
 	"vault": {
 		Kind: NeedsUserConfig,
 		Why: "a fresh Vault starts SEALED: its readiness probe never passes, the pod is never Ready, " +
-			"and the Application sits Progressing at any budget. The catalog's config schema offers " +
+			"and the Application sits Progressing at any budget — measured health=Progressing " +
+			"sync=OutOfSync on run 33124236998. The catalog's config schema offers " +
 			"`ui` and `ha` and no init/unseal knob, and the marketplace chart deliberately ships no " +
 			"bootstrap Job — packages/core/argocd/vault.go keeps that on the PLATFORM Vault only. " +
 			"Initialising and unsealing is a customer operation with a customer's key material.",
@@ -79,33 +105,71 @@ var addOnExclusions = map[string]AddOnExclusion{
 	"velero": {
 		Kind: NeedsUserConfig,
 		Why: "backups need a real object-store BUCKET plus credentials for it. With the catalog's " +
-			"empty `bucket` default the values carry no backupStorageLocation at all, so nothing " +
-			"can reconcile. It is also the one add-on with a cloud-shaped gap: the `provider` enum " +
-			"is aws|gcp|azure, so on hetzner there is no valid choice even WITH a bucket.",
+			"empty `bucket` default `toValues` emits no backupStorageLocation at all, so nothing " +
+			"can reconcile — measured health=Missing on run 33124236998. It is also the one add-on " +
+			"with a cloud-shaped gap: the `provider` enum is aws|gcp|azure, so on hetzner AND on " +
+			"alibaba there is no valid choice even WITH a bucket. (alibaba joined the fixture " +
+			"clouds in #3048; it has the same gap hetzner does and the note used to name only " +
+			"hetzner.)",
 		Issue: "#2717",
 	},
+	// NOT hetzner — MEASURED. Run 33124236998 (hetzner · `addons`, 2026-08-28, the first sweep
+	// after #3048) reported `addon-external-dns: health=Healthy sync=Synced`. It escaped the
+	// stale-exclusion ratchet only because that run t.Fatal'd at the convergence assertion in
+	// t2_provision_test.go — five Applications short, on falco/harbor/kyverno/loki/tempo — and so
+	// never reached AssertNoStaleAddOnExclusions below it. See Clouds below.
 	"external-dns": {
 		Kind: NeedsUserConfig,
-		Why: "the catalog default is provider=cloudflare with an empty apiToken, so the chart gets " +
-			"no credential. Switching it to provider=aws does NOT rescue it: the marketplace " +
-			"add-on renders as `addon-external-dns` and its schema has only provider/domainFilter/" +
-			"apiToken — no serviceAccount and no annotation knob — so it cannot reach the IRSA role " +
-			"the template binds to the PLATFORM external-dns's `external-dns-sa`. That is the same " +
-			"reason cert-manager was removed from the catalog: an add-on cannot see the cloud " +
-			"identity, the zone, or the provider.",
-		Issue: "#2734",
+		Why: "the fixture seeds CATALOG DEFAULTS, and both credential knobs default to empty. " +
+			"#3048 repointed it at each cloud's NATIVE provider (aws→aws, gcp→google, azure→azure) " +
+			"so the old reason — `provider=cloudflare` everywhere — is dead, and #2777 added the " +
+			"`workloadIdentity` knob the old reason said the schema lacked. What is left is that " +
+			"nothing FILLS either knob: `toValues` gates the serviceAccount block on " +
+			"`p.saAnnotation && c.workloadIdentity`, and `secretValues` returns {} with no apiToken " +
+			"ref, so the controller runs with a provider name and no identity and no token. " +
+			"external-dns 1.15.0 then log.Fatalf's `Failed to do run once` on the provider error " +
+			"and CrashLoops — measured on the PLATFORM rail at the same chart version, health=" +
+			"Degraded both times: gcp 403 (#2811, run 32959925920) and azure config-file (#2868, " +
+			"run 33001235713). alibaba is a fourth case with the same outcome: " +
+			"EXTERNAL_DNS_NATIVE_PROVIDER has no entry for it, so its fixture still carries " +
+			"provider=cloudflare with no token. Supplying an IAM role ARN / GSA email / client id, " +
+			"or a provider API token, is a CUSTOMER action. UNVERIFIED on these four since #3048: " +
+			"the only add-on sweep that has run since it merged was hetzner's, which is exactly " +
+			"the cloud this exclusion no longer covers.",
+		Issue:  "#2717",
+		Clouds: []string{"aws", "gcp", "azure", "alibaba"},
 	},
 }
 
-// excludedAddOnAppNames maps ArgoCD Application name → exclusion, derived through
+// excludedAddOnAppNames maps ArgoCD Application name → exclusion FOR ONE CLOUD, derived through
 // argocd.AddOnAppName so this file can never disagree with the renderer about what an add-on's
 // Application is called.
-func excludedAddOnAppNames() map[string]AddOnExclusion {
+//
+// An entry whose Clouds list does not name this cloud is simply absent from the result, which is
+// what makes it asserted: every consumer below decides by presence in this map.
+func excludedAddOnAppNames(cloud string) map[string]AddOnExclusion {
 	out := make(map[string]AddOnExclusion, len(addOnExclusions))
 	for id, e := range addOnExclusions {
+		if !e.appliesTo(cloud) {
+			continue
+		}
 		out[argocd.AddOnAppName(id)] = e
 	}
 	return out
+}
+
+// appliesTo reports whether this exclusion holds on `cloud`. An empty Clouds list means every
+// cloud — the common case, and the one vault and velero use.
+func (e AddOnExclusion) appliesTo(cloud string) bool {
+	if len(e.Clouds) == 0 {
+		return true
+	}
+	for _, c := range e.Clouds {
+		if c == cloud {
+			return true
+		}
+	}
+	return false
 }
 
 // PartitionExcludedAddOns splits a derived expected-Application set into the ones whose health is
@@ -114,8 +178,11 @@ func excludedAddOnAppNames() map[string]AddOnExclusion {
 // Call it AFTER RequireAllAddOnsExpected, never before: that guard's whole job is to prove the
 // derived set still covers the catalog, and handing it a pre-filtered set would make it agree with
 // a set that had already dropped the very add-ons it exists to count.
-func PartitionExcludedAddOns(expected []string) (asserted, withheld []string) {
-	ex := excludedAddOnAppNames()
+// The split is PER CLOUD (#3048 made the fixture per cloud and the truth followed it): an add-on
+// withheld on aws may be asserted on hetzner, and passing the wrong cloud here would assert an
+// add-on that cannot converge or withhold one that already does.
+func PartitionExcludedAddOns(cloud string, expected []string) (asserted, withheld []string) {
+	ex := excludedAddOnAppNames(cloud)
 	for _, name := range expected {
 		if _, isExcluded := ex[name]; isExcluded {
 			withheld = append(withheld, name)
@@ -130,11 +197,11 @@ func PartitionExcludedAddOns(expected []string) (asserted, withheld []string) {
 // DescribeWithheldAddOns renders the withheld set for the run log, so a reader of a GREEN run can
 // see exactly what it did not assert. A verdict whose exclusions are invisible reads as a wider
 // claim than it is.
-func DescribeWithheldAddOns(withheld []string) string {
+func DescribeWithheldAddOns(cloud string, withheld []string) string {
 	if len(withheld) == 0 {
 		return "no add-ons withheld: every catalog add-on's health is asserted"
 	}
-	ex := excludedAddOnAppNames()
+	ex := excludedAddOnAppNames(cloud)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%d add-on(s) WITHHELD from the health assertion (installed and observed, but not required to converge):", len(withheld))
 	for _, name := range withheld {
@@ -152,7 +219,7 @@ func DescribeWithheldAddOns(withheld []string) string {
 //
 // Red on purpose. An add-on that has started converging must come OFF this list — otherwise the
 // list grows monotonically and the dimension quietly asserts less every release.
-func AssertNoStaleAddOnExclusions(ctx context.Context, kubeconfigPath string, withheld []string) error {
+func AssertNoStaleAddOnExclusions(ctx context.Context, kubeconfigPath, cloud string, withheld []string) error {
 	if len(withheld) == 0 {
 		return nil
 	}
@@ -165,7 +232,7 @@ func AssertNoStaleAddOnExclusions(ctx context.Context, kubeconfigPath string, wi
 	if err != nil {
 		return fmt.Errorf("stale-exclusion check could not parse ArgoCD Applications: %w", err)
 	}
-	stale := staleExclusions(observed, withheld)
+	stale := staleExclusions(observed, cloud, withheld)
 	if len(stale) == 0 {
 		return nil
 	}
@@ -183,8 +250,8 @@ func AssertNoStaleAddOnExclusions(ctx context.Context, kubeconfigPath string, wi
 // exactly the spurious-diff class the Application template's ignoreDifferences handles, and a
 // Progressing one may simply not have finished — neither is evidence the exclusion is wrong, and
 // treating either as stale would red a run for the opposite of the reason this check exists.
-func staleExclusions(observed map[string]argoAppState, withheld []string) []string {
-	ex := excludedAddOnAppNames()
+func staleExclusions(observed map[string]argoAppState, cloud string, withheld []string) []string {
+	ex := excludedAddOnAppNames(cloud)
 	var stale []string
 	for _, name := range withheld {
 		st, ok := observed[name]
