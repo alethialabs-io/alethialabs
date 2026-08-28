@@ -27,6 +27,19 @@ concurrency:
   group: e2e-ai-nightly
   cancel-in-progress: true
 
+# ── The job this workflow EXISTS to run (#2506). ──
+#
+# `preflight` succeeds whether or not ANTHROPIC_API_KEY is set; `e2e-live` is gated on it. Without
+# the key the run concludes `success` having executed no test at all, and the daily health report
+# read that as healthy — correctly, at the wrong altitude.
+#
+# This names the job that carries the meaning, so `scripts/ci/workflow-health.mjs` can ask whether
+# it actually ran rather than only whether the run went green. It is the job's DISPLAY name, which
+# is what the API reports; if the job is ever renamed and this is not, the health report says so
+# loudly (`misdeclared`) instead of quietly going back to reporting green.
+env:
+  WORKFLOW_HEALTH_SUBSTANTIVE_JOB: "E2E (browser · real model)"
+
 jobs:
   preflight:
     name: Preflight (is a key configured?)
