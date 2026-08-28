@@ -1605,19 +1605,29 @@ func tailAfter(text, marker string) string {
 // bounded by the caller's context, and every failure to ASK renders as "could not tell" rather than
 // as either answer.
 func argoHardRefreshVerdict(ctx context.Context, kubeconfigPath, target, app string) string {
-	run := func(args ...string) (string, error) {
+	// The hard refresh runs INSIDE the application-controller pod (it needs --core plus
+	// repo-server reachability); the status is then read from OUTSIDE it.
+	//
+	// That split is not stylistic. The first attempt exec'd BOTH commands in the pod and the second
+	// one died with `exec: "kubectl": executable file not found in $PATH` — the controller image
+	// ships `argocd` and not `kubectl`. The probe reported COULD NOT ASK rather than inventing a
+	// verdict, which is the fail-safe working, but it answered nothing. `readArgoReconciledAt`
+	// already reads Application status with the HOST kubectl; this now does the same.
+	inPod := func(args ...string) (string, error) {
 		full := append([]string{"--kubeconfig", kubeconfigPath, "-n", "argocd", "exec", target, "--"}, args...)
 		out, err := exec.CommandContext(ctx, "kubectl", full...).CombinedOutput()
 		return strings.TrimSpace(string(out)), err
 	}
-	if out, err := run("argocd", "app", "get", app, "--core", "--hard-refresh", "-o", "json"); err != nil {
+	if out, err := inPod("argocd", "app", "get", app, "--core", "--hard-refresh", "-o", "json"); err != nil {
 		return interpretHardRefresh("", err, out)
 	}
-	out, err := run("kubectl", "get", "applications.argoproj.io", app, "-o", "jsonpath={.status.sync.status}")
+	raw, err := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		"-n", "argocd", "get", "applications.argoproj.io", app,
+		"-o", "jsonpath={.status.sync.status}").CombinedOutput()
 	if err != nil {
-		return interpretHardRefresh("", err, out)
+		return interpretHardRefresh("", err, strings.TrimSpace(string(raw)))
 	}
-	return interpretHardRefresh(out, nil, "")
+	return interpretHardRefresh(strings.TrimSpace(string(raw)), nil, "")
 }
 
 // interpretHardRefresh is the verdict half of argoHardRefreshVerdict, split out so the mapping is
