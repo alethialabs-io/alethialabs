@@ -919,6 +919,30 @@ jobs:
       # must NOT raise it, or the warning stops meaning anything. Hermetic: `hcloud` is stubbed.
       - name: hcloud sweeper reports what it cannot attribute (imager upload helpers)
         run: bash scripts/e2e/hcloud-cleanup.sh --self-test
+      # ── The three-state probe contract, and the reason all five sweepers are asserted here now.
+      #
+      # Every cloud verified teardown with `<cli> … 2>/dev/null | tr | grep -v '^$' || true`. Three
+      # launderings in one line: the redirect drops the reason, the pipe substitutes the LAST
+      # stage's status for the cloud call's, and `|| true` normalises what is left. An API that
+      # FAILED therefore produced empty stdout and exit 0 — byte-identical to "confirmed gone" —
+      # and verify_swept's `[ -n "$x" ]` test read EVERY resource type as clean at once. One
+      # expired credential and a leaked Aurora cluster, NAT gateway or EKS control plane billed
+      # while the step printed "cleanup verified complete".
+      #
+      # This is the `always()` teardown path test/e2e/t2_provision_test.go defers to as "the
+      # guarantee" — the in-process destroy is allowed to fail BECAUSE the sweeper will catch it.
+      # If the sweeper cannot see, nothing does. So each self-test asserts all three states end to
+      # end, varying the stub's OUTPUT and its EXIT CODE independently: a test that varies only the
+      # output passes just as happily with the fix removed, because output was the half that
+      # already worked. Hermetic — every CLI is stubbed, no credentials, no cloud, no spend.
+      - name: Sweeper probe contract (an API that did not answer is not an empty account)
+        run: bash scripts/e2e/lib/sweep-probe.sh --self-test
+      - name: GCP sweeper three-state verification
+        run: bash scripts/e2e/gcp-cleanup.sh --self-test
+      - name: Azure sweeper three-state verification
+        run: bash scripts/e2e/azure-cleanup.sh --self-test
+      - name: Alibaba sweeper three-state verification
+        run: bash scripts/e2e/alibaba-cleanup.sh --self-test
       # Which workflows are red, and have been red for a while. The classifier is the load-bearing
       # part: `skipped` must never read as a failure (a gate-off leg is not a broken pipeline), and
       # three runs is the minimum that can distinguish "dead" from "flaked once". Both are asserted.

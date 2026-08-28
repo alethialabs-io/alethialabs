@@ -59,6 +59,28 @@
 # Requires: the Azure CLI `az` (authenticated — OIDC `azure/login` in CI).
 set -euo pipefail
 
+# ── The three-state probe contract (CLEAN / LEAKED / UNVERIFIABLE), shared by all five cloud
+#    sweepers. Read scripts/e2e/lib/sweep-probe.sh before touching any list below: `az … -o tsv
+#    2>/dev/null | grep … || true` launders the CLI's exit status three times over, so an expired
+#    login, a throttle or a wrong subscription answered every list with "nothing" and exit 0 —
+#    which verify_swept reads as an empty subscription. ──
+E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+# shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
+. "${E2E_LIB_DIR}/sweep-probe.sh"
+probe_reset
+
+# ── `--self-test` exercises the three-state probe contract against a stubbed `az` and exits. It
+# sets its own ENV/REGION so the guards below are left exactly as they protect the real path. ──
+SELF_TEST=0
+if [ "${1:-}" = "--self-test" ]; then
+	SELF_TEST=1
+	ALETHIA_E2E_ENV="selftest-4177-1"
+	ALETHIA_E2E_REGION="swedencentral"
+	# The probe retries are a real-cloud kindness (a transient 5xx must not red a healthy teardown)
+	# and pure dead time against a stub. The retry LOOP is still exercised; it just does not wait.
+	PROBE_RETRY_DELAY=0
+fi
+
 ENV="${ALETHIA_E2E_ENV:-}"
 # Region is AUTHORITATIVE from ALETHIA_E2E_REGION only — no silent ambient fallback. Azure resource
 # groups are subscription-global, so region does not scope discovery, but requiring it keeps the
@@ -115,7 +137,9 @@ if [ -z "$REGION" ]; then
 	exit 2
 fi
 
-if ! command -v az >/dev/null 2>&1; then
+# The self-test shadows `az` with a shell function, so it needs no binary — and the CI runner that
+# runs it has none. Requiring it here would make the hermetic test unrunnable where it is meant to run.
+if [ "$SELF_TEST" != "1" ] && ! command -v az >/dev/null 2>&1; then
 	echo "✗ the 'az' CLI is not installed." >&2
 	echo "  Install it: https://learn.microsoft.com/cli/azure/install-azure-cli" >&2
 	exit 2
@@ -127,16 +151,30 @@ PROJECT_ID_TAG="e2e-${ENV}"
 export AZURE_CORE_ONLY_SHOW_ERRORS="${AZURE_CORE_ONLY_SHOW_ERRORS:-true}"
 
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
-if [ "$PREFLIGHT" != "1" ]; then
+if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
 	echo "→ azure belt-and-suspenders cleanup in ${REGION}, scope ${TAG_KEY}=${PROJECT_ID_TAG}"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 fi
 
+# assert_scope — a STRING check on the tag handle, and nothing more. It makes no cloud call, so it
+# cannot tell a working login from an expired one; it exists only so an empty scope can never reach
+# a mutating call. What catches a credential that cannot see the subscription is az_list: every
+# list below records UNVERIFIABLE when the API does not answer, and finalize_verification gates.
 assert_scope() {
 	if [ -z "${PROJECT_ID_TAG#e2e-}" ]; then
 		echo "✗ INTERNAL: empty scope — aborting before an unfiltered operation." >&2
 		exit 3
 	fi
+}
+
+# az_list <type> <az args…> — every scoped LIST in this file goes through here. It captures az's
+# REAL exit status before anything filters it, and records <type> as UNVERIFIABLE when the call did
+# not answer. The callers still pipe the output through their own `grep -i -- "-${ENV}"` scoping;
+# what changed is that the filtering is now DOWNSTREAM of the exit-status decision.
+az_list() {
+	local ptype="$1"
+	shift
+	probe_run "$ptype" az "$@" || true
 }
 
 # looks_gone <stderr-text> — true if an az delete/show error means the resource group is already
@@ -148,7 +186,7 @@ looks_gone() {
 # rg_has_handle_tag <rg> — true iff the resource group carries our EXACT project-id handle tag.
 rg_has_handle_tag() {
 	local rg="$1" val
-	val="$(az group show --name "$rg" --query "tags.\"${TAG_KEY}\"" -o tsv 2>/dev/null || true)"
+	val="$(probe_confirm resource-group az group show --name "$rg" --query "tags.\"${TAG_KEY}\"" -o tsv || true)"
 	[ "$val" = "$PROJECT_ID_TAG" ]
 }
 
@@ -204,7 +242,7 @@ retry_delete_rg() {
 
 # rg_exists <rg> — true iff the resource group still exists (any provisioning state).
 rg_exists() {
-	[ "$(az group exists --name "$1" 2>/dev/null || echo false)" = "true" ]
+	[ "$(az_list resource-group group exists --name "$1")" = "true" ]
 }
 
 # wait_rgs_gone <rg...> — bounded poll until every named resource group is gone. Async deletes were
@@ -238,8 +276,8 @@ wait_rgs_gone() {
 main_rgs() {
 	assert_scope
 	{
-		az group list --tag "${TAG_KEY}=${PROJECT_ID_TAG}" --query "[].name" -o tsv 2>/dev/null || true
-		az group list --query "[?starts_with(name,'rg-')].name" -o tsv 2>/dev/null | grep -i -- "-${ENV}" || true
+		az_list resource-group group list --tag "${TAG_KEY}=${PROJECT_ID_TAG}" --query "[].name" -o tsv
+		az_list resource-group group list --query "[?starts_with(name,'rg-')].name" -o tsv | grep -i -- "-${ENV}" || true
 	} | grep -v '^$' | sort -u || true
 }
 
@@ -249,14 +287,14 @@ main_rgs() {
 node_rgs_of() {
 	local rg="$1"
 	[ -n "$rg" ] || return 0
-	az aks list --resource-group "$rg" --query "[].nodeResourceGroup" -o tsv 2>/dev/null | grep -v '^$' || true
+	az_list aks-node-rg aks list --resource-group "$rg" --query "[].nodeResourceGroup" -o tsv | grep -v '^$' || true
 }
 
 # orphan_node_rgs — `MC_`-prefixed node resource groups whose name embeds -<ENV> (an AKS node RG left
 # behind after its parent AKS/main-RG was torn down). Now parent-less, so directly deletable.
 orphan_node_rgs() {
 	assert_scope
-	az group list --query "[?starts_with(name,'MC_')].name" -o tsv 2>/dev/null | grep -i -- "-${ENV}" | grep -v '^$' | sort -u || true
+	az_list aks-node-rg group list --query "[?starts_with(name,'MC_')].name" -o tsv | grep -i -- "-${ENV}" | grep -v '^$' | sort -u || true
 }
 
 # ── Soft-deleted Key Vaults ─────────────────────────────────────────────────────────────────────
@@ -280,7 +318,7 @@ orphan_node_rgs() {
 # purge is re-gated on that match immediately before it is issued.
 deleted_key_vaults() {
 	assert_scope
-	az keyvault list-deleted --query "[].name" -o tsv 2>/dev/null | grep -i -- "-${ENV}" | grep -v '^$' | sort -u || true
+	az_list soft-deleted-key-vault keyvault list-deleted --query "[].name" -o tsv | grep -i -- "-${ENV}" | grep -v '^$' | sort -u || true
 }
 
 # sweep_deleted_key_vaults — purge what CAN be purged. A vault created with purge protection on
@@ -315,19 +353,19 @@ sweep_deleted_key_vaults() {
 #    node RGs, and any surviving AKS/VMSS/public-IP embedding this run's ENV. grep -i so an Azure
 #    case-normalized RG name can't hide a survivor. ──
 alive_tagged_rgs() {
-	az group list --tag "${TAG_KEY}=${PROJECT_ID_TAG}" --query "[].name" -o tsv 2>/dev/null | grep -v '^$' || true
+	az_list resource-group group list --tag "${TAG_KEY}=${PROJECT_ID_TAG}" --query "[].name" -o tsv | grep -v '^$' || true
 }
 alive_env_rgs() {
-	az group list --query "[].name" -o tsv 2>/dev/null | grep -i -- "-${ENV}" | grep -v '^$' | sort -u || true
+	az_list resource-group group list --query "[].name" -o tsv | grep -i -- "-${ENV}" | grep -v '^$' | sort -u || true
 }
 alive_aks() {
-	az aks list --query "[].name" -o tsv 2>/dev/null | grep -i -- "-${ENV}" | grep -v '^$' || true
+	az_list aks-cluster aks list --query "[].name" -o tsv | grep -i -- "-${ENV}" | grep -v '^$' || true
 }
 alive_vmss() {
-	az vmss list --query "[].resourceGroup" -o tsv 2>/dev/null | grep -i -- "-${ENV}" | grep -v '^$' || true
+	az_list vmss vmss list --query "[].resourceGroup" -o tsv | grep -i -- "-${ENV}" | grep -v '^$' || true
 }
 alive_public_ips() {
-	az network public-ip list --query "[].resourceGroup" -o tsv 2>/dev/null | grep -i -- "-${ENV}" | grep -v '^$' || true
+	az_list public-ip network public-ip list --query "[].resourceGroup" -o tsv | grep -i -- "-${ENV}" | grep -v '^$' || true
 }
 
 verify_swept() {
@@ -401,6 +439,24 @@ sweep_env() {
 	verify_swept
 }
 
+# ── finalize_verification — THE EXIT-CODE CONTRACT.
+#
+#   0  every probe answered, and nothing billable for this run survived.
+#   1  a LEAK: the API listed something still standing and billing.
+#   4  UNVERIFIABLE: at least one probe could not answer, so nothing here proves the subscription
+#      is empty. This runs on the `always()` teardown path the T2 harness defers to as the
+#      guarantee, so "could not look" has to red the step rather than pass as a log line.
+#
+# A confirmed leak outranks "could not check", so the sweep + verify runs first.
+finalize_verification() {
+	if ! sweep_env "$ENV"; then
+		return 1
+	fi
+	probe_gate azure "run ${ENV}" || return 4
+	echo "✓ azure cleanup verified complete for run ${ENV} — no billable resources remain"
+	return 0
+}
+
 # ── list_orphan_envs — every OTHER e2e run's ENV that still has a project-id-tagged resource group in
 #    this subscription (prior-run orphans). Reads the `alethia:project-id` tag value off every RG,
 #    keeps only `e2e-`-prefixed values, strips the prefix, EXCLUDES this run (SELF_ENV), and
@@ -408,7 +464,7 @@ sweep_env() {
 #    ENV guards — so a preflight can never widen past a genuine prior nightly. Empty ⇒ nothing to sweep. ──
 list_orphan_envs() {
 	local vals v oenv
-	vals="$(az group list --query "[?tags.\"${TAG_KEY}\"].tags.\"${TAG_KEY}\"" -o tsv 2>/dev/null | grep -v '^$' || true)"
+	vals="$(az_list orphan-scan group list --query "[?tags.\"${TAG_KEY}\"].tags.\"${TAG_KEY}\"" -o tsv | grep -v '^$' || true)"
 	while IFS= read -r v; do
 		[ -n "$v" ] || continue
 		case "$v" in e2e-*) ;; *) continue ;; esac # e2e-prefixed values only — never a prod project-id
@@ -470,9 +526,76 @@ if [ "$PREFLIGHT" = "1" ]; then
 	if [ "$residual" = "1" ]; then
 		echo "⚠ preflight finished with residual orphans (see warnings above) — continuing (best-effort, non-fatal)"
 	else
+		# ⚠️ Not "the subscription is clean" — "every orphan this preflight could SEE is swept".
+		# The discovery listing can fail too, and preflight is explicitly non-blocking, so the
+		# honest report here is a warning; the always() teardown is what gates.
+		probe_warn_unverifiable azure "the preflight orphan scan"
 		echo "✓ preflight complete — all prior-run e2e orphans in this subscription swept"
 	fi
 	exit 0 # preflight never blocks the provisioning run
+fi
+
+# ── Self-test. `az` is stubbed, so this touches no subscription and needs no login. What is under
+# test is the THREE-STATE contract: an empty subscription and a subscription this script could not
+# look at must not produce the same answer, and the second must not exit 0.
+#
+# $ST_OUT and $ST_RC are varied INDEPENDENTLY on purpose. Every list in this file used to read
+# `az … -o tsv 2>/dev/null | grep … || true`, and the OUTPUT half of that always worked — a test
+# that varies only the output passes just as happily with the fix removed. ──
+if [ "$SELF_TEST" = "1" ]; then
+	st_fails=0
+	# DRY_RUN so the stubbed sweep deletes nothing and skips the RG wait loops; verify_swept is
+	# called explicitly below, because that is the half under test.
+	DRY_RUN=1
+	az() {
+		if [ -n "$ST_OUT" ]; then printf '%s\n' "$ST_OUT"; fi
+		if [ "$ST_RC" -ne 0 ]; then printf '%s\n' "${ST_ERR:-ERROR: az failed}" >&2; fi
+		return "$ST_RC"
+	}
+
+	echo "→ azure-cleanup.sh self-test (ENV=${ENV})"
+	st_case() { # <name> <output> <rc> <expected rc> <expect unverifiable: yes|no>
+		probe_reset
+		ST_OUT="$2" ST_RC="$3" ST_ERR="ERROR: Please run 'az login' to setup account."
+		local rc=0 unv=no
+		if verify_swept >/dev/null 2>&1; then
+			probe_gate azure "run ${ENV}" >/dev/null 2>&1 || rc=$?
+		else
+			rc=1
+		fi
+		probe_has_unverifiable && unv=yes
+		if [ "$rc" = "$4" ] && [ "$unv" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$4/unverifiable=$5, got rc=${rc}/unverifiable=${unv}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_case "an empty subscription, honestly listed, is CLEAN and exits 0" "" 0 0 no
+	st_case "a surviving resource group is a LEAK and exits 1" "rg-${ENV}-alethia" 0 1 no
+	# THE REGRESSION. Before this change the case below and the first case were byte-identical:
+	# empty stdout, exit 0, "no billable resources remain".
+	st_case "a list that FAILED is UNVERIFIABLE and exits 4, NOT 0" "" 1 4 yes
+
+	# The type NAMES the report, so a human knows what to check by hand.
+	probe_reset
+	ST_OUT="" ST_RC=1 ST_ERR="AuthorizationFailed"
+	alive_aks >/dev/null 2>&1 || true
+	case "$(probe_unverifiable_types)" in
+	*aks-cluster*) echo "  ✓ the ledger names the resource type that could not be checked" ;;
+	*)
+		echo "  ✗ the ledger names the resource type that could not be checked — got '$(probe_unverifiable_types)'" >&2
+		st_fails=$((st_fails + 1))
+		;;
+	esac
+	unset -f az
+
+	if [ "$st_fails" -ne 0 ]; then
+		echo "✗ azure-cleanup.sh self-test: ${st_fails} failure(s)" >&2
+		exit 1
+	fi
+	echo "✓ azure-cleanup.sh self-test passed"
+	exit 0
 fi
 
 # ── Normal (belt-and-suspenders) path — the full scope-locked sweep + verify for THIS run. ──
@@ -482,7 +605,6 @@ if [ "$DRY_RUN" = "1" ]; then
 	exit 0
 fi
 
-if ! sweep_env "$ENV"; then
-	exit 1
-fi
-echo "✓ azure cleanup verified complete for run ${ENV} — no billable resources remain"
+st_rc=0
+finalize_verification || st_rc=$?
+exit "$st_rc"

@@ -344,13 +344,23 @@ jobs:
           [ -f "$LOG" ] || { echo "::error::no sweep log for ${PROVIDER} — the sweep step did not run to completion."; exit 0; }
           swept=$(grep -cE '^  *(deleted|would delete) ' "$LOG" || true)
           orphans=$(grep -cE '^── preflight sweep: prior run ' "$LOG" || true)
+          # THE THIRD STATE. "0 orphans" used to be the only way this table could report a quiet
+          # region, and it was also what a sweeper that could not TALK to the cloud produced —
+          # empty lists, exit 0, a clean-looking row. The sweepers now say so out loud
+          # (probe_warn_unverifiable, since PREFLIGHT never blocks its caller), so the summary has
+          # to carry it: a row reading "0 orphans" beside "could not check" is a different fact
+          # from "0 orphans", and the whole point of this change is that they stop looking alike.
+          unverified=$(grep -cE 'preflight for .* could not check ' "$LOG" || true)
           {
             echo "### Orphan reaper — ${PROVIDER}"
             echo
-            echo "| region | orphan runs | resources | mode |"
-            echo "|---|---:|---:|---|"
-            echo "| \`${ALETHIA_E2E_REGION}\` | ${orphans} | ${swept} | $([ "$DRY_RUN" = "1" ] && echo 'DRY RUN' || echo 'reclaim') |"
+            echo "| region | orphan runs | resources | unverified | mode |"
+            echo "|---|---:|---:|---:|---|"
+            echo "| \`${ALETHIA_E2E_REGION}\` | ${orphans} | ${swept} | ${unverified} | $([ "$DRY_RUN" = "1" ] && echo 'DRY RUN' || echo 'reclaim') |"
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${unverified:-0}" -gt 0 ]; then
+            echo "::warning::${PROVIDER}: the reaper could NOT check part of ${ALETHIA_E2E_REGION} — see the 'could not check' warnings above. A region it could not look at is not a region it found empty."
+          fi
           if [ "${orphans:-0}" -gt 0 ]; then
             echo "::warning::${PROVIDER}: reclaimed ${orphans} orphaned run(s), ${swept} resource(s). A previous nightly's teardown did NOT complete — check whether that run was cancelled (#2330)."
           fi
