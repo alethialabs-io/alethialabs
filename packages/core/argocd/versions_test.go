@@ -69,3 +69,42 @@ func TestDefaultArgoInstallTimeoutIsUsable(t *testing.T) {
 		t.Errorf("DefaultArgoInstallTimeout = %v, which cannot cover a cold cluster's image-pull queue (measured ~3m30s before the application-controller starts pulling)", d)
 	}
 }
+
+// TestDefaultArgoInstallTimeoutFitsTheMeasuredBudget is a TWO-SIDED guard on the deadline, and the
+// second side is the point of it. A deadline can be wrong by being too short — 15m was, and gcp
+// floor run 33156252646 died on it — but it can equally be wrong by being too LONG: the wait sits
+// inside the runner job, and the job has to reach a terminal status inside the e2e harness's
+// per-provider WaitTerminal or the run is recorded as a failure with no verdict at all.
+//
+// Both bounds come from that same run, not from taste:
+//
+//   - FLOOR. Server and repo-server became Ready at ~t+7m30s once their liveness kills are removed
+//     (InstallProbeValues), redis at t+12m27s, and dex — a pure image pull, no probe involved — was
+//     still pulling at the 15m deadline having only STARTED at t+10m37s. The install converges in
+//     the t+14–17m band, which is why 15m failed by seconds. Anything at or below 17m re-creates it.
+//   - CEILING. gcp's WaitTerminal is 50m (test/e2e/t2_providers.go). The same run measured the rest
+//     of the spine directly: the runner claimed the job at 08:43:19 and failed at 09:14:47 — 31m28s
+//     with the full 15m wait consumed, so everything before ArgoCD costs ~16m30s. The post-install
+//     work is bounded by addonConvergeTimeout, 10m (packages/core/provisioner/deploy.go).
+//
+// The constants below restate the two numbers this package cannot import (WaitTerminal lives in
+// test/e2e, addonConvergeTimeout is unexported in provisioner). That restatement is the risk this
+// test carries, so each one names its source.
+func TestDefaultArgoInstallTimeoutFitsTheMeasuredBudget(t *testing.T) {
+	const (
+		gcpWaitTerminal      = 50 * time.Minute // test/e2e/t2_providers.go, t2ProviderTable["gcp"].waitTimeout
+		spineBeforeArgo      = 16*time.Minute + 30*time.Second
+		addonConvergeCeiling = 10 * time.Minute // packages/core/provisioner/deploy.go addonConvergeTimeout()
+		observedConvergence  = 17 * time.Minute
+	)
+	d, err := time.ParseDuration(DefaultArgoInstallTimeout)
+	if err != nil {
+		t.Fatalf("DefaultArgoInstallTimeout %q does not parse: %v", DefaultArgoInstallTimeout, err)
+	}
+	if d <= observedConvergence {
+		t.Errorf("DefaultArgoInstallTimeout = %v, which does not clear the %v the gcp floor install was measured to need (run 33156252646) — 15m failed there by seconds", d, observedConvergence)
+	}
+	if total := spineBeforeArgo + d + addonConvergeCeiling; total > gcpWaitTerminal {
+		t.Errorf("DefaultArgoInstallTimeout = %v puts the worst-case job at %v, past gcp's %v WaitTerminal — the run would be recorded FAILED with no verdict. Raise the node shape or the harness budget, not this constant", d, total, gcpWaitTerminal)
+	}
+}
