@@ -1147,6 +1147,12 @@ jobs:
       - name: ...and that check's own parser is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/check-guards-independent.mjs --self-test
+      # The classifier both chart-render jobs share, and the retry built on it. It runs the script
+      # under `bash -e` — GitHub's default shell — because an earlier version of that retry was 100%
+      # INERT in CI for exactly that reason while passing a harness that used plain `bash`.
+      - name: The chart-fetch retry retries a fetch and refuses a real failure
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/ci/tofu-test-retry-fetch.sh --self-test
       - name: Guards self-test (runtime · compose · merge)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
@@ -1787,6 +1793,13 @@ jobs:
       - uses: azure/setup-helm@v5
         with:
           version: v3.16.2
+      # BEFORE the real run, and cheap: it stubs helm out entirely. The retry this job gained in
+      # #2754 is the dangerous kind of change — too eager and it re-rolls a genuine render failure,
+      # which is precisely the defect (#2058) this job exists to catch. The self-test asserts the
+      # attempt COUNTS, not just the outcomes, because a function that gives up after one attempt
+      # returns the same shape as one that tried three times.
+      - name: ...and the fetch-vs-render classifier is not too eager
+        run: node apps/console/scripts/check-addon-charts-render.mjs --self-test
       - name: Every add-on renders with its pinned chart and its own defaults
         run: node apps/console/scripts/check-addon-charts-render.mjs
 
