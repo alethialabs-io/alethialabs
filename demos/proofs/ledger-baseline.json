@@ -97,26 +97,16 @@
       "no issue has no diagnosis to rank on: it reads as work while being nobody's \u2014 strictly worse",
       "than a never-run cell, which at least advertises what it is.",
       "",
-      "THE ONE RECORD HERE IS NOT UNOWNED, IT IS UNCITABLE. #3098 (`e2e nightly: azure RED (addons)`)",
-      "is open and is exactly this red. The row carrying the verdict is the 2026-08-25 azure/full",
-      "composite, written before this was enforced, and the ledger is append-only. The citation lands",
-      "when azure/addons is next recorded, and deleting this record is that run's job.",
+      "EMPTY, AND IT EMPTIED ITSELF, which is the ratchet working rather than a gap. The one record",
+      "here was azure/addons, grandfathered because #3098 owned it but the append-only 2026-08-25",
+      "azure/full row could not be given a citation. #2671 then stopped the `full` composite from",
+      "crediting `addons` without assertion-time evidence, so that cell is no longer red at all \u2014 and",
+      "this list refused the now-stale record on the very next run rather than carrying it forward.",
       "",
       "THE FIX FOR A NEW ONE IS NEVER A RECORD HERE. If the row is the one you are writing, put the",
       "issue number in its last column. If no issue exists, file one \u2014 the nightly convention is",
       "`e2e nightly: <cloud> RED (<dimension>)`, which the rollup already parses."
     ],
-    "records": [
-      {
-        "date": "2026-08-25",
-        "cloud": "azure",
-        "dimension": "addons",
-        "verdict": "FAIL",
-        "row_sha": "0087536b",
-        "row": "the azure/full composite run this cell is credited from",
-        "reason": "predates the citation convention, and the ledger is append-only",
-        "issue": "#3098"
-      }
-    ]
+    "records": []
   }
 }

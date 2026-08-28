@@ -167,7 +167,7 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**19 of 30 proof cells are proven.** 3 failing · 1 stale (cause fixed, needs a re-run) · 0 blocked · 7 never run.
+**19 of 30 proof cells are proven.** 1 failing · 1 stale (cause fixed, needs a re-run) · 0 blocked · 9 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -175,9 +175,9 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 
 | cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| **aws** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
 | **gcp** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
-| **azure** | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| **azure** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
 | **alibaba** | · | · | · | · | · | · |
 | **hetzner** | ✅ | ♻️ | ❌ | ✅ | ✅ | ✅ |
 
@@ -187,7 +187,6 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 - `aws/floor` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T125612Z`
 - `aws/maxconfig` **proven** — ledger 2026-08-26, bundle `demos/proofs/aws/20260826T114712Z`
-- `aws/addons` **failing** — ledger 2026-08-26 (via the `full` composite run) (#2717)
 - `aws/gitops` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T142417Z`
 - `aws/byo-iac` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T155743Z`
 - `aws/day2` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T190408Z`
@@ -198,7 +197,6 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
 - `azure/floor` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T215237Z`
 - `azure/maxconfig` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T211849Z`
-- `azure/addons` **failing** — ledger 2026-08-25 (via the `full` composite run)
 - `azure/gitops` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
 - `azure/byo-iac` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T204358Z`
 - `azure/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T235236Z`
@@ -220,12 +218,12 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 <details><summary>The next 10</summary>
 
 1. `hetzner/maxconfig` — stale
-1. `aws/addons` — failing
-1. `azure/addons` — failing
 1. `hetzner/addons` — failing
 1. `alibaba/floor` — never_run
 1. `alibaba/maxconfig` — never_run
+1. `aws/addons` — never_run
 1. `gcp/addons` — never_run
+1. `azure/addons` — never_run
 1. `alibaba/addons` — never_run
 1. `alibaba/gitops` — never_run
 1. `alibaba/byo-iac` — never_run
@@ -291,8 +289,6 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cell | state | issue | issue state |
 |---|---|---|:---:|
-| `aws/addons` | failing | #2717 | open |
-| `azure/addons` | failing | **none** | ? |
 | `hetzner/maxconfig` | stale | #2568 | ⛔ **CLOSED** |
 | `hetzner/addons` | failing | #2717 | open |
 
