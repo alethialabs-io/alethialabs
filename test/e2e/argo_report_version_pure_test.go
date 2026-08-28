@@ -33,7 +33,7 @@ import (
 // the record of where the mechanism was established. Only string literals reach a run's output.
 var argoReportVersionScannedFiles = []string{
 	"argo_predicted_live.go",
-	"argo_server_side_diff.go",
+	"argo_ssd_experiment.go",
 }
 
 // argoVersionLiteral matches a semantic version with or without the `v`. Three components, so a
