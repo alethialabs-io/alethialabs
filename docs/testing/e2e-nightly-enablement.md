@@ -9,11 +9,14 @@ deliberate no-op that reports success, so a nightly can show five green checks w
 The rollup states the ratio explicitly (`Coverage: N/5 clouds enabled`) and keeps one standing issue
 listing what each inert cloud needs.
 
-This is the procedure to take a cloud from inert to proven. It is maintainer work: it applies real
-cloud infrastructure and spends money.
+This is the procedure to take a cloud from inert to proven. It applies real cloud infrastructure and
+commits real money, and its last step — setting the gate value — is the maintainer's alone.
 
-> **Agents must not run `tofu apply`, and must not dispatch this workflow.** Both are maintainer
-> actions — see the IaC rules in `CLAUDE.md`.
+> **An agent may dispatch a dimension on a cloud whose gate is already on, and may apply a named
+> stack under a plan the maintainer has reviewed. An agent must never turn a gate on.** Dispatching
+> an enabled cloud spends a known, budgeted amount. Setting a gate value commits new spend on a
+> cloud that was inert, and that decision is the maintainer's — surface it and stop. See the IaC
+> rules in `CLAUDE.md`.
 
 ## The gate, in one paragraph
 
@@ -24,7 +27,8 @@ kill-drill. Everything else the leg needs must already be in place, because the 
 
 ## Order of operations
 
-1. **Apply the cloud's e2e stack** (in the directory below). Agents don't do this step. Each stack
+1. **Apply the cloud's e2e stack** (in the directory below) — an agent may run this one under a
+   reviewed plan for the named stack, but never on its own initiative. Each stack
    keeps its state remotely, in the same account/project/subscription as the identity it creates, so
    the first apply on a cloud is really two: its `bootstrap/` (the state container), then the stack
    itself. See [`e2e-state-migration.md`](./e2e-state-migration.md) — which is also the procedure for
@@ -133,7 +137,7 @@ These are not per-cloud gates, but legs depend on them:
   azure, alibaba and hetzner are unpriced, so dispatch them one at a time and watch them.
 
 Region defaults per cloud when the `region` input is blank: hetzner `nbg1`, aws `us-east-1`,
-gcp `europe-west3`, azure `germanywestcentral`, alibaba `eu-central-1`.
+gcp `europe-west3`, azure `westeurope`, alibaba `eu-central-1`.
 
 The matrix runs at most **3 real provisions concurrently** (`max-parallel: 3`), and a per-provider
 concurrency group serializes same-cloud runs.
