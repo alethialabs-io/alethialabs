@@ -74,6 +74,21 @@ type argoAppState struct {
 	// Naming the RESOURCE (#2738) answered "which object differs" and left "which FIELD differs"
 	// to a guess — and a guessed ignoreDifferences entry can MASK REAL DRIFT rather than no-op.
 	OutOfSyncRefs []outOfSyncRef
+	// NotHealthyResources names the resources whose own health is not Healthy, with ArgoCD's
+	// message for each.
+	//
+	// WHY IT IS CARRIED. An Application's health is an AGGREGATE, and reporting only the aggregate
+	// left `health=Progressing` unattributable. On hetzner/addons run 33162842830 addon-harbor sat
+	// Progressing for 50 minutes with all seven of its pods Running and ready — so the health was
+	// not pod readiness, and the run could not say what it WAS. `kubectl describe application` does
+	// carry it, but the describe is truncated by the dump's own size cap long before
+	// `Status.Resources`, so the answer was fetched and thrown away twice over.
+	//
+	// This also separates two cases that had already cost #2717 two refuted hypotheses: an add-on
+	// that is OutOfSync AND independently not finished, versus one whose health is Progressing
+	// BECAUSE of the thing that is OutOfSync. Those have different fixes, and only the per-resource
+	// health tells them apart.
+	NotHealthyResources []string
 }
 
 // anyProvider is the infraServiceArgoApps inner key meaning "the same Application on
@@ -533,6 +548,10 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 					Name      string `json:"name"`
 					Namespace string `json:"namespace"`
 					Status    string `json:"status"`
+					Health    struct {
+						Status  string `json:"status"`
+						Message string `json:"message"`
+					} `json:"health"`
 				} `json:"resources"`
 			} `json:"status"`
 		} `json:"items"`
@@ -552,13 +571,28 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 		// Only the OutOfSync ones. A Synced resource in a Synced app is noise, and in an
 		// OutOfSync app it is the part that is fine.
 		seenRes := map[string]struct{}{}
+		seenUnhealthy := map[string]struct{}{}
 		for _, r := range item.Status.Resources {
-			if r.Status != "OutOfSync" {
-				continue
-			}
 			label := r.Kind + "/" + r.Name
 			if r.Group != "" {
 				label = r.Group + "/" + r.Kind + "/" + r.Name
+			}
+			// A resource with no health at all is NOT a healthy resource — ArgoCD leaves the field
+			// empty for kinds it has no health check for (ConfigMap, Secret, Service…), and
+			// treating that as unhealthy would bury the one that matters. Only a health it
+			// EXPLICITLY reported as something other than Healthy is named.
+			if h := r.Health.Status; h != "" && h != "Healthy" {
+				if _, dup := seenUnhealthy[label]; !dup {
+					seenUnhealthy[label] = struct{}{}
+					entry := label + " " + h
+					if msg := strings.TrimSpace(r.Health.Message); msg != "" {
+						entry += ": " + msg
+					}
+					st.NotHealthyResources = append(st.NotHealthyResources, entry)
+				}
+			}
+			if r.Status != "OutOfSync" {
+				continue
 			}
 			if _, dup := seenRes[label]; dup {
 				continue
@@ -570,6 +604,7 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 			})
 		}
 		sort.Strings(st.OutOfSyncResources)
+		sort.Strings(st.NotHealthyResources)
 		out[item.Metadata.Name] = st
 	}
 	return out, nil
@@ -611,15 +646,35 @@ func evaluateArgoApps(observed map[string]argoAppState, expected []string) (lose
 			// or not-yet-populated resource list, and silence there would read as a clean diff.
 			report.WriteString("\n      OutOfSync: (no per-resource detail reported by ArgoCD)")
 		}
+		// The aggregate health names no resource, so `health=Progressing` was unattributable — see
+		// NotHealthyResources. This is what says whether an OutOfSync add-on is ALSO unfinished for
+		// its own reasons, or is Progressing because of the very resource that is OutOfSync.
+		if len(st.NotHealthyResources) > 0 {
+			fmt.Fprintf(&report, "\n      not Healthy: %s", strings.Join(st.NotHealthyResources, "; "))
+		} else if st.Health != "Healthy" {
+			report.WriteString("\n      not Healthy: (ArgoCD reports no unhealthy RESOURCE — the aggregate health is not attributable to one)")
+		}
 		report.WriteString("\n")
 	}
 	if len(losers) == 0 {
 		return nil, nil
 	}
+	// The full listing carries the resource detail too, and that is not cosmetic. It is the ONLY
+	// place a WITHHELD Application's OutOfSync resources appear: withheld add-ons are excluded from
+	// the loop above, so on run 33162842830 addon-vault reported `Progressing/OutOfSync` with no
+	// resource named — and vault's StatefulSet is the control case that separates the two candidate
+	// causes of #2717's surviving four (see the loki-vs-tempo note in packages/core/argocd/addons.go).
+	// Printing it costs nothing: the data is already parsed.
 	fmt.Fprintf(&report, "all Applications observed in the argocd namespace:\n")
 	for _, name := range sortedAppNames(observed) {
 		st := observed[name]
 		fmt.Fprintf(&report, "  - %s: health=%s sync=%s\n", name, st.Health, st.Sync)
+		if len(st.OutOfSyncResources) > 0 {
+			fmt.Fprintf(&report, "      OutOfSync: %s\n", strings.Join(st.OutOfSyncResources, ", "))
+		}
+		if len(st.NotHealthyResources) > 0 {
+			fmt.Fprintf(&report, "      not Healthy: %s\n", strings.Join(st.NotHealthyResources, "; "))
+		}
 	}
 	return losers, fmt.Errorf("%d/%d expected ArgoCD Applications are not Healthy+Synced:\n%s",
 		len(losers), len(expected), strings.TrimRight(report.String(), "\n"))
@@ -1049,8 +1104,11 @@ const argoDiffExitCodeMeansDiff = 1
 func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string, refs []outOfSyncRef) string {
 	// Generous: --core renders the manifests through the repo-server, which pulls the chart, and on
 	// the empty-diff branch it ALSO fetches the whole Application's manifests and server-side
-	// dry-runs them (argo_predicted_live.go). kyverno renders ~50k lines, so this is not a fast path
-	// — it is the only path that can name the field, and it runs only on an already-failing run.
+	// dry-runs them (argo_predicted_live.go), then runs argo-cd's OWN server-side diff
+	// (argo_server_side_diff.go) — a THIRD manifest render. kyverno renders ~50k lines, so this is
+	// not a fast path — it is the only path that can name the field, and it runs only on an
+	// already-failing run. The budget is shared: a probe that runs out of it says COULD NOT ASK,
+	// which is the correct answer and not a silent pass.
 	cctx, cancel := context.WithTimeout(ctx, 300*time.Second)
 	defer cancel()
 
@@ -1073,8 +1131,9 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string, refs []out
 		// further. These two do: the first says WHICH comparison the controller ran (an empty
 		// `argocd app diff` on a ServerSideApply Application is a different algorithm, not a
 		// contradiction), the second reproduces a server-side comparison and names the fields.
-		report += readArgoDiffStrategy(cctx, kubeconfigPath, app) + "\n"
+		report += readArgoDiffStrategy(cctx, kubeconfigPath, target, app) + "\n"
 		report += argoPredictedLiveDiff(cctx, kubeconfigPath, target, app, refs) + "\n"
+		report += argoServerSideDiff(cctx, kubeconfigPath, target, app) + "\n"
 	}
 	return report
 }

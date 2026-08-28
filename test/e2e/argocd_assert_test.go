@@ -1351,3 +1351,118 @@ func TestInterpretHardRefresh(t *testing.T) {
 		t.Errorf("detail must be truncated, got %d chars", len(long))
 	}
 }
+
+// TestArgoReportAttributesANonHealthyAppToItsResource — an aggregate `health=Progressing` names
+// nothing, and that cost #2717 two refuted hypotheses.
+//
+// On hetzner/addons run 33162842830 addon-harbor sat Progressing for fifty minutes with all seven
+// of its pods Running and ready, so the health was NOT pod readiness and the run could not say what
+// it WAS. ArgoCD carries the answer per resource; this assertion was fetching it and throwing it
+// away. Naming it is what separates "OutOfSync AND independently unfinished" from "Progressing
+// BECAUSE of the resource that is OutOfSync" — two states with different fixes.
+func TestArgoReportAttributesANonHealthyAppToItsResource(t *testing.T) {
+	raw := []byte(`{"items":[{"metadata":{"name":"addon-harbor"},"status":{
+	  "health":{"status":"Progressing"},"sync":{"status":"OutOfSync"},
+	  "resources":[
+	    {"group":"apps","kind":"StatefulSet","name":"addon-harbor-database","status":"OutOfSync",
+	     "health":{"status":"Progressing","message":"waiting for statefulset rolling update to complete"}},
+	    {"group":"apps","kind":"Deployment","name":"addon-harbor-core","status":"Synced",
+	     "health":{"status":"Healthy"}},
+	    {"kind":"Service","name":"addon-harbor","status":"Synced"}
+	  ]}}]}`)
+	observed, err := parseArgoApps(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	st := observed["addon-harbor"]
+	if len(st.NotHealthyResources) != 1 {
+		t.Fatalf("exactly one resource is not Healthy, got %v", st.NotHealthyResources)
+	}
+	// A Service has NO health at all — ArgoCD has no health check for the kind. An empty health is
+	// not an unhealthy resource, and counting it would bury the one that matters.
+	for _, r := range st.NotHealthyResources {
+		if strings.Contains(r, "Service/") {
+			t.Errorf("a resource with no reported health must not be called unhealthy: %v", st.NotHealthyResources)
+		}
+	}
+	_, err = evaluateArgoApps(observed, []string{"addon-harbor"})
+	if err == nil {
+		t.Fatal("Progressing must fail")
+	}
+	for _, want := range []string{
+		"not Healthy:",
+		"apps/StatefulSet/addon-harbor-database",
+		"waiting for statefulset rolling update to complete",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the report must carry %q so the Progressing is attributable:\n%s", want, err)
+		}
+	}
+}
+
+// TestArgoReportSaysWhenAHealthIsNotAttributable — the empty branch is a FINDING.
+//
+// "ArgoCD named no unhealthy resource" and "we did not look" print the same absence otherwise, and
+// this repo's dominant defect class is a diagnostic whose silence reads as a pass.
+func TestArgoReportSaysWhenAHealthIsNotAttributable(t *testing.T) {
+	raw := []byte(`{"items":[{"metadata":{"name":"addon-z"},"status":{
+	  "health":{"status":"Progressing"},"sync":{"status":"Synced"},
+	  "resources":[{"group":"apps","kind":"Deployment","name":"d","status":"Synced","health":{"status":"Healthy"}}]}}]}`)
+	observed, err := parseArgoApps(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	_, err = evaluateArgoApps(observed, []string{"addon-z"})
+	if err == nil {
+		t.Fatal("Progressing must fail")
+	}
+	if !strings.Contains(err.Error(), "no unhealthy RESOURCE") {
+		t.Errorf("an unattributable health must say so rather than print nothing:\n%s", err)
+	}
+	// And a HEALTHY app must not grow the line at all.
+	healthy := []byte(`{"items":[{"metadata":{"name":"addon-z"},"status":{
+	  "health":{"status":"Healthy"},"sync":{"status":"OutOfSync"},"resources":[]}}]}`)
+	obs2, _ := parseArgoApps(healthy)
+	_, err2 := evaluateArgoApps(obs2, []string{"addon-z"})
+	if err2 == nil {
+		t.Fatal("OutOfSync must fail")
+	}
+	if strings.Contains(err2.Error(), "not Healthy:") {
+		t.Errorf("a Healthy app must not carry a not-Healthy line:\n%s", err2)
+	}
+}
+
+// TestArgoReportNamesWithheldAppsResources — the full observed listing is the ONLY place a WITHHELD
+// Application's OutOfSync resources can appear, and on run 33162842830 that mattered.
+//
+// addon-vault is withheld (a fresh Vault starts sealed), so it never enters the per-expected-app
+// loop and reported `Progressing/OutOfSync` with no resource named. Its chart's
+// volumeClaimTemplates entry is the CONTROL CASE that separates the two co-varying candidate causes
+// of #2717's surviving four — it omits apiVersion/kind like harbor and tempo, but carries no
+// null-valued key like loki and minio. Whether its StatefulSet is the OutOfSync resource decides
+// which candidate survives, and printing it costs nothing: the data is already parsed.
+func TestArgoReportNamesWithheldAppsResources(t *testing.T) {
+	raw := []byte(`{"items":[
+	  {"metadata":{"name":"addon-tempo"},"status":{
+	     "health":{"status":"Healthy"},"sync":{"status":"OutOfSync"},
+	     "resources":[{"group":"apps","kind":"StatefulSet","name":"addon-tempo","status":"OutOfSync"}]}},
+	  {"metadata":{"name":"addon-vault"},"status":{
+	     "health":{"status":"Progressing"},"sync":{"status":"OutOfSync"},
+	     "resources":[{"group":"apps","kind":"StatefulSet","name":"addon-vault","status":"OutOfSync",
+	                   "health":{"status":"Progressing","message":"Vault is sealed"}}]}}
+	]}`)
+	observed, err := parseArgoApps(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// addon-vault is NOT expected — that is what "withheld" means here.
+	_, err = evaluateArgoApps(observed, []string{"addon-tempo"})
+	if err == nil {
+		t.Fatal("addon-tempo must fail")
+	}
+	for _, want := range []string{"addon-vault", "apps/StatefulSet/addon-vault", "Vault is sealed"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("a withheld app's detail must reach the report (%q):\n%s", want, err)
+		}
+	}
+}
