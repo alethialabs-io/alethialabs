@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# sweep-probe.sh — three-state verification for the five e2e cloud sweepers.
+# sweep-probe.sh — four-state verification for the five e2e cloud sweepers.
 #
 # Sourced by scripts/e2e/{aws,gcp,azure,alibaba,hcloud}-cleanup.sh. Run directly with
 # `--self-test` to exercise this file on its own (no cloud, no credentials).
@@ -31,13 +31,45 @@
 #
 # ── THE CONTRACT ────────────────────────────────────────────────────────────────────────────────
 #
-# Every probe resolves to exactly one of three states, and the third is the whole point:
+# Every probe resolves to exactly one of FOUR states:
 #
-#   CLEAN         the API answered, and it listed nothing.          → exit 0
-#   LEAKED        the API answered, and it listed something.        → exit 1  (caller's verify_swept)
-#   UNVERIFIABLE  the API did not answer.                           → exit 4  (finalize_verification)
+#   CLEAN           the API answered, and it listed nothing.        → exit 0
+#   LEAKED          the API answered, and it listed something.      → exit 1  (caller's verify_swept)
+#   UNVERIFIABLE    the API did not answer.                         → exit 4  (finalize_verification)
+#   UNATTRIBUTABLE  the API answered, and the answer is that
+#                   something EXISTS which by design cannot be
+#                   tied to this run.                               → exit UNCHANGED, reported loudly
 #
-# "The API said nothing survives" and "the API did not answer" must never be the same value.
+# "The API said nothing survives" and "the API did not answer" must never be the same value. That
+# is the #2549/#3138 half, and it gates.
+#
+# ── WHY THE FOURTH STATE EXISTS, AND WHY IT MUST NOT GATE ───────────────────────────────────────
+#
+# #3138 shipped the third state and, correctly, made it gate. It then routed a case into it that is
+# not a probe failure at all, and hetzner went permanently red for it (run 33172643012, the only
+# unverifiable was `imager-upload-helpers(unlabelled, cannot attribute)`).
+#
+# The hcloud-talos/imager provider boots a rescue server and registers an ssh key, both named
+# `hcloud-upload-image-<hex>` and NEITHER carrying a label of any kind. Both listings SUCCEED. The
+# account is shared with prod, and a CONCURRENT run's live upload server matches the same pattern,
+# so `report_imager_helpers` is designed to report and never delete (#2463 tracks making them
+# labelable upstream, which retires the whole case).
+#
+# That is not "I could not look". It is "I looked, the API answered, and the answer is structurally
+# ambiguous". Gating on it makes the step red on every single run, and a signal that is always red
+# carries exactly as much information as one that is always green — which is the defect class
+# #3138 set out to remove, arriving from the other direction.
+#
+# So UNATTRIBUTABLE is loud (a `::warning::` annotation, a step-summary block, its own ledger, and a
+# qualifier appended to the "✓ verified complete" line so that line can never read as clean) and it
+# does NOT touch the exit code.
+#
+# ⚠️ THE LINE BETWEEN THE TWO IS NOT "IS IT ANNOYING". It is: did the probe get an answer, and does
+# this sweeper still owe an action? A missing credential, an absent CLI, a subcommand this CLI
+# version does not have, a 5xx, a throttle — all UNVERIFIABLE, all gate, unchanged. A resource this
+# sweeper is REQUIRED to delete but could not bind to this run is also UNVERIFIABLE: something is
+# left undone. Only a resource the design says to report and never delete — where reporting IS the
+# complete discharge of the contract — is UNATTRIBUTABLE.
 #
 # ── WHY THE LEDGER IS A FILE AND NOT A SHELL VARIABLE ───────────────────────────────────────────
 #
@@ -54,8 +86,13 @@ PROBE_RETRY_DELAY="${PROBE_RETRY_DELAY:-3}"
 
 PROBE_LEDGER="${PROBE_LEDGER:-}"
 PROBE_ERR_DIR="${PROBE_ERR_DIR:-}"
+# TWO ledgers, never one with a flag column. They are read by different code with different
+# consequences — one decides the exit code, one decides only what is printed — and a single file
+# with a marker is one careless `grep` away from collapsing them back together, which is the exact
+# regression this file now tests for in both directions.
+PROBE_UNATTRIB_LEDGER="${PROBE_UNATTRIB_LEDGER:-}"
 
-# probe_reset — begin (or restart) a verification ledger. Idempotent.
+# probe_reset — begin (or restart) the verification ledgers. Idempotent.
 #
 # Called once at startup. It is deliberately NOT called again before verify_swept: a discovery call
 # that failed DURING the sweep means this script may have failed to delete something it never saw,
@@ -66,7 +103,9 @@ probe_reset() {
 		PROBE_ERR_DIR="$(mktemp -d "${TMPDIR:-/tmp}/alethia-sweep-probe.XXXXXX")"
 		PROBE_LEDGER="${PROBE_ERR_DIR}/ledger"
 	fi
+	[ -n "$PROBE_UNATTRIB_LEDGER" ] || PROBE_UNATTRIB_LEDGER="${PROBE_LEDGER}.unattributable"
 	: >"$PROBE_LEDGER"
+	: >"$PROBE_UNATTRIB_LEDGER"
 }
 
 # probe_note_unverifiable <type> <reason> — record that <type> could NOT be looked at.
@@ -103,7 +142,88 @@ probe_unverifiable_detail() {
 	return 0
 }
 
-# probe_run <type> <cmd…> — run a cloud LIST/DESCRIBE call and resolve its three-state result.
+# ── THE FOURTH STATE. Everything below is deliberately a PARALLEL set of functions over a SECOND
+#    ledger, not a parameter on the first. See the header: the two are read by different code with
+#    different consequences, and the one thing that must never happen is a change that makes an API
+#    failure stop gating. A shared ledger makes that a one-character mistake. ──
+
+# probe_note_unattributable <type> <reason> — record that <type> WAS looked at, the API DID answer,
+# and the answer is that something exists which by design carries nothing tying it to this run.
+#
+# NOT for a probe that failed — that is probe_note_unverifiable, and it gates. Use this ONLY where
+# the sweeper's design says "report, never delete", so that reporting is the complete discharge of
+# its contract and there is no action left undone.
+probe_note_unattributable() {
+	[ -n "$PROBE_UNATTRIB_LEDGER" ] || probe_reset
+	printf '%s(%s)\n' "$1" "$2" >>"$PROBE_UNATTRIB_LEDGER"
+}
+
+# probe_has_unattributable — true when at least one probe answered with something unattributable.
+probe_has_unattributable() {
+	[ -n "$PROBE_UNATTRIB_LEDGER" ] && [ -s "$PROBE_UNATTRIB_LEDGER" ]
+}
+
+# probe_unattributable_types — the distinct resource types, space-separated (headline form).
+probe_unattributable_types() {
+	probe_has_unattributable || return 0
+	sed -E 's/\(.*//' "$PROBE_UNATTRIB_LEDGER" | sort -u | tr '\n' ' '
+}
+
+# probe_unattributable_detail — every distinct type(reason), one per line, capped like the other.
+probe_unattributable_detail() {
+	probe_has_unattributable || return 0
+	local total
+	total="$(sort -u "$PROBE_UNATTRIB_LEDGER" | grep -c . || true)"
+	sort -u "$PROBE_UNATTRIB_LEDGER" | head -n 20 | sed 's/^/      · /'
+	[ "${total:-0}" -gt 20 ] && echo "      · … and $((total - 20)) more"
+	return 0
+}
+
+# probe_report_unattributable <cloud> <scope> — the LOUD, NON-GATING half of the contract.
+#
+# `::warning::` and not `::error::`, and it always returns 0. The resource is real and a human may
+# well have to remove it, but this sweeper is structurally incapable of ever resolving it, so
+# failing on it would red every run forever — see the header.
+#
+# The word "UNATTRIBUTABLE" is in every line it emits, and never the word "clean". That is the
+# reader-facing half of the contract: no log line or step-summary row for this state may be
+# mistakable for a clean sweep, and the self-test asserts the word rather than assuming it.
+probe_report_unattributable() {
+	probe_has_unattributable || return 0
+	local cloud="$1" scope="$2"
+	echo "  ⚠ UNATTRIBUTABLE — looked at, the API ANSWERED, and the answer cannot be tied to this run:" >&2
+	probe_unattributable_detail >&2
+	echo "::warning::${cloud} sweep for ${scope} found UNATTRIBUTABLE resource(s): $(probe_unattributable_types)— they EXIST, they were deliberately NOT swept, and nothing on them ties them to this run. This is NOT a clean result and NOT a failed probe: the probe answered. It does not gate the exit code, because a state this sweeper can never resolve would red every run forever and an always-red signal carries no information. Confirm by hand." >&2
+	# The step summary is where a human looks first, and "0 leaks, exit 0" with nothing beside it is
+	# what they would otherwise read here.
+	if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+		{
+			echo "### ⚠ ${cloud} sweep — UNATTRIBUTABLE resources"
+			echo
+			echo "Scope: \`${scope}\` · **not clean, not unverifiable, not gating.**"
+			echo
+			echo "Looked at; the API answered. These exist and by design carry nothing that ties them"
+			echo "to this run, so a scope-locked sweep must not delete them."
+			echo
+			probe_unattributable_detail | sed -E 's/^ *· (.*)$/- `\1`/'
+		} >>"$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# probe_clean_suffix — what the caller MUST append to its "✓ … verified complete" line.
+#
+# Empty on a genuinely clean run, so nothing changes there. Otherwise the success sentence carries
+# the finding, because "✓ cleanup verified complete — no billable resources remain" followed by
+# nothing is precisely the sentence a reader converts into "the account is empty".
+probe_clean_suffix() {
+	probe_has_unattributable || return 0
+	printf '; ⚠ ALSO PRESENT and deliberately NOT swept, because nothing ties them to this run: %s(UNATTRIBUTABLE — see the warning above)' "$(probe_unattributable_types)"
+}
+
+# probe_run <type> <cmd…> — run a cloud LIST/DESCRIBE call and resolve CLEAN / LEAKED /
+# UNVERIFIABLE. It never produces UNATTRIBUTABLE: that state is a judgement about what a
+# SUCCESSFUL answer means, which only the caller knows (see probe_note_unattributable).
 #
 # Echoes the command's stdout UNFILTERED (the caller pipes it through tr/grep/jq as before — the
 # filtering is now downstream of the exit-status decision, which is the fix). Returns the command's
@@ -175,8 +295,14 @@ probe_confirm() {
 # Returns 0 when every probe answered, 4 when one did not. Callers run it AFTER verify_swept so a
 # real leak (exit 1) still outranks "could not check". `::error::` and not `::warning::`: the whole
 # point is that the step goes red, because the account may be billing and nobody knows.
+#
+# UNATTRIBUTABLE findings are reported here too — every caller already calls probe_gate, so routing
+# the report through it is what makes the fourth state reach all five clouds in one place rather
+# than five copies that drift. It is reported FIRST and unconditionally: a run whose only finding is
+# unattributable still has to print it, and that run returns 0 from here.
 probe_gate() {
 	local cloud="$1" scope="$2"
+	probe_report_unattributable "$cloud" "$scope"
 	probe_has_unverifiable || return 0
 	echo "  ✗ verification INCOMPLETE — these probes could not answer:" >&2
 	probe_unverifiable_detail >&2
@@ -188,6 +314,7 @@ probe_gate() {
 # best-effort and never blocks its caller, so it warns instead of gating; the always() teardown and
 # the next preflight are what gate.
 probe_warn_unverifiable() {
+	probe_report_unattributable "$1" "$2"
 	probe_has_unverifiable || return 0
 	echo "::warning::${1} preflight for ${2} could not check $(probe_unverifiable_types)— the sweep is best-effort and does not block, but these were NOT verified." >&2
 	probe_unverifiable_detail >&2
@@ -280,6 +407,80 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	probe_gate aws "run e2e-1-1" >/dev/null 2>&1 || st_rc=$?
 	if [ "$st_rc" -eq 4 ]; then ok "an unverifiable probe gates with exit 4"; else bad "an unverifiable probe gates with exit 4" "got rc=${st_rc}"; fi
 	if [ "$(probe_unverifiable_types)" = "ec2-instance " ]; then ok "the headline names the type"; else bad "the headline names the type" "got '$(probe_unverifiable_types)'"; fi
+
+	# ── THE FOURTH STATE, and the two directions it can be broken in. ─────────────────────────────
+	#
+	# #3138 gave UNVERIFIABLE the exit code, correctly. It then routed hcloud's imager upload helpers
+	# into it — a case where BOTH listings SUCCEED and the answer is simply that an unlabelled
+	# resource exists which no selector can attribute — and hetzner went permanently red for it.
+	#
+	# These cases pin the boundary from BOTH sides, because one assertion alone is satisfiable by
+	# the wrong fix. "Unattributable does not gate" passes if UNVERIFIABLE stops gating too, which
+	# reinstates the original defect wholesale; "a failed API gates" passes if everything gates,
+	# which is the regression being fixed here. Each direction has to be able to go red alone.
+
+	# DIRECTION 1 — collapsing UNATTRIBUTABLE back into UNVERIFIABLE must fail. If
+	# probe_note_unattributable is ever made an alias of probe_note_unverifiable, or the ledgers are
+	# merged, probe_gate returns 4 here and this reds.
+	probe_reset
+	probe_note_unattributable imager-upload-helpers "unlabelled, cannot attribute"
+	st_rc=0
+	probe_gate hcloud "cluster=alethia-nl-1-1" >/dev/null 2>&1 || st_rc=$?
+	if [ "$st_rc" -eq 0 ]; then ok "an UNATTRIBUTABLE finding does NOT gate the exit code"; else bad "an UNATTRIBUTABLE finding does NOT gate the exit code" "probe_gate returned ${st_rc} — the two states have been collapsed"; fi
+	if probe_has_unattributable; then ok "it is recorded — reported, not swallowed"; else bad "it is recorded" "the unattributable ledger is empty"; fi
+	if probe_has_unverifiable; then bad "it does NOT land in the UNVERIFIABLE ledger" "it did — the ledgers are shared"; else ok "it does NOT land in the UNVERIFIABLE ledger"; fi
+	if [ "$(probe_unattributable_types)" = "imager-upload-helpers " ]; then ok "the headline names the unattributable type"; else bad "the headline names the unattributable type" "got '$(probe_unattributable_types)'"; fi
+
+	# DIRECTION 2 — routing a genuine API failure into UNATTRIBUTABLE must fail. If someone "fixes"
+	# a noisy red by calling probe_note_unattributable from probe_run, or by making probe_run's
+	# failure path non-gating, this reds: the ledger split AND the exit code are both asserted.
+	probe_reset
+	: >"$PROBE_CALLS"
+	ST_OUT="" ST_RC=255 ST_ERR="ExpiredToken" ST_FAIL_FIRST=0
+	st_out="$(probe_run widget stub)" || true
+	if probe_has_unverifiable; then ok "a FAILED API call is still UNVERIFIABLE"; else bad "a FAILED API call is still UNVERIFIABLE" "the unverifiable ledger is empty"; fi
+	if probe_has_unattributable; then bad "a FAILED API call is NOT unattributable" "it was routed into the non-gating ledger — a dead credential would now exit 0"; else ok "a FAILED API call is NOT unattributable"; fi
+	st_rc=0
+	probe_gate aws "run e2e-1-1" >/dev/null 2>&1 || st_rc=$?
+	if [ "$st_rc" -eq 4 ]; then ok "and it still gates with exit 4 (#3138 unweakened)"; else bad "and it still gates with exit 4" "got rc=${st_rc}"; fi
+
+	# BOTH AT ONCE. The gating state wins the exit code and the other is still printed — a real
+	# failure must never be hidden by a finding that does not gate, and vice versa.
+	probe_reset
+	probe_note_unattributable imager-upload-helpers "unlabelled, cannot attribute"
+	probe_note_unverifiable dns-zones "exit 1 — hcloud zone list unavailable"
+	st_rc=0
+	st_out="$(probe_gate hcloud "cluster=x" 2>&1)" || st_rc=$?
+	if [ "$st_rc" -eq 4 ]; then ok "unverifiable + unattributable together still exit 4"; else bad "unverifiable + unattributable together still exit 4" "got rc=${st_rc}"; fi
+	case "$st_out" in *imager-upload-helpers*) ok "…and the unattributable finding is still printed" ;; *) bad "…and the unattributable finding is still printed" "not in output" ;; esac
+	case "$st_out" in *dns-zones*) ok "…and so is the unverifiable one" ;; *) bad "…and so is the unverifiable one" "not in output" ;; esac
+
+	# THE READER-FACING HALF. A human reads two things: the annotation and the ✓ line. Neither may
+	# be mistakable for a clean sweep, so the word is asserted rather than assumed.
+	probe_reset
+	probe_note_unattributable imager-upload-helpers "unlabelled, cannot attribute"
+	st_out="$(probe_report_unattributable hcloud "cluster=x" 2>&1)"
+	case "$st_out" in *UNATTRIBUTABLE*) ok "the annotation says UNATTRIBUTABLE out loud" ;; *) bad "the annotation says UNATTRIBUTABLE out loud" "got '${st_out}'" ;; esac
+	case "$st_out" in *"::warning::"*) ok "it is a warning annotation, so it surfaces in the Actions UI" ;; *) bad "it is a warning annotation" "no ::warning:: in '${st_out}'" ;; esac
+	case "$st_out" in *"::error::"*) bad "it is NOT an error annotation" "an ::error:: would red the step it is not allowed to red" ;; *) ok "it is NOT an error annotation" ;; esac
+	st_out="$(probe_clean_suffix)"
+	case "$st_out" in *UNATTRIBUTABLE*imager-upload-helpers*|*imager-upload-helpers*UNATTRIBUTABLE*) ok "the ✓ line carries the finding, so it cannot read as clean" ;; *) bad "the ✓ line carries the finding" "got '${st_out}'" ;; esac
+	probe_reset
+	if [ -z "$(probe_clean_suffix)" ]; then ok "a genuinely clean run appends nothing"; else bad "a genuinely clean run appends nothing" "got '$(probe_clean_suffix)'"; fi
+
+	# The step-summary block. It is the row a human reads first, and "exit 0" beside nothing is what
+	# they would otherwise read.
+	probe_reset
+	probe_note_unattributable imager-upload-helpers "unlabelled, cannot attribute"
+	GITHUB_STEP_SUMMARY="${PROBE_ERR_DIR}/summary"
+	: >"$GITHUB_STEP_SUMMARY"
+	probe_report_unattributable hcloud "cluster=x" >/dev/null 2>&1
+	if grep -q 'UNATTRIBUTABLE' "$GITHUB_STEP_SUMMARY" && grep -q 'imager-upload-helpers' "$GITHUB_STEP_SUMMARY"; then
+		ok "the step summary names the state and the type"
+	else
+		bad "the step summary names the state and the type" "got '$(cat "$GITHUB_STEP_SUMMARY")'"
+	fi
+	unset GITHUB_STEP_SUMMARY
 
 	# ── Recorded from inside a subshell. The pipeline form is what every real caller uses. ──
 	probe_reset
