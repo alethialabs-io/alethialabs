@@ -635,26 +635,35 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - id: setup
+        run: pnpm install --frozen-lockfile
       - name: Open-core boundary (core must not import ee/)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:ee-boundary
       - name: Repository-wide open-core boundary and community image contract
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:open-core
       - name: No @theme inline variable is overridden (inert responsive ladder)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:theme-inline
       - name: Runner self-image is baked, matches its job, and is multi-arch
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:runner-self-image
       - name: Community edition type-checks without enterprise activation
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
           ALETHIA_EDITION: community
         run: pnpm -F console check-types
       - name: Installed dependency licence inventory has no unknown metadata
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm compliance:licenses
       - name: Generate workspace SBOM and community-source evidence
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm compliance:release
           pnpm source:community
       - name: Upload compliance evidence
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         uses: actions/upload-artifact@v7
         with:
           name: compliance-${{ github.sha }}
@@ -664,18 +673,25 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: No Supabase
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:no-supabase
       - name: No arbitrary var utility shadowed by an unlayered brand device
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:var-utility-shadowing
       - name: Authz scope (PDP, not ad-hoc user_id)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:authz-scope
       - name: Guard — revalidatePath targets resolve to real routes
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:revalidate-paths
       - name: Guard — no unauthorized "use server" action files
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:action-boundary
       - name: Marketing routes ⇄ reservation ⇄ Caddy in sync
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:marketing-routes
       - name: tsconfig.build.json excludes every un-shipped file (pruned-image type-check)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:tsconfig-build
       # Dead code in the console (knip). The script first asserts that every `entry` glob in
       # apps/console/knip.json still matches at least one file on disk, and FAILS if one does
@@ -689,12 +705,16 @@ jobs:
       # ~580-strong backlog of them that this lane's scope (knip.json + package.json) cannot
       # delete. Ratchet those two rules to "error" once that backlog is cleared.
       - name: Dead code — unused files, deps and binaries in the console (knip)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:dead-code
       - name: Drizzle migration history is unforked (linear snapshot chain)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:migrations
       - name: Every canvas offer is buildable on every cloud, or documented (offer parity)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:offer-parity
       - name: Offer-parity matrix is in sync with the code
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:offer-parity
           git diff --exit-code -- docs/testing/offer-parity.md \
@@ -704,8 +724,10 @@ jobs:
       # choice can be perfectly buildable while the number beside it is discarded — #1981 shipped a
       # cache allow-list that saved cleanly, provisioned nothing, and left the cache open.
       - name: Every value the product collects reaches the plan, or is documented (config carriage)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:config-carriage
       - name: Config-carriage board is in sync with the code
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:config-carriage
           git diff --exit-code -- docs/testing/config-carriage.md \
@@ -717,18 +739,22 @@ jobs:
       # could go stale. AWS envelope-encrypted Kubernetes Secrets for the entire life of the
       # templates while three clouds did not, unboarded and unexcluded (#2004).
       - name: Every asymmetric template variable is recorded (template parity)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:template-parity
       - name: Template-parity board is in sync with the templates
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:template-parity
           git diff --exit-code -- docs/testing/template-parity.md \
             || { echo "::error::docs/testing/template-parity.md is stale — run 'pnpm -F console gen:template-parity' and commit."; exit 1; }
       - name: Keyless cells agree with the code that implements them
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:keyless-cells
       # The canvas gates the IAM-auth toggle on this table (#1510). Hand-mirroring it would only
       # DETECT drift; generating it makes drift impossible — and the table churns (aws/gcp MySQL
       # opened four lanes after it was first written).
       - name: Keyless cell mirror is in sync with the renderer (keyless.go → keyless-cells.ts)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:keyless-cells
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/keyless-cells.ts \
@@ -738,6 +764,7 @@ jobs:
       # TestNodeDiskFloorsMatchTemplates); the canvas reads a generated mirror of them, so a floor
       # bump in a template that isn't regenerated here fails the build instead of drifting.
       - name: Node-disk floors are in sync with the templates (variables.tf → node-disk.ts)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:node-disk
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/node-disk.ts \
@@ -748,6 +775,7 @@ jobs:
       # reviewable, and diffed so it cannot move silently: adding a gate to a field is a real change
       # to what the product offers, and until now it moved nothing a reviewer could see.
       - name: Offer surface is in sync with the inspector schema (config-schema.ts → offer-surface.json)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:offer-surface
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/offer-surface.json \
@@ -759,25 +787,31 @@ jobs:
       # deploy time as unresolved secrets rather than at config time. The paired Go test
       # (categories/secrets_runtime_read_mirror_test.go) proves the generator READ the source right.
       - name: Secrets runtime-read mirror is in sync with the hooks (secrets_*.go → secrets-runtime-read.ts)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:secrets-runtime-read
           git diff --exit-code -- apps/console/lib/connectors/generated/secrets-runtime-read.ts \
             || { echo "::error::Generated secrets-runtime-read.ts is stale — run 'pnpm -F console gen:secrets-runtime-read' and commit (source of truth: the saasSecretStore / keylessSecretStore hooks in packages/core/categories/secrets_*.go)."; exit 1; }
       - name: Project templates pin their providers (tofu lock files, no -upgrade)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:tofu-lockfiles
       - name: Shipped version defaults are mutually compatible (compat matrix)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console check:compat
       - name: CLI contract fixtures are in sync with the Zod contract
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:cli-fixtures
           git diff --exit-code -- packages/core/api/testdata \
             || { echo "::error::CLI fixtures are stale — run 'pnpm -F console gen:cli-fixtures' and commit (the Go contract test will then name any struct field to update)."; exit 1; }
       - name: Go enum constants are in sync with the drizzle enums
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:go-enums
           git diff --exit-code -- packages/core/types/enums_gen.go \
             || { echo "::error::Go enum constants are stale — run 'pnpm -F console gen:go-enums' and commit. The Go build + exhaustive lint then flag any switch/map to update."; exit 1; }
       - name: Compat matrix mirror is in sync with the SSOT (matrix.json → matrix.ts)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:matrix
           git diff --exit-code -- apps/console/lib/compat/generated/matrix.ts \
@@ -787,51 +821,65 @@ jobs:
       # non-empty versions[] containing its default, and the snake + camel surfaces agree), so a
       # malformed catalog.json reds here rather than at someone's next apply.
       - name: Cloud catalog mirror is in sync with the SSOT (catalog.json → catalog.ts)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           pnpm -F console gen:catalog
           git diff --exit-code -- apps/console/lib/cloud-providers/generated/catalog.ts \
             || { echo "::error::Generated catalog.ts is stale — run 'pnpm -F console gen:catalog' and commit (source of truth: packages/core/catalog/catalog.json)."; exit 1; }
       - name: Catalog drift scout's pure parsers/differ hold (derive:catalog --self-test)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm -F console derive:catalog -- --self-test
       - name: Tests exercise real source (anti-vacuous-test tripwire)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-test-imports.mjs
       - name: Go tests exercise real source (anti-vacuous-test tripwire, verify + runner)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-go-test-imports.mjs
       - name: Connector setup artifacts in sync (infra/connector ⇄ console public)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-connector-assets.mjs
       - name: SPDX headers are legal-form-agnostic (Alethia Labs, no OÜ/DPK)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-license-headers.mjs
       # The IP-activation path is dormant code until the founder assignment is signed, and dormant
       # code rots silently. It rewrites eleven exact prose markers across eight legal files; edit any
       # of that wording and the activation would refuse at the worst possible moment. This runs the
       # real rewrite against synthetic evidence, so the markers are proven on every PR.
       - name: IP-activation markers still match the legal prose (#2366)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/legal/activate-company-ip.mjs --check-markers
       - name: Docs describe a repo that exists (paths · scripts · blocked commands)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-docs-contract.mjs
       # A clickwrap record names a Terms VERSION. If the text behind that version can move, the
       # record proves nothing about what the user actually agreed to — so every public legal
       # document is pinned by the SHA-256 of its source, and editing one without re-sealing is a
       # hard failure rather than a silent re-description of the past (#2372).
       - name: Legal documents match their sealed content hash
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-legal-document-hashes.mjs
       # The contributor agreements are sealed BEFORE they are active, and that is the point: the
       # window between counsel approving the text and activation switching enforcement on is exactly
       # when an unnoticed edit would be most damaging. Also guards cla/ACTIVE against disagreeing
       # with the seal once it exists (#2374).
       - name: Contributor agreements match their sealed hash
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/legal/check-cla-hashes.mjs
       # Four hermetic suites that ran NOWHERE until now — no network, no gh, no docker.
       # wt-lease-hook-test.sh replays incident #1247 (one instance committing another's
       # uncommitted work) against a real throwaway leased worktree; it is the only proof
       # the lease actually holds, and it was never executed by CI.
       - name: Worktree lease protocol (13 properties, incl. pid-reuse + nested worktrees)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-lease.sh --self-test
       - name: Worktree lease guard — replays incident #1247
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-lease-hook-test.sh
       - name: Worktree landed-detection (squash merges; merged-PR-plus-new-commit is NOT landed)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/lib/wt-landed-test.sh
       - name: Board claim arbitration (earliest-lease-wins) + PR predicates
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/claim-work.sh --self-test
       # The Go coverage ratchet becomes a step inside `Go (build · vet · test · lint)`, a REQUIRED
       # check with no path filter — so it gates every PR in the repository and a false failure
@@ -846,6 +894,7 @@ jobs:
       #     DIFFERENT, ADJACENT package must merge clean, or every concurrent Go PR conflicts.
       # Hermetic: no go, no network, no repo state.
       - name: Go coverage ratchet (arithmetic · fail-open set · merge-safe layout)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/go-coverage.sh --self-test
       # The TypeScript half of the same design — three steps inside `TypeScript (lint · types ·
       # test · docs)`, a REQUIRED check with NO path filter, so it gates every PR in the
@@ -868,14 +917,17 @@ jobs:
       #     — the guard's own guard, so a new project cannot join un-gated.
       # Hermetic: no suites, no network, no installed tree.
       - name: TS coverage ratchet (arithmetic · fail-open set · merge-safe layout · scope)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ts-coverage.mjs --self-test
       # The self-test above proves the ratchet's ARITHMETIC. This proves its PREMISE: that the
       # environment each committed floors file records is one the enforcing job can actually
       # reproduce. A recorded axis the job can never match demotes every regression to a warning,
       # so the gate passes forever while looking exactly like a gate that is holding.
       - name: Floors fingerprint is reproducible by the job that enforces it
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:floors-reproducible
       - name: Board decomposition validator (disjoint scopes, acyclic DAG)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/decompose-validate.mjs --self-test
       # The CLA gate runs from `pull_request_target` — a privileged token, and comment text written
       # by whoever opened the pull request. It is also DORMANT until `pnpm legal:activate-ip` writes
@@ -886,6 +938,7 @@ jobs:
       # signing comment, a third party signing on the author's behalf, and a signature scoped to a
       # superseded CLA version. Hermetic — no network, no gh, no repo state.
       - name: CLA gate decisions (spoofed bots · edited comments · version scoping)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/legal/cla-check-selftest.mjs
       # The capabilities-security REQUIRED check decides which changed files it inspects AT ALL, and a
       # file outside that set is not "passed" — it is never read and the check goes green (#1789). This
@@ -894,18 +947,21 @@ jobs:
       # not match, and that invariants A–D still fire. It reads the checkout, but runs no git and no
       # network — the invariants are driven from inline fixtures.
       - name: Capabilities-security gate scope + invariants (the guard's own guard)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/security/capabilities-gate.mjs --self-test
       # The nightly rollup is the only thing that reads a real-cloud run's verdict, and it reported a
       # leg that provisioned and FAILED as "gate off — no secret/var wired" (#1613). It is main-gated
       # and runs once a night, so a regression there is invisible for a day and then misattributed to
       # whatever diff is nearby. These fixtures are hermetic — no network, no gh, no token.
       - name: Nightly rollup derivation (a red leg is never "not enabled")
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/nightly-rollup.sh --self-test
       # Which dimension a nightly proved decides the tracking issue's TITLE, and the title is the
       # dedup key: keyed on the cloud alone, the floor and the weekly full bar collapse onto one
       # issue and the second red filed is silently dropped — which is how the full bar ran unwatched
       # for weeks (#1755). Both crons are asserted here because neither is reachable from a PR.
       - name: Nightly dimension resolution (floor and full-bar never collide)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/resolve-dimension.sh --self-test
       # The AWS sweeper discovers this run's cluster to reach the resources tofu never owned — the
       # NLB ingress-nginx creates, Karpenter's instances. Discovery fell back to EC2 tags alone, so a
@@ -915,6 +971,7 @@ jobs:
       # run 31929564177 left one standing for eight days. Both directions are asserted: another run's
       # LB must NOT resolve, or the fix would be a wildcard. Hermetic — `aws` is stubbed, no creds.
       - name: AWS sweeper cluster discovery (a dead cluster still reaches its load balancer)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/aws-cleanup.sh --self-test
       # The hcloud sweeper's twin blind spot. The imager provider boots a rescue server and an ssh
       # key named `hcloud-upload-image-*` to build the Talos snapshot, neither carrying a label, and
@@ -925,6 +982,7 @@ jobs:
       # that is what turns "verified complete" into a warning. Both directions — an empty account
       # must NOT raise it, or the warning stops meaning anything. Hermetic: `hcloud` is stubbed.
       - name: hcloud sweeper reports what it cannot attribute (imager upload helpers)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/hcloud-cleanup.sh --self-test
       # ── The three-state probe contract, and the reason all five sweepers are asserted here now.
       #
@@ -943,18 +1001,23 @@ jobs:
       # output passes just as happily with the fix removed, because output was the half that
       # already worked. Hermetic — every CLI is stubbed, no credentials, no cloud, no spend.
       - name: Sweeper probe contract (an API that did not answer is not an empty account)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/lib/sweep-probe.sh --self-test
       - name: GCP sweeper three-state verification
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/gcp-cleanup.sh --self-test
       - name: Azure sweeper three-state verification
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/azure-cleanup.sh --self-test
       - name: Alibaba sweeper three-state verification
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash scripts/e2e/alibaba-cleanup.sh --self-test
       # Which workflows are red, and have been red for a while. The classifier is the load-bearing
       # part: `skipped` must never read as a failure (a gate-off leg is not a broken pipeline), and
       # three runs is the minimum that can distinguish "dead" from "flaked once". Both are asserted.
       # Hermetic — the classifier is pure and the fixtures are the real 2026-08-24 shape.
       - name: Workflow health classifier (skipped is not a failure)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ci/workflow-health.mjs --self-test
       # A TIMER must never start an unpriced real apply. The weekly `17 5 * * 0` full-bar cron fanned
       # the 11-kind surface across all five clouds while ALETHIA_COST_CEILING_MONTHLY_USD was wired
@@ -964,6 +1027,7 @@ jobs:
       # that resolves to `full` fails unless every matrix cloud is priced. Exemptions (a watched
       # dispatch) deliberately do not satisfy it. Hermetic — parses two files, no gh, no cloud.
       - name: E2E spend guard (no scheduled full bar on an unpriced cloud)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           node scripts/check-e2e-spend-guard.mjs --self-test
           node scripts/check-e2e-spend-guard.mjs
@@ -974,6 +1038,7 @@ jobs:
       # timeout, raise the ArgoCD convergence budget — that could not be dispatched at all.
       # Hermetic: reads test/e2e/**.go, the nightly workflow and the resolver. No gh, no cloud.
       - name: E2E knob reachability (a knob nothing can set is a scenario nobody can run)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-e2e-knob-reach.mjs
       # hcloud-cloud-controller-manager refuses to create a Load Balancer unless it is told WHERE.
       # The hetzner template told it nothing, so every `type: LoadBalancer` Service sat Pending —
@@ -983,6 +1048,7 @@ jobs:
       # The symptom names none of its cause, so a comment in the template would not have survived;
       # dropping the location re-arms the whole chain. Hermetic — parses one .tf, no cloud.
       - name: Hetzner CCM has somewhere to put a Load Balancer
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           node scripts/check-hetzner-lb-location.mjs --self-test
           node scripts/check-hetzner-lb-location.mjs
@@ -993,6 +1059,7 @@ jobs:
       # both directions — non-vacuous AND not over-broad — and is hermetic: no cloud, no secret,
       # obviously-fake literals only.
       - name: Proof-scrub denylist (non-vacuous, and no false positive on a tofu plan JSON)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash demos/proofs/scrub.sh --self-test
       # The scrub above decides what a bundle may PUBLISH. This decides whether a bundle SAYS
       # ANYTHING — and until #2688 it did not. capture-proof.sh runs after the tier's t.Cleanup has
@@ -1006,6 +1073,7 @@ jobs:
       # compares two bundles it actually wrote, rather than asserting against a fixture that would
       # have matched the broken output just as well.
       - name: Proof bundle distinguishes a PASS from a FAIL (never 0/0 on both)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash demos/proofs/capture-proof.sh --self-test
       # PROGRAMME.md is the one file a session reads to know where the MVP programme stands, so its
       # status half is DERIVED and diff-gated — the numbers cannot be typed. This is the guard's own
@@ -1015,32 +1083,53 @@ jobs:
       # passing CI: runner-xcloud-parity.md called hetzner green for cluster provision,
       # provisioning-e2e-parity.md called it blocked, and the proof ledger said neither had evidence.
       - name: Programme ledger derivation (a PASS with no bundle is never a proof)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/programme-rollup.mjs --self-test
       - name: Programme ledger is in sync with the tree
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/programme-rollup.mjs
       # The spine mirror: Node cannot parse Go, so the Go tables that already OWN and validate the
       # ceiling/debt verdicts (MaxConfigCarriage, CLIReach) are exported to JSON and diff-gated,
       # rather than a third hand-authored list being kept in step by hand. Same shape as
       # gen:offer-surface / gen:keyless-cells. Untagged test — no cloud, no cost.
       - name: Programme spine mirror is in sync with the Go tables
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           (cd test/e2e && GOWORK=off go test -run 'TestProgrammeExport' ./...)
           git diff --exit-code -- test/e2e/generated/programme.json \
             || { echo "::error::test/e2e/generated/programme.json is stale — regenerate with (cd test/e2e && GOWORK=off go test -run TestProgrammeExport ./...) and commit. Source of truth: MaxConfigKinds + CLIDemoSteps."; exit 1; }
       # Each guard proves it still BLOCKS what it must and, more importantly, still
       # ALLOWS what it must — the false positives are what get a guard disabled.
+      # This job is a BAG of independent checks, and it must stay one. Actions stops a job at its
+      # first failing step, so before #2662 a failure at index 4 (`Open-core boundary`) silently
+      # skipped 73 others — including the migration-chain check, the proof-scrub denylist and the
+      # hook self-tests below, none of which has anything to do with the open-core boundary. Every
+      # red run reported ONE finding and hid however many more sat behind it.
+      #
+      # The 73 `if:` lines fix today. This keeps them: the next check appended without one would
+      # otherwise rejoin the veto chain at the bottom, where it is also the step most likely to be
+      # skipped, and nothing would say so.
+      - name: The guards job is a bag of independent checks, not a pipeline
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-guards-independent.mjs
+      - name: ...and that check's own parser is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/ci/check-guards-independent.mjs --self-test
       - name: Guards self-test (runtime · compose · merge)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           bash .claude/hooks/guard-runtime.sh --self-test
           bash .claude/hooks/guard-compose.sh --self-test
           bash .claude/hooks/guard-merge.sh --self-test
           bash .claude/hooks/guard-iac.sh --self-test
       - name: Hook scripts parse
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: |
           for f in .claude/hooks/*.sh scripts/env.sh scripts/dev-doctor.sh scripts/box/*.sh; do
             bash -n "$f"
           done
       - name: Cloud privilege (OIDC / creds) never reachable from a PR (BYOC invariant 1)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/check-workflow-oidc-isolation.mjs
 
   go:
