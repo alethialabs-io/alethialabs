@@ -167,7 +167,11 @@ jobs:
     # 160 → 180 (fabric 265 → 275) with #2717's measured ArgoCD budget. See the step cap below for
     # the arithmetic; the two move together, and TestArgoBudgetCeilingFitsTheWorkflowCaps now holds
     # them to it offline instead of leaving it to t2budget on a paid run.
-    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 275 || 180 }}
+    #
+    # 180 → 195 (fabric 275 → 290) with the managed teardown window's 30m → 45m, measured on
+    # aws/floor run 33155063965. Same rule as every other move here: the ladder rung moved, so its
+    # outermost backstop moves with it, and the offline guard is what said so.
+    timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 290 || 195 }}
     # Serialize PER PROVIDER: never let two nightly runs provision into the SAME shared
     # cloud account at once — but let DIFFERENT providers run concurrently (they share no
     # account, and serializing them would stretch the nightly to the sum of every cloud).
@@ -951,10 +955,16 @@ jobs:
       #    normally — rather than the whole job hitting its cap. ──
       # The LADDER is ctx < go-timeout < step < job, and each rung has a job:
       #
-      #   ctx  cancels first  → the scenario reports its own bounded failure, and t.Cleanup tears down
-      #   go   +5m            → if the ctx is not honored, go panics with a stack naming the test
-      #   step +5m            → if go is wedged, the step kills it and the run still reaches teardown
-      #   job  +15m           → teardown, proof capture and the scrub all run after the step is done
+      #   ctx      cancels first  → the scenario reports its own bounded failure, and t.Cleanup tears down
+      #   teardown reserved       → the in-process t.Cleanup destroy's OWN window, inside the go-timeout
+      #   go       +5m            → if the ctx is not honored, go panics with a stack naming the test
+      #   step     +5m            → if go is wedged, the step kills it and the run still reaches teardown
+      #   job      +15m           → the WORKFLOW sweeper, proof capture and the scrub, after the step
+      #
+      # The teardown rung is a rung, not a footnote: the sweeper the job's +15m pays for runs AFTER
+      # the step, while the t.Cleanup destroy runs INSIDE the go test process, so only the go-timeout
+      # can bound it. A window too small does not just leak resources — terraform-exec cancels with
+      # SIGINT, so the harness gets `signal: interrupt` and loses the destroy's own named error.
       #
       # The two inner rungs are DERIVED, not written here: the step's `run:` asks
       # test/e2e/cmd/t2budget for the go-timeout, computed by the same ResolveT2Budget the test uses
@@ -984,7 +994,7 @@ jobs:
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
-        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 260 || 165 }}
+        timeout-minutes: ${{ vars.E2E_FABRIC_DEMO != '' && 275 || 180 }}
         working-directory: test/e2e
         env:
           ALETHIA_E2E_PROVIDER: ${{ matrix.provider }}
@@ -1429,7 +1439,9 @@ jobs:
           #   1. an aws `full` bar's ladder is ctx 102m, which 100m could never contain — the two
           #      heaviest cells were unreachable by arithmetic, not by any cloud's fault; and
           #   2. ResolveT2Budget now RESERVES the in-process teardown window in the go-timeout
-          #      (30m managed / 15m hetzner, #2729), which every rung above it inherits.
+          #      (#2729), which every rung above it inherits. The window itself is per-provider and
+          #      lives in t2ProviderTable, deliberately not restated here — it has already moved once
+          #      (30m → 45m managed) and a copy of it in this comment would now be wrong.
           #
           # 142/157 -> 145/160 (fabric 237/252 -> 250/265) because the day-2 access layer became a
           # RESERVED ladder term. Its probes always consumed ctx; nothing reserved for them, so the
@@ -1454,6 +1466,16 @@ jobs:
           #   ctx = deploy-wait 50 + argocd-converge 40 + soak 25 + day2-access 3 + headroom 7 = 125
           #   go  = ctx + teardown 30 + 5 = 160  ·  step = go + 5 = 165  ·  job = step + 15 = 180
           #
+          # 165/180 -> 180/195 (fabric 260/275 -> 275/290) because the managed teardown window is
+          # now 45m, not 30m. aws/floor run 33155063965 spent all 30m of it and was SIGINT'd with an
+          # internet gateway at 19m50s and three subnets at 17m0s — every one of them still inside
+          # the AWS provider's own 20m delete ceiling, so the destroy was ~3m from returning a NAMED
+          # error and instead reported `tofu destroy failed: signal: interrupt`, which names nothing.
+          # The reserved rung moved, so these two move with it:
+          #
+          #   ctx = 125 (unchanged; teardown is deliberately NOT in the ctx)
+          #   go  = ctx + teardown 45 + 5 = 175  ·  step = go + 5 = 180  ·  job = step + 15 = 195
+          #
           # This is the outer GitHub-level backstop, NOT the effective bound on a cheap leg: the
           # ladder is per-provider and per-dimension, so a floor run is still killed by its own
           # ~100m go-timeout. This pair only binds if every finer timeout has already failed.
@@ -1462,8 +1484,8 @@ jobs:
           # this offline on every PR, across every cloud x dimension, and additionally holds these
           # two to being the SAME expressions as the `timeout-minutes:` above — which the
           # "if you change one, change both" instruction asked for and nothing enforced.
-          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 260 || 165 }}
-          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 275 || 180 }}
+          T2_STEP_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 275 || 180 }}
+          T2_JOB_CAP_MINUTES: ${{ vars.E2E_FABRIC_DEMO != '' && 290 || 195 }}
           # Where the go-test stream is teed so capture-proof.sh can put the ASSERTIONS in the
           # committed bundle. ALETHIA_E2E_T2_RUNNER_LOG above is the RUNNER's deployment log — a
           # different stream, which carries no `--- PASS` and no A0.x decision lines.
