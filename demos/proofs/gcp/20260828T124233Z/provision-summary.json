@@ -1,0 +1,22 @@
+{
+  "provider": "gcp",
+  "region": "europe-west3",
+  "cluster": "alethia-nl-33169515387-1",
+  "run_tag": "nightly-33169515387-1",
+  "outcome": "success",
+  "deploy_stage": "argocd-ready",
+  "git_sha": "5f3a95e",
+  "captured_at": "20260828T124233Z",
+  "resources_added": 45,
+  "resources_destroyed": 1,
+  "cluster_live_at_capture": false,
+  "nodes_ready": 0,
+  "argocd_total": 0,
+  "argocd_healthy_synced": 0,
+  "argocd_verdict": "Healthy+Synced (T2-asserted)",
+  "receipt_signed": true,
+  "receipt_plan_sha256": "10cc8cf33132",
+  "destroyed": true,
+  "duration_seconds": 2332,
+  "verdict": "gcp: ✅ apply(45 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (T2-asserted)→destroyed(1)"
+}
