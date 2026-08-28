@@ -23,7 +23,7 @@ func TestDescribeArgoDiffStrategySeparatesTheThreeCases(t *testing.T) {
 	// ServerSideApply they run the same one, and then it is.
 	ssa := describeArgoDiffStrategy(argoAppDiffStrategySpec{
 		SyncOptions: []string{"CreateNamespace=true", "ServerSideApply=true", "RespectIgnoreDifferences=true"},
-	}, nil)
+	}, "v9.9.9", nil)
 	if !strings.Contains(ssa, "STRUCTURED-MERGE") {
 		t.Fatalf("ServerSideApply without ServerSideDiff must name structured-merge diff, got %q", ssa)
 	}
@@ -33,7 +33,7 @@ func TestDescribeArgoDiffStrategySeparatesTheThreeCases(t *testing.T) {
 
 	plain := describeArgoDiffStrategy(argoAppDiffStrategySpec{
 		SyncOptions: []string{"CreateNamespace=true"},
-	}, nil)
+	}, "v9.9.9", nil)
 	if !strings.Contains(plain, "genuine contradiction") {
 		t.Fatalf("without ServerSideApply an empty diff IS a contradiction, got %q", plain)
 	}
@@ -44,7 +44,7 @@ func TestDescribeArgoDiffStrategySeparatesTheThreeCases(t *testing.T) {
 	ssd := describeArgoDiffStrategy(argoAppDiffStrategySpec{
 		SyncOptions:    []string{"ServerSideApply=true"},
 		CompareOptions: "ServerSideDiff=true",
-	}, nil)
+	}, "v9.9.9", nil)
 	if !strings.Contains(ssd, "dry-run apply") {
 		t.Fatalf("ServerSideDiff=true must name the API-server dry-run, got %q", ssd)
 	}
@@ -60,14 +60,14 @@ func TestDescribeArgoDiffStrategyHonoursAnExplicitFalse(t *testing.T) {
 	got := describeArgoDiffStrategy(argoAppDiffStrategySpec{
 		SyncOptions:    []string{"ServerSideApply=true"},
 		CompareOptions: "ServerSideDiff=false",
-	}, nil)
+	}, "v9.9.9", nil)
 	if !strings.Contains(got, "STRUCTURED-MERGE") {
 		t.Fatalf("ServerSideDiff=false leaves structured-merge diff in place, got %q", got)
 	}
 }
 
 func TestDescribeArgoDiffStrategyCannotInventAVerdict(t *testing.T) {
-	got := describeArgoDiffStrategy(argoAppDiffStrategySpec{}, errors.New("connection refused"))
+	got := describeArgoDiffStrategy(argoAppDiffStrategySpec{}, "v9.9.9", errors.New("connection refused"))
 	if !strings.Contains(got, "COULD NOT ASK") {
 		t.Fatalf("a read failure must render as COULD NOT ASK, got %q", got)
 	}
@@ -274,7 +274,7 @@ func TestReadArgoDiffStrategyWithoutAClusterSaysSoRatherThanGuessing(t *testing.
 	// No cluster: kubectl either is absent or cannot reach one. Both are "could not ask", and the
 	// dangerous failure would be falling through to the `!ssa` branch — which asserts the two
 	// diffs are the SAME comparison and that the empty diff is therefore a real contradiction.
-	got := readArgoDiffStrategy(t.Context(), "/nonexistent-kubeconfig", "addon-loki")
+	got := readArgoDiffStrategy(t.Context(), "/nonexistent-kubeconfig", "statefulset.apps/argo-cd-argocd-application-controller", "addon-loki")
 	if !strings.Contains(got, "COULD NOT ASK") {
 		t.Fatalf("want COULD NOT ASK without a cluster, got %q", got)
 	}
