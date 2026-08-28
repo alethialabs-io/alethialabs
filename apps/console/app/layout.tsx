@@ -72,7 +72,19 @@ export default function RootLayout({
 				    moment a visitor crossed from the site into the login page — the same
 				    seam, in the other direction, that the marketing/blog mismatch created.
 				    Only the DEFAULT moves: the account-menu toggle still pins a choice, and
-				    anyone who already made one keeps it, because localStorage wins. */}
+				    anyone who already made one keeps it, because localStorage wins.
+
+				    THE SCOPE IS THE WHOLE CONSOLE, DELIBERATELY (#2694). This is the app's only
+				    ThemeProvider — it is the root layout, so it governs `/[org]/…` exactly as much
+				    as the login page, and the marketing-seam argument above motivates only the
+				    latter. Following the OS everywhere is the intended product behaviour, and a
+				    first-time user on a dark-mode OS is meant to land in a dark console.
+
+				    That RETIRES an explicit promise. The comment this replaced said "the default
+				    stays `light` so a first load is unchanged", which was a deliberate guarantee and
+				    is now consciously withdrawn — recorded here rather than left to be rediscovered
+				    from the diff, because a scope that only the git history knows is a scope nobody
+				    can review. */}
 				<ThemeProvider attribute="class" defaultTheme="system" enableSystem>
 					<Providers>{children}</Providers>
 					{/* Bottom-center keeps toasts clear of the bottom-right floating chrome (setup
