@@ -26,13 +26,22 @@ pnpm wt:who                                                     # ~160 worktrees
 ls demos/monday-evidence/                                       # what has actually been proven
 ```
 
-Then take the **first row in §2 with no verdict** and do that. Do not re-plan, do not re-explore, do
+**Read §3 before §2.** As of 2026-08-29 the top unfinished rows are blocked on the maintainer, not on
+work — a session that just grabs "the first blank row" will walk straight into a blocker and burn its
+context rediscovering it. §3 says which one, and what single command clears it.
+
+Once §3 is clear, take the **first row in §2 with no verdict**. Do not re-plan, do not re-explore, do
 not pick a different row because it looks easier.
 
 **The discipline that makes a context clear free:** update §2 *before* the context fills, not after.
 A row written after the fact is a row written from memory, and memory is what this file replaces.
 
-Work happens in `../wt-monday-demo` (branch `feat/monday-demo`). Never commit in `app/`.
+Work happens in `../wt-monday-demo` on branch `feat/monday-demo`, which already has an **open PR into
+`dev` (#3345)** — push to it, do not open a second one. Never commit in `app/`.
+
+Filed and still open: **#3348** (prod cannot provision AWS/GCP — the biggest risk to Monday),
+**#3351** (drift dead on a prod env), **#3318** (MCP discovery), **#3321** (Hetzner Robot pools,
+scope only).
 
 ---
 
