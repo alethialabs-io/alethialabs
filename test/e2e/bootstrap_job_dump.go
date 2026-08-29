@@ -58,10 +58,17 @@ func (j bootstrapJob) Verdict() string {
 	switch {
 	case j.Succeeded > 0:
 		return "Complete"
+	case j.Active > 0:
+		// ACTIVE BEATS FAILED. A Job under a backoffLimit accumulates `failed` while it retries, so
+		// 2 failures and 1 active pod is a Job that may STILL COMPLETE — calling that FAILED reports
+		// a verdict the Job has not reached, and on the vault bootstrap that is the difference
+		// between "it is retrying" and "it is dead".
+		if j.Failed > 0 {
+			return fmt.Sprintf("still running (%d prior pod failure(s))", j.Failed)
+		}
+		return "still running"
 	case j.Failed > 0:
 		return fmt.Sprintf("FAILED (%d pod failure(s))", j.Failed)
-	case j.Active > 0:
-		return "still running"
 	default:
 		return "no succeeded/failed/active count — the Job exists but has not reported"
 	}
@@ -114,6 +121,12 @@ func parseBootstrapJobs(listJSON []byte) ([]bootstrapJob, error) {
 
 // kubectlRead runs one kubectl read and returns STDOUT, with stderr folded into the ERROR.
 //
+// THE STDOUT IS RETURNED EVEN ON FAILURE, because a partial answer is still an answer.
+// `kubectl logs -l` reads a Job's pods in sequence and bails on the first one it cannot open — so a
+// fifth pod still in ContainerCreating makes the command exit non-zero AFTER it has already printed
+// attempts one to four. Discarding that is discarding the very attempt this dump exists to show,
+// and it is the exact Job shape the dump was written for.
+//
 // `exec.Output()` alone renders a missing CRD, an RBAC refusal and an unreachable API server all
 // as `exit status 1` — three faults with three different next steps, printed as one number, in a
 // dump whose only job is to say which. Stderr stays OUT of the returned value: this stdout is
@@ -134,9 +147,9 @@ func kubectlRead(ctx context.Context, timeout time.Duration, kubeconfigPath stri
 		if msg != "" {
 			// Appended only when there IS something: an error ending in a bare colon reads like a
 			// message that got cut off.
-			return nil, fmt.Errorf("%w: %s", err, msg)
+			return out, fmt.Errorf("%w: %s", err, msg)
 		}
-		return nil, err
+		return out, err
 	}
 	return out, nil
 }
@@ -169,31 +182,52 @@ var jobPodSelectors = []string{"batch.kubernetes.io/job-name=", "job-name="}
 // the question.
 func bootstrapJobLog(ctx context.Context, kubeconfigPath string, j bootstrapJob) string {
 	var b strings.Builder
+	var readErrs []string
 	for _, sel := range jobPodSelectors {
+		// No --max-log-requests: kubectl enforces that ceiling only under --follow ("maximum number
+		// of concurrent logs to FOLLOW"), so on this snapshot path it is inert and a comment
+		// claiming it bounds the read would be describing something that does not happen. The real
+		// bound is the timeout above.
+		//
+		// --all-containers because these Jobs are init-container-first: an init container that fails
+		// leaves the main one in PodInitializing, and a read scoped to the default container returns
+		// nothing about the step that actually failed.
 		logs, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath,
 			"-n", j.Namespace, "logs", "-l", sel+j.Name,
-			"--tail=40", "--prefix", "--timestamps", "--all-containers",
-			// backoffLimit 4 makes five pods, and kubectl's default ceiling is five. One over is
-			// not enough margin for a Job whose limit someone raises later.
-			"--max-log-requests=10")
+			"--tail=40", "--prefix", "--timestamps", "--all-containers")
+		// PRINT WHAT CAME BACK FIRST, error or not. kubectl bails on the first pod it cannot open
+		// and has already written the ones before it.
+		if len(strings.TrimSpace(string(logs))) > 0 {
+			for _, ln := range strings.Split(strings.TrimRight(string(logs), "\n"), "\n") {
+				fmt.Fprintf(&b, "    | %s\n", ln)
+			}
+			if err != nil {
+				fmt.Fprintf(&b, "    (PARTIAL — the read stopped early: %v. Attempts after the one "+
+					"it stopped on are missing; ordering is by the timestamps above, not by block.)\n", err)
+			} else {
+				fmt.Fprintf(&b, "    (attempts appear in no particular order — sort by the timestamps)\n")
+			}
+			return b.String()
+		}
 		if err != nil {
-			fmt.Fprintf(&b, "    (no log via %s: %v — the pods may already have been collected)\n", sel+j.Name, err)
-			continue
+			// A failed read is its OWN outcome, not a member of the no-output dichotomy below.
+			// Folding it in there would offer a reader two explanations that both exclude the
+			// actual one, and the reason is right here.
+			readErrs = append(readErrs, fmt.Sprintf("%s: %v", sel+j.Name, err))
 		}
-		if len(strings.TrimSpace(string(logs))) == 0 {
-			// Not yet a finding: the OTHER selector may be the one this cluster labels with.
-			continue
-		}
-		for _, ln := range strings.Split(strings.TrimRight(string(logs), "\n"), "\n") {
-			fmt.Fprintf(&b, "    | %s\n", ln)
-		}
+		// Otherwise: exit 0 and nothing. Not yet a finding — the OTHER selector may be the one this
+		// cluster labels with.
+	}
+	if len(readErrs) > 0 {
+		fmt.Fprintf(&b, "    (the log COULD NOT BE READ, which says nothing about whether the Job "+
+			"said anything — %s)\n", strings.Join(readErrs, "; "))
 		return b.String()
 	}
-	// Every selector tried and none produced a line. Said in full, because "the Job produced no
+	// Every selector returned successfully and empty. Said in full, because "the Job produced no
 	// output" and "we could not find its pods" send a reader to completely different places.
-	fmt.Fprintf(&b, "    (NO OUTPUT from any pod of this Job, under either %s or %s. Either it did "+
-		"not get as far as saying anything, or its pods are labelled with neither selector — check "+
-		"`kubectl get pods -n %s` before concluding the first.)\n",
+	fmt.Fprintf(&b, "    (NO OUTPUT from any pod of this Job, under either %s or %s, and both reads "+
+		"SUCCEEDED. Either it did not get as far as saying anything, or its pods are labelled with "+
+		"neither selector — check `kubectl get pods -n %s` before concluding the first.)\n",
 		jobPodSelectors[0], jobPodSelectors[1], j.Namespace)
 	return b.String()
 }
@@ -208,9 +242,12 @@ func dumpAddOnBootstrapJobs(ctx context.Context, kubeconfigPath string) string {
 		"get", "jobs", "--all-namespaces", "-o", "json")
 	var b strings.Builder
 	b.WriteString("\n──── one-shot bootstrap Jobs (Vault unseal, DB bootstrap) ────\n")
-	if err != nil {
+	if err != nil && len(strings.TrimSpace(string(out))) == 0 {
 		fmt.Fprintf(&b, "  could not list Jobs (%v) — this says nothing about whether a bootstrap ran\n", err)
 		return b.String()
+	}
+	if err != nil {
+		fmt.Fprintf(&b, "  the Job list read failed but returned output (%v); what follows may be incomplete\n", err)
 	}
 	jobs, perr := parseBootstrapJobs(out)
 	if perr != nil {

@@ -174,9 +174,34 @@ func assertBootstrapDidNotFail(t *testing.T, ctx context.Context, kc string, p k
 		// arbitrarily, and this Job retries under its backoffLimit. The attempt that FAILED FIRST is
 		// the one carrying the original cause; every attempt after it can only report the state the
 		// first one left. Same correction as the add-on bootstrap dump in this package.
-		if logs, lerr := nsKubectl(ctx, kc, "logs", "-n", p.cfg.namespace, "-l", "job-name="+job,
-			"--tail=200", "--prefix", "--timestamps", "--max-log-requests=10"); lerr == nil {
-			t.Logf("keyless: bootstrap Job logs:\n%s", logs)
+		// --all-containers because this Job is INIT-CONTAINER-FIRST (render-sql, and db-token on
+		// Azure): an init failure leaves the main container in PodInitializing, so a read scoped to
+		// the default container exits non-zero and prints nothing — on exactly the "an Entra admin
+		// was never set" case this function exists to explain.
+		//
+		// Both selectors, current-first, because Kubernetes renamed the label; and the output is
+		// logged even when the read FAILED, because kubectl bails on the first pod it cannot open
+		// after printing the ones before it.
+		//
+		// nsKubectl COMBINES the streams, so a failed read comes back as the partial log followed by
+		// kubectl's own error — which is the shape worth printing rather than discarding.
+		// LABELLED, because a bare `break` inside the switch below would leave the switch and not
+		// the loop — and a `return` would skip the t.Fatalf that makes this a FAILURE at all.
+	readLogs:
+		for _, sel := range jobPodSelectors {
+			logs, lerr := nsKubectl(ctx, kc, "logs", "-n", p.cfg.namespace, "-l", sel+job,
+				"--tail=200", "--prefix", "--timestamps", "--all-containers")
+			switch {
+			case lerr == nil && strings.TrimSpace(logs) != "":
+				t.Logf("keyless: bootstrap Job logs (%s):\n%s", sel+job, logs)
+				break readLogs
+			case strings.TrimSpace(logs) != "":
+				t.Logf("keyless: PARTIAL log read via %s (%v) — kubectl stops at the first pod it "+
+					"cannot open, so later attempts are missing:\n%s", sel+job, lerr, logs)
+			case lerr != nil:
+				t.Logf("keyless: could not read the bootstrap Job's logs via %s: %v — this says "+
+					"nothing about whether it logged anything", sel+job, lerr)
+			}
 		}
 		t.Fatalf("the keyless bootstrap Job %s FAILED (%s) — the app's database login was never created, so nothing downstream could authenticate", job, outcome.Detail)
 	}
