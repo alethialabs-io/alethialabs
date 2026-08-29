@@ -102,9 +102,10 @@ interface PlacementSelectorProps {
  * The onboarding placement selector (#844): choose which environments a new project seeds and how
  * each is placed onto a Fabric. Renders the four-environment catalog — production is always on; the
  * others toggle — each with a placement dropdown (`namespace` · `vcluster` · `dedicated`). Emits an
- * {@link EnvironmentSpec}[] that `createProject` fans out (a Fabric per `dedicated` env + one shared
- * Fabric for the namespace/vcluster envs). Everything is created `DRAFT` — nothing provisions until
- * a deploy — so seeding the full matrix is free.
+ * {@link EnvironmentSpec}[] that `createProject` fans out: a Fabric per `dedicated` env, with the
+ * namespace/vcluster envs placed onto the default dedicated env's Fabric — only a dedicated env
+ * provisions a cluster, so a tier placed anywhere else could never deploy. Everything is created
+ * `DRAFT` — nothing provisions until a deploy — so seeding the full matrix is free.
  */
 export function PlacementSelector({ value, onChange }: PlacementSelectorProps) {
 	/** The spec for a catalog entry if it's currently enabled. */
