@@ -41,27 +41,82 @@ type kubeSecretStore struct {
 // A missing Secret is the first run, not a failure. Distinguishing the two matters more here than
 // anywhere else in this package: "absent" means initialise, while "present" is what stops the
 // bootstrap re-initialising a Vault whose storage was lost.
+//
+// ⚠️ AND "ABSENT" MUST NOT BE THE ANSWER TO EVERY OTHER QUESTION. This function used to return
+// `map[string]string{}, nil` for any non-zero kubectl exit — Forbidden, an unreachable API server,
+// a kubeconfig that had not landed — with stderr sent to io.Discard so nothing was even logged.
+// That makes the data-loss guard in vaultBootstrap unable to fire: the guard refuses to
+// re-initialise a Vault whose storage was lost precisely BECAUSE this cluster still holds an
+// unseal key, and a read that reports "no key" for a read it could not perform hands it the one
+// answer that turns the guard off. The outcome it exists to prevent — an empty Vault, every stored
+// secret discarded, and a green deploy — was one transient RBAC error away.
+//
+// ABSENCE IS PROVEN, NOT INFERRED FROM AN ERROR. This LISTS with a field selector rather than
+// getting the object by name:
+//
+//	kubectl get secret -n <ns> --field-selector metadata.name=<name> -o json
+//
+// A list has no NotFound path. A genuinely absent Secret is a 200 with `items: []` — a positive
+// statement from the API server that it looked and there is nothing there — while every fault
+// exits non-zero.
+//
+// `--ignore-not-found` was the first fix and it is not enough: it suppresses ANY 404, and a proxy,
+// a load balancer or a mis-pathed endpoint answering 404 exits 0 with empty output. That reads as
+// "no unseal key" and turns the data-loss guard back off, which is the failure this function
+// exists to close. Measuring four branches against a healthy cluster never exercises a 404 that
+// is not about this object.
+//
+//	absent               → exit 0, {"items":[]}
+//	present              → exit 0, {"items":[{…}]}
+//	forbidden            → exit 1, "Error from server (Forbidden): …"
+//	endpoint 404         → exit 1 — no longer indistinguishable from absence
 func (k *kubeSecretStore) Read(ctx context.Context) (map[string]string, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", k.name, "-n", k.namespace, "-o", "json")
-	var stdout strings.Builder
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", "-n", k.namespace,
+		"--field-selector", "metadata.name="+k.name, "-o", "json")
+	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
-	cmd.Stderr = io.Discard
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		// Kept SEPARATE from stdout rather than folded in with CombinedOutput: this function's
+		// stdout is a VALUE, and kubectl writes to stderr on calls that succeed. Appended only when
+		// there is something to append — kubectl-not-on-PATH and killed-by-context write nothing,
+		// and an error ending in a bare colon reads like a message that got cut off.
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("read secret %s/%s: %w: %s", k.namespace, k.name, err, msg)
+		}
+		return nil, fmt.Errorf("read secret %s/%s: %w", k.namespace, k.name, err)
+	}
+	var list struct {
+		Items []struct {
+			Data map[string]string `json:"data"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal([]byte(stdout.String()), &list); err != nil {
+		return nil, fmt.Errorf("decode secret list %s/%s: %w", k.namespace, k.name, err)
+	}
+	if len(list.Items) == 0 {
+		// The API server looked and there is nothing there. The first run, and the ONLY case that
+		// may answer "absent".
 		return map[string]string{}, nil
 	}
-	var out struct {
-		Data map[string]string `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(stdout.String()), &out); err != nil {
-		return nil, fmt.Errorf("decode secret %s/%s: %w", k.namespace, k.name, err)
-	}
-	decoded := make(map[string]string, len(out.Data))
-	for key, b64 := range out.Data {
+	decoded := make(map[string]string, len(list.Items[0].Data))
+	for key, b64 := range list.Items[0].Data {
 		raw, err := base64.StdEncoding.DecodeString(b64)
 		if err != nil {
 			return nil, fmt.Errorf("decode %s/%s key %q: %w", k.namespace, k.name, key, err)
 		}
 		decoded[key] = string(raw)
+	}
+	// PRESENT BUT CARRYING NEITHER FIELD IS NOT A FIRST RUN. An empty map here is byte-for-byte the
+	// absent answer, so a state Secret that exists and holds nothing we recognise — emptied by hand,
+	// or written under renamed keys — would let the guard pass and the bootstrap re-initialise a
+	// Vault this cluster may still hold the key for. Refusing is the only safe reading: the object
+	// is evidence that a bootstrap has been here.
+	if decoded[vaultUnsealKeyField] == "" && decoded[vaultInitializedField] == "" {
+		return nil, fmt.Errorf("the state Secret %s/%s exists but carries neither %q nor %q "+
+			"(%d key(s) present) — refusing to treat it as a first run, because re-initialising "+
+			"would discard whatever the Vault it belongs to already holds",
+			k.namespace, k.name, vaultUnsealKeyField, vaultInitializedField, len(decoded))
 	}
 	return decoded, nil
 }
