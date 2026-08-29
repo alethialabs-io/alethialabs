@@ -150,12 +150,17 @@ func renderPendingHook(app string, s stalledApp, st hookLiveState) string {
 		b.WriteString("    So the apply DID land and ArgoCD is not observing it. The fault is in what " +
 			"the controller can watch or cache, not in what the API server accepted — and its log " +
 			"will be quiet, because from its side nothing failed.\n")
-	case s.SyncResult != "":
-		fmt.Fprintf(&b, "    NOT in the cluster NOW, but the sync RECORDED it: %q.\n", s.SyncResult)
-		b.WriteString("    So the apply landed and the object was removed afterwards — which is the " +
-			"NORMAL end state for a hook carrying `hook-delete-policy: hook-succeeded`. Absence is " +
-			"not evidence the apply failed here. Look at why the hook's COMPLETION was never " +
-			"recorded (a hook declared in two phases, a delete-and-recreate loop), not at RBAC.\n")
+	case s.Recorded && s.recordedFailure():
+		fmt.Fprintf(&b, "    NOT in the cluster, and the sync recorded it as FAILED: %q.\n", s.SyncResult)
+		b.WriteString("    So the apply was ATTEMPTED and REFUSED. The message above is the API " +
+			"server's own reason — read it first; if it says `is forbidden`, that is RBAC and the " +
+			"answer is in the ServiceAccount's Role, not in hook lifecycle.\n")
+	case s.Recorded:
+		fmt.Fprintf(&b, "    NOT in the cluster NOW, but the sync RECORDED it as succeeding: %q.\n", s.SyncResult)
+		b.WriteString("    So the apply landed and the object was removed afterwards — the NORMAL " +
+			"end state for a hook carrying `hook-delete-policy: hook-succeeded`. Absence is not " +
+			"evidence the apply failed here. Look at why the hook's COMPLETION was never recorded " +
+			"(a hook declared in two phases, a delete-and-recreate loop), not at RBAC.\n")
 	default:
 		b.WriteString("    NOT IN THE CLUSTER, and the sync recorded NO result for it. The apply " +
 			"never landed, so the fault is on the way in — RBAC, an admission webhook, a quota, a " +
@@ -174,6 +179,29 @@ type stalledApp struct {
 	// nothing. It is the difference between "the apply never landed" and "the apply landed and the
 	// object was removed afterwards", which the cluster alone cannot tell you.
 	SyncResult string
+	// Recorded says whether a result EXISTS, which non-emptiness of SyncResult cannot: a hook whose
+	// result carries no ResultCode, no phase and no message renders as "" and would otherwise be
+	// reported as "the sync recorded NO result for it" — nothing-found read as nothing-wrong.
+	Recorded bool
+	// Status and HookPhase are the two fields that say whether the recorded result was a SUCCESS.
+	// They were parsed and folded into SyncResult's text without ever being branched on, which is
+	// how a recorded FAILURE came to be rendered as "the apply landed … not at RBAC".
+	Status    string
+	HookPhase string
+}
+
+// recordedFailure reports whether the sync recorded this hook as having FAILED.
+//
+// ArgoCD writes a ResourceResult for a failed apply exactly as it does for a successful one: the
+// object is absent AND recorded, with `status: SyncFailed` and a message carrying the API server's
+// refusal (`clusterroles.rbac… is forbidden: …`), or `hookPhase: Failed|Error` for a hook that ran
+// and failed. Presence of a record is therefore not evidence the apply landed.
+func (s stalledApp) recordedFailure() bool {
+	switch s.HookPhase {
+	case "Failed", "Error":
+		return true
+	}
+	return s.Status == "SyncFailed"
 }
 
 // stalledHooksFromList finds every loser that is waiting on a hook, in ONE list.
@@ -235,7 +263,15 @@ func stalledHooksFromList(appsJSON []byte, losers []string) (stalled []stalledAp
 				continue
 			}
 			entry.SyncResult = strings.TrimSpace(strings.Join([]string{r.Status, r.HookPhase, r.Message}, " "))
-			break
+			entry.Recorded = true
+			entry.Status, entry.HookPhase = r.Status, r.HookPhase
+			// A result is keyed by resource AND PHASE, so one object declared as both a pre- and a
+			// post-install hook produces TWO entries with identical group/kind/name. Taking the
+			// first would take the PreSync `Succeeded` one and never see the PostSync entry the
+			// sync is actually stuck on. Keep scanning and let a failure win.
+			if entry.recordedFailure() {
+				break
+			}
 		}
 		stalled = append(stalled, entry)
 	}
