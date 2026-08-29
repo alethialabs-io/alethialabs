@@ -67,13 +67,23 @@ func TestCLIDemoDimensionCannotSilentlyProveNothing(t *testing.T) {
 					}
 					return true
 				})
+				// A CALL to CLIDemoProvisionEnabled is not a REFUSAL, and the first version of this
+				// guard could not tell them apart: turning the `t.Fatalf` into a `t.Logf` left the
+				// guard green and restored the vacuous run in one edit. So the shape asserted is the
+				// whole shape — an `if` whose CONDITION asks the gate and whose BODY terminates the
+				// test. Anything softer (Logf, Skip, a comment) is not a refusal and does not count.
+				if base != "t2_provision_test.go" {
+					continue
+				}
 				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					call, ok := n.(*ast.CallExpr)
+					ifs, ok := n.(*ast.IfStmt)
 					if !ok {
 						return true
 					}
-					id, ok := call.Fun.(*ast.Ident)
-					if ok && id.Name == "CLIDemoProvisionEnabled" && base == "t2_provision_test.go" {
+					if !containsCallTo(ifs.Cond, "CLIDemoProvisionEnabled") {
+						return true
+					}
+					if bodyFatals(ifs.Body) {
 						refusedIn = base
 					}
 					return true
@@ -83,7 +93,8 @@ func TestCLIDemoDimensionCannotSilentlyProveNothing(t *testing.T) {
 	}
 
 	if len(driven) == 0 && refusedIn == "" {
-		t.Fatal("nothing drives CLIDemoBeats AND t2_provision_test.go does not refuse the dimension — " +
+		t.Fatal("nothing drives CLIDemoBeats AND t2_provision_test.go does not REFUSE the dimension " +
+			"(an `if CLIDemoProvisionEnabled()` whose body calls t.Fatal/t.Fatalf) — " +
 			"a `cli-demo` dispatch would provision a floor, assert the floor, and be recorded as a " +
 			"CLI-driven proof. Either drive the beats or restore the refusal.")
 	}
@@ -91,4 +102,43 @@ func TestCLIDemoDimensionCannotSilentlyProveNothing(t *testing.T) {
 		t.Fatalf("the beats are now driven (%v) AND t2_provision_test.go still refuses the dimension — "+
 			"remove the refusal, or the dimension can never run the thing it now has.", driven)
 	}
+}
+
+// containsCallTo reports whether an expression calls the named function. Used on an `if` condition,
+// so `CLIDemoProvisionEnabled()`, `!CLIDemoProvisionEnabled()` and a compound condition all match.
+func containsCallTo(e ast.Expr, name string) bool {
+	found := false
+	ast.Inspect(e, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == name {
+			found = true
+		}
+		return true
+	})
+	return found
+}
+
+// bodyFatals reports whether a block TERMINATES the test. `t.Fatal`/`t.Fatalf` only: `t.Errorf`
+// records a failure and runs on, and `t.Skip` reports success — both would let a `cli-demo`
+// dispatch proceed to provision a cluster and assert a floor, which is the thing being prevented.
+func bodyFatals(b *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(b, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if sel.Sel.Name == "Fatal" || sel.Sel.Name == "Fatalf" {
+			found = true
+		}
+		return true
+	})
+	return found
 }
