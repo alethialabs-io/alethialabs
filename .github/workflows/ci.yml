@@ -668,7 +668,7 @@ jobs:
         run: pnpm check:shared-surface
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: pnpm check:shared-surface -- --self-test
+        run: node scripts/check-shared-surface.mjs --self-test
       - name: Runner self-image is baked, matches its job, and is multi-arch
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:runner-self-image
