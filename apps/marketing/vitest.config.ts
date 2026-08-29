@@ -32,8 +32,11 @@ export default defineConfig({
 			provider: "v8",
 			// "json" writes coverage-final.json — the artefact scripts/ts-coverage.mjs measures. It
 			// is in vitest's DEFAULT reporter set, but naming any `reporter` array REPLACES that
-			// default, so it must be listed explicitly.
-			reporter: ["text", "json"],
+			// default, so it must be listed explicitly. "json-summary" is for
+			// scripts/coverage-badge.mjs, which merges every project in scripts/ts-coverage-sweep.json
+			// and now FAILS on a project it cannot read — this project was silently contributing
+			// nothing to the published number.
+			reporter: ["text", "json", "json-summary"],
 			reportsDirectory: "./coverage",
 			// Scope to the LOGIC surface, the same policy apps/console applies: `app/**` and
 			// `components/**` are views, covered by the browser tier rather than here.
