@@ -541,14 +541,6 @@ func kubectlErrorLine(stderr string) string {
 	return strings.TrimSpace(stderr)
 }
 
-// firstLine returns s up to its first newline, for one-line error rendering.
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
-}
-
 // truncateLine bounds one printed message without hiding that it was cut.
 func truncateLine(s string, max int) string {
 	if len(s) <= max {
