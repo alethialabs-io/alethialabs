@@ -145,6 +145,24 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	}
 	defer wd.cleanup()
 
+	// BEFORE the destroy: remove the in-cluster objects that own cloud load balancers.
+	//
+	// A LoadBalancer Service and an ALB Ingress create cloud resources that are not in the state
+	// file, and `tofu destroy` then fails on the network they are attached to — measured on
+	// aws/addons run 33262881462 as seven subnet DependencyViolations, an Internet Gateway that
+	// would not detach, and an ACM certificate "in use". See destroy_loadbalancers.go.
+	//
+	// BEST EFFORT, and deliberately so. Every failure here is reported and none of them stops the
+	// teardown: the usual reason to be unable to reach the cluster is that it is already gone, and
+	// a destroy that refuses to start because it could not tidy up first would be a worse bug than
+	// the one this fixes.
+	//
+	// ⚠️ Best effort is NOT "someone else will catch it". The scope-locked sweepers are the e2e
+	// workflow's (`scripts/e2e/*-cleanup.sh`); nothing here sweeps cloud load balancers after a
+	// failed destroy, so on a customer's teardown the warning below is the only signal that
+	// something is still billing.
+	releaseLoadBalancersBeforeDestroy(ctx, provider, vc, wd, out)
+
 	fmt.Fprintln(out, "   Destroying Cloud Resources (this may take 10-15 mins)...")
 	if err := wd.tf.Destroy(ctx, wd.varFile); err != nil {
 		return fmt.Errorf("tofu destroy failed: %w", err)
@@ -314,4 +332,44 @@ func prepareDestroyWorkdir(ctx context.Context, params DestroyParams) (*destroyW
 	}
 
 	return &destroyWorkdir{tf: tf, dir: tfDir, varFile: varFile, cleanup: unwind}, nil
+}
+
+// releaseLoadBalancersBeforeDestroy resolves cluster access from the state's outputs and releases
+// the cloud-backed objects. Every path reports and returns; nothing here can fail a teardown.
+//
+// The kubeconfig comes from the SAME place the deploy's did — `tofu output` plus the provider's
+// ConfigureKubeconfig — so this needs no new cloud SDK, no new credential, and no new parameter on
+// DestroyParams. A cluster whose state has no outputs (already destroyed, or never provisioned) has
+// no name, and the step says so and returns.
+func releaseLoadBalancersBeforeDestroy(
+	ctx context.Context,
+	provider cloud.CloudProvider,
+	vc *types.ProjectConfig,
+	wd *destroyWorkdir,
+	out io.Writer,
+) {
+	outputs, err := wd.tf.Output(ctx)
+	if err != nil {
+		fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
+		return
+	}
+	// NO cluster-name gate. `ExtractClusterName` was the obvious pre-check and it is narrower than
+	// what ConfigureKubeconfig accepts: awsProvider handles a BYO-IaC module that emits a generic
+	// `kubeconfig` output for a self-managed, non-EKS cluster — checked BEFORE any cluster-name
+	// lookup — and such an environment has LoadBalancer Services like any other. Gating on the name
+	// skipped it with "the state names no cluster", which was both wrong and confident. Let
+	// ConfigureKubeconfig decide what it can reach; its error is the honest gate.
+	// ⚠️ SIDE EFFECT, stated because it is new on this path: ConfigureKubeconfig writes
+	// ~/.kube/kubeconfig and sets the process's KUBECONFIG (cloud/kubeconfig.go:39). The destroy
+	// that follows therefore runs with KUBECONFIG pointing at the cluster it is about to destroy —
+	// which is the correct cluster for any template provider that falls back to it, and the same
+	// state the DEPLOY path leaves behind. It is called after the workdir is prepared and before
+	// the destroy, so nothing in between reads a different cluster.
+	if err := provider.ConfigureKubeconfig(ctx, vc, outputs, out); err != nil {
+		fmt.Fprintf(out, "   Skipping load-balancer release: the cluster is not reachable (%v).\n", err)
+		return
+	}
+	if err := releaseCloudLoadBalancers(ctx, out); err != nil {
+		fmt.Fprintf(out, "   WARNING — cloud load balancers may still exist and still bill: %v\n", err)
+	}
 }
