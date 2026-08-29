@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	tfjson "github.com/hashicorp/terraform-json"
 
@@ -348,28 +349,62 @@ func releaseLoadBalancersBeforeDestroy(
 	wd *destroyWorkdir,
 	out io.Writer,
 ) {
-	outputs, err := wd.tf.Output(ctx)
-	if err != nil {
-		fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
-		return
-	}
-	// NO cluster-name gate. `ExtractClusterName` was the obvious pre-check and it is narrower than
-	// what ConfigureKubeconfig accepts: awsProvider handles a BYO-IaC module that emits a generic
-	// `kubeconfig` output for a self-managed, non-EKS cluster — checked BEFORE any cluster-name
-	// lookup — and such an environment has LoadBalancer Services like any other. Gating on the name
-	// skipped it with "the state names no cluster", which was both wrong and confident. Let
-	// ConfigureKubeconfig decide what it can reach; its error is the honest gate.
-	// ⚠️ SIDE EFFECT, stated because it is new on this path: ConfigureKubeconfig writes
-	// ~/.kube/kubeconfig and sets the process's KUBECONFIG (cloud/kubeconfig.go:39). The destroy
-	// that follows therefore runs with KUBECONFIG pointing at the cluster it is about to destroy —
-	// which is the correct cluster for any template provider that falls back to it, and the same
-	// state the DEPLOY path leaves behind. It is called after the workdir is prepared and before
-	// the destroy, so nothing in between reads a different cluster.
-	if err := provider.ConfigureKubeconfig(ctx, vc, outputs, out); err != nil {
-		fmt.Fprintf(out, "   Skipping load-balancer release: the cluster is not reachable (%v).\n", err)
-		return
+	// ⚠️ A WORKING KUBECONFIG IS NOT OVERWRITTEN, and that is not a micro-optimisation.
+	//
+	// `awsProvider.ConfigureKubeconfig` writes an EXEC-PLUGIN kubeconfig whose command is
+	// `os.Args[0] kube-token …` — the running binary as its own credential helper. That is correct
+	// in production, where RunDestroy runs inside the runner and the runner implements `kube-token`.
+	// It is broken anywhere else: aws/addons run 33271997812 called this from the e2e TEST process,
+	// so the plugin became `/tmp/go-build…/e2e.test kube-token …`, which exits 1, and every kubectl
+	// died with
+	//
+	//	getting credentials: exec: executable …/e2e.test failed with exit code 1
+	//
+	// — clobbering the perfectly good kubeconfig the runner had already written during the deploy.
+	// So: ask the cluster first. If it answers, the credential in hand works and there is nothing to
+	// configure.
+	if clusterReachable(ctx) {
+		fmt.Fprintln(out, "   Cluster already reachable with the kubeconfig in hand — not reconfiguring it.")
+	} else {
+		outputs, err := wd.tf.Output(ctx)
+		if err != nil {
+			fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
+			return
+		}
+		// NO cluster-name gate. `ExtractClusterName` was the obvious pre-check and it is narrower
+		// than what ConfigureKubeconfig accepts: awsProvider handles a BYO-IaC module that emits a
+		// generic `kubeconfig` output for a self-managed, non-EKS cluster — checked BEFORE any
+		// cluster-name lookup — and such an environment has LoadBalancer Services like any other.
+		//
+		// ⚠️ SIDE EFFECT: ConfigureKubeconfig writes ~/.kube/kubeconfig and sets the process's
+		// KUBECONFIG (cloud/kubeconfig.go:39). The destroy that follows therefore runs with
+		// KUBECONFIG pointing at the cluster it is about to destroy — the correct cluster for any
+		// template provider that falls back to it, and the same state the DEPLOY path leaves behind.
+		if err := provider.ConfigureKubeconfig(ctx, vc, outputs, out); err != nil {
+			fmt.Fprintf(out, "   Skipping load-balancer release: the cluster is not reachable (%v).\n", err)
+			return
+		}
+		if !clusterReachable(ctx) {
+			// CHECKED AFTER CONFIGURING, not assumed. ConfigureKubeconfig succeeding means it WROTE
+			// a kubeconfig, not that the kubeconfig works — the exec-plugin case above writes
+			// happily and then fails on every call.
+			fmt.Fprintln(out, "   Skipping load-balancer release: a kubeconfig was written but the "+
+				"cluster does not answer with it.")
+			return
+		}
 	}
 	if err := releaseCloudLoadBalancers(ctx, out); err != nil {
 		fmt.Fprintf(out, "   WARNING — cloud load balancers may still exist and still bill: %v\n", err)
 	}
+}
+
+// clusterReachable asks the API server one cheap question with whatever credential is in scope.
+//
+// `/version` rather than a list: it is unauthenticated-readable on every distribution, so a 200
+// means the endpoint and the transport work, and a failure is about reaching the cluster rather
+// than about what this identity may read. Bounded well under the destroy's own budget — a cluster
+// being torn down is allowed to be slow, but not to hold the teardown open.
+func clusterReachable(ctx context.Context) bool {
+	_, err := runKubectlBounded(ctx, 20*time.Second, "get", "--raw", "/version")
+	return err == nil
 }
