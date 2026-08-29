@@ -19,6 +19,27 @@
 # be a joke at its own expense. It opens or updates ONE title-deduped issue — the mechanism
 # e2e-nightly's rollup already uses, and the one that demonstrably reaches someone.
 
+# ── FINDING THE TRACKING ISSUE, keyed on a LABEL and never on the title (#3252) ────────────────────
+#
+# This job keeps ONE long-lived issue and updates it, because a daily issue is indistinguishable
+# from spam and gets muted — which would recreate the blindness the whole file exists to remove. It
+# used to find that issue by matching an exact TITLE string inside `wave:hygiene`, and there were
+# TWO of them by 2026-08-28 (#2759 and #3208). Both halves of how that happened are ordinary:
+#
+#   1. Somebody RENAMED the issue, at 14:02:34, to match the broadened scope #3161 had just given
+#      this job. A title is prose; people edit prose.
+#   2. A scheduled run used a DIFFERENT constant. `schedule:` fires the DEFAULT branch's copy —
+#      `main` — which was ~30 commits behind, still carrying the old title. It looked for that
+#      title, found none, and filed a second issue.
+#
+# The second point generalises and is easy to forget: a change to a scheduled workflow on `dev` is
+# INERT until it reaches `main`. So two refs must agree about the key, and a mutable string is a bad
+# thing for two refs to have to agree about. A dedicated label is not edited by accident, survives a
+# rename, and means the title can stay prose for humans.
+#
+# AND MORE THAN ONE MATCH IS REPORTED, NOT RESOLVED. Silently taking the first is how a duplicate
+# gets absorbed rather than surfaced, which is why this one sat unnoticed for three days.
+
 name: Workflow health
 
 on:
@@ -130,14 +151,21 @@ jobs:
           _Refreshed by \`.github/workflows/workflow-health.yml\` on $(date -u +%Y-%m-%d). Close it when the list is empty; it will reopen itself if that stops being true._"
           # Dedup by LABEL, not by --search. GitHub's search index LAGS by minutes, and a dedup
           # that only asks search has already filed a duplicate in this repo. `--label` is live.
-          existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
-            --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
+          # Keyed on the tracker label, never on the title — see the header. `--label` is also live
+          # where `--search` lags by minutes, which is a separate trap this repo has already hit.
+          matches="$(gh issue list --state open --label "tracker:workflow-health" --limit 100 --json number -q '.[].number' 2>/dev/null || true)"
+          count="$(printf '%s' "$matches" | grep -c . || true)"
+          if [ "${count:-0}" -gt 1 ]; then
+            echo "::error title=duplicate tracking issues::more than one open issue carries \`tracker:workflow-health\`: $(printf '%s' "$matches" | tr '\n' ' ')— close all but one. Picking the first would absorb the duplicate instead of reporting it, which is how #3252 went unnoticed for three days."
+            exit 1
+          fi
+          existing="$(printf '%s' "$matches" | head -1)"
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --body "$body"
             gh issue comment "$existing" --body "Still actionable on $(date -u +%Y-%m-%d) — red, or green without running. See the updated body."
             echo "updated #$existing"
           else
-            gh issue create --title "$TITLE" --label "wave:hygiene" --body "$body"
+            gh issue create --title "$TITLE" --label "wave:hygiene,tracker:workflow-health" --body "$body"
           fi
 
       - name: Say so when everything is green
@@ -147,8 +175,15 @@ jobs:
           TITLE: "ci: workflows red on every recent run, or green without running"
         run: |
           set -euo pipefail
-          existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
-            --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
+          # Keyed on the tracker label, never on the title — see the header. `--label` is also live
+          # where `--search` lags by minutes, which is a separate trap this repo has already hit.
+          matches="$(gh issue list --state open --label "tracker:workflow-health" --limit 100 --json number -q '.[].number' 2>/dev/null || true)"
+          count="$(printf '%s' "$matches" | grep -c . || true)"
+          if [ "${count:-0}" -gt 1 ]; then
+            echo "::error title=duplicate tracking issues::more than one open issue carries \`tracker:workflow-health\`: $(printf '%s' "$matches" | tr '\n' ' ')— close all but one. Picking the first would absorb the duplicate instead of reporting it, which is how #3252 went unnoticed for three days."
+            exit 1
+          fi
+          existing="$(printf '%s' "$matches" | head -1)"
           if [ -n "$existing" ]; then
             gh issue close "$existing" --comment "No workflow has failed its last 3 runs as of $(date -u +%Y-%m-%d). Closing; this reopens itself if that changes."
             echo "closed #$existing"
@@ -213,13 +248,20 @@ jobs:
           } > body.md
           # Dedup by LABEL. GitHub's search index lags by minutes and a --search-only dedup has
           # already filed a duplicate in this repo.
-          existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
-            --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
+          # Keyed on the tracker label, never on the title — see the header. `--label` is also live
+          # where `--search` lags by minutes, which is a separate trap this repo has already hit.
+          matches="$(gh issue list --state open --label "tracker:required-checks-drift" --limit 100 --json number -q '.[].number' 2>/dev/null || true)"
+          count="$(printf '%s' "$matches" | grep -c . || true)"
+          if [ "${count:-0}" -gt 1 ]; then
+            echo "::error title=duplicate tracking issues::more than one open issue carries \`tracker:required-checks-drift\`: $(printf '%s' "$matches" | tr '\n' ' ')— close all but one. Picking the first would absorb the duplicate instead of reporting it, which is how #3252 went unnoticed for three days."
+            exit 1
+          fi
+          existing="$(printf '%s' "$matches" | head -1)"
           if [ -n "$existing" ]; then
             gh issue edit "$existing" --body-file body.md
             echo "updated #$existing"
           else
-            gh issue create --title "$TITLE" --label "wave:hygiene" --body-file body.md
+            gh issue create --title "$TITLE" --label "wave:hygiene,tracker:required-checks-drift" --body-file body.md
           fi
 
       - name: Close it when an apply has landed
@@ -229,8 +271,15 @@ jobs:
           TITLE: "ci: the live branch rulesets do not require what infra/github says they do"
         run: |
           set -euo pipefail
-          existing="$(gh issue list --state open --label "wave:hygiene" --limit 100 \
-            --json number,title -q ".[] | select(.title == \"$TITLE\") | .number" 2>/dev/null | head -1 || true)"
+          # Keyed on the tracker label, never on the title — see the header. `--label` is also live
+          # where `--search` lags by minutes, which is a separate trap this repo has already hit.
+          matches="$(gh issue list --state open --label "tracker:required-checks-drift" --limit 100 --json number -q '.[].number' 2>/dev/null || true)"
+          count="$(printf '%s' "$matches" | grep -c . || true)"
+          if [ "${count:-0}" -gt 1 ]; then
+            echo "::error title=duplicate tracking issues::more than one open issue carries \`tracker:required-checks-drift\`: $(printf '%s' "$matches" | tr '\n' ' ')— close all but one. Picking the first would absorb the duplicate instead of reporting it, which is how #3252 went unnoticed for three days."
+            exit 1
+          fi
+          existing="$(printf '%s' "$matches" | head -1)"
           if [ -n "$existing" ]; then
             gh issue close "$existing" --comment "Every ruleset now requires exactly what infra/github declares, as of $(date -u +%Y-%m-%d). Closing; this reopens itself if that changes."
             echo "closed #$existing"
