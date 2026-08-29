@@ -427,3 +427,39 @@ func TestRenderAddOnIgnoresRemovedCRDField(t *testing.T) {
 		t.Errorf("ignoreDifferences without RespectIgnoreDifferences only changes the view\n---\n%s", manifest)
 	}
 }
+
+// The keda webhook entry, and the two properties that make it an EVIDENCED ignore rather than a
+// guessed one: it names both fields a foreign writer owns, and it is SCOPED to the one object.
+//
+// Measured on azure/addons run 33249209041, by the ownership probe #3301 repaired:
+//
+//	owned by "admissionsenforcer": .webhooks[*].namespaceSelector
+//	owned by "keda":               .webhooks[*].clientConfig.caBundle
+//
+// The cloud split is the tell. `keda` writes its own serving CA everywhere; `admissionsenforcer` is
+// AKS's, and exists on AKS alone — which is why gcp and hetzner converged with byte-identical chart
+// values while azure sat Healthy+OutOfSync across two paid runs.
+func TestKedaWebhookIgnoreDifferencesIsScopedAndNamesBothOwners(t *testing.T) {
+	a := sampleAddOn()
+	a.ID = "keda"
+	manifest, err := RenderAddOnApplication(a)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	for _, want := range []string{
+		"kind: ValidatingWebhookConfiguration",
+		"name: keda-admission",
+		".webhooks[]?.clientConfig.caBundle",
+		".webhooks[]?.namespaceSelector",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Errorf("the keda ignoreDifferences entry is missing %q\n---\n%s", want, manifest)
+		}
+	}
+	// SCOPED. Without `name`, this would ignore a caBundle on every ValidatingWebhookConfiguration
+	// the marketplace installs — including ones whose caBundle nobody writes, where a difference
+	// WOULD be real drift. #2778 is explicit that a guessed entry masks it.
+	if strings.Count(manifest, "name: keda-admission") != 1 {
+		t.Errorf("the entry must name exactly one object\n---\n%s", manifest)
+	}
+}
