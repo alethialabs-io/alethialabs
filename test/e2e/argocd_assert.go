@@ -394,11 +394,51 @@ func RequireAllAddOnsExpected(expected []string) error {
 // NUMERICALLY IDENTICAL, and the only thing distinguishing them was the prose "(T2-asserted)",
 // which is a claim rather than a measurement.
 //
-// The counts exist HERE, at the moment the assertion is made, and nowhere else afterwards. So
-// they are written here, on EVERY exit path — converged, timed out, cancelled, or refused as
-// vacuous. Writing only on success would reproduce the original defect in a new place: a
-// missing file reads as "nothing went wrong" exactly as 0/0 did.
-func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected []string, timeout time.Duration) (err error) {
+// The counts exist at the moment the assertion is made, and nowhere else afterwards. So they are
+// written there, on EVERY exit path — converged, timed out, cancelled, or refused as vacuous.
+// Writing only on success would reproduce the original defect in a new place: a missing file
+// reads as "nothing went wrong" exactly as 0/0 did. That write lives in assertArgoConvergence,
+// which is the single loop this and A0.6's assertion both delegate to; see #3281 for why being
+// two loops made the counts vanish from every bundle the programme actually counts.
+func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected []string, timeout time.Duration) error {
+	return assertArgoConvergence(ctx, kubeconfigPath, expected, nil, timeout, argoConvergeSubject{
+		vacuous:  "refusing a VACUOUS ArgoCD health assertion: the expected Application set is empty",
+		deadline: "ArgoCD Applications",
+	})
+}
+
+// argoConvergeSubject carries the only thing that differs between the two public assertions —
+// their wording — so one loop can serve both without either losing the message an operator greps
+// a red run for.
+type argoConvergeSubject struct {
+	// vacuous is the refusal returned for an empty expected set.
+	vacuous string
+	// deadline is the noun phrase the timeout error opens with.
+	deadline string
+}
+
+// assertArgoConvergence is THE ArgoCD convergence wait. Both public assertions delegate to it, and
+// it is the ONLY place the convergence summary is registered.
+//
+// # Why this is one function and not two (#3281)
+//
+// It used to be two. AssertArgoAppsHealthy carried the deferred summary write; A0.6's
+// AssertArgoReposConverge was a near-identical copy of the same poll that carried none. Every real
+// run enables A0.6 — the nightly sets ALETHIA_E2E_ARGO_REPOS_REQUIRE whenever the apps-repo var is
+// set, which is always — so every run took the copy WITHOUT the write, and shipped a bundle reading
+// `argocd_assert_outcome: unmeasured` on an assertion that had just counted 22 Applications. The
+// evidence for the add-on cells lived only in an expiring job log.
+//
+// Adding a second `defer` to the second copy would have been the same defect one layer along, and
+// it would have written `unreadable`: that copy recorded `observed` only on the LOSING path, so on
+// success there would have been no map to count. So there is one loop. A third convergence path
+// cannot now be acquired without this instrumentation arriving with it.
+//
+// manualSync may be empty. A hardened bring-your-own chart renders with MANUAL sync and would sit
+// OutOfSync forever, so any listed app not yet Healthy+Synced is re-issued a sync over its CR on
+// each iteration, as an operator would; the last error per app is kept so a persistently REJECTED
+// sync is reported rather than reading as merely slow.
+func assertArgoConvergence(ctx context.Context, kubeconfigPath string, expected, manualSync []string, timeout time.Duration, subj argoConvergeSubject) (err error) {
 	// Declared before the vacuity check so the deferred write covers that exit too — a run that
 	// asserted over an empty set must leave evidence that it asserted nothing.
 	var lastErr error
@@ -407,6 +447,9 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 	// Carried so the deadline dump can tell an OutOfSync loser (which HAS a diff to fetch) from a
 	// Degraded-but-Synced one (which does not).
 	var lastObserved map[string]argoAppState
+	// Per manual-sync app, the error from its LAST sync attempt. A success voids an earlier
+	// failure: carrying a stale error forward would report a problem that has since resolved.
+	lastSyncErr := map[string]error{}
 	if path := os.Getenv(ArgoSummaryEnv); path != "" {
 		defer func() {
 			s := newArgoConvergenceSummary(expected, lastObserved, lastLosers, timeout, err)
@@ -418,7 +461,7 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 		}()
 	}
 	if len(expected) == 0 {
-		return errors.New("refusing a VACUOUS ArgoCD health assertion: the expected Application set is empty")
+		return errors.New(subj.vacuous)
 	}
 	deadline := time.Now().Add(timeout)
 	for {
@@ -433,6 +476,18 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 			lastErr = fmt.Errorf("parsing ArgoCD Applications failed: %w", perr)
 			lastLosers, lastRefs, lastObserved = nil, nil, nil
 		} else {
+			// Nudge the manual-sync (hardened BYO) apps that have not converged yet. A no-op when
+			// manualSync is empty, which is the plain assertion's shape.
+			for _, name := range manualSync {
+				st, ok := observed[name]
+				if !ok || st.Health != "Healthy" || st.Sync != "Synced" {
+					if serr := triggerArgoSync(ctx, kubeconfigPath, name); serr != nil {
+						lastSyncErr[name] = serr
+					} else {
+						delete(lastSyncErr, name)
+					}
+				}
+			}
 			losers, everr := evaluateArgoApps(observed, expected)
 			// Recorded on the WINNING path too, not just the losing one: on success the
 			// deferred summary is the whole point, and `observed` is only in scope here.
@@ -444,8 +499,9 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 			lastRefs = refsForLosers(observed, losers)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("ArgoCD Applications did not all reach Healthy+Synced within %s:\n%v%s",
-				timeout, lastErr,
+			return fmt.Errorf("%s did not all reach Healthy+Synced within %s:\n%v%s%s",
+				subj.deadline, timeout, lastErr,
+				renderSyncErrors(lastSyncErr),
 				argoDeadlineDump(ctx, kubeconfigPath, lastObserved, lastLosers, lastRefs))
 		}
 		select {
