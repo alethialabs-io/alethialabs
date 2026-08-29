@@ -120,25 +120,92 @@ func TestStalledHooksFromListCountsLosersItCannotFind(t *testing.T) {
 	}
 }
 
-func TestRenderPendingHookSaysWhichOfTheTwoFaultsItIs(t *testing.T) {
+func TestRenderPendingHookSaysWhichOfTheThreeOutcomesItIs(t *testing.T) {
 	ref := hookRef{Group: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "x-admission"}
+	app := stalledApp{App: "addon-x", Ref: ref}
 
-	absent := renderPendingHook("addon-x", ref, hookLiveState{Exists: false})
+	// 1. Absent AND unrecorded: the apply never landed.
+	absent := renderPendingHook("addon-x", app, hookLiveState{Exists: false})
 	if !strings.Contains(absent, "NOT IN THE CLUSTER") || !strings.Contains(absent, "on the way in") {
-		t.Errorf("the absent verdict does not point at the apply path:\n%s", absent)
+		t.Errorf("the never-applied verdict does not point at the apply path:\n%s", absent)
 	}
 
-	present := renderPendingHook("addon-x", ref, hookLiveState{Exists: true, Created: "t", Managers: []string{"argocd-controller"}})
+	// 2. THE ONE THAT WAS WRONG. Absent but RECORDED: the apply landed and the object was removed,
+	// which is the normal end state for a hook with `hook-delete-policy: hook-succeeded`. Reading
+	// this as a failed apply sent azure/addons run 33266338989's reader to RBAC and quotas while
+	// the Application's own sync result said `Synced … serverside-applied`.
+	recorded := app
+	recorded.SyncResult = "Synced Running clusterrole … serverside-applied"
+	removed := renderPendingHook("addon-x", recorded, hookLiveState{Exists: false})
+	if strings.Contains(removed, "NOT IN THE CLUSTER, and the sync recorded NO result") {
+		t.Errorf("an applied-then-deleted hook was reported as a failed apply:\n%s", removed)
+	}
+	if !strings.Contains(removed, "serverside-applied") {
+		t.Errorf("the recorded result is not quoted back:\n%s", removed)
+	}
+	if !strings.Contains(removed, "hook-delete-policy") {
+		t.Errorf("the verdict does not name why absence is normal here:\n%s", removed)
+	}
+	if !strings.Contains(removed, "not at RBAC") {
+		t.Errorf("the verdict does not steer the reader away from the wrong place:\n%s", removed)
+	}
+
+	// 3. Present: applied and unobserved.
+	present := renderPendingHook("addon-x", app, hookLiveState{Exists: true, Created: "t", Managers: []string{"argocd-controller"}})
 	if !strings.Contains(present, "EXISTS") || !strings.Contains(present, "not observing it") {
 		t.Errorf("the present verdict does not point at the watch path:\n%s", present)
 	}
-	// The two verdicts must not be confusable — they send the reader to opposite places.
-	if strings.Contains(present, "NOT IN THE CLUSTER") {
-		t.Errorf("the present verdict contains the absent one's words:\n%s", present)
+
+	// The three must not be confusable — they send the reader to three different places.
+	if strings.Contains(present, "NOT IN THE CLUSTER") || strings.Contains(removed, "EXISTS,") {
+		t.Errorf("the verdicts overlap:\npresent=%s\nremoved=%s", present, removed)
 	}
 
-	unread := renderPendingHook("addon-x", ref, hookLiveState{ReadError: "timed out"})
+	unread := renderPendingHook("addon-x", app, hookLiveState{ReadError: "timed out"})
 	if !strings.Contains(unread, "says nothing about whether it exists") {
 		t.Errorf("a failed lookup must not read as an absent object:\n%s", unread)
+	}
+}
+
+// The recorded result is matched on group+kind+name, so a same-named object of a DIFFERENT kind
+// cannot lend its result to the hook and turn a genuine failed apply into "it was deleted".
+func TestStalledHooksFromListMatchesTheRecordedResultExactly(t *testing.T) {
+	const listJSON = `{"items":[
+	 {"metadata":{"name":"addon-x"},"spec":{"destination":{"namespace":"monitoring"}},
+	  "status":{"operationState":{
+	    "message":"waiting for completion of hook rbac.authorization.k8s.io/ClusterRole/x-admission and 1 more hooks",
+	    "syncResult":{"resources":[
+	      {"group":"","kind":"ServiceAccount","name":"x-admission","status":"Synced","hookPhase":"Succeeded","message":"created"},
+	      {"group":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"x-admission","status":"Synced","hookPhase":"Running","message":"serverside-applied"}
+	    ]}}}}
+	]}`
+	stalled, found, err := stalledHooksFromList([]byte(listJSON), []string{"addon-x"})
+	if err != nil || found != 1 || len(stalled) != 1 {
+		t.Fatalf("stalled=%+v found=%d err=%v", stalled, found, err)
+	}
+	got := stalled[0].SyncResult
+	if !strings.Contains(got, "serverside-applied") {
+		t.Errorf("SyncResult = %q, want the ClusterRole's own result", got)
+	}
+	if strings.Contains(got, "created") {
+		t.Errorf("SyncResult = %q — it took the ServiceAccount's result, which is a different object", got)
+	}
+}
+
+// And an Application that recorded nothing for the hook leaves it empty, so the renderer can say
+// the apply never landed rather than inventing a reassurance.
+func TestStalledHooksFromListLeavesTheResultEmptyWhenNoneWasRecorded(t *testing.T) {
+	const listJSON = `{"items":[
+	 {"metadata":{"name":"addon-x"},"spec":{"destination":{"namespace":"monitoring"}},
+	  "status":{"operationState":{
+	    "message":"waiting for completion of hook rbac.authorization.k8s.io/ClusterRole/x-admission and 1 more hooks",
+	    "syncResult":{"resources":[]}}}}
+	]}`
+	stalled, _, err := stalledHooksFromList([]byte(listJSON), []string{"addon-x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stalled) != 1 || stalled[0].SyncResult != "" {
+		t.Fatalf("SyncResult = %q, want empty", stalled[0].SyncResult)
 	}
 }
