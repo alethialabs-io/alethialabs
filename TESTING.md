@@ -108,8 +108,13 @@ cd apps/runner && go test ./...
 
 | Badge | Counts | Does **not** count |
 |---|---|---|
-| **coverage** | console **logic** (`lib/**`, `app/server/actions/**`) + `@repo/ui` src + `@repo/plan-catalog` | console `components/**` (presentational), the marketing/docs/blog apps, `@repo/{email,brand}` |
+| **coverage** | every project in `scripts/ts-coverage-sweep.json`: console **logic** (`lib/**`, `app/server/actions/**`), `@repo/ui` src, `@repo/plan-catalog`, `@repo/format`, `apps/marketing`'s logic surface, and `ee` (the licensed tier) | console `components/**` (presentational), the docs/blog apps, `@repo/{email,brand}` |
 | **go coverage** | aggregate of `apps/cli` + `apps/runner` + `packages/core` (`go test -coverprofile`, via `scripts/go-coverage-badge.mjs`) | — |
+
+That first row named three projects for as long as `scripts/coverage-badge.mjs` did — while the
+record listed six and the badge's "could not read that project" branch merely warned. So the
+published number described half the repository and looked exactly like a number that described
+all of it. Both now read the record, and a project the badge cannot read is an error that names it.
 
 They climb as more logic gets tested, and neither is cherry-picked *upward* by discarding a
 failing suite. But "honest" was too strong a word for the **coverage** badge, and it is being
