@@ -1,0 +1,154 @@
+// SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+// SPDX-License-Identifier: AGPL-3.0-only
+
+//go:build !e2e_t1 && !e2e_t2 && !e2e_b6
+
+package e2e
+
+import (
+	"strings"
+	"testing"
+)
+
+// The shapes here are copied from a real cluster, not invented: the controller lines are argo-cd
+// v3.3.9's logrus format, and the event JSON is `kubectl get events -o json`'s.
+
+func TestFilterControllerLinesKeepsLoserAndErrorLines(t *testing.T) {
+	raw := []byte(strings.Join([]string{
+		`[pod/argocd-application-controller-0/application-controller] time="2026-08-29T14:07:01Z" level=info msg="Refreshing app addon-loki"`,
+		`[pod/argocd-application-controller-0/application-controller] time="2026-08-29T14:07:02Z" level=info msg="Syncing app addon-kube-prometheus-stack"`,
+		`[pod/argocd-application-controller-0/application-controller] time="2026-08-29T14:07:03Z" level=error msg="Failed to apply hook" error="clusterroles.rbac.authorization.k8s.io is forbidden"`,
+		`[pod/argocd-application-controller-0/application-controller] time="2026-08-29T14:07:04Z" level=info msg="Normalized app spec"`,
+		"",
+	}, "\n"))
+
+	kept, scanned := filterControllerLines(raw, []string{"addon-kube-prometheus-stack"}, 60)
+	if scanned != 4 {
+		t.Fatalf("scanned = %d, want 4 (the blank line is not a line)", scanned)
+	}
+	if len(kept) != 2 {
+		t.Fatalf("kept %d lines, want 2:\n%s", len(kept), strings.Join(kept, "\n"))
+	}
+	if !strings.Contains(kept[0], "Syncing app addon-kube-prometheus-stack") {
+		t.Errorf("first kept line is not the loser's: %s", kept[0])
+	}
+	// The error line names no Application at all. Dropping it is the failure mode this half exists
+	// to prevent — it is the line that carries the answer.
+	if !strings.Contains(kept[1], "is forbidden") {
+		t.Errorf("the error line that names no app was dropped: %v", kept)
+	}
+}
+
+func TestFilterControllerLinesKeepsTheMostRecentWhenCapped(t *testing.T) {
+	var lines []string
+	for i := 0; i < 10; i++ {
+		lines = append(lines, `level=error msg="attempt `+string(rune('0'+i))+`"`)
+	}
+	kept, scanned := filterControllerLines([]byte(strings.Join(lines, "\n")), nil, 3)
+	if scanned != 10 {
+		t.Fatalf("scanned = %d, want 10", scanned)
+	}
+	if len(kept) != 3 {
+		t.Fatalf("kept %d, want 3", len(kept))
+	}
+	// A stuck sync repeats; the LAST copy is the current state, so the cap must drop the oldest.
+	if !strings.Contains(kept[2], "attempt 9") {
+		t.Errorf("cap kept the wrong end — last line is %q, want attempt 9", kept[2])
+	}
+}
+
+func TestFilterControllerLinesEmptyLogIsDistinguishable(t *testing.T) {
+	kept, scanned := filterControllerLines(nil, []string{"addon-x"}, 60)
+	if scanned != 0 || len(kept) != 0 {
+		t.Fatalf("empty log: scanned=%d kept=%d, want 0/0", scanned, len(kept))
+	}
+	// And a log that HAS lines but none matching must report a non-zero scan, so the caller can
+	// tell "the controller is silent about these apps" from "there is no controller".
+	kept, scanned = filterControllerLines([]byte("level=info msg=\"all good\"\n"), []string{"addon-x"}, 60)
+	if scanned != 1 || len(kept) != 0 {
+		t.Fatalf("non-matching log: scanned=%d kept=%d, want 1/0", scanned, len(kept))
+	}
+}
+
+const appsListJSON = `{"items":[
+ {"metadata":{"name":"addon-kube-prometheus-stack"},"spec":{"destination":{"namespace":"monitoring"}}},
+ {"metadata":{"name":"addon-loki"},"spec":{"destination":{"namespace":"logging"}}},
+ {"metadata":{"name":"addon-no-destination"},"spec":{"destination":{}}}
+]}`
+
+func TestLoserNamespacesReadsTheDestinationFromTheApplication(t *testing.T) {
+	got, err := loserNamespaces([]byte(appsListJSON), []string{"addon-kube-prometheus-stack", "addon-no-destination"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["addon-kube-prometheus-stack"] != "monitoring" {
+		t.Errorf("destination = %q, want monitoring", got["addon-kube-prometheus-stack"])
+	}
+	// A loser with no destination is ABSENT rather than mapped to "", so the caller can say how
+	// many losers it could not cover instead of silently searching the empty namespace.
+	if _, ok := got["addon-no-destination"]; ok {
+		t.Errorf("an Application with no destination namespace was mapped anyway: %v", got)
+	}
+	// And a healthy app is not a loser: its namespace must not widen the event filter.
+	if _, ok := got["addon-loki"]; ok {
+		t.Errorf("a non-loser was included: %v", got)
+	}
+}
+
+const eventsJSON = `{"items":[
+ {"metadata":{"namespace":"monitoring"},"involvedObject":{"kind":"Pod","name":"addon-kube-prometheus-stac-admission-create-abcde"},
+  "reason":"Failed","message":"Error: ImagePullBackOff","type":"Warning","count":9,"lastTimestamp":"2026-08-29T14:30:00Z"},
+ {"metadata":{"namespace":"monitoring"},"involvedObject":{"kind":"Job","name":"addon-kube-prometheus-stac-admission-create"},
+  "reason":"BackoffLimitExceeded","message":"Job has reached the specified backoff limit","type":"Warning","count":1,"lastTimestamp":"2026-08-29T14:35:00Z"},
+ {"metadata":{"namespace":"kube-system"},"involvedObject":{"kind":"Pod","name":"konnectivity"},
+  "reason":"Unhealthy","message":"probe failed","type":"Warning","count":3,"lastTimestamp":"2026-08-29T14:36:00Z"},
+ {"metadata":{"namespace":"monitoring"},"involvedObject":{"kind":"Pod","name":"whatever"},
+  "reason":"Scheduled","message":"assigned","type":"Normal","count":1,"lastTimestamp":"2026-08-29T14:37:00Z"}
+]}`
+
+func TestFilterWarningEventsScopesToTheNamespacesAndDropsNormal(t *testing.T) {
+	got, scanned, err := filterWarningEvents([]byte(eventsJSON), map[string]bool{"monitoring": true}, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned != 4 {
+		t.Fatalf("scanned = %d, want 4 (every item, so an empty result can say which kind of empty)", scanned)
+	}
+	if len(got) != 2 {
+		t.Fatalf("kept %d, want 2 (the two monitoring Warnings): %+v", len(got), got)
+	}
+	// Sorted oldest-first, so the tail of the printed dump is the newest state.
+	if got[0].Reason != "Failed" || got[1].Reason != "BackoffLimitExceeded" {
+		t.Errorf("order is not oldest-first: %+v", got)
+	}
+	// The chart's objects are named from a TRUNCATED release name; a filter keyed on the
+	// Application's own name would have matched neither of these two.
+	if !strings.HasPrefix(got[0].Object, "Pod/addon-kube-prometheus-stac-admission-create") {
+		t.Errorf("unexpected object: %s", got[0].Object)
+	}
+	if got[0].Count != 9 {
+		t.Errorf("count lost: %+v", got[0])
+	}
+}
+
+func TestFilterWarningEventsEmptyResultIsNotSilence(t *testing.T) {
+	// Warnings exist, but none in the namespace we care about: scanned must stay non-zero so the
+	// renderer prints "N in the cluster, NONE in these namespaces" rather than nothing at all.
+	got, scanned, err := filterWarningEvents([]byte(eventsJSON), map[string]bool{"logging": true}, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 || scanned != 4 {
+		t.Fatalf("got %d events, scanned %d; want 0 and 4", len(got), scanned)
+	}
+}
+
+func TestFilterWarningEventsCapKeepsTheNewest(t *testing.T) {
+	got, _, err := filterWarningEvents([]byte(eventsJSON), map[string]bool{"monitoring": true}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Reason != "BackoffLimitExceeded" {
+		t.Fatalf("cap kept the wrong end: %+v", got)
+	}
+}
