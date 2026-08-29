@@ -233,6 +233,45 @@ func firstJSONID(out string) string {
 	return ""
 }
 
+// AssertCLIDemoBeatsAreLeafCommands refuses a beat whose argv names a command GROUP rather than a
+// command.
+//
+// THIS EXISTS BECAUSE IT ALREADY HAPPENED. `drift`, `cost` and `verify` are groups — their leaves
+// are `drift show`, `cost show`, `verify receipt`. Invoked without the subcommand, cobra prints the
+// group's help and **exits 0**. So three beats would have run, performed nothing, exited clean, and
+// the dimension would have reported a CLI-driven proof of a demo it never gave. That is the exact
+// vacuity this tier exists to prevent, arriving through the one door nothing was watching: a
+// SUCCESSFUL command.
+//
+// Run once, up front, before a cluster is bought — it costs one `--help` per beat.
+func AssertCLIDemoBeatsAreLeafCommands(ctx context.Context, t *testing.T, run *CLIDemoRun) {
+	t.Helper()
+	for _, b := range CLIDemoBeats {
+		// The command PATH is the leading non-flag tokens. Values that follow a flag are skipped
+		// with it, so `--project <id>` never contributes `<id>` to the path.
+		var path []string
+		argv := b.Args(run)
+		for i := 0; i < len(argv); i++ {
+			if strings.HasPrefix(argv[i], "-") {
+				break
+			}
+			path = append(path, argv[i])
+		}
+		if len(path) == 0 {
+			t.Errorf("beat %q builds an argv that starts with a flag — it names no command", b.StepID)
+			continue
+		}
+		cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		out, _ := exec.CommandContext(cctx, run.Bin, append(append([]string{}, path...), "--help")...).CombinedOutput()
+		cancel()
+		if strings.Contains(string(out), "Available Commands:") {
+			t.Errorf("beat %q invokes `alethia %s`, which is a command GROUP, not a command. "+
+				"Cobra prints its help and EXITS 0, so this beat would perform nothing and pass. "+
+				"Name the subcommand.", b.StepID, strings.Join(path, " "))
+		}
+	}
+}
+
 // DriveCLIDemoPhase executes every beat in one phase, in table order, against the real binary.
 //
 // It is FATAL on the first failure rather than collecting: the beats thread ids through one another,

@@ -278,21 +278,23 @@ var CLIDemoBeats = []CLIDemoBeat{
 	{
 		StepID: "receipt-verify",
 		Phase:  CLIDemoConverged,
-		Args:   func(r *CLIDemoRun) []string { return []string{"verify", "--job", r.ApplyJobID, "--no-input"} },
-		Why:    "the signed ed25519 receipt sealed to the plan hash — the claim the demo's close rests on.",
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"verify", "receipt", "--job", r.ApplyJobID, "--no-input"}
+		},
+		Why: "the signed ed25519 receipt sealed to the plan hash — the claim the demo's close rests on.",
 	},
 	{
 		StepID: "drift",
 		Phase:  CLIDemoConverged,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"drift", "--project", r.ProjectID, "--env", r.EnvName, "--no-input"}
+			return []string{"drift", "show", "--project", r.ProjectID, "--env", r.EnvName, "--no-input"}
 		},
 	},
 	{
 		StepID: "cost",
 		Phase:  CLIDemoConverged,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"cost", "--project", r.ProjectID, "--env", r.EnvName, "--no-input"}
+			return []string{"cost", "show", "--project", r.ProjectID, "--env", r.EnvName, "--no-input"}
 		},
 	},
 	{

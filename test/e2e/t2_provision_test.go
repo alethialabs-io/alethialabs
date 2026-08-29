@@ -383,6 +383,9 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		cliDemo.RunnerID = runnerID
 		cliDemo.Provider, cliDemo.Region = provider, region
 		cliDemo.Project, cliDemo.EnvName = project, env
+		// Before anything is bought: refuse a beat that names a command GROUP. `drift`, `cost` and
+		// `verify` are groups whose help exits 0, so such a beat performs nothing and PASSES.
+		AssertCLIDemoBeatsAreLeafCommands(ctx, t, cliDemo)
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoAuthoring)
 		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoEnqueue)
 		jobID = cliDemo.ApplyJobID
