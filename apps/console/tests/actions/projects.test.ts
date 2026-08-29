@@ -24,6 +24,17 @@ vi.mock("@/lib/scaler", () => ({ notifyScaler: vi.fn() }));
 vi.mock("@/lib/auth/owner", () => ({ requireOwner: vi.fn() }));
 vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
 vi.mock("@/lib/authz/tuple-sync", () => ({ mirrorHierarchyEdge: vi.fn() }));
+// SPIED, not replaced. UNSUPPORTED_KINDS_BY_PROVIDER is EMPTY since #3228 — Hetzner was the last
+// cloud refusing a kind, and nosql was its last entry — so `blocked.size > 0` is now false for
+// every real provider and the fail-closed kind gate never executes in production. A gate with no
+// live case is a gate nothing proves, and deleting its test would have retired the wiring silently.
+// So the module stays REAL (importOriginal) and only the lookup is overridable, per test, which
+// exercises the gate exactly as a future exclusion would.
+vi.mock("@/lib/cloud-providers/unsupported-kinds", async (importOriginal) => {
+	const actual =
+		await importOriginal<typeof import("@/lib/cloud-providers/unsupported-kinds")>();
+	return { ...actual, unsupportedKindsFor: vi.fn(actual.unsupportedKindsFor) };
+});
 
 import {
 	addEnvironment,
@@ -44,6 +55,7 @@ import { requireOwner } from "@/lib/auth/owner";
 import { authorize, currentActor } from "@/lib/authz/guard";
 import { mirrorHierarchyEdge } from "@/lib/authz/tuple-sync";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
+import { unsupportedKindsFor } from "@/lib/cloud-providers/unsupported-kinds";
 import { getServiceDb, withActorScope, withScope } from "@/lib/db";
 import {
 	auditLog,
@@ -1665,7 +1677,8 @@ describe("planProject", () => {
 	// through, the snapshot runs on and fails on a row the fixture does not provide. Rejecting for
 	// SOME other reason is therefore expected here — what matters, and what would regress if the
 	// kind were re-refused, is that it is no longer THIS reason. The fail-closed gate itself still
-	// has direct coverage from the `nosql` sibling below, which is the kind that is still refused.
+	// has direct coverage from the sibling below, which injects an exclusion — no cloud refuses any
+	// kind today, so an injected one is the only way left to exercise the gate at all.
 	it("no longer fails closed on a Hetzner topic — the kind is carried in-cluster by NATS", async () => {
 		setupDb({
 			select: snapshotSelect(
@@ -1680,7 +1693,14 @@ describe("planProject", () => {
 		);
 	});
 
-	it("fails closed on a Hetzner nosql table", async () => {
+	it("fails closed on a kind the target cloud cannot back", async () => {
+		// The gate has NO live case any more: every cloud backs all 19 kinds (#3228). It is still
+		// load-bearing — a cloud-switch or an AI-composed graph can put a hidden kind on the canvas
+		// and the snapshot mapper would drop it silently, reporting SUCCESS without the component —
+		// so the exclusion is injected rather than the test deleted.
+		//
+		// `Once`, so nothing leaks into the next test: the gate reads the lookup exactly once.
+		vi.mocked(unsupportedKindsFor).mockReturnValueOnce(["nosql"]);
 		setupDb({
 			select: snapshotSelect(
 				new Map<unknown, RowsResolver>([
@@ -1692,6 +1712,13 @@ describe("planProject", () => {
 		await expect(planProject("p1")).rejects.toThrow(
 			/Component "sessions" \(nosql\) can't be provisioned on Hetzner/,
 		);
+	});
+
+	it("plans a Hetzner nosql table now that ScyllaDB carries it", async () => {
+		// The other direction, and the one the test above used to stand in for. Without it, the
+		// injected exclusion could pass while the REAL lookup still refused nosql on Hetzner and
+		// nobody would know — the suite would be proving its own mock.
+		expect(unsupportedKindsFor("hetzner")).not.toContain("nosql");
 	});
 
 	// #2431 turned this around: a Hetzner registry is DELIVERED as an in-cluster Harbor (a minted

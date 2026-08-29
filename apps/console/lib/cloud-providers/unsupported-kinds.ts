@@ -16,9 +16,18 @@ import type { CloudProvider } from "@/lib/db/schema/enums";
  * cache→Valkey, queue→RabbitMQ, registry→Harbor, secret→Vault, topic→NATS — see
  * lib/cloud-providers/hetzner-services.ts, which synthesizes them as ArgoCD add-on Applications)
  * and provisions buckets natively via Object Storage (the aminueza/minio provider — see
- * infra/templates/project/hetzner/buckets.tf); nosql (DynamoDB) is the ONE kind still refused.
+ * infra/templates/project/hetzner/buckets.tf) and nosql via an in-cluster ScyllaCluster serving
+ * the DynamoDB-compatible Alternator API. Hetzner refuses NOTHING: the map below is empty, and so
+ * is every other provider's entry.
  * When a provider gains a native path for a kind, drop it from this map and BOTH the palette and
  * the deploy gate follow.
+ *
+ * THE GATE IS NOW UNEXERCISED IN PRODUCTION, which is a thing to know rather than to celebrate.
+ * `buildConfigSnapshot` reads this map and skips the whole check when it is empty, so nothing on a
+ * real deploy path executes the refusal. It is kept, and kept TESTED (an injected exclusion in
+ * tests/actions/projects.test.ts), because a cloud-switch or an AI-composed graph can still put a
+ * kind on the canvas that a future provider cannot back — and the snapshot mapper's failure mode
+ * there is to drop the component silently and report SUCCESS.
  *
  * `registry` LEFT this list in #2431, and it took three things beyond the chart. On every other
  * cloud a project's own registry needs no imagePullSecret because the nodes authenticate to ECR /

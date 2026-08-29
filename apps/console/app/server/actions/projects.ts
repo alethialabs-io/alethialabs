@@ -903,8 +903,11 @@ async function buildConfigSnapshot(
 			: [];
 
 		// Fail-closed KIND gate: reject any present component whose KIND the target cloud's
-		// built-in template can't provision (Hetzner: topic/nosql/registry/secret — NOT bucket,
-		// which Hetzner Object Storage provisions natively via minio_s3_bucket). Derived from
+		// built-in template can't provision. NO CLOUD REFUSES ANYTHING TODAY — Hetzner was the last
+		// and nosql its last entry (#3228, ScyllaDB) — so `blocked.size > 0` is false and this gate
+		// does not execute on any real deploy. It stays because the failure it prevents is silent:
+		// the snapshot mapper drops an unmappable component and reports SUCCESS without it. Derived
+		// from
 		// the SAME UNSUPPORTED_KINDS_BY_PROVIDER set the Add-palette hides — a cloud-switch or an
 		// AI-composed graph can smuggle a hidden kind past the palette, and the snapshot mapper
 		// would then silently drop it (SUCCESS without the component). Skipped in BYO-IaC replace
