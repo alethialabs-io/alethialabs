@@ -80,6 +80,11 @@ type CLIDemoRun struct {
 	// user-facing endpoint and whose whole point is that faking those would prove the CLI against
 	// a mock.
 	APIBase string
+	// ClusterSets are the `--set` pairs that carry the workflow's cheap node shape into the
+	// CLI-authored project. Built by CLIDemoClusterSets from ALETHIA_E2E_CLUSTER_JSON — the same
+	// variable the seeded path merges — so the two cannot disagree. Empty on hetzner, which passes
+	// no override.
+	ClusterSets []string
 	// RunnerID is the runner the harness registered. `project apply` REQUIRES it: without
 	// --runner-id the CLI calls selectRunner(), which prompts — and a prompt in CI hangs until the
 	// context kills it, reporting as "the CLI cannot reach apply" when the truth is that nobody
@@ -247,10 +252,18 @@ var CLIDemoBeats = []CLIDemoBeat{
 			// `--set` is REQUIRED: a cluster with no fields is refused server-side with
 			// "No values to set". And `--name` is omitted deliberately — cluster is a singleton
 			// and the CLI ignores the flag for singletons, so passing it would be cargo.
-			return []string{
+			//
+			// The node shape comes from the workflow's own ALETHIA_E2E_CLUSTER_JSON rather than
+			// being written here: the seeded path merges that variable into its snapshot, and the
+			// CLI path must land on the same shape or aws takes the template default
+			// (m5a.4xlarge x2) and the cost guard refuses the run. The min/max below are the floor
+			// the shape overrides where it says so.
+			argv := []string{
 				"project", "component", "add", "--project", r.ProjectID, "--kind", "cluster",
-				"--env", r.EnvName, "--set", "node_min_size=1", "--set", "node_max_size=2", "--no-input",
+				"--env", r.EnvName, "--set", "node_min_size=1", "--set", "node_max_size=2",
 			}
+			argv = append(argv, r.ClusterSets...)
+			return append(argv, "--no-input")
 		},
 	},
 	{

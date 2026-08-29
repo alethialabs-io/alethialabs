@@ -30,6 +30,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -435,6 +436,60 @@ var cliDemoClaimPoll = 5 * time.Second
 // A var, like cliDemoClaimPoll, so the pure test can drive the whole loop in milliseconds instead
 // of making every PR wait out a real window to prove one error message.
 var cliDemoClaimWindow = 90 * time.Second
+
+// CLIDemoClusterSets translates the workflow's cheap node shape into `--set` pairs for the
+// component-add beat.
+//
+// WHY IT IS TRANSLATED AND NOT RESTATED. On the seeded path the workflow's shape reaches the
+// snapshot through ALETHIA_E2E_CLUSTER_JSON, merged key by key by t2MergeClusterJSON. The CLI path
+// has no snapshot to merge into — the CLI AUTHORS the project — so without this the project takes
+// the TEMPLATE DEFAULTS, which on aws is m5a.4xlarge x2 and which the harness's own cost guard
+// hard-fails before spending. Writing the shape out again here would put a second copy of it one
+// edit away from disagreeing with the workflow; reading the same variable cannot.
+//
+// Hetzner passes no shape at all (its template default is already cents/run), so this returns
+// nothing there and the beat is unchanged — which is correct, not a gap.
+//
+// KNOWN LIMIT, stated rather than hidden: nested objects are skipped. `provider_config` is the only
+// one today, and `--set` takes scalars and JSON arrays. A skipped key is reported so it cannot pass
+// as "there was nothing to set".
+func CLIDemoClusterSets(t *testing.T) []string {
+	t.Helper()
+	raw := strings.TrimSpace(os.Getenv("ALETHIA_E2E_CLUSTER_JSON"))
+	if raw == "" {
+		return nil
+	}
+	var shape map[string]any
+	if err := json.Unmarshal([]byte(raw), &shape); err != nil {
+		t.Fatalf("cli-demo: ALETHIA_E2E_CLUSTER_JSON is not JSON (%v) — the project would be authored "+
+			"with template defaults, which the cost guard refuses on aws:\n%s", err, raw)
+	}
+	keys := make([]string, 0, len(shape))
+	for k := range shape {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // deterministic argv, so a failing beat is reproducible from its log
+	var sets []string
+	for _, k := range keys {
+		switch v := shape[k].(type) {
+		case map[string]any:
+			t.Logf("cli-demo: skipping nested cluster key %q — `--set` takes scalars and JSON arrays", k)
+		case []any, string, float64, bool:
+			enc, err := json.Marshal(v)
+			if err != nil {
+				t.Fatalf("cli-demo: encoding cluster key %q: %v", k, err)
+			}
+			val := string(enc)
+			if sv, ok := v.(string); ok {
+				val = sv // a bare string, not a quoted one — `--set engine=postgres`
+			}
+			sets = append(sets, "--set", k+"="+val)
+		default:
+			t.Logf("cli-demo: skipping cluster key %q of unhandled type %T", k, v)
+		}
+	}
+	return sets
+}
 
 // cliDemoEnv is the environment EVERY cli-demo invocation runs with — the beat and its read-back
 // alike. One builder, because the two differing is exactly how a read-back ends up querying the

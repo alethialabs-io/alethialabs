@@ -383,6 +383,8 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		cliDemo.RunnerID = runnerID
 		cliDemo.Provider, cliDemo.Region = provider, region
 		cliDemo.Project, cliDemo.EnvName = project, env
+		// The SAME shape the seeded path merges — read from ALETHIA_E2E_CLUSTER_JSON, not restated.
+		cliDemo.ClusterSets = CLIDemoClusterSets(t)
 		// Before anything is bought: refuse a beat that names a command GROUP. `drift`, `cost` and
 		// `verify` are groups whose help exits 0, so such a beat performs nothing and PASSES.
 		AssertCLIDemoBeatsAreLeafCommands(ctx, t, cliDemo)
