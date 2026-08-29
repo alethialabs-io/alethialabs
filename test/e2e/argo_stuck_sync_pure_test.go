@@ -6,6 +6,9 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -449,5 +452,40 @@ func TestRenderControllerLogWithdrawsTheVerdictUnderACaveat(t *testing.T) {
 	clean := renderControllerLog(controllerLogScan{Scanned: 200, Levelled: 200, Matched: 0, Pods: 1})
 	if !strings.Contains(clean, "is not complaining") {
 		t.Errorf("a clean, fully readable log must still produce a verdict:\n%s", clean)
+	}
+}
+
+// ONE READ HELPER FOR THE PACKAGE. There were two, written a day apart for the same purpose, each
+// correct about a half of a defect the other had — `kubectlValue` picked the right stderr line and
+// discarded partial stdout, `kubectlRead` kept the stdout and took stderr's first line. This pins
+// that only one survives, because two helpers over one operation is how they diverged.
+func TestOnlyOneKubectlReadHelperExists(t *testing.T) {
+	t.Parallel()
+
+	files, err := filepath.Glob("*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("could not list package sources (%v) — this test cannot check anything", err)
+	}
+	var defs []string
+	sawCanonical := false
+	for _, f := range files {
+		raw, rerr := os.ReadFile(f)
+		if rerr != nil {
+			t.Fatalf("could not read %s: %v", f, rerr)
+		}
+		for _, m := range regexp.MustCompile(`(?m)^func (kubectl[A-Za-z0-9_]*)\(ctx context\.Context, timeout time\.Duration`).FindAllStringSubmatch(string(raw), -1) {
+			defs = append(defs, f+":"+m[1])
+			if m[1] == "kubectlRead" {
+				sawCanonical = true
+			}
+		}
+	}
+	// Guards the guard: a rename would empty the scan and report success while checking nothing.
+	if !sawCanonical {
+		t.Fatal("kubectlRead is not defined in this package — the scan checked nothing")
+	}
+	if len(defs) != 1 {
+		t.Errorf("%d kubectl read helpers with this signature: %v — they diverge, and the divergence "+
+			"is a wrong error message on a failing path", len(defs), defs)
 	}
 }
