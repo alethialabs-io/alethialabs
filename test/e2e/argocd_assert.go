@@ -1193,6 +1193,9 @@ func argoDeadlineDump(
 	// FIRST, because it is the only one that speaks for a loser whose resources were never created,
 	// and because it is one small `kubectl get` rather than a chart render. See argo_sync_failure.go.
 	return dumpArgoSyncFailures(ctx, kubeconfigPath, losers) +
+		// IMMEDIATELY after it, because it answers the question that dump's own output raises: the
+		// Application names the hook it is waiting for and stops there. See argo_pending_hook.go.
+		dumpPendingHooks(ctx, kubeconfigPath, losers) +
 		// An add-on that installs SEALED cannot converge on the chart alone, and nothing on this
 		// path was looking at the Job that opens it. One `kubectl get jobs -A`; see
 		// bootstrap_job_dump.go for the run that needed it.
