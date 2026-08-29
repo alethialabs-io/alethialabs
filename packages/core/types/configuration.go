@@ -18,18 +18,29 @@ type ConfigurationSummary struct {
 }
 
 type Configuration struct {
-	CloudAccountID          string           `json:"cloud_account_id"`
-	Region                  string           `json:"region"`
-	ContainerPlatform       string           `json:"container_platform"`
-	ProvisionNetwork        *bool            `json:"provision_network"`
-	CreatedAt               time.Time        `json:"created_at"`
-	DbMaxCapacity           *float64         `json:"db_max_capacity"`
-	DbMinCapacity           *float64         `json:"db_min_capacity"`
-	Description             *string          `json:"description"`
-	DnsDomainName           *string          `json:"dns_domain_name"`
-	DnsZoneID               *string          `json:"dns_zone_id"`
-	DownloadCount           *int             `json:"download_count"`
-	ClusterAdmins           *string          `json:"cluster_admins"`
+	CloudAccountID    string    `json:"cloud_account_id"`
+	Region            string    `json:"region"`
+	ContainerPlatform string    `json:"container_platform"`
+	ProvisionNetwork  *bool     `json:"provision_network"`
+	CreatedAt         time.Time `json:"created_at"`
+	DbMaxCapacity     *float64  `json:"db_max_capacity"`
+	DbMinCapacity     *float64  `json:"db_min_capacity"`
+	Description       *string   `json:"description"`
+	DnsDomainName     *string   `json:"dns_domain_name"`
+	DnsZoneID         *string   `json:"dns_zone_id"`
+	DownloadCount     *int      `json:"download_count"`
+	// ClusterAdmins is a LIST, and typing it as *string broke every `alethia project get` on a
+	// project that has any: the API serialises the project_cluster_admins rows as an array, and the
+	// CLI died on
+	//
+	//	json: cannot unmarshal array into Go struct field Configuration.configuration.cluster_admins of type string
+	//
+	// It is `[]any` to match ProjectClusterConfig.ClusterAdmins in project_config.go — the sibling
+	// struct in this same package, describing the same field, which every real consumer already
+	// reads (aws_provider's eks_cluster_admins, azure_provider's admin group ids). Two shapes for
+	// one field is what let this sit: nothing in the repo reads THIS one, so nothing caught it, and
+	// the only symptom was a demo-path command failing on a decode.
+	ClusterAdmins           []any            `json:"cluster_admins"`
 	DnsEnabled              *bool            `json:"dns_enabled"`
 	EnableGitopsDestination *bool            `json:"enable_gitops_destination"`
 	HasCache                *bool            `json:"has_cache"`
