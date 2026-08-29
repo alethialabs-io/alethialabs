@@ -9,6 +9,7 @@
 //
 // The formatting half is pure (and unit-tested); the DB half is a thin owner-scoped read.
 
+import { formatMonthlyRate } from "@repo/format";
 import { desc, eq, isNull, sql } from "drizzle-orm";
 import { type Tx, withActorScope, withOwnerScope } from "@/lib/db";
 import { agentContext, jobs, projectEnvironments, projects } from "@/lib/db/schema";
@@ -62,7 +63,9 @@ export function formatProjectKnowledge(facts: ProjectFacts): string {
 		`- Region: ${facts.region} · IaC: ${facts.iacVersion}`,
 	];
 	if (facts.monthlyCost !== null) {
-		lines.push(`- Estimated monthly cost: $${facts.monthlyCost}`);
+		// Through the shared formatter so the model is told the cost in the same words the console
+		// shows the user — a bare `$${n}` here prints `$412` for 412 and `$412.5` for 412.5.
+		lines.push(`- Estimated monthly cost: ${formatMonthlyRate(facts.monthlyCost, "exact")}`);
 	}
 
 	if (facts.environments.length > 0) {

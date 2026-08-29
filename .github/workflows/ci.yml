@@ -658,6 +658,17 @@ jobs:
       - name: ...and that check is not silently blind
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:ui-client-boundary -- --self-test
+      # CLAUDE.md §6's shared-surface table, for the two rows where the rule is unambiguous:
+      # @repo/format and @repo/ui/page-header. Before this, no row of that table was guarded by
+      # anything — one `numeric` column rendered as `$12.50/mo`, `~$12/mo` and `€12.50`, and
+      # in-app page titles rendered at five sizes. apps/console/shared-surface-allowlist.yaml
+      # carries the documented exceptions and is shrink-only.
+      - name: Console shared surface (@repo/format, @repo/ui/page-header) is not hand-rolled
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:shared-surface
+      - name: ...and that check is not silently blind
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-shared-surface.mjs --self-test
       - name: Runner self-image is baked, matches its job, and is multi-arch
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: pnpm check:runner-self-image

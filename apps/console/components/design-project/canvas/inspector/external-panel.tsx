@@ -13,6 +13,7 @@
 // hidden — it is all here, one row per address.
 
 import { Boxes } from "lucide-react";
+import { formatMonthlyRate } from "@repo/format";
 import { cn } from "@repo/ui/utils";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 import { NODE_STATUS_META, nodeStatusKey, useNodeStatus } from "@/lib/canvas/node-status";
@@ -107,7 +108,7 @@ export function ExternalPanel({ nodeId }: { nodeId: string }) {
 									{/* Never-priced reads as nothing at all. A fabricated $0.00 is worse than an
 									    admitted unknown, because you'd believe it. */}
 									{cost != null && (
-										<span className="text-foreground">${cost.toFixed(2)}/mo</span>
+										<span className="text-foreground">{formatMonthlyRate(cost, "exact")}</span>
 									)}
 									{hasDrift && (
 										<span className="border border-border-strong px-1 uppercase tracking-wide">
