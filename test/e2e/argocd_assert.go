@@ -1691,9 +1691,8 @@ func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []o
 		}
 		shown++
 		args := foreignOwnerKubectlArgs(kubeconfigPath, r.kubectlTarget(), r.Namespace)
-		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		out, err := exec.CommandContext(cctx, "kubectl", args...).Output()
-		cancel()
+		// args already carries --kubeconfig, so this read passes an empty path rather than a second.
+		out, err := kubectlRead(ctx, 20*time.Second, "", args[2:]...)
 		if err != nil {
 			// Naming the failure matters as much as the dump: "could not read it" and "it had
 			// nothing interesting" must not look the same.
@@ -1922,12 +1921,10 @@ var podProducingKinds = map[string]bool{
 // managedWorkloads reads the pod-producing resources an Application believes it created, from
 // `.status.resources` — ArgoCD's own record of what it applied.
 func managedWorkloads(ctx context.Context, kubeconfigPath, app string) ([]managedWorkload, error) {
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+	out, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath,
 		"get", "applications.argoproj.io", "-n", "argocd", app,
 		"-o", "jsonpath={range .status.resources[*]}{.kind}|{.name}|{.namespace}|{.health.status}{\"\\n\"}{end}",
-	).Output()
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1962,12 +1959,10 @@ func parseManagedWorkloads(raw string) []managedWorkload {
 // chart. Reading `.spec.selector.matchLabels` cannot go stale, because it is definitionally the
 // selector the workload itself matches on.
 func podSelectorFor(ctx context.Context, kubeconfigPath string, w managedWorkload) (string, error) {
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+	out, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath,
 		"get", strings.ToLower(w.Kind), "-n", w.Namespace, w.Name,
 		"-o", "jsonpath={.spec.selector.matchLabels}",
-	).Output()
+	)
 	if err != nil {
 		return "", err
 	}
