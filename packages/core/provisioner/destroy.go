@@ -155,7 +155,12 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	// BEST EFFORT, and deliberately so. Every failure here is reported and none of them stops the
 	// teardown: the usual reason to be unable to reach the cluster is that it is already gone, and
 	// a destroy that refuses to start because it could not tidy up first would be a worse bug than
-	// the one this fixes. Whatever is left over remains the sweeper's problem, as it was before.
+	// the one this fixes.
+	//
+	// ⚠️ Best effort is NOT "someone else will catch it". The scope-locked sweepers are the e2e
+	// workflow's (`scripts/e2e/*-cleanup.sh`); nothing here sweeps cloud load balancers after a
+	// failed destroy, so on a customer's teardown the warning below is the only signal that
+	// something is still billing.
 	releaseLoadBalancersBeforeDestroy(ctx, provider, vc, wd, out)
 
 	fmt.Fprintln(out, "   Destroying Cloud Resources (this may take 10-15 mins)...")
@@ -348,10 +353,12 @@ func releaseLoadBalancersBeforeDestroy(
 		fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
 		return
 	}
-	if cloud.ExtractClusterName(outputs) == "" {
-		fmt.Fprintln(out, "   Skipping load-balancer release: the state names no cluster.")
-		return
-	}
+	// NO cluster-name gate. `ExtractClusterName` was the obvious pre-check and it is narrower than
+	// what ConfigureKubeconfig accepts: awsProvider handles a BYO-IaC module that emits a generic
+	// `kubeconfig` output for a self-managed, non-EKS cluster — checked BEFORE any cluster-name
+	// lookup — and such an environment has LoadBalancer Services like any other. Gating on the name
+	// skipped it with "the state names no cluster", which was both wrong and confident. Let
+	// ConfigureKubeconfig decide what it can reach; its error is the honest gate.
 	// ⚠️ SIDE EFFECT, stated because it is new on this path: ConfigureKubeconfig writes
 	// ~/.kube/kubeconfig and sets the process's KUBECONFIG (cloud/kubeconfig.go:39). The destroy
 	// that follows therefore runs with KUBECONFIG pointing at the cluster it is about to destroy —
@@ -363,6 +370,6 @@ func releaseLoadBalancersBeforeDestroy(
 		return
 	}
 	if err := releaseCloudLoadBalancers(ctx, out); err != nil {
-		fmt.Fprintf(out, "   Warning: %v\n", err)
+		fmt.Fprintf(out, "   WARNING — cloud load balancers may still exist and still bill: %v\n", err)
 	}
 }

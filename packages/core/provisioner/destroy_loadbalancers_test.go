@@ -6,9 +6,11 @@ package provisioner
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +22,8 @@ const svcListJSON = `{"items":[
  {"metadata":{"name":"nodeport-thing","namespace":"default"},"spec":{"type":"NodePort"}},
  {"metadata":{"name":"harbor","namespace":"harbor"},"spec":{"type":"LoadBalancer"}}
 ]}`
+
+const emptyList = `{"items":[]}`
 
 func TestParseLoadBalancerServicesTakesOnlyTheCloudBackedOnes(t *testing.T) {
 	got, err := parseLoadBalancerServices([]byte(svcListJSON))
@@ -64,57 +68,129 @@ func TestParseLoadBalancerServicesFailsLoudlyOnGarbage(t *testing.T) {
 	}
 }
 
-// stubKubectlSequence puts a `kubectl` on PATH that answers `get` from a numbered sequence of files:
-// the first `get services` gets seq-0, the second seq-1, and so on. Everything else exits 0.
+// A cluster with no Ingress API contributes nothing; a cluster that REFUSED the read contributes an
+// error. Collapsing them is the trap the field-selector comment is about.
+func TestNoIngressAPISeparatesAbsenceFromRefusal(t *testing.T) {
+	for _, msg := range []string{
+		`error: the server doesn't have a resource type "ingresses"`,
+		"Error from server (NotFound): the server could not find the requested resource",
+	} {
+		if !noIngressAPI(errors.New(msg)) {
+			t.Errorf("an absent Ingress API was read as a failure: %s", msg)
+		}
+	}
+	for _, msg := range []string{
+		"Error from server (Forbidden): ingresses is forbidden",
+		"error: Get \"https://x\": net/http: request canceled (Client.Timeout exceeded)",
+		"Error from server (TooManyRequests): please try again later",
+	} {
+		if noIngressAPI(errors.New(msg)) {
+			t.Errorf("a failed read was swallowed as 'no Ingress API': %s", msg)
+		}
+	}
+}
+
+// kubectlRecorder is a `kubectl` on PATH that records every argv, answers `get services` from a
+// sequence and `get ingresses` from one fixed answer.
 //
-// A SEQUENCE because the behaviour under test is a wait — "the objects are still there, and then
-// they are not" cannot be expressed by a stub with one answer.
-func stubKubectlSequence(t *testing.T, svcAnswers []string, repeatLast bool, ingAnswer string, ingExit int) {
+// A SEQUENCE because the behaviour under test is a wait: "the objects are still there, and then
+// they are not" cannot be expressed by a stub with one answer. A RECORDER because the decisive fix
+// is an ORDERING — the ArgoCD Applications must be deleted before anything is listed — and an
+// ordering is only observable in the argv.
+type kubectlRecorder struct{ dir string }
+
+func stubKubectlForRelease(t *testing.T, svcAnswers []string, repeatLast bool, ingAnswer string, ingExit int, ingErr string) *kubectlRecorder {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the stub kubectl is a shell script")
 	}
 	dir := t.TempDir()
 	for i, a := range svcAnswers {
-		if err := os.WriteFile(filepath.Join(dir, "svc-"+string(rune('0'+i))), []byte(a), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "svc-"+strconv.Itoa(i)), []byte(a), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ing"), []byte(ingAnswer), 0o600); err != nil {
-		t.Fatal(err)
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// Each `get services` consumes one answer. Past the end it either repeats the last one — a
-	// controller that never releases — or fails, which is a cluster that went away.
+	write("ing", ingAnswer)
+	write("ingerr", ingErr)
 	repeat := "0"
 	if repeatLast {
 		repeat = "1"
 	}
 	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + dir + "/calls\n" +
 		"case \"$*\" in\n" +
 		"  *'get services'*)\n" +
 		"    n=$(cat " + dir + "/count 2>/dev/null || echo 0)\n" +
 		"    echo $((n+1)) > " + dir + "/count\n" +
 		"    f=" + dir + "/svc-$n\n" +
-		"    if [ ! -f \"$f\" ] && [ " + repeat + " -eq 1 ]; then f=$(ls " + dir + "/svc-* 2>/dev/null | tail -1); fi\n" +
-		"    if [ -n \"$f\" ] && [ -f \"$f\" ]; then cat \"$f\"; exit 0; else echo 'error: the server could not find the requested resource' >&2; exit 1; fi;;\n" +
-		"  *'get ingresses'*) cat " + dir + "/ing; exit " + string(rune('0'+ingExit)) + ";;\n" +
+		"    if [ ! -f \"$f\" ] && [ " + repeat + " -eq 1 ]; then f=$(ls " + dir + "/svc-* 2>/dev/null | sort -V | tail -1); fi\n" +
+		"    if [ -n \"$f\" ] && [ -f \"$f\" ]; then cat \"$f\"; exit 0; fi\n" +
+		"    echo 'Error from server (TooManyRequests): please try again later' >&2; exit 1;;\n" +
+		"  *'get ingresses'*) cat " + dir + "/ing; cat " + dir + "/ingerr >&2; exit " + strconv.Itoa(ingExit) + ";;\n" +
 		"esac\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return &kubectlRecorder{dir: dir}
 }
 
+func (k *kubectlRecorder) calls(t *testing.T) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(k.dir, "calls"))
+	if err != nil {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+}
+
+// Generous relative to six process spawns, small relative to a test run. 300ms was one loaded
+// runner away from firing the deadline branch on the first iteration and blaming the wrong thing.
 func shortWaits(t *testing.T) {
 	t.Helper()
 	pt, pp := lbReleaseTimeout, lbReleasePoll
-	lbReleaseTimeout, lbReleasePoll = 300*time.Millisecond, 10*time.Millisecond
+	lbReleaseTimeout, lbReleasePoll = 3*time.Second, 20*time.Millisecond
 	t.Cleanup(func() { lbReleaseTimeout, lbReleasePoll = pt, pp })
+}
+
+// THE DECISIVE ONE. The add-ons that own these load balancers run under Applications with
+// `selfHeal: true`, so deleting a Service without stopping ArgoCD first is out-of-band drift: the
+// controller puts it back, the CCM creates a NEW load balancer, and the environment ends up with
+// more orphans than it started with.
+func TestReleaseCloudLoadBalancersStopsArgoCDBeforeItListsAnything(t *testing.T) {
+	shortWaits(t)
+	rec := stubKubectlForRelease(t, []string{svcListJSON, emptyList}, true, emptyList, 0, "")
+	var buf bytes.Buffer
+	if err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	calls := rec.calls(t)
+	appsAt, listAt := -1, -1
+	for i, c := range calls {
+		if appsAt < 0 && strings.Contains(c, "delete applications.argoproj.io") {
+			appsAt = i
+		}
+		if listAt < 0 && strings.Contains(c, "get services") {
+			listAt = i
+		}
+	}
+	if appsAt < 0 {
+		t.Fatalf("the ArgoCD Applications were never deleted:\n%s", strings.Join(calls, "\n"))
+	}
+	if listAt < 0 || appsAt > listAt {
+		t.Errorf("Applications deleted at %d, first list at %d — self-heal re-creates whatever is "+
+			"deleted after that point:\n%s", appsAt, listAt, strings.Join(calls, "\n"))
+	}
 }
 
 func TestReleaseCloudLoadBalancersOnAClusterWithNone(t *testing.T) {
 	shortWaits(t)
-	stubKubectlSequence(t, []string{`{"items":[]}`}, true, `{"items":[]}`, 0)
+	stubKubectlForRelease(t, []string{emptyList}, true, emptyList, 0, "")
 	var buf bytes.Buffer
 	if err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
 		t.Fatalf("a cluster with no LoadBalancer Services is not a failure: %v", err)
@@ -128,7 +204,7 @@ func TestReleaseCloudLoadBalancersOnAClusterWithNone(t *testing.T) {
 // removed the cloud resource, so their disappearance IS the release.
 func TestReleaseCloudLoadBalancersWaitsUntilTheObjectsAreGone(t *testing.T) {
 	shortWaits(t)
-	stubKubectlSequence(t, []string{svcListJSON, svcListJSON, `{"items":[]}`}, true, `{"items":[]}`, 0)
+	rec := stubKubectlForRelease(t, []string{svcListJSON, svcListJSON, emptyList}, true, emptyList, 0, "")
 	var buf bytes.Buffer
 	if err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
 		t.Fatalf("the objects were released and this reported a failure: %v", err)
@@ -140,13 +216,25 @@ func TestReleaseCloudLoadBalancersWaitsUntilTheObjectsAreGone(t *testing.T) {
 	if !strings.Contains(out, "All cloud-backed objects released") {
 		t.Errorf("the success is not stated:\n%s", out)
 	}
+	// The deletes are RE-ISSUED while the objects persist — that is what recovers a delete that
+	// failed once (an evicted admission webhook, a throttled apiserver) instead of waiting the
+	// whole budget on an object nothing successfully asked to remove.
+	var deletes int
+	for _, c := range rec.calls(t) {
+		if strings.Contains(c, "delete service ingress-nginx-controller") {
+			deletes++
+		}
+	}
+	if deletes < 2 {
+		t.Errorf("the delete was issued %d time(s); it must be re-issued while the object persists", deletes)
+	}
 }
 
 // A controller that never releases must not hold the teardown open — and the give-up must NAME what
 // is still held, because the destroy is about to fail on whatever those are attached to.
 func TestReleaseCloudLoadBalancersGivesUpAndNamesWhatIsHeld(t *testing.T) {
 	shortWaits(t)
-	stubKubectlSequence(t, []string{svcListJSON}, true, `{"items":[]}`, 0)
+	stubKubectlForRelease(t, []string{svcListJSON}, true, emptyList, 0, "")
 	var buf bytes.Buffer
 	err := releaseCloudLoadBalancers(context.Background(), &buf)
 	if err == nil {
@@ -160,11 +248,10 @@ func TestReleaseCloudLoadBalancersGivesUpAndNamesWhatIsHeld(t *testing.T) {
 	}
 }
 
-// The common case for a repeated destroy: the cluster is already gone. That is a perfectly good
-// outcome — there is nothing left to hold anything — and it must not read as a failure.
+// An unreachable cluster is reported, never read as "there are none".
 func TestReleaseCloudLoadBalancersOnAnUnreachableClusterIsAnError(t *testing.T) {
 	shortWaits(t)
-	stubKubectlSequence(t, nil, false, `{"items":[]}`, 0) // the FIRST `get services` fails
+	stubKubectlForRelease(t, nil, false, emptyList, 0, "") // the FIRST `get services` fails
 	var buf bytes.Buffer
 	err := releaseCloudLoadBalancers(context.Background(), &buf)
 	if err == nil {
@@ -175,16 +262,49 @@ func TestReleaseCloudLoadBalancersOnAnUnreachableClusterIsAnError(t *testing.T) 
 	}
 }
 
-// And a cluster that goes away DURING the wait is a success: whatever held the load balancers is
-// gone with it.
-func TestReleaseCloudLoadBalancersTreatsAVanishedClusterAsReleased(t *testing.T) {
+// AND A FAILURE MID-WAIT IS NOT A RELEASE. A teardown is exactly when an apiserver throttles or a
+// control plane restarts; calling any of those "the cluster is gone, therefore released" claims a
+// release over live load balancers.
+func TestReleaseCloudLoadBalancersDoesNotCallAnUnreadableClusterReleased(t *testing.T) {
 	shortWaits(t)
-	stubKubectlSequence(t, []string{svcListJSON}, false, `{"items":[]}`, 0) // the SECOND list fails
+	stubKubectlForRelease(t, []string{svcListJSON}, false, emptyList, 0, "") // every list after the first fails
+	var buf bytes.Buffer
+	err := releaseCloudLoadBalancers(context.Background(), &buf)
+	if err == nil {
+		t.Fatalf("a cluster that stopped answering was reported as released:\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "could not confirm") {
+		t.Errorf("the verdict is not stated as unconfirmed: %v", err)
+	}
+	if !strings.Contains(err.Error(), "may still be live") {
+		t.Errorf("the error does not say what is at stake: %v", err)
+	}
+}
+
+// A failed Ingress read must not render as "nothing to release" — the exact trap the Services
+// field-selector comment warns about, on the kind that is MORE likely to hold an ALB.
+func TestReleaseCloudLoadBalancersFailsOnARefusedIngressRead(t *testing.T) {
+	shortWaits(t)
+	stubKubectlForRelease(t, []string{emptyList}, true, "", 1, "Error from server (Forbidden): ingresses is forbidden")
+	var buf bytes.Buffer
+	err := releaseCloudLoadBalancers(context.Background(), &buf)
+	if err == nil {
+		t.Fatalf("a refused Ingress read was reported as nothing to do:\n%s", buf.String())
+	}
+	if !strings.Contains(err.Error(), "list ingresses") {
+		t.Errorf("the error does not name the read that failed: %v", err)
+	}
+	if strings.Contains(buf.String(), "nothing outside the state file") {
+		t.Errorf("a failed read printed the no-op verdict:\n%s", buf.String())
+	}
+}
+
+// A cluster with no Ingress API at all is a fact, not a failure.
+func TestReleaseCloudLoadBalancersToleratesAClusterWithNoIngressAPI(t *testing.T) {
+	shortWaits(t)
+	stubKubectlForRelease(t, []string{emptyList}, true, "", 1, `error: the server doesn't have a resource type "ingresses"`)
 	var buf bytes.Buffer
 	if err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
-		t.Fatalf("a cluster that vanished mid-wait is not a failure: %v", err)
-	}
-	if !strings.Contains(buf.String(), "no longer reachable") {
-		t.Errorf("the reason is not stated:\n%s", buf.String())
+		t.Fatalf("a cluster with no Ingress API is not a failure: %v", err)
 	}
 }
