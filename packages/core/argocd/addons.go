@@ -326,10 +326,29 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 					// azure sat Healthy+OutOfSync from the ten-minute mark to the 35-minute deadline
 					// across two paid runs.
 					//
-					// Neither field is one ArgoCD has an opinion about: the chart renders NO
-					// caBundle at all, and no namespaceSelector for the enforcer to conflict with.
-					// So this ignores what another writer owns, not a value we chose — which is the
-					// distinction #2778 draws between an evidenced entry and a guessed one.
+					// THE TWO FIELDS ARE NOT ALIKE, and an earlier version of this comment claimed
+					// they were. It said the chart renders "no namespaceSelector for the enforcer to
+					// conflict with". That is FALSE, and rendering the pinned chart settles it:
+					//
+					//   helm template addon-keda kedacore/keda --version 2.15.1 -n keda \
+					//     --set operator.replicaCount=1
+					//   → namespaceSelector: {}   on all three webhooks
+					//
+					// `caBundle` genuinely is absent from the render — keda writes it and ArgoCD has
+					// no opinion. `namespaceSelector` is ours: the chart authors `{}`, ArgoCD applies
+					// it and therefore OWNS it, and AKS's enforcer overwrites it. That conflict is
+					// exactly the mechanism, and it is why ignoring the field is the right remedy on
+					// AKS — but it is NOT the same claim as "we never wrote it".
+					//
+					// THE COST OF SAYING IT THIS WAY. Because this ignores a path rather than an
+					// owner, a future chart that scopes the selector to a real namespace would be
+					// silently unenforced — ArgoCD would stop comparing a value we do care about.
+					// `spec.ignoreDifferences[].managedFieldsManagers` is the primitive that says
+					// what is actually meant ("ignore what admissionsenforcer and keda own"), and
+					// swapping to it is #3346. It is deliberately NOT done in the same change as
+					// the entry an azure run is currently testing: verifying the mechanism and
+					// refining the expression are two things, and doing both at once would leave
+					// neither verified.
 					Group:             "admissionregistration.k8s.io",
 					Kind:              "ValidatingWebhookConfiguration",
 					Name:              "keda-admission",
