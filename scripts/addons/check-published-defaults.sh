@@ -136,6 +136,10 @@ if [ "$total" -eq 0 ]; then
   echo "check-published-defaults: the fixtures yielded ZERO add-ons — nothing was checked" >&2
   exit 2
 fi
+# Every chart KEY this run knows about, so an allowlist entry can be attributed to its chart. The
+# key may contain dots (`hetzner-service.registry-app-images`), so an entry is matched by prefix
+# against these rather than split on a separator.
+awk '{print $1}' "$workdir/charts.txt" | grep -v '^[[:space:]]*$' > "$workdir/all-keys.txt"
 
 declared=""
 if [ -r "$allowfile" ]; then
@@ -169,6 +173,12 @@ new_uncheckable=""
 now_checkable=""
 seen_file="$workdir/seen.txt"
 : > "$seen_file"
+# The charts that were actually RENDERED AND COMPARED. Distinct from the specs the fixtures yielded:
+# a chart in $unreachable / $failed / $unreadable / $uncomparable never reached the comparison, so
+# nothing of its was ever added to $seen_file — and the stale ratchet below would then read every
+# one of its declared entries as "fixed, remove it".
+compared_file="$workdir/compared.txt"
+: > "$compared_file"
 
 while read -r key repo chart version ns id; do
   [ -n "$key" ] || continue
@@ -240,17 +250,29 @@ def secret_values(path):
     found, in_secret, read_any = {}, False, 0
     block = None          # "data" | "stringData" | None — which mapping we are inside
     pending_key = None    # the key of a block scalar being gathered
+    pending_block = None  # the mapping THAT key belongs to, captured when the block scalar opened:
+                          # `block` can have moved on by the time flush() runs
     pending_lines = []
 
     def flush():
-        nonlocal pending_key, pending_lines, read_any
+        nonlocal pending_key, pending_block, pending_lines, read_any
         if pending_key is not None:
             val = "\n".join(pending_lines).strip()
+            # A `data:` entry is base64 WHEREVER it is written. Charts render
+            # `{{ .Values.tls.crt | b64enc | nindent 4 }}` under `data:` as a block scalar, and
+            # decoding only the inline path would apply the 128-char filter to the base64 form —
+            # ~33% longer — so a 100-byte shipped credential survives the filter inline and is
+            # silently dropped as a block. Same namespace of values, two representations.
+            if val and pending_block == "data":
+                try:
+                    val = base64.b64decode(val).decode("utf-8", "strict")
+                except Exception:
+                    val = ""
             if val:
                 read_any += 1
                 if len(val) <= 128:
                     found.setdefault(val, set()).add(pending_key)
-        pending_key, pending_lines = None, []
+        pending_key, pending_block, pending_lines = None, None, []
 
     for raw in open(path, encoding="utf-8", errors="replace"):
         line = raw.rstrip("\n")
@@ -276,9 +298,15 @@ def secret_values(path):
             continue
         if block is None:
             continue
-        m = re.match(r'^  ([A-Za-z0-9_.\-]+): (\|-?|>-?)\s*$', line)
+        # EVERY block-scalar indicator, not the four common ones. YAML also allows the KEEP
+        # chomping indicator and an explicit indentation indicator — `|+`, `>+`, `|2`, `|-2`. A
+        # narrower match falls through to the scalar regex below, which happily records the
+        # INDICATOR as the value (`ca.crt: |+` → val "|+"), reports it as a published default
+        # because theirs renders the same indicator, and drops the actual content lines — with
+        # `read_any` non-zero, so the extraction-broke net does not catch it either.
+        m = re.match(r'^  ([A-Za-z0-9_.\-]+): [|>][-+]?[0-9]?\s*$', line)
         if m:
-            pending_key = m.group(1)
+            pending_key, pending_block = m.group(1), block
             pending_lines = []
             continue
         m = re.match(r'^  ([A-Za-z0-9_.\-]+): "?(.*?)"?\s*$', line)
@@ -350,6 +378,7 @@ PY
 )"
 
   if [ -z "$hits" ]; then
+    printf '%s\n' "$key" >> "$compared_file"
     echo "clean          $key"
     continue
   fi
@@ -361,6 +390,7 @@ PY
     continue
   fi
 
+  printf '%s\n' "$key" >> "$compared_file"
   while IFS= read -r hit; do
     [ -n "$hit" ] || continue
     entry="$(printf '%s' "$hit" | tr '\t' '.')"
@@ -381,15 +411,38 @@ done < "$workdir/charts.txt"
 if [ -n "$declared" ]; then
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
-    if ! grep -qxF "$entry" "$seen_file" 2>/dev/null; then
-      stale="$stale $entry"
-      echo "NO LONGER SHIPPED  $entry — remove it from $(basename "$allowfile")"
+    grep -qxF "$entry" "$seen_file" 2>/dev/null && continue
+    # WHOSE entry is this? An allowlist line is `<chart-key>.<secret data key>`, and the chart key
+    # may itself contain dots (`hetzner-service.registry-app-images`), so it is matched against the
+    # charts that were compared rather than split on the last dot.
+    owner=""
+    while IFS= read -r c; do
+      [ -n "$c" ] || continue
+      case "$entry" in "$c".*) owner="$c" ;; esac
+    done < "$workdir/all-keys.txt"
+    if [ -n "$owner" ] && ! grep -qxF "$owner" "$compared_file" 2>/dev/null; then
+      # NOT stale — never measured. Saying "remove it" here would delete a real declaration because
+      # goharbor was unreachable for ninety seconds, and the next run would report the credential as
+      # a NEW published default. The chart's own failure is already fatal below; this line exists so
+      # the two are not confused.
+      echo "NOT RE-CHECKED $entry — its chart did not render on this run, so this says nothing about whether it is fixed"
+      continue
     fi
+    stale="$stale $entry"
+    echo "NO LONGER SHIPPED  $entry — remove it from $(basename "$allowfile")"
   done <<< "$declared"
 fi
 
 echo
-echo "checked $total chart render(s): $(cat "$workdir/n.catalog") marketplace add-on(s) + $(cat "$workdir/n.dataservice") hetzner data-service spec(s)"
+# COUNT WHAT WAS CHECKED. `$total` is what the fixtures YIELDED, written before any render happens,
+# and it includes every chart that was declared uncheckable, failed to render, was unreachable or
+# whose Secrets could not be read. Printing it as the coverage number is how a run where goharbor
+# was down still ends with a confident "checked 27" — the exact shape this file refuses elsewhere.
+compared_n="$(grep -c '[^[:space:]]' "$compared_file" 2>/dev/null || echo 0)"
+echo "checked $compared_n of $total chart render(s) ($(cat "$workdir/n.catalog") marketplace add-on(s) + $(cat "$workdir/n.dataservice") hetzner data-service spec(s) yielded)"
+if [ "$compared_n" -ne "$total" ]; then
+  echo "  NOT compared:${uncomparable}${failed}${unreachable}${unreadable} — see the lines above for which and why"
+fi
 
 # And the other direction: a declared-uncheckable add-on that now renders is coverage REGAINED, and
 # the list must shrink to record it.
