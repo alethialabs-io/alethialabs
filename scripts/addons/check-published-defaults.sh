@@ -438,7 +438,13 @@ echo
 # and it includes every chart that was declared uncheckable, failed to render, was unreachable or
 # whose Secrets could not be read. Printing it as the coverage number is how a run where goharbor
 # was down still ends with a confident "checked 27" — the exact shape this file refuses elsewhere.
-compared_n="$(grep -c '[^[:space:]]' "$compared_file" 2>/dev/null || echo 0)"
+# `|| true`, NOT `|| echo 0`. `grep -c` on an empty file PRINTS `0` and EXITS 1, so `|| echo 0`
+# appends a second line and the value becomes the two-line string `0\n0`. `[ "$compared_n" -ne
+# "$total" ]` then dies with `integer expression expected` and takes the FALSE branch — suppressing
+# the `NOT compared:` list in the one run where NOTHING was compared, which is exactly the run a
+# reader needs it. Line 134 above already uses `|| true` for the same reason.
+compared_n="$(grep -c '[^[:space:]]' "$compared_file" 2>/dev/null || true)"
+compared_n="${compared_n:-0}"
 echo "checked $compared_n of $total chart render(s) ($(cat "$workdir/n.catalog") marketplace add-on(s) + $(cat "$workdir/n.dataservice") hetzner data-service spec(s) yielded)"
 if [ "$compared_n" -ne "$total" ]; then
   echo "  NOT compared:${uncomparable}${failed}${unreachable}${unreadable} — see the lines above for which and why"
