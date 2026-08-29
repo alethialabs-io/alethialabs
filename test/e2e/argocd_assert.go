@@ -1691,8 +1691,13 @@ func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []o
 		}
 		shown++
 		args := foreignOwnerKubectlArgs(kubeconfigPath, r.kubectlTarget(), r.Namespace)
-		// args already carries --kubeconfig, so this read passes an empty path rather than a second.
-		out, err := kubectlRead(ctx, 20*time.Second, "", args[2:]...)
+		// `args[2:]` drops the `--kubeconfig <path>` pair foreignOwnerKubectlArgs puts first, because
+		// kubectlRead prepends its own. The PATH still has to be handed over: passing "" here made
+		// kubectlRead prepend `--kubeconfig ""`, and kubectl does not reject an empty value — it
+		// falls back to its default loading rules ($KUBECONFIG, then ~/.kube/config, then
+		// localhost:8080). So this probe read whatever cluster the machine happened to be pointed
+		// at, or none, and reported the answer as if it came from the cluster under test.
+		out, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath, args[2:]...)
 		if err != nil {
 			// Naming the failure matters as much as the dump: "could not read it" and "it had
 			// nothing interesting" must not look the same.
