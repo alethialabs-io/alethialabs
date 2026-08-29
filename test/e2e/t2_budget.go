@@ -181,6 +181,20 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 		d := fabricDemoTimeout()
 		add("fabric-demo", time.Duration(len(tiers))*2*d+d+vclusterTenantBudget)
 	}
+	// ⚠️ HEADROOM ALSO PAYS FOR THE FAILING-PATH DUMP, and that is a deliberate exception to the
+	// rule this function otherwise keeps.
+	//
+	// Every other real cost here is a NAMED term, because a cost hidden inside headroom is a cost
+	// nobody can see in the ladder the workflow prints. `argoDeadlineDump` is the exception: it runs
+	// only when a leg has already failed, so reserving for it would inflate every ladder including
+	// the widest — and the widest is already within four minutes of T2_JOB_CAP_MINUTES. Buying
+	// visibility by raising the cap on every cloud, for time only a failing run can spend, is the
+	// worse trade.
+	//
+	// So it is bounded INSIDE headroom instead: `argoDumpBudget` (argocd_assert.go) caps the whole
+	// dump, and TestArgoDumpBudgetFitsInsideHeadroom pins that it leaves margin here. If the dump
+	// ever needs more than headroom can lend, that is the moment to make it a term and raise the
+	// cap — not before.
 	add("headroom", t2BaseHeadroom)
 
 	for _, t := range b.Terms {

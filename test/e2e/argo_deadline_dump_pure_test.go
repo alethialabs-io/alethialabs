@@ -100,3 +100,47 @@ func TestSharedDumpCarriesEveryDiagnostic(t *testing.T) {
 		}
 	}
 }
+
+// The budget's job is to stop the dump killing teardown; the SKIPPED LIST's job is to stop it doing
+// that quietly. A dump that ends early without saying so reads as a complete dump with nothing in
+// its later sections, which is the same defect the whole file exists to prevent.
+func TestRenderDumpBudgetSpentNamesWhatDidNotRun(t *testing.T) {
+	t.Parallel()
+
+	if got := renderDumpBudgetSpent(nil); got != "" {
+		t.Errorf("nothing skipped must print nothing, got %q", got)
+	}
+	got := renderDumpBudgetSpent([]dumpSection{{name: "describe"}, {name: "argocd app diff"}})
+	for _, want := range []string{"2 section(s) NOT run", "describe", "argocd app diff", argoDumpBudget.String()} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the skipped notice does not carry %q:\n%s", want, got)
+		}
+	}
+}
+
+// Every section the dump declares must be NAMED, or the skipped notice reports a blank.
+func TestEveryDumpSectionHasAName(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("argocd_assert.go")
+	if err != nil {
+		t.Fatalf("could not read argocd_assert.go: %v", err)
+	}
+	body := regexp.MustCompile(`(?s)sections := \[\]dumpSection\{.*?\n\t\}\n`).FindString(string(raw))
+	if body == "" {
+		t.Fatal("the section table was not found — this test would be vacuous")
+	}
+	entries := regexp.MustCompile(`\{"([^"]*)", func\(\) string`).FindAllStringSubmatch(body, -1)
+	if len(entries) == 0 {
+		t.Fatal("no sections matched — the table's shape changed and this test stopped checking")
+	}
+	// Deliberately NOT compared against len(dumpHelpers): #3373 adds a test that derives every
+	// diagnostic call from the helper's body and requires it to be named there, which checks the
+	// same drift by NAME rather than by count. A count check here would only duplicate it, and it
+	// would couple this test to a list that lives on another branch.
+	for _, e := range entries {
+		if strings.TrimSpace(e[1]) == "" {
+			t.Error("a dump section has an empty name; the skipped notice would report a blank")
+		}
+	}
+}

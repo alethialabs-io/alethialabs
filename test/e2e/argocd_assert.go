@@ -1220,6 +1220,44 @@ func (r outOfSyncRef) kubectlTarget() string {
 // That is the whole argument for a single function. Two call sites assembling the same list by hand
 // will drift, and the drift is invisible until a run needs the missing half — by which point it has
 // already cost a real apply.
+// argoDumpBudget is the whole failing-path dump's share of the wall clock.
+//
+// Sized against what remains rather than against what would be comfortable: t2BaseHeadroom is seven
+// minutes, teardown is reserved separately by the ladder, and four minutes buys every section a
+// realistic run — each is a `kubectl get` measured in hundreds of milliseconds, and the timeouts
+// they carry are ceilings for a HUNG call, not expected costs.
+//
+// Reserved as its own term in ResolveT2Budget, deliberately, rather than left to headroom.
+// t2_budget.go makes that argument in its own words for day2-url and cli-demo: headroom absorbs
+// variance in terms that ARE reserved, and a real bounded cost hidden inside it is a cost nobody
+// can see in the ladder the workflow prints. This one is worse than invisible — it is spent exactly
+// when the ArgoCD term has already been spent in full, which is the moment headroom is thinnest.
+const argoDumpBudget = 4 * time.Minute
+
+// dumpSection is one diagnostic and the name it is reported under when it does not get to run.
+type dumpSection struct {
+	name string
+	run  func() string
+}
+
+// renderDumpBudgetSpent names the sections that did not run.
+//
+// NAMED, never silently dropped: this file's stated principle is that a dump which stops before the
+// interesting failure has the same effect as no dump, at the same price. A reader who can see that
+// "argocd app diff" was not reached knows to look for it; a reader shown nothing concludes there
+// was nothing to show.
+func renderDumpBudgetSpent(skipped []dumpSection) string {
+	if len(skipped) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(skipped))
+	for _, s := range skipped {
+		names = append(names, s.name)
+	}
+	return fmt.Sprintf("\n──── dump budget of %s spent; %d section(s) NOT run: %s ────\n",
+		argoDumpBudget, len(names), strings.Join(names, ", "))
+}
+
 func argoDeadlineDump(
 	ctx context.Context,
 	kubeconfigPath string,
@@ -1227,23 +1265,51 @@ func argoDeadlineDump(
 	losers []string,
 	refs []outOfSyncRef,
 ) string {
-	// FIRST, because it is the only one that speaks for a loser whose resources were never created,
-	// and because it is one small `kubectl get` rather than a chart render. See argo_sync_failure.go.
-	return dumpArgoSyncFailures(ctx, kubeconfigPath, losers) +
+	// ONE budget for the whole dump, not one per call.
+	//
+	// Eight sections, each with its own per-call timeout and its own per-app cap, and the caps
+	// MULTIPLY: twenty losers against describeArgoApps' 30s alone is ten minutes. Every section was
+	// sized against the remaining time as though it were the only one, which is how a chain of
+	// individually reasonable timeouts overruns.
+	//
+	// And it overruns into the worst place available. This runs INSIDE the T2 context, after the
+	// ArgoCD budget is already spent, and a cancelled ctx does not merely truncate the dump — it
+	// kills the process before t.Cleanup tears the cluster down, leaking a real cloud cluster to the
+	// sweeper. A diagnostic that costs a leaked EKS cluster to print is not worth printing.
+	dctx, cancel := context.WithTimeout(ctx, argoDumpBudget)
+	defer cancel()
+
+	sections := []dumpSection{
+		// FIRST, because it is the only one that speaks for a loser whose resources were never
+		// created, and because it is one small `kubectl get` rather than a chart render. See
+		// argo_sync_failure.go.
+		{"sync failures", func() string { return dumpArgoSyncFailures(dctx, kubeconfigPath, losers) }},
 		// IMMEDIATELY after it, because it answers the question that dump's own output raises: the
 		// Application names the hook it is waiting for and stops there. See argo_pending_hook.go.
-		dumpPendingHooks(ctx, kubeconfigPath, losers) +
+		{"pending hooks", func() string { return dumpPendingHooks(dctx, kubeconfigPath, losers) }},
 		// An add-on that installs SEALED cannot converge on the chart alone, and nothing on this
 		// path was looking at the Job that opens it. One `kubectl get jobs -A`; see
 		// bootstrap_job_dump.go for the run that needed it.
-		dumpAddOnBootstrapJobs(ctx, kubeconfigPath) +
+		{"bootstrap jobs", func() string { return dumpAddOnBootstrapJobs(dctx, kubeconfigPath) }},
 		// The two sources that speak for a sync still RUNNING — an Application waiting on a hook it
 		// never applied has nothing further to say, and both of these do. See argo_stuck_sync.go.
-		dumpArgoControllerLog(ctx, kubeconfigPath, losers) +
-		dumpDestinationWarnings(ctx, kubeconfigPath, losers) +
-		describeArgoApps(ctx, kubeconfigPath, losers) +
-		dumpOutOfSyncResources(ctx, kubeconfigPath, refs) +
-		dumpArgoAppDiffs(ctx, kubeconfigPath, observed, losers)
+		{"controller log", func() string { return dumpArgoControllerLog(dctx, kubeconfigPath, losers) }},
+		{"cluster warnings", func() string { return dumpDestinationWarnings(dctx, kubeconfigPath, losers) }},
+		{"describe", func() string { return describeArgoApps(dctx, kubeconfigPath, losers) }},
+		{"out-of-sync objects", func() string { return dumpOutOfSyncResources(dctx, kubeconfigPath, refs) }},
+		// LAST, because it is by far the most expensive: each entry renders the chart.
+		{"argocd app diff", func() string { return dumpArgoAppDiffs(dctx, kubeconfigPath, observed, losers) }},
+	}
+
+	var b strings.Builder
+	for i, sec := range sections {
+		if dctx.Err() != nil {
+			b.WriteString(renderDumpBudgetSpent(sections[i:]))
+			break
+		}
+		b.WriteString(sec.run())
+	}
+	return b.String()
 }
 
 // dumpArgoAppDiffs asks ArgoCD for the desired-vs-live diff of every OUT-OF-SYNC loser.

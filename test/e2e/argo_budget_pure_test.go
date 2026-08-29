@@ -368,3 +368,27 @@ func TestArgoAddOnCountIsZeroOnTheLeanTier(t *testing.T) {
 		t.Errorf("argoAddOnCount() = %d on the lean tier, want 0", got)
 	}
 }
+
+// The failing-path dump is bounded by argoDumpBudget and paid for out of t2BaseHeadroom rather than
+// by a term of its own — see the note at the `headroom` line in ResolveT2Budget. That is only safe
+// while it genuinely fits, so the relationship is pinned here rather than remembered.
+//
+// It runs at the worst moment available: after argocd-converge has been spent in full, inside ctx,
+// with teardown still to come. Overrunning does not truncate the dump — it kills the process before
+// t.Cleanup destroys the cluster, and a real cloud cluster leaks to the sweeper.
+func TestArgoDumpBudgetFitsInsideHeadroom(t *testing.T) {
+	t.Parallel()
+
+	if argoDumpBudget >= t2BaseHeadroom {
+		t.Fatalf("argoDumpBudget %s does not fit inside headroom %s — the dump would eat the whole "+
+			"variance allowance and then overrun ctx, killing teardown and leaking the cluster. "+
+			"Make it a named term in ResolveT2Budget and raise T2_JOB_CAP_MINUTES with it.",
+			argoDumpBudget, t2BaseHeadroom)
+	}
+	// And it must leave something behind: headroom exists to absorb variance in the terms that ARE
+	// reserved, and a dump that consumed all but a minute of it would be a term in everything but
+	// name.
+	if left := t2BaseHeadroom - argoDumpBudget; left < 2*time.Minute {
+		t.Errorf("the dump leaves only %s of headroom for every other term's variance", left)
+	}
+}
