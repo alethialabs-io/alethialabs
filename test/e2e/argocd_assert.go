@@ -1496,10 +1496,7 @@ func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []o
 			break
 		}
 		shown++
-		args := []string{"--kubeconfig", kubeconfigPath, "get", r.kubectlTarget(), "-o", "json"}
-		if r.Namespace != "" {
-			args = append(args, "-n", r.Namespace)
-		}
+		args := foreignOwnerKubectlArgs(kubeconfigPath, r.kubectlTarget(), r.Namespace)
 		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		out, err := exec.CommandContext(cctx, "kubectl", args...).Output()
 		cancel()
@@ -1509,16 +1506,28 @@ func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []o
 			fmt.Fprintf(&b, "\n    - %s: could not fetch (%v)", r.kubectlTarget(), err)
 			continue
 		}
-		byManager, perr := foreignFieldOwners(out)
+		byManager, total, perr := foreignFieldOwners(out)
 		if perr != nil {
 			fmt.Fprintf(&b, "\n    - %s: could not read managedFields (%v)", r.kubectlTarget(), perr)
+			continue
+		}
+		if total == 0 {
+			// THREE outcomes, not two. An object with NO managedFields at all is not an object
+			// every field of which belongs to ArgoCD — it is an object this probe could not read,
+			// and conflating the two is the whole defect: the reassuring sentence below was printed
+			// on an empty list for the life of this check. Every real object on a modern apiserver
+			// has at least one entry, so zero means the read was wrong, not the cluster.
+			fmt.Fprintf(&b, "\n    - %s: NO managedFields on the object — this probe measured NOTHING. "+
+				"(kubectl strips them without --show-managed-fields; if the flag is present and this still "+
+				"prints, the apiserver is not tracking ownership for this resource.)", r.kubectlTarget())
 			continue
 		}
 		if len(byManager) == 0 {
 			// A DIFFERENT fact from "we could not tell", and it must read differently: every field
 			// on this object belongs to ArgoCD, so an apiserver default is not the explanation here
-			// and the cause is elsewhere.
-			fmt.Fprintf(&b, "\n    - %s: every field is ArgoCD-owned — no foreign default to blame", r.kubectlTarget())
+			// and the cause is elsewhere. Trustworthy ONLY because `total > 0` above proved there
+			// were entries to classify.
+			fmt.Fprintf(&b, "\n    - %s: every field is ArgoCD-owned across %d manager entr(ies) — no foreign default to blame", r.kubectlTarget(), total)
 			continue
 		}
 		fmt.Fprintf(&b, "\n    - %s:", r.kubectlTarget())
@@ -1534,6 +1543,27 @@ func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []o
 	return b.String()
 }
 
+// foreignOwnerKubectlArgs builds the read this probe depends on. Extracted so the ONE flag that
+// makes it a measurement can be asserted without a cluster.
+//
+// `--show-managed-fields` IS LOAD-BEARING, and its absence is why this probe answered vacuously for
+// the whole of its life. Since kubectl 1.21, `get -o json|yaml` STRIPS `metadata.managedFields`
+// unless the flag is given — so foreignFieldOwners parsed an empty list on every object, found zero
+// foreign managers every time, and printed "every field is ArgoCD-owned — no foreign default to
+// blame". That sentence was TRUE OF NOTHING: it appeared for seven Applications across four paid
+// runs (see the #2778 note above) and never once described a measurement.
+//
+// Measured on a kind cluster, keda 2.15.1: without the flag `metadata.managedFields` is absent
+// entirely; with it, `manager=keda` owns exactly `webhooks[*].clientConfig.caBundle` — which is the
+// field azure/addons run 33243601159 sat OutOfSync on while this probe called it ArgoCD-owned.
+func foreignOwnerKubectlArgs(kubeconfigPath, target, namespace string) []string {
+	args := []string{"--kubeconfig", kubeconfigPath, "get", target, "-o", "json", "--show-managed-fields"}
+	if namespace != "" {
+		args = append(args, "-n", namespace)
+	}
+	return args
+}
+
 // argoFieldManagers are the manager names ArgoCD applies under. A field owned by one of these was
 // authored by the chart, so it is NOT a candidate.
 //
@@ -1544,8 +1574,13 @@ func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []o
 var argoFieldManagers = []string{"argocd"}
 
 // foreignFieldOwners returns manager → the field paths that manager owns, for every manager that is
-// NOT ArgoCD. Paths are rendered dotted, from the apiserver's `f:`-prefixed fieldsV1 tree.
-func foreignFieldOwners(objJSON []byte) (map[string][]string, error) {
+// NOT ArgoCD, AND the total number of managedFields entries the object carried.
+//
+// The total is returned, not derived by the caller, because "no foreign owner" and "no owners at
+// all" are different answers and only one of them is about the cluster. Returning a single empty
+// map for both is what let this probe report `every field is ArgoCD-owned` on objects whose
+// managedFields kubectl had silently stripped.
+func foreignFieldOwners(objJSON []byte) (map[string][]string, int, error) {
 	var obj struct {
 		Metadata struct {
 			ManagedFields []struct {
@@ -1555,7 +1590,7 @@ func foreignFieldOwners(objJSON []byte) (map[string][]string, error) {
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal(objJSON, &obj); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	out := map[string][]string{}
 	for _, mf := range obj.Metadata.ManagedFields {
@@ -1571,7 +1606,7 @@ func foreignFieldOwners(objJSON []byte) (map[string][]string, error) {
 			out[mf.Manager] = append(out[mf.Manager], paths...)
 		}
 	}
-	return out, nil
+	return out, len(obj.Metadata.ManagedFields), nil
 }
 
 // isArgoManager reports whether a field manager is ArgoCD's.
