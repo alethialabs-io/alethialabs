@@ -312,6 +312,15 @@ export interface AddOnInstallSpec {
 	 * runner waits for each to reach condition=Established after applying, so a CR can't be synced
 	 * before the operator that owns its schema exists. Omitted for helm/git sources. */
 	crds?: string[];
+	/** Marks an add-on whose admission webhook takes its serving certificate from cert-manager (the
+	 * chart annotates it `cert-manager.io/inject-ca-from`). The runner then installs the cert-manager
+	 * CONTROLLER even on a deploy that issues no public certificate, because a `failurePolicy: Fail`
+	 * webhook with no CA does not degrade the add-on — it rejects every CR the operator owns.
+	 *
+	 * Declared on the SPEC rather than inferred from the id in Go, so exactly one place knows which
+	 * operators need it: the mapper that adds the operator. `InfraFacts.WebhookCAAddOns` reads it
+	 * back. Mirrors the Go `AddOnInstall.RequiresCertManager` (#3228). */
+	requiresCertManager?: boolean;
 	/** ArgoCD AppProject the Application is placed in. Omitted = "infra" (marketplace default);
 	 * BYO charts are pinned to their hardened "byo-<slug>" project by the runner. */
 	project?: string;
