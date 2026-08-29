@@ -297,6 +297,17 @@ var supportedNoControlProviderTokens = map[string]bool{
 	// pure utility:
 	"random": true, "tls": true, "null": true,
 	"local": true, "time": true, "external": true,
+	// `terraform_data` — the BUILT-IN no-op resource, successor to `null_resource` (allowlisted
+	// directly above). It stores values in state and creates no cloud authority whatsoever, so it
+	// carries exactly the same justification as `null`; only the name changed upstream.
+	//
+	// Leaving it off was not a conservative choice, it was a blind spot: all five shipped project
+	// templates use `terraform_data` for their precondition guards (28 declarations), so SCOPE-001
+	// fired on EVERY plan Alethia itself produces. Every committed receipt in demos/proofs/ carries
+	// `SCOPE-001: not_evaluable` for this reason alone — the gate could never return `pass` for the
+	// product's own templates, and only a co-occurring `warn` (which outranks not_evaluable) hid how
+	// total that was.
+	"terraform": true,
 }
 
 // providerToken extracts the terraform provider prefix from a resource type — the
