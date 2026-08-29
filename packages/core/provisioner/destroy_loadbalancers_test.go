@@ -392,3 +392,20 @@ func TestListCloudBackedObjectsFailsOnAnUndecodableIngressList(t *testing.T) {
 		t.Errorf("the error does not name what failed: %v", err)
 	}
 }
+
+// `kubectl get --raw /version` is the reachability question, and it must be answered by the
+// CLUSTER rather than by whether a kubeconfig file exists — the exec-plugin case writes a
+// kubeconfig happily and then fails on every call through it.
+func TestClusterReachableAsksTheClusterNotTheFile(t *testing.T) {
+	stubKubectlRaw(t, `case "$*" in *"--raw /version"*) echo '{"gitVersion":"v1.31.0"}'; exit 0;; esac; exit 1`)
+	if !clusterReachable(context.Background()) {
+		t.Error("a cluster that answered /version was reported unreachable")
+	}
+
+	// The shape aws/addons run 33271997812 actually produced: a kubeconfig in place, and every call
+	// through it dying in the credential plugin.
+	stubKubectlRaw(t, `echo 'error: getting credentials: exec: executable /tmp/go-build/e2e.test failed with exit code 1' >&2; exit 1`)
+	if clusterReachable(context.Background()) {
+		t.Error("a kubeconfig whose credential plugin fails was reported reachable")
+	}
+}
