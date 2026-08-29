@@ -110,6 +110,13 @@ func parseStorageClassDoc(doc string) *storageClassRef {
 	return &storageClassRef{Name: name, Provisioner: provisioner}
 }
 
+// liveProvisionerFn reads the cluster's current provisioner for a class; deleteClassFn removes it.
+// Injected so the DECISION — which is the part that can be wrong — is testable without a cluster.
+// The alternative is a function whose only untested branch is the one that fires on the day it
+// matters, which is how a safeguard becomes decoration.
+type liveProvisionerFn func(name string) (provisioner string, found bool, err error)
+type deleteClassFn func(name string) error
+
 // ReconcileImmutableStorageClasses deletes any StorageClass this deploy is about to apply whose
 // LIVE provisioner differs from the one being applied, so the apply can recreate it.
 //
@@ -121,42 +128,68 @@ func ReconcileImmutableStorageClasses(renderedDir string, stdout, stderr io.Writ
 	if err != nil {
 		return err
 	}
+	return reconcileStorageClasses(classes, liveStorageClassProvisioner, deleteStorageClass, stdout, stderr)
+}
+
+// reconcileStorageClasses is the decision, over an already-read set of classes.
+func reconcileStorageClasses(classes []storageClassRef, live liveProvisionerFn, del deleteClassFn, stdout, stderr io.Writer) error {
 	for _, c := range classes {
 		if c.Name == "" || c.Provisioner == "" {
 			return fmt.Errorf("rendered %s declares a StorageClass this deploy cannot read (name=%q provisioner=%q) — refusing to apply it blind, because a provisioner mismatch is only repairable before the apply", c.File, c.Name, c.Provisioner)
 		}
-		live, found, lerr := liveStorageClassProvisioner(c.Name)
+		liveProvisioner, found, lerr := live(c.Name)
 		if lerr != nil {
 			// Not fatal: a cluster that cannot answer this is a cluster the apply is about to fail
 			// against anyway, with a better message. Never silent, though.
 			fmt.Fprintf(stderr, "Warning: could not read the live provisioner of StorageClass %s (%v); applying as-is\n", c.Name, lerr)
 			continue
 		}
-		if !found || live == c.Provisioner {
+		if !found || liveProvisioner == c.Provisioner {
 			continue
 		}
 		fmt.Fprintf(stdout, "StorageClass %s carries provisioner %q and this deploy applies %q. "+
 			"That field is immutable, so the class is deleted and recreated — bound volumes are "+
-			"unaffected (a PersistentVolume carries its own driver reference).\n", c.Name, live, c.Provisioner)
-		if derr := exec.Command("kubectl", "delete", "storageclass", c.Name, "--ignore-not-found").Run(); derr != nil {
-			return fmt.Errorf("StorageClass %s must be recreated to change its provisioner from %q to %q, and deleting it failed: %w", c.Name, live, c.Provisioner, derr)
+			"unaffected (a PersistentVolume carries its own driver reference).\n", c.Name, liveProvisioner, c.Provisioner)
+		if derr := del(c.Name); derr != nil {
+			return fmt.Errorf("StorageClass %s must be recreated to change its provisioner from %q to %q, and deleting it failed: %w", c.Name, liveProvisioner, c.Provisioner, derr)
 		}
 	}
 	return nil
 }
 
-// liveStorageClassProvisioner reads the cluster's current provisioner for a class. `found` is false
-// when the class does not exist, which is the fresh-cluster case and needs no action.
+// deleteStorageClass removes a class so the apply that follows can recreate it with the new
+// provisioner. `--ignore-not-found` because a concurrent deploy may already have done it.
+func deleteStorageClass(name string) error {
+	return exec.Command("kubectl", "delete", "storageclass", name, "--ignore-not-found").Run()
+}
+
+// liveStorageClassProvisioner reads the cluster's current provisioner for a class.
 func liveStorageClassProvisioner(name string) (provisioner string, found bool, err error) {
-	out, err := exec.Command("kubectl", "get", "storageclass", name, "-o", "jsonpath={.provisioner}").CombinedOutput()
-	if err != nil {
-		if strings.Contains(string(out), "NotFound") || strings.Contains(string(out), "not found") {
+	out, runErr := exec.Command("kubectl", "get", "storageclass", name, "-o", "jsonpath={.provisioner}").CombinedOutput()
+	return classifyLiveProvisioner(out, runErr)
+}
+
+// classifyLiveProvisioner turns kubectl's output into the three answers this decision needs, and it
+// is separated from the exec because the classification is the part that can be WRONG.
+//
+// `found=false, err=nil` is the fresh-cluster case — the class does not exist, so there is nothing
+// to reconcile and the apply will create it. `err != nil` is "the cluster could not tell me", which
+// is NOT the same and must not be read as absent: reading a real failure as "no class here" would
+// skip the reconcile on exactly the cluster that needed it, and the apply would then fail with the
+// immutability error this exists to prevent.
+func classifyLiveProvisioner(out []byte, runErr error) (provisioner string, found bool, err error) {
+	text := string(out)
+	if runErr != nil {
+		if strings.Contains(text, "NotFound") || strings.Contains(text, "not found") {
 			return "", false, nil
 		}
-		return "", false, fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+		return "", false, fmt.Errorf("%v: %s", runErr, strings.TrimSpace(text))
 	}
-	p := strings.TrimSpace(string(out))
+	p := strings.TrimSpace(text)
 	if p == "" {
+		// A class that exists with an EMPTY provisioner is not a thing the API server allows, so an
+		// empty read on a successful command means the jsonpath matched nothing — treat it as
+		// absent, which is the safe direction: the apply creates it and the API server decides.
 		return "", false, nil
 	}
 	return p, true, nil

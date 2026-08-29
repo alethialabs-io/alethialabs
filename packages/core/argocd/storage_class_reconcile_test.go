@@ -4,6 +4,8 @@
 package argocd
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -105,5 +107,145 @@ func write(t *testing.T, dir, name, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 		t.Fatalf("writing %s: %v", name, err)
+	}
+}
+
+// The DECISION, tabulated. Every branch, because the one that fires on the day it matters is the
+// one nothing else exercises: on a fresh cluster the class does not exist, on a re-deploy it exists
+// and agrees, and only on the redeploy AFTER a provisioner change does it differ.
+func TestReconcileStorageClassesDecision(t *testing.T) {
+	want := storageClassRef{Name: "gp3", Provisioner: "ebs.csi.aws.com", File: "storage-class-gp3.yaml"}
+
+	cases := []struct {
+		name       string
+		live       liveProvisionerFn
+		wantDelete bool
+		wantErr    string
+	}{
+		{
+			name: "fresh cluster — the class does not exist yet, so there is nothing to reconcile",
+			live: func(string) (string, bool, error) { return "", false, nil },
+		},
+		{
+			name: "re-deploy with the same provisioner — no delete, because deleting would be churn",
+			live: func(string) (string, bool, error) { return "ebs.csi.aws.com", true, nil },
+		},
+		{
+			name:       "the provisioner CHANGED — delete, because the apply that follows cannot update it",
+			live:       func(string) (string, bool, error) { return "ebs.csi.eks.amazonaws.com", true, nil },
+			wantDelete: true,
+		},
+		{
+			// A cluster that cannot answer is one the apply is about to fail against anyway, with a
+			// better message. Never silent, but never fatal here either.
+			name: "unreadable live state — warn and apply as-is",
+			live: func(string) (string, bool, error) { return "", false, errors.New("connection refused") },
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var deleted []string
+			del := func(n string) error { deleted = append(deleted, n); return nil }
+			var out, errOut bytes.Buffer
+			if err := reconcileStorageClasses([]storageClassRef{want}, tc.live, del, &out, &errOut); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := len(deleted) > 0; got != tc.wantDelete {
+				t.Fatalf("delete called = %v, want %v (stdout: %s)", got, tc.wantDelete, out.String())
+			}
+			if tc.wantDelete && !strings.Contains(out.String(), "immutable") {
+				t.Errorf("a delete must say WHY in the deploy log; got: %s", out.String())
+			}
+		})
+	}
+}
+
+// A delete that fails must be FATAL and must name both provisioners: the apply that follows would
+// fail with the API server's message, which names the field but not the reason.
+func TestReconcileStorageClassesFailsLoudlyWhenTheDeleteFails(t *testing.T) {
+	var out, errOut bytes.Buffer
+	err := reconcileStorageClasses(
+		[]storageClassRef{{Name: "gp3", Provisioner: "ebs.csi.aws.com"}},
+		func(string) (string, bool, error) { return "ebs.csi.eks.amazonaws.com", true, nil },
+		func(string) error { return errors.New("forbidden") },
+		&out, &errOut,
+	)
+	if err == nil {
+		t.Fatal("a failed delete leaves the apply certain to fail — it must not be swallowed")
+	}
+	for _, want := range []string{"ebs.csi.aws.com", "ebs.csi.eks.amazonaws.com", "gp3"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error must name %q so the operator can act: %v", want, err)
+		}
+	}
+}
+
+// An unreadable StorageClass is REFUSED, not applied blind — a provisioner mismatch is only
+// repairable BEFORE the apply, so guessing here is the one thing that cannot be undone.
+func TestReconcileStorageClassesRefusesAnUnreadableClass(t *testing.T) {
+	var out, errOut bytes.Buffer
+	err := reconcileStorageClasses(
+		[]storageClassRef{{Name: "", Provisioner: "", File: "storage-class-gp3.yaml"}},
+		func(string) (string, bool, error) {
+			t.Fatal("the cluster must not be consulted about a class that could not be read")
+			return "", false, nil
+		},
+		func(string) error {
+			t.Fatal("nothing may be deleted on the strength of an unreadable manifest")
+			return nil
+		},
+		&out, &errOut,
+	)
+	if err == nil || !strings.Contains(err.Error(), "storage-class-gp3.yaml") {
+		t.Fatalf("want a refusal naming the file; got %v", err)
+	}
+}
+
+// The exported entry point over a rendered directory: no StorageClass means no cluster call at all,
+// and an unreadable directory is an error rather than a quiet pass. Without these the only covered
+// path is the injected one, and the function the deploy actually calls goes unexercised.
+func TestReconcileImmutableStorageClassesOverARenderedDir(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "cert-manager.yaml", "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: cert-manager\n")
+	var out, errOut bytes.Buffer
+	// No StorageClass in the render ⇒ nothing to reconcile, and nothing may shell out to kubectl:
+	// on a fresh cluster this runs before anything has been applied at all.
+	if err := ReconcileImmutableStorageClasses(dir, &out, &errOut); err != nil {
+		t.Fatalf("a render with no StorageClass is not an error: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("nothing to do must say nothing; got %q", out.String())
+	}
+	if err := ReconcileImmutableStorageClasses(filepath.Join(dir, "does-not-exist"), &out, &errOut); err == nil {
+		t.Fatal("an unreadable rendered directory must be an error — a scan that cannot read is not a scan that found nothing")
+	}
+}
+
+// "the class is not there" and "the cluster could not tell me" are different answers, and reading
+// the second as the first would skip the reconcile on exactly the cluster that needed it.
+func TestClassifyLiveProvisioner(t *testing.T) {
+	cases := []struct {
+		name    string
+		out     string
+		runErr  error
+		want    string
+		found   bool
+		wantErr bool
+	}{
+		{name: "a class that exists", out: "ebs.csi.aws.com\n", want: "ebs.csi.aws.com", found: true},
+		{name: "kubectl's NotFound is absence, not failure", out: `Error from server (NotFound): storageclasses.storage.k8s.io "gp3" not found`, runErr: errors.New("exit status 1")},
+		{name: "any other failure is a failure", out: "The connection to the server was refused", runErr: errors.New("exit status 1"), wantErr: true},
+		{name: "an empty read on a successful command is absence", out: "\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, found, err := classifyLiveProvisioner([]byte(tc.out), tc.runErr)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, want error = %v", err, tc.wantErr)
+			}
+			if got != tc.want || found != tc.found {
+				t.Fatalf("got (%q, %v), want (%q, %v)", got, found, tc.want, tc.found)
+			}
+		})
 	}
 }

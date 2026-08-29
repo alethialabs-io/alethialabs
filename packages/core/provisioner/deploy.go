@@ -1027,18 +1027,6 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			return &result, fmt.Errorf("failed to render ArgoCD applications: %w", renderErr)
 		}
 		defer os.RemoveAll(renderedDir)
-		// A StorageClass's `provisioner` is IMMUTABLE — the API server refuses the update outright
-		// (ValidateStorageClassUpdate), so `kubectl apply` against a cluster whose class carries a
-		// DIFFERENT provisioner does not converge, it fails, and the apply below is fatal. #3310
-		// changed exactly that field on aws (the default class named EKS Auto Mode's driver while
-		// the cluster installs the add-on that registers another), so a FRESH cluster gets the fix
-		// for free — every e2e run, which is why the e2e would never show this — and an EXISTING
-		// environment gets a failed deploy on its next redeploy instead. Delete-then-apply, and only
-		// when the live value actually differs.
-		if scErr := argocd.ReconcileImmutableStorageClasses(renderedDir, stdout, stderr); scErr != nil {
-			result.GitopsStatus = gitopsFailed(argocd.GitopsStepApply, scErr)
-			return &result, fmt.Errorf("failed to reconcile an immutable StorageClass field before applying: %w", scErr)
-		}
 		if applyErr := argocd.ApplyApplications(renderedDir, stdout, stderr); applyErr != nil {
 			result.GitopsStatus = gitopsFailed(argocd.GitopsStepApply, applyErr)
 			return &result, fmt.Errorf("failed to apply ArgoCD infrastructure applications: %w", applyErr)
