@@ -200,7 +200,25 @@ metadata:
   namespace: %[2]s
 spec:
   backoffLimit: 4
-  ttlSecondsAfterFinished: 600
+  # THE TTL DELETED THE EVIDENCE BEFORE ANYTHING READ IT.
+  #
+  # This Job is deliberately not waited on — the comment on EnsureAddOnBootstraps says so, and it is
+  # right: "the health wait that follows is what observes the result". But that wait is the ArgoCD
+  # convergence budget, which is 35 MINUTES for the 18-chart surface. At 600s the Job and its pod
+  # were garbage-collected twenty-five minutes BEFORE the deadline dump ran, so the one artefact
+  # that says why the bootstrap failed no longer existed by the time anything looked.
+  #
+  # Measured on aws/addons run 33249968471: 24 of 25 Applications Healthy+Synced, addon-vault
+  # Progressing, and the vault pod own log ending at "core: root token generated" then "pre-seal
+  # teardown complete" — Vault initialised and re-sealed, which is an init with no unseal after it.
+  # The bootstrap therefore failed between those two steps, and the only step there is persisting
+  # the unseal key. Which of init, persist or unseal it was is one line in the Job log, and the Job
+  # was gone.
+  #
+  # 3600 outlives the whole convergence budget plus slack, and still cleans up long before the
+  # cluster is torn down. It applies to Failed Jobs as much as Complete ones, which is the case that
+  # matters: a Complete Job leaves nothing anyone needs.
+  ttlSecondsAfterFinished: 3600
   template:
     spec:
       serviceAccountName: %[1]s

@@ -1193,6 +1193,10 @@ func argoDeadlineDump(
 	// FIRST, because it is the only one that speaks for a loser whose resources were never created,
 	// and because it is one small `kubectl get` rather than a chart render. See argo_sync_failure.go.
 	return dumpArgoSyncFailures(ctx, kubeconfigPath, losers) +
+		// An add-on that installs SEALED cannot converge on the chart alone, and nothing on this
+		// path was looking at the Job that opens it. One `kubectl get jobs -A`; see
+		// bootstrap_job_dump.go for the run that needed it.
+		dumpAddOnBootstrapJobs(ctx, kubeconfigPath) +
 		describeArgoApps(ctx, kubeconfigPath, losers) +
 		dumpOutOfSyncResources(ctx, kubeconfigPath, refs) +
 		dumpArgoAppDiffs(ctx, kubeconfigPath, observed, losers)
