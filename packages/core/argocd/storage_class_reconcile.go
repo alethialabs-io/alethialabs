@@ -5,6 +5,7 @@ package argocd
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -164,9 +165,23 @@ func deleteStorageClass(name string) error {
 }
 
 // liveStorageClassProvisioner reads the cluster's current provisioner for a class.
+//
+// stdout and stderr are captured SEPARATELY, and that is load-bearing rather than tidiness.
+// `CombinedOutput` folds stderr into the value, and kubectl writes to stderr on calls that SUCCEED
+// — a `Warning:` deprecation header, or an exec-credential plugin's notice on AWS/GCP/Azure auth.
+// One such line makes `text` read `Warning: ...\nebs.csi.aws.com`, so the comparison against the
+// rendered provisioner fails, and the caller then DELETES AND RECREATES the cluster's default
+// StorageClass on a cluster that had nothing wrong with it. `provisioner/probe.go`'s
+// `runKubectlBounded` documents this exact trap ("CombinedOutput would poison the exact-`ok`
+// match"); this call did not follow it.
+//
+// NotFound is still classified from stderr, because that is where kubectl writes it.
 func liveStorageClassProvisioner(name string) (provisioner string, found bool, err error) {
-	out, runErr := exec.Command("kubectl", "get", "storageclass", name, "-o", "jsonpath={.provisioner}").CombinedOutput()
-	return classifyLiveProvisioner(out, runErr)
+	cmd := exec.Command("kubectl", "get", "storageclass", name, "-o", "jsonpath={.provisioner}")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, runErr := cmd.Output()
+	return classifyLiveProvisioner(out, stderr.Bytes(), runErr)
 }
 
 // classifyLiveProvisioner turns kubectl's output into the three answers this decision needs, and it
@@ -177,15 +192,19 @@ func liveStorageClassProvisioner(name string) (provisioner string, found bool, e
 // is NOT the same and must not be read as absent: reading a real failure as "no class here" would
 // skip the reconcile on exactly the cluster that needed it, and the apply would then fail with the
 // immutability error this exists to prevent.
-func classifyLiveProvisioner(out []byte, runErr error) (provisioner string, found bool, err error) {
-	text := string(out)
+func classifyLiveProvisioner(out, errOut []byte, runErr error) (provisioner string, found bool, err error) {
 	if runErr != nil {
+		// Diagnostics live on stderr; stdout is checked too so a kubectl that ever writes the
+		// message the other way round still classifies rather than being reported as opaque.
+		text := string(errOut) + string(out)
 		if strings.Contains(text, "NotFound") || strings.Contains(text, "not found") {
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("%v: %s", runErr, strings.TrimSpace(text))
 	}
-	p := strings.TrimSpace(text)
+	// SUCCESS: the value is stdout ALONE. Anything on stderr here is a warning about the call, not
+	// part of the answer, and folding it in is what made a healthy cluster look like a mismatch.
+	p := strings.TrimSpace(string(out))
 	if p == "" {
 		// A class that exists with an EMPTY provisioner is not a thing the API server allows, so an
 		// empty read on a successful command means the jsonpath matched nothing — treat it as
