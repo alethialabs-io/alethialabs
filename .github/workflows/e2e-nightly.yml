@@ -1173,6 +1173,15 @@ jobs:
           ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
           ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
           BETTER_AUTH_SECRET: e2e-cli-demo-placeholder-secret
+          # BASE64, 32 bytes decoded — lib/crypto/secrets.ts does `Buffer.from(raw, "base64")` and
+          # refuses anything else with "must decode to 32 bytes". Without it the `connector` beat
+          # fails at credential submission with a 400 that names the key, which reads as a CLI
+          # defect and is a missing console setting.
+          #
+          # A fixed non-secret value on purpose: this console lives for one job against a throwaway
+          # database, nothing it encrypts outlives the run, and a generated key would make a failed
+          # decrypt unreproducible. It must never be reused anywhere real.
+          ALETHIA_CRED_ENCRYPTION_KEY: YWxldGhpYS1lMmUtY2xpLWRlbW8tdGhyb3dhd2F5ISE=
           BETTER_AUTH_URL: http://localhost:3000
           NEXT_PUBLIC_APP_URL: http://localhost:3000
           ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
