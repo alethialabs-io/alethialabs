@@ -14,7 +14,19 @@
 # QEMU — an emulated `tofu init` crashes lfstack.push). ENDS AS ROOT on purpose: each variant installs its
 # cloud CLI (apk/pip need root) and only then switches to `USER runner` before `tofu init`.
 
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
+# The builder's Go MINOR must match `go.work`'s `go` directive, and `go_toolchain_test.go`
+# in packages/core/compat enforces it. #3356 raised this to 1.27-alpine on its own; go.work and
+# all four go.mod files stayed 1.26.6, and every `actions/setup-go` in the repo resolves its
+# version FROM go.work. So the required check `Go (build · vet · test · lint) (apps/runner)`
+# compiled with 1.26.6 while the shipped /usr/local/bin/runner — inherited by all five per-cloud
+# images via `FROM runner-base` — was built by 1.27.
+#
+# The drift is ASYMMETRIC, which is why it needed a test rather than care: a builder BEHIND
+# go.work fails loudly at `go mod download`, a builder AHEAD is silent. Landing Go 1.27 is a
+# four-part change — go.work, the four go.mod files, this line — exactly as the repo's own
+# precedent did it ("chore(go): repo-wide Go 1.26 upgrade — go.work, 4 modules, 8 CI pins,
+# runner base image").
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
 
 RUN apk add --no-cache git
 
