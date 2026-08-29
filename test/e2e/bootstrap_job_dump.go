@@ -112,6 +112,65 @@ func parseBootstrapJobs(listJSON []byte) ([]bootstrapJob, error) {
 	return out, nil
 }
 
+// jobPodSelectors are the label selectors that find a Job's pods, current first.
+//
+// TWO of them because Kubernetes renamed the label: `batch.kubernetes.io/job-name` is the current
+// one, `job-name` the legacy one. Both are set on a modern cluster (measured), and the fallback is
+// what keeps this working on an older control plane — a selector that quietly matches nothing would
+// print "no log" for a Job whose pods are sitting right there, which is the failure this whole file
+// exists to stop.
+var jobPodSelectors = []string{"batch.kubernetes.io/job-name=", "job-name="}
+
+// bootstrapJobLog prints the log of EVERY attempt the Job made, not one of them.
+//
+// `kubectl logs job/<name>` picks one pod arbitrarily. Measured against a Job with backoffLimit 2:
+//
+//	$ kubectl logs job/failjob
+//	Found 3 pods, using pod/failjob-g4mkd
+//
+// For this Job that is close to useless. The bootstrap's `backoffLimit` means a failure produces up
+// to five pods, and they do not fail the same way: attempt 1 carries the ORIGINAL error, and every
+// attempt after it can only report the state attempt 1 left behind. Reading a later attempt's
+// "Vault is INITIALISED but this cluster holds no unseal key" and stopping there is reading the
+// consequence and calling it the cause — and which pod kubectl picks is not something to leave to
+// luck on a run that costs money.
+//
+// So: select the pods, print them all with `--prefix`, and `--timestamps` so the attempts can be
+// put in order. Pod names carry no sequence; the timestamps do, and with retries the sequence IS
+// the question.
+func bootstrapJobLog(ctx context.Context, kubeconfigPath string, j bootstrapJob) string {
+	var b strings.Builder
+	for _, sel := range jobPodSelectors {
+		lctx, lcancel := context.WithTimeout(ctx, 20*time.Second)
+		logs, err := exec.CommandContext(lctx, "kubectl", "--kubeconfig", kubeconfigPath,
+			"-n", j.Namespace, "logs", "-l", sel+j.Name,
+			"--tail=40", "--prefix", "--timestamps", "--all-containers",
+			// backoffLimit 4 makes five pods, and kubectl's default ceiling is five. One over is
+			// not enough margin for a Job whose limit someone raises later.
+			"--max-log-requests=10").Output()
+		lcancel()
+		if err != nil {
+			fmt.Fprintf(&b, "    (no log via %s: %v — the pods may already have been collected)\n", sel+j.Name, err)
+			continue
+		}
+		if len(strings.TrimSpace(string(logs))) == 0 {
+			// Not yet a finding: the OTHER selector may be the one this cluster labels with.
+			continue
+		}
+		for _, ln := range strings.Split(strings.TrimRight(string(logs), "\n"), "\n") {
+			fmt.Fprintf(&b, "    | %s\n", ln)
+		}
+		return b.String()
+	}
+	// Every selector tried and none produced a line. Said in full, because "the Job produced no
+	// output" and "we could not find its pods" send a reader to completely different places.
+	fmt.Fprintf(&b, "    (NO OUTPUT from any pod of this Job, under either %s or %s. Either it did "+
+		"not get as far as saying anything, or its pods are labelled with neither selector — check "+
+		"`kubectl get pods -n %s` before concluding the first.)\n",
+		jobPodSelectors[0], jobPodSelectors[1], j.Namespace)
+	return b.String()
+}
+
 // dumpAddOnBootstrapJobs renders every bootstrap Job and, for any that did not succeed, its pod log.
 //
 // It says something in ALL THREE states, and the third is the one that matters: NO Jobs at all is
@@ -149,20 +208,7 @@ func dumpAddOnBootstrapJobs(ctx context.Context, kubeconfigPath string) string {
 		}
 		// The log is the whole point: RunVaultBootstrap's failures are one line each, and which of
 		// init / persist / unseal it was is only ever visible here.
-		lctx, lcancel := context.WithTimeout(ctx, 20*time.Second)
-		logs, lerr := exec.CommandContext(lctx, "kubectl", "--kubeconfig", kubeconfigPath,
-			"-n", j.Namespace, "logs", "job/"+j.Name, "--tail=40").Output()
-		lcancel()
-		switch {
-		case lerr != nil:
-			fmt.Fprintf(&b, "    (no log: %v — the pod may already have been collected)\n", lerr)
-		case len(strings.TrimSpace(string(logs))) == 0:
-			fmt.Fprintf(&b, "    (the Job pod produced NO output — it did not get as far as saying anything)\n")
-		default:
-			for _, ln := range strings.Split(strings.TrimRight(string(logs), "\n"), "\n") {
-				fmt.Fprintf(&b, "    | %s\n", ln)
-			}
-		}
+		b.WriteString(bootstrapJobLog(ctx, kubeconfigPath, j))
 	}
 	return b.String()
 }
