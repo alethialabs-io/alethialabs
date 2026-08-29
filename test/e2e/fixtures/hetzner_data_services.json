@@ -170,6 +170,9 @@
 					}
 				},
 				"externalURL": "http://registry-app-images.registries.svc.cluster.local",
+				"updateStrategy": {
+					"type": "Recreate"
+				},
 				"persistence": {
 					"persistentVolumeClaim": {
 						"registry": {
