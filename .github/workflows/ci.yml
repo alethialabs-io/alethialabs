@@ -1117,6 +1117,23 @@ jobs:
         run: |
           node scripts/check-hetzner-lb-location.mjs --self-test
           node scripts/check-hetzner-lb-location.mjs
+      # A variable's DEFAULT is a decision, and `infra/.gitignore` used to hide every stack's real
+      # inputs — so on any fresh checkout a bare `tofu apply` ran entirely on defaults, with nothing
+      # saying so. That is not untidy, it is dangerous in two directions: a `count` gated on an
+      # empty-defaulting variable means DESTROY (aws-oidc would have destroyed a Route53 zone whose
+      # NS set is delegated at Cloudflare), and an empty default that merely STEERS a branch narrows
+      # or widens in silence (gcp-e2e's OIDC trust went ref-only, killing every workflow_dispatch
+      # from dev while the scheduled run kept passing). Twice is a class.
+      #
+      # Nothing in CI can catch this by running tofu: no workflow runs `tofu plan`, and `validate`
+      # evaluates neither `check`, `validation` nor `prevent_destroy`. So it is a static read of the
+      # HCL, ratcheting against infra/tfvars-safety-baseline.json — new empty defaults fail on the
+      # PR that adds them, and a baseline entry that stops describing anything fails too.
+      - name: Every dangerous variable default is supplied, required, or written down
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          node scripts/check-tfvars-safety.mjs --self-test
+          node scripts/check-tfvars-safety.mjs
       # The proof-bundle scrub decides what a PUBLIC repo publishes, and its only run was inside
       # e2e-nightly.yml — a workflow no PR triggers. So the change that made the tripwire fire on
       # every azure plan JSON could not have been caught before merge, and wasn't: azure lost its

@@ -1,6 +1,13 @@
 .terraform/
 *.tfstate
 *.tfstate.*
+*.tfplan
 backend.hcl
-terraform.tfvars
 *.tfvars.json
+
+# terraform.tfvars is committed HERE on purpose, overriding `**/terraform.tfvars` in
+# infra/.gitignore (and `infra/**/terraform.tfvars` in the root one — which is why the negation has
+# to live in this file, deeper than both). Every value in it is a public repo Actions variable, and
+# its absence is the whole defect: the three deployer-role ARNs are `count`-gated on it, so a bare
+# apply from a fresh checkout planned their DESTRUCTION. See README.md.
+!terraform.tfvars
