@@ -33,6 +33,7 @@ import (
 // Add a diagnostic to argoDeadlineDump, add it here.
 var dumpHelpers = []string{
 	"dumpArgoSyncFailures",
+	"dumpPendingHooks",
 	"dumpAddOnBootstrapJobs",
 	"dumpArgoControllerLog",
 	"dumpDestinationWarnings",
