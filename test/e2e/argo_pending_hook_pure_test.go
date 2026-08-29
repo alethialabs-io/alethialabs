@@ -135,6 +135,11 @@ func TestRenderPendingHookSaysWhichOfTheThreeOutcomesItIs(t *testing.T) {
 	// this as a failed apply sent azure/addons run 33266338989's reader to RBAC and quotas while
 	// the Application's own sync result said `Synced … serverside-applied`.
 	recorded := app
+	// `Recorded` — not non-emptiness of SyncResult — is what says a result EXISTS, and `Status`/
+	// `HookPhase` are what say whether it SUCCEEDED. Setting all three is what the production
+	// extraction does; a fixture that sets only the text drifts from the path it stands for.
+	recorded.Recorded = true
+	recorded.Status, recorded.HookPhase = "Synced", "Running"
 	recorded.SyncResult = "Synced Running clusterrole … serverside-applied"
 	removed := renderPendingHook("addon-x", recorded, hookLiveState{Exists: false})
 	if strings.Contains(removed, "NOT IN THE CLUSTER, and the sync recorded NO result") {
@@ -207,5 +212,62 @@ func TestStalledHooksFromListLeavesTheResultEmptyWhenNoneWasRecorded(t *testing.
 	}
 	if len(stalled) != 1 || stalled[0].SyncResult != "" {
 		t.Fatalf("SyncResult = %q, want empty", stalled[0].SyncResult)
+	}
+}
+
+// A RECORDED FAILURE MUST NOT READ AS A LANDING.
+//
+// ArgoCD writes a ResourceResult for a failed apply exactly as it does for a successful one, so
+// the object is absent AND recorded. Branching on the mere presence of a record therefore printed
+// "the apply landed … not at RBAC" over a message whose own text says `is forbidden` — steering
+// the reader away from RBAC in precisely the case where RBAC is the answer.
+func TestPendingHookVerdictSeparatesARecordedFailureFromALanding(t *testing.T) {
+	forbidden := stalledApp{
+		App:        "addon-keda",
+		Ref:        hookRef{Group: "rbac.authorization.k8s.io", Kind: "ClusterRole", Name: "keda-operator"},
+		Recorded:   true,
+		Status:     "SyncFailed",
+		HookPhase:  "Failed",
+		SyncResult: `SyncFailed Failed clusterroles.rbac.authorization.k8s.io "keda-operator" is forbidden`,
+	}
+	if !forbidden.recordedFailure() {
+		t.Fatal("a SyncFailed/Failed result is not being recognised as a failure")
+	}
+	out := renderPendingHook(forbidden.App, forbidden, hookLiveState{})
+	if strings.Contains(out, "the apply landed") {
+		t.Errorf("a recorded FAILURE renders as a landing:\n%s", out)
+	}
+	if strings.Contains(out, "not at RBAC") {
+		t.Errorf("a recorded FAILURE steers the reader away from RBAC:\n%s", out)
+	}
+	if !strings.Contains(out, "REFUSED") {
+		t.Errorf("the failure verdict does not say the apply was refused:\n%s", out)
+	}
+
+	// The success case must keep its verdict — the fix must not turn every absence into a failure.
+	succeeded := stalledApp{
+		App:        "addon-vault",
+		Ref:        hookRef{Kind: "Job", Name: "vault-init"},
+		Recorded:   true,
+		Status:     "Synced",
+		HookPhase:  "Succeeded",
+		SyncResult: "Synced Succeeded",
+	}
+	if succeeded.recordedFailure() {
+		t.Error("a Synced/Succeeded result is being read as a failure")
+	}
+	if out := renderPendingHook(succeeded.App, succeeded, hookLiveState{}); !strings.Contains(out, "the apply landed") {
+		t.Errorf("a recorded SUCCESS lost its landing verdict:\n%s", out)
+	}
+}
+
+// A result with no ResultCode, no phase and no message trims to "" — which non-emptiness reads as
+// "the sync recorded NO result for it". That is nothing-found reported as nothing-wrong, the
+// conflation the rest of this file exists to avoid.
+func TestPendingHookAnEmptyResultIsStillARecord(t *testing.T) {
+	empty := stalledApp{App: "addon-x", Ref: hookRef{Kind: "Job", Name: "j"}, Recorded: true}
+	out := renderPendingHook(empty.App, empty, hookLiveState{})
+	if strings.Contains(out, "recorded NO result") {
+		t.Errorf("a recorded-but-empty result is reported as no record at all:\n%s", out)
 	}
 }
