@@ -60,7 +60,7 @@ func storageClassesInManifests(dir string) ([]storageClassRef, error) {
 	}
 	var out []storageClassRef
 	for _, e := range entries {
-		if e.IsDir() || !(strings.HasSuffix(e.Name(), ".yaml") || strings.HasSuffix(e.Name(), ".yml")) {
+		if e.IsDir() || (!strings.HasSuffix(e.Name(), ".yaml") && !strings.HasSuffix(e.Name(), ".yml")) {
 			continue
 		}
 		b, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
