@@ -97,6 +97,11 @@ type memState struct {
 	writes   []map[string]string
 	readErr  error
 	writeErr error
+	// writeFailures is how many of the NEXT writes fail before one is allowed through.
+	writeFailures int
+	// writeAttempts counts every call, successful or not — the retry's own claim is about the
+	// number of attempts, so asserting only the outcome would let a broken loop pass.
+	writeAttempts int
 }
 
 func newMemState(seed map[string]string) *memState {
@@ -118,6 +123,14 @@ func (m *memState) Read(context.Context) (map[string]string, error) {
 }
 
 func (m *memState) Write(_ context.Context, data map[string]string) error {
+	// writeFailures models the case the retry exists for: a write that fails a few times and then
+	// succeeds. It is consumed BEFORE writeErr so a test can set either, or both.
+	if m.writeFailures > 0 {
+		m.writeFailures--
+		m.writeAttempts++
+		return errors.New("transient: the server could not find the requested resource")
+	}
+	m.writeAttempts++
 	if m.writeErr != nil {
 		return m.writeErr
 	}
