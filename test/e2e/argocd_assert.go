@@ -876,6 +876,47 @@ func kubectlGetArgoApps(ctx context.Context, kubeconfigPath string) ([]byte, err
 	return out, nil
 }
 
+// describeHeadBudget is how much of the TOP of a describe survives truncation: enough for the
+// identity block (Name, Namespace, Labels, Annotations) and no more.
+const describeHeadBudget = 600
+
+// truncateDescribe keeps BOTH ENDS of `kubectl describe`, dropping the middle.
+//
+// This used to keep the first 2500 characters, on the stated reasoning that "the useful part is at
+// the top". It is not. `kubectl describe application` prints Name, Labels, Annotations, Metadata,
+// Spec, Status, Events — in that order — and the Spec of a Helm Application is the entire values
+// block. So the budget was spent on values we already chose, and Status, Conditions and Events —
+// the only part that says what went wrong — were exactly what got cut.
+//
+// azure/addons run 33255369578 shows the cut landing mid-word inside the spec (`Rev…(truncated)`),
+// with not one line of status for the one Application that failed.
+//
+// The head is kept because the identity block is genuinely useful and cheap: it names the project,
+// the sync-wave and the add-on labels in about four hundred characters. Everything after that up to
+// the tail budget is dropped, and the marker says how much — a truncation that does not admit its
+// size reads as a complete document.
+func truncateDescribe(s string, head, total int) string {
+	if len(s) <= total {
+		return s
+	}
+	if head < 0 {
+		head = 0
+	}
+	if head >= total {
+		// A head budget that leaves no tail would reproduce the bug this function replaced. Refuse
+		// it here rather than silently honour it: keep the tail, which is the half that was missing.
+		head = 0
+	}
+	tail := total - head
+	var b strings.Builder
+	if head > 0 {
+		b.WriteString(s[:head])
+	}
+	fmt.Fprintf(&b, "\n…(%d characters of the spec dropped; the tail below is the status and events)…\n", len(s)-total)
+	b.WriteString(s[len(s)-tail:])
+	return b.String()
+}
+
 // describeArgoApps returns `kubectl describe` output for each losing Application
 // (best-effort, truncated per app, capped at 5 apps) formatted for appending to the
 // timeout error — the "full dump" that makes a red nightly diagnosable from logs.
@@ -889,7 +930,7 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 	//
 	// 18 marketplace add-ons plus the platform rail is the realistic ceiling on how many can fail at
 	// once, so cover all of them. The per-app budget shrinks to compensate — `describe` is mostly the
-	// spec, which the Application already rendered above, and the useful part is at the top.
+	// spec, which the Application already rendered above.
 	const maxApps = 20
 	const maxPerApp = 2500
 	var b strings.Builder
@@ -908,11 +949,7 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 			fmt.Fprintf(&b, "(describe failed: %v)\n%s", err, out)
 			continue
 		}
-		s := string(out)
-		if len(s) > maxPerApp {
-			s = s[:maxPerApp] + "…(truncated)"
-		}
-		b.WriteString(s)
+		b.WriteString(truncateDescribe(string(out), describeHeadBudget, maxPerApp))
 		// `describe application` shows the DESIRED spec and the sync status. It says nothing about
 		// the workload, so a Degraded app — which ArgoCD derives from the underlying Deployment —
 		// reports a verdict with no cause attached. See dumpUnhealthyPods.
