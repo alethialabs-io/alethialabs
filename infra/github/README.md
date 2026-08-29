@@ -44,13 +44,21 @@ Secrets Manager, so nothing in CI needs to write GitHub secrets.)
 
 ## Apply
 
-> **Apply from an up-to-date `main`, and only with the role-ARN `-var`s below.** A bare
-> `tofu apply` (no vars, or from a `dev`/`staging` checkout) plans a **destroy** of the
-> deployer-role Actions vars (they are `count`-gated on those vars) and — if the checkout
-> predates a resource here — of the `production` environment (`environments.tf`), which is
-> the OIDC deploy control. `environments.tf` lives on every branch now, but the vars still
-> make apply non-destructive, so never bare-apply. (`plan -destroy`/`apply` from an agent is
-> forbidden — see root `CLAUDE.md`.)
+> **The three role ARNs are now COMMITTED in `terraform.tfvars`** (tracked via the
+> `!terraform.tfvars` negation in this stack's `.gitignore`), so a checkout carries them and
+> an apply no longer depends on remembering `-var`. Every value in that file is a public repo
+> Actions variable, read from the live repository rather than typed.
+>
+> That warning had been here since the stack was written, and it was the whole defect: the three
+> deployer-role Actions vars are `count`-gated on variables defaulting to `""` (`main.tf:161`,
+> `:168`, `:175`), so a bare `tofu apply` from any checkout planned their **destroy** — taking
+> `infra-cp-hetzner.yml`'s federation, the runner release's OIDC, and deploy-console's Secrets
+> Manager read with them. A comment is not a control (#3108, following #3105).
+>
+> **Still true:** apply from an up-to-date `main`. If the checkout predates a resource here, a
+> plan can still propose destroying the `production` environment (`environments.tf`), which is
+> the OIDC deploy control. And `github_token` has no default — pass it at apply time.
+> (`plan -destroy`/`apply` from an agent is forbidden — see root `CLAUDE.md`.)
 
 Normally run by `bootstrap.yml`. Locally:
 
