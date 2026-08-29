@@ -14,11 +14,18 @@
 			"title": "ArgoCD chart ↔ Kubernetes",
 			"versions": [
 				{
+					"version": "9.5.11",
+					"app_version": "v3.3.9",
+					"k8s_min": "1.33",
+					"k8s_max": "",
+					"note": "Shipped pin. Keeps the #1165 1.33 floor and adds the structured-merge-diff fixes 8.6.4 lacks: argo-cd#24844 (structured-merge-diff#306, null metadata) and argo-cd#25210 (the v3.2.0 creationTimestamp regression, #25184) are both ancestors of v3.3.9, and its in-tree gitops-engine carries #747's skipFullNormalize. Without them every add-on StatefulSet owning volumeClaimTemplates is permanently OutOfSync (#2717)."
+				},
+				{
 					"version": "8.6.4",
 					"app_version": "v3.1.8",
 					"k8s_min": "1.33",
 					"k8s_max": "",
-					"note": "gitops-engine carries the K8s 1.33+ OpenAPI schema (.status.terminatingReplicas, KEP-3973), so Deployments diff correctly (#1165)."
+					"note": "gitops-engine carries the K8s 1.33+ OpenAPI schema (.status.terminatingReplicas, KEP-3973), so Deployments diff correctly (#1165). Superseded by 9.5.11: v3.1.8's structured-merge diff pins every volumeClaimTemplates StatefulSet OutOfSync (#2717)."
 				},
 				{
 					"version": "7.1.3",

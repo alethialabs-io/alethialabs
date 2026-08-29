@@ -15,6 +15,8 @@
 package e2e
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -680,4 +682,140 @@ func TestT2SweeperNameMatchesRealScripts(t *testing.T) {
 			t.Errorf("an unknown provider must not be given something that reads as a script path, got %q", got)
 		}
 	})
+}
+
+// TestT2TeardownFailureLineNamesAnExpiredWindow is the offline proof for the only branch of the
+// teardown that has ever run in anger, and the only one that cannot be reached without spending on
+// a cloud.
+//
+// aws/floor run 33155063965 reported `tofu destroy failed: signal: interrupt` and it was read twice
+// as a destroy that ERRORED. It was a destroy that was still working: terraform-exec cancels its
+// child with SIGINT, so a window that runs out and a tofu that crashed produce the same sentence.
+// The ctx's own error is the only thing that separates them, so the line is required to USE it.
+//
+// Probed in BOTH directions on purpose. A message that always mentioned the window would be just as
+// wrong as one that never did — it would relabel every genuine destroy error as a timeout — so the
+// non-expired case asserts the window is ABSENT, not merely that the error text survives.
+func TestT2TeardownFailureLineNamesAnExpiredWindow(t *testing.T) {
+	const window = 45 * time.Minute
+	interrupted := errors.New("tofu destroy failed: signal: interrupt")
+
+	t.Run("the window expired", func(t *testing.T) {
+		got := t2TeardownFailureLine("aws", window, context.DeadlineExceeded, interrupted)
+		for _, want := range []string{
+			"WINDOW EXPIRED",
+			"45m0s",
+			"ALETHIA_E2E_T2_TEARDOWN",
+			"teardownTimeout",
+			"aws-cleanup.sh",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("an expired teardown window must name %q; got:\n%s", want, got)
+			}
+		}
+	})
+
+	t.Run("the destroy reported its own error", func(t *testing.T) {
+		derr := errors.New("error deleting EC2 Subnet: DependencyViolation: has dependencies and cannot be deleted")
+		got := t2TeardownFailureLine("aws", window, nil, derr)
+		if !strings.Contains(got, "DependencyViolation") {
+			t.Errorf("a real destroy error must survive verbatim; got:\n%s", got)
+		}
+		if strings.Contains(got, "WINDOW EXPIRED") || strings.Contains(got, window.String()) {
+			t.Errorf("a destroy that reported its own error must NOT be relabelled as a timeout; got:\n%s", got)
+		}
+		if !strings.Contains(got, "aws-cleanup.sh") {
+			t.Errorf("the sweeper still has to be named; got:\n%s", got)
+		}
+	})
+
+	t.Run("a cancelled ctx is not a deadline", func(t *testing.T) {
+		// context.Canceled is what a caller-side cancel produces. It is NOT the window running out,
+		// and reporting it as one would send the reader to widen a budget that was never the cause.
+		got := t2TeardownFailureLine("aws", window, context.Canceled, interrupted)
+		if strings.Contains(got, "WINDOW EXPIRED") {
+			t.Errorf("context.Canceled is not a deadline; got:\n%s", got)
+		}
+	})
+
+	t.Run("the sweeper follows the provider", func(t *testing.T) {
+		got := t2TeardownFailureLine("gcp", window, context.DeadlineExceeded, interrupted)
+		if !strings.Contains(got, "gcp-cleanup.sh") {
+			t.Errorf("the expired-window line must name THIS cloud's sweeper; got:\n%s", got)
+		}
+		if strings.Contains(got, "aws-cleanup.sh") {
+			t.Errorf("the expired-window line named the wrong cloud's sweeper; got:\n%s", got)
+		}
+	})
+}
+
+// TestT2TeardownWindowExceedsTheDeployProvidersOwnCeilings pins the RELATION the 45m exists for,
+// rather than the number alone — the number is already pinned by TestT2ProviderTableTeardownBudgets.
+//
+// A managed destroy is not one wait; it is a serialized prelude (workdir + init + state pull +
+// refresh + plan, ~9m20s measured on run 33155063965) followed by resources that each carry their
+// cloud provider's OWN delete ceiling — 20m for an AWS subnet and internet gateway. A window shorter
+// than prelude + ceiling can only ever end in SIGINT, which is the one outcome that names nothing.
+// 30m was exactly that, and it was not obviously that: it looked generous.
+//
+// hetzner is excluded by NAME rather than by "whatever is under 30m": its teardown is 18 flat
+// resources with no managed control plane in front of them, and a rule that silently skipped any
+// short row would go quietly vacuous the moment a managed row was lowered.
+func TestT2TeardownWindowExceedsTheDeployProvidersOwnCeilings(t *testing.T) {
+	// Measured on aws/floor run 33155063965; see the teardownTimeout field comment. Each term is
+	// separate because the SUM is the claim: a destroy reaches a verdict only after the prelude, plus
+	// however late the long-pole resource starts, plus that resource's own ceiling.
+	const (
+		// workdir prep + `tofu init` + state pull + refresh of 130 resources + plan render, before
+		// a single resource is deleted. Observed ~9m20s.
+		preludeObserved = 10 * time.Minute
+		// The VPC layer is not first: the subnets began deleting ~3m40s into the apply, behind the
+		// node group and the ENI holders.
+		longPoleStartOffset = 4 * time.Minute
+		// The AWS provider's own delete ceiling for aws_subnet and aws_internet_gateway — the point
+		// at which tofu stops retrying and returns the DependencyViolation naming what still holds
+		// the subnet. This is the answer the window exists to let the harness receive.
+		resourceCeiling  = 20 * time.Minute
+		minManagedWindow = preludeObserved + longPoleStartOffset + resourceCeiling
+	)
+	managed := []string{"aws", "gcp", "azure", "alibaba"}
+
+	var checked int
+	for _, cloud := range managed {
+		p, ok := t2LookupProvider(cloud)
+		if !ok {
+			t.Fatalf("no provider row for %q — this guard would silently stop covering it", cloud)
+		}
+		checked++
+		if got := p.teardownTimeout; got < minManagedWindow {
+			t.Errorf("%s teardown window is %s, which cannot contain a destroy that reaches its own "+
+				"verdict: ~%s of workdir+init+refresh+plan before anything is deleted, +%s before the "+
+				"long-pole resource even starts, + its provider's own %s delete ceiling = %s. Below "+
+				"that the only reachable outcome is SIGINT, and `signal: interrupt` names no resource "+
+				"and no cloud error (run 33155063965).",
+				cloud, got, preludeObserved, longPoleStartOffset, resourceCeiling, minManagedWindow)
+		}
+	}
+	if checked != len(managed) {
+		t.Fatalf("checked %d of %d managed clouds", checked, len(managed))
+	}
+
+	// The window is only useful if the PROCESS deadline still contains it — a widened window that
+	// the go-timeout does not reserve is killed by go instead of by the ctx, which loses even more.
+	// TestT2BudgetReservesTeardownInGoTimeout proves the reservation tracks the window; this asserts
+	// the reserved amount is at least what the relation above demands.
+	for _, v := range T2BudgetScenarioEnv() {
+		t.Setenv(v, "")
+	}
+	t.Setenv("ALETHIA_E2E_T2_TEARDOWN", "")
+	for _, cloud := range managed {
+		b, err := ResolveT2Budget(cloud, "ladder")
+		if err != nil {
+			t.Fatalf("%s: %v", cloud, err)
+		}
+		if reserved := b.GoTimeout - b.Ctx - t2GoTimeoutMargin; reserved < minManagedWindow {
+			t.Errorf("%s reserves only %s of the process deadline for teardown, want at least %s\n  %s",
+				cloud, reserved, minManagedWindow, b.Describe())
+		}
+	}
 }

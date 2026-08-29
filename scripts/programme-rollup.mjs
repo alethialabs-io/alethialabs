@@ -66,6 +66,22 @@ import path from "node:path";
 
 const SNAPSHOT = "docs/testing/programme-snapshot.json";
 const LEDGER = "demos/proofs/provisioning-e2e-log.md";
+/**
+ * How many marketplace add-ons the generated catalog carries. `undefined` when it cannot be read —
+ * NOT a default. A default here would be a number nobody measured, quietly deciding whether a proof
+ * counts.
+ */
+function addOnCatalogCount() {
+	try {
+		const c = JSON.parse(fs.readFileSync(ADDON_CATALOG, "utf8"));
+		return Array.isArray(c) && c.length > 0 ? c.length : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+const ADDON_CATALOG = "test/e2e/fixtures/addon_catalog.hetzner.json";
+const LEDGER_BASELINE = "demos/proofs/ledger-baseline.json";
 const SPINE = "test/e2e/generated/programme.json";
 const WORKFLOW = ".github/workflows/e2e-nightly.yml";
 // The fidelity table moved OUT of the workflow's inline `env:` and into the resolver (#2356), so a
@@ -99,7 +115,32 @@ const END = "<!-- END GENERATED: programme-rollup -->";
 const DIMENSIONS = [
 	{ id: "floor", label: "floor", gate: "(the cloud gate alone)", gates: [], what: "real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set" },
 	{ id: "maxconfig", label: "all kinds", gate: "ALETHIA_E2E_MAX_CONFIG", gates: [{ name: "ALETHIA_E2E_MAX_CONFIG", kind: "derived" }], what: "every kind this cloud offers lands in tofu state (or converges as its named Application)" },
-	{ id: "addons", label: "18 add-ons", gate: "ALETHIA_E2E_ALL_ADDONS", gates: [{ name: "ALETHIA_E2E_ALL_ADDONS", kind: "derived" }], what: "all 18 marketplace add-ons Healthy+Synced" },
+	{
+		id: "addons",
+		label: "18 add-ons",
+		gate: "ALETHIA_E2E_ALL_ADDONS",
+		gates: [{ name: "ALETHIA_E2E_ALL_ADDONS", kind: "derived" }],
+		what: "all 18 marketplace add-ons Healthy+Synced",
+		// THE ONE DIMENSION WHOSE COMPOSITE CREDIT COULD NEVER BE WITHHELD (#2671).
+		//
+		// `compositeCreditsFor` asks "were this dimension's REPO gates wired?", and `addons` has no repo
+		// gate — its only gate is `derived`. `[].every(…)` is `true`, so the credit was unconditionally
+		// granted, on every cloud, forever. The guard built to withhold this credit was structurally
+		// incapable of withholding THIS one.
+		//
+		// That is fine while the assertion is trustworthy, and it was not. `argoAddOnCount` sized the
+		// convergence BUDGET from the catalog while the assertion sized its SCOPE from the observed
+		// applications, so a run that saw 4 Applications passed a sweep this column advertises as 18.
+		// #2642 fixed the assertion. The CREDITING side stayed wrong in both directions: before that fix
+		// a `full` PASS made `addons` proven from a floor-sized sweep, and after it the shrunken run
+		// FAILS and the composite lands that failure on `addons` — a cell then reading "we exercised
+		// add-ons and they failed" when the run died on drift with six Applications in scope.
+		//
+		// So the dimension states its own requirement and the credit is refused unless the bundle shows
+		// it was met. Gate wiring answers "was the layer switched on?"; this answers "did the layer
+		// assert what this column claims?", and those come apart.
+		asserts: assertsFullAddOnSweep,
+	},
 	// RENAMED from `byo`, and the rename IS the correction. This column asserts A0.6 — a customer
 	// apps-DESTINATION repo plus a BYO Helm chart converging as ArgoCD Applications, each managing at
 	// least one real resource. Under the old label ("BYO-IaC", "customer IaC/charts applied, and
@@ -176,6 +217,28 @@ export function parseLedger(text) {
  * and were later RETRACTED because no bundle had ever existed.
  * @returns {"path"|"run-tag"|"none"}
  */
+/**
+ * Do a ledger row's sha and its bundle's sha name the same commit?
+ *
+ * BOTH DIRECTIONS, because the two are abbreviated independently and to different lengths — the
+ * ledger carries 7- and 8-character forms side by side (`7050809` next to `29d4074e`), so a
+ * one-way `startsWith` would call half the real matches a mismatch and the other half a match
+ * depending only on which side happened to be shorter.
+ *
+ * A minimum length is required so that emptiness, `unknown`, or a truncated cell cannot agree with
+ * everything. Anything shorter than a git short-sha is not a comparison, it is a coincidence.
+ * @param {string} rowSha
+ * @param {string} bundleSha
+ */
+export function shasAgree(rowSha, bundleSha) {
+	const a = (rowSha ?? "").trim().toLowerCase();
+	const b = (bundleSha ?? "").trim().toLowerCase();
+	const MIN = 7;
+	if (a.length < MIN || b.length < MIN) return false;
+	if (!/^[0-9a-f]+$/.test(a) || !/^[0-9a-f]+$/.test(b)) return false;
+	return a.startsWith(b) || b.startsWith(a);
+}
+
 export function bundleKind(ref) {
 	if (!ref) return "none";
 	if (ref.startsWith(`${PROOFS_DIR}/`) || /^[a-z]+\/\d{8}T\d{6}Z$/.test(ref)) return "path";
@@ -233,6 +296,46 @@ export function gateReached(observation) {
  * written, and rewriting history to match a corrected label is the more expensive error.
  * @type {Map<string, string>}
  */
+/**
+ * Did this run assert the WHOLE marketplace add-on surface? `"yes"` · `"no"` · `"unknown"`.
+ *
+ * THREE-VALUED, AND THE THIRD VALUE IS THE POINT. Bundles in this tree come in three shapes and
+ * collapsing any of them onto a boolean gets one of the two failures this exists to prevent:
+ *
+ *   · pre-#2688 bundles carry `argocd_total: 0` and `argocd_healthy_synced: 0` for EVERY run,
+ *     passing and failing alike, because capture-proof.sh counted the cluster AFTER teardown had
+ *     already removed it. Reading that 0 as an observation refuses every historical credit.
+ *   · older bundles still carry neither field. Reading absent as "fine" reinstates the hole.
+ *   · post-#2688 bundles carry the ASSERTION-TIME counts, written by AssertArgoAppsHealthy before
+ *     the cleanup runs, and `null` where nothing was measured.
+ *
+ * SO IT READS THE ASSERTED FIELDS, NOT THE CAPTURED ONES, and this is where #2671's own suggestion
+ * has been overtaken: it proposed `argocd_total`, which is exactly the capture-time field that
+ * #2688 made `null` on purpose. A check written against it today would find `null` in every new
+ * bundle — the newest bundle in the tree carries `argocd_total: null` beside
+ * `argocd_healthy_synced_asserted: 8` — and, written the obvious way, credit the dimension anyway.
+ * That is this repo's dominant defect class landing inside the fix for it.
+ *
+ * `unknown` REFUSES the credit and says which bundle could not be measured. Refusing is the safe
+ * direction here for the same reason the run-tag rule is: a PASS nobody can check is not a proof,
+ * and the cost of being wrong is a cell that reads `never_run` until somebody re-runs it.
+ */
+export function assertsFullAddOnSweep(summary, required) {
+	if (!summary || typeof summary !== "object") return "unknown";
+	const expected = summary.argocd_expected_total;
+	const asserted = summary.argocd_healthy_synced_asserted;
+	const outcome = summary.argocd_assert_outcome;
+	// Neither assertion-time field present at all: a bundle written before #2688 taught the harness to
+	// record what it asserted. Not measurable, in either direction.
+	if (typeof expected !== "number" && typeof asserted !== "number") return "unknown";
+	if (typeof expected !== "number" || typeof asserted !== "number") return "unknown";
+	// The harness's own word for "the assertion did not run or could not read the cluster". Trusting
+	// the counts beside it would be trusting numbers it has just disclaimed.
+	if (outcome !== undefined && outcome !== "converged") return "unknown";
+	if (!Number.isFinite(required) || required <= 0) return "unknown";
+	return expected >= required && asserted >= required ? "yes" : "no";
+}
+
 export const DIMENSION_ALIASES = new Map(DIMENSIONS.flatMap((d) => (d.aliases ?? []).map((a) => [a, d.id])));
 
 /** Resolve a ledger row's dimension token to its column id. */
@@ -336,9 +439,14 @@ const STATE_GLYPH = {
  * it anyway promotes a scenario that never executed to `proven` — the exact green-skip-as-proof
  * failure that retracted every 2026-07-22 row.
  *
+ * `compositeRefusedWhy` carries the caller's reason when there is one. There is more than one way to
+ * refuse the credit now (#2671 added "the bundle does not show the assertion this column claims"),
+ * and the hardcoded sentence below would confidently name the wrong cause for every new reason — a
+ * refusal that names a cause it did not establish is a defect this file has already shipped twice.
+ *
  * @returns {{state: string, why: string, row: object|null}}
  */
-export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCredits = true }) {
+export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCredits = true, compositeRefusedWhy = null }) {
 	const direct = claims.get(`${cloud}/${dimension}`) ?? null;
 	const compositeClaim = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
 	const composite = compositeCredits ? compositeClaim : null;
@@ -350,7 +458,9 @@ export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCr
 		const why =
 			compositeClaim === null
 				? "no surviving ledger claim"
-				: `no surviving ledger claim — this cloud's \`${COMPOSITE}\` run does NOT count for this dimension, whose layer green-skips until its repo gate is set`;
+				: compositeRefusedWhy
+					? `no surviving ledger claim — ${compositeRefusedWhy}`
+					: `no surviving ledger claim — this cloud's \`${COMPOSITE}\` run does NOT count for this dimension, whose layer green-skips until its repo gate is set`;
 		return { state: STATE.neverRun, why, row: null };
 	}
 	const via = direct === null ? ` (via the \`${COMPOSITE}\` composite run)` : "";
@@ -493,9 +603,11 @@ export function deriveBoard(snapshot) {
 	};
 }
 
-export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot }) {
+export function derive({ ledgerText, spine, workflowText, resolverText = "", unsupportedText, bundleExists, readBundleSummary = () => null, exclusionCounts, snapshot, ledgerBaseline = {}, assertRequirements = {} }) {
 	const failures = [];
 	const notes = [];
+	/** Cells whose composite credit was refused for want of a MEASUREMENT, not for a verdict. */
+	const unmeasuredComposites = [];
 	const { rows, errors } = parseLedger(ledgerText);
 	failures.push(...errors);
 	const claims = collapseLedger(rows);
@@ -521,6 +633,11 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	//   repo gates      the switch IS composed, but a repo variable a human must set is unset, so the
 	//                   layer green-skipped inside the run. `unknown` is NOT `wired`, so a missing
 	//                   snapshot fails closed rather than buying a proof.
+	//
+	//   asserts()       the switch was on and the layer ran, but the BUNDLE does not show it
+	//                   asserting what this dimension claims. This one is per-CLOUD, because the
+	//                   evidence is a bundle and each cloud has its own — which is why the credit is
+	//                   computed inside the loop rather than once per dimension (#2671).
 	const compositeCreditsFor = new Map(
 		DIMENSIONS.map((d) => [
 			d.id,
@@ -530,7 +647,32 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	for (const cloud of clouds) {
 		grid[cloud] = {};
 		for (const d of DIMENSIONS) {
-			grid[cloud][d.id] = deriveCell({ cloud, dimension: d.id, claims, bundleExists, compositeCredits: compositeCreditsFor.get(d.id) });
+			let credits = compositeCreditsFor.get(d.id);
+			// The default message names the repo-gate cause, which is the ONLY cause it could have had
+			// before this. A refusal that names a cause it did not establish is the defect this file
+			// has now been fixed for twice, so every new refusal carries its own sentence.
+			let refusedWhy;
+			if (credits && typeof d.asserts === "function") {
+				const compositeClaim = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
+				const bundle = compositeClaim && bundleKind(compositeClaim.bundle) === "path" ? compositeClaim.bundle : null;
+				const summary = bundle ? readBundleSummary(path.join(bundlePath(bundle), "provision-summary.json")) : null;
+				const verdict = d.asserts(summary, assertRequirements[d.id]);
+				if (verdict === "no") {
+					credits = false;
+					refusedWhy =
+						`this cloud's \`${COMPOSITE}\` run did not assert what this column claims — its own bundle ` +
+						`\`${bundle}\` records a smaller add-on sweep than the ${assertRequirements[d.id]} the catalog carries, ` +
+						`so crediting it would promote a floor-sized run to a full one`;
+				} else if (verdict === "unknown") {
+					credits = false;
+					refusedWhy =
+						`this cloud's \`${COMPOSITE}\` run cannot be shown to have asserted what this column claims — ` +
+						`${bundle ? `its bundle \`${bundle}\` records no assertion-time add-on counts` : "it has no committed bundle to read"}. ` +
+						`Unmeasured is not proven: re-run it, or record a direct claim for this dimension`;
+					unmeasuredComposites.push(`${cloud}/${d.id}${bundle ? ` (\`${bundle}\`)` : ""}`);
+				}
+			}
+			grid[cloud][d.id] = deriveCell({ cloud, dimension: d.id, claims, bundleExists, compositeCredits: credits, compositeRefusedWhy: refusedWhy });
 		}
 	}
 
@@ -597,6 +739,89 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 					`${summary.outcome ? ` and \`outcome: "${summary.outcome}"\`` : ""}${spent}. ` +
 					`BLOCKED means the harness refused BEFORE spending; a run that reached '${SPENDING_STAGE}' spent and broke, which is FAIL. ` +
 					`The ledger is append-only — supersede the row with a RETRACTED naming it, then re-record as FAIL.`,
+			);
+		}
+	}
+
+	// ── INTEGRITY: a surviving claim's `git sha` must match the sha inside its OWN bundle ──
+	//
+	// A proof row says "this cell was proven, at this commit, and here is the bundle". Nothing
+	// checked that the last two agreed, and they frequently do not: measured across the whole
+	// ledger, 29 rows match, 7 do not, and 15 name no committed bundle to compare against.
+	//
+	// The drift RUNS BOTH WAYS, which is what rules out every benign explanation. Four rows name a
+	// commit NEWER than the run and three name one OLDER, so "the row is written after the code
+	// moved" cannot cover it. The mechanism is structural: `provisioning-e2e.sh` takes
+	// `git rev-parse --short HEAD` in the ROLLUP job while the bundle's `git_sha` is stamped in the
+	// LEG job, so any merge landing between them separates the two.
+	//
+	// It matters most where it is least visible. Two of the seven back cells the grid renders
+	// PROVEN. A PASS naming a commit its run never executed is unverifiable in precisely the way an
+	// expiring CI run tag was — and every 2026-07-22 row was retracted for that.
+	//
+	// SURVIVING CLAIMS ONLY, for the same reason the BLOCKED-vs-spent rule above walks `claims`:
+	// the ledger is append-only, a corrected row stays in the file forever, and firing on a corpse
+	// punishes the supersession convention this repo is asking people to follow.
+	//
+	// SHRINK-ONLY, keyed on IDENTITY not on a count. Each grandfathered row is named in
+	// demos/proofs/ledger-baseline.json under `sha_drift`; a mismatch that is not named fails, and a
+	// name that no longer matches a real mismatch fails too. A bare ceiling of "7" would let an eighth
+	// mismatch move in the moment one of these is retracted.
+	{
+		const ackList = Array.isArray(ledgerBaseline?.sha_drift?.records) ? ledgerBaseline.sha_drift.records : [];
+		const ackKey = (o) => `${o.cloud}/${o.dimension}@${o.row_sha ?? o.sha}→${o.bundle_sha}`;
+		// Built by hand rather than `new Map(entries)` so a DUPLICATE key is reported instead of
+		// silently overwritten. The first draft of this baseline listed the hetzner/full RETRACTED
+		// row and its FAIL replacement separately; both render the same key, `new Map` kept one, and
+		// the redundant record was accepted without a word. A ratchet that quietly absorbs a record
+		// it is not using can be padded — which is the one thing a shrink-only list must not allow.
+		const unmatchedAck = new Map();
+		for (const a of ackList) {
+			const k = ackKey(a);
+			if (unmatchedAck.has(k)) {
+				failures.push(`${LEDGER_BASELINE}: duplicate record for \`${k}\`. Only surviving claims are checked, so one record per cell is the most that can ever match; the extra can never be satisfied and would pad the ratchet.`);
+				continue;
+			}
+			unmatchedAck.set(k, a);
+		}
+		let unstamped = 0;
+		for (const r of claims.values()) {
+			if (!r || bundleKind(r.bundle) !== "path") continue;
+			const summary = readBundleSummary(path.join(bundlePath(r.bundle), "provision-summary.json"));
+			const bundleSha = summary && typeof summary === "object" ? summary.git_sha : undefined;
+			// `unknown` is capture-proof.sh's own fallback when `git rev-parse` fails, so it is an
+			// absence wearing a value. Counted and reported, never compared — comparing against it
+			// would manufacture a mismatch out of a missing measurement.
+			if (typeof bundleSha !== "string" || bundleSha === "" || bundleSha === "unknown") {
+				unstamped++;
+				continue;
+			}
+			if (shasAgree(r.sha, bundleSha)) continue;
+			const key = `${r.cloud}/${r.dimension}@${r.sha}→${bundleSha}`;
+			if (unmatchedAck.has(key)) {
+				unmatchedAck.delete(key);
+				continue;
+			}
+			failures.push(
+				`${LEDGER}:${r.line}: ${r.cloud}/${r.dimension} is recorded at \`${r.sha}\`, but its own bundle ` +
+					`\`${r.bundle}/provision-summary.json\` says the run executed \`${bundleSha}\`. ` +
+					`A ${r.verdict} naming a commit its run never executed cannot be checked against the tree. ` +
+					`The ledger is append-only — supersede the row with a RETRACTED naming it, then re-record with the sha the bundle carries. ` +
+					`If this row is genuinely to be grandfathered, name it in ${LEDGER_BASELINE} with the reason.`,
+			);
+		}
+		for (const [key, a] of unmatchedAck) {
+			failures.push(
+				`${LEDGER_BASELINE}: the acknowledged mismatch \`${key}\` no longer corresponds to a surviving claim whose sha disagrees with its bundle. ` +
+					`Either it was superseded (delete the record — this ratchet only shrinks) or the row/bundle it named has moved. ` +
+					`A record for a mismatch that does not exist is the same stale-evidence shape the record was meant to expose.` +
+					(a.issue ? ` Filed as ${a.issue}.` : ""),
+			);
+		}
+		if (unstamped > 0) {
+			notes.push(
+				`${unstamped} surviving claim(s) name a committed bundle that carries no usable \`git_sha\`, so their row sha could not be checked at all. ` +
+					`That is not a pass — it is an unmeasured cell.`,
 			);
 		}
 	}
@@ -680,7 +905,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 			const c = grid[cloud][d.id];
 			if (c.state !== STATE.failing && c.state !== STATE.blocked) continue;
 			const issue = c.row?.issue ?? "";
-			reds.push({ cloud, dimension: d.id, state: c.state, issue, issueState: board.issueState(issue), why: c.why });
+			reds.push({ cloud, dimension: d.id, state: c.state, issue, issueState: board.issueState(issue), why: c.why, row: c.row });
 		}
 	}
 
@@ -705,10 +930,95 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		};
 		r.state = STATE.stale;
 	}
-	// A red with NO issue at all is genuinely unowned, and unlike a closed citation that IS fixable —
-	// file one. Kept a note rather than a failure while the ledger still holds pre-convention rows.
-	for (const r of reds.filter((x) => x.issue === "")) {
-		notes.push(`\`${r.cloud}/${r.dimension}\` is ${r.state} but names no issue — an unfiled red is an unowned red.`);
+	// ── UNFILED REDS: an unowned red is the one state the grid cannot RANK ────────────────────────
+	//
+	// A closed citation is information — the cause is fixed, the cell needs a re-run, and `stale`
+	// above says exactly that. A red with NO citation is the opposite: it carries a verdict and no
+	// diagnosis, so nothing downstream can do anything with it.
+	//
+	// That is a ranking defect, not a tidiness one. PROGRAMME.md's "mechanical next" orders failing
+	// cells ABOVE never-run ones on the argument that a red already has a diagnosed cause and is
+	// therefore cheaper to advance. An uncited red enters that ordering carrying none, so it is
+	// ranked above work that is genuinely readier, on a property it does not have. It reads as work
+	// while being nobody's — strictly worse than a never-run cell, which at least advertises what it
+	// is.
+	//
+	// This was a `notes.push` until #3157, "kept a note rather than a failure while the ledger still
+	// holds pre-convention rows". That was right when it was written and wrong afterwards for a
+	// reason worth stating: until #3151 reconnected the advisory channel, `notes` was WRITE-ONLY —
+	// pushed to here, returned from derive(), and dropped. So the compromise position was not "a
+	// quieter guard", it was no guard at all, and nothing stopped the next one arriving.
+	//
+	// SHRINK-ONLY, keyed on the ROW rather than the cell. Each grandfathered red is named in
+	// demos/proofs/ledger-baseline.json under `unfiled_reds`; an uncited red that is not named fails,
+	// and a name that no longer matches an uncited red fails too. The key carries the row's date and
+	// sha, so a record cannot launder the NEXT uncited row for the same cell — which is the only
+	// thing it could plausibly be padded with.
+	//
+	// WHY GRANDFATHERING IS NEEDED AT ALL, and why it is not a loophole: the ledger is append-only
+	// and is never corrected in place, so a row already in the file CANNOT be given a citation. Its
+	// remedy lands on the next row for that cell, which needs a run. A rule that fired on those
+	// would be unfixable-by-construction, which is how a guard trains people to route around it. A
+	// row being written NOW, by contrast, is trivially fixable — fill the last column — which is the
+	// case this rule is actually for.
+	//
+	// AND IT IS SATISFIABLE BY CONSTRUCTION, which is what makes promoting it fair rather than
+	// merely stricter. scripts/e2e/provisioning-e2e.sh files or updates the tracking issue BEFORE it
+	// appends the row, precisely so the number is available to write into the last column — it was
+	// reordered for that reason, and its comment says so. So the ordinary path already cites. The
+	// only way an uncited FAIL row is produced today is the one documented failure branch, where
+	// `gh issue create` did not succeed and the script emits "the ledger row will cite none". That
+	// branch is a warning in a run log nobody reads afterwards; here it becomes a red, at the point
+	// where the row is being brought into the tree by scripts/e2e/commit-proof.sh and a human can
+	// still put the number in.
+	{
+		const recs = Array.isArray(ledgerBaseline?.unfiled_reds?.records) ? ledgerBaseline.unfiled_reds.records : [];
+		const redKey = (o) => `${o.cloud}/${o.dimension}@${o.date ?? ""}@${o.row_sha ?? ""}`;
+		// Built by hand rather than `new Map(entries)` for the same reason the sha ratchet is: a
+		// duplicate must be REPORTED, not silently overwritten. One record per cell is the ceiling —
+		// only surviving claims are walked — so a second can never be satisfied and exists only to
+		// pad the list.
+		const unmatched = new Map();
+		for (const rec of recs) {
+			const k = redKey(rec);
+			if (unmatched.has(k)) {
+				failures.push(
+					`${LEDGER_BASELINE}: duplicate unfiled-red record for \`${k}\`. Only surviving claims are checked, so one record per cell is the most that can ever match; the extra can never be satisfied and would pad the ratchet.`,
+				);
+				continue;
+			}
+			unmatched.set(k, rec);
+		}
+		for (const r of reds.filter((x) => x.issue === "")) {
+			const key = redKey({ cloud: r.cloud, dimension: r.dimension, date: r.row?.date, row_sha: r.row?.sha });
+			const rec = unmatched.get(key);
+			if (rec) {
+				unmatched.delete(key);
+				// Grandfathered, never silenced. The whole point of the record is that somebody DOES
+				// own this — it just cannot be written into a row that is already in the file.
+				notes.push(
+					`\`${r.cloud}/${r.dimension}\` is ${r.state} and its ledger row names no issue. Grandfathered in ${LEDGER_BASELINE}` +
+						(rec.issue ? `, owned by ${rec.issue}` : "") +
+						`: ${rec.reason ?? "no reason recorded"}. The citation lands when this cell is next recorded.`,
+				);
+				continue;
+			}
+			failures.push(
+				`${LEDGER}${r.row?.line ? `:${r.row.line}` : ""}: ${r.cloud}/${r.dimension} is ${r.state} and names no issue in its last column. ` +
+					`An unfiled red is an unowned red: it enters the "mechanical next" ranking above never-run cells on the claim that a red carries a diagnosed cause, and this one carries none. ` +
+					`If this is the row you are writing — or bringing in with scripts/e2e/commit-proof.sh — put the issue number in its last column. ` +
+					`If no issue exists, file one — the nightly convention is \`e2e nightly: ${r.cloud} RED (${r.dimension})\`, which this script already parses. ` +
+					`If the row predates the convention and cannot be corrected (the ledger is append-only), name it in ${LEDGER_BASELINE} under \`unfiled_reds\` with the issue that does own it.`,
+			);
+		}
+		for (const [key, rec] of unmatched) {
+			failures.push(
+				`${LEDGER_BASELINE}: the unfiled-red record \`${key}\` no longer corresponds to a red whose surviving row names no issue. ` +
+					`Either the cell was re-recorded WITH a citation, or it is no longer red — delete the record, this ratchet only shrinks. ` +
+					`A record for a violation that does not exist is the same stale-evidence shape the record was meant to expose.` +
+					(rec.issue ? ` It named ${rec.issue}.` : ""),
+			);
+		}
 	}
 
 	// ── CONTESTED: a cell the ledger calls PROVEN with an open RED filed after the proving run ──
@@ -816,6 +1126,16 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		for (const cloud of clouds) {
 			if (grid[cloud][d.id].state === STATE.neverRun) next.push({ cloud, dimension: d.id, state: STATE.neverRun, why: grid[cloud][d.id].why });
 		}
+	}
+
+	// A refusal for want of a MEASUREMENT is not the same as a cell nobody ran, and the grid renders
+	// them identically (`never_run`). Saying which is which is the difference between "nobody has
+	// tried this" and "somebody did and we cannot check it" — the second is one dispatch from proven.
+	if (unmeasuredComposites.length > 0) {
+		notes.push(
+			`${unmeasuredComposites.length} cell(s) could have been credited from a \`${COMPOSITE}\` run but its bundle records no assertion-time evidence: ` +
+				`${unmeasuredComposites.join(", ")}. Unmeasured is not proven — but it is not never-run either, and a re-run closes it.`,
+		);
 	}
 
 	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, costCells, gateReality, cloudGates };
@@ -1214,6 +1534,16 @@ function readInputs() {
 		workflowText: need(WORKFLOW),
 		resolverText: need(RESOLVER),
 		unsupportedText: need(UNSUPPORTED_KINDS),
+		// ABSENT MEANS EMPTY, not "skip the rule". A ratchet whose baseline file can be deleted to
+		// silence it is not a ratchet — removing the file must make the guard louder (every
+		// mismatch becomes a failure), never quieter.
+		ledgerBaseline: fs.existsSync(LEDGER_BASELINE) ? JSON.parse(fs.readFileSync(LEDGER_BASELINE, "utf8")) : {},
+		// WHAT EACH DIMENSION'S CLAIM REQUIRES, read from the same generated fixture the harness seeds
+		// rather than hardcoded here. `addons` says "18 add-ons" in its label and the number has to
+		// come from the catalog, or the two drift and the guard measures against a stale figure —
+		// which is the class of defect it was written to catch. A catalog that cannot be read yields
+		// `undefined`, and the predicate treats that as `unknown`: refusing to credit, never guessing.
+		assertRequirements: { addons: addOnCatalogCount() },
 		bundleExists: (p) => fs.existsSync(p),
 		// Tolerant on purpose: an absent or unreadable summary means "cannot check", which is not the
 		// same as "checked and fine". The rule below simply does not fire, rather than inventing a
@@ -1326,9 +1656,14 @@ function runSelfTest() {
 
 		// ONE DIRECTION: a FAIL on a run that never spent overstates the damage, which costs nobody
 		// a proof. It is deliberately not refused.
+		//
+		// This is the one assertion in the file that demands `failures` be EMPTY rather than free of
+		// one pattern, which is worth keeping — it catches any new rule that fires on an ordinary
+		// row. That is exactly what it did when #3157 landed, so the fixture now cites an issue, as
+		// a real FAIL row must.
 		r = derive({
 			...base,
-			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "FAIL", AT),
+			ledgerText: hdr + row("2026-08-25", "hetzner", "full", "FAIL", AT, "#2718"),
 			readBundleSummary: summaries({ [`${AT}/provision-summary.json`]: { outcome: "failure", deploy_stage: "prerequisites" } }),
 		});
 		ok("a FAIL on a run that did not spend is NOT refused", r.failures.length === 0, JSON.stringify(r.failures));
@@ -1372,6 +1707,203 @@ function runSelfTest() {
 		ok("a run-tag bundle is not reconciled", !r.failures.some((f) => /recorded BLOCKED/.test(f)), JSON.stringify(r.failures));
 	}
 
+	// ── A row's sha vs its own bundle's sha (#2718). ──
+	//
+	// The negatives carry the weight. A rule that fires on every row is not a check, and a
+	// baseline that can be padded is not a ratchet.
+	{
+		ok("shasAgree: identical", shasAgree("abc1234", "abc1234"), "");
+		ok("shasAgree: the LONGER row sha extends the bundle's", shasAgree("abc12345", "abc1234"), "");
+		ok("shasAgree: the LONGER bundle sha extends the row's", shasAgree("abc1234", "abc12345"), "");
+		ok("shasAgree: different commits disagree", !shasAgree("abc1234", "def5678"), "");
+		// Without a minimum length an empty or truncated cell agrees with everything, and the guard
+		// reports green on exactly the rows it cannot read.
+		ok("shasAgree: an empty sha agrees with nothing", !shasAgree("", "abc1234"), "");
+		ok("shasAgree: a too-short prefix is a coincidence, not a match", !shasAgree("abc", "abc1234"), "");
+		ok("shasAgree: 'unknown' is not a sha", !shasAgree("unknown", "abc1234"), "");
+
+		const AT = "demos/proofs/gcp/20260825T200519Z";
+		const at = (git_sha) => (p) => (p === `${AT}/provision-summary.json` ? { outcome: "success", git_sha } : null);
+		const shaRow = (sha, bundle) => `| 2026-08-25 | ${sha} | gcp | floor | **PASS** | detail | \`${bundle}\` | — |\n`;
+		const MISMATCH = /is recorded at .* but its own bundle/;
+
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("f3cb966") });
+		ok("a row naming a commit its run never executed is an integrity failure", r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+		ok("...and the message names both shas", r.failures.some((f) => /09911316/.test(f) && /f3cb966/.test(f)), JSON.stringify(r.failures));
+
+		// The positive case, both abbreviation lengths — the ledger carries 7- and 8-char forms side
+		// by side, so a one-way comparison would call half the real matches a mismatch.
+		r = derive({ ...base, ledgerText: hdr + shaRow("f3cb966", AT), readBundleSummary: at("f3cb9661234") });
+		ok("a row whose sha is a PREFIX of its bundle's raises nothing", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+		r = derive({ ...base, ledgerText: hdr + shaRow("f3cb9661234", AT), readBundleSummary: at("f3cb966") });
+		ok("a row whose sha EXTENDS its bundle's raises nothing", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+
+		// An absent measurement is not a pass. It must not fail the build, and it must not be silent.
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("unknown") });
+		ok("a bundle whose sha is 'unknown' is not compared", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+		ok("...but it is reported as unmeasured", r.notes.some((n) => /no usable `git_sha`/.test(n)), JSON.stringify(r.notes));
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: () => null });
+		ok("an unreadable summary is not compared either", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+
+		// The ratchet.
+		const ack = (o) => ({ sha_drift: { records: [{ cloud: "gcp", dimension: "floor", row_sha: "09911316", bundle_sha: "f3cb966", ...o }] } });
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("f3cb966"), ledgerBaseline: ack({}) });
+		ok("an acknowledged mismatch is grandfathered", !r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+
+		// Shrink-only: the record must stop being accepted once the row it names agrees.
+		r = derive({ ...base, ledgerText: hdr + shaRow("f3cb966", AT), readBundleSummary: at("f3cb966"), ledgerBaseline: ack({}) });
+		ok("a record for a mismatch that no longer exists is an integrity failure", r.failures.some((f) => /no longer corresponds/.test(f)), JSON.stringify(r.failures));
+
+		// A record must not grandfather a DIFFERENT mismatch than the one it names — otherwise one
+		// acknowledgement launders every future drift on that cell.
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("9999999"), ledgerBaseline: ack({}) });
+		ok("an acknowledgement does not cover a mismatch against a different bundle sha", r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+
+		// A duplicate can never be satisfied — only surviving claims are checked, so one record per
+		// cell is the ceiling. Absorbing it silently would let the list be padded.
+		r = derive({
+			...base,
+			ledgerText: hdr + shaRow("09911316", AT),
+			readBundleSummary: at("f3cb966"),
+			ledgerBaseline: { sha_drift: { records: [...ack({}).sha_drift.records, ...ack({}).sha_drift.records] } },
+		});
+		ok("a duplicate baseline record is an integrity failure", r.failures.some((f) => /duplicate record/.test(f)), JSON.stringify(r.failures));
+
+		// Deleting the baseline must make the guard LOUDER, never quieter.
+		r = derive({ ...base, ledgerText: hdr + shaRow("09911316", AT), readBundleSummary: at("f3cb966"), ledgerBaseline: undefined });
+		ok("no baseline at all means every mismatch fails", r.failures.some((f) => MISMATCH.test(f)), JSON.stringify(r.failures));
+	}
+
+	// ── the unfiled-red ratchet (#3157) ───────────────────────────────────────────────────────────
+	//
+	// The negatives are the ones that matter here. A rule that fires on every red is not a check —
+	// three of the four reds in the tree the day this landed were correctly cited — and a baseline
+	// that a stale record can pad is not a ratchet.
+	{
+		const UNCITED = /names no issue in its last column/;
+		const STALE = /no longer corresponds to a red whose surviving row names no issue/;
+		const redRow = (issue) => row("2026-08-01", "aws", "floor", "FAIL", "demos/proofs/aws/20260801T000000Z", issue);
+		// `abc1234` is what `row()` stamps; the key pins the ROW, not just the cell.
+		const rec = (o) => ({ unfiled_reds: { records: [{ cloud: "aws", dimension: "floor", date: "2026-08-01", row_sha: "abc1234", ...o }] } });
+
+		r = derive({ ...base, ledgerText: hdr + redRow("—") });
+		ok("a red whose row names no issue is an integrity failure", r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+		// A refusal that does not say what to do next is how a guard teaches people to route around
+		// it. Both remedies must be in the message: the one for a row you are writing, and the one
+		// for a row the append-only ledger will not let you touch.
+		ok("...and it names the cell and the ledger line", r.failures.some((f) => /aws\/floor/.test(f) && /provisioning-e2e-log\.md:\d+/.test(f)), JSON.stringify(r.failures));
+		ok("...and tells you to fill the last column", r.failures.some((f) => /put the issue number in its last column/.test(f)), JSON.stringify(r.failures));
+		ok("...and gives the exact title to file under", r.failures.some((f) => /e2e nightly: aws RED \(floor\)/.test(f)), JSON.stringify(r.failures));
+		ok("...and names the grandfathering escape for a row that cannot be corrected", r.failures.some((f) => /unfiled_reds/.test(f)), JSON.stringify(r.failures));
+
+		// The two negatives that keep it from being a rule that fires on everything.
+		r = derive({ ...base, ledgerText: hdr + redRow("#3098") });
+		ok("a red that cites an issue raises nothing", !r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+		r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "floor", "PASS", "demos/proofs/aws/20260801T000000Z", "—") });
+		ok("a PROVEN cell with no issue raises nothing — only reds need an owner", !r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+
+		// BLOCKED is a red too: the harness refused before spending, and that refusal has a cause
+		// somebody owns. Excluding it would leave the cheapest-to-diagnose state unowned.
+		r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "floor", "BLOCKED", "demos/proofs/aws/20260801T000000Z", "—") });
+		ok("a BLOCKED cell with no issue is also unowned", r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+
+		// The ratchet.
+		r = derive({ ...base, ledgerText: hdr + redRow("—"), ledgerBaseline: rec({ issue: "#3098", reason: "predates the convention" }) });
+		ok("a grandfathered unfiled red is not a failure", !r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+		// Grandfathered is not silenced. The record exists because somebody DOES own the red, and a
+		// reader who cannot see that has the same problem the rule was written to fix.
+		ok("...but it is still reported, naming its owner", r.notes.some((n) => /aws\/floor/.test(n) && /#3098/.test(n)), JSON.stringify(r.notes));
+
+		// A record must pin the ROW. Keyed on the cell alone, one acknowledgement would launder
+		// every future uncited row for that cell — which is exactly what a re-run produces.
+		r = derive({ ...base, ledgerText: hdr + redRow("—"), ledgerBaseline: rec({ row_sha: "9999999" }) });
+		ok("a record does not cover a DIFFERENT row for the same cell", r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+
+		// Shrink-only, both ways it can go stale: the cell gets cited, or the cell stops being red.
+		r = derive({ ...base, ledgerText: hdr + redRow("#3098"), ledgerBaseline: rec({}) });
+		ok("a record for a red that is now cited is an integrity failure", r.failures.some((f) => STALE.test(f)), JSON.stringify(r.failures));
+		r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "floor", "PASS", "demos/proofs/aws/20260801T000000Z", "—"), ledgerBaseline: rec({}) });
+		ok("a record for a cell that is no longer red is an integrity failure", r.failures.some((f) => STALE.test(f)), JSON.stringify(r.failures));
+
+		r = derive({ ...base, ledgerText: hdr + redRow("—"), ledgerBaseline: { unfiled_reds: { records: [...rec({}).unfiled_reds.records, ...rec({}).unfiled_reds.records] } } });
+		ok("a duplicate unfiled-red record is an integrity failure", r.failures.some((f) => /duplicate unfiled-red record/.test(f)), JSON.stringify(r.failures));
+
+		// Deleting the baseline must make the guard LOUDER, never quieter.
+		r = derive({ ...base, ledgerText: hdr + redRow("—"), ledgerBaseline: undefined });
+		ok("no baseline at all means every unfiled red fails", r.failures.some((f) => UNCITED.test(f)), JSON.stringify(r.failures));
+	}
+
+	// ── the composite must not credit a dimension its own bundle does not evidence (#2671) ────────
+	//
+	// `addons` is the one dimension whose composite credit could never be withheld: its only gate is
+	// `derived`, so the repo-gate filter leaves an empty array and `[].every(…)` is true. The
+	// negatives below are therefore the entire content of the fix — a rule that credits everything is
+	// what was already there.
+	{
+		const FULL = "demos/proofs/aws/full";
+		const at = (v) => (p) => (p === `${FULL}/provision-summary.json` ? v : null);
+		const run = (summary, required = 18) =>
+			derive({
+				...base,
+				ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", FULL),
+				readBundleSummary: typeof summary === "function" ? summary : at(summary),
+				assertRequirements: { addons: required },
+			});
+		const converged = (n) => ({ argocd_assert_outcome: "converged", argocd_expected_total: n, argocd_healthy_synced_asserted: n });
+
+		// The predicate, alone. Each of these is a bundle shape that exists in the tree today.
+		ok("a run that asserted the whole catalog says yes", assertsFullAddOnSweep(converged(18), 18) === "yes");
+		ok("a run that asserted MORE than the catalog says yes", assertsFullAddOnSweep(converged(24), 18) === "yes");
+		ok("a run that asserted a floor-sized set says no", assertsFullAddOnSweep(converged(6), 18) === "no", "the #2642 shape: 6 Applications passing a sweep advertised as 18");
+		// THE TRAP #2671 NAMES BY NUMBER. Every pre-#2688 bundle carries these zeros, on passing and
+		// failing runs alike, because capture-proof.sh counted the cluster after teardown removed it.
+		// Reading them as an observation would refuse every historical credit on a measurement nobody
+		// took; reading their absence as fine reinstates the hole. Both are wrong, so it is `unknown`.
+		ok("a pre-#2688 bundle's captured zeros are UNKNOWN, not a small sweep", assertsFullAddOnSweep({ argocd_total: 0, argocd_healthy_synced: 0 }, 18) === "unknown");
+		ok("a bundle with neither field is unknown", assertsFullAddOnSweep({ outcome: "success" }, 18) === "unknown");
+		// The field #2671 itself proposed. It is null by design in every post-#2688 bundle, so a check
+		// written against it would find nothing and — written the obvious way — credit anyway.
+		ok("the capture-time field alone is unknown, whatever it says", assertsFullAddOnSweep({ argocd_total: null, argocd_healthy_synced: null }, 18) === "unknown");
+		ok("the harness's own 'unmeasured' verdict is believed over the numbers beside it", assertsFullAddOnSweep({ ...converged(18), argocd_assert_outcome: "unmeasured" }, 18) === "unknown");
+		ok("an unreadable summary is unknown", assertsFullAddOnSweep(null, 18) === "unknown");
+		// An unreadable catalog must not silently become a requirement of zero, which every run meets.
+		ok("an unknown requirement is unknown, never satisfied", assertsFullAddOnSweep(converged(18), undefined) === "unknown");
+		ok("...and neither is a requirement of zero", assertsFullAddOnSweep(converged(0), 0) === "unknown");
+		// Half-measured is not measured: expected without asserted says what was hoped for, not seen.
+		ok("expected without asserted is unknown", assertsFullAddOnSweep({ argocd_assert_outcome: "converged", argocd_expected_total: 18 }, 18) === "unknown");
+
+		// End to end, through derive().
+		r = run(converged(18));
+		ok("a full run that asserted the catalog credits addons", r.grid.aws.addons.state === "proven", r.grid.aws.addons.why);
+		r = run(converged(6));
+		ok("a full run that asserted six does NOT credit addons", r.grid.aws.addons.state === "never_run", r.grid.aws.addons.why);
+		// A refusal that names a cause it did not establish is the defect this file has shipped twice.
+		// The repo-gate sentence is wrong here — `addons` has no repo gate — so it must not appear.
+		ok("...and the refusal names the assertion, not the repo gate", /did not assert what this column claims/.test(r.grid.aws.addons.why), r.grid.aws.addons.why);
+		ok("...and does NOT blame a repo gate it has no repo gate to blame", !/repo gate is set/.test(r.grid.aws.addons.why), r.grid.aws.addons.why);
+		ok("...and names the bundle, so the claim can be checked", r.grid.aws.addons.why.includes(FULL), r.grid.aws.addons.why);
+
+		r = run(() => null);
+		ok("an unmeasurable bundle refuses the credit", r.grid.aws.addons.state === "never_run", r.grid.aws.addons.why);
+		ok("...saying it cannot be SHOWN, not that it failed", /cannot be shown to have asserted/.test(r.grid.aws.addons.why), r.grid.aws.addons.why);
+		// `never_run` renders identically for "nobody tried" and "somebody did and we cannot check".
+		// The note is the only thing that separates them, and the second is one dispatch from proven.
+		ok("...and it is reported, so unmeasured is not silently never-run", r.notes.some((n) => /no assertion-time evidence/.test(n) && /aws\/addons/.test(n)), JSON.stringify(r.notes));
+
+		// The other dimensions must be untouched: this is a per-dimension declaration, not a new
+		// blanket requirement that every composite credit carry a bundle measurement.
+		ok("a dimension that declares no requirement is credited as before", r.grid.aws.maxconfig.state === "proven", r.grid.aws.maxconfig.why);
+
+		// A DIRECT claim is the more specific statement and never passes through this at all.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", FULL) + row("2026-08-02", "aws", "addons", "PASS", "demos/proofs/aws/addons"),
+			readBundleSummary: at(converged(6)),
+			assertRequirements: { addons: 18 },
+		});
+		ok("a DIRECT addons claim is unaffected by the composite's evidence", r.grid.aws.addons.state === "proven", r.grid.aws.addons.why);
+	}
+
 	// RETRACTED supersession — voids the claim rather than replacing it.
 	r = derive({
 		...base,
@@ -1397,7 +1929,18 @@ function runSelfTest() {
 
 	// The composite: a `full` PASS is evidence for every dimension the full bar ACTUALLY EXERCISES.
 	// `base` carries no snapshot, so every gate reads `unknown` — which is deliberately NOT `wired`.
-	r = derive({ ...base, ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full") });
+	// The fixture now carries ASSERTION-TIME evidence, because "exercises" gained a third condition in
+	// #2671: a dimension may also declare what its own claim requires, and `addons` does. Without the
+	// counts below this assertion fails on `addons` — correctly, which is the whole point of that
+	// change and the reason this fixture had to grow rather than the rule shrink.
+	const FULL_SWEEP = { argocd_assert_outcome: "converged", argocd_expected_total: 18, argocd_healthy_synced_asserted: 18 };
+	const sweepAt = (b, v) => (p) => (p === `${b}/provision-summary.json` ? v : null);
+	r = derive({
+		...base,
+		ledgerText: hdr + row("2026-08-01", "aws", "full", "PASS", "demos/proofs/aws/full"),
+		readBundleSummary: sweepAt("demos/proofs/aws/full", FULL_SWEEP),
+		assertRequirements: { addons: 18 },
+	});
 	// "Exercises" now has TWO conditions, not one. A dimension is exercised by the full bar only if
 	// `full` composes its switch at all (composedByFull) AND every repo-kind gate it declares is
 	// wired. The first condition is new: byo-iac is declared out of the composite entirely, so no
@@ -1936,6 +2479,19 @@ if (!executedDirectly) {
 
 	const intentViolations = intentHalfViolations(existing);
 	const integrity = [...view.failures, ...intentViolations];
+
+	// ── ADVISORIES ──
+	//
+	// `notes` was pushed to and never read. One note has been generated since it was written — "an
+	// unfiled red is an unowned red" — and nobody has ever seen it, because the array was returned
+	// and dropped. A finding routed into a channel with no outlet is indistinguishable from no
+	// finding, which is the exact failure mode this file exists to prevent one level up.
+	//
+	// Advisories are NOT integrity failures and must not gate the build: an unfiled red is a
+	// bookkeeping gap, not a lying cell. They are printed on every run and annotated in CI.
+	for (const n of view.notes) {
+		console.error(`::warning::programme-rollup: ${n}`);
+	}
 
 	if (process.argv.includes("--write")) {
 		fs.writeFileSync(TARGET, splice(existing, generated));

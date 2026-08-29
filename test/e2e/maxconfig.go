@@ -396,14 +396,21 @@ const (
 const hetznerNoManagedService = "Hetzner has no managed equivalent; the console synthesizes an in-cluster chart " +
 	"(hetzner-services.ts) which the runner installs as an ArgoCD Application — nothing reaches tofu state"
 
-// hetznerKindHiddenAndRejected is what is TRUE of all four of Hetzner's excluded kinds, and only
-// that: the canvas hides them and the deploy action rejects them outright
-// (UNSUPPORTED_KINDS_BY_PROVIDER.hetzner = ["topic","nosql","registry","secret"],
-// apps/console/lib/cloud-providers/unsupported-kinds.ts). It deliberately does NOT say why — the two
-// whys are different verdicts, and one shared sentence claiming "no chart or cloud service backs it"
-// was false for two of the four cells that used it.
+// hetznerKindHiddenAndRejected describes what the canvas and the deploy gate do to an excluded
+// kind: hide it, and reject it outright. It deliberately does NOT say why — the whys are different
+// verdicts, and one shared sentence claiming "no chart or cloud service backs it" was false for
+// two of the four cells that once used it.
+//
+// ONE kind is excluded today. `UNSUPPORTED_KINDS_BY_PROVIDER.hetzner` is `["nosql"]` — registry left
+// in #2431, secret in #2432, and topic when NATS was wired. hetznerChartExistsNotWired shares this
+// tail for the DEBT verdict; the `deferred_in_product` ratchet is 0, so no cell reaches that one,
+// and it is kept because the verdict vocabulary must stay expressible: a future kind that a shipped
+// chart backs but the product has not wired must still READ as debt rather than as a ceiling.
 const hetznerKindHiddenAndRejected = "hidden on the canvas and REJECTED at deploy " +
 	"(unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner)"
+
+const hetznerNoServiceNoChart = "Hetzner has no such service, and this repo offers no chart wired for the kind either " +
+	"— " + hetznerKindHiddenAndRejected
 
 // HetznerVaultAddOnID is the install-spec id of the platform Vault, and therefore the suffix of its
 // ArgoCD Application name. It mirrors HETZNER_VAULT_ADDON_ID in
@@ -412,12 +419,15 @@ const hetznerKindHiddenAndRejected = "hidden on the canvas and REJECTED at deplo
 // the real console mapper generated into the fixture.
 const HetznerVaultAddOnID = "secrets-vault"
 
-// hetznerNoServiceNoChart is the CEILING reason — the strong claim, made only where it holds:
-// Hetzner has no such cloud service, and no chart in this repo is offered for the kind either.
-// unsupported-kinds.ts states it for exactly these two: "topic (SNS) and nosql (DynamoDB) have no
-// clean single-chart OSS equal and are deferred (hidden on the canvas)".
-const hetznerNoServiceNoChart = "Hetzner has no such service, and this repo offers no chart for the kind either " +
-	"(unsupported-kinds.ts: \"no clean single-chart OSS equal\") — " + hetznerKindHiddenAndRejected
+// hetznerNoServiceNoChart is the CEILING reason, and it now backs exactly ONE cell — `nosql`. It
+// used to back `topic` too, on the strength of unsupported-kinds.ts saying the two had "no clean
+// single-chart OSS equal". That was wrong about topic (NATS is one), which is why the wording no
+// longer quotes that phrase: the claim this constant makes is about THIS repo offering no chart for
+// the kind, which is a fact about the tree and is re-read whenever the cell is challenged.
+//
+// It is deliberately NOT the reason nosql is refused today — ScyllaDB fits the kind exactly. The
+// blocker is delivery (scylla-operator's fail-closed webhook needs cert-manager, which this platform
+// installs conditionally); see unsupported-kinds.ts for the measured detail.
 
 // hetznerChartExistsNotWired is the DEBT reason: a kind a chart this repo ALREADY SHIPS
 // demonstrably delivers, which the product has simply not mapped. "Until it lands" is the definition
@@ -679,13 +689,12 @@ var MaxConfigKinds = []MaxConfigKind{
 		GCP: tofuCell("google_pubsub_topic", "create_pubsub", "pubsub_topics"),
 		// Azure: distinct service_bus_topics map (separate from the queue's service_bus_queues).
 		Azure: tofuCell("azurerm_servicebus_topic", "service_bus_topics"),
-		// Hetzner: a genuine ceiling, unlike `secrets`/`registry` below. RabbitMQ is installed here
-		// for the `queue` kind and its exchanges would be the obvious substrate — but nothing in this
-		// repo offers a topic on it (hetzner-services.ts has no topic branch, and RabbitMQ is not a
-		// marketplace add-on a user can pick), and the console SSOT states the position outright: "no
-		// clean single-chart OSS equal". Re-verdicting this as debt would need a chart the product
-		// actually offers for the kind, not a broker that happens to be running.
-		Hetzner: ceilingCell(hetznerNoServiceNoChart),
+		// Hetzner: NO LONGER A CEILING. This cell used to reason that RabbitMQ's exchanges were the
+		// obvious substrate but that nothing in the repo OFFERED a topic on them — which was the
+		// right test and the wrong conclusion, because the answer was never RabbitMQ. A topic is
+		// publish/subscribe fanout and a NATS SUBJECT is exactly that, from one chart, one release
+		// and one readable Application. hetzner-services.ts now has a topic branch.
+		Hetzner: inClusterCell("addon-topic-"+maxConfigTopicName, hetznerNoManagedService+" (NATS with JetStream, nats-io chart)"),
 		// Alibaba: unlike GCP, MNS topics are a DISTINCT resource type from queues, so state can tell
 		// the two kinds apart.
 		Alibaba: tofuCell("alicloud_message_service_topic", "mns_topics"),
@@ -914,7 +923,7 @@ const maxConfigDomainSuffix = "e2e.alethialabs.io"
 //
 // It exists because HETZNER CANNOT USE THE DEFAULT AT ALL. Hetzner DNS refuses to host a `.io`
 // zone — its API answers `unsupported tld (invalid_input)`, 422, measured against the live API and
-// recorded in apps/console/lib/cloud-providers/dns-tld.ts. So hetzner/maxconfig and hetzner/full
+// recorded in apps/console/lib/cloud-providers/dns-zone-support.ts. So hetzner/maxconfig and hetzner/full
 // were blocked on the TLD of a constant, on every run, whatever else was fixed.
 //
 // PER-PROVIDER rather than one global switch, deliberately. aws's certificate path is wired to THIS
@@ -998,7 +1007,7 @@ func MaxConfigDomainFor(provider string) string {
 //
 // WHY, and a CORRECTION to what this repo already believed (#2843).
 //
-// `apps/console/lib/cloud-providers/dns-tld.ts` records four probes against the live Hetzner API:
+// `apps/console/lib/cloud-providers/dns-zone-support.ts` records five probes against the live Hetzner
 //
 //	probe-hcloud.alethialabs.io   → unsupported tld (422)   3 labels, .io
 //	probe1.e2e.alethialabs.io     → unsupported tld (422)   4 labels, .io

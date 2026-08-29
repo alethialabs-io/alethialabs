@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# ERROR SHAPES THAT MEAN "WE COULD NOT REACH A CHART REPOSITORY", one POSIX ERE alternative per
+# line. Blank lines and `#` comments are ignored; everything else is joined with `|`.
+#
+# WHY IT IS A FILE. Two jobs render third-party charts on every PR and each has to answer the same
+# question — is this a fetch failure or a render failure? — and answer it identically:
+#
+#   scripts/ci/tofu-test-retry-fetch.sh              `tofu test` on infra/templates/project/hetzner
+#   apps/console/scripts/check-addon-charts-render.mjs   `helm template` over 18 specs, 17 hosts
+#
+# One is bash, the other node. Two copies of a classifier is two copies that drift, and the drift is
+# silent in the direction that matters: the copy nobody updated keeps retrying a failure the other
+# has learned is real, or stops retrying one the other still knows is a flake. A gate that
+# reclassifies a failure is not a gate, so the decision lives in one place and both read it.
+#
+# WHAT MUST NOT GO IN HERE. This list is deliberately not a catch-all. Two shapes were in an early
+# draft and are excluded on purpose, because each would retry a GENUINE failure three times and then
+# report it as a host we could not reach — the same misdirection this exists to remove, pointed the
+# other way:
+#
+#   `unexpected EOF`  the classic OpenTofu plugin-CRASH message. infra-templates.yml documents
+#                     1.9.0 crashing on hetzner's own suite (opentofu/opentofu#2993).
+#   a bare `EOF`      matches any error whose echoed source snippet ends a heredoc —
+#                     aws/modules/dynamodb/variables.tf:89 is literally `  EOF`.
+#
+# The bar for adding a line: it must be produced by the TRANSPORT, never by a chart, a template or a
+# provider deciding something is wrong. When in doubt, leave it out — a real failure reported once is
+# cheaper than a real failure reported three times as somebody else's outage.
+#
+# Matching is case-insensitive in both consumers.
+
+# helm's own message when the index cannot be fetched at all. This is the one that reds a PR most
+# often, and the one whose wording most looks like the chart's fault rather than the network's.
+not a valid chart repository or cannot be reached
+
+# TCP-level refusals. `connection reset by peer` is what charts.hetzner.cloud returned on the
+# staging→main promotion PR #3117.
+connection reset by peer
+connection refused
+TLS handshake timeout
+
+# DNS.
+no such host
+temporary failure in name resolution
+
+# Timeouts. `Client\.Timeout exceeded` is Go's http client, which is what both helm and the
+# terraform helm provider use.
+i/o timeout
+Client\.Timeout exceeded
+
+# Address-family and routing failures. `network is unreachable` on an IPv6 literal is what
+# grafana.github.io returned on #2749, blocking a production-outage fix.
+network is unreachable
+no route to host
+
+# The upstream is up enough to answer and not up enough to serve. Deliberately only the two that
+# mean "come back later" — a 404 is a chart that is not there, which is a real failure.
+502 Bad Gateway
+503 Service Unavailable
+504 Gateway Time-?out

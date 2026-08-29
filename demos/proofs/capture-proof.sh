@@ -36,6 +36,100 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=demos/proofs/scrub.sh
 source "$root/demos/proofs/scrub.sh"
 
+# ── --self-test (#2688). Drives THIS script end to end into a temp dir and asserts the one
+#    property whose absence was the defect: a PASS bundle and a FAIL bundle must not be
+#    numerically identical.
+#
+#    It asserts on the BUNDLE THIS RUN WROTE, not on a fixture of what a bundle looks like.
+#    The defect it guards against was invisible to every check in the repo precisely because
+#    the shape was right and only the values were vacuous — so a fixture-shaped test would
+#    have passed against the broken script too.
+if [ "${1:-}" = "--self-test" ]; then
+	fails=0
+	tmp="$(mktemp -d)"
+	trap 'rm -rf "$tmp"' EXIT
+	_t() { # _t <name> <condition-description> <actual> <expected>
+		if [ "$3" = "$4" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected $2 = '$4', got '$3'" >&2
+			fails=$((fails + 1))
+		fi
+	}
+	# Each capture gets its OWN output root. The first version of this helper shared one root and
+	# disambiguated by `find | sort | tail -1` — which silently returned the PREVIOUS capture,
+	# because every capture in a self-test stamps to the same UTC second. Two assertions then
+	# compared a bundle against itself and one of them PASSED, on 'READ-FAILED' != '22'. A
+	# harness that can pass for the wrong reason is worth less than no harness.
+	_capture() { # _capture <label> <outcome> <summary-path-or-empty> → echoes the bundle dir
+		local label="$1" outcome="$2" summary="$3" dir
+		ALETHIA_E2E_PROOF_OUT_ROOT="$tmp/$label" \
+			ALETHIA_E2E_PROOF_OUTCOME="$outcome" \
+			ALETHIA_E2E_ARGOCD_SUMMARY="$summary" \
+			KUBECONFIG="" \
+			PROVIDER=_selftest \
+			bash "${BASH_SOURCE[0]}" _selftest "selftest-$label" >/dev/null 2>&1 || true
+		dir="$(find "$tmp/$label/_selftest" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)"
+		[ -n "$dir" ] || { echo "capture-proof --self-test: capture '$label' produced no bundle" >&2; exit 1; }
+		printf '%s' "$dir"
+	}
+	_field() { jq -r "$2 // \"null\"" "$1/provision-summary.json" 2>/dev/null || echo "READ-FAILED"; }
+
+	command -v jq >/dev/null 2>&1 || { echo "capture-proof --self-test: jq is required" >&2; exit 1; }
+
+	echo "capture-proof --self-test"
+
+	# 1 · A converged run records what it asserted.
+	printf '%s\n' '{"asserted_at":"2026-01-01T00:00:00Z","outcome":"converged","expected_total":22,"healthy_synced":22,"observed_total":24,"losers":[],"timeout_seconds":2100,"verdict":"22 of 22 expected Applications Healthy+Synced"}' >"$tmp/pass.json"
+	pass_dir="$(_capture pass success "$tmp/pass.json")"
+	_t "PASS bundle carries the asserted expected total" ".argocd_expected_total" "$(_field "$pass_dir" .argocd_expected_total)" "22"
+	_t "PASS bundle carries the asserted converged count" ".argocd_healthy_synced_asserted" "$(_field "$pass_dir" .argocd_healthy_synced_asserted)" "22"
+	_t "PASS bundle records the assertion outcome" ".argocd_assert_outcome" "$(_field "$pass_dir" .argocd_assert_outcome)" "converged"
+
+	# 2 · A failed run records what it asserted TOO — and the numbers differ. This is the
+	#     property that did not hold: both were 0/0.
+	printf '%s\n' '{"asserted_at":"2026-01-01T00:00:00Z","outcome":"unconverged","expected_total":22,"healthy_synced":18,"observed_total":24,"losers":["loki","tempo","vault","velero"],"timeout_seconds":2100,"verdict":"18 of 22 expected Applications Healthy+Synced within 35m0s; 4 did not converge: loki, tempo, vault, velero"}' >"$tmp/fail.json"
+	fail_dir="$(_capture fail failure "$tmp/fail.json")"
+	_t "FAIL bundle carries its own converged count" ".argocd_healthy_synced_asserted" "$(_field "$fail_dir" .argocd_healthy_synced_asserted)" "18"
+	_t "FAIL bundle records the assertion outcome" ".argocd_assert_outcome" "$(_field "$fail_dir" .argocd_assert_outcome)" "unconverged"
+
+	# THE REGRESSION ITSELF. Before #2688 this comparison was 0 == 0 on both fields.
+	p="$(_field "$pass_dir" .argocd_healthy_synced_asserted)"
+	f="$(_field "$fail_dir" .argocd_healthy_synced_asserted)"
+	# Both sides must be REAL numbers before their difference means anything. Without this, an
+	# unreadable bundle compares unequal to a good one and the assertion passes having proved
+	# nothing — which is exactly how the first draft of this very test reported green.
+	if ! printf '%s' "$p" | grep -qE '^[0-9]+$' || ! printf '%s' "$f" | grep -qE '^[0-9]+$'; then
+		echo "  ✗ a bundle carries no readable count (pass='$p' fail='$f') — the comparison would prove nothing" >&2
+		fails=$((fails + 1))
+	elif [ "$p" = "$f" ]; then
+		echo "  ✗ a PASS bundle and a FAIL bundle are NUMERICALLY IDENTICAL (both argocd_healthy_synced_asserted=$p) — this is #2688 exactly" >&2
+		fails=$((fails + 1))
+	else
+		echo "  ✓ a PASS bundle and a FAIL bundle differ numerically ($p vs $f)"
+	fi
+
+	# 3 · No summary ⇒ NULL and a stated 'unmeasured', never 0. Collapsing "not measured" into
+	#     "measured zero" is the whole defect; a 0 here would let it back in through the door
+	#     the fix just closed.
+	none_dir="$(_capture none success "")"
+	_t "an unmeasured run says so" ".argocd_assert_outcome" "$(_field "$none_dir" .argocd_assert_outcome)" "unmeasured"
+	_t "an unmeasured run writes null, not 0" ".argocd_healthy_synced_asserted" "$(_field "$none_dir" .argocd_healthy_synced_asserted)" "null"
+	_t "an untouched cluster probe writes null, not 0" ".nodes_ready" "$(_field "$none_dir" .nodes_ready)" "null"
+	# And the verdict must not read like a counted one.
+	case "$(_field "$none_dir" .argocd_verdict)" in
+		*UNMEASURED*) echo "  ✓ an unmeasured verdict is worded as weaker than a counted one" ;;
+		*) echo "  ✗ an unmeasured verdict reads identically to a counted one: $(_field "$none_dir" .argocd_verdict)" >&2; fails=$((fails + 1)) ;;
+	esac
+
+	if [ "$fails" -ne 0 ]; then
+		echo "capture-proof --self-test: $fails assertion(s) FAILED" >&2
+		exit 1
+	fi
+	echo "capture-proof --self-test: OK"
+	exit 0
+fi
+
 provider="${1:-${PROVIDER:-}}"
 run_tag="${2:-${ALETHIA_E2E_PROOF_RUN_TAG:-local-$(date -u +%Y%m%dT%H%M%SZ)}}"
 outcome="${ALETHIA_E2E_PROOF_OUTCOME:-unknown}"
@@ -50,7 +144,12 @@ if [ -z "$provider" ]; then
 fi
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-out="$root/demos/proofs/$provider/$stamp"
+# The output root is overridable ONLY so `--self-test` can drive this script end to end into a
+# temp dir. It is never set by the workflow. A self-test that wrote into demos/proofs/ would
+# either pollute the committed bundles or need an `rm -rf` aimed at the directory holding every
+# proof this programme owns — and the tripwire at the bottom of this file already deletes a
+# bundle on one path, which is exactly the kind of aim that must not be pointed at real evidence.
+out="${ALETHIA_E2E_PROOF_OUT_ROOT:-$root/demos/proofs}/$provider/$stamp"
 mkdir -p "$out"
 echo "→ capturing T2 proof v2 for $provider (outcome=$outcome) into $out"
 
@@ -147,9 +246,14 @@ fi
 #    run without teardown, or a failure that skipped destroy). When it's gone, the structured
 #    summary (runner log + DB receipt) and the T2 outcome carry the proof instead. Every
 #    captured file is scrubbed. ──
-nodes_ready=0
-argocd_total=0
-argocd_ok=0
+# EMPTY, not 0 (#2688). These three are LIVE-PROBE counts, and on the nightly the probe never
+# gets to run — so 0 was never an observation, it was the absence of one, and it rendered
+# identically in a PASS bundle and a FAIL bundle. Empty here becomes `null` in the JSON below,
+# which is the only value that says "not measured". The assertion-time counts folded in further
+# down are what carry the real number.
+nodes_ready=""
+argocd_total=""
+argocd_ok=""
 cluster_live=false
 if [ -n "${KUBECONFIG:-}" ] && [ -f "${KUBECONFIG:-/nonexistent}" ] && kubectl get nodes --request-timeout=15s >/dev/null 2>&1; then
 	cluster_live=true
@@ -176,16 +280,82 @@ fi
 #    These are non-secret (an ed25519 signature over the plan sha + per-control verdicts) and
 #    are the headline "inspected, not vacuous" artifact. The runner already scrubbed the
 #    metadata at the source (A0.0); we pull only these two sub-objects and scrub again. ──
+#
+#    WHICH DEPLOY JOB — `LIMIT 1` WITH NO `ORDER BY` IS NOT A CHOICE, IT IS A COIN TOSS.
+#
+#    A T2 run writes SEVERAL DEPLOY rows: the cluster apply, the BYO-IaC apply, and a heal. The
+#    old query was `WHERE job_type='DEPLOY' LIMIT 1` — no ordering, no filter — so Postgres was
+#    free to return any of them, and the two pulls could even return DIFFERENT rows. Three
+#    consecutive proof bundles committed evidence for the wrong job:
+#
+#      aws/20260828T125612Z   receipt.json is the BYO-IaC apply's (plan 518bc1b06763…) while
+#                             VERDICT.txt names the floor plan (57afd9885b42…)
+#      aws/20260828T125612Z   verify-result.json says pass=3 not_evaluable=0; the floor deploy's
+#                             own gate line in the SAME bundle says pass=2 not_evaluable=2
+#      gcp/20260828T124233Z   a BYO row has no verify_receipt → null → the drop loop below
+#      gcp/20260828T120037Z   deleted the file, so VERDICT.txt asserts signed=true over a
+#                             bundle that ships no receipt at all
+#
+#    A signature over a plan the bundle does not claim verifies nothing about the cell being
+#    proven, and it is worse than no receipt, because it looks like one.
+#
+#    So: pin to the job whose receipt covers THE PLAN THIS BUNDLE REPORTS — $receipt_plan_sha,
+#    read from the runner log above and printed in VERDICT.txt and provision-summary.json — and
+#    pull BOTH artifacts from that single id so they cannot disagree with each other.
 if [ -n "${ALETHIA_DATABASE_URL:-}" ] && command -v psql >/dev/null 2>&1; then
-	psql "$ALETHIA_DATABASE_URL" -tAc \
-		"SELECT COALESCE(execution_metadata->'verify_receipt','null') FROM public.jobs WHERE job_type='DEPLOY' LIMIT 1" \
-		2>/dev/null | scrub_stream >"$out/receipt.json" || true
-	psql "$ALETHIA_DATABASE_URL" -tAc \
-		"SELECT COALESCE(execution_metadata->'verify_result','null') FROM public.jobs WHERE job_type='DEPLOY' LIMIT 1" \
-		2>/dev/null | scrub_stream >"$out/verify-result.json" || true
-	# Drop empty/null pulls so the bundle only carries real evidence.
+	receipt_job=""
+	# $receipt_plan_sha IS A PREFIX, NOT THE SHA. The runner logs `plan sha256 <12 hex>` — a
+	# TRUNCATED display form — while the receipt stores the full 64. The first version of this
+	# pin got that wrong twice over and was inert on every real run: a `{16,128}` length guard
+	# rejected the 12-char value outright, so the query never ran, and had it run, `= '<12>'`
+	# against a 64-char column could not have matched either. Every bundle silently took the
+	# fallback while the code read as though it were pinning. Caught on #3169, not by the tests
+	# I wrote — those used a 16-char fixture and a stub that matched on the SHAPE of the query
+	# rather than on the shape of the data.
+	#
+	# So: accept 8-64 hex, and compare by PREFIX. 12 hex is 48 bits — ample against the handful
+	# of DEPLOY rows in one run, and `ORDER BY created_at ASC` settles a tie deterministically.
+	# `LIKE` is safe here because the value is hex-validated on the line below, so it cannot
+	# carry `%` or `_`.
+	if printf '%s' "$receipt_plan_sha" | grep -qE '^[0-9a-f]{8,64}$'; then
+		receipt_job="$(psql "$ALETHIA_DATABASE_URL" -tAc \
+			"SELECT id FROM public.jobs
+			  WHERE job_type='DEPLOY'
+			    AND execution_metadata->'verify_receipt'->'receipt'->>'plan_sha256' LIKE '$receipt_plan_sha%'
+			  ORDER BY created_at ASC LIMIT 1" 2>/dev/null | tr -d '[:space:]' || true)"
+	fi
+	# Fallback: the EARLIEST DEPLOY that actually carries a receipt — the cluster apply, which is
+	# seeded before the BYO-IaC one. Still deterministic and still a single job for both
+	# artifacts, but it is not the pinned plan, so say so rather than letting it pass as one.
+	if [ -z "$receipt_job" ]; then
+		receipt_job="$(psql "$ALETHIA_DATABASE_URL" -tAc \
+			"SELECT id FROM public.jobs
+			  WHERE job_type='DEPLOY' AND execution_metadata ? 'verify_receipt'
+			  ORDER BY created_at ASC LIMIT 1" 2>/dev/null | tr -d '[:space:]' || true)"
+		if [ -n "$receipt_job" ] && [ -n "$receipt_plan_sha" ]; then
+			echo "::warning::capture-proof: no DEPLOY job carries a receipt for plan ${receipt_plan_sha}; fell back to the earliest receipt-bearing DEPLOY job. The committed receipt may not cover the plan this bundle reports."
+		fi
+	fi
+
+	if [ -n "$receipt_job" ]; then
+		psql "$ALETHIA_DATABASE_URL" -tAc \
+			"SELECT COALESCE(execution_metadata->'verify_receipt','null') FROM public.jobs WHERE id='$receipt_job'" \
+			2>/dev/null | scrub_stream >"$out/receipt.json" || true
+		psql "$ALETHIA_DATABASE_URL" -tAc \
+			"SELECT COALESCE(execution_metadata->'verify_result','null') FROM public.jobs WHERE id='$receipt_job'" \
+			2>/dev/null | scrub_stream >"$out/verify-result.json" || true
+	else
+		echo "::warning::capture-proof: no DEPLOY job in the control-plane DB carries a verify_receipt — this bundle ships no receipt.json or verify-result.json."
+	fi
+
+	# Drop empty/null pulls so the bundle only carries real evidence — but SAY SO. VERDICT.txt's
+	# receipt line is derived from the runner log, not from these files, so a silent drop leaves
+	# a bundle asserting `signed=true` with nothing behind it and no signal anywhere.
 	for f in receipt.json verify-result.json; do
-		[ -f "$out/$f" ] && { [ ! -s "$out/$f" ] || grep -qx 'null' "$out/$f"; } && rm -f "$out/$f"
+		if [ -f "$out/$f" ] && { [ ! -s "$out/$f" ] || grep -qx 'null' "$out/$f"; }; then
+			rm -f "$out/$f"
+			echo "::warning::capture-proof: $f is empty/null for the selected DEPLOY job and was dropped — this bundle does not carry it."
+		fi
 	done
 fi
 
@@ -310,6 +480,44 @@ if [ -n "$keyless_summary" ] && [ -f "$keyless_summary" ]; then
 	[ -n "$keyless_verdict" ] && echo "  · keyless-db: $keyless_verdict (rotation dwell ${keyless_dwell:-?}s)"
 fi
 
+# ── ArgoCD convergence counts (#2688) — the ONE summary that changes what a bundle MEANS. ──
+#
+#    Every other summary above enriches a verdict. This one supplies the verdict's evidence.
+#
+#    The live probe further up runs after the tier's t.Cleanup has destroyed the cluster, so
+#    `argocd_total`/`argocd_healthy_synced` were 0 on every nightly run — PASS and FAIL alike.
+#    Measured on the tree before this change: every bundle from 2026-08-25 onward carried
+#    `cluster_live_at_capture:false, nodes_ready:0, argocd_total:0, argocd_healthy_synced:0`,
+#    with zero counter-examples. The only thing separating a proof from a failure was the
+#    `outcome` string and the words "(T2-asserted)" — a claim, not a measurement.
+#
+#    AssertArgoAppsHealthy now writes its counts AT ASSERTION TIME, which is the only moment
+#    they exist. They are authoritative here precisely because they are not re-derived: the
+#    converged count is the assertion's own `len(expected) - len(losers)`, so the number in the
+#    bundle cannot disagree with the pass/fail decision that produced it.
+#
+#    Absent ⇒ the fields stay NULL and say so. They are never defaulted to 0 — "measured, and it
+#    was zero" and "never measured" are different facts, and collapsing them is the defect.
+argocd_summary="${ALETHIA_E2E_ARGOCD_SUMMARY:-}"
+argo_expected=""
+argo_converged=""
+argo_assert_outcome=""
+argo_assert_verdict=""
+if [ -n "$argocd_summary" ] && [ -f "$argocd_summary" ]; then
+	scrub_stream <"$argocd_summary" >"$out/argocd-summary.json" || true
+	if command -v jq >/dev/null 2>&1 && [ -f "$out/argocd-summary.json" ]; then
+		argo_expected="$(jq -r '.expected_total // empty' "$out/argocd-summary.json" 2>/dev/null || true)"
+		argo_converged="$(jq -r '.healthy_synced // empty' "$out/argocd-summary.json" 2>/dev/null || true)"
+		argo_assert_outcome="$(jq -r '.outcome // empty' "$out/argocd-summary.json" 2>/dev/null || true)"
+		argo_assert_verdict="$(jq -r '.verdict // empty' "$out/argocd-summary.json" 2>/dev/null || true)"
+	fi
+	[ -n "$argo_assert_verdict" ] && echo "  · argocd: $argo_assert_verdict"
+else
+	# A SUCCESS with no assertion summary is the shape this change exists to make visible: the
+	# run claims convergence and carries no number for it. Say so loudly rather than emitting 0.
+	echo "capture-proof: WARNING — ALETHIA_E2E_ARGOCD_SUMMARY unset or unwritten; this bundle carries NO measured ArgoCD convergence counts and its verdict rests on the T2 exit code alone" >&2
+fi
+
 # ── Wall-clock. ──
 duration_s=""
 if [ -n "$start_epoch" ]; then
@@ -320,15 +528,28 @@ git_sha="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 # ── The verdict. On SUCCESS the T2 test exits 0 ONLY if it asserted the WHOLE chain
 #    (real apply → a Ready node → every expected ArgoCD Application Healthy+Synced) before
 #    tearing down — so `outcome==success` is itself the authoritative proof of the chain,
-#    even though the cluster is usually gone by capture time. We enrich the ArgoCD line with
-#    LIVE counts when the cluster was still reachable. On FAILURE we report the stage the
-#    spine died at. Kept terse for the step summary; the JSON carries the detail. ──
+#    even though the cluster is usually gone by capture time. On FAILURE we report the stage
+#    the spine died at. Kept terse for the step summary; the JSON carries the detail.
+#
+#    THREE SOURCES, IN DESCENDING STRENGTH (#2688), and the wording must make the difference
+#    legible rather than uniform — a reader who cannot tell a counted claim from an uncounted
+#    one is reading the shape that let 0/0 pass as evidence:
+#      1. LIVE counts   — the cluster was still up at capture (a local run, or a failure that
+#                         skipped teardown). Strongest, and rarest on the nightly.
+#      2. ASSERTED      — the counts AssertArgoAppsHealthy recorded at the moment it asserted.
+#                         This is the normal nightly path now, and it is a real measurement.
+#      3. UNMEASURED    — neither. The exit code still proves the chain (the tier cannot exit 0
+#                         without asserting it), but no number backs it, and the verdict says so
+#                         out loud instead of quietly reading like case 2. ──
 if [ "$outcome" = "success" ]; then
 	if [ "$cluster_live" = true ]; then
 		argocd_verdict="Healthy+Synced (${argocd_ok}/${argocd_total} live)"
 		ready_verdict="${nodes_ready} node(s) Ready"
+	elif [ -n "$argo_converged" ] && [ -n "$argo_expected" ]; then
+		argocd_verdict="Healthy+Synced (${argo_converged}/${argo_expected} asserted)"
+		ready_verdict="node Ready (T2-asserted)"
 	else
-		argocd_verdict="Healthy+Synced (T2-asserted)"
+		argocd_verdict="Healthy+Synced (T2-asserted, UNMEASURED)"
 		ready_verdict="node Ready (T2-asserted)"
 	fi
 	verdict="✅ apply(${resources_added:-?} added)→${ready_verdict}→ArgoCD ${argocd_verdict}→destroyed(${resources_destroyed:-?})"
@@ -349,9 +570,12 @@ if command -v jq >/dev/null 2>&1; then
 		--arg receipt_plan_sha "$receipt_plan_sha" \
 		--argjson resources_added "${resources_added:-null}" \
 		--argjson resources_destroyed "${resources_destroyed:-null}" \
-		--argjson nodes_ready "${nodes_ready:-0}" \
-		--argjson argocd_total "${argocd_total:-0}" \
-		--argjson argocd_healthy_synced "${argocd_ok:-0}" \
+		--argjson nodes_ready "${nodes_ready:-null}" \
+		--argjson argocd_total "${argocd_total:-null}" \
+		--argjson argocd_healthy_synced "${argocd_ok:-null}" \
+		--argjson argocd_expected_total "${argo_expected:-null}" \
+		--argjson argocd_healthy_synced_asserted "${argo_converged:-null}" \
+		--arg argocd_assert_outcome "${argo_assert_outcome:-unmeasured}" \
 		--arg argocd_verdict "$argocd_verdict" \
 		--argjson cluster_live "$cluster_live" \
 		--argjson receipt_signed "$receipt_signed" --argjson destroyed "$destroyed" \
@@ -362,6 +586,9 @@ if command -v jq >/dev/null 2>&1; then
 		  resources_added:$resources_added, resources_destroyed:$resources_destroyed,
 		  cluster_live_at_capture:$cluster_live, nodes_ready:$nodes_ready,
 		  argocd_total:$argocd_total, argocd_healthy_synced:$argocd_healthy_synced,
+		  argocd_expected_total:$argocd_expected_total,
+		  argocd_healthy_synced_asserted:$argocd_healthy_synced_asserted,
+		  argocd_assert_outcome:$argocd_assert_outcome,
 		  argocd_verdict:$argocd_verdict,
 		  receipt_signed:$receipt_signed, receipt_plan_sha256:$receipt_plan_sha,
 		  destroyed:$destroyed, duration_seconds:$duration_s, verdict:$verdict}' \
@@ -374,8 +601,12 @@ else
   "git_sha": "$git_sha", "captured_at": "$stamp",
   "resources_added": ${resources_added:-null}, "resources_destroyed": ${resources_destroyed:-null},
   "cluster_live_at_capture": $cluster_live,
-  "nodes_ready": ${nodes_ready:-0}, "argocd_total": ${argocd_total:-0},
-  "argocd_healthy_synced": ${argocd_ok:-0}, "argocd_verdict": "$argocd_verdict",
+  "nodes_ready": ${nodes_ready:-null}, "argocd_total": ${argocd_total:-null},
+  "argocd_healthy_synced": ${argocd_ok:-null},
+  "argocd_expected_total": ${argo_expected:-null},
+  "argocd_healthy_synced_asserted": ${argo_converged:-null},
+  "argocd_assert_outcome": "${argo_assert_outcome:-unmeasured}",
+  "argocd_verdict": "$argocd_verdict",
   "receipt_signed": $receipt_signed, "receipt_plan_sha256": "$receipt_plan_sha",
   "destroyed": $destroyed, "duration_seconds": ${duration_s:-null},
   "verdict": "$verdict_line"
@@ -398,6 +629,7 @@ acm-cert: ${acm_cert_verdict:-n/a (#1773 ACM certificate gate off or not reached
 byo-iac:   ${byo_iac_verdict:-n/a (#1765 BYO-IaC continuous proof off or not reached)}
 xacct:     ${xacct_verdict:-n/a (#1268 cross-account secrets off or not reached)}
 keyless-db: ${keyless_verdict:-n/a (#1511 keyless DB auth off or not reached)}
+argocd:    ${argo_assert_verdict:-UNMEASURED (#2688 — no assertion summary; this bundle carries no ArgoCD counts)}
 EOF
 
 # ── FAIL-CLOSED tripwire: the finished bundle MUST be grep-clean. A surviving secret makes

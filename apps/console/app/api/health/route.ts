@@ -39,6 +39,24 @@ export async function GET(request: Request): Promise<Response> {
 			status: "ok",
 			mode: "live",
 			ts: new Date().toISOString(),
+			// WHICH BUILD IS ANSWERING (#2812).
+			//
+			// A sandbox env runs `next dev`, and `.next` is excluded from the rsync, so the box keeps
+			// its own compile cache across pushes. A stale cache serves YESTERDAY'S module while
+			// `env:push` and `env:up` both report success — which is how an aria-label fix sat
+			// invisible across two restarts, and how a visual pass can confirm something that is not
+			// there. The box is the only place anything visual can be checked, so a browser silently
+			// showing a previous bundle is a hole underneath the last line of defence.
+			//
+			// This value is deliberately read from a `NEXT_PUBLIC_` variable, which Next INLINES AT
+			// COMPILE TIME. That is the whole point and the reason it is not read from disk at
+			// request time: a value read at request time would report the file the box currently
+			// holds, which is exactly the thing that is already correct when this fails. Inlined, it
+			// reports the compile — so a stale compile returns a stale id and env-mode.sh catches it.
+			//
+			// It identifies a BOOT, not a release: env-mode.sh mints it per start. Absent (a local
+			// run, or the production image) it is null, which is honest rather than a fake "unknown".
+			build: process.env.NEXT_PUBLIC_ALETHIA_BUILD_ID ?? null,
 		});
 	}
 

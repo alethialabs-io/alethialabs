@@ -185,6 +185,89 @@ func TestParseACMCertARN(t *testing.T) {
 	}
 }
 
+// TestParseACMCertARN_ReadsTheRunnersRealShape is the regression for #3042 — the ONE assertion that
+// red'd AWS run 33155063965 after a complete provision, a real issued certificate and a clean
+// custody chain.
+//
+// The runner does not promote arbitrary tofu outputs to the top level of execution_metadata: it
+// lifts cluster_name / cluster_endpoint / argocd_url by name and puts everything else under
+// `outputs` (buildDeployMetadata, apps/runner/internal/agent/runner.go — pinned from that side by
+// TestDeployMetadata_TofuOutputsAreNestedNotPromoted). So THIS is the document a passing run
+// produces, and before the fix parseACMCertARN returned "" for it and the scenario reported
+// "the template output did not reach the product" about a product that had it.
+func TestParseACMCertARN_ReadsTheRunnersRealShape(t *testing.T) {
+	const arn = "arn:aws:acm:us-east-1:270587882865:certificate/40ebff10-ed21-40eb-a445-a445e7df6968"
+	// Trimmed to the shape that matters: the lifted keys at the top, every other output nested.
+	real := `{"cluster_name":"eks-use1-prod-acme",
+	          "cluster_endpoint":"https://C0ADA.gr7.us-east-1.eks.amazonaws.com",
+	          "cluster_ready":true,
+	          "outputs":{"eks_cluster_arn":"arn:aws:eks:us-east-1:270587882865:cluster/x",
+	                     "acm_certificate_arn":"` + arn + `"}}`
+	got, err := parseACMCertARN([]byte(real))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got != arn {
+		t.Fatalf("outputs.acm_certificate_arn = %q, want %q — the ARN's only home in execution_metadata "+
+			"is the nested `outputs` map; reading only the top level is what red'd run 33155063965", got, arn)
+	}
+}
+
+// A wrong value nested under `outputs` must be an ERROR, not a silent absence — the same rule the
+// top level already had. Absence and "something else claimed the field" are different defects and
+// a paid run must not have to distinguish them by hand.
+func TestParseACMCertARN_NestedWrongValueIsAnError(t *testing.T) {
+	_, err := parseACMCertARN([]byte(`{"outputs":{"acm_certificate_arn":"arn:aws:iam::1:server-certificate/x"}}`))
+	if err == nil {
+		t.Fatal("a non-ACM ARN under outputs must be an error, not silently ignored")
+	}
+	if !strings.Contains(err.Error(), "outputs.acm_certificate_arn") {
+		t.Errorf("the error must name the PATH it read, so the next run's log localises it; got %q", err)
+	}
+}
+
+// tofu's `{"value": …}` envelope is unwrapped by TofuCLI.Output today, so the bare scalar is what
+// lands — but argocd.ExtractOutput, which the runner uses to read this very key, tolerates both.
+// The assertion tolerates both for the same reason: a change of mind there must not turn a real
+// certificate into a reported absence.
+func TestParseACMCertARN_AcceptsTheTofuValueEnvelope(t *testing.T) {
+	const arn = "arn:aws:acm:eu-central-1:270587882865:certificate/12345678-1234-1234-1234-123456789012"
+	got, err := parseACMCertARN([]byte(`{"outputs":{"acm_certificate_arn":{"type":"string","value":"` + arn + `"}}}`))
+	if err != nil || got != arn {
+		t.Fatalf("got (%q, %v), want (%q, nil)", got, err, arn)
+	}
+	// A null-valued envelope (the template's `var.acm_certificate_enable ? … : null` with the
+	// feature off) is ABSENCE, not a malformed ARN — it must not become an error.
+	if got, err := parseACMCertARN([]byte(`{"outputs":{"acm_certificate_arn":{"value":null}}}`)); err != nil || got != "" {
+		t.Fatalf("a null output is absence; got (%q, %v)", got, err)
+	}
+	// Same for a bare JSON null, which is what a disabled conditional output actually serializes to.
+	if got, err := parseACMCertARN([]byte(`{"outputs":{"acm_certificate_arn":null}}`)); err != nil || got != "" {
+		t.Fatalf("a null output is absence; got (%q, %v)", got, err)
+	}
+}
+
+// The absence DIAGNOSTIC has to name what did arrive. #3042's log said only "absent", which left
+// "the runner never posted" and "the key is one level down" indistinguishable — the shape that
+// costs a second paid run.
+func TestAcmCertMetaKeysNamesWhatArrived(t *testing.T) {
+	got := acmCertMetaKeys([]byte(`{"cluster_ready":true,"cluster_name":"x","outputs":{"vpc_id":"vpc-1","eks_cluster_arn":"a"}}`))
+	for _, want := range []string{"cluster_name", "cluster_ready", "outputs.eks_cluster_arn", "outputs.vpc_id"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("key listing %q does not name %q", got, want)
+		}
+	}
+	// The two absence shapes must READ differently — a listing that says the same thing for both is
+	// the guard-that-reports-green defect one level down.
+	noOutputs := acmCertMetaKeys([]byte(`{"cluster_name":"x"}`))
+	if !strings.Contains(noOutputs, "NO `outputs`") {
+		t.Errorf("metadata with no outputs object must say so; got %q", noOutputs)
+	}
+	if empty := acmCertMetaKeys(nil); empty == noOutputs {
+		t.Errorf("an ABSENT metadata document must not read like one that merely has no outputs; both said %q", empty)
+	}
+}
+
 // The verdict must require the non-vacuity control, not just "a certificate exists".
 func TestAcmCertVerdictRequiresTheBroughtZone(t *testing.T) {
 	full := acmCertSummary{

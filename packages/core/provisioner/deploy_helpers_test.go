@@ -627,24 +627,26 @@ func TestArgocdURLAndWAFDecisionsMatchWhatInstallArgoCDEmits(t *testing.T) {
 func TestInstallArgoCDGKEIngress(t *testing.T) {
 	const policy = "alethia-nl-production-armor-policy"
 
-	// run drives installArgoCD with the given outputs and returns every command it issued plus the
-	// contents of the values file the last helm command referenced (empty when it referenced none).
-	run := func(t *testing.T, outputs map[string]interface{}) (cmds []string, values string, url string) {
+	// run drives installArgoCD with the given outputs and returns every command it issued, the
+	// contents of the per-cloud INGRESS values file (empty when none was rendered), the resulting
+	// ArgocdURL, and the contents of EVERY values file the helm command referenced.
+	//
+	// The last two used to be one value. They had to split when the install started carrying the
+	// unconditional probe values as well: "a `-f` was passed" no longer means "an ingress was
+	// rendered", so the cases that assert on absence need the whole set, by content.
+	run := func(t *testing.T, outputs map[string]interface{}) (cmds []string, values string, url string, allValues []string) {
 		t.Helper()
 		resetDeploySeams(t)
 		executeCommandWithOutput = func(string, string, []string) (string, error) { return "existing-auth", nil }
 		executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
 			cmds = append(cmds, command)
-			// Read any -f'd values file NOW: installArgoCD removes its temp dir on return.
+			// Read any -f'd values file NOW: installArgoCD removes its temp dir on return, so a
+			// read after the call would only ever say "no such file". `values` is the INGRESS one
+			// specifically — "" when none was rendered, which several cases assert — while
+			// `allValues` is every file, for the cases that assert on what is ABSENT.
 			if i := strings.Index(command, "helm upgrade --install argo-cd"); i == 0 {
-				if j := strings.Index(command, " -f "); j >= 0 {
-					path := strings.Trim(strings.TrimSpace(command[j+4:]), "'\"")
-					b, err := os.ReadFile(path)
-					if err != nil {
-						t.Errorf("values file %s unreadable at helm time: %v", path, err)
-					}
-					values = string(b)
-				}
+				allValues = argoValuesFiles(t, command)
+				values = argoIngressValues(t, command)
 			}
 			return nil
 		}
@@ -671,11 +673,11 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 		if err := installArgoCD(context.Background(), vc, outputs, result, io.Discard, io.Discard); err != nil {
 			t.Fatalf("installArgoCD: %v", err)
 		}
-		return cmds, values, result.ArgocdURL
+		return cmds, values, result.ArgocdURL, allValues
 	}
 
 	t.Run("certificate + policy: gce ingress, BackendConfig applied before helm", func(t *testing.T) {
-		cmds, values, url := run(t, map[string]interface{}{
+		cmds, values, url, _ := run(t, map[string]interface{}{
 			"cloud_armor_policy_name": policy,
 		})
 		if url != "https://argocd.example.com" {
@@ -713,7 +715,7 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 	})
 
 	t.Run("WAF off: ingress intact, no BackendConfig anywhere", func(t *testing.T) {
-		cmds, values, url := run(t, map[string]interface{}{
+		cmds, values, url, _ := run(t, map[string]interface{}{
 			// null is the shape tofu emits when cloud_armor_enabled is false; it must behave
 			// exactly like an absent key.
 			"cloud_armor_policy_name": nil,
@@ -742,7 +744,7 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 		// The blocker here is the solver, not a certificate output: dropping the external-dns
 		// identity makes CertManagerSolver return "" on gcp, so CertManagerEnabled is false. That
 		// is the same arm the decision's skip reason reports, so the two cannot disagree.
-		cmds, values, url := run(t, map[string]interface{}{
+		cmds, values, url, allValues := run(t, map[string]interface{}{
 			"cloud_armor_policy_name":      policy,
 			"external_dns_service_account": nil,
 		})
@@ -752,12 +754,15 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 		if values != "" {
 			t.Errorf("rendered ingress values with no way to get TLS:\n%s", values)
 		}
+		// `-f` alone no longer means "an ingress was rendered": every install carries the
+		// unconditional probe values file (argocd.InstallProbeValues). So the assertion is on the
+		// CONTENT — exactly one values file, and it is that one.
+		if len(allValues) != 1 || allValues[0] != argocd.InstallProbeValues() {
+			t.Errorf("helm received %d values file(s) with no way to get TLS, want only the probe values:\n%#v", len(allValues), allValues)
+		}
 		for _, c := range cmds {
 			if strings.Contains(c, "backendconfig.yaml") {
 				t.Errorf("applied a BackendConfig for an ingress that was never rendered: %s", c)
-			}
-			if strings.HasPrefix(c, "helm upgrade --install argo-cd") && strings.Contains(c, " -f ") {
-				t.Errorf("passed ingress values with no way to get TLS: %s", c)
 			}
 		}
 	})
@@ -765,11 +770,16 @@ func TestInstallArgoCDGKEIngress(t *testing.T) {
 	// The AWS path must be completely unaffected by the new branch: its outputs are disjoint from
 	// GCP's, and a deploy carrying an ACM certificate must still get the ALB `--set` chain.
 	t.Run("aws is untouched by the gcp branch", func(t *testing.T) {
-		cmds, values, _ := run(t, map[string]interface{}{
+		cmds, values, _, allValues := run(t, map[string]interface{}{
 			"acm_certificate_arn": "arn:aws:acm:us-east-1:111111111111:certificate/abc",
 		})
 		if values != "" {
 			t.Errorf("aws must not use a values file:\n%s", values)
+		}
+		// Same content-level assertion as the case above: the AWS path drives its ingress purely
+		// through `--set`, so the ONLY values file it may carry is the unconditional probe values.
+		if len(allValues) != 1 || allValues[0] != argocd.InstallProbeValues() {
+			t.Errorf("aws install received %d values file(s), want only the probe values:\n%#v", len(allValues), allValues)
 		}
 		install := cmds[len(cmds)-1]
 		if !strings.Contains(install, "server.ingress.ingressClassName=alb") {
@@ -805,15 +815,10 @@ func TestArgocdURLDecisionMatchesWhatInstallArgoCDEmitsOnAzure(t *testing.T) {
 						executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
 							commands = append(commands, command)
 							// Read the values file NOW — installArgoCD removes its temp dir on return.
+							// The INGRESS one specifically: the install also carries the
+							// unconditional probe values, and "" here means "no ingress".
 							if strings.HasPrefix(command, "helm upgrade --install argo-cd") {
-								if j := strings.Index(command, " -f "); j >= 0 {
-									path := strings.Trim(strings.TrimSpace(command[j+4:]), "'\"")
-									b, err := os.ReadFile(path)
-									if err != nil {
-										t.Errorf("values file %s unreadable at helm time: %v", path, err)
-									}
-									values = string(b)
-								}
+								values = argoIngressValues(t, command)
 							}
 							return nil
 						}
@@ -860,7 +865,7 @@ func TestArgocdURLDecisionMatchesWhatInstallArgoCDEmitsOnAzure(t *testing.T) {
 
 						// When it IS emitted, the two things that make it a WORKING ingress rather
 						// than a rendered one must both be present. `tls: true` is the whole TLS
-						// contract with argo-cd 8.6.4 (there is no tlsSecret key), and without the
+						// contract with argo-cd 9.5.11 (there is no tlsSecret key), and without the
 						// issuer annotation cert-manager never mints the Secret — the listener
 						// would serve the gateway's default certificate forever, silently.
 						if emitted {
@@ -909,15 +914,10 @@ func TestArgocdURLDecisionMatchesWhatInstallArgoCDEmitsOnGCP(t *testing.T) {
 						executeCommand = func(command, _ string, _ []string, _, _ io.Writer) error {
 							commands = append(commands, command)
 							// Read the values file NOW — installArgoCD removes its temp dir on return.
+							// The INGRESS one specifically: the install also carries the
+							// unconditional probe values, and "" here means "no ingress".
 							if strings.HasPrefix(command, "helm upgrade --install argo-cd") {
-								if j := strings.Index(command, " -f "); j >= 0 {
-									path := strings.Trim(strings.TrimSpace(command[j+4:]), "'\"")
-									b, err := os.ReadFile(path)
-									if err != nil {
-										t.Errorf("values file %s unreadable at helm time: %v", path, err)
-									}
-									values = string(b)
-								}
+								values = argoIngressValues(t, command)
 							}
 							return nil
 						}
@@ -962,7 +962,7 @@ func TestArgocdURLDecisionMatchesWhatInstallArgoCDEmitsOnGCP(t *testing.T) {
 						}
 
 						if emitted {
-							// `tls: true` is the whole TLS contract with argo-cd 8.6.4, and without
+							// `tls: true` is the whole TLS contract with argo-cd 9.5.11, and without
 							// the issuer annotation cert-manager never mints the Secret. With
 							// allow-http=false the Ingress would then serve NOTHING — not plaintext
 							// — which is a silent outage rather than a downgrade.

@@ -20,7 +20,7 @@ import {
 	projectEnvironments,
 	projects,
 } from "@/lib/db/schema";
-import { describeIfDb } from "./db";
+import { APP_ROLE_DISTINCT, describeIfDb } from "./db";
 
 const ORG = randomUUID();
 const USER = randomUUID();
@@ -30,10 +30,6 @@ const PROJ = randomUUID();
 const ENV = randomUUID();
 const ENV2 = randomUUID(); // second env — project_cluster is UNIQUE per (project_id, environment_id)
 const CLUSTER = randomUUID();
-
-const APP_ROLE_DISTINCT =
-	(process.env.ALETHIA_APP_DATABASE_URL ?? "") !== "" &&
-	process.env.ALETHIA_APP_DATABASE_URL !== process.env.ALETHIA_DATABASE_URL;
 
 describeIfDb("cluster_admins — reader parity, view, RLS, cascade", () => {
 	beforeAll(async () => {

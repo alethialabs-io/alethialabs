@@ -74,6 +74,21 @@ type argoAppState struct {
 	// Naming the RESOURCE (#2738) answered "which object differs" and left "which FIELD differs"
 	// to a guess — and a guessed ignoreDifferences entry can MASK REAL DRIFT rather than no-op.
 	OutOfSyncRefs []outOfSyncRef
+	// NotHealthyResources names the resources whose own health is not Healthy, with ArgoCD's
+	// message for each.
+	//
+	// WHY IT IS CARRIED. An Application's health is an AGGREGATE, and reporting only the aggregate
+	// left `health=Progressing` unattributable. On hetzner/addons run 33162842830 addon-harbor sat
+	// Progressing for 50 minutes with all seven of its pods Running and ready — so the health was
+	// not pod readiness, and the run could not say what it WAS. `kubectl describe application` does
+	// carry it, but the describe is truncated by the dump's own size cap long before
+	// `Status.Resources`, so the answer was fetched and thrown away twice over.
+	//
+	// This also separates two cases that had already cost #2717 two refuted hypotheses: an add-on
+	// that is OutOfSync AND independently not finished, versus one whose health is Progressing
+	// BECAUSE of the thing that is OutOfSync. Those have different fixes, and only the per-resource
+	// health tells them apart.
+	NotHealthyResources []string
 }
 
 // anyProvider is the infraServiceArgoApps inner key meaning "the same Application on
@@ -370,36 +385,63 @@ func RequireAllAddOnsExpected(expected []string) error {
 // every Application actually present) and a `kubectl describe` of each loser — enough
 // to diagnose a red run from logs alone. An empty expected set is refused outright
 // (see DeriveExpectedArgoApps).
-func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected []string, timeout time.Duration) error {
-	if len(expected) == 0 {
-		return errors.New("refusing a VACUOUS ArgoCD health assertion: the expected Application set is empty")
-	}
-	deadline := time.Now().Add(timeout)
+//
+// # Why it persists its own counts (#2688)
+//
+// The proof bundle's ArgoCD numbers used to come from `demos/proofs/capture-proof.sh`, which
+// runs AFTER the tier's t.Cleanup has torn the cluster down — so it counted a cluster that no
+// longer existed and wrote 0/0 for every run. A PASS bundle and a FAIL bundle were therefore
+// NUMERICALLY IDENTICAL, and the only thing distinguishing them was the prose "(T2-asserted)",
+// which is a claim rather than a measurement.
+//
+// The counts exist HERE, at the moment the assertion is made, and nowhere else afterwards. So
+// they are written here, on EVERY exit path — converged, timed out, cancelled, or refused as
+// vacuous. Writing only on success would reproduce the original defect in a new place: a
+// missing file reads as "nothing went wrong" exactly as 0/0 did.
+func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected []string, timeout time.Duration) (err error) {
+	// Declared before the vacuity check so the deferred write covers that exit too — a run that
+	// asserted over an empty set must leave evidence that it asserted nothing.
 	var lastErr error
 	var lastLosers []string
 	var lastRefs []outOfSyncRef
 	// Carried so the deadline dump can tell an OutOfSync loser (which HAS a diff to fetch) from a
 	// Degraded-but-Synced one (which does not).
 	var lastObserved map[string]argoAppState
+	if path := os.Getenv(ArgoSummaryEnv); path != "" {
+		defer func() {
+			s := newArgoConvergenceSummary(expected, lastObserved, lastLosers, timeout, err)
+			if werr := writeArgoSummary(path, s); werr != nil {
+				// Never fatal: the assertion's verdict is the test's, not this file's. But it is
+				// never silent either — a bundle that quietly lost its numbers is the defect.
+				fmt.Fprintf(os.Stderr, "argocd assert: could not write the convergence summary to %s: %v\n", path, werr)
+			}
+		}()
+	}
+	if len(expected) == 0 {
+		return errors.New("refusing a VACUOUS ArgoCD health assertion: the expected Application set is empty")
+	}
+	deadline := time.Now().Add(timeout)
 	for {
-		raw, err := kubectlGetArgoApps(ctx, kubeconfigPath)
-		if err != nil {
+		raw, rerr := kubectlGetArgoApps(ctx, kubeconfigPath)
+		if rerr != nil {
 			// A read hiccup (apiserver blip, CRD not yet registered) is retried until the
 			// deadline — unlike ReadAddOnHealth's best-effort Unknown, a persistent failure
 			// here must FAIL, not soften.
-			lastErr = fmt.Errorf("listing ArgoCD Applications failed: %w", err)
+			lastErr = fmt.Errorf("listing ArgoCD Applications failed: %w", rerr)
 			lastLosers, lastRefs, lastObserved = nil, nil, nil
 		} else if observed, perr := parseArgoApps(raw); perr != nil {
 			lastErr = fmt.Errorf("parsing ArgoCD Applications failed: %w", perr)
 			lastLosers, lastRefs, lastObserved = nil, nil, nil
 		} else {
 			losers, everr := evaluateArgoApps(observed, expected)
+			// Recorded on the WINNING path too, not just the losing one: on success the
+			// deferred summary is the whole point, and `observed` is only in scope here.
+			lastLosers, lastObserved = losers, observed
 			if everr == nil {
 				return nil
 			}
-			lastErr, lastLosers = everr, losers
+			lastErr = everr
 			lastRefs = refsForLosers(observed, losers)
-			lastObserved = observed
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("ArgoCD Applications did not all reach Healthy+Synced within %s:\n%v%s",
@@ -412,6 +454,81 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 		case <-time.After(argoPollInterval):
 		}
 	}
+}
+
+// ArgoSummaryEnv names the file AssertArgoAppsHealthy writes its convergence counts to. It
+// follows the six ALETHIA_E2E_*_SUMMARY paths capture-proof.sh already folds into a bundle
+// (soak, day-2 access, day-2 offer, byo-iac, acm-cert, keyless-db) — same shape, same scrub,
+// same "counts and booleans, never a secret" rule.
+const ArgoSummaryEnv = "ALETHIA_E2E_ARGOCD_SUMMARY"
+
+// ArgoConvergenceSummary is the machine-readable result of the ArgoCD convergence assertion,
+// written to ArgoSummaryEnv so a proof bundle carries what was MEASURED rather than what was
+// claimed. Counts and names only — an Application name is not a secret, and nothing else is
+// recorded.
+//
+// HealthySynced and ObservedTotal are POINTERS on purpose. When the Application list could not
+// be read at all there is no honest number to write, and `0` would be indistinguishable from
+// "read fine, nothing converged" — which is precisely the ambiguity #2688 was filed about. A
+// `null` says "not measured"; a `0` says "measured, and it was zero".
+type ArgoConvergenceSummary struct {
+	AssertedAt string `json:"asserted_at"`
+	// Outcome is one of: converged · unconverged · unreadable · vacuous.
+	Outcome string `json:"outcome"`
+	// ExpectedTotal is the size of the derived expected set — the field #2671 needs in order to
+	// tell a full-scope add-on sweep from a floor run wearing its name.
+	ExpectedTotal  int      `json:"expected_total"`
+	HealthySynced  *int     `json:"healthy_synced"`
+	ObservedTotal  *int     `json:"observed_total"`
+	Losers         []string `json:"losers"`
+	TimeoutSeconds int      `json:"timeout_seconds"`
+	Verdict        string   `json:"verdict"`
+}
+
+// newArgoConvergenceSummary renders the assertion's own state into the summary. It derives the
+// converged count as `len(expected) - len(losers)` rather than re-walking the observed map,
+// so the number can never disagree with the verdict the assertion actually returned — the
+// count and the pass/fail decision are computed from one source, not two that can drift.
+func newArgoConvergenceSummary(expected []string, observed map[string]argoAppState, losers []string, timeout time.Duration, err error) ArgoConvergenceSummary {
+	s := ArgoConvergenceSummary{
+		AssertedAt:     time.Now().UTC().Format(time.RFC3339),
+		ExpectedTotal:  len(expected),
+		Losers:         append([]string(nil), losers...),
+		TimeoutSeconds: int(timeout.Seconds()),
+	}
+	sort.Strings(s.Losers)
+	switch {
+	case len(expected) == 0:
+		s.Outcome = "vacuous"
+		s.Verdict = "refused: the expected Application set was empty, so this run asserted nothing"
+		return s
+	case observed == nil:
+		// No successful read in the whole poll window. Leave both counts null.
+		s.Outcome = "unreadable"
+		s.Verdict = fmt.Sprintf("no ArgoCD Application list could be read within %s; %d expected", timeout, len(expected))
+		return s
+	}
+	hs := len(expected) - len(losers)
+	ot := len(observed)
+	s.HealthySynced, s.ObservedTotal = &hs, &ot
+	if err == nil {
+		s.Outcome = "converged"
+		s.Verdict = fmt.Sprintf("%d of %d expected Applications Healthy+Synced", hs, len(expected))
+		return s
+	}
+	s.Outcome = "unconverged"
+	s.Verdict = fmt.Sprintf("%d of %d expected Applications Healthy+Synced within %s; %d did not converge: %s",
+		hs, len(expected), timeout, len(s.Losers), strings.Join(s.Losers, ", "))
+	return s
+}
+
+// writeArgoSummary persists the summary as indented JSON, mirroring writeAccessSummary.
+func writeArgoSummary(path string, s ArgoConvergenceSummary) error {
+	b, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o644)
 }
 
 // Budget shape for ArgoAssertTimeout. The flat 8m these replace was set for the LEAN surface and
@@ -533,6 +650,10 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 					Name      string `json:"name"`
 					Namespace string `json:"namespace"`
 					Status    string `json:"status"`
+					Health    struct {
+						Status  string `json:"status"`
+						Message string `json:"message"`
+					} `json:"health"`
 				} `json:"resources"`
 			} `json:"status"`
 		} `json:"items"`
@@ -552,13 +673,28 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 		// Only the OutOfSync ones. A Synced resource in a Synced app is noise, and in an
 		// OutOfSync app it is the part that is fine.
 		seenRes := map[string]struct{}{}
+		seenUnhealthy := map[string]struct{}{}
 		for _, r := range item.Status.Resources {
-			if r.Status != "OutOfSync" {
-				continue
-			}
 			label := r.Kind + "/" + r.Name
 			if r.Group != "" {
 				label = r.Group + "/" + r.Kind + "/" + r.Name
+			}
+			// A resource with no health at all is NOT a healthy resource — ArgoCD leaves the field
+			// empty for kinds it has no health check for (ConfigMap, Secret, Service…), and
+			// treating that as unhealthy would bury the one that matters. Only a health it
+			// EXPLICITLY reported as something other than Healthy is named.
+			if h := r.Health.Status; h != "" && h != "Healthy" {
+				if _, dup := seenUnhealthy[label]; !dup {
+					seenUnhealthy[label] = struct{}{}
+					entry := label + " " + h
+					if msg := strings.TrimSpace(r.Health.Message); msg != "" {
+						entry += ": " + msg
+					}
+					st.NotHealthyResources = append(st.NotHealthyResources, entry)
+				}
+			}
+			if r.Status != "OutOfSync" {
+				continue
 			}
 			if _, dup := seenRes[label]; dup {
 				continue
@@ -570,6 +706,7 @@ func parseArgoApps(raw []byte) (map[string]argoAppState, error) {
 			})
 		}
 		sort.Strings(st.OutOfSyncResources)
+		sort.Strings(st.NotHealthyResources)
 		out[item.Metadata.Name] = st
 	}
 	return out, nil
@@ -611,15 +748,35 @@ func evaluateArgoApps(observed map[string]argoAppState, expected []string) (lose
 			// or not-yet-populated resource list, and silence there would read as a clean diff.
 			report.WriteString("\n      OutOfSync: (no per-resource detail reported by ArgoCD)")
 		}
+		// The aggregate health names no resource, so `health=Progressing` was unattributable — see
+		// NotHealthyResources. This is what says whether an OutOfSync add-on is ALSO unfinished for
+		// its own reasons, or is Progressing because of the very resource that is OutOfSync.
+		if len(st.NotHealthyResources) > 0 {
+			fmt.Fprintf(&report, "\n      not Healthy: %s", strings.Join(st.NotHealthyResources, "; "))
+		} else if st.Health != "Healthy" {
+			report.WriteString("\n      not Healthy: (ArgoCD reports no unhealthy RESOURCE — the aggregate health is not attributable to one)")
+		}
 		report.WriteString("\n")
 	}
 	if len(losers) == 0 {
 		return nil, nil
 	}
+	// The full listing carries the resource detail too, and that is not cosmetic. It is the ONLY
+	// place a WITHHELD Application's OutOfSync resources appear: withheld add-ons are excluded from
+	// the loop above, so on run 33162842830 addon-vault reported `Progressing/OutOfSync` with no
+	// resource named — and vault's StatefulSet is the control case that separates the two candidate
+	// causes of #2717's surviving four (see the loki-vs-tempo note in packages/core/argocd/addons.go).
+	// Printing it costs nothing: the data is already parsed.
 	fmt.Fprintf(&report, "all Applications observed in the argocd namespace:\n")
 	for _, name := range sortedAppNames(observed) {
 		st := observed[name]
 		fmt.Fprintf(&report, "  - %s: health=%s sync=%s\n", name, st.Health, st.Sync)
+		if len(st.OutOfSyncResources) > 0 {
+			fmt.Fprintf(&report, "      OutOfSync: %s\n", strings.Join(st.OutOfSyncResources, ", "))
+		}
+		if len(st.NotHealthyResources) > 0 {
+			fmt.Fprintf(&report, "      not Healthy: %s\n", strings.Join(st.NotHealthyResources, "; "))
+		}
 	}
 	return losers, fmt.Errorf("%d/%d expected ArgoCD Applications are not Healthy+Synced:\n%s",
 		len(losers), len(expected), strings.TrimRight(report.String(), "\n"))
@@ -1004,8 +1161,13 @@ func dumpArgoAppDiffs(ctx context.Context, kubeconfigPath string, observed map[s
 			fmt.Fprintf(&b, "\n  … %d more OutOfSync Application(s) not diffed\n", len(outOfSync)-i)
 			break
 		}
-		b.WriteString(dumpArgoAppDiff(ctx, kubeconfigPath, name))
+		b.WriteString(dumpArgoAppDiff(ctx, kubeconfigPath, name, observed[name].OutOfSyncRefs))
 	}
+	// The one comparison no diagnostic above can make: argo-cd's own verdict on whether live
+	// matches desired under Server-Side Diff. Not asked as a diff — #3140 proved the CLI cannot
+	// answer that — but run as an OUTCOME on one or two of these same Applications, and reverted.
+	// See argo_ssd_experiment.go.
+	b.WriteString(argoSSDExperiment(ctx, kubeconfigPath, outOfSync))
 	return b.String()
 }
 
@@ -1046,9 +1208,14 @@ const argoDiffExitCodeMeansDiff = 1
 // Best-effort on an ALREADY-FAILING path. It must never be why a run hangs or an error is lost, and
 // — the point of the constant above — "the command reported a difference" must never be mistaken
 // for "the command failed".
-func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
-	// Generous: --core renders the manifests through the repo-server, which pulls the chart.
-	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string, refs []outOfSyncRef) string {
+	// Generous: --core renders the manifests through the repo-server, which pulls the chart, and on
+	// the empty-diff branch it ALSO fetches the whole Application's manifests and server-side
+	// dry-runs them (argo_predicted_live.go) — a SECOND manifest render. kyverno renders ~50k
+	// lines, so this is not a fast path — it is the only path that can name the field, and it runs
+	// only on an already-failing run. The budget is shared: a probe that runs out of it says COULD
+	// NOT ASK, which is the correct answer and not a silent pass.
+	cctx, cancel := context.WithTimeout(ctx, 300*time.Second)
 	defer cancel()
 
 	target, err := argoDiffWorkload(cctx, kubeconfigPath)
@@ -1066,6 +1233,12 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
 	if strings.Contains(report, "reports NO difference") {
 		report += argoSyncStaleness(app, readArgoReconciledAt(ctx, kubeconfigPath, app), time.Now()) + "\n"
 		report += argoHardRefreshVerdict(cctx, kubeconfigPath, target, app) + "\n"
+		// #3093's hard refresh answered "the OutOfSync is real, not a stale cache" and could not go
+		// further. These two do: the first says WHICH comparison the controller ran (an empty
+		// `argocd app diff` on a ServerSideApply Application is a different algorithm, not a
+		// contradiction), the second reproduces a server-side comparison and names the fields.
+		report += readArgoDiffStrategy(cctx, kubeconfigPath, target, app) + "\n"
+		report += argoPredictedLiveDiff(cctx, kubeconfigPath, target, app, refs) + "\n"
 	}
 	return report
 }
@@ -1087,7 +1260,8 @@ func dumpArgoAppDiff(ctx context.Context, kubeconfigPath, app string) string {
 //
 // `--core` runs the API-server logic IN-PROCESS, so it needs the cluster permissions the API server
 // would have had — and the argocd-server ServiceAccount does not have them. Verified against the
-// pinned 8.6.4 chart rather than guessed: the server's Role grants secrets, configmaps,
+// pinned chart rather than guessed — and RE-verified on the 8.6.4 → 9.5.11 bump (#2717), where the
+// rendered Role is unchanged: the server's Role grants secrets, configmaps,
 // argoproj.io resources and events, and nothing else. The APPLICATION-CONTROLLER's ClusterRole is
 // apiGroups ['*'], resources ['*'], verbs ['*'] — it has to be, because it reconciles arbitrary
 // customer resources. Every ArgoCD component runs the same image, so the `argocd` binary is there.
@@ -1195,8 +1369,9 @@ func argoSyncStaleness(app string, reconciledAt string, now time.Time) string {
 		return fmt.Sprintf("      %s: unparseable status.reconciledAt %q — cannot say whether the status is stale", app, t)
 	}
 	age := now.Sub(parsed).Round(time.Second)
-	// ArgoCD's default reconciliation is every 3 minutes, so anything close to or beyond that is
-	// plausibly just a status the controller has not refreshed yet.
+	// One WORST-CASE reconcile cycle, so anything close to or beyond it is plausibly just a status
+	// the controller has not refreshed yet. See argoReconcileInterval for where the number comes
+	// from — it is no longer a flat 3m on the shipped chart.
 	if age >= argoReconcileInterval {
 		return fmt.Sprintf(
 			"      %s: last reconciled %s ago (>= ArgoCD's ~%s cadence) — the OutOfSync status is plausibly STALE and the empty diff is current; re-read after a refresh before treating this as a real disagreement",
@@ -1207,8 +1382,16 @@ func argoSyncStaleness(app string, reconciledAt string, now time.Time) string {
 		app, age, argoReconcileInterval)
 }
 
-// argoReconcileInterval is ArgoCD's default `timeout.reconciliation`. Used only to judge whether a
-// sync status is old enough to be suspect, never to wait on.
+// argoReconcileInterval is the WORST-CASE gap between two reconciles on the shipped argo-cd chart.
+// Used only to judge whether a sync status is old enough to be suspect, never to wait on.
+//
+// The value is unchanged at 3m across the 8.6.4 → 9.5.11 bump, but its derivation is not, and the
+// old comment ("ArgoCD's default reconciliation is every 3 minutes") is no longer true. 8.6.4's
+// argocd-cm set `timeout.reconciliation: 180s` with no jitter. 9.5.11 sets
+// `timeout.reconciliation: 120s` plus `timeout.reconciliation.jitter: 60s`, so the cadence is now a
+// 120s–180s band. 3m is still the right bound BECAUSE it is the top of that band: this constant
+// exists to avoid calling a status stale when it is merely young, so it must be the longest a fresh
+// status can legitimately go unrefreshed, not the typical one.
 const argoReconcileInterval = 3 * time.Minute
 
 // readArgoReconciledAt reads an Application's last reconcile timestamp. Best-effort: this runs on an

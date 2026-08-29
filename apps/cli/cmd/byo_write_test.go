@@ -27,6 +27,9 @@ func TestRunChartAttach(t *testing.T) {
 		p := api.AttachChartParams{
 			Project: "shop", Env: "dev", ID: "api", RepoURL: "https://github.com/acme/charts",
 			ChartPath: "charts/api", Ref: "v1.2.3", Namespace: "api",
+			// GitCredID stays exercised here on purpose: the SERVER still accepts the field
+			// (#2788 withdrew the CLI flag, not the API), so the transport must keep carrying
+			// it. Nothing in the CLI sets it any more — see the flag-surface test below.
 			ValuesYAML: "image:\n  tag: v1\n", GitCredID: "cred-1",
 			Values: map[string]interface{}{"replicas": float64(2)},
 		}
@@ -282,9 +285,9 @@ func resetByoFlags(t *testing.T) {
 	t.Helper()
 	reset := func() {
 		chartAttachRepo, chartAttachPath, chartAttachRef = "", "", ""
-		chartAttachNamespace, chartAttachValuesFile, chartAttachGitCred = "", "", ""
+		chartAttachNamespace, chartAttachValuesFile = "", ""
 		chartAttachSet, chartDetachYes = nil, false
-		iacAttachRepo, iacAttachRef, iacAttachPath, iacAttachGitCred = "", "", "", ""
+		iacAttachRepo, iacAttachRef, iacAttachPath = "", "", ""
 		iacAttachVar, iacDetachYes = nil, false
 		for _, c := range []*cobra.Command{chartCmd, iacCmd} {
 			_ = c.PersistentFlags().Set("project", "")
@@ -506,4 +509,33 @@ func TestByoWritesFailLoudly(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The `--git-credential-id` flag is GONE from both attach verbs (#2788).
+//
+// It accepted a value that nothing in the product could produce: `project_git_credentials` is
+// only ever SELECTed, so the table is empty, and both `project_addons` and `project_iac_sources`
+// carry a foreign key to it. Any value therefore reached the database and came back as a raw
+// foreign-key violation — while telling the user their private repo needed a credential set up
+// somewhere, and there was nowhere.
+//
+// What actually authorizes a private clone is the job-time token minted from the owner's linked
+// OAuth account, scoped to the repositories the project declares. The attach verbs now say so.
+//
+// Asserted on the flag SET rather than on a string in help text: a flag can be re-added without
+// touching the prose, and this must fail if it is.
+func TestByoAttachOffersNoGitCredentialFlag(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		cmd  *cobra.Command
+	}{{"chart attach", chartAttachCmd}, {"iac attach", iacAttachCmd}} {
+		if f := c.cmd.Flags().Lookup("git-credential-id"); f != nil {
+			t.Errorf("%s still offers --git-credential-id; the credential it names cannot be created (#2788)", c.name)
+		}
+		// And the real mechanism must be discoverable at the point of use, or removing the flag
+		// just leaves the user with no answer instead of a wrong one.
+		if !strings.Contains(c.cmd.Long, "linked GitHub/GitLab account") {
+			t.Errorf("%s help does not say how a private repository is authorized", c.name)
+		}
+	}
 }

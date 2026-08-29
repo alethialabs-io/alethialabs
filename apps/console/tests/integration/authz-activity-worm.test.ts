@@ -24,13 +24,9 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { getServiceDb, withOwnerScope } from "@/lib/db";
 import { authzActivityLog } from "@/lib/db/schema";
 import { gcAuthzActivityLog } from "@/lib/reconcile/gc";
-import { describeIfDb, purgeAuthzActivityLog } from "./db";
+import { APP_ROLE_DISTINCT, describeIfDb, purgeAuthzActivityLog } from "./db";
 
 // The app role is only a real RLS/REVOKE boundary when it differs from the service role.
-const APP_ROLE_DISTINCT =
-	(process.env.ALETHIA_APP_DATABASE_URL ?? "") !== "" &&
-	process.env.ALETHIA_APP_DATABASE_URL !== process.env.ALETHIA_DATABASE_URL;
-
 describeIfDb("authz_activity_log tenant-scoping RLS + GC-aware WORM", () => {
 	const ORG_A = randomUUID();
 	const ORG_B = randomUUID();

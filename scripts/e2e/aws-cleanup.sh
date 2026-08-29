@@ -51,6 +51,13 @@
 #   ALETHIA_E2E_ENV=<run_id>-<attempt> ALETHIA_E2E_REGION=us-east-1 ./scripts/e2e/aws-cleanup.sh
 #   (positional $1 accepted for call-site symmetry with hcloud-cleanup.sh but IGNORED.)
 #   DRY_RUN=1 ...     # list what WOULD be deleted, delete + verify nothing
+#
+# Exit codes (the verification contract — see finalize_verification):
+#   0  every probe answered, and nothing billable for this run survived
+#   1  a LEAK: the API listed something still standing and billing
+#   2  refused to run (missing/implausible scope, missing CLI)
+#   3  INTERNAL: empty scope reached a scoped call
+#   4  UNVERIFIABLE: a probe could not answer, so nothing here proves the account is empty
 #   PREFLIGHT=1 ...   # BEFORE provisioning: sweep PRIOR-run e2e orphans (any other e2e-<env>),
 #                     #   NOT this run. Best-effort + loud (warns on residual, never exit 1).
 #
@@ -69,6 +76,22 @@
 #
 # Requires: awscli v2 (digest-pinned in the workflow), configured creds (OIDC in CI), jq.
 set -euo pipefail
+
+# ── The probe contract (CLEAN / LEAKED / UNVERIFIABLE / UNATTRIBUTABLE), shared by all five cloud
+#    sweepers. Read scripts/e2e/lib/sweep-probe.sh before touching any probe below: every
+#    `aws … 2>/dev/null | … || true` in this file laundered the API's exit status THREE times over,
+#    so a broken credential made all eighteen resource types report clean at once and this script
+#    announced "no billable resources remain" over a live Aurora cluster.
+#
+#    A FOURTH state was added after #3138 gated the third one over a case that was not a probe
+#    failure: UNATTRIBUTABLE — the probe DID get an answer, and the answer is that something
+#    exists which by design cannot be tied to this run. Reported loudly, never gates. Only
+#    hetzner produces one today (#2463); the taxonomy is shared so the next cloud does not have
+#    to re-derive it, and every sweeper's --self-test asserts both halves. ──
+E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+# shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
+. "${E2E_LIB_DIR}/sweep-probe.sh"
+probe_reset
 
 ENV="${ALETHIA_E2E_ENV:-}"
 # Region is AUTHORITATIVE from ALETHIA_E2E_REGION only. A silent fallback to an ambient
@@ -96,6 +119,10 @@ if [ "${1:-}" = "--self-test" ]; then
 	SELF_TEST=1
 	ENV="selftest-4177-1"
 	REGION="us-east-1"
+	# The probe retries are a real-cloud kindness (a transient 5xx must not red a healthy teardown)
+	# and pure dead time against a stub. The self-test still exercises the retry LOOP; it just does
+	# not wait between attempts.
+	PROBE_RETRY_DELAY=0
 fi
 
 # ── Guard 1: a specific ENV is REQUIRED. No ENV ⇒ no filter ⇒ hard refuse. ──
@@ -144,6 +171,11 @@ if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 fi
 
+# assert_scope — a STRING check on the tag handle, and nothing more. It makes no cloud call, so it
+# cannot tell a working credential from a dead one; it exists only so an empty scope can never
+# reach a mutating call. What catches a credential that cannot see the account is probe_run: every
+# list and describe below records UNVERIFIABLE when the API does not answer, and the exit code
+# gates on it (see finalize_verification).
 assert_scope() {
 	if [ -z "${PROJECT_ID_TAG#e2e-}" ]; then
 		echo "✗ INTERNAL: empty scope — aborting before an unfiltered operation." >&2
@@ -160,7 +192,10 @@ tagged_arns() {
 		--tag-filters "Key=alethia:project-id,Values=${PROJECT_ID_TAG}"
 		--query 'ResourceTagMappingList[].ResourceARN' --output text)
 	[ -n "$svc" ] && args+=(--resource-type-filters "$svc")
-	aws "${args[@]}" 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true
+	# THE SINGLE MOST LOAD-BEARING PROBE IN THIS FILE. Twelve of the alive_* checks below start
+	# here, so one failed tagging-API call used to empty all twelve at once — and `2>/dev/null |
+	# tr | grep || true` reported that as exit 0 with no rows, which verify_swept reads as "gone".
+	probe_run "tagging-api${svc:+(${svc})}" aws "${args[@]}" | tr '\t' '\n' | grep -v '^$' || true
 }
 
 arn_id() { printf '%s\n' "$1" | sed -E 's#^.*[:/]##'; }
@@ -168,8 +203,13 @@ arn_id() { printf '%s\n' "$1" | sed -E 's#^.*[:/]##'; }
 # looks_gone <stderr-text> — true if an AWS delete error means the resource is already absent
 # (idempotency: eventual consistency can list an already-deleted ARN; a NotFound on delete is
 # success, not failure — grill F4). Covers ec2 InvalidX.NotFound, eks/elbv2 NotFound, EIP, etc.
+# It is now ALSO what probe_confirm uses to tell "confirmed absent" (CLEAN) from "the API did not
+# answer" (UNVERIFIABLE), so the strings matter more than they did: a shape missing from here turns
+# a genuinely-deleted resource into a false UNVERIFIABLE, and — far worse in the other direction —
+# a shape wrongly ADDED here turns a throttle into "gone". `Not Found` (spaced) and `(404)` are
+# s3api head-bucket; `NonExistent` is sqs get-queue-url; `NoSuch*` is the S3 error family.
 looks_gone() {
-	printf '%s' "$1" | grep -Eqi 'NotFound|does not exist|InvalidAllocationID|no such|could not be found|ResourceNotFoundException|LoadBalancerNotFound'
+	printf '%s' "$1" | grep -Eqi 'NotFound|Not Found|\(404\)|NoSuch|NonExistent|does not exist|InvalidAllocationID|no such|could not be found|ResourceNotFoundException|LoadBalancerNotFound'
 }
 
 # retry_delete <human> <cmd...> — delete with backoff. "Already gone" = success. NEVER returns
@@ -253,21 +293,26 @@ discover_cluster() {
 # incl. those lacking project-id default_tags. Empty when CLUSTER unknown.
 cluster_instance_ids() {
 	[ -z "$CLUSTER" ] && return 0
-	aws ec2 describe-instances \
+	probe_run ec2-instance aws ec2 describe-instances \
 		--filters "Name=tag:kubernetes.io/cluster/${CLUSTER},Values=owned,shared" \
 		"Name=instance-state-name,Values=pending,running,stopping,stopped" \
-		--query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true
+		--query 'Reservations[].Instances[].InstanceId' --output text | tr '\t' '\n' | grep -v '^$' || true
 }
 
 # cluster_lb_arns — ELBv2 ARNs tagged elbv2.k8s.aws/cluster=<CLUSTER>. Empty when CLUSTER unknown.
 cluster_lb_arns() {
 	[ -z "$CLUSTER" ] && return 0
-	local arns arn
-	arns="$(aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
+	local arns arn tags
+	arns="$(probe_run load-balancer aws elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerArn' --output text | tr '\t' '\n' | grep -v '^$' || true)"
 	while IFS= read -r arn; do
 		[ -n "$arn" ] || continue
-		if aws elbv2 describe-tags --resource-arns "$arn" \
-			--query "TagDescriptions[].Tags[?Key=='elbv2.k8s.aws/cluster' && Value=='${CLUSTER}']" --output text 2>/dev/null | grep -q .; then
+		# Captured, THEN matched. `probe_run … | grep -q .` would be wrong twice over: grep -q exits
+		# on the first line, which can SIGPIPE the capture, and under `set -o pipefail` that turns
+		# the pipeline's status into 141 — so a load balancer that DOES carry the tag would read as
+		# untagged. Capture first, filter second, exactly as the rest of this change does.
+		tags="$(probe_run load-balancer aws elbv2 describe-tags --resource-arns "$arn" \
+			--query "TagDescriptions[].Tags[?Key=='elbv2.k8s.aws/cluster' && Value=='${CLUSTER}']" --output text || true)"
+		if printf '%s' "$tags" | grep -q .; then
 			printf '%s\n' "$arn"
 		fi
 	done <<<"$arns"
@@ -794,9 +839,9 @@ purge_bucket_versions() {
 #    lag ⇒ no false-RED), and cover BOTH the tofu-tagged and the out-of-band (Karpenter/ELB/CSI)
 #    scopes. ──
 by_tag_instances() {
-	aws ec2 describe-instances \
+	probe_run ec2-instance aws ec2 describe-instances \
 		--filters "Name=tag:$1,Values=$2" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-		--query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true
+		--query 'Reservations[].Instances[].InstanceId' --output text | tr '\t' '\n' | grep -v '^$' || true
 }
 alive_instances() {
 	{
@@ -805,9 +850,9 @@ alive_instances() {
 	} | grep -v '^$' | sort -u || true
 }
 by_tag_volumes() {
-	aws ec2 describe-volumes \
+	probe_run ebs-volume aws ec2 describe-volumes \
 		--filters "Name=tag:$1,Values=$2" "Name=status,Values=creating,available,in-use" \
-		--query 'Volumes[].VolumeId' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true
+		--query 'Volumes[].VolumeId' --output text | tr '\t' '\n' | grep -v '^$' || true
 }
 alive_volumes() {
 	{
@@ -817,12 +862,15 @@ alive_volumes() {
 }
 alive_nats() {
 	# shellcheck disable=SC2016 # backtick is JMESPath
-	aws ec2 describe-nat-gateways \
+	probe_run nat-gateway aws ec2 describe-nat-gateways \
 		--filter "Name=tag:alethia:project-id,Values=${PROJECT_ID_TAG}" \
-		--query 'NatGateways[?State!=`deleted`].NatGatewayId' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true
+		--query 'NatGateways[?State!=`deleted`].NatGatewayId' --output text | tr '\t' '\n' | grep -v '^$' || true
 }
 alive_lbs() { cluster_lb_arns; }
-alive_eks() { [ -n "$CLUSTER" ] && aws eks describe-cluster --name "$CLUSTER" --query 'cluster.name' --output text 2>/dev/null || true; }
+# probe_confirm, not probe_run: a deleted cluster answers ResourceNotFoundException, and that IS
+# the answer "gone". Any other error means the control plane's existence is unknown — and an EKS
+# control plane is $0.10/hour whether or not this script could see it.
+alive_eks() { [ -n "$CLUSTER" ] && probe_confirm eks-cluster aws eks describe-cluster --name "$CLUSTER" --query 'cluster.name' --output text || true; }
 
 # A surviving hosted zone bills at $0.50/month FOREVER — small per run, but it never ages out and
 # nothing else would ever notice it. Unlike the describes above there is no tag-filtered Route 53
@@ -838,8 +886,8 @@ alive_acm_certs() {
 	local arn
 	while IFS= read -r arn; do
 		[ -n "$arn" ] || continue
-		aws acm describe-certificate --certificate-arn "$arn" \
-			--query 'Certificate.DomainName' --output text 2>/dev/null | grep -v '^$' || true
+		probe_confirm acm-certificate aws acm describe-certificate --certificate-arn "$arn" \
+			--query 'Certificate.DomainName' --output text | grep -v '^$' || true
 	done <<<"$(tagged_arns acm:certificate)"
 }
 
@@ -856,24 +904,24 @@ alive_rds_clusters() {
 	local id
 	for id in $(tagged_arns rds:cluster | while read -r a; do arn_id "$a"; done); do
 		# shellcheck disable=SC2016 # backtick is JMESPath
-		aws rds describe-db-clusters --db-cluster-identifier "$id" \
-			--query 'DBClusters[?Status!=`deleting`].DBClusterIdentifier' --output text 2>/dev/null || true
+		probe_confirm rds-cluster aws rds describe-db-clusters --db-cluster-identifier "$id" \
+			--query 'DBClusters[?Status!=`deleting`].DBClusterIdentifier' --output text || true
 	done | tr '\t' '\n' | grep -v '^$' || true
 }
 alive_rds_instances() {
 	local id
 	for id in $(tagged_arns rds:db | while read -r a; do arn_id "$a"; done); do
 		# shellcheck disable=SC2016
-		aws rds describe-db-instances --db-instance-identifier "$id" \
-			--query 'DBInstances[?DBInstanceStatus!=`deleting`].DBInstanceIdentifier' --output text 2>/dev/null || true
+		probe_confirm rds-instance aws rds describe-db-instances --db-instance-identifier "$id" \
+			--query 'DBInstances[?DBInstanceStatus!=`deleting`].DBInstanceIdentifier' --output text || true
 	done | tr '\t' '\n' | grep -v '^$' || true
 }
 alive_elasticache() {
 	local id
 	for id in $(tagged_arns elasticache:replicationgroup | while read -r a; do arn_id "$a"; done); do
 		# shellcheck disable=SC2016
-		aws elasticache describe-replication-groups --replication-group-id "$id" \
-			--query 'ReplicationGroups[?Status!=`deleting`].ReplicationGroupId' --output text 2>/dev/null || true
+		probe_confirm elasticache-replication-group aws elasticache describe-replication-groups --replication-group-id "$id" \
+			--query 'ReplicationGroups[?Status!=`deleting`].ReplicationGroupId' --output text || true
 	done | tr '\t' '\n' | grep -v '^$' || true
 }
 alive_ddb_tables() {
@@ -882,7 +930,7 @@ alive_ddb_tables() {
 	# compare in shell instead.
 	local id state
 	for id in $(tagged_arns dynamodb:table | while read -r a; do arn_id "$a"; done); do
-		state="$(aws dynamodb describe-table --table-name "$id" --query 'Table.TableStatus' --output text 2>/dev/null || true)"
+		state="$(probe_confirm dynamodb-table aws dynamodb describe-table --table-name "$id" --query 'Table.TableStatus' --output text || true)"
 		case "$state" in "" | None | DELETING) ;; *) printf '%s\n' "$id" ;; esac
 	done
 }
@@ -892,28 +940,28 @@ alive_s3_buckets() {
 		[ -n "$arn" ] || continue
 		name="${arn##*:}"
 		[ -n "$name" ] || continue
-		aws s3api head-bucket --bucket "$name" >/dev/null 2>&1 && printf '%s\n' "$name"
+		probe_confirm s3-bucket aws s3api head-bucket --bucket "$name" >/dev/null && printf '%s\n' "$name"
 	done <<<"$(tagged_arns s3)"
 }
 alive_ecr_repos() {
 	local id
 	for id in $(tagged_arns ecr:repository | while read -r a; do arn_id "$a"; done); do
-		aws ecr describe-repositories --repository-names "$id" \
-			--query 'repositories[].repositoryName' --output text 2>/dev/null || true
+		probe_confirm ecr-repository aws ecr describe-repositories --repository-names "$id" \
+			--query 'repositories[].repositoryName' --output text || true
 	done | tr '\t' '\n' | grep -v '^$' || true
 }
 alive_secrets() {
 	local arn
 	while IFS= read -r arn; do
 		[ -n "$arn" ] || continue
-		aws secretsmanager describe-secret --secret-id "$arn" >/dev/null 2>&1 && printf '%s\n' "${arn##*:}"
+		probe_confirm secretsmanager-secret aws secretsmanager describe-secret --secret-id "$arn" >/dev/null && printf '%s\n' "${arn##*:}"
 	done <<<"$(tagged_arns secretsmanager:secret)"
 }
 alive_sqs_queues() {
 	local arn url
 	while IFS= read -r arn; do
 		[ -n "$arn" ] || continue
-		url="$(aws sqs get-queue-url --queue-name "${arn##*:}" --query 'QueueUrl' --output text 2>/dev/null || true)"
+		url="$(probe_confirm sqs-queue aws sqs get-queue-url --queue-name "${arn##*:}" --query 'QueueUrl' --output text || true)"
 		[ -n "$url" ] && [ "$url" != "None" ] && printf '%s\n' "${arn##*:}"
 	done <<<"$(tagged_arns sqs)"
 }
@@ -921,7 +969,7 @@ alive_sns_topics() {
 	local arn
 	while IFS= read -r arn; do
 		[ -n "$arn" ] || continue
-		aws sns get-topic-attributes --topic-arn "$arn" >/dev/null 2>&1 && printf '%s\n' "${arn##*:}"
+		probe_confirm sns-topic aws sns get-topic-attributes --topic-arn "$arn" >/dev/null && printf '%s\n' "${arn##*:}"
 	done <<<"$(tagged_arns sns)"
 }
 alive_kms_keys() {
@@ -929,7 +977,7 @@ alive_kms_keys() {
 	# can shorten it. Only a key still Enabled/Disabled means the sweep did not reach it.
 	local id state
 	for id in $(tagged_arns kms:key | while read -r a; do arn_id "$a"; done); do
-		state="$(aws kms describe-key --key-id "$id" --query 'KeyMetadata.KeyState' --output text 2>/dev/null || true)"
+		state="$(probe_confirm kms-key aws kms describe-key --key-id "$id" --query 'KeyMetadata.KeyState' --output text || true)"
 		case "$state" in Enabled | Disabled) printf '%s\n' "$id" ;; esac
 	done
 }
@@ -940,8 +988,8 @@ alive_kms_keys() {
 #    the VPC, and the VPC is reported in its own right, so listing them would be noise that trains
 #    people to ignore the output. ──
 net_by_tag() {
-	aws ec2 "$1" --filters "Name=tag:alethia:project-id,Values=${PROJECT_ID_TAG}" \
-		--query "$2" --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true
+	probe_run "network(${1#describe-})" aws ec2 "$1" --filters "Name=tag:alethia:project-id,Values=${PROJECT_ID_TAG}" \
+		--query "$2" --output text | tr '\t' '\n' | grep -v '^$' || true
 }
 alive_network() {
 	{
@@ -1084,6 +1132,27 @@ verify_swept() {
 		echo "::error::aws cleanup INCOMPLETE — resources for run ${ENV} still exist (billable, or network still held by something billable). Investigate + remove (stay scope-locked; never account-wide)." >&2
 		return 1
 	fi
+	return 0
+}
+
+# ── finalize_verification — THE EXIT-CODE CONTRACT.
+#
+#   0  every probe answered, and nothing billable for this run survived.
+#   1  a LEAK: the API listed something that is still standing and billing.
+#   4  UNVERIFIABLE: at least one probe could not answer. Nothing here proves the account is empty,
+#      and this step is the `always()` guarantee test/e2e/t2_provision_test.go defers to — so
+#      "could not look" has to be a red step, not a line in a log nobody reads.
+#
+# A confirmed leak outranks "could not check", so verify_swept runs first.
+finalize_verification() {
+	if ! verify_swept; then
+		return 1
+	fi
+	probe_gate aws "run ${ENV}" || return 4
+	# probe_clean_suffix is EMPTY on a genuinely clean run and carries any UNATTRIBUTABLE finding
+	# otherwise, so this sentence can never read as "the account is empty" when it is not. Shared
+	# by all five sweepers — the taxonomy is one contract, not five that drift.
+	echo "✓ aws cleanup verified complete for run ${ENV} — no billable resources remain$(probe_clean_suffix)"
 	return 0
 }
 
@@ -1275,6 +1344,10 @@ if [ "$PREFLIGHT" = "1" ]; then
 	if [ "$residual" = "1" ]; then
 		echo "⚠ preflight finished with residual orphans (see above) — continuing (best-effort, non-fatal)"
 	else
+		# ⚠️ Not "the account is clean" — "every orphan this preflight could SEE is swept".
+		# The discovery listings can fail too, and preflight is explicitly non-blocking, so
+		# the honest report here is a warning; the always() teardown is what gates.
+		probe_warn_unverifiable aws "the preflight orphan scan in ${REGION}"
 		echo "✓ preflight complete — all prior-run e2e orphans in ${REGION} swept"
 	fi
 	exit 0 # preflight never blocks the provisioning run
@@ -1391,6 +1464,102 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_cls_case "an UNKNOWN resource type bills (fail-closed)" "arn:aws:quantumledger:us-east-1:0:ledger/whatever" "BILLING"
 	unset -f aws
 
+	# ── THE THREE STATES, end to end through verify_swept and the exit code (#3xxx).
+	#
+	# Every probe in this file used to read `aws … 2>/dev/null | tr | grep -v '^$' || true`. Three
+	# launderings: the redirect drops the reason, the pipe substitutes grep's status for the CLI's,
+	# and `|| true` normalises what is left. An API that FAILED therefore produced empty stdout and
+	# exit 0 — byte-identical to "confirmed gone" — and verify_swept's `[ -n "$x" ]` test read all
+	# eighteen resource types as clean at once. A leaked Aurora cluster, NAT gateway or EKS control
+	# plane billed while the step printed "verified complete".
+	#
+	# $ST_OUT and $ST_RC are varied INDEPENDENTLY on purpose. A test that only varies the output
+	# passes just as happily with the fix removed, because output is the half that already worked.
+	aws() {
+		if [ -n "$ST_OUT" ]; then printf '%s\n' "$ST_OUT"; fi
+		if [ "$ST_RC" -ne 0 ]; then printf '%s\n' "${ST_ERR:-An error occurred}" >&2; fi
+		return "$ST_RC"
+	}
+	st_verify_case() { # <name> <output> <rc> <expected finalize rc> <expect unverifiable: yes|no>
+		probe_reset
+		ST_OUT="$2" ST_RC="$3" ST_ERR="An error occurred (ExpiredToken) when calling the operation"
+		CLUSTER=""
+		local rc=0 unv=no
+		finalize_verification >/dev/null 2>&1 || rc=$?
+		probe_has_unverifiable && unv=yes
+		if [ "$rc" = "$4" ] && [ "$unv" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$4/unverifiable=$5, got rc=${rc}/unverifiable=${unv}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_verify_case "an empty account, honestly listed, is CLEAN and exits 0" "" 0 0 no
+	st_verify_case "a surviving resource is a LEAK and exits 1" "i-0abc123" 0 1 no
+	st_verify_case "an API that FAILED is UNVERIFIABLE and exits 4, NOT 0" "" 254 4 yes
+
+	# ── CLOUD PARITY FOR THE FOURTH STATE (#3138 follow-up). ─────────────────────────────────────
+	#
+	# The four-state taxonomy is ONE contract, in scripts/e2e/lib/sweep-probe.sh. Every sweeper
+	# asserts it here rather than trusting that sourcing the library is enough, because the thing
+	# that actually breaks is a CALLER — a "✓ verified complete" line that forgot the qualifier, or a
+	# finalize_verification reading the wrong ledger. hetzner is the only cloud with an
+	# unattributable resource today (the imager upload helpers, #2463); the next one must not have to
+	# re-derive the answer, and must not be able to ship the loud half without the non-gating half.
+	#
+	# BOTH halves, because either alone is satisfiable by the wrong change: an UNATTRIBUTABLE finding
+	# must not move the exit code, AND an API failure must still move it to 4.
+	st_parity() { # <name> <rc> <the ✓ line (STDOUT) names it: yes|no> <unverifiable: yes|no> <the annotation (STDERR) names it: yes|no>
+		local rc=0 out named=no ann=no unv=no errf
+		# STDOUT AND STDERR ARE READ SEPARATELY, and that is the point of this helper. The ::warning::
+		# goes to stderr and would match either way, so folding them together with 2>&1 would let the
+		# ✓ line silently lose its qualifier — "verified complete — no billable resources remain",
+		# full stop, over an account that still holds something — and this test would not notice.
+		errf="$(mktemp "${TMPDIR:-/tmp}/alethia-st-parity.XXXXXX")"
+		out="$(finalize_verification 2>"$errf")" || rc=$?
+		case "$out" in *UNATTRIBUTABLE*) named=yes ;; esac
+		if grep -q 'UNATTRIBUTABLE' "$errf"; then ann=yes; fi
+		rm -f "$errf"
+		probe_has_unverifiable && unv=yes
+		if [ "$rc" = "$2" ] && [ "$named" = "$3" ] && [ "$unv" = "$4" ] && [ "$ann" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$2/✓-line=$3/unverifiable=$4/annotation=$5, got rc=${rc}/✓-line=${named}/unverifiable=${unv}/annotation=${ann}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	probe_reset
+	ST_OUT="" ST_RC=0 ST_ERR="" CLUSTER=""
+	probe_note_unattributable imager-upload-helpers "unlabelled — cannot be tied to this run"
+	st_parity "an UNATTRIBUTABLE finding is reported loudly and does NOT gate" 0 yes no yes
+	probe_reset
+	ST_OUT="" ST_RC=254 ST_ERR="An error occurred (ExpiredToken) when calling the operation" CLUSTER=""
+	probe_note_unattributable imager-upload-helpers "unlabelled — cannot be tied to this run"
+	st_parity "…and it never masks an API failure, which still exits 4" 4 no yes yes
+
+	# probe_confirm's split, wired into a real probe rather than only unit-tested in the library.
+	# A deleted cluster answers ResourceNotFoundException and that IS the answer "gone"; a throttle
+	# is not an answer at all. Conflating them is how an EKS control plane bills unnoticed.
+	st_eks_case() { # <name> <stderr> <expect unverifiable: yes|no>
+		probe_reset
+		ST_OUT="" ST_RC=254 ST_ERR="$2"
+		CLUSTER="eks-ue1-${ENV}-alethia-nl"
+		local got=no
+		alive_eks >/dev/null 2>&1 || true
+		probe_has_unverifiable && got=yes
+		if [ "$got" = "$3" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected unverifiable=$3, got ${got}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_eks_case "a NotFound on describe-cluster confirms GONE" \
+		"An error occurred (ResourceNotFoundException): No cluster found" no
+	st_eks_case "a THROTTLE on describe-cluster is UNVERIFIABLE, not gone" \
+		"An error occurred (ThrottlingException): Rate exceeded" yes
+	unset -f aws
+
 	if [ "$st_fails" -ne 0 ]; then
 		echo "✗ aws-cleanup.sh self-test: ${st_fails} failure(s)" >&2
 		exit 1
@@ -1423,7 +1592,6 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 echo "→ verifying nothing billable for run ${ENV} survived…"
-if ! verify_swept; then
-	exit 1
-fi
-echo "✓ aws cleanup verified complete for run ${ENV} — no billable resources remain"
+st_rc=0
+finalize_verification || st_rc=$?
+exit "$st_rc"

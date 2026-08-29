@@ -49,23 +49,109 @@ export function classify(conclusions) {
 }
 
 /**
+ * A RUN-level conclusion cannot see a job that never ran (#2506).
+ *
+ * `e2e-ai-nightly` gates its only substantive job on a secret being present. Without the key,
+ * `preflight` succeeds, `e2e-live` is skipped, and the RUN concludes `success` — so `classify`
+ * above answers "healthy", correctly and uselessly. The pipeline is green because it did nothing.
+ *
+ * The run conclusion is the wrong altitude, and no amount of care at that altitude fixes it. So a
+ * workflow may DECLARE which job carries its meaning, and this asks whether that job actually ran:
+ *
+ *     env:
+ *       WORKFLOW_HEALTH_SUBSTANTIVE_JOB: "E2E (browser · real model)"
+ *
+ * Undeclared workflows are judged exactly as before. That is deliberate — 35 workflows have
+ * legitimately-conditional jobs, and a rule that flagged all of them would be triaged into silence
+ * within a week.
+ *
+ * THE DECLARATION IS A NAME, AND NAMES DRIFT. If a job is renamed and the marker is not, the link
+ * breaks — and a broken link that reports "healthy" would be this very defect wearing the costume
+ * of its own fix. So a declaration that matches NO job in any observed run is `misdeclared`, which
+ * reports at the top of the report rather than quietly passing.
+ *
+ * @param {{substantiveJob?: string, substantive?: string[], conclusions: string[]}} w
+ *   `substantive[i]` is "ran" | "skipped" | "absent", aligned with `conclusions[i]`.
+ * @returns {"vacuous"|"misdeclared"|null} null when the question does not apply.
+ */
+export function substantiveVerdict(w) {
+	if (!w.substantiveJob) return null;
+	const states = w.substantive ?? [];
+	if (states.length === 0) return null;
+	// Never seen, in any run we looked at: the marker names a job that does not exist under that
+	// name. Reported, never inferred away — the alternative is a check that silently stopped asking.
+	if (states.every((s) => s === "absent")) return "misdeclared";
+	// Pair each state with its run's conclusion, keep the decided ones, and judge that window.
+	const paired = w.conclusions
+		.map((c, i) => ({ c, s: states[i] ?? "absent" }))
+		.filter((p) => BAD.has(p.c) || GOOD.has(p.c))
+		.slice(0, WINDOW);
+	if (paired.length < WINDOW) return null;
+	// A red run is already reported by `classify`, and its substantive job may well have been
+	// skipped BECAUSE something upstream failed. Vacuity is only interesting on a GREEN run.
+	if (!paired.every((p) => GOOD.has(p.c))) return null;
+	if (paired.some((p) => p.s === "ran")) return null;
+	// At least one observed skip, or this is indistinguishable from "we could not see".
+	return paired.some((p) => p.s === "skipped") ? "vacuous" : null;
+}
+
+/**
  * Assess every workflow and produce the report + the issue-worthy set.
  * Pure: takes data, returns data. The caller does the network.
  * @param {{name: string, conclusions: string[]}[]} workflows
  */
 export function assess(workflows) {
 	const rows = workflows
-		.map((w) => ({ name: w.name, state: classify(w.conclusions), conclusions: w.conclusions.slice(0, WINDOW) }))
+		.map((w) => {
+			const base = classify(w.conclusions);
+			const sub = substantiveVerdict(w);
+			// A vacuous verdict OVERRIDES healthy and only healthy. If the run conclusions are red or
+			// mixed, that is the louder fact and `classify` already says it; a green-but-empty run is
+			// precisely the case nothing else can see. `misdeclared` overrides regardless, because a
+			// check that has silently stopped asking is worse than either answer it could have given.
+			const state = sub === "misdeclared" ? "misdeclared" : sub === "vacuous" && base === "healthy" ? "vacuous" : base;
+			return { name: w.name, state, conclusions: w.conclusions.slice(0, WINDOW), substantiveJob: w.substantiveJob };
+		})
 		.sort((a, b) => {
-			const rank = { unhealthy: 0, flaky: 1, healthy: 2, insufficient: 3 };
+			const rank = { misdeclared: 0, unhealthy: 1, vacuous: 2, flaky: 3, healthy: 4, insufficient: 5 };
 			return rank[a.state] - rank[b.state] || a.name.localeCompare(b.name);
 		});
-	return { rows, unhealthy: rows.filter((r) => r.state === "unhealthy"), flaky: rows.filter((r) => r.state === "flaky") };
+	return {
+		rows,
+		unhealthy: rows.filter((r) => r.state === "unhealthy"),
+		flaky: rows.filter((r) => r.state === "flaky"),
+		vacuous: rows.filter((r) => r.state === "vacuous"),
+		misdeclared: rows.filter((r) => r.state === "misdeclared"),
+	};
 }
 
 /** Render the human report. Markdown, because it lands in an issue and a step summary. */
-export function render({ rows, unhealthy, flaky }) {
+export function render({ rows, unhealthy, flaky, vacuous = [], misdeclared = [] }) {
 	const out = [];
+	// First, because it is the one state that means THIS REPORT is not asking what it thinks it is.
+	if (misdeclared.length > 0) {
+		out.push(
+			`**${misdeclared.length} workflow(s) declare a substantive job that no observed run contains.** ` +
+				"The job was probably renamed and `WORKFLOW_HEALTH_SUBSTANTIVE_JOB` was not — until it is fixed, " +
+				"those workflows are not being checked for vacuity at all.",
+			"",
+			"| workflow | declared job |",
+			"|---|---|",
+			...misdeclared.map((r) => `| \`${r.name}\` | \`${r.substantiveJob}\` |`),
+			"",
+		);
+	}
+	if (vacuous.length > 0) {
+		out.push(
+			`**${vacuous.length} workflow(s) are GREEN on every recent run while their substantive job never ran.** ` +
+				"A green tick that skipped the only job carrying meaning reports the absence of a test as a passing one.",
+			"",
+			"| workflow | substantive job | last runs |",
+			"|---|---|---|",
+			...vacuous.map((r) => `| \`${r.name}\` | \`${r.substantiveJob}\` | ${r.conclusions.join(", ")} |`),
+			"",
+		);
+	}
 	if (unhealthy.length === 0) {
 		out.push(`No workflow has failed its last ${WINDOW} runs.`);
 	} else {
@@ -127,6 +213,55 @@ function selfTest() {
 	ok("a clean report says so plainly", /No workflow has failed/.test(render(clean)));
 	ok("a red report names the workflow", /`deploy-console`/.test(render(observed)));
 
+	// ── vacuity: green on every run, with the only job that matters skipped every time (#2506) ──
+	const G3 = ["success", "success", "success"];
+	const SUB = "E2E (browser · real model)";
+
+	// THE REGRESSION. Run-level conclusions call this healthy, correctly and uselessly.
+	ok("a green run whose substantive job always skipped is not healthy",
+		substantiveVerdict({ substantiveJob: SUB, conclusions: G3, substantive: ["skipped", "skipped", "skipped"] }) === "vacuous");
+	ok("...and classify alone still calls it healthy, which is why this exists",
+		classify(G3) === "healthy");
+
+	// The negatives are the whole design. A rule that fires on every conditional job would be
+	// triaged into silence within a week, and 35 workflows have one.
+	ok("one real execution in the window clears it",
+		substantiveVerdict({ substantiveJob: SUB, conclusions: G3, substantive: ["skipped", "ran", "skipped"] }) === null);
+	ok("an undeclared workflow is never judged on vacuity",
+		substantiveVerdict({ conclusions: G3, substantive: ["skipped", "skipped", "skipped"] }) === null);
+	ok("a declaration with no observations is not a verdict",
+		substantiveVerdict({ substantiveJob: SUB, conclusions: G3, substantive: [] }) === null);
+	ok("too few decided runs cannot decide",
+		substantiveVerdict({ substantiveJob: SUB, conclusions: ["success", "success"], substantive: ["skipped", "skipped"] }) === null);
+	// A red run's substantive job may have been skipped BECAUSE something upstream failed. That is
+	// already reported as unhealthy; calling it vacuous too would double-count and misattribute.
+	ok("vacuity is only asked of a GREEN window",
+		substantiveVerdict({ substantiveJob: SUB, conclusions: ["failure", "failure", "failure"], substantive: ["skipped", "skipped", "skipped"] }) === null);
+	// "absent" means we could not see the job at all in that run — not evidence that it skipped.
+	ok("unseen is not skipped",
+		substantiveVerdict({ substantiveJob: SUB, conclusions: G3, substantive: ["absent", "absent", "absent"] }) === "misdeclared");
+	ok("a mix of absent and skipped still reports vacuity",
+		substantiveVerdict({ substantiveJob: SUB, conclusions: G3, substantive: ["skipped", "absent", "absent"] }) === "vacuous");
+
+	// A renamed job must not silently disconnect the check — that would be this defect wearing the
+	// costume of its own fix.
+	const drifted = assess([{ name: "e2e-ai-nightly", conclusions: G3, substantiveJob: "a job by no name", substantive: ["absent", "absent", "absent"] }]);
+	ok("a declaration matching no job is misdeclared, not healthy", drifted.rows[0].state === "misdeclared");
+	ok("...and the report says the check is not running", /not being checked for vacuity/.test(render(drifted)));
+	ok("...and it sorts above everything, including unhealthy",
+		assess([
+			{ name: "dead", conclusions: ["failure", "failure", "failure"] },
+			{ name: "drifted", conclusions: G3, substantiveJob: "gone", substantive: ["absent", "absent", "absent"] },
+		]).rows[0].name === "drifted");
+
+	const vac = assess([{ name: "e2e-ai-nightly", conclusions: G3, substantiveJob: SUB, substantive: ["skipped", "skipped", "skipped"] }]);
+	ok("assess surfaces the vacuous workflow", vac.vacuous.length === 1 && vac.rows[0].state === "vacuous");
+	ok("...and the report names the job that never ran", new RegExp(SUB.replace(/[()·]/g, ".")).test(render(vac)));
+	ok("...and it is not counted as green", !/No workflow has failed/.test(render(vac)) || vac.vacuous.length === 1);
+	// A vacuous verdict must not mask a red one.
+	ok("a red workflow stays unhealthy even if its substantive job skipped",
+		assess([{ name: "x", conclusions: ["failure", "failure", "failure"], substantiveJob: SUB, substantive: ["skipped", "skipped", "skipped"] }]).rows[0].state === "unhealthy");
+
 	if (fails > 0) { console.error(`\nworkflow-health self-test: ${fails} failure(s)`); process.exit(1); }
 	console.log("\nself-test: all passed");
 }
@@ -146,5 +281,12 @@ if (process.argv.includes("--self-test")) {
 	console.log(render(result));
 	// The count goes to stdout's last line for the workflow to branch on. Still exit 0 — see the
 	// header: this must not become the sixth red pipeline nobody looks at.
-	console.log(`\nUNHEALTHY_COUNT=${result.unhealthy.length}`);
+	//
+	// IT COUNTS EVERYTHING WORTH OPENING AN ISSUE FOR, not just the red ones. It emitted
+	// `unhealthy.length` alone, and the workflow gates the issue on `count != '0'` — so a report
+	// whose only finding was a green-but-vacuous workflow would render the finding into a step
+	// summary and stop there. A daily cron's step summary is not a channel anyone reads; that is a
+	// finding with no outlet, which is the same defect this script exists to catch one level up.
+	const actionable = result.unhealthy.length + result.vacuous.length + result.misdeclared.length;
+	console.log(`\nACTIONABLE_COUNT=${actionable}`);
 }

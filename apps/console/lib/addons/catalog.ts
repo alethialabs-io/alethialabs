@@ -152,6 +152,99 @@ const EXTERNAL_DNS_PROVIDERS: Record<ExternalDnsProvider, ExternalDnsProviderAut
 	azure: { label: "Azure DNS", saAnnotation: "azure.workload.identity/client-id" },
 };
 
+/**
+ * The object-store PLUGINS velero can talk to a backup location through.
+ *
+ * These ids are velero's own `BackupStorageLocation.spec.provider` values, not cloud names — the
+ * distinction the catalog previously blurred and that made velero read as un-offerable on two
+ * clouds. `aws` is the S3 plugin, and it speaks the S3 API to ANY store that does: Hetzner Object
+ * Storage, Alibaba OSS, MinIO, Ceph. Upstream says so directly — "Velero's AWS Object Store plugin
+ * uses Amazon's Go SDK to connect to the AWS S3 API. Some third-party storage providers also support
+ * the S3 API" (velero.io/docs/v1.14/supported-providers). What that needs is an ENDPOINT, which is
+ * why `s3Url` and `s3ForcePathStyle` are knobs below.
+ */
+/**
+ * The marketplace Vault's in-cluster API root, and the Secret its bootstrap keeps state in.
+ *
+ * ⚠️ DERIVED, NOT CHOSEN, and a drift here does not error — it resolves nowhere, and the only
+ * symptom is a Vault that stays sealed with a Job retrying against a name that does not exist.
+ * Three facts compose into this string, each verified against `helm template addon-vault
+ * hashicorp/vault --version 0.28.1`:
+ *
+ *   1. ArgoCD names the Helm release after the Application, and the Application is `addon-` + the
+ *      catalog id (packages/core/argocd/addons.go `AddOnAppName`).
+ *   2. The chart's `vault.fullname` returns the RELEASE NAME unchanged when it already contains the
+ *      chart name — `addon-vault` does — so the server Service is `addon-vault`, not
+ *      `addon-vault-vault`.
+ *   3. That Service sets `publishNotReadyAddresses: true`, which is the only reason this address
+ *      works AT ALL for the bootstrap: a sealed Vault fails its readiness probe (`vault status`
+ *      exits 2), so an ordinary Service would carry no endpoints and the Job could never reach the
+ *      Vault it exists to unseal.
+ *
+ * A Go test reads the value back out of the generated fixture rather than restating it, the same
+ * way `hetznerVaultHost()` is pinned for the platform Vault.
+ */
+const VAULT_ADDON_ID = "vault";
+const VAULT_ADDON_NAMESPACE = "vault";
+const VAULT_ADDON_API_BASE = `http://addon-${VAULT_ADDON_ID}.${VAULT_ADDON_NAMESPACE}.svc.cluster.local:8200`;
+
+/**
+ * Where the bootstrap keeps the unseal key.
+ *
+ * Deliberately NOT `alethia-addon-vault`, the #640 runner-seeded secret-knob Secret. Those carry
+ * `alethia.io/managed-by=addon-marketplace` + an add-on-id label, and `PruneAddOnSecrets` deletes
+ * every labelled Secret whose add-on is no longer enabled. The Job writes this one with no ArgoCD
+ * and no marketplace labels, so nothing sweeps it — which is the property that matters: deleting
+ * the unseal key leaves a Vault nobody can ever open, and that is unrecoverable rather than merely
+ * broken. Separate name as well as separate labels, so the two cannot be confused by a reader.
+ */
+const VAULT_ADDON_STATE_SECRET = "alethia-vault-addon-state";
+
+const VELERO_PROVIDER_IDS = ["aws", "gcp", "azure"] as const;
+
+/** One velero object-store provider id. */
+export type VeleroProvider = (typeof VELERO_PROVIDER_IDS)[number];
+
+/** How one velero object-store provider is installed and described. */
+interface VeleroProviderPlugin {
+	/** The choice's label in the configure form. */
+	label: string;
+	/** The plugin container image, copied into the velero pod by an init container. */
+	image: string;
+}
+
+/**
+ * Provider → its plugin image, PINNED.
+ *
+ * WHY THIS EXISTS — and it is not a refinement. The velero chart ships `initContainers: []` and says
+ * so in its own values.yaml: "Init containers to add to the Velero deployment's pod spec. **At least
+ * one plugin provider image is required.**" The catalog set no initContainers at all, so every
+ * velero this marketplace has ever installed came up with NO object-store plugin — a `velero server`
+ * that cannot talk to S3, GCS or Blob and therefore cannot take a single backup, on any cloud, even
+ * with a bucket, a region and a credentials file all correctly supplied. It reported Healthy while
+ * doing it, because the deployment's probes are an HTTP GET on /metrics.
+ *
+ * The tag is pinned against the chart's OWN velero image (7.2.1 → velero v1.14.1) through upstream's
+ * compatibility table, where plugin v1.10.x ↔ velero v1.14.x
+ * (github.com/vmware-tanzu/velero-plugin-for-{aws,gcp,microsoft-azure} README). A bump of `version`
+ * above must be re-checked against that table — an off-by-one major here is a plugin that loads and
+ * then refuses every call.
+ */
+const VELERO_PROVIDERS: Record<VeleroProvider, VeleroProviderPlugin> = {
+	aws: {
+		label: "S3 — AWS, or any S3-compatible store",
+		image: "velero/velero-plugin-for-aws:v1.10.1",
+	},
+	gcp: {
+		label: "Google Cloud Storage",
+		image: "velero/velero-plugin-for-gcp:v1.10.1",
+	},
+	azure: {
+		label: "Azure Blob Storage",
+		image: "velero/velero-plugin-for-microsoft-azure:v1.10.1",
+	},
+};
+
 export const ADDON_CATALOG: AddOnDef[] = [
 	defineAddOn({
 		id: "kube-prometheus-stack",
@@ -433,11 +526,85 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			ui: z.boolean().default(true),
 			/** High-availability (Raft) server instead of a single standalone pod. */
 			ha: z.boolean().default(false),
+			/**
+			 * Run `vault operator init` + unseal once, from inside the cluster, and enable KV v2.
+			 * Off means the operator does it themselves and the pod stays sealed until they do.
+			 */
+			initialize: z.boolean().default(true),
+			/** The Agent sidecar injector — a cluster-wide mutating admission webhook. */
+			injector: z.boolean().default(false),
 		}),
+		// ── injector: false, and the reason is measured in the chart, not a preference ─────────
+		//
+		// The chart's default is TRUE, and it installs a MutatingWebhookConfiguration with
+		// `caBundle: ""` plus an injector whose ClusterRole grants `patch` on
+		// `mutatingwebhookconfigurations` — because with `injector.certs.secretName: null` it runs in
+		// "automatic management mode", generates its own certificate and writes the bundle into the
+		// webhook itself (hashicorp/vault-helm 0.28.1 values.yaml + injector-clusterrole.yaml).
+		//
+		// Under an ArgoCD Application with `selfHeal: true` that is not a cosmetic diff, it is a
+		// FIGHT: ArgoCD heals `caBundle` back to the empty string the chart declares, the injector
+		// re-patches it, forever. The Application never reaches Synced and the injector's webhook is
+		// intermittently unusable. The same class the render-determinism check exists for (#2822,
+		// #2823), arrived at from the other direction — a value the CLUSTER rotates rather than one
+		// the render does.
+		//
+		// It is also a second answer to a question the product already answers: secrets reach
+		// workloads through external-secrets-operator here, and the platform Vault turns the injector
+		// off for exactly that reason (apps/console/lib/cloud-providers/hetzner-services.ts).
+		//
+		// A knob rather than a hard-coded false, because a customer's Vault is theirs and Agent
+		// injection is a legitimate way to use it. The field help states the consequence.
 		toValues: (c) => ({
 			ui: { enabled: c.ui },
+			injector: { enabled: c.injector },
 			server: { ha: { enabled: c.ha } },
 		}),
+		// ── Why a marketplace Vault needs a bootstrap at all ──────────────────────────────────
+		//
+		// A freshly installed Vault is SEALED and UNINITIALISED. Nothing in the chart changes that:
+		// hashicorp/vault-helm 0.28.1 has no init hook of any kind (its `server.postStart` comment
+		// offers the idea and its values ship `[]`), because upstream's position is that
+		// initialising is an operator act. So the marketplace was offering a one-click install of a
+		// product that cannot come up — `vault status` exits 2, the readiness probe never passes,
+		// no pod is ever Ready, and the Application sits Progressing at any budget.
+		//
+		// AUTO-UNSEAL IS NOT AN ALTERNATIVE TO THIS, and that is the finding that shaped the
+		// design. A cloud-KMS seal (`awskms` / `gcpckms` / `azurekeyvault`) removes the need to hold
+		// an unseal key across RESTARTS; it does not initialise anything. `vault operator init` is
+		// still required exactly once, and it still has to be run by somebody. A user who owns a KMS
+		// key can already reach that seal today through the Advanced values YAML, which deep-merges
+		// over `server.standalone.config` — and this Job then does the one thing they still cannot
+		// automate. Alethia does not provision the KMS key or the workload identity for it: a
+		// marketplace add-on is a chart plus user config and can see neither the project's cloud nor
+		// its IaC outputs (the same wall that moved cert-manager onto the platform rail above).
+		//
+		// ── The custody statement ─────────────────────────────────────────────────────────────
+		//
+		// With the default Shamir seal, SOMETHING must hold the unseal key across restarts, and it
+		// is a Kubernetes Secret in the customer's own cluster. Against a cluster-admin, an etcd
+		// backup or a volume snapshot, that buys nothing over a plain Secret — the same honest
+		// accounting packages/core/argocd/vault.go makes for the platform Vault, and it must be said
+		// wherever this is described. What it does buy is a Vault that WORKS: audit, leases,
+		// revocation and rotation, on a cluster the customer already fully controls.
+		//
+		// The ROOT TOKEN is revoked before the Job exits, so no standing unrestricted credential is
+		// created. The owner mints one on demand with `vault operator generate-root`, which requires
+		// the stored unseal key — Vault's own documented path, and auditable each time.
+		//
+		// ── Why not on HA ─────────────────────────────────────────────────────────────────────
+		//
+		// Raft means three replicas, each of which must be joined and unsealed. This rail unseals
+		// ONE node, so on `ha` it would open a third of a cluster and report success. It returns
+		// null instead, and the field help says so.
+		bootstrap: (c) =>
+			c.initialize && !c.ha
+				? {
+						kind: "vault-init",
+						apiBase: VAULT_ADDON_API_BASE,
+						stateSecret: VAULT_ADDON_STATE_SECRET,
+					}
+				: null,
 		fields: [
 			{ key: "ui", label: "Enable Vault UI", type: "boolean", default: true },
 			{
@@ -445,6 +612,20 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "High availability (Raft)",
 				type: "boolean",
 				default: false,
+			},
+			{
+				key: "initialize",
+				label: "Initialise and unseal automatically",
+				type: "boolean",
+				default: true,
+				help: `A new Vault starts sealed and cannot come up on its own. With this on, Alethia runs \`vault operator init\` and unseals it once from inside the cluster, enables KV v2 at secret/, and revokes the root token. The unseal key is written to the "${VAULT_ADDON_STATE_SECRET}" Secret in this cluster and nowhere else — mint an operator token with \`vault operator generate-root\`. Not available with high availability (Raft), where every node needs unsealing. Turn it off to hold the key yourself.`,
+			},
+			{
+				key: "injector",
+				label: "Agent sidecar injector",
+				type: "boolean",
+				default: false,
+				help: "Off by default. The injector installs a cluster-wide mutating admission webhook and then rewrites that webhook's CA bundle itself, which GitOps continuously heals back — so the add-on never reaches Synced while it is on. Secrets already reach workloads through external-secrets-operator.",
 			},
 		],
 		syncWave: 2,
@@ -514,21 +695,27 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		category: "backup",
 		icon: "Archive",
 		summary:
-			"Cluster backup + restore + migration to an object-store backup location — set the provider, bucket, and region below.",
+			"Cluster backup + restore + migration to an object-store backup location — S3 (including S3-compatible stores), GCS or Azure Blob.",
 		docsUrl: "https://velero.io/docs/latest/",
 		license: "Apache-2.0",
 		chartRepo: "https://vmware-tanzu.github.io/helm-charts",
 		chart: "velero",
 		version: "7.2.1",
 		namespace: "velero",
-		defaultValues: { snapshotsEnabled: true },
 		configSchema: z.object({
-			/** Object-store provider for the backup location (the velero plugin's provider name). */
-			provider: z.enum(["aws", "gcp", "azure"]).default("aws"),
+			/** Object-store PLUGIN for the backup location — velero's own provider name, not a cloud. */
+			provider: z.enum(VELERO_PROVIDER_IDS).default("aws"),
 			/** Backup bucket name. Empty = no backup location configured (velero installs unconfigured). */
 			bucket: z.string().default(""),
-			/** Bucket region (AWS/S3-compatible). */
+			/** Bucket region. Required by the S3 plugin; ignored by gcp. */
 			region: z.string().default(""),
+			/**
+			 * S3 endpoint URL for a NON-AWS S3-compatible store (Hetzner Object Storage, Alibaba OSS,
+			 * MinIO, Ceph). Empty = AWS's own endpoint. `provider: aws` only.
+			 */
+			s3Url: z.string().default(""),
+			/** Address buckets as `<endpoint>/<bucket>` rather than `<bucket>.<endpoint>`. */
+			s3ForcePathStyle: z.boolean().default(false),
 			/** Also back up file volumes (deploys the node-agent DaemonSet). */
 			deployNodeAgent: z.boolean().default(false),
 			/** Take cloud volume snapshots alongside object-store backups. */
@@ -537,25 +724,100 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			 * mounted from the runner-seeded Secret's `cloud` key, never inlined). */
 			cloud: z.string().default(""),
 		}),
-		toValues: (c) => ({
-			snapshotsEnabled: c.snapshotsEnabled,
-			deployNodeAgent: c.deployNodeAgent,
-			...(c.bucket
-				? {
-						configuration: {
-							backupStorageLocation: [
+		// ── Three facts about this chart that the values below exist to honour ─────────────────
+		//
+		// 1. NO PLUGIN, NO BACKUPS. `initContainers` is empty upstream and the chart's own comment
+		//    says at least one plugin image is required. See VELERO_PROVIDERS above.
+		//
+		// 2. AN UNCONFIGURED VELERO MUST STILL RENDER A VALID MANIFEST. The chart's default
+		//    `configuration.backupStorageLocation` is a one-element list of EMPTY placeholders, so
+		//    emitting no `configuration` at all — which is what this entry used to do when `bucket`
+		//    was blank — renders `provider: <null>` and `bucket: ""`. The BackupStorageLocation CRD
+		//    marks `provider` and `objectStorage.bucket` required, so the API server REJECTS the
+		//    document and the whole Application fails to sync: measured health=Missing on the add-on
+		//    sweep (#2717 run 33124236998), and the reason the catalog's own claim — "empty bucket =
+		//    velero installs unconfigured" — was false. An EMPTY LIST is what the template wants:
+		//    `{{- range .Values.configuration.backupStorageLocation }}` over nothing renders nothing.
+		//
+		// 3. AN S3-COMPATIBLE ENDPOINT HAS NO SNAPSHOT API. `s3Url` points the aws plugin at a bucket
+		//    somebody else runs; it does not give it an EC2 API to snapshot volumes with. So a
+		//    VolumeSnapshotLocation is emitted only for a plugin talking to its own cloud — offering
+		//    a snapshot location that can never take a snapshot is the class of dead offer the
+		//    external-dns work above exists to stop repeating.
+		toValues: (c) => {
+			const plugin = VELERO_PROVIDERS[c.provider];
+			// S3 endpoint knobs are the aws plugin's; gcp and azure have no such config keys, and a
+			// stray one on their BSL is silently ignored rather than rejected — which is worse.
+			const s3 =
+				c.provider === "aws"
+					? {
+							...(c.s3Url ? { s3Url: c.s3Url } : {}),
+							...(c.s3ForcePathStyle ? { s3ForcePathStyle: true } : {}),
+						}
+					: {};
+			const config = { ...(c.region ? { region: c.region } : {}), ...s3 };
+			// Volume snapshots need the plugin's own cloud (fact 3 above), and a snapshot location
+			// with no backup location is not a configuration velero can act on.
+			const snapshots = c.snapshotsEnabled && Boolean(c.bucket) && !c.s3Url;
+			return {
+				// 4. THE CHART'S CRD-UPGRADE HOOK IS DEAD WEIGHT UNDER ARGOCD, AND ITS IMAGE NO
+				//    LONGER EXISTS. With `upgradeCRDs` at its default `true` the chart emits a Job
+				//    whose container is `docker.io/bitnami/kubectl:<the CLUSTER's minor>` — the tag
+				//    is derived from the cluster, not pinned. Bitnami withdrew their public Docker
+				//    Hub catalog, so on a 1.35 cluster that resolves to `bitnami/kubectl:1.35`,
+				//    which does not exist:
+				//
+				//      Failed to pull image "docker.io/bitnami/kubectl:1.35":
+				//        code = NotFound ... -> ErrImagePull -> ImagePullBackOff (x218)
+				//
+				//    The Job is a pre-upgrade hook, so ArgoCD waits on it and syncs NOTHING: every
+				//    resource reads Missing and the add-on never converges. Measured on
+				//    hetzner/addons run 33199532768 — `addon-velero: health=Missing sync=OutOfSync`
+				//    with all 20 resources "could not fetch".
+				//
+				//    Turning the hook OFF is the fix rather than re-pinning the image, because under
+				//    ArgoCD the hook has nothing to do: ArgoCD renders with `--include-crds` and
+				//    applies the CRDs as ordinary managed resources. Verified by rendering the
+				//    pinned chart both ways — `upgradeCRDs=false` emits ZERO kubectl references and
+				//    still carries all THIRTEEN velero CRDs. Pinning a replacement image would have
+				//    kept a Docker Hub pull, a rate limit and a second version to track, to run a
+				//    Job whose work ArgoCD has already done.
+				upgradeCRDs: false,
+				// The plugin binary, copied into the shared `plugins` emptyDir before velero starts.
+				initContainers: [
+					{
+						name: "velero-plugin",
+						image: plugin.image,
+						imagePullPolicy: "IfNotPresent",
+						volumeMounts: [{ mountPath: "/target", name: "plugins" }],
+					},
+				],
+				snapshotsEnabled: snapshots,
+				deployNodeAgent: c.deployNodeAgent,
+				configuration: {
+					backupStorageLocation: c.bucket
+						? [
 								{
 									name: "default",
 									provider: c.provider,
 									bucket: c.bucket,
 									default: true,
+									...(Object.keys(config).length > 0 ? { config } : {}),
+								},
+							]
+						: [],
+					volumeSnapshotLocation: snapshots
+						? [
+								{
+									name: "default",
+									provider: c.provider,
 									...(c.region ? { config: { region: c.region } } : {}),
 								},
-							],
-						},
-					}
-				: {}),
-		}),
+							]
+						: [],
+				},
+			};
+		},
 		// Velero mounts `credentials.existingSecret` at /credentials and every provider env
 		// (AWS_SHARED_CREDENTIALS_FILE, GOOGLE_APPLICATION_CREDENTIALS, …) points at the
 		// fixed `cloud` KEY inside it — verified via `helm template velero --version 7.2.1`.
@@ -566,17 +828,40 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		fields: [
 			{
 				key: "provider",
-				label: "Backup provider",
+				label: "Object-store plugin",
 				type: "enum",
 				default: "aws",
-				options: [
-					{ value: "aws", label: "AWS S3 / S3-compatible" },
-					{ value: "gcp", label: "Google Cloud Storage" },
-					{ value: "azure", label: "Azure Blob" },
-				],
+				help: "Velero's own provider name, not a cloud. The S3 plugin talks to any store that speaks the S3 API — set the endpoint below for one that is not AWS.",
+				// Derived from the table, so a plugin added there cannot be missing here — the
+				// descriptor↔schema guard (tests/lib/addons/field-descriptors.test.ts) checks the
+				// other direction, that every option the form offers is one the schema accepts.
+				options: VELERO_PROVIDER_IDS.map((id) => ({
+					value: id,
+					label: VELERO_PROVIDERS[id].label,
+				})),
 			},
-			{ key: "bucket", label: "Backup bucket", type: "string", default: "" },
-			{ key: "region", label: "Region (AWS/S3)", type: "string", default: "" },
+			{
+				key: "bucket",
+				label: "Backup bucket",
+				type: "string",
+				default: "",
+				help: "A bucket you own, OUTSIDE this cluster's lifecycle — a backup store destroyed with the cluster it backs up is not a backup store. Leave empty to install velero now and configure the location later.",
+			},
+			{ key: "region", label: "Region", type: "string", default: "" },
+			{
+				key: "s3Url",
+				label: "S3 endpoint URL (S3-compatible stores)",
+				type: "string",
+				default: "",
+				help: "For a non-AWS S3 store, e.g. https://fsn1.your-objectstorage.com (Hetzner Object Storage) or https://oss-eu-central-1.aliyuncs.com (Alibaba OSS). Leave empty for AWS S3. Volume snapshots are unavailable against an S3-compatible endpoint.",
+			},
+			{
+				key: "s3ForcePathStyle",
+				label: "Path-style bucket addressing",
+				type: "boolean",
+				default: false,
+				help: "Required by most S3-compatible stores, including Hetzner Object Storage and MinIO.",
+			},
 			{ key: "deployNodeAgent", label: "Back up file volumes (node-agent)", type: "boolean", default: false },
 			{ key: "snapshotsEnabled", label: "Volume snapshots", type: "boolean", default: true },
 			{
@@ -1019,10 +1304,23 @@ export const ADDON_CATALOG: AddOnDef[] = [
 		configSchema: z.object({
 			/** Persistent volume size for the registry store (GiB). */
 			storageGb: z.coerce.number().int().min(10).max(2000).default(50),
-			/** How the registry is exposed outside the cluster. */
+			/**
+			 * How the registry is exposed outside the cluster.
+			 *
+			 * DEFAULT clusterIP, NOT the chart's `ingress` — the same call, for the same measured
+			 * reason, that `hetznerRegistryValues` already makes for the `registry` KIND: an ingress
+			 * needs an ingress controller AND a resolvable host, and the chart's default host
+			 * `core.harbor.domain` resolves nowhere. An add-on installed at catalog defaults carries
+			 * no domain, so the cluster network is the only address it truly has.
+			 *
+			 * This is not cosmetic. ArgoCD's Ingress health check reports **Progressing** until
+			 * `.status.loadBalancer` is populated, and nothing populates it for an Ingress no
+			 * controller has claimed — so `addon-harbor` sat Healthy-pods/Progressing-app forever,
+			 * holding the whole add-on cell red. See the toValues comment for the proof.
+			 */
 			exposeType: z
 				.enum(["ingress", "clusterIP", "nodePort", "loadBalancer"])
-				.default("ingress"),
+				.default("clusterIP"),
 			/** Harbor admin password (secret — encrypted at rest; empty = Alethia mints one, #2846). */
 			adminPassword: z.string().default(""),
 			/**
@@ -1098,14 +1396,30 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			},
 			expose: {
 				type: c.exposeType,
-				// certSource `auto` — the chart default — calls genSignedCert on every render, so
-				// the ingress TLS Secret and the pod-template checksums that hash it move every
-				// time ArgoCD reconciles (#2823). `none` is the chart's own documented answer for
-				// "the ingress controller already has a certificate", which on every Alethia
-				// cluster it does: cert-manager is the platform TLS mechanism and terminates at
-				// the ingress. TLS stays ENABLED, so `externalURL` remains https — which is why
-				// this is `none` and not `tls.enabled: false`, the other deterministic option.
-				tls: { enabled: true, certSource: "none" },
+				// ── WHY THE TLS BLOCK FOLLOWS exposeType RATHER THAN BEING FIXED ──
+				//
+				// On the INGRESS path, `certSource: none` is load-bearing and stays: the chart
+				// default `auto` calls genSignedCert on every render, so the ingress TLS Secret and
+				// the pod-template checksums that hash it move every time ArgoCD reconciles
+				// (#2823). `none` is the chart's own documented answer for "the ingress controller
+				// already has a certificate", and TLS stays ENABLED so `externalURL` remains https
+				// — which is why it is `none` and not `tls.enabled: false`.
+				//
+				// That comment used to add "which on every Alethia cluster it does: cert-manager is
+				// the platform TLS mechanism". THAT IS NOT TRUE, and it matters here: cert-manager
+				// installs CONDITIONALLY — `CertManagerEnabled` is `ManagedCertificate && DNSEnabled
+				// && DomainName != "" && CertManagerSolver() != ""` (infra_facts.go). A cluster with
+				// no managed certificate has no cert-manager and no terminating certificate, so on
+				// the default path there is nothing for `certSource: none` to defer to.
+				//
+				// Off the ingress path there is no ingress TLS Secret at all, so #2823's
+				// non-determinism cannot arise and enabling TLS would only promise an https
+				// `externalURL` that nothing terminates. `hetznerRegistryValues` reaches the same
+				// pair — clusterIP with tls disabled — for the `registry` kind.
+				tls:
+					c.exposeType === "ingress"
+						? { enabled: true, certSource: "none" }
+						: { enabled: false },
 			},
 		}),
 		// Harbor reads HARBOR_ADMIN_PASSWORD from `existingSecretAdminPassword` at the key
@@ -1461,6 +1775,7 @@ export function resolveAddOnInstall(row: {
 	);
 	const secretWiring =
 		secretKeys.length > 0 && def.secretValues ? def.secretValues(refs, config) : {};
+	const bootstrap = def.bootstrap ? def.bootstrap(config) : null;
 	// Precedence (low → high): chart defaults → schema knobs → secret wiring → the user's raw
 	// Helm-values YAML. Unparseable raw YAML is ignored (the save-time action validates it) so
 	// it never blocks a deploy.
@@ -1480,6 +1795,11 @@ export function resolveAddOnInstall(row: {
 		// #2837: only when the add-on asks. An absent field leaves the namespace unlabelled and the
 		// cluster's own default in force.
 		...(def.podSecurity ? { podSecurity: def.podSecurity } : {}),
+		// The one-shot in-cluster bootstrap this add-on's knobs ask for (a sealed Vault's init +
+		// unseal). Derived from the PARSED config, so a stored row that fails validation falls back
+		// to the schema defaults here exactly as `values` does — the two can never disagree about
+		// which configuration was resolved.
+		...(bootstrap ? { bootstrap } : {}),
 		...(secretKeys.length > 0
 			? {
 					secretRef: {

@@ -374,15 +374,16 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	t.Cleanup(func() {
 		// Per-provider, and the SAME function ResolveT2Budget reserves the window with — a
 		// flat 15m here was hetzner's number charged to every cloud (#2729).
-		dctx, dcancel := context.WithTimeout(context.Background(), resolveT2TeardownTimeout(p))
+		window := resolveT2TeardownTimeout(p)
+		dctx, dcancel := context.WithTimeout(context.Background(), window)
 		defer dcancel()
 		if derr := teardownT2Cluster(dctx, cp.URL(), jobID, project, env, provider, region, stagedTemplate, t2LogWriter{t}); derr != nil {
-			// The sweeper NAME follows the provider. This line hardcoded `hcloud-cleanup` on every
-			// cloud, so an aws run whose in-test destroy failed pointed the reader at hetzner's
-			// script — the workflow's own per-provider `case` had already chosen `aws-cleanup.sh`
-			// correctly, so only the message was wrong, and only when someone was reading it after
-			// a failure. `provider` is in scope four lines up.
-			t.Logf("teardown RunDestroy failed (workflow %s is the guarantee): %v", t2SweeperName(provider), derr)
+			// The sweeper NAME follows the provider, and a window that EXPIRED is reported as a
+			// window rather than as a destroy error — the two are opposite findings that arrive
+			// wearing the same `signal: interrupt`. Both live in t2TeardownFailureLine, which is
+			// untagged and unit-tested, because this branch only executes on a paid cloud run.
+			// `dctx.Err()` is read AFTER the call returns, so it is the deadline's own verdict.
+			t.Logf("%s", t2TeardownFailureLine(provider, window, dctx.Err(), derr))
 		} else {
 			t.Log("teardown: cluster destroyed via RunDestroy")
 		}

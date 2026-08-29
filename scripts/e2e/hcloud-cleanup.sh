@@ -36,7 +36,35 @@
 #   HCLOUD_TOKEN=... ./scripts/e2e/hcloud-cleanup.sh <cluster-name>
 #   HCLOUD_TOKEN=... ALETHIA_E2E_CLUSTER_NAME=<cluster-name> ./scripts/e2e/hcloud-cleanup.sh
 #   DRY_RUN=1 ...    # list what WOULD be deleted, delete nothing
+#
+# Exit codes (the verification contract — see finalize_verification):
+#   0  every probe answered, and nothing labelled cluster=<name> survived
+#   1  a LEAK: the API listed something still standing and billing
+#   2  refused to run (missing/implausible cluster name, no token, missing CLI)
+#   3  INTERNAL: empty selector reached a scoped call
+#   4  UNVERIFIABLE: a type could not be looked at, so nothing here proves the account is empty
+#
+# UNATTRIBUTABLE is a FOURTH probe state with NO exit code of its own: the probe answered, and the answer
+# is that something exists which by design carries nothing tying it to this run (the imager upload
+# helpers — see report_imager_helpers). It is reported loudly and never gates, because a condition
+# this script can never resolve would red every run forever. #3138 gated it and hetzner went
+# permanently red; see scripts/e2e/lib/sweep-probe.sh's header for the boundary.
 set -euo pipefail
+
+# ── The probe contract (CLEAN / LEAKED / UNVERIFIABLE / UNATTRIBUTABLE), shared by all five sweepers.
+#
+# The exit code is gated on UNVERIFIABLE and NOT on UNATTRIBUTABLE. #2549 was diagnosed and fixed
+# HERE, in this file, for exactly two probes — and never generalised: not to the other four clouds,
+# and not even to list_ids twenty lines below, which every purge and the whole of verify_swept run
+# through. scripts/e2e/lib/sweep-probe.sh is that fix, generalised, and it gates.
+#
+# #3138 then over-applied it: the imager upload helpers are not a failed probe, and gating on them
+# made this leg red on every run. That is the fourth state, and the boundary between the two is in
+# sweep-probe.sh's header — read it before adding a note to either ledger. ──
+E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+# shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
+. "${E2E_LIB_DIR}/sweep-probe.sh"
+probe_reset
 
 SELF_TEST=0
 if [ "${1:-}" = "--self-test" ]; then
@@ -46,6 +74,9 @@ if [ "${1:-}" = "--self-test" ]; then
 	# satisfy the token guard, and is deliberately not a plausible token.
 	HCLOUD_TOKEN="self-test-no-hcloud-call-is-made"
 	export HCLOUD_TOKEN
+	# The probe retries are a real-cloud kindness (a transient 5xx must not red a healthy teardown)
+	# and pure dead time against a stub. The retry LOOP is still exercised; it just does not wait.
+	PROBE_RETRY_DELAY=0
 fi
 CLUSTER_NAME="${1:-${ALETHIA_E2E_CLUSTER_NAME:-}}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -110,9 +141,9 @@ S3_ACCESS_KEY="${HETZNER_S3_ACCESS_KEY:-}"
 S3_SECRET_KEY="${HETZNER_S3_SECRET_KEY:-}"
 S3_REGION="${HETZNER_S3_REGION:-${ALETHIA_E2E_HCLOUD_REGION:-fsn1}}"
 S3_ENDPOINT="${HETZNER_S3_ENDPOINT:-${S3_REGION}.your-objectstorage.com}"
-# Set by the sweep/verify below when a type could not be looked at rather than looked at and found
-# clean. The two are not the same answer and the final banner must not conflate them.
-UNVERIFIABLE=""
+# The sweep/verify below record — via probe_note_unverifiable / probe_run — every type that could
+# not be LOOKED AT, as distinct from looked at and found clean. The two are not the same answer;
+# the final banner must not conflate them, and since this change the exit code must not either.
 
 [ "$SELF_TEST" = "1" ] || echo "→ hcloud belt-and-suspenders cleanup for label ${SELECTOR}"
 [ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
@@ -131,7 +162,7 @@ else
 	# them apart and does not need to: both mean this script could not look, which is reported —
 	# never silently folded into "none".
 	echo "::warning::'hcloud zone list' failed (CLI without DNS zone support, or a token that cannot read zones). DNS zones for ${SELECTOR} were NOT swept and NOT verified — check them by hand in the Hetzner Console."
-	UNVERIFIABLE="${UNVERIFIABLE}dns-zones(hcloud zone list unavailable) "
+	probe_note_unverifiable dns-zones "hcloud zone list unavailable"
 fi
 
 # assert_selector fails closed if the selector ever became empty (defensive — the
@@ -144,9 +175,15 @@ assert_selector() {
 }
 
 # list_ids <resource> — ids of resources of <resource> carrying our label, one per line.
+#
+# THE GAP #2549 LEFT OPEN. This one line is what every purge and the whole of verify_swept read,
+# and it laundered its status exactly like the load-balancer fallback that issue was filed against:
+# `2>/dev/null … || true`, so an expired token or a 5xx returned an empty list and exit 0 — which
+# verify_swept reads as "nothing survived". Every resource type at once. It goes through probe_run
+# now, so a failed list is UNVERIFIABLE and gates.
 list_ids() {
 	assert_selector
-	hcloud "$1" list --selector "$SELECTOR" -o noheader -o columns=id 2>/dev/null || true
+	probe_run "$1" hcloud "$1" list --selector "$SELECTOR" -o noheader -o columns=id || true
 }
 
 # purge <resource> [human-label] — delete every labelled resource of <resource>, with retries.
@@ -248,7 +285,10 @@ wait_for_volumes_detached() {
 # confirmed attached to a network id that carries our label.
 cluster_network_id() {
 	assert_selector
-	hcloud network list --selector "$SELECTOR" -o noheader -o columns=id 2>/dev/null | head -n1 | tr -d '[:space:]' || true
+	# Captured BEFORE it is filtered: `hcloud … | head -n1` reports head's status, never the CLI's.
+	local out
+	out="$(probe_run network hcloud network list --selector "$SELECTOR" -o noheader -o columns=id)" || return 0
+	printf '%s' "$out" | head -n1 | tr -d '[:space:]' || true
 }
 
 # unlabelled_lb_ids — Load Balancers attached to THIS run's private network but carrying no
@@ -259,7 +299,9 @@ unlabelled_lb_ids() {
 	# A non-numeric or empty id would make the jq match degenerate; refuse rather than widen.
 	printf '%s' "$net" | grep -Eq '^[0-9]+$' || return 0
 	labelled="$(list_ids load-balancer | tr '\n' ' ')"
-	hcloud load-balancer list -o json 2>/dev/null |
+	local raw
+	raw="$(probe_run ccm-load-balancers hcloud load-balancer list -o json)" || return 0
+	printf '%s' "$raw" |
 		jq -r --argjson net "$net" '.[] | select(((.private_net // []) | map(.network) | index($net)) != null) | .id' 2>/dev/null |
 		while IFS= read -r id; do
 			[ -n "$id" ] || continue
@@ -274,7 +316,7 @@ sweep_unlabelled_lbs() {
 	local ids id
 	if ! command -v jq >/dev/null 2>&1; then
 		echo "::warning::jq is not installed — the CCM-created ingress load balancer for ${SELECTOR} could NOT be discovered (it carries no hcloud label; the only binding is its private-network attachment, which needs jq to read). NOT swept and NOT verified — check load balancers by hand."
-		UNVERIFIABLE="${UNVERIFIABLE}ccm-load-balancers(no jq) "
+		probe_note_unverifiable ccm-load-balancers "no jq"
 		return 0
 	fi
 	# "none" must mean NONE, not "could not look" (#2549).
@@ -310,7 +352,7 @@ sweep_unlabelled_lbs() {
 		lb_list="$(hcloud load-balancer list -o noheader -o columns=id 2>/dev/null)" || lb_rc=$?
 		if [ "$lb_rc" -ne 0 ]; then
 			echo "::warning::'hcloud load-balancer list' failed (exit ${lb_rc}) while checking for a CCM-created ingress load balancer for ${SELECTOR}. NOT swept and NOT verified — check load balancers by hand in the Hetzner Console (#2549)." >&2
-			UNVERIFIABLE="${UNVERIFIABLE}ccm-load-balancers(list-failed) "
+			probe_note_unverifiable ccm-load-balancers "list-failed"
 			return 0
 		fi
 		lb_total="$(printf '%s' "$lb_list" | grep -c . || true)"
@@ -319,7 +361,7 @@ sweep_unlabelled_lbs() {
 			return 0
 		fi
 		echo "::warning::the run's private network is already gone, so a CCM-created ingress load balancer for ${SELECTOR} cannot be bound to this run — and this project holds ${lb_total}. NOT swept and NOT verified; check load balancers by hand (#2549)." >&2
-		UNVERIFIABLE="${UNVERIFIABLE}ccm-load-balancers(network-already-destroyed) "
+		probe_note_unverifiable ccm-load-balancers "network-already-destroyed"
 		return 0
 	fi
 
@@ -357,10 +399,16 @@ EOF
 # let the final banner imply it was checked.
 s3() { aws --endpoint-url "https://${S3_ENDPOINT}" --region "${S3_REGION}" "$@"; }
 
+s3_list_buckets() {
+	AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY" AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY" AWS_SESSION_TOKEN="" \
+		s3 s3api list-buckets --query 'Buckets[].Name' --output text
+}
 s3_bucket_names() {
 	assert_selector
-	AWS_ACCESS_KEY_ID="$S3_ACCESS_KEY" AWS_SECRET_ACCESS_KEY="$S3_SECRET_KEY" AWS_SESSION_TOKEN="" \
-		s3 s3api list-buckets --query 'Buckets[].Name' --output text 2>/dev/null |
+	# Credentials that are PRESENT but wrong (rotated, or the wrong region's endpoint) fail the call
+	# and used to render as "no buckets" — the same shape as having no credentials at all, which
+	# this file already knew to report. Now both do.
+	probe_run object-storage-buckets s3_list_buckets 2>/dev/null |
 		tr '\t' '\n' | grep -E "^${CLUSTER_NAME}-" || true
 }
 
@@ -369,12 +417,12 @@ s3_bucket_names() {
 s3_available() {
 	if [ -z "$S3_ACCESS_KEY" ] || [ -z "$S3_SECRET_KEY" ]; then
 		echo "::warning::HETZNER_S3_ACCESS_KEY/HETZNER_S3_SECRET_KEY are unset — Hetzner Object Storage buckets named ${CLUSTER_NAME}-* were NOT swept and NOT verified. Object Storage is a separate product with no hcloud label and no Cloud-API listing, so this script cannot see it without them. If this run provisioned buckets, check them by hand at https://${S3_ENDPOINT}."
-		UNVERIFIABLE="${UNVERIFIABLE}object-storage-buckets(no S3 credentials) "
+		probe_note_unverifiable object-storage-buckets "no S3 credentials"
 		return 1
 	fi
 	if ! command -v aws >/dev/null 2>&1; then
 		echo "::warning::the 'aws' CLI is not installed — Hetzner Object Storage buckets named ${CLUSTER_NAME}-* were NOT swept and NOT verified. Check them by hand at https://${S3_ENDPOINT}."
-		UNVERIFIABLE="${UNVERIFIABLE}object-storage-buckets(no aws CLI) "
+		probe_note_unverifiable object-storage-buckets "no aws CLI"
 		return 1
 	fi
 	return 0
@@ -401,10 +449,42 @@ s3_available() {
 #
 # The two listings are account-wide, which is safe precisely because they are READS. Nothing here
 # deletes, and that is the whole design.
+#
+# ── WHY THIS IS UNATTRIBUTABLE AND NOT UNVERIFIABLE (#3138's one wrong call) ─────────────────────
+#
+# #3138 recorded this through probe_note_unverifiable, which gates. Both listings SUCCEED; the
+# answer is simply that an unlabelled resource exists. So the hetzner leg exited 4 on every run —
+# 33172643012's only ledger entry was `imager-upload-helpers(unlabelled, cannot attribute)` — and
+# a step that is red every night is a step nobody reads, which is the same defect class #3138 was
+# written to remove.
+#
+# The discriminator is not "how noisy is it". It is: did the probe get an answer, and does this
+# sweeper still owe an action? Here reporting IS the whole contract — the design forbids deleting —
+# so nothing is left undone and there is nothing an exit code could usefully demand.
+#
+# The FAILURE path is untouched and still gates. `probe_run` writes the UNVERIFIABLE ledger itself
+# when `hcloud server list` cannot answer, and that entry is a file write, so the `| grep` below
+# cannot launder it. A dead token here still exits 4; only a successful listing that found something
+# is downgraded.
+#
+# ── WHO ELSE WOULD SEE ONE OF THESE (measured 2026-08-28: nobody) ───────────────────────────────
+#
+# e2e-orphan-reaper.yml (`17 7 * * *`) is the only standing watcher of this account, and its hetzner
+# leg runs this script's PREFLIGHT. PREFLIGHT discovery is `list_orphan_clusters`, which selects on
+# `labels["alethia_project-id"]` starting with `e2e-` — and an imager helper carries NO LABELS AT
+# ALL, so it is invisible to that query by construction. Worse, on the common day the preflight
+# finds no orphan it `exit 0`s before the purge sequence this function is part of ever runs, so it
+# never looked. Nothing else lists them: the label selector cannot reach them, `tofu destroy` has
+# them in no state file (#2458), and no alarm keys on the name.
+#
+# That is why the preflight now calls this function on its no-orphans path (see the PREFLIGHT block
+# below): it makes the daily reaper the standing observer, which is the only thing that watches this
+# account when no nightly is running. #2463 is where the real fix lives — a label from the provider
+# would let the ordinary selector reach them and retire this function entirely.
 report_imager_helpers() {
 	local servers keys found
-	servers="$(hcloud server list -o noheader -o columns=id,name 2>/dev/null | grep -F 'hcloud-upload-image-' || true)"
-	keys="$(hcloud ssh-key list -o noheader -o columns=id,name 2>/dev/null | grep -F 'hcloud-upload-image-' || true)"
+	servers="$(probe_run imager-upload-helpers hcloud server list -o noheader -o columns=id,name | grep -F 'hcloud-upload-image-' || true)"
+	keys="$(probe_run imager-upload-helpers hcloud ssh-key list -o noheader -o columns=id,name | grep -F 'hcloud-upload-image-' || true)"
 	found=0
 	if [ -n "$servers" ]; then
 		echo "  · imager upload servers present (NOT swept — unlabelled, may belong to another run):"
@@ -420,8 +500,8 @@ report_imager_helpers() {
 		echo "  · imager upload helpers: none present"
 		return 0
 	fi
-	echo "::warning::hcloud-upload-image-* server(s)/ssh-key(s) exist and were NOT swept. The imager provider creates them unlabelled, so this label-scoped script cannot attribute them to a run. If no image build is in flight they are leaked (a stopped server still bills) — remove them by hand. See #2463."
-	UNVERIFIABLE="${UNVERIFIABLE}imager-upload-helpers(unlabelled, cannot attribute) "
+	echo "::warning::hcloud-upload-image-* server(s)/ssh-key(s) exist and were NOT swept. The imager provider creates them unlabelled, so this label-scoped script cannot attribute them to a run. If no image build is in flight they are leaked (a stopped server still bills) — remove them by hand. Nothing else watches for them: the reaper's preflight discovery selects on the alethia_project-id label these do not carry. See #2463."
+	probe_note_unattributable imager-upload-helpers "unlabelled by the imager provider — cannot be tied to this run"
 }
 
 sweep_object_storage() {
@@ -516,7 +596,17 @@ if [ "$PREFLIGHT" = "1" ]; then
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 	orphans="$(list_orphan_clusters || true)"
 	if [ -z "$orphans" ]; then
-		echo "✓ preflight: no prior-run e2e orphans — nothing to sweep"
+		# THE ONE TYPE THIS EARLY EXIT WOULD OTHERWISE STEP OVER. list_orphan_clusters selects on
+		# `labels["alethia_project-id"]` — the imager upload helpers carry NO labels at all, so they
+		# are invisible to it by construction, and on the quiet day this branch runs the daily reaper
+		# would exit 0 having never looked at the one resource type nothing else watches for. Read
+		# only; the function never deletes. On the branch below, the per-orphan child sweep reports
+		# them already, so this is not duplicated there.
+		report_imager_helpers
+		# Reports BOTH states: the unattributable finding, and — if the listing itself failed —
+		# the fact that it could not answer. Preflight never blocks its caller, so both warn.
+		probe_warn_unverifiable hcloud "the preflight scan"
+		echo "✓ preflight: no prior-run e2e orphans — nothing to sweep$(probe_clean_suffix)"
 		exit 0
 	fi
 	# shellcheck disable=SC2086
@@ -556,6 +646,10 @@ if [ "$PREFLIGHT" = "1" ]; then
 	if [ "$residual" = "1" ]; then
 		echo "⚠ preflight finished with residual orphans (see above) — continuing (best-effort, non-fatal)"
 	else
+		# ⚠️ Not "the account is clean" — "every orphan this preflight could SEE is swept". The
+		# discovery listing itself can fail, and preflight is explicitly non-blocking, so the honest
+		# report here is a warning; the always() teardown is what gates.
+		probe_warn_unverifiable hcloud "the preflight orphan scan"
 		echo "✓ preflight complete — all prior-run e2e orphans swept"
 	fi
 	exit 0 # preflight never blocks its caller
@@ -578,121 +672,6 @@ fi
 #
 # The CCM load balancer and the network it is discovered through must both go BEFORE `purge
 # network`, or the network delete fails with the LB still attached and the id we bind to is gone.
-# ── Self-test. `hcloud` is stubbed, so this touches no account and needs no token. The decision
-# under test is not the printing — it is whether UNVERIFIABLE gets set, because that is what turns
-# the final line from "verified complete" into a warning a human has to read. Asserted in both
-# directions: an empty account must NOT raise it, or every clean sweep would cry wolf and the
-# warning would stop meaning anything. ──
-if [ "$SELF_TEST" = "1" ]; then
-	st_fails=0
-	hcloud() {
-		case "$1 ${2:-}" in
-		"server list") printf '%s\n' "$ST_SERVERS" ;;
-		"ssh-key list") printf '%s\n' "$ST_KEYS" ;;
-		"network list") printf '%s\n' "$ST_NETWORK" ;;
-		# ST_LBS_RC lets a case make the CLI FAIL rather than merely return nothing. Without it the
-		# stub can only ever produce the two OUTPUTS, and "empty because it worked" and "empty
-		# because it could not run" are exactly the pair this function must not confuse.
-		"load-balancer list") printf '%s\n' "$ST_LBS"; return "${ST_LBS_RC:-0}" ;;
-		*) : ;;
-		esac
-	}
-	st_imager_case() { # <name> <servers> <keys> <expect UNVERIFIABLE to mention imager: yes|no>
-		UNVERIFIABLE=""
-		ST_SERVERS="$2"
-		ST_KEYS="$3"
-		report_imager_helpers >/dev/null 2>&1
-		local got=no
-		case "$UNVERIFIABLE" in *imager-upload-helpers*) got=yes ;; esac
-		if [ "$got" = "$4" ]; then
-			echo "  ✓ $1"
-		else
-			echo "  ✗ $1 — expected imager-in-UNVERIFIABLE=$4, got $got" >&2
-			st_fails=$((st_fails + 1))
-		fi
-	}
-
-	echo "→ hcloud-cleanup.sh self-test"
-	st_imager_case "a leaked upload server is reported unverified" "163477937 hcloud-upload-image-77b49987" "" yes
-	st_imager_case "a leaked upload ssh-key alone is enough" "" "117831479 hcloud-upload-image-77b49987" yes
-	st_imager_case "an empty account raises nothing" "" "" no
-	st_imager_case "an unrelated server is not mistaken for one" "163000000 alethia-prod-web" "" no
-
-	# #2549: "none" must mean NONE, not "could not look". A CCM load balancer is bound to a run ONLY
-	# through its private-network attachment, and `tofu destroy` deletes that network FIRST — so the
-	# lookup that finds it is already impossible by the time the sweep runs, and it used to print
-	# "none" over a load balancer that was still billing.
-	st_lb_case() { # <name> <network list> <load-balancer list> <expect ccm-load-balancers in UNVERIFIABLE: yes|no> [lb-list exit code]
-		UNVERIFIABLE=""
-		ST_NETWORK="$2"
-		ST_LBS="$3"
-		ST_LBS_RC="${5:-0}"
-		sweep_unlabelled_lbs >/dev/null 2>&1
-		local got=no
-		case "$UNVERIFIABLE" in *ccm-load-balancers*) got=yes ;; esac
-		if [ "$got" = "$4" ]; then
-			echo "  ✓ $1"
-		else
-			echo "  ✗ $1 — expected ccm-load-balancers-in-UNVERIFIABLE=$4, got $got" >&2
-			st_fails=$((st_fails + 1))
-		fi
-	}
-
-	st_lb_case "network gone + a load balancer present is UNVERIFIABLE, not 'none'" "" "4711" yes
-	st_lb_case "network gone + no load balancer at all is honestly none" "" "" no
-	st_lb_case "network still present resolves normally, raising nothing" "12345" "" no
-	# THE REGRESSION. The fallback asked `hcloud ... | grep -c . || true`, which launders the exit
-	# status twice — the pipe reports grep's, `|| true` swallows the rest. An expired token or an API
-	# error printed nothing, counted 0, and the sweep announced "project holds no load balancer at
-	# all" having never looked. Empty-and-failed must not read as empty-and-clean.
-	st_lb_case "network gone + the CLI FAILING is UNVERIFIABLE, not 'none'" "" "" yes 1
-
-	# The REASON, not merely the fact. A case with output AND a non-zero exit passes the yes/no
-	# assertion above either way — the network-gone branch already flags it — so asserting only
-	# "something was unverifiable" proves nothing about this fix. What must be true is that a failed
-	# list is reported AS a failed list: `list-failed`, not `network-already-destroyed`. Confusing
-	# the two sends whoever reads the warning to look for a teardown-ordering problem that isn't
-	# there, while the token that actually broke goes unmentioned.
-	st_lb_reason() { # <name> <load-balancer list> <lb-list exit code> <expected reason substring>
-		UNVERIFIABLE=""
-		ST_NETWORK=""
-		ST_LBS="$2"
-		ST_LBS_RC="$3"
-		sweep_unlabelled_lbs >/dev/null 2>&1
-		case "$UNVERIFIABLE" in
-		*"$4"*) echo "  ✓ $1" ;;
-		*)
-			echo "  ✗ $1 — expected UNVERIFIABLE to name '$4', got '${UNVERIFIABLE}'" >&2
-			st_fails=$((st_fails + 1))
-			;;
-		esac
-	}
-	st_lb_reason "a failed list is reported as list-failed, not network-already-destroyed" "4711" 1 "ccm-load-balancers(list-failed)"
-	st_lb_reason "a network that is genuinely gone still reports network-already-destroyed" "4711" 0 "ccm-load-balancers(network-already-destroyed)"
-
-	unset -f hcloud
-
-	if [ "$st_fails" -ne 0 ]; then
-		echo "✗ hcloud-cleanup.sh self-test: ${st_fails} failure(s)" >&2
-		exit 1
-	fi
-	echo "✓ hcloud-cleanup.sh self-test passed"
-	exit 0
-fi
-
-purge server "servers"
-purge load-balancer "load balancers"
-sweep_unlabelled_lbs
-wait_for_volumes_detached
-purge volume "volumes"
-purge firewall "firewalls"
-purge network "networks"
-purge primary-ip "primary IPs"
-purge image "images (talos snapshots)"
-[ "$ZONE_SUPPORTED" = "1" ] && purge zone "dns zones"
-sweep_object_storage
-report_imager_helpers
-
 # ── Final verification: a leak must NEVER exit green. ──
 # The whole point of this script is that nothing bills after the run. Previously a delete that
 # failed (e.g. a still-attached volume) logged a WARN and the script still printed "✓ complete"
@@ -743,25 +722,278 @@ verify_swept() {
 	return 0
 }
 
+
+# ── finalize_verification — THE EXIT-CODE CONTRACT.
+#
+#   0  every probe answered, and nothing labelled ${SELECTOR} survived.
+#   1  a LEAK: something the API listed is still standing and billing.
+#   4  UNVERIFIABLE: at least one probe could not answer, so nothing here proves the account is
+#      empty. Warning-only was the second half of the #2549 defect — this file's own header says
+#      "a leak must NEVER exit green", and a leak nobody could look for is still a leak.
+#
+# A real leak outranks "could not check", so verify_swept runs first.
+finalize_verification() {
+	if ! verify_swept; then
+		return 1
+	fi
+	probe_gate hcloud "${SELECTOR}" || return 4
+	# probe_clean_suffix is EMPTY on a genuinely clean run and carries the unattributable finding
+	# otherwise, so this sentence can never read as "the account is empty" when it is not.
+	echo "✓ hcloud cleanup verified complete for ${SELECTOR} — no labelled resources remain$(probe_clean_suffix)"
+	return 0
+}
+
+
+# ── Self-test. `hcloud` is stubbed, so this touches no account and needs no token. The decision
+# under test is not the printing — it is whether UNVERIFIABLE gets set, because that is what turns
+# the final line from "verified complete" into a warning a human has to read. Asserted in both
+# directions: an empty account must NOT raise it, or every clean sweep would cry wolf and the
+# warning would stop meaning anything. ──
+if [ "$SELF_TEST" = "1" ]; then
+	st_fails=0
+	hcloud() {
+		case "$1 ${2:-}" in
+		# ST_SERVERS_RC / ST_KEYS_RC exist for the same reason ST_LBS_RC does, and they carry the
+		# whole imager distinction: a listing that ANSWERED "here is an unlabelled server" and one
+		# that COULD NOT ANSWER produce the same empty-or-not stdout and must resolve to different
+		# states. Without an independent exit code this pair cannot be told apart in a test.
+		"server list") printf '%s\n' "$ST_SERVERS"; return "${ST_SERVERS_RC:-0}" ;;
+		"ssh-key list") printf '%s\n' "$ST_KEYS"; return "${ST_KEYS_RC:-0}" ;;
+		"network list") printf '%s\n' "$ST_NETWORK" ;;
+		# ST_LBS_RC lets a case make the CLI FAIL rather than merely return nothing. Without it the
+		# stub can only ever produce the two OUTPUTS, and "empty because it worked" and "empty
+		# because it could not run" are exactly the pair this function must not confuse.
+		"load-balancer list") printf '%s\n' "$ST_LBS"; return "${ST_LBS_RC:-0}" ;;
+		# The generic `hcloud <type> list` every list_ids call lands on. Output and exit code are
+		# separately controlled, because "empty because it worked" and "empty because it could not
+		# run" is precisely the pair list_ids used to conflate.
+		*" list") [ -n "${ST_LIST:-}" ] && printf '%s\n' "$ST_LIST"; return "${ST_LIST_RC:-0}" ;;
+		*) : ;;
+		esac
+	}
+	# ── THE IMAGER HELPERS, and the boundary #3138 put in the wrong place. ───────────────────────
+	#
+	# BOTH ledgers are asserted on every case, never just one. "It is unattributable" passes if
+	# everything is unattributable, which is how a dead token would stop gating; "it is not
+	# unverifiable" passes if nothing is recorded at all, which is how the finding would vanish. The
+	# pair is the assertion. The exit-code half is st_imager_finalize below.
+	st_imager_case() { # <name> <servers> <keys> <expect UNATTRIBUTABLE: yes|no> <expect UNVERIFIABLE: yes|no> [servers rc]
+		probe_reset
+		ST_SERVERS="$2"
+		ST_KEYS="$3"
+		ST_SERVERS_RC="${6:-0}"
+		ST_KEYS_RC=0
+		report_imager_helpers >/dev/null 2>&1 || true
+		local una=no unv=no
+		case "$(probe_unattributable_types)" in *imager-upload-helpers*) una=yes ;; esac
+		case "$(probe_unverifiable_types)" in *imager-upload-helpers*) unv=yes ;; esac
+		if [ "$una" = "$4" ] && [ "$unv" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected unattributable=$4/unverifiable=$5, got unattributable=${una}/unverifiable=${unv}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+		ST_SERVERS_RC=0
+	}
+
+	echo "→ hcloud-cleanup.sh self-test"
+	st_imager_case "a leaked upload server is UNATTRIBUTABLE, not unverifiable" "163477937 hcloud-upload-image-77b49987" "" yes no
+	st_imager_case "a leaked upload ssh-key alone is enough" "" "117831479 hcloud-upload-image-77b49987" yes no
+	st_imager_case "an empty account raises nothing at all" "" "" no no
+	st_imager_case "an unrelated server is not mistaken for one" "163000000 alethia-prod-web" "" no no
+	# THE HALF THAT MUST NOT MOVE. Downgrading the FINDING does not downgrade the FAILURE: a
+	# `hcloud server list` that cannot answer is still UNVERIFIABLE and still gates, and the `| grep`
+	# in report_imager_helpers cannot launder that because probe_run writes a FILE, not a status.
+	st_imager_case "a listing that COULD NOT ANSWER is still UNVERIFIABLE" "" "" no yes 1
+
+	# #2549: "none" must mean NONE, not "could not look". A CCM load balancer is bound to a run ONLY
+	# through its private-network attachment, and `tofu destroy` deletes that network FIRST — so the
+	# lookup that finds it is already impossible by the time the sweep runs, and it used to print
+	# "none" over a load balancer that was still billing.
+	st_lb_case() { # <name> <network list> <load-balancer list> <expect ccm-load-balancers in UNVERIFIABLE: yes|no> [lb-list exit code]
+		probe_reset
+		ST_NETWORK="$2"
+		ST_LBS="$3"
+		ST_LBS_RC="${5:-0}"
+		sweep_unlabelled_lbs >/dev/null 2>&1
+		local got=no
+		case "$(probe_unverifiable_types)" in *ccm-load-balancers*) got=yes ;; esac
+		if [ "$got" = "$4" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected ccm-load-balancers-in-UNVERIFIABLE=$4, got $got" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+
+	st_lb_case "network gone + a load balancer present is UNVERIFIABLE, not 'none'" "" "4711" yes
+	st_lb_case "network gone + no load balancer at all is honestly none" "" "" no
+	st_lb_case "network still present resolves normally, raising nothing" "12345" "" no
+	# THE REGRESSION. The fallback asked `hcloud ... | grep -c . || true`, which launders the exit
+	# status twice — the pipe reports grep's, `|| true` swallows the rest. An expired token or an API
+	# error printed nothing, counted 0, and the sweep announced "project holds no load balancer at
+	# all" having never looked. Empty-and-failed must not read as empty-and-clean.
+	st_lb_case "network gone + the CLI FAILING is UNVERIFIABLE, not 'none'" "" "" yes 1
+
+	# The REASON, not merely the fact. A case with output AND a non-zero exit passes the yes/no
+	# assertion above either way — the network-gone branch already flags it — so asserting only
+	# "something was unverifiable" proves nothing about this fix. What must be true is that a failed
+	# list is reported AS a failed list: `list-failed`, not `network-already-destroyed`. Confusing
+	# the two sends whoever reads the warning to look for a teardown-ordering problem that isn't
+	# there, while the token that actually broke goes unmentioned.
+	st_lb_reason() { # <name> <load-balancer list> <lb-list exit code> <expected reason substring>
+		probe_reset
+		ST_NETWORK=""
+		ST_LBS="$2"
+		ST_LBS_RC="$3"
+		sweep_unlabelled_lbs >/dev/null 2>&1
+		case "$(probe_unverifiable_detail)" in
+		*"$4"*) echo "  ✓ $1" ;;
+		*)
+			echo "  ✗ $1 — expected UNVERIFIABLE to name '$4', got '$(probe_unverifiable_detail)'" >&2
+			st_fails=$((st_fails + 1))
+			;;
+		esac
+	}
+	st_lb_reason "a failed list is reported as list-failed, not network-already-destroyed" "4711" 1 "ccm-load-balancers(list-failed)"
+	st_lb_reason "a network that is genuinely gone still reports network-already-destroyed" "4711" 0 "ccm-load-balancers(network-already-destroyed)"
+
+	# ── list_ids — THE GAP #2549 LEFT OPEN, and the exit-code contract that now sits on top of it.
+	#
+	# Every purge and every row of verify_swept reads this one function. It laundered its status the
+	# same way the load-balancer fallback above did, so a broken token made all eight resource types
+	# report "none" at once and the script printed "verified complete". These three cases are the
+	# three states this function can reach, end to end: the stub's OUTPUT and its EXIT CODE are varied
+	# independently, because varying only the output is exactly the test that would pass with the fix
+	# removed. (The fourth, UNATTRIBUTABLE, has no list_ids path — see st_imager_finalize.)
+	#
+	# $ST_LIST / $ST_LIST_RC drive the generic `hcloud <type> list` stub. The S3 and zone paths are
+	# short-circuited so they cannot contribute an unverifiable of their own and mask the result.
+	st_verify_case() { # <name> <list output> <list exit code> <expected rc> <expect unverifiable: yes|no>
+		probe_reset
+		ST_LIST="$2"
+		ST_LIST_RC="$3"
+		# A stub of its own, not the one above: these cases have to drive the exit code of EVERY
+		# `hcloud <type> list` at once, which is the shape a broken credential actually has.
+		hcloud() {
+			case "$1 ${2:-}" in
+			*" list")
+				if [ -n "$ST_LIST" ]; then printf '%s\n' "$ST_LIST"; fi
+				return "$ST_LIST_RC"
+				;;
+			*) : ;;
+			esac
+		}
+		local rc=0 unv=no
+		finalize_verification >/dev/null 2>&1 || rc=$?
+		probe_has_unverifiable && unv=yes
+		if [ "$rc" = "$4" ] && [ "$unv" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$4/unverifiable=$5, got rc=${rc}/unverifiable=${unv}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	# s3_available is asked before any bucket is listed; the self-test has no credentials, and
+	# answering "not available" here keeps object storage from contributing an unverifiable of its
+	# own and masking the result. Its own path is covered by st_lb_case/st_imager_case, which
+	# exercise the same ledger from other producers.
+	s3_available() { return 1; }
+	ZONE_SUPPORTED=0
+	st_verify_case "an empty account, honestly listed, is CLEAN and exits 0" "" 0 0 no
+	st_verify_case "a surviving resource is a LEAK and exits 1" "4711" 0 1 no
+	st_verify_case "a list that FAILED is UNVERIFIABLE and exits 4, not 0" "" 1 4 yes
+	# THE DIRECTION THAT MATTERS. Case 1 and case 3 produced byte-identical output and the same
+	# exit 0 before this change — an empty account and a dead credential were the same answer.
+	# Case 4 pins the precedence: a confirmed leak still outranks "could not check" (rc 1, not 4),
+	# but the ledger must ALSO record that the list failed, or the leak count is understated.
+	st_verify_case "a FAILED list that also listed a row is a LEAK *and* unverifiable" "4711" 1 1 yes
+
+	# ── RUN 33172643012, REPLAYED END TO END. ────────────────────────────────────────────────────
+	#
+	# That run swept everything it owned, listed nothing labelled cluster=<name>, and still died on
+	# `##[error]hcloud cleanup UNVERIFIED … Process completed with exit code 4` — with exactly one
+	# ledger entry, `imager-upload-helpers(unlabelled, cannot attribute)`, from two listings that had
+	# both SUCCEEDED. Every hetzner leg red, every night, for a resource this script is designed not
+	# to touch.
+	#
+	# The exit code is the assertion that matters, and the ✓ line is asserted alongside it: exit 0
+	# is only correct if the finding is still impossible to miss. If the two states are ever
+	# collapsed again this case goes red on the FIRST field.
+	st_imager_finalize() { # <name> <servers> <expected finalize rc> <expect the ✓ line to name it: yes|no>
+		probe_reset
+		ST_SERVERS="$2"
+		ST_KEYS=""
+		# `hcloud server list` is issued by BOTH report_imager_helpers (account-wide, unfiltered)
+		# and list_ids (scope-locked). They are told apart on `--selector`, which is the only thing
+		# that distinguishes them in the real script either.
+		hcloud() {
+			case "$*" in
+			*--selector*) return 0 ;; # scope-locked: nothing labelled survived — the sweep worked
+			"server list"*) printf '%s\n' "$ST_SERVERS" ;;
+			"ssh-key list"*) printf '%s\n' "$ST_KEYS" ;;
+			*) : ;;
+			esac
+		}
+		report_imager_helpers >/dev/null 2>&1 || true
+		local rc=0 out named=no
+		# STDOUT ONLY. The ::warning:: goes to stderr and would match either way, so 2>&1 here would
+		# let the ✓ line silently lose its qualifier and still pass — and the ✓ line is the sentence
+		# a reader converts into "the account is empty".
+		out="$(finalize_verification 2>/dev/null)" || rc=$?
+		case "$out" in *UNATTRIBUTABLE*) named=yes ;; esac
+		if [ "$rc" = "$3" ] && [ "$named" = "$4" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$3/named=$4, got rc=${rc}/named=${named}" >&2
+			echo "      output was: ${out}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_imager_finalize "a swept run whose ONLY finding is an imager helper exits 0, not 4" \
+		"163477937 hcloud-upload-image-77b49987" 0 yes
+	# The other direction, on the same path: with nothing present the ✓ line stays exactly as it was,
+	# so a clean run cannot start crying wolf and teaching people to ignore the qualifier.
+	st_imager_finalize "a clean run's ✓ line is unchanged and mentions nothing" "" 0 no
+
+	unset -f s3_available
+
+	unset -f hcloud
+
+	if [ "$st_fails" -ne 0 ]; then
+		echo "✗ hcloud-cleanup.sh self-test: ${st_fails} failure(s)" >&2
+		exit 1
+	fi
+	echo "✓ hcloud-cleanup.sh self-test passed"
+	exit 0
+fi
+
+purge server "servers"
+purge load-balancer "load balancers"
+sweep_unlabelled_lbs
+wait_for_volumes_detached
+purge volume "volumes"
+purge firewall "firewalls"
+purge network "networks"
+purge primary-ip "primary IPs"
+purge image "images (talos snapshots)"
+[ "$ZONE_SUPPORTED" = "1" ] && purge zone "dns zones"
+sweep_object_storage
+report_imager_helpers
+
+
 if [ "$DRY_RUN" = "1" ]; then
 	echo "✓ hcloud DRY RUN complete for ${SELECTOR} (nothing deleted, nothing verified)"
 	exit 0
 fi
 
 echo "→ verifying nothing labelled ${SELECTOR} survived…"
-if ! verify_swept; then
-	exit 1
-fi
-
-# Reached only when verify_swept confirmed NOTHING it could look at remains. If something could not
-# be looked at, say so HERE — the success line is what a human reads, and "verified complete" over a
-# type nobody checked is the exact claim this script exists to stop making.
-if [ -n "$UNVERIFIABLE" ]; then
-	echo "⚠ hcloud cleanup: everything checkable for ${SELECTOR} is gone, but these were NOT VERIFIED: ${UNVERIFIABLE}"
-	echo "::warning::hcloud cleanup for ${SELECTOR} left UNVERIFIED types: ${UNVERIFIABLE}— a human must confirm they are not billing."
-else
-	echo "✓ hcloud cleanup verified complete for ${SELECTOR} — no labelled resources remain"
-fi
+# The success line is what a human reads, and "verified complete" over a type nobody checked is the
+# exact claim this script exists to stop making. Since #2549's fix was generalised it is also the
+# exit code that says so: 1 for a leak, 4 for a type that could not be looked at.
+st_rc=0
+finalize_verification || st_rc=$?
+[ "$st_rc" -eq 0 ] || exit "$st_rc"
 echo "  CSI volumes: dynamically-provisioned pvc-* volumes are created by the CSI controller"
 echo "  at runtime (not by our template), so 'tofu destroy' cannot reclaim them. They are"
 echo "  stamped with cluster=<name> at the source — the hetzner template sets the driver's"

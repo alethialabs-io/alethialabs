@@ -117,15 +117,28 @@ jobs:
       # refuse what they claim to refuse. `validate` cannot do this: it never evaluates a
       # precondition, so a guard that can't fail looks identical to one that works. A cloud with no
       # *.tftest.hcl is skipped rather than failed — the suites land per cloud as each is written.
-      - name: OpenTofu Test (mocked providers, no creds)
+      #
+      # A FETCH FAILURE IS NOT A RENDER FAILURE (#2754). `tofu test` is not hermetic on one cloud:
+      # hetzner declares three `data "helm_template"` sources against two third-party hosts, and a
+      # data source is evaluated at plan, so every run fetches live. No other cloud template
+      # declares a `helm_template` at all. The retry, what it refuses to retry, and why it is a
+      # shared script rather than inline, all live in the script's own header.
+      # THE NAME IS PART OF THE FIX (#2489). It used to read "mocked providers, no creds", and the
+      # complaint that opened that issue was that the name is a promise: a reader whose PR reds here
+      # assumes they broke a mocked test and looks in the wrong place — which is exactly what
+      # happened before anyone read the log. "no creds" is true; "no network" never was, and the two
+      # are easy to hear as the same claim.
+      - name: OpenTofu Test (mocked providers · renders fetch pinned charts)
         working-directory: infra/templates/project/${{ matrix.cloud }}
+        env:
+          TOFU_TEST_FETCH_ATTEMPTS: "3"
         run: |
           if ! ls ./*.tftest.hcl >/dev/null 2>&1; then
             echo "::notice::no *.tftest.hcl for ${{ matrix.cloud }} — skipping"
             exit 0
           fi
           tofu version
-          tofu test
+          "${{ github.workspace }}/scripts/ci/tofu-test-retry-fetch.sh" "${{ matrix.cloud }}"
 
       - name: IaC checks (fmt + tflint + Trivy)
         uses: ./.github/actions/iac-checks

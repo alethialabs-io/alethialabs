@@ -1254,6 +1254,16 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			if gitErr := writeAddOnGitOps(ctx, vc, params.GitAccessToken, facts.Labels, stdout, stderr); gitErr != nil {
 				fmt.Fprintf(stderr, "Warning: GitOps add-on sync skipped: %v\n", gitErr)
 			}
+			// One-shot in-cluster bootstraps for the add-ons that ask for one — today, initialising
+			// and unsealing a marketplace Vault (#2717).
+			//
+			// HERE, and the position is load-bearing in both directions. AFTER the Applications are
+			// applied, because the Job talks to a Service that does not exist until then. BEFORE
+			// WaitAddOnsHealthy below, because a sealed Vault never becomes Healthy — waiting first
+			// would burn the whole add-on budget and then unseal it too late to be observed. The
+			// apply does not block on the Job finishing; the wait that follows is what sees the
+			// result.
+			argocd.EnsureAddOnBootstraps(vc.AddOns, selfimage.Ref(), stdout, stderr)
 		}
 		// Prune managed add-ons the user disabled (removed from the desired set). Runs even
 		// when vc.AddOns is empty, so disabling the last add-on still cleans it up.
@@ -1453,6 +1463,21 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 		return fmt.Errorf("failed to create the ArgoCD values dir: %w", err)
 	}
 	defer os.RemoveAll(valuesDir)
+
+	// Health probes the node can actually satisfy — applied UNCONDITIONALLY, before any per-cloud
+	// branch below. The chart's own defaults (timeoutSeconds 1, failureThreshold 3) restart-loop
+	// argocd-server and argocd-repo-server on a small burstable node, which is a property of the
+	// NODE, not of DNS, of a certificate or of a cloud — so it cannot live inside the ingress
+	// branch that only some projects take. See argocd.InstallProbeValues for the measurement.
+	//
+	// Written FIRST so a per-cloud `-f` appended later still wins on any key it also sets (helm
+	// merges values files left to right). Today there is no overlap; the ordering is what keeps it
+	// true if one ever appears.
+	probesPath := filepath.Join(valuesDir, "argocd-probes.yaml")
+	if wErr := os.WriteFile(probesPath, []byte(argocd.InstallProbeValues()), 0o600); wErr != nil {
+		return fmt.Errorf("failed to write the ArgoCD probe values: %w", wErr)
+	}
+	installCmd += " -f " + utils.ShellQuote(probesPath)
 
 	if vc.DNS.Enabled && vc.DNS.DomainName != "" {
 		// FAIL CLOSED on a domain that is not a domain. `vc.DNS.DomainName` is free-text project

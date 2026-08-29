@@ -49,6 +49,34 @@
 # Requires: the `aliyun` CLI (authenticated — keyless AssumeRoleWithOIDC in CI) + jq.
 set -euo pipefail
 
+# ── The probe contract (CLEAN / LEAKED / UNVERIFIABLE / UNATTRIBUTABLE), shared by all five cloud
+#    sweepers. Read scripts/e2e/lib/sweep-probe.sh before touching any lister below: `ali … 2>/dev/null
+#    | jq … 2>/dev/null | grep -v '^$' || true` launders the CLI's exit status FOUR times over —
+#    and the jq stage adds one the other clouds do not have, because jq exits 0 on empty input, so
+#    a non-JSON error page becomes an empty id list and a clean-looking teardown.
+#
+#    A FOURTH state was added after #3138 gated the third one over a case that was not a probe
+#    failure: UNATTRIBUTABLE — the probe DID get an answer, and the answer is that something
+#    exists which by design cannot be tied to this run. Reported loudly, never gates. Only
+#    hetzner produces one today (#2463); the taxonomy is shared so the next cloud does not have
+#    to re-derive it, and every sweeper's --self-test asserts both halves. ──
+E2E_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+# shellcheck source-path=SCRIPTDIR source=lib/sweep-probe.sh
+. "${E2E_LIB_DIR}/sweep-probe.sh"
+probe_reset
+
+# ── `--self-test` exercises the three-state probe contract against a stubbed `aliyun` and exits.
+# It sets its own ENV/REGION so the guards below are left exactly as they protect the real path. ──
+SELF_TEST=0
+if [ "${1:-}" = "--self-test" ]; then
+	SELF_TEST=1
+	ALETHIA_E2E_ENV="selftest-4177-1"
+	ALETHIA_E2E_REGION="eu-central-1"
+	# The probe retries are a real-cloud kindness (a transient 5xx must not red a healthy teardown)
+	# and pure dead time against a stub. The retry LOOP is still exercised; it just does not wait.
+	PROBE_RETRY_DELAY=0
+fi
+
 ENV="${ALETHIA_E2E_ENV:-}"
 # Region is AUTHORITATIVE from ALETHIA_E2E_REGION only. A silent fallback to an ambient region that
 # differs from where the run provisioned would make every (regional) tag query empty → delete
@@ -100,7 +128,10 @@ if [ -z "$REGION" ]; then
 	exit 2
 fi
 
+# The self-test shadows `ali` with a shell function, so it needs no aliyun binary — and the CI
+# runner that runs it has none. jq IS still required: the self-test drives real jq filters.
 for bin in aliyun jq; do
+	[ "$bin" = "aliyun" ] && [ "$SELF_TEST" = "1" ] && continue
 	if ! command -v "$bin" >/dev/null 2>&1; then
 		echo "✗ the '$bin' CLI is not installed." >&2
 		exit 2
@@ -118,7 +149,7 @@ CLUSTER_ID=""                      # the ACK cluster id — the secondary (out-o
 ali() { aliyun "$@" --region "$REGION"; }
 
 # The per-run banner is for the normal (belt-and-suspenders) path; PREFLIGHT prints its own below.
-if [ "$PREFLIGHT" != "1" ]; then
+if [ "$PREFLIGHT" != "1" ] && [ "$SELF_TEST" != "1" ]; then
 	echo "→ alibaba belt-and-suspenders cleanup in ${REGION}, scope ${TAGK}=${PROJECT_ID_TAG}"
 	[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 fi
@@ -175,32 +206,53 @@ retry_delete() {
 # response degrades to "none", not an error.
 ################################################################################
 
-# ecs_ids <DescribeApi> <jqPath> — generic ECS/VPC RPC lister, filtered on our project-id tag.
-tagged_ids() {
-	assert_scope
-	local product="$1" api="$2" jqpath="$3"
-	ali "$product" "$api" \
-		--PageSize 100 \
-		--Tag.1.Key "$TAGK" --Tag.1.Value "$PROJECT_ID_TAG" 2>/dev/null |
-		jq -r "$jqpath" 2>/dev/null | grep -v '^$' || true
+# ali_jq <type> <jqPath> <ali args…> — the ONE place an aliyun response is turned into ids.
+#
+# Two stages, two failure modes, and until this change both were laundered into "no resources":
+#
+#   1. the API call — captured through probe_run, so its REAL exit status decides, not the pipe's;
+#   2. the jq parse — jq exits 0 on EMPTY input, so `ali … 2>/dev/null | jq …` turned an HTML error
+#      page, a throttle body or a truncated response into an empty id list and exit 0. That second
+#      laundering is unique to this cloud (only alibaba pipes through jq), and it is the reason a
+#      response that arrives but cannot be read is now UNVERIFIABLE too.
+ali_jq() {
+	local ptype="$1" jqpath="$2"
+	shift 2
+	local raw out
+	raw="$(probe_run "$ptype" ali "$@")" || return 0
+	[ -n "$raw" ] || return 0
+	if ! out="$(printf '%s' "$raw" | jq -r "$jqpath" 2>&1)"; then
+		probe_note_unverifiable "$ptype" "response arrived but could not be parsed as JSON"
+		return 0
+	fi
+	printf '%s\n' "$out" | grep -v '^$' || true
 }
 
-tagged_instances() { tagged_ids ecs DescribeInstances '.Instances.Instance[]?.InstanceId'; }
-tagged_disks() { tagged_ids ecs DescribeDisks '.Disks.Disk[]?.DiskId'; }
-tagged_security_groups() { tagged_ids ecs DescribeSecurityGroups '.SecurityGroups.SecurityGroup[]?.SecurityGroupId'; }
-tagged_vpcs() { tagged_ids vpc DescribeVpcs '.Vpcs.Vpc[]?.VpcId'; }
-tagged_vswitches() { tagged_ids vpc DescribeVSwitches '.VSwitches.VSwitch[]?.VSwitchId'; }
-tagged_nat_gateways() { tagged_ids vpc DescribeNatGateways '.NatGateways.NatGateway[]?.NatGatewayId'; }
-tagged_eips() { tagged_ids vpc DescribeEipAddresses '.EipAddresses.EipAddress[]?.AllocationId'; }
+# tagged_ids <type> <product> <DescribeApi> <jqPath> — generic ECS/VPC RPC lister, filtered on our
+# project-id tag.
+tagged_ids() {
+	assert_scope
+	local ptype="$1" product="$2" api="$3" jqpath="$4"
+	ali_jq "$ptype" "$jqpath" "$product" "$api" \
+		--PageSize 100 \
+		--Tag.1.Key "$TAGK" --Tag.1.Value "$PROJECT_ID_TAG"
+}
+
+tagged_instances() { tagged_ids ecs-instance ecs DescribeInstances '.Instances.Instance[]?.InstanceId'; }
+tagged_disks() { tagged_ids cloud-disk ecs DescribeDisks '.Disks.Disk[]?.DiskId'; }
+tagged_security_groups() { tagged_ids security-group ecs DescribeSecurityGroups '.SecurityGroups.SecurityGroup[]?.SecurityGroupId'; }
+tagged_vpcs() { tagged_ids vpc vpc DescribeVpcs '.Vpcs.Vpc[]?.VpcId'; }
+tagged_vswitches() { tagged_ids vswitch vpc DescribeVSwitches '.VSwitches.VSwitch[]?.VSwitchId'; }
+tagged_nat_gateways() { tagged_ids nat-gateway vpc DescribeNatGateways '.NatGateways.NatGateway[]?.NatGatewayId'; }
+tagged_eips() { tagged_ids eip vpc DescribeEipAddresses '.EipAddresses.EipAddress[]?.AllocationId'; }
 
 # SLB (classic) tag filter param spelling differs per API version; use the documented Tag.N.Key.
-tagged_slbs() { tagged_ids slb DescribeLoadBalancers '.LoadBalancers.LoadBalancer[]?.LoadBalancerId'; }
+tagged_slbs() { tagged_ids slb slb DescribeLoadBalancers '.LoadBalancers.LoadBalancer[]?.LoadBalancerId'; }
 # ALB lister is ROA-ish RPC (`ListLoadBalancers` → `.LoadBalancers[].LoadBalancerId`).
 tagged_albs() {
 	assert_scope
-	ali alb ListLoadBalancers \
-		--Tag.1.Key "$TAGK" --Tag.1.Value "$PROJECT_ID_TAG" 2>/dev/null |
-		jq -r '.LoadBalancers[]?.LoadBalancerId' 2>/dev/null | grep -v '^$' || true
+	ali_jq alb '.LoadBalancers[]?.LoadBalancerId' alb ListLoadBalancers \
+		--Tag.1.Key "$TAGK" --Tag.1.Value "$PROJECT_ID_TAG"
 }
 
 ################################################################################
@@ -214,9 +266,9 @@ tagged_albs() {
 # {id,name,tags}. `aliyun cs GET /api/v1/clusters` returns {"clusters":[…]} (or, on older CLIs, a
 # bare array) — handle both.
 all_clusters() {
-	ali cs GET /api/v1/clusters 2>/dev/null |
-		jq -c '(.clusters // .)[]? | {id: .cluster_id, name: .name, region: .region_id,
-			pid: ((.tags // []) | map(select(.key == "'"$TAGK"'") | .value) | first) }' 2>/dev/null || true
+	ali_jq ack-cluster '(.clusters // .)[]? | {id: .cluster_id, name: .name, region: .region_id,
+			pid: ((.tags // []) | map(select(.key == "'"$TAGK"'") | .value) | first) }' \
+		cs GET /api/v1/clusters
 }
 
 # ── Discover THIS run's ACK cluster for the out-of-band secondary sweeps. First by the project-id
@@ -254,21 +306,19 @@ discover_cluster() {
 # tag (out-of-band CCM/CSI resources). Empty when CLUSTER_ID unknown (never account-wide).
 cluster_tagged_ids() {
 	[ -z "$CLUSTER_ID" ] && return 0
-	local product="$1" api="$2" jqpath="$3"
-	ali "$product" "$api" \
+	local ptype="$1" product="$2" api="$3" jqpath="$4"
+	ali_jq "$ptype" "$jqpath" "$product" "$api" \
 		--PageSize 100 \
-		--Tag.1.Key "ack.aliyun.com" --Tag.1.Value "$CLUSTER_ID" 2>/dev/null |
-		jq -r "$jqpath" 2>/dev/null | grep -v '^$' || true
+		--Tag.1.Key "ack.aliyun.com" --Tag.1.Value "$CLUSTER_ID"
 }
 
-cluster_instance_ids() { cluster_tagged_ids ecs DescribeInstances '.Instances.Instance[]?.InstanceId'; }
-cluster_disk_ids() { cluster_tagged_ids ecs DescribeDisks '.Disks.Disk[]?.DiskId'; }
-cluster_slb_ids() { cluster_tagged_ids slb DescribeLoadBalancers '.LoadBalancers.LoadBalancer[]?.LoadBalancerId'; }
+cluster_instance_ids() { cluster_tagged_ids ecs-instance ecs DescribeInstances '.Instances.Instance[]?.InstanceId'; }
+cluster_disk_ids() { cluster_tagged_ids cloud-disk ecs DescribeDisks '.Disks.Disk[]?.DiskId'; }
+cluster_slb_ids() { cluster_tagged_ids slb slb DescribeLoadBalancers '.LoadBalancers.LoadBalancer[]?.LoadBalancerId'; }
 cluster_alb_ids() {
 	[ -z "$CLUSTER_ID" ] && return 0
-	ali alb ListLoadBalancers \
-		--Tag.1.Key "ack.aliyun.com" --Tag.1.Value "$CLUSTER_ID" 2>/dev/null |
-		jq -r '.LoadBalancers[]?.LoadBalancerId' 2>/dev/null | grep -v '^$' || true
+	ali_jq alb '.LoadBalancers[]?.LoadBalancerId' alb ListLoadBalancers \
+		--Tag.1.Key "ack.aliyun.com" --Tag.1.Value "$CLUSTER_ID"
 }
 
 ################################################################################
@@ -513,9 +563,21 @@ alive_cr_instances() {
 	assert_scope
 	# `--version` is explicit: the `cr` product carries both 2016-06-07 and 2018-12-01, and only the
 	# latter has ListInstance. Letting the CLI pick would make this silently version-dependent.
-	ali cr ListInstance --version 2018-12-01 --PageSize 100 2>/dev/null |
-		jq -r --arg env "$ENV" '.Instances[]? | select((.InstanceName // "") | contains("-" + $env)) | "\(.InstanceName)[\(.InstanceId)]"' 2>/dev/null |
-		grep -v '^$' || true
+	#
+	# Spelled out rather than routed through ali_jq because the filter needs `jq --arg`, which
+	# ali_jq's positional shape cannot carry. The two-stage split is identical: the API call decides
+	# the exit status through probe_run, and a response that arrives but will not parse is
+	# UNVERIFIABLE rather than "no subscription". A subscription is the worst thing in this file to
+	# report as "none" — it is a monthly commitment, and a missed one recurs every month.
+	local raw out
+	raw="$(probe_run cr-ee-instance-subscription ali cr ListInstance --version 2018-12-01 --PageSize 100)" || return 0
+	[ -n "$raw" ] || return 0
+	if ! out="$(printf '%s' "$raw" | jq -r --arg env "$ENV" \
+		'.Instances[]? | select((.InstanceName // "") | contains("-" + $env)) | "\(.InstanceName)[\(.InstanceId)]"' 2>&1)"; then
+		probe_note_unverifiable cr-ee-instance-subscription "response arrived but could not be parsed as JSON"
+		return 0
+	fi
+	printf '%s\n' "$out" | grep -v '^$' || true
 }
 
 verify_swept() {
@@ -556,6 +618,27 @@ verify_swept() {
 	} | grep -v '^$' | sort -u || true)"
 	# shellcheck disable=SC2086
 	[ -n "$residue" ] && echo "::notice::alibaba cleanup: network residue still tagged (non-billable, will age out): $(printf '%s ' $residue)"
+	return 0
+}
+
+# ── finalize_verification — THE EXIT-CODE CONTRACT.
+#
+#   0  every probe answered, and nothing billable for this run survived.
+#   1  a LEAK: the API listed something still standing and billing (or a standing SUBSCRIPTION).
+#   4  UNVERIFIABLE: at least one probe could not answer, so nothing here proves the account is
+#      empty. This runs on the `always()` teardown path the T2 harness defers to as the guarantee,
+#      so "could not look" has to red the step rather than pass as a log line.
+#
+# A confirmed leak outranks "could not check", so verify_swept runs first.
+finalize_verification() {
+	if ! verify_swept; then
+		return 1
+	fi
+	probe_gate alibaba "run ${ENV}" || return 4
+	# probe_clean_suffix is EMPTY on a genuinely clean run and carries any UNATTRIBUTABLE finding
+	# otherwise, so this sentence can never read as "the account is empty" when it is not. Shared
+	# by all five sweepers — the taxonomy is one contract, not five that drift.
+	echo "✓ alibaba cleanup verified complete for run ${ENV} — no billable resources remain$(probe_clean_suffix)"
 	return 0
 }
 
@@ -658,9 +741,128 @@ if [ "$PREFLIGHT" = "1" ]; then
 	if [ "$residual" = "1" ]; then
 		echo "⚠ preflight finished with residual orphans (see warnings above) — continuing (best-effort, non-fatal)"
 	else
+		# ⚠️ Not "the account is clean" — "every orphan this preflight could SEE is swept". The
+		# cluster inventory can fail too, and preflight is explicitly non-blocking, so the honest
+		# report here is a warning; the always() teardown is what gates.
+		probe_warn_unverifiable alibaba "the preflight orphan scan in ${REGION}"
 		echo "✓ preflight complete — all prior-run e2e orphans in ${REGION} swept"
 	fi
 	exit 0 # preflight never blocks the provisioning run
+fi
+
+# ── Self-test. `ali` is stubbed, so this touches no account and needs no credentials (jq is real —
+# the two-stage parse is half of what is under test). What is under test is the THREE-STATE
+# contract: an empty account and an account this script could not look at must not produce the same
+# answer, and the second must not exit 0.
+#
+# $ST_OUT and $ST_RC are varied INDEPENDENTLY on purpose. Every lister in this file used to read
+# `ali … 2>/dev/null | jq … 2>/dev/null | grep -v '^$' || true`, and the OUTPUT half of that always
+# worked — a test that varies only the output passes just as happily with the fix removed. ──
+if [ "$SELF_TEST" = "1" ]; then
+	st_fails=0
+	# Two response slots, because the Container Registry lister reads a DIFFERENT document shape
+	# (`.Instances[]` — a flat array) from the ECS/VPC listers (`.Instances.Instance[]`). A single
+	# blanket body would fail one filter or the other for a reason that has nothing to do with what
+	# is under test, and a self-test that goes red for the wrong reason teaches people to skip it.
+	ali() {
+		case "$*" in
+		*ListInstance*) printf '%s\n' "$ST_CR" ;;
+		*) if [ -n "$ST_OUT" ]; then printf '%s\n' "$ST_OUT"; fi ;;
+		esac
+		if [ "$ST_RC" -ne 0 ]; then printf '%s\n' "${ST_ERR:-ERROR: SDK.ServerError}" >&2; fi
+		return "$ST_RC"
+	}
+
+	echo "→ alibaba-cleanup.sh self-test (ENV=${ENV})"
+	st_case() { # <name> <output> <rc> <expected finalize rc> <expect unverifiable: yes|no> [cr body]
+		probe_reset
+		ST_OUT="$2" ST_RC="$3" ST_CR="${6:-{\"Instances\":[]\}}"
+		ST_ERR="ERROR: SDK.InvalidCredential specified access key is not found"
+		CLUSTER_ID="" CLUSTER_NAME=""
+		local rc=0 unv=no
+		finalize_verification >/dev/null 2>&1 || rc=$?
+		probe_has_unverifiable && unv=yes
+		if [ "$rc" = "$4" ] && [ "$unv" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$4/unverifiable=$5, got rc=${rc}/unverifiable=${unv}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_case "an empty account, honestly listed, is CLEAN and exits 0" '{}' 0 0 no
+	st_case "a surviving ECS instance is a LEAK and exits 1" \
+		'{"Instances":{"Instance":[{"InstanceId":"i-gw8abc"}]}}' 0 1 no
+	# THE REGRESSION. Before this change the case below and the first case were byte-identical:
+	# empty stdout, exit 0, "no billable resources remain".
+	st_case "a call that FAILED is UNVERIFIABLE and exits 4, NOT 0" "" 1 4 yes
+
+	# ── CLOUD PARITY FOR THE FOURTH STATE (#3138 follow-up). ─────────────────────────────────────
+	#
+	# The four-state taxonomy is ONE contract, in scripts/e2e/lib/sweep-probe.sh. Every sweeper
+	# asserts it here rather than trusting that sourcing the library is enough, because the thing
+	# that actually breaks is a CALLER — a "✓ verified complete" line that forgot the qualifier, or a
+	# finalize_verification reading the wrong ledger. hetzner is the only cloud with an
+	# unattributable resource today (the imager upload helpers, #2463); the next one must not have to
+	# re-derive the answer, and must not be able to ship the loud half without the non-gating half.
+	#
+	# BOTH halves, because either alone is satisfiable by the wrong change: an UNATTRIBUTABLE finding
+	# must not move the exit code, AND an API failure must still move it to 4.
+	st_parity() { # <name> <rc> <the ✓ line (STDOUT) names it: yes|no> <unverifiable: yes|no> <the annotation (STDERR) names it: yes|no>
+		local rc=0 out named=no ann=no unv=no errf
+		# STDOUT AND STDERR ARE READ SEPARATELY, and that is the point of this helper. The ::warning::
+		# goes to stderr and would match either way, so folding them together with 2>&1 would let the
+		# ✓ line silently lose its qualifier — "verified complete — no billable resources remain",
+		# full stop, over an account that still holds something — and this test would not notice.
+		errf="$(mktemp "${TMPDIR:-/tmp}/alethia-st-parity.XXXXXX")"
+		out="$(finalize_verification 2>"$errf")" || rc=$?
+		case "$out" in *UNATTRIBUTABLE*) named=yes ;; esac
+		if grep -q 'UNATTRIBUTABLE' "$errf"; then ann=yes; fi
+		rm -f "$errf"
+		probe_has_unverifiable && unv=yes
+		if [ "$rc" = "$2" ] && [ "$named" = "$3" ] && [ "$unv" = "$4" ] && [ "$ann" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected rc=$2/✓-line=$3/unverifiable=$4/annotation=$5, got rc=${rc}/✓-line=${named}/unverifiable=${unv}/annotation=${ann}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	probe_reset
+	ST_OUT='{}' ST_RC=0 ST_CR='{"Instances":[]}' ST_ERR=""
+	CLUSTER_ID="" CLUSTER_NAME=""
+	probe_note_unattributable imager-upload-helpers "unlabelled — cannot be tied to this run"
+	st_parity "an UNATTRIBUTABLE finding is reported loudly and does NOT gate" 0 yes no yes
+	probe_reset
+	ST_OUT="" ST_RC=1 ST_CR="" ST_ERR="ERROR: SDK.InvalidCredential specified access key is not found"
+	CLUSTER_ID="" CLUSTER_NAME=""
+	probe_note_unattributable imager-upload-helpers "unlabelled — cannot be tied to this run"
+	st_parity "…and it never masks an API failure, which still exits 4" 4 no yes yes
+	# THE JQ HALF, which no other cloud in this repo has. jq exits 0 on empty input and its own
+	# parse failure was swallowed by `2>/dev/null || true`, so an HTML error page or a truncated
+	# body — an exit-0 response that is not JSON — produced an empty id list and a clean teardown.
+	st_case "a 200 that is NOT JSON is UNVERIFIABLE, not an empty account" \
+		'<html><body>502 Bad Gateway</body></html>' 0 4 yes '<html>502</html>' 
+
+	# The type NAMES the report, so a human knows what to check by hand — and for the CR EE
+	# subscription the instruction is different ("unsubscribe in the console"), so it must not be
+	# folded into a generic line.
+	probe_reset
+	ST_OUT="" ST_RC=1 ST_ERR="Forbidden.RAM"
+	alive_cr_instances >/dev/null 2>&1 || true
+	case "$(probe_unverifiable_types)" in
+	*cr-ee-instance-subscription*) echo "  ✓ an unverifiable SUBSCRIPTION is named as one" ;;
+	*)
+		echo "  ✗ an unverifiable SUBSCRIPTION is named as one — got '$(probe_unverifiable_types)'" >&2
+		st_fails=$((st_fails + 1))
+		;;
+	esac
+	unset -f ali
+
+	if [ "$st_fails" -ne 0 ]; then
+		echo "✗ alibaba-cleanup.sh self-test: ${st_fails} failure(s)" >&2
+		exit 1
+	fi
+	echo "✓ alibaba-cleanup.sh self-test passed"
+	exit 0
 fi
 
 # ── Orchestrate, in strict dependency order. ──
@@ -677,7 +879,6 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 echo "→ verifying nothing billable for run ${ENV} survived…"
-if ! verify_swept; then
-	exit 1
-fi
-echo "✓ alibaba cleanup verified complete for run ${ENV} — no billable resources remain"
+st_rc=0
+finalize_verification || st_rc=$?
+exit "$st_rc"
