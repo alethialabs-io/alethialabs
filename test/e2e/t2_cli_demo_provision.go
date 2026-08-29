@@ -129,6 +129,14 @@ type CLIDemoBeat struct {
 	// credentials must NOT travel in argv — /proc is world-readable and argv reaches the process
 	// list, which is the same reason the runner's bootstrap Jobs pass names and never values.
 	Stdin func(r *CLIDemoRun) string
+	// ReadBack, when set, is a READ-ONLY command run after the beat succeeds, whose output is what
+	// After receives instead of the beat's own.
+	//
+	// It exists because some commands DO something and then print a progress UI rather than the id
+	// they created. `connector <cloud>` is the case: it renders a three-step stepper and keeps
+	// `initResp.IdentityID` to itself. Parsing a stepper for an id would be reading a UI; asking
+	// the product what now EXISTS is the same answer from a stable surface.
+	ReadBack func(r *CLIDemoRun) []string
 	// After runs on success with the command's combined output: it captures ids into the run and
 	// asserts what the step must have produced. A beat with no After proves only that the command
 	// exited 0, which for a read-only step is the whole claim.
@@ -192,17 +200,26 @@ var CLIDemoBeats = []CLIDemoBeat{
 			"can do. Listing exercises the same org surface and does not pretend otherwise.",
 	},
 	{
-		StepID: "connector",
-		Phase:  CLIDemoAuthoring,
-		Args:   func(r *CLIDemoRun) []string { return []string{"connector", r.Provider, "--token-stdin", "--no-input"} },
-		Stdin:  func(r *CLIDemoRun) string { return cliDemoConnectorStdin(r) },
-		Why:    "credentials over STDIN, never argv — argv reaches /proc and the process list.",
+		StepID:   "connector",
+		Phase:    CLIDemoAuthoring,
+		Args:     func(r *CLIDemoRun) []string { return []string{"connector", r.Provider, "--token-stdin", "--no-input"} },
+		Stdin:    func(r *CLIDemoRun) string { return cliDemoConnectorStdin(r) },
+		ReadBack: func(_ *CLIDemoRun) []string { return []string{"connector", "list", "--output", "json", "--no-input"} },
+		After:    captureIdentityID,
+		Why:      "credentials over STDIN, never argv — argv reaches /proc and the process list.",
 	},
 	{
 		StepID: "project-create",
 		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "create", r.Project, "--region", r.Region, "--stage", "development", "--output", "json", "--no-input"}
+			// --cloud-identity-id is what makes the project PROVISIONABLE. Without it the project
+			// is created with `cloud_identity_id: null` and the deploy has no credential to
+			// provision with — a failure that surfaces during apply, long after the beat that
+			// should have caught it. The id comes from the connector beat's read-back.
+			return []string{
+				"project", "create", r.Project, "--region", r.Region, "--stage", "development",
+				"--cloud-identity-id", r.IdentityID, "--output", "json", "--no-input",
+			}
 		},
 		After: captureProjectID,
 	},

@@ -183,6 +183,35 @@ func captureApplyJobID(r *CLIDemoRun, out string) error {
 	return fmt.Errorf("no job id in `project apply` output — the spine has nothing to wait on:\n%s", out)
 }
 
+// captureIdentityID picks this cloud's identity out of `connector list --output json`.
+//
+// Matched on PROVIDER rather than taken positionally: a demo org may hold connectors for several
+// clouds, and "the first one" would attach the wrong account to the project — which provisions
+// successfully, into somebody else's cloud.
+func captureIdentityID(r *CLIDemoRun, out string) error {
+	start := strings.Index(out, "[")
+	end := strings.LastIndex(out, "]")
+	if start == -1 || end <= start {
+		return fmt.Errorf("`connector list --output json` produced no JSON array:\n%s", out)
+	}
+	var ids []struct {
+		ID       string `json:"id"`
+		Provider string `json:"provider"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &ids); err != nil {
+		return fmt.Errorf("parsing the connector list: %w\n%s", err, out)
+	}
+	for _, id := range ids {
+		if strings.EqualFold(id.Provider, r.Provider) && id.ID != "" {
+			r.IdentityID = id.ID
+			return nil
+		}
+	}
+	return fmt.Errorf("no %s identity among %d connector(s) — `connector %s` reported success but "+
+		"attached nothing, and the project would be created with no credential to provision with:\n%s",
+		r.Provider, len(ids), r.Provider, out)
+}
+
 // captureDefaultEnv reads the DEFAULT environment's name out of `project env list --output json`.
 //
 // It is captured rather than assumed because the CLI creates the environments, not the harness:
@@ -292,13 +321,7 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 		}
 		cctx, cancel := context.WithTimeout(ctx, bound)
 		cmd := exec.CommandContext(cctx, run.Bin, argv...)
-		cmd.Env = append(os.Environ(),
-			"ALETHIA_TOKEN="+run.Token,
-			cliDemoAPIEnv+"="+run.APIBase,
-			// A demo runs on a fresh machine; an update check that reaches the network turns a
-			// beat's timeout into a story about the CLI being slow.
-			"ALETHIA_NO_UPDATE_CHECK=1",
-		)
+		cmd.Env = cliDemoEnv(run)
 		if b.Stdin != nil {
 			if in := b.Stdin(run); in != "" {
 				cmd.Stdin = strings.NewReader(in)
@@ -312,6 +335,22 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 				b.StepID, strings.Join(argv, " "), err, out)
 		}
 		t.Logf("cli-demo [%s] %s: `alethia %s` ok", phase, b.StepID, strings.Join(argv, " "))
+		if b.ReadBack != nil {
+			rb := b.ReadBack(run)
+			rctx, rcancel := context.WithTimeout(ctx, cliDemoBeatTimeout)
+			rbCmd := exec.CommandContext(rctx, run.Bin, rb...)
+			// THE SAME ENV as the beat. Inheriting os.Environ() instead would leave the read-back
+			// with no ALETHIA_TOKEN and no origin — and ResolveWebOrigin's hosted default means it
+			// would not fail, it would query PRODUCTION and find no identity there.
+			rbCmd.Env = cliDemoEnv(run)
+			rbOut, rbErr := rbCmd.CombinedOutput()
+			rcancel()
+			if rbErr != nil {
+				t.Fatalf("cli-demo beat %q: the read-back `alethia %s` failed: %v\n%s",
+					b.StepID, strings.Join(rb, " "), rbErr, rbOut)
+			}
+			out = string(rbOut)
+		}
 		if b.After != nil {
 			if e := b.After(run, out); e != nil {
 				t.Fatalf("cli-demo beat %q produced no usable output: %v", b.StepID, e)
@@ -396,6 +435,19 @@ var cliDemoClaimPoll = 5 * time.Second
 // A var, like cliDemoClaimPoll, so the pure test can drive the whole loop in milliseconds instead
 // of making every PR wait out a real window to prove one error message.
 var cliDemoClaimWindow = 90 * time.Second
+
+// cliDemoEnv is the environment EVERY cli-demo invocation runs with — the beat and its read-back
+// alike. One builder, because the two differing is exactly how a read-back ends up querying the
+// hosted control plane instead of the console under test.
+func cliDemoEnv(run *CLIDemoRun) []string {
+	return append(os.Environ(),
+		"ALETHIA_TOKEN="+run.Token,
+		cliDemoAPIEnv+"="+run.APIBase,
+		// A demo runs on a fresh machine; an update check that reaches the network turns a beat's
+		// timeout into a story about the CLI being slow.
+		"ALETHIA_NO_UPDATE_CHECK=1",
+	)
+}
 
 // cliDemoBeatTimeout bounds ONE command. Generous, because a first request to a console that has
 // just booted pays for a cold Next.js route, and a beat that times out on that would be reported as
