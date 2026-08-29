@@ -1190,7 +1190,10 @@ func argoDeadlineDump(
 	losers []string,
 	refs []outOfSyncRef,
 ) string {
-	return describeArgoApps(ctx, kubeconfigPath, losers) +
+	// FIRST, because it is the only one that speaks for a loser whose resources were never created,
+	// and because it is one small `kubectl get` rather than a chart render. See argo_sync_failure.go.
+	return dumpArgoSyncFailures(ctx, kubeconfigPath, losers) +
+		describeArgoApps(ctx, kubeconfigPath, losers) +
 		dumpOutOfSyncResources(ctx, kubeconfigPath, refs) +
 		dumpArgoAppDiffs(ctx, kubeconfigPath, observed, losers)
 }
