@@ -1,0 +1,109 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Shared-surface exceptions — the machine-readable half of CLAUDE.md §6.
+#
+# §6: "if two pages disagree about how something looks or reads, the user is being told the product
+# is two products." `check:shared-surface` (scripts/check-shared-surface.mjs) fails on any console
+# site that hand-rolls a number, a date or a page title instead of reaching for `@repo/format` or
+# `@repo/ui/page-header`, unless it is listed here.
+#
+# An entry is a DECISION, not a mute button. Each one states why THIS surface is a different thing
+# from the one the shared component is for — a display heading on a marketing-shaped page, an
+# accessibility landmark, a quantity the package has no opinion about. Never "we haven't got to it
+# yet": work not yet done belongs on the board as an issue, where it stays visible. An exclusion
+# says we are not going to do it, and the guard prints it to anyone who trips over it.
+#
+# The list is SHRINK-ONLY. `baseline` is the entry count the guard ratchets against: adding an
+# entry without raising it is refused, and so is a shrink that is not recorded, so a win cannot be
+# quietly spent later. Be clear about what that does and does not mechanise: the guard compares
+# `baseline` against the entry count in THIS file, so raising the number and adding an entry in one
+# commit passes. The shrink-only property is enforced by REVIEW — the same way the checked-in
+# coverage floors are. A `baseline` that goes up in a diff is the thing to stop.
+#
+# `hits` is the same ratchet one level down — an exception is granted per OCCURRENCE, not per file,
+# so a new `<h1>` in an allowlisted file is new drift.
+#
+# Fields:
+#   path    — repo-relative, exactly as the guard prints it. One entry per file per section; a
+#             second entry for the same path is a parse error, because it would be a free entry
+#             against `baseline` with only one of its two reasons being the recorded decision.
+#   hits    — how many occurrences this entry covers. The guard fails if the file has more OR
+#             fewer, which is also its live proof that the matcher still matches.
+#   reason  — one line, in the product's voice: what a USER gets from this surface being different,
+#             not what the code does. The guard prints it verbatim with either `hits` failure.
+#
+# THREE sections. A section this file invents is a parse error, never a silently ignored block of
+# exceptions.
+#   format:       — @repo/format. `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a literal
+#                   `$` before an interpolation, and `/ 1024`. `scripts/check-shared-surface.mjs`
+#                   states which console directories each of those reaches.
+#   page_header:  — @repo/ui/page-header. A raw `<h1>` in app/(private)/** or components/**.
+#   scanned:      — NOT exceptions. One census floor per scope the guard declares: the fewest
+#                   files that scope may examine before the run is refused. It is the ONLY control
+#                   that notices a root being DELETED from the guard's own scope declaration — the
+#                   per-root vacuity check is built from that list, so a removed root has no row
+#                   left to be zero, and the guard printed a clean tree over 299 unread route
+#                   files. This ratchet runs the OPPOSITE way to `baseline`: files only grow, so
+#                   the number may be raised freely and a DROP is the thing review stops. The
+#                   floors sit a few percent under the live count so an ordinary refactor need not
+#                   touch them.
+
+baseline: 15
+
+scanned:
+  - scope: console_code
+    floor: 1100
+  - scope: console_view
+    floor: 630
+  - scope: console_pages
+    floor: 380
+
+format:
+  - path: apps/console/components/runners/pool-card.tsx
+    hits: 2
+    reason: Provisioned hours and utilization are fleet telemetry, not money or duration — @repo/format has no opinion about either, and inventing one for two call sites would be the wrong place to decide it.
+  - path: apps/console/components/runners/runner-card.tsx
+    hits: 1
+    reason: The same provisioned-hours figure as the pool card, and it must read the same way on both — `formatDuration` measures a span in milliseconds, which is a different question.
+  - path: apps/console/components/agent/agent-knowledge-panel.tsx
+    hits: 1
+    reason: Knowledge size is a budget you are spending against a limit, so it stays a bare compact figure (`2.1k`) rather than a formatted quantity with a unit.
+  - path: apps/console/components/agent/widgets/bodies/blocks.tsx
+    hits: 2
+    reason: SVG path coordinates for a sparkline — geometry the browser reads, never a number a person does.
+
+page_header:
+  - path: apps/console/components/auth/auth-form.tsx
+    hits: 4
+    reason: Sign-in is a full-screen, marketing-shaped page; its display heading is the same one the website uses, and shrinking it to a console page title would make the product's front door look like a settings tab.
+  - path: apps/console/components/auth/onboarding-form.tsx
+    hits: 2
+    reason: The first screen after sign-up, still on the marketing-shaped surface — it welcomes you, it does not label a page you navigated to.
+  - path: apps/console/components/forms/oauth-consent-form.tsx
+    hits: 2
+    reason: A consent screen has to read as its own moment, not as a page inside the console you happen to be on, because the decision it asks for is about handing access to someone else.
+  - path: apps/console/components/org/org-purchase-ui.tsx
+    hits: 2
+    reason: Buying a plan is a checkout, not a console page; it keeps the display type the pricing page uses so the two halves of one purchase look like one purchase.
+  - path: apps/console/components/legal/accept-terms-form.tsx
+    hits: 1
+    reason: Accepting terms blocks everything else until it is answered, and the display heading is what makes it read as a stop rather than a page.
+  - path: apps/console/app/(private)/cli/login/page.tsx
+    hits: 1
+    reason: The CLI hand-off is a single-purpose full-screen page in the same marketing-shaped shell as sign-in, and it is read from a terminal-shaped context, not from inside the console shell.
+  - path: apps/console/app/(private)/[org]/~/support/page.tsx
+    hits: 1
+    reason: "\"What can we help you with?\" is the support hub's opening question over its entry-point cards — a centred hero, which a left-aligned title-and-actions row cannot express."
+  - path: apps/console/components/agent/elench/elench-empty-landing.tsx
+    hits: 1
+    reason: The agent's invitation above an empty composer. It is the prompt, not the name of a page — there is nothing on screen yet for a page title to title.
+  - path: apps/console/components/create-project/create-project-form.tsx
+    hits: 1
+    reason: The same invitation, on the surface where a project starts; it opens the composer rather than labelling the route, and the two openers must read alike.
+  - path: apps/console/components/alerts/alerts-page.tsx
+    hits: 1
+    reason: An `sr-only` landmark. The page shows three stacked section headers and no visible title, so this exists purely to give a screen reader the route's name.
+  - path: apps/console/components/errors/error-state.tsx
+    hits: 1
+    reason: An error boundary is not a page header — it replaces the page, and its heading has to size itself to whether it is filling the screen or sitting inside a panel.

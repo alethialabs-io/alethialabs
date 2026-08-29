@@ -6,6 +6,7 @@ import { Loader2, RefreshCw, Plug, SearchX } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { globalHref } from "@/lib/routing";
+import { EmptyState } from "@repo/ui/empty";
 import { Button } from "@repo/ui/button";
 
 /** The non-READY results of getScanProposal. */
@@ -30,58 +31,53 @@ export function ScanReviewNotice({
 	const router = useRouter();
 
 	return (
-		<div className="mx-auto flex max-w-md flex-col items-center gap-4 py-16 text-center">
+		<div className="mx-auto flex max-w-md flex-col py-16">
 			{result.status === "PENDING" && (
-				<>
-					<Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-					<div className="space-y-1">
-						<h1 className="text-lg font-semibold">Scanning your repository…</h1>
-						<p className="text-sm text-muted-foreground">
-							We&apos;re analyzing the repo to infer what to provision (status: {result.jobStatus}).
-							This usually takes under a minute.
-						</p>
-					</div>
-					<Button
-						variant="outline"
-						className="gap-1.5 rounded-none"
-						onClick={() => router.refresh()}
-					>
-						<RefreshCw className="h-3.5 w-3.5" />
-						Check again
-					</Button>
-				</>
+				<EmptyState
+					level={1}
+					icon={<Loader2 className="animate-spin" />}
+					title="Scanning your repository…"
+					description={`We're analyzing the repo to infer what to provision (status: ${result.jobStatus}). This usually takes under a minute.`}
+					action={
+						<Button
+							variant="outline"
+							className="gap-1.5 rounded-none"
+							onClick={() => router.refresh()}
+						>
+							<RefreshCw className="h-3.5 w-3.5" />
+							Check again
+						</Button>
+					}
+				/>
 			)}
 
 			{result.status === "NEEDS_SETUP" && (
-				<>
-					<Plug className="h-8 w-8 text-muted-foreground" />
-					<div className="space-y-1">
-						<h1 className="text-lg font-semibold">Connect a cloud first</h1>
-						<p className="text-sm text-muted-foreground">
-							We inferred a stack from your repo, but you need a verified cloud account to
-							target it. Connect one, then re-open the scan.
-						</p>
-					</div>
-					<Button className="gap-1.5 rounded-none" nativeButton={false} render={<Link href={globalHref(org, "connectors")} />}>
-						<Plug className="h-3.5 w-3.5" />
-						Connect a cloud
-					</Button>
-				</>
+				<EmptyState
+					level={1}
+					icon={<Plug />}
+					title="Connect a cloud first"
+					description="We inferred a stack from your repo, but you need a verified cloud account to target it. Connect one, then re-open the scan."
+					action={
+						<Button className="gap-1.5 rounded-none" nativeButton={false} render={<Link href={globalHref(org, "connectors")} />}>
+							<Plug className="h-3.5 w-3.5" />
+							Connect a cloud
+						</Button>
+					}
+				/>
 			)}
 
 			{result.status === "NOT_FOUND" && (
-				<>
-					<SearchX className="h-8 w-8 text-muted-foreground" />
-					<div className="space-y-1">
-						<h1 className="text-lg font-semibold">Scan not found</h1>
-						<p className="text-sm text-muted-foreground">
-							This scan no longer exists. Start a new project and scan your repo again.
-						</p>
-					</div>
-					<Button variant="outline" className="gap-1.5 rounded-none" nativeButton={false} render={<Link href={globalHref(org, "new")} />}>
-						Start a new project
-					</Button>
-				</>
+				<EmptyState
+					level={1}
+					icon={<SearchX />}
+					title="Scan not found"
+					description="This scan no longer exists. Start a new project and scan your repo again."
+					action={
+						<Button variant="outline" className="gap-1.5 rounded-none" nativeButton={false} render={<Link href={globalHref(org, "new")} />}>
+							Start a new project
+						</Button>
+					}
+				/>
 			)}
 		</div>
 	);

@@ -9,6 +9,7 @@
 import { formatDistanceToNow } from "date-fns";
 import { Box } from "lucide-react";
 import Link from "next/link";
+import { formatMonthlyRate } from "@repo/format";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { TableCell, TableRow } from "@repo/ui/table";
@@ -86,7 +87,7 @@ export function ProjectRow({
 			</TableCell>
 			<TableCell className="text-right font-mono text-[11px] text-muted-foreground">
 				{project.estimated_monthly_cost
-					? `$${project.estimated_monthly_cost.toFixed(2)}`
+					? formatMonthlyRate(project.estimated_monthly_cost)
 					: "—"}
 			</TableCell>
 			<TableCell className="text-right font-mono text-[11px] text-muted-foreground">

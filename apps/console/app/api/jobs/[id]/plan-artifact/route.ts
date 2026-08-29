@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { formatBytes } from "@repo/format";
 import { verifyRunnerOwnsJob, verifyRunnerToken } from "@/lib/runners/auth";
 import { storage } from "@/lib/storage";
 import {
@@ -31,7 +32,7 @@ export async function POST(
 		}
 		if (sizeError === "too_large") {
 			return NextResponse.json(
-				{ error: `File too large (max ${MAX_PLAN_ARTIFACT_BYTES / (1024 * 1024)}MB)` },
+				{ error: `File too large (max ${formatBytes(MAX_PLAN_ARTIFACT_BYTES)})` },
 				{ status: 413 },
 			);
 		}

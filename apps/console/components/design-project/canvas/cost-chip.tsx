@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { formatMonthlyRate } from "@repo/format";
 import { useEnvironmentStatus } from "@/lib/canvas/environment-status-context";
 
 /**
@@ -37,10 +38,12 @@ export function CostChip() {
 					: undefined
 			}
 		>
-			<span className="vx-eyebrow text-[9px]">Monthly</span>
-			{/* Money is precise — the design system's rule. */}
+			{/* No "Monthly" eyebrow: `formatMonthlyRate` carries its own `/mo`, and "Monthly
+			    $12.50/mo" labels the period twice in a chip whose constraint is horizontal
+			    space. `exact` because the node cards on the same canvas are the parts of this
+			    number, and a total that rounds differently from its parts cannot be checked. */}
 			<span className="font-mono text-xs text-foreground">
-				${env.monthlyCost.toFixed(2)}
+				{formatMonthlyRate(env.monthlyCost, "exact")}
 			</span>
 		</span>
 	);

@@ -9,6 +9,7 @@
 // an attachment (Stripe stays the source of truth for the invoice document).
 
 import type Stripe from "stripe";
+import { formatDate } from "@repo/format";
 import { planMeta } from "@repo/plan-catalog";
 import { getEmailConfig } from "@repo/email/config";
 import type { EmailAttachment } from "@repo/email/send";
@@ -49,16 +50,18 @@ function money(amountMinor: number, currency: string): string {
 	}).format(amountMinor / 100);
 }
 
-/** Formats a Stripe unix timestamp (seconds) as e.g. "Jul 3, 2026". */
+/**
+ * Formats a Stripe unix timestamp (seconds) as e.g. "3 Jul 2026".
+ *
+ * Through `@repo/format` rather than its own `toLocaleDateString`: a renewal date in a billing
+ * email and the same date on the billing page are one fact, and the console had them on two
+ * locales — this one pinned `en-US`, `formatDate` pins `en-GB`.
+ */
 function fmtDate(unixSeconds: number): string {
-	return new Date(unixSeconds * 1000).toLocaleDateString("en-US", {
-		month: "short",
-		day: "numeric",
-		year: "numeric",
-	});
+	return formatDate(unixSeconds * 1000);
 }
 
-/** "Jul 3 – Aug 3, 2026" from two unix timestamps; undefined if either is missing. */
+/** "3 Jul 2026 – 3 Aug 2026" from two unix timestamps; undefined if either is missing. */
 function fmtPeriod(startSec?: number | null, endSec?: number | null): string | undefined {
 	if (!startSec || !endSec) return undefined;
 	return `${fmtDate(startSec)} – ${fmtDate(endSec)}`;

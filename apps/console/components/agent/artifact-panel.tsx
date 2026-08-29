@@ -19,6 +19,7 @@ import type {
 	ProvisionJobType,
 } from "@/lib/db/schema/enums";
 import type { GitopsDeployStatus } from "@/lib/gitops/deploy-status";
+import { formatMonthlyRate } from "@repo/format";
 import { Badge } from "@repo/ui/badge";
 import { CountPill } from "@repo/ui/count-pill";
 import { EmptyState } from "@repo/ui/empty";
@@ -482,7 +483,7 @@ function CostPane({ cost }: { cost: { items: CostItem[]; total: number } | null 
 							)}
 						</div>
 						<span className="ml-2 shrink-0 font-mono text-foreground">
-							${item.cost.toFixed(0)}
+							{formatMonthlyRate(item.cost, "exact")}
 						</span>
 					</div>
 				))}
@@ -490,7 +491,7 @@ function CostPane({ cost }: { cost: { items: CostItem[]; total: number } | null 
 			<div className="mt-3 flex items-center justify-between border-t border-border pt-3">
 				<span className="text-sm font-medium">Total</span>
 				<span className="font-mono text-sm font-semibold">
-					~${cost.total.toFixed(0)}/mo
+					{formatMonthlyRate(cost.total, "exact")}
 				</span>
 			</div>
 		</div>
@@ -710,7 +711,7 @@ function PlanPane({
 					</div>
 					{plan.costSummary?.totalMonthlyCost != null && (
 						<div className="font-mono text-xs text-muted-foreground">
-							~${plan.costSummary.totalMonthlyCost.toFixed(0)}/mo
+							{formatMonthlyRate(plan.costSummary.totalMonthlyCost, "exact")}
 						</div>
 					)}
 					<div className="divide-y divide-border border border-border">

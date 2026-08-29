@@ -4,6 +4,7 @@
 // Upload an attachment to a support case. The authorize gate (authorizeUserId + org
 // match) is the wall; the writes then run on the service DB (route context, no RLS).
 
+import { formatBytes } from "@repo/format";
 import { NextResponse } from "next/server";
 import { getOwner } from "@/lib/auth/owner";
 import { getActiveScope } from "@/lib/auth/scope";
@@ -77,7 +78,7 @@ export async function POST(
 	}
 	if (file.size > MAX_ATTACHMENT_BYTES) {
 		return NextResponse.json(
-			{ error: `File too large (max ${MAX_ATTACHMENT_BYTES / (1024 * 1024)}MB)` },
+			{ error: `File too large (max ${formatBytes(MAX_ATTACHMENT_BYTES)})` },
 			{ status: 413 },
 		);
 	}

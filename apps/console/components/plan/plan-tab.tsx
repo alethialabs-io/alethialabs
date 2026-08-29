@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
+import { formatMonthlyRate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Separator } from "@repo/ui/separator";
@@ -176,6 +177,9 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 							<>
 								<Separator />
 								<div className="space-y-2">
+									{/* `exact` in BOTH the lines and the Total below them: this is a
+									    column a reader adds up, and the headline register would print
+									    $60.25 + $45.10 under a Total of $105. */}
 									<h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
 										Cost Breakdown
 									</h4>
@@ -190,7 +194,7 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 														{cr.name}
 													</span>
 													<span className="font-medium">
-														${cr.monthlyCost?.toFixed(2) ?? "—"}/mo
+														{cr.monthlyCost != null ? formatMonthlyRate(cr.monthlyCost, "exact") : "—"}
 													</span>
 												</div>
 											))}
@@ -198,7 +202,7 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 										{costResult.totalMonthlyCost !== null && (
 											<div className="flex items-center justify-between border-t bg-muted/30 px-3 py-2 text-sm font-medium">
 												<span>Total</span>
-												<span>${costResult.totalMonthlyCost.toFixed(2)}/mo</span>
+												<span>{formatMonthlyRate(costResult.totalMonthlyCost, "exact")}</span>
 											</div>
 										)}
 									</div>
@@ -255,6 +259,7 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 				<>
 					<Separator />
 					<div className="space-y-2">
+						{/* Same pair as the applied view above, and the same reason. */}
 						<h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
 							Cost Breakdown
 						</h4>
@@ -269,10 +274,9 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 											{cr.name}
 										</span>
 										<span className="font-medium">
-											$
-											{cr.monthlyCost?.toFixed(2) ??
-												"—"}
-											/mo
+											{cr.monthlyCost != null
+												? formatMonthlyRate(cr.monthlyCost, "exact")
+												: "—"}
 										</span>
 									</div>
 								))}
@@ -281,9 +285,7 @@ export function PlanTab({ plan, onApplied }: PlanTabProps) {
 								<div className="flex items-center justify-between border-t bg-muted/30 px-3 py-2 text-sm font-medium">
 									<span>Total</span>
 									<span>
-										$
-										{costResult.totalMonthlyCost.toFixed(2)}
-										/mo
+										{formatMonthlyRate(costResult.totalMonthlyCost, "exact")}
 									</span>
 								</div>
 							)}
