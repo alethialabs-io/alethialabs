@@ -153,10 +153,23 @@ func dumpArgoSyncFailures(ctx context.Context, kubeconfigPath string, losers []s
 	if len(losers) == 0 {
 		return ""
 	}
+	// BOUNDED, because this runs on the failing path INSIDE the T2 context, after the ArgoCD budget
+	// is already spent. t2budget leaves ~7m of headroom before the ctx cancels — and a cancelled ctx
+	// does not merely truncate this dump, it kills the process before t.Cleanup tears the cluster
+	// down, leaking it to the sweeper. So: one small `kubectl get` per app, 5s each (this reads two
+	// status fields, not a chart), and at most 20 apps — the same ceiling describeArgoApps uses,
+	// which is the realistic maximum number that can fail at once. Worst case 100s, not 400s.
+	const maxApps = 20
+	const perApp = 5 * time.Second
+
 	var b strings.Builder
 	b.WriteString("\n──── Why the last sync did not take, per failing Application ────\n")
-	for _, name := range losers {
-		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	for i, name := range losers {
+		if i == maxApps {
+			fmt.Fprintf(&b, "\n  … %d more failing Application(s) not asked\n", len(losers)-i)
+			break
+		}
+		cctx, cancel := context.WithTimeout(ctx, perApp)
 		out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
 			"get", "applications.argoproj.io", "-n", "argocd", name, "-o", "json").Output()
 		cancel()

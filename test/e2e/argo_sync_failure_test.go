@@ -10,9 +10,12 @@
 package e2e
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseArgoAppFailureReadsTheOperationState(t *testing.T) {
@@ -87,5 +90,37 @@ func TestRenderArgoAppFailureCapsTheResourceList(t *testing.T) {
 	out := renderArgoAppFailure("addon-x", f, nil)
 	if !strings.Contains(out, "8 more resource(s) with a sync error") {
 		t.Fatalf("a truncated list must name what it dropped:\n%s", out)
+	}
+}
+
+// The dump is BOUNDED, and the bound is not cosmetic: this runs inside the T2 context after the
+// ArgoCD budget is spent, and a cancelled ctx kills the process before t.Cleanup tears the cluster
+// down — leaking it to the sweeper. Twenty apps at five seconds is 100s against ~7m of headroom;
+// twenty at twenty seconds would have been 400s, which is most of it.
+//
+// Asserted on the CAP rather than on wall-clock, because a timing test would be flaky and would not
+// say what it means.
+func TestDumpArgoSyncFailuresNamesWhatItSkipped(t *testing.T) {
+	var losers []string
+	for i := 0; i < 25; i++ {
+		losers = append(losers, fmt.Sprintf("addon-%02d", i))
+	}
+	// No cluster: every read fails fast, which is the point — this exercises the loop's bound, not
+	// kubectl. A context already past its deadline keeps it instant.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	out := dumpArgoSyncFailures(ctx, "/nonexistent/kubeconfig", losers)
+	if !strings.Contains(out, "5 more failing Application(s) not asked") {
+		t.Fatalf("the cap must name what it skipped:\n%s", out)
+	}
+	if strings.Contains(out, "addon-20") {
+		t.Errorf("app 21 is past the cap and must not have been asked:\n%s", out)
+	}
+	if !strings.Contains(out, "addon-19") {
+		t.Errorf("app 20 is within the cap and must have been asked:\n%s", out)
+	}
+	// And an empty loser set produces nothing at all, rather than a header with no body.
+	if dumpArgoSyncFailures(ctx, "/nonexistent/kubeconfig", nil) != "" {
+		t.Error("no losers means no section")
 	}
 }
