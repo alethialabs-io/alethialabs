@@ -170,7 +170,12 @@ func assertBootstrapDidNotFail(t *testing.T, ctx context.Context, kc string, p k
 		t.Fatalf("keyless: %v", perr)
 	}
 	if outcome.Failed {
-		if logs, lerr := nsKubectl(ctx, kc, "logs", "-n", p.cfg.namespace, "job/"+job, "--tail=200"); lerr == nil {
+		// By SELECTOR, not `job/<name>`: that form prints "Found N pods, using pod/…" and picks one
+		// arbitrarily, and this Job retries under its backoffLimit. The attempt that FAILED FIRST is
+		// the one carrying the original cause; every attempt after it can only report the state the
+		// first one left. Same correction as the add-on bootstrap dump in this package.
+		if logs, lerr := nsKubectl(ctx, kc, "logs", "-n", p.cfg.namespace, "-l", "job-name="+job,
+			"--tail=200", "--prefix", "--timestamps", "--max-log-requests=10"); lerr == nil {
 			t.Logf("keyless: bootstrap Job logs:\n%s", logs)
 		}
 		t.Fatalf("the keyless bootstrap Job %s FAILED (%s) — the app's database login was never created, so nothing downstream could authenticate", job, outcome.Detail)
