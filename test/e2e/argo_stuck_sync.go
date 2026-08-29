@@ -91,14 +91,19 @@ func filterControllerLines(raw []byte, losers []string, max, tail int) controlle
 		tail = controllerTailLines
 	}
 	var sc controllerLogScan
-	pods := map[string]bool{}
+	// Per-pod LINE COUNTS, not a set: the window is per pod, so the count is what decides whether
+	// any of them was truncated. The empty key holds a log with no --prefix blocks, which is one
+	// window's worth by definition.
+	pods := map[string]int{}
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		sc.Scanned++
 		if m := podPrefixRE.FindStringSubmatch(line); m != nil {
-			pods[m[1]] = true
+			pods[m[1]]++
+		} else {
+			pods[""]++
 		}
 		if hasKnownLevel(line) {
 			sc.Levelled++
@@ -116,11 +121,20 @@ func filterControllerLines(raw []byte, losers []string, max, tail int) controlle
 	if sc.Pods == 0 {
 		sc.Pods = 1
 	}
-	// PER POD. `kubectl logs -l` applies --tail to EACH selected pod, so comparing the aggregate
-	// against one pod's limit reports a truncated window whenever two replicas each return half of
-	// it. The pod count comes from the --prefix blocks, and is at least one so a log with no
-	// prefixes still compares against a single window.
-	sc.WindowFull = sc.Scanned >= sc.Pods*tail
+	// ANY POD AT ITS LIMIT, not the aggregate against the sum.
+	//
+	// `kubectl logs -l` applies --tail to EACH selected pod, so `Scanned >= Pods*tail` fires only
+	// when EVERY pod filled its window. Two controller shards — one genuinely truncated at 4000 and
+	// one idle at 10 — would report a complete read, and the caveat would be withdrawn on exactly
+	// the case it exists for: a busy pod whose first failure is off the top.
+	//
+	// One pod's window is full ⇒ something was cut. That is the honest bound.
+	for _, n := range pods {
+		if n >= tail {
+			sc.WindowFull = true
+			break
+		}
+	}
 	return sc
 }
 
@@ -148,10 +162,17 @@ func (s controllerLogScan) Unreadable() bool { return s.Levelled == 0 }
 // `"level":"fatal"` line off hetzner/addons run 33059349873 — an RBAC refusal. A severity list of
 // error+warning treats a controller that FATALED as running and not complaining, which is the
 // precise verdict this file exists to stop printing.
-var levelMarkers = []string{
-	"level=error", "level=warning", "level=fatal", "level=panic",
-	`"level":"error"`, `"level":"warning"`, `"level":"fatal"`, `"level":"panic"`,
-}
+// ⚠️ THE SAME MATCHER AS hasKnownLevel, NARROWED TO THE SEVERITIES WORTH KEEPING. These were
+// literal substrings while hasKnownLevel was widened to whitespace-tolerant regexes, and the gap
+// between the two is a false verdict: `{"level": "error", …}` — one space, which logrus writes if
+// anything downstream re-marshals — counted as READABLE and matched NOTHING, so `Unreadable()` was
+// false, `Matched` was zero, and the confident "the controller is not complaining" printed over a
+// log full of errors. Two matchers over one format must not be written twice.
+const keptSeverities = `(warn|warning|error|fatal|panic)`
+
+var keptTextRE = regexp.MustCompile(`^(\[[^\]]*\]\s+)?(time="[^"]*"\s+)?level=` + keptSeverities + `\b`)
+
+var keptJSONRE = regexp.MustCompile(`"level"\s*:\s*"` + keptSeverities + `"`)
 
 // severities is every level logrus can emit, as an alternation for the two format regexes.
 const severities = `(trace|debug|info|warn|warning|error|fatal|panic)`
@@ -189,12 +210,7 @@ func controllerLineMatters(line string, losers []string) bool {
 			return true
 		}
 	}
-	for _, m := range levelMarkers {
-		if strings.Contains(line, m) {
-			return true
-		}
-	}
-	return false
+	return keptTextRE.MatchString(line) || keptJSONRE.MatchString(line)
 }
 
 // renderControllerLog states the verdict, with every caveat that invalidates it printed FIRST.

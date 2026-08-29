@@ -254,6 +254,29 @@ func TestHasKnownLevelRequiresARealSeverity(t *testing.T) {
 			t.Errorf("a real level marker was not recognised: %s", line)
 		}
 	}
+	// ⚠️ READABLE AND KEPT MUST AGREE ON THE SAME SPELLING. `hasKnownLevel` was widened to
+	// whitespace-tolerant regexes while the keep-list stayed literal substrings, so a spaced JSON
+	// record counted as readable and matched nothing — Unreadable() false, Matched zero, and the
+	// confident "not complaining" verdict over a log full of errors. Asserting only readability
+	// here is what BAKED that in.
+	for _, line := range []string{
+		`{"level": "error", "msg": "Failed to apply hook"}`,
+		`{"level":"fatal","msg":"boom"}`,
+		`time="…" level=warning msg="x"`,
+	} {
+		if !hasKnownLevel(line) {
+			t.Errorf("not readable: %s", line)
+		}
+		if !controllerLineMatters(line, nil) {
+			t.Errorf("readable but never kept — this is the gap that prints a calm verdict over "+
+				"errors: %s", line)
+		}
+	}
+	// And an INFO line is readable but correctly not kept: the two matchers agree on the format and
+	// differ only on severity, which is the whole design.
+	if info := `{"level": "info", "msg": "ok"}`; !hasKnownLevel(info) || controllerLineMatters(info, nil) {
+		t.Errorf("info must be readable and NOT kept: %s", info)
+	}
 	// The one that matters: a level marker sitting inside a MESSAGE, on a line that is not a
 	// logrus record. Unanchored matching counts it and one such line then vouches for the whole log.
 	for _, line := range []string{
@@ -303,8 +326,8 @@ func TestRenderControllerLogSaysWhenTheWindowWasFull(t *testing.T) {
 	}
 }
 
-// `kubectl logs -l` applies --tail to EACH pod, so the aggregate must be compared against the pod
-// count times the limit. Two replicas returning half a window each is not a truncated window.
+// `kubectl logs -l` applies --tail to EACH pod, so the window is per pod — and one pod at its limit
+// means something was cut, whatever the others did.
 func TestControllerLogScanCountsTheWindowPerPod(t *testing.T) {
 	var lines []string
 	for _, pod := range []string{"argocd-application-controller-0", "argocd-application-controller-1"} {
@@ -312,7 +335,7 @@ func TestControllerLogScanCountsTheWindowPerPod(t *testing.T) {
 			lines = append(lines, "[pod/"+pod+"/application-controller] level=info msg=\"x\"")
 		}
 	}
-	// tail=10: two pods, ten lines total, five each — neither window was filled.
+	// tail=10: two pods, five lines each — neither window was filled.
 	sc := filterControllerLines([]byte(strings.Join(lines, "\n")), nil, 60, 10)
 	if sc.Pods != 2 {
 		t.Fatalf("Pods = %d, want 2 — the --prefix blocks are how the pod count is known", sc.Pods)
@@ -320,10 +343,37 @@ func TestControllerLogScanCountsTheWindowPerPod(t *testing.T) {
 	if sc.WindowFull {
 		t.Errorf("two pods at half a window each reported a FULL window (%d lines, tail 10)", sc.Scanned)
 	}
-	// One pod at the limit is a full window.
-	one := filterControllerLines([]byte(strings.Join(lines[:5], "\n")), nil, 60, 5)
-	if !one.WindowFull {
+	// One pod at exactly its tail is a full window.
+	if one := filterControllerLines([]byte(strings.Join(lines[:5], "\n")), nil, 60, 5); !one.WindowFull {
 		t.Errorf("one pod at exactly its tail is a full window: %+v", one)
+	}
+}
+
+// ONE BUSY POD IS ENOUGH. Comparing the aggregate against Pods*tail fires only when EVERY pod
+// filled its window, so a truncated shard beside an idle one reports a complete read — and the
+// caveat is withdrawn on exactly the case it exists for.
+func TestControllerLogScanFlagsATruncatedPodBesideAnIdleOne(t *testing.T) {
+	var lines []string
+	for i := 0; i < 10; i++ {
+		lines = append(lines, "[pod/busy/application-controller] level=info msg=\"x\"")
+	}
+	lines = append(lines, "[pod/idle/application-controller] level=info msg=\"x\"")
+
+	sc := filterControllerLines([]byte(strings.Join(lines, "\n")), nil, 60, 10)
+	if !sc.WindowFull {
+		t.Errorf("a pod at its 10-line tail beside an idle one reported a complete read: %+v", sc)
+	}
+}
+
+// A log with no --prefix blocks is one window's worth by definition, and must still be able to
+// report itself truncated.
+func TestControllerLogScanCountsAnUnprefixedLogAsOneWindow(t *testing.T) {
+	var lines []string
+	for i := 0; i < 4; i++ {
+		lines = append(lines, `level=info msg="x"`)
+	}
+	if sc := filterControllerLines([]byte(strings.Join(lines, "\n")), nil, 60, 4); !sc.WindowFull {
+		t.Errorf("four lines against a tail of four is a full window: %+v", sc)
 	}
 }
 
