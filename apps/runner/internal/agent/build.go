@@ -221,9 +221,16 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 	//    degrades from a digest-pinned reference to a tag under a message that reads like a benign
 	//    fallback. Concatenating every pod's message is safe for exactly the reason the bug is
 	//    possible: only a successful attempt has a digest to find.
-	if msg, terr := w.kubectlOutput(ctx, "get", "pods", "-n", namespace,
+	//
+	//    The error is deliberately NOT checked before parsing. `-o jsonpath` walks every item and
+	//    fails the whole read on the first pod that has no `containerStatuses` — a pod still
+	//    Pending, or evicted — after emitting the ones before it. Ranging over every item makes
+	//    that MORE likely than `items[0]` did, and the successful attempt's message may be among
+	//    the ones already emitted. Parsing first costs nothing: the regex either finds a digest or
+	//    it does not, and a partial read that contains one is a correct answer.
+	if msg, _ := w.kubectlOutput(ctx, "get", "pods", "-n", namespace,
 		"-l", buildJobPodSelector+jobName, "-o",
-		`jsonpath={range .items[*]}{.status.containerStatuses[0].state.terminated.message}{"\n"}{end}`); terr == nil {
+		`jsonpath={range .items[*]}{.status.containerStatuses[0].state.terminated.message}{"\n"}{end}`); msg != "" {
 		if digest := parseKanikoDigest(msg); digest != "" {
 			return dest + "@" + digest, nil
 		}

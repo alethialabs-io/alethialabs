@@ -1715,6 +1715,44 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 		}
 	})
 
+	// `-o jsonpath` fails the whole read on the first pod with no containerStatuses — Pending or
+	// evicted — after emitting the ones before it. Ranging over every item makes that more likely
+	// than items[0] did, and the successful attempt's message may be among the ones already out.
+	t.Run("a jsonpath read that errored still yields the digest it printed", func(t *testing.T) {
+		t.Setenv("KUBECONFIG", "")
+		t.Setenv("HOME", t.TempDir())
+		_, url := covBuildGitRepo(t)
+		s := covBuildNewStubs(t)
+		covBuildTofuStub(t, s)
+		s.write(t, "out.output", covBuildTofuOutputs("registry.test/web"))
+		covBuildKubectlStub(t, s, 0,
+			covBuildKubeRule{match: "get job", stdout: "Complete=True ", exit: 0},
+			covBuildKubeRule{
+				match:  "get pods",
+				stdout: "image pushed " + digest + "\n",
+				stderr: `error: error executing jsonpath "...": containerStatuses is not found`,
+				exit:   1,
+			},
+			covBuildKubeRule{match: "logs", stdout: "", exit: 0},
+		)
+		api := &covBuildAPI{mockAPI: &mockAPI{}, gitToken: "ghp_test"}
+		w := covBuildRunner(t, api)
+		out, errl := covBuildLoggers(t, api)
+		identity := &CloudIdentity{Provider: "hetzner", AccountID: "acct-1"}
+		if err := w.executeBuild(ctx, covBuildJob(url), "", identity, out, errl); err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		var result map[string]string
+		for _, u := range api.getStatusUpdates() {
+			if m, ok := u.metadata[buildResultKey].(map[string]string); ok {
+				result = m
+			}
+		}
+		if result["web"] != "registry.test/web@"+digest {
+			t.Errorf("digest = %q — a jsonpath error discarded a message that carried the answer", result["web"])
+		}
+	})
+
 	t.Run("git-sha tag fallback", func(t *testing.T) {
 		result, _, err := run(t, "no digest", "no digest in the logs either")
 		if err != nil {
