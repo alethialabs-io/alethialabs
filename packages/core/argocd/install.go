@@ -22,6 +22,14 @@ import (
 var applyCRDRaceMaxWait = 5 * time.Minute
 
 func ApplyApplications(renderedDir string, stdout, stderr io.Writer) error {
+	// Before the apply, not beside it: a StorageClass whose `provisioner` differs from the live one
+	// cannot be updated (the field is immutable), so the apply below would fail outright rather than
+	// converge. Making the applies POSSIBLE is part of applying them, which is why this lives here
+	// and not in the caller — deploy.go should not have to know that one manifest kind has an
+	// immutable field. See storage_class_reconcile.go.
+	if scErr := ReconcileImmutableStorageClasses(renderedDir, stdout, stderr); scErr != nil {
+		return scErr
+	}
 	cmd := fmt.Sprintf("kubectl apply -f %s", renderedDir)
 	fmt.Fprintln(stdout, "Applying ArgoCD infrastructure applications...")
 	// ArgoCD Applications install their CRDs + admission webhooks ASYNCHRONOUSLY via ArgoCD sync
