@@ -3,18 +3,15 @@
 
 import { Skeleton } from "@repo/ui/skeleton";
 
-/** Instant skeleton shown while the clusters route prefetches on the server. */
+/**
+ * Instant skeleton shown while the clusters route prefetches on the server.
+ *
+ * No heading, deliberately: ClustersClient renders none either ("the surface opens straight into
+ * content"), so a title here is one that disappears on hydration, taking the grid up with it.
+ */
 export default function ClustersLoading() {
 	return (
 		<div className="space-y-6">
-			<div>
-				<h1 className="text-2xl font-semibold tracking-tight text-foreground">
-					Clusters
-				</h1>
-				<p className="text-sm text-muted-foreground mt-1">
-					Provisioned infrastructure and access credentials.
-				</p>
-			</div>
 			<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 				{[1, 2].map((i) => (
 					<div key={i} className="rounded-lg border border-border/40 p-5 space-y-4">

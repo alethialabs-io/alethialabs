@@ -10,6 +10,7 @@
 // through the shared TanStack cache (period-fixed reads are server-prefetched + hydrated; the
 // over-time chart re-queries as the range picker changes).
 
+import { formatMonthlyRate } from "@repo/format";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, Info } from "lucide-react";
 import Link from "next/link";
@@ -45,11 +46,6 @@ const METRICS: { id: Metric; label: string }[] = [
 	{ id: "jobs", label: "Jobs" },
 	{ id: "aiCredits", label: "AI credits" },
 ];
-
-/** Formats a USD amount with no decimals (e.g. "$1,240"). */
-function currency(n: number): string {
-	return `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
 
 /**
  * Renders the Usage view for a single project. `projectId` is resolved from the URL slug in
@@ -173,7 +169,9 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 							Estimated cloud spend for this project
 						</span>
 						<span className="font-mono text-text-secondary">
-							{counts.data ? currency(counts.data.estimatedMonthlyCost) : "—"}/mo
+							{counts.data
+								? formatMonthlyRate(counts.data.estimatedMonthlyCost)
+								: "—"}
 						</span>
 					</div>
 				</div>

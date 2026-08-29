@@ -92,12 +92,16 @@ export function formatDuration(ms: number): string {
 }
 
 /** How much of a timestamp to show. */
-export type DateStyle = "date" | "datetime" | "month";
+export type DateStyle = "date" | "datetime" | "month" | "time";
 
 const DATE_OPTS: Record<DateStyle, Intl.DateTimeFormatOptions> = {
 	date: { day: "numeric", month: "short", year: "numeric" },
 	datetime: { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" },
 	month: { month: "long", year: "numeric" },
+	// `time` exists for one shape: a log gutter, where the date is the same on every line and
+	// repeating it is noise, but the second matters. `hourCycle: "h23"` rather than
+	// `hour12: false`, which is the option that renders midnight as 24:00 in some locales.
+	time: { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" },
 };
 
 /**
@@ -176,12 +180,98 @@ export function formatBytes(bytes: number): string {
  */
 export function formatMoney(cents: number, currency = "USD"): string {
 	const amount = Number.isFinite(cents) ? cents / 100 : 0;
-	// `currencyDisplay: "narrowSymbol"` is load-bearing: en-GB renders USD as "US$12.50"
-	// by default, which is wrong for a product that bills in dollars. narrowSymbol gives
-	// "$12.50", "€12.50", "£12.50". Verified against Intl before relying on it.
-	return new Intl.NumberFormat(LOCALE, { style: "currency", currency, currencyDisplay: "narrowSymbol" }).format(
-		amount,
-	);
+	// No explicit decimals: a billed amount keeps the currency's own (2 for USD, 0 for JPY).
+	return money(amount, currency);
+}
+
+/**
+ * Which question a monthly figure is answering. The two registers differ ONLY in whether the
+ * figure is allowed to round away detail it does not have; they never differ in precision for the
+ * same number, which is what lets a line and a total sit in one column.
+ */
+export type MonthlyRateStyle = "estimate" | "exact";
+
+/**
+ * A recurring monthly cost, held in MAJOR units — `$12.50/mo`, `$1,240.37/mo`.
+ *
+ * The sibling of {@link formatMoney}, and it is a sibling rather than an option on it because the
+ * two answer different questions and take different units.
+ *
+ * UNITS. `formatMoney` takes cents because a billed amount comes from Stripe and the billing
+ * tables, where money is stored in minor units. This takes major units because a monthly estimate
+ * comes from `projects.estimated_monthly_cost` and the plan's cost result, which are `numeric`
+ * columns holding dollars. Passing one to the other is off by 100 either way, so the two names
+ * carry the unit — `formatMoney(1250)` and `formatMonthlyRate(12.5)` are the same money.
+ *
+ * CENTS ARE ALWAYS SHOWN. The first cut of this function dropped them above $100, on the argument
+ * that they are fake precision on an estimate. That argument is true of a lone headline and false
+ * everywhere else in this console, because this quantity almost never appears alone: review found
+ * three breakdown-and-total pairs whose own lines stopped adding up (`$60.25` + `$45.10` under a
+ * total of `$105`, from a real `totalMonthlyCost` of 105.35) and two canvas cards side by side
+ * reading `$99.99/mo` and `$100/mo` for the same field. A threshold that changes precision inside
+ * one column is the disagreement this package exists to end, so there is no threshold.
+ *
+ * THE TWO REGISTERS are about ADMISSION, not precision:
+ *
+ *   "estimate" — a lone headline whose parts are not on screen (a project card, a plan's
+ *                "Est." summary). It may admit it does not know:
+ *                  <= 0       -> `$0/mo`      nothing is running — NOT `$0.00/mo`, which reads
+ *                                             like a bill
+ *                  0 < x < 1  -> `<$1/mo`     the same admission `formatMinutes` makes for
+ *                                             `<1 min`; `$0.02/mo` for a whole project reads as
+ *                                             a broken number, not a cheap one
+ *                  otherwise  -> `$12.50/mo`, `$1,240.37/mo`
+ *
+ *   "exact"    — a line in a breakdown, the total of one, or a card in a set that sums to a
+ *                total on the same screen. It may NOT round anything away, because the reader is
+ *                adding the column up: a $0.50 hosted zone and a $0.03 bucket must not both read
+ *                `<$1/mo`, and a genuine zero must read `$0.00/mo` so the column aligns.
+ *                  <= 0       -> `$0.00/mo`
+ *                  otherwise  -> `$0.03/mo`, `$126.40/mo`
+ *
+ * Rounding to cents happens ONCE, before the `<1` test, so a figure cannot be rounded differently
+ * by two branches: 0.999 reads `$1.00/mo`, never `<$1/mo` beside a `$1.00/mo`. The `<= 0` test is
+ * the exception and runs FIRST, on the raw value — 0.001 is a real cost that must not round into
+ * "nothing is running".
+ *
+ * NO `~`. Three call sites prefixed one and thirteen did not, which is the disagreement, not the
+ * fix — the same field cannot be approximate on one screen and exact on the next. A page that
+ * wants to say "estimated" says it in words beside the number, where it is readable.
+ *
+ * @param amount a recurring monthly cost in major units (dollars, euros). Negative is clamped to 0.
+ * @param style which register — see above. Defaults to the headline `"estimate"`.
+ * @param currency ISO 4217 code; defaults to USD.
+ */
+export function formatMonthlyRate(amount: number, style: MonthlyRateStyle = "estimate", currency = "USD"): string {
+	const suffix = "/mo";
+	// `undefined` decimals keeps the currency's own (2 for USD, 0 for JPY) — the same choice
+	// `formatMoney` makes, so a breakdown line and a billed amount cannot disagree about JPY.
+	if (!Number.isFinite(amount) || amount <= 0) {
+		return `${money(0, currency, style === "exact" ? undefined : 0)}${suffix}`;
+	}
+	const rounded = Math.round(amount * 100) / 100;
+	if (style === "estimate" && rounded < 1) return `<${money(1, currency, 0)}${suffix}`;
+	return `${money(rounded, currency)}${suffix}`;
+}
+
+/**
+ * The one Intl currency call both money functions go through, so `formatMoney` and
+ * `formatMonthlyRate` cannot disagree about the symbol.
+ *
+ * `currencyDisplay: "narrowSymbol"` is load-bearing: en-GB renders USD as "US$12.50" by default,
+ * which is wrong for a product that bills in dollars. narrowSymbol gives "$12.50", "€12.50",
+ * "£12.50". Verified against Intl before relying on it.
+ *
+ * @param decimals fixed fraction digits; omit to keep the currency's own.
+ */
+function money(amount: number, currency: string, decimals?: number): string {
+	const digits = decimals === undefined ? {} : { minimumFractionDigits: decimals, maximumFractionDigits: decimals };
+	return new Intl.NumberFormat(LOCALE, {
+		style: "currency",
+		currency,
+		currencyDisplay: "narrowSymbol",
+		...digits,
+	}).format(amount);
 }
 
 /** Coerce the accepted input shapes to a valid Date, or null when it cannot be read. */
