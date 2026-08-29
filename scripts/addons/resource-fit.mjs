@@ -14,6 +14,14 @@ import { execSync } from "node:child_process";
 // is a different release from the data-service `secrets-vault`.
 const [allowPath, ceilingArg, ...fixtureArgs] = process.argv.slice(2);
 const ceilingMi = Number(ceilingArg);
+// `worst > NaN` is ALWAYS false, so an unparseable ceiling makes every chart `fits`, leaves `fail`
+// empty, prints the OK line and exits 0 — a guard that passes everything while looking like it ran.
+// It matters more since the positional contract moved from `<fixture> <allowlist> <ceiling>` to
+// `<allowlist> <ceiling> <fixture…>`: a caller that did not move with it lands here.
+if (!Number.isFinite(ceilingMi) || ceilingMi <= 0) {
+	console.error(`::error::check-resource-fit: ceiling ${JSON.stringify(ceilingArg)} is not a positive number — every comparison would silently pass`);
+	process.exit(1);
+}
 
 /** Kubernetes quantity → MiB. Returns null for anything unparseable, which is reported, never
  *  silently treated as zero — a unit this does not understand would make a huge pod look free. */
@@ -36,7 +44,16 @@ const perSource = [];
 for (const arg of fixtureArgs) {
 	const [path, prefix = ""] = arg.split("::");
 	const raw = JSON.parse(fs.readFileSync(path, "utf8"));
-	const list = Array.isArray(raw) ? raw : (raw.addons || raw.specs || Object.values(raw)[0]);
+	// `chartedNotOffered` is where a kind lands when its chart is wired but the kind is not offered
+	// — Harbor's own history. Those charts are still RENDERED (the chart gate renders them), so they
+	// are still charts this repo ships, and dropping them here would let this half fall from nine
+	// specs to eight with nothing but a smaller number to say so. The per-source guard below only
+	// fires at ZERO. The sibling render check makes the same union deliberately.
+	const list = Array.isArray(raw)
+		? raw
+		: raw.addons
+			? [...raw.addons, ...(raw.chartedNotOffered ?? [])]
+			: raw.specs || Object.values(raw)[0];
 	// PER SOURCE, not on the total. One combined count would let a half go to zero — a renamed
 	// fixture key, an exporter writing `[]` — while the number still looked healthy, which is the
 	// "found nothing == nothing wrong" collapse this guard family exists to refuse.
@@ -46,8 +63,9 @@ for (const arg of fixtureArgs) {
 	}
 	// The `id` is namespaced for reporting and for the allowlist; `release` keeps the name that
 	// actually ships, because a chart can derive rendered content from its release name.
-	for (const s of list) specs.push({ ...s, id: prefix + s.id, release: s.id });
-	perSource.push(`${list.length} from ${path.split("/").pop()}`);
+	const source = path.split("/").pop();
+	for (const s of list) specs.push({ ...s, id: prefix + s.id, release: s.id, source });
+	perSource.push({ source, specs: list.length });
 }
 
 const declared = new Map();
@@ -59,6 +77,13 @@ for (const line of fs.readFileSync(allowPath, "utf8").split("\n")) {
 
 const fail = [];
 const over = new Set();
+// PER SOURCE, like the spec count. A chart whose render yields no `requests.memory` leaves
+// `worst = 0`, prints `fits 0 Mi` — byte-identical to a real measurement — and can never exceed the
+// ceiling. With one global counter the marketplace half's ~25 requests keep it non-zero while the
+// data-service half measures nothing at all, and the run still says OK. That is the
+// "found nothing == nothing wrong" collapse this file refuses for the spec count; it has to refuse
+// it for the MEASUREMENT too, which is the number that decides the verdict.
+const podsBySource = new Map();
 let podsSeen = 0;
 const tmp = fs.mkdtempSync("/tmp/resfit-");
 
@@ -97,6 +122,7 @@ for (const s of specs) {
 			const m = lines[j].match(/^\s*memory:\s*"?([^"\s]+)"?\s*$/);
 			if (m) {
 				podsSeen++;
+				podsBySource.set(s.source, (podsBySource.get(s.source) ?? 0) + 1);
 				const mi = toMi(m[1]);
 				if (mi === null) {
 					fail.push(`${s.id}: could not parse the memory quantity ${JSON.stringify(m[1])} — refusing to treat an unreadable request as small`);
@@ -121,6 +147,11 @@ for (const s of specs) {
 if (podsSeen === 0) {
 	fail.push("no memory requests were found in ANY rendered chart — the extractor has stopped matching, so NOTHING was checked");
 }
+for (const { source } of perSource) {
+	if ((podsBySource.get(source) ?? 0) === 0) {
+		fail.push(`no memory requests were found in ANY chart from ${source} — that half rendered but measured NOTHING, and every one of its charts would print "fits 0 Mi"`);
+	}
+}
 
 // Ratchet, the other direction.
 for (const id of declared.keys()) {
@@ -131,7 +162,9 @@ for (const id of declared.keys()) {
 	}
 }
 
-console.log(`\nchecked ${specs.length} chart render(s) (${perSource.join(" + ")}), ${podsSeen} pod spec(s), ceiling ${ceilingMi}Mi per pod`);
+console.log(
+	`\nchecked ${specs.length} chart render(s) (${perSource.map((p) => `${p.specs} from ${p.source}, ${podsBySource.get(p.source) ?? 0} memory request(s)`).join(" + ")}), ceiling ${ceilingMi}Mi per pod`,
+);
 if (fail.length > 0) {
 	for (const f of fail) console.error(`::error::check-resource-fit: ${f}`);
 	console.error(`\ncheck-resource-fit: ${fail.length} problem(s).`);
