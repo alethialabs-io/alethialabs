@@ -1735,6 +1735,13 @@ jobs:
           # could tell them apart — which is how a cell was promoted on unmeasured counts (#3281).
           ALETHIA_E2E_DIMENSION: ${{ env.E2E_DIMENSION }}
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
+          # The go-test stream, which is where the ASSERTIONS come from. Declared on the t2 step
+          # since #2645 and never here, so `capture-proof.sh` always took its else branch and every
+          # bundle warned "carries NO test assertions". `env:` on a step does not inherit from a
+          # sibling step, only from the job — and this step re-declares fifteen other summary paths
+          # for exactly that reason, which is what made the omission invisible: the list LOOKS
+          # exhaustive. Measured before this line: 0 assertions.txt across 45 committed bundles.
+          ALETHIA_E2E_T2_TEST_LOG: ${{ runner.temp }}/t2-test.log
           # Day-2 soak summary (BYOC A0.3), written by the T2 test; folded into the bundle +
           # step-summary verdict when present (absent ⇒ the capture is unchanged).
           ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json
