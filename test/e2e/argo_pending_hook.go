@@ -125,21 +125,42 @@ func parseHookLiveState(objJSON []byte) (hookLiveState, error) {
 }
 
 // renderPendingHook states the verdict in the words the reader needs, never as a bare fact.
-func renderPendingHook(app string, ref hookRef, st hookLiveState) string {
+//
+// ⚠️ THREE OUTCOMES, NOT TWO, AND THE THIRD IS WHY THIS COMMENT EXISTS. The first version of this
+// probe read an absent object as "the apply never landed" and said so with confidence. On
+// azure/addons run 33266338989 that was WRONG, and wrong in the most expensive direction: it sent
+// the reader to RBAC, admission and quotas while the Application's own sync result said
+//
+//	ClusterRole/…-admission  Synced … serverside-applied
+//
+// The object was applied and then REMOVED — kube-prometheus-stack's admission hooks carry
+// `helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded`, so ArgoCD deletes them the
+// moment they succeed. Absence from the cluster is the NORMAL end state for such a hook.
+//
+// So the cluster cannot answer this alone. What separates the two is whether the Application
+// RECORDED a result for that hook, and that is read from the same list this dump already fetches.
+func renderPendingHook(app string, s stalledApp, st hookLiveState) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n  ──── %s is waiting on %s ────\n", app, ref)
+	fmt.Fprintf(&b, "\n  ──── %s is waiting on %s ────\n", app, s.Ref)
 	switch {
 	case st.ReadError != "":
 		fmt.Fprintf(&b, "    could not be looked up (%s) — this says nothing about whether it exists\n", st.ReadError)
-	case !st.Exists:
-		b.WriteString("    NOT IN THE CLUSTER. The apply never landed, so the fault is on the way in — " +
-			"RBAC, an admission webhook, a quota, a manifest the API server refused. The " +
-			"application-controller log above carries the API error; this is not a watch problem.\n")
-	default:
+	case st.Exists:
 		fmt.Fprintf(&b, "    EXISTS, created %s, field managers: %s.\n", orNone(st.Created), orNone(strings.Join(st.Managers, ", ")))
 		b.WriteString("    So the apply DID land and ArgoCD is not observing it. The fault is in what " +
 			"the controller can watch or cache, not in what the API server accepted — and its log " +
 			"will be quiet, because from its side nothing failed.\n")
+	case s.SyncResult != "":
+		fmt.Fprintf(&b, "    NOT in the cluster NOW, but the sync RECORDED it: %q.\n", s.SyncResult)
+		b.WriteString("    So the apply landed and the object was removed afterwards — which is the " +
+			"NORMAL end state for a hook carrying `hook-delete-policy: hook-succeeded`. Absence is " +
+			"not evidence the apply failed here. Look at why the hook's COMPLETION was never " +
+			"recorded (a hook declared in two phases, a delete-and-recreate loop), not at RBAC.\n")
+	default:
+		b.WriteString("    NOT IN THE CLUSTER, and the sync recorded NO result for it. The apply " +
+			"never landed, so the fault is on the way in — RBAC, an admission webhook, a quota, a " +
+			"manifest the API server refused. The application-controller log above carries the API " +
+			"error; this is not a watch problem.\n")
 	}
 	return b.String()
 }
@@ -149,6 +170,10 @@ type stalledApp struct {
 	App       string
 	Ref       hookRef
 	Namespace string
+	// SyncResult is what the Application RECORDED for this exact hook, empty when it recorded
+	// nothing. It is the difference between "the apply never landed" and "the apply landed and the
+	// object was removed afterwards", which the cluster alone cannot tell you.
+	SyncResult string
 }
 
 // stalledHooksFromList finds every loser that is waiting on a hook, in ONE list.
@@ -173,7 +198,17 @@ func stalledHooksFromList(appsJSON []byte, losers []string) (stalled []stalledAp
 			} `json:"spec"`
 			Status struct {
 				OperationState struct {
-					Message string `json:"message"`
+					Message    string `json:"message"`
+					SyncResult struct {
+						Resources []struct {
+							Group     string `json:"group"`
+							Kind      string `json:"kind"`
+							Name      string `json:"name"`
+							Status    string `json:"status"`
+							HookPhase string `json:"hookPhase"`
+							Message   string `json:"message"`
+						} `json:"resources"`
+					} `json:"syncResult"`
 				} `json:"operationState"`
 			} `json:"status"`
 		} `json:"items"`
@@ -194,7 +229,15 @@ func stalledHooksFromList(appsJSON []byte, losers []string) (stalled []stalledAp
 		if !ok {
 			continue
 		}
-		stalled = append(stalled, stalledApp{App: it.Metadata.Name, Ref: ref, Namespace: it.Spec.Destination.Namespace})
+		entry := stalledApp{App: it.Metadata.Name, Ref: ref, Namespace: it.Spec.Destination.Namespace}
+		for _, r := range it.Status.OperationState.SyncResult.Resources {
+			if r.Kind != ref.Kind || r.Name != ref.Name || r.Group != ref.Group {
+				continue
+			}
+			entry.SyncResult = strings.TrimSpace(strings.Join([]string{r.Status, r.HookPhase, r.Message}, " "))
+			break
+		}
+		stalled = append(stalled, entry)
 	}
 	return stalled, found, nil
 }
@@ -239,7 +282,7 @@ func dumpPendingHooks(ctx context.Context, kubeconfigPath string, losers []strin
 			fmt.Fprintf(&b, "\n  … %d more stalled Application(s) not looked up\n", len(stalled)-i)
 			break
 		}
-		b.WriteString(renderPendingHook(s.App, s.Ref, lookupHook(ctx, kubeconfigPath, s.Ref, s.Namespace)))
+		b.WriteString(renderPendingHook(s.App, s, lookupHook(ctx, kubeconfigPath, s.Ref, s.Namespace)))
 	}
 	return b.String()
 }
