@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -115,41 +114,6 @@ func parseBootstrapJobs(listJSON []byte) ([]bootstrapJob, error) {
 			j.Conditions = append(j.Conditions, strings.TrimSpace(fmt.Sprintf("%s=%s %s %s", c.Type, c.Status, c.Reason, c.Message)))
 		}
 		out = append(out, j)
-	}
-	return out, nil
-}
-
-// kubectlRead runs one kubectl read and returns STDOUT, with stderr folded into the ERROR.
-//
-// THE STDOUT IS RETURNED EVEN ON FAILURE, because a partial answer is still an answer.
-// `kubectl logs -l` reads a Job's pods in sequence and bails on the first one it cannot open — so a
-// fifth pod still in ContainerCreating makes the command exit non-zero AFTER it has already printed
-// attempts one to four. Discarding that is discarding the very attempt this dump exists to show,
-// and it is the exact Job shape the dump was written for.
-//
-// `exec.Output()` alone renders a missing CRD, an RBAC refusal and an unreachable API server all
-// as `exit status 1` — three faults with three different next steps, printed as one number, in a
-// dump whose only job is to say which. Stderr stays OUT of the returned value: this stdout is
-// parsed as JSON, and kubectl writes to stderr on calls that succeed.
-func kubectlRead(ctx context.Context, timeout time.Duration, kubeconfigPath string, args ...string) ([]byte, error) {
-	cctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	full := append([]string{"--kubeconfig", kubeconfigPath}, args...)
-	var stderr strings.Builder
-	cmd := exec.CommandContext(cctx, "kubectl", full...)
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if i := strings.IndexByte(msg, '\n'); i >= 0 {
-			msg = msg[:i]
-		}
-		if msg != "" {
-			// Appended only when there IS something: an error ending in a bare colon reads like a
-			// message that got cut off.
-			return out, fmt.Errorf("%w: %s", err, msg)
-		}
-		return out, err
 	}
 	return out, nil
 }

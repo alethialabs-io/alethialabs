@@ -425,7 +425,7 @@ func dumpDestinationWarnings(ctx context.Context, kubeconfigPath string, losers 
 	var b strings.Builder
 	b.WriteString("\n──── cluster Warnings in the losers' destination namespaces ────\n")
 
-	appsOut, err := kubectlValue(ctx, 20*time.Second, kubeconfigPath,
+	appsOut, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath,
 		"get", "applications.argoproj.io", "-n", "argocd", "-o", "json")
 	if err != nil {
 		fmt.Fprintf(&b, "  could not read the Applications to learn their namespaces (%v)\n", err)
@@ -454,7 +454,7 @@ func dumpDestinationWarnings(ctx context.Context, kubeconfigPath string, losers 
 			len(losers)-len(byApp), len(losers))
 	}
 
-	evOut, err := kubectlValue(ctx, 30*time.Second, kubeconfigPath,
+	evOut, err := kubectlRead(ctx, 30*time.Second, kubeconfigPath,
 		"get", "events", "--all-namespaces", "--field-selector", "type=Warning", "-o", "json")
 	if err != nil {
 		fmt.Fprintf(&b, "  could not read events (%v)\n", err)
@@ -480,33 +480,6 @@ func dumpDestinationWarnings(ctx context.Context, kubeconfigPath string, losers 
 		}
 	}
 	return b.String()
-}
-
-// kubectlValue runs one kubectl read and returns STDOUT, with stderr folded into the error.
-//
-// `exec.Output()` alone gives the caller `exit status 1` for a missing CRD, an RBAC refusal and an
-// unreachable API server alike — three faults with three different next steps, rendered as one
-// number. And CombinedOutput is not the answer either: this stdout is a VALUE, and kubectl writes
-// to stderr on calls that SUCCEED.
-func kubectlValue(ctx context.Context, timeout time.Duration, kubeconfigPath string, args ...string) ([]byte, error) {
-	cctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	full := append([]string{"--kubeconfig", kubeconfigPath}, args...)
-	var stderr strings.Builder
-	cmd := exec.CommandContext(cctx, "kubectl", full...)
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		// The bytes already collected are returned alongside the error. Both callers here parse
-		// JSON, so a partial document is unusable to them today — but this is the package's shared
-		// kubectl read and its contract should not be "a command that half-succeeded produced
-		// nothing", which is the shape #3378 had to remove from the Job-log read.
-		if msg := kubectlErrorLine(stderr.String()); msg != "" {
-			return out, fmt.Errorf("%w: %s", err, msg)
-		}
-		return out, err
-	}
-	return out, nil
 }
 
 // execFailure renders a command failure as one string, with kubectl's own words when it left any.
