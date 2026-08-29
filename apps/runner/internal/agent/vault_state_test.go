@@ -12,8 +12,15 @@ import (
 	"testing"
 )
 
-// stubVaultKubectl installs a recording `kubectl` on PATH for one test. `get` answers with getBody (or
-// exits 1 when empty, standing in for an absent Secret); everything else succeeds.
+// stubVaultKubectl installs a recording `kubectl` on PATH for one test. `get` answers with getBody
+// (or exits 0 with NO OUTPUT when empty, standing in for an absent Secret); everything else
+// succeeds.
+//
+// Exit 0 and not exit 1, because Read passes `--ignore-not-found`: measured against kubectl on a
+// live cluster, an absent object exits 0 with no output while Forbidden and an unreachable API
+// server exit 1. A stub that failed here would be asserting the shape of the bug this contract
+// replaced. `stubKubectlOutcome` covers the non-zero exits, which this stub deliberately cannot
+// produce.
 func stubVaultKubectl(t *testing.T, getBody string) *string {
 	t.Helper()
 	dir := t.TempDir()
@@ -28,7 +35,7 @@ func stubVaultKubectl(t *testing.T, getBody string) *string {
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + log + "\n" +
 		"case \"$1\" in\n" +
-		"  get) if [ -s " + body + " ]; then cat " + body + "; exit 0; else exit 1; fi;;\n" +
+		"  get) if [ -s " + body + " ]; then cat " + body + "; fi; exit 0;;\n" +
 		"  apply) cp \"$3\" " + applied + "; exit 0;;\n" +
 		"esac\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
