@@ -231,10 +231,19 @@ func dumpArgoControllerLog(ctx context.Context, kubeconfigPath string, losers []
 		fmt.Sprintf("--tail=%d", controllerTailLines), "--prefix")
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	if err != nil {
+	// THE PARTIAL OUTPUT IS STILL THE ANSWER. `kubectl logs -l` reads the selected pods in sequence
+	// and stops at the first one it cannot open, having already written the ones before it. On a
+	// cluster unhealthy enough to be in this dump, an unopenable pod is likely — and discarding what
+	// came back would lose the controller's account on exactly the runs this exists for.
+	if err != nil && len(strings.TrimSpace(string(out))) == 0 {
 		fmt.Fprintf(&b, "  could not be read (%v: %s) — this says nothing about the sync\n",
 			err, strings.TrimSpace(firstLine(stderr.String())))
 		return b.String()
+	}
+	if err != nil {
+		fmt.Fprintf(&b, "  PARTIAL: the read stopped early (%v: %s). What follows is what came back "+
+			"before it stopped, and an absence in it is not evidence.\n",
+			err, strings.TrimSpace(firstLine(stderr.String())))
 	}
 	b.WriteString(renderControllerLog(filterControllerLines(out, losers, maxControllerLines)))
 	return b.String()
