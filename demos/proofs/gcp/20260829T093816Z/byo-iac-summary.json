@@ -1,0 +1,31 @@
+{
+  "enabled": true,
+  "provider": "gcp",
+  "repo": "https://github.com/alethialabs-io/enterprise-demo",
+  "ref": "main",
+  "path": "iac/drift/gcp",
+  "pinned_commit_sha": "ab54450f2a7a16203db1ea32af4f43be0d8fc303",
+  "gate_blocked_non_allowlisted": true,
+  "clone_at_pinned_commit_logged": true,
+  "gate_passed_logged": true,
+  "deploy_status": "SUCCESS",
+  "receipt_plan_sha256": "75d3b91f73b89ebe6d5f5cbd19d56551ff87805371187838e994af0b15d40aa1",
+  "state_on_proxy": true,
+  "state_resources": 1,
+  "no_cluster_name_output": true,
+  "alethia_context": "alethia-nl/33243600150-1",
+  "drift_target": "alethia-byo-iac-e2e33243",
+  "baseline_in_sync": true,
+  "mutation_applied": true,
+  "drifted_count": 1,
+  "drifted_types": [
+    "google_storage_bucket"
+  ],
+  "drifted_is_probe_resource": true,
+  "heal_status": "SUCCESS",
+  "healed_in_sync": true,
+  "destroy_status": "SUCCESS",
+  "state_cleared": true,
+  "state_cleared_by": "delete",
+  "verdict": "✅ byo-iac on gcp: iac/drift/gcp@ab54450f2a7a… https://github.com/alethialabs-io/enterprise-demo · gate-blocks-bad=true · pinned-clone-logged=true · receipt=75d3b91f73b8… · state-on-proxy=true(1 res) · no-cluster-output=true · ctx=alethia-nl/33243600150-1 · drift baseline-in-sync=true → induced(alethia-byo-iac-e2e33243)=1[google_storage_bucket] → healed-in-sync=true · destroy=SUCCESS state-cleared=true"
+}
