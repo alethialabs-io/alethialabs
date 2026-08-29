@@ -187,6 +187,30 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Logf("#1773: ACM certificate SKIPPED — set %s (+ %s, %s) to enable.", envAcmCert, envAcmCertZoneID, envAcmCertZoneName)
 	}
 
+	// THE `cli-demo` DIMENSION REFUSES ITSELF UNTIL ITS BEATS ARE DRIVEN, and it refuses EARLY —
+	// before a cluster is bought.
+	//
+	// #3303 landed the vehicle: the dimension resolves, exports ALETHIA_E2E_CLI_DEMO_PROVISION, takes
+	// a budget term, and has a beat table cross-checked against CLIDemoSteps in the pure half. What
+	// it does NOT yet have is a caller: nothing in this test executes CLIDemoBeats. So a dispatch
+	// today would provision a floor-shaped cluster, assert the floor, and go GREEN — having proven
+	// nothing whatever about the ACTOR, which is the only thing the dimension claims.
+	//
+	// A green run that proves the opposite of its own claim is worse than no run: `commit-proof.sh`
+	// would accept the bundle (the ArgoCD convergence is measured and real), the ledger would carry a
+	// PASS, and PROGRAMME.md would render a `cli-demo` cell ✅ on the strength of a floor. That is
+	// "never promote a cell by asserting it", one layer down — the assertion would be TRUE and about
+	// the wrong thing.
+	//
+	// So it fails, loudly, naming what is missing. It costs an operator a dispatch and a minute; the
+	// alternative costs the programme a false cell. Delete this once the beats are driven.
+	if CLIDemoProvisionEnabled() {
+		t.Fatalf("the `cli-demo` dimension is enabled (ALETHIA_E2E_CLI_DEMO_PROVISION), but nothing in "+
+			"this test drives CLIDemoBeats yet — %d beats are defined and none is executed. This run "+
+			"would provision a floor, assert the floor, and be recorded as a CLI-DRIVEN proof. "+
+			"Wire the beats before dispatching this dimension.", len(CLIDemoBeats))
+	}
+
 	// #1511: keyless DB auth, resolved on the same terms and for the same reason — a misconfigured
 	// opt-in must fail in seconds, and an EXCLUDED cell (alibaba/hetzner) resolves to "off" carrying
 	// the product's own exclusion prose rather than a silent skip.
