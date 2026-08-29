@@ -103,9 +103,11 @@ the blocker) · *(blank)* = not yet attempted.
 | 4 | Corrected 5-env runbook written | PASS | `demos/RUNBOOK.md` | 2026-08-29 |
 | 5 | Elench prompt pack written | PASS | `demos/elench-prompts.md` — Blocks 1–3 outputs are real runs | 2026-08-29 |
 | 5a | MCP OAuth discovery broken in prod | FAIL | [#3318](https://github.com/alethialabs-io/alethialabs/issues/3318) — found by probing, Block 4 carries the caveat | 2026-08-29 |
-| 6 | Isolation ladder proven on Hetzner (1 Fabric) | | | |
-| 7 | Isolation ladder proven on Hetzner (2 Fabrics) | | | |
-| 8 | Isolation ladder proven on AWS | | | |
+| 6 | AWS ladder proof attempted | **BLOCKED** | [#3348](https://github.com/alethialabs-io/alethialabs/issues/3348) — the prod runner is `self` with no ambient AWS creds; the PLAN job fails before tofu runs | 2026-08-29 |
+| 6a | Azure plan on the SAME runner | PASS | job `0d9850b1` — keyless federated identity activated, tofu init clean. Azure/Alibaba/token clouds have no operator gate | 2026-08-29 |
+| 6b | Elench gate could never pass its own templates | FIXED | `terraform_data` denied SCOPE-001 on all 5 clouds; every committed receipt shows it | 2026-08-29 |
+| 7 | Isolation ladder proven (cloud TBD — Azure is the only unblocked one) | | | |
+| 8 | Isolation ladder proven on a second cloud | | | |
 | 9 | Browser pass — signed-in surface (overview · clusters · new project) | PASS | `demos/monday-evidence/20260829-new-project-placement-defaults.png`; 2 defects found → rows 9a/9b | 2026-08-29 |
 | 9a | Overview "Recent jobs · last 24h" showed month-old jobs | FIXED | commit `c645c8d2` — no time window exists anywhere; label now "latest 5" | 2026-08-29 |
 | 9b | New-project default shape hits the orphan-Fabric bug on PROD | CONFIRMED | screenshot: production+staging `Dedicated`, dev+preview `Namespace` — needs M2 to reach prod | 2026-08-29 |
@@ -131,7 +133,10 @@ once.
 | M1 | Sign in to alethialabs.io in Chrome | The OTP goes to your email; an agent cannot read it. | **DONE** — a live session was already present 2026-08-29 (org `tovr`, HOBBY plan). If it lapses, sign in again and the passes resume. |
 | M2 | Promote `dev → staging → main` | Prod serves `main`; `Deploy Console` fires on push there. | **OPEN — now load-bearing.** Prod carries the orphan-Fabric bug (row 9b) and the false "last 24h" label. Without the promotion, a project created through the console's DEFAULT template on alethialabs.io still cannot deploy its `dev`/`preview` tiers. |
 | M3 | Confirm the AWS account + Hetzner project to demo from | Hetzner tokens are project-scoped and can do anything in that project; do not demo from the project the sandbox box lives in. | OPEN |
-| M4 | Confirm the runner placement | Assumed: a registered runner on the existing sandbox box (zero new spend). | OPEN |
+| M4 | Confirm the runner placement | Assumed: a registered runner on the existing sandbox box (zero new spend). | SUPERSEDED by M5 |
+| M5 | **Decide how the demo gets a runner that can provision AWS** | #3348: the prod runner is `self`, so AWS and GCP cannot federate. Either set `ALETHIA_RUNNER_OPERATOR=managed` on the control-plane runner (a security decision — it lets that VM mint assertions into customer roles), or stand up a fleet pool, or demo on **Azure**, which works today. | **OPEN — blocks any AWS demo** |
+| M7 | **Connect Hetzner** — one command, then the ladder proof is unblocked | Hetzner is token-based (`ActivateTokenCloud`), so it has **no operator gate** and is not affected by #3348. It is the cheapest path to the proof (~€0.10/hr). The agent is blocked from handling the token itself. Run, using the `alethia-e2e` project (it is empty — the runbook says never demo from the project the sandbox box lives in):<br>`hcloud context use alethia-e2e`<br>`hcloud context active` → then paste that project's token:<br>`alethia connector hetzner --token-stdin` | **OPEN — cheapest unblock** |
+| M6 | Merge `enterprise-demo` PR #6 | The overlays PR targets `main` in a single-branch repo; the merge guard refuses `main` from an agent session. | OPEN — needed only for the 5-tier shape |
 
 ---
 
@@ -147,6 +152,14 @@ once.
   so if a browser pass creates a project through the console's default catalog (production+staging
   dedicated, dev+preview namespace), the two namespace tiers will land on an orphan Fabric. Create
   demo projects with an explicit dedicated env until the promotion lands.
+
+- **R0 · Nothing can provision on AWS or GCP in production (#3348).** The deployed runner runs as
+  `self` (`docker-compose.yml` sets `ALETHIA_RUNNER_MODE: self-hosted`) and has no ambient cloud
+  credentials, so `AssumeRole` falls through to EC2 IMDS and 404s. **Azure, Alibaba and the token
+  clouds are unaffected** — they have no operator gate and always federate keylessly, which a live
+  Azure plan on the same runner confirmed. There are also **no fleet pools**, so no managed runner
+  exists to claim the job instead. This is the single biggest risk to Monday and it needs a
+  maintainer decision (see M5).
 
 - **R2 · `namespace` and `vcluster` placement have never run on a real cloud.**
   Every committed bundle in `demos/proofs/*/*/summary.txt` reads `fabric-demo: n/a`. Only `dedicated`
