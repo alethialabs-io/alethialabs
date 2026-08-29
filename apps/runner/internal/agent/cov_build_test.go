@@ -1589,6 +1589,19 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 	ctx := context.Background()
 	const digest = "sha256:aa11bb22cc33dd44ee55ff667788990011223344556677889900aabbccddeeff"
 
+	// The stub answers any `get pods` with the same canned stdout, so a behavioural assertion alone
+	// would pass just as well with the old `items[0]` jsonpath — it would be a test of
+	// parseKanikoDigest, not of the read. These two pin the ARGV, which is what actually changed.
+	assertReadsEveryPod := func(t *testing.T, s *covBuildStubs) {
+		t.Helper()
+		if !s.sawCall("get pods", "range .items[*]") {
+			t.Errorf("the termination-message read is not ranging over every pod: %v", s.calls())
+		}
+		if s.sawCall("get pods", ".items[0]") {
+			t.Errorf("the arbitrary-pod read is back: %v", s.calls())
+		}
+	}
+
 	run := func(t *testing.T, terminated, logs string) (map[string]string, string, error) {
 		t.Helper()
 		t.Setenv("KUBECONFIG", "")
@@ -1604,6 +1617,7 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 		out, errl := covBuildLoggers(t, api)
 		identity := &CloudIdentity{Provider: "hetzner", AccountID: "acct-1"}
 		err := w.executeBuild(ctx, covBuildJob(url), "", identity, out, errl)
+		assertReadsEveryPod(t, s)
 
 		var result map[string]string
 		for _, u := range api.getStatusUpdates() {
@@ -1634,6 +1648,24 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 		}
 		if result["web"] != "registry.test/web@"+digest {
 			t.Errorf("digest = %q, want the log-derived one", result["web"])
+		}
+	})
+
+	// THE RETRY. backoffLimit is 1 by default, so a build that failed once and succeeded on the
+	// retry leaves TWO pods. The termination-message read used to take `items[0]`, and half the
+	// time that is the failed attempt — which carries no digest, because kaniko writes the digest
+	// file only on success. Reading every pod is what makes the outcome independent of the order
+	// the API server happens to list them in.
+	t.Run("a failed attempt listed first must not hide the successful one's digest", func(t *testing.T) {
+		// Two termination messages, newline-joined, the empty one first — the jsonpath now ranges
+		// over `.items[*]` and produces exactly this shape.
+		result, _, err := run(t, "\nimage pushed "+digest, "")
+		if err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		if result["web"] != "registry.test/web@"+digest {
+			t.Errorf("digest = %q — a failed attempt listed first swallowed the successful one, "+
+				"and the build silently degraded to a tag", result["web"])
 		}
 	})
 
@@ -1716,8 +1748,17 @@ func TestBuild_ExecuteBuild_Failures(t *testing.T) {
 			!strings.Contains(err.Error(), "build web:") {
 			t.Fatalf("want a per-service build error, got %v", err)
 		}
-		if !s.sawCall("logs", "job/build-web") {
+		// By SELECTOR and with --prefix: `kubectl logs job/<name>` picks one pod arbitrarily, and a
+		// build Job runs to its backoffLimit — so an operator could be shown a retry instead of the
+		// failure that started it.
+		if !s.sawCall("logs", "-l job-name=build-web") {
 			t.Errorf("the kaniko log tail must be surfaced: %v", s.calls())
+		}
+		if !s.sawCall("logs", "--prefix") {
+			t.Errorf("every attempt must be distinguishable in the tail: %v", s.calls())
+		}
+		if s.sawCall("logs", "job/build-web") {
+			t.Errorf("the one-pod read is back: %v", s.calls())
 		}
 	})
 

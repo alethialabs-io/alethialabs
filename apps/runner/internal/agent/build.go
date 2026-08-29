@@ -186,7 +186,12 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 
 	if err := w.waitForJob(ctx, jobName, namespace, stdout, stderr); err != nil {
 		// Surface the build log tail so the console shows WHY the Dockerfile failed.
-		if logs, lerr := w.kubectlOutput(ctx, "logs", "job/"+jobName, "-n", namespace, "--tail=50"); lerr == nil && logs != "" {
+		//
+		// EVERY attempt, not one. `kubectl logs job/<name>` prints "Found 2 pods, using pod/…" and
+		// picks arbitrarily, and a build Job runs to DefaultBackoffLimit — so the tail an operator
+		// is shown may be a retry rather than the failure that started it.
+		if logs, lerr := w.kubectlOutput(ctx, "logs", "-l", buildJobPodSelector+jobName, "-n", namespace,
+			"--tail=50", "--prefix", "--max-log-requests=10"); lerr == nil && logs != "" {
 			fmt.Fprintf(stderr, "--- kaniko log tail (%s) ---\n%s\n", svc.Name, logs)
 		}
 		return "", err
@@ -197,14 +202,25 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 	//    (imagebuild.DigestFilePath), so the digest is readable AFTER completion without
 	//    depending on log retention. Fallbacks, loudly: the kaniko log line, then the
 	//    immutable git-SHA tag (still a pinned, verify-passing reference).
+	//    ⚠️ EVERY pod, not `items[0]`. The Job's backoffLimit is 1 by default, so a build that
+	//    failed once and succeeded on the retry leaves TWO pods and `items[0]` is whichever the API
+	//    server lists first. Half the time that is the FAILED attempt, whose termination message
+	//    carries no digest — because kaniko only writes the digest file on success. The read then
+	//    finds nothing, the log read below picks a pod just as arbitrarily, and the build silently
+	//    degrades from a digest-pinned reference to a tag under a message that reads like a benign
+	//    fallback. Concatenating every pod's message is safe for exactly the reason the bug is
+	//    possible: only a successful attempt has a digest to find.
 	if msg, terr := w.kubectlOutput(ctx, "get", "pods", "-n", namespace,
-		"-l", "job-name="+jobName, "-o",
-		`jsonpath={.items[0].status.containerStatuses[0].state.terminated.message}`); terr == nil {
+		"-l", buildJobPodSelector+jobName, "-o",
+		`jsonpath={range .items[*]}{.status.containerStatuses[0].state.terminated.message}{"\n"}{end}`); terr == nil {
 		if digest := parseKanikoDigest(msg); digest != "" {
 			return dest + "@" + digest, nil
 		}
 	}
-	logs, err := w.kubectlOutput(ctx, "logs", "job/"+jobName, "-n", namespace, "--tail=-1")
+	// Same correction on the fallback. `--tail=-1` is explicit because kubectl defaults a SELECTOR
+	// read to the last 10 lines, and the digest line is not reliably in the last 10.
+	logs, err := w.kubectlOutput(ctx, "logs", "-l", buildJobPodSelector+jobName, "-n", namespace,
+		"--tail=-1", "--prefix", "--max-log-requests=10")
 	if err != nil {
 		return "", fmt.Errorf("read build digest (termination message and logs both unavailable): %w", err)
 	}
@@ -407,6 +423,13 @@ var kanikoDigestRe = regexp.MustCompile(`sha256:[a-f0-9]{64}`)
 
 // parseKanikoDigest extracts the pushed image digest from kaniko's log output ("" when no
 // digest line is present).
+// buildJobPodSelector labels a build Job's pods.
+//
+// `job-name` rather than `batch.kubernetes.io/job-name`: both are set on a current cluster, and
+// only the legacy one exists on an older control plane, so this is the wider of the two. It is also
+// what this file already used for the termination-message read.
+const buildJobPodSelector = "job-name="
+
 func parseKanikoDigest(logs string) string {
 	return kanikoDigestRe.FindString(logs)
 }
