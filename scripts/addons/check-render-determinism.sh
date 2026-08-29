@@ -49,8 +49,11 @@ fixture="$repo_root/test/e2e/fixtures/addon_catalog.hetzner.json"
 # ── AND THE DATA-SERVICE SPECS, which this check did not see (#3299). ───────────────────────────
 #
 # The marketplace catalogue is not the only place this repo renders a chart. `hetzner-services.ts`
-# renders SEVEN more — the in-cluster carriers for the database, cache, queue, registry, secret,
+# renders NINE more — the in-cluster carriers for the database, cache, queue, registry, secret,
 # topic and nosql node KINDS — from the same pinned coordinates, and often the very same chart.
+# (It was seven when this was written; #3275 added scylla-operator and nosql-items for the nosql
+# kind. The count is stated because it is checked below, not as decoration — read it from the
+# fixture, not from here, if the two ever disagree again.)
 # Harbor is rendered from BOTH, and every hardening the marketplace copy received (#2823's pinned
 # rotators, #2846's non-published secretKey, #3286's Recreate update strategy) had to be applied
 # twice because nothing compared them. Twice, it was applied once.
