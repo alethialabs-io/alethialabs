@@ -177,7 +177,22 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "patch"]
+    # "list" is what the state READ needs, not a convenience. vault_state.go reads the state
+    # Secret with a field selector (kubectl get secret --field-selector metadata.name=NAME), and a
+    # field selector is a LIST against the collection, never a GET of one object. Without this verb
+    # every read is Forbidden -- and since an unreadable state is now fatal by design,
+    # vaultBootstrap returns before waitForVault on EVERY cluster, through all four backoffLimit
+    # attempts.
+    #
+    # The read is a list on purpose: a list has no NotFound path, so an absent Secret is a 200
+    # carrying an empty items array -- the API server stating it looked and found nothing -- while
+    # every fault exits non-zero. The --ignore-not-found flag on a GET cannot do that: it suppresses
+    # ANY 404, so a proxy or a mis-pathed endpoint answering 404 exits 0 with empty output and reads
+    # as "no unseal key", which turns the data-loss guard off.
+    #
+    # The added privilege is ENUMERATION only. These rules carry no resourceNames, so "get" already
+    # permits reading any Secret in this namespace by name; "list" adds discovering names.
+    verbs: ["get", "list", "create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
