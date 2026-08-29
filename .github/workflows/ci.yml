@@ -938,6 +938,20 @@ jobs:
       - name: TS coverage ratchet (arithmetic · fail-open set · merge-safe layout · scope)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: node scripts/ts-coverage.mjs --self-test
+      # A floor can only be honest about a scope somebody checked. These two steps check the SCOPE
+      # the floors above are taken over: every coverage exclusion carries a manifest entry, and
+      # every tier-separation claim is re-read from the suite it names rather than believed as
+      # prose. #3262 exists because one such claim — "convergence/reap/GC verified by
+      # reconcile-b2c.test.ts" — was false for eight weeks: that suite never imports the GC module.
+      # Both run in THIS job deliberately, not as a new required check: adding one needs a
+      # `tofu apply` in infra/github/, and an unapplied required check blocks every PR.
+      # Hermetic, like the steps above: no suites, no network, no installed tree.
+      - name: Coverage-exclusion guard self-test (classifier, not path)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: node scripts/check-coverage-exclusions.mjs --self-test
+      - name: Every coverage exclusion is manifested, and every claim re-read
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: pnpm check:coverage-exclusions
       # The self-test above proves the ratchet's ARITHMETIC. This proves its PREMISE: that the
       # environment each committed floors file records is one the enforcing job can actually
       # reproduce. A recorded axis the job can never match demotes every regression to a warning,

@@ -86,7 +86,7 @@
 // several artefacts and merge them by path BEFORE measuring.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -591,7 +591,7 @@ export function stripTsComments(src) {
 }
 
 /**
- * Extract the `exclude: [...]` entries from a vitest config's COVERAGE block.
+ * Extract the entries of one string-array key from a vitest config's COVERAGE block.
  *
  * Deliberately parses the coverage block only. `test.exclude` and `coverage.exclude` are different
  * keys with different meanings, and a regex that finds "the first exclude array" reads the wrong
@@ -599,15 +599,25 @@ export function stripTsComments(src) {
  *
  * Hand-rolled rather than via the TypeScript AST because this must run in a DE-HYDRATED worktree
  * with no node_modules — that is where the guard is cheapest to run and most likely to be run. It
- * returns null when it cannot find the block, and the caller treats null as a FAILURE rather than
- * as "no exclusions", because a parser that silently reports nothing is the vacuity this guard
- * exists to catch.
+ * returns null when it cannot find the block, and callers treat null as a FAILURE rather than as
+ * "no entries", because a parser that silently reports nothing is the vacuity this guard exists to
+ * catch.
  *
- * @param {string} src the config file's source
- * @returns {string[]|null} the quoted entries, or null when the coverage/exclude block is absent
+ * GENERALISED FROM `exclude` to any key by #3262, which needs `include` read by the same parser
+ * rather than by a second one: an `include` allowlist is an exclusion with the sign flipped, and a
+ * separate reader for it would be a second place for the #2549 (prose is not a value) and #2724
+ * (collapse is not emptiness) fixes to be missing from.
+ *
+ * `found` distinguishes an ABSENT key from a present-but-empty one, which the two callers need to
+ * read in opposite directions: an absent `exclude` excludes nothing, an absent `include` includes
+ * everything.
+ *
+ * @param {string} rawSrc the config file's source
+ * @param {string} key the coverage-block key to read, e.g. "exclude" or "include"
+ * @returns {{found: boolean, entries: string[]}|null} null when the block or the array is unparsed
  */
-export function coverageExcludes(rawSrc) {
-	// Comments first — see stripTsComments. A quoted phrase in prose is not an exclusion.
+export function coverageArrayKey(rawSrc, key) {
+	// Comments first — see stripTsComments. A quoted phrase in prose is not an entry.
 	const src = stripTsComments(rawSrc);
 	const covAt = src.indexOf("coverage: {");
 	if (covAt === -1) return null;
@@ -626,11 +636,12 @@ export function coverageExcludes(rawSrc) {
 	}
 	if (covEnd === -1) return null;
 	const block = src.slice(covAt, covEnd);
-	const exAt = block.indexOf("exclude: [");
-	if (exAt === -1) return [];
+	const opener = `${key}: [`;
+	const exAt = block.indexOf(opener);
+	if (exAt === -1) return { found: false, entries: [] };
 	const close = block.indexOf("]", exAt);
 	if (close === -1) return null;
-	const inner = block.slice(exAt + "exclude: [".length, close);
+	const inner = block.slice(exAt + opener.length, close);
 	const entries = [...inner.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
 	// COLLAPSE IS NOT EMPTINESS (#2724). `exclude: []` is legitimately empty and returns []. But an
 	// exclude block with CONTENT that yields no entries means this parser has stopped understanding
@@ -640,7 +651,22 @@ export function coverageExcludes(rawSrc) {
 	// answer. This is what the `literals >= 10` floor was standing in for, and it is a relationship
 	// rather than a magnitude, so it cannot go slack.
 	if (entries.length === 0 && inner.trim() !== "") return null;
-	return entries;
+	return { found: true, entries };
+}
+
+/**
+ * The `exclude: [...]` entries of a vitest config's coverage block.
+ *
+ * An ABSENT `exclude` and an empty one mean the same thing — nothing is excluded — so both come
+ * back as `[]` and the `found` flag is dropped here. null still means unparsed, and callers still
+ * treat it as a FAILURE.
+ *
+ * @param {string} rawSrc the config file's source
+ * @returns {string[]|null} the quoted entries, or null when the coverage/exclude block is absent
+ */
+export function coverageExcludes(rawSrc) {
+	const read = coverageArrayKey(rawSrc, "exclude");
+	return read === null ? null : read.entries;
 }
 
 /** The committed record of which vitest projects declare a coverage block (#2724). */
@@ -900,37 +926,90 @@ function runSelfTest() {
 		check("scope check could run", false, err.message);
 	}
 
+	process.stdout.write("\n the entry-point gate — a SYMLINKED invocation must still run\n");
+	// The gate decides whether this file does anything at all, and its failure mode is silence:
+	// a wrong comparison exits 0 having printed nothing, which no caller distinguishes from a
+	// pass. It cannot be asserted in-process — the gate has already been evaluated by the time
+	// this line runs — so the case SPAWNS the script through a symlinked directory, the shape
+	// that broke it (`path.resolve` does not follow a symlink; the ESM loader realpaths
+	// `import.meta.filename`, so the two disagreed and `runCli` never ran).
+	{
+		const link = path.join(mkdtempSync(path.join(tmpdir(), "tscov-link-")), "wt");
+		try {
+			symlinkSync(ROOT, link);
+			// `--project` is deliberately omitted: the usage error is proof the CLI RAN, and it
+			// needs no repository state, no coverage artefact and no network to reach.
+			const out = execFileSync(process.execPath, [path.join(link, "scripts", "ts-coverage.mjs")], {
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+			check("a symlinked invocation is not silently skipped", false, `expected the usage error, got a clean exit: ${JSON.stringify(out)}`);
+		} catch (err) {
+			const e = /** @type {{status?: number, stderr?: string}} */ (err);
+			check(
+				"a symlinked invocation runs the CLI rather than exiting 0 in silence",
+				e.status === 2 && (e.stderr ?? "").includes("--project"),
+				`status ${String(e.status)}, stderr ${JSON.stringify(e.stderr ?? "")}`,
+			);
+		} finally {
+			rmSync(path.dirname(link), { recursive: true, force: true });
+		}
+	}
+
 	process.stdout.write(`\n${failures === 0 ? "✓ all self-test assertions passed" : `✗ ${failures} self-test assertion(s) FAILED`}\n`);
 	process.exit(failures === 0 ? 0 : 1);
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
 
-const argv = process.argv.slice(2);
-/** @type {string|undefined} */
-let project;
-let mode = "check";
-for (let i = 0; i < argv.length; i += 1) {
-	const a = argv[i];
-	if (a === "--project") { project = argv[i + 1]; i += 1; }
-	else if (a.startsWith("--project=")) project = a.slice("--project=".length);
-	else if (a === "--update") mode = "update";
-	else if (a === "--accept-regression") mode = "accept";
-	else if (a === "--print") mode = "print";
-	else if (a === "--self-test") mode = "self-test";
-	else {
-		process.stderr.write(`ts-coverage: unknown argument ${a}\n`);
-		process.exit(2);
+/**
+ * Parse argv and run the requested mode.
+ *
+ * GATED ON BEING THE ENTRY POINT (#3262). This block used to be bare top-level statements, which
+ * made the module unimportable: `import { coverageExcludes } from "./ts-coverage.mjs"` ran the CLI
+ * as a side effect of the import, found no `--project` in the IMPORTER's argv, and exited 2 before
+ * the importing guard had executed a line. scripts/check-coverage-exclusions.mjs reuses this
+ * file's parser rather than growing a second one — the #2549 and #2724 fixes live in it and a
+ * copy is a place for them to be missing from — so the reuse has to be possible.
+ *
+ * `process.argv[1]` is compared REALPATH-RESOLVED, not `path.resolve`d. The ESM loader realpaths
+ * the main module before it derives `import.meta.filename`, and `path.resolve` does not follow a
+ * symlink at all, so the two disagree for every invocation whose path crosses one — a symlinked
+ * checkout, a container bind-mount, or macOS's own `/tmp` -> `/private/tmp`. A disagreeing gate is
+ * SILENT: node exits 0 having printed nothing and run nothing, which no caller can tell from a
+ * pass. Measured before the fix: `node <symlink>/scripts/ts-coverage.mjs --self-test` exited 0 with
+ * zero output while the same file through its real path ran every assertion. `fs.realpathSync` is
+ * the idiom scripts/check-e2e-spend-guard.mjs and scripts/programme-rollup.mjs already use.
+ */
+function runCli() {
+	const argv = process.argv.slice(2);
+	/** @type {string|undefined} */
+	let project;
+	let mode = "check";
+	for (let i = 0; i < argv.length; i += 1) {
+		const a = argv[i];
+		if (a === "--project") { project = argv[i + 1]; i += 1; }
+		else if (a.startsWith("--project=")) project = a.slice("--project=".length);
+		else if (a === "--update") mode = "update";
+		else if (a === "--accept-regression") mode = "accept";
+		else if (a === "--print") mode = "print";
+		else if (a === "--self-test") mode = "self-test";
+		else {
+			process.stderr.write(`ts-coverage: unknown argument ${a}\n`);
+			process.exit(2);
+		}
 	}
+
+	if (mode === "self-test") runSelfTest();
+	else if (!project) {
+		process.stderr.write("ts-coverage: --project <path> is required (e.g. --project apps/console)\n");
+		process.exit(2);
+	} else if (!existsSync(path.join(ROOT, project))) {
+		process.stderr.write(`ts-coverage: no such project directory: ${project}\n`);
+		process.exit(2);
+	} else if (mode === "check") runCheck(project);
+	else if (mode === "print") runPrint(project);
+	else runUpdate(project, { allowLower: mode === "accept" });
 }
 
-if (mode === "self-test") runSelfTest();
-else if (!project) {
-	process.stderr.write("ts-coverage: --project <path> is required (e.g. --project apps/console)\n");
-	process.exit(2);
-} else if (!existsSync(path.join(ROOT, project))) {
-	process.stderr.write(`ts-coverage: no such project directory: ${project}\n`);
-	process.exit(2);
-} else if (mode === "check") runCheck(project);
-else if (mode === "print") runPrint(project);
-else runUpdate(project, { allowLower: mode === "accept" });
+if (process.argv[1] && import.meta.filename === realpathSync(process.argv[1])) runCli();

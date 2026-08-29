@@ -51,6 +51,11 @@ export default defineConfig({
 			// @repo/ui component tests + e2e, so counting ~24k untested view lines here would make
 			// the badge read a misleadingly low number. (The component tests still run.)
 			include: ["lib/**", "app/server/actions/**"],
+			// EVERY entry below also has an entry in ./coverage-exclusions.yaml, and the two are
+			// checked against each other in both directions by `pnpm check:coverage-exclusions`.
+			// The comments here are the argument; the manifest is the CLAIM, and the guard re-reads
+			// each named suite's imports rather than trusting the prose. #3262 exists because one of
+			// these comments was wrong for eight weeks and nothing could tell.
 			exclude: [
 				"**/*.d.ts",
 				"lib/db/migrations/**",
@@ -95,8 +100,11 @@ export default defineConfig({
 				// Publishing that drop is the point. An exclusion that keeps untested code out of
 				// the denominator does not make the code tested, it makes the badge wrong; and the
 				// ratchet (#2649) can only hold a floor under surface it can see. There is nothing
-				// left here to re-include — every remaining exclusion below is either infrastructural
-				// or a tier-separation claim with a named suite behind it.
+				// left here to re-include as a WHOLE FILE. Per EXPORT there is: 24 of the 79 runtime
+				// exports the entries below hide are carried by no test at all, and they are recorded
+				// one by one in ./coverage-exclusions.yaml under `baseline:`, where they are
+				// shrink-only. "Every remaining exclusion is a tier-separation claim with a named
+				// suite behind it" was the true-sounding version of that, and it was false by 24.
 				// Real-SQL modules verified by the integration tier (tests/integration/*, real
 				// Postgres) — mocked unit tests can't exercise their WHERE/joins/CTEs, so they're
 				// scoped to that tier and excluded from the unit badge (same tier-separation as
@@ -135,11 +143,23 @@ export default defineConfig({
 				"lib/fleet/pools-db.ts",
 				"lib/authz/postgres-rbac-pdp.ts",
 				"lib/authz/seed.ts",
-				// B2c reconcilers: real-SQL convergence/reap/GC verified by tests/integration/
+				// B2c reconcilers: real-SQL convergence and reap verified by tests/integration/
 				// reconcile-b2c.test.ts (real Postgres). The loop host + heartbeat seam stay in scope
 				// (unit-covered by tests/lib/reconcile/*).
 				"lib/reconcile/converge.ts",
 				"lib/reconcile/reap.ts",
+				// CORRECTED by #3262. This line used to say reconcile-b2c.test.ts verifies "GC" too.
+				// It does not: that suite never imports `@/lib/reconcile/gc`, and its retention-GC
+				// tests call the SQL directly (`select public.gc_job_logs(...)`), so the TypeScript
+				// wrappers never execute. gc.ts is PARTLY proven — `gcAuthzActivityLog` is executed by
+				// tests/integration/authz-activity-{gc,worm}.test.ts — and `gcJobLogs`/`gcFleetActions`
+				// are executed by nothing at all; their only test reference is a `vi.mock` in
+				// tests/lib/reconcile/loop.test.ts, which REPLACES the module so the real code never
+				// runs. Its FOURTH export, `EFFECTIVE_RETENTION_DAYS`, is named by no test at all —
+				// production reads it from lib/retention/health.ts. All three halves are recorded in
+				// coverage-exclusions.yaml, one under tier_separation and two under baseline, where
+				// they are shrink-only. (Three, not two: "gc.ts's three exports" was itself an
+				// off-by-one in the first draft of this correction.)
 				"lib/reconcile/gc.ts",
 				// BYOC B2.3 probe dispatch + ingest/query: real-SQL, verified by tests/integration/
 				// probes-b23.test.ts. The pure scheduler (lib/probes/schedule.ts) stays in scope,
