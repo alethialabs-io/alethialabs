@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tfjson "github.com/hashicorp/terraform-json"
@@ -361,15 +362,31 @@ func releaseLoadBalancersBeforeDestroy(
 	//	getting credentials: exec: executable …/e2e.test failed with exit code 1
 	//
 	// — clobbering the perfectly good kubeconfig the runner had already written during the deploy.
-	// So: ask the cluster first. If it answers, the credential in hand works and there is nothing to
-	// configure.
-	if clusterReachable(ctx) {
+	// So: ask the cluster first. But ask WHICH cluster answered, because "something answered" is
+	// not "the cluster in this state file answered" — and this step then runs
+	// `kubectl delete applications --all-namespaces --all`, whose Applications carry
+	// `resources-finalizer.argocd.argoproj.io` and therefore cascade-delete everything ArgoCD
+	// manages wherever the answer came from.
+	//
+	// The ambient KUBECONFIG is durable and cross-job, so the wrong answer is the ORDINARY case
+	// rather than a corner: ConfigureKubeconfig does `os.Setenv("KUBECONFIG", …)` process-wide
+	// (cloud/kubeconfig.go:39,118) and nothing unsets it; `workerHome` is a STABLE per-slot path
+	// (agent/supervisor.go:176); and the default isolation backend is the in-process Passthrough
+	// (agent/runner.go:44). So worker 0 deploying env A and later claiming the destroy for env B
+	// hands `/version` to cluster A, skips the reconfigure, and deletes A.
+	//
+	// Reading the outputs first costs one call and is what makes the probe mean something. It is
+	// the same correction #3408 made for the managed-fields probe, on a path that DELETES.
+	outputs, err := wd.tf.Output(ctx)
+	if err != nil {
+		fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
+		return
+	}
+	if reachable, why := clusterReachable(ctx, cloud.ExtractClusterEndpoint(outputs)); reachable {
 		fmt.Fprintln(out, "   Cluster already reachable with the kubeconfig in hand — not reconfiguring it.")
 	} else {
-		outputs, err := wd.tf.Output(ctx)
-		if err != nil {
-			fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
-			return
+		if why != "" {
+			fmt.Fprintf(out, "   Reconfiguring the kubeconfig: %s\n", why)
 		}
 		// NO cluster-name gate. `ExtractClusterName` was the obvious pre-check and it is narrower
 		// than what ConfigureKubeconfig accepts: awsProvider handles a BYO-IaC module that emits a
@@ -384,12 +401,13 @@ func releaseLoadBalancersBeforeDestroy(
 			fmt.Fprintf(out, "   Skipping load-balancer release: the cluster is not reachable (%v).\n", err)
 			return
 		}
-		if !clusterReachable(ctx) {
+		if reachable, why := clusterReachable(ctx, cloud.ExtractClusterEndpoint(outputs)); !reachable {
+			_ = why
 			// CHECKED AFTER CONFIGURING, not assumed. ConfigureKubeconfig succeeding means it WROTE
 			// a kubeconfig, not that the kubeconfig works — the exec-plugin case above writes
 			// happily and then fails on every call.
-			fmt.Fprintln(out, "   Skipping load-balancer release: a kubeconfig was written but the "+
-				"cluster does not answer with it.")
+			fmt.Fprintf(out, "   WARNING — cloud load balancers may still exist and still bill: a "+
+				"kubeconfig was written but %s\n", orUnknownReason(why))
 			return
 		}
 	}
@@ -404,7 +422,60 @@ func releaseLoadBalancersBeforeDestroy(
 // means the endpoint and the transport work, and a failure is about reaching the cluster rather
 // than about what this identity may read. Bounded well under the destroy's own budget — a cluster
 // being torn down is allowed to be slow, but not to hold the teardown open.
-func clusterReachable(ctx context.Context) bool {
-	_, err := runKubectlBounded(ctx, 20*time.Second, "get", "--raw", "/version")
-	return err == nil
+// clusterReachable reports whether the kubeconfig in hand answers for the cluster this state
+// file describes — and, when it does not, WHY.
+//
+// Two questions, not one. "/version answers" only proves an apiserver is on the other end of
+// whatever KUBECONFIG the process carries; the caller is about to issue cluster-wide deletes, so
+// it also has to know the answer came from the right cluster. `wantEndpoint` is the API server
+// this state's outputs name. When it is empty — a BYO-IaC module that emits only a generic
+// kubeconfig, and has no endpoint output — the identity check cannot be made, so this reports
+// NOT reachable and the caller configures the credential it can vouch for. Failing toward the
+// known-good path is the only safe direction on a deleting step.
+//
+// The reason is returned rather than discarded: a credential-plugin failure, a DNS failure, a 401
+// and a timeout are different problems, and collapsing them to a bool is what made run
+// 33271997812 take a human to diagnose.
+func clusterReachable(ctx context.Context, wantEndpoint string) (bool, string) {
+	if wantEndpoint == "" {
+		return false, "this state names no API endpoint to check the kubeconfig against"
+	}
+	if _, err := runKubectlBounded(ctx, 20*time.Second, "get", "--raw", "/version"); err != nil {
+		return false, err.Error()
+	}
+	got, err := runKubectlBounded(ctx, 20*time.Second, "config", "view", "--minify",
+		"-o", "jsonpath={.clusters[0].cluster.server}")
+	if err != nil {
+		return false, "could not read which server the kubeconfig points at: " + err.Error()
+	}
+	if !sameAPIServer(strings.TrimSpace(got), wantEndpoint) {
+		// NOT a soft skip. The kubeconfig works, against something else.
+		return false, fmt.Sprintf("the kubeconfig points at %q but this state's cluster is %q",
+			strings.TrimSpace(got), wantEndpoint)
+	}
+	return true, ""
+}
+
+// sameAPIServer compares two API server references tolerantly enough for the forms providers
+// actually emit: with or without a scheme, with or without a trailing slash, case-insensitive
+// host. It deliberately does NOT ignore the host — that is the whole comparison.
+func sameAPIServer(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.TrimSpace(s)
+		s = strings.TrimSuffix(s, "/")
+		s = strings.TrimPrefix(s, "https://")
+		s = strings.TrimPrefix(s, "http://")
+		return strings.ToLower(s)
+	}
+	na, nb := norm(a), norm(b)
+	return na != "" && na == nb
+}
+
+// orUnknownReason keeps a skip message from ending in a dangling clause when no reason was
+// captured — an empty tail reads like a sentence that got cut off.
+func orUnknownReason(why string) string {
+	if strings.TrimSpace(why) == "" {
+		return "the cluster does not answer with it"
+	}
+	return why
 }

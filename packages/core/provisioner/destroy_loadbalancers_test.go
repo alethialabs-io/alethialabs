@@ -397,15 +397,83 @@ func TestListCloudBackedObjectsFailsOnAnUndecodableIngressList(t *testing.T) {
 // CLUSTER rather than by whether a kubeconfig file exists — the exec-plugin case writes a
 // kubeconfig happily and then fails on every call through it.
 func TestClusterReachableAsksTheClusterNotTheFile(t *testing.T) {
-	stubKubectlRaw(t, `case "$*" in *"--raw /version"*) echo '{"gitVersion":"v1.31.0"}'; exit 0;; esac; exit 1`)
-	if !clusterReachable(context.Background()) {
-		t.Error("a cluster that answered /version was reported unreachable")
+	const want = "https://ABC123.gr7.eu-west-1.eks.amazonaws.com"
+
+	stubKubectlRaw(t, `case "$*" in
+	  *"--raw /version"*) echo '{"gitVersion":"v1.31.0"}'; exit 0;;
+	  *"config view"*) echo 'https://ABC123.gr7.eu-west-1.eks.amazonaws.com'; exit 0;;
+	esac; exit 1`)
+	if ok, why := clusterReachable(context.Background(), want); !ok {
+		t.Errorf("a cluster that answered /version AS ITSELF was reported unreachable: %s", why)
 	}
 
 	// The shape aws/addons run 33271997812 actually produced: a kubeconfig in place, and every call
 	// through it dying in the credential plugin.
 	stubKubectlRaw(t, `echo 'error: getting credentials: exec: executable /tmp/go-build/e2e.test failed with exit code 1' >&2; exit 1`)
-	if clusterReachable(context.Background()) {
+	ok, why := clusterReachable(context.Background(), want)
+	if ok {
 		t.Error("a kubeconfig whose credential plugin fails was reported reachable")
+	}
+	if !strings.Contains(why, "getting credentials") {
+		t.Errorf("the reason was discarded — a plugin failure, a DNS failure and a 401 must not "+
+			"read alike: %q", why)
+	}
+}
+
+// THE ONE THAT MATTERS. A working kubeconfig pointed at a DIFFERENT cluster answers /version
+// perfectly, and the caller then runs `kubectl delete applications --all-namespaces --all` —
+// whose Applications carry `resources-finalizer.argocd.argoproj.io`, so the delete cascades to
+// everything ArgoCD manages there.
+//
+// The ambient KUBECONFIG makes this the ordinary case, not a corner: ConfigureKubeconfig sets it
+// process-wide, `workerHome` is a stable per-slot path, and the default isolation backend is
+// in-process — so one worker deploying env A and later destroying env B carries A's kubeconfig in.
+func TestClusterReachableRefusesADifferentCluster(t *testing.T) {
+	stubKubectlRaw(t, `case "$*" in
+	  *"--raw /version"*) echo '{"gitVersion":"v1.31.0"}'; exit 0;;
+	  *"config view"*) echo 'https://OTHER.gr7.eu-west-1.eks.amazonaws.com'; exit 0;;
+	esac; exit 1`)
+	ok, why := clusterReachable(context.Background(), "https://ABC123.gr7.eu-west-1.eks.amazonaws.com")
+	if ok {
+		t.Fatal("a kubeconfig pointing at ANOTHER cluster was accepted — the release would have " +
+			"deleted every ArgoCD Application there")
+	}
+	if !strings.Contains(why, "OTHER") || !strings.Contains(why, "ABC123") {
+		t.Errorf("the reason does not name both clusters, which is the whole diagnosis: %q", why)
+	}
+}
+
+// A state with no endpoint output cannot be checked, so it must fail TOWARD reconfiguring the
+// credential this job can vouch for. Reporting "reachable" there would restore the defect for
+// exactly the BYO-IaC environments that have no endpoint to compare.
+func TestClusterReachableWithNoEndpointToCheckAgainstIsNotReachable(t *testing.T) {
+	stubKubectlRaw(t, `echo '{"gitVersion":"v1.31.0"}'; exit 0`)
+	ok, why := clusterReachable(context.Background(), "")
+	if ok {
+		t.Fatal("with no endpoint to compare, the probe claimed the cluster was verified")
+	}
+	if !strings.Contains(why, "no API endpoint") {
+		t.Errorf("the reason does not say why the check could not be made: %q", why)
+	}
+}
+
+// Providers emit the endpoint with and without a scheme and sometimes with a trailing slash;
+// kubectl always prints a scheme. Those must compare equal, or every real destroy reconfigures
+// needlessly — and a needless reconfigure is what #3413 was written to stop.
+func TestSameAPIServerToleratesSchemeAndTrailingSlash(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"https://abc.eks.amazonaws.com", "abc.eks.amazonaws.com", true},
+		{"https://abc.eks.amazonaws.com/", "https://abc.eks.amazonaws.com", true},
+		{"https://ABC.eks.amazonaws.com", "abc.eks.amazonaws.com", true},
+		{"https://abc.eks.amazonaws.com", "https://other.eks.amazonaws.com", false},
+		{"", "abc.eks.amazonaws.com", false},
+		{"", "", false},
+	} {
+		if got := sameAPIServer(c.a, c.b); got != c.want {
+			t.Errorf("sameAPIServer(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
 	}
 }
