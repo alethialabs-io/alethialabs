@@ -63,3 +63,18 @@ func TestRunConfigExportError(t *testing.T) {
 		t.Error("expected error to propagate")
 	}
 }
+
+// The FLAG DEFAULT is the thing under test, not the client's empty-string substitution.
+// packages/core/api substitutes `json` only when the format is EMPTY, and the flag default was
+// `legacy-yaml` — never empty — so the substitution never fired and every real invocation asked the
+// server for a format it refuses by name (400). The server, the API client and the docs were all
+// corrected; this flag was the renderer that was missed. Assert the default the docs promise.
+func TestConfigExportFormatFlagDefaultsToJSON(t *testing.T) {
+	f := configExportCmd.Flags().Lookup("format")
+	if f == nil {
+		t.Fatal("config export has no --format flag")
+	}
+	if f.DefValue != "json" {
+		t.Errorf("--format default = %q; want json (apps/docs/content/docs/cli/configuration.mdx documents json, and the export route accepts json alone)", f.DefValue)
+	}
+}
