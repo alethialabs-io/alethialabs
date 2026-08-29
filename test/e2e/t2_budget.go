@@ -64,6 +64,11 @@ const (
 	t2KeylessPostDwell   = 20 * time.Minute
 	t2RegistryPollBudget = 25 * time.Minute
 	t2SoakHeadroom       = 15 * time.Minute // drift wait (10m) + PVC bind (5m)
+	// cliDemoProvisionBudget bounds the BEATS, not the cluster: the apply's wait is already
+	// reserved as deploy-wait. It covers the ordered command sequence plus the console the job
+	// booted answering them — generous, because a beat that times out on a slow first request would
+	// report the CLI cannot reach something it can.
+	cliDemoProvisionBudget = 20 * time.Minute
 
 	// The day-2 access layer had NO ladder term at all, so its probes spent against `headroom`
 	// unnoticed. At the old flat 3m that was survivable by luck; with a URL ceiling sized for an
@@ -140,6 +145,18 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 		if acmCertEnabled() && !MaxConfigEnabled() {
 			add("day2-url", Day2URLTimeout())
 		}
+	}
+	// The CLI-demo provision (#3038): the beats re-drive the floor spine through the real binary,
+	// so the cluster time is already covered by deploy-wait above. What is NOT covered is the beats
+	// themselves — a sequence of real commands against a console this job booted — so they get their
+	// OWN term rather than being absorbed into someone else's headroom.
+	//
+	// Folding it into `headroom` was the tempting shortcut and is the wrong one: headroom is what
+	// absorbs variance in terms that ARE reserved, and a scenario hidden inside it is a scenario
+	// nobody can see in the ladder the workflow prints. Every other opt-in scenario here is a named
+	// term for that reason.
+	if CLIDemoProvisionEnabled() {
+		add("cli-demo", cliDemoProvisionBudget)
 	}
 	if secretsXacctEnabled() {
 		add("secrets-xacct", t2XacctPollBudget)

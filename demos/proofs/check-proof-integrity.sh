@@ -41,7 +41,13 @@ set -euo pipefail
 ARGO_CLAIM_DIMENSIONS="addons maxconfig full gitops byo"
 # SUPPORTING: the cell asserts something else and merely converges on the way. Missing counts are
 # a warning here; refusing would throw away real evidence over a missing nicety.
-ARGO_SUPPORTING_DIMENSIONS="floor byo-iac day2"
+#
+# `cli-demo` is here, not above, and the placement is a decision rather than a default. What that
+# cell claims is that the product was PROVISIONED THROUGH THE REAL BINARY — the actor, not the
+# surface area — on a deliberately floor-shaped cluster. Its ArgoCD convergence is the same
+# convergence `floor` already proves; refusing the bundle for want of counts would withhold the
+# only evidence that the CLI drove anything.
+ARGO_SUPPORTING_DIMENSIONS="floor byo-iac day2 cli-demo"
 
 _integrity_verdict() { # _integrity_verdict <bundle-dir> <dimension>  → prints reason; returns 0/1/3
 	local dir="$1" dim="$2" outcome assert healthy
@@ -136,7 +142,7 @@ if [ "${1:-}" = "--self-test" ]; then
 		_expect "a vacuous $dim bundle is REFUSED"       "$vacuous"    "$dim" 1
 		rows=$((rows + 3))
 	done
-	for dim in floor byo-iac day2; do
+	for dim in floor byo-iac day2 cli-demo; do
 		_expect "an unmeasured $dim bundle only warns"   "$unmeasured" "$dim" 0
 		_expect "a measured $dim bundle is promotable"   "$measured"   "$dim" 0
 		rows=$((rows + 2))
