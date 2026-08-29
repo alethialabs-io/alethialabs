@@ -270,6 +270,22 @@ func TestDumpHelpersNamesEveryDiagnosticTheHelperCalls(t *testing.T) {
 	if len(called) == 0 {
 		t.Fatal("no diagnostic calls found in argoDeadlineDump — the pattern no longer matches its body")
 	}
+	// ⚠️ THE CONVENTION IS PART OF THE GUARD. This finds calls named `dump…` or `describe…`; a
+	// diagnostic added as `argoAppEventsSummary(` is invisible to it and would be as unguarded as
+	// the four this test was written for. Name diagnostics `dump…`/`describe…`, or widen this.
+	//
+	// Checked rather than trusted: every name already in dumpHelpers must be found by the pattern,
+	// so a rename that escapes the convention fails HERE instead of silently shrinking the set.
+	found := map[string]bool{}
+	for _, m := range called {
+		found[m[1]] = true
+	}
+	for _, h := range dumpHelpers {
+		if !regexp.MustCompile(`\b(?:dump|describe)[A-Za-z0-9_]*$`).MatchString(h) {
+			t.Errorf("dumpHelpers names %q, which this test's pattern cannot match — it is outside "+
+				"the naming convention the guard depends on", h)
+		}
+	}
 	named := map[string]bool{}
 	for _, h := range dumpHelpers {
 		named[h] = true

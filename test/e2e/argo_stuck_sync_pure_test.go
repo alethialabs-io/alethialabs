@@ -22,7 +22,7 @@ func TestFilterControllerLinesKeepsLoserAndErrorLines(t *testing.T) {
 		"",
 	}, "\n"))
 
-	sc := filterControllerLines(raw, []string{"addon-kube-prometheus-stack"}, 60)
+	sc := filterControllerLines(raw, []string{"addon-kube-prometheus-stack"}, 60, 0)
 	kept, scanned, levelled := sc.Kept, sc.Scanned, sc.Levelled
 	if scanned != 4 {
 		t.Fatalf("scanned = %d, want 4 (the blank line is not a line)", scanned)
@@ -48,7 +48,7 @@ func TestFilterControllerLinesKeepsTheMostRecentWhenCapped(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		lines = append(lines, `level=error msg="attempt `+string(rune('0'+i))+`"`)
 	}
-	sc := filterControllerLines([]byte(strings.Join(lines, "\n")), nil, 3)
+	sc := filterControllerLines([]byte(strings.Join(lines, "\n")), nil, 3, 0)
 	kept, scanned := sc.Kept, sc.Scanned
 	if scanned != 10 {
 		t.Fatalf("scanned = %d, want 10", scanned)
@@ -63,14 +63,14 @@ func TestFilterControllerLinesKeepsTheMostRecentWhenCapped(t *testing.T) {
 }
 
 func TestFilterControllerLinesEmptyLogIsDistinguishable(t *testing.T) {
-	sc := filterControllerLines(nil, []string{"addon-x"}, 60)
+	sc := filterControllerLines(nil, []string{"addon-x"}, 60, 0)
 	kept, scanned := sc.Kept, sc.Scanned
 	if scanned != 0 || len(kept) != 0 {
 		t.Fatalf("empty log: scanned=%d kept=%d, want 0/0", scanned, len(kept))
 	}
 	// And a log that HAS lines but none matching must report a non-zero scan, so the caller can
 	// tell "the controller is silent about these apps" from "there is no controller".
-	sc = filterControllerLines([]byte("level=info msg=\"all good\"\n"), []string{"addon-x"}, 60)
+	sc = filterControllerLines([]byte("level=info msg=\"all good\"\n"), []string{"addon-x"}, 60, 0)
 	kept, scanned = sc.Kept, sc.Scanned
 	if scanned != 1 || len(kept) != 0 {
 		t.Fatalf("non-matching log: scanned=%d kept=%d, want 1/0", scanned, len(kept))
@@ -165,7 +165,7 @@ func TestFilterWarningEventsCapKeepsTheNewest(t *testing.T) {
 func TestFilterControllerLinesReadsTheJSONLogFormat(t *testing.T) {
 	raw := []byte(`{"level":"error","msg":"Failed to apply hook","error":"clusterroles is forbidden"}` + "\n" +
 		`{"level":"info","msg":"Reconciliation completed"}`)
-	sc := filterControllerLines(raw, nil, 60)
+	sc := filterControllerLines(raw, nil, 60, 0)
 	kept, scanned, levelled := sc.Kept, sc.Scanned, sc.Levelled
 	if scanned != 2 || levelled != 2 {
 		t.Fatalf("scanned=%d levelled=%d, want 2/2", scanned, levelled)
@@ -179,7 +179,7 @@ func TestFilterControllerLinesReadsTheJSONLogFormat(t *testing.T) {
 // produce an empty result that reads as calm.
 func TestFilterControllerLinesReportsALogItCannotRead(t *testing.T) {
 	raw := []byte("2026-08-29 14:07:01 E some other logger entirely\n2026-08-29 14:07:02 I fine")
-	sc := filterControllerLines(raw, []string{"addon-x"}, 60)
+	sc := filterControllerLines(raw, []string{"addon-x"}, 60, 0)
 	kept, scanned, levelled := sc.Kept, sc.Scanned, sc.Levelled
 	if scanned != 2 {
 		t.Fatalf("scanned = %d, want 2", scanned)
@@ -202,7 +202,7 @@ func TestFilterControllerLinesKeepsFatalAndPanic(t *testing.T) {
 		`time="…" level=panic msg="nil map"`,
 		`{"level":"panic","msg":"nil map"}`,
 	} {
-		sc := filterControllerLines([]byte(line), nil, 60)
+		sc := filterControllerLines([]byte(line), nil, 60, 0)
 		if len(sc.Kept) != 1 {
 			t.Errorf("%q was dropped — a controller that died reads as one that is not complaining", line)
 		}
@@ -238,20 +238,92 @@ func TestRenderControllerLogPrintsMatchesEvenWhenTheFormatIsUnreadable(t *testin
 	}
 }
 
-// One stray `level=` inside a quoted message must not vouch for four thousand lines.
-func TestRenderControllerLogUnreadableIsARatioNotAZeroCheck(t *testing.T) {
-	out := renderControllerLog(controllerLogScan{Scanned: 4000, Levelled: 1, Matched: 0})
-	if !strings.Contains(out, "only 1 of 4000") {
-		t.Errorf("a single levelled line switched the blindness check off:\n%s", out)
+// The strictness moved from a RATIO into the marker itself. A `level=` inside a quoted `msg=` is
+// not a level marker, and requiring the severity word at a token boundary is what makes one match
+// mean the line really is logrus-shaped.
+func TestHasKnownLevelRequiresARealSeverity(t *testing.T) {
+	for _, line := range []string{
+		`time="2026-08-29T14:07:03Z" level=error msg="Failed to apply"`,
+		`[pod/argocd-application-controller-0/application-controller] time="…" level=info msg="ok"`,
+		`{"app":"addon-x","level":"error","msg":"boom"}`,
+		`level=info msg="ok"`,
+		`{"level":"fatal","msg":"boom"}`,
+		`{"level": "warning", "msg": "x"}`,
+	} {
+		if !hasKnownLevel(line) {
+			t.Errorf("a real level marker was not recognised: %s", line)
+		}
+	}
+	// The one that matters: a level marker sitting inside a MESSAGE, on a line that is not a
+	// logrus record. Unanchored matching counts it and one such line then vouches for the whole log.
+	for _, line := range []string{
+		`2026-08-29 14:07 some-other-logger the operator set level=error on the cluster`,
+		`some other logger: level=`,
+		`{"lvl":"error"}`,
+		`2026-08-29 14:07:01 E some other logger entirely`,
+	} {
+		if hasKnownLevel(line) {
+			t.Errorf("a non-marker was counted as one, which lets one line vouch for the log: %s", line)
+		}
+	}
+}
+
+// A panicking controller emits ONE level=panic line and dozens of un-levelled stack-trace lines.
+// A majority rule would tell the reader to distrust a log the filter parsed perfectly — on exactly
+// the failure this dump exists for.
+func TestControllerLogScanTreatsAStackTraceAsReadable(t *testing.T) {
+	lines := []string{`time="…" level=panic msg="nil map" app=addon-x`}
+	for i := 0; i < 40; i++ {
+		lines = append(lines, "\tgithub.com/argoproj/argo-cd/v3/controller.(*ApplicationController).Sync(0x0)")
+	}
+	sc := filterControllerLines([]byte(strings.Join(lines, "\n")), nil, 60, 0)
+	if sc.Unreadable() {
+		t.Errorf("a panic plus its stack trace was reported as an unreadable format (%d of %d levelled)",
+			sc.Levelled, sc.Scanned)
+	}
+	if len(sc.Kept) != 1 {
+		t.Errorf("the panic line was not kept: %v", sc.Kept)
+	}
+}
+
+// And a log in a format the filter genuinely cannot read still reports it.
+func TestControllerLogScanReportsAFormatItCannotRead(t *testing.T) {
+	sc := filterControllerLines([]byte("2026-08-29 E one\n2026-08-29 I two"), []string{"addon-x"}, 60, 0)
+	if !sc.Unreadable() {
+		t.Errorf("neither line is a format this filter knows, but Unreadable() is false (%+v)", sc)
 	}
 }
 
 func TestRenderControllerLogSaysWhenTheWindowWasFull(t *testing.T) {
 	out := renderControllerLog(controllerLogScan{
-		Scanned: controllerTailLines, Levelled: controllerTailLines, Matched: 0, WindowFull: true,
+		Scanned: controllerTailLines, Levelled: controllerTailLines, Matched: 0, Pods: 1, WindowFull: true,
 	})
 	if !strings.Contains(out, "keeps the NEWEST lines") {
 		t.Errorf("a filled --tail window must be reported — the first failure may be outside it:\n%s", out)
+	}
+}
+
+// `kubectl logs -l` applies --tail to EACH pod, so the aggregate must be compared against the pod
+// count times the limit. Two replicas returning half a window each is not a truncated window.
+func TestControllerLogScanCountsTheWindowPerPod(t *testing.T) {
+	var lines []string
+	for _, pod := range []string{"argocd-application-controller-0", "argocd-application-controller-1"} {
+		for i := 0; i < 5; i++ {
+			lines = append(lines, "[pod/"+pod+"/application-controller] level=info msg=\"x\"")
+		}
+	}
+	// tail=10: two pods, ten lines total, five each — neither window was filled.
+	sc := filterControllerLines([]byte(strings.Join(lines, "\n")), nil, 60, 10)
+	if sc.Pods != 2 {
+		t.Fatalf("Pods = %d, want 2 — the --prefix blocks are how the pod count is known", sc.Pods)
+	}
+	if sc.WindowFull {
+		t.Errorf("two pods at half a window each reported a FULL window (%d lines, tail 10)", sc.Scanned)
+	}
+	// One pod at the limit is a full window.
+	one := filterControllerLines([]byte(strings.Join(lines[:5], "\n")), nil, 60, 5)
+	if !one.WindowFull {
+		t.Errorf("one pod at exactly its tail is a full window: %+v", one)
 	}
 }
 
@@ -279,5 +351,53 @@ func TestRenderControllerLogNothingToReportIsStillAVerdict(t *testing.T) {
 	}
 	if strings.Contains(out, "cannot reliably tell") {
 		t.Errorf("a fully readable log must not carry the blindness caveat:\n%s", out)
+	}
+}
+
+// kubectl writes warnings to stderr on calls that SUCCEED, and they come FIRST. #3338 measured the
+// gcp-auth-plugin and StorageClass deprecation warnings as the ordinary shape of authenticating to
+// EKS, GKE and AKS — so taking line one makes a missing CRD, an RBAC refusal and an unreachable
+// API server render identically.
+func TestKubectlErrorLinePicksTheErrorNotTheWarning(t *testing.T) {
+	stderr := "WARNING: the gcp auth plugin is deprecated in v1.22+, unavailable in v1.26+\n" +
+		"Warning: storage.k8s.io/v1beta1 StorageClass is deprecated\n" +
+		`Error from server (Forbidden): applications.argoproj.io is forbidden`
+	got := kubectlErrorLine(stderr)
+	if !strings.Contains(got, "Forbidden") {
+		t.Errorf("kubectlErrorLine = %q — the warning was reported as the failure", got)
+	}
+	if strings.Contains(got, "gcp auth plugin") {
+		t.Errorf("the warning came through: %q", got)
+	}
+	// A shape we do not recognise: show everything rather than an arbitrary line.
+	odd := kubectlErrorLine("something unexpected\nand a second line")
+	if !strings.Contains(odd, "something unexpected") || !strings.Contains(odd, "second line") {
+		t.Errorf("an unrecognised stderr must be shown whole, got %q", odd)
+	}
+	// Nothing at all must stay nothing, so the caller does not print a dangling colon.
+	if got := kubectlErrorLine("   \n  "); got != "" {
+		t.Errorf("empty stderr rendered as %q", got)
+	}
+}
+
+// Under a caveat, the "not complaining" line is a claim the filter is not entitled to make.
+func TestRenderControllerLogWithdrawsTheVerdictUnderACaveat(t *testing.T) {
+	blind := renderControllerLog(controllerLogScan{Scanned: 4000, Levelled: 0, Matched: 0, Pods: 1})
+	if strings.Contains(blind, "is not complaining") {
+		t.Errorf("a filter that cannot read the log still claimed the controller is calm:\n%s", blind)
+	}
+	if !strings.Contains(blind, "NOT evidence") {
+		t.Errorf("the withdrawal is not stated:\n%s", blind)
+	}
+	cut := renderControllerLog(controllerLogScan{
+		Scanned: 4000, Levelled: 4000, Matched: 0, Pods: 1, WindowFull: true,
+	})
+	if strings.Contains(cut, "is not complaining") {
+		t.Errorf("a truncated window still produced a calm verdict:\n%s", cut)
+	}
+	// And with no caveat, the verdict IS stated — withdrawing it always would be its own defect.
+	clean := renderControllerLog(controllerLogScan{Scanned: 200, Levelled: 200, Matched: 0, Pods: 1})
+	if !strings.Contains(clean, "is not complaining") {
+		t.Errorf("a clean, fully readable log must still produce a verdict:\n%s", clean)
 	}
 }

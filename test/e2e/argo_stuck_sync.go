@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -77,20 +78,28 @@ type controllerLogScan struct {
 	Scanned    int
 	Levelled   int
 	Matched    int
+	Pods       int
 	WindowFull bool
 }
 
 // filterControllerLines keeps the controller lines that speak about the failing Applications.
-func filterControllerLines(raw []byte, losers []string, max int) controllerLogScan {
+func filterControllerLines(raw []byte, losers []string, max, tail int) controllerLogScan {
 	if max <= 0 {
 		max = maxControllerLines
 	}
+	if tail <= 0 {
+		tail = controllerTailLines
+	}
 	var sc controllerLogScan
+	pods := map[string]bool{}
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		sc.Scanned++
+		if m := podPrefixRE.FindStringSubmatch(line); m != nil {
+			pods[m[1]] = true
+		}
 		if hasKnownLevel(line) {
 			sc.Levelled++
 		}
@@ -103,17 +112,30 @@ func filterControllerLines(raw []byte, losers []string, max int) controllerLogSc
 	if len(sc.Kept) > max {
 		sc.Kept = sc.Kept[len(sc.Kept)-max:]
 	}
-	sc.WindowFull = sc.Scanned >= controllerTailLines
+	sc.Pods = len(pods)
+	if sc.Pods == 0 {
+		sc.Pods = 1
+	}
+	// PER POD. `kubectl logs -l` applies --tail to EACH selected pod, so comparing the aggregate
+	// against one pod's limit reports a truncated window whenever two replicas each return half of
+	// it. The pod count comes from the --prefix blocks, and is at least one so a log with no
+	// prefixes still compares against a single window.
+	sc.WindowFull = sc.Scanned >= sc.Pods*tail
 	return sc
 }
 
-// Unreadable reports whether most of the log is in a format this filter does not understand.
+// podPrefixRE matches the `[pod/<name>/<container>]` prefix `kubectl logs --prefix` writes.
+var podPrefixRE = regexp.MustCompile(`^\[pod/([^/\]]+)`)
+
+// Unreadable reports whether the log is in a format this filter does not understand.
 //
-// A RATIO, not `Levelled == 0`. One stray `level=` inside a quoted `msg=` or `error=` would
-// otherwise vouch for four thousand lines it says nothing about — the blindness check would
-// silently switch itself off in exactly the log it exists to flag. A minority of levelled lines is
-// also the honest verdict for a log that is half stack traces.
-func (s controllerLogScan) Unreadable() bool { return s.Levelled*2 < s.Scanned }
+// A ZERO CHECK, not a ratio — and the strictness lives in `anyLevelRE` instead, which is the right
+// place for it. A ratio was the first attempt and it is wrong for the case this dump exists for: a
+// panicking application-controller emits ONE `level=panic` line followed by dozens of un-levelled
+// stack-trace lines, and a window dominated by those would drop below any majority and tell the
+// reader to distrust a log the filter had parsed perfectly. Continuation lines are not a foreign
+// format. One line that really is logrus-shaped is proof the filter can read this log.
+func (s controllerLogScan) Unreadable() bool { return s.Levelled == 0 }
 
 // levelMarkers are the shapes a log level takes in argo-cd's two output formats.
 //
@@ -131,18 +153,28 @@ var levelMarkers = []string{
 	`"level":"error"`, `"level":"warning"`, `"level":"fatal"`, `"level":"panic"`,
 }
 
-// anyLevelMarkers are the same two formats at ANY severity, used only to decide whether this filter
-// can read the log at all.
-var anyLevelMarkers = []string{"level=", `"level":`}
+// severities is every level logrus can emit, as an alternation for the two format regexes.
+const severities = `(trace|debug|info|warn|warning|error|fatal|panic)`
+
+// levelTextRE matches logrus TEXT at the START of a record: an optional `[pod/…]` block from
+// `kubectl logs --prefix`, an optional `time="…"` field, then `level=<severity>`.
+//
+// ANCHORED, and that is the whole point. `strings.Contains(line, "level=")` — and even a
+// `\slevel=<severity>` — is satisfied by a marker sitting inside a quoted `msg=` or `error=`, which
+// lets one line vouch for four thousand it says nothing about and switches the blindness check off
+// in exactly the log it exists to flag. A level field only appears in this position when the line
+// really is a logrus record.
+var levelTextRE = regexp.MustCompile(`^(\[[^\]]*\]\s+)?(time="[^"]*"\s+)?level=` + severities + `\b`)
+
+// levelJSONRE matches logrus JSON. Unanchored because the JSON formatter marshals a map and the
+// key order is not ours to predict — a record with an `app` field sorts it before `level`. A
+// JSON-quoted `"level":"error"` inside a MESSAGE would be escaped (`\"level\"`), so this cannot be
+// satisfied from inside one.
+var levelJSONRE = regexp.MustCompile(`"level"\s*:\s*"` + severities + `"`)
 
 // hasKnownLevel reports whether a line carries a level marker in a format this filter understands.
 func hasKnownLevel(line string) bool {
-	for _, m := range anyLevelMarkers {
-		if strings.Contains(line, m) {
-			return true
-		}
-	}
-	return false
+	return levelTextRE.MatchString(line) || levelJSONRE.MatchString(line)
 }
 
 // controllerLineMatters reports whether a controller log line is about a failing Application, or is
@@ -193,6 +225,17 @@ func renderControllerLog(sc controllerLogScan) string {
 			controllerTailLines)
 	}
 	if sc.Matched == 0 {
+		// THE VERDICT IS ONLY A VERDICT WHEN NOTHING ABOVE CONTRADICTS IT. Under Unreadable() the
+		// filter has just said it cannot tell an error from an info line, and under WindowFull that
+		// the first failure may be outside what it read — so "is not complaining" is a claim it is
+		// not entitled to make. Removing the switch was right for the matched case and wrong here,
+		// where the rendering IS the verdict.
+		if sc.Unreadable() || sc.WindowFull {
+			fmt.Fprintf(&b, "  %d line(s) read and none matched — but see the finding(s) above. "+
+				"This is NOT evidence that the controller is calm; it is what a filter that cannot "+
+				"read this log, or could not see all of it, produces either way.\n", sc.Scanned)
+			return b.String()
+		}
 		fmt.Fprintf(&b, "  %d line(s) read (%d with a level marker), and NOT ONE names a failing "+
 			"Application or is an error. The controller is running and is not complaining — so "+
 			"whatever is holding the sync is not something it considers a failure.\n",
@@ -236,16 +279,16 @@ func dumpArgoControllerLog(ctx context.Context, kubeconfigPath string, losers []
 	// cluster unhealthy enough to be in this dump, an unopenable pod is likely — and discarding what
 	// came back would lose the controller's account on exactly the runs this exists for.
 	if err != nil && len(strings.TrimSpace(string(out))) == 0 {
-		fmt.Fprintf(&b, "  could not be read (%v: %s) — this says nothing about the sync\n",
-			err, strings.TrimSpace(firstLine(stderr.String())))
+		fmt.Fprintf(&b, "  could not be read (%s) — this says nothing about the sync\n",
+			execFailure(err, stderr.String()))
 		return b.String()
 	}
 	if err != nil {
-		fmt.Fprintf(&b, "  PARTIAL: the read stopped early (%v: %s). What follows is what came back "+
+		fmt.Fprintf(&b, "  PARTIAL: the read stopped early (%s). What follows is what came back "+
 			"before it stopped, and an absence in it is not evidence.\n",
-			err, strings.TrimSpace(firstLine(stderr.String())))
+			execFailure(err, stderr.String()))
 	}
-	b.WriteString(renderControllerLog(filterControllerLines(out, losers, maxControllerLines)))
+	b.WriteString(renderControllerLog(filterControllerLines(out, losers, maxControllerLines, controllerTailLines)))
 	return b.String()
 }
 
@@ -438,12 +481,48 @@ func kubectlValue(ctx context.Context, timeout time.Duration, kubeconfigPath str
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		if msg := strings.TrimSpace(firstLine(stderr.String())); msg != "" {
-			return nil, fmt.Errorf("%w: %s", err, msg)
+		// The bytes already collected are returned alongside the error. Both callers here parse
+		// JSON, so a partial document is unusable to them today — but this is the package's shared
+		// kubectl read and its contract should not be "a command that half-succeeded produced
+		// nothing", which is the shape #3378 had to remove from the Job-log read.
+		if msg := kubectlErrorLine(stderr.String()); msg != "" {
+			return out, fmt.Errorf("%w: %s", err, msg)
 		}
-		return nil, err
+		return out, err
 	}
 	return out, nil
+}
+
+// execFailure renders a command failure as one string, with kubectl's own words when it left any.
+// Kept separate so an empty stderr does not produce a message ending in a bare colon.
+func execFailure(err error, stderr string) string {
+	if msg := kubectlErrorLine(stderr); msg != "" {
+		return fmt.Sprintf("%v: %s", err, msg)
+	}
+	return fmt.Sprintf("%v", err)
+}
+
+// errorLineRE matches the shapes kubectl uses for an ERROR, as opposed to the warnings it routinely
+// writes to the same stream on calls that succeed.
+var errorLineRE = regexp.MustCompile(`(?m)^\s*(error:|Error from server|The connection to the server|Unable to connect)`)
+
+// kubectlErrorLine picks the line of stderr that says what went wrong.
+//
+// NOT the first line. kubectl's first stderr line on a managed cluster is routinely a warning —
+// #3338 measured `WARNING: the gcp auth plugin is deprecated in v1.22+…` as the ordinary shape of
+// authenticating to EKS, GKE and AKS. Taking it makes a missing CRD, an RBAC refusal and an
+// unreachable API server render identically, which is the defect this selection exists to prevent.
+//
+// Falls back to the whole trimmed stderr rather than to the first line: if no line matches a shape
+// we recognise, showing everything is the honest answer, and it is bounded because the caller reads
+// one command's stderr.
+func kubectlErrorLine(stderr string) string {
+	for _, line := range strings.Split(stderr, "\n") {
+		if errorLineRE.MatchString(line) {
+			return strings.TrimSpace(line)
+		}
+	}
+	return strings.TrimSpace(stderr)
 }
 
 // firstLine returns s up to its first newline, for one-line error rendering.
