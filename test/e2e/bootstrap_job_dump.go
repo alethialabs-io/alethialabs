@@ -112,6 +112,35 @@ func parseBootstrapJobs(listJSON []byte) ([]bootstrapJob, error) {
 	return out, nil
 }
 
+// kubectlRead runs one kubectl read and returns STDOUT, with stderr folded into the ERROR.
+//
+// `exec.Output()` alone renders a missing CRD, an RBAC refusal and an unreachable API server all
+// as `exit status 1` — three faults with three different next steps, printed as one number, in a
+// dump whose only job is to say which. Stderr stays OUT of the returned value: this stdout is
+// parsed as JSON, and kubectl writes to stderr on calls that succeed.
+func kubectlRead(ctx context.Context, timeout time.Duration, kubeconfigPath string, args ...string) ([]byte, error) {
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	full := append([]string{"--kubeconfig", kubeconfigPath}, args...)
+	var stderr strings.Builder
+	cmd := exec.CommandContext(cctx, "kubectl", full...)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if i := strings.IndexByte(msg, '\n'); i >= 0 {
+			msg = msg[:i]
+		}
+		if msg != "" {
+			// Appended only when there IS something: an error ending in a bare colon reads like a
+			// message that got cut off.
+			return nil, fmt.Errorf("%w: %s", err, msg)
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
 // jobPodSelectors are the label selectors that find a Job's pods, current first.
 //
 // TWO of them because Kubernetes renamed the label: `batch.kubernetes.io/job-name` is the current
@@ -141,14 +170,12 @@ var jobPodSelectors = []string{"batch.kubernetes.io/job-name=", "job-name="}
 func bootstrapJobLog(ctx context.Context, kubeconfigPath string, j bootstrapJob) string {
 	var b strings.Builder
 	for _, sel := range jobPodSelectors {
-		lctx, lcancel := context.WithTimeout(ctx, 20*time.Second)
-		logs, err := exec.CommandContext(lctx, "kubectl", "--kubeconfig", kubeconfigPath,
+		logs, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath,
 			"-n", j.Namespace, "logs", "-l", sel+j.Name,
 			"--tail=40", "--prefix", "--timestamps", "--all-containers",
 			// backoffLimit 4 makes five pods, and kubectl's default ceiling is five. One over is
 			// not enough margin for a Job whose limit someone raises later.
-			"--max-log-requests=10").Output()
-		lcancel()
+			"--max-log-requests=10")
 		if err != nil {
 			fmt.Fprintf(&b, "    (no log via %s: %v — the pods may already have been collected)\n", sel+j.Name, err)
 			continue
@@ -177,10 +204,8 @@ func bootstrapJobLog(ctx context.Context, kubeconfigPath string, j bootstrapJob)
 // not "nothing went wrong". Either none was applied — which is itself the finding — or the TTL
 // deleted them before this ran, which is what happened on run 33249968471 at the old 600s.
 func dumpAddOnBootstrapJobs(ctx context.Context, kubeconfigPath string) string {
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
-		"get", "jobs", "--all-namespaces", "-o", "json").Output()
-	cancel()
+	out, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath,
+		"get", "jobs", "--all-namespaces", "-o", "json")
 	var b strings.Builder
 	b.WriteString("\n──── one-shot bootstrap Jobs (Vault unseal, DB bootstrap) ────\n")
 	if err != nil {
