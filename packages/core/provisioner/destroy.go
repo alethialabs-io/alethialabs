@@ -352,6 +352,12 @@ func releaseLoadBalancersBeforeDestroy(
 		fmt.Fprintln(out, "   Skipping load-balancer release: the state names no cluster.")
 		return
 	}
+	// ⚠️ SIDE EFFECT, stated because it is new on this path: ConfigureKubeconfig writes
+	// ~/.kube/kubeconfig and sets the process's KUBECONFIG (cloud/kubeconfig.go:39). The destroy
+	// that follows therefore runs with KUBECONFIG pointing at the cluster it is about to destroy —
+	// which is the correct cluster for any template provider that falls back to it, and the same
+	// state the DEPLOY path leaves behind. It is called after the workdir is prepared and before
+	// the destroy, so nothing in between reads a different cluster.
 	if err := provider.ConfigureKubeconfig(ctx, vc, outputs, out); err != nil {
 		fmt.Fprintf(out, "   Skipping load-balancer release: the cluster is not reachable (%v).\n", err)
 		return
