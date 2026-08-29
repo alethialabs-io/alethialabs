@@ -1115,6 +1115,17 @@ jobs:
       - name: Proof bundle distinguishes a PASS from a FAIL (never 0/0 on both)
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: bash demos/proofs/capture-proof.sh --self-test
+      # And whether a bundle that says nothing may still PROMOTE A CELL — which, until #3281, it
+      # could. The capture printed "WARNING — this bundle carries NO measured ArgoCD convergence
+      # counts" on a hetzner/addons run that had just driven 22 Applications to Healthy+Synced, and
+      # nothing was required to act on it, so the cell went green on a job-log line that expires.
+      # A warning nobody must act on is indistinguishable from silence.
+      #
+      # The gate is at the moment a bundle is used to CLAIM something (commit-proof.sh), never at
+      # capture: a failing run's bundle is the evidence of the failure and must always survive.
+      - name: A bundle that measured nothing cannot promote a cell (#3281)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash demos/proofs/check-proof-integrity.sh --self-test
       # PROGRAMME.md is the one file a session reads to know where the MVP programme stands, so its
       # status half is DERIVED and diff-gated — the numbers cannot be typed. This is the guard's own
       # guard (fixtures for RETRACTED supersession, an expiring CI run tag masquerading as a proof,
