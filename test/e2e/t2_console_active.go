@@ -17,10 +17,14 @@
 //
 //   - SNAPSHOT FIDELITY: the T2 DEPLOY snapshot is checked against a shared fixture frozen by the
 //     REAL buildConfigSnapshot (apps/console/tests/e2e-fixtures/t2-config-snapshot.test.ts →
-//     test/e2e/fixtures/t2_config_snapshot.hetzner.json). This kills finding #4's synthetic-drift
-//     risk: the seeded snapshot's keys are asserted key-for-key against the console-produced shape.
-//     With ALETHIA_E2E_A05_REAL_SNAPSHOT the harness SEEDS that real console shape (cheap 1+1
-//     Hetzner) instead of the lean map — full substitution, opt-in to protect the billable apply.
+//     test/e2e/fixtures/t2_config_snapshot.<cloud>.json, one per cloud since #3122). This kills
+//     finding #4's synthetic-drift risk for the keys it compares — and "the keys it compares" is
+//     the whole caveat: this line used to say "asserted key-for-key", a claim about 35 keys made
+//     after comparing two. The comparator is SEED-DRIVEN (a05CheckFidelity's doc comment carries
+//     the scope), and `addons` within it is compared element-wise by id, so its reach is stated on
+//     every run rather than implied. With ALETHIA_E2E_A05_REAL_SNAPSHOT the harness SEEDS that real
+//     console shape — now this run's cloud's, not hetzner's on every cloud — instead of the lean
+//     map: full substitution, opt-in to protect the billable apply.
 //
 //   - CONSOLE → ACTIVE: after the runner reports SUCCESS, the harness replays the REAL
 //     finalizeDeployment (via the tsx shim scripts/e2e/finalize-deployment.ts, the ACTUAL exported
@@ -40,6 +44,14 @@
 //
 // Nothing computes the ramp's exit condition either — no counter, no ledger field. Treat "3 green
 // nights" as an aspiration with no owner until one exists (#1965).
+//
+// What #3122/#2499 changed about that ramp: arming it was not merely un-wired, it was UNUSABLE.
+// Two divergences fired by construction — `provider`, because one hetzner fixture was compared
+// against all five clouds, and `addons`, because a full-surface run seeds 18 against a canonical
+// fixture carrying one. So ENFORCE would have hard-failed 4 of 5 clouds and every addons/full run,
+// on the baseline rather than on the snapshot. Both are gone; the flag is now armable, and arming
+// it is still a maintainer decision that touches e2e-nightly.yml, nightly_reachability_test.go and
+// scripts/e2e/knobs-local-only.txt.
 package e2e
 
 import (
@@ -182,14 +194,25 @@ func runFinalizeDeploymentShim(ctx context.Context, root, dbURL, jobID string, o
 // ─────────────────────────── snapshot fidelity ───────────────────────────
 
 // a05FixturePath is the committed fixture the console vitest freezes from the REAL
-// buildConfigSnapshot for a canonical cheap Hetzner env.
-func a05FixturePath(root string) string {
-	return filepath.Join(root, "test", "e2e", "fixtures", "t2_config_snapshot.hetzner.json")
+// buildConfigSnapshot for a canonical cheap env ON THIS RUN'S CLOUD.
+//
+// PER-CLOUD since #3122/#2499, and the reason is the same one that split addon_catalog.<cloud>.json
+// (see addon_surface.go): a single-cloud baseline does not measure the other four. There was one
+// fixture, hetzner's, loaded on every provider — so `provider` diverged BY CONSTRUCTION on aws, gcp,
+// azure and alibaba, on every run, regardless of correctness. That is 4 of 5 runs warning about the
+// baseline rather than about the snapshot, and it made ALETHIA_E2E_A05_ENFORCE — the escalation the
+// warning itself advertises — unusable: arming it would have hard-failed every managed-cloud run.
+//
+// The cloud is resolved the SAME way the rest of the harness resolves it (t2_provision_test.go's
+// ALETHIA_E2E_PROVIDER, defaulting to hetzner), because a second, differently-defaulted answer to
+// "which cloud is this" is how two files come to disagree.
+func a05FixturePath(root, cloud string) string {
+	return filepath.Join(root, "test", "e2e", "fixtures", "t2_config_snapshot."+cloud+".json")
 }
 
-// loadA05Fixture reads + parses the shared config-snapshot fixture.
-func loadA05Fixture(root string) (map[string]any, error) {
-	b, err := os.ReadFile(a05FixturePath(root))
+// loadA05Fixture reads + parses the shared config-snapshot fixture for `cloud`.
+func loadA05Fixture(root, cloud string) (map[string]any, error) {
+	b, err := os.ReadFile(a05FixturePath(root, cloud))
 	if err != nil {
 		return nil, fmt.Errorf("read fixture: %w", err)
 	}
@@ -251,11 +274,104 @@ func a05SnapshotFidelity(seeded, fixture map[string]any) []string {
 			diffs = append(diffs, fmt.Sprintf("key %q is not in the console-produced fixture (synthetic key?)", k))
 			continue
 		}
+		if k == a05AddOnsKey {
+			diffs = append(diffs, a05AddOnsFidelity(seeded[k], fv)...)
+			continue
+		}
 		if !reflect.DeepEqual(seeded[k], fv) {
 			diffs = append(diffs, fmt.Sprintf("key %q diverges from the console shape: seeded=%v fixture=%v", k, seeded[k], fv))
 		}
 	}
 	return diffs
+}
+
+// a05AddOnsKey is the one compared key whose two sides legitimately describe DIFFERENT PROJECTS,
+// and which therefore cannot be judged as a single value.
+const a05AddOnsKey = "addons"
+
+// a05AddOnsInstalls narrows a snapshot value to a list of add-on installs keyed by id. `ok` is false
+// when the value is not the shape this comparator understands, which is itself a divergence — the
+// caller reports it rather than silently comparing nothing.
+func a05AddOnsInstalls(v any) (map[string]any, []string, bool) {
+	list, isList := v.([]any)
+	if !isList {
+		return nil, nil, false
+	}
+	byID := make(map[string]any, len(list))
+	ids := make([]string, 0, len(list))
+	for _, e := range list {
+		m, isMap := e.(map[string]any)
+		if !isMap {
+			return nil, nil, false
+		}
+		id, isString := m["id"].(string)
+		if !isString || id == "" {
+			return nil, nil, false
+		}
+		byID[id] = m
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return byID, ids, true
+}
+
+// a05AddOnsFidelity compares add-on installs ELEMENT-WISE, by id.
+//
+// Why not reflect.DeepEqual over the whole list. The fixture is frozen from a canonical project
+// carrying ONE add-on (reloader); a run with ALETHIA_E2E_ALL_ADDONS=1 seeds all 18. Whole-list
+// equality therefore diverged BY CONSTRUCTION on every full-surface run — hetzner's included — for
+// exactly the reason `provider` diverged on the other four clouds. Two by-construction divergences,
+// and fixing only the cloud one would have left ALETHIA_E2E_A05_ENFORCE just as unusable: it would
+// have hard-failed every addons and full run instead of every non-hetzner one.
+//
+// So an add-on the run seeded that the fixture ALSO carries must deep-equal it — that is the drift
+// signal, and `reloader` is on both sides on every tier. An add-on the fixture does not carry is
+// NOT COMPARED (a05AddOnsScope names them), because the fixture does not describe that project.
+// Those shapes are not unguarded: addon_catalog.<cloud>.json is generated from the same
+// resolveAddOnInstall emitter and catalog-export.test.ts reds CI when it drifts (see
+// addon_surface.go). Restating 18 chart shapes here would be a second source of truth, not a
+// second check.
+func a05AddOnsFidelity(seeded, fixture any) []string {
+	seededByID, seededIDs, seededOK := a05AddOnsInstalls(seeded)
+	fixtureByID, _, fixtureOK := a05AddOnsInstalls(fixture)
+	if !seededOK || !fixtureOK {
+		if reflect.DeepEqual(seeded, fixture) {
+			return nil
+		}
+		return []string{fmt.Sprintf("key %q is not a list of id-keyed add-on installs on both sides, so it cannot be compared element-wise: seeded=%v fixture=%v", a05AddOnsKey, seeded, fixture)}
+	}
+	var diffs []string
+	for _, id := range seededIDs {
+		fv, inFixture := fixtureByID[id]
+		if !inFixture {
+			continue
+		}
+		if !reflect.DeepEqual(seededByID[id], fv) {
+			diffs = append(diffs, fmt.Sprintf("add-on %q diverges from the console shape: seeded=%v fixture=%v", id, seededByID[id], fv))
+		}
+	}
+	return diffs
+}
+
+// a05AddOnsScope reports which seeded add-ons the fixture could be compared against and which it
+// could not, so the success line states its own reach instead of implying the whole surface.
+// A0.5 used to log "seeded snapshot is key-for-key faithful", a claim about 35 keys made after
+// comparing two; the same mistake one level down would be a claim about 18 add-ons made after
+// comparing one.
+func a05AddOnsScope(seeded, fixture any) (compared, notCompared []string) {
+	_, seededIDs, seededOK := a05AddOnsInstalls(seeded)
+	fixtureByID, _, fixtureOK := a05AddOnsInstalls(fixture)
+	if !seededOK || !fixtureOK {
+		return nil, nil
+	}
+	for _, id := range seededIDs {
+		if _, ok := fixtureByID[id]; ok {
+			compared = append(compared, id)
+		} else {
+			notCompared = append(notCompared, id)
+		}
+	}
+	return compared, notCompared
 }
 
 // a05RealSnapshotFromFixture builds the FULL console-shape snapshot to seed when
