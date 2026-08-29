@@ -559,6 +559,26 @@ export function hetznerRegistryValues(
 			clusterIP: { name: `registry-${registry.name}` },
 		},
 		externalURL: `http://${host}`,
+		// RECREATE, NOT ROLLINGUPDATE. Harbor's `registry` and `jobservice` Deployments own
+		// persistent volumes, and hcloud-volumes — like every cloud's default block storage — is
+		// ReadWriteOnce. On RollingUpdate the new pod is scheduled BEFORE the old one is torn down,
+		// so it waits for a volume the old pod still holds while the old pod waits for the new one
+		// to become ready: a permanent deadlock, and the Application sits Degraded.
+		//
+		// Measured on hetzner/maxconfig run 33244231777, which FAILED on exactly this:
+		//
+		//   addon-registry-app-images-harbor-registry-7dfb9f9796-td9jm   Running   true,true
+		//   addon-registry-app-images-harbor-registry-6cbf58965c-dktzc   Pending   ContainerCreating
+		//     Warning FailedAttachVolume  Multi-Attach error for volume "pvc-f05b7576-…"
+		//             Volume is already used by pod(s) …-harbor-registry-7dfb9f9796-td9jm
+		//
+		// The chart's own values file says it: "Set it as Recreate when RWM for volumes isn't
+		// supported" — and RWM needs NFS/EFS/Filestore, which Hetzner does not provision.
+		//
+		// The marketplace `harbor` add-on has carried this since #2823; THIS renderer did not, and
+		// that gap is the whole defect. Two places render the same chart and only one of them knew.
+		// tests/lib/cloud-providers/hetzner-services.test.ts now asserts it over both.
+		updateStrategy: { type: "Recreate" },
 		persistence: {
 			persistentVolumeClaim: {
 				registry: { size: imageStore, storageClass: HCLOUD_STORAGE_CLASS },

@@ -250,6 +250,48 @@ describe("hetznerDataServicesToAddOns — registries (Harbor)", () => {
 		}
 	});
 
+	it("EVERY renderer of the harbor chart sets updateStrategy Recreate", async () => {
+		// Harbor's `registry` and `jobservice` Deployments own persistent volumes, and every cloud's
+		// default block storage is ReadWriteOnce. RollingUpdate schedules the new pod before tearing
+		// the old one down, so it blocks on a volume the old pod holds — a permanent deadlock the
+		// Application reports as Degraded.
+		//
+		// hetzner/maxconfig run 33244231777 died on it:
+		//   Warning FailedAttachVolume  Multi-Attach error for volume "pvc-f05b7576-…"
+		//           Volume is already used by pod(s) …-harbor-registry-7dfb9f9796-td9jm
+		//
+		// The marketplace add-on has set Recreate since #2823. hetznerRegistryValues did not, and
+		// nothing compared them — TWO RENDERERS OF ONE CHART, ONE OF THEM FIXED. So this asserts
+		// over every renderer there is, and derives the registry-node half from the generated specs
+		// rather than calling hetznerRegistryValues directly: a spec that stopped carrying the
+		// values would pass a direct call and fail here, which is the way round that matters.
+		const { ADDON_CATALOG } = await import("@/lib/addons/catalog");
+		const marketplace = ADDON_CATALOG.find((a) => a.id === "harbor");
+		expect(marketplace).toBeDefined();
+
+		const renderers: Array<{ what: string; values: unknown }> = [
+			...specsFor([{ name: "app-images" }, { name: "base" }])
+				.filter((s) => s.chart === "harbor")
+				.map((s) => ({ what: `the \`registry\` node ${s.id}`, values: s.values })),
+			{
+				what: "the harbor marketplace add-on",
+				values: marketplace?.defaultValues,
+			},
+		];
+		// A guard whose "nothing found" branch is indistinguishable from "nothing wrong" is not a
+		// guard: two registry nodes plus the add-on is three, and finding fewer means this stopped
+		// looking rather than started passing.
+		expect(renderers).toHaveLength(3);
+
+		for (const r of renderers) {
+			const values = r.values as { updateStrategy?: { type?: string } } | undefined;
+			expect(
+				values?.updateStrategy?.type,
+				`${r.what} renders harbor with updateStrategy ${JSON.stringify(values?.updateStrategy)} — RollingUpdate deadlocks on ReadWriteOnce storage`,
+			).toBe("Recreate");
+		}
+	});
+
 	it("pins the SAME chart version as the harbor marketplace add-on", async () => {
 		// Two Harbor versions in one cluster is what a Hetzner project that ALSO enables the
 		// marketplace add-on would get, and nothing else in the tree would notice.
