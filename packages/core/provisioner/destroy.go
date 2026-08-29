@@ -145,6 +145,19 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	}
 	defer wd.cleanup()
 
+	// BEFORE the destroy: remove the in-cluster objects that own cloud load balancers.
+	//
+	// A LoadBalancer Service and an ALB Ingress create cloud resources that are not in the state
+	// file, and `tofu destroy` then fails on the network they are attached to — measured on
+	// aws/addons run 33262881462 as seven subnet DependencyViolations, an Internet Gateway that
+	// would not detach, and an ACM certificate "in use". See destroy_loadbalancers.go.
+	//
+	// BEST EFFORT, and deliberately so. Every failure here is reported and none of them stops the
+	// teardown: the usual reason to be unable to reach the cluster is that it is already gone, and
+	// a destroy that refuses to start because it could not tidy up first would be a worse bug than
+	// the one this fixes. Whatever is left over remains the sweeper's problem, as it was before.
+	releaseLoadBalancersBeforeDestroy(ctx, provider, vc, wd, out)
+
 	fmt.Fprintln(out, "   Destroying Cloud Resources (this may take 10-15 mins)...")
 	if err := wd.tf.Destroy(ctx, wd.varFile); err != nil {
 		return fmt.Errorf("tofu destroy failed: %w", err)
@@ -314,4 +327,36 @@ func prepareDestroyWorkdir(ctx context.Context, params DestroyParams) (*destroyW
 	}
 
 	return &destroyWorkdir{tf: tf, dir: tfDir, varFile: varFile, cleanup: unwind}, nil
+}
+
+// releaseLoadBalancersBeforeDestroy resolves cluster access from the state's outputs and releases
+// the cloud-backed objects. Every path reports and returns; nothing here can fail a teardown.
+//
+// The kubeconfig comes from the SAME place the deploy's did — `tofu output` plus the provider's
+// ConfigureKubeconfig — so this needs no new cloud SDK, no new credential, and no new parameter on
+// DestroyParams. A cluster whose state has no outputs (already destroyed, or never provisioned) has
+// no name, and the step says so and returns.
+func releaseLoadBalancersBeforeDestroy(
+	ctx context.Context,
+	provider cloud.CloudProvider,
+	vc *types.ProjectConfig,
+	wd *destroyWorkdir,
+	out io.Writer,
+) {
+	outputs, err := wd.tf.Output(ctx)
+	if err != nil {
+		fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
+		return
+	}
+	if cloud.ExtractClusterName(outputs) == "" {
+		fmt.Fprintln(out, "   Skipping load-balancer release: the state names no cluster.")
+		return
+	}
+	if err := provider.ConfigureKubeconfig(ctx, vc, outputs, out); err != nil {
+		fmt.Fprintf(out, "   Skipping load-balancer release: the cluster is not reachable (%v).\n", err)
+		return
+	}
+	if err := releaseCloudLoadBalancers(ctx, out); err != nil {
+		fmt.Fprintf(out, "   Warning: %v\n", err)
+	}
 }
