@@ -1,0 +1,115 @@
+{
+	"id": "p1",
+	"user_id": "user-1",
+	"org_id": "org-1",
+	"cloud_identity_id": "ci-1",
+	"project_name": "alethia-fixture",
+	"slug": "alethia-fixture",
+	"region": "eu-central-1",
+	"iac_version": "1.0.0",
+	"environment_stage": "fixture",
+	"environment_id": "env-1",
+	"fabric_id": "fab-1",
+	"fabric_name": "fixture",
+	"placement_mode": "dedicated",
+	"namespace": null,
+	"provider": "alibaba",
+	"classification": {},
+	"network": {
+		"cloud_provider": "alibaba",
+		"cloud_identity_id": "ci-1",
+		"region": "eu-central-1",
+		"provision_network": true,
+		"cidr_block": "10.0.0.0/16",
+		"single_nat_gateway": true
+	},
+	"cluster": {
+		"cloud_provider": "alibaba",
+		"cloud_identity_id": "ci-1",
+		"region": "eu-central-1",
+		"cluster_version": "",
+		"cluster_name": null,
+		"cluster_endpoint": null,
+		"instance_types": [],
+		"node_min_size": 1,
+		"node_max_size": 1,
+		"node_desired_size": 1,
+		"node_disk_size_gb": null,
+		"cluster_admins": [],
+		"provider_config": {}
+	},
+	"dns": {
+		"cloud_provider": "alibaba",
+		"cloud_identity_id": "ci-1",
+		"region": "eu-central-1",
+		"enabled": false,
+		"provider": "",
+		"provider_config": {}
+	},
+	"observability": {
+		"cloud_provider": "alibaba",
+		"cloud_identity_id": "ci-1",
+		"region": "eu-central-1",
+		"enabled": false,
+		"provider": "",
+		"provider_config": {}
+	},
+	"repositories": {},
+	"source_repos": [],
+	"databases": [],
+	"caches": [],
+	"queues": [],
+	"topics": [],
+	"nosql_tables": [],
+	"secrets": [],
+	"container_registries": [],
+	"helm_registries": [],
+	"storage_buckets": [],
+	"services": [],
+	"addons": [
+		{
+			"id": "reloader",
+			"mode": "managed",
+			"chartRepo": "https://stakater.github.io/stakater-charts",
+			"chart": "reloader",
+			"version": "1.1.0",
+			"namespace": "reloader",
+			"values": {
+				"reloader": {
+					"watchGlobally": true,
+					"deployment": {
+						"replicas": 1
+					}
+				}
+			},
+			"syncWave": 1
+		}
+	],
+	"compat": {
+		"verdict": "not_evaluable",
+		"catalog_version": "compat-matrix-0.1.0",
+		"controls": [
+			{
+				"id": "COMPAT-K8S-CLOUD-ALIBABA",
+				"title": "Kubernetes availability on alibaba",
+				"severity": "high",
+				"status": "not_evaluable",
+				"coverage": "cluster Kubernetes version is unset or unparseable"
+			},
+			{
+				"id": "COMPAT-ADDON-RELOADER",
+				"title": "add-on reloader ↔ Kubernetes",
+				"severity": "medium",
+				"status": "not_evaluable",
+				"coverage": "no Kubernetes compatibility range recorded"
+			}
+		],
+		"summary": {
+			"pass": 0,
+			"fail": 0,
+			"warn": 0,
+			"not_evaluable": 2
+		}
+	},
+	"git_access_token": ""
+}

@@ -302,7 +302,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// the replayed finalizeDeployment will drive to ACTIVE. Warn-only unless ALETHIA_E2E_A05_ENFORCE;
 	// a seed/fixture failure disables A0.5 and falls back to the unlinked lean seed (provisioning is
 	// never affected).
-	a05 := setupA05(t, ctx, cp, root, project, env, region)
+	a05 := setupA05(t, ctx, cp, root, project, env, provider, region)
 
 	// The self runner MUST be seeded in the SAME org as the DEPLOY job it will claim —
 	// claim_next_job's self-runner branch scopes to `j.org_id = v_runner_org_id` (audit P0, #392),
