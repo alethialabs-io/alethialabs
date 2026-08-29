@@ -41,7 +41,9 @@ const NS = {
 	registry: "registries",
 	secret: "secrets",
 	topic: "topics",
+	nosql: "nosql",
 	operators: "cnpg-system",
+	scyllaOperators: "scylla-operator",
 } as const;
 
 /**
@@ -151,6 +153,39 @@ export const HETZNER_CHARTS = {
 		chart: "nats",
 		version: "2.14.6",
 	},
+	/**
+	 * ScyllaDB operator — installed once per cluster when >=1 `nosql` node exists, exactly as the
+	 * CloudNativePG operator is for `database`.
+	 *
+	 * Its admission webhook is `failurePolicy: Fail` and its serving certificate is issued through
+	 * `cert-manager.io/inject-ca-from`, so the install spec sets `requiresCertManager` and the
+	 * runner installs the cert-manager CONTROLLER for it. That is a real platform decision, not a
+	 * detail: without the CA the webhook rejects every ScyllaCluster, so the kind is unusable
+	 * rather than degraded (#3228).
+	 */
+	scyllaOperator: {
+		chartRepo: "https://scylla-operator-charts.storage.googleapis.com/stable",
+		chart: "scylla-operator",
+		version: "v1.21.1",
+	},
+	/**
+	 * ScyllaDB `scylla` chart — one ScyllaCluster CR per `nosql` node.
+	 *
+	 * WHY SCYLLA AND NOT MONGODB. The `nosql` kind is DynamoDB-shaped: `PartitionKey` +
+	 * `SortKey`, on-demand or provisioned capacity. Scylla is a wide-column store whose data
+	 * model is that shape natively (partition key + clustering key) — and it ships **Alternator**,
+	 * a DynamoDB-compatible HTTP API, so the same client that talks to DynamoDB on AWS talks to
+	 * this on Hetzner. MongoDB is a document store with no partition/sort key concept, so mapping
+	 * the kind onto it would have meant inventing a translation the product would then own
+	 * forever. Alternator is enabled in hetznerNosqlValues() for exactly that reason.
+	 *
+	 * Not Bitnami, and not a community repackage: this is ScyllaDB's own chart, on its own repo.
+	 */
+	scyllaCluster: {
+		chartRepo: "https://scylla-operator-charts.storage.googleapis.com/stable",
+		chart: "scylla",
+		version: "v1.21.1",
+	},
 } as const;
 
 /** Node kinds Hetzner supports in v1 (the canvas hides the rest for Hetzner). */
@@ -160,6 +195,8 @@ export const HETZNER_SUPPORTED_DATA_KINDS = [
 	"queue",
 	"registry",
 	"secret",
+	"topic",
+	"nosql",
 ] as const;
 
 /** Database engines available on Hetzner (Postgres only in v1 — via CloudNativePG). */
@@ -210,6 +247,14 @@ interface TopicInput {
 	storage_gb?: number | null;
 }
 
+/** A `nosql` node. One ScyllaCluster per node; the TABLE is created by the application, exactly as
+ *  a `database` node is a Postgres cluster rather than a schema. */
+interface NosqlInput {
+	name: string;
+	storage_gb?: number | null;
+	replicas?: number | null;
+}
+
 interface HetznerDataServices {
 	databases?: DatabaseInput[];
 	caches?: CacheInput[];
@@ -217,6 +262,7 @@ interface HetznerDataServices {
 	registries?: RegistryInput[];
 	secrets?: SecretInput[];
 	topics?: TopicInput[];
+	nosqlTables?: NosqlInput[];
 }
 
 /** Clamp a positive integer with a default, guarding null/NaN/negatives. */
@@ -249,6 +295,7 @@ export function hetznerDataServicesToAddOns(
 	const registries = services.registries ?? [];
 	const secrets = services.secrets ?? [];
 	const topics = services.topics ?? [];
+	const nosqlTables = services.nosqlTables ?? [];
 
 	// Secrets → ONE Vault for the project (never one per node: a `secret` node is a KV entry, not a
 	// server). syncWave 0 because the ClusterSecretStore over it, and every ExternalSecret that
@@ -324,6 +371,46 @@ export function hetznerDataServicesToAddOns(
 			version: HETZNER_CHARTS.nats.version,
 			namespace: NS.topic,
 			values: hetznerTopicValues(topic),
+			syncWave: 1,
+		});
+	}
+
+	// NoSQL → ScyllaDB: the operator once (sync-wave 0), then a ScyllaCluster per node (wave 1).
+	// This is the CNPG shape, for the CNPG reason — ArgoCD sync-waves do NOT order separate
+	// top-level Applications, so the runner blocks on the CRD becoming Established before wave 1.
+	// Without that the operator and the CR race and the CR's first sync fails with
+	// `no matches for kind "ScyllaCluster"`. Name verified against the real chart
+	// (scylla-operator v1.21.1 renders scyllaclusters.scylla.scylladb.com).
+	//
+	// `requiresCertManager` is the other half, and it is the one that took a platform decision:
+	// the operator's ValidatingWebhookConfiguration is `failurePolicy: Fail` with its serving cert
+	// injected by cert-manager, and this platform installs cert-manager CONDITIONALLY — on the
+	// managed-certificate ask, which a project with a nosql node and no domain never makes. So the
+	// spec DECLARES the dependency here and InfraFacts reads it back (webhookCAAddOns), rather
+	// than Go re-deriving "hetzner + nosql" and drifting from this file (#3228).
+	if (nosqlTables.length > 0) {
+		specs.push({
+			id: "scylla-operator",
+			mode: "managed",
+			chartRepo: HETZNER_CHARTS.scyllaOperator.chartRepo,
+			chart: HETZNER_CHARTS.scyllaOperator.chart,
+			version: HETZNER_CHARTS.scyllaOperator.version,
+			namespace: NS.scyllaOperators,
+			values: {},
+			syncWave: 0,
+			crds: ["scyllaclusters.scylla.scylladb.com"],
+			requiresCertManager: true,
+		});
+	}
+	for (const table of nosqlTables) {
+		specs.push({
+			id: `nosql-${table.name}`,
+			mode: "managed",
+			chartRepo: HETZNER_CHARTS.scyllaCluster.chartRepo,
+			chart: HETZNER_CHARTS.scyllaCluster.chart,
+			version: HETZNER_CHARTS.scyllaCluster.version,
+			namespace: NS.nosql,
+			values: hetznerNosqlValues(table),
 			syncWave: 1,
 		});
 	}
@@ -592,5 +679,47 @@ export function hetznerTopicValues(topic: TopicInput): Record<string, unknown> {
 				},
 			},
 		},
+	};
+}
+
+/**
+ * Helm values for one nosql node — a single-rack ScyllaCluster with the DynamoDB-compatible
+ * Alternator API enabled.
+ *
+ * THREE chart defaults have to be overridden here, and each one is a cluster that does not start
+ * if it is left alone:
+ *
+ *  1. `alternator.enabled` is FALSE by default. It is the entire reason this chart backs the
+ *     `nosql` kind — without it Scylla speaks CQL only, and the kind's DynamoDB-shaped model
+ *     (partition key + sort key) would need a translation layer this repo would then own.
+ *  2. `racks[].storage.storageClassName` defaults to `scylladb-local-xfs`, which does not exist on
+ *     a Hetzner/Talos cluster. It becomes the hcloud CSI class, like every other volume here.
+ *  3. `racks[].placement` defaults to a REQUIRED nodeAffinity on
+ *     `scylla.scylladb.com/node-type=scylla` plus a matching toleration — that is ScyllaDB's
+ *     dedicated-node-pool topology. On a general-purpose Hetzner cluster no node carries that
+ *     label, so every Scylla pod would sit Pending forever while the Application reported
+ *     Progressing. `placement` is therefore cleared rather than inherited.
+ */
+export function hetznerNosqlValues(table: NosqlInput): Record<string, unknown> {
+	return {
+		alternator: { enabled: true, insecureEnableHTTP: true, writeIsolation: "always" },
+		developerMode: true,
+		cpuset: false,
+		datacenter: "hetzner",
+		racks: [
+			{
+				name: "rack-1",
+				members: posInt(table.replicas, 1),
+				storage: {
+					storageClassName: HCLOUD_STORAGE_CLASS,
+					capacity: `${Math.max(posInt(table.storage_gb, HCLOUD_MIN_VOLUME_GB), HCLOUD_MIN_VOLUME_GB)}Gi`,
+				},
+				resources: {
+					limits: { cpu: 1, memory: "2Gi" },
+					requests: { cpu: "500m", memory: "1Gi" },
+				},
+				placement: {},
+			},
+		],
 	};
 }

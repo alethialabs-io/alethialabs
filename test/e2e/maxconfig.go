@@ -387,6 +387,7 @@ const (
 	maxConfigQueueName    = "jobs"
 	maxConfigRegistryName = "app-images"
 	maxConfigTopicName    = "events"
+	maxConfigNosqlName    = "items"
 )
 
 // hetznerNoManagedService is the shared reason for Hetzner's three in-cluster data services: the
@@ -401,10 +402,11 @@ const hetznerNoManagedService = "Hetzner has no managed equivalent; the console 
 // verdicts, and one shared sentence claiming "no chart or cloud service backs it" was false for
 // two of the four cells that once used it.
 //
-// ONE kind is excluded today. `UNSUPPORTED_KINDS_BY_PROVIDER.hetzner` is `["nosql"]` — registry left
-// in #2431, secret in #2432, and topic when NATS was wired. hetznerChartExistsNotWired shares this
-// tail for the DEBT verdict; the `deferred_in_product` ratchet is 0, so no cell reaches that one,
-// and it is kept because the verdict vocabulary must stay expressible: a future kind that a shipped
+// NO kind is excluded today. `UNSUPPORTED_KINDS_BY_PROVIDER` is EMPTY — registry left in #2431,
+// secret in #2432, topic when NATS was wired, and nosql in #3228 when ScyllaDB carried it. So this
+// sentence describes a state no cell is in. hetznerChartExistsNotWired shares this tail for the
+// DEBT verdict; the `deferred_in_product` ratchet is 0, so no cell reaches that one either, and
+// both are kept because the verdict vocabulary must stay expressible: a future kind that a shipped
 // chart backs but the product has not wired must still READ as debt rather than as a ceiling.
 const hetznerKindHiddenAndRejected = "hidden on the canvas and REJECTED at deploy " +
 	"(unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner)"
@@ -419,15 +421,17 @@ const hetznerNoServiceNoChart = "Hetzner has no such service, and this repo offe
 // the real console mapper generated into the fixture.
 const HetznerVaultAddOnID = "secrets-vault"
 
-// hetznerNoServiceNoChart is the CEILING reason, and it now backs exactly ONE cell — `nosql`. It
-// used to back `topic` too, on the strength of unsupported-kinds.ts saying the two had "no clean
-// single-chart OSS equal". That was wrong about topic (NATS is one), which is why the wording no
-// longer quotes that phrase: the claim this constant makes is about THIS repo offering no chart for
-// the kind, which is a fact about the tree and is re-read whenever the cell is challenged.
+// hetznerNoServiceNoChart is the CEILING reason, and NO CELL USES IT TODAY. It backed `topic` on the
+// strength of unsupported-kinds.ts saying the two kinds had "no clean single-chart OSS equal" — wrong
+// about topic, which NATS is — and then `nosql` alone, which was wrong for a different reason:
+// ScyllaDB fits the kind exactly, and what blocked it was DELIVERY (scylla-operator's fail-closed
+// webhook needs cert-manager, which this platform used to install only on a managed-certificate
+// ask). #3228 split that gate and the last hetzner ceiling closed with it.
 //
-// It is deliberately NOT the reason nosql is refused today — ScyllaDB fits the kind exactly. The
-// blocker is delivery (scylla-operator's fail-closed webhook needs cert-manager, which this platform
-// installs conditionally); see unsupported-kinds.ts for the measured detail.
+// Kept, not deleted, for the same reason as hetznerChartExistsNotWired: the verdict vocabulary must
+// stay expressible for the next kind that genuinely has no service and no chart. The claim it makes
+// is about THIS repo offering no chart for the kind — a fact about the tree, re-read whenever a cell
+// is challenged, never inherited.
 
 // hetznerChartExistsNotWired is the DEBT reason: a kind a chart this repo ALREADY SHIPS
 // demonstrably delivers, which the product has simply not mapped. "Until it lands" is the definition
@@ -701,11 +705,11 @@ var MaxConfigKinds = []MaxConfigKind{
 	},
 	{
 		Kind: "nosql",
-		Doc: "a NoSQL table — DynamoDB / Firestore / Cosmos DB container / Tablestore. " +
-			"Hetzner has neither a service nor an offered chart for it.",
+		Doc: "a NoSQL table — DynamoDB / Firestore / Cosmos DB container / Tablestore, and on " +
+			"Hetzner a ScyllaCluster serving the DynamoDB-compatible Alternator API.",
 		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.NosqlTables = []types.ProjectNosqlConfig{{
-				Name: "items", PartitionKey: "pk", PartitionKeyType: "S",
+				Name: maxConfigNosqlName, PartitionKey: "pk", PartitionKeyType: "S",
 				SortKey: "sk", SortKeyType: "S", TableType: "standard",
 				CapacityMode: "on_demand", PointInTimeRecovery: true,
 			}}
@@ -714,8 +718,16 @@ var MaxConfigKinds = []MaxConfigKind{
 		AWS:       tofuCell("aws_dynamodb_table", "ddb_create", "ddb_table_configuration"),
 		GCP:       tofuCell("google_firestore_database", "create_firestore"),
 		// Azure: the per-table container (account/db parents are shared, one each).
-		Azure:   tofuCell("azurerm_cosmosdb_sql_container", "create_cosmos_db"),
-		Hetzner: ceilingCell(hetznerNoServiceNoChart),
+		Azure: tofuCell("azurerm_cosmosdb_sql_container", "create_cosmos_db"),
+		// Hetzner: NO LONGER A CEILING. The old reason was "neither a service nor an offered
+		// chart", and the second half was the wrong test — ScyllaDB fits the kind exactly. What
+		// actually blocked it was the platform rail: scylla-operator's webhook is failurePolicy:
+		// Fail with a cert-manager-injected CA, and cert-manager used to install ONLY when a
+		// managed certificate was asked for. Splitting that gate (CertManagerEnabled = does the
+		// CONTROLLER install; CertManagerIssuerEnabled = can it ISSUE) is what closed it (#3228).
+		Hetzner: inClusterCell("addon-nosql-"+maxConfigNosqlName,
+			hetznerNoManagedService+" (ScyllaDB, scylla-operator + scylla charts; one ScyllaCluster "+
+				"per nosql node, serving the DynamoDB-compatible Alternator API)"),
 		// Alibaba: the per-table Tablestore resource (alicloud_ots_instance is the shared parent).
 		Alibaba: tofuCell("alicloud_ots_table", "create_ots", "ots_tables"),
 	},

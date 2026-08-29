@@ -16,9 +16,18 @@ import type { CloudProvider } from "@/lib/db/schema/enums";
  * cache→Valkey, queue→RabbitMQ, registry→Harbor, secret→Vault, topic→NATS — see
  * lib/cloud-providers/hetzner-services.ts, which synthesizes them as ArgoCD add-on Applications)
  * and provisions buckets natively via Object Storage (the aminueza/minio provider — see
- * infra/templates/project/hetzner/buckets.tf); nosql (DynamoDB) is the ONE kind still refused.
+ * infra/templates/project/hetzner/buckets.tf) and nosql via an in-cluster ScyllaCluster serving
+ * the DynamoDB-compatible Alternator API. Hetzner refuses NOTHING: the map below is empty, and so
+ * is every other provider's entry.
  * When a provider gains a native path for a kind, drop it from this map and BOTH the palette and
  * the deploy gate follow.
+ *
+ * THE GATE IS NOW UNEXERCISED IN PRODUCTION, which is a thing to know rather than to celebrate.
+ * `buildConfigSnapshot` reads this map and skips the whole check when it is empty, so nothing on a
+ * real deploy path executes the refusal. It is kept, and kept TESTED (an injected exclusion in
+ * tests/actions/projects.test.ts), because a cloud-switch or an AI-composed graph can still put a
+ * kind on the canvas that a future provider cannot back — and the snapshot mapper's failure mode
+ * there is to drop the component silently and report SUCCESS.
  *
  * `registry` LEFT this list in #2431, and it took three things beyond the chart. On every other
  * cloud a project's own registry needs no imagePullSecret because the nodes authenticate to ECR /
@@ -60,24 +69,29 @@ import type { CloudProvider } from "@/lib/db/schema/enums";
  * connected client, so there is no object to create and nothing for Alethia to operate. The topic
  * is delivered; the fanout wiring is the application's.
  *
- * `nosql` STAYS, and the reason is now specific rather than "no clean single-chart OSS equal".
- * ScyllaDB is the right carrier — the kind is DynamoDB-shaped (partition key plus sort key), which
- * is a wide-column model, and Scylla ships Alternator, a DynamoDB-compatible API. What blocks it is
- * DELIVERY, not fit: scylla-operator's ValidatingWebhookConfiguration is `failurePolicy: Fail` and
- * its serving certificate is issued by cert-manager (`cert-manager.io/inject-ca-from`), and this
- * platform installs cert-manager CONDITIONALLY — `CertManagerEnabled` is
- * `ManagedCertificate && DNSEnabled && DomainName != "" && CertManagerSolver() != ""`. A project
- * with a nosql node but no managed certificate would get an operator whose webhook never gets a
- * cert, and a webhook that fails closed blocks every ScyllaCluster. Measured, not assumed: rendering
- * the chart with `webhook.createSelfSignedCertificate=false` drops the cert-manager Certificate and
- * Issuer but leaves the webhook Deployment mounting a secret with an EMPTY name. Closing this needs
- * a decision about cert-manager's install gate, which is a platform-rail change, not a chart pick.
+ * `nosql` IS GONE TOO, and what closed it was the platform rail rather than a different chart.
+ * ScyllaDB was always the right carrier — the kind is DynamoDB-shaped (partition key plus sort
+ * key), which is a wide-column model, and Scylla ships Alternator, a DynamoDB-compatible API, so a
+ * client written against DynamoDB on AWS works here unchanged. What blocked it was DELIVERY:
+ * scylla-operator's ValidatingWebhookConfiguration is `failurePolicy: Fail` and its serving
+ * certificate is injected by cert-manager, which this platform used to install only when a MANAGED
+ * CERTIFICATE was asked for — a thing a project with a nosql node and no domain never asks for. So
+ * the operator would have arrived with a webhook that had no CA, and a webhook that fails closed
+ * rejects every ScyllaCluster.
+ *
+ * The fix was to stop asking one question in place of two. `CertManagerEnabled` now means "does the
+ * CONTROLLER install", and `CertManagerIssuerEnabled` means "can it ISSUE" — which is what the old
+ * predicate actually decided. Issuing still needs a solver, a domain and the user's ask, exactly as
+ * before; installing additionally happens when an add-on declares `requiresCertManager`, which
+ * scylla-operator's install spec does. A self-signed Issuer signing an operator's own webhook
+ * certificate involves no ACME challenge, so none of the issuing gate's concerns apply to it
+ * (#3228).
+ *
+ * The map is now EMPTY: Hetzner refuses none of the 19 canvas kinds.
  */
 export const UNSUPPORTED_KINDS_BY_PROVIDER: Partial<
 	Record<CloudProviderSlug, readonly NodeKind[]>
-> = {
-	hetzner: ["nosql"],
-};
+> = {};
 
 /**
  * The kinds the given provider's template can't provision (empty when it backs everything).
