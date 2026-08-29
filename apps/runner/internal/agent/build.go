@@ -231,7 +231,7 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 	if msg, _ := w.kubectlOutput(ctx, "get", "pods", "-n", namespace,
 		"-l", buildJobPodSelector+jobName, "-o",
 		`jsonpath={range .items[*]}{.status.containerStatuses[0].state.terminated.message}{"\n"}{end}`); msg != "" {
-		if digest := parseKanikoDigest(msg); digest != "" {
+		if digest := parseKanikoDigest(msg, dest); digest != "" {
 			return dest + "@" + digest, nil
 		}
 	}
@@ -243,7 +243,7 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 	// already written the ones before it, and the successful attempt — the only one with a digest —
 	// may be among them. Failing on the error while holding the answer would degrade a digest-pinned
 	// image to a tag for a reason that is in hand.
-	if digest := parseKanikoDigest(logs); digest != "" {
+	if digest := parseKanikoDigest(logs, dest); digest != "" {
 		return dest + "@" + digest, nil
 	}
 	if err != nil {
@@ -454,11 +454,6 @@ func gitContextFor(repoURL, sha string) string {
 	return "git://" + u + "#" + sha
 }
 
-// kanikoDigestRe matches the pushed-image digest kaniko logs on success.
-var kanikoDigestRe = regexp.MustCompile(`sha256:[a-f0-9]{64}`)
-
-// parseKanikoDigest extracts the pushed image digest from kaniko's log output ("" when no
-// digest line is present).
 // buildJobPodSelector labels a build Job's pods.
 //
 // `job-name` rather than `batch.kubernetes.io/job-name`: both are set on a current cluster, and
@@ -466,8 +461,43 @@ var kanikoDigestRe = regexp.MustCompile(`sha256:[a-f0-9]{64}`)
 // what this file already used for the termination-message read.
 const buildJobPodSelector = "job-name="
 
-func parseKanikoDigest(logs string) string {
-	return kanikoDigestRe.FindString(logs)
+// parseKanikoDigest extracts the digest kaniko pushed TO dest ("" when the text carries none).
+//
+// ANCHORED TO dest, and that is the whole point. An unanchored `sha256:[a-f0-9]{64}` with
+// FindString returns the FIRST 64-hex string anywhere in the text, and the text is now every
+// attempt's full log. A Dockerfile that pins its base by digest — `FROM node@sha256:…`, the
+// recommended supply-chain practice — makes kaniko log `Retrieving image manifest node@sha256:…`
+// in EVERY attempt including the failed ones, before it logs anything about the push. kubectl
+// emits selector-matched pods in Go map order, so a failed attempt's log can come first, and the
+// unanchored match then returns the BASE IMAGE's digest.
+//
+// That answer is not merely wrong, it is invisible: `dest@sha256:<base-image-digest>` satisfies
+// isValidImageRef, satisfies verify's IMAGE-001 (it IS digest-pinned), is persisted to
+// resolved_image, renders into the Deployment, and fails at ImagePullBackOff with nothing anywhere
+// saying the digest was wrong.
+//
+// Both readers carry dest, so both can be anchored. The Job points kaniko's
+// --image-name-with-digest-file at /dev/termination-log, so the termination message is
+// `<dest>@sha256:…`, not a bare digest; and the log line is
+// `INFO[0058] Pushed <dest>@sha256:…`. Neither is a bare 64-hex string.
+//
+// NO BARE-DIGEST FALLBACK. If the anchored match finds nothing, this returns "" and the caller
+// degrades to the immutable git-SHA tag — which is loud, verify-passing and correct. Falling back
+// to the first sha256 in the text would reinstate exactly the defect this exists to remove, and a
+// wrong digest is worse than an honest tag.
+func parseKanikoDigest(text, dest string) string {
+	if dest == "" {
+		return ""
+	}
+	re, err := regexp.Compile(regexp.QuoteMeta(dest) + `@(sha256:[a-f0-9]{64})`)
+	if err != nil {
+		return ""
+	}
+	m := re.FindStringSubmatch(text)
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // namespaceManifest renders the minimal namespace the build Jobs run in.
