@@ -5,6 +5,7 @@ package argocd
 
 import (
 	"os"
+	"sort"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
@@ -39,7 +40,20 @@ type InfraFacts struct {
 	// issuer is the portable half, and the only half Alethia can offer on a cloud whose
 	// native certificate has nothing to attach to.
 	ManagedCertificate bool
-	EnableKarpenter    bool
+	// WebhookCAAddOns names the add-ons on this deploy whose admission webhook takes its serving
+	// certificate from cert-manager (`cert-manager.io/inject-ca-from`). It is DERIVED FROM THE
+	// INSTALL SPECS, never from a second copy of "which kinds does this cloud carry in-cluster" —
+	// the console mapper that adds such an operator sets AddOnInstall.RequiresCertManager, and this
+	// reads it back, so one place knows and the Go gate cannot drift from the TypeScript that
+	// emits it.
+	//
+	// It exists because a fail-closed webhook with no CA is not a degraded add-on, it is a broken
+	// cluster: scylla-operator's ValidatingWebhookConfiguration is `failurePolicy: Fail`, so every
+	// ScyllaCluster is rejected until the CA is injected. That has to install cert-manager on a
+	// deploy that issues no public certificate at all — which is why the install gate and the
+	// ISSUE gate are two predicates now rather than one.
+	WebhookCAAddOns []string
+	EnableKarpenter bool
 
 	ClusterName     string
 	ClusterEndpoint string
@@ -354,13 +368,49 @@ func (f *InfraFacts) CertManagerSolver() string {
 	return solver
 }
 
-// CertManagerEnabled reports whether the cert-manager platform Application renders for this
-// deploy: the user asked for a managed certificate, DNS is on with a domain to issue for,
-// and this cloud has a DNS01 solver that can actually complete a challenge. Kept as a method
-// so the Go decision and the YAML template read the same predicate rather than two copies of
-// the same `and` — the template gate is literally `{{- if .CertManagerEnabled }}`.
-func (f *InfraFacts) CertManagerEnabled() bool {
+// CertManagerIssuerEnabled reports whether a ClusterIssuer can honestly be created: the user asked
+// for a managed certificate, DNS is on with a domain to issue for, and this cloud has a DNS01
+// solver that can actually complete a challenge.
+//
+// This is the ORIGINAL CertManagerEnabled predicate, unchanged, under the name that says what it
+// actually decides. Everything that touches the ISSUER reads this one — certManagerIssuerManifest
+// and the ClusterIssuer arm of CleanupSkippedInfraServices — because the issuer template
+// structurally requires a solver: with Solver == "" every arm of its `if` is false and it would
+// render a `dns01:` key with an empty body. An issuer is not a thing you can install "partly".
+func (f *InfraFacts) CertManagerIssuerEnabled() bool {
 	return f.ManagedCertificate && f.DNSEnabled && f.DomainName != "" && f.CertManagerSolver() != ""
+}
+
+// CertManagerWebhookCARequired reports whether something on this deploy needs the cert-manager
+// CONTROLLER for an admission webhook's serving certificate, independently of whether any public
+// certificate is ever issued.
+func (f *InfraFacts) CertManagerWebhookCARequired() bool { return len(f.WebhookCAAddOns) > 0 }
+
+// CertManagerEnabled reports whether the cert-manager platform Application renders for this deploy.
+// Kept as a method, and kept under THIS NAME, so the Go decision and the YAML template read the
+// same predicate rather than two copies of the same `and` — the template gate is literally
+// `{{- if .CertManagerEnabled }}` and TestCertManagerGateMatchesTemplate pins that literal.
+//
+// ── WHY THIS IS NO LONGER THE SAME QUESTION AS "can it issue?" ──
+//
+// It used to be, and that was right while cert-manager had exactly one job here. It has two now,
+// and they need different answers:
+//
+//	ISSUE a public certificate  → needs a DNS01 solver, a domain, and the user's ask.
+//	INJECT a webhook CA         → needs none of those. A self-signed Issuer signs an operator's
+//	                              own webhook certificate, and no ACME challenge is involved.
+//
+// Collapsing them refused cert-manager on hetzner — correctly, for issuing — and thereby also
+// refused every operator whose webhook is fail-closed, which is how `nosql` came to read as a
+// cloud ceiling when ScyllaDB carries the kind perfectly well (#3228).
+//
+// The gate's stated concern is preserved exactly, because it was always about the ISSUER:
+// cert_manager_test.go's "ships an issuer-less controller on clouds that cannot solve a DNS01
+// challenge". A controller installed for a webhook CA is not issuer-less by accident — it is
+// deliberately issuer-free, and certManagerDecision says so in those words rather than claiming a
+// ClusterIssuer that does not exist.
+func (f *InfraFacts) CertManagerEnabled() bool {
+	return f.CertManagerIssuerEnabled() || f.CertManagerWebhookCARequired()
 }
 
 // BuildFromOutputs assembles InfraFacts from the tofu outputs for the config's cloud.
@@ -386,6 +436,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		DNSConnector:         vc.DNS.Provider,
 		DNSCredentialPresent: dnsCredentialPresent(vc),
 		ManagedCertificate:   managedCertificateAsk(vc),
+		WebhookCAAddOns:      webhookCAAddOns(vc),
 		EnableKarpenter:      enableKarpenter,
 		AppsDestinationRepo:  vc.Repositories.AppsDestinationRepo,
 		Labels:               cloud.ClassificationLabels(vc),
@@ -584,4 +635,25 @@ func managedCertificateAsk(vc *types.ProjectConfig) bool {
 		}
 	}
 	return ask
+}
+
+// webhookCAAddOns lists the add-ons on this deploy that declared RequiresCertManager.
+//
+// It reads the INSTALL SPECS, which is the whole point: the alternative — asking "is this hetzner
+// and does the project have a nosql node?" — would put a second copy of the carriage decision in
+// Go, where it would silently stop agreeing with the TypeScript mapper the day a second operator
+// needs a webhook CA, or the day another cloud carries a kind in-cluster. The spec that causes the
+// requirement is the only thing that states it.
+//
+// Sorted, so the facts render deterministically and a decision string built from them does not
+// churn between deploys on map-iteration order alone.
+func webhookCAAddOns(vc *types.ProjectConfig) []string {
+	var ids []string
+	for _, a := range vc.AddOns {
+		if a.RequiresCertManager {
+			ids = append(ids, a.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }

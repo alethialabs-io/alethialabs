@@ -620,7 +620,11 @@ func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
 	// that have nothing to do with this switch. Re-issuing them all then meets Let's Encrypt's
 	// duplicate-certificate rate limit (5 per week), which no retry recovers from. An idle
 	// controller is the strictly smaller harm, and certManagerDecision still records the skip.
-	if !facts.CertManagerEnabled() {
+	// The ISSUER predicate, not the controller one: cert-manager may now be installed with no
+	// issuer at all (to inject an operator's webhook CA), and on that deploy the ClusterIssuer
+	// SHOULD be reaped — there is none to keep. Reading the controller gate here would leave a
+	// stale issuer standing on exactly the deploys that never create one.
+	if !facts.CertManagerIssuerEnabled() {
 		cmd := fmt.Sprintf("kubectl delete clusterissuer %s --ignore-not-found --timeout=60s", CertManagerIssuerName)
 		if err := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not remove stale cert-manager ClusterIssuer %s: %v\n", CertManagerIssuerName, err)

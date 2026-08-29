@@ -62,7 +62,7 @@ describe("catalogTools.list_services", () => {
 		expect(out.services.find((s) => s.kind === "repositories")?.serviceNames).toBeNull();
 	});
 
-	it("flags the one kind Hetzner still cannot provision (unsupportedOn) so the agent will not propose it", async () => {
+	it("reports NO kind as unprovisionable on any cloud (unsupportedOn), so the agent stops refusing kinds the product backs", async () => {
 		const out = (await run(catalogTools().list_services, {})) as {
 			services: Array<{
 				kind: string;
@@ -71,16 +71,21 @@ describe("catalogTools.list_services", () => {
 			}>;
 		};
 		const svc = (kind: string) => out.services.find((s) => s.kind === kind);
-		// nosql is the ONE kind still flagged on Hetzner. topic left the list when it was wired to
-		// an in-cluster NATS release, as registry (#2431) and secret (#2432) did before it.
-		expect(svc("nosql")?.unsupportedOn).toContain("hetzner");
+		// NOTHING is flagged on Hetzner any more. nosql was the last one and left with #3228, when
+		// cert-manager's install gate stopped being the same question as its ISSUE gate — topic
+		// (NATS), registry (#2431) and secret (#2432) had gone before it.
+		//
+		// This matters more here than on the other boards: `unsupportedOn` is prose an AGENT acts
+		// on, so a stale flag makes the model refuse a kind the product backs.
+		expect(svc("nosql")?.unsupportedOn).toEqual([]);
 		expect(svc("nosql")?.unsupportedOn).not.toContain("aws");
 		expect(svc("topic")?.unsupportedOn).toEqual([]);
 		expect(svc("bucket")?.unsupportedOn).not.toContain("hetzner");
 		// The MODE is asserted too, not just `unsupportedOn`: topic must read as in-cluster on
 		// Hetzner, which is the half that would silently regress if the derivation broke.
 		expect(svc("topic")?.deployment?.hetzner).toBe("in-cluster-helm");
-		expect(svc("nosql")?.deployment?.hetzner).toBe("unsupported");
+		// nosql now reads as in-cluster-helm on Hetzner too — a ScyllaCluster, not a refusal.
+		expect(svc("nosql")?.deployment?.hetzner).toBe("in-cluster-helm");
 		expect(svc("nosql")?.deployment?.aws).toBe("managed");
 		// …while supported Hetzner kinds keep their real mode and an empty unsupportedOn there.
 		// (cluster/network are no longer addable services — W2 made them env settings.)

@@ -57,13 +57,14 @@ Column vehicles (all on the same `TestT2RealCloudProvisioning`, gated by env):
     queue are in-cluster charts (CloudNativePG / Valkey / RabbitMQ, `hetzner-services.ts`), so the
     proof is the named ArgoCD Application reaching Healthy+Synced, not a state count.
   - **`CloudCeiling`** — the cloud genuinely does not offer the kind: no cloud service, and no chart
-    in this repo backs it either. Hetzner: `topic`, `nosql`. Alibaba has no ceilings: all 11 kinds
-    are `CarriedByTofu`.
+    in this repo backs it either. **No cell holds this verdict.** Hetzner held the last ones and they
+    closed in order: `registry` (#2431, Harbor), `secret` (#2432, Vault), `topic` (NATS) and `nosql`
+    (#3228, ScyllaDB). Alibaba has none either: all 11 of its kinds are `CarriedByTofu`.
   - **`DeferredInProduct`** — hidden and rejected today exactly like a ceiling, but for a different
     reason: a chart this repo already ships backs the kind and only the mapping is missing. That is
     **debt**, and the cell must name the chart (`MaxConfigCell.Chart`, checked against the generated
-    add-on catalog on every PR). Hetzner: `secrets` (Vault) and `registry` (Harbor) — both install on
-    every full-bar run while the kind that would use them is refused.
+    add-on catalog on every PR). **No cell holds this verdict either** — the `deferred_in_product`
+    ratchet is 0 and must stay there.
 
   A cloud with no column, a cell with no verdict, or a cloud with no offered kind at all is an
   **error**, not a skip. Read back on every PR by `maxconfig_verdicts_pure_test.go`.
