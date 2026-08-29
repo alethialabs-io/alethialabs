@@ -63,9 +63,8 @@ variable "e2e_monthly_budget_usd" {
 }
 
 variable "e2e_budget_alert_emails" {
-  description = "Email addresses notified by the budget action group + the budget notifications. Empty = action group with no receivers (wire an automation/kill-switch later)."
+  description = "Email addresses notified by the budget action group + BOTH budget notifications. REQUIRED, deliberately, and for the same measured reason as its aws-oidc twin (#3105, #3108): it feeds the action group's email receivers AND contact_emails on every threshold, so defaulting it to [] rendered a budget in the portal while silently unsubscribing the maintainer from their own cost alerts. It holds personal addresses and this repo is public, so it is the one input here that cannot be committed — supply it via the gitignored emails.auto.tfvars (see README). Pass [] explicitly to opt out."
   type        = list(string)
-  default     = []
 }
 
 variable "name_prefix" {
