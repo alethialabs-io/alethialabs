@@ -45,11 +45,12 @@ describe("NODE_REGISTRY palette metadata", () => {
 		}
 	});
 
-	it("addableKindsFor drops the one kind Hetzner still can't back, and passes AWS through", () => {
+	it("addableKindsFor now passes Hetzner through unchanged, like AWS", () => {
 		const hetzner = addableKindsFor("hetzner");
-		// nosql is the last refused kind — ScyllaDB fits it, but scylla-operator's fail-closed
-		// webhook needs cert-manager, which this platform installs conditionally.
-		expect(hetzner).not.toContain("nosql");
+		// nosql was the LAST refused kind and it is gone: ScyllaDB always fitted, and what blocked
+		// it was cert-manager's install gate, which now separates "does the CONTROLLER install"
+		// from "can it ISSUE" (#3228). Asserted positively rather than by absence from a list.
+		expect(hetzner).toContain("nosql");
 		// topic IS addable now: it maps to an in-cluster NATS release with JetStream.
 		expect(hetzner).toContain("topic");
 		// Registry IS addable since #2431: an in-cluster Harbor with a minted pull robot.
@@ -74,15 +75,20 @@ describe("NODE_REGISTRY palette metadata", () => {
 		// deploy-time guard (buildConfigSnapshot) can never diverge on what a cloud can't back.
 		expect(UNSUPPORTED_KINDS_BY_PROVIDER).toBe(SERVER_UNSUPPORTED_KINDS_BY_PROVIDER);
 		// bucket is NATIVE on Hetzner (Object Storage via the minio provider); database, cache,
-		// queue, registry (#2431), secret (#2432, an in-cluster Vault) and topic (NATS) all run as
-		// in-cluster charts (hetzner-services.ts), so those stay addable. nosql is the one kind
-		// still refused — see the module comment for why it is a DELIVERY blocker, not a fit one.
-		expect(unsupportedKindsFor("hetzner")).toEqual(["nosql"]);
-		// The three that LEFT the list are asserted positively, because a kind merely absent from an
-		// array is indistinguishable from one nobody remembered to add.
-		expect(unsupportedKindsFor("hetzner")).not.toContain("registry");
-		expect(unsupportedKindsFor("hetzner")).not.toContain("secret");
-		expect(unsupportedKindsFor("hetzner")).not.toContain("topic");
+		// queue, registry (#2431), secret (#2432, an in-cluster Vault), topic (NATS) and now nosql
+		// (#3228, ScyllaDB) all run as in-cluster charts (hetzner-services.ts), so every kind is
+		// addable and the map is empty.
+		// EMPTY. nosql was the last entry and left with #3228, so Hetzner refuses none of the 19.
+		expect(unsupportedKindsFor("hetzner")).toEqual([]);
+		// The map itself is empty, so no cloud refuses a kind at all. Asserted on the map rather
+		// than only per-cloud: a provider key that reappears anywhere is a product regression.
+		expect(Object.keys(UNSUPPORTED_KINDS_BY_PROVIDER)).toEqual([]);
+		// The kinds that LEFT the list are asserted positively, because a kind merely absent from
+		// an array is indistinguishable from one nobody remembered to add.
+		expect(addableKindsFor("hetzner")).toContain("registry");
+		expect(addableKindsFor("hetzner")).toContain("secret");
+		expect(addableKindsFor("hetzner")).toContain("topic");
+		expect(addableKindsFor("hetzner")).toContain("nosql");
 		// A cloud with no blocked kinds (and an unknown/out-of-design slug) → empty.
 		expect(unsupportedKindsFor("aws")).toEqual([]);
 		expect(unsupportedKindsFor("digitalocean")).toEqual([]);

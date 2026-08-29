@@ -232,17 +232,13 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 
 ### Capability surface
 
-**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 47 carried by tofu · 6 carried in-cluster · 1 cloud ceilings · **0 deferred (our debt)** · 1 excluded by cost.
+**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 47 carried by tofu · 7 carried in-cluster · 0 cloud ceilings · **0 deferred (our debt)** · 1 excluded by cost.
 
 Excluded by **cost** — the cloud offers the kind and the product ships it, but provisioning it in the harness would buy something not billed by the hour. These are spend decisions, not capability limits, and the price is printed so the decision can be re-taken rather than inherited:
 
 - `alibaba/registry` → alicloud_cr_ee_instance — 150 USD/month (Basic, eu-central-1; 1800/year, no term discount; Advanced 617; no tier below Basic), bought PER RUN because instance_name carries the environment
 
-Cloud ceilings (the cloud genuinely does not offer the kind — not our debt):
-
-- `hetzner/nosql`
-
-**Parity grid (19 canvas NodeKinds × 5 clouds):** hetzner refuses 1 (nosql); every other cloud backs all 19.
+**Parity grid (19 canvas NodeKinds × 5 clouds):** every cloud backs every kind.
 
 ### Driven from the CLI
 
@@ -313,7 +309,7 @@ The ledger row itself is not wrong and is not rewritten (it is append-only, and 
 
 | board | recorded debt |
 |---|---|
-| `infra/offer-exclusions.yaml` | exclusions: 25 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
+| `infra/offer-exclusions.yaml` | exclusions: 26 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/config-carriage-exclusions.yaml` | exclusions: 31 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 301 · uniform: 12 |
 

@@ -387,6 +387,7 @@ const (
 	maxConfigQueueName    = "jobs"
 	maxConfigRegistryName = "app-images"
 	maxConfigTopicName    = "events"
+	maxConfigNosqlName    = "items"
 )
 
 // hetznerNoManagedService is the shared reason for Hetzner's three in-cluster data services: the
@@ -701,11 +702,11 @@ var MaxConfigKinds = []MaxConfigKind{
 	},
 	{
 		Kind: "nosql",
-		Doc: "a NoSQL table — DynamoDB / Firestore / Cosmos DB container / Tablestore. " +
-			"Hetzner has neither a service nor an offered chart for it.",
+		Doc: "a NoSQL table — DynamoDB / Firestore / Cosmos DB container / Tablestore, and on " +
+			"Hetzner a ScyllaCluster serving the DynamoDB-compatible Alternator API.",
 		Apply: func(pc *types.ProjectConfig, provider string) {
 			pc.NosqlTables = []types.ProjectNosqlConfig{{
-				Name: "items", PartitionKey: "pk", PartitionKeyType: "S",
+				Name: maxConfigNosqlName, PartitionKey: "pk", PartitionKeyType: "S",
 				SortKey: "sk", SortKeyType: "S", TableType: "standard",
 				CapacityMode: "on_demand", PointInTimeRecovery: true,
 			}}
@@ -714,8 +715,16 @@ var MaxConfigKinds = []MaxConfigKind{
 		AWS:       tofuCell("aws_dynamodb_table", "ddb_create", "ddb_table_configuration"),
 		GCP:       tofuCell("google_firestore_database", "create_firestore"),
 		// Azure: the per-table container (account/db parents are shared, one each).
-		Azure:   tofuCell("azurerm_cosmosdb_sql_container", "create_cosmos_db"),
-		Hetzner: ceilingCell(hetznerNoServiceNoChart),
+		Azure: tofuCell("azurerm_cosmosdb_sql_container", "create_cosmos_db"),
+		// Hetzner: NO LONGER A CEILING. The old reason was "neither a service nor an offered
+		// chart", and the second half was the wrong test — ScyllaDB fits the kind exactly. What
+		// actually blocked it was the platform rail: scylla-operator's webhook is failurePolicy:
+		// Fail with a cert-manager-injected CA, and cert-manager used to install ONLY when a
+		// managed certificate was asked for. Splitting that gate (CertManagerEnabled = does the
+		// CONTROLLER install; CertManagerIssuerEnabled = can it ISSUE) is what closed it (#3228).
+		Hetzner: inClusterCell("addon-nosql-"+maxConfigNosqlName,
+			hetznerNoManagedService+" (ScyllaDB, scylla-operator + scylla charts; one ScyllaCluster "+
+				"per nosql node, serving the DynamoDB-compatible Alternator API)"),
 		// Alibaba: the per-table Tablestore resource (alicloud_ots_instance is the shared parent).
 		Alibaba: tofuCell("alicloud_ots_table", "create_ots", "ots_tables"),
 	},

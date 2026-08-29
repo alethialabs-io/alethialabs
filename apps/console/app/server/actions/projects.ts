@@ -1088,6 +1088,17 @@ async function buildConfigSnapshot(
 					// exactly as a `queue` node is a RabbitMQ release rather than an AMQP queue. That
 					// is why it needs no bootstrap Job of the kind `secret` and `registry` do.
 					topics,
+					// A `nosql` node maps to an in-cluster ScyllaCluster: Hetzner sells no
+					// DynamoDB-shaped product, so the kind reaches the cluster as an ArgoCD
+					// Application rather than as tofu state.
+					//
+					// Same "a node is one SERVER" rule as `topic` above: the ScyllaCluster is the
+					// server and the application creates its tables, exactly as a `database` node
+					// is a Postgres cluster rather than a schema. Scylla is chosen because the kind
+					// is wide-column (partition key + sort key) and Scylla ships Alternator, a
+					// DynamoDB-compatible API — so a client written against DynamoDB on AWS works
+					// here unchanged (#3228).
+					nosqlTables,
 				}),
 			);
 		}

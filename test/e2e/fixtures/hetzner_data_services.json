@@ -28,6 +28,11 @@
 				"name": "api-key"
 			}
 		],
+		"nosqlTables": [
+			{
+				"name": "items"
+			}
+		],
 		"topics": [
 			{
 				"name": "events"
@@ -123,6 +128,60 @@
 						}
 					}
 				}
+			},
+			"syncWave": 1
+		},
+		{
+			"id": "scylla-operator",
+			"mode": "managed",
+			"chartRepo": "https://scylla-operator-charts.storage.googleapis.com/stable",
+			"chart": "scylla-operator",
+			"version": "v1.21.1",
+			"namespace": "scylla-operator",
+			"values": {},
+			"syncWave": 0,
+			"crds": [
+				"scyllaclusters.scylla.scylladb.com"
+			],
+			"requiresCertManager": true
+		},
+		{
+			"id": "nosql-items",
+			"mode": "managed",
+			"chartRepo": "https://scylla-operator-charts.storage.googleapis.com/stable",
+			"chart": "scylla",
+			"version": "v1.21.1",
+			"namespace": "nosql",
+			"values": {
+				"alternator": {
+					"enabled": true,
+					"insecureEnableHTTP": true,
+					"writeIsolation": "always"
+				},
+				"developerMode": true,
+				"cpuset": false,
+				"datacenter": "hetzner",
+				"racks": [
+					{
+						"name": "rack-1",
+						"members": 1,
+						"storage": {
+							"storageClassName": "hcloud-volumes",
+							"capacity": "10Gi"
+						},
+						"resources": {
+							"limits": {
+								"cpu": 1,
+								"memory": "2Gi"
+							},
+							"requests": {
+								"cpu": "500m",
+								"memory": "1Gi"
+							}
+						},
+						"placement": {}
+					}
+				]
 			},
 			"syncWave": 1
 		},
