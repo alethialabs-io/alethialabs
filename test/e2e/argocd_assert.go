@@ -1197,6 +1197,10 @@ func argoDeadlineDump(
 		// path was looking at the Job that opens it. One `kubectl get jobs -A`; see
 		// bootstrap_job_dump.go for the run that needed it.
 		dumpAddOnBootstrapJobs(ctx, kubeconfigPath) +
+		// The two sources that speak for a sync still RUNNING — an Application waiting on a hook it
+		// never applied has nothing further to say, and both of these do. See argo_stuck_sync.go.
+		dumpArgoControllerLog(ctx, kubeconfigPath, losers) +
+		dumpDestinationWarnings(ctx, kubeconfigPath, losers) +
 		describeArgoApps(ctx, kubeconfigPath, losers) +
 		dumpOutOfSyncResources(ctx, kubeconfigPath, refs) +
 		dumpArgoAppDiffs(ctx, kubeconfigPath, observed, losers)
