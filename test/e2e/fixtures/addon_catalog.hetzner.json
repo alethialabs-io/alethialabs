@@ -203,6 +203,14 @@
 					}
 				}
 			},
+			"prometheusOperator": {
+				"admissionWebhooks": {
+					"enabled": false
+				},
+				"tls": {
+					"enabled": false
+				}
+			},
 			"alertmanager": {
 				"enabled": true
 			}
