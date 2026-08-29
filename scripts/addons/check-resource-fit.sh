@@ -44,6 +44,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # across clouds. hetzner is chosen because it is the harness's own default cloud, so this file and
 # addonCatalogFixture() agree on which fixture "the" fixture is.
 fixture="$repo_root/test/e2e/fixtures/addon_catalog.hetzner.json"
+# AND the data-service specs — the nine charts `hetzner-services.ts` renders for the node KINDS.
+# The catalogue was never the whole surface; see #3299 and the sibling extensions in #3305/#3316.
+ds_fixture="$repo_root/test/e2e/fixtures/hetzner_data_services.json"
 allowfile="$repo_root/scripts/addons/resource-fit-allowed.txt"
 
 # 4Gi. Every cloud's default worker shape is at least 8 GB, so a single marketplace add-on asking
@@ -52,6 +55,8 @@ ceiling_mi=4096
 
 command -v helm >/dev/null 2>&1 || { echo "check-resource-fit: helm is not installed" >&2; exit 2; }
 [ -r "$fixture" ] || { echo "check-resource-fit: no fixture at $fixture" >&2; exit 2; }
+[ -r "$ds_fixture" ] || { echo "check-resource-fit: no data-service fixture at $ds_fixture" >&2; exit 2; }
 [ -r "$allowfile" ] || { echo "check-resource-fit: no allowlist at $allowfile" >&2; exit 2; }
 
-node "$repo_root/scripts/addons/resource-fit.mjs" "$fixture" "$allowfile" "$ceiling_mi"
+node "$repo_root/scripts/addons/resource-fit.mjs" "$allowfile" "$ceiling_mi" \
+  "$fixture" "$ds_fixture::hetzner-service."
