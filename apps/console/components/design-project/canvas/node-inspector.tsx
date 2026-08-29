@@ -5,6 +5,7 @@
 import { ArrowLeft, TriangleAlert, X } from "lucide-react";
 import { useState } from "react";
 import { ConfirmDialog } from "@/components/alerts/confirm-dialog";
+import { formatMonthlyRate } from "@repo/format";
 import { Alert, AlertDescription } from "@repo/ui/alert";
 import { Button } from "@repo/ui/button";
 import { CopyButton } from "@repo/ui/copy-button";
@@ -476,7 +477,7 @@ function Overview({ node }: { node: CanvasNode }) {
 					<div className="flex items-baseline justify-between">
 						<span className="text-xs text-muted-foreground">Monthly</span>
 						<span className="font-mono text-sm font-semibold">
-							{formatMonthly(status.monthlyCost)}
+							{formatMonthlyRate(status.monthlyCost, "exact")}
 						</span>
 					</div>
 				</div>
@@ -532,14 +533,6 @@ function Overview({ node }: { node: CanvasNode }) {
 	);
 }
 
-/** A resource's monthly cost, formatted the one way the panel spells it. */
-function formatMonthly(n: number): string {
-	return `$${n.toLocaleString("en-US", {
-		minimumFractionDigits: 2,
-		maximumFractionDigits: 2,
-	})}/mo`;
-}
-
 /**
  * The Cost tab — the node's monthly spend broken down by Terraform address. The rollup and the
  * per-line detail both come from the last plan's Infracost breakdown (resolved on the node's status).
@@ -567,7 +560,7 @@ function CostTab({ node }: { node: CanvasNode }) {
 			<div className="flex items-baseline justify-between border border-border bg-surface-sunken px-3 py-2.5">
 				<span className="vx-eyebrow">Monthly</span>
 				<span className="font-mono text-lg font-semibold">
-					{status.monthlyCost != null ? formatMonthly(status.monthlyCost) : "—"}
+					{status.monthlyCost != null ? formatMonthlyRate(status.monthlyCost, "exact") : "—"}
 				</span>
 			</div>
 			{env.costCapturedAt && (
@@ -585,7 +578,7 @@ function CostTab({ node }: { node: CanvasNode }) {
 								className="flex items-center gap-2 border border-border bg-surface-sunken px-2 py-1.5 font-mono text-[10px]"
 							>
 								<span className="min-w-0 flex-1 truncate">{l.address}</span>
-								<span className="shrink-0">{formatMonthly(l.monthlyCost)}</span>
+								<span className="shrink-0">{formatMonthlyRate(l.monthlyCost, "exact")}</span>
 							</li>
 						))}
 					</ul>

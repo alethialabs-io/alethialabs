@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 
+import { formatMonthlyRate } from "@repo/format";
 import { Badge } from "@repo/ui/badge";
 import type { PlanSummary } from "@/lib/plan/parse-plan";
 import type { CostSummary } from "@/lib/plan/parse-cost";
@@ -60,9 +61,8 @@ export function PlanSummaryBar({ plan, cost }: PlanSummaryBarProps) {
 				<div className="text-sm font-medium text-muted-foreground">
 					Est.{" "}
 					<span className="text-foreground font-semibold">
-						${cost.totalMonthlyCost.toFixed(2)}
+						{formatMonthlyRate(cost.totalMonthlyCost, "exact")}
 					</span>
-					/mo
 				</div>
 			)}
 		</div>

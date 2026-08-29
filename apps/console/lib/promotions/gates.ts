@@ -6,6 +6,7 @@
 // approvals), it returns a per-rule verdict + an overall decision. No DB, no I/O — unit-testable.
 // The orchestrator (app/server/actions/promotions.ts) builds the context and acts on the result.
 
+import { formatMonthlyRate } from "@repo/format";
 import type {
 	ApproverSpec,
 	ClassificationEnforcement,
@@ -198,9 +199,11 @@ function costGate(ctx: GateContext): GateResult {
 		return {
 			type,
 			status: "pending",
-			detail: `Cost +$${ctx.costDelta.toFixed(2)}/mo exceeds $${threshold.toFixed(2)} — needs approval`,
+			// `exact`: this string is read next to the breakdown that produced the delta, and a
+			// rounded threshold would not match the number the rule was configured with.
+			detail: `Cost +${formatMonthlyRate(ctx.costDelta, "exact")} exceeds ${formatMonthlyRate(threshold, "exact")} — needs approval`,
 		};
-	return { type, status: "pass", detail: `Cost delta within $${threshold.toFixed(2)}/mo` };
+	return { type, status: "pass", detail: `Cost delta within ${formatMonthlyRate(threshold, "exact")}` };
 }
 
 /** A required number of manual approvals. */

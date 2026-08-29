@@ -6,6 +6,7 @@
 // env" protection summary, and a right rail (auto-heal + duplicate + delete). Presentational; the
 // mutations are handled by the orchestrator.
 
+import { formatMonthlyRate } from "@repo/format";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import { Switch } from "@repo/ui/switch";
@@ -51,7 +52,10 @@ function gateChips(p: ProtectionSummary | undefined) {
 		},
 		{ label: p.soak_minutes != null ? `Soak ${p.soak_minutes}m` : "Soak", on: p.soak_minutes != null },
 		{
-			label: p.cost_delta_threshold != null ? `Cost $${p.cost_delta_threshold}/mo` : "Cost",
+			label:
+				p.cost_delta_threshold != null
+					? `Cost ${formatMonthlyRate(p.cost_delta_threshold, "exact")}`
+					: "Cost",
 			on: p.cost_delta_threshold != null,
 		},
 	];
