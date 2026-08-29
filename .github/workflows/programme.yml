@@ -113,9 +113,37 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
+          # A FRESHNESS STAMP, APPENDED AROUND THE RENDER — never inside it (#3146).
+          #
+          # The epic emits `render(derive(...))` VERBATIM: the same function, the same inputs and
+          # the same BYTES that PROGRAMME.md's generated half gets. That is deliberate — a second
+          # renderer would be a second thing to keep in step, and an epic drifting from the ledger
+          # would be indistinguishable from the ledger being wrong. So the stamp cannot live in the
+          # render, and it cannot live in PROGRAMME.md either: a render time is not a function of
+          # the tree, and the diff gate would go stale an hour after every refresh.
+          #
+          # It goes HERE, in the assembly, outside the generated region. The epic is not diff-gated,
+          # so it can carry what the file cannot.
+          #
+          # WHY IT IS NEEDED. The preamble claims this is "refreshed daily at 06:07 UTC, and by hand
+          # after each dispatch". On 2026-08-28 the epic read 11 of 30 while the ledger read 14 —
+          # three cells and two days stale — and NOTHING on the page said so. A reader cannot tell
+          # "refreshed twenty minutes ago" from "last refreshed on Tuesday": the grid renders
+          # identically either way. Three of the seven scheduled runs before that had failed, and
+          # GitHub's cron is best-effort under load, so a missed refresh is normal rather than
+          # exceptional.
+          #
+          # PROGRAMME.md §4 already legislates exactly this for the snapshot — "staleness is an
+          # error eventually… it warns past 48 hours and FAILS past 7 days" — and the copy most
+          # people actually read had none of that protection.
           {
             cat .github/programme-epic-preamble.md
             node scripts/programme-rollup.mjs --epic-body
+            printf '\n---\n\n'
+            printf '_Refreshed **%s** from `%s` by [run %s](%s/%s/actions/runs/%s)._\n' \
+              "$(date -u '+%Y-%m-%d %H:%M UTC')" "$(git rev-parse --short HEAD)" \
+              "${GITHUB_RUN_NUMBER}" "${GITHUB_SERVER_URL}" "${GITHUB_REPOSITORY}" "${GITHUB_RUN_ID}"
+            printf '_If that timestamp is old, this grid is old — the ledger in `PROGRAMME.md` is the source, and `pnpm gen:programme` regenerates it._\n'
           } > /tmp/epic-body.md
           gh issue edit 2896 --body-file /tmp/epic-body.md
 

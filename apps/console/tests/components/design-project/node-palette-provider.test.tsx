@@ -50,12 +50,15 @@ beforeEach(() => {
 });
 
 describe("NodePalette — per-provider kind filtering", () => {
-	it("hides topic and nosql on a Hetzner project", () => {
+	it("hides nosql on a Hetzner project, and shows topic now that NATS carries it", () => {
 		seedCanvas("hetzner");
 		renderPalette();
 
-		expect(screen.queryByText("Topic")).not.toBeInTheDocument();
+		// nosql is the ONE kind still refused on Hetzner — ScyllaDB fits it, but scylla-operator's
+		// fail-closed webhook needs cert-manager, which this platform installs conditionally.
 		expect(screen.queryByText("NoSQL table")).not.toBeInTheDocument();
+		// Topic IS offered: it maps to an in-cluster NATS release with JetStream.
+		expect(screen.getByText("Topic")).toBeInTheDocument();
 
 		// Registry is addable since #2431: an in-cluster Harbor with a minted pull robot and a
 		// Talos containerd mirror, so the kind is delivered rather than hidden.

@@ -1,0 +1,336 @@
+{
+  "enabled": true,
+  "provider": "aws",
+  "duration_seconds": 600,
+  "liveness_checks": 19,
+  "liveness_failures": 0,
+  "drift_job_status": "SUCCESS",
+  "drift_in_sync": false,
+  "drift_drifted": 19,
+  "drift_state_resources": 193,
+  "drift_state_reads": 4,
+  "drift_details": [
+    {
+      "address": "module.common_vpc[0].aws_default_network_acl.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "egress[0].icmp_code",
+        "egress[0].icmp_type",
+        "egress[1].icmp_code",
+        "egress[1].icmp_type",
+        "ingress[0].icmp_code",
+        "ingress[0].icmp_type",
+        "ingress[1].icmp_code",
+        "ingress[1].icmp_type",
+        "subnet_ids"
+      ]
+    },
+    {
+      "address": "module.common_vpc[0].aws_eip.nat[0]",
+      "kind": "modified",
+      "attributes": [
+        "association_id",
+        "network_interface",
+        "private_dns",
+        "private_ip"
+      ]
+    },
+    {
+      "address": "module.common_vpc[0].aws_route_table.private[0]",
+      "kind": "modified",
+      "attributes": [
+        "route"
+      ]
+    },
+    {
+      "address": "module.common_vpc[0].aws_route_table.public[0]",
+      "kind": "modified",
+      "attributes": [
+        "route"
+      ]
+    },
+    {
+      "address": "module.irsa_ai_bedrock[0].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.irsa_alethia_agent[0].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.irsa_fluentbit_cloudwatch[0].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.irsa_karpenter[0].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.karpenter[0].aws_sqs_queue.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "policy",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.s3_bucket_irsa_role[0].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.eks.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.eks.aws_security_group.cluster[0]",
+      "kind": "modified",
+      "attributes": [
+        "egress",
+        "ingress"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.eks.aws_security_group.node[0]",
+      "kind": "modified",
+      "attributes": [
+        "egress",
+        "ingress"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.iam_assumable_role_admin_aws_load_balancer_controller.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.iam_assumable_role_admin_secrets_operator.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.iam_assumable_role_external_dns.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.irsa-ebs-csi.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.vpc_cni_irsa.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.eks.module.eks_managed_node_group[\"eks_workers\"].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns"
+      ]
+    }
+  ],
+  "drift_baseline": [
+    {
+      "address": "module.common_vpc[0].aws_default_network_acl.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "egress[0].icmp_code",
+        "egress[0].icmp_type",
+        "egress[1].icmp_code",
+        "egress[1].icmp_type",
+        "ingress[0].icmp_code",
+        "ingress[0].icmp_type",
+        "ingress[1].icmp_code",
+        "ingress[1].icmp_type",
+        "subnet_ids"
+      ]
+    },
+    {
+      "address": "module.common_vpc[0].aws_eip.nat[0]",
+      "kind": "modified",
+      "attributes": [
+        "association_id",
+        "network_interface",
+        "private_dns",
+        "private_ip"
+      ]
+    },
+    {
+      "address": "module.common_vpc[0].aws_route_table.private[0]",
+      "kind": "modified",
+      "attributes": [
+        "route"
+      ]
+    },
+    {
+      "address": "module.common_vpc[0].aws_route_table.public[0]",
+      "kind": "modified",
+      "attributes": [
+        "route"
+      ]
+    },
+    {
+      "address": "module.irsa_ai_bedrock[0].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.irsa_alethia_agent[0].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.irsa_fluentbit_cloudwatch[0].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.irsa_karpenter[0].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.karpenter[0].aws_sqs_queue.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "policy",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.s3_bucket_irsa_role[0].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.eks.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.eks.aws_security_group.cluster[0]",
+      "kind": "modified",
+      "attributes": [
+        "egress",
+        "ingress"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.eks.aws_security_group.node[0]",
+      "kind": "modified",
+      "attributes": [
+        "egress",
+        "ingress"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.iam_assumable_role_admin_aws_load_balancer_controller.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.iam_assumable_role_admin_secrets_operator.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.iam_assumable_role_external_dns.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.irsa-ebs-csi.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.vpc_cni_irsa.aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns",
+        "tags"
+      ]
+    },
+    {
+      "address": "module.eks[0].module.eks.module.eks_managed_node_group[\"eks_workers\"].aws_iam_role.this[0]",
+      "kind": "modified",
+      "attributes": [
+        "managed_policy_arns"
+      ]
+    }
+  ],
+  "pvc_checked": false,
+  "pvc_bound": false,
+  "pvc_volume_id": "",
+  "pvc_sweep_tag_ok": false,
+  "addon_reread_ok": true,
+  "verdict": "✅ soak 600s: liveness 19/19 ok · drift SUCCESS baseline=19 final=19 NEW=0 (state=193 res, non-empty reads=4) · pvc: n/a (provider cloud-side check not wired) · addons re-read=true"
+}

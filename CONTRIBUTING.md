@@ -61,8 +61,12 @@ receives merges from `staging`.
   `required_approving_review_count` in `infra/github` when a second reviewer exists.
 - **`dev` uses a merge queue — Mergify, not GitHub's native one.** Just open a **non-draft**
   PR into `dev`. Mergify (`.mergify.yml`) auto-queues every non-draft, conflict-free dev PR and
-  squash-merges it in order once the **9 required checks** pass, validating each PR on its own
-  branch (it rebases candidates itself). That is what makes concurrent PRs safe: you never merge
+  squash-merges it in order once the **required checks** pass, validating each PR on its own
+  branch (it rebases candidates itself). The list itself is not written down here on purpose — a
+  count in prose is the fifth place it can go stale, and `.mergify.yml` had already been a month
+  out of step with `infra/github/variables.tf` twice. `scripts/ci/check-required-checks.mjs`
+  compares the two in-tree lists on every PR, and `workflow-health.yml` reports nightly when the
+  live rulesets disagree with either. That is what makes concurrent PRs safe: you never merge
   against a `dev` that moved under you, so two green-against-stale PRs cannot race and break the
   branch. Keep work-in-progress as a **draft** — drafts are excluded. If Mergify reports a
   conflict, rebase onto `origin/dev` and push; it re-queues automatically. You can nudge it with

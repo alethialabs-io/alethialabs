@@ -88,7 +88,7 @@ export function catalogTools() {
 	return {
 		list_services: tool({
 			description:
-				"List the infrastructure services that can be added to the canvas. For each, gives every cloud's concrete service name (aws/gcp/azure/alibaba/hetzner) AND how it is deployed there — 'managed' (a managed cloud service), 'native' (cluster/network), 'in-cluster-helm' (Hetzner runs data as OSS Helm charts via ArgoCD, e.g. CloudNativePG/Valkey/RabbitMQ), or 'unsupported' (that cloud's template can't provision this kind). Each entry also carries `unsupportedOn`: the clouds whose template can't provision that kind — do NOT propose a kind on a cloud listed there (e.g. Hetzner has no topic/nosql/bucket/registry). Use this to reason about what actually gets provisioned on each cloud.",
+				"List the infrastructure services that can be added to the canvas. For each, gives every cloud's concrete service name (aws/gcp/azure/alibaba/hetzner) AND how it is deployed there — 'managed' (a managed cloud service), 'native' (cluster/network), 'in-cluster-helm' (Hetzner runs data as OSS Helm charts via ArgoCD — CloudNativePG, Valkey, RabbitMQ, Harbor, Vault, NATS), or 'unsupported' (that cloud's template can't provision this kind). Each entry also carries `unsupportedOn`: the clouds whose template can't provision that kind — do NOT propose a kind on a cloud listed there (today that is only nosql on Hetzner). Use this to reason about what actually gets provisioned on each cloud.",
 			inputSchema: z.object({}),
 			execute: async () => ({
 				services: ADDABLE_KINDS.map((kind) => {

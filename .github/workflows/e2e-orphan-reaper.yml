@@ -351,13 +351,24 @@ jobs:
           # to carry it: a row reading "0 orphans" beside "could not check" is a different fact
           # from "0 orphans", and the whole point of this change is that they stop looking alike.
           unverified=$(grep -cE 'preflight for .* could not check ' "$LOG" || true)
+          # THE FOURTH STATE, and the only place it is ever OBSERVED. hetzner's imager upload
+          # helpers (`hcloud-upload-image-*`) carry no labels at all, so the preflight's own
+          # discovery — which selects on `alethia_project-id` — is blind to them by construction;
+          # nothing else in this repo lists them either. The sweeper reports them explicitly
+          # (probe_report_unattributable), and this row is where a human actually sees it: a region
+          # with an unattributable resource standing in it is not a region that came back clean.
+          # Non-gating by design — see scripts/e2e/lib/sweep-probe.sh's header and #2463.
+          unattributable=$(grep -cE 'sweep for .* found UNATTRIBUTABLE resource' "$LOG" || true)
           {
             echo "### Orphan reaper — ${PROVIDER}"
             echo
-            echo "| region | orphan runs | resources | unverified | mode |"
-            echo "|---|---:|---:|---:|---|"
-            echo "| \`${ALETHIA_E2E_REGION}\` | ${orphans} | ${swept} | ${unverified} | $([ "$DRY_RUN" = "1" ] && echo 'DRY RUN' || echo 'reclaim') |"
+            echo "| region | orphan runs | resources | unverified | unattributable | mode |"
+            echo "|---|---:|---:|---:|---:|---|"
+            echo "| \`${ALETHIA_E2E_REGION}\` | ${orphans} | ${swept} | ${unverified} | ${unattributable} | $([ "$DRY_RUN" = "1" ] && echo 'DRY RUN' || echo 'reclaim') |"
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${unattributable:-0}" -gt 0 ]; then
+            echo "::warning::${PROVIDER}: ${ALETHIA_E2E_REGION} holds resource(s) that EXIST and cannot be attributed to any run — see the UNATTRIBUTABLE warnings above. Not a failure and not a clean region: this reaper is the only thing that looks for them, and only a human can decide whether they are leaked (#2463)."
+          fi
           if [ "${unverified:-0}" -gt 0 ]; then
             echo "::warning::${PROVIDER}: the reaper could NOT check part of ${ALETHIA_E2E_REGION} — see the 'could not check' warnings above. A region it could not look at is not a region it found empty."
           fi

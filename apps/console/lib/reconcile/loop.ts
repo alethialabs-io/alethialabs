@@ -17,6 +17,7 @@ import { sweepProbeSchedule } from "@/lib/probes/dispatch";
 import { registerLoop, superviseLoop } from "@/lib/observability/heartbeats";
 import { log } from "@/lib/observability/log";
 import { convergeEnvStatuses } from "@/lib/reconcile/converge";
+import { releaseStrandedAiHolds } from "@/lib/reconcile/ai-holds";
 import { gcAuthzActivityLog, gcFleetActions, gcJobLogs } from "@/lib/reconcile/gc";
 import { getHeartbeats, isDue, runTask } from "@/lib/reconcile/heartbeat";
 import { reapExpiredEphemeralEnvs } from "@/lib/reconcile/reap";
@@ -40,6 +41,10 @@ const INTERVALS = {
 	"gc-job-logs": 15 * 60_000, // 15m — bounded-batch retention GC; a backlog drains over passes
 	"gc-fleet-actions": 15 * 60_000, // 15m
 	"gc-authz-activity": 15 * 60_000, // 15m — bounded-batch retention GC for the governance/audit log
+	// 15m — a hold only becomes sweepable at STRANDED_HOLD_AGE_MINUTES (60m), so the tick rate sets
+	// how long past that a stranded reservation keeps counting against the org, not whether it is
+	// found. Matched to the GCs rather than tightened: it reclaims ~$0.10 at a time.
+	"release-ai-holds": 15 * 60_000,
 } as const;
 
 declare global {
@@ -105,6 +110,12 @@ export async function tick(now: Date = new Date()): Promise<void> {
 		}
 		if (isDue("gc-authz-activity", INTERVALS["gc-authz-activity"], now)) {
 			await runTask("gc-authz-activity", () => gcAuthzActivityLog(db));
+		}
+		// Release AI budget holds whose reconciling write never landed (#2683). Not retention — the
+		// row stays; only the reserved credits are released, so the org stops being billed-in-effect
+		// for a turn that was never recorded.
+		if (isDue("release-ai-holds", INTERVALS["release-ai-holds"], now)) {
+			await runTask("release-ai-holds", () => releaseStrandedAiHolds(db));
 		}
 
 		// Bubble any reconciler currently in a FAILED STATE up to the loop heartbeat (runTask already

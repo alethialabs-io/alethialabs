@@ -167,7 +167,7 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**17 of 30 proof cells are proven.** 4 failing · 1 stale (cause fixed, needs a re-run) · 0 blocked · 8 never run.
+**19 of 30 proof cells are proven.** 1 failing · 1 stale (cause fixed, needs a re-run) · 0 blocked · 9 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
@@ -175,9 +175,9 @@ A cell is `proven` only when the proof ledger's surviving claim is PASS **and** 
 
 | cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ✅ | ✅ | ❌ | ✅ | · | ❌ |
+| **aws** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
 | **gcp** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
-| **azure** | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| **azure** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
 | **alibaba** | · | · | · | · | · | · |
 | **hetzner** | ✅ | ♻️ | ❌ | ✅ | ✅ | ✅ |
 
@@ -187,9 +187,9 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 - `aws/floor` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T125612Z`
 - `aws/maxconfig` **proven** — ledger 2026-08-26, bundle `demos/proofs/aws/20260826T114712Z`
-- `aws/addons` **failing** — ledger 2026-08-26 (via the `full` composite run) (#2717)
 - `aws/gitops` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T142417Z`
-- `aws/day2` **failing** — ledger 2026-08-26 (#2717)
+- `aws/byo-iac` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T155743Z`
+- `aws/day2` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T190408Z`
 - `gcp/floor` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T120037Z`
 - `gcp/maxconfig` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T124233Z`
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
@@ -197,7 +197,6 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
 - `azure/floor` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T215237Z`
 - `azure/maxconfig` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T211849Z`
-- `azure/addons` **failing** — ledger 2026-08-25 (via the `full` composite run)
 - `azure/gitops` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
 - `azure/byo-iac` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T204358Z`
 - `azure/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T235236Z`
@@ -219,21 +218,21 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 <details><summary>The next 10</summary>
 
 1. `hetzner/maxconfig` — stale
-1. `aws/addons` — failing
-1. `azure/addons` — failing
 1. `hetzner/addons` — failing
-1. `aws/day2` — failing
 1. `alibaba/floor` — never_run
 1. `alibaba/maxconfig` — never_run
+1. `aws/addons` — never_run
 1. `gcp/addons` — never_run
+1. `azure/addons` — never_run
 1. `alibaba/addons` — never_run
 1. `alibaba/gitops` — never_run
+1. `alibaba/byo-iac` — never_run
 
 </details>
 
 ### Capability surface
 
-**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 47 carried by tofu · 5 carried in-cluster · 2 cloud ceilings · **0 deferred (our debt)** · 1 excluded by cost.
+**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 47 carried by tofu · 6 carried in-cluster · 1 cloud ceilings · **0 deferred (our debt)** · 1 excluded by cost.
 
 Excluded by **cost** — the cloud offers the kind and the product ships it, but provisioning it in the harness would buy something not billed by the hour. These are spend decisions, not capability limits, and the price is printed so the decision can be re-taken rather than inherited:
 
@@ -241,10 +240,9 @@ Excluded by **cost** — the cloud offers the kind and the product ships it, but
 
 Cloud ceilings (the cloud genuinely does not offer the kind — not our debt):
 
-- `hetzner/topic`
 - `hetzner/nosql`
 
-**Parity grid (19 canvas NodeKinds × 5 clouds):** hetzner refuses 2 (topic, nosql); every other cloud backs all 19.
+**Parity grid (19 canvas NodeKinds × 5 clouds):** hetzner refuses 1 (nosql); every other cloud backs all 19.
 
 ### Driven from the CLI
 
@@ -269,11 +267,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33095437088 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 33107356336 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 33080748841 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33080748841 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 33107342500 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33190000558 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 33184624136 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 33184624136 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33184624136 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 33199532768 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -290,9 +288,6 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cell | state | issue | issue state |
 |---|---|---|:---:|
-| `aws/addons` | failing | #2717 | open |
-| `aws/day2` | failing | #2717 | open |
-| `azure/addons` | failing | **none** | ? |
 | `hetzner/maxconfig` | stale | #2568 | ⛔ **CLOSED** |
 | `hetzner/addons` | failing | #2717 | open |
 
@@ -302,12 +297,8 @@ The ledger row itself is not wrong and is not rewritten (it is append-only, and 
 
 ### Blocked on a human
 
-- #2698 — security(billing): runColonyTasks lets the caller set its own fan-out, behind one up-front budget hold
-- #2697 — security(audit): queueAudit attaches a job to any projectId without authorizing it, and an AI tool supplies that id
-- #2683 — fix(billing): a failed metering write leaks the AI budget hold it was meant to reconcile
-- #2679 — security(promotions): protection rules are authorized on one project and written to another
-- #2663 — fix(cli): `project get <name>` resolves to an arbitrary project when two share a name
-- #2485 — prod: the console has not deployed since 2026-07-30 — a cross-app import in the pruned image build, masked by fail-fast behind an expired PostHog key
+- #3145 — cli: two projects may share a name — silent-oldest is deterministic, but is it the contract?
+- #2788 — byo: --git-credential-id accepts an id that nothing in the product can create
 - #2482 — release: the console never learns about a new CLI version — the notification's credentials cannot mint from a tag
 - #2465 — programme: two of the six MVP predicates assert something no script can check
 - #2462 — infra(e2e): make the e2e-dev OIDC trust widening authoritative — four applies, currently hand-applied
@@ -339,11 +330,11 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-08-27T19:16:22Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-08-28T18:32:05Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
-Ledger rows read: **54** · surviving claims: **22** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
+Ledger rows read: **56** · surviving claims: **23** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
 
 _Generated by `scripts/programme-rollup.mjs`. Do not edit below the marker — run `pnpm gen:programme`._
 

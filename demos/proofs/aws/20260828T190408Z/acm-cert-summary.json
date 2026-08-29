@@ -1,0 +1,11 @@
+{
+  "feature": "acm-certificate",
+  "provider": "aws",
+  "zone_id": "Z0395392Z0SAB8SFGNLX",
+  "domain_name": "33190000558-1.e2e.alethialabs.io",
+  "certificate_arn": "arn:aws:acm:us-east-1:270587882865:certificate/3da5e576-1b33-46b9-a4d7-e25cfa7a0421",
+  "zone_not_created": true,
+  "certificate_issued": true,
+  "ingress_gated": true,
+  "verdict": "PASS"
+}

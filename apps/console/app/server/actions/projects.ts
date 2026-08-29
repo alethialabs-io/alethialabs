@@ -80,7 +80,7 @@ import {
 	dbEngineFamily,
 	DEFAULT_K8S_VERSION,
 	getProvider,
-	dnsTldUnsupportedReasonForCloud,
+	dnsZoneUnsupportedReasonForCloud,
 	keylessUnavailableReasonForCloud,
 	wafUnavailableReasonForCloud,
 } from "@/lib/cloud-providers";
@@ -1038,7 +1038,7 @@ async function buildConfigSnapshot(
 			!dns.zone_id &&
 			(!dns.provider || dns.provider === "native")
 		) {
-			const reason = dnsTldUnsupportedReasonForCloud(
+			const reason = dnsZoneUnsupportedReasonForCloud(
 				identity.provider,
 				dns.domain_name,
 			);
@@ -1080,6 +1080,14 @@ async function buildConfigSnapshot(
 					// Vault from inside the cluster, mints a least-privilege ESO token, revokes root,
 					// and ESO reads it through the secretstore-hetzner ClusterSecretStore.
 					secrets,
+					// A `topic` node maps to an in-cluster NATS release. Hetzner sells no pub/sub
+					// product, so the kind reaches the cluster as an ArgoCD Application rather than
+					// as tofu state — the same route `queue` and `database` already take.
+					//
+					// A node is one SERVER, not one server-side object: the topics are NATS subjects,
+					// exactly as a `queue` node is a RabbitMQ release rather than an AMQP queue. That
+					// is why it needs no bootstrap Job of the kind `secret` and `registry` do.
+					topics,
 				}),
 			);
 		}

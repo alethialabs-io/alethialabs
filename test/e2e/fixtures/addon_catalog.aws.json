@@ -87,10 +87,9 @@
 				}
 			},
 			"expose": {
-				"type": "ingress",
+				"type": "clusterIP",
 				"tls": {
-					"enabled": true,
-					"certSource": "none"
+					"enabled": false
 				}
 			},
 			"existingSecretAdminPassword": "alethia-addon-harbor",
@@ -470,6 +469,7 @@
 		"version": "7.2.1",
 		"namespace": "velero",
 		"values": {
+			"upgradeCRDs": false,
 			"initContainers": [
 				{
 					"name": "velero-plugin",

@@ -234,6 +234,43 @@ function notArmed(code, message) {
  *
  * @returns {Map<string, {covered: number, total: number}>}
  */
+/**
+ * Per-FILE covered/total for one directory, straight from the coverage artefact.
+ *
+ * WHY (#3079). The failure line says a directory "fell to 54.6% from 54.6% (957/1753 vs
+ * 958/1753)". One statement, out of 1753, somewhere in 31 files. That is true and nearly
+ * unactionable: the reader's first move is to guess which file, and on a promotion PR the
+ * directory is often one the diff never touched — so the honest answer is "none of them, this
+ * wobbled", which costs an investigation to reach.
+ *
+ * Naming the files turns a directory-shaped number into a place to look. It cannot say WHICH
+ * statement moved (the floors record a ratio, not a per-file baseline), so it deliberately does
+ * not pretend to: it prints the breakdown and lets the reader compare against the diff they
+ * already have.
+ *
+ * @returns {{file: string, covered: number, total: number}[]} sorted by uncovered count, worst first
+ */
+function perFileBreakdown(projectDir, dir) {
+	try {
+		const raw = JSON.parse(readFileSync(coveragePath(projectDir), "utf8"));
+		const abs = path.resolve(ROOT, projectDir);
+		const out = [];
+		for (const [file, data] of Object.entries(raw)) {
+			const rel = path.relative(abs, file);
+			if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
+			const owner = path.dirname(rel) === "" ? "." : path.dirname(rel);
+			if (owner !== dir) continue;
+			const s = Object.values(data?.s ?? {});
+			out.push({ file: path.basename(rel), covered: s.filter((n) => n > 0).length, total: s.length });
+		}
+		return out.sort((a, b) => b.total - b.covered - (a.total - a.covered));
+	} catch {
+		// A breakdown we cannot produce is not a reason to change the verdict, and an empty list
+		// renders as "not available" rather than as "no files".
+		return [];
+	}
+}
+
 function measureOrFailOpen(projectDir, project) {
 	const cov = coveragePath(projectDir);
 	// F2 — no artefact. The only ways here: the `Unit tests` step already failed (and already
@@ -386,8 +423,33 @@ function runCheck(project) {
 		"",
 		`  ts-coverage: ${failures.length} directory(ies) lost coverage in ${project}`,
 		"",
-		...failures.map((f) => `    ${f.dir}  ${formatPct(f.floor)} -> ${formatPct(f.now)}   (${f.floor.covered}/${f.floor.total} -> ${f.now.covered}/${f.now.total})`),
+		...failures.flatMap((f) => {
+			const head = `    ${f.dir}  ${formatPct(f.floor)} -> ${formatPct(f.now)}   (${f.floor.covered}/${f.floor.total} -> ${f.now.covered}/${f.now.total})`;
+			const files = perFileBreakdown(projectDir, f.dir);
+			if (files.length === 0) return [head];
+			// Only the files with something uncovered can account for a drop; a fully covered file
+			// cannot have lost anything, and listing it buries the ones that could.
+			const movers = files.filter((x) => x.covered < x.total);
+			if (movers.length === 0) return [head];
+			return [
+				head,
+				...movers.slice(0, 8).map((x) => `        ${x.file}  ${x.covered}/${x.total}`),
+				...(movers.length > 8 ? [`        … and ${movers.length - 8} more with uncovered statements`] : []),
+			];
+		}),
 		"",
+		// A ONE-STATEMENT MOVE WITH AN UNCHANGED TOTAL IS THE SIGNATURE OF NOISE (#3079), and
+		// saying so is not permission to ignore it — it is the difference between "you regressed"
+		// and "this wobbled", which the reader would otherwise spend an investigation establishing.
+		...(failures.some((f) => f.now.total === f.floor.total && Math.abs(f.now.covered - f.floor.covered) === 1)
+			? [
+					"  NOTE: a directory above moved by exactly ONE statement with its total unchanged.",
+					"  That is the shape of a nondeterministic test rather than a real regression (#3079) —",
+					"  especially if your diff does not touch that directory. Re-run before assuming it is",
+					"  yours; if a re-run is green, say so on #3079 rather than lowering the floor.",
+					"",
+				]
+			: []),
 		"  Add tests until the ratio is back at or above its floor. If the drop is intended and",
 		"  correct, record it deliberately:",
 		"",
@@ -568,7 +630,39 @@ export function coverageExcludes(rawSrc) {
 	if (exAt === -1) return [];
 	const close = block.indexOf("]", exAt);
 	if (close === -1) return null;
-	return [...block.slice(exAt, close).matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+	const inner = block.slice(exAt + "exclude: [".length, close);
+	const entries = [...inner.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+	// COLLAPSE IS NOT EMPTINESS (#2724). `exclude: []` is legitimately empty and returns []. But an
+	// exclude block with CONTENT that yields no entries means this parser has stopped understanding
+	// the block — a different quote style, a spread, a variable — and returning [] there would make
+	// "the parser broke" indistinguishable from "there is nothing to exclude". Both then report
+	// "none stale" and mean nothing. Callers treat null as unparsed and FAIL, which is the honest
+	// answer. This is what the `literals >= 10` floor was standing in for, and it is a relationship
+	// rather than a magnitude, so it cannot go slack.
+	if (entries.length === 0 && inner.trim() !== "") return null;
+	return entries;
+}
+
+/** The committed record of which vitest projects declare a coverage block (#2724). */
+export const SWEEP_RECORD = "scripts/ts-coverage-sweep.json";
+
+/**
+ * Read the recorded coverage-emitting project set.
+ *
+ * THROWS on absence or malformation, deliberately. If a missing record read as an empty set, the
+ * two assertions built on it would both pass vacuously — "nothing missing" and "nothing
+ * unrecorded" are trivially true of an empty list — and deleting the file would silence the very
+ * tripwire it exists to arm. The caller's `catch` turns a throw into a FAILED assertion, which is
+ * the honest outcome: a check that cannot read its own baseline has not passed.
+ */
+function readSweepRecord() {
+	const raw = readFileSync(path.join(ROOT, SWEEP_RECORD), "utf8");
+	const parsed = JSON.parse(raw);
+	const list = parsed?.coverage_emitting_projects;
+	if (!Array.isArray(list) || list.length === 0) {
+		throw new Error(`${SWEEP_RECORD}: coverage_emitting_projects must be a non-empty array`);
+	}
+	return list;
 }
 
 /** A path with no glob metacharacter — the kind that can silently stop matching anything. */
@@ -622,6 +716,19 @@ function runSelfTest() {
 	const nested = measure(fixture({ "lib/authz/a.ts": [1], "lib/authz/fga/b.ts": [0] }), "/abs/proj");
 	check("nested dirs are DISTINCT keys, not recursive", nested.get("lib/authz")?.total === 1 && nested.get("lib/authz/fga")?.total === 1);
 	check("keys come back sorted", [...measure(fixture({ "z/a.ts": [1], "a/b.ts": [1] }), "/abs/proj").keys()].join() === "a,z");
+
+	process.stdout.write("\n exclusion parsing — collapse is not emptiness (#2724)\n");
+	const ex = (src) => { const r = coverageExcludes(src); return r === null ? "null" : JSON.stringify(r); };
+	check("no coverage block reads as null", ex("export default {}") === "null");
+	check("a coverage block with no exclude is legitimately empty", ex('coverage: { provider: "v8" }') === "[]");
+	check("...and so is an explicitly empty one", ex("coverage: { exclude: [] }") === "[]");
+	check("normal entries parse", ex('coverage: { exclude: ["a.ts", "b/**"] }') === '["a.ts","b/**"]', ex('coverage: { exclude: ["a.ts", "b/**"] }'));
+	// THE COLLAPSE. Before #2724 each of these returned [] — indistinguishable from "nothing to
+	// exclude" — so the staleness sweep below reported "none stale" having read nothing. That is
+	// what the `literals >= 10` floor was standing in for, badly.
+	check("single-quoted entries are a PARSE FAILURE, not an empty list", ex("coverage: { exclude: ['a.ts', 'b.ts'] }") === "null", ex("coverage: { exclude: ['a.ts', 'b.ts'] }"));
+	check("a spread the parser cannot read is a failure too", ex("coverage: { exclude: [...SHARED] }") === "null", ex("coverage: { exclude: [...SHARED] }"));
+	check("a template literal is a failure too", ex("coverage: { exclude: [`a.ts`] }") === "null", ex("coverage: { exclude: [`a.ts`] }"));
 
 	process.stdout.write("\n corruption tripwire (F6 feeds on these)\n");
 	const bad = fixture({ "lib/a.ts": [1, 1] });
@@ -709,13 +816,34 @@ function runSelfTest() {
 		// branch indistinguishable from "nothing wrong". Asserting the denominator makes the
 		// difference visible — an empty sweep now FAILS instead of congratulating itself.
 		//
-		// The floor is 3 rather than 1 because three projects (apps/console, packages/ui,
-		// packages/plan-catalog) demonstrably declare a coverage block today; a sweep that finds
-		// fewer has stopped seeing something it used to see, whatever the reason.
+		// THE DENOMINATOR IS A RECORDED SET, NOT A FLOOR (#2724).
+		//
+		// This was `emitting.length >= 3`, and a hand-typed floor guarding a number that changes
+		// whenever a project gains coverage can only ever go slack — silently, because slack passes.
+		// It did, twice, within hours: #2695 set it at exactly 3; #2720 correctly added
+		// apps/marketing and ee (real count 5); by the time #2724 was fixed packages/format had made
+		// it 6. A tripwire written to catch ONE project leaving the sweep was tolerating THREE.
+		//
+		// A recorded SET cannot drift that way, and it says WHICH project vanished rather than only
+		// that the number got smaller. A project appearing fails too, asking for the record to be
+		// updated in a reviewed diff — the same ratchet discipline coverage-floors.json already
+		// applies to the numbers, applied to the sweep that guards them.
+		const recorded = readSweepRecord();
+		const missing = recorded.filter((p) => !emitting.includes(p));
+		const unrecorded = emitting.filter((p) => !recorded.includes(p));
 		check(
-			"the scope sweep actually examined projects (>= 3 declare coverage)",
-			emitting.length >= 3,
-			`found ${emitting.length} of ${configs.length} vitest configs: ${emitting.join(", ") || "(none)"}`,
+			"the scope sweep found every project recorded as coverage-emitting",
+			missing.length === 0,
+			missing.length > 0
+				? `${missing.join(", ")} declared coverage when ${SWEEP_RECORD} was written and does not now — either its coverage block went away (record that here) or this sweep has stopped seeing it`
+				: `found all ${recorded.length}: ${emitting.join(", ")}`,
+		);
+		check(
+			"...and no coverage-emitting project is missing from that record",
+			unrecorded.length === 0,
+			unrecorded.length > 0
+				? `${unrecorded.join(", ")} declares coverage but is not in ${SWEEP_RECORD} — add it there in this PR so the set stays reviewed`
+				: "",
 		);
 		check("no coverage-emitting vitest project lacks a ratchet step in ci.yml", ungated.length === 0, ungated.join(", "));
 
@@ -756,17 +884,17 @@ function runSelfTest() {
 			}
 		}
 		check("every vitest coverage block parsed", unparsed.length === 0, unparsed.join(", "));
-		// The denominator, for the same reason as the sweep above: a run that examined zero literal
-		// paths would report "none stale" and mean nothing.
-		// The floor is 10 against 11 literal entries on dev today — one below, so a single
-		// legitimate deletion does not red the repo, while a parser that collapsed to a handful
-		// still does. It is a vacuity tripwire, NOT a target: nothing here wants more exclusions.
-		// (#2700 replaces one glob with six literals, taking the count to 17; this floor holds.)
-		check(
-			"the exclusion sweep actually examined literal paths (>= 10)",
-			literals >= 10,
-			`examined ${literals}`,
-		);
+		// The floor that used to sit here (`literals >= 10`) is GONE, replaced by a relationship
+		// (#2724). It was a vacuity tripwire against the parser collapsing, expressed as a
+		// magnitude — and a magnitude is the wrong shape twice over. It went slack (10 against 17
+		// real, tolerating seven disappearing), and it pointed the wrong way: FEWER exclusions is an
+		// improvement, so a shrinking count is not evidence of anything wrong.
+		//
+		// What it was actually protecting is now enforced where it belongs, in coverageExcludes:
+		// an exclude block with content that parses to no entries returns null and lands in
+		// `unparsed` above, which fails and names the config. That catches the collapse this floor
+		// was aiming at, without a number anyone has to remember to raise.
+		check("the exclusion sweep examined a non-empty set of configs", emitting.length > 0, `${emitting.length} coverage-emitting config(s)`);
 		check("every literal coverage exclusion still names a real file", stale.length === 0, stale.join(", "));
 	} catch (err) {
 		check("scope check could run", false, err.message);

@@ -27,6 +27,11 @@
 			{
 				"name": "api-key"
 			}
+		],
+		"topics": [
+			{
+				"name": "events"
+			}
 		]
 	},
 	"addons": [
@@ -93,6 +98,30 @@
 						"storageClass": "hcloud-volumes"
 					},
 					"imageName": "ghcr.io/cloudnative-pg/postgresql:16"
+				}
+			},
+			"syncWave": 1
+		},
+		{
+			"id": "topic-events",
+			"mode": "managed",
+			"chartRepo": "https://nats-io.github.io/k8s/helm/charts/",
+			"chart": "nats",
+			"version": "2.14.6",
+			"namespace": "topics",
+			"values": {
+				"config": {
+					"jetstream": {
+						"enabled": true,
+						"fileStore": {
+							"enabled": true,
+							"pvc": {
+								"enabled": true,
+								"size": "10Gi",
+								"storageClassName": "hcloud-volumes"
+							}
+						}
+					}
 				}
 			},
 			"syncWave": 1

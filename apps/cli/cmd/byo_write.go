@@ -24,16 +24,14 @@ var (
 	chartAttachRef        string
 	chartAttachNamespace  string
 	chartAttachValuesFile string
-	chartAttachGitCred    string
 	chartAttachSet        []string
 	chartDetachYes        bool
 
-	iacAttachRepo    string
-	iacAttachRef     string
-	iacAttachPath    string
-	iacAttachGitCred string
-	iacAttachVar     []string
-	iacDetachYes     bool
+	iacAttachRepo string
+	iacAttachRef  string
+	iacAttachPath string
+	iacAttachVar  []string
+	iacDetachYes  bool
 )
 
 // readChartValuesFile reads the raw Helm-values override, or returns "" when no file was named. The
@@ -65,7 +63,11 @@ var chartAttachCmd = &cobra.Command{
 A git chart needs --chart-path; an OCI chart is named by the URL's last segment and does not.
 The chart is not deployable until it has been scanned — run "alethia chart scan <id>" next.
 
-Re-attaching the same id UPDATES it, so this is also how you move a chart to a new ref.`,
+Re-attaching the same id UPDATES it, so this is also how you move a chart to a new ref.
+
+A PRIVATE repository needs no credential here. The runner fetches a short-lived token at job
+time from your linked GitHub/GitLab account, scoped to the repositories this project declares.
+Link that account once in the console; nothing is stored against the chart.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -88,7 +90,7 @@ Re-attaching the same id UPDATES it, so this is also how you move a chart to a n
 			Project: project, Env: env, ID: args[0],
 			RepoURL: chartAttachRepo, ChartPath: chartAttachPath, Ref: chartAttachRef,
 			Namespace: chartAttachNamespace, ValuesYAML: valuesYAML,
-			GitCredID: chartAttachGitCred, Values: values,
+			Values: values,
 		}); err != nil {
 			failf("Failed to attach chart: %v", err)
 		}
@@ -200,7 +202,11 @@ var iacAttachCmd = &cobra.Command{
 An environment holds at most ONE source, so re-attaching replaces it. --var sets scalar tfvars
 (string, number or bool only — never a secret; the server refuses anything nested).
 
-The source is not deployable until scanned: run "alethia iac scan" next.`,
+The source is not deployable until scanned: run "alethia iac scan" next.
+
+A PRIVATE repository needs no credential here. The runner fetches a short-lived token at job
+time from your linked GitHub/GitLab account, scoped to the repositories this project declares.
+Link that account once in the console; nothing is stored against the source.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		token, err := getAuthToken()
 		if err != nil {
@@ -217,7 +223,7 @@ The source is not deployable until scanned: run "alethia iac scan" next.`,
 		}
 		if err := runIacAttach(api.NewClient(token), os.Stdout, api.AttachIacParams{
 			Project: project, Env: env, RepoURL: iacAttachRepo, Ref: iacAttachRef,
-			Path: iacAttachPath, GitCredID: iacAttachGitCred, VarValues: vars,
+			Path: iacAttachPath, VarValues: vars,
 		}); err != nil {
 			failf("Failed to attach IaC source: %v", err)
 		}
@@ -314,7 +320,6 @@ func init() {
 	chartAttachCmd.Flags().StringVar(&chartAttachRef, "ref", "", "Git ref (branch, tag or SHA)")
 	chartAttachCmd.Flags().StringVar(&chartAttachNamespace, "namespace", "", "Destination namespace")
 	chartAttachCmd.Flags().StringVar(&chartAttachValuesFile, "values-file", "", "Path to a raw Helm values YAML override")
-	chartAttachCmd.Flags().StringVar(&chartAttachGitCred, "git-credential-id", "", "Git credential for a private repository")
 	chartAttachCmd.Flags().StringArrayVar(&chartAttachSet, "set", nil, "Chart value key=value (repeatable)")
 	addYesFlag(chartDetachCmd, &chartDetachYes)
 	chartCmd.AddCommand(chartAttachCmd, chartDetachCmd, chartScanCmd)
@@ -322,7 +327,6 @@ func init() {
 	iacAttachCmd.Flags().StringVar(&iacAttachRepo, "repo", "", "Git repository URL (required)")
 	iacAttachCmd.Flags().StringVar(&iacAttachRef, "ref", "", "Git ref (branch, tag or SHA)")
 	iacAttachCmd.Flags().StringVar(&iacAttachPath, "path", "", "Path to the module within the repo")
-	iacAttachCmd.Flags().StringVar(&iacAttachGitCred, "git-credential-id", "", "Git credential for a private repository")
 	iacAttachCmd.Flags().StringArrayVar(&iacAttachVar, "var", nil, "Scalar tfvar key=value (repeatable; never a secret)")
 	addYesFlag(iacDetachCmd, &iacDetachYes)
 	iacCmd.AddCommand(iacAttachCmd, iacDetachCmd, iacScanCmd)

@@ -1384,7 +1384,7 @@ jobs:
           # ── The max-config DNS zone suffix, global and per-cloud. ──
           #
           #    Hetzner DNS REFUSES a `.io` zone outright — its API answers `unsupported tld
-          #    (invalid_input)`, 422, measured against the live API (dns-tld.ts). The suffix was a
+          #    (invalid_input)`, 422, measured against the live API (dns-zone-support.ts). The suffix was a
           #    compiled-in constant, so hetzner/maxconfig and hetzner/full were blocked on the TLD of
           #    a `const` on every run, whatever else got fixed.
           #

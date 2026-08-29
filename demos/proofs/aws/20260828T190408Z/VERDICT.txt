@@ -1,0 +1,15 @@
+aws: ✅ apply(125 added)→node Ready (T2-asserted)→ArgoCD Healthy+Synced (8/8 asserted)→destroyed(1)
+cluster:   alethia-nl-33190000558-1 (us-east-1)
+run:       nightly-33190000558-1 @ e3c6ebc
+receipt:   signed=true sha256=eddac302aa0e
+teardown:  destroyed=true (1 resources)
+duration:  5862s
+soak:      ✅ soak 600s: liveness 19/19 ok · drift SUCCESS baseline=19 final=19 NEW=0 (state=193 res, non-empty reads=4) · pvc: n/a (provider cloud-side check not wired) · addons re-read=true
+day2-access: ✅ day2-access: endpoint surfaced=true · kube reachable=true authorized=true (can-i * / *) · nodes ready=1 · argocd-url reachable=true (https://argocd.33190000558-1.e2e.alethialabs.io)
+day2offer: n/a (day-2 offer postures off or not reached)
+fabric-demo: n/a (#845 Fabric placement gate off or not reached)
+acm-cert: PASS
+byo-iac:   ✅ byo-iac on aws: iac/drift/aws@ab54450f2a7a… https://github.com/alethialabs-io/enterprise-demo · gate-blocks-bad=true · pinned-clone-logged=true · receipt=1ac88f51db73… · state-on-proxy=true(1 res) · no-cluster-output=true · ctx=alethia-nl/33190000558-1 · drift baseline-in-sync=true → induced(/alethia/byo-iac/e2e33190/drift_marker)=1[aws_ssm_parameter] → healed-in-sync=true · destroy=SUCCESS state-cleared=true
+xacct:     n/a (#1268 cross-account secrets off or not reached)
+keyless-db: n/a (#1511 keyless DB auth off or not reached)
+argocd:    8 of 8 expected Applications Healthy+Synced
