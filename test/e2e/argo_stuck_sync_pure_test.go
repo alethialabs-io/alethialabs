@@ -22,9 +22,12 @@ func TestFilterControllerLinesKeepsLoserAndErrorLines(t *testing.T) {
 		"",
 	}, "\n"))
 
-	kept, scanned := filterControllerLines(raw, []string{"addon-kube-prometheus-stack"}, 60)
+	kept, scanned, levelled := filterControllerLines(raw, []string{"addon-kube-prometheus-stack"}, 60)
 	if scanned != 4 {
 		t.Fatalf("scanned = %d, want 4 (the blank line is not a line)", scanned)
+	}
+	if levelled != 4 {
+		t.Fatalf("levelled = %d, want 4 — every line here is logrus text", levelled)
 	}
 	if len(kept) != 2 {
 		t.Fatalf("kept %d lines, want 2:\n%s", len(kept), strings.Join(kept, "\n"))
@@ -44,7 +47,7 @@ func TestFilterControllerLinesKeepsTheMostRecentWhenCapped(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		lines = append(lines, `level=error msg="attempt `+string(rune('0'+i))+`"`)
 	}
-	kept, scanned := filterControllerLines([]byte(strings.Join(lines, "\n")), nil, 3)
+	kept, scanned, _ := filterControllerLines([]byte(strings.Join(lines, "\n")), nil, 3)
 	if scanned != 10 {
 		t.Fatalf("scanned = %d, want 10", scanned)
 	}
@@ -58,13 +61,13 @@ func TestFilterControllerLinesKeepsTheMostRecentWhenCapped(t *testing.T) {
 }
 
 func TestFilterControllerLinesEmptyLogIsDistinguishable(t *testing.T) {
-	kept, scanned := filterControllerLines(nil, []string{"addon-x"}, 60)
+	kept, scanned, _ := filterControllerLines(nil, []string{"addon-x"}, 60)
 	if scanned != 0 || len(kept) != 0 {
 		t.Fatalf("empty log: scanned=%d kept=%d, want 0/0", scanned, len(kept))
 	}
 	// And a log that HAS lines but none matching must report a non-zero scan, so the caller can
 	// tell "the controller is silent about these apps" from "there is no controller".
-	kept, scanned = filterControllerLines([]byte("level=info msg=\"all good\"\n"), []string{"addon-x"}, 60)
+	kept, scanned, _ = filterControllerLines([]byte("level=info msg=\"all good\"\n"), []string{"addon-x"}, 60)
 	if scanned != 1 || len(kept) != 0 {
 		t.Fatalf("non-matching log: scanned=%d kept=%d, want 1/0", scanned, len(kept))
 	}
@@ -150,5 +153,35 @@ func TestFilterWarningEventsCapKeepsTheNewest(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Reason != "BackoffLimitExceeded" {
 		t.Fatalf("cap kept the wrong end: %+v", got)
+	}
+}
+
+// JSON is one Helm value away, and a filter that matched nothing under it would print "not one
+// line carries an error" about a log full of them.
+func TestFilterControllerLinesReadsTheJSONLogFormat(t *testing.T) {
+	raw := []byte(`{"level":"error","msg":"Failed to apply hook","error":"clusterroles is forbidden"}` + "\n" +
+		`{"level":"info","msg":"Reconciliation completed"}`)
+	kept, scanned, levelled := filterControllerLines(raw, nil, 60)
+	if scanned != 2 || levelled != 2 {
+		t.Fatalf("scanned=%d levelled=%d, want 2/2", scanned, levelled)
+	}
+	if len(kept) != 1 || !strings.Contains(kept[0], "is forbidden") {
+		t.Fatalf("the JSON error line was not kept: %v", kept)
+	}
+}
+
+// The blindness itself: a log in neither format must be REPORTED as unreadable, not silently
+// produce an empty result that reads as calm.
+func TestFilterControllerLinesReportsALogItCannotRead(t *testing.T) {
+	raw := []byte("2026-08-29 14:07:01 E some other logger entirely\n2026-08-29 14:07:02 I fine")
+	kept, scanned, levelled := filterControllerLines(raw, []string{"addon-x"}, 60)
+	if scanned != 2 {
+		t.Fatalf("scanned = %d, want 2", scanned)
+	}
+	if levelled != 0 {
+		t.Fatalf("levelled = %d, want 0 — neither line is a format this filter knows", levelled)
+	}
+	if len(kept) != 0 {
+		t.Fatalf("kept %v from a format it cannot read", kept)
 	}
 }

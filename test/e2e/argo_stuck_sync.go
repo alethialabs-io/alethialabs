@@ -61,10 +61,12 @@ const maxControllerLines = 60
 
 // filterControllerLines keeps the controller lines that speak about the failing Applications.
 //
-// Returns the kept lines and the number SCANNED, because "the controller said nothing about these
-// apps" and "the controller log was empty" are different findings and the caller renders them
-// differently. A dump that prints nothing in both cases is a dump that reports green.
-func filterControllerLines(raw []byte, losers []string, max int) (kept []string, scanned int) {
+// Returns the kept lines, the number SCANNED, and how many carried a level marker this filter
+// RECOGNISES — because "the controller said nothing about these apps", "the controller log was
+// empty", and "the log is in a format this filter cannot read" are three different findings and the
+// caller renders them differently. A dump that prints nothing in all three is a dump that reports
+// green.
+func filterControllerLines(raw []byte, losers []string, max int) (kept []string, scanned, levelled int) {
 	if max <= 0 {
 		max = maxControllerLines
 	}
@@ -73,6 +75,9 @@ func filterControllerLines(raw []byte, losers []string, max int) (kept []string,
 			continue
 		}
 		scanned++
+		if hasKnownLevel(line) {
+			levelled++
+		}
 		if !controllerLineMatters(line, losers) {
 			continue
 		}
@@ -81,7 +86,32 @@ func filterControllerLines(raw []byte, losers []string, max int) (kept []string,
 	if len(kept) > max {
 		kept = kept[len(kept)-max:]
 	}
-	return kept, scanned
+	return kept, scanned, levelled
+}
+
+// levelMarkers are the shapes a log level takes in argo-cd's two output formats.
+//
+// argo-cd 9.5.11 (v3.3.9) defaults to logrus TEXT — `time="…" level=info msg="…"` — which is what
+// this repo installs and what was read off a live cluster. But the format is one Helm value away
+// from JSON, and a filter that silently matched nothing under JSON would print "not one line
+// carries an error" about a log full of them. That is a worse failure than printing nothing.
+var levelMarkers = []string{
+	"level=error", "level=warning", // logrus text
+	`"level":"error"`, `"level":"warning"`, // logrus json
+}
+
+// anyLevelMarkers are the same two formats at ANY severity, used only to decide whether this filter
+// can read the log at all.
+var anyLevelMarkers = []string{"level=", `"level":`}
+
+// hasKnownLevel reports whether a line carries a level marker in a format this filter understands.
+func hasKnownLevel(line string) bool {
+	for _, m := range anyLevelMarkers {
+		if strings.Contains(line, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // controllerLineMatters reports whether a controller log line is about a failing Application, or is
@@ -96,7 +126,12 @@ func controllerLineMatters(line string, losers []string) bool {
 			return true
 		}
 	}
-	return strings.Contains(line, "level=error") || strings.Contains(line, "level=warning")
+	for _, m := range levelMarkers {
+		if strings.Contains(line, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // dumpArgoControllerLog asks the application-controller why it could not finish.
@@ -123,16 +158,22 @@ func dumpArgoControllerLog(ctx context.Context, kubeconfigPath string, losers []
 		return b.String()
 	}
 
-	kept, scanned := filterControllerLines(out, losers, maxControllerLines)
+	kept, scanned, levelled := filterControllerLines(out, losers, maxControllerLines)
 	switch {
 	case scanned == 0:
 		fmt.Fprintf(&b, "  FINDING: the controller log is EMPTY. Either no pod matched %q "+
 			"(the label changed) or the controller has not started — and in both cases nothing "+
 			"has been syncing anything.\n", controllerComponentSelector)
+	case levelled == 0:
+		// Said BEFORE the "nothing to report" verdict, because it invalidates it. A log this
+		// filter cannot read produces the same empty result as a log with nothing in it.
+		fmt.Fprintf(&b, "  FINDING: %d line(s) read and NOT ONE carries a level marker in either "+
+			"format this filter knows (`level=…` or `\"level\":…`). It cannot tell an error from "+
+			"an info line here, so read the raw log — do not read the absence below as calm.\n", scanned)
 	case len(kept) == 0:
-		fmt.Fprintf(&b, "  FINDING: %d line(s) read, and NOT ONE names a failing Application or "+
-			"is an error. The controller is running and is not complaining — so whatever is "+
-			"holding the sync is not something it considers a failure.\n", scanned)
+		fmt.Fprintf(&b, "  FINDING: %d line(s) read (%d with a level marker), and NOT ONE names a "+
+			"failing Application or is an error. The controller is running and is not complaining "+
+			"— so whatever is holding the sync is not something it considers a failure.\n", scanned, levelled)
 	default:
 		fmt.Fprintf(&b, "  %d of %d line(s) name a loser or carry an error; most recent last:\n", len(kept), scanned)
 		for _, line := range kept {
