@@ -404,6 +404,7 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 	return assertArgoConvergence(ctx, kubeconfigPath, expected, nil, timeout, argoConvergeSubject{
 		vacuous:  "refusing a VACUOUS ArgoCD health assertion: the expected Application set is empty",
 		deadline: "ArgoCD Applications",
+		name:     "AssertArgoAppsHealthy",
 	})
 }
 
@@ -415,6 +416,10 @@ type argoConvergeSubject struct {
 	vacuous string
 	// deadline is the noun phrase the timeout error opens with.
 	deadline string
+	// name identifies WHICH assertion wrote a summary. Two convergence waits share this file and a
+	// bundle that carries the wrong one gives no way to tell which — azure/addons run 33277183092
+	// shipped a `vacuous` summary from a call nobody could identify from the artifact.
+	name string
 }
 
 // assertArgoConvergence is THE ArgoCD convergence wait. Both public assertions delegate to it, and
@@ -453,6 +458,22 @@ func assertArgoConvergence(ctx context.Context, kubeconfigPath string, expected,
 	if path := os.Getenv(ArgoSummaryEnv); path != "" {
 		defer func() {
 			s := newArgoConvergenceSummary(expected, lastObserved, lastLosers, timeout, err)
+			s.Assertion = subj.name
+			// ⚠️ A VACUOUS WRITE MUST NOT CLOBBER A MEASUREMENT. The file carries the RUN's
+			// convergence evidence and every call writes it, so last-writer-wins is the wrong rule
+			// the moment one of those writers asserted nothing: azure/addons run 33277183092
+			// converged 20 of 20 and shipped `outcome: vacuous, expected_total: 0`, which
+			// check-proof-integrity refuses — a cell that passed and cannot be promoted.
+			//
+			// Only the measured→vacuous DOWNGRADE is refused. When no measured summary exists the
+			// vacuous one is still written, because "this run asserted nothing" is itself evidence
+			// and losing it is how #3281 happened.
+			if s.Outcome == "vacuous" && measuredSummaryExists(path) {
+				fmt.Fprintf(os.Stderr, "argocd assert: %s asserted nothing over an empty set; "+
+					"keeping the measured summary already at %s rather than overwriting it\n",
+					orNone(subj.name), path)
+				return
+			}
 			if werr := writeArgoSummary(path, s); werr != nil {
 				// Never fatal: the assertion's verdict is the test's, not this file's. But it is
 				// never silent either — a bundle that quietly lost its numbers is the defect.
@@ -529,6 +550,10 @@ const ArgoSummaryEnv = "ALETHIA_E2E_ARGOCD_SUMMARY"
 // `null` says "not measured"; a `0` says "measured, and it was zero".
 type ArgoConvergenceSummary struct {
 	AssertedAt string `json:"asserted_at"`
+	// Assertion names the wait that wrote this. Without it, a bundle carrying the wrong summary
+	// gives a reader no way to tell WHICH of the two convergence waits produced it — which is the
+	// question azure/addons run 33277183092 could not answer from its artifact.
+	Assertion string `json:"assertion"`
 	// Outcome is one of: converged · unconverged · unreadable · vacuous.
 	Outcome string `json:"outcome"`
 	// ExpectedTotal is the size of the derived expected set — the field #2671 needs in order to
@@ -576,6 +601,23 @@ func newArgoConvergenceSummary(expected []string, observed map[string]argoAppSta
 	s.Verdict = fmt.Sprintf("%d of %d expected Applications Healthy+Synced within %s; %d did not converge: %s",
 		hs, len(expected), timeout, len(s.Losers), strings.Join(s.Losers, ", "))
 	return s
+}
+
+// measuredSummaryExists reports whether the summary file already holds a real measurement.
+//
+// "Measured" means an outcome other than `vacuous` — converged, unconverged and unreadable all say
+// something about a set that was actually asserted over. An unreadable or absent file is NOT
+// measured, so the first writer always wins the empty slot.
+func measuredSummaryExists(path string) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var prev ArgoConvergenceSummary
+	if err := json.Unmarshal(raw, &prev); err != nil {
+		return false
+	}
+	return prev.Outcome != "" && prev.Outcome != "vacuous"
 }
 
 // writeArgoSummary persists the summary as indented JSON, mirroring writeAccessSummary.

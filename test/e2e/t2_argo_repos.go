@@ -356,6 +356,7 @@ func AssertArgoReposConverge(ctx context.Context, kubeconfigPath string, expecte
 	return assertArgoConvergence(ctx, kubeconfigPath, expected, manualSync, timeout, argoConvergeSubject{
 		vacuous:  "refusing a VACUOUS ArgoCD-with-repos assertion: the expected Application set is empty",
 		deadline: "ArgoCD Applications (incl. repo-apps + repo-byo)",
+		name:     "AssertArgoReposConverge",
 	})
 }
 
