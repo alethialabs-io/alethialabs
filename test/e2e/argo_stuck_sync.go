@@ -55,33 +55,94 @@ import (
 // Verified against a live argo-cd 9.5.11 install rather than read off the chart source.
 const controllerComponentSelector = "app.kubernetes.io/component=application-controller"
 
-// maxControllerLines caps what is printed, keeping the MOST RECENT matches — a stuck sync retries,
+// maxControllerLines caps what is PRINTED, keeping the most recent matches — a stuck sync retries,
 // so the interesting line is repeated and the last copy is as good as the first.
 const maxControllerLines = 60
 
-// filterControllerLines keeps the controller lines that speak about the failing Applications.
+// controllerTailLines is how far back the read reaches. It is a WINDOW, and the scan reports when
+// it was filled — see controllerLogScan.WindowFull.
+const controllerTailLines = 4000
+
+// controllerLogScan is everything the filter learned, kept together because the verdict needs all
+// of it. Three separate empties look identical in the output and mean opposite things:
 //
-// Returns the kept lines and the number SCANNED, because "the controller said nothing about these
-// apps" and "the controller log was empty" are different findings and the caller renders them
-// differently. A dump that prints nothing in both cases is a dump that reports green.
-func filterControllerLines(raw []byte, losers []string, max int) (kept []string, scanned int) {
+//	Scanned == 0   no log at all — nothing has been syncing anything
+//	Levelled low   a format this filter cannot read — it cannot tell an error from an info line
+//	Matched == 0   read fine, nothing to report — the controller does not consider this a failure
+//
+// Matched is counted BEFORE the print cap, so the verdict can say how many it is not showing
+// instead of quietly reporting the cap as the total.
+type controllerLogScan struct {
+	Kept       []string
+	Scanned    int
+	Levelled   int
+	Matched    int
+	WindowFull bool
+}
+
+// filterControllerLines keeps the controller lines that speak about the failing Applications.
+func filterControllerLines(raw []byte, losers []string, max int) controllerLogScan {
 	if max <= 0 {
 		max = maxControllerLines
 	}
+	var sc controllerLogScan
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		scanned++
+		sc.Scanned++
+		if hasKnownLevel(line) {
+			sc.Levelled++
+		}
 		if !controllerLineMatters(line, losers) {
 			continue
 		}
-		kept = append(kept, line)
+		sc.Matched++
+		sc.Kept = append(sc.Kept, line)
 	}
-	if len(kept) > max {
-		kept = kept[len(kept)-max:]
+	if len(sc.Kept) > max {
+		sc.Kept = sc.Kept[len(sc.Kept)-max:]
 	}
-	return kept, scanned
+	sc.WindowFull = sc.Scanned >= controllerTailLines
+	return sc
+}
+
+// Unreadable reports whether most of the log is in a format this filter does not understand.
+//
+// A RATIO, not `Levelled == 0`. One stray `level=` inside a quoted `msg=` or `error=` would
+// otherwise vouch for four thousand lines it says nothing about — the blindness check would
+// silently switch itself off in exactly the log it exists to flag. A minority of levelled lines is
+// also the honest verdict for a log that is half stack traces.
+func (s controllerLogScan) Unreadable() bool { return s.Levelled*2 < s.Scanned }
+
+// levelMarkers are the shapes a log level takes in argo-cd's two output formats.
+//
+// argo-cd 9.5.11 (v3.3.9) defaults to logrus TEXT — `time="…" level=info msg="…"` — which is what
+// this repo installs and what was read off a live cluster. But the format is one Helm value away
+// from JSON, and a filter that silently matched nothing under JSON would print "not one line
+// carries an error" about a log full of them.
+//
+// FATAL AND PANIC ARE HERE BECAUSE THIS REPO HAS ONE. `argocd_assert_test.go` carries a captured
+// `"level":"fatal"` line off hetzner/addons run 33059349873 — an RBAC refusal. A severity list of
+// error+warning treats a controller that FATALED as running and not complaining, which is the
+// precise verdict this file exists to stop printing.
+var levelMarkers = []string{
+	"level=error", "level=warning", "level=fatal", "level=panic",
+	`"level":"error"`, `"level":"warning"`, `"level":"fatal"`, `"level":"panic"`,
+}
+
+// anyLevelMarkers are the same two formats at ANY severity, used only to decide whether this filter
+// can read the log at all.
+var anyLevelMarkers = []string{"level=", `"level":`}
+
+// hasKnownLevel reports whether a line carries a level marker in a format this filter understands.
+func hasKnownLevel(line string) bool {
+	for _, m := range anyLevelMarkers {
+		if strings.Contains(line, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // controllerLineMatters reports whether a controller log line is about a failing Application, or is
@@ -96,7 +157,59 @@ func controllerLineMatters(line string, losers []string) bool {
 			return true
 		}
 	}
-	return strings.Contains(line, "level=error") || strings.Contains(line, "level=warning")
+	for _, m := range levelMarkers {
+		if strings.Contains(line, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// renderControllerLog states the verdict, with every caveat that invalidates it printed FIRST.
+//
+// Pure, and separate from the shell-out, because the ORDER and the completeness of these branches
+// is the whole substance of this file — and a rendering that only runs behind a live cluster is a
+// rendering nothing tests.
+func renderControllerLog(sc controllerLogScan) string {
+	var b strings.Builder
+	if sc.Scanned == 0 {
+		fmt.Fprintf(&b, "  FINDING: the controller log is EMPTY. Either no pod matched %q "+
+			"(the label changed) or the controller has not started — and in both cases nothing "+
+			"has been syncing anything.\n", controllerComponentSelector)
+		return b.String()
+	}
+	// The caveats come before the verdict and NOT INSTEAD OF IT. Making these a switch case would
+	// discard the matched lines in exactly the log that most needs them printed.
+	if sc.Unreadable() {
+		fmt.Fprintf(&b, "  FINDING: only %d of %d line(s) carry a level marker in a format this "+
+			"filter knows (`level=…` or `\"level\":…`). It cannot reliably tell an error from an "+
+			"info line here, so read the raw log — do not read an absence below as calm.\n",
+			sc.Levelled, sc.Scanned)
+	}
+	if sc.WindowFull {
+		fmt.Fprintf(&b, "  FINDING: the read filled its %d-line window, and --tail keeps the "+
+			"NEWEST lines. A sync stuck for the whole budget has its first failure at the far end, "+
+			"which may be outside this window — an absence below is not evidence it never happened.\n",
+			controllerTailLines)
+	}
+	if sc.Matched == 0 {
+		fmt.Fprintf(&b, "  %d line(s) read (%d with a level marker), and NOT ONE names a failing "+
+			"Application or is an error. The controller is running and is not complaining — so "+
+			"whatever is holding the sync is not something it considers a failure.\n",
+			sc.Scanned, sc.Levelled)
+		return b.String()
+	}
+	if hidden := sc.Matched - len(sc.Kept); hidden > 0 {
+		fmt.Fprintf(&b, "  %d of %d line(s) name a loser or carry an error; the %d most recent are "+
+			"shown and %d OLDER match(es) are not:\n", sc.Matched, sc.Scanned, len(sc.Kept), hidden)
+	} else {
+		fmt.Fprintf(&b, "  %d of %d line(s) name a loser or carry an error; most recent last:\n",
+			sc.Matched, sc.Scanned)
+	}
+	for _, line := range sc.Kept {
+		fmt.Fprintf(&b, "    %s\n", line)
+	}
+	return b.String()
 }
 
 // dumpArgoControllerLog asks the application-controller why it could not finish.
@@ -107,38 +220,32 @@ func dumpArgoControllerLog(ctx context.Context, kubeconfigPath string, losers []
 	var b strings.Builder
 	b.WriteString("\n──── argocd-application-controller: what it logged about the losers ────\n")
 
-	// One call, bounded. --tail rather than --since: a sync that has been stuck for 35 minutes has
-	// its explanation at the FIRST attempt, and a --since window sized for the poll interval would
-	// cut exactly that off.
+	// One call, bounded. --tail rather than --since because a --since window sized for the poll
+	// interval would cut the whole wait off — but --tail is a window too, keeping the NEWEST lines,
+	// so filling it is reported rather than assumed away.
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var stderr strings.Builder
 	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath, "-n", "argocd",
-		"logs", "-l", controllerComponentSelector, "--tail=4000", "--prefix")
+		"logs", "-l", controllerComponentSelector,
+		fmt.Sprintf("--tail=%d", controllerTailLines), "--prefix")
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	if err != nil {
+	// THE PARTIAL OUTPUT IS STILL THE ANSWER. `kubectl logs -l` reads the selected pods in sequence
+	// and stops at the first one it cannot open, having already written the ones before it. On a
+	// cluster unhealthy enough to be in this dump, an unopenable pod is likely — and discarding what
+	// came back would lose the controller's account on exactly the runs this exists for.
+	if err != nil && len(strings.TrimSpace(string(out))) == 0 {
 		fmt.Fprintf(&b, "  could not be read (%v: %s) — this says nothing about the sync\n",
 			err, strings.TrimSpace(firstLine(stderr.String())))
 		return b.String()
 	}
-
-	kept, scanned := filterControllerLines(out, losers, maxControllerLines)
-	switch {
-	case scanned == 0:
-		fmt.Fprintf(&b, "  FINDING: the controller log is EMPTY. Either no pod matched %q "+
-			"(the label changed) or the controller has not started — and in both cases nothing "+
-			"has been syncing anything.\n", controllerComponentSelector)
-	case len(kept) == 0:
-		fmt.Fprintf(&b, "  FINDING: %d line(s) read, and NOT ONE names a failing Application or "+
-			"is an error. The controller is running and is not complaining — so whatever is "+
-			"holding the sync is not something it considers a failure.\n", scanned)
-	default:
-		fmt.Fprintf(&b, "  %d of %d line(s) name a loser or carry an error; most recent last:\n", len(kept), scanned)
-		for _, line := range kept {
-			fmt.Fprintf(&b, "    %s\n", line)
-		}
+	if err != nil {
+		fmt.Fprintf(&b, "  PARTIAL: the read stopped early (%v: %s). What follows is what came back "+
+			"before it stopped, and an absence in it is not evidence.\n",
+			err, strings.TrimSpace(firstLine(stderr.String())))
 	}
+	b.WriteString(renderControllerLog(filterControllerLines(out, losers, maxControllerLines)))
 	return b.String()
 }
 
@@ -259,10 +366,8 @@ func dumpDestinationWarnings(ctx context.Context, kubeconfigPath string, losers 
 	var b strings.Builder
 	b.WriteString("\n──── cluster Warnings in the losers' destination namespaces ────\n")
 
-	actx, acancel := context.WithTimeout(ctx, 20*time.Second)
-	appsOut, err := exec.CommandContext(actx, "kubectl", "--kubeconfig", kubeconfigPath,
-		"get", "applications.argoproj.io", "-n", "argocd", "-o", "json").Output()
-	acancel()
+	appsOut, err := kubectlValue(ctx, 20*time.Second, kubeconfigPath,
+		"get", "applications.argoproj.io", "-n", "argocd", "-o", "json")
 	if err != nil {
 		fmt.Fprintf(&b, "  could not read the Applications to learn their namespaces (%v)\n", err)
 		return b.String()
@@ -290,10 +395,8 @@ func dumpDestinationWarnings(ctx context.Context, kubeconfigPath string, losers 
 			len(losers)-len(byApp), len(losers))
 	}
 
-	ectx, ecancel := context.WithTimeout(ctx, 30*time.Second)
-	evOut, err := exec.CommandContext(ectx, "kubectl", "--kubeconfig", kubeconfigPath,
-		"get", "events", "--all-namespaces", "--field-selector", "type=Warning", "-o", "json").Output()
-	ecancel()
+	evOut, err := kubectlValue(ctx, 30*time.Second, kubeconfigPath,
+		"get", "events", "--all-namespaces", "--field-selector", "type=Warning", "-o", "json")
 	if err != nil {
 		fmt.Fprintf(&b, "  could not read events (%v)\n", err)
 		return b.String()
@@ -318,6 +421,29 @@ func dumpDestinationWarnings(ctx context.Context, kubeconfigPath string, losers 
 		}
 	}
 	return b.String()
+}
+
+// kubectlValue runs one kubectl read and returns STDOUT, with stderr folded into the error.
+//
+// `exec.Output()` alone gives the caller `exit status 1` for a missing CRD, an RBAC refusal and an
+// unreachable API server alike — three faults with three different next steps, rendered as one
+// number. And CombinedOutput is not the answer either: this stdout is a VALUE, and kubectl writes
+// to stderr on calls that SUCCEED.
+func kubectlValue(ctx context.Context, timeout time.Duration, kubeconfigPath string, args ...string) ([]byte, error) {
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	full := append([]string{"--kubeconfig", kubeconfigPath}, args...)
+	var stderr strings.Builder
+	cmd := exec.CommandContext(cctx, "kubectl", full...)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(firstLine(stderr.String())); msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg)
+		}
+		return nil, err
+	}
+	return out, nil
 }
 
 // firstLine returns s up to its first newline, for one-line error rendering.

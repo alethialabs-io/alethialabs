@@ -22,7 +22,19 @@ import (
 
 // dumpHelpers are the diagnostics a timed-out wait must carry. Calling any of them outside
 // argoDeadlineDump means a caller is building its own dump.
+//
+// ⚠️ EVERY diagnostic in the shared helper belongs here. This list held three of seven, so both
+// tests below passed with four of them deleted from `argoDeadlineDump` — the exact #2834 drift the
+// file exists to prevent, tolerated by the guard against it. A guard whose subject list is written
+// once and never grown decays into a guard for whatever was true the day it was written.
+//
+// Add a diagnostic to argoDeadlineDump, add it here.
 var dumpHelpers = []string{
+	"dumpArgoSyncFailures",
+	"dumpPendingHooks",
+	"dumpAddOnBootstrapJobs",
+	"dumpArgoControllerLog",
+	"dumpDestinationWarnings",
 	"describeArgoApps",
 	"dumpOutOfSyncResources",
 	"dumpArgoAppDiffs",
@@ -97,6 +109,41 @@ func TestSharedDumpCarriesEveryDiagnostic(t *testing.T) {
 	for _, helper := range dumpHelpers {
 		if !strings.Contains(body, helper+"(") {
 			t.Errorf("argoDeadlineDump no longer calls %s — every ArgoCD timeout loses it", helper)
+		}
+	}
+}
+
+// The OTHER direction, which is the one that let this list rot: a diagnostic added to the shared
+// helper and never added to dumpHelpers is unguarded, and nothing said so.
+//
+// Every `dump*`/`describe*` call in the helper's body must be named above. That is a mechanical
+// question about the body, so it cannot fall behind the way a hand-maintained list does.
+func TestDumpHelpersNamesEveryDiagnosticTheHelperCalls(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("argocd_assert.go")
+	if err != nil {
+		t.Fatalf("could not read argocd_assert.go: %v", err)
+	}
+	body := regexp.MustCompile(`(?s)func argoDeadlineDump\(.*?\n}\n`).FindString(string(raw))
+	if body == "" {
+		t.Fatal("argoDeadlineDump not found — this test would be vacuous")
+	}
+	called := regexp.MustCompile(`\b((?:dump|describe)[A-Za-z0-9_]*)\(`).FindAllStringSubmatch(body, -1)
+	if len(called) == 0 {
+		t.Fatal("no diagnostic calls found in argoDeadlineDump — the pattern no longer matches its body")
+	}
+	named := map[string]bool{}
+	for _, h := range dumpHelpers {
+		named[h] = true
+	}
+	for _, m := range called {
+		if m[1] == "argoDeadlineDump" {
+			continue
+		}
+		if !named[m[1]] {
+			t.Errorf("argoDeadlineDump calls %s but dumpHelpers does not name it — that diagnostic "+
+				"can be deleted, or duplicated into a second wait, with both guards still green", m[1])
 		}
 	}
 }
