@@ -41,12 +41,39 @@ type kubeSecretStore struct {
 // A missing Secret is the first run, not a failure. Distinguishing the two matters more here than
 // anywhere else in this package: "absent" means initialise, while "present" is what stops the
 // bootstrap re-initialising a Vault whose storage was lost.
+//
+// ⚠️ AND "ABSENT" MUST NOT BE THE ANSWER TO EVERY OTHER QUESTION. This function used to return
+// `map[string]string{}, nil` for any non-zero kubectl exit — Forbidden, an unreachable API server,
+// a kubeconfig that had not landed — with stderr sent to io.Discard so nothing was even logged.
+// That makes the data-loss guard in vaultBootstrap unable to fire: the guard refuses to
+// re-initialise a Vault whose storage was lost precisely BECAUSE this cluster still holds an
+// unseal key, and a read that reports "no key" for a read it could not perform hands it the one
+// answer that turns the guard off. The outcome it exists to prevent — an empty Vault, every stored
+// secret discarded, and a green deploy — was one transient RBAC error away.
+//
+// `--ignore-not-found` makes the EXIT CODE carry the meaning, so nothing here matches on message
+// text. MEASURED against kubectl on a live cluster, all four branches, because a flag that also
+// swallowed Forbidden would have looked like the tidier fix and been the same bug:
+//
+//	absent               → exit 0, no output
+//	present              → exit 0, the JSON
+//	forbidden, present   → exit 1, "Error from server (Forbidden): …"
+//	forbidden, absent    → exit 1, "Error from server (Forbidden): …"
 func (k *kubeSecretStore) Read(ctx context.Context) (map[string]string, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", k.name, "-n", k.namespace, "-o", "json")
-	var stdout strings.Builder
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "secret", k.name, "-n", k.namespace,
+		"-o", "json", "--ignore-not-found")
+	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
-	cmd.Stderr = io.Discard
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		// Kept SEPARATE from stdout rather than folded in with CombinedOutput: this function's
+		// stdout is a VALUE, and kubectl writes to stderr on calls that succeed.
+		return nil, fmt.Errorf("read secret %s/%s: %w: %s", k.namespace, k.name, err,
+			strings.TrimSpace(stderr.String()))
+	}
+	// Exit 0 and nothing on stdout is what --ignore-not-found prints for a Secret that is not
+	// there. That is the first run, and the only case that may answer "absent".
+	if strings.TrimSpace(stdout.String()) == "" {
 		return map[string]string{}, nil
 	}
 	var out struct {
