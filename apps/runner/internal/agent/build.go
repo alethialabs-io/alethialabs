@@ -191,9 +191,19 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 		// EVERY attempt, not one. `kubectl logs job/<name>` prints "Found 2 pods, using pod/…" and
 		// picks arbitrarily, and a build Job runs to DefaultBackoffLimit — so the tail an operator
 		// is shown may be a retry rather than the failure that started it.
+		//
+		// PRINTED EVEN WHEN THE READ FAILED. `kubectl logs -l` reads the pods in sequence and stops
+		// at the first one it cannot open — after writing the ones before it. On a failed build the
+		// pod that cannot be opened is a likely one, and discarding what came back would throw away
+		// the log tail on exactly the runs it exists for.
 		if logs, lerr := w.kubectlOutput(ctx, "logs", "-l", buildJobPodSelector+jobName, "-n", namespace,
-			"--tail=50", "--prefix", "--max-log-requests=10"); lerr == nil && logs != "" {
+			"--tail=50", "--prefix"); logs != "" {
 			fmt.Fprintf(stderr, "--- kaniko log tail (%s) ---\n%s\n", svc.Name, logs)
+			if lerr != nil {
+				fmt.Fprintf(stderr, "(the log read stopped early: %v — later attempts are missing)\n", lerr)
+			}
+		} else if lerr != nil {
+			fmt.Fprintf(stderr, "(no kaniko log for %s: %v)\n", svc.Name, lerr)
 		}
 		return "", err
 	}
@@ -221,12 +231,16 @@ func (w *Runner) buildOneService(ctx context.Context, job *Job, svc types.Projec
 	// Same correction on the fallback. `--tail=-1` is explicit because kubectl defaults a SELECTOR
 	// read to the last 10 lines, and the digest line is not reliably in the last 10.
 	logs, err := w.kubectlOutput(ctx, "logs", "-l", buildJobPodSelector+jobName, "-n", namespace,
-		"--tail=-1", "--prefix", "--max-log-requests=10")
-	if err != nil {
-		return "", fmt.Errorf("read build digest (termination message and logs both unavailable): %w", err)
-	}
+		"--tail=-1", "--prefix")
+	// PARSED BEFORE THE ERROR IS CHECKED. A selector read that stopped at an unopenable pod has
+	// already written the ones before it, and the successful attempt — the only one with a digest —
+	// may be among them. Failing on the error while holding the answer would degrade a digest-pinned
+	// image to a tag for a reason that is in hand.
 	if digest := parseKanikoDigest(logs); digest != "" {
 		return dest + "@" + digest, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read build digest (termination message and logs both unavailable): %w", err)
 	}
 	fmt.Fprintf(stderr, "No digest in termination message or logs for %s — falling back to the immutable git-SHA tag.\n", svc.Name)
 	return dest + ":" + sha, nil

@@ -1676,6 +1676,45 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 		}
 	})
 
+	// A selector read that stops at an unopenable pod has already written the ones before it, and
+	// the successful attempt — the only one carrying a digest — may be among them. Failing on the
+	// error while holding the answer degrades a digest-pinned image to a tag for a reason that is
+	// in hand.
+	t.Run("a log read that stopped early still yields its digest", func(t *testing.T) {
+		t.Setenv("KUBECONFIG", "")
+		t.Setenv("HOME", t.TempDir())
+		_, url := covBuildGitRepo(t)
+		s := covBuildNewStubs(t)
+		covBuildTofuStub(t, s)
+		s.write(t, "out.output", covBuildTofuOutputs("registry.test/web"))
+		covBuildKubectlStub(t, s, 0,
+			covBuildKubeRule{match: "get job", stdout: "Complete=True ", exit: 0},
+			covBuildKubeRule{match: "get pods", stdout: "no digest", exit: 0},
+			covBuildKubeRule{
+				match:  "logs",
+				stdout: "INFO pushed registry.test/web@" + digest + "\n",
+				stderr: `error: container "kaniko" in pod "build-web-2" is waiting to start: ContainerCreating`,
+				exit:   1,
+			},
+		)
+		api := &covBuildAPI{mockAPI: &mockAPI{}, gitToken: "ghp_test"}
+		w := covBuildRunner(t, api)
+		out, errl := covBuildLoggers(t, api)
+		identity := &CloudIdentity{Provider: "hetzner", AccountID: "acct-1"}
+		if err := w.executeBuild(ctx, covBuildJob(url), "", identity, out, errl); err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		var result map[string]string
+		for _, u := range api.getStatusUpdates() {
+			if m, ok := u.metadata[buildResultKey].(map[string]string); ok {
+				result = m
+			}
+		}
+		if result["web"] != "registry.test/web@"+digest {
+			t.Errorf("digest = %q — the partial log was discarded and the image degraded to a tag", result["web"])
+		}
+	})
+
 	t.Run("git-sha tag fallback", func(t *testing.T) {
 		result, _, err := run(t, "no digest", "no digest in the logs either")
 		if err != nil {
