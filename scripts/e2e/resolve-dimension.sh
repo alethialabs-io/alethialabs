@@ -114,7 +114,7 @@ resolve() {
 #
 # So the dimension DECIDES its assertions, and there is no per-run override: an override is exactly
 # how the divergence returns. A heavier claim gets a heavier dimension — that ladder already exists.
-DIMENSIONS="floor maxconfig addons gitops byo-iac day2 full"
+DIMENSIONS="floor maxconfig addons gitops byo-iac day2 cli-demo full"
 
 # `byo` is the OLD name for `gitops`, kept as an accepted alias so no dispatch, no runbook and no
 # ledger row breaks. It is deliberately NOT in DIMENSIONS: the list drives the self-test's
@@ -131,7 +131,7 @@ DIMENSION_ALIASES="byo"
 #
 # So an omission is now a DECLARATION, and the self-test holds every dimension to being in exactly
 # one of the two sets. Adding a dimension without deciding this fails the build.
-FULL_EXCLUDES="byo-iac"
+FULL_EXCLUDES="byo-iac cli-demo"
 
 # full_exclude_reason prints WHY a dimension is out of the composite. A reason nobody can read is
 # indistinguishable from an oversight, which is the shape this whole file exists to prevent.
@@ -144,6 +144,17 @@ full_exclude_reason() { # <dimension>
 		# vehicle that credits maxconfig, addons and day2, so a red there costs three cells their
 		# only proof route. It joins the union once it has passed standalone at least once.
 		echo "never executed in CI; folding it in would red the composite that credits maxconfig/addons/day2 — joins after its first standalone PASS"
+		;;
+	cli-demo)
+		# It re-drives the SAME provisioning spine `full` already drives, through a different ACTOR
+		# — the real `alethia` binary instead of a seeded job row. Composing it in would buy a
+		# second floor-shaped cluster and a console build on every full bar to re-prove what the
+		# composite already proves, and would red the bar that credits maxconfig/addons/day2 on a
+		# CLI defect that has nothing to do with any of them.
+		#
+		# It is also the only dimension needing a built console and a seeded service token, so it is
+		# dispatch-only by construction rather than by preference.
+		echo "re-drives the same spine through the CLI rather than a seeded job row; folding it in would buy a second cluster plus a console build per full bar and red three cells on a CLI defect"
 		;;
 	*) return 1 ;;
 	esac
@@ -186,6 +197,20 @@ fidelity_env() { # <dimension>
 	addons)
 		echo "ALETHIA_E2E_SOAK=off"
 		echo "ALETHIA_E2E_ALL_ADDONS=1"
+		;;
+	cli-demo)
+		# MVP predicate 4's second half: not "does the command surface resolve" — the reachability
+		# bar already answers that with zero CLI gaps — but "has the product ever been PROVISIONED
+		# through the binary". It never has: the T2 spine writes the DEPLOY job straight into
+		# Postgres (controlplane.go SeedDeployJob), so the CLI has never been the actor.
+		#
+		# A FLOOR-shaped cluster, deliberately: what is under test is the ACTOR, not the surface
+		# area. Driving max-config or the 18 add-ons through the CLI would re-prove those cells at
+		# their price while telling us nothing new about who issued the commands. So no MAX_CONFIG,
+		# no ALL_ADDONS, and heavy_shape() stays false — which also keeps the runner-image build
+		# (#3266) correctly skipped for this dimension.
+		echo "ALETHIA_E2E_SOAK=off"
+		echo "ALETHIA_E2E_CLI_DEMO_PROVISION=1"
 		;;
 	gitops | byo)
 		# NAMED `gitops`, NOT `byo`, AND THE RENAME IS THE POINT.

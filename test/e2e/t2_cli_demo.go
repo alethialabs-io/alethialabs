@@ -600,6 +600,17 @@ func ScoreCLIDemo(cloud string) (CLIDemoProof, error) {
 // CLIDemoEnabled reports whether the CLI-only demo scenario is switched on for this run.
 func CLIDemoEnabled() bool { return t2Truthy(os.Getenv("ALETHIA_E2E_CLI_DEMO")) }
 
+// CLIDemoProvisionEnabled gates the PROVISIONING half — MVP predicate 4's second clause, the one
+// the reachability bar above deliberately does not answer.
+//
+// A SEPARATE gate from CLIDemoEnabled, not the same one, because they buy different things. The
+// reachability bar costs nothing: it runs `alethia <cmd> --help` and is safe to leave on for every
+// leg. This one boots a console, seeds a service token and provisions a real cluster through the
+// binary, so it is a DIMENSION (`cli-demo`) rather than a variable a maintainer sets and forgets —
+// resolve-dimension.sh exports it, which is what stops it riding along on a leg that did not ask
+// for it.
+func CLIDemoProvisionEnabled() bool { return t2Truthy(os.Getenv("ALETHIA_E2E_CLI_DEMO_PROVISION")) }
+
 // CLIDemoBinary is the `alethia` binary under test. It defaults to whatever is on PATH so a
 // maintainer can point the harness at a release artifact and prove the bar against the binary
 // that actually ships — not against a `go run` of the working tree, which can pass while the
