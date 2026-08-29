@@ -204,6 +204,60 @@ func (o vaultBootstrapOpts) validate() error {
 	return nil
 }
 
+// vaultPersistAttempts is how many times the unseal key's write is tried before giving up.
+//
+// This one write is the only step of the bootstrap whose failure CANNOT BE UNDONE. Vault shows the
+// unseal key exactly once, at init; if the write that captures it fails, the key is gone and the
+// Vault is permanently unopenable — and the Job's own retry makes it worse rather than better,
+// because attempt 2 finds an initialised Vault with no stored key and lands in the terminal branch
+// below. Every other step of this bootstrap is safely repeatable. This one is not, so it is the one
+// step that gets its own retry, inside the same process, while the key is still in memory.
+//
+// Not conditioned on the error being "transient". kubectl's exit status does not reliably say, and
+// a wrong guess here throws away the key to save twelve seconds. Retrying a genuinely permanent
+// error costs the backoff and then reports the same error; not retrying a transient one costs the
+// cluster's Vault.
+const vaultPersistAttempts = 5
+
+// vaultPersistBackoff is the first inter-attempt pause; it doubles (1s, 2s, 4s, 8s ≈ 15s total).
+//
+// A var, not a const, so tests can drive the retry logic without sleeping. Nothing else writes it.
+var vaultPersistBackoff = time.Second
+
+// persistVaultState writes the state Secret, retrying because losing this write loses the Vault.
+//
+// Returns the LAST error, with the attempt count, so a log reader can tell one refusal from five —
+// "persist unseal key: forbidden" and "persist unseal key: forbidden (5 attempts over 15s)" point
+// at different causes, and RBAC that has not finished propagating looks exactly like the first
+// until you can see it was retried.
+func persistVaultState(ctx context.Context, state vaultStateStore, data map[string]string) error {
+	backoff := vaultPersistBackoff
+	var last error
+	for attempt := 1; attempt <= vaultPersistAttempts; attempt++ {
+		last = state.Write(ctx, data)
+		if last == nil {
+			if attempt > 1 {
+				fmt.Fprintf(os.Stdout, "vault-bootstrap: persisted the unseal key on attempt %d\n", attempt)
+			}
+			return nil
+		}
+		if attempt == vaultPersistAttempts {
+			break
+		}
+		// A cancelled context is not something a retry can fix, and sleeping through it would push
+		// the Job past its deadline having done nothing. Report the write error rather than the
+		// context's: the write is what failed, and the context merely stopped us asking again.
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("%w (attempt %d of %d; context ended before a retry: %v)",
+				last, attempt, vaultPersistAttempts, ctx.Err())
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+	return fmt.Errorf("%w (%d attempts)", last, vaultPersistAttempts)
+}
+
 // vaultBootstrap is the whole algorithm with its I/O injected.
 //
 // The ordering is the dangerous part, and one branch in particular: an UNINITIALIZED Vault while we
@@ -247,7 +301,7 @@ func vaultBootstrap(
 		// Persist BEFORE unsealing. Vault shows these exactly once; a crash between init and write
 		// leaves a Vault nobody can ever unseal, which is unrecoverable rather than merely broken.
 		stored = map[string]string{vaultUnsealKeyField: key, vaultInitializedField: "true"}
-		if wErr := state.Write(ctx, stored); wErr != nil {
+		if wErr := persistVaultState(ctx, state, stored); wErr != nil {
 			return fmt.Errorf("vault-bootstrap: persist unseal key: %w", wErr)
 		}
 		rootToken = root
@@ -257,7 +311,18 @@ func vaultBootstrap(
 	if sealed {
 		key := stored[vaultUnsealKeyField]
 		if key == "" {
-			return errors.New("vault-bootstrap: Vault is sealed and no unseal key is stored — it cannot be opened")
+			// This is the terminal state of the hazard the persist comment above describes, and the
+			// message has to say so: an operator reading "it cannot be opened" on attempt 2 of a
+			// Job with backoffLimit 4 will reasonably wait for attempt 3, and attempt 3 lands here
+			// too. Nothing this Job can do will ever open this Vault, and it should say which
+			// alternatives exist rather than leave a retry loop looking like a slow success.
+			return errors.New("vault-bootstrap: Vault is INITIALISED but this cluster holds no unseal key, " +
+				"so it cannot be opened and no retry will change that. Either a previous bootstrap " +
+				"initialised it and could not write the state Secret " + o.StateNamespace + "/" + o.StateSecret +
+				" (Vault shows the key exactly once), or it was initialised by someone else. If this Vault " +
+				"holds nothing yet — the usual case, because this runs at install — delete its storage " +
+				"(PVC) so a fresh one initialises. Otherwise restore the state Secret from a backup; " +
+				"without the key the data is not recoverable")
 		}
 		if uErr := client.Unseal(ctx, key); uErr != nil {
 			return fmt.Errorf("vault-bootstrap: unseal: %w", uErr)
