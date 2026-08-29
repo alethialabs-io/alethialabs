@@ -81,6 +81,46 @@ case "$row" in
      echo "  $row" >&2; exit 1 ;;
 esac
 
+# ── INTEGRITY GATE (#3281). The ledger row and the committed path are what PROGRAMME.md counts,
+#    and neither looks inside the bundle. A hetzner/addons run that drove 22 Applications to
+#    Healthy+Synced shipped a bundle recording `argocd_assert_outcome: unmeasured`, and the cell
+#    went green on a job-log line that expires. So the claim is checked HERE, at the moment the
+#    bundle is used to make one — never at capture time, where refusing would destroy the evidence
+#    of a failing run.
+#
+#    The dimension comes from the ROW being appended (column 5), not from a guess: the row is the
+#    thing making the claim, so it is the thing that must be judged.
+dimension="$(printf '%s' "$row" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/, "", $5); print $5}')"
+[ -n "$dimension" ] || {
+  echo "commit-proof: could not read the dimension out of the ledger row — refusing to promote a claim I cannot judge:" >&2
+  echo "  $row" >&2; exit 1
+}
+integrity_reason=""
+if ! integrity_out="$(bash "$root/demos/proofs/check-proof-integrity.sh" "$tmp/proof/$stamp" --dimension "$dimension" 2>&1)"; then
+  if [ -z "${ALETHIA_ACCEPT_UNMEASURED:-}" ]; then
+    echo "$integrity_out" >&2
+    echo "commit-proof: REFUSING to commit demos/proofs/$cloud/$stamp as a '$dimension' proof." >&2
+    exit 1
+  fi
+  # The override is not a way to make the problem quiet. It goes in the ledger's notes column, so
+  # the row says what it rests on and a later reader can find the run that DOES carry the counts.
+  integrity_reason="$ALETHIA_ACCEPT_UNMEASURED"
+  echo "commit-proof: integrity check overridden — recording the reason in the row:" >&2
+  echo "  $integrity_reason" >&2
+else
+  echo "commit-proof: $integrity_out"
+fi
+
+if [ -n "$integrity_reason" ]; then
+  # Replace the trailing notes cell (`| — |`) rather than appending a column, so the table shape
+  # is unchanged. A row that already carries a note is left alone rather than silently overwritten.
+  case "$row" in
+    *"| — |") row="${row%| — |}| ⚠️ argocd counts unmeasured: ${integrity_reason} |" ;;
+    *) echo "commit-proof: the row already carries a note; not overwriting it. Add the override reason by hand:" >&2
+       echo "  $integrity_reason" >&2 ;;
+  esac
+fi
+
 cp -R "$tmp/proof/$stamp" "$dest/$stamp"
 printf '%s\n' "$row" >> "$ledger"
 

@@ -61,11 +61,13 @@ if [ "${1:-}" = "--self-test" ]; then
 	# because every capture in a self-test stamps to the same UTC second. Two assertions then
 	# compared a bundle against itself and one of them PASSED, on 'READ-FAILED' != '22'. A
 	# harness that can pass for the wrong reason is worth less than no harness.
-	_capture() { # _capture <label> <outcome> <summary-path-or-empty> → echoes the bundle dir
-		local label="$1" outcome="$2" summary="$3" dir
+	_capture() { # _capture <label> <outcome> <summary-path-or-empty> [dimension] → echoes the bundle dir
+		local label="$1" outcome="$2" summary="$3" dimension="${4:-}" dir
 		ALETHIA_E2E_PROOF_OUT_ROOT="$tmp/$label" \
 			ALETHIA_E2E_PROOF_OUTCOME="$outcome" \
 			ALETHIA_E2E_ARGOCD_SUMMARY="$summary" \
+			ALETHIA_E2E_DIMENSION="$dimension" \
+			E2E_DIMENSION="" \
 			KUBECONFIG="" \
 			PROVIDER=_selftest \
 			bash "${BASH_SOURCE[0]}" _selftest "selftest-$label" >/dev/null 2>&1 || true
@@ -121,6 +123,29 @@ if [ "${1:-}" = "--self-test" ]; then
 		*UNMEASURED*) echo "  ✓ an unmeasured verdict is worded as weaker than a counted one" ;;
 		*) echo "  ✗ an unmeasured verdict reads identically to a counted one: $(_field "$none_dir" .argocd_verdict)" >&2; fails=$((fails + 1)) ;;
 	esac
+
+	# 4 · The bundle records WHICH CLAIM it makes (#3281). Without this the same fields read
+	#     identically for an add-on sweep (where the ArgoCD convergence IS the verdict) and a floor
+	#     run (where it is a supporting fact), so nothing downstream can tell a promotable bundle
+	#     from an unpromotable one — which is how a cell went green on `unmeasured` counts.
+	dim_dir="$(_capture dim success "$tmp/pass.json" addons)"
+	_t "a bundle records the dimension it claims" ".dimension" "$(_field "$dim_dir" .dimension)" "addons"
+	_t "an unstamped capture records null, not a guess" ".dimension" "$(_field "$none_dir" .dimension)" "null"
+	# And the integrity checker must agree with the bundle the capture just wrote — the two are
+	# only useful as a pair, and a fixture of what a bundle "looks like" would not prove that.
+	if bash "$root/demos/proofs/check-proof-integrity.sh" "$dim_dir" >/dev/null 2>&1; then
+		echo "  ✓ a measured addons bundle passes the integrity check"
+	else
+		echo "  ✗ a measured addons bundle was REFUSED by check-proof-integrity.sh" >&2
+		fails=$((fails + 1))
+	fi
+	unmeasured_dim_dir="$(_capture dimnone success "" addons)"
+	if bash "$root/demos/proofs/check-proof-integrity.sh" "$unmeasured_dim_dir" >/dev/null 2>&1; then
+		echo "  ✗ an UNMEASURED addons bundle passed the integrity check — #3281 could recur" >&2
+		fails=$((fails + 1))
+	else
+		echo "  ✓ an unmeasured addons bundle is refused by check-proof-integrity.sh"
+	fi
 
 	if [ "$fails" -ne 0 ]; then
 		echo "capture-proof --self-test: $fails assertion(s) FAILED" >&2
@@ -498,6 +523,13 @@ fi
 #
 #    Absent ⇒ the fields stay NULL and say so. They are never defaulted to 0 — "measured, and it
 #    was zero" and "never measured" are different facts, and collapsing them is the defect.
+# The DIMENSION this bundle claims. Recorded because nothing downstream could otherwise tell an
+# add-on sweep's bundle from a floor run's, and the two make very different claims out of the same
+# fields — which is how a cell was promoted on `unmeasured` counts (#3281).
+# `E2E_DIMENSION` is the name the workflow's one deriver (scripts/e2e/resolve-dimension.sh) exports;
+# ALETHIA_E2E_DIMENSION is the explicit passthrough, so this does not rest on an inherited job env.
+dimension="${ALETHIA_E2E_DIMENSION:-${E2E_DIMENSION:-}}"
+
 argocd_summary="${ALETHIA_E2E_ARGOCD_SUMMARY:-}"
 argo_expected=""
 argo_converged=""
@@ -516,6 +548,13 @@ else
 	# A SUCCESS with no assertion summary is the shape this change exists to make visible: the
 	# run claims convergence and carries no number for it. Say so loudly rather than emitting 0.
 	echo "capture-proof: WARNING — ALETHIA_E2E_ARGOCD_SUMMARY unset or unwritten; this bundle carries NO measured ArgoCD convergence counts and its verdict rests on the T2 exit code alone" >&2
+	# The warning alone is what let #3281 through: it was printed on every run and nothing was
+	# required to act on it. Name the consequence for the dimension actually being captured, so an
+	# operator reading the log knows whether this bundle can promote a cell at all.
+	case " addons maxconfig full gitops " in
+		*" ${dimension:-} "*)
+			echo "capture-proof: this is a '${dimension}' run, whose CLAIM is the ArgoCD convergence — demos/proofs/check-proof-integrity.sh will REFUSE to promote this bundle" >&2 ;;
+	esac
 fi
 
 # ── Wall-clock. ──
@@ -565,6 +604,7 @@ verdict_line="${provider}: ${verdict}"
 if command -v jq >/dev/null 2>&1; then
 	jq -n \
 		--arg provider "$provider" --arg region "$region" --arg cluster "$cluster" \
+		--arg dimension "$dimension" \
 		--arg run_tag "$run_tag" --arg outcome "$outcome" --arg stage "$deploy_stage" \
 		--arg git_sha "$git_sha" --arg stamp "$stamp" \
 		--arg receipt_plan_sha "$receipt_plan_sha" \
@@ -582,6 +622,7 @@ if command -v jq >/dev/null 2>&1; then
 		--argjson duration_s "${duration_s:-null}" \
 		--arg verdict "$verdict_line" \
 		'{provider:$provider, region:$region, cluster:$cluster, run_tag:$run_tag,
+		  dimension:(if $dimension == "" then null else $dimension end),
 		  outcome:$outcome, deploy_stage:$stage, git_sha:$git_sha, captured_at:$stamp,
 		  resources_added:$resources_added, resources_destroyed:$resources_destroyed,
 		  cluster_live_at_capture:$cluster_live, nodes_ready:$nodes_ready,
@@ -597,6 +638,7 @@ else
 	cat >"$out/provision-summary.json" <<EOF
 {
   "provider": "$provider", "region": "$region", "cluster": "$cluster",
+  "dimension": $([ -n "$dimension" ] && printf '"%s"' "$dimension" || printf 'null'),
   "run_tag": "$run_tag", "outcome": "$outcome", "deploy_stage": "$deploy_stage",
   "git_sha": "$git_sha", "captured_at": "$stamp",
   "resources_added": ${resources_added:-null}, "resources_destroyed": ${resources_destroyed:-null},
@@ -616,6 +658,7 @@ fi
 
 cat >"$out/VERDICT.txt" <<EOF
 $verdict_line
+dimension: ${dimension:-unrecorded}
 cluster:   $cluster ($region)
 run:       $run_tag @ $git_sha
 receipt:   signed=$receipt_signed sha256=${receipt_plan_sha:-n/a}
