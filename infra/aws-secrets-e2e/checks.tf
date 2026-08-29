@@ -36,3 +36,21 @@ check "secret_has_a_version" {
     error_message = "The canary secret must carry a version — an empty secret would make the e2e's sha256 comparison vacuous."
   }
 }
+
+# `external_id` defaults to "", and that default REMOVES the sts:ExternalId condition from the
+# trust policy (main.tf:59) — the trust then rests on the ArnLike aws:PrincipalArn condition alone.
+#
+# It stays optional on purpose: this stack mirrors the connector's own optional `external_id`
+# field, and requiring it here would test something the product does not require. What it should
+# not be is SILENT. A confused-deputy control that is absent because nobody passed a value looks
+# exactly like one that was deliberately declined, and #3108 is a list of defaults that were taken
+# without anyone deciding to take them.
+#
+# `check` (warn) rather than a precondition (block) is the same call gcp-e2e records at
+# e2e-budget.tf:115-118: a documented, deliberate opt-out is not a defect to be refused.
+check "external_id_is_a_decision_not_a_default" {
+  assert {
+    condition     = var.external_id != ""
+    error_message = "external_id is empty, so the read role's trust policy carries NO sts:ExternalId condition and rests on the ArnLike aws:PrincipalArn condition alone. That is a supported configuration — the connector's external_id is optional too — but confirm it is what you meant, and pass TF_VAR_external_id to add the control."
+  }
+}
