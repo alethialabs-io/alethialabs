@@ -382,12 +382,9 @@ func releaseLoadBalancersBeforeDestroy(
 		fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
 		return
 	}
-	if reachable, why := clusterReachable(ctx, cloud.ExtractClusterEndpoint(outputs)); reachable {
-		fmt.Fprintln(out, "   Cluster already reachable with the kubeconfig in hand — not reconfiguring it.")
-	} else {
-		if why != "" {
-			fmt.Fprintf(out, "   Reconfiguring the kubeconfig: %s\n", why)
-		}
+	reachable, why := clusterReachable(ctx, cloud.ExtractClusterEndpoint(outputs))
+	fmt.Fprint(out, kubeconfigDecisionLine(reachable, why))
+	if !reachable {
 		// NO cluster-name gate. `ExtractClusterName` was the obvious pre-check and it is narrower
 		// than what ConfigureKubeconfig accepts: awsProvider handles a BYO-IaC module that emits a
 		// generic `kubeconfig` output for a self-managed, non-EKS cluster — checked BEFORE any
@@ -401,13 +398,11 @@ func releaseLoadBalancersBeforeDestroy(
 			fmt.Fprintf(out, "   Skipping load-balancer release: the cluster is not reachable (%v).\n", err)
 			return
 		}
-		if reachable, why := clusterReachable(ctx, cloud.ExtractClusterEndpoint(outputs)); !reachable {
-			_ = why
+		if ok, why2 := clusterReachable(ctx, cloud.ExtractClusterEndpoint(outputs)); !ok {
 			// CHECKED AFTER CONFIGURING, not assumed. ConfigureKubeconfig succeeding means it WROTE
 			// a kubeconfig, not that the kubeconfig works — the exec-plugin case above writes
 			// happily and then fails on every call.
-			fmt.Fprintf(out, "   WARNING — cloud load balancers may still exist and still bill: a "+
-				"kubeconfig was written but %s\n", orUnknownReason(why))
+			fmt.Fprint(out, postConfigureFailureLine(why2))
 			return
 		}
 	}
@@ -471,11 +466,35 @@ func sameAPIServer(a, b string) bool {
 	return na != "" && na == nb
 }
 
-// orUnknownReason keeps a skip message from ending in a dangling clause when no reason was
-// captured — an empty tail reads like a sentence that got cut off.
-func orUnknownReason(why string) string {
-	if strings.TrimSpace(why) == "" {
-		return "the cluster does not answer with it"
+// kubeconfigDecisionLine renders what the probe decided and WHY, so the log says which of the two
+// paths was taken rather than leaving the reader to infer it from what happens next.
+//
+// Pure, and separated from the caller deliberately: the caller holds a *tofu.TofuCLI, which cannot
+// be faked, so every branch of the decision would otherwise be reachable only from a real destroy
+// against a real cluster. That is precisely how "reachable" came to mean "something answered".
+func kubeconfigDecisionLine(reachable bool, why string) string {
+	if reachable {
+		return "   Cluster already reachable with the kubeconfig in hand — not reconfiguring it.\n"
 	}
-	return why
+	if strings.TrimSpace(why) == "" {
+		return "   Reconfiguring the kubeconfig.\n"
+	}
+	return "   Reconfiguring the kubeconfig: " + why + "\n"
+}
+
+// postConfigureFailureLine renders the case where a kubeconfig was WRITTEN and still does not
+// answer for this cluster.
+//
+// It is a billing warning, not a skip notice. #3413 replaced the warning with a neutral "the
+// cluster does not answer with it", which reads as "already gone" — and this is the only signal a
+// customer gets that something is still costing money, because nothing outside CI sweeps cloud
+// load balancers after a failed destroy (destroy_loadbalancers.go).
+func postConfigureFailureLine(why string) string {
+	reason := strings.TrimSpace(why)
+	if reason == "" {
+		// An empty tail reads like a sentence that got cut off.
+		reason = "the cluster does not answer with it"
+	}
+	return "   WARNING — cloud load balancers may still exist and still bill: a kubeconfig was " +
+		"written but " + reason + "\n"
 }

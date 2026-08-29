@@ -477,3 +477,47 @@ func TestSameAPIServerToleratesSchemeAndTrailingSlash(t *testing.T) {
 		}
 	}
 }
+
+// The two renderers carry the caller's decision, and the caller cannot be driven in a unit test —
+// it holds a *tofu.TofuCLI, a concrete type with no seam. Leaving them inline is how every branch
+// of this decision would be reachable only from a real destroy against a real cluster, which is
+// precisely how "reachable" came to mean "something answered".
+func TestKubeconfigDecisionLineSaysWhichPathAndWhy(t *testing.T) {
+	if got := kubeconfigDecisionLine(true, ""); !strings.Contains(got, "not reconfiguring") {
+		t.Errorf("the reachable line does not say it skipped the reconfigure: %q", got)
+	}
+
+	got := kubeconfigDecisionLine(false, `the kubeconfig points at "https://OTHER" but this state's cluster is "https://ABC"`)
+	if !strings.Contains(got, "Reconfiguring") {
+		t.Errorf("the unreachable line does not say what it is about to do: %q", got)
+	}
+	if !strings.Contains(got, "OTHER") || !strings.Contains(got, "ABC") {
+		t.Errorf("the reason was dropped — a wrong-cluster answer must name both: %q", got)
+	}
+
+	// No reason captured must not produce a sentence ending in a dangling colon.
+	bare := kubeconfigDecisionLine(false, "   ")
+	if strings.Contains(bare, ":") {
+		t.Errorf("an empty reason left a dangling clause: %q", bare)
+	}
+	if !strings.HasSuffix(bare, "\n") {
+		t.Errorf("the line is not newline-terminated: %q", bare)
+	}
+}
+
+// A kubeconfig that was written and still does not answer is a BILLING warning, not a skip
+// notice. #3413 replaced the warning with a neutral "the cluster does not answer with it", which
+// reads as "already gone" — and nothing outside CI sweeps cloud load balancers after a failed
+// destroy, so this line is the only signal a customer gets.
+func TestPostConfigureFailureLineIsABillingWarning(t *testing.T) {
+	got := postConfigureFailureLine("getting credentials: exec: executable e2e.test failed")
+	for _, want := range []string{"WARNING", "still bill", "getting credentials"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the post-configure failure line is missing %q: %q", want, got)
+		}
+	}
+	if bare := postConfigureFailureLine(""); !strings.Contains(bare, "WARNING") ||
+		!strings.Contains(bare, "still bill") || strings.HasSuffix(strings.TrimSpace(bare), "but") {
+		t.Errorf("with no reason the warning degrades or dangles: %q", bare)
+	}
+}
