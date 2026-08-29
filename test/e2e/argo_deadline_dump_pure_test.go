@@ -24,7 +24,19 @@ import (
 
 // dumpHelpers are the diagnostics a timed-out wait must carry. Calling any of them outside
 // argoDeadlineDump means a caller is building its own dump.
+//
+// ⚠️ EVERY diagnostic in the shared helper belongs here. This list held three of seven, so both
+// tests below passed with four of them deleted from `argoDeadlineDump` — the exact #2834 drift the
+// file exists to prevent, tolerated by the guard against it. A guard whose subject list is written
+// once and never grown decays into a guard for whatever was true the day it was written.
+//
+// Add a diagnostic to argoDeadlineDump, add it here.
 var dumpHelpers = []string{
+	"dumpArgoSyncFailures",
+	"dumpPendingHooks",
+	"dumpAddOnBootstrapJobs",
+	"dumpArgoControllerLog",
+	"dumpDestinationWarnings",
 	"describeArgoApps",
 	"dumpOutOfSyncResources",
 	"dumpArgoAppDiffs",
@@ -228,5 +240,76 @@ func TestEveryDiagnosticIsInsideTheSectionTable(t *testing.T) {
 		}
 		t.Errorf("argoDeadlineDump calls %s outside the section table — it would run unbudgeted and "+
 			"never appear in the skipped notice", m[1])
+	}
+}
+
+// THE OTHER DIRECTION, and the one that let the list rot: a diagnostic added to the shared helper
+// and never added to dumpHelpers is unguarded, and nothing said so.
+//
+// Distinct from TestEveryDiagnosticIsInsideTheSectionTable above, and both are needed. That one
+// asks whether every diagnostic is BUDGETED — inside the section table, under the ceiling and the
+// per-section share. This one asks whether every diagnostic is GUARDED — named in dumpHelpers, so
+// the two drift tests can see it. A diagnostic can be in the table and not in the list, or the
+// reverse; keeping only one of these leaves the other hole open.
+func TestDumpHelpersNamesEveryDiagnosticTheHelperCalls(t *testing.T) {
+	t.Parallel()
+
+	raw, err := os.ReadFile("argocd_assert.go")
+	if err != nil {
+		t.Fatalf("could not read argocd_assert.go: %v", err)
+	}
+	body := regexp.MustCompile(`(?s)func argoDeadlineDump\(.*?\n}\n`).FindString(string(raw))
+	if body == "" {
+		t.Fatal("argoDeadlineDump not found — this test would be vacuous")
+	}
+	// COMMENTS STRIPPED FIRST. The body is mostly comment, and a doc line naming a function that was
+	// removed would otherwise demand an entry in dumpHelpers for something that no longer exists —
+	// a guard failing on prose.
+	code := regexp.MustCompile(`(?m)//.*$`).ReplaceAllString(body, "")
+	called := regexp.MustCompile(`\b((?:dump|describe)[A-Za-z0-9_]*)\(`).FindAllStringSubmatch(code, -1)
+	if len(called) == 0 {
+		t.Fatal("no diagnostic calls found in argoDeadlineDump — the pattern no longer matches its body")
+	}
+	// ⚠️ THE CONVENTION IS PART OF THE GUARD. This finds calls named `dump…` or `describe…`; a
+	// diagnostic added as `argoAppEventsSummary(` is invisible to it and would be as unguarded as
+	// the four this test was written for. Name diagnostics `dump…`/`describe…`, or widen this.
+	//
+	// Checked rather than trusted: every name already in dumpHelpers must be found by the pattern,
+	// so a rename that escapes the convention fails HERE instead of silently shrinking the set.
+	found := map[string]bool{}
+	for _, m := range called {
+		found[m[1]] = true
+	}
+	for _, h := range dumpHelpers {
+		if !regexp.MustCompile(`\b(?:dump|describe)[A-Za-z0-9_]*$`).MatchString(h) {
+			t.Errorf("dumpHelpers names %q, which this test's pattern cannot match — it is outside "+
+				"the naming convention the guard depends on", h)
+		}
+	}
+	named := map[string]bool{}
+	for _, h := range dumpHelpers {
+		named[h] = true
+	}
+	for _, m := range called {
+		switch m[1] {
+		case "argoDeadlineDump", "dumpPlan", "dumpSection": // itself, and types rather than diagnostics
+			continue
+		}
+		if !named[m[1]] {
+			t.Errorf("argoDeadlineDump calls %s but dumpHelpers does not name it — that diagnostic "+
+				"can be deleted, or duplicated into a second wait, with both guards still green", m[1])
+		}
+	}
+	// ⚠️ THE CONVENTION IS PART OF THE GUARD. This finds calls named `dump…`/`describe…`; a
+	// diagnostic added as `argoAppEventsSummary(` is invisible to it and would be as unguarded as
+	// the four this test was written for. Checked rather than trusted: every name already in
+	// dumpHelpers must be findable by the pattern, so a rename that escapes the convention fails
+	// HERE instead of silently shrinking the set.
+	convention := regexp.MustCompile(`^(?:dump|describe)[A-Za-z0-9_]*$`)
+	for _, h := range dumpHelpers {
+		if !convention.MatchString(h) {
+			t.Errorf("dumpHelpers names %q, which this test's pattern cannot match — it is outside "+
+				"the naming convention the guard depends on", h)
+		}
 	}
 }
