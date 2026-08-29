@@ -197,7 +197,13 @@ jobs:
             VERSION=${{ github.sha }}
           tags: ghcr.io/alethialabs-io/runner-base:e2e-${{ github.sha }}
           push: true
-          cache-from: type=gha,scope=runner-base-amd64
+          # BOTH scopes, own first. This job WRITES e2e-runner-base-amd64, so reading only
+          # deploy-console's scope meant every heavy dispatch paid the full build while the cache
+          # it had just written was never read by anything. deploy-console's stays as the fallback
+          # for the first run after a cache eviction — it is built from the same Dockerfile.
+          cache-from: |
+            type=gha,scope=e2e-runner-base-amd64
+            type=gha,scope=runner-base-amd64
           cache-to: type=gha,mode=max,scope=e2e-runner-base-amd64
       - name: Build runner (amd64)
         id: build
@@ -212,7 +218,9 @@ jobs:
             SELF_IMAGE=ghcr.io/alethialabs-io/runner:e2e-${{ github.sha }}
           tags: ghcr.io/alethialabs-io/runner:e2e-${{ github.sha }}
           push: true
-          cache-from: type=gha,scope=runner-amd64
+          cache-from: |
+            type=gha,scope=e2e-runner-amd64
+            type=gha,scope=runner-amd64
           cache-to: type=gha,mode=max,scope=e2e-runner-amd64
       # Consume the DIGEST, never the tag. A tag can be moved; a digest names these exact bytes, so
       # the cluster cannot pull an image built from a different commit however the tag is reused.
