@@ -5,6 +5,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -318,7 +319,21 @@ func (w *Runner) kubectlOutput(ctx context.Context, args ...string) (string, err
 	cctx, cancel := context.WithTimeout(ctx, kubectlTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(cctx, "kubectl", append(args, "--request-timeout=30s")...).Output()
-	return strings.TrimSpace(string(out)), err
+	if err != nil {
+		// `.Output()` fills ExitError.Stderr and nothing was reading it, so a missing CRD, an RBAC
+		// refusal and an unreachable API server all reached the operator as `exit status 1` — three
+		// faults with three different next steps, rendered as one number. Kept OUT of the returned
+		// value: callers here parse stdout for a digest, and folding kubectl's error text into it
+		// would hand them a string that can match on the failure path.
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			if msg := strings.TrimSpace(string(ee.Stderr)); msg != "" {
+				return strings.TrimSpace(string(out)), fmt.Errorf("%w: %s", err, msg)
+			}
+		}
+		return strings.TrimSpace(string(out)), err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // kubectlApplyManifest applies one manifest (JSON or YAML) from stdin.

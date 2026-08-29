@@ -123,6 +123,10 @@ exit 0
 type covBuildKubeRule struct {
 	match  string
 	stdout string
+	// stderr is what the rule writes to fd 2. It exists because the stub could previously only
+	// succeed or fail SILENTLY, and a stub that cannot produce stderr cannot show a bug in how
+	// stderr is handled — which is exactly where `kubectlOutput` was discarding it.
+	stderr string
 	exit   int
 }
 
@@ -134,8 +138,11 @@ func covBuildKubectlStub(t *testing.T, s *covBuildStubs, defaultExit int, rules 
 		for i, r := range rules {
 			name := fmt.Sprintf("kout-%d", i)
 			s.write(t, name, r.stdout)
-			fmt.Fprintf(&b, "  *%s*) cat %s; exit %d;;\n",
-				covBuildShQuote(r.match), covBuildShQuote(filepath.Join(s.dir, name)), r.exit)
+			errName := fmt.Sprintf("kerr-%d", i)
+			s.write(t, errName, r.stderr)
+			fmt.Fprintf(&b, "  *%s*) cat %s; cat %s >&2; exit %d;;\n",
+				covBuildShQuote(r.match), covBuildShQuote(filepath.Join(s.dir, name)),
+				covBuildShQuote(filepath.Join(s.dir, errName)), r.exit)
 		}
 		b.WriteString("esac\n")
 	}
@@ -1891,5 +1898,41 @@ func TestBuild_ExtractOutputStr(t *testing.T) {
 	}, "k")
 	if len(got) != 1 || got["a"] != "x" {
 		t.Errorf("non-string / empty members must be dropped: %v", got)
+	}
+}
+
+// `.Output()` fills ExitError.Stderr and nothing was reading it, so a missing CRD, an RBAC refusal
+// and an unreachable API server all reached the operator as `exit status 1`.
+func TestBuild_KubectlOutput_SurfacesStderr(t *testing.T) {
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("HOME", t.TempDir())
+	s := covBuildNewStubs(t)
+	const refusal = `Error from server (Forbidden): pods is forbidden: User "system:serviceaccount:x:y" cannot list resource "pods"`
+	covBuildKubectlStub(t, s, 0, covBuildKubeRule{match: "get pods", stderr: refusal, exit: 1})
+
+	w := covBuildRunner(t, &covBuildAPI{mockAPI: &mockAPI{}})
+	_, err := w.kubectlOutput(context.Background(), "get", "pods", "-n", "alethia-build")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "Forbidden") {
+		t.Errorf("kubectl said why and the operator gets %q instead", err)
+	}
+}
+
+// And a failure with nothing on stderr must not gain a dangling colon.
+func TestBuild_KubectlOutput_SilentFailureHasNoDanglingColon(t *testing.T) {
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("HOME", t.TempDir())
+	s := covBuildNewStubs(t)
+	covBuildKubectlStub(t, s, 0, covBuildKubeRule{match: "get pods", exit: 1})
+
+	w := covBuildRunner(t, &covBuildAPI{mockAPI: &mockAPI{}})
+	_, err := w.kubectlOutput(context.Background(), "get", "pods", "-n", "alethia-build")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if strings.HasSuffix(strings.TrimSpace(err.Error()), ":") {
+		t.Errorf("the message ends in a bare colon: %q", err)
 	}
 }
