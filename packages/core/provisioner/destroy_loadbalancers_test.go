@@ -308,3 +308,87 @@ func TestReleaseCloudLoadBalancersToleratesAClusterWithNoIngressAPI(t *testing.T
 		t.Fatalf("a cluster with no Ingress API is not a failure: %v", err)
 	}
 }
+
+// stubKubectlRaw installs a `kubectl` whose whole behaviour is the given shell body, for the
+// branches the sequence stub cannot express — a delete that fails, a CRD that is not there.
+func stubKubectlRaw(t *testing.T, body string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the stub kubectl is a shell script")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte("#!/bin/sh\n"+body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// A cluster with no ArgoCD CRD has nothing to stop reconciling, and that is a fact rather than a
+// warning — saying "could not delete Applications" there would send a reader looking for ArgoCD.
+func TestStopArgoCDReconcilingOnAClusterWithoutTheCRD(t *testing.T) {
+	stubKubectlRaw(t, `echo 'error: the server doesn'"'"'t have a resource type "applications"' >&2; exit 1`)
+	var buf bytes.Buffer
+	stopArgoCDReconciling(context.Background(), &buf)
+	if !strings.Contains(buf.String(), "no CRD") {
+		t.Errorf("an absent CRD must be reported as absent, not as a failure:\n%s", buf.String())
+	}
+}
+
+// And a delete that FAILED is the most likely reason the wait below fails, so it says so.
+func TestStopArgoCDReconcilingWarnsWhenTheDeleteFails(t *testing.T) {
+	stubKubectlRaw(t, `echo 'Error from server (Forbidden): applications.argoproj.io is forbidden' >&2; exit 1`)
+	var buf bytes.Buffer
+	stopArgoCDReconciling(context.Background(), &buf)
+	out := buf.String()
+	if !strings.Contains(out, "Forbidden") {
+		t.Errorf("the reason was dropped:\n%s", out)
+	}
+	if !strings.Contains(out, "re-create the objects deleted below") {
+		t.Errorf("the consequence is not stated — this is why the wait will fail:\n%s", out)
+	}
+}
+
+func TestStopArgoCDReconcilingSaysWhenItWorked(t *testing.T) {
+	stubKubectlRaw(t, `exit 0`)
+	var buf bytes.Buffer
+	stopArgoCDReconciling(context.Background(), &buf)
+	if !strings.Contains(buf.String(), "marked for deletion") {
+		t.Errorf("the success is not stated:\n%s", buf.String())
+	}
+}
+
+// A delete that fails is NAMED on the first pass and silent afterwards: a warning per object per
+// poll would bury the outcome under its own noise.
+func TestDeleteAllNamesAFailureOnceAndIsQuietOnRetries(t *testing.T) {
+	stubKubectlRaw(t, `echo 'Error from server (Forbidden): services is forbidden' >&2; exit 1`)
+	objs := []cloudBackedObject{{Kind: "service", Namespace: "ingress-nginx", Name: "controller"}}
+
+	var loud bytes.Buffer
+	deleteAll(context.Background(), &loud, objs, false)
+	if !strings.Contains(loud.String(), "could not delete service/ingress-nginx/controller") {
+		t.Errorf("the first failure must name the object:\n%s", loud.String())
+	}
+
+	var quiet bytes.Buffer
+	deleteAll(context.Background(), &quiet, objs, true)
+	if quiet.String() != "" {
+		t.Errorf("the retry pass must be silent, got:\n%s", quiet.String())
+	}
+}
+
+// "Could not parse" must never render as "there are none" for Ingresses either — the kind more
+// likely to hold an ALB.
+func TestParseIngressesFailsLoudlyOnGarbage(t *testing.T) {
+	if _, err := parseIngresses([]byte("not json")); err == nil {
+		t.Fatal("want an error for an undecodable list")
+	}
+}
+
+func TestListCloudBackedObjectsFailsOnAnUndecodableIngressList(t *testing.T) {
+	stubKubectlForRelease(t, []string{emptyList}, true, "not json", 0, "")
+	if _, err := listCloudBackedObjects(context.Background()); err == nil {
+		t.Fatal("an undecodable Ingress list must be an error, not an empty result")
+	} else if !strings.Contains(err.Error(), "parse ingresses") {
+		t.Errorf("the error does not name what failed: %v", err)
+	}
+}
