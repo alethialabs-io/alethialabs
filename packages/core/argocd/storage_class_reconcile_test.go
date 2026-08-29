@@ -227,19 +227,52 @@ func TestClassifyLiveProvisioner(t *testing.T) {
 	cases := []struct {
 		name    string
 		out     string
+		errOut  string
 		runErr  error
 		want    string
 		found   bool
 		wantErr bool
 	}{
 		{name: "a class that exists", out: "ebs.csi.aws.com\n", want: "ebs.csi.aws.com", found: true},
-		{name: "kubectl's NotFound is absence, not failure", out: `Error from server (NotFound): storageclasses.storage.k8s.io "gp3" not found`, runErr: errors.New("exit status 1")},
-		{name: "any other failure is a failure", out: "The connection to the server was refused", runErr: errors.New("exit status 1"), wantErr: true},
+		{name: "kubectl's NotFound is absence, not failure", errOut: `Error from server (NotFound): storageclasses.storage.k8s.io "gp3" not found`, runErr: errors.New("exit status 1")},
+		{name: "any other failure is a failure", errOut: "The connection to the server was refused", runErr: errors.New("exit status 1"), wantErr: true},
 		{name: "an empty read on a successful command is absence", out: "\n"},
+
+		// The reason this function takes two streams. kubectl writes to stderr on calls that
+		// SUCCEED, and every one of these used to be folded into the value by CombinedOutput —
+		// making a healthy cluster's provisioner compare unequal to the rendered one, which the
+		// caller answers by DELETING AND RECREATING the default StorageClass.
+		{
+			name:   "a deprecation warning on a successful read is not part of the value",
+			out:    "ebs.csi.aws.com\n",
+			errOut: "Warning: storage.k8s.io/v1beta1 StorageClass is deprecated in v1.19+\n",
+			want:   "ebs.csi.aws.com", found: true,
+		},
+		{
+			name:   "an exec-credential plugin notice on a successful read is not part of the value",
+			out:    "ebs.csi.aws.com\n",
+			errOut: "WARNING: the gcp auth plugin is deprecated in v1.22+, unavailable in v1.26+\n",
+			want:   "ebs.csi.aws.com", found: true,
+		},
+		{
+			// The mirror: a warning must not manufacture a value either. Absence stays absence.
+			name:   "a warning with no value is still absence, not a class named by the warning",
+			out:    "",
+			errOut: "Warning: something happened\n",
+			want:   "", found: false,
+		},
+		{
+			// NotFound is classified from stderr, which is where kubectl actually writes it —
+			// the case that would break if the split were made without moving the check.
+			name:   "NotFound on stderr with empty stdout is absence",
+			out:    "",
+			errOut: `Error from server (NotFound): storageclasses.storage.k8s.io "gp3" not found`,
+			runErr: errors.New("exit status 1"),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, found, err := classifyLiveProvisioner([]byte(tc.out), tc.runErr)
+			got, found, err := classifyLiveProvisioner([]byte(tc.out), []byte(tc.errOut), tc.runErr)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, want error = %v", err, tc.wantErr)
 			}
