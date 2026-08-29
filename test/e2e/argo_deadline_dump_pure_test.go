@@ -107,14 +107,25 @@ func TestSharedDumpCarriesEveryDiagnostic(t *testing.T) {
 func TestRenderDumpBudgetSpentNamesWhatDidNotRun(t *testing.T) {
 	t.Parallel()
 
-	if got := renderDumpBudgetSpent(nil); got != "" {
+	if got := renderDumpBudgetSpent(nil, false); got != "" {
 		t.Errorf("nothing skipped must print nothing, got %q", got)
 	}
-	got := renderDumpBudgetSpent([]dumpSection{{name: "describe"}, {name: "argocd app diff"}})
+	skipped := []dumpSection{{name: "describe"}, {name: "argocd app diff"}}
+	got := renderDumpBudgetSpent(skipped, false)
 	for _, want := range []string{"2 section(s) NOT run", "describe", "argocd app diff", argoDumpBudget.String()} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the skipped notice does not carry %q:\n%s", want, got)
 		}
+	}
+
+	// The other reason, which is a DIFFERENT fault: the leg ran out of time before the dump began,
+	// so this budget never applied and tuning it would fix nothing.
+	parent := renderDumpBudgetSpent(skipped, true)
+	if !strings.Contains(parent, "ALREADY cancelled") || !strings.Contains(parent, "look at the ladder") {
+		t.Errorf("a pre-cancelled context is reported as a spent dump budget:\n%s", parent)
+	}
+	if strings.Contains(parent, "budget of") {
+		t.Errorf("the two reasons are not distinguishable:\n%s", parent)
 	}
 }
 

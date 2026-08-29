@@ -1240,19 +1240,31 @@ type dumpSection struct {
 	run  func() string
 }
 
-// renderDumpBudgetSpent names the sections that did not run.
+// renderDumpBudgetSpent names the sections that did not run, and WHY.
 //
 // NAMED, never silently dropped: this file's stated principle is that a dump which stops before the
 // interesting failure has the same effect as no dump, at the same price. A reader who can see that
 // "argocd app diff" was not reached knows to look for it; a reader shown nothing concludes there
 // was nothing to show.
-func renderDumpBudgetSpent(skipped []dumpSection) string {
+//
+// `parentDone` separates the two reasons, because they are different faults with different fixes.
+// The dump's own budget running out means the dump is too slow for what it was asked. The TEST's
+// context being cancelled before the dump even started means the whole leg is out of time, the
+// budget here is irrelevant, and the thing to look at is the ladder — reporting that as "the dump
+// budget was spent" would send a reader to tune a number that had nothing to do with it.
+func renderDumpBudgetSpent(skipped []dumpSection, parentDone bool) string {
 	if len(skipped) == 0 {
 		return ""
 	}
 	names := make([]string, 0, len(skipped))
 	for _, s := range skipped {
 		names = append(names, s.name)
+	}
+	if parentDone {
+		return fmt.Sprintf("\n──── the test's context was ALREADY cancelled, so the %s dump budget "+
+			"never applied; %d section(s) NOT run: %s. The leg ran out of time before this point — "+
+			"look at the ladder, not at this budget. ────\n",
+			argoDumpBudget, len(names), strings.Join(names, ", "))
 	}
 	return fmt.Sprintf("\n──── dump budget of %s spent; %d section(s) NOT run: %s ────\n",
 		argoDumpBudget, len(names), strings.Join(names, ", "))
@@ -1304,7 +1316,7 @@ func argoDeadlineDump(
 	var b strings.Builder
 	for i, sec := range sections {
 		if dctx.Err() != nil {
-			b.WriteString(renderDumpBudgetSpent(sections[i:]))
+			b.WriteString(renderDumpBudgetSpent(sections[i:], ctx.Err() != nil))
 			break
 		}
 		b.WriteString(sec.run())
