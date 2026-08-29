@@ -233,7 +233,7 @@ func saveActiveOrg(o api.OrgSummary) error {
 }
 
 func init() {
-	configExportCmd.Flags().String("format", "legacy-yaml", "Configuration content format")
+	configExportCmd.Flags().String("format", "json", "Configuration content format")
 	configExportCmd.Flags().String("out", "", "Write the configuration to this file instead of stdout")
 	configCmd.AddCommand(configSetCmd)
 	configCmd.AddCommand(configGetCmd)
