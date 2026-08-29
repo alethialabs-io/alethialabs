@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.5.0...runner-v0.6.0) (2026-08-29)
+
+
+### Features
+
+* **addons:** vault initialises and unseals; velero installs a plugin and reaches any S3-compatible store ([#3154](https://github.com/alethialabs-io/alethialabs/issues/3154)) ([9fc2c20](https://github.com/alethialabs-io/alethialabs/commit/9fc2c2050a5411850e9b79d65eeb19214d5a3df5)), closes [#2717](https://github.com/alethialabs-io/alethialabs/issues/2717)
+
+
+### Bug Fixes
+
+* **e2e:** the ARN reached the product one level down, and the reader only ever looked at the top ([#3042](https://github.com/alethialabs-io/alethialabs/issues/3042)) ([#3132](https://github.com/alethialabs-io/alethialabs/issues/3132)) ([86f11d8](https://github.com/alethialabs-io/alethialabs/commit/86f11d8e6032b58e0fdc26792698ff4ee815f1e0))
+
 ## [0.5.0](https://github.com/alethialabs-io/alethialabs/compare/runner-v0.4.0...runner-v0.5.0) (2026-08-25)
 
 
