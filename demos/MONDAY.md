@@ -117,6 +117,7 @@ the blocker) · *(blank)* = not yet attempted.
 | 12 | Browser pass — post-deploy day-2 surfaces | | | |
 | 13 | `enterprise-demo` overlays PR | | | |
 | 14 | Hetzner Robot warm-pool issue filed | PASS | [#3321](https://github.com/alethialabs-io/alethialabs/issues/3321) — held against the #3268 NO-GO | 2026-08-29 |
+| 14a | Every documented command mechanically verified | PASS | 40 `alethia …` commands in RUNBOOK + elench-prompts + the tutorial: every subcommand, long flag **and shorthand** resolves against the real binary. The checker was validated both directions (it flags `-p` on `project env add`, passes it on `project design apply`) | 2026-08-29 |
 | 15 | Timed dress rehearsal + abort drill | | | |
 
 **Spend to date: $0.00.** (One unplanned event: the sandbox box was OOM-wedged and rebooted — see
