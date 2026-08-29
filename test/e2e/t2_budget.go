@@ -191,10 +191,14 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 	// visibility by raising the cap on every cloud, for time only a failing run can spend, is the
 	// worse trade.
 	//
-	// So it is bounded INSIDE headroom instead: `argoDumpBudget` (argocd_assert.go) caps the whole
-	// dump, and TestArgoDumpBudgetFitsInsideHeadroom pins that it leaves margin here. If the dump
-	// ever needs more than headroom can lend, that is the moment to make it a term and raise the
-	// cap — not before.
+	// And it is NOT carved out of headroom either, because headroom is not slack: this constant is
+	// "runner build + snapshot seeding + the slack the old comment called headroom", and
+	// t2BuildRunner alone carries a five-minute ceiling spent after ctx is created. Sizing the dump
+	// against seven minutes would be arithmetic on an allowance that was never free.
+	//
+	// Instead the dump takes whatever is ACTUALLY left, capped by `argoDumpBudget` (argocd_assert.go)
+	// and decided by `planArgoDump`, whose notice says which of the two bound it. If it ever needs
+	// more than the leg can spare, that is the moment to make it a term and raise the cap.
 	add("headroom", t2BaseHeadroom)
 
 	for _, t := range b.Terms {

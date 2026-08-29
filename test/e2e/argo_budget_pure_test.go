@@ -369,26 +369,38 @@ func TestArgoAddOnCountIsZeroOnTheLeanTier(t *testing.T) {
 	}
 }
 
-// The failing-path dump is bounded by argoDumpBudget and paid for out of t2BaseHeadroom rather than
-// by a term of its own — see the note at the `headroom` line in ResolveT2Budget. That is only safe
-// while it genuinely fits, so the relationship is pinned here rather than remembered.
+// t2BaseHeadroom IS NOT SLACK, and the dump must not be sized as though it were.
 //
-// It runs at the worst moment available: after argocd-converge has been spent in full, inside ctx,
-// with teardown still to come. Overrunning does not truncate the dump — it kills the process before
-// t.Cleanup destroys the cluster, and a real cloud cluster leaks to the sweeper.
-func TestArgoDumpBudgetFitsInsideHeadroom(t *testing.T) {
+// Its own definition is "runner build + snapshot seeding + the slack the old comment called
+// headroom", and `t2BuildRunner` alone carries a five-minute ceiling that is spent after the test
+// context is created. So "seven minutes of headroom, four for the dump, two left over" is
+// arithmetic on an allowance that was never free — and on a cold module cache the dump would reach
+// its point with nothing left at all.
+//
+// That is why argoDumpBudget is a CEILING and never a reservation: `planArgoDump` takes whatever is
+// actually remaining and caps it. This test pins the reasoning rather than a subtraction, so nobody
+// re-derives the wrong one.
+func TestDumpCeilingIsNotSizedAgainstHeadroom(t *testing.T) {
 	t.Parallel()
 
-	if argoDumpBudget >= t2BaseHeadroom {
-		t.Fatalf("argoDumpBudget %s does not fit inside headroom %s — the dump would eat the whole "+
-			"variance allowance and then overrun ctx, killing teardown and leaking the cluster. "+
-			"Make it a named term in ResolveT2Budget and raise T2_JOB_CAP_MINUTES with it.",
-			argoDumpBudget, t2BaseHeadroom)
+	// The ceiling never exceeds what is left, whatever it is — the only property the dump needs.
+	for _, remaining := range []time.Duration{
+		0, time.Second, 10 * time.Second, time.Minute, argoDumpBudget, 30 * time.Minute,
+	} {
+		p := planArgoDump(remaining, true)
+		if p.Budget > remaining {
+			t.Errorf("with %s left the plan asks for %s", remaining, p.Budget)
+		}
+		if p.Budget > argoDumpBudget {
+			t.Errorf("with %s left the plan exceeds the ceiling: %s", remaining, p.Budget)
+		}
 	}
-	// And it must leave something behind: headroom exists to absorb variance in the terms that ARE
-	// reserved, and a dump that consumed all but a minute of it would be a term in everything but
-	// name.
-	if left := t2BaseHeadroom - argoDumpBudget; left < 2*time.Minute {
-		t.Errorf("the dump leaves only %s of headroom for every other term's variance", left)
+	// And it is not derived from headroom: if someone re-introduces that subtraction, this is the
+	// comment they should hit first.
+	if argoDumpBudget >= t2BaseHeadroom {
+		t.Errorf("argoDumpBudget %s is at or above t2BaseHeadroom %s. That is not fatal — the plan "+
+			"caps against real remaining time, not against headroom — but it means the ceiling can "+
+			"never be reached on a normal leg, which makes it a number that does nothing.",
+			argoDumpBudget, t2BaseHeadroom)
 	}
 }

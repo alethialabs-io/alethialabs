@@ -1209,6 +1209,92 @@ func (r outOfSyncRef) kubectlTarget() string {
 //
 // Best-effort and hard-capped: this runs on an ALREADY-FAILING path, so it must never be the reason
 // a run hangs or an error is lost.
+// argoDumpBudget is the CEILING on the whole failing-path dump — never a reservation.
+//
+// It is not a term in ResolveT2Budget and it is not carved out of t2BaseHeadroom, because
+// t2BaseHeadroom is not slack: its own definition is "runner build + snapshot seeding + the slack
+// the old comment called headroom", and t2BuildRunner alone carries a five-minute ceiling that is
+// spent after ctx is created. Treating seven minutes as seven minutes of spare time is how a
+// fixed budget comes to be justified by an allowance that was never free.
+//
+// So the dump takes whatever is ACTUALLY left, capped here. planArgoDump decides, the notice says
+// which of the two bound it, and nothing downstream has to believe an arithmetic claim about
+// headroom that the ladder does not make.
+const argoDumpBudget = 4 * time.Minute
+
+// argoDumpMinimum is the least remaining time the dump is worth starting with. Below it, every
+// section would report its own timeout and the reader would get eight lines of context-deadline
+// noise instead of one line saying the leg had already run out.
+const argoDumpMinimum = 5 * time.Second
+
+// argoDumpSectionFloor keeps a starved section from being handed a share too small to say anything.
+// A section given 200ms produces a timeout message, which is worse than being named as not run.
+const argoDumpSectionFloor = 3 * time.Second
+
+// dumpPlan is how long the dump may take and WHAT BOUND IT — two different findings that the same
+// expired context produces.
+//
+// "The dump budget was spent" means the dump is too slow for what it was asked, and the lever is
+// argoDumpBudget. "The T2 context ran out" means the leg is out of time, this budget never applied,
+// and the lever is the ladder. Printing the first when the second happened sends a maintainer to
+// tune a number that had nothing to do with it.
+type dumpPlan struct {
+	Budget     time.Duration
+	BoundByCtx bool
+	Startable  bool
+}
+
+// planArgoDump is pure so both branches are pinned by a test rather than by a run that costs money.
+func planArgoDump(remaining time.Duration, hasDeadline bool) dumpPlan {
+	if !hasDeadline {
+		// No deadline on the parent at all — the ceiling is the only bound there is.
+		return dumpPlan{Budget: argoDumpBudget, Startable: true}
+	}
+	switch {
+	case remaining <= argoDumpMinimum:
+		return dumpPlan{Budget: 0, BoundByCtx: true, Startable: false}
+	case remaining < argoDumpBudget:
+		return dumpPlan{Budget: remaining, BoundByCtx: true, Startable: true}
+	default:
+		return dumpPlan{Budget: argoDumpBudget, Startable: true}
+	}
+}
+
+// dumpSection is one diagnostic and the name it is reported under when it does not get to run.
+type dumpSection struct {
+	name string
+	run  func(context.Context) string
+}
+
+// sectionNames lists a run of sections for the skipped notice.
+func sectionNames(secs []dumpSection) []string {
+	names := make([]string, 0, len(secs))
+	for _, s := range secs {
+		names = append(names, s.name)
+	}
+	return names
+}
+
+// renderDumpStopped names the sections that did not run, and says which clock ran out.
+//
+// NAMED, never silently dropped: this file's stated principle is that a dump which stops before the
+// interesting failure has the same effect as no dump, at the same price. A reader who can see that
+// "argocd app diff" was not reached knows to look for it; a reader shown nothing concludes there
+// was nothing to show.
+func renderDumpStopped(skipped []dumpSection, plan dumpPlan) string {
+	if len(skipped) == 0 {
+		return ""
+	}
+	names := strings.Join(sectionNames(skipped), ", ")
+	if plan.BoundByCtx {
+		return fmt.Sprintf("\n──── the T2 context ran out first (%s left, under the %s dump ceiling); "+
+			"%d section(s) NOT run: %s. The LEG is out of time — look at the ladder, not at this "+
+			"ceiling. ────\n", plan.Budget, argoDumpBudget, len(skipped), names)
+	}
+	return fmt.Sprintf("\n──── dump ceiling of %s spent; %d section(s) NOT run: %s ────\n",
+		argoDumpBudget, len(skipped), names)
+}
+
 // argoDeadlineDump is EVERY diagnostic a timed-out ArgoCD wait should carry, in one place.
 //
 // It exists because there are two of these waits — AssertArgoAppsHealthy here, and the A0.6
@@ -1220,56 +1306,6 @@ func (r outOfSyncRef) kubectlTarget() string {
 // That is the whole argument for a single function. Two call sites assembling the same list by hand
 // will drift, and the drift is invisible until a run needs the missing half — by which point it has
 // already cost a real apply.
-// argoDumpBudget is the whole failing-path dump's share of the wall clock.
-//
-// Sized against what remains rather than against what would be comfortable: t2BaseHeadroom is seven
-// minutes, teardown is reserved separately by the ladder, and four minutes buys every section a
-// realistic run — each is a `kubectl get` measured in hundreds of milliseconds, and the timeouts
-// they carry are ceilings for a HUNG call, not expected costs.
-//
-// Reserved as its own term in ResolveT2Budget, deliberately, rather than left to headroom.
-// t2_budget.go makes that argument in its own words for day2-url and cli-demo: headroom absorbs
-// variance in terms that ARE reserved, and a real bounded cost hidden inside it is a cost nobody
-// can see in the ladder the workflow prints. This one is worse than invisible — it is spent exactly
-// when the ArgoCD term has already been spent in full, which is the moment headroom is thinnest.
-const argoDumpBudget = 4 * time.Minute
-
-// dumpSection is one diagnostic and the name it is reported under when it does not get to run.
-type dumpSection struct {
-	name string
-	run  func() string
-}
-
-// renderDumpBudgetSpent names the sections that did not run, and WHY.
-//
-// NAMED, never silently dropped: this file's stated principle is that a dump which stops before the
-// interesting failure has the same effect as no dump, at the same price. A reader who can see that
-// "argocd app diff" was not reached knows to look for it; a reader shown nothing concludes there
-// was nothing to show.
-//
-// `parentDone` separates the two reasons, because they are different faults with different fixes.
-// The dump's own budget running out means the dump is too slow for what it was asked. The TEST's
-// context being cancelled before the dump even started means the whole leg is out of time, the
-// budget here is irrelevant, and the thing to look at is the ladder — reporting that as "the dump
-// budget was spent" would send a reader to tune a number that had nothing to do with it.
-func renderDumpBudgetSpent(skipped []dumpSection, parentDone bool) string {
-	if len(skipped) == 0 {
-		return ""
-	}
-	names := make([]string, 0, len(skipped))
-	for _, s := range skipped {
-		names = append(names, s.name)
-	}
-	if parentDone {
-		return fmt.Sprintf("\n──── the test's context was ALREADY cancelled, so the %s dump budget "+
-			"never applied; %d section(s) NOT run: %s. The leg ran out of time before this point — "+
-			"look at the ladder, not at this budget. ────\n",
-			argoDumpBudget, len(names), strings.Join(names, ", "))
-	}
-	return fmt.Sprintf("\n──── dump budget of %s spent; %d section(s) NOT run: %s ────\n",
-		argoDumpBudget, len(names), strings.Join(names, ", "))
-}
-
 func argoDeadlineDump(
 	ctx context.Context,
 	kubeconfigPath string,
@@ -1277,49 +1313,78 @@ func argoDeadlineDump(
 	losers []string,
 	refs []outOfSyncRef,
 ) string {
-	// ONE budget for the whole dump, not one per call.
+	// ONE budget for the whole dump, and a SHARE of it for each section.
 	//
-	// Eight sections, each with its own per-call timeout and its own per-app cap, and the caps
-	// MULTIPLY: twenty losers against describeArgoApps' 30s alone is ten minutes. Every section was
-	// sized against the remaining time as though it were the only one, which is how a chain of
-	// individually reasonable timeouts overruns.
+	// Nine sections, each with its own per-call timeout and its own per-app cap, and the caps
+	// MULTIPLY: describeArgoApps alone is twenty losers × 30s, and dumpArgoAppDiff's per-app
+	// timeout is 300s — longer than the whole ceiling. Every section was sized as though it were
+	// the only one, which is how a chain of individually reasonable timeouts overruns.
 	//
-	// And it overruns into the worst place available. This runs INSIDE the T2 context, after the
-	// ArgoCD budget is already spent, and a cancelled ctx does not merely truncate the dump — it
-	// kills the process before t.Cleanup tears the cluster down, leaking a real cloud cluster to the
-	// sweeper. A diagnostic that costs a leaked EKS cluster to print is not worth printing.
-	dctx, cancel := context.WithTimeout(ctx, argoDumpBudget)
-	defer cancel()
-
+	// A pooled budget alone would not fix it: the cheap early sections would eat the pool on a
+	// many-loser run and `argocd app diff` — the LAST section, the most expensive, and the one
+	// #2834 added the shared dump for — would be starved by the very cap meant to protect the run.
+	// So each section takes an equal share of what is left at the moment it starts, and a section
+	// that finishes early returns its remainder to the ones after it.
 	sections := []dumpSection{
 		// FIRST, because it is the only one that speaks for a loser whose resources were never
 		// created, and because it is one small `kubectl get` rather than a chart render. See
 		// argo_sync_failure.go.
-		{"sync failures", func() string { return dumpArgoSyncFailures(dctx, kubeconfigPath, losers) }},
+		{"sync failures", func(c context.Context) string { return dumpArgoSyncFailures(c, kubeconfigPath, losers) }},
 		// IMMEDIATELY after it, because it answers the question that dump's own output raises: the
 		// Application names the hook it is waiting for and stops there. See argo_pending_hook.go.
-		{"pending hooks", func() string { return dumpPendingHooks(dctx, kubeconfigPath, losers) }},
+		{"pending hooks", func(c context.Context) string { return dumpPendingHooks(c, kubeconfigPath, losers) }},
 		// An add-on that installs SEALED cannot converge on the chart alone, and nothing on this
 		// path was looking at the Job that opens it. One `kubectl get jobs -A`; see
 		// bootstrap_job_dump.go for the run that needed it.
-		{"bootstrap jobs", func() string { return dumpAddOnBootstrapJobs(dctx, kubeconfigPath) }},
+		{"bootstrap jobs", func(c context.Context) string { return dumpAddOnBootstrapJobs(c, kubeconfigPath) }},
 		// The two sources that speak for a sync still RUNNING — an Application waiting on a hook it
 		// never applied has nothing further to say, and both of these do. See argo_stuck_sync.go.
-		{"controller log", func() string { return dumpArgoControllerLog(dctx, kubeconfigPath, losers) }},
-		{"cluster warnings", func() string { return dumpDestinationWarnings(dctx, kubeconfigPath, losers) }},
-		{"describe", func() string { return describeArgoApps(dctx, kubeconfigPath, losers) }},
-		{"out-of-sync objects", func() string { return dumpOutOfSyncResources(dctx, kubeconfigPath, refs) }},
-		// LAST, because it is by far the most expensive: each entry renders the chart.
-		{"argocd app diff", func() string { return dumpArgoAppDiffs(dctx, kubeconfigPath, observed, losers) }},
+		{"controller log", func(c context.Context) string { return dumpArgoControllerLog(c, kubeconfigPath, losers) }},
+		{"cluster warnings", func(c context.Context) string { return dumpDestinationWarnings(c, kubeconfigPath, losers) }},
+		{"describe", func(c context.Context) string { return describeArgoApps(c, kubeconfigPath, losers) }},
+		{"out-of-sync objects", func(c context.Context) string { return dumpOutOfSyncResources(c, kubeconfigPath, refs) }},
+		{"argocd app diff", func(c context.Context) string { return dumpArgoAppDiffs(c, kubeconfigPath, observed, losers) }},
 	}
 
+	// ALREADY DONE beats any arithmetic about deadlines: a context cancelled by hand carries NO
+	// deadline at all, so asking Deadline() first would compute a four-minute ceiling against a
+	// context that is finished, run every section, and report eight sections "CUT OFF" instead of
+	// one line saying the leg had already ended.
+	if ctx.Err() != nil {
+		return renderDumpStopped(sections, dumpPlan{BoundByCtx: true})
+	}
+	deadline, hasDeadline := ctx.Deadline()
+	plan := planArgoDump(time.Until(deadline), hasDeadline)
+	if !plan.Startable {
+		return renderDumpStopped(sections, plan)
+	}
+	dctx, cancel := context.WithTimeout(ctx, plan.Budget)
+	defer cancel()
+	dumpDeadline, _ := dctx.Deadline()
+
 	var b strings.Builder
-	for i, sec := range sections {
-		if dctx.Err() != nil {
-			b.WriteString(renderDumpBudgetSpent(sections[i:], ctx.Err() != nil))
-			break
+	for i := range sections {
+		left := time.Until(dumpDeadline)
+		if dctx.Err() != nil || left <= 0 {
+			b.WriteString(renderDumpStopped(sections[i:], plan))
+			return b.String()
 		}
-		b.WriteString(sec.run())
+		share := left / time.Duration(len(sections)-i)
+		if share < argoDumpSectionFloor {
+			share = min(left, argoDumpSectionFloor)
+		}
+		sctx, scancel := context.WithTimeout(dctx, share)
+		b.WriteString(sections[i].run(sctx))
+		cut := sctx.Err() != nil
+		scancel()
+		if cut {
+			// SAID, because a section that ran out mid-way otherwise renders as a section that
+			// found nothing — which is the reading this whole file exists to prevent, and the guard
+			// at the top of the loop cannot see it: exhaustion INSIDE the last section leaves the
+			// loop normally and would print nothing at all.
+			fmt.Fprintf(&b, "\n  (the %q section was CUT OFF after %s — what it printed is partial)\n",
+				sections[i].name, share)
+		}
 	}
 	return b.String()
 }

@@ -13,11 +13,13 @@
 package e2e
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // dumpHelpers are the diagnostics a timed-out wait must carry. Calling any of them outside
@@ -101,57 +103,130 @@ func TestSharedDumpCarriesEveryDiagnostic(t *testing.T) {
 	}
 }
 
-// The budget's job is to stop the dump killing teardown; the SKIPPED LIST's job is to stop it doing
-// that quietly. A dump that ends early without saying so reads as a complete dump with nothing in
-// its later sections, which is the same defect the whole file exists to prevent.
-func TestRenderDumpBudgetSpentNamesWhatDidNotRun(t *testing.T) {
+// The ceiling's job is to stop the dump outliving its context; the SKIPPED LIST's job is to stop it
+// doing that quietly. A dump that ends early without saying so reads as a complete dump with
+// nothing in its later sections.
+func TestRenderDumpStoppedNamesWhatDidNotRunAndWhichClockRanOut(t *testing.T) {
 	t.Parallel()
 
-	if got := renderDumpBudgetSpent(nil, false); got != "" {
+	if got := renderDumpStopped(nil, dumpPlan{}); got != "" {
 		t.Errorf("nothing skipped must print nothing, got %q", got)
 	}
 	skipped := []dumpSection{{name: "describe"}, {name: "argocd app diff"}}
-	got := renderDumpBudgetSpent(skipped, false)
-	for _, want := range []string{"2 section(s) NOT run", "describe", "argocd app diff", argoDumpBudget.String()} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the skipped notice does not carry %q:\n%s", want, got)
+
+	own := renderDumpStopped(skipped, dumpPlan{Budget: argoDumpBudget})
+	for _, want := range []string{"2 section(s) NOT run", "describe", "argocd app diff", "ceiling of"} {
+		if !strings.Contains(own, want) {
+			t.Errorf("the skipped notice does not carry %q:\n%s", want, own)
 		}
 	}
 
-	// The other reason, which is a DIFFERENT fault: the leg ran out of time before the dump began,
-	// so this budget never applied and tuning it would fix nothing.
-	parent := renderDumpBudgetSpent(skipped, true)
-	if !strings.Contains(parent, "ALREADY cancelled") || !strings.Contains(parent, "look at the ladder") {
-		t.Errorf("a pre-cancelled context is reported as a spent dump budget:\n%s", parent)
+	// The OTHER reason, and a different fault: the leg ran out, this ceiling never bound anything,
+	// and raising it would fix nothing.
+	byCtx := renderDumpStopped(skipped, dumpPlan{Budget: 45 * time.Second, BoundByCtx: true})
+	if !strings.Contains(byCtx, "T2 context ran out first") || !strings.Contains(byCtx, "look at the ladder") {
+		t.Errorf("a context-bound stop is reported as a spent ceiling:\n%s", byCtx)
 	}
-	if strings.Contains(parent, "budget of") {
-		t.Errorf("the two reasons are not distinguishable:\n%s", parent)
+	if !strings.Contains(byCtx, "45s") {
+		t.Errorf("the notice does not say how little was left:\n%s", byCtx)
 	}
 }
 
-// Every section the dump declares must be NAMED, or the skipped notice reports a blank.
-func TestEveryDumpSectionHasAName(t *testing.T) {
+// planArgoDump is the whole of the "which clock" decision, so both branches are pinned here rather
+// than inferred from a run.
+func TestPlanArgoDumpTakesWhatIsActuallyLeft(t *testing.T) {
+	t.Parallel()
+
+	// Plenty of time: the ceiling binds, and the notice must not blame the context.
+	if p := planArgoDump(30*time.Minute, true); p.Budget != argoDumpBudget || p.BoundByCtx || !p.Startable {
+		t.Errorf("with 30m left: %+v, want the ceiling and not context-bound", p)
+	}
+	// Less than the ceiling: take what is there and SAY the context bound it.
+	if p := planArgoDump(45*time.Second, true); p.Budget != 45*time.Second || !p.BoundByCtx || !p.Startable {
+		t.Errorf("with 45s left: %+v, want 45s and context-bound", p)
+	}
+	// Too little to be worth starting: one honest line beats eight timeout messages.
+	if p := planArgoDump(time.Second, true); p.Startable || !p.BoundByCtx {
+		t.Errorf("with 1s left: %+v, want not startable and context-bound", p)
+	}
+	if p := planArgoDump(-time.Minute, true); p.Startable {
+		t.Errorf("an already-expired context must not start the dump: %+v", p)
+	}
+	// A context with no deadline at all (the pure tests, and any caller that forgets one) still
+	// gets the ceiling rather than an unbounded dump.
+	if p := planArgoDump(0, false); p.Budget != argoDumpBudget || p.BoundByCtx || !p.Startable {
+		t.Errorf("with no deadline: %+v, want the ceiling", p)
+	}
+}
+
+// THE LOOP, not just the renderer. A cancelled context must produce the notice naming EVERY section
+// — which is what an `sections[i+1:]` off-by-one or an inverted guard would get wrong, and neither
+// would be visible from the pure renderer alone. No cluster, no tags, no cost.
+func TestArgoDeadlineDumpOnAnAlreadyCancelledContextNamesEverySection(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	out := argoDeadlineDump(ctx, "/nonexistent/kubeconfig", nil, nil, nil)
+
+	if !strings.Contains(out, "NOT run") {
+		t.Fatalf("a cancelled context produced no stopped-notice:\n%s", out)
+	}
+	for _, name := range []string{
+		"sync failures", "pending hooks", "bootstrap jobs", "controller log",
+		"cluster warnings", "describe", "out-of-sync objects", "argocd app diff",
+	} {
+		if !strings.Contains(out, name) {
+			t.Errorf("the notice does not name %q — an off-by-one would drop exactly the section "+
+				"that did not run:\n%s", name, out)
+		}
+	}
+}
+
+// Every diagnostic argoDeadlineDump calls must be INSIDE the section table, and every section must
+// be NAMED.
+//
+// The second half is obvious; the first is the one that decays. A ninth diagnostic added to the
+// helper but outside `sections` runs UNBUDGETED — outside the ceiling, outside the per-section
+// share, and absent from the skipped notice — with every other test in this file still green. That
+// is the same drift as #2834, one level in.
+func TestEveryDiagnosticIsInsideTheSectionTable(t *testing.T) {
 	t.Parallel()
 
 	raw, err := os.ReadFile("argocd_assert.go")
 	if err != nil {
 		t.Fatalf("could not read argocd_assert.go: %v", err)
 	}
-	body := regexp.MustCompile(`(?s)sections := \[\]dumpSection\{.*?\n\t\}\n`).FindString(string(raw))
+	body := regexp.MustCompile(`(?s)func argoDeadlineDump\(.*?\n}\n`).FindString(string(raw))
 	if body == "" {
-		t.Fatal("the section table was not found — this test would be vacuous")
+		t.Fatal("argoDeadlineDump not found — this test would be vacuous")
 	}
-	entries := regexp.MustCompile(`\{"([^"]*)", func\(\) string`).FindAllStringSubmatch(body, -1)
-	if len(entries) == 0 {
-		t.Fatal("no sections matched — the table's shape changed and this test stopped checking")
+	table := regexp.MustCompile(`(?s)sections := \[\]dumpSection\{.*?\n\t\}\n`).FindString(body)
+	if table == "" {
+		t.Fatal("the section table was not found inside argoDeadlineDump — the shape changed and " +
+			"this test stopped checking")
 	}
-	// Deliberately NOT compared against len(dumpHelpers): #3373 adds a test that derives every
-	// diagnostic call from the helper's body and requires it to be named there, which checks the
-	// same drift by NAME rather than by count. A count check here would only duplicate it, and it
-	// would couple this test to a list that lives on another branch.
-	for _, e := range entries {
-		if strings.TrimSpace(e[1]) == "" {
+
+	// Names: matched loosely on purpose — any string literal that opens an entry — so a rewrite to
+	// keyed fields or a multi-line entry does not silently empty the set.
+	names := regexp.MustCompile(`\{\s*"([^"]*)"\s*,`).FindAllStringSubmatch(table, -1)
+	if len(names) == 0 {
+		t.Fatal("no named sections matched — the table's shape changed and this test stopped checking")
+	}
+	for _, n := range names {
+		if strings.TrimSpace(n[1]) == "" {
 			t.Error("a dump section has an empty name; the skipped notice would report a blank")
 		}
+	}
+
+	// And nothing diagnostic outside the table.
+	outside := strings.Replace(body, table, "", 1)
+	for _, m := range regexp.MustCompile(`\b((?:dump|describe)[A-Za-z0-9_]*)\(`).FindAllStringSubmatch(outside, -1) {
+		switch m[1] {
+		case "dumpPlan", "dumpSection": // types, not diagnostics
+			continue
+		}
+		t.Errorf("argoDeadlineDump calls %s outside the section table — it would run unbudgeted and "+
+			"never appear in the skipped notice", m[1])
 	}
 }
