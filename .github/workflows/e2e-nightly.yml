@@ -95,6 +95,7 @@ on:
           - byo-iac
           - byo
           - day2
+          - cli-demo
           - full
         default: ""
       full_bar:
@@ -587,6 +588,8 @@ jobs:
               echo "::notice::DAY-2 dimension — floor shape, then the A0.3 soak for ${soak:-10m} with its FATAL drift check." ;;
             gitops | byo)
               echo "::notice::GITOPS dimension — floor shape plus the A0.6 apps-repo + BYO Helm chart proof, REQUIRED on this dimension (it reds rather than skipping when the apps-repo env is unset). This is NOT the BYO-IaC custody chain; that is the byo-iac dimension." ;;
+            cli-demo)
+              echo "::notice::CLI-DEMO dimension — a FLOOR-shaped cluster provisioned through the real \`alethia\` binary rather than a seeded job row (MVP predicate 4). No max-config, no add-on sweep, no day-2 soak: what is under test is the ACTOR, not the surface area. Needs a built console and a seeded service token, so it is dispatch-only by construction." ;;
             byo-iac)
               echo "::notice::BYO-IaC dimension — floor shape plus the seven-job custody chain: a customer OpenTofu module refused when unsafe, applied through the state proxy, drifted, healed, destroyed, state cleared. No partial credit." ;;
             *)
