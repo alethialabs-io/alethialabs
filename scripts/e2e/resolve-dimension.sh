@@ -562,6 +562,72 @@ run_self_test() {
 		fails=$((fails + 1))
 	fi
 
+	# ── THE CHOICE LIST MUST MIRROR DIMENSIONS. ────────────────────────────────────────────────
+	#
+	# The comment above DIMENSION_ALIASES has always said this list "drives ... the workflow's choice
+	# list". Nothing enforced it, and the two are in different files in different languages, so a
+	# dimension could be fully implemented here — its fidelity, its full-exclusion reason, its label —
+	# and still be UNSELECTABLE, because `workflow_dispatch` inputs of type `choice` accept only the
+	# values they enumerate. The symptom is not an error: the dispatch UI simply never offers it, and
+	# the cell it proves sits never-run with everything in place.
+	#
+	# check-e2e-knob-reach.mjs does NOT cover this. It is deliberately generous — it asks whether a
+	# knob's NAME appears anywhere a dispatch could influence — so a knob emitted only by an
+	# unselectable dimension reads as `wired`.
+	#
+	# Both directions, because a stale option is its own bug: it puts a name in the dispatch UI that
+	# `resolve` will reject with exit 2 after the operator has picked it.
+	local wf="$(cd "$(dirname "$0")/../.." && pwd)/.github/workflows/e2e-nightly.yml"
+	if [ ! -f "$wf" ]; then
+		echo "FAIL - cannot find e2e-nightly.yml; refusing to report the choice list as consistent with a file that is not there" >&2
+		fails=$((fails + 1))
+	else
+		# The `dimension:` input's options only — the file has other choice lists.
+		local opts
+		# Anchored on the exact keys AND end-of-line: the file has a second `      dimension:` (a
+		# job output) further down, and an unanchored match walks into it.
+		opts="$(awk '/^      dimension:$/{f=1} f&&/^        options:$/{o=1;next} o{ if ($0 ~ /^          - /) {v=$0; sub(/^          - /,"",v); gsub(/"/,"",v); if(v!="") print v} else exit }' "$wf")"
+		[ -n "$opts" ] || { echo "FAIL - read NO options out of the dimension input; this check would pass having read nothing" >&2; fails=$((fails + 1)); }
+		local missing="" stray=""
+		for d in $DIMENSIONS $DIMENSION_ALIASES; do
+			printf '%s\n' $opts | grep -qx "$d" || missing="$missing $d"
+		done
+		for o in $opts; do
+			printf '%s\n' $DIMENSIONS $DIMENSION_ALIASES | grep -qx "$o" || stray="$stray $o"
+		done
+		if [ -n "$missing" ]; then
+			echo "FAIL - dimension(s) this script implements are NOT selectable in e2e-nightly.yml's choice list:$missing" >&2
+			fails=$((fails + 1))
+		else
+			echo "ok   - every dimension is selectable from a dispatch"
+		fi
+		if [ -n "$stray" ]; then
+			echo "FAIL - e2e-nightly.yml offers dimension(s) this script would reject:$stray" >&2
+			fails=$((fails + 1))
+		else
+			echo "ok   - every offered dimension is one this script resolves"
+		fi
+	fi
+
+	# And the operator NOTICE must name the dimension it resolved. The `*` branch announces a green
+	# floor, so a dimension without a case of its own tells the operator it is running something
+	# else — which the `*` branch's own comment records as a bug already paid for once.
+	# `floor` is the exception, and deliberately so: the `*)` branch IS floor's branch, and it says
+	# "green-floor dimension" in as many words. Asserted rather than assumed — if that wording ever
+	# stops naming the floor, floor joins the list of dimensions that lie about themselves.
+	local uncased=""
+	grep -q 'green-floor dimension' "$wf" || uncased="$uncased floor(the-*-branch-no-longer-names-it)"
+	for d in $DIMENSIONS; do
+		[ "$d" = "floor" ] && continue
+		grep -qE "^            ($d|[a-z| -]*\| *$d|$d *\|[a-z| -]*)\)" "$wf" || uncased="$uncased $d"
+	done
+	if [ -n "$uncased" ]; then
+		echo "FAIL - dimension(s) with no case in the workflow's operator notice, so they announce themselves as a green floor:$uncased" >&2
+		fails=$((fails + 1))
+	else
+		echo "ok   - every dimension names itself in the operator notice"
+	fi
+
 	if [ "$fails" -eq 0 ]; then
 		echo "self-test: all passed"
 		exit 0
