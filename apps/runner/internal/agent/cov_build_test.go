@@ -1636,7 +1636,7 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 	}
 
 	t.Run("termination message", func(t *testing.T) {
-		result, _, err := run(t, "image pushed "+digest, "")
+		result, _, err := run(t, "image pushed registry.test/web@"+digest, "")
 		if err != nil {
 			t.Fatalf("build: %v", err)
 		}
@@ -1666,7 +1666,7 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 	t.Run("a failed attempt listed first must not hide the successful one's digest", func(t *testing.T) {
 		// Two termination messages, newline-joined, the empty one first — the jsonpath now ranges
 		// over `.items[*]` and produces exactly this shape.
-		result, _, err := run(t, "\nimage pushed "+digest, "")
+		result, _, err := run(t, "\nimage pushed registry.test/web@"+digest, "")
 		if err != nil {
 			t.Fatalf("build: %v", err)
 		}
@@ -1729,7 +1729,7 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 			covBuildKubeRule{match: "get job", stdout: "Complete=True ", exit: 0},
 			covBuildKubeRule{
 				match:  "get pods",
-				stdout: "image pushed " + digest + "\n",
+				stdout: "image pushed registry.test/web@" + digest + "\n",
 				stderr: `error: error executing jsonpath "...": containerStatuses is not found`,
 				exit:   1,
 			},
