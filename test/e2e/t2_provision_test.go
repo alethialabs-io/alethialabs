@@ -875,6 +875,35 @@ func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) string {
 		t.Fatalf("no Ready node via the runner kubeconfig:\n%s", out)
 	}
 	t.Logf("kubectl get nodes:\n%s", out)
+
+	// EXPORT IT. Everything in this file passes `--kubeconfig kc` explicitly, so the ambient
+	// KUBECONFIG was never set — and `RunDestroy`, which the teardown calls IN THIS PROCESS, has no
+	// parameter for one. Its load-balancer release therefore found no credential, asked
+	// `provider.ConfigureKubeconfig` for one, and got a kubeconfig whose exec plugin is
+	// `os.Args[0] kube-token` — which in a test process is `e2e.test` and exits 1. aws/addons run
+	// 33277594471:
+	//
+	//	Skipping load-balancer release: a kubeconfig was written but the cluster does not answer with it.
+	//
+	// Worse, that write lands on THIS PATH — ConfigureKubeconfig writes ~/.alethia/kubeconfig — so
+	// the destroy overwrote the very file this function just proved works.
+	//
+	// Setting the ambient variable is the honest fix and not a harness special case: this process
+	// holds a working credential for the cluster it is about to tear down, and every operator would
+	// have KUBECONFIG pointing at it. #3413 then finds the cluster reachable and does not
+	// reconfigure anything. Explicit `--kubeconfig` flags elsewhere still win, so nothing else
+	// changes.
+	//
+	// ⚠️ `os.Setenv`, NOT `t.Setenv`, and the reason is LIFO. `t.Setenv` registers its restore as a
+	// cleanup AT THE POINT OF THE CALL, and cleanups run last-registered-first. The teardown that
+	// needs this variable is registered at line 398 — BEFORE the deploy, deliberately, so it is
+	// guaranteed to run — which is EARLIER than here. So `t.Setenv`'s restore would fire first and
+	// unset KUBECONFIG moments before the destroy reads it: the fix would compile, pass every test,
+	// and do nothing on the one path it exists for.
+	//
+	// There is no restore to lose. This process tests exactly one cluster and is about to destroy
+	// it.
+	_ = os.Setenv("KUBECONFIG", kc)
 	return kc
 }
 
