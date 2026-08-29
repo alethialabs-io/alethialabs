@@ -6,8 +6,15 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
+	"gopkg.in/yaml.v3"
 )
 
 func TestRunnerSlots(t *testing.T) {
@@ -92,19 +99,142 @@ func TestRunnerProviders(t *testing.T) {
 // A renamed or dropped entry compiles cleanly, and the Job would silently try to register as a
 // runner instead of doing its work — with an env that carries no runner token, so it would fail
 // looking like a credential problem rather than a routing one.
-func TestSubcommandTableCoversEveryMode(t *testing.T) {
-	want := []string{
-		"kube-token", "db-token", "db-authproxy", "db-bootstrap",
-		"harbor-bootstrap", "registry-token", "helm-repo-token",
-	}
-	for _, name := range want {
+//
+// This is the LONG-RUNNING half: sidecars and exec-plugins whose name reaches a manifest through a
+// Go []string the renderer builds, not as argv in a YAML literal. They are listed because nothing
+// derivable names them. The one-shot Jobs are covered structurally by the test below instead —
+// see the note there for why a list was not enough.
+func TestSubcommandTableCoversEveryLongRunningMode(t *testing.T) {
+	for _, name := range []string{
+		"kube-token", "db-token", "db-authproxy", "registry-token", "helm-repo-token",
+	} {
 		if subcommands[name] == nil {
-			t.Errorf("subcommand %q is not dispatched — its Job would boot the agent instead", name)
+			t.Errorf("subcommand %q is not dispatched — its sidecar would boot the agent instead", name)
 		}
 	}
-	if len(subcommands) != len(want) {
-		t.Errorf("the table has %d entries, this test knows %d — add the new one here so it stays covered",
-			len(subcommands), len(want))
+}
+
+// TestEveryRenderedJobSubcommandIsDispatched reads the subcommand name out of the argv the REAL
+// manifest renderers emit, and asserts the table dispatches it.
+//
+// WHY THIS EXISTS, AND WHY THE LIST ABOVE DID NOT DO THE JOB. Until 2026-08-29 the only coverage
+// here was a hand-typed allowlist plus `len(subcommands) != len(want)`. That shape catches a
+// subcommand someone REMOVED. It is structurally incapable of catching one that was never ADDED:
+// its "nothing found" branch is identical to its "nothing wrong" branch, and it never consults the
+// renderers that actually invoke these names.
+//
+// What it missed: `vault-bootstrap` was emitted by two renderers from #2432 and #3154 and was
+// never in the table at all. `agent.RunVaultBootstrap` — 646 lines, thoroughly unit-tested — was
+// referenced only from its own test file. Both Vault bootstrap paths were dead in production and
+// in e2e, and this test was green throughout. It cost five proof cells.
+//
+// So the expectation is DERIVED FROM THE EMITTER: drive each renderer, parse the YAML it produces,
+// and take args[0] of every container. A renderer that grows a new subcommand is covered the day
+// it is written, with nothing to remember.
+func TestEveryRenderedJobSubcommandIsDispatched(t *testing.T) {
+	const image = "ghcr.io/alethialabs-io/runner:test"
+
+	renders := []struct {
+		what   string
+		render func() (string, error)
+	}{
+		{
+			// The marketplace Vault add-on (#3154) — passes --init-only.
+			what: "argocd.AddOnBootstrapManifest (marketplace vault)",
+			render: func() (string, error) {
+				return argocd.AddOnBootstrapManifest(types.AddOnInstall{
+					ID: "vault", Mode: "managed", Namespace: "vault",
+					Bootstrap: &types.AddOnBootstrap{
+						Kind:        types.AddOnBootstrapVaultInit,
+						APIBase:     "http://addon-vault.vault.svc.cluster.local:8200",
+						StateSecret: "alethia-vault-addon-state",
+					},
+				}, image)
+			},
+		},
+		{
+			// The platform Vault carrying hetzner's `secret` kind (#2432) — seeds and mints too.
+			what: "argocd.HetznerVaultBootstrapJobManifest (platform vault)",
+			render: func() (string, error) {
+				return argocd.HetznerVaultBootstrapJobManifest(argocd.HetznerVault{
+					Secrets: []argocd.HetznerVaultSecret{{Name: "api-key", Generate: true}},
+				}, image)
+			},
+		},
+		{
+			// The Hetzner `registry` node's pull-robot bootstrap (#2431).
+			what: "argocd.HarborBootstrapJobManifest",
+			render: func() (string, error) {
+				return argocd.HarborBootstrapJobManifest(argocd.HarborRegistry{
+					Name: "app-images", Namespace: "registries", Host: "harbor.svc",
+					PullSecretName: "app-images-pull", PullSecretNamespace: "default",
+				}, image)
+			},
+		},
+	}
+
+	seen := 0
+	for _, r := range renders {
+		manifest, err := r.render()
+		if err != nil {
+			t.Errorf("%s: render: %v", r.what, err)
+			continue
+		}
+		names, err := jobSubcommands(manifest)
+		if err != nil {
+			t.Errorf("%s: %v", r.what, err)
+			continue
+		}
+		if len(names) == 0 {
+			t.Errorf("%s rendered no container argv — this test would pass vacuously, which is the "+
+				"exact shape it replaced", r.what)
+			continue
+		}
+		for _, name := range names {
+			seen++
+			if subcommands[name] == nil {
+				t.Errorf("%s emits `runner %s`, but the table does not dispatch it — the Job would "+
+					"boot the agent instead and die on a missing ALETHIA_WEB_ORIGIN, reading as a "+
+					"credential problem rather than a routing one", r.what, name)
+			}
+		}
+	}
+	// A renderer list that silently emptied would otherwise report green. Assert the work happened.
+	if seen == 0 {
+		t.Fatal("no subcommand was extracted from any renderer — the guard measured nothing")
+	}
+}
+
+// jobSubcommands parses a multi-document manifest and returns args[0] of every container that has
+// one. Structural, not textual: the renderers emit YAML, so the YAML is what gets read — a comment
+// or a flag value that happens to contain a subcommand name cannot fool it.
+func jobSubcommands(manifest string) ([]string, error) {
+	var out []string
+	dec := yaml.NewDecoder(strings.NewReader(manifest))
+	for {
+		var doc struct {
+			Spec struct {
+				Template struct {
+					Spec struct {
+						Containers []struct {
+							Args []string `yaml:"args"`
+						} `yaml:"containers"`
+					} `yaml:"spec"`
+				} `yaml:"template"`
+			} `yaml:"spec"`
+		}
+		err := dec.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			return out, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse rendered manifest: %w", err)
+		}
+		for _, c := range doc.Spec.Template.Spec.Containers {
+			if len(c.Args) > 0 {
+				out = append(out, c.Args[0])
+			}
+		}
 	}
 }
 
