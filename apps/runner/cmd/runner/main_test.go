@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
+	"github.com/alethialabs-io/alethialabs/packages/core/manifests"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"gopkg.in/yaml.v3"
 )
@@ -129,8 +130,16 @@ func TestSubcommandTableCoversEveryLongRunningMode(t *testing.T) {
 // in e2e, and this test was green throughout. It cost five proof cells.
 //
 // So the expectation is DERIVED FROM THE EMITTER: drive each renderer, parse the YAML it produces,
-// and take args[0] of every container. A renderer that grows a new subcommand is covered the day
-// it is written, with nothing to remember.
+// and take the subcommand of every runner-image container. A renderer that grows a new subcommand is
+// covered the day it is written, with nothing to remember.
+//
+// The first version of this test shipped with the same hole one layer down, and `db-bootstrap` fell
+// through it: the renderer list named only the three Vault/Harbor manifests, and the parser read only
+// `containers`. `db-bootstrap` is emitted by manifests.RenderBootstrapJob as an INIT container, so it
+// was neither listed nor reachable — dispatched in the table, asserted by nothing, and deleting its
+// entry left every test in this package green while every keyless DB bootstrap Job on AWS, Azure and
+// GCP died on a missing ALETHIA_WEB_ORIGIN. Both halves are fixed here: the three bootstrap Jobs are
+// driven below, and jobSubcommands reads initContainers.
 func TestEveryRenderedJobSubcommandIsDispatched(t *testing.T) {
 	const image = "ghcr.io/alethialabs-io/runner:test"
 
@@ -171,6 +180,59 @@ func TestEveryRenderedJobSubcommandIsDispatched(t *testing.T) {
 				}, image)
 			},
 		},
+		// The keyless-database bootstrap Jobs (#1511) — the reason this file reads initContainers.
+		// One per cloud, because each builds its own container list and only the shared init step
+		// invokes the runner; a cloud that stopped emitting it would otherwise be invisible here.
+		{
+			what: "manifests.RenderBootstrapJob (aws)",
+			render: func() (string, error) {
+				res, err := manifests.RenderBootstrapJob(manifests.Options{
+					Provider:    string(types.CloudProviderAws),
+					RunnerImage: image,
+					Outputs: map[string]string{
+						"rds_cluster_endpoint":               "orders.abc.rds.amazonaws.com",
+						"rds_database_name":                  "ordersdb",
+						"rds_master_credentials_secret_name": "alethia/rds/orders",
+					},
+				}, types.ServiceBindingTarget{Kind: "database", Name: "orders-db"})
+				return res.JobYAML, err
+			},
+		},
+		{
+			what: "manifests.RenderBootstrapJob (gcp)",
+			render: func() (string, error) {
+				res, err := manifests.RenderBootstrapJob(manifests.Options{
+					Provider:    string(types.CloudProviderGcp),
+					RunnerImage: image,
+					Outputs: map[string]string{
+						"cloud_sql_ip":                 "10.0.0.5",
+						"cloud_sql_database":           "orders-prod",
+						"cloud_sql_iam_user":           "appdb-1a2b@proj.iam",
+						"cloud_sql_credentials_secret": "orders-prod-sql-credentials",
+					},
+				}, types.ServiceBindingTarget{Kind: "database", Name: "orders-db"})
+				return res.JobYAML, err
+			},
+		},
+		{
+			// Azure is the one that mints its own admin token, so it invokes the runner TWICE —
+			// `db-bootstrap` in the init step and `db-token --once` before it.
+			what: "manifests.RenderBootstrapJob (azure)",
+			render: func() (string, error) {
+				res, err := manifests.RenderBootstrapJob(manifests.Options{
+					Provider:    string(types.CloudProviderAzure),
+					RunnerImage: image,
+					Outputs: map[string]string{
+						"azure_db_fqdn":            "orders.postgres.database.azure.com",
+						"azure_db_name":            "orders_prod",
+						"azure_db_admin_user":      "aks-orders-dbadmin",
+						"azure_db_admin_client_id": "aaaa1111-2222-3333-4444-555566667777",
+						"azure_db_app_oid":         "bbbb1111-2222-3333-4444-555566667777",
+					},
+				}, types.ServiceBindingTarget{Kind: "database", Name: "orders-db"})
+				return res.JobYAML, err
+			},
+		},
 	}
 
 	seen := 0
@@ -180,7 +242,7 @@ func TestEveryRenderedJobSubcommandIsDispatched(t *testing.T) {
 			t.Errorf("%s: render: %v", r.what, err)
 			continue
 		}
-		names, err := jobSubcommands(manifest)
+		names, err := jobSubcommands(manifest, image)
 		if err != nil {
 			t.Errorf("%s: %v", r.what, err)
 			continue
@@ -205,10 +267,29 @@ func TestEveryRenderedJobSubcommandIsDispatched(t *testing.T) {
 	}
 }
 
-// jobSubcommands parses a multi-document manifest and returns args[0] of every container that has
-// one. Structural, not textual: the renderers emit YAML, so the YAML is what gets read — a comment
-// or a flag value that happens to contain a subcommand name cannot fool it.
-func jobSubcommands(manifest string) ([]string, error) {
+// jobSubcommands parses a multi-document manifest and returns the subcommand every container built
+// FROM THE RUNNER IMAGE invokes. Structural, not textual: the renderers emit YAML, so the YAML is
+// what gets read — a comment or a flag value that happens to contain a subcommand name cannot fool
+// it.
+//
+// It reads initContainers as well as containers. `db-bootstrap` is emitted ONLY as an init container
+// (manifests.renderSQLInit writes /sql/init.sql for the client container that follows), so a reader
+// of `containers` alone sees every keyless bootstrap Job on AWS, Azure and GCP as containing no
+// runner invocation at all — which is how `db-bootstrap` sat dispatched-but-unasserted while the
+// test above was written specifically to make that impossible.
+//
+// The runner-image filter is what makes reading both lists safe. A bootstrap Job also carries a
+// postgres or mysql client container, and those are NOT runner invocations: the MySQL one overrides
+// the entrypoint with `/bin/sh -c "…"`, so a naive args[0]/command[0] read would assert that
+// `/bin/sh` is a runner subcommand and fail on a container that has nothing to do with the table.
+// Matching on the image is exact, and it means a new sidecar on a third-party image cannot red this
+// test while a new runner container is covered the day it is written.
+func jobSubcommands(manifest, runnerImage string) ([]string, error) {
+	type container struct {
+		Image   string   `yaml:"image"`
+		Command []string `yaml:"command"`
+		Args    []string `yaml:"args"`
+	}
 	var out []string
 	dec := yaml.NewDecoder(strings.NewReader(manifest))
 	for {
@@ -216,9 +297,8 @@ func jobSubcommands(manifest string) ([]string, error) {
 			Spec struct {
 				Template struct {
 					Spec struct {
-						Containers []struct {
-							Args []string `yaml:"args"`
-						} `yaml:"containers"`
+						InitContainers []container `yaml:"initContainers"`
+						Containers     []container `yaml:"containers"`
 					} `yaml:"spec"`
 				} `yaml:"template"`
 			} `yaml:"spec"`
@@ -230,9 +310,19 @@ func jobSubcommands(manifest string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse rendered manifest: %w", err)
 		}
-		for _, c := range doc.Spec.Template.Spec.Containers {
-			if len(c.Args) > 0 {
-				out = append(out, c.Args[0])
+		for _, c := range append(doc.Spec.Template.Spec.InitContainers, doc.Spec.Template.Spec.Containers...) {
+			if c.Image != runnerImage {
+				continue
+			}
+			// `command` overrides the entrypoint, so it comes first in argv when set. The subcommand
+			// is the first word that is neither a flag nor a path — a `command` that re-states the
+			// binary must not be mistaken for the mode it then invokes.
+			for _, a := range append(append([]string{}, c.Command...), c.Args...) {
+				if strings.HasPrefix(a, "-") || strings.Contains(a, "/") {
+					continue
+				}
+				out = append(out, a)
+				break
 			}
 		}
 	}
