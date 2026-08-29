@@ -109,8 +109,14 @@ type addonAppDestination struct {
 }
 
 type addonIgnoreDifference struct {
-	Group             string   `yaml:"group"`
-	Kind              string   `yaml:"kind"`
+	Group string `yaml:"group"`
+	Kind  string `yaml:"kind"`
+	// Name scopes an entry to ONE object. Every entry above it is a fact about a Kubernetes API
+	// (a removed field, an API-server-managed default) and rightly applies to every object of that
+	// kind; the keda one below is a fact about ONE controller's behaviour, and applying it to every
+	// ValidatingWebhookConfiguration would ignore a caBundle on webhooks whose caBundle nobody
+	// writes — which is the shape #2778 warns about, a guessed entry masking real drift.
+	Name              string   `yaml:"name,omitempty"`
 	JSONPointers      []string `yaml:"jsonPointers,omitempty"`
 	JQPathExpressions []string `yaml:"jqPathExpressions,omitempty"`
 }
@@ -300,6 +306,34 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 					Group:        "apiextensions.k8s.io",
 					Kind:         "CustomResourceDefinition",
 					JSONPointers: []string{"/spec/preserveUnknownFields"},
+				},
+				{
+					// keda's admission webhook, and the ONLY entry here scoped to a single object.
+					//
+					// MEASURED on azure/addons run 33249209041, by the field-ownership probe #3301
+					// repaired — before that repair the same probe reported "every field is
+					// ArgoCD-owned — no foreign default to blame" on this very object, because
+					// `kubectl get -o json` strips managedFields without --show-managed-fields:
+					//
+					//   owned by "admissionsenforcer": .webhooks[*].namespaceSelector
+					//   owned by "keda":               .webhooks[*].clientConfig.caBundle
+					//
+					// TWO writers, and they explain the cloud split that made this look like a
+					// flake. `keda` is the operator injecting its own serving CA, on every cloud.
+					// `admissionsenforcer` is AKS's Admissions Enforcer, which exists on AKS ALONE —
+					// which is why gcp and hetzner converged with the identical chart and values
+					// (`{"operator":{"replicaCount":1}}`, byte-identical in all five fixtures) while
+					// azure sat Healthy+OutOfSync from the ten-minute mark to the 35-minute deadline
+					// across two paid runs.
+					//
+					// Neither field is one ArgoCD has an opinion about: the chart renders NO
+					// caBundle at all, and no namespaceSelector for the enforcer to conflict with.
+					// So this ignores what another writer owns, not a value we chose — which is the
+					// distinction #2778 draws between an evidenced entry and a guessed one.
+					Group:             "admissionregistration.k8s.io",
+					Kind:              "ValidatingWebhookConfiguration",
+					Name:              "keda-admission",
+					JQPathExpressions: []string{".webhooks[]?.clientConfig.caBundle", ".webhooks[]?.namespaceSelector"},
 				},
 			},
 			SyncPolicy: addonSyncPolicy{
