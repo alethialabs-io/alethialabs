@@ -350,61 +350,13 @@ func triggerArgoSync(ctx context.Context, kubeconfigPath, name string) error {
 // chart — must reach Healthy AND Synced within timeout, else it fails with the same full per-app
 // dump + kubectl describe A0.2 produces. An empty expected set is refused (vacuity guard).
 func AssertArgoReposConverge(ctx context.Context, kubeconfigPath string, expected, manualSync []string, timeout time.Duration) error {
-	if len(expected) == 0 {
-		return errors.New("refusing a VACUOUS ArgoCD-with-repos assertion: the expected Application set is empty")
-	}
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	var lastLosers []string
-	var lastRefs []outOfSyncRef
-	// Carried so the shared deadline dump can tell an OutOfSync loser (which HAS a diff to fetch)
-	// from a Degraded-but-Synced one (which does not).
-	var lastObserved map[string]argoAppState
-	lastSyncErr := map[string]error{}
-	for {
-		raw, err := kubectlGetArgoApps(ctx, kubeconfigPath)
-		if err != nil {
-			lastErr = fmt.Errorf("listing ArgoCD Applications failed: %w", err)
-			lastLosers, lastRefs = nil, nil
-		} else if observed, perr := parseArgoApps(raw); perr != nil {
-			lastErr = fmt.Errorf("parsing ArgoCD Applications failed: %w", perr)
-			lastLosers, lastRefs = nil, nil
-		} else {
-			// Nudge the manual-sync (hardened BYO) apps that haven't converged yet, keeping the
-			// last error per app so a persistently-REJECTED sync is reported instead of looking
-			// like a slow one.
-			for _, name := range manualSync {
-				st, ok := observed[name]
-				if !ok || st.Health != "Healthy" || st.Sync != "Synced" {
-					if serr := triggerArgoSync(ctx, kubeconfigPath, name); serr != nil {
-						lastSyncErr[name] = serr
-					} else {
-						// A success VOIDS an earlier failure. Carrying a stale error forward would
-						// report a problem that has since resolved, which is its own wrong answer.
-						delete(lastSyncErr, name)
-					}
-				}
-			}
-			losers, everr := evaluateArgoApps(observed, expected)
-			if everr == nil {
-				return nil
-			}
-			lastErr, lastLosers = everr, losers
-			lastRefs = refsForLosers(observed, losers)
-			lastObserved = observed
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("ArgoCD Applications (incl. repo-apps + repo-byo) did not all reach Healthy+Synced within %s:\n%v%s%s",
-				timeout, lastErr,
-				renderSyncErrors(lastSyncErr),
-				argoDeadlineDump(ctx, kubeconfigPath, lastObserved, lastLosers, lastRefs))
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("context cancelled while waiting for ArgoCD Applications (%v); last state:\n%v", ctx.Err(), lastErr)
-		case <-time.After(argoPollInterval):
-		}
-	}
+	// DELEGATES, and does not re-implement. This used to be its own copy of A0.2's poll, and the
+	// copy is what #3281 was: only the other one wrote the convergence summary, and A0.6 is enabled
+	// on every real run, so every bundle recorded `unmeasured` on an assertion that had counted.
+	return assertArgoConvergence(ctx, kubeconfigPath, expected, manualSync, timeout, argoConvergeSubject{
+		vacuous:  "refusing a VACUOUS ArgoCD-with-repos assertion: the expected Application set is empty",
+		deadline: "ArgoCD Applications (incl. repo-apps + repo-byo)",
+	})
 }
 
 // renderSyncErrors names the manual-sync apps whose LAST sync attempt was rejected, and why.

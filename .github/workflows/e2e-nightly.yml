@@ -1729,6 +1729,11 @@ jobs:
           E2E_GIT_TOKEN: ${{ secrets.E2E_GIT_TOKEN }}
           ALETHIA_E2E_PROOF_OUTCOME: ${{ steps.t2.outcome }}
           ALETHIA_E2E_PROOF_RUN_TAG: nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          # WHICH CLAIM this bundle makes. Passed explicitly rather than left to the inherited job
+          # env: the same fields read identically for an add-on sweep (where the ArgoCD convergence
+          # IS the verdict) and a floor run (where it is a supporting fact), and nothing downstream
+          # could tell them apart — which is how a cell was promoted on unmeasured counts (#3281).
+          ALETHIA_E2E_DIMENSION: ${{ env.E2E_DIMENSION }}
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
           # Day-2 soak summary (BYOC A0.3), written by the T2 test; folded into the bundle +
           # step-summary verdict when present (absent ⇒ the capture is unchanged).
