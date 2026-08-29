@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.5.0...cli-v0.6.0) (2026-08-29)
+
+
+### Features
+
+* **cli:** service-account tokens — `alethia` can finally run without a browser ([#2786](https://github.com/alethialabs-io/alethialabs/issues/2786)) ([c9740a3](https://github.com/alethialabs-io/alethialabs/commit/c9740a397b251aa50ea2e3c902604d99ddf65d04))
+
+
+### Bug Fixes
+
+* **cli:** remove --git-credential-id, and tell the user what actually authorizes a private clone ([#3211](https://github.com/alethialabs-io/alethialabs/issues/3211)) ([56d71fc](https://github.com/alethialabs-io/alethialabs/commit/56d71fc908b17028dbbe5ebaca8f7aaadebf9ea3)), closes [#2788](https://github.com/alethialabs-io/alethialabs/issues/2788)
+
 ## [0.5.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.4.0...cli-v0.5.0) (2026-08-11)
 
 
