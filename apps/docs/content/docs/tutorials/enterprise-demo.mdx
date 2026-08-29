@@ -18,6 +18,7 @@ watch for.
 <Mermaid chart={`
 flowchart TB
   F["One Fabric — the infrastructure<br/>cluster · network · DNS"]
+  F --> P["Environment: prod<br/>dedicated placement<br/>owns the Fabric"]
   F --> D["Environment: dev<br/>namespace placement<br/>ns boutique-dev"]
   F --> S["Environment: staging<br/>vcluster placement<br/>ns boutique-staging"]
   D --> DA["overlays/dev<br/>12 services"]
@@ -62,13 +63,18 @@ One command declares the whole shape: a project, and two environments with their
 alethia project create boutique \
   --region <your-region> \
   --cloud-identity-id <your-identity-id> \
+  --env prod:production:dedicated \
   --env dev:development:namespace:boutique-dev \
   --env staging:staging:vcluster:boutique-staging
 ```
 
-Each `--env` is `name:stage:placement:namespace`. The **first** entry owns the Fabric it provisions;
-later ones share it. So `dev` here is the tier that brings the cluster into being and `staging` joins
-it.
+Each `--env` is `name:stage:placement:namespace`.
+
+**At least one environment must be `dedicated`.** A `dedicated` environment owns a Fabric and is what
+brings a cluster into being; `namespace` and `vcluster` environments are placed onto a cluster that
+already exists. Here `prod` provisions the Fabric, and `dev` and `staging` join it — three
+environments, one cluster. A matrix with no `dedicated` entry is refused at creation, because nothing
+in it would ever provision anything.
 
 <Callout type="warn">
   Without `--env` you get the default Production + Preview pair, and any environment you add later
@@ -82,17 +88,20 @@ Check what you got:
 alethia project env list --project boutique
 ```
 
-Both environments, one Fabric.
+Three environments, one Fabric.
 
 ## Step 2 — Give the cluster a shape
 
 ```bash
-alethia project component add --project boutique --env dev --kind cluster \
+alethia project component add --project boutique --env prod --kind cluster \
   --set cluster_version=1.31 \
   --set node_desired_size=2 \
   --set node_min_size=2 \
   --set node_max_size=3
 ```
+
+The cluster is a property of the **Fabric**, so it is configured on `prod` — the environment that
+owns it. The tiers placed onto that Fabric do not each get a cluster; that is the whole point.
 
 Two nodes is the floor for this demo: twelve services land three times over (once per namespace
 tier, and once more inside the vcluster, whose pods schedule on the host), which is roughly 5 vCPU
@@ -178,7 +187,7 @@ what stops one tier's manifests from touching the other's namespace.
 
 Look at the bill, and at `alethia cluster list`.
 
-**One cluster.** Two environments, delivered independently, with different application versions and
+**One cluster.** Three environments, delivered independently, with different application versions and
 namespace-level isolation between them — and one set of infrastructure underneath. The `staging` tier
 additionally has its own Kubernetes API server, so a controller installed there sees only its own
 resources, without a second control plane to pay for.

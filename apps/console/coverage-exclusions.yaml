@@ -115,9 +115,13 @@ tier_separation:
     reason: The org evidence roll-up across drift, security and job rows, verified against real Postgres.
 
   - path: lib/queries/projects.ts
-    suite: [tests/integration/cli-project-create.test.ts]
-    symbols: [insertProjectWithDefaultFabric]
-    reason: The project + default-fabric + hierarchy insert, verified as one real transaction.
+    suite:
+      [
+        tests/integration/cli-project-create.test.ts,
+        tests/lib/queries/fabric-placement.test.ts,
+      ]
+    symbols: [insertProjectWithDefaultFabric, planFabricPlacement]
+    reason: The project + default-fabric + hierarchy insert as one real transaction, plus the pure placement decision — unit-tested because needing Postgres to reach the fan-out is why an unprovisionable `shared` Fabric went unnoticed.
 
   - path: lib/queries/runner-usage.ts
     suite:
