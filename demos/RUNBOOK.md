@@ -78,6 +78,14 @@ if you want the first.
 - [ ] A runner is online: `alethia runner list` shows a recent heartbeat. If not,
       `alethia runner register demo-box` and start it. A "waiting for runner" hang is the single most
       common way this demo dies, and it is invisible until the plan just sits there.
+- [ ] **A runner is online _and can mint credentials for your cloud_** — these are different checks,
+      and only the second one matters. A runner whose operator is `self` has no ambient cloud
+      credentials in production and cannot federate into **AWS or GCP**; the job fails with an error
+      naming *EC2 IMDS*, which has nothing to do with the cause (#3348). **Azure, Alibaba and the
+      token clouds (Hetzner, DigitalOcean, Civo) are unaffected** — they have no operator gate.
+      Prove it, do not assume it: queue a plan on a throwaway project for the cloud you will demo and
+      confirm the log says *Activating keyless …* rather than *Assuming role …*. A plan provisions
+      nothing, so this costs nothing.
 - [ ] Connectors verified: `alethia provider verify hetzner` (and any other cloud you will use).
 - [ ] Quotas checked for any managed cloud you will touch. GCP NodePool quota and Azure regional vCPU
       are the two that fail at apply time, minutes in, and cannot be fixed live.
@@ -100,8 +108,9 @@ alethia project create boutique-demo \
   --env prod:production:dedicated
 
 # 2 · The cluster is a property of the FABRIC, so it is configured on its owner.
+# `cluster_version` is a STRING: unquoted, `--set` coerces 1.31 to a number and the server 400s.
 alethia project component add --project boutique-demo --env prod --kind cluster \
-  --set cluster_version=1.31 \
+  --set 'cluster_version="1.31"' \
   --set node_desired_size=3 --set node_min_size=3 --set node_max_size=4
 
 alethia project component add --project boutique-demo --env prod --kind repositories \
@@ -109,8 +118,10 @@ alethia project component add --project boutique-demo --env prod --kind reposito
   --set apps_path=overlays/prod
 
 # 3 · Provision it. The shared tiers cannot be placed until this cluster exists.
-alethia project plan  --project-id boutique-demo --wait
-alethia project apply --project-id boutique-demo --plan-job-id <id> --wait
+#     --project-id wants the UUID, not the name: `alethia project list -o json` has it.
+#     Pass --runner-id too, or the command prompts and dies under --no-input.
+alethia project plan  --project-id <uuid> --runner-id <uuid> --wait
+alethia project apply --project-id <uuid> --plan-job-id <id> --wait
 ```
 
 Then add the tiers that cost nothing:
@@ -134,8 +145,8 @@ for n in 1 2 3; do
     --set apps_path="overlays/dev-$n"
 done
 
-alethia project plan  --project-id boutique-demo --wait
-alethia project apply --project-id boutique-demo --plan-job-id <id> --wait
+alethia project plan  --project-id <uuid> --runner-id <uuid> --wait
+alethia project apply --project-id <uuid> --plan-job-id <id> --wait
 ```
 
 **For the two-Fabric shape**, add a second dedicated env before the tiers and point them at it:
@@ -190,7 +201,7 @@ they are paying for today.
 ### Beat 4 — the gate (3 min) ★
 
 ```bash
-alethia project plan --project-id boutique-demo --wait
+alethia project plan --project-id <uuid> --runner-id <uuid> --wait
 ```
 
 The plan stops at the **verify gate**. Show the verdict. Then say the part that matters: the receipt
@@ -269,7 +280,7 @@ to Hetzner.
 ## 6 · Teardown — same day, every time
 
 ```bash
-alethia project destroy --project-id boutique-demo --wait
+alethia project destroy --project-id <uuid> --runner-id <uuid> --wait --yes
 alethia cluster list
 ```
 
@@ -319,6 +330,14 @@ artifact, never on a green harness.
 
 ## 8 · Known dead-ends — do not walk into these
 
+- **`--set cluster_version=1.31` is refused.** `--set` coerces anything that parses as JSON, so
+  `1.31` arrives as a *number* and the server wants a string: *"Invalid value for cluster_version:
+  expected string, received number"*. Quote it as JSON — `--set 'cluster_version="1.31"'`. The same
+  trap waits on any string field whose value looks numeric.
+- **`--project-id` takes the project's UUID, not its name.** `alethia project list -o json` has it.
+- **`plan`/`apply`/`destroy` prompt for a runner** when `--runner-id` is omitted, so under `--no-input`
+  they die with *"interactive input required"* — a message that reads like it is complaining about the
+  project. `destroy` additionally needs `--yes`.
 - **A matrix with no `dedicated` environment is refused at creation.** Nothing in it would ever
   provision a cluster. If you want one cluster carrying everything, make one env `dedicated` and place
   the rest onto its Fabric — that is the demo, not a workaround.

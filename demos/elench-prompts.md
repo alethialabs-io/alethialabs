@@ -118,6 +118,19 @@ Then the receipt itself — `demos/proofs/hetzner/20260827T210204Z/receipt.json`
 records what was true, not what we would like to have been true. A receipt that always said `pass`
 would be worth nothing.
 
+### A caveat that was true until 2026-08-29, and may still be true on prod
+
+Every committed receipt in `demos/proofs/` reads `SCOPE-001: not_evaluable`, on every cloud. That was
+**not** a finding about the infrastructure — it was our own bug: `terraform_data`, the built-in no-op
+resource all five templates use for their precondition guards, was not on the engine's
+supported-no-controls allowlist, so the fail-closed backstop fired on every plan the product itself
+produces. Fixed on `dev`; **until that promotion reaches prod, a live plan still shows
+`not_evaluable`**, and the six findings will all be `terraform_data.*_guard`.
+
+If you demo a live plan before the promotion, own it in one sentence — "that's our own guard resource,
+and the gate refusing to reason about something it doesn't recognise is the behaviour we want" — and
+move on. It is a better story than pretending it isn't there.
+
 Against a live job, the same evidence through the CLI:
 
 ```bash
@@ -125,6 +138,21 @@ alethia verify show    --job <job-id>          # the per-control table
 alethia verify receipt --job <job-id>          # checks the signature, prints the trust level
 alethia verify receipt --job <job-id> --key <a-wrong-public-key>   # watch it refuse
 ```
+
+A real one, from a production Azure plan on 2026-08-29 (job `0d9850b1`):
+
+```
+Verify: not_evaluable (azure, catalog elench-controls-0.5.2) — 3 pass, 0 fail, 0 warn, 1 not evaluable
+
+AZURE-KEYLESS-001    pass   high   No static application/service-principal…
+AZURE-FED-001        pass   high   Federated credentials bind a specific s…
+AZURE-LEASTPRIV-001  pass   high   No Owner/Contributor role assignments
+SCOPE-001            not_evaluable  high   Plan is within the engine's evaluable scope
+```
+
+Three real controls passing on a real subscription — no static credential, the federated credential
+bound to a specific subject, and no Owner/Contributor assignment. That is the keyless claim, checked
+rather than asserted.
 
 Trust levels are explicit — `pinned` > `org` > `platform` > `self` > `none` — and the command exits
 non-zero on a bad signature, so it gates a pipeline rather than decorating one.
