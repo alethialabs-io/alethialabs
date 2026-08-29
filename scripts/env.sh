@@ -670,7 +670,19 @@ mint_env() {
   local secret1 secret2 secret3 secret4 oidc_key receipt_key snapshot_key bootstrap_token
   secret1="$(openssl rand -hex 32)"
   secret2="$(openssl rand -hex 32)"
-  secret3="$(openssl rand -hex 32)"
+  # BASE64, not hex, and the difference is not cosmetic: this becomes
+  # ALETHIA_CRED_ENCRYPTION_KEY, and apps/console/lib/crypto/secrets.ts does
+  # `Buffer.from(raw, "base64")` and refuses anything that does not decode to exactly 32 bytes.
+  #
+  # `openssl rand -hex 32` is 64 characters; base64-decoding 64 characters yields 48 bytes, so
+  # every env built before this line was fixed rejected its own key:
+  #
+  #   ALETHIA_CRED_ENCRYPTION_KEY must decode to 32 bytes (got 48) (status 400)
+  #
+  # i.e. NO connector could be created in ANY branch env. It went unnoticed because branch envs
+  # cannot sign in (#2953), so nothing reached the connector flow — the sign-in gap was masking
+  # whether the env worked. `-base64 32` is 44 characters and decodes to exactly 32 (#3372).
+  secret3="$(openssl rand -base64 32)"
   secret4="$(openssl rand -hex 16)"
   # base64(PKCS8 RSA-2048 PEM) on ONE line — mirrors rsa_b64() in scripts/bootstrap-secrets.sh.
   oidc_key="$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null | openssl base64 -A)"
