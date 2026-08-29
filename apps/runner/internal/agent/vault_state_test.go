@@ -13,14 +13,13 @@ import (
 )
 
 // stubVaultKubectl installs a recording `kubectl` on PATH for one test. `get` answers with getBody
-// (or exits 0 with NO OUTPUT when empty, standing in for an absent Secret); everything else
+// (or with an EMPTY LIST when it is empty, standing in for an absent Secret); everything else
 // succeeds.
 //
-// Exit 0 and not exit 1, because Read passes `--ignore-not-found`: measured against kubectl on a
-// live cluster, an absent object exits 0 with no output while Forbidden and an unreachable API
-// server exit 1. A stub that failed here would be asserting the shape of the bug this contract
-// replaced. `stubKubectlOutcome` covers the non-zero exits, which this stub deliberately cannot
-// produce.
+// An empty list and not a non-zero exit, because Read LISTS with a field selector: a list has no
+// NotFound path, so a genuinely absent Secret is a 200 carrying `items: []` and every fault exits
+// non-zero. A stub that failed here would be asserting the shape of the bug this contract replaced.
+// `stubKubectlOutcome` covers the non-zero exits, which this stub deliberately cannot produce.
 func stubVaultKubectl(t *testing.T, getBody string) *string {
 	t.Helper()
 	dir := t.TempDir()
@@ -35,7 +34,7 @@ func stubVaultKubectl(t *testing.T, getBody string) *string {
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> " + log + "\n" +
 		"case \"$1\" in\n" +
-		"  get) if [ -s " + body + " ]; then cat " + body + "; fi; exit 0;;\n" +
+		"  get) if [ -s " + body + " ]; then cat " + body + "; else printf '{\"items\":[]}'; fi; exit 0;;\n" +
 		"  apply) cp \"$3\" " + applied + "; exit 0;;\n" +
 		"esac\nexit 0\n"
 	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
@@ -43,6 +42,12 @@ func stubVaultKubectl(t *testing.T, getBody string) *string {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return &applied
+}
+
+// secretList wraps one Secret's base64 `data` entries in the LIST shape kubectl returns for a
+// field-selector read — the shape Read actually parses.
+func secretList(dataEntries string) string {
+	return `{"items":[{"data":{` + dataEntries + `}}]}`
 }
 
 func readFile(t *testing.T, path string) string {
@@ -58,7 +63,7 @@ func readFile(t *testing.T, path string) string {
 // severe: reporting an error fails every fresh cluster, and reporting data that is not there would
 // let the bootstrap think a Vault is already initialised.
 func TestKubeSecretStoreReadTreatsAMissingSecretAsEmpty(t *testing.T) {
-	stubVaultKubectl(t, "") // `get` exits 1
+	stubVaultKubectl(t, "") // `get` returns an empty list
 	got, err := (&kubeSecretStore{namespace: "vault", name: "alethia-vault-state"}).Read(context.Background())
 	if err != nil {
 		t.Fatalf("a missing Secret was reported as an error: %v", err)
@@ -69,8 +74,8 @@ func TestKubeSecretStoreReadTreatsAMissingSecretAsEmpty(t *testing.T) {
 }
 
 func TestKubeSecretStoreReadDecodesTheStoredFields(t *testing.T) {
-	body := `{"data":{"unsealKey":"` + base64.StdEncoding.EncodeToString([]byte("k-1")) +
-		`","initialized":"` + base64.StdEncoding.EncodeToString([]byte("true")) + `"}}`
+	body := secretList(`"unsealKey":"` + base64.StdEncoding.EncodeToString([]byte("k-1")) +
+		`","initialized":"` + base64.StdEncoding.EncodeToString([]byte("true")) + `"`)
 	stubVaultKubectl(t, body)
 
 	got, err := (&kubeSecretStore{namespace: "vault", name: "alethia-vault-state"}).Read(context.Background())
@@ -85,7 +90,7 @@ func TestKubeSecretStoreReadDecodesTheStoredFields(t *testing.T) {
 // A Secret we cannot PARSE is not an empty one. Returning empty here would let the bootstrap
 // re-initialise a live Vault and discard every secret in it.
 func TestKubeSecretStoreReadFailsOnAnUndecodableSecret(t *testing.T) {
-	stubVaultKubectl(t, `{"data":{"unsealKey":"!!!not-base64!!!"}}`)
+	stubVaultKubectl(t, secretList(`"unsealKey":"!!!not-base64!!!"`))
 	if _, err := (&kubeSecretStore{namespace: "vault", name: "s"}).Read(context.Background()); err == nil {
 		t.Error("an undecodable Secret was reported as empty — that would re-initialise a live Vault")
 	}
