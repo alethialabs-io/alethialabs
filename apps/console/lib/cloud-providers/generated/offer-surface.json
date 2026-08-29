@@ -185,12 +185,13 @@
 				"aws",
 				"gcp",
 				"azure",
-				"alibaba"
-			],
-			"unavailableOn": {},
-			"notOfferedOn": [
+				"alibaba",
 				"hetzner"
-			]
+			],
+			"unavailableOn": {
+				"hetzner": "Hetzner has no managed NoSQL service, so this table runs as an in-cluster ScyllaDB. Scylla backs up on a schedule rather than continuously, so there is no point-in-time restore to offer. Every other cloud here supports it."
+			},
+			"notOfferedOn": []
 		},
 		{
 			"kind": "queue",

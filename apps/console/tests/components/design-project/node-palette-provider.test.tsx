@@ -3,8 +3,9 @@
 
 // The Add palette derives its service groups from the node registry and filters them by the
 // project root's effective provider (addableKindsFor) — the same gate the ⌘K menu and canvas
-// controls use. On Hetzner, topic (SNS-like) and nosql (DynamoDB-like) have no backing service,
-// so their rows must be absent; on AWS the full catalog (plus the "Soon" roadmap rows) renders.
+// controls use. Hetzner now refuses NO kind (nosql, the last one, left with #3228), so the filter's
+// current job is to be a no-op — and that is asserted by rendering both providers and comparing the
+// kind rows, rather than by re-listing labels a reader would have to trust.
 
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -50,13 +51,19 @@ beforeEach(() => {
 });
 
 describe("NodePalette — per-provider kind filtering", () => {
-	it("hides nosql on a Hetzner project, and shows topic now that NATS carries it", () => {
+	it("offers every kind on a Hetzner project, nosql included", () => {
 		seedCanvas("hetzner");
 		renderPalette();
 
-		// nosql is the ONE kind still refused on Hetzner — ScyllaDB fits it, but scylla-operator's
-		// fail-closed webhook needs cert-manager, which this platform installs conditionally.
-		expect(screen.queryByText("NoSQL table")).not.toBeInTheDocument();
+		// nosql was the LAST kind Hetzner refused, and it is offered now (#3228). ScyllaDB always
+		// fitted the kind — what blocked it was cert-manager's install gate, which now answers
+		// "does the CONTROLLER install" separately from "can it ISSUE".
+		//
+		// Asserted POSITIVELY. The previous version of this test asserted an ABSENCE, which is why
+		// it survived the change that made the absence wrong: `queryByText(...).not.toBeInTheDocument()`
+		// passes just as happily when the label is renamed, the palette fails to render, or the
+		// component throws — three states that have nothing to do with the claim.
+		expect(screen.getByText("NoSQL table")).toBeInTheDocument();
 		// Topic IS offered: it maps to an in-cluster NATS release with JetStream.
 		expect(screen.getByText("Topic")).toBeInTheDocument();
 

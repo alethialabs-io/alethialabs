@@ -56,6 +56,9 @@ export const E2E_MAX_CONFIG_HETZNER_COMPONENTS = {
 	// Mirrors MaxConfigKinds' topic Apply on the hetzner column: maxConfigTopicName is "events".
 	// Same read-back guard as every row above.
 	topics: [{ name: "events" }],
+	// Mirrors MaxConfigKinds' nosql Apply on the hetzner column, whose table is named "items".
+	// Same read-back guard as every row above.
+	nosqlTables: [{ name: "items" }],
 } as const;
 
 /**
@@ -87,6 +90,7 @@ export interface HetznerDataServiceFixture {
 		registries: { name: string }[];
 		secrets: { name: string }[];
 		topics: { name: string }[];
+		nosqlTables: { name: string }[];
 	};
 	/** The install specs a Hetzner deploy of those components would carry. */
 	addons: AddOnInstallSpec[];
@@ -122,6 +126,9 @@ export function exportHetznerDataServiceFixture(): HetznerDataServiceFixture {
 		})),
 		secrets: E2E_MAX_CONFIG_HETZNER_COMPONENTS.secrets.map((s) => ({
 			name: s.name,
+		})),
+		nosqlTables: E2E_MAX_CONFIG_HETZNER_COMPONENTS.nosqlTables.map((n) => ({
+			name: n.name,
 		})),
 		topics: E2E_MAX_CONFIG_HETZNER_COMPONENTS.topics.map((t) => ({
 			name: t.name,

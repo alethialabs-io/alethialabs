@@ -70,6 +70,9 @@ type hetznerDataServiceComponents struct {
 	Topics []struct {
 		Name string `json:"name"`
 	} `json:"topics"`
+	NosqlTables []struct {
+		Name string `json:"name"`
+	} `json:"nosqlTables"`
 }
 
 // hetznerDataServiceFixture is the generated artifact: what was mapped, and what it mapped to.
@@ -111,12 +114,13 @@ func loadHetznerDataServiceFixture() (hetznerDataServiceFixture, error) {
 	}
 	if len(fx.Components.Databases) == 0 || len(fx.Components.Caches) == 0 ||
 		len(fx.Components.Queues) == 0 || len(fx.Components.Registries) == 0 ||
-		len(fx.Components.Secrets) == 0 || len(fx.Components.Topics) == 0 {
+		len(fx.Components.Secrets) == 0 || len(fx.Components.Topics) == 0 ||
+		len(fx.Components.NosqlTables) == 0 {
 		return hetznerDataServiceFixture{}, fmt.Errorf(
-			"hetzner data-service fixture declares %d database(s), %d cache(s), %d queue(s), %d registry/ies, %d secret(s), %d topic(s) — all SIX kinds are CarriedInCluster on hetzner, so a missing one makes that kind unprovable (%s)",
+			"hetzner data-service fixture declares %d database(s), %d cache(s), %d queue(s), %d registry/ies, %d secret(s), %d topic(s), %d nosql table(s) — all SEVEN kinds are CarriedInCluster on hetzner, so a missing one makes that kind unprovable (%s)",
 			len(fx.Components.Databases), len(fx.Components.Caches), len(fx.Components.Queues),
 			len(fx.Components.Registries), len(fx.Components.Secrets), len(fx.Components.Topics),
-			hetznerDataServicesRegenerate)
+			len(fx.Components.NosqlTables), hetznerDataServicesRegenerate)
 	}
 	// One Application per component, plus the CNPG operator that owns the Cluster CRD. Derived from
 	// the components rather than written down: a hard-coded total has to be edited by hand every
@@ -130,12 +134,19 @@ func loadHetznerDataServiceFixture() (hetznerDataServiceFixture, error) {
 	if len(fx.Components.Secrets) > 0 {
 		vaultSpecs = 1
 	}
+	// scylla-operator is the SECOND operator, counted the same way the CNPG one is: once, when any
+	// nosql node exists, because it owns the ScyllaCluster CRD every nosql Application depends on.
+	scyllaOperatorSpecs := 0
+	if len(fx.Components.NosqlTables) > 0 {
+		scyllaOperatorSpecs = 1
+	}
 	wantSpecs := len(fx.Components.Databases) + len(fx.Components.Caches) +
 		len(fx.Components.Queues) + len(fx.Components.Registries) +
-		len(fx.Components.Topics) + vaultSpecs + 1
+		len(fx.Components.Topics) + len(fx.Components.NosqlTables) +
+		vaultSpecs + scyllaOperatorSpecs + 1
 	if len(fx.AddOns) != wantSpecs {
 		return hetznerDataServiceFixture{}, fmt.Errorf(
-			"hetzner data-service fixture holds %d install spec(s), expected %d (one per component, one Vault for all secrets, + the cnpg-operator) — the fixture is stale or partial (%s)",
+			"hetzner data-service fixture holds %d install spec(s), expected %d (one per component, one Vault for all secrets, + the cnpg-operator and the scylla-operator) — the fixture is stale or partial (%s)",
 			len(fx.AddOns), wantSpecs, hetznerDataServicesRegenerate)
 	}
 	for i, a := range fx.AddOns {
