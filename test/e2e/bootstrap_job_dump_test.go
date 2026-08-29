@@ -70,3 +70,27 @@ func TestParseBootstrapJobsOnAClusterWithNone(t *testing.T) {
 		t.Fatalf("want none, got %+v", jobs)
 	}
 }
+
+// A Job under a backoffLimit accumulates `failed` WHILE IT RETRIES, so failures plus an active pod
+// is a Job that may still complete. Reporting FAILED there states a verdict the Job has not
+// reached — and on the vault bootstrap that is the difference between "it is retrying" and "it is
+// dead", which is the whole question the dump is asked.
+func TestBootstrapJobVerdictPrefersActiveOverAccumulatedFailures(t *testing.T) {
+	j := bootstrapJob{Failed: 2, Active: 1}
+	got := j.Verdict()
+	if !strings.Contains(got, "still running") {
+		t.Errorf("Verdict() = %q — an active Job was called failed", got)
+	}
+	// And the failures are not hidden: they are the reason it is on its third attempt.
+	if !strings.Contains(got, "2 prior pod failure(s)") {
+		t.Errorf("Verdict() = %q — the prior failures were dropped", got)
+	}
+	// With no active pod left, it IS failed.
+	if v := (bootstrapJob{Failed: 3}).Verdict(); !strings.Contains(v, "FAILED") {
+		t.Errorf("Verdict() = %q — a Job with no attempts left must read as failed", v)
+	}
+	// Succeeded still wins over everything: a Job that retried and then worked is Complete.
+	if v := (bootstrapJob{Succeeded: 1, Failed: 2}).Verdict(); v != "Complete" {
+		t.Errorf("Verdict() = %q, want Complete", v)
+	}
+}
