@@ -167,19 +167,19 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**22 of 30 proof cells are proven.** 0 failing · 0 stale (cause fixed, needs a re-run) · 0 blocked · 8 never run.
+**22 of 35 proof cells are proven.** 0 failing · 0 stale (cause fixed, needs a re-run) · 0 blocked · 13 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
 ### Proof grid — cloud × dimension
 
-| cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
-| **gcp** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| **azure** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
-| **alibaba** | · | · | · | · | · | · |
-| **hetzner** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 | CLI-driven |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **aws** | ✅ | ✅ | · | ✅ | ✅ | ✅ | · |
+| **gcp** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
+| **azure** | ✅ | ✅ | · | ✅ | ✅ | ✅ | · |
+| **alibaba** | · | · | · | · | · | · | · |
+| **hetzner** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 
 Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · ⚠️ contested · — ceiling · 🔶 deferred · 💰 cost
 
@@ -226,6 +226,8 @@ Failing cells rank above never-run ones: a red cell already has a diagnosed caus
 1. `alibaba/gitops` — never_run
 1. `alibaba/byo-iac` — never_run
 1. `alibaba/day2` — never_run
+1. `aws/cli-demo` — never_run
+1. `gcp/cli-demo` — never_run
 
 </details>
 
@@ -278,6 +280,7 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | GitOps repos | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ✅ wired: `E2E_ARGO_APPS_REPO`<br>✅ wired: `E2E_GIT_TOKEN` | a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource |
 | BYO-IaC | `ALETHIA_E2E_BYO_IAC` | ✅ by dimension: `ALETHIA_E2E_BYO_IAC` | a customer OpenTofu root module is refused when unsafe, applied through the state proxy, drifts, heals and destroys — with state cleared |
 | day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>✅ wired: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
+| CLI-driven | `ALETHIA_E2E_CLI_DEMO_PROVISION` | ✅ by dimension: `ALETHIA_E2E_CLI_DEMO_PROVISION` | a floor-shaped cluster provisioned through the real `alethia` binary rather than a seeded job row — the ACTOR, not the surface area |
 
 ### Open REDs
 
