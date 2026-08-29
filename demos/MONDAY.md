@@ -111,6 +111,7 @@ the blocker) · *(blank)* = not yet attempted.
 | 9 | Browser pass — signed-in surface (overview · clusters · new project) | PASS | `demos/monday-evidence/20260829-new-project-placement-defaults.png`; 2 defects found → rows 9a/9b | 2026-08-29 |
 | 9a | Overview "Recent jobs · last 24h" showed month-old jobs | FIXED | commit `c645c8d2` — no time window exists anywhere; label now "latest 5" | 2026-08-29 |
 | 9b | New-project default shape hits the orphan-Fabric bug on PROD | CONFIRMED | screenshot: production+staging `Dedicated`, dev+preview `Namespace` — needs M2 to reach prod | 2026-08-29 |
+| 9c | Drift detection dead on a prod env for 5+ weeks | FAIL | [#3351](https://github.com/alethialabs-io/alethialabs/issues/3351) — 5 weekly FAILEDs are the first thing on the org overview | 2026-08-29 |
 | 10 | Browser pass — signed-in to Deploy CTA | | | |
 | 11 | Browser pass — full provisioning journey | | | |
 | 12 | Browser pass — post-deploy day-2 surfaces | | | |

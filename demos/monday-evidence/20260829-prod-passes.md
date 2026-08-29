@@ -51,9 +51,15 @@ deploy. This is the default path, not an edge case.
   `router.push('/{org}/~/jobs/{id}')`. A tooling artifact, not a product bug — recorded so nobody
   re-files it.
 
+7. **#3351 — drift detection has been dead on `a640` for 5+ weeks.** Five consecutive weekly
+   `Detect Drift` jobs abort in ~14s: `tofu plan -refresh-only` hits `Invalid index … is empty tuple`
+   on a counted resource that is in the runner image's template but has no instance in this
+   environment's state. The failing line **migrates** (July: `outputs.tf:131` external_dns identity →
+   August: `aks.tf:16` aks identity) as the template gains resources the environment never applied.
+   Checked and ruled out: a guard/count predicate mismatch — both use the same predicate. An earlier
+   drift on this project succeeded, on a different runner.
+
 ## Worth a look, not filed
 
 - The primary CTAs on `/{org}/~/new` ("Start from a template", "Blank project") and the job rows
   expose **no accessible name** in the a11y tree — a screen reader reads them as "button".
-- Five consecutive weekly **Detect Drift** failures on `a640` (Azure) sit on the org overview. Cause
-  not established; the same runner runs Azure plans successfully, so it is not #3348.
