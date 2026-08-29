@@ -57,10 +57,20 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # across clouds. hetzner is chosen because it is the harness's own default cloud, so this file and
 # addonCatalogFixture() agree on which fixture "the" fixture is.
 fixture="$repo_root/test/e2e/fixtures/addon_catalog.hetzner.json"
+# ── AND THE DATA-SERVICE SPECS (#3299). ────────────────────────────────────────────────────────
+# The marketplace catalogue is not the only place this repo renders a chart. `hetzner-services.ts`
+# renders nine more — the in-cluster carriers for the database, cache, queue, registry, secret,
+# topic and nosql node KINDS — and Harbor is rendered from BOTH. #2846's fix (stop shipping the
+# chart's published `secretKey` and registry password) went to the marketplace copy only, because
+# this check has never seen the other one. #3305 extended the render-determinism sweep the same way
+# and found two undeclared defects on its first run; this is the same extension on the credential
+# question, which is the one that matters more.
+ds_fixture="$repo_root/test/e2e/fixtures/hetzner_data_services.json"
 allowfile="$repo_root/scripts/addons/published-defaults-allowed.txt"
 
 command -v helm >/dev/null 2>&1 || { echo "check-published-defaults: helm is not installed" >&2; exit 2; }
 [ -r "$fixture" ] || { echo "check-published-defaults: no fixture at $fixture" >&2; exit 2; }
+[ -r "$ds_fixture" ] || { echo "check-published-defaults: no data-service fixture at $ds_fixture" >&2; exit 2; }
 
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
@@ -72,20 +82,58 @@ const raw = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
 const specs = Array.isArray(raw) ? raw : (raw.addons || raw.specs || Object.values(raw)[0]);
 if (!Array.isArray(specs)) throw new Error("fixture is not a list of install specs");
 const dir = process.argv[2];
+// The filename key is namespaced by SOURCE; the helm RELEASE NAME stays the id that ships, because
+// a chart can derive generated content from it. The two fixtures are independent id spaces — the
+// marketplace `vault` is a different release from the data-service `secrets-vault`.
+const prefix = process.argv[3];
 const lines = [];
 for (const s of specs) {
   if (!s.id || !s.chart || !s.chartRepo || !s.version) {
-    throw new Error(`add-on ${s.id ?? "<unnamed>"} is missing chart coordinates`);
+    throw new Error(`spec ${s.id ?? "<unnamed>"} is missing chart coordinates`);
   }
-  fs.writeFileSync(`${dir}/${s.id}.values.json`, JSON.stringify(s.values ?? {}));
-  lines.push([s.id, s.chartRepo, s.chart, s.version, s.namespace || s.id].join(" "));
+  const key = prefix + s.id;
+  fs.writeFileSync(`${dir}/${key}.values.json`, JSON.stringify(s.values ?? {}));
+  lines.push([key, s.chartRepo, s.chart, s.version, s.namespace || s.id, s.id].join(" "));
 }
-fs.writeFileSync(`${dir}/charts.txt`, lines.join("\n") + "\n");
-' "$fixture" "$workdir"
+fs.appendFileSync(`${dir}/charts.txt`, lines.join("\n") + "\n");
+process.stdout.write(String(lines.length));
+' "$fixture" "$workdir" "" > "$workdir/n.catalog"
+
+# shellcheck disable=SC2016
+node -e '
+const fs = require("fs");
+const raw = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const specs = Array.isArray(raw) ? raw : (raw.addons || raw.specs || Object.values(raw)[0]);
+if (!Array.isArray(specs)) throw new Error("data-service fixture is not a list of install specs");
+const dir = process.argv[2];
+const prefix = process.argv[3];
+const lines = [];
+for (const s of specs) {
+  if (!s.id || !s.chart || !s.chartRepo || !s.version) {
+    throw new Error(`spec ${s.id ?? "<unnamed>"} is missing chart coordinates`);
+  }
+  const key = prefix + s.id;
+  fs.writeFileSync(`${dir}/${key}.values.json`, JSON.stringify(s.values ?? {}));
+  lines.push([key, s.chartRepo, s.chart, s.version, s.namespace || s.id, s.id].join(" "));
+}
+fs.appendFileSync(`${dir}/charts.txt`, lines.join("\n") + "\n");
+process.stdout.write(String(lines.length));
+' "$ds_fixture" "$workdir" "hetzner-service." > "$workdir/n.dataservice"
+
+# EACH SOURCE must have yielded something. One combined count would let the data-service half go to
+# zero while the total still looked healthy — the "found nothing == nothing wrong" collapse this
+# file already guards against for the catalogue alone.
+for src in catalog dataservice; do
+  n="$(cat "$workdir/n.$src" 2>/dev/null || echo 0)"
+  if [ "${n:-0}" -eq 0 ]; then
+    echo "check-published-defaults: the $src fixture yielded ZERO specs — that half was not checked" >&2
+    exit 2
+  fi
+done
 
 total="$(grep -c '[^[:space:]]' "$workdir/charts.txt" || true)"
 if [ "$total" -eq 0 ]; then
-  echo "check-published-defaults: the fixture yielded ZERO add-ons — nothing was checked" >&2
+  echo "check-published-defaults: the fixtures yielded ZERO add-ons — nothing was checked" >&2
   exit 2
 fi
 
@@ -105,9 +153,9 @@ if [ -r "$uncheckfile" ]; then
 fi
 is_uncheckable() { printf '%s\n' "$uncheckable" | grep -qxF "$1"; }
 
-while read -r id repo chart version ns; do
-  [ -n "$id" ] || continue
-  helm repo add "pd-$id" "$repo" >/dev/null 2>&1 || true
+while read -r key repo chart version ns id; do
+  [ -n "$key" ] || continue
+  helm repo add "pd-$key" "$repo" >/dev/null 2>&1 || true
 done < "$workdir/charts.txt"
 chart_fetch_repo_update "$workdir/repo-update.err" || true
 
@@ -122,87 +170,136 @@ now_checkable=""
 seen_file="$workdir/seen.txt"
 : > "$seen_file"
 
-while read -r id repo chart version ns; do
-  [ -n "$id" ] || continue
+while read -r key repo chart version ns id; do
+  [ -n "$key" ] || continue
 
   # OURS: the chart as the runner would install it. THEIRS: the same chart at its own defaults —
   # the published reference, which is why no maintained list of bad values is needed.
   # Only the FETCH is retried: a chart that downloads and then renders wrongly still fails on
   # the first attempt, so the guard is not weakened. See scripts/addons/lib/chart-fetch.sh.
   render_ours() {
-    helm template "addon-$id" "pd-$id/$chart" --version "$version" -n "$ns" \
-      --values "$workdir/$id.values.json" --kube-version 1.30.0 \
-      > "$workdir/$id.ours.yaml" 2> "$workdir/$id.err" || true
-    [ -s "$workdir/$id.ours.yaml" ]
+    helm template "addon-$id" "pd-$key/$chart" --version "$version" -n "$ns" \
+      --values "$workdir/$key.values.json" --kube-version 1.30.0 \
+      > "$workdir/$key.ours.yaml" 2> "$workdir/$key.err" || true
+    [ -s "$workdir/$key.ours.yaml" ]
   }
   attempt=1
   while :; do
     render_ours && break
-    if [ "$attempt" -ge "$CHART_FETCH_ATTEMPTS" ] || ! chart_fetch_is_net_err "$workdir/$id.err"; then
+    if [ "$attempt" -ge "$CHART_FETCH_ATTEMPTS" ] || ! chart_fetch_is_net_err "$workdir/$key.err"; then
       break
     fi
     sleep $((attempt * 5))
     attempt=$((attempt + 1))
   done
-  helm template "addon-$id" "pd-$id/$chart" --version "$version" -n "$ns" \
-    --kube-version 1.30.0 > "$workdir/$id.theirs.yaml" 2>> "$workdir/$id.err" || true
+  helm template "addon-$id" "pd-$key/$chart" --version "$version" -n "$ns" \
+    --kube-version 1.30.0 > "$workdir/$key.theirs.yaml" 2>> "$workdir/$key.err" || true
 
-  if [ ! -s "$workdir/$id.ours.yaml" ]; then
+  if [ ! -s "$workdir/$key.ours.yaml" ]; then
     # #2754: an unreachable host says nothing about the add-on's defaults.
-    if chart_fetch_is_net_err "$workdir/$id.err"; then
-      unreachable="$unreachable $id"
-      echo "COULD NOT FETCH $id — $(chart_fetch_host "$workdir/$id.err") unreachable after ${CHART_FETCH_ATTEMPTS} attempts"
+    if chart_fetch_is_net_err "$workdir/$key.err"; then
+      unreachable="$unreachable $key"
+      echo "COULD NOT FETCH $key — $(chart_fetch_host "$workdir/$key.err") unreachable after ${CHART_FETCH_ATTEMPTS} attempts"
     else
-      failed="$failed $id"
-      echo "RENDER FAILED  $id — $(head -1 "$workdir/$id.err" | cut -c1-110)"
+      failed="$failed $key"
+      echo "RENDER FAILED  $key — $(head -1 "$workdir/$key.err" | cut -c1-110)"
     fi
     continue
   fi
-  if [ ! -s "$workdir/$id.theirs.yaml" ]; then
+  if [ ! -s "$workdir/$key.theirs.yaml" ]; then
     # A chart that REQUIRES values cannot be rendered at its own defaults, so there is no published
     # reference to compare against. loki and opentelemetry-collector are both like this. That is a
     # real limit of this method rather than a fault, and it is reported as "not checked" — the one
     # thing it must never do is print `clean`.
-    uncomparable="$uncomparable $id"
-    if is_uncheckable "$id"; then
-      echo "NOT CHECKED    $id — declared: cannot render at its own defaults"
+    uncomparable="$uncomparable $key"
+    if is_uncheckable "$key"; then
+      echo "NOT CHECKED    $key — declared: cannot render at its own defaults"
     else
-      new_uncheckable="$new_uncheckable $id"
-      echo "NEWLY UNCHECKABLE  $id — the chart cannot render at its own defaults, so there is no"
-      echo "                   published reference: $(head -1 "$workdir/$id.err" | cut -c1-84)"
+      new_uncheckable="$new_uncheckable $key"
+      echo "NEWLY UNCHECKABLE  $key — the chart cannot render at its own defaults, so there is no"
+      echo "                   published reference: $(head -1 "$workdir/$key.err" | cut -c1-84)"
     fi
     continue
   fi
 
-  hits="$(ADDON_ID="$id" python3 - "$workdir/$id.ours.yaml" "$workdir/$id.theirs.yaml" <<'PY'
+  hits="$(ADDON_ID="$key" python3 - "$workdir/$key.ours.yaml" "$workdir/$key.theirs.yaml" <<'PY'
 import base64, os, re, sys
 
 def secret_values(path):
-    """decoded value -> set of data keys, across every Secret in the document.
+    """value -> set of data keys, across every Secret in the document.
 
-    Returns (values, decoded_any). `decoded_any` counts every entry that base64-decoded, BEFORE the
-    length filter — it answers "can this scan still read this chart", which is a different question
+    BOTH `data:` (base64) and `stringData:` (plaintext) are read. The extraction-broke comment below
+    names a stringData block as a cause, and it was right: the NATS chart the `topic` node installs
+    renders its only Secret as `stringData`, so this scan reported it unreadable and checked nothing
+    (#3299). A plaintext credential is exactly as published as a base64 one.
+
+    Returns (values, read_any). `read_any` counts every entry this scan could READ, BEFORE the
+    length filter — it answers "can this scan still see this chart", which is a different question
     from "did anything survive as a credential candidate".
     """
-    found, in_secret, decoded_any = {}, False, 0
-    for line in open(path, encoding="utf-8", errors="replace"):
+    found, in_secret, read_any = {}, False, 0
+    block = None          # "data" | "stringData" | None — which mapping we are inside
+    pending_key = None    # the key of a block scalar being gathered
+    pending_lines = []
+
+    def flush():
+        nonlocal pending_key, pending_lines, read_any
+        if pending_key is not None:
+            val = "\n".join(pending_lines).strip()
+            if val:
+                read_any += 1
+                if len(val) <= 128:
+                    found.setdefault(val, set()).add(pending_key)
+        pending_key, pending_lines = None, []
+
+    for raw in open(path, encoding="utf-8", errors="replace"):
+        line = raw.rstrip("\n")
         if line.startswith("kind: Secret"):
-            in_secret = True
-        elif line.startswith("kind: ") or line.startswith("---"):
-            in_secret = False
-        m = re.match(r'^  ([A-Za-z0-9_.\-]+): "?([A-Za-z0-9+/=]{4,})"?\s*$', line)
-        if in_secret and m:
+            flush(); in_secret, block = True, None
+            continue
+        if line.startswith("kind: ") or line.startswith("---"):
+            flush(); in_secret, block = False, None
+            continue
+        if not in_secret:
+            continue
+        # A block scalar's continuation lines are indented deeper than its key.
+        if pending_key is not None:
+            if line.startswith("    ") or line.strip() == "":
+                pending_lines.append(line[4:] if line.startswith("    ") else "")
+                continue
+            flush()
+        if re.match(r"^(data|stringData):\s*$", line):
+            block = line.split(":", 1)[0]
+            continue
+        if re.match(r"^[A-Za-z]", line):   # left the Secret's top-level mapping
+            block = None
+            continue
+        if block is None:
+            continue
+        m = re.match(r'^  ([A-Za-z0-9_.\-]+): (\|-?|>-?)\s*$', line)
+        if m:
+            pending_key = m.group(1)
+            pending_lines = []
+            continue
+        m = re.match(r'^  ([A-Za-z0-9_.\-]+): "?(.*?)"?\s*$', line)
+        if not m or m.group(2) == "":
+            continue
+        key, val = m.group(1), m.group(2)
+        if block == "data":
+            if not re.fullmatch(r"[A-Za-z0-9+/=]{4,}", val):
+                continue
             try:
-                dec = base64.b64decode(m.group(2)).decode("utf-8", "strict")
+                val = base64.b64decode(val).decode("utf-8", "strict")
             except Exception:
                 continue
-            decoded_any += 1
-            # Long values are certificates, keys and embedded config files — not shipped credential
-            # constants, and a value we generate would not match theirs anyway. Note this filter is
-            # applied AFTER counting: a value excluded here was read perfectly well.
-            if 0 < len(dec) <= 128:
-                found.setdefault(dec, set()).add(m.group(1))
-    return found, decoded_any
+        read_any += 1
+        # Long values are certificates, keys and embedded config files — not shipped credential
+        # constants, and a value we generate would not match theirs anyway. Applied AFTER counting:
+        # a value excluded here was read perfectly well.
+        if 0 < len(val) <= 128:
+            found.setdefault(val, set()).add(key)
+    flush()
+    return found, read_any
 
 # Metadata keys that live at the same indent as data entries and are not data.
 _META = re.compile(r"^  (name|namespace|labels|annotations|type|apiVersion|kind|data|stringData):")
@@ -225,7 +322,7 @@ def candidate_data_lines(path):
             n += 1
     return n
 
-ours, ours_decoded = secret_values(sys.argv[1])
+ours, ours_read = secret_values(sys.argv[1])
 theirs, _ = secret_values(sys.argv[2])
 addon = os.environ["ADDON_ID"]
 
@@ -237,12 +334,12 @@ addon = os.environ["ADDON_ID"]
 # Keyed on candidate LINES rather than on Secret documents, because a Secret with an empty `data:`
 # block is legitimately empty: trivy-operator and velero both render one, and the first version of
 # this check called them broken.
-# Keyed on whether anything DECODED, not on whether anything survived the length filter. A chart
+# Keyed on whether anything was READ, not on whether anything survived the length filter. A chart
 # whose only Secret holds one long embedded config — kube-prometheus-stack, once Grafana reads its
 # admin credential from a runner-seeded Secret and stops rendering its own — decodes fine and
 # legitimately yields no credential candidates. Reporting that as a broken extractor is a false
 # alarm on a chart that is working exactly as intended.
-if candidate_data_lines(sys.argv[1]) > 0 and ours_decoded == 0:
+if candidate_data_lines(sys.argv[1]) > 0 and ours_read == 0:
     print(f"{addon}\t!EXTRACTION-YIELDED-NOTHING")
     sys.exit(0)
 
@@ -253,13 +350,13 @@ PY
 )"
 
   if [ -z "$hits" ]; then
-    echo "clean          $id"
+    echo "clean          $key"
     continue
   fi
 
   if printf '%s' "$hits" | grep -q '!EXTRACTION-YIELDED-NOTHING'; then
-    unreadable="$unreadable $id"
-    echo "EXTRACTION BROKE  $id — the render contains Secret documents but none decoded."
+    unreadable="$unreadable $key"
+    echo "EXTRACTION BROKE  $key — the render contains Secret documents but none decoded."
     echo "                  The scan cannot see this chart any more; it has NOT been checked."
     continue
   fi
@@ -292,7 +389,7 @@ if [ -n "$declared" ]; then
 fi
 
 echo
-echo "checked $total add-on(s)"
+echo "checked $total chart render(s): $(cat "$workdir/n.catalog") marketplace add-on(s) + $(cat "$workdir/n.dataservice") hetzner data-service spec(s)"
 
 # And the other direction: a declared-uncheckable add-on that now renders is coverage REGAINED, and
 # the list must shrink to record it.

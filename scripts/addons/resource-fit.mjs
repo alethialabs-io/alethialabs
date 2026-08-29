@@ -6,7 +6,13 @@
 import fs from "node:fs";
 import { execSync } from "node:child_process";
 
-const [fixturePath, allowPath, ceilingArg] = process.argv.slice(2);
+// Usage: resource-fit.mjs <allowlist> <ceilingMi> <fixture[::prefix]> [<fixture[::prefix]> …]
+//
+// MORE THAN ONE FIXTURE, because the marketplace catalogue is not the only place this repo renders
+// a chart: `hetzner-services.ts` renders nine more for the data-service node KINDS (#3299). Ids are
+// namespaced per source, since the two fixtures are independent id spaces — the marketplace `vault`
+// is a different release from the data-service `secrets-vault`.
+const [allowPath, ceilingArg, ...fixtureArgs] = process.argv.slice(2);
 const ceilingMi = Number(ceilingArg);
 
 /** Kubernetes quantity → MiB. Returns null for anything unparseable, which is reported, never
@@ -21,11 +27,27 @@ function toMi(q) {
 	return table[unit] !== undefined ? v * table[unit] : null;
 }
 
-const raw = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
-const specs = Array.isArray(raw) ? raw : (raw.addons || raw.specs || Object.values(raw)[0]);
-if (!Array.isArray(specs) || specs.length === 0) {
-	console.error("::error::check-resource-fit: the fixture yielded no add-ons — nothing was checked");
+if (fixtureArgs.length === 0) {
+	console.error("::error::check-resource-fit: no fixture given — nothing would be checked");
 	process.exit(1);
+}
+const specs = [];
+const perSource = [];
+for (const arg of fixtureArgs) {
+	const [path, prefix = ""] = arg.split("::");
+	const raw = JSON.parse(fs.readFileSync(path, "utf8"));
+	const list = Array.isArray(raw) ? raw : (raw.addons || raw.specs || Object.values(raw)[0]);
+	// PER SOURCE, not on the total. One combined count would let a half go to zero — a renamed
+	// fixture key, an exporter writing `[]` — while the number still looked healthy, which is the
+	// "found nothing == nothing wrong" collapse this guard family exists to refuse.
+	if (!Array.isArray(list) || list.length === 0) {
+		console.error(`::error::check-resource-fit: ${path} yielded no specs — that half was not checked`);
+		process.exit(1);
+	}
+	// The `id` is namespaced for reporting and for the allowlist; `release` keeps the name that
+	// actually ships, because a chart can derive rendered content from its release name.
+	for (const s of list) specs.push({ ...s, id: prefix + s.id, release: s.id });
+	perSource.push(`${list.length} from ${path.split("/").pop()}`);
 }
 
 const declared = new Map();
@@ -52,7 +74,7 @@ for (const s of specs) {
 	for (let attempt = 0; attempt < 3 && rendered === null; attempt++) {
 		try {
 			rendered = execSync(
-				`helm template ${s.id} ${s.chart} --repo ${s.chartRepo} --version ${s.version} -n ${s.namespace || s.id} -f ${tmp}/values.json`,
+				`helm template ${s.release ?? s.id} ${s.chart} --repo ${s.chartRepo} --version ${s.version} -n ${s.namespace || s.release || s.id} -f ${tmp}/values.json`,
 				{ maxBuffer: 1 << 28, stdio: ["ignore", "pipe", "pipe"] },
 			).toString();
 		} catch (e) {
@@ -109,10 +131,10 @@ for (const id of declared.keys()) {
 	}
 }
 
-console.log(`\nchecked ${specs.length} add-on(s), ${podsSeen} pod spec(s), ceiling ${ceilingMi}Mi per pod`);
+console.log(`\nchecked ${specs.length} chart render(s) (${perSource.join(" + ")}), ${podsSeen} pod spec(s), ceiling ${ceilingMi}Mi per pod`);
 if (fail.length > 0) {
 	for (const f of fail) console.error(`::error::check-resource-fit: ${f}`);
 	console.error(`\ncheck-resource-fit: ${fail.length} problem(s).`);
 	process.exit(1);
 }
-console.log("OK — every add-on's largest pod fits under the ceiling, and the allowlist is exact");
+console.log("OK — every chart this repo renders, from either source, has its largest pod under the ceiling, and the allowlist is exact");
