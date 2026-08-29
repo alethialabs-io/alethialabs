@@ -49,3 +49,27 @@ describe("RecentJobsCard fetch-error state", () => {
 		expect(screen.queryByText(/Couldn't load/i)).not.toBeInTheDocument();
 	});
 });
+
+// The header said "last 24h" while neither this component nor useJobsQuery applies any time
+// window — it renders the newest MAX_ROWS jobs whatever their age. On the production overview that
+// read as five drift jobs failing today when the newest was a week old and the oldest a month.
+describe("RecentJobsCard header label", () => {
+	it("does not claim a time window it does not apply", () => {
+		const old = new Date("2026-07-01T00:00:00Z").toISOString();
+		q.data = [
+			{
+				id: "j1",
+				status: "FAILED",
+				type: "DETECT_DRIFT",
+				created_at: old,
+				completed_at: old,
+				project_name: "a640",
+			},
+		];
+		render(<RecentJobsCard orgSlug="acme" />);
+		expect(screen.queryByText(/last 24h/i)).not.toBeInTheDocument();
+		// A month-old job is still rendered — which is the behaviour, and why the label must not
+		// promise recency.
+		expect(screen.getByText("a640")).toBeInTheDocument();
+	});
+});

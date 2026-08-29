@@ -42,8 +42,13 @@ export function RecentJobsCard({ orgSlug }: { orgSlug: string }) {
 		<div className="rounded-lg border bg-card shadow-sm">
 			<div className="flex min-h-[50px] items-center gap-2 border-b px-4 py-2.5">
 				<span className="font-display text-sm font-semibold">Recent jobs</span>
+				{/* Describes what the card SHOWS. It said "last 24h", but there is no time window
+				    anywhere in this component or in useJobsQuery — it renders the newest MAX_ROWS
+				    jobs whatever their age, so an org whose last deploy was a month ago read as
+				    having failed five jobs today. A window would be worse than the label: it would
+				    empty the card for exactly the orgs with the least to look at. */}
 				<span className="font-mono text-[10px] text-muted-foreground">
-					last 24h
+					latest {MAX_ROWS}
 				</span>
 				<Link
 					href={globalHref(orgSlug, "jobs")}
