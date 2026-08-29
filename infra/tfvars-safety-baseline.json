@@ -1,0 +1,89 @@
+{
+	"_doc": [
+		"Empty variable defaults that reach a decision and are KNOWN — read by scripts/check-tfvars-safety.mjs.",
+		"",
+		"WHAT AN ENTRY MEANS. Someone looked at this (stack, variable) pair and wrote down what taking",
+		"the default costs. It does not mean the default is right; several entries below say the",
+		"opposite and name the issue that will decide. It means the decision is recorded rather than",
+		"discovered during an apply.",
+		"",
+		"WHY A BASELINE AND NOT AN EXEMPTION LIST. #3108 found 36 sites across 21 stacks. Fixing all of",
+		"them in one change would mean committing values nobody has checked against a live account,",
+		"which is the failure #3105 was written to prevent, not a fix for it. So the guard ratchets: a",
+		"NEW empty default reaching a decision fails immediately, and the backlog is visible and",
+		"shrinking rather than implicit.",
+		"",
+		"THE KEY IS (stack, variable), NOT file:line. A line number drifts on any edit above it, and the",
+		"decision belongs to the variable — so an entry covers every site in that stack which reads it.",
+		"",
+		"A STALE ENTRY FAILS. When a variable stops being a finding — its input gets committed, or it",
+		"becomes REQUIRED — this entry no longer describes anything and the check says so. Remove it in",
+		"the PR that fixed it; that diff is the review. A baseline that outlives what it describes is",
+		"how a ratchet goes slack, and it leaves the next person adding the same defect pre-forgiven.",
+		"",
+		"NOT IN HERE, because they were fixed rather than recorded: aws-oidc (#3105) and, in #3108,",
+		"github, gcp-e2e, azure-e2e and alibaba-e2e."
+	],
+	"known": [
+		{
+			"stack": "infra/alibaba-e2e",
+			"variable": "prod_regions",
+			"reason": "[] makes the 'the e2e region must not be a prod region' check (checks.tf:101) vacuously true — a safety check satisfied by the absence of its own input. Deliberate for now: there is no Alibaba production estate for an e2e region to collide with. The moment one exists this must be filled in, and the check starts meaning something."
+		},
+		{
+			"stack": "infra/aws-oidc",
+			"variable": "admin_principal_arns",
+			"reason": "[] removes the AdminAssume statement from the deploy-role and e2e-nightly trust policies (main.tf:65, e2e-nightly.tf:92). It narrows to OIDC-only, which is the SAFE direction — but it silently removes a human break-glass path, and re-adding it later is an IAM change. Deliberate: nobody should hold standing assume rights on these roles."
+		},
+		{
+			"stack": "infra/aws-oidc",
+			"variable": "oidc_provider_arn",
+			"reason": "\"\" falls back to a data lookup of the account's existing GitHub OIDC provider (main.tf:20) rather than gating anything. Benign, and the fallback is the intended path — the variable exists to override it in an account where the provider is named unusually."
+		},
+		{
+			"stack": "infra/aws-secrets-e2e",
+			"variable": "external_id",
+			"reason": "\"\" drops the sts:ExternalId confused-deputy condition from the cross-account trust (main.tf:59), leaving the ArnLike aws:PrincipalArn condition alone. Stays optional on purpose: this stack MIRRORS the connector's own optional external_id field, and requiring it here would test something the product does not require. What it must not be is silent, so checks.tf now carries `external_id_is_a_decision_not_a_default`, which says on every plan that the control is absent."
+		},
+		{
+			"stack": "infra/azure-e2e/bootstrap",
+			"variable": "state_network_allowed_cidrs",
+			"reason": "THE INVERSION, and the sharpest finding in the sweep: main.tf:66 reads `default_action = length(...) > 0 ? \"Deny\" : \"Allow\"`, so the UNSET value is the permissive one and the state storage account defaults to network-open. Not decided here — flipping the polarity can lock the maintainer out of their own backend. Filed as #3290."
+		},
+		{
+			"stack": "infra/azure-e2e/bootstrap",
+			"variable": "state_writer_principal_ids",
+			"reason": "[] removes every Storage Blob Data Contributor assignment on the state account (main.tf:103). Shared-key auth is disabled there, so with zero assignments every `tofu init` against that backend 403s and the state becomes unreachable. The value is a personal Entra object id, so it cannot be committed to a public repo; main.tf:112-117 already carries a `check` that names the failure and the `az ad signed-in-user show` command that produces the id."
+		},
+		{
+			"stack": "infra/connector-assets/bootstrap",
+			"variable": "admin_principal_arns",
+			"reason": "Same shape and same decision as aws-oidc's: [] removes the AdminAssume statement from the alethia-connector-assets-deployer trust (deployer.tf:38). OIDC-only is intended."
+		},
+		{
+			"stack": "infra/connector-assets/bootstrap",
+			"variable": "create_oidc_provider",
+			"reason": "false is the deliberate default and the whole point of this bootstrap: the account already has a GitHub OIDC provider (created by aws-oidc), so this stack ADOPTS it via oidc_provider_arn rather than creating a second one. Creating one where another exists is the error, which is why the safe value is the default here and `true` in email-ses/bootstrap."
+		},
+		{
+			"stack": "infra/cp-alibaba",
+			"variable": "zone_id",
+			"reason": "\"\" makes the stack auto-select an availability zone from a data source (main.tf:34,48) instead of pinning one. Benign, and intended for a first apply — but it is non-deterministic across applies, so pin it if a zone ever needs to stay put."
+		},
+		{
+			"stack": "infra/cp-hetzner",
+			"variable": "manage_email_routing",
+			"reason": "false leaves 11 Cloudflare email-routing resources ungated-into-existence (email-routing.tf:39,49,57,81), including the 8 inbound addresses printed in transactional email footers. The ONLY finding in this sweep that CI can trip by itself: infra-cp-hetzner.yml:103 runs `tofu apply -auto-approve` on push to main and nothing sets the variable. Harmless while the state is genuinely empty, which variables.tf:44-47 records; the hazard is the moment those resources exist. Filed as #3291."
+		},
+		{
+			"stack": "infra/email-ses/bootstrap",
+			"variable": "admin_principal_arns",
+			"reason": "Same shape and same decision as aws-oidc's: [] removes the AdminAssume statement from the alethia-ses-deployer trust (deployer.tf:37). OIDC-only is intended."
+		},
+		{
+			"stack": "infra/gcp-e2e/bootstrap",
+			"variable": "state_bucket_name",
+			"reason": "\"\" derives the bucket name as alethia-tofu-state-<project_id> (main.tf:27). Benign, and the derivation is the intended path — but it does mean the bucket a bare apply targets is a function of another variable, so a mis-set project_id silently retargets state rather than failing."
+		}
+	]
+}

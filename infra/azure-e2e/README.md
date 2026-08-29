@@ -62,11 +62,20 @@ cp backend.hcl.example backend.hcl && $EDITOR backend.hcl   # names from `tofu o
 tofu init -backend-config=backend.hcl -migrate-state
 
 cd infra/azure-e2e
-cp terraform.tfvars.example terraform.tfvars     # set subscription_id (dedicated!) + emails
+# terraform.tfvars IS COMMITTED here (see .gitignore) and already carries e2e_github_environment.
+# Two inputs are still yours:
+printf 'subscription_id = "…"\n' >> terraform.tfvars           # the DEDICATED e2e subscription
+printf 'e2e_budget_alert_emails = ["you@…"]\n' > emails.auto.tfvars   # gitignored; REQUIRED
 cp backend.hcl.example backend.hcl               # same account/container, key azure-e2e.tfstate
 tofu init -backend-config=backend.hcl
 tofu apply
 ```
+
+`e2e_budget_alert_emails` has **no default**, deliberately, and for the same reason as its `aws-oidc`
+twin: it feeds the action group's email receivers *and* `contact_emails` on every budget threshold,
+so `[]` rendered a budget in the portal while silently unsubscribing the maintainer from their own
+cost alerts. Without it `tofu plan` exits **1** with *"No value for required variable"*. Pass `[]`
+explicitly to opt out.
 
 ## Remote state
 

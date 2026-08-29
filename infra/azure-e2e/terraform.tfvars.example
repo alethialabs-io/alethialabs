@@ -22,8 +22,14 @@ location = "germanywestcentral"
 # Monthly USD cost ceiling (0 < x <= 500). Alerts at 50/80/100% actual + 100% forecast.
 e2e_monthly_budget_usd = 100
 
-# Emails notified by the budget + action group. Empty = action group with no receivers.
-e2e_budget_alert_emails = ["you@alethialabs.io"]
+# Emails notified by the budget AND the action group. REQUIRED, no default. Personal addresses,
+# and this repo is public — so it does NOT go here, nor in terraform.tfvars (which IS committed in
+# this stack). Put it in the gitignored emails.auto.tfvars:
+#
+#   e2e_budget_alert_emails = ["you@alethialabs.io"]
+#
+# Without it `tofu plan` exits 1 with "No value for required variable", instead of rendering a
+# budget with no subscribers. Pass [] explicitly to opt out.
 
 # ── Federating a workflow_dispatch from `dev` (the cadence unblock) ──
 # The scheduled nightly federates by REF (main). Set this to ALSO trust the branch-restricted
