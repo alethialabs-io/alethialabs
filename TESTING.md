@@ -121,6 +121,33 @@ earned rather than asserted under #2649:
 - `@repo/ui` counts an **allowlist** of hand-listed files rather than its whole `src/`. An
   include-allowlist is an exclusion with the sign flipped and no comment.
 
+`apps/console` is the first project recorded: **`apps/console/coverage-exclusions.yaml`** carries
+one entry per exclusion, and `pnpm check:coverage-exclusions` re-reads it on every PR. The section
+is the decision — `infrastructural:` (not product code, and the path must match a declared class),
+`tier_separation:` (proven by a named test suite) or `baseline:` (real debt, with an owning issue
+and a verified `state:`, shrink-only). **Adding an exclusion without a manifest entry fails, and so
+does a manifest entry whose exclusion has gone.**
+
+What the guard checks about a `tier_separation:` claim is a **value import**: it resolves the named
+suite's imports the way vitest resolves them and requires one for the module and for each name in
+`symbols:`. `import type { X }`, `import { type X }`, `typeof import("…")` and a `vi.mock` of the
+module are all non-evidence — the first three are erased by the compiler and the fourth replaces the
+module, so v8 records nothing either way. It does not step into a function body, so an export that
+is imported and never called satisfies the claim.
+
+`symbols:` is also checked for **completeness**: every runtime export of an excluded file must be
+accounted for, in `symbols:` or in `baseline:`. A list of two of a module's seven exports reads
+exactly like a list of all seven.
+
+Three projects are not yet enrolled and are recorded as such rather than left silent — `@repo/ui`
+(47 files hidden behind a hand-listed `include`), `apps/marketing` and `ee` (six `exclude:` entries
+between them, none manifested). The guard names and counts them on every run; enrolling them is the
+next unit.
+
+That first pass already retired one false claim: the console config said
+`tests/integration/reconcile-b2c.test.ts` verifies `lib/reconcile/gc.ts`, and that suite never
+imports it (#3262).
+
 Until every one of those is recorded as a decision with checkable evidence, read the coverage
 badge as "the measured part of our logic is this well tested", not "our logic is this well
 tested". The **go coverage** badge has no such caveat: every package in all four modules is

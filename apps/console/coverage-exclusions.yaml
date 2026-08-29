@@ -1,0 +1,351 @@
+# SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Coverage exclusions for apps/console — the machine-readable half of every `exclude:` entry in
+# vitest.config.ts.
+#
+# The claims those exclusions used to carry were TypeScript comments, and prose is not machine-read.
+# One of them was measurably false for eight weeks: the B2c block asserted that
+# tests/integration/reconcile-b2c.test.ts verifies converge, reap AND gc, and that suite never
+# imports `@/lib/reconcile/gc` at all — its retention-GC tests call the raw SQL functions directly,
+# so the TypeScript wrappers never run. Of gc.ts's FOUR exports exactly one has a real caller in a
+# test; two are named only through a `vi.mock`, and the fourth is named by nothing at all. #3262.
+#
+# Every entry here is re-read on every run by `pnpm check:coverage-exclusions`
+# (scripts/check-coverage-exclusions.mjs), which resolves each named suite's imports the way vitest
+# resolves them and requires a VALUE import of the module and of each listed symbol.
+#
+# AN ENTRY IS A DECISION, NOT A MUTE BUTTON, and the SECTION IS THE DECISION — the same vocabulary,
+# for the same reason, as infra/offer-exclusions.yaml:
+#
+#   infrastructural:  not product code. The class is the argument and no evidence is required —
+#                     declaration files, generated migrations, seed data, build config, the tests
+#                     themselves. Nothing here has statements a person wrote to be executed.
+#
+#   tier_separation:  product code, proven by ANOTHER TIER. Real-SQL modules whose WHERE clauses,
+#                     joins and CTEs a mocked unit test structurally cannot exercise are covered by
+#                     the integration suites (real Postgres, `pnpm test:integration`, their own
+#                     config) and are therefore kept out of the unit badge's denominator.
+#
+#                     `suite:` names the test files that execute it and `symbols:` the exports
+#                     those suites VALUE-IMPORT — which is the checkable half of "execute", and the
+#                     only half claimed here. The guard resolves each suite's imports the way vitest
+#                     resolves them; it does not step into a function body, so an export that is
+#                     imported and never called satisfies the claim. `import type { X }` does not —
+#                     it is
+#                     erased by the compiler, loads no module and records no coverage. A module the
+#                     suite `vi.mock`s is not evidence either: a mock REPLACES the module, so the
+#                     real code never runs and v8 records nothing. Adding another `vi.mock` would
+#                     satisfy "a test names it" while changing the coverage by exactly zero.
+#
+#   baseline:         REAL DEBT. Product code nothing executes, kept out of the denominator while
+#                     it is being fixed. Carries `issue:` (an entry with no owning issue is an
+#                     amnesty nothing comes back to collect) and `state:`, and is SHRINK-ONLY —
+#                     when a symbol here gains a real test the guard FAILS and asks for it to move
+#                     up into tier_separation.
+#
+#                     `state:` is one of:
+#                       mock-only        the listed exports are named only through a `vi.mock` of
+#                                        the module; the real code never runs for them
+#                       no-test          nothing in the project's tests names the module at all
+#                       untested-export  a test executes the module for real, and no test
+#                                        value-imports the listed exports
+#                     All three are verified PER SYMBOL, so a measured gap cannot be discharged by
+#                     RECLASSIFYING it. A path may appear once per state, because a partly-proven
+#                     module really is two records.
+#
+# EVERY RUNTIME EXPORT OF AN EXCLUDED FILE IS ACCOUNTED FOR, in `symbols:` here or in `baseline:`,
+# and the guard fails on any that is in neither. A list of 2 of a module's 7 exports reads exactly
+# like a list of all 7 — which is #2676's "one line asserted twelve things and nobody could see
+# which were true", one level down. Type-only exports are not runtime exports and are not listed.
+#
+# `infrastructural:` is the one section that needs no evidence, so ENTERING IT IS ITSELF A CHECKED
+# CLAIM: the path must match one of the declared classes in scripts/check-coverage-exclusions.mjs.
+# Otherwise the headline defect of #3262 could be re-hidden in one line, by moving the file out of
+# `tier_separation:` and into the section that asks for nothing.
+#
+# TO ADD AN EXCLUSION: add it to vitest.config.ts AND here, in the same PR. The guard fails in both
+# directions — an exclusion with no entry, and an entry whose exclusion has gone.
+#
+# NOT A PLACE TO RE-INCLUDE A FILE. Moving a file back into the coverage scope moves the published
+# number, and its floors must be recorded from CI, never from a laptop (see scripts/ts-coverage.mjs
+# on why floors recorded on macOS make CI demote its own failures). Re-inclusions ship as their own
+# PRs so the direction of each move is separately attributable.
+
+infrastructural:
+  # No statements to execute: `.d.ts` files are erased entirely by the compiler.
+  - path: "**/*.d.ts"
+    reason: Type declarations — no runtime statements exist to be covered.
+
+  # Generated by drizzle-kit from the schema; the chain is linear, un-mergeable and never
+  # hand-edited (CLAUDE.md §5). A test asserting a generated artefact asserts the generator.
+  - path: lib/db/migrations/**
+    reason: Generated drizzle migrations and snapshots, never hand-written.
+
+  - path: lib/db/seed/**
+    reason: Development seed data, not shipped product code.
+
+  - path: "**/*.config.*"
+    reason: Build and tooling configuration, exercised by running the tools rather than by tests.
+
+  - path: tests/**
+    reason: The tests themselves — counting them inflates the number with the measurement.
+
+tier_separation:
+  # ── lib/queries — real-SQL reads against Postgres ─────────────────────────────────────────
+  #
+  # This block USED TO BE ONE GLOB, `lib/queries/**`, carrying the claim "each has a green
+  # integration suite" — true of six of its twelve files and false of the other six. A
+  # directory-wide exclusion is exactly how six unproven files hid behind six proven ones: one line
+  # asserted twelve things and nobody could see which were true. Per-file entries make each claim
+  # separately checkable and separately falsifiable, which is what this manifest then re-reads.
+  - path: lib/queries/classification.ts
+    suite: [tests/integration/classification-snapshot.test.ts, tests/integration/classification-usage.test.ts]
+    symbols: [listAssignmentsFor, countAssignmentsByKindForValue, countAssignmentsByValue, countResourcesByDimension]
+    reason: Assignment reads and the per-dimension counting joins, verified against real Postgres.
+
+  - path: lib/queries/cluster-for-env.ts
+    suite: [tests/integration/cluster-for-env.test.ts]
+    symbols: [resolveServingCluster]
+    reason: The environment-to-serving-cluster resolution join, verified against real Postgres.
+
+  - path: lib/queries/evidence.ts
+    suite: [tests/integration/evidence-query.test.ts]
+    symbols: [queryOrgEvidence]
+    reason: The org evidence roll-up across drift, security and job rows, verified against real Postgres.
+
+  - path: lib/queries/projects.ts
+    suite: [tests/integration/cli-project-create.test.ts]
+    symbols: [insertProjectWithDefaultFabric]
+    reason: The project + default-fabric + hierarchy insert, verified as one real transaction.
+
+  - path: lib/queries/runner-usage.ts
+    suite:
+      [
+        tests/integration/runner-usage.test.ts,
+        tests/integration/project-usage.test.ts,
+        tests/integration/fleet-pool-teardown.test.ts,
+      ]
+    symbols:
+      [
+        queryJobMinutesByOrg,
+        queryJobMinutesSeries,
+        queryProvisionedHours,
+        queryJobMinutesByProject,
+        queryJobMinutesSeriesByProject,
+        provisionedHoursByProvider,
+      ]
+    reason: Billable-minute and provisioned-hour aggregations over real session rows.
+
+  - path: lib/queries/usage-counts.ts
+    suite: [tests/integration/usage-counts.test.ts, tests/integration/project-usage.test.ts]
+    symbols: [queryResourceCounts, queryRunningJobs, queryProjectResourceCounts, queryProjectRunningJobs]
+    reason: The resource-count and running-job gauges, including the project_cluster org join.
+
+  # ── lib/billing ───────────────────────────────────────────────────────────────────────────
+  - path: lib/billing/ai-quota.ts
+    suite:
+      [
+        tests/integration/ai-quota.test.ts,
+        tests/integration/ai-guard-race.test.ts,
+        tests/integration/project-usage.test.ts,
+      ]
+    symbols: [aiCreditsSeries, grantAiCredits, purchasedBalance, recordAiUsage, sumCredits, aiCreditsSeriesByProject, sumCreditsByProject]
+    reason: Credit grants, holds and settlement — the ledger arithmetic only a real transaction can race.
+
+  - path: lib/billing/queries.ts
+    suite: [tests/integration/billing-queries.test.ts, tests/unit/billing-to-valid-date.test.ts]
+    symbols: [getOrgBilling, getOrgByStripeCustomer, toValidDate]
+    reason: Per-org billing reads against real Postgres, plus the pure timestamptz coercion its unit suite proves.
+
+  # ── lib/fleet — the durable queue and pool tables ─────────────────────────────────────────
+  - path: lib/fleet/queue.ts
+    suite:
+      [
+        tests/integration/fleet-queue.test.ts,
+        tests/integration/fleet-dispatchable.test.ts,
+        tests/integration/fleet-actions.test.ts,
+        tests/integration/fleet-leader.test.ts,
+        tests/integration/fleet-pool-teardown.test.ts,
+        tests/integration/multireplica-hardening.test.ts,
+      ]
+    symbols:
+      [
+        backlogByProvider,
+        dispatchableBacklogByProvider,
+        countInflightForProvider,
+        countManagedRunnersForProvider,
+        latestReleaseVersion,
+        managedRunnerRowsForProvider,
+        managedRunnersByInstance,
+        insertFleetAction,
+        tryBecomeFleetLeader,
+        tryFleetScaleLock,
+        retireRunner,
+      ]
+    reason: Backlog gauges, the durable action ledger and the leader and scale advisory locks, against real Postgres.
+
+  - path: lib/fleet/pools-db.ts
+    suite: [tests/integration/fleet-pools-db.test.ts, tests/integration/fleet-pool-teardown.test.ts]
+    symbols: [loadFleetPools, rowToProject, upsertFleetPool, reapDeletedPools]
+    reason: Pool CRUD and the row-to-FleetTarget mapping where a version pin wins over a channel.
+
+  # ── lib/authz — the community PDP and its seed ────────────────────────────────────────────
+  - path: lib/authz/postgres-rbac-pdp.ts
+    suite: [tests/integration/postgres-rbac-pdp.test.ts, tests/integration/pdp-parity.test.ts]
+    symbols: [PostgresRbacPDP]
+    reason: Grant resolution, the recursive hierarchy walk and explicit-deny-wins, decided in SQL.
+
+  - path: lib/authz/seed.ts
+    suite:
+      [
+        tests/integration/authz-seed.test.ts,
+        tests/integration/postgres-rbac-pdp.test.ts,
+        tests/integration/pdp-parity.test.ts,
+      ]
+    symbols: [seedAuthz]
+    reason: The built-in role and permission seed, asserted against the rows it actually writes.
+
+  # ── lib/reconcile — the B2c reconcilers ──────────────────────────────────────────────────
+  #
+  # The config comment above these entries USED TO CLAIM reconcile-b2c.test.ts verifies
+  # "convergence/reap/GC". It verifies the first two. See the gc.ts entry below and in `baseline:`.
+  - path: lib/reconcile/converge.ts
+    suite: [tests/integration/reconcile-b2c.test.ts]
+    symbols: [convergeEnvStatuses]
+    reason: Environment-status convergence over real job rows, against real Postgres.
+
+  - path: lib/reconcile/reap.ts
+    suite: [tests/integration/reconcile-b2c.test.ts, tests/lib/reconcile/reap-decision.test.ts]
+    symbols: [reapExpiredEphemeralEnvs, MAX_REAP_ATTEMPTS, reapBackoffMs, decideReap]
+    reason: Ephemeral-environment reaping against real Postgres, plus the pure retry decision its unit suite proves.
+
+  # CORRECTED BY #3262. gc.ts is NOT reached by reconcile-b2c.test.ts — that suite's retention-GC
+  # tests call the SQL functions directly (`select public.gc_job_logs(...)`), so the TypeScript
+  # wrappers never execute. Exactly one of its FOUR exports has a real caller in a test, and these
+  # are the two suites that call it. The other three are in `baseline:` below.
+  - path: lib/reconcile/gc.ts
+    suite: [tests/integration/authz-activity-gc.test.ts, tests/integration/authz-activity-worm.test.ts]
+    symbols: [gcAuthzActivityLog]
+    reason: The authz-activity retention sweep, asserted against the real WORM table and its keyset index.
+
+  # ── lib/probes — BYOC B2.3 dispatch and ingest ───────────────────────────────────────────
+  - path: lib/probes/dispatch.ts
+    suite: [tests/integration/probes-b23.test.ts, tests/integration/scheduler-clock.test.ts]
+    symbols: [sweepProbeSchedule]
+    reason: Probe dispatch off the real schedule clock, including the due-window SQL.
+
+  - path: lib/probes/persistence.ts
+    suite: [tests/integration/probes-b23.test.ts]
+    symbols: [getLatestProbesByEnv, recordProbeResult]
+    reason: Probe ingest and the latest-per-environment read, with its partial-status filters and ordering.
+
+baseline:
+  # The other two exports of lib/reconcile/gc.ts. The module stays excluded — it is partly proven,
+  # by the entry in `tier_separation:` above — but these two are carried by nothing.
+  #
+  # Their only test reference is tests/lib/reconcile/loop.test.ts:16, a `vi.mock` of the whole
+  # module, with :30 re-importing the mocked names to assert call counts. That is the pattern this
+  # manifest exists to refuse: the mock REPLACES the module, so the real `delete … using` statements
+  # never run and v8 records nothing for them. Adding another mock would satisfy "a test names it"
+  # while changing the coverage by exactly zero.
+  #
+  # The remedy is an integration test that calls the wrappers the way authz-activity-gc.test.ts
+  # calls gcAuthzActivityLog — against real job_logs and fleet_actions rows, asserting the retention
+  # window and the delete batch size rather than the SQL function underneath them. Re-including
+  # gc.ts in the coverage scope is a separate, later step: it moves the published number, and its
+  # floors have to be recorded from CI.
+  - path: lib/reconcile/gc.ts
+    symbols: [gcJobLogs, gcFleetActions]
+    issue: "#2649"
+    state: mock-only
+    reason: The job-log and fleet-action retention sweeps are executed by no test — their only reference is a mock.
+
+  # ── The exports an exclusion hides that no test value-imports ────────────────────────────────
+  #
+  # Every one of these modules IS executed for real by the suites named in `tier_separation:` —
+  # that is what `state: untested-export` asserts, and the guard verifies it. What is NOT true of
+  # them is the thing a partial `symbols:` list quietly implied: that the exclusion only hides
+  # exports somebody asserted. 26 runtime exports across nine entries were in neither list when
+  # this manifest was first written, which is #2676's "one line asserted twelve things and nobody
+  # could see which were true" reappearing one level down, at the symbol.
+  #
+  # They are debt, not infrastructure, and they are owned by the coverage epic rather than by
+  # #3262 — #3262 closes when the guard lands, and a record pointing at a closed issue is the
+  # amnesty this section is written not to be.
+  - path: lib/queries/classification.ts
+    symbols:
+      [
+        listDimensionsWithValues,
+        assignmentsForKind,
+        listResourceIdsByValue,
+        getEnforcingValuesFor,
+        countResourcesByKindForDimension,
+      ]
+    issue: "#2649"
+    state: untested-export
+    reason: Dimension listing, per-kind assignment reads and the enforcing-value lookup are asserted by no suite.
+
+  - path: lib/queries/runner-usage.ts
+    symbols: [idleManagedRunnersForProvider]
+    issue: "#2649"
+    state: untested-export
+    reason: The idle-runner sweep read is asserted by no suite.
+
+  - path: lib/queries/runner-usage.ts
+    symbols: [jobMinutesByProvider]
+    issue: "#2649"
+    state: mock-only
+    reason: The per-provider job-minute roll-up is only ever named through a mock of this module.
+
+  - path: lib/queries/usage-counts.ts
+    symbols: [queryJobCount, queryProjectJobCount]
+    issue: "#2649"
+    state: untested-export
+    reason: The org and per-project job counters are asserted by no suite, unlike the gauges beside them.
+
+  - path: lib/billing/ai-quota.ts
+    symbols: [meteringFailed]
+    issue: "#2649"
+    state: untested-export
+    reason: The metering error sink is asserted by no suite.
+
+  - path: lib/billing/ai-quota.ts
+    symbols: [sumCreditsForUser, oldestUsageSince, oldestUsageForUserSince]
+    issue: "#2649"
+    state: mock-only
+    reason: The per-user credit sum and the usage-window reads are only ever named through a mock of this module.
+
+  - path: lib/billing/queries.ts
+    symbols: [upsertOrgAiSubscription, claimPlanWelcome]
+    issue: "#2649"
+    state: untested-export
+    reason: The AI-subscription upsert and the plan-welcome claim are asserted by no suite.
+
+  - path: lib/billing/queries.ts
+    symbols: [resolveOrgEntitlements, upsertOrgBilling]
+    issue: "#2649"
+    state: mock-only
+    reason: Entitlement resolution and the billing upsert are only ever named through a mock of this module.
+
+  - path: lib/fleet/queue.ts
+    symbols: [countLiveManagedInstances, setRunnerObserved, markRunnerDraining, recentReapDeadCount, disableFleetPool]
+    issue: "#2649"
+    state: untested-export
+    reason: The runner lifecycle writes and the reap-dead counter are asserted by no suite, unlike the backlog gauges.
+
+  - path: lib/fleet/pools-db.ts
+    symbols: [seedFleetPoolsFromEnv]
+    issue: "#2649"
+    state: untested-export
+    reason: The env-to-pool seeding path is asserted by no suite; the CRUD around it is.
+
+  # gc.ts a second time, under the state that is true of its FOURTH export. `EFFECTIVE_RETENTION_DAYS`
+  # has no test reference at all — not even the `vi.mock` the two above are named through — and it
+  # is read by production code (lib/retention/health.ts). One entry could not carry both facts, so
+  # a `baseline:` path may be recorded once per state.
+  - path: lib/reconcile/gc.ts
+    symbols: [EFFECTIVE_RETENTION_DAYS]
+    issue: "#2649"
+    state: untested-export
+    reason: The retention-window table is read by the health page and asserted by no test.
