@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // CLIDemoRun is the state the beats thread through one another: ids the CLI mints as it goes.
@@ -132,6 +133,10 @@ type CLIDemoBeat struct {
 	// asserts what the step must have produced. A beat with no After proves only that the command
 	// exited 0, which for a read-only step is the whole claim.
 	After func(r *CLIDemoRun, out string) error
+	// Timeout overrides the default per-beat bound. Zero means the default. Only the teardown
+	// needs it: `project destroy --wait` blocks on a real cloud destroy, which outlasts a bound
+	// sized for a command that talks to a console.
+	Timeout time.Duration
 	// Why documents anything surprising about the invocation. Optional.
 	Why string
 }
@@ -175,13 +180,13 @@ var CLIDemoBeats = []CLIDemoBeat{
 	{
 		StepID: "whoami",
 		Phase:  CLIDemoAuthoring,
-		Args:   func(_ *CLIDemoRun) []string { return []string{"whoami"} },
+		Args:   func(_ *CLIDemoRun) []string { return []string{"whoami", "--no-input"} },
 		Why:    "first command on a fresh machine — it proves the service token resolved to an org before anything is created.",
 	},
 	{
 		StepID: "org-switch",
 		Phase:  CLIDemoAuthoring,
-		Args:   func(_ *CLIDemoRun) []string { return []string{"org", "list"} },
+		Args:   func(_ *CLIDemoRun) []string { return []string{"org", "list", "--no-input"} },
 		Why: "`org list` rather than `org switch`: a service token is PINNED to one org by construction " +
 			"(lib/cli/service-token.ts service_token_org_id), so switching is not a thing this credential " +
 			"can do. Listing exercises the same org surface and does not pretend otherwise.",
@@ -189,7 +194,7 @@ var CLIDemoBeats = []CLIDemoBeat{
 	{
 		StepID: "connector",
 		Phase:  CLIDemoAuthoring,
-		Args:   func(r *CLIDemoRun) []string { return []string{"connector", r.Provider} },
+		Args:   func(r *CLIDemoRun) []string { return []string{"connector", r.Provider, "--token-stdin", "--no-input"} },
 		Stdin:  func(r *CLIDemoRun) string { return cliDemoConnectorStdin(r) },
 		Why:    "credentials over STDIN, never argv — argv reaches /proc and the process list.",
 	},
@@ -197,32 +202,47 @@ var CLIDemoBeats = []CLIDemoBeat{
 		StepID: "project-create",
 		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "create", r.Project, "--region", r.Region, "--stage", "development", "--output", "json"}
+			return []string{"project", "create", r.Project, "--region", r.Region, "--stage", "development", "--output", "json", "--no-input"}
 		},
 		After: captureProjectID,
 	},
 	{
 		StepID: "project-env",
 		Phase:  CLIDemoAuthoring,
-		Args:   func(r *CLIDemoRun) []string { return []string{"project", "env", "list", "--project-id", r.ProjectID} },
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"project", "env", "list", "--project", r.ProjectID, "--output", "json", "--no-input"}
+		},
+		After: captureDefaultEnv,
+		Why: "captures the DEFAULT environment rather than assuming one. `project create --stage " +
+			"development` makes `development` and `preview`, and the harness's own env name is a " +
+			"different thing entirely — addressing the wrong one fails with `Environment \"x\" not " +
+			"found`, which reads as a CLI defect and is a harness assumption.",
 	},
 	{
 		StepID: "component-kinds",
 		Phase:  CLIDemoAuthoring,
-		Args:   func(_ *CLIDemoRun) []string { return []string{"project", "component", "kinds"} },
+		Args:   func(_ *CLIDemoRun) []string { return []string{"project", "component", "kinds", "--no-input"} },
 	},
 	{
 		StepID: "component-add",
 		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "component", "add", "cluster", "--project-id", r.ProjectID, "--env", r.EnvName}
+			// `--set` is REQUIRED: a cluster with no fields is refused server-side with
+			// "No values to set". And `--name` is omitted deliberately — cluster is a singleton
+			// and the CLI ignores the flag for singletons, so passing it would be cargo.
+			return []string{
+				"project", "component", "add", "--project", r.ProjectID, "--kind", "cluster",
+				"--env", r.EnvName, "--set", "node_min_size=1", "--set", "node_max_size=2", "--no-input",
+			}
 		},
 	},
 	{
 		StepID: "staged",
 		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "get", "--project-id", r.ProjectID, "--output", "json"}
+			// BY NAME. `project get` takes `[project_name]`, and handing it an id returns 404 —
+			// which reads as "the project vanished" rather than "wrong argument".
+			return []string{"project", "get", r.Project, "--output", "json", "--no-input"}
 		},
 	},
 	{
@@ -231,14 +251,14 @@ var CLIDemoBeats = []CLIDemoBeat{
 		Args: func(r *CLIDemoRun) []string {
 			// NO --wait. The runner process starts AFTER this phase, so blocking here would wait
 			// on a claimer that does not exist. The spine waits instead, on the DEPLOY job.
-			return []string{"project", "plan", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID}
+			return []string{"project", "plan", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--no-input"}
 		},
 	},
 	{
 		StepID: "apply",
 		Phase:  CLIDemoEnqueue,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "apply", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID}
+			return []string{"project", "apply", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--no-input"}
 		},
 		After: captureApplyJobID,
 		Why: "the beat the whole dimension exists for — the DEPLOY job is enqueued BY THE CLI, not by a " +
@@ -248,41 +268,48 @@ var CLIDemoBeats = []CLIDemoBeat{
 	{
 		StepID: "jobs-logs",
 		Phase:  CLIDemoConverged,
-		Args:   func(r *CLIDemoRun) []string { return []string{"jobs", "logs", r.ApplyJobID} },
+		Args:   func(r *CLIDemoRun) []string { return []string{"jobs", "logs", r.ApplyJobID, "--no-input"} },
 	},
 	{
 		StepID: "cluster-get",
 		Phase:  CLIDemoConverged,
-		Args:   func(r *CLIDemoRun) []string { return []string{"clusters", "get", "--project-id", r.ProjectID} },
+		Args:   func(r *CLIDemoRun) []string { return []string{"clusters", "get", r.ProjectID, "--no-input"} },
 	},
 	{
 		StepID: "receipt-verify",
 		Phase:  CLIDemoConverged,
-		Args:   func(r *CLIDemoRun) []string { return []string{"verify", "--job-id", r.ApplyJobID} },
+		Args:   func(r *CLIDemoRun) []string { return []string{"verify", "--job", r.ApplyJobID, "--no-input"} },
 		Why:    "the signed ed25519 receipt sealed to the plan hash — the claim the demo's close rests on.",
 	},
 	{
 		StepID: "drift",
 		Phase:  CLIDemoConverged,
-		Args:   func(r *CLIDemoRun) []string { return []string{"drift", "--project-id", r.ProjectID} },
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"drift", "--project", r.ProjectID, "--env", r.EnvName, "--no-input"}
+		},
 	},
 	{
 		StepID: "cost",
 		Phase:  CLIDemoConverged,
-		Args:   func(r *CLIDemoRun) []string { return []string{"cost", "--project-id", r.ProjectID} },
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"cost", "--project", r.ProjectID, "--env", r.EnvName, "--no-input"}
+		},
 	},
 	{
 		StepID: "addons",
 		Phase:  CLIDemoConverged,
-		Args:   func(r *CLIDemoRun) []string { return []string{"addon", "list", "--project-id", r.ProjectID} },
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"addon", "list", "--project", r.ProjectID, "--env", r.EnvName, "--no-input"}
+		},
 	},
 	{
 		StepID: "destroy",
 		Phase:  CLIDemoTeardown,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "destroy", "--project-id", r.ProjectID, "--env", r.EnvName, "--yes", "--wait"}
+			return []string{"project", "destroy", "--project-id", r.ProjectID, "--env", r.EnvName, "--yes", "--wait", "--no-input"}
 		},
-		Why: "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
+		Timeout: 30 * time.Minute,
+		Why:     "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
 	},
 }
 

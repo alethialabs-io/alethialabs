@@ -183,6 +183,37 @@ func captureApplyJobID(r *CLIDemoRun, out string) error {
 	return fmt.Errorf("no job id in `project apply` output — the spine has nothing to wait on:\n%s", out)
 }
 
+// captureDefaultEnv reads the DEFAULT environment's name out of `project env list --output json`.
+//
+// It is captured rather than assumed because the CLI creates the environments, not the harness:
+// `project create --stage development` makes `development` (default) and `preview`, and the
+// harness's own `env` variable names something else entirely. Addressing the wrong one fails with
+// `Environment "x" not found` — a 404 that reads as a CLI defect and is a harness assumption.
+func captureDefaultEnv(r *CLIDemoRun, out string) error {
+	start := strings.Index(out, "[")
+	end := strings.LastIndex(out, "]")
+	if start == -1 || end <= start {
+		return fmt.Errorf("`project env list --output json` produced no JSON array:\n%s", out)
+	}
+	var envs []struct {
+		Name      string `json:"name"`
+		IsDefault bool   `json:"is_default"`
+	}
+	if err := json.Unmarshal([]byte(out[start:end+1]), &envs); err != nil {
+		return fmt.Errorf("parsing the environment list: %w\n%s", err, out)
+	}
+	for _, e := range envs {
+		if e.IsDefault && e.Name != "" {
+			r.EnvName = e.Name
+			return nil
+		}
+	}
+	// Falling back to "the first one" would work today and silently address the wrong environment
+	// the day a project is created with two. A project with no default is a product question, not
+	// something for this harness to paper over.
+	return fmt.Errorf("no DEFAULT environment among %d — every later beat addresses one by name:\n%s", len(envs), out)
+}
+
 // firstJSONID pulls a top-level `"id"` out of the first JSON object in the output, if there is one.
 // Returns "" rather than erroring: the caller has a fallback, and a card rendered as a table is not
 // a failure.
@@ -216,7 +247,11 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 			continue
 		}
 		argv := b.Args(run)
-		cctx, cancel := context.WithTimeout(ctx, cliDemoBeatTimeout)
+		bound := cliDemoBeatTimeout
+		if b.Timeout > 0 {
+			bound = b.Timeout
+		}
+		cctx, cancel := context.WithTimeout(ctx, bound)
 		cmd := exec.CommandContext(cctx, run.Bin, argv...)
 		cmd.Env = append(os.Environ(),
 			"ALETHIA_TOKEN="+run.Token,
@@ -269,36 +304,59 @@ func DriveCLIDemoPhase(ctx context.Context, t *testing.T, run *CLIDemoRun, phase
 // actually wrong. It is the cheap half of the deploy wait, taken first.
 func AssertCLIDemoJobClaimed(ctx context.Context, t *testing.T, cp *ControlPlane, run *CLIDemoRun) {
 	t.Helper()
+	if err := awaitCLIDemoClaim(ctx, run, func(c context.Context) (string, error) {
+		status, _, err := cp.JobState(c, run.ApplyJobID)
+		return status, err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("cli-demo: the CLI's DEPLOY job %s was claimed — runner and token agree on org %s",
+		run.ApplyJobID, run.OrgID)
+}
+
+// awaitCLIDemoClaim is the decision, separated from the ControlPlane so the FAILURE MESSAGE is
+// testable without a cluster.
+//
+// That separation is the point: the message is the whole value of this assertion. If it does not
+// name the tenancy rule, the operator reads a stuck job and starts looking at the cluster — which
+// is precisely the wrong-layer reporting this exists to prevent. A message nobody can test is a
+// message that rots.
+func awaitCLIDemoClaim(ctx context.Context, run *CLIDemoRun, status func(context.Context) (string, error)) error {
 	deadline := time.Now().Add(cliDemoClaimWindow)
-	var last string
+	last := "(never read)"
 	for time.Now().Before(deadline) {
-		status, _, err := cp.JobState(ctx, run.ApplyJobID)
+		s, err := status(ctx)
 		if err == nil {
-			last = status
-			if status != "QUEUED" {
-				t.Logf("cli-demo: the CLI's DEPLOY job %s was claimed (status %s) — runner and token agree on org %s",
-					run.ApplyJobID, status, run.OrgID)
-				return
+			last = s
+			if s != "QUEUED" {
+				return nil
 			}
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("cli-demo: cancelled while waiting for the CLI's job to be claimed: %v", ctx.Err())
-		case <-time.After(5 * time.Second):
+			return fmt.Errorf("cli-demo: cancelled while waiting for the CLI's job to be claimed: %w", ctx.Err())
+		case <-time.After(cliDemoClaimPoll):
 		}
 	}
-	t.Fatalf("cli-demo: the DEPLOY job %s the CLI created is still %q after %s — it was never CLAIMED.\n"+
+	return fmt.Errorf("cli-demo: the DEPLOY job %s the CLI created is still %q after %s — it was never CLAIMED.\n"+
 		"This is almost certainly a TENANCY mismatch, not a provisioning failure: claim_next_job's "+
 		"self-runner branch scopes to `j.org_id = v_runner_org_id` (#392), and the runner is registered "+
-		"in org %s. If the service token is pinned to a different org, no runner will ever claim this job "+
-		"and the deploy wait would have run to its full deadline reporting a timeout.",
+		"in org %s. If the service token is pinned to a different org, no runner will ever claim this job, "+
+		"and the deploy wait would have run to its full deadline reporting a timeout that names the cluster.",
 		run.ApplyJobID, last, cliDemoClaimWindow, run.OrgID)
 }
 
+// cliDemoClaimPoll is how often the claim is re-read. A variable so the pure test can drive the
+// loop in milliseconds rather than making the suite wait out a real poll interval.
+var cliDemoClaimPoll = 5 * time.Second
+
 // cliDemoClaimWindow bounds the claim check. Short on purpose: a claim is a database transaction a
-// live runner performs within its poll interval, so a minute that passes without one is not slow,
-// it is wrong.
-const cliDemoClaimWindow = 90 * time.Second
+// live runner performs within its poll interval, so a minute and a half that passes without one is
+// not slow, it is wrong.
+//
+// A var, like cliDemoClaimPoll, so the pure test can drive the whole loop in milliseconds instead
+// of making every PR wait out a real window to prove one error message.
+var cliDemoClaimWindow = 90 * time.Second
 
 // cliDemoBeatTimeout bounds ONE command. Generous, because a first request to a console that has
 // just booted pays for a cold Next.js route, and a beat that times out on that would be reported as
