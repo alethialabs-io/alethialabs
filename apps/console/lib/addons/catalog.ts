@@ -269,6 +269,41 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			grafana: { enabled: true },
 			// Keep the footprint small by default; the knobs below tune it.
 			prometheus: { prometheusSpec: {} },
+			// ⚠️ THE OPERATOR'S ADMISSION WEBHOOKS ARE OFF, AND THAT IS A DELIBERATE TRADE.
+			//
+			// The chart installs them through a certgen Job plus five RBAC objects declared as helm
+			// hooks in BOTH `pre-install,pre-upgrade` AND `post-install,post-upgrade`, carrying
+			// `hook-delete-policy: before-hook-creation,hook-succeeded` — so ArgoCD deletes each one
+			// the moment it succeeds and re-creates it on the next phase.
+			//
+			// MEASURED on azure/addons runs 33249209041, 33255369578 and 33266338989: the
+			// Application sits `phase=Running waiting for completion of hook
+			// rbac.authorization.k8s.io/ClusterRole/…-admission`, health=Missing, for the whole
+			// 35-minute budget, with not one error in 3965 controller log lines. The controller
+			// computes `Synced … serverside-applied` for those hooks and then logs "No operation
+			// updates necessary" — the result computed and never persisted. Twenty add-ons converge;
+			// this one never does.
+			//
+			// What is GIVEN UP, stated rather than buried: admission-time validation of
+			// PrometheusRule and AlertmanagerConfig. The operator still validates at reconcile and
+			// reports it; what is lost is the API server refusing a malformed rule at `kubectl
+			// apply`. Metrics collection, alerting and Grafana are unaffected.
+			//
+			// `tls.enabled: false` is NOT a second opinion — it is REQUIRED by the first. Rendered
+			// and checked: with only `admissionWebhooks.enabled: false`, the operator Deployment
+			// still mounts `secretName: …-admission` as its `tls-secret` and its ServiceMonitor
+			// still reads that Secret's `ca` with `optional: false`. The Secret is gone with the
+			// certgen Job, so the operator pod never starts — one stalled Application traded for a
+			// broken one. With both, the render carries ZERO non-test helm hooks, no dangling
+			// secret reference, and the operator's ServiceMonitor scrapes `port: http`.
+			//
+			// Not a per-cloud exclusion and not an ignoreDifferences entry: the hook phase is the
+			// thing that stalls, so the fix removes the hook phase. It is a `defaultValues` entry,
+			// so a customer who wants the webhooks back can deep-merge them on.
+			prometheusOperator: {
+				admissionWebhooks: { enabled: false },
+				tls: { enabled: false },
+			},
 		},
 		configSchema: z.object({
 			/** Prometheus metric retention in days. */
