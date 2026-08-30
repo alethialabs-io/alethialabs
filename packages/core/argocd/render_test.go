@@ -222,6 +222,61 @@ func TestRender_AppsOverlaysApplicationSet(t *testing.T) {
 	}
 }
 
+// A `dedicated` environment that names an apps_path delivers THAT path, and the discovery
+// ApplicationSet is not rendered at all.
+//
+// Both halves matter and they are one behaviour. The glob is anchored at the repo root, so a Fabric
+// whose shared tiers place overlays out of the same repo adopted their manifests too — ArgoCD then
+// reported "Deployment/adservice is part of applications argocd/app-<project>-<ns> and apps-<ns>",
+// with both Applications self-healing, and the shared tiers stuck OutOfSync/Missing. An explicit
+// path wins over a glob.
+func TestRender_AppsPathOnDedicatedReplacesDiscovery(t *testing.T) {
+	vc := cfg("aws")
+	vc.Repositories.AppsDestinationRepo = "https://github.com/acme/demo"
+	vc.Repositories.AppsPath = "examples/online-boutique/overlays/prod"
+	files := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo"}, vc))
+
+	apps, ok := files["user-apps.yaml"]
+	if !ok {
+		t.Fatalf("root apps Application should still render")
+	}
+	if !strings.Contains(apps, "path: examples/online-boutique/overlays/prod") {
+		t.Errorf("root Application must deliver the declared apps_path:\n%s", apps)
+	}
+	if strings.Contains(apps, "path: .\n") {
+		t.Errorf("root Application still pinned to the repo root despite an apps_path:\n%s", apps)
+	}
+	if _, present := files["user-apps-overlays.yaml"]; present {
+		t.Errorf("the discovery ApplicationSet must NOT render once apps_path is declared — it is " +
+			"what collides with the shared tiers' own placement Applications")
+	}
+}
+
+// The compatibility claim, asserted rather than reasoned about: an environment that declares no
+// apps_path renders EXACTLY what it rendered before the field existed — root `.` plus the glob.
+// Every project today is in this case, so this is the test that says the change moves nobody.
+func TestRender_NoAppsPathIsUnchanged(t *testing.T) {
+	vc := cfg("aws")
+	vc.Repositories.AppsDestinationRepo = "https://github.com/acme/demo"
+	vc.Repositories.AppsPath = ""
+	files := renderAll(t, BuildFromOutputs(map[string]interface{}{"eks_cluster_name": "eks-demo"}, vc))
+
+	apps, ok := files["user-apps.yaml"]
+	if !ok {
+		t.Fatalf("root apps Application should render")
+	}
+	if !strings.Contains(apps, "path: .") {
+		t.Errorf("with no apps_path the root Application must still deliver the repo root:\n%s", apps)
+	}
+	as, ok := files["user-apps-overlays.yaml"]
+	if !ok {
+		t.Fatalf("with no apps_path the discovery ApplicationSet must still render")
+	}
+	if !strings.Contains(as, "path: overlays/*") {
+		t.Errorf("discovery generator changed shape:\n%s", as)
+	}
+}
+
 func TestRender_GCPWorkloadIdentity(t *testing.T) {
 	files := renderAll(t, BuildFromOutputs(map[string]interface{}{
 		"gke_cluster_name":             "gke-demo",

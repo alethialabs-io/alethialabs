@@ -19,9 +19,9 @@ watch for.
 flowchart TB
   F["One Fabric — the infrastructure<br/>cluster · network · DNS"]
   F --> P["Environment: prod<br/>dedicated placement<br/>owns the Fabric"]
-  F --> D["Environment: dev<br/>namespace placement<br/>ns boutique-dev"]
+  F --> D["Environment: dev-1<br/>namespace placement<br/>ns boutique-dev-1"]
   F --> S["Environment: staging<br/>vcluster placement<br/>ns boutique-staging"]
-  D --> DA["overlays/dev<br/>12 services"]
+  D --> DA["overlays/dev-1<br/>12 services"]
   S --> SA["overlays/staging<br/>12 services, frontend x2"]
 `} />
 
@@ -30,7 +30,7 @@ how much isolation it gets: `dedicated` means its own cluster, `namespace` means
 shared one, `vcluster` means its own Kubernetes API server inside the shared one. See
 [Fabrics and placement](/concepts/fabrics-and-placement) for the model.
 
-The application is [enterprise-demo](https://github.com/alethialabs-io/enterprise-demo) — an
+The application is [enterprise-demo](https://github.com/alethialabs-io/alethia-examples) — an
 Online-Boutique-style shop, twelve services, delivered by ArgoCD from Kustomize overlays. Two
 overlays, one per environment, so the two tiers differ in a way you can see.
 
@@ -64,7 +64,7 @@ alethia project create boutique \
   --region <your-region> \
   --cloud-identity-id <your-identity-id> \
   --env prod:production:dedicated \
-  --env dev:development:namespace:boutique-dev \
+  --env dev-1:development:namespace:boutique-dev-1 \
   --env staging:staging:vcluster:boutique-staging
 ```
 
@@ -113,18 +113,18 @@ This is the step that makes the two tiers different, and the reason `--env` matt
 `component add`:
 
 ```bash
-alethia project component add --project boutique --env dev --kind repositories \
-  --set apps_destination_repo=https://github.com/alethialabs-io/enterprise-demo \
-  --set apps_path=overlays/dev
+alethia project component add --project boutique --env dev-1 --kind repositories \
+  --set apps_destination_repo=https://github.com/alethialabs-io/alethia-examples \
+  --set apps_path=examples/online-boutique/overlays/dev-1
 
 alethia project component add --project boutique --env staging --kind repositories \
-  --set apps_destination_repo=https://github.com/alethialabs-io/enterprise-demo \
-  --set apps_path=overlays/staging
+  --set apps_destination_repo=https://github.com/alethialabs-io/alethia-examples \
+  --set apps_path=examples/online-boutique/overlays/staging
 ```
 
-Same repository, different path. Each overlay stamps its own namespace — `overlays/dev` renders into
-`boutique-dev`, `overlays/staging` into `boutique-staging` — which must match the namespace you gave
-that environment in step 1. A mismatch is refused by the tenant AppProject rather than deployed into
+Same repository, different path. Each overlay stamps its own namespace — `overlays/dev-1` renders
+into `boutique-dev-1`, `overlays/staging` into `boutique-staging` — which must match the namespace
+you gave that environment in step 1. A mismatch is refused by the tenant AppProject rather than deployed into
 the wrong place.
 
 Confirm each tier separately:
@@ -169,13 +169,13 @@ alethia cluster get boutique
 That prints the API endpoint and the ArgoCD URL. With a kubeconfig for the cluster:
 
 ```bash
-kubectl get pods -n boutique-dev
+kubectl get pods -n boutique-dev-1
 kubectl get pods -n boutique-staging
 ```
 
 Twelve services running in each. In ArgoCD you will see one Application per placement, named
-`app-boutique-boutique-dev` and `app-boutique-boutique-staging`, each pinned to its own hardened
-AppProject — `tenant-boutique-boutique-dev` and `tenant-boutique-boutique-staging`. The AppProject is
+`app-boutique-boutique-dev-1` and `vc-app-boutique-boutique-staging`, each pinned to its own hardened
+AppProject — `tenant-boutique-boutique-dev-1` and `vc-boutique-boutique-staging`. The AppProject is
 what stops one tier's manifests from touching the other's namespace.
 
 <Callout type="info">

@@ -39,7 +39,7 @@
 // accepts https, and the T2 harness seeds jobs by direct SQL (test/e2e/controlplane.go), so it
 // can put `iac_source` straight into config_snapshot without going through
 // attachIacSource/scanIacSource. The cloud tier now exists: test/e2e/t2_byo_iac_run_test.go
-// drives the customer's own module out of the public alethialabs-io/enterprise-demo.
+// drives the customer's own module out of the public alethialabs-io/alethia-examples.
 //
 // The two tiers prove DIFFERENT things and neither replaces the other:
 //

@@ -6,6 +6,7 @@ package argocd
 import (
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/categories"
 	"github.com/alethialabs-io/alethialabs/packages/core/cloud"
@@ -60,6 +61,18 @@ type InfraFacts struct {
 	ClusterArn      string // AWS EKS ARN (empty on GCP/Azure)
 
 	AppsDestinationRepo string
+
+	// AppsPath is the subpath within AppsDestinationRepo this environment delivers from, and it
+	// means the same thing here as it does for a `namespace` or `vcluster` placement. It was
+	// missing from this struct entirely, so a `dedicated` environment ignored the field: the
+	// templates hardcoded a root Application at `.` plus an ApplicationSet globbing `overlays/*`,
+	// and the Fabric therefore adopted EVERY overlay in the repo — including the ones its own
+	// shared tiers were placing. ArgoCD reported the result as a resource ownership conflict
+	// ("Deployment/adservice is part of applications … and apps-dev-1") with both Applications
+	// self-healing against each other.
+	//
+	// Empty is the untouched path: root `.` plus the glob, exactly as before.
+	AppsPath string
 
 	// Labels are the classification + sweep-handle Kubernetes labels (cloud.ClassificationLabels)
 	// stamped onto metadata.labels of every rendered ArgoCD Application/AppProject (BYOC B1.4).
@@ -439,6 +452,7 @@ func BuildFromOutputs(outputs map[string]interface{}, vc *types.ProjectConfig) *
 		WebhookCAAddOns:      webhookCAAddOns(vc),
 		EnableKarpenter:      enableKarpenter,
 		AppsDestinationRepo:  vc.Repositories.AppsDestinationRepo,
+		AppsPath:             strings.TrimSpace(vc.Repositories.AppsPath),
 		Labels:               cloud.ClassificationLabels(vc),
 	}
 

@@ -27,6 +27,7 @@ import {
 	projectObservability,
 	projectQueues,
 	projectRepositories,
+	projectEnvironments,
 	projectSecrets,
 	projectStorageBuckets,
 	projectTopics,
@@ -433,13 +434,42 @@ export async function insertProjectComponent(
 	};
 	if (!def.singleton) insertValues.name = name;
 
+	// A table that carries `fabric_id` attaches at the FABRIC, not the environment, and the
+	// linkage has to be made HERE because nothing else makes it at runtime. `project_cluster`
+	// was written env-keyed with a null `fabric_id`, and the only thing that ever filled it was
+	// a migration-time backfill in programmables.sql — which by definition cannot reach a project
+	// created after it ran, i.e. every real project.
+	//
+	// The consequence was not a null column, it was the whole isolation ladder. The Fabric's own
+	// `dedicated` env still resolved, because resolveServingCluster falls back to the env-keyed
+	// row; but a `namespace` or `vcluster` env has no cluster row of its own and resolves ONLY by
+	// Fabric, so it found nothing and the deploy failed closed with "no serving cluster on the
+	// config snapshot — the Fabric's cluster must be provisioned", against a cluster that was
+	// provisioned, ACTIVE and serving. Every shared placement was unreachable.
+	const fabricLinked = "fabric_id" in cols;
+	if (fabricLinked && insertValues.fabric_id === undefined) {
+		const [env] = await db
+			.select({ fabric_id: projectEnvironments.fabric_id })
+			.from(projectEnvironments)
+			.where(eq(projectEnvironments.id, environmentId))
+			.limit(1);
+		if (env?.fabric_id) insertValues.fabric_id = env.fabric_id;
+	}
+
 	if (def.singleton) {
+		// The conflict branch must carry the linkage too. `add` upserts, so the row a caller is
+		// amending is very often one written before this fix — repairing it on write is what makes
+		// the fix reach existing projects without a data migration.
+		const updateValues =
+			fabricLinked && insertValues.fabric_id !== undefined
+				? { ...values, fabric_id: insertValues.fabric_id }
+				: values;
 		const [row] = await db
 			.insert(def.table)
 			.values(insertValues)
 			.onConflictDoUpdate({
 				target: [cols.project_id, cols.environment_id],
-				set: values,
+				set: updateValues,
 			})
 			.returning();
 		return rowToComponentWire(kind, row);

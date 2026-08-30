@@ -653,7 +653,7 @@ func t2RequireMaxConfigNodeShape(provider string, snapshot map[string]any) (fata
 // Unlike the heavy floor's 12 vCPU (reverse-derived from the AWS fixture, as the comment above
 // admits), these numbers are MEASURED from the workload the scenario actually places:
 //
-//	github.com/alethialabs-io/enterprise-demo base/kubernetes-manifests.yaml is Online Boutique —
+//	github.com/alethialabs-io/alethia-examples base/kubernetes-manifests.yaml is Online Boutique —
 //	12 Deployments whose `requests` sum to 1.57 vCPU / 1.34 GiB per copy. overlays/staging patches
 //	frontend to replicas: 2, which adds 0.10 vCPU / 64 MiB, so a staging copy is 1.67 / 1.40.
 //

@@ -14,8 +14,8 @@ func validVClusterSpec() VClusterSpec {
 		Name:                "team-web",
 		HostNamespace:       "vcluster-team-web",
 		ServiceAccount:      "vcluster-argocd-team-web",
-		KubeconfigSecret:    "vcluster-kubeconfig-team-web",
-		KubeconfigNamespace: "argocd",
+		KubeconfigSecret:    "vc-team-web",
+		KubeconfigNamespace: "vcluster-team-web",
 	}
 }
 
@@ -63,7 +63,7 @@ func TestInClusterAPIServerURL(t *testing.T) {
 
 func TestRenderVClusterValues(t *testing.T) {
 	// Default (no expose, no version pin): no controlPlane block; exportKubeConfig pins the in-cluster
-	// server, SA-token mode, and writes the Secret into the ArgoCD namespace.
+	// server and SA-token mode on the chart's PRIMARY exported Secret.
 	v := renderVClusterValues(validVClusterSpec())
 	for _, want := range []string{
 		"exportKubeConfig:",
@@ -71,16 +71,39 @@ func TestRenderVClusterValues(t *testing.T) {
 		"serviceAccount:",
 		"name: vcluster-argocd-team-web",
 		"clusterRole: cluster-admin",
-		"additionalSecrets:",
-		"- name: vcluster-kubeconfig-team-web",
-		"namespace: argocd",
 	} {
 		if !strings.Contains(v, want) {
 			t.Errorf("default values missing %q\n---\n%s", want, v)
 		}
 	}
-	if strings.Contains(v, "controlPlane:") {
-		t.Errorf("default values should not emit an empty controlPlane block\n---\n%s", v)
+	// `additionalSecrets` must NOT be requested. `server` and `serviceAccount` govern the primary
+	// Secret only; an additional one is written with the chart's default admin CERTIFICATE
+	// kubeconfig at https://localhost:8443 and an empty token, which is unusable for ArgoCD
+	// registration and is the admin credential this values block exists to avoid.
+	if strings.Contains(v, "additionalSecrets") {
+		t.Errorf("values must not request additionalSecrets — they do not inherit server/serviceAccount\n---\n%s", v)
+	}
+	// controlPlane is always emitted now, because proxy.extraSANs is unconditional: the proxy
+	// certificate must carry the very address exportKubeConfig.server pins, or ArgoCD dials the
+	// vcluster and rejects its certificate — leaving the Application SYNC Unknown while still
+	// reporting Healthy.
+	for _, want := range []string{
+		"controlPlane:",
+		"proxy:",
+		"extraSANs:",
+		"- team-web.vcluster-team-web.svc",
+		"- team-web.vcluster-team-web.svc.cluster.local",
+	} {
+		if !strings.Contains(v, want) {
+			t.Errorf("default values missing %q\n---\n%s", want, v)
+		}
+	}
+	// The SAN list and the pinned server must agree — they share a derivation precisely so this
+	// cannot drift. Assert the relationship, not the literals.
+	spec := validVClusterSpec()
+	server := strings.TrimPrefix(spec.effectiveServer(), "https://")
+	if !strings.Contains(v, "- "+server+"\n") {
+		t.Errorf("extraSANs must cover the pinned server %q\n---\n%s", server, v)
 	}
 	if strings.Contains(v, "LoadBalancer") {
 		t.Errorf("default values should not expose a LoadBalancer\n---\n%s", v)
@@ -134,7 +157,7 @@ func TestVClusterCommands(t *testing.T) {
 		t.Errorf("uninstall command wrong: %q", un)
 	}
 	del := vclusterDeleteSecretCommand(s)
-	if !strings.Contains(del, "kubectl delete secret 'vcluster-kubeconfig-team-web'") || !strings.Contains(del, "--namespace 'argocd'") {
+	if !strings.Contains(del, "kubectl delete secret 'vc-team-web'") || !strings.Contains(del, "--namespace 'vcluster-team-web'") {
 		t.Errorf("delete-secret command wrong: %q", del)
 	}
 }

@@ -15,7 +15,22 @@ spec:
     limits.cpu: "4"
     limits.memory: 8Gi
     pods: "30"
-    services: "10"
+    # 10 was below the product's OWN reference workload. This bundle is applied verbatim into a
+    # `namespace`-placed tenant as well as a preview (deploy_namespace.go:
+    # applyNamespaceGuardrailBundle — "v1 reuses the exact, tested bundle"), and Online Boutique,
+    # the application the enterprise demo ships, declares TWELVE Services. So every namespace tier
+    # of the demo failed to converge:
+    #
+    #   services "paymentservice" is forbidden: exceeded quota: preview-quota,
+    #   requested: services=1, used: services=10, limited: services=10
+    #
+    # Ten of twelve applied, two were refused, and the Application sat OutOfSync/Missing with a
+    # partly-populated namespace — the worst shape, because the tier looks deployed.
+    #
+    # Raised to fit that workload with room, and NOT to loosen the guardrail: the blast radius a
+    # quota really bounds is cpu/memory, and those are unchanged. A Service is a cheap object; ten
+    # was a number, not a limit anybody had costed.
+    services: "30"
     persistentvolumeclaims: "10"
     requests.storage: 20Gi
     count/deployments.apps: "20"

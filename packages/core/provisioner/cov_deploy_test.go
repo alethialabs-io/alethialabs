@@ -83,7 +83,7 @@ case "$*" in
   *"get nodes -o json"*)
     echo '{"items":[{"status":{"conditions":[{"type":"Ready","status":"True"}]}}]}'
     ;;
-  *"get secret vcluster-kubeconfig-"*"-o json"*)
+  *"get secret vc-"*"-o json"*)
     echo '` + secret + `'
     ;;
 esac
@@ -1095,8 +1095,8 @@ func TestDep_DeregisterVClusterIsBestEffort(t *testing.T) {
 		Name:                "tenant-a",
 		HostNamespace:       "vcluster-tenant-a",
 		ServiceAccount:      "vcluster-argocd-tenant-a",
-		KubeconfigSecret:    "vcluster-kubeconfig-tenant-a",
-		KubeconfigNamespace: "argocd",
+		KubeconfigSecret:    "vc-tenant-a",
+		KubeconfigNamespace: "vcluster-tenant-a",
 	}
 
 	t.Run("a helm uninstall failure still runs the ArgoCD deregister", func(t *testing.T) {

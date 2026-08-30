@@ -31,11 +31,19 @@ func TestBuildVClusterSpec(t *testing.T) {
 	if spec.ServiceAccount != "vcluster-argocd-team-web" {
 		t.Errorf("ServiceAccount = %q", spec.ServiceAccount)
 	}
-	if spec.KubeconfigSecret != "vcluster-kubeconfig-team-web" {
+	if spec.KubeconfigSecret != "vc-team-web" {
 		t.Errorf("KubeconfigSecret = %q", spec.KubeconfigSecret)
 	}
-	if spec.KubeconfigNamespace != "argocd" {
-		t.Errorf("KubeconfigNamespace = %q, want argocd", spec.KubeconfigNamespace)
+	// The export lands in the vcluster's OWN host namespace, which is the only namespace the loft
+	// chart grants its service account. Naming `argocd` here made the syncer watch a namespace it
+	// had no RBAC for, so its caches never synced, /readyz never served, and `helm install --wait`
+	// timed out — reported as a bare "helm install failed: exit status 1".
+	if spec.KubeconfigNamespace != "vcluster-team-web" {
+		t.Errorf("KubeconfigNamespace = %q, want vcluster-team-web (the vcluster's own host namespace)", spec.KubeconfigNamespace)
+	}
+	if spec.KubeconfigNamespace != spec.HostNamespace {
+		t.Errorf("KubeconfigNamespace %q must equal HostNamespace %q — the export may only be written where the chart holds RBAC",
+			spec.KubeconfigNamespace, spec.HostNamespace)
 	}
 	if err := spec.Validate(); err != nil {
 		t.Errorf("built spec is invalid: %v", err)

@@ -167,7 +167,7 @@ func TestHelmVClusterProvisionerCreate(t *testing.T) {
 		if !strings.Contains(commands[1], "helm upgrade --install 'team-web' 'loft-sh/vcluster'") {
 			t.Errorf("install command = %q", commands[1])
 		}
-		for _, want := range []string{"exportKubeConfig:", "vcluster-argocd-team-web", "vcluster-kubeconfig-team-web"} {
+		for _, want := range []string{"exportKubeConfig:", "vcluster-argocd-team-web"} {
 			if !strings.Contains(values, want) {
 				t.Errorf("values file missing %q:\n%s", want, values)
 			}

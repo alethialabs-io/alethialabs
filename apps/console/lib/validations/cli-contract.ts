@@ -417,6 +417,16 @@ export const environmentWire = z.object({
 	status: z.string(),
 	is_default: z.boolean(),
 	region: z.string().nullable(),
+	/** The isolation rung: `dedicated` owns a Fabric (and therefore a cluster), `vcluster` and
+	 *  `namespace` are placed onto one that already exists. This is the product's headline
+	 *  distinction, so a list of environments that omits it cannot answer the question the list
+	 *  is for — which of these cost a cluster, and which were free. */
+	placement_mode: z.string(),
+	/** ArgoCD destination namespace for a shared placement; null for `dedicated`. */
+	namespace: z.string().nullable(),
+	/** The Fabric this environment is placed on, BY NAME rather than id — the whole point is to
+	 *  show at a glance that several environments share one, and a uuid does not read as shared. */
+	fabric: z.string().nullable(),
 });
 
 /** A project component (GET /api/cli/projects/:id/components, POST .../components/:kind).

@@ -86,7 +86,7 @@ const (
 // git token is empty and validateByoRepoURL accepts https, so a public repo needs no git server,
 // no token and no new maintainer-held secret. It is also honest about what BYO means — the module
 // lives in a repo Alethia does not own the state of.
-const byoIacDefaultRepo = "https://github.com/alethialabs-io/enterprise-demo"
+const byoIacDefaultRepo = "https://github.com/alethialabs-io/alethia-examples"
 
 // byoIacDefaultRef is the branch the pinned SHA is resolved FROM. The SHA — never this ref — is
 // what every job carries; the ref is only how the harness discovers it once, at the top of the run.
