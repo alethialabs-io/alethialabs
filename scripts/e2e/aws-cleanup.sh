@@ -272,7 +272,17 @@ discover_cluster() {
 	if [ -z "$CLUSTER" ]; then
 		while IFS= read -r lb_arn; do
 			[ -n "$lb_arn" ] || continue
-			lb_val="$(probe_run cluster-discovery aws elbv2 describe-tags --resource-arns "$lb_arn" \
+			# probe_confirm_re, NOT probe_run: this is a PER-RESOURCE describe over a SHARED
+			# account, prod included, and it does not break until it finds a match. A foreign
+			# balancer deleted between the list below and this describe answers
+			# LoadBalancerNotFound — under probe_run that burns every retry and records
+			# UNVERIFIABLE, so finalize_verification returns 4 on an otherwise clean teardown.
+			# Ordinary throttling on a fan-out across a shared account does the same. Narrowed to
+			# the one shape this call can mean by "gone" rather than the whole looks_gone union,
+			# because CLUSTER is the SCOPE here: a throttle silently read as "gone" leaves
+			# CLUSTER="" and that is the silent green the ⚠️ note below is about.
+			lb_val="$(probe_confirm_re cluster-discovery 'LoadBalancerNotFound' \
+				aws elbv2 describe-tags --resource-arns "$lb_arn" \
 				--query "TagDescriptions[].Tags[?Key=='elbv2.k8s.aws/cluster'].Value" \
 				--output text | tr '\t' '\n' | grep -E -- "-${ENV}-" | head -n1 || true)"
 			if [ -n "$lb_val" ]; then
@@ -440,14 +450,24 @@ cluster_classic_lb_names() {
 		[ -n "$name" ] || continue
 		# Captured, THEN matched — same reason as cluster_lb_arns: a `| grep -q .` can SIGPIPE the
 		# capture and, under pipefail, turn a TAGGED balancer into an untagged-looking one.
-		# probe_confirm, NOT probe_run: this reads ONE balancer in a SHARED account, prod included,
-		# and a foreign ELB deleted between the list above and this describe answers
+		# probe_confirm_re, NOT probe_run: this reads ONE balancer in a SHARED account, prod
+		# included, and a foreign ELB deleted between the list above and this describe answers
 		# LoadBalancerNotFound. Under probe_run that exhausts the retries and forces exit 4 on an
 		# otherwise clean teardown — up to eight scans per job across verify and three preflight
-		# envs. A NotFound here is an ANSWER ("it is gone, so it is not ours to delete"), which is
-		# exactly the distinction probe_confirm exists to make; any other error is still
-		# UNVERIFIABLE.
-		tags="$(probe_confirm classic-load-balancer aws elb describe-tags --load-balancer-names "$name" \
+		# envs. A NotFound here is an ANSWER ("it is gone, so it is not ours to delete").
+		#
+		# ⚠️ ...but the "gone" shape is pinned to that ONE string rather than delegated to
+		# looks_gone, because this function has TWO callers and they want different things. The
+		# sweep can afford a generous "already gone". The other caller is
+		# alive_lbs → verify_swept → finalize_verification, where "the describe did not answer"
+		# reclassified as "not ours" drops a live, BILLING classic ELB out of the leak list and the
+		# run exits 0 — the silent green this file exists to remove. looks_gone is an
+		# 11-alternative union covering s3api, sqs and the NoSuch* family; an `elb describe-tags`
+		# failing through a misrouted endpoint or a proxy answers "An error occurred (404) …: Not
+		# Found", which matches three of them. Everything but LoadBalancerNotFound stays
+		# UNVERIFIABLE, so the gate still fires.
+		tags="$(probe_confirm_re classic-load-balancer 'LoadBalancerNotFound' \
+			aws elb describe-tags --load-balancer-names "$name" \
 			--query "TagDescriptions[].Tags[?Key=='kubernetes.io/cluster/${CLUSTER}'].Value" --output text || true)"
 		if printf '%s' "$tags" | grep -Eq 'owned|shared'; then
 			printf '%s\n' "$name"
@@ -1471,12 +1491,43 @@ if [ "$SELF_TEST" = "1" ]; then
 			shift
 		done
 	}
-	aws() {
+	# Named, and `aws` is a one-line shim onto it. A case that needs its own stub (a failing
+	# describe, say) restores this one with `st_aws_restore` — `unset -f aws` would leave every
+	# LATER case running against the real CLI, which silently answers nothing and turns their
+	# assertions into vacuous passes.
+	st_aws_main() {
 		local q
 		q="$(st_query "$@")"
 		case "$1 ${2:-}" in
 		"elbv2 describe-load-balancers") printf '%s\n' "$st_lb" ;;
-		"elbv2 describe-tags") printf '%s\n' "$ST_LB_CLUSTER" ;;
+		# The elbv2 arm asks the SAME two questions the classic arm below does, and for the same
+		# reason: answering $ST_LB_CLUSTER whatever the --query said left this service exactly as
+		# blind as the defect being fixed. Measured: with an unconditional answer, replacing the
+		# discovery tag key with THIS-TAG-DOES-NOT-EXIST, or cluster_lb_arns' scope predicate
+		# `Value=='${CLUSTER}'` with a nonsense literal, left ALL cases green — including the one
+		# named "LB tag for THIS run resolves the cluster". The scope predicate is what decides
+		# which balancers get deleted, so it is the last expression that should be unpinned.
+		"elbv2 describe-tags")
+			case "$q" in
+			*"elbv2.k8s.aws/cluster"*)
+				case "$q" in
+				# cluster_lb_arns' SCOPE PREDICATE — `… && Value=='<cluster>'`. It decides which
+				# balancers get DELETED, so the stub compares the literal it was given against the
+				# tag this balancer actually carries: a predicate naming another run's cluster
+				# matches nothing, which is the whole safety property. Answering unconditionally
+				# let that literal be replaced with a nonsense string unnoticed.
+				*"&& Value=='"*)
+					[ -n "$ST_LB_CLUSTER" ] && case "$q" in
+					*"&& Value=='${ST_LB_CLUSTER}'"*) printf '%s\n' "cluster=${ST_LB_CLUSTER}" ;;
+					esac
+					;;
+				# Discovery projects `.Value` to learn the cluster NAME. A separate answer from the
+				# predicate above, so neither can stand in for the other under mutation.
+				*.Value*) printf '%s\n' "$ST_LB_CLUSTER" ;;
+				esac
+				;;
+			esac
+			;;
 		# The CLASSIC service answers separately, because it IS a separate service — the whole
 		# defect this stub now covers was `elb` and `elbv2` being treated as one.
 		"elb describe-load-balancers")
@@ -1502,6 +1553,8 @@ if [ "$SELF_TEST" = "1" ]; then
 		*) : ;;
 		esac
 	}
+	st_aws_restore() { aws() { st_aws_main "$@"; }; }
+	st_aws_restore
 
 	st_case() { # <name> <lb cluster tag> <expected CLUSTER>
 		CLUSTER=""
@@ -1587,6 +1640,20 @@ if [ "$SELF_TEST" = "1" ]; then
 		DRY_RUN="$st_prev_dry"
 		local saw="kept"
 		printf '%s' "$out" | grep -q "classic-elb $2" && saw="deleted"
+		# ⚠️ POSITIVE CONTROL, and the `kept` case is why it is not optional. That case passes on
+		# the ABSENCE of a line, and the capture above discards both stderr and the exit status —
+		# so "the sweep correctly skipped this balancer" and "sweep_load_balancers aborted before
+		# it ever got there" rendered identically as ✓. Requiring the summary line the classic
+		# branch always prints separates them: the sweep must have RUN and REACHED its verdict, and
+		# the verdict must be the counted one, not merely a missing delete line.
+		local want_summary="· classic load balancers: none"
+		[ "$4" = "deleted" ] && want_summary="· classic load balancers: 1 to delete"
+		if ! printf '%s' "$out" | grep -qF "$want_summary"; then
+			echo "  ✗ $1 — the sweep never reached its classic-ELB verdict (wanted \"${want_summary}\"); " \
+				"an absent delete line proves nothing here" >&2
+			st_fails=$((st_fails + 1))
+			return
+		fi
 		if [ "$saw" = "$4" ]; then
 			echo "  ✓ $1"
 		else
@@ -1594,12 +1661,155 @@ if [ "$SELF_TEST" = "1" ]; then
 			st_fails=$((st_fails + 1))
 		fi
 	}
+	# ── THE ELBv2 SWEEP'S SCOPE PREDICATE. The classic cases below cover `elb`; nothing covered
+	# `elbv2`, so cluster_lb_arns' `&& Value=='${CLUSTER}'` — the predicate that decides which
+	# balancers get DELETED in a shared account holding prod — was unpinned. Measured: replacing
+	# that literal with a nonsense string left every case green. This is the one expression in the
+	# file where a false positive deletes someone else's load balancer.
+	st_v2_sweep_case() { # <name> <the tag THIS balancer carries> <expect: deleted|kept>
+		local out st_prev_dry="$DRY_RUN"
+		CLUSTER="eks-ue1-${ENV}-alethia-nl"
+		ST_LB_CLUSTER="$2"
+		ST_CLASSIC_LB=""
+		ST_CLASSIC_TAG_KEY=""
+		ST_CLASSIC_TAG_VALUE=""
+		DRY_RUN=1
+		out="$(sweep_load_balancers 2>/dev/null || true)"
+		DRY_RUN="$st_prev_dry"
+		local saw="kept"
+		printf '%s' "$out" | grep -q "would delete elb " && saw="deleted"
+		# Same positive control as the classic pair, for the same reason: the `kept` verdict is an
+		# ABSENCE, and an aborted sweep is absent too.
+		local want_summary="· load balancers: none"
+		[ "$3" = "deleted" ] && want_summary="· load balancers: 1 to delete"
+		if ! printf '%s' "$out" | grep -qF "$want_summary"; then
+			echo "  ✗ $1 — the sweep never reached its elbv2 verdict (wanted \"${want_summary}\")" >&2
+			st_fails=$((st_fails + 1))
+			return
+		fi
+		if [ "$saw" = "$3" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected the sweep to have $3 it, but it $saw it" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_v2_sweep_case "this run's ELBv2 is deleted" "eks-ue1-${ENV}-alethia-nl" "deleted"
+	st_v2_sweep_case "ANOTHER run's ELBv2 is NOT deleted" "eks-ue1-99999999-9-alethia-nl" "kept"
+
+	# ── AND THE CLASSIC DESCRIBE THAT DOES NOT ANSWER. cluster_classic_lb_names feeds BOTH the
+	# sweep and alive_lbs → verify_swept, so its error handling decides whether a live balancer can
+	# vanish from the leak list. Nothing exercised a failing `elb describe-tags`, which is why
+	# reverting it to probe_run left the suite green — the same untested-fix shape as the discovery
+	# cases below.
+	st_classic_probe_case() { # <name> <rc> <stderr> <expect unverifiable: yes|no> <expect in leaks: yes|no>
+		probe_reset
+		CLUSTER="eks-ue1-${ENV}-alethia-nl"
+		ST_CLASSIC_LB="a19d04c70d3934e4996ce17cb9ae9ea6"
+		ST_LB_CLUSTER=""
+		local unv=no seen=no names
+		aws() {
+			case "$1 ${2:-}" in
+			"elb describe-load-balancers") printf '%s\n' "$ST_CLASSIC_LB" ;;
+			"elb describe-tags") printf '%s\n' "$ST_CLASSIC_ERR" >&2; return "$ST_CLASSIC_RC" ;;
+			*) : ;;
+			esac
+		}
+		ST_CLASSIC_RC="$2" ST_CLASSIC_ERR="$3"
+		names="$(cluster_classic_lb_names 2>/dev/null || true)"
+		st_aws_restore
+		probe_has_unverifiable && unv=yes
+		printf '%s' "$names" | grep -q "$ST_CLASSIC_LB" && seen=yes
+		if [ "$unv" = "$4" ] && [ "$seen" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected unverifiable=$4/in-leaks=$5, got unverifiable=${unv}/in-leaks=${seen}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_classic_probe_case "a LoadBalancerNotFound on the classic describe is an ANSWER — no false red" \
+		255 "An error occurred (LoadBalancerNotFound) when calling the DescribeTags operation" no no
+	st_classic_probe_case "a THROTTLE on the classic describe is UNVERIFIABLE, not 'not ours'" \
+		254 "An error occurred (Throttling) when calling the DescribeTags operation: Rate exceeded" yes no
+	# ⚠️ The finding that made probe_confirm_re necessary: this 404 matches THREE alternatives of
+	# looks_gone, so plain probe_confirm resolves it CLEAN and a live, billing classic ELB drops out
+	# of alive_lbs on a run that exits 0.
+	st_classic_probe_case "a 404 through a proxy is UNVERIFIABLE — it must not read as 'not ours'" \
+		254 "An error occurred (404) when calling the DescribeTags operation: Not Found" yes no
+
 	st_classic_sweep_case "this run's classic ELB is deleted" \
 		"a19d04c70d3934e4996ce17cb9ae9ea6" "owned" "deleted"
 	st_classic_sweep_case "ANOTHER run's classic ELB is NOT deleted" \
 		"a8a8791a7a6b249319f24b2e2b727584" "" "kept"
 
 	CLUSTER=""
+	# ── DISCOVERY THAT DOES NOT ANSWER (#3492). ──────────────────────────────────────────────────
+	#
+	# Every case above varies what the API SAYS. None varies whether it answers at all — and the
+	# whole claim of the probe wiring in discover_cluster is about what happens when it does not.
+	# Measured before this block existed: reverting every probe_run / probe_confirm_re in
+	# discover_cluster to a bare `aws … 2>/dev/null` left the self-test entirely green, so CI could
+	# not stop this regressing to the state #3437 shipped.
+	#
+	# The distinction being pinned costs money in BOTH directions:
+	#   · a THROTTLE leaves CLUSTER="" — and CLUSTER is the SCOPE, so an unrecorded one makes
+	#     alive_lbs empty and finalize_verification exits 0 over a live load balancer;
+	#   · a LoadBalancerNotFound on a PER-RESOURCE describe is an ANSWER, and recording it as
+	#     UNVERIFIABLE reds an otherwise clean teardown over another run's already-deleted balancer.
+	# A test asserting only the first is satisfied by reverting to probe_run; only the second one
+	# distinguishes probe_confirm_re from it.
+	#
+	# $ST_DISC_ON selects WHICH call fails, because "the list fails" and "one per-resource describe
+	# fails" are different states and the second cannot be reached by failing everything.
+	st_disc_aws() {
+		case "$ST_DISC_ON" in
+		all) ;;
+		describe-tags)
+			# The list answers; only the per-resource describe fails.
+			case "$1 ${2:-}" in
+			*"describe-tags") ;;
+			"elbv2 describe-load-balancers") printf '%s\n' "$st_lb"; return 0 ;;
+			*) return 0 ;;
+			esac
+			;;
+		esac
+		printf '%s\n' "${ST_DISC_ERR}" >&2
+		return "${ST_DISC_RC}"
+	}
+	st_discovery_probe_case() { # <name> <which call fails> <rc> <stderr> <expect unverifiable>
+		probe_reset
+		CLUSTER=""
+		ST_DISC_ON="$2" ST_DISC_RC="$3" ST_DISC_ERR="$4"
+		local unv=no
+		aws() { st_disc_aws "$@"; }
+		discover_cluster >/dev/null 2>&1 || true
+		st_aws_restore
+		probe_has_unverifiable && unv=yes
+		# CLUSTER must be empty either way. That is not the property under test — it is the
+		# precondition that makes the LEDGER ENTRY the only difference between the two outcomes.
+		if [ "$unv" = "$5" ] && [ -z "$CLUSTER" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected unverifiable=$5 with CLUSTER empty, got unverifiable=${unv} CLUSTER='${CLUSTER}'" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_discovery_probe_case "a THROTTLED discovery is UNVERIFIABLE, not an empty account" \
+		all 254 "An error occurred (Throttling) when calling the DescribeLoadBalancers operation: Rate exceeded" yes
+	st_discovery_probe_case "a DENIED discovery is UNVERIFIABLE — 'not allowed to look' is not 'nothing there'" \
+		all 254 "An error occurred (UnauthorizedOperation) when calling the DescribeLoadBalancers operation" yes
+	# The negative control, and the case a future reader is most likely to "simplify" back to
+	# probe_run: this is the entire reason the per-resource describes use probe_confirm_re.
+	st_discovery_probe_case "a LoadBalancerNotFound on a per-resource describe is an ANSWER, not a failure to look" \
+		describe-tags 255 "An error occurred (LoadBalancerNotFound) when calling the DescribeTags operation" no
+	# ⚠️ And the shape that motivated probe_confirm_re over plain probe_confirm: looks_gone is a
+	# union over every resource kind this sweeper touches, so a 404 through a misrouted endpoint or
+	# a proxy hits three of its eleven alternatives. Under probe_confirm that reads as "gone" and
+	# the ledger records nothing. It must stay UNVERIFIABLE.
+	st_discovery_probe_case "a 404 through a proxy stays UNVERIFIABLE — looks_gone is wider than this call can mean" \
+		describe-tags 254 "An error occurred (404) when calling the DescribeTags operation: Not Found" yes
+	ST_DISC_ON="" ST_DISC_RC=0 ST_DISC_ERR=""
+
 
 	# The VPC-scoped security-group discovery. $ST_SGS is what the stub reports for the run's VPC;
 	# `default` must never appear in the result, or the sweep would retry an undeletable group forever.

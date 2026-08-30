@@ -290,6 +290,46 @@ probe_confirm() {
 	return "$rc"
 }
 
+# probe_confirm_re <type> <gone-regex> <cmd…> — probe_confirm with an EXPLICIT "gone" shape,
+# for a call where the caller's `looks_gone` union is wider than the answer this call can give.
+#
+# `looks_gone` is a union over every resource kind a sweeper touches — s3api head-bucket's `(404)`,
+# sqs's `NonExistent`, the whole `NoSuch*` S3 family — and its own header already warns that "a
+# shape wrongly ADDED here turns a throttle into 'gone'". Handing that union to a membership test
+# widens it the same way: an `elb describe-tags` failing through a misrouted endpoint or a proxy
+# answers `An error occurred (404) when calling the DescribeTags operation: Not Found`, which hits
+# three alternatives, and a live billing balancer drops out of the leak list on a run that exits 0.
+#
+# So a caller that knows exactly which error means "gone" says so, and EVERYTHING else — including
+# the other ten alternatives — stays UNVERIFIABLE. Same retry and same ledger entry as
+# probe_confirm otherwise; the only difference is how narrow the CLEAN answer is.
+probe_confirm_re() {
+	local ptype="$1" gone_re="$2"
+	shift 2
+	[ -n "$PROBE_ERR_DIR" ] || probe_reset
+	local out="" rc=0 attempt=1 delay="$PROBE_RETRY_DELAY" errf err why
+	errf="${PROBE_ERR_DIR}/err.${BASHPID:-$$}"
+	while :; do
+		rc=0
+		out="$("$@" 2>"$errf")" || rc=$?
+		[ "$rc" -eq 0 ] && break
+		err="$(cat "$errf" 2>/dev/null || true)"
+		if printf '%s' "$err" | grep -Eqi -- "$gone_re"; then
+			return 0 # confirmed absent, by the ONE shape this call can answer with — CLEAN
+		fi
+		[ "$attempt" -ge "$PROBE_RETRIES" ] && break
+		[ "$delay" -gt 0 ] && sleep "$delay"
+		attempt=$((attempt + 1))
+		delay=$((delay * 2))
+	done
+	if [ "$rc" -ne 0 ]; then
+		why="$(tr '\n' ' ' <"$errf" 2>/dev/null | tr -s ' ' | cut -c1-200)"
+		probe_note_unverifiable "$ptype" "exit ${rc} after ${attempt} attempt(s)${why:+ — ${why}}"
+	fi
+	if [ -n "$out" ]; then printf '%s\n' "$out"; fi
+	return "$rc"
+}
+
 # probe_gate <cloud> <scope-description> — the exit-code half of the contract.
 #
 # Returns 0 when every probe answered, 4 when one did not. Callers run it AFTER verify_swept so a
