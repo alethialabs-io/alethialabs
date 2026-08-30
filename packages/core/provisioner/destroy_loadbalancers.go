@@ -241,6 +241,16 @@ type releaseOutcome struct {
 	// Skipped records why the step did not run at all (no cluster access, no state outputs). It is
 	// not Clean: nothing was established.
 	Skipped string
+	// NoCluster narrows Skipped to the one case that is PERMANENT: this environment's state names
+	// no API endpoint at all, so there was never a control plane to hold a load balancer. Every
+	// other skip is potentially transient — a throttled apiserver, an exec-credential refresh, a
+	// state-proxy blip — and those are worth a second attempt.
+	//
+	// It is a separate field rather than a match on Skipped's text because the two consumers both
+	// decide something expensive with it (whether to retry a destroy, whether to alarm an
+	// operator), and a sentence written for a human is not a predicate. Reworded once and both
+	// silently change behaviour.
+	NoCluster bool
 }
 
 // billingWarning renders the block appended to a failed destroy's error, or "" when there is
@@ -251,9 +261,36 @@ type releaseOutcome struct {
 // sweeps cloud load balancers after a failed destroy. So on a customer's teardown this text is the
 // whole signal that something is still running and still charging — which is why it names the
 // objects, says nothing will remove them, and gives the two ways out.
-func (r releaseOutcome) billingWarning() string {
+func (r releaseOutcome) billingWarning() string { return r.warning(toneAlarm) }
+
+// warningTone is the volume the same facts are rendered at. A destroy that FAILED and one that
+// SUCCEEDED owe the reader different things about an unreleased load balancer, and the difference
+// is presentation, not fact — so it is a parameter here rather than a second renderer somewhere
+// else. The comment on postDestroySuccessNotice used to claim this ("they cannot drift into
+// disagreeing about what is still held") while its Skipped arm hand-wrote its own sentence.
+type warningTone int
+
+const (
+	toneAlarm warningTone = iota // the destroy FAILED: the loudest thing the operator will see
+	toneNote                     // the destroy SUCCEEDED: say what did not happen, quietly
+)
+
+func (r releaseOutcome) warning(tone warningTone) string {
 	if r.Clean {
 		return ""
+	}
+	// A BARE Skipped — nothing observed, the cluster never went unreadable mid-wait — is the only
+	// outcome whose volume the tone changes. On a succeeded destroy it is a note, and on an
+	// environment that never had a control plane it is nothing at all: alarming on every repeat
+	// teardown of an already-gone environment is how a reader learns to scroll past the alarm that
+	// matters.
+	if tone == toneNote && r.Skipped != "" && len(r.Remaining) == 0 && !r.Unknown {
+		if r.NoCluster {
+			return ""
+		}
+		return fmt.Sprintf("   Note: the pre-destroy load-balancer release did not run (%s). "+
+			"Everything in the state file is gone; a Service of type LoadBalancer or an Ingress "+
+			"would not have been, so check the cloud console if this environment exposed one.", r.Skipped)
 	}
 	var b strings.Builder
 	b.WriteString("\n\n⚠️  CLOUD LOAD BALANCERS MAY STILL EXIST AND STILL BILL.\n")

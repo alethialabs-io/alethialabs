@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -630,6 +631,50 @@ func TestReleaseReportsWhatItLastSawWhenTheClusterStopsAnswering(t *testing.T) {
 	}
 }
 
+// cancelOnMarker is an io.Writer that cancels a context the first time a marker line is written to
+// it. It exists so a test can say "cancel once the code under test has REACHED this point" instead
+// of "cancel after N milliseconds and hope" — the difference between an assertion about the code
+// and an assertion about the machine it runs on.
+//
+// Writes arrive from releaseCloudLoadBalancers' goroutines, so the buffer is mutex-guarded; String
+// takes the same lock, because a test reading it while a late write lands is a data race the race
+// detector will find in CI and not locally.
+type cancelOnMarker struct {
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	marker string
+	cancel context.CancelFunc
+	fired  bool
+}
+
+func (c *cancelOnMarker) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	n, err := c.buf.Write(p)
+	seen := !c.fired && strings.Contains(c.buf.String(), c.marker)
+	if seen {
+		c.fired = true
+	}
+	c.mu.Unlock()
+	if seen {
+		c.cancel()
+	}
+	return n, err
+}
+
+func (c *cancelOnMarker) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
+
+// Fired reports whether the marker was ever written. A test that never saw it did not exercise the
+// path it claims to: the cancellation would have come from the outer hang guard instead.
+func (c *cancelOnMarker) Fired() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fired
+}
+
 // A cancelled context must not report a release. The teardown's own deadline expiring mid-wait is
 // the one moment when "we stopped looking" is easiest to mistake for "there is nothing there", and
 // the destroy that follows branches on exactly that.
@@ -639,14 +684,22 @@ func TestReleaseOnACancelledContextIsNotARelease(t *testing.T) {
 	t.Cleanup(func() { lbReleaseTimeout, lbReleasePoll = prevT, prevP })
 
 	stubKubectlForRelease(t, []string{svcListJSON}, true, emptyList, 0, "")
-	// Long enough that the FIRST list and the deletes complete — each kubectl is a process spawn —
-	// so the cancellation lands INSIDE the wait loop rather than on the opening read. A shorter
-	// window made this test pass through the early-return path instead, proving something else.
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	// ⚠️ THE CANCELLATION IS CAUSAL, NOT TIMED, and that is the whole reliability of this test.
+	//
+	// It used to be a 1500 ms window sized to "long enough that the first list and the deletes
+	// complete". Reaching the wait loop costs THREE kubectl PROCESS SPAWNS plus os/exec setup, so
+	// on a loaded runner that window is missed — and because the assertion below is a hard Fatal,
+	// missing it does not merely prove something else, it REDS THE SUITE for a reason unrelated to
+	// the code under test. Cancelling the moment the wait loop announces itself removes the machine
+	// from the experiment entirely.
+	//
+	// The outer deadline is a hang guard, not the mechanism: it is two orders of magnitude wider
+	// than the window it replaces, so it cannot be reached by ordinary slowness.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	var buf bytes.Buffer
-	rel, err := releaseCloudLoadBalancers(ctx, &buf)
+	buf := &cancelOnMarker{marker: "cloud-backed object(s) before destroy", cancel: cancel}
+	rel, err := releaseCloudLoadBalancers(ctx, buf)
 	if err == nil {
 		t.Fatal("a cancelled wait must report an error, not a release")
 	}
@@ -660,19 +713,27 @@ func TestReleaseOnACancelledContextIsNotARelease(t *testing.T) {
 	// context, the early return yields {Unknown: true} plus an error and satisfies every assertion
 	// above without ever entering the wait loop — so on a loaded runner this test would go green
 	// for exactly the reason its own comment says it must not. This line is the difference.
-	if !strings.Contains(buf.String(), "cloud-backed object(s) before destroy") {
-		t.Fatalf("the run never reached the wait loop, so the cancellation landed on the opening "+
-			"read and this test proved something else:\n%s", buf.String())
+	if !buf.Fired() {
+		t.Fatalf("the run never reached the wait loop, so the cancellation came from the hang guard "+
+			"and this test proved something else:\n%s", buf.String())
 	}
 	if len(rel.Remaining) == 0 {
 		t.Error("Remaining is empty — a cancelled wait must still report what it had already seen")
 	}
 }
 
-// TestShouldRetryReleaseOnlyWhenObjectsWereActuallyObserved drives the retry guard across ALL FOUR
-// facts releaseOutcome keeps apart, because the bug it replaced branched on `!Clean` — which is true
-// for every one of them and therefore distinguishes none.
-func TestShouldRetryReleaseOnlyWhenObjectsWereActuallyObserved(t *testing.T) {
+// It drives the guard across every fact releaseOutcome keeps apart, because the bug before it
+// branched on `!Clean` — true for all of them, and therefore distinguishing none.
+// TestShouldRetryReleaseSkipsOnlyWhatASecondPassCannotChange replaces
+// TestShouldRetryReleaseOnlyWhenObjectsWereActuallyObserved, whose premise was wrong in the
+// expensive direction: "nothing was observed" is not "nothing could be done".
+//
+// A Skipped release deleted NOTHING, so on a destroy that then failed the load balancer is still
+// live AND still deletable — the retry re-runs Output + ConfigureKubeconfig, reaches the cluster
+// the second time, and the teardown succeeds. Refusing it leaves a red teardown and a billing ELB.
+// The only skip worth refusing is the permanent one: a state that names no API endpoint never had a
+// control plane, which is what NoCluster records.
+func TestShouldRetryReleaseSkipsOnlyWhatASecondPassCannotChange(t *testing.T) {
 	held := []cloudBackedObject{{Kind: "service", Namespace: "ingress-nginx", Name: "controller"}}
 	boom := errors.New("tofu destroy failed")
 	cases := []struct {
@@ -682,10 +743,14 @@ func TestShouldRetryReleaseOnlyWhenObjectsWereActuallyObserved(t *testing.T) {
 		ctxErr    error
 		want      bool
 	}{
-		{"objects observed still held is the ONLY retryable case", boom, releaseOutcome{Remaining: held}, nil, true},
+		{"objects observed still held is the clearest retryable case", boom, releaseOutcome{Remaining: held}, nil, true},
 		{"unknown with objects last seen is still worth a second look", boom, releaseOutcome{Unknown: true, Remaining: held}, nil, true},
-		{"skipped established nothing, so a second pass would learn nothing", boom, releaseOutcome{Skipped: "the cluster could not be reached"}, nil, false},
-		{"unknown with nothing observed names no objects to retry for", boom, releaseOutcome{Unknown: true}, nil, false},
+		// ⚠️ THE TWO THAT #3477 TURNED OFF. On both, the release deleted nothing, so the objects
+		// are still there and still deletable — this is the retry doing real work, not re-reporting.
+		{"a transient skip is retried: the release deleted nothing, so the ELB is still deletable", boom, releaseOutcome{Skipped: "the cluster could not be reached"}, nil, true},
+		{"unknown with nothing observed is retried: 'we could not look' is when objects are most likely still there", boom, releaseOutcome{Unknown: true}, nil, true},
+		// ...and the one skip a second pass genuinely cannot change.
+		{"a state naming no API endpoint is NOT retried: there was never a cluster to reach", boom, releaseOutcome{Skipped: "this state names no API endpoint", NoCluster: true}, nil, false},
 		{"a cancelled teardown must stop, not start another wait", boom, releaseOutcome{Remaining: held}, context.Canceled, false},
 		{"a destroy that succeeded is not retried", nil, releaseOutcome{Remaining: held}, nil, false},
 		{"a clean release has nothing to retry", boom, releaseOutcome{Clean: true}, nil, false},
@@ -725,8 +790,22 @@ func TestAdoptRetryOutcomeNeverErasesTheOnlyListAnyoneHas(t *testing.T) {
 		}
 	})
 	t.Run("an Unknown second attempt that saw nothing does not erase them either", func(t *testing.T) {
-		if got, _ := adoptRetryOutcome(first, releaseOutcome{Unknown: true}); len(got.Remaining) != 1 {
+		got, _ := adoptRetryOutcome(first, releaseOutcome{Unknown: true})
+		if len(got.Remaining) != 1 {
 			t.Errorf("adopted an outcome that observed nothing: %+v", got)
+		}
+		// ⚠️ THE LIST SURVIVES; THE CONFIDENCE MUST NOT. The second attempt established that the
+		// cluster can no longer be read, so `first`'s list is no longer known to be COMPLETE.
+		// Keeping `first` verbatim renders the definitive branch — "Still holding one when the
+		// destroy ran: …" — over a list nobody can vouch for, and Unknown is the one field that
+		// exists to keep "there may be more" apart from "this is all of it". The assertion above
+		// alone passes for the version that drops it.
+		if !got.Unknown {
+			t.Error("the retry's Unknown was dropped: the warning will claim a complete list on " +
+				"exactly the path where the second look failed")
+		}
+		if w := got.billingWarning(); !strings.Contains(w, "not a complete list") {
+			t.Errorf("the warning reads as definitive after an unreadable second attempt:\n%s", w)
 		}
 	})
 	// And the other direction, or the function could simply always return `first` — which would
@@ -836,6 +915,48 @@ func TestPostDestroySuccessNoticeWarnsOnAGreenTeardownToo(t *testing.T) {
 				"error path's")
 		}
 	})
+	// ⚠️ AND THE SAME PROPERTY FOR THE ARM MOST LIKELY TO BE EDITED. The Skipped sentence used to
+	// be hand-written in postDestroySuccessNotice while billingWarning said the same fact in
+	// different words — so the "cannot drift" claim above was enforced for exactly the case that
+	// could not drift, and unenforced for the one that could. Both now come out of `warning`, and
+	// this pins that they differ only in TONE.
+	t.Run("the quiet Skipped form comes from the same renderer as the loud one", func(t *testing.T) {
+		rel := releaseOutcome{Skipped: "the cluster could not be reached"}
+		note, alarm := rel.warning(toneNote), rel.warning(toneAlarm)
+		if note == "" || alarm == "" {
+			t.Fatalf("a skipped release must say something in both tones: note=%q alarm=%q", note, alarm)
+		}
+		if note == alarm {
+			t.Error("the two tones render identically — a succeeded teardown now raises the full " +
+				"alarm, which is the fatigue postDestroySuccessNotice exists to avoid")
+		}
+		if strings.Contains(note, "STILL BILL") {
+			t.Errorf("the quiet form is the loud one:\n%s", note)
+		}
+		if !strings.Contains(alarm, "STILL BILL") {
+			t.Errorf("the loud form lost its alarm:\n%s", alarm)
+		}
+	})
+	// An environment whose state names no API endpoint never had a control plane, so it never had
+	// a cloud load balancer. This is the COMMON e2e/cleanup case — a deploy that died before the
+	// control plane existed — and a note on every one of those is the alarm fatigue again.
+	t.Run("an environment that never had a cluster is not told to check the console", func(t *testing.T) {
+		rel := releaseOutcome{Skipped: "this state names no API endpoint", NoCluster: true}
+		if got := postDestroySuccessNotice(rel); got != "" {
+			t.Errorf("a teardown of an environment that never had a cluster warned about its "+
+				"load balancers:\n%s", got)
+		}
+		// The negative control, without which the assertion above is satisfied by a notice that
+		// never fires: the SAME skip without NoCluster must still be reported.
+		if got := postDestroySuccessNotice(releaseOutcome{Skipped: "this state names no API endpoint"}); got == "" {
+			t.Error("suppressing the no-cluster case also silenced every other skip")
+		}
+		// ...and a FAILED destroy still alarms, because there the destroy itself said something is
+		// wrong. NoCluster narrows the note, not the warning.
+		if got := rel.billingWarning(); got == "" {
+			t.Error("a failed destroy went silent because the state named no endpoint")
+		}
+	})
 }
 
 // TestRetryReleaseAndDestroyDrivesTheWholePolicy covers the branch that shipped in #3433 with no
@@ -891,7 +1012,7 @@ func TestRetryReleaseAndDestroyDrivesTheWholePolicy(t *testing.T) {
 		err  error
 	}{
 		{"a destroy that succeeded", releaseOutcome{Remaining: held}, nil},
-		{"a release that was skipped entirely", releaseOutcome{Skipped: "no state outputs"}, boom},
+		{"a release skipped because there is no cluster in the state", releaseOutcome{Skipped: "this state names no API endpoint", NoCluster: true}, boom},
 		{"a clean release", releaseOutcome{Clean: true}, boom},
 	} {
 		t.Run(tc.name+" does not retry", func(t *testing.T) {
@@ -927,6 +1048,61 @@ func TestRetryReleaseAndDestroyDrivesTheWholePolicy(t *testing.T) {
 		}
 		if releases != 0 {
 			t.Errorf("a cancelled teardown started %d more release(s)", releases)
+		}
+	})
+}
+
+// TestDestroySuccessLinesEndOnTheHonestOne pins the half of the billing notice that a reader
+// actually sees.
+//
+// #3477 added the ⚠️ block and then printed "Environment destroyed successfully!" immediately
+// after it. Everything that truncates a log keeps the NEWEST lines, so the last word of a teardown
+// that left a load balancer billing was still that it succeeded — the warning was present and
+// overwritten, which for a reader scanning the bottom of a green job is indistinguishable from
+// never having warned at all.
+func TestDestroySuccessLinesEndOnTheHonestOne(t *testing.T) {
+	held := []cloudBackedObject{{Kind: "service", Namespace: "ingress-nginx", Name: "controller"}}
+
+	t.Run("a clean teardown says so plainly", func(t *testing.T) {
+		got := destroySuccessLines(releaseOutcome{Clean: true})
+		if len(got) != 1 || got[0] != "Environment destroyed successfully!" {
+			t.Errorf("a teardown with nothing to warn about did not simply succeed: %q", got)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		rel  releaseOutcome
+	}{
+		{"objects still held", releaseOutcome{Remaining: held}},
+		{"the cluster stopped answering", releaseOutcome{Unknown: true}},
+		{"the release never ran", releaseOutcome{Skipped: "the cluster could not be reached"}},
+	} {
+		t.Run(tc.name+" does not end on an unqualified success", func(t *testing.T) {
+			got := destroySuccessLines(tc.rel)
+			if len(got) < 2 {
+				t.Fatalf("nothing was said about the load balancers: %q", got)
+			}
+			last := got[len(got)-1]
+			if strings.Contains(last, "successfully") {
+				t.Errorf("the LAST line — the one a truncated log keeps — still reads as an "+
+					"unqualified success: %q", last)
+			}
+			if !strings.Contains(last, "see the note above") {
+				t.Errorf("the last line does not point at the warning above it: %q", last)
+			}
+			// The negative control: pointing at a note that is not there is worse than silence.
+			if got[0] == "" {
+				t.Error("the final line refers to a note that was never printed")
+			}
+		})
+	}
+
+	// And the case NoCluster suppresses: nothing to warn about, so nothing to qualify.
+	t.Run("an environment that never had a cluster still succeeds plainly", func(t *testing.T) {
+		got := destroySuccessLines(releaseOutcome{Skipped: "this state names no API endpoint", NoCluster: true})
+		if len(got) != 1 || !strings.Contains(got[0], "successfully") {
+			t.Errorf("a teardown with nothing to warn about was qualified anyway: %q", got)
 		}
 	})
 }

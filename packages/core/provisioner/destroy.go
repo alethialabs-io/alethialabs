@@ -195,11 +195,9 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 		return fmt.Errorf("tofu destroy failed: %w%s", err, rel.billingWarning())
 	}
 
-	if notice := postDestroySuccessNotice(rel); notice != "" {
-		fmt.Fprintln(out, notice)
+	for _, line := range destroySuccessLines(rel) {
+		fmt.Fprintln(out, line)
 	}
-
-	fmt.Fprintln(out, "Environment destroyed successfully!")
 	return nil
 }
 
@@ -238,16 +236,36 @@ func retryReleaseAndDestroy(
 // reaching it for real needs a tofu that fails and a cluster that answers, and an untested retry is
 // how the first version of this shipped erasing the list it existed to preserve.
 //
-// The condition is `len(rel.Remaining) > 0`, NOT `!rel.Clean`. Not-Clean covers four different
-// facts — objects observed still held, the cluster stopped answering, the step never ran, the
-// context ended — and the retry's rationale ("the destroy almost certainly failed ON them") holds
-// only for the first. On the others a second pass pays for a full Output + reachability +
-// ConfigureKubeconfig round to learn nothing, then reports "the second release did not clear them
-// either" about objects nobody ever observed. A repeat teardown of an already-gone cluster is
-// exactly that case, and it is the common one.
+// The condition is NOT `len(rel.Remaining) > 0`, and NOT `!rel.Clean` either — both are wrong in
+// opposite directions.
+//
+// `!rel.Clean` retries a repeat teardown of an already-gone environment, paying for a full
+// Output + reachability + ConfigureKubeconfig round to learn nothing. That is the common case and
+// it is why the condition was narrowed.
+//
+// But narrowing it to `Remaining` removed the retry from the two states where it was doing REAL
+// WORK, not just re-reporting. On a `Skipped` the release deleted NOTHING — `wd.tf.Output` blipped
+// against the state proxy, or `clusterReachable` answered false once (a throttled apiserver, an
+// exec-credential refresh, the ambient-KUBECONFIG mismatch documented at
+// releaseLoadBalancersBeforeDestroy) — so the ingress-nginx ELB is still live and `tofu destroy`
+// then fails on exactly the subnet DependencyViolation this file exists for. The retry re-ran the
+// release, reached the cluster that time, deleted the Service and re-ran the destroy, and the
+// teardown SUCCEEDED. Returning immediately leaves it red with the ELB billing and no remedy but a
+// human in the console. `Unknown` from the opening list is the same shape: "we could not look" is
+// precisely the state in which the objects are most likely still there and still deletable.
+//
+// So the skip is gated on whether the first release could ever have reached a cluster, which is
+// what NoCluster records — a permanent fact about the state file, not a transient failure.
 func shouldRetryRelease(destroyErr error, rel releaseOutcome, ctxErr error) bool {
 	// A cancelled teardown must stop, not start another wait.
-	return destroyErr != nil && ctxErr == nil && len(rel.Remaining) > 0
+	if destroyErr == nil || ctxErr != nil || rel.Clean {
+		return false
+	}
+	// Nothing to reach, so nothing a second attempt could do differently.
+	if rel.NoCluster {
+		return false
+	}
+	return len(rel.Remaining) > 0 || rel.Unknown || rel.Skipped != ""
 }
 
 // adoptRetryOutcome picks which release outcome the billing warning speaks from after a retry.
@@ -272,6 +290,12 @@ func adoptRetryOutcome(first, second releaseOutcome) (releaseOutcome, string) {
 		return second, "   The second release did not clear them either — not retrying the " +
 			"destroy, which would fail the same way."
 	default:
+		// Keep the first outcome's LIST, but not its CONFIDENCE. A second attempt that could not
+		// read the cluster has established that the list is no longer known to be complete, and
+		// Unknown is the single field that keeps "there may be more" apart from "this is all of
+		// it". Dropping it renders the definitive branch — "Still holding one when the destroy
+		// ran: A." — over a list nobody can now vouch for.
+		first.Unknown = first.Unknown || second.Unknown
 		return first, "   The second release established nothing new — keeping what the first one " +
 			"saw, and not retrying the destroy."
 	}
@@ -293,18 +317,34 @@ func adoptRetryOutcome(first, second releaseOutcome) (releaseOutcome, string) {
 // the step cannot run at all, and an alarm on every one of those teaches the reader to scroll past
 // the alarm that matters. Not silence either — it still says what did not happen.
 //
-// It renders THROUGH billingWarning rather than beside it, so the two cannot drift into disagreeing
-// about what is still held.
+// It is ONE CALL into the same renderer the failure path uses, differing only in tone — the earlier
+// version claimed that ("they cannot drift into disagreeing about what is still held") while
+// hand-writing its own sentence for the Skipped arm, which is the arm most likely to be edited and
+// the one a test pinned to differ.
+//
+// An environment whose state names no API endpoint gets NOTHING: it never had a control plane, so
+// it never had a cloud load balancer, and a note about checking the console for one is the alarm
+// fatigue the paragraph above argues against.
 func postDestroySuccessNotice(rel releaseOutcome) string {
-	switch {
-	case len(rel.Remaining) > 0 || rel.Unknown:
-		return rel.billingWarning()
-	case rel.Skipped != "":
-		return fmt.Sprintf("   Note: the pre-destroy load-balancer release did not run (%s). "+
-			"Everything in the state file is gone; a Service of type LoadBalancer or an Ingress "+
-			"would not have been, so check the cloud console if this environment exposed one.", rel.Skipped)
+	return rel.warning(toneNote)
+}
+
+// destroySuccessLines is everything a SUCCEEDED destroy prints, in order.
+//
+// ⚠️ THE LAST LINE IS THE ONE THAT GETS READ. Job summaries, `--tail` views and the runner's console
+// excerpt all keep the NEWEST lines, and a human scanning a green job reads the bottom. Printing the
+// ⚠️ block and then an unqualified "Environment destroyed successfully!" left the final word of a
+// teardown that stranded a billing load balancer saying it went fine — which is half of the defect
+// the notice was added to fix, and the visible half.
+//
+// A slice rather than two writes at the call site, because "which line comes last" is the entire
+// decision and reaching RunDestroy for real needs a tofu binary and a cloud. The function this file
+// keeps splitting out is the one whose branch nobody could otherwise exercise.
+func destroySuccessLines(rel releaseOutcome) []string {
+	if notice := postDestroySuccessNotice(rel); notice != "" {
+		return []string{notice, "Environment destroyed — but see the note above."}
 	}
-	return ""
+	return []string{"Environment destroyed successfully!"}
 }
 
 // RunDestroyPlan PLANS a project teardown and returns the plan JSON without applying
@@ -515,9 +555,14 @@ func releaseLoadBalancersBeforeDestroy(
 		fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
 		return releaseOutcome{Skipped: fmt.Sprintf("the state outputs could not be read (%v)", err)}
 	}
-	reachable, why := clusterReachable(ctx, cloud.ExtractClusterEndpoint(outputs))
+	endpoint := cloud.ExtractClusterEndpoint(outputs)
+	reachable, why := clusterReachable(ctx, endpoint)
 	fmt.Fprint(out, kubeconfigDecisionLine(reachable, why))
 	if !reachable {
+		// An empty endpoint is not a failure to reach a cluster — it is the absence of one in this
+		// state. Carried on the outcome so the retry and the operator notice can both branch on the
+		// FACT rather than on the wording of the sentence below.
+		noCluster := endpoint == ""
 		// NO cluster-name gate. `ExtractClusterName` was the obvious pre-check and it is narrower
 		// than what ConfigureKubeconfig accepts: awsProvider handles a BYO-IaC module that emits a
 		// generic `kubeconfig` output for a self-managed, non-EKS cluster — checked BEFORE any
@@ -529,14 +574,14 @@ func releaseLoadBalancersBeforeDestroy(
 		// template provider that falls back to it, and the same state the DEPLOY path leaves behind.
 		if err := provider.ConfigureKubeconfig(ctx, vc, outputs, out); err != nil {
 			fmt.Fprintf(out, "   Skipping load-balancer release: the cluster is not reachable (%v).\n", err)
-			return releaseOutcome{Skipped: fmt.Sprintf("the cluster could not be reached (%v)", err)}
+			return releaseOutcome{Skipped: fmt.Sprintf("the cluster could not be reached (%v)", err), NoCluster: noCluster}
 		}
-		if ok, why2 := clusterReachable(ctx, cloud.ExtractClusterEndpoint(outputs)); !ok {
+		if ok, why2 := clusterReachable(ctx, endpoint); !ok {
 			// CHECKED AFTER CONFIGURING, not assumed. ConfigureKubeconfig succeeding means it WROTE
 			// a kubeconfig, not that the kubeconfig works — the exec-plugin case above writes
 			// happily and then fails on every call.
 			fmt.Fprint(out, postConfigureFailureLine(why2))
-			return releaseOutcome{Skipped: "a kubeconfig was written but the cluster did not answer with it (" + why2 + ")"}
+			return releaseOutcome{Skipped: "a kubeconfig was written but the cluster did not answer with it (" + why2 + ")", NoCluster: noCluster}
 		}
 	}
 	rel, err := releaseCloudLoadBalancers(ctx, out)
