@@ -10,9 +10,6 @@
 package e2e
 
 import (
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -75,12 +72,12 @@ func TestFabricDemoVClusterSlugIsDisjoint(t *testing.T) {
 }
 
 func TestFabricDemoTiers(t *testing.T) {
-	t.Run("default tracks the enterprise-demo layout", func(t *testing.T) {
+	t.Run("default tracks the alethia-examples layout", func(t *testing.T) {
 		tiers, err := fabricDemoTiers("run1", "aws")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		want := []fabricDemoOverlayTier{{"dev", "boutique-dev"}, {"staging", "boutique-staging"}}
+		want := []fabricDemoOverlayTier{{"dev-1", "boutique-dev-1"}, {"staging", "boutique-staging"}}
 		if len(tiers) != len(want) {
 			t.Fatalf("default tiers = %v, want %v", tiers, want)
 		}
@@ -159,38 +156,57 @@ func TestFabricDemoTiers(t *testing.T) {
 	}
 }
 
-// TestFabricDemoDefaultTracksTheProductTemplate is the vacuity trap the DEFAULTS sit in.
+// TestFabricDemoDefaultsAreSelfConsistent is the vacuity trap the DEFAULTS sit in.
 //
 // The default namespaces are load-bearing: RenderNamespaceTenant pins the tenant AppProject to the
 // single placed namespace, so if the overlays declare a different one, ArgoCD refuses every sync and
-// nothing ever converges. infra/templates/argocd/user-apps-overlays.yaml is the in-repo source of
-// truth for what the enterprise-demo overlays actually target. Reading it here means a drift between
-// the demo's layout and this harness fails in 200ms, not two hours into a real cloud run.
-func TestFabricDemoDefaultTracksTheProductTemplate(t *testing.T) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	tmpl, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "infra", "templates", "argocd", "user-apps-overlays.yaml"))
-	if err != nil {
-		t.Fatalf("read user-apps-overlays.yaml: %v", err)
-	}
-	body := string(tmpl)
-
+// nothing ever converges.
+//
+// This used to read infra/templates/argocd/user-apps-overlays.yaml and require each default
+// namespace to appear somewhere in it. That check only ever worked by accident: the template's
+// PROSE happened to name the demo's namespaces while describing what a Kustomize repo looks like.
+// It was never the source of truth for the demo's layout, and it is not one now — the overlays live
+// in another repository (alethialabs-io/alethia-examples), and the template no longer describes
+// them at all. A test that greps an unrelated file's comments for a string will pass or fail on
+// edits that have nothing to do with the thing it claims to protect.
+//
+// What this repo CAN assert offline is the convention the overlays actually follow: a tier's
+// namespace is `boutique-<tier>`. That catches the real failure — a typo'd or half-updated default
+// pair — in 200ms rather than two hours into a paid cloud run. The overlay path itself is verified
+// against the live repo by the run, which is the only place it can honestly be checked.
+func TestFabricDemoDefaultsAreSelfConsistent(t *testing.T) {
 	tiers, err := fabricDemoTiers("run1", "aws")
 	if err != nil {
 		t.Fatalf("default tiers: %v", err)
 	}
+	if len(tiers) == 0 {
+		t.Fatal("fabricDemoTiers returned no tiers — the gate would assert nothing")
+	}
 	for _, tier := range tiers {
-		if !strings.Contains(body, tier.Namespace) {
-			t.Errorf("default tier %q maps to namespace %q, which the product's own ApplicationSet template never mentions — the defaults have drifted from the enterprise-demo layout, and a placement into the wrong namespace can never converge (the tenant AppProject refuses it)", tier.Tier, tier.Namespace)
+		want := "boutique-" + tier.Tier
+		if tier.Namespace != want {
+			t.Errorf("default tier %q maps to namespace %q, want %q — the overlays in alethia-examples "+
+				"stamp `boutique-<tier>`, and a placement into any other namespace can never converge "+
+				"(the tenant AppProject refuses it)", tier.Tier, tier.Namespace, want)
 		}
+	}
+	// The vcluster tier must be one of the tiers actually placed, or the headline rung is never run.
+	vc := strings.ToLower(strings.TrimSpace(fabricDemoDefaultVClusterTier))
+	found := false
+	for _, tier := range tiers {
+		if tier.Tier == vc {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the vcluster tier %q is not among the default tiers %v — #845's headline rung "+
+			"would silently never be placed", vc, tiers)
 	}
 }
 
 func TestFabricDemoOverlayPathAndStage(t *testing.T) {
-	if got := fabricDemoOverlayPath(" Dev "); got != "overlays/dev" {
-		t.Fatalf("fabricDemoOverlayPath = %q, want overlays/dev", got)
+	if got := fabricDemoOverlayPath(" Dev-1 "); got != "examples/online-boutique/overlays/dev-1" {
+		t.Fatalf("fabricDemoOverlayPath = %q, want examples/online-boutique/overlays/dev-1", got)
 	}
 	stages := map[string]string{
 		"dev": "development", "staging": "staging", "stage": "staging",
@@ -254,7 +270,7 @@ func TestBuildFabricDemoSnapshot(t *testing.T) {
 	if !ok || repos["apps_destination_repo"] != "https://github.com/o/r" {
 		t.Fatalf("repositories = %v, want the demo repo", snap["repositories"])
 	}
-	if repos["apps_path"] != "overlays/dev" {
+	if repos["apps_path"] != fabricDemoOverlayPath("dev") {
 		t.Errorf("apps_path = %v, want overlays/dev", repos["apps_path"])
 	}
 	// The refuter: without apps_path the runner renders the repo ROOT, every tier delivers the whole
@@ -345,7 +361,7 @@ func TestAssertCausedByPlacement(t *testing.T) {
 }
 
 func TestSameRepoURL(t *testing.T) {
-	base := "https://github.com/alethialabs-io/enterprise-demo"
+	base := "https://github.com/alethialabs-io/alethia-examples"
 	for _, equal := range []string{base, base + ".git", base + "/", strings.ToUpper(base), " " + base + " "} {
 		if !sameRepoURL(base, equal) {
 			t.Errorf("sameRepoURL(%q, %q) = false, want true", base, equal)
@@ -362,7 +378,7 @@ func TestSameRepoURL(t *testing.T) {
 }
 
 func TestFabricDemoRepoPrecondition(t *testing.T) {
-	const demo = "https://github.com/alethialabs-io/enterprise-demo"
+	const demo = "https://github.com/alethialabs-io/alethia-examples"
 	if err := fabricDemoRepoPrecondition("", demo); err != nil {
 		t.Errorf("no base apps repo must be fine: %v", err)
 	}
@@ -377,7 +393,7 @@ func TestFabricDemoRepoPrecondition(t *testing.T) {
 }
 
 func TestAssertTenantAppOverlay(t *testing.T) {
-	const repo = "https://github.com/alethialabs-io/enterprise-demo"
+	const repo = "https://github.com/alethialabs-io/alethia-examples"
 	app := func(repoURL, path string) namespaceAppState {
 		var a namespaceAppState
 		a.Metadata.Name = "app-acme-boutique-dev"
@@ -386,10 +402,10 @@ func TestAssertTenantAppOverlay(t *testing.T) {
 		return a
 	}
 
-	if err := assertTenantAppOverlay(app(repo, "overlays/dev"), repo, "dev"); err != nil {
+	if err := assertTenantAppOverlay(app(repo, fabricDemoOverlayPath("dev")), repo, "dev"); err != nil {
 		t.Fatalf("the matching overlay must be accepted: %v", err)
 	}
-	if err := assertTenantAppOverlay(app(repo+".git", "overlays/dev"), repo, "dev"); err != nil {
+	if err := assertTenantAppOverlay(app(repo+".git", fabricDemoOverlayPath("dev")), repo, "dev"); err != nil {
 		t.Fatalf("a .git suffix must not matter: %v", err)
 	}
 
@@ -406,10 +422,10 @@ func TestAssertTenantAppOverlay(t *testing.T) {
 	if err := assertTenantAppOverlay(app(repo, ""), repo, "dev"); err == nil {
 		t.Error("an empty source path must be refused")
 	}
-	if err := assertTenantAppOverlay(app(repo, "overlays/staging"), repo, "dev"); err == nil {
+	if err := assertTenantAppOverlay(app(repo, fabricDemoOverlayPath("staging")), repo, "dev"); err == nil {
 		t.Error("the WRONG tier's overlay must be refused — otherwise two tiers could both 'prove' the same directory")
 	}
-	if err := assertTenantAppOverlay(app("https://github.com/acme/other", "overlays/dev"), repo, "dev"); err == nil {
+	if err := assertTenantAppOverlay(app("https://github.com/acme/other", fabricDemoOverlayPath("dev")), repo, "dev"); err == nil {
 		t.Error("a foreign repo must be refused")
 	}
 }
@@ -455,12 +471,12 @@ func passingFabricDemoSummary() FabricDemoSummary {
 		Enabled:  true,
 		Provider: "aws",
 		Fabric:   "acme-run1",
-		Repo:     "https://github.com/alethialabs-io/enterprise-demo",
+		Repo:     "https://github.com/alethialabs-io/alethia-examples",
 		Tiers: []FabricDemoTier{
-			{Tier: "dev", Namespace: "boutique-dev", Placed: true, TenantApp: "app-acme-boutique-dev", TenantProject: "tenant-acme-boutique-dev", SourcePath: "overlays/dev", CausedByPlacement: true, Converged: true, ResourceCount: 3},
-			{Tier: "staging", Namespace: "boutique-staging", Placed: true, TenantApp: "app-acme-boutique-staging", TenantProject: "tenant-acme-boutique-staging", SourcePath: "overlays/staging", CausedByPlacement: true, Converged: true, ResourceCount: 3},
+			{Tier: "dev", Namespace: "boutique-dev", Placed: true, TenantApp: "app-acme-boutique-dev", TenantProject: "tenant-acme-boutique-dev", SourcePath: fabricDemoOverlayPath("dev"), CausedByPlacement: true, Converged: true, ResourceCount: 3},
+			{Tier: "staging", Namespace: "boutique-staging", Placed: true, TenantApp: "app-acme-boutique-staging", TenantProject: "tenant-acme-boutique-staging", SourcePath: fabricDemoOverlayPath("staging"), CausedByPlacement: true, Converged: true, ResourceCount: 3},
 		},
-		VCluster:           FabricDemoVCluster{Name: "e2e-vcdemo-run1", Tier: "staging", Placed: true, App: "vc-app", SourcePath: "overlays/staging", CausedByPlacement: true, ResourceCount: 2, Deregistered: true},
+		VCluster:           FabricDemoVCluster{Name: "e2e-vcdemo-run1", Tier: "staging", Placed: true, App: "vc-app", SourcePath: fabricDemoOverlayPath("staging"), CausedByPlacement: true, ResourceCount: 2, Deregistered: true},
 		ArgoNotReinstalled: true,
 		ReceiptScope:       "fabric",
 		FabricPlanSHA:      strings.Repeat("a", 64),
@@ -482,7 +498,7 @@ func TestFabricDemoVerdictPass(t *testing.T) {
 		"a tier never converged":            func(s *FabricDemoSummary) { s.Tiers[0].Converged = false },
 		"a tier delivered nothing":          func(s *FabricDemoSummary) { s.Tiers[0].ResourceCount = 0 },
 		"a tier synced the repo ROOT":       func(s *FabricDemoSummary) { s.Tiers[0].SourcePath = "." },
-		"a tier synced the WRONG overlay":   func(s *FabricDemoSummary) { s.Tiers[0].SourcePath = "overlays/staging" },
+		"a tier synced the WRONG overlay":   func(s *FabricDemoSummary) { s.Tiers[0].SourcePath = fabricDemoOverlayPath("staging") },
 		"no vcluster tier at all":           func(s *FabricDemoSummary) { s.VCluster = FabricDemoVCluster{} },
 		"the vcluster never placed":         func(s *FabricDemoSummary) { s.VCluster.Placed = false },
 		"the vcluster PRE-EXISTED":          func(s *FabricDemoSummary) { s.VCluster.CausedByPlacement = false },
@@ -521,7 +537,7 @@ func TestFabricDemoSummaryVerdict(t *testing.T) {
 
 	t.Run("passing", func(t *testing.T) {
 		got := fabricDemoSummaryVerdict(passingFabricDemoSummary())
-		for _, want := range []string{"✅", "overlays/dev", "boutique-dev", "e2e-vcdemo-run1", "receipt(fabric)", "in_sync=true"} {
+		for _, want := range []string{"✅", fabricDemoOverlayPath("dev"), "boutique-dev", "e2e-vcdemo-run1", "receipt(fabric)", "in_sync=true"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("verdict %q is missing %q", got, want)
 			}

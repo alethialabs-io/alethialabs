@@ -221,7 +221,7 @@ once.
 | Elench prompt pack | [`demos/elench-prompts.md`](./elench-prompts.md) |
 | Browser + CLI pass evidence | `demos/monday-evidence/` |
 | Real-apply proof bundles | `demos/proofs/<cloud>/<stamp>/` |
-| The demo application | <https://github.com/alethialabs-io/enterprise-demo> |
+| The demo application | <https://github.com/alethialabs-io/alethia-examples> |
 | Placement model | `apps/docs/content/docs/concepts/fabrics-and-placement.mdx` |
 
 **Do not quote `demos/DEMO-READINESS.md`** — it is a superseded historical ledger and says so itself.

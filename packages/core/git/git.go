@@ -48,11 +48,11 @@ type GIT struct {
 // getAuth took the getSSHAuthMethod branch, and the clone died on a box with no agent:
 //
 //	BYO IaC clone/checkout failed: failed to clone repository
-//	'git@github.com:alethialabs-io/enterprise-demo.git':
+//	'git@github.com:alethialabs-io/alethia-examples.git':
 //	error creating SSH agent: "SSH agent requested but SSH_AUTH_SOCK not-specified"
 //
 // (gcp/maxconfig run 33051613329 — the BYO-IaC fallback teardown, #2905. The DEPLOY of the same
-// repo in the same run logged `cloning https://github.com/alethialabs-io/enterprise-demo` and
+// repo in the same run logged `cloning https://github.com/alethialabs-io/alethia-examples` and
 // worked, because it had a token and took the other branch. The repo is PUBLIC and needs no token
 // at all; the only difference was which constructor ran.)
 //

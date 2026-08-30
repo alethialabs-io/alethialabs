@@ -1249,7 +1249,7 @@ jobs:
           #    DeriveExpectedArgoApps blindness to ApplicationSet-generated apps is real, but it
           #    belongs to the A0.6 base leg where that ApplicationSet is genuinely rendered.
           #
-          #    The default repo is the PUBLIC github.com/alethialabs-io/enterprise-demo, which ArgoCD
+          #    The default repo is the PUBLIC github.com/alethialabs-io/alethia-examples, which ArgoCD
           #    clones anonymously — so unlike the A0.6 layer above this needs NO git token, and
           #    E2E_FABRIC_DEMO is the only variable a maintainer must set to turn it on. UNSET ⇒
           #    empty ⇒ a clean skip, so these lines change nothing until then. Real-apply is
@@ -1278,7 +1278,7 @@ jobs:
           #    VM, no gateway: the module emits no `cluster_name`, which is precisely what keeps the
           #    kubeconfig → CNI → ArgoCD tail off.
           #
-          #    The default repo is the PUBLIC github.com/alethialabs-io/enterprise-demo, cloned
+          #    The default repo is the PUBLIC github.com/alethialabs-io/alethia-examples, cloned
           #    ANONYMOUSLY (prepareByoIacWorkdir clones without auth when the token is empty), so
           #    like the fabric-demo gate above this needs NO git token and NO new secret.
           #    E2E_BYO_IAC is the only variable a maintainer must set to turn it on; the repo, ref,

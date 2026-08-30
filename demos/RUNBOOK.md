@@ -89,7 +89,7 @@ if you want the first.
 - [ ] Connectors verified: `alethia provider verify hetzner` (and any other cloud you will use).
 - [ ] Quotas checked for any managed cloud you will touch. GCP NodePool quota and Azure regional vCPU
       are the two that fail at apply time, minutes in, and cannot be fixed live.
-- [ ] The demo repo is reachable: <https://github.com/alethialabs-io/enterprise-demo>.
+- [ ] The demo repo is reachable: <https://github.com/alethialabs-io/alethia-examples>.
 
 > ⚠️ **Hetzner tokens are project-scoped and can do anything inside that project.** Use a Hetzner
 > project that holds nothing you care about. Do not demo from the project the sandbox box lives in.
@@ -130,15 +130,13 @@ alethia project component add --project boutique-demo --env prod --kind cluster 
   --set 'instance_types=["cx33"]' \
   --set node_desired_size=4 --set node_min_size=4 --set node_max_size=4
 
-alethia project component add --project boutique-demo --env prod --kind repositories \
-  --set apps_destination_repo=https://github.com/alethialabs-io/enterprise-demo \
-  --set apps_path=overlays/prod
-
-# 3 · One repositories component per tier — same repo, different overlay.
+# 3 · One repositories component per tier — same repo, different overlay. Including prod:
+# `apps_path` means the same thing on every placement mode, so the Fabric's own environment
+# delivers the path it names rather than the repo root.
 for tier in prod staging dev-1 dev-2 dev-3; do
   alethia project component add --project boutique-demo --env "$tier" --kind repositories \
-    --set apps_destination_repo=https://github.com/alethialabs-io/enterprise-demo \
-    --set "apps_path=overlays/$tier"
+    --set apps_destination_repo=https://github.com/alethialabs-io/alethia-examples \
+    --set "apps_path=examples/online-boutique/overlays/$tier"
 done
 
 # 4 · Provision the Fabric FIRST. The shared tiers cannot be placed until this cluster exists.
