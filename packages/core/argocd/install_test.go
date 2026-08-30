@@ -393,17 +393,35 @@ func TestAnUnanswerableCRDWaitIsNeitherReadinessNorFailure(t *testing.T) {
 // cluster — the exact case #2652 is about — a single unconditional wait would return at once and
 // order nothing. Only the poll makes it an ordering primitive.
 func TestTheCRDWaitRetriesWhileTheCRDIsStillRegistering(t *testing.T) {
+	// THE LOOP MUST END ON STATE, NOT ON A CLOCK.
+	//
+	// This test used to cap `externalSecretsStoreMaxWait` at 300ms against a stub that answered
+	// NotFound forever, and assert the wait had been issued at least twice before the deadline
+	// elapsed. Every stub call spawns a `/bin/sh`, so the assertion was really "can this machine
+	// fork twice in 300ms" — true on an idle laptop, false under coverage instrumentation or on a
+	// loaded CI runner. It failed exactly that way once, and a wall-clock flake in a shared repo
+	// reds pull requests that have nothing to do with it.
+	//
+	// So the CRD now BECOMES Established on the third answer, and the deadline is set far beyond
+	// anything the test needs. The loop exits because the condition it waits for came true, which
+	// is the behaviour under test; the count is then exact rather than a lower bound, and no
+	// amount of machine load can change it.
 	origWait, origPoll := externalSecretsStoreMaxWait, clusterSecretStoreCRDPollInterval
-	externalSecretsStoreMaxWait = 300 * time.Millisecond
+	externalSecretsStoreMaxWait = time.Minute
 	clusterSecretStoreCRDPollInterval = time.Millisecond
 	t.Cleanup(func() {
 		externalSecretsStoreMaxWait, clusterSecretStoreCRDPollInterval = origWait, origPoll
 	})
 
+	notFound := `Error from server (NotFound): customresourcedefinitions.apiextensions.k8s.io "clustersecretstores.external-secrets.io" not found`
 	stub := newKubectlStub(t, 0, stubRule{
 		Match:  "wait --for=condition=established",
-		Stdout: `Error from server (NotFound): customresourcedefinitions.apiextensions.k8s.io "clustersecretstores.external-secrets.io" not found`,
+		Stdout: notFound,
 		Exit:   1,
+		Then: []stubAnswer{
+			{Stdout: notFound, Exit: 1},
+			{Stdout: "customresourcedefinition.apiextensions.k8s.io/clustersecretstores.external-secrets.io condition met", Exit: 0},
+		},
 	})
 	facts := &InfraFacts{
 		Provider: "aws", Region: "us-east-1",
@@ -411,7 +429,7 @@ func TestTheCRDWaitRetriesWhileTheCRDIsStillRegistering(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	if err := EnsureExternalSecretsStore(facts, &stdout, &stderr); err != nil {
-		t.Fatalf("EnsureExternalSecretsStore() error = %v, want nil — a CRD that never appears is the apply's problem to report", err)
+		t.Fatalf("EnsureExternalSecretsStore() error = %v, want nil", err)
 	}
 
 	waits := 0
@@ -420,11 +438,18 @@ func TestTheCRDWaitRetriesWhileTheCRDIsStillRegistering(t *testing.T) {
 			waits++
 		}
 	}
-	if waits < 2 {
-		t.Fatalf("the CRD wait was issued %d time(s) — a not-yet-registered CRD must be polled, not given up on: %v",
+	// EXACTLY three: two NotFounds and the one that succeeded. Fewer means the poll gave up on a
+	// CRD that was still registering; more means it kept asking after the answer was yes.
+	if waits != 3 {
+		t.Fatalf("the CRD wait was issued %d time(s), want exactly 3 (NotFound, NotFound, Established): %v",
 			waits, stub.calls())
 	}
 	if !strings.Contains(stdout.String(), "isn't Established yet (attempt 1)") {
 		t.Errorf("the poll never reported that it was waiting:\n%s", stdout.String())
+	}
+	// The point of polling is to reach a CONFIRMED establish. A run that only ever saw NotFound
+	// and fell through to the apply retry would satisfy the count above but not this.
+	if !strings.Contains(stdout.String(), "was confirmed Established") {
+		t.Errorf("the poll never reported the establish it was waiting for:\n%s", stdout.String())
 	}
 }
