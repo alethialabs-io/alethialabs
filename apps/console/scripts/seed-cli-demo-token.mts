@@ -34,6 +34,7 @@ import { writeFileSync } from "node:fs";
 
 import { mintServiceToken } from "@/lib/cli/service-token";
 import { getServiceDb } from "@/lib/db";
+import { profiles } from "@/lib/db/schema/accounts";
 import { resolveOwner, seedOrgAndPeople } from "@/lib/seed/builders";
 import { makeIds } from "@/lib/seed/ids";
 
@@ -56,6 +57,27 @@ async function main(): Promise<void> {
 	const orgId = ownerId;
 
 	await seedOrgAndPeople({ db, ownerId, orgId, ownerEmail: email, slug, id, now: new Date() });
+
+	// THE PROFILE ROW, and it is not optional — `cli_service_tokens.created_by` is a foreign key to
+	// `profiles(id)`, NOT to `user(id)`.
+	//
+	// In the product a profile is written by `upsertProfile` from a better-auth hook when the user
+	// is created. This seed bypasses better-auth (it inserts the `user` row directly, through
+	// resolveOwner), so that hook never fires and the table stays empty — and `mintServiceToken`
+	// then fails the FK with a message naming ten columns and no cause.
+	//
+	// Measured, not assumed: on a real migrated database `profiles` was empty, `"user"` carried the
+	// row, and there is no trigger bridging them. So the seed mirrors the hook's side effect, the
+	// same way it already mirrors the user row it creates.
+	//
+	// createdBy CANNOT be dropped to null instead. A service token ACTS AS the profile that minted
+	// it (lib/cli/service-token.ts) — that is what gives it an Actor the ReBAC PDP already governs,
+	// rather than a machine principal on a second authorization path. A null would authenticate and
+	// then authorize as nobody.
+	await db
+		.insert(profiles)
+		.values({ id: ownerId, email, full_name: "Alethia CLI demo", avatar_url: null })
+		.onConflictDoNothing();
 
 	const { token, token_prefix } = await mintServiceToken({
 		organizationId: orgId,
