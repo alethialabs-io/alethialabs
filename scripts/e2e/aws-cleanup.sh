@@ -254,10 +254,10 @@ discover_cluster() {
 		# Fallback: scan instance `kubernetes.io/cluster/<name>` tag KEYS and LB
 		# `elbv2.k8s.aws/cluster` tag VALUES for a name containing our unique ENV.
 		# shellcheck disable=SC2016 # backticks are JMESPath, not command substitution
-		cand="$(aws ec2 describe-instances \
+		cand="$(probe_run cluster-discovery aws ec2 describe-instances \
 			--filters "Name=instance-state-name,Values=pending,running,stopping,stopped" \
 			--query 'Reservations[].Instances[].Tags[?starts_with(Key, `kubernetes.io/cluster/`)].Key' \
-			--output text 2>/dev/null | tr '\t' '\n' | sed -E 's#^kubernetes.io/cluster/##' \
+			--output text | tr '\t' '\n' | sed -E 's#^kubernetes.io/cluster/##' \
 			| grep -E -- "-${ENV}-" | sort -u | head -n1 || true)"
 		[ -n "$cand" ] && CLUSTER="$cand"
 	fi
@@ -272,16 +272,24 @@ discover_cluster() {
 	if [ -z "$CLUSTER" ]; then
 		while IFS= read -r lb_arn; do
 			[ -n "$lb_arn" ] || continue
-			lb_val="$(aws elbv2 describe-tags --resource-arns "$lb_arn" \
+			lb_val="$(probe_run cluster-discovery aws elbv2 describe-tags --resource-arns "$lb_arn" \
 				--query "TagDescriptions[].Tags[?Key=='elbv2.k8s.aws/cluster'].Value" \
-				--output text 2>/dev/null | tr '\t' '\n' | grep -E -- "-${ENV}-" | head -n1 || true)"
+				--output text | tr '\t' '\n' | grep -E -- "-${ENV}-" | head -n1 || true)"
 			if [ -n "$lb_val" ]; then
 				CLUSTER="$lb_val"
 				break
 			fi
-		done <<<"$(aws elbv2 describe-load-balancers \
-			--query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
+		done <<<"$(probe_run cluster-discovery aws elbv2 describe-load-balancers \
+			--query 'LoadBalancers[].LoadBalancerArn' --output text | tr '\t' '\n' | grep -v '^$' || true)"
 	fi
+	# ⚠️ EVERY read in this function goes through probe_run (or probe_confirm for a per-resource
+	# existence check). It used to use `aws … 2>/dev/null || true`, which resolves a denied or
+	# throttled call to CLUSTER="" — and CLUSTER is the SCOPE: empty makes cluster_classic_lb_names
+	# and cluster_lb_arns return nothing, which makes alive_lbs empty, which lets
+	# finalize_verification exit 0 printing "no billable resources remain" over a live load
+	# balancer. That is the same silent green the classic-ELB fix was written to remove, one API
+	# call further up, and the ledger would record nothing because nothing asked.
+	#
 	# THIRD fallback: classic ELB `kubernetes.io/cluster/<name>` tag KEYS. A run hard-killed before
 	# its cluster and instances went away leaves an ingress-nginx classic ELB and nothing else that
 	# names the cluster — the elbv2 scan above cannot see it, because it is a different service.
@@ -290,16 +298,16 @@ discover_cluster() {
 		while IFS= read -r c_name; do
 			[ -n "$c_name" ] || continue
 			# shellcheck disable=SC2016 # backticks are JMESPath, not command substitution
-			c_key="$(aws elb describe-tags --load-balancer-names "$c_name" \
+			c_key="$(probe_confirm cluster-discovery aws elb describe-tags --load-balancer-names "$c_name" \
 				--query 'TagDescriptions[].Tags[?starts_with(Key, `kubernetes.io/cluster/`)].Key' \
-				--output text 2>/dev/null | tr '\t' '\n' | sed -E 's#^kubernetes.io/cluster/##' \
+				--output text | tr '\t' '\n' | sed -E 's#^kubernetes.io/cluster/##' \
 				| grep -E -- "-${ENV}-" | head -n1 || true)"
 			if [ -n "$c_key" ]; then
 				CLUSTER="$c_key"
 				break
 			fi
-		done <<<"$(aws elb describe-load-balancers \
-			--query 'LoadBalancerDescriptions[].LoadBalancerName' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
+		done <<<"$(probe_run cluster-discovery aws elb describe-load-balancers \
+			--query 'LoadBalancerDescriptions[].LoadBalancerName' --output text | tr '\t' '\n' | grep -v '^$' || true)"
 	fi
 	if [ -n "$CLUSTER" ]; then
 		echo "  · cluster (secondary scope): ${CLUSTER}"
@@ -432,7 +440,14 @@ cluster_classic_lb_names() {
 		[ -n "$name" ] || continue
 		# Captured, THEN matched — same reason as cluster_lb_arns: a `| grep -q .` can SIGPIPE the
 		# capture and, under pipefail, turn a TAGGED balancer into an untagged-looking one.
-		tags="$(probe_run classic-load-balancer aws elb describe-tags --load-balancer-names "$name" \
+		# probe_confirm, NOT probe_run: this reads ONE balancer in a SHARED account, prod included,
+		# and a foreign ELB deleted between the list above and this describe answers
+		# LoadBalancerNotFound. Under probe_run that exhausts the retries and forces exit 4 on an
+		# otherwise clean teardown — up to eight scans per job across verify and three preflight
+		# envs. A NotFound here is an ANSWER ("it is gone, so it is not ours to delete"), which is
+		# exactly the distinction probe_confirm exists to make; any other error is still
+		# UNVERIFIABLE.
+		tags="$(probe_confirm classic-load-balancer aws elb describe-tags --load-balancer-names "$name" \
 			--query "TagDescriptions[].Tags[?Key=='kubernetes.io/cluster/${CLUSTER}'].Value" --output text || true)"
 		if printf '%s' "$tags" | grep -Eq 'owned|shared'; then
 			printf '%s\n' "$name"
@@ -1439,14 +1454,51 @@ if [ "$SELF_TEST" = "1" ]; then
 
 	# $ST_LB_CLUSTER is the `elbv2.k8s.aws/cluster` tag value the stub reports. Everything else
 	# answers empty — i.e. the cluster and every instance are already gone, the leak's real shape.
+	# ⚠️ QUERY-AWARE, and that is the point. Keying only on "$1 $2" made the stub answer the same
+	# thing whatever the --query said, so NEITHER new JMESPath was exercised: replacing the tag key
+	# with one that does not exist, or the discovery projection with a nonsense one, left all thirty
+	# cases green — including the one named "alive_lbs reports a classic ELB". Since the defect
+	# being fixed was READING THE WRONG AWS SERVICE, "the query selects on the right thing" is the
+	# property most worth pinning.
+	#
+	# It is not a JMESPath evaluator and does not pretend to be. It checks the two load-bearing
+	# parts a mutation would break — which tag key the expression filters on, and which field it
+	# projects — and answers empty otherwise, which is what AWS returns for a query that matches
+	# nothing.
+	st_query() { # echo the --query argument out of an argv
+		while [ "$#" -gt 0 ]; do
+			[ "$1" = "--query" ] && { printf '%s' "${2:-}"; return 0; }
+			shift
+		done
+	}
 	aws() {
+		local q
+		q="$(st_query "$@")"
 		case "$1 ${2:-}" in
 		"elbv2 describe-load-balancers") printf '%s\n' "$st_lb" ;;
 		"elbv2 describe-tags") printf '%s\n' "$ST_LB_CLUSTER" ;;
 		# The CLASSIC service answers separately, because it IS a separate service — the whole
 		# defect this stub now covers was `elb` and `elbv2` being treated as one.
-		"elb describe-load-balancers") printf '%s\n' "$ST_CLASSIC_LB" ;;
-		"elb describe-tags") printf '%s\n' "$ST_CLASSIC_TAG" ;;
+		"elb describe-load-balancers")
+			# `LoadBalancers[]` is the ELBv2 shape; against the classic API it selects nothing.
+			case "$q" in
+			*LoadBalancerDescriptions*) printf '%s\n' "$ST_CLASSIC_LB" ;;
+			esac
+			;;
+		"elb describe-tags")
+			# A query that does not filter on the cluster tag key matches no tag at all.
+			case "$q" in
+			*"kubernetes.io/cluster/"*)
+				# Discovery projects the KEY (to learn the cluster name); the sweep projects the
+				# VALUE (owned/shared). Answering both with one fixture let `.Value` be mutated to
+				# `.Key` unnoticed.
+				case "$q" in
+				*.Key) printf '%s\n' "$ST_CLASSIC_TAG_KEY" ;;
+				*.Value) printf '%s\n' "$ST_CLASSIC_TAG_VALUE" ;;
+				esac
+				;;
+			esac
+			;;
 		*) : ;;
 		esac
 	}
@@ -1455,7 +1507,8 @@ if [ "$SELF_TEST" = "1" ]; then
 		CLUSTER=""
 		ST_LB_CLUSTER="$2"
 		ST_CLASSIC_LB=""
-		ST_CLASSIC_TAG=""
+		ST_CLASSIC_TAG_KEY=""
+		ST_CLASSIC_TAG_VALUE=""
 		discover_cluster >/dev/null 2>&1
 		if [ "$CLUSTER" = "$3" ]; then
 			echo "  ✓ $1"
@@ -1478,7 +1531,8 @@ if [ "$SELF_TEST" = "1" ]; then
 		CLUSTER=""
 		ST_LB_CLUSTER=""
 		ST_CLASSIC_LB="$2"
-		ST_CLASSIC_TAG="kubernetes.io/cluster/$3"
+		ST_CLASSIC_TAG_KEY="kubernetes.io/cluster/$3"
+		ST_CLASSIC_TAG_VALUE="owned"
 		discover_cluster >/dev/null 2>&1
 		if [ "$CLUSTER" = "$4" ]; then
 			echo "  ✓ $1"
@@ -1501,13 +1555,50 @@ if [ "$SELF_TEST" = "1" ]; then
 	CLUSTER="eks-ue1-${ENV}-alethia-nl"
 	ST_LB_CLUSTER=""
 	ST_CLASSIC_LB="a19d04c70d3934e4996ce17cb9ae9ea6"
-	ST_CLASSIC_TAG="owned"
+	ST_CLASSIC_TAG_KEY="kubernetes.io/cluster/eks-ue1-${ENV}-alethia-nl"
+	ST_CLASSIC_TAG_VALUE="owned"
 	if alive_lbs 2>/dev/null | grep -q "a19d04c70d3934e4996ce17cb9ae9ea6"; then
 		echo "  ✓ alive_lbs reports a classic ELB, so verify_swept cannot exit green over one"
 	else
 		echo "  ✗ alive_lbs is blind to classic ELBs — a billing load balancer would read as swept" >&2
 		st_fails=$((st_fails + 1))
 	fi
+
+	# ── THE DELETE HALF. Discovery and alive_lbs are both covered above; nothing asserted that the
+	# sweep actually deletes THIS run's classic ELB, or — far more dangerous — that it leaves
+	# ANOTHER run's alone. The discovery cases observe that both-directions discipline already, and
+	# for the strongest possible reason: on 2026-08-30 this sweeper, pointed at a live run's scope,
+	# deleted that run's EKS cluster mid-apply. A sweeper's "does NOT delete" case is not symmetry
+	# for its own sake.
+	#
+	# DRY_RUN, so `retry_delete` announces instead of calling. The stub answers no `aws` at all for
+	# a delete, so a regression that got past DRY_RUN would still touch nothing.
+	st_classic_sweep_case() { # <name> <lb name> <tag value for OUR cluster> <expect: deleted|kept>
+		local out st_prev_dry="$DRY_RUN"
+		CLUSTER="eks-ue1-${ENV}-alethia-nl"
+		ST_LB_CLUSTER=""
+		ST_CLASSIC_LB="$2"
+		ST_CLASSIC_TAG_KEY="kubernetes.io/cluster/eks-ue1-${ENV}-alethia-nl"
+		# Empty = this balancer carries no `kubernetes.io/cluster/<ours>` tag, which is exactly what
+		# the query returns for a balancer belonging to a different run.
+		ST_CLASSIC_TAG_VALUE="$3"
+		DRY_RUN=1
+		out="$(sweep_load_balancers 2>/dev/null || true)"
+		DRY_RUN="$st_prev_dry"
+		local saw="kept"
+		printf '%s' "$out" | grep -q "classic-elb $2" && saw="deleted"
+		if [ "$saw" = "$4" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected the sweep to have $4 it, but it $saw it" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_classic_sweep_case "this run's classic ELB is deleted" \
+		"a19d04c70d3934e4996ce17cb9ae9ea6" "owned" "deleted"
+	st_classic_sweep_case "ANOTHER run's classic ELB is NOT deleted" \
+		"a8a8791a7a6b249319f24b2e2b727584" "" "kept"
+
 	CLUSTER=""
 
 	# The VPC-scoped security-group discovery. $ST_SGS is what the stub reports for the run's VPC;
