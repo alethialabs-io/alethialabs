@@ -39,7 +39,7 @@ pass. A version with **no recorded window** (both bounds empty) is `not_evaluabl
 `compat.Report` mirrors `verify.Report` 1:1 — `Status` (`pass` / `fail` / `warn` /
 `not_evaluable`), `Severity`, `Finding`, `ControlResult`, `Summary`, plus `Override` and
 `Report.Unwaived`. The shapes are **redeclared** here, not imported: the two engines stay
-disjoint and independently versioned (`compat-matrix-0.1.0` vs `elench-controls-0.5.2`). The
+disjoint and independently versioned (`compat-matrix-0.2.0` vs `elench-controls-0.5.2`). The
 Go type names match `verify` (`compat.Report`); the generated TS mirror is `CompatReport`
 (no package namespace).
 
@@ -72,6 +72,18 @@ The matrix feeds a **two-gate** design (epic #1186), neither wired by this seam:
 
 - **ArgoCD ↔ K8s** — `9.5.11`→`v3.3.9`→`≥1.33` (shipped); `8.6.4`→`v3.1.8`→`≥1.33`;
   `7.1.3`→`v2.11`→`≤1.32` (`argocd/versions.go`, #1165 for the floor, #2717 for the 8.6.4→9.5.11 bump).
+- **ArgoCD support window** — `components[argocd].supported` declares the ArgoCD versions Alethia
+  supports *operating*, on the **app-version** axis (`v3.3.9+`, no ceiling). This is a different
+  axis from the row above: a chart version is what we install, an app version is what a live
+  cluster reports, and a cluster somebody else installed from the upstream manifests has no chart
+  version at all. #2717 was expensive because the two were reasoned about interchangeably.
+
+  The floor tracks the evidence rather than being an opinion: releases the matrix records as
+  known-broken carry `"unsupported": true`, and `TestCouplingArgoCD` (plus its
+  `apps/console/scripts/check-compat.mjs` mirror) fails if the window admits one of them, or if the
+  shipped pin falls outside it. So lowering the floor means recording a known-good release beneath
+  it — not editing the number. The ceiling is **undeclared, which is not the same as tested-open**;
+  exercising the range edges is #3126 item 3.
 - **Talos ↔ K8s** — `v1.13.6`→`1.31–1.36` (`cloud/hetzner_provider.go`, `hetzner/variables.tf`).
 - **Cilium ↔ K8s** — `1.19.6`→`≤1.35` (`hetzner/cilium.tf`).
 - **hcloud-CSI ↔ K8s** — `2.22.0`→`1.34–1.36` (`hetzner/csi.tf`).
