@@ -10,9 +10,16 @@ reachable* — whether a prospect gets from an empty account to a running, verif
 using `alethia` alone. Until `test/e2e/t2_cli_demo.go` existed, nothing asserted it, and the
 console-only gaps were discoverable only by trying them one at a time in front of an audience.
 
-Harness: `test/e2e/t2_cli_demo.go` (the table) · `t2_cli_demo_pure_test.go` (shape, every PR, free) ·
-`t2_cli_demo_run_test.go` (`e2e_t2` — checks the table against a REAL binary). Gate:
-`E2E_CLI_DEMO` repo variable, with `E2E_CLI_BIN` naming the binary under test.
+The bar has **two tiers**, and they answer different questions. Keeping them apart is the point:
+one is free and runs on every leg, the other buys a cluster.
+
+| tier | question | harness | gate | cost |
+|---|---|---|---|---|
+| **reachability** | does the command surface resolve? | `t2_cli_demo.go` (the table) · `t2_cli_demo_pure_test.go` (shape, every PR) · `t2_cli_demo_run_test.go` (`e2e_t2`, real binary) | `E2E_CLI_DEMO` repo variable, `E2E_CLI_BIN` naming the binary | seconds, no cloud |
+| **provisioning** | has the product ever been provisioned THROUGH the binary? | `t2_cli_demo_provision.go` (the beats) · `t2_cli_demo_drive.go` (the driver) · `t2_cli_demo_provision_pure_test.go` (the cross-check) | the `cli-demo` **dimension**, which exports `ALETHIA_E2E_CLI_DEMO_PROVISION` | a floor-shaped cluster + a console build, dispatch-only |
+
+The second is a dimension rather than a variable deliberately: it boots a console, seeds a service
+token and provisions, so it must not ride along on a leg that did not ask for it.
 
 ## The bar
 
@@ -128,14 +135,50 @@ This is the only verdict in the table that is a design decision rather than a ga
 verdict an author would reach for to turn a red table green, so it carries the burden of proof — if
 it ever stops being true it becomes a `CLIGap`, not a quietly-edited `Why`.
 
-## Two things this bar does NOT claim
+## What each tier does NOT claim
 
-- **It does not provision.** The question is reachability, and reachability is answered by the
-  command surface; the provisioning half is already proven by the base T2 spine, and re-driving it
-  through the CLI would double the bill to re-prove it.
+- **The reachability tier does not provision.** Its question is whether a human at a terminal can
+  REACH each step, and that is answered by the command surface. Re-driving the apply on every leg
+  would double the bill to re-prove what the base T2 spine already proves.
+- **The provisioning tier does not prove the surface AREA.** It drives a FLOOR-shaped cluster, on
+  purpose: what is under test is the ACTOR, not the eleven kinds or the eighteen add-ons, which
+  `maxconfig` and `addons` prove at their own price. A green `cli-demo` cell says "the CLI was the
+  actor", and nothing more.
+- **Neither tier performs `login`.** The device flow needs a human at a browser by design, and
+  `ALETHIA_TOKEN` is the documented non-interactive substitute. The provisioning tier records that
+  in `cliDemoNotDriven` rather than counting it — a bar that quietly counted `login` as performed
+  would be claiming the one thing it cannot do.
 - **MCP is not a demo driver.** `apps/console/app/api/mcp/route.ts` exposes only read/both tools —
   HITL proposals, canvas tools and job-queuing writes are excluded by construction. MCP is a
   **read/verify** surface. Any claim that the product is "drivable from MCP" must say that.
+
+## What stops the provisioning tier from proving nothing
+
+Two guards, because a bar that provisions is worth exactly as much as its accounting.
+
+**Every `CLIDriven` step is accounted for in exactly one of a beat or a written reason.** Never
+both, never neither — `ValidateCLIDemoBeats` fails on a step with two answers ("one of the two is a
+lie") and on a step with none. The reasons are sentences a reader can disagree with; "n/a" is
+indistinguishable from an oversight.
+
+**The dimension cannot go green without a driver.** `cli_demo_wiring_pure_test.go` holds exactly one
+of {the beats are driven, `t2_provision_test.go` REFUSES the dimension} — and it asserts the refusal
+as a SHAPE (an `if` on the gate whose body terminates the test), because turning a `t.Fatalf` into a
+`t.Logf` would otherwise restore a vacuous run in one edit. Before a driver existed, a `cli-demo`
+dispatch would have provisioned a floor, asserted the floor, and been recorded as a CLI-driven
+proof: an assertion that is TRUE and about the wrong thing.
+
+## One hazard worth knowing before you drive the CLI from any test
+
+`types.ResolveWebOrigin()` is env > persisted config > **the hosted default,
+`https://alethialabs.io`**, and `api.NewClient` appends `/api`. So a harness that exports the wrong
+variable name — or none — does **not** fail. Every command authenticates against PRODUCTION with
+whatever token it was given, and the run reports the CLI as broken while pointing at a console
+nobody meant to touch. Nothing downstream can catch it; from the CLI's side it is an ordinary
+request.
+
+`ResolveCLIDemoRun` therefore REFUSES a production origin outright. The hazard is not specific to
+this bar, so the refusal lives on the resolution path any CLI-driving test would use.
 
 ## The ratchet
 
