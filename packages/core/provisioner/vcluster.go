@@ -201,17 +201,26 @@ func renderVClusterValues(spec VClusterSpec) string {
 			fmt.Fprintf(&b, "        tag: v%s\n", version)
 		}
 	}
-	// exportKubeConfig: emit a SCOPED service-account-token kubeconfig (not the admin cert) into the
-	// ArgoCD namespace on the host, with the API endpoint pinned to the address ArgoCD reaches it at
-	// (in-cluster Service by default; the explicit override when exposed off-host).
+	// exportKubeConfig: emit a SCOPED service-account-token kubeconfig (not the admin cert), with the
+	// API endpoint pinned to the address ArgoCD reaches it at (in-cluster Service by default; the
+	// explicit override when exposed off-host).
+	//
+	// These two keys govern the chart's PRIMARY exported Secret (`vc-<name>`, in the release
+	// namespace) and nothing else. An `additionalSecrets` entry does NOT inherit them: it is written
+	// with the chart's default admin CERTIFICATE kubeconfig, user `kubernetes-super-admin`, server
+	// `https://localhost:8443`, and an EMPTY token key. Requesting one and reading it back is how
+	// registration failed with "vcluster kubeconfig has no user token" — the code was reading a
+	// kubeconfig that could not have worked even had it parsed, since localhost:8443 is not an
+	// address ArgoCD can reach, and it carried the admin cert this comment promises to avoid.
+	//
+	// So no additionalSecrets: the spec's KubeconfigSecret IS the chart's default name, and
+	// KubeconfigNamespace the release namespace, which is also the only namespace the chart holds
+	// RBAC in.
 	b.WriteString("exportKubeConfig:\n")
 	fmt.Fprintf(&b, "  server: %s\n", spec.effectiveServer())
 	b.WriteString("  serviceAccount:\n")
 	fmt.Fprintf(&b, "    name: %s\n", spec.ServiceAccount)
 	fmt.Fprintf(&b, "    clusterRole: %s\n", spec.resolvedClusterRole())
-	b.WriteString("  additionalSecrets:\n")
-	fmt.Fprintf(&b, "    - name: %s\n", spec.KubeconfigSecret)
-	fmt.Fprintf(&b, "      namespace: %s\n", spec.KubeconfigNamespace)
 	return b.String()
 }
 

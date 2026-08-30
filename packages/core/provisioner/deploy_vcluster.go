@@ -40,9 +40,14 @@ const (
 	// vclusterHostNamespacePrefix / vclusterServiceAccountPrefix / vclusterKubeconfigSecretPrefix derive
 	// the per-env resource names from the env's namespace. Distinct prefixes keep the control-plane host
 	// namespace, the SA, and the exported Secret from colliding.
-	vclusterHostNamespacePrefix    = "vcluster-"
-	vclusterServiceAccountPrefix   = "vcluster-argocd-"
-	vclusterKubeconfigSecretPrefix = "vcluster-kubeconfig-"
+	vclusterHostNamespacePrefix  = "vcluster-"
+	vclusterServiceAccountPrefix = "vcluster-argocd-"
+	// vclusterKubeconfigSecretPrefix is the loft chart's OWN default for the exported kubeconfig
+	// Secret — "If this is not defined, vCluster will create it with `vc-NAME`". We read that
+	// primary Secret rather than requesting an additional one, because `exportKubeConfig.server`
+	// and `exportKubeConfig.serviceAccount` apply ONLY to it: an `additionalSecrets` entry is
+	// written with the default admin CERTIFICATE kubeconfig pointed at https://localhost:8443.
+	vclusterKubeconfigSecretPrefix = "vc-"
 )
 
 // vclusterRemintProviders is the allowlist of clouds whose OUTPUT-FREE keyless host re-mint is wired for

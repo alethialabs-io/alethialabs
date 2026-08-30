@@ -14,8 +14,8 @@ func validVClusterSpec() VClusterSpec {
 		Name:                "team-web",
 		HostNamespace:       "vcluster-team-web",
 		ServiceAccount:      "vcluster-argocd-team-web",
-		KubeconfigSecret:    "vcluster-kubeconfig-team-web",
-		KubeconfigNamespace: "argocd",
+		KubeconfigSecret:    "vc-team-web",
+		KubeconfigNamespace: "vcluster-team-web",
 	}
 }
 
@@ -63,7 +63,7 @@ func TestInClusterAPIServerURL(t *testing.T) {
 
 func TestRenderVClusterValues(t *testing.T) {
 	// Default (no expose, no version pin): no controlPlane block; exportKubeConfig pins the in-cluster
-	// server, SA-token mode, and writes the Secret into the ArgoCD namespace.
+	// server and SA-token mode on the chart's PRIMARY exported Secret.
 	v := renderVClusterValues(validVClusterSpec())
 	for _, want := range []string{
 		"exportKubeConfig:",
@@ -71,13 +71,17 @@ func TestRenderVClusterValues(t *testing.T) {
 		"serviceAccount:",
 		"name: vcluster-argocd-team-web",
 		"clusterRole: cluster-admin",
-		"additionalSecrets:",
-		"- name: vcluster-kubeconfig-team-web",
-		"namespace: argocd",
 	} {
 		if !strings.Contains(v, want) {
 			t.Errorf("default values missing %q\n---\n%s", want, v)
 		}
+	}
+	// `additionalSecrets` must NOT be requested. `server` and `serviceAccount` govern the primary
+	// Secret only; an additional one is written with the chart's default admin CERTIFICATE
+	// kubeconfig at https://localhost:8443 and an empty token, which is unusable for ArgoCD
+	// registration and is the admin credential this values block exists to avoid.
+	if strings.Contains(v, "additionalSecrets") {
+		t.Errorf("values must not request additionalSecrets — they do not inherit server/serviceAccount\n---\n%s", v)
 	}
 	if strings.Contains(v, "controlPlane:") {
 		t.Errorf("default values should not emit an empty controlPlane block\n---\n%s", v)
@@ -134,7 +138,7 @@ func TestVClusterCommands(t *testing.T) {
 		t.Errorf("uninstall command wrong: %q", un)
 	}
 	del := vclusterDeleteSecretCommand(s)
-	if !strings.Contains(del, "kubectl delete secret 'vcluster-kubeconfig-team-web'") || !strings.Contains(del, "--namespace 'argocd'") {
+	if !strings.Contains(del, "kubectl delete secret 'vc-team-web'") || !strings.Contains(del, "--namespace 'vcluster-team-web'") {
 		t.Errorf("delete-secret command wrong: %q", del)
 	}
 }

@@ -31,7 +31,7 @@ func TestBuildVClusterSpec(t *testing.T) {
 	if spec.ServiceAccount != "vcluster-argocd-team-web" {
 		t.Errorf("ServiceAccount = %q", spec.ServiceAccount)
 	}
-	if spec.KubeconfigSecret != "vcluster-kubeconfig-team-web" {
+	if spec.KubeconfigSecret != "vc-team-web" {
 		t.Errorf("KubeconfigSecret = %q", spec.KubeconfigSecret)
 	}
 	// The export lands in the vcluster's OWN host namespace, which is the only namespace the loft
