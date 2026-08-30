@@ -166,7 +166,7 @@ func TestReleaseCloudLoadBalancersStopsArgoCDBeforeItListsAnything(t *testing.T)
 	shortWaits(t)
 	rec := stubKubectlForRelease(t, []string{svcListJSON, emptyList}, true, emptyList, 0, "")
 	var buf bytes.Buffer
-	if err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
+	if _, err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
 		t.Fatalf("release: %v", err)
 	}
 	calls := rec.calls(t)
@@ -192,7 +192,7 @@ func TestReleaseCloudLoadBalancersOnAClusterWithNone(t *testing.T) {
 	shortWaits(t)
 	stubKubectlForRelease(t, []string{emptyList}, true, emptyList, 0, "")
 	var buf bytes.Buffer
-	if err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
+	if _, err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
 		t.Fatalf("a cluster with no LoadBalancer Services is not a failure: %v", err)
 	}
 	if !strings.Contains(buf.String(), "nothing outside the state file") {
@@ -206,7 +206,7 @@ func TestReleaseCloudLoadBalancersWaitsUntilTheObjectsAreGone(t *testing.T) {
 	shortWaits(t)
 	rec := stubKubectlForRelease(t, []string{svcListJSON, svcListJSON, emptyList}, true, emptyList, 0, "")
 	var buf bytes.Buffer
-	if err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
+	if _, err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
 		t.Fatalf("the objects were released and this reported a failure: %v", err)
 	}
 	out := buf.String()
@@ -236,7 +236,7 @@ func TestReleaseCloudLoadBalancersGivesUpAndNamesWhatIsHeld(t *testing.T) {
 	shortWaits(t)
 	stubKubectlForRelease(t, []string{svcListJSON}, true, emptyList, 0, "")
 	var buf bytes.Buffer
-	err := releaseCloudLoadBalancers(context.Background(), &buf)
+	_, err := releaseCloudLoadBalancers(context.Background(), &buf)
 	if err == nil {
 		t.Fatal("want an error when the objects are never released")
 	}
@@ -253,7 +253,7 @@ func TestReleaseCloudLoadBalancersOnAnUnreachableClusterIsAnError(t *testing.T) 
 	shortWaits(t)
 	stubKubectlForRelease(t, nil, false, emptyList, 0, "") // the FIRST `get services` fails
 	var buf bytes.Buffer
-	err := releaseCloudLoadBalancers(context.Background(), &buf)
+	_, err := releaseCloudLoadBalancers(context.Background(), &buf)
 	if err == nil {
 		t.Fatal("an unreachable cluster must be reported, not read as 'there are none'")
 	}
@@ -269,7 +269,7 @@ func TestReleaseCloudLoadBalancersDoesNotCallAnUnreadableClusterReleased(t *test
 	shortWaits(t)
 	stubKubectlForRelease(t, []string{svcListJSON}, false, emptyList, 0, "") // every list after the first fails
 	var buf bytes.Buffer
-	err := releaseCloudLoadBalancers(context.Background(), &buf)
+	_, err := releaseCloudLoadBalancers(context.Background(), &buf)
 	if err == nil {
 		t.Fatalf("a cluster that stopped answering was reported as released:\n%s", buf.String())
 	}
@@ -287,7 +287,7 @@ func TestReleaseCloudLoadBalancersFailsOnARefusedIngressRead(t *testing.T) {
 	shortWaits(t)
 	stubKubectlForRelease(t, []string{emptyList}, true, "", 1, "Error from server (Forbidden): ingresses is forbidden")
 	var buf bytes.Buffer
-	err := releaseCloudLoadBalancers(context.Background(), &buf)
+	_, err := releaseCloudLoadBalancers(context.Background(), &buf)
 	if err == nil {
 		t.Fatalf("a refused Ingress read was reported as nothing to do:\n%s", buf.String())
 	}
@@ -304,7 +304,7 @@ func TestReleaseCloudLoadBalancersToleratesAClusterWithNoIngressAPI(t *testing.T
 	shortWaits(t)
 	stubKubectlForRelease(t, []string{emptyList}, true, "", 1, `error: the server doesn't have a resource type "ingresses"`)
 	var buf bytes.Buffer
-	if err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
+	if _, err := releaseCloudLoadBalancers(context.Background(), &buf); err != nil {
 		t.Fatalf("a cluster with no Ingress API is not a failure: %v", err)
 	}
 }
@@ -519,5 +519,130 @@ func TestPostConfigureFailureLineIsABillingWarning(t *testing.T) {
 	if bare := postConfigureFailureLine(""); !strings.Contains(bare, "WARNING") ||
 		!strings.Contains(bare, "still bill") || strings.HasSuffix(strings.TrimSpace(bare), "but") {
 		t.Errorf("with no reason the warning degrades or dangles: %q", bare)
+	}
+}
+
+// THE ONLY BACKSTOP A CUSTOMER HAS. The scope-locked sweepers live in `scripts/e2e/*-cleanup.sh`
+// and are the e2e workflow's; nothing in apps/runner or packages/core sweeps cloud load balancers
+// after a failed destroy. So when the destroy fails with objects still held, this text is the whole
+// signal that something is running and charging — #3395.
+func TestBillingWarningNamesWhatIsStillHeldAndThatNothingSweepsIt(t *testing.T) {
+	clean := releaseOutcome{Clean: true}
+	if got := clean.billingWarning(); got != "" {
+		t.Errorf("a clean release must warn about nothing, got %q", got)
+	}
+
+	held := releaseOutcome{Remaining: []cloudBackedObject{
+		{Kind: "service", Namespace: "ingress-nginx", Name: "controller"},
+		{Kind: "ingress", Namespace: "alethia", Name: "console"},
+	}}
+	got := held.billingWarning()
+	for _, want := range []string{
+		"STILL BILL",
+		"service/ingress-nginx/controller",
+		"ingress/alethia/console",
+		"NOTHING SWEEPS THESE AUTOMATICALLY",
+		"cloud console",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the warning does not carry %q:\n%s", want, got)
+		}
+	}
+
+	// "We could not look" must not render as a complete list — the difference between a bounded
+	// clean-up list and an unbounded one is the whole reason Unknown exists.
+	unknown := releaseOutcome{Unknown: true, Remaining: []cloudBackedObject{{Kind: "service", Namespace: "x", Name: "y"}}}
+	if u := unknown.billingWarning(); !strings.Contains(u, "not a complete list") {
+		t.Errorf("an unconfirmed release must say the list may be incomplete:\n%s", u)
+	}
+
+	// And a step that never ran says WHY, because "nothing was released" and "nothing needed
+	// releasing" are opposite facts.
+	skipped := releaseOutcome{Skipped: "the cluster could not be reached (dial tcp: timeout)"}
+	s := skipped.billingWarning()
+	if !strings.Contains(s, "did not run") || !strings.Contains(s, "dial tcp: timeout") {
+		t.Errorf("a skipped release must say it was skipped and why:\n%s", s)
+	}
+	if !strings.Contains(s, "NOTHING SWEEPS") {
+		t.Errorf("a skipped release still warns about billing:\n%s", s)
+	}
+}
+
+// The outcome is what the retry branches on, so the values it can take are pinned here rather than
+// inferred from the one path a test happens to drive.
+func TestReleaseOutcomeCleanIsOnlyForAnEstablishedRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		o    releaseOutcome
+		want bool
+	}{
+		{"released", releaseOutcome{Clean: true}, true},
+		{"objects still held", releaseOutcome{Remaining: []cloudBackedObject{{Kind: "service"}}}, false},
+		{"could not confirm", releaseOutcome{Unknown: true}, false},
+		{"never ran", releaseOutcome{Skipped: "no cluster access"}, false},
+		{"zero value", releaseOutcome{}, false},
+	} {
+		if tc.o.Clean != tc.want {
+			t.Errorf("%s: Clean = %v, want %v — the destroy retries on this field, so a false "+
+				"positive pays for a second full destroy that cannot succeed", tc.name, tc.o.Clean, tc.want)
+		}
+	}
+}
+
+// An undecodable SERVICES list must be an error for the same reason the Ingress one is: "could not
+// parse" rendering as "there are none" is the answer that skips the release entirely and walks the
+// destroy into the failure.
+func TestListCloudBackedObjectsFailsOnAnUndecodableServiceList(t *testing.T) {
+	stubKubectlForRelease(t, []string{"not json"}, true, emptyList, 0, "")
+	if _, err := listCloudBackedObjects(context.Background()); err == nil {
+		t.Fatal("an undecodable Service list must be an error, not an empty result")
+	} else if !strings.Contains(err.Error(), "parse services") {
+		t.Errorf("the error does not name what failed: %v", err)
+	}
+}
+
+// And the Unknown outcome carries the objects last seen, so the billing warning can name them even
+// though the list is not complete.
+func TestReleaseReportsWhatItLastSawWhenTheClusterStopsAnswering(t *testing.T) {
+	shortWaits(t)
+	stubKubectlForRelease(t, []string{svcListJSON}, false, emptyList, 0, "")
+	var buf bytes.Buffer
+	rel, err := releaseCloudLoadBalancers(context.Background(), &buf)
+	if err == nil {
+		t.Fatal("a cluster that stopped answering must not be reported as released")
+	}
+	if rel.Clean {
+		t.Error("Clean must be false — the destroy would retry on a release that never happened")
+	}
+	if !rel.Unknown {
+		t.Error("Unknown must be true — the list below it is not complete and the warning says so")
+	}
+}
+
+// A cancelled context must not report a release. The teardown's own deadline expiring mid-wait is
+// the one moment when "we stopped looking" is easiest to mistake for "there is nothing there", and
+// the destroy that follows branches on exactly that.
+func TestReleaseOnACancelledContextIsNotARelease(t *testing.T) {
+	prevT, prevP := lbReleaseTimeout, lbReleasePoll
+	lbReleaseTimeout, lbReleasePoll = time.Minute, 20*time.Millisecond
+	t.Cleanup(func() { lbReleaseTimeout, lbReleasePoll = prevT, prevP })
+
+	stubKubectlForRelease(t, []string{svcListJSON}, true, emptyList, 0, "")
+	// Long enough that the FIRST list and the deletes complete — each kubectl is a process spawn —
+	// so the cancellation lands INSIDE the wait loop rather than on the opening read. A shorter
+	// window made this test pass through the early-return path instead, proving something else.
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+
+	var buf bytes.Buffer
+	rel, err := releaseCloudLoadBalancers(ctx, &buf)
+	if err == nil {
+		t.Fatal("a cancelled wait must report an error, not a release")
+	}
+	if rel.Clean {
+		t.Error("Clean must be false — the destroy retries on it, and nothing was established here")
+	}
+	if !rel.Unknown {
+		t.Error("Unknown must be true: the wait stopped early, so what it last saw is not a complete list")
 	}
 }
