@@ -112,6 +112,54 @@ func TestCouplingArgoCD(t *testing.T) {
 		Components: []compat.ComponentRef{{ID: "argocd", Version: ver}},
 	})
 	assertNoFail(t, rep)
+
+	// ── The ArgoCD version is a product CONTRACT, not an implementation detail (#3126). ──
+	//
+	// The declared window and the release rows are two statements about the same thing, so hold
+	// them to each other in BOTH directions: the shipped pin must be admitted, and every release
+	// the matrix records as known-broken must be refused. Checking only the first would let the
+	// floor be lowered past a release whose own note says it never converges.
+	win, ok := m.SupportedWindow("argocd")
+	if !ok {
+		t.Fatal("matrix.json components[argocd] declares no `supported` window — the ArgoCD version is a product contract (#3126), and an undeclared window is not an open one: the live-cluster guard refuses everything without it")
+	}
+	label := compat.SemverLabel(win.AppVersionMin, win.AppVersionMax)
+
+	// The pin's membership is proved THROUGH the recorded chart→app_version mapping, which is the
+	// only thing that ever checks that mapping. A chart version and an app version are different
+	// scales; conflating them is what #2717 cost.
+	if rel.AppVersion == "" {
+		t.Fatalf("argocd chart %s records no app_version, so nothing can place the shipped pin inside the support window %s", ver, label)
+	}
+	// StatusPass, not "!= StatusFail". not_evaluable is the vacuous answer this matrix exists to
+	// refuse, and asserting merely-not-fail would accept an unparseable bound as a pass.
+	if st, detail := compat.CheckSemverWindow(rel.AppVersion, win.AppVersionMin, win.AppVersionMax); st != compat.StatusPass {
+		t.Errorf("shipped ArgoCD chart %s (app %s) is %s against the declared support window %s: %s — a pin outside the window it advertises is a contract that refuses its own product", ver, rel.AppVersion, st, label, detail)
+	}
+
+	comp, ok := m.Component("argocd")
+	if !ok {
+		t.Fatal("matrix.json has no `argocd` component at all")
+	}
+	unsupported := 0
+	for _, r := range comp.Releases {
+		if !r.Unsupported {
+			continue
+		}
+		unsupported++
+		if r.AppVersion == "" {
+			t.Errorf("argocd chart %s is marked unsupported but records no app_version, so the window cannot be held to it", r.Version)
+			continue
+		}
+		if st, _ := compat.CheckSemverWindow(r.AppVersion, win.AppVersionMin, win.AppVersionMax); st == compat.StatusPass {
+			t.Errorf("the support window %s ADMITS chart %s (app %s), which this matrix records as unsupported: %q — widen the window only by recording a known-good release, never by reaching past a broken one", label, r.Version, r.AppVersion, r.Note)
+		}
+	}
+	// Non-vacuity. With no unsupported row the loop above passes without comparing anything, and a
+	// window that refuses nothing is a claim with no content.
+	if unsupported == 0 {
+		t.Error("no argocd release is marked `unsupported`, so the window-vs-rows check compared nothing — the matrix records two known-broken releases (v3.1.8 #2717, v2.11 #1165) and they must carry the flag")
+	}
 }
 
 // TestStaticCouplings locks each build-time Go-const ↔ Dockerfile-ARG coupling: the

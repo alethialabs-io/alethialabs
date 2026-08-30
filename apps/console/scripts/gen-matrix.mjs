@@ -88,6 +88,19 @@ export interface ComponentRelease {
 	app_version?: string;
 	k8s_min: string;
 	k8s_max: string;
+	/** Known-broken. Absent means supported; a \`supported\` window may not admit a release carrying this. */
+	unsupported?: boolean;
+	note?: string;
+}
+
+/**
+ * The window Alethia supports OPERATING a component in, on the app-version axis — what a live
+ * cluster reports — as distinct from ComponentRelease's Kubernetes window, which is what a chart
+ * version tolerates. Both bounds empty means no window is recorded, which is never a pass.
+ */
+export interface SupportedWindow {
+	app_version_min: string;
+	app_version_max: string;
 	note?: string;
 }
 
@@ -95,6 +108,7 @@ export interface ComponentRelease {
 export interface Component {
 	id: string;
 	title: string;
+	supported?: SupportedWindow;
 	versions: ComponentRelease[];
 }
 

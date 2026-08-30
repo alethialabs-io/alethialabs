@@ -17,6 +17,19 @@ export interface ComponentRelease {
 	app_version?: string;
 	k8s_min: string;
 	k8s_max: string;
+	/** Known-broken. Absent means supported; a `supported` window may not admit a release carrying this. */
+	unsupported?: boolean;
+	note?: string;
+}
+
+/**
+ * The window Alethia supports OPERATING a component in, on the app-version axis — what a live
+ * cluster reports — as distinct from ComponentRelease's Kubernetes window, which is what a chart
+ * version tolerates. Both bounds empty means no window is recorded, which is never a pass.
+ */
+export interface SupportedWindow {
+	app_version_min: string;
+	app_version_max: string;
 	note?: string;
 }
 
@@ -24,6 +37,7 @@ export interface ComponentRelease {
 export interface Component {
 	id: string;
 	title: string;
+	supported?: SupportedWindow;
 	versions: ComponentRelease[];
 }
 
@@ -81,7 +95,7 @@ export interface Matrix {
 
 export const MATRIX: Matrix = {
 		"version": 1,
-		"catalog_version": "compat-matrix-0.1.0",
+		"catalog_version": "compat-matrix-0.2.0",
 		"k8s_cloud": {
 			"aws": {
 				"supported": [
@@ -126,6 +140,11 @@ export const MATRIX: Matrix = {
 			{
 				"id": "argocd",
 				"title": "ArgoCD chart ↔ Kubernetes",
+				"supported": {
+					"app_version_min": "v3.3.9",
+					"app_version_max": "",
+					"note": "The ArgoCD versions Alethia supports operating, on the APP-VERSION axis — what a live cluster reports — not the chart axis. A chart version cannot be compared against a cluster somebody else installed from the upstream manifests, and #2717 was expensive precisely because the two scales were reasoned about interchangeably. The floor TRACKS THE EVIDENCE IN `versions` BELOW rather than being an opinion typed here: v3.3.9 is the lowest app_version this matrix records as working. Both rows beneath it are marked `unsupported` — v3.1.8 pins every volumeClaimTemplates StatefulSet OutOfSync (#2717), v2.11 never converges at all on 1.33+ (#1165). So lowering the floor is a matter of RECORDING a known-good release row beneath it, not of editing this number, and TestCouplingArgoCD fails if the window and the rows disagree in either direction. No ceiling is declared: nothing above is known to break, and an invented max would refuse a cluster that works. UNDECLARED is not the same as tested-open — the range edges are untested, which is #3126 item 3."
+				},
 				"versions": [
 					{
 						"version": "9.5.11",
@@ -139,6 +158,7 @@ export const MATRIX: Matrix = {
 						"app_version": "v3.1.8",
 						"k8s_min": "1.33",
 						"k8s_max": "",
+						"unsupported": true,
 						"note": "gitops-engine carries the K8s 1.33+ OpenAPI schema (.status.terminatingReplicas, KEP-3973), so Deployments diff correctly (#1165). Superseded by 9.5.11: v3.1.8's structured-merge diff pins every volumeClaimTemplates StatefulSet OutOfSync (#2717)."
 					},
 					{
@@ -146,6 +166,7 @@ export const MATRIX: Matrix = {
 						"app_version": "v2.11",
 						"k8s_min": "",
 						"k8s_max": "1.32",
+						"unsupported": true,
 						"note": "v2.11 predates .status.terminatingReplicas; structured-merge-diff yields sync=Unknown for every Deployment on a 1.33+ cluster and GitOps never converges (#1165)."
 					}
 				]
