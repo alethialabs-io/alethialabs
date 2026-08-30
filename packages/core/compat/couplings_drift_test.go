@@ -152,7 +152,7 @@ func TestCouplingArgoCD(t *testing.T) {
 			continue
 		}
 		if st, _ := compat.CheckSemverWindow(r.AppVersion, win.AppVersionMin, win.AppVersionMax); st == compat.StatusPass {
-			t.Errorf("the support window %s ADMITS chart %s (app %s), which this matrix records as unsupported: %q — widen the window only by recording a known-good release, never by reaching past a broken one", label, r.Version, r.AppVersion, r.Note)
+			t.Errorf("the support window %s ADMITS chart %s (app %s), which this matrix records as unsupported: %q — the window may refuse a version we have measured as broken, but it must never ADMIT one", label, r.Version, r.AppVersion, r.Note)
 		}
 	}
 	// Non-vacuity. With no unsupported row the loop above passes without comparing anything, and a
