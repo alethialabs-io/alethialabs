@@ -428,8 +428,9 @@ func TestRenderAddOnIgnoresRemovedCRDField(t *testing.T) {
 	}
 }
 
-// The keda webhook entry, and the two properties that make it an EVIDENCED ignore rather than a
-// guessed one: it names both fields a foreign writer owns, and it is SCOPED to the one object.
+// The keda webhook entry, and the three properties that make it an EVIDENCED ignore rather than a
+// guessed one: it is SCOPED to the one object, it ignores the enforcer's field by OWNER, and it
+// still ignores `caBundle` by PATH because no owner list can reach that one.
 //
 // Measured on azure/addons run 33249209041, by the ownership probe #3301 repaired:
 //
@@ -450,7 +451,8 @@ func TestKedaWebhookIgnoreDifferencesIsScopedAndNamesBothOwners(t *testing.T) {
 		"kind: ValidatingWebhookConfiguration",
 		"name: keda-admission",
 		".webhooks[]?.clientConfig.caBundle",
-		".webhooks[]?.namespaceSelector",
+		"managedFieldsManagers:",
+		"- admissionsenforcer",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Errorf("the keda ignoreDifferences entry is missing %q\n---\n%s", want, manifest)
@@ -461,5 +463,61 @@ func TestKedaWebhookIgnoreDifferencesIsScopedAndNamesBothOwners(t *testing.T) {
 	// WOULD be real drift. #2778 is explicit that a guessed entry masks it.
 	if strings.Count(manifest, "name: keda-admission") != 1 {
 		t.Errorf("the entry must name exactly one object\n---\n%s", manifest)
+	}
+}
+
+// `namespaceSelector` must be ignored by OWNER and NOT by path. This is #3346, and it is the half
+// of the entry a path expression got wrong: the chart authors `namespaceSelector: {}` on all three
+// webhooks, ArgoCD applies it and therefore owns it, and a jq `del(.webhooks[]?.namespaceSelector)`
+// keeps deleting it from the comparison after the value stops being `{}`. A future chart bump that
+// scopes the selector to a real namespace would be silently unenforced on all five clouds, and with
+// `RespectIgnoreDifferences=true` excluded from the apply too. Naming the manager instead ignores
+// only what AKS's enforcer wrote, and leaves a chart-authored value compared.
+//
+// The absence assertion is the point. Adding the manager list while LEAVING the path behind would
+// satisfy every "contains" check above and change nothing about the behaviour this fixes.
+func TestKedaNamespaceSelectorIsIgnoredByOwnerNotByPath(t *testing.T) {
+	a := sampleAddOn()
+	a.ID = "keda"
+	manifest, err := RenderAddOnApplication(a)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if strings.Contains(manifest, "namespaceSelector") {
+		t.Errorf("namespaceSelector must not appear as a jq PATH — a path ignore silences the "+
+			"field whoever writes it, so a chart-authored selector would stop being enforced. "+
+			"Ignore it via managedFieldsManagers: [admissionsenforcer] instead.\n---\n%s", manifest)
+	}
+}
+
+// `caBundle` must STAY a jq path, and #3346 proposed dropping it ("it needs no jq path at all").
+// argo-cd v3.3.9 refutes that, and the refutation is why this assertion exists rather than a
+// symmetric swap. `util/argo/managedfields.normalize` strips only
+//
+//	mfs.Intersection(tr.comparison.Modified)
+//
+// and structured-merge-diff documents `Modified` as "fields present in both objects but different"
+// — `Removed` is what is present in live and absent from the render. The pinned keda chart renders
+// no `caBundle` at all (keda's operator injects it post-apply), so it lands in `Removed`, no owner
+// list can ever reach it, and swapping it to `managedFieldsManagers: ["keda"]` would have dropped
+// the ignore in silence and left keda OutOfSync on EVERY cloud rather than only AKS.
+func TestKedaCABundleStaysAJQPathBecauseNoOwnerListCanReachIt(t *testing.T) {
+	a := sampleAddOn()
+	a.ID = "keda"
+	manifest, err := RenderAddOnApplication(a)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+	if !strings.Contains(manifest, ".webhooks[]?.clientConfig.caBundle") {
+		t.Errorf("caBundle lost its jq path: managedFieldsManagers cannot substitute for it, "+
+			"because a field absent from the render is in comparison.Removed and normalize() "+
+			"intersects with comparison.Modified only\n---\n%s", manifest)
+	}
+	// `keda` must NOT be trusted as a manager: it would be inert for the reason above, and an
+	// owner-scoped ignore is unbounded — it would silence every OTHER field keda's operator comes
+	// to own and differ on, which is the mirror image of the staleness this change removes.
+	if strings.Contains(manifest, "- keda\n") {
+		t.Errorf("`keda` must not be in managedFieldsManagers: it cannot cover caBundle and it "+
+			"widens the ignore to every field keda owns\n---\n%s", manifest)
 	}
 }
