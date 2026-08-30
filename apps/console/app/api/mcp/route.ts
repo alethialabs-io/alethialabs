@@ -9,7 +9,7 @@ import { requireMcpAuth } from "@better-auth/mcp";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { registerAiToolsOnMcp } from "@/lib/ai/mcp/adapter";
 import { buildExternalAgentTools } from "@/lib/ai/tools";
-import { auth } from "@/lib/auth";
+import { auth, mcpResourceUrl } from "@/lib/auth";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { isAiSurfaceEnabled } from "@/lib/billing/ai-guard";
@@ -57,30 +57,45 @@ const mcpHandler = createMcpHandler(
 // verified access-token CLAIMS (a JWTPayload), not a session object. The subject claim is
 // the user id. It is typed optional, so fail closed rather than coercing — an actor
 // resolved from an absent subject would be an actor with no user behind it.
-const handler = requireMcpAuth(auth, async (_req, accessTokenClaims) => {
-	const subject = accessTokenClaims.sub;
-	if (typeof subject !== "string" || subject.length === 0) {
-		return new Response(JSON.stringify({ error: "Access token carries no subject." }), {
-			status: 401,
-			headers: { "content-type": "application/json" },
-		});
-	}
-	const actor = await getActiveScope(subject);
+//
+// THE THIRD ARGUMENT IS NOT OPTIONAL IN PRACTICE (#3318). Left off, `requireMcpAuth` defaults
+// `resource` to the auth BASE URL — `https://<host>/api/auth` — and uses it for two things at
+// once: the RFC 9728 `resource_metadata` pointer in the 401 challenge, and the `aud` it demands
+// of the access token. `mcp()` binds issued tokens (RFC 8707) to `https://<host>/api/mcp`, so the
+// default made the 401 advertise metadata for a resource nobody serves AND made every correctly
+// issued token fail audience verification — MCP could not authenticate at all, not just fail to
+// be discovered. Same constant as the plugin's; see lib/auth/mcp-resource.ts.
+const handler = requireMcpAuth(
+	auth,
+	async (_req, accessTokenClaims) => {
+		const subject = accessTokenClaims.sub;
+		if (typeof subject !== "string" || subject.length === 0) {
+			return new Response(JSON.stringify({ error: "Access token carries no subject." }), {
+				status: 401,
+				headers: { "content-type": "application/json" },
+			});
+		}
+		const actor = await getActiveScope(subject);
 
-	// The connector is a paid/ee surface; self-host (no Stripe) is always enabled.
-	if (!(await isAiSurfaceEnabled(actor.orgId))) {
-		return new Response(
-			JSON.stringify({
-				error: "AI features require an active plan. Upgrade to use the connector.",
-			}),
-			{ status: 403, headers: { "content-type": "application/json" } },
-		);
-	}
+		// The connector is a paid/ee surface; self-host (no Stripe) is always enabled.
+		if (!(await isAiSurfaceEnabled(actor.orgId))) {
+			return new Response(
+				JSON.stringify({
+					error: "AI features require an active plan. Upgrade to use the connector.",
+				}),
+				{ status: 403, headers: { "content-type": "application/json" } },
+			);
+		}
 
-	// Bind the token-derived actor for the whole request so currentActor()/
-	// requireOwner() inside the tools resolve to it instead of a (absent) session.
-	return runWithActor(actor, () => mcpHandler.fetch(_req));
-});
+		// Bind the token-derived actor for the whole request so currentActor()/
+		// requireOwner() inside the tools resolve to it instead of a (absent) session.
+		return runWithActor(actor, () => mcpHandler.fetch(_req));
+	},
+	// `undefined` (not `{ resource: null }`) when the deployment cannot form a resource: the
+	// library validates `opts.resource` eagerly, so passing a non-URL here would throw at module
+	// load. Without a resource, mcp() is not registered either — the route can only 401.
+	mcpResourceUrl !== null ? { resource: mcpResourceUrl } : undefined,
+);
 
 // POST only. 1.7's upgrade guide requires dropping the MCP-route GET and DELETE exports
 // (the SSE/session transports they served are the `legacy` mode now rejected above).
