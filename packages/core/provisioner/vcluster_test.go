@@ -83,8 +83,27 @@ func TestRenderVClusterValues(t *testing.T) {
 	if strings.Contains(v, "additionalSecrets") {
 		t.Errorf("values must not request additionalSecrets — they do not inherit server/serviceAccount\n---\n%s", v)
 	}
-	if strings.Contains(v, "controlPlane:") {
-		t.Errorf("default values should not emit an empty controlPlane block\n---\n%s", v)
+	// controlPlane is always emitted now, because proxy.extraSANs is unconditional: the proxy
+	// certificate must carry the very address exportKubeConfig.server pins, or ArgoCD dials the
+	// vcluster and rejects its certificate — leaving the Application SYNC Unknown while still
+	// reporting Healthy.
+	for _, want := range []string{
+		"controlPlane:",
+		"proxy:",
+		"extraSANs:",
+		"- team-web.vcluster-team-web.svc",
+		"- team-web.vcluster-team-web.svc.cluster.local",
+	} {
+		if !strings.Contains(v, want) {
+			t.Errorf("default values missing %q\n---\n%s", want, v)
+		}
+	}
+	// The SAN list and the pinned server must agree — they share a derivation precisely so this
+	// cannot drift. Assert the relationship, not the literals.
+	spec := validVClusterSpec()
+	server := strings.TrimPrefix(spec.effectiveServer(), "https://")
+	if !strings.Contains(v, "- "+server+"\n") {
+		t.Errorf("extraSANs must cover the pinned server %q\n---\n%s", server, v)
 	}
 	if strings.Contains(v, "LoadBalancer") {
 		t.Errorf("default values should not expose a LoadBalancer\n---\n%s", v)
