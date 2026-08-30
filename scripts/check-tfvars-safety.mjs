@@ -26,6 +26,51 @@
 // which steers whether something exists or which branch is taken, and which no COMMITTED
 // `terraform.tfvars` supplies, is a finding.
 //
+// THE SECOND DIRECTION (#3292). The rule above only looks DOWN — at a default that is absent. A
+// default can be dangerous by being *present and open*, and #3292 found three: `ssh_allowed_cidrs`
+// in `infra/cp-hetzner`, `infra/status` and `infra/sandbox` all default to `["0.0.0.0/0", "::/0"]`,
+// and each is read straight into the `source_ips` of a port-22 firewall rule. Two of those three
+// stacks are applied by CI with `tofu apply -auto-approve` on push to `main` and nothing supplies a
+// narrower value, so the open default is not a placeholder — it IS the production configuration.
+// The empty-default rule could never see them: `["0.0.0.0/0", "::/0"]` is not empty, and it does
+// not steer a conditional, it is simply the value that gets applied.
+//
+// So the second rule, also in one sentence: a variable whose NAME says it carries an access-control
+// allowlist, whose default contains a CIDR with a prefix length of `0` (the whole address space),
+// and which no COMMITTED `terraform.tfvars` supplies, is a finding.
+//
+// WHY SCOPE BY NAME AND NOT BY USE. The sound-looking alternative — follow the variable to the
+// resource attribute it lands in and decide whether that attribute is a security control — needs
+// per-provider knowledge of which attribute names are access control (`source_ips`, `cidr_blocks`,
+// `authorized_networks`, `security_rules`, `master_authorized_networks_config`, …) and it needs the
+// HCL evaluation this file has already refused. The name is the cheaper question and it is the one
+// the maintainer already answers when declaring the variable: a list of CIDRs called
+// `*_allowed_cidrs` / `*_authorized_networks` / `*_ip_ranges` is an allowlist, and `0.0.0.0/0` in
+// it means "everyone". The shape is deliberately two alternatives (see ACCESS_CONTROL_NAME):
+//
+//   · a PLURAL address-list suffix — `_cidrs`, `_cidr_blocks`, `_ip_ranges`, `_networks`,
+//     `_ranges`, `_source_ips`. Plural on purpose: a LIST of CIDRs is an allowlist, whereas the
+//     singular `vpc_cidr` / `pod_cidr` / `service_cidr` names an address space you are ALLOCATING,
+//     where a prefix is a sizing decision and not a permission. Matching those would have been
+//     noise on a different axis.
+//   · an access-control WORD anywhere in the name — `allow`/`allowed`/`allowlist`,
+//     `authorized`/`authorised`, `whitelist`, `ingress`, `public_access`, `trusted`. This catches
+//     `aks_authorized_ip_ranges` and `cluster_endpoint_public_access_cidrs`, and it over-matches
+//     harmlessly onto booleans like `allow_long_names`, whose default can never contain a CIDR.
+//
+// It over-reports rather than under-reports, exactly like the rule above, and an over-report is
+// answered the same three ways: commit the input, declare the variable REQUIRED, or record the
+// reason in the baseline.
+//
+// WHAT THIS DOES NOT COVER, said out loud so the silence is not mistaken for a clean sweep:
+//   · A permissive value HARDCODED in a resource rather than defaulted in a variable.
+//     `infra/status/main.tf:35,41` opens 80 and 443 to the world that way, which is what a status
+//     page is for. Deciding that case needs the per-attribute knowledge rejected above.
+//   · Everything under `infra/templates/**`. Those are the runner's PROJECT templates, not operator
+//     stacks; they carry no `versions.tf`, so `findStacks` never reaches them, and their defaults
+//     (`cluster_endpoint_public_access_cidrs`, `gke_master_authorized_cidr_blocks`) are overridden
+//     per project by the runner. A separate question, and not this one.
+//
 // WHAT IT DELIBERATELY DOES NOT DO. It does not evaluate HCL. An expression evaluator would have to
 // resolve `merge()`, string interpolation and `for` comprehensions to decide whether a particular
 // gate goes empty — and it would then have MISSED the azure case above, where the map is never
@@ -53,6 +98,40 @@ const BASELINE = "infra/tfvars-safety-baseline.json";
 
 /** Values that make a gate false / a conditional take its "unset" branch. */
 const EMPTY_DEFAULTS = new Set(['""', "[]", "{}", "false", "null"]);
+
+/** The two finding kinds. A baseline entry without a `kind` means the original one, `empty-default`. */
+const EMPTY = "empty-default";
+const PERMISSIVE = "permissive-default";
+const KINDS = new Set([EMPTY, PERMISSIVE]);
+
+/**
+ * A variable NAME that says its value is an access-control allowlist.
+ *
+ * Two alternatives, and the header says why at length: a PLURAL address-list suffix (a list of
+ * CIDRs is an allowlist; the singular `vpc_cidr` is an allocation), or an access-control word
+ * anywhere in the name (catches `aks_authorized_ip_ranges`, `cluster_endpoint_public_access_cidrs`).
+ * British and American spellings both, because a stack written either way is the same hazard.
+ */
+const ACCESS_CONTROL_NAME =
+	/(_(cidrs|cidr_blocks|ip_ranges|ip_blocks|networks|ranges|source_ips)$)|((^|_)(allow|allowed|allowlist|authorized|authorised|whitelist|ingress|public_access|trusted)(_|$))/;
+
+export const isAccessControlName = (name) => ACCESS_CONTROL_NAME.test(name);
+
+/**
+ * CIDR tokens in an expression whose prefix length is `0` — i.e. the ENTIRE address space.
+ *
+ * Prefix-length-0 rather than a literal match on the two strings #3292 names, because `0.0.0.0/0`
+ * and `::/0` are only the canonical spellings: `10.0.0.0/0` and `2001:db8::/0` are the same
+ * permission written differently, and a check that recognised only the tidy spelling would report
+ * green on the untidy one. Costs nothing — the prefix is already captured.
+ */
+export function openCidrTokens(expr) {
+	const out = [];
+	for (const m of expr.matchAll(/([0-9A-Fa-f.:]+)\/(\d{1,3})\b/g)) {
+		if (Number(m[2]) === 0) out.push(m[0]);
+	}
+	return out;
+}
 
 /**
  * Strip `#`, `//` and block comments from HCL, preserving every byte position.
@@ -274,26 +353,46 @@ function readStackFiles(root, stack) {
 
 function loadBaseline(root) {
 	const p = path.join(root, BASELINE);
-	if (!existsSync(p)) return [];
+	// A MISSING baseline is not an empty one. Returning [] here would make a deleted or mis-pathed
+	// file read as "no exceptions recorded", every known finding would come back as new — and worse,
+	// on a tree with nothing to find it would print the clean-sweep line having read no record at
+	// all. "I could not look" is not "nothing is wrong", the same rule the run() guards below apply.
+	if (!existsSync(p)) {
+		console.error(`✗ check-tfvars-safety: ${BASELINE} is missing. It is the entire record of which dangerous defaults have been reviewed; without it this check cannot tell a new finding from a known one. Refusing to run.`);
+		process.exit(1);
+	}
 	const raw = JSON.parse(readFileSync(p, "utf8"));
 	const list = raw?.known;
 	if (!Array.isArray(list)) throw new Error(`${BASELINE}: no "known" array`);
 	for (const e of list) {
 		if (!e.stack || !e.variable || !e.reason) throw new Error(`${BASELINE}: every entry needs stack, variable and reason — got ${JSON.stringify(e)}`);
+		if (e.kind !== undefined && !KINDS.has(e.kind)) throw new Error(`${BASELINE}: kind must be one of ${[...KINDS].join(", ")} (or absent, meaning ${EMPTY}) — got ${JSON.stringify(e.kind)}`);
 	}
 	return list;
 }
 
+/** The acknowledgement key: (stack, variable, kind). NUL-joined so no name can forge a boundary. */
+const ackKey = (stack, name, kind) => `${stack}\u0000${name}\u0000${kind}`;
+
+/** A baseline entry's kind, defaulting to the original one so pre-#3292 entries keep their meaning. */
+const kindOf = (entry) => entry.kind ?? EMPTY;
+
 /**
- * Baselined on the exact (stack, variable) pair — never a substring, so `admin` does not cover
- * `admin_extra` and `zon` does not cover `zone`.
+ * Baselined on the exact (stack, variable, kind) triple — never a substring, so `admin` does not
+ * cover `admin_extra` and `zon` does not cover `zone`.
  *
  * The pair, not the file:line, because a line number drifts on any edit above it and the DECISION
  * being recorded belongs to the variable. Baselining a variable therefore baselines every site in
  * that stack which reads it, which is what a reason like "the whole email-routing block is
  * deliberately dormant" actually means.
+ *
+ * KIND is part of the key because the two rules record two different decisions about the same
+ * variable. "This list is deliberately empty" and "this list is deliberately open" are opposite
+ * statements, and an entry making one must not silently absolve the other — otherwise narrowing a
+ * default from `0.0.0.0/0` to `[]` would leave the old entry quietly covering the new finding
+ * instead of going stale and failing.
  */
-const isKnown = (baseline, stack, name) => baseline.some((e) => e.stack === stack && e.variable === name);
+const isKnown = (baseline, stack, name, kind) => baseline.some((e) => e.stack === stack && e.variable === name && kindOf(e) === kind);
 
 export function analyseStack({ stack, files, tracked, baseline = [], root = ROOT }) {
 	const vars = readVariables(files);
@@ -310,8 +409,8 @@ export function analyseStack({ stack, files, tracked, baseline = [], root = ROOT
 		if (v.default === undefined) continue; // REQUIRED — a bare apply fails loudly, which is the fix
 		if (!EMPTY_DEFAULTS.has(v.default.replace(/\s+/g, ""))) continue;
 		if (supplied.has(site.name)) continue;
-		if (isKnown(baseline, stack, site.name)) {
-			acknowledged.add(`${stack}\u0000${site.name}`);
+		if (isKnown(baseline, stack, site.name, EMPTY)) {
+			acknowledged.add(ackKey(stack, site.name, EMPTY));
 			continue;
 		}
 		// One finding per (file, line, variable). `count = var.zone != "" ? 1 : 0` matches BOTH the
@@ -327,7 +426,42 @@ export function analyseStack({ stack, files, tracked, baseline = [], root = ROOT
 		seen.set(key, finding);
 		findings.push(finding);
 	}
-	return { findings, unresolved, acknowledged, counts: { variables: vars.size, locals: locals.size, sites: sites.length, supplied: supplied.size } };
+
+	// THE SECOND DIRECTION (#3292). Note what this loop does NOT do: it never asks whether the
+	// variable reaches a steering site. An open allowlist is not dangerous because it steers a
+	// decision — it IS the decision, sitting in the `source_ips` of a firewall rule, and requiring
+	// it to also gate a `count` would have skipped all three real cases.
+	const permissive = [];
+	let accessControlVars = 0;
+	for (const v of vars.values()) {
+		if (!isAccessControlName(v.name)) continue;
+		accessControlVars += 1;
+		if (v.default === undefined) continue; // REQUIRED — a bare apply fails loudly, which is the fix
+		const open = openCidrTokens(v.default);
+		if (open.length === 0) continue;
+		if (supplied.has(v.name)) continue;
+		if (isKnown(baseline, stack, v.name, PERMISSIVE)) {
+			acknowledged.add(ackKey(stack, v.name, PERMISSIVE));
+			continue;
+		}
+		permissive.push({
+			stack,
+			kind: PERMISSIVE,
+			name: v.name,
+			rel: v.rel,
+			line: v.line,
+			default: v.default.replace(/\s+/g, " ").slice(0, 90),
+			open: [...new Set(open)],
+		});
+	}
+
+	return {
+		findings,
+		permissive,
+		unresolved,
+		acknowledged,
+		counts: { variables: vars.size, locals: locals.size, sites: sites.length, supplied: supplied.size, accessControlVars },
+	};
 }
 
 function trackedSet(root) {
@@ -341,27 +475,31 @@ function run(root) {
 	const tracked = trackedSet(root);
 	let variables = 0;
 	let sites = 0;
+	let accessControlVars = 0;
 	const findings = [];
+	const permissive = [];
 	const unresolved = [];
 	const acknowledged = new Set();
 	for (const stack of stacks) {
 		const r = analyseStack({ stack, files: readStackFiles(root, stack), tracked, baseline });
 		findings.push(...r.findings);
+		permissive.push(...r.permissive);
 		unresolved.push(...r.unresolved.map((u) => ({ stack, ...u })));
 		for (const a of r.acknowledged) acknowledged.add(a);
 		variables += r.counts.variables;
 		sites += r.counts.sites;
+		accessControlVars += r.counts.accessControlVars;
 	}
 
 	// A baseline that outlives what it describes is how a ratchet goes slack: the entry keeps
 	// reading like a reviewed decision long after the decision was made, and the next person adding
 	// the same defect finds it pre-forgiven. So a stale entry FAILS, and its removal rides in the
 	// same PR as the fix — the same discipline scripts/ts-coverage-sweep.json states for itself.
-	const stale = baseline.filter((e) => !acknowledged.has(`${e.stack}\u0000${e.variable}`));
+	const stale = baseline.filter((e) => !acknowledged.has(ackKey(e.stack, e.variable, kindOf(e))));
 
-	// "I examined nothing" must never read like "I found nothing wrong". Every one of these three is
-	// a way this check could go quietly inert: a moved directory layout, a stack file convention
-	// change, an HCL dialect the reader stops recognising.
+	// "I examined nothing" must never read like "I found nothing wrong". Every one of these is a way
+	// this check could go quietly inert: a moved directory layout, a stack file convention change,
+	// an HCL dialect the reader stops recognising, a naming convention the name shape stops matching.
 	if (stacks.length === 0) {
 		console.error("✗ check-tfvars-safety: found ZERO stacks under infra/ — the layout moved, or versions.tf is no longer the marker. Refusing to report green.");
 		process.exit(1);
@@ -370,10 +508,19 @@ function run(root) {
 		console.error(`✗ check-tfvars-safety: ${stacks.length} stack(s) but ZERO count/for_each/conditional sites. The HCL reader is broken, not the infrastructure.`);
 		process.exit(1);
 	}
+	// The permissive half is scoped by variable NAME, so it goes inert the moment the repo renames
+	// its allowlists — silently, and while still printing a green line about defaults it never
+	// looked at. A rename is exactly the change that would do it, so say so instead.
+	if (accessControlVars === 0) {
+		console.error(
+			`✗ check-tfvars-safety: ${stacks.length} stack(s) but ZERO variables matching the access-control NAME shape (${ACCESS_CONTROL_NAME}). Either every allowlist variable was removed, or the repo renamed them and the permissive-default half of this check now examines nothing. Refusing to report green.`,
+		);
+		process.exit(1);
+	}
 
 	if (stale.length > 0) {
 		console.error(`✗ check-tfvars-safety: ${stale.length} baseline entr(ies) no longer describe anything real — remove them in the PR that fixed them:`);
-		for (const e of stale) console.error(`    ${e.stack}  var.${e.variable}  — recorded reason: ${e.reason}`);
+		for (const e of stale) console.error(`    ${e.stack}  var.${e.variable}  [${kindOf(e)}]  — recorded reason: ${e.reason}`);
 		console.error("");
 	}
 
@@ -401,9 +548,27 @@ function run(root) {
 		console.error(`  ${BASELINE} that says WHICH, and why.`);
 	}
 
-	if (findings.length > 0 || unresolved.length > 0 || stale.length > 0) process.exit(1);
+	if (permissive.length > 0) {
+		console.error(`✗ check-tfvars-safety: ${permissive.length} access-control variable(s) default to the WHOLE address space, with no committed input narrowing them:\n`);
+		let last = "";
+		for (const f of permissive) {
+			if (f.stack !== last) {
+				console.error(`  ${f.stack}`);
+				last = f.stack;
+			}
+			console.error(`    ${f.rel}:${f.line}  var.${f.name} = ${f.default}`);
+			console.error(`      OPEN — the default IS the applied allowlist:  ${f.open.join(", ")} (prefix length 0 = every address)`);
+		}
+		console.error("\n  Fix by narrowing the default, or by committing the real value (see infra/aws-oidc/terraform.tfvars");
+		console.error("  and its .gitignore negation), or by declaring the variable REQUIRED so a bare apply fails loudly.");
+		console.error(`  Where the open default is deliberate — or is known debt nobody has been able to narrow yet — an`);
+		console.error(`  entry in ${BASELINE} with "kind": "${PERMISSIVE}" says WHICH, and why.`);
+		console.error("  Do NOT guess a CIDR for a stack CI applies unattended: the wrong guess locks CI out of the box.");
+	}
+
+	if (findings.length > 0 || permissive.length > 0 || unresolved.length > 0 || stale.length > 0) process.exit(1);
 	console.log(
-		`✓ check-tfvars-safety: ${stacks.length} stack(s), ${variables} variable(s), ${sites} steering site(s) — every empty default that reaches one is either supplied by a committed terraform.tfvars, declared REQUIRED, or carried in ${BASELINE} with a reason (${acknowledged.size} baselined).`,
+		`✓ check-tfvars-safety: ${stacks.length} stack(s), ${variables} variable(s), ${sites} steering site(s), ${accessControlVars} access-control variable(s) — every empty default that reaches a decision, and every access-control default that is open to the whole internet, is either supplied by a committed terraform.tfvars, declared REQUIRED, or carried in ${BASELINE} with a reason (${acknowledged.size} baselined).`,
 	);
 }
 
@@ -532,7 +697,7 @@ function selfTest() {
 	// The stale half of the ratchet. `run()` fails when a baseline entry acknowledges nothing, and
 	// `acknowledged` is the signal it uses — so a fixed stack must stop reporting its variable.
 	r = analyse(direct, { baseline: [{ stack: direct, variable: "zone", reason: "deliberate" }] });
-	if (r.acknowledged.has(`${direct}\u0000zone`)) ok("a baseline entry that DOES describe a real finding is recorded as acknowledged");
+	if (r.acknowledged.has(ackKey(direct, "zone", EMPTY))) ok("a baseline entry that DOES describe a real finding is recorded as acknowledged");
 	else bad("an active baseline entry should be acknowledged");
 	r = analyse(required, { baseline: [{ stack: required, variable: "emails", reason: "already fixed" }] });
 	if (r.acknowledged.size === 0) ok("a baseline entry for an already-fixed variable acknowledges NOTHING — run() reports it stale");
@@ -554,9 +719,104 @@ function selfTest() {
 	if (analyse(missingLocal).unresolved.length > 0) ok("a local with no assignment in the stack is reported UNRESOLVED");
 	else bad("a missing local should be reported unresolved");
 
+	// ── the second direction (#3292): a default that is PRESENT and OPEN ──────────────────────────
+	//
+	// The axis to vary here is the DEFAULT's permissiveness and the NAME's shape, independently —
+	// getting one right while the other silently matches everything (or nothing) is how this half
+	// would report green over an open box.
+	console.log("\n permissive defaults (#3292)");
+	const opens = (r) => r.permissive.map((f) => f.name).sort().join(",");
+
+	const openSsh = stack("open-ssh", {
+		"versions.tf": "terraform {}\n",
+		"variables.tf": 'variable "ssh_allowed_cidrs" {\n  type    = list(string)\n  default = ["0.0.0.0/0", "::/0"]\n}\n',
+		"main.tf": 'resource "hcloud_firewall" "f" {\n  rule {\n    port       = "22"\n    source_ips = var.ssh_allowed_cidrs\n  }\n}\n',
+	});
+	let p = analyse(openSsh);
+	if (opens(p) === "ssh_allowed_cidrs") ok("an access-control default of 0.0.0.0/0 is found — with no gate, no conditional, nothing to steer");
+	else bad(`the real #3292 shape should be found, got [${opens(p)}]`);
+	if (p.findings.length === 0) ok("...and it is NOT also reported as an empty default — the two rules do not double-count");
+	else bad("an open default must not report as an empty-default finding");
+
+	const v6Only = stack("v6-only", {
+		"versions.tf": "terraform {}\n",
+		"variables.tf": 'variable "api_allowed_cidrs" {\n  default = ["::/0"]\n}\n',
+	});
+	if (opens(analyse(v6Only)) === "api_allowed_cidrs") ok("::/0 alone is open — the IPv6 half is not a rounding error");
+	else bad("::/0 should be found on its own");
+
+	// Prefix length 0, not a literal string match: `10.0.0.0/0` is the same permission spelled
+	// untidily, and a check that only knew the tidy spelling would report green on it.
+	const untidy = stack("untidy", {
+		"versions.tf": "terraform {}\n",
+		"variables.tf": 'variable "db_allowed_cidrs" {\n  default = ["10.0.0.0/0"]\n}\n',
+	});
+	if (opens(analyse(untidy)) === "db_allowed_cidrs") ok("a NON-canonical whole-space CIDR (10.0.0.0/0) is open too — the check reads the prefix, not the spelling");
+	else bad("10.0.0.0/0 should be found");
+
+	const narrowed = stack("narrowed", {
+		"versions.tf": "terraform {}\n",
+		"variables.tf": 'variable "ssh_allowed_cidrs" {\n  default = ["203.0.113.4/32", "2001:db8::/32"]\n}\nvariable "vpc_allowed_cidr_blocks" {\n  default = ["10.0.0.0/8"]\n}\n',
+	});
+	if (analyse(narrowed).permissive.length === 0) ok("a NARROWED default (/32, /8) is not a finding — otherwise the fix could never be recognised");
+	else bad(`narrowed defaults should not be findings, got [${opens(analyse(narrowed))}]`);
+
+	// The name half, both directions. `vpc_cidr` is an ALLOCATION, not an allowlist; a `/0` there is
+	// nonsense rather than a permission, and matching it would be noise on a different axis.
+	const notAccessControl = stack("not-access-control", {
+		"versions.tf": "terraform {}\n",
+		"variables.tf": 'variable "vpc_cidr" {\n  default = "0.0.0.0/0"\n}\nvariable "pod_cidr" {\n  default = "0.0.0.0/0"\n}\nvariable "example_doc" {\n  default = "e.g. 0.0.0.0/0"\n}\n',
+	});
+	if (analyse(notAccessControl).permissive.length === 0) ok("a SINGULAR allocation variable (vpc_cidr, pod_cidr) is not an allowlist, even holding 0.0.0.0/0");
+	else bad(`allocation variables should not be findings, got [${opens(analyse(notAccessControl))}]`);
+	if (analyse(notAccessControl).counts.accessControlVars === 0) ok("...and none of them counts toward the access-control name shape");
+	else bad("allocation variables must not count as access-control variables");
+
+	const nameShapes = stack("name-shapes", {
+		"versions.tf": "terraform {}\n",
+		"variables.tf":
+			'variable "aks_authorized_ip_ranges" {\n  default = ["0.0.0.0/0"]\n}\nvariable "cloud_sql_authorized_networks" {\n  default = ["0.0.0.0/0"]\n}\nvariable "cluster_endpoint_public_access_cidrs" {\n  default = ["0.0.0.0/0"]\n}\nvariable "master_authorised_cidr_blocks" {\n  default = ["0.0.0.0/0"]\n}\n',
+	});
+	if (analyse(nameShapes).permissive.length === 4) ok("every real allowlist naming convention in this repo matches — _ip_ranges, _networks, public_access, and the British spelling");
+	else bad(`expected all 4 naming conventions to match, got [${opens(analyse(nameShapes))}]`);
+
+	const requiredOpen = stack("required-open", {
+		"versions.tf": "terraform {}\n",
+		"variables.tf": 'variable "ssh_allowed_cidrs" {\n  type = list(string)\n}\n',
+	});
+	p = analyse(requiredOpen);
+	if (p.permissive.length === 0) ok("a REQUIRED allowlist (no default) is the fix, not a finding");
+	else bad("a required allowlist should not be a finding");
+	if (p.counts.accessControlVars === 1) ok("...but it still COUNTS, so fixing the last one does not make this half read as inert");
+	else bad(`a required allowlist should still count as an access-control variable, got ${p.counts.accessControlVars}`);
+
+	const suppliedOpen = stack("supplied-open", {
+		"versions.tf": "terraform {}\n",
+		"variables.tf": 'variable "ssh_allowed_cidrs" {\n  default = ["0.0.0.0/0"]\n}\nvariable "web_allowed_cidrs" {\n  default = ["0.0.0.0/0"]\n}\n',
+		"terraform.tfvars": 'ssh_allowed_cidrs = ["203.0.113.4/32"]\n',
+	});
+	if (opens(analyse(suppliedOpen, { tracked: ["infra/supplied-open/terraform.tfvars"] })) === "web_allowed_cidrs")
+		ok("a COMMITTED tfvars narrows the variable it sets, and only that one");
+	else bad(`supplied-open: expected only web_allowed_cidrs, got [${opens(analyse(suppliedOpen, { tracked: ["infra/supplied-open/terraform.tfvars"] }))}]`);
+	if (opens(analyse(suppliedOpen)) === "ssh_allowed_cidrs,web_allowed_cidrs") ok("an UNTRACKED tfvars narrows nothing — infra/sandbox's real one is invisible on a fresh checkout");
+	else bad(`untracked tfvars should narrow nothing, got [${opens(analyse(suppliedOpen))}]`);
+
+	console.log("\n the baseline knows the two kinds apart");
+	const permBase = [{ stack: openSsh, variable: "ssh_allowed_cidrs", kind: PERMISSIVE, reason: "recorded" }];
+	p = analyse(openSsh, { baseline: permBase });
+	if (p.permissive.length === 0 && p.acknowledged.has(ackKey(openSsh, "ssh_allowed_cidrs", PERMISSIVE)))
+		ok("a permissive-default baseline entry acknowledges it, and is recorded as active");
+	else bad("a permissive baseline entry should acknowledge the finding");
+	p = analyse(openSsh, { baseline: [{ stack: openSsh, variable: "ssh_allowed_cidrs", reason: "wrong kind" }] });
+	if (opens(p) === "ssh_allowed_cidrs") ok("an entry with NO kind means empty-default and does NOT absolve an open one — the two claims are opposites");
+	else bad("a kindless baseline entry must not acknowledge a permissive finding");
+	p = analyse(narrowed, { baseline: [{ stack: narrowed, variable: "ssh_allowed_cidrs", kind: PERMISSIVE, reason: "already narrowed" }] });
+	if (p.acknowledged.size === 0) ok("a permissive entry for an already-narrowed default acknowledges NOTHING — run() reports it stale, so the list only shrinks");
+	else bad("a stale permissive entry must not read as acknowledged");
+
 	console.log("\n the layout markers");
-	if (findStacks(dir).length === 10) ok("every fixture stack is discovered by its versions.tf");
-	else bad(`expected 10 fixture stacks, found ${findStacks(dir).length}`);
+	if (findStacks(dir).length === 18) ok("every fixture stack is discovered by its versions.tf");
+	else bad(`expected 18 fixture stacks, found ${findStacks(dir).length}`);
 	const noMarker = path.join(dir, "infra", "not-a-stack");
 	mkdirSync(noMarker, { recursive: true });
 	writeFileSync(path.join(noMarker, "main.tf"), 'resource "r" "a" {\n  count = 1\n}\n');
