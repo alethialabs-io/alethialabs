@@ -57,6 +57,42 @@ interface UpgradeOrgSheetProps {
 }
 
 /**
+ * The customer-facing sentence for a failed billing intent.
+ *
+ * `createSubscriptionIntent` is a SERVER ACTION, and in a production build Next.js replaces a
+ * thrown error's message with a framework digest before it reaches the client. The old code did
+ * `e instanceof Error ? e.message : "Couldn't start the upgrade."` — but a rejected server action
+ * IS an Error, so the friendly fallback could never fire, and the upgrade sheet rendered:
+ *
+ *   Minified React error #441; visit https://react.dev/errors/441 for the full message…
+ *
+ * to a customer trying to pay us. A framework internal is never a billing explanation, so an
+ * unrecognised failure gets the product sentence and the detail goes to the console instead.
+ *
+ * A message is only shown through when the server deliberately produced one — our own actions
+ * throw plain, already-customer-safe strings, and those are worth keeping (they say things like
+ * which currency is unsupported). React/Next internals are recognised and dropped.
+ */
+export function billingIntentMessage(e: unknown): string {
+	const FALLBACK =
+		"Couldn't start the upgrade. Billing may not be configured on this deployment — try again, or contact support if it persists.";
+	if (!(e instanceof Error) || !e.message) return FALLBACK;
+	const m = e.message;
+	// Framework-generated text: a minified React error, a Next.js server-action digest, or the
+	// generic production message. None of these describe anything the reader can act on.
+	if (
+		/Minified React error/i.test(m) ||
+		/react\.dev\/errors/i.test(m) ||
+		/An error occurred in the Server Components render/i.test(m) ||
+		/Failed to find Server Action/i.test(m) ||
+		/^\s*$/.test(m)
+	) {
+		return FALLBACK;
+	}
+	return m;
+}
+
+/**
  * The upgrade sheet for an existing Hobby org. Opens a payment intent for the active org
  * as soon as it's shown, pays through the shared checkout, then invites. The org must be
  * the active workspace (the server action is active-org-scoped).
@@ -98,13 +134,13 @@ export function UpgradeOrgSheet({ open, onOpenChange, orgSlug }: UpgradeOrgSheet
 				setClientSecret(intent.clientSecret);
 				setCurrency(intent.currency);
 			})
-			.catch(
-				(e) =>
-					active &&
-					setError(
-						e instanceof Error ? e.message : "Couldn't start the upgrade.",
-					),
-			);
+			.catch((e) => {
+				if (!active) return;
+				// Keep the real cause where an engineer can read it, and show the customer a
+				// sentence about the product.
+				console.error("[upgrade] createSubscriptionIntent failed", e);
+				setError(billingIntentMessage(e));
+			});
 		return () => {
 			active = false;
 		};
