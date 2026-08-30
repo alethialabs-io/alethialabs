@@ -13,8 +13,8 @@
   },
   "packages": {
     ".": {
-      "covered": 3063,
-      "total": 4575
+      "covered": 3213,
+      "total": 4811
     }
   }
 }
