@@ -1,6 +1,20 @@
 {
 	"_doc": [
-		"Empty variable defaults that reach a decision and are KNOWN — read by scripts/check-tfvars-safety.mjs.",
+		"Dangerous variable defaults that are KNOWN — read by scripts/check-tfvars-safety.mjs.",
+		"",
+		"TWO KINDS, because a default is dangerous in two directions. An entry's \"kind\" field says",
+		"which; an entry with no \"kind\" means \"empty-default\", the original one, so every pre-#3292",
+		"entry keeps its meaning unchanged.",
+		"",
+		"  · \"empty-default\" (#3108) — the default is ABSENT (\"\", [], {}, false, null) and it reaches a",
+		"    count/for_each gate or steers a conditional. The unset value silently decides.",
+		"  · \"permissive-default\" (#3292) — the default is PRESENT and OPEN: an access-control variable",
+		"    whose default carries a CIDR with prefix length 0, i.e. the whole address space. Nothing",
+		"    is silent about it — it is simply the allowlist that gets applied.",
+		"",
+		"The kind is part of the key. \"This list is deliberately empty\" and \"this list is deliberately",
+		"open\" are opposite claims, and an entry making one must not absolve the other: narrowing an",
+		"open default to [] must make the permissive entry go STALE and fail, not quietly carry over.",
 		"",
 		"WHAT AN ENTRY MEANS. Someone looked at this (stack, variable) pair and wrote down what taking",
 		"the default costs. It does not mean the default is right; several entries below say the",
@@ -76,6 +90,12 @@
 			"reason": "false leaves 11 Cloudflare email-routing resources ungated-into-existence (email-routing.tf:39,49,57,81), including the 8 inbound addresses printed in transactional email footers. The ONLY finding in this sweep that CI can trip by itself: infra-cp-hetzner.yml:103 runs `tofu apply -auto-approve` on push to main and nothing sets the variable. Harmless while the state is genuinely empty, which variables.tf:44-47 records; the hazard is the moment those resources exist. Filed as #3291."
 		},
 		{
+			"stack": "infra/cp-hetzner",
+			"variable": "ssh_allowed_cidrs",
+			"kind": "permissive-default",
+			"reason": "[\"0.0.0.0/0\", \"::/0\"] is the source_ips of the port-22 rule on the alethia-cp firewall (main.tf:33), and infra-cp-hetzner.yml runs `tofu apply -auto-approve` on push to main with nothing supplying a narrower value — so the open default is not a placeholder, it IS the applied production configuration. There IS a recorded reason, quoted from variables.tf:90-91: \"GitHub-hosted runner egress IPs are dynamic, so SSH stays open by default (key-only auth). Restrict to a bastion/Tailscale range to harden later.\" True — the ranges are published but large and they move. Key-only auth is a mitigation, not the control this variable is named after. Whether GitHub's published meta ranges or a bastion/Tailscale hop can replace 0.0.0.0/0 is #3292 point 2, and it is the MAINTAINER's decision: a wrong CIDR here locks CI out of the control-plane box."
+		},
+		{
 			"stack": "infra/email-ses/bootstrap",
 			"variable": "admin_principal_arns",
 			"reason": "Same shape and same decision as aws-oidc's: [] removes the AdminAssume statement from the alethia-ses-deployer trust (deployer.tf:37). OIDC-only is intended."
@@ -84,6 +104,18 @@
 			"stack": "infra/gcp-e2e/bootstrap",
 			"variable": "state_bucket_name",
 			"reason": "\"\" derives the bucket name as alethia-tofu-state-<project_id> (main.tf:27). Benign, and the derivation is the intended path — but it does mean the bucket a bare apply targets is a function of another variable, so a mis-set project_id silently retargets state rather than failing."
+		},
+		{
+			"stack": "infra/sandbox",
+			"variable": "ssh_allowed_cidrs",
+			"kind": "permissive-default",
+			"reason": "[\"0.0.0.0/0\", \"::/0\"] is the source_ips of the port-22 rule on the sandbox box (network.tf:16). The one of the three #3292 cases that is NOT applied unattended: the maintainer applies this stack by hand and narrows the value in an untracked terraform.tfvars, which this check cannot see and must not assume (terraform.tfvars.example:23 shows the shape, `ssh_allowed_cidrs = [\"203.0.113.4/32\"]`). Recorded reason, quoted from variables.tf:47-49: \"Unlike cp-hetzner (which must accept dynamic GitHub-runner egress), this box is only ever reached from one laptop, so it CAN be locked down. Default is open to keep a first apply from locking you out; narrow it in terraform.tfvars.\" #3292 point 3 says keep as is — the lock-yourself-out reasoning holds for a first apply, and the value is narrowed in practice."
+		},
+		{
+			"stack": "infra/status",
+			"variable": "ssh_allowed_cidrs",
+			"kind": "permissive-default",
+			"reason": "UNJUSTIFIED. This entry records outstanding DEBT — #3292 point 1 — not an accepted exception, and it is here to be deleted rather than kept. [\"0.0.0.0/0\", \"::/0\"] is the source_ips of the port-22 rule on the alethia-status firewall (main.tf:29); infra-status.yml runs `tofu apply -auto-approve` on push to main and no committed tfvars narrows it, so an internet-open SSH allowlist is the live configuration of that box. Unlike infra/cp-hetzner and infra/sandbox, variables.tf:47-51 carries NO reason at all: nobody chose the open value, it is what an unfilled declaration left behind. The issue calls this the actionable half. Baselined ONLY so the guard can go green on the tree as it stands — narrowing it here would be an agent guessing a CIDR for a box CI applies unattended, which is how you lock CI out. The fix is the maintainer's: narrow the default, or write down in variables.tf why it cannot be narrowed, and delete this entry in the same PR."
 		}
 	]
 }
