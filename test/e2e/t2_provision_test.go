@@ -487,6 +487,32 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 			status, jobFailureDump(ctx, cp, jobID), runnerOut.String())
 	}
 
+	// TEARDOWN HYGIENE, AND IT MUST COME BEFORE EVERY ASSERTION BELOW.
+	//
+	// #3419 gave the destroy the working credential this process holds. It exports it inside
+	// assertT2KubeconfigNodesReady — which is called at step (5), TEN fatal exits after the line
+	// above. Each of those ten is a metadata, receipt or log-shipping assertion; not one of them
+	// says anything about whether the cluster is reachable. Step (2) below in fact asserts
+	// `cluster_ready`, so on reaching it the cluster is provably live and its ArgoCD
+	// `Service: LoadBalancer` objects already exist.
+	//
+	// So a failure at, say, "shipped logs missing the claim banner" — a claim about rows in
+	// Postgres — left the guaranteed teardown with no KUBECONFIG. RunDestroy then asked
+	// ConfigureKubeconfig for one, got an exec plugin resolving to `e2e.test kube-token`, wrote it
+	// OVER ~/.alethia/kubeconfig, skipped the load-balancer release, and `tofu destroy` died on the
+	// subnets the surviving NLB still owned (#3395). The runs that need the credential most are
+	// exactly the ones that never reached the line that sets it.
+	//
+	// BEST-EFFORT, AND ASSERTING NOTHING, deliberately. This is not the reachability proof — step
+	// (5) still is, and still fails the test if no node is Ready. Exporting a kubeconfig that turns
+	// out to be junk cannot make the teardown worse, and that is a property of #3416 rather than an
+	// assumption: clusterReachable now requires the state to name an endpoint, requires
+	// `kubectl get --raw /version` to answer, AND requires the kubeconfig's server to match that
+	// endpoint. A file that fails any of the three is refused with a stated reason and the destroy
+	// behaves exactly as it does today. Before #3416 an ambient KUBECONFIG was trusted on sight and
+	// this would have been the wrong shape.
+	exportT2KubeconfigForTeardown(t)
+
 	_, metaRaw, err := cp.JobState(ctx, jobID)
 	if err != nil {
 		t.Fatalf("read job metadata: %v", err)
@@ -848,6 +874,40 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	}
 }
 
+// t2RunnerKubeconfigPath is where the runner's ConfigureKubeconfig writes the host-usable
+// kubeconfig. One definition, because the teardown export and the reachability proof must not be
+// able to disagree about which file they mean — the destroy overwriting THIS path is the whole
+// defect #3419 was about.
+func t2RunnerKubeconfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.TempDir()
+	}
+	return filepath.Join(home, ".alethia", "kubeconfig")
+}
+
+// exportT2KubeconfigForTeardown points the ambient KUBECONFIG at the runner-written kubeconfig as
+// soon as the deploy reports SUCCESS, so the guaranteed teardown holds a credential no matter which
+// later assertion fails. Returns the path it exported, or "" when there was nothing to export.
+//
+// It asserts NOTHING and never fails the test. The reachability proof is
+// assertT2KubeconfigNodesReady's job and stays fatal; this is only about not entering teardown
+// empty-handed. See the call site for why a junk kubeconfig cannot make the destroy worse.
+func exportT2KubeconfigForTeardown(t *testing.T) string {
+	t.Helper()
+	kc := t2RunnerKubeconfigPath()
+	if _, err := os.Stat(kc); err != nil {
+		// Not a failure: the reachability assertion below is what decides whether the runner was
+		// supposed to have written one. Logged rather than swallowed, because "the teardown ran
+		// without a credential" must be readable in the run log afterwards.
+		t.Logf("teardown credential: nothing to export — %s is not readable yet (%v)", kc, err)
+		return ""
+	}
+	_ = os.Setenv("KUBECONFIG", kc)
+	t.Logf("teardown credential: exported KUBECONFIG=%s before the post-deploy assertions", kc)
+	return kc
+}
+
 // assertT2KubeconfigNodesReady reads the runner-written kubeconfig, asserts at least
 // one Ready node via a fresh kubectl, and returns the kubeconfig path for follow-on
 // assertions (the ArgoCD health check). (For a real cloud the kubeconfig is a Talos
@@ -855,11 +915,7 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 // $HOME/.alethia/kubeconfig rather than shelling `kind get kubeconfig`.)
 func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) string {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		home = os.TempDir()
-	}
-	kc := filepath.Join(home, ".alethia", "kubeconfig")
+	kc := t2RunnerKubeconfigPath()
 	if _, err := os.Stat(kc); err != nil {
 		t.Fatalf("runner kubeconfig not found at %s: %v", kc, err)
 	}
@@ -903,6 +959,12 @@ func assertT2KubeconfigNodesReady(t *testing.T, ctx context.Context) string {
 	//
 	// There is no restore to lose. This process tests exactly one cluster and is about to destroy
 	// it.
+	//
+	// Re-set rather than moved: exportT2KubeconfigForTeardown already did this the moment the
+	// deploy reported SUCCESS, so on every path that reaches here this is a no-op writing the same
+	// value. It stays because the early call is best-effort — if the runner had not yet written the
+	// file then, this is where the export actually takes, and a reader arriving at the reachability
+	// proof should not have to look elsewhere to learn that the ambient variable ends up set.
 	_ = os.Setenv("KUBECONFIG", kc)
 	return kc
 }
