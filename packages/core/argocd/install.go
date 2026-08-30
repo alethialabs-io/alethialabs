@@ -556,8 +556,9 @@ func externalSecretsStoreManifest(facts *InfraFacts) (string, error) {
 // applied the external-secrets operator's ArgoCD Application. The store is a custom resource whose
 // kind + validating webhook the operator provides, so on a fresh cluster it races the operator in
 // two stages ("no matches for kind", then "no endpoints available" for the webhook). Applying it
-// here — on its own, server-side, retrying ONLY the transient operator-not-ready markers until the
-// operator (installed asynchronously by ArgoCD) is up — fixes the #1208 bootstrap deadlock: mixing
+// here — on its own, server-side, after waiting for its CRD to become Established (#2652) and then
+// retrying ONLY the transient operator-not-ready markers until the operator (installed
+// asynchronously by ArgoCD) is up — fixes the #1208 bootstrap deadlock: mixing
 // the store into the operator's client-side apply file could poison that file so the operator never
 // installed and the retry could never converge. No-op when no store renders. Returns a timeout error
 // after externalSecretsStoreMaxWait, which the caller treats as NON-fatal (the store is idempotent
@@ -575,17 +576,128 @@ func EnsureExternalSecretsStore(facts *InfraFacts, stdout, stderr io.Writer) err
 	return applyStoreAwaitingOperator(manifest, stdout, stderr)
 }
 
-// applyStoreAwaitingOperator applies a ClusterSecretStore manifest, retrying ONLY the transient
-// "the external-secrets operator is not up yet" markers until it is. Shared by the per-cloud stores
-// above and by the in-cluster Vault store (vault.go), which faces exactly the same race and must not
-// grow a second, subtly-different copy of this loop.
+// clusterSecretStoreCRD is the CRD whose schema EVERY ClusterSecretStore this package applies is
+// validated against — the per-cloud stores above and the in-cluster Vault store in vault.go alike.
+// The external-secrets operator installs it ASYNCHRONOUSLY (ArgoCD sync → Helm install → CRD
+// registered), which is the race #2652 recorded as `no matches for kind "ClusterSecretStore"`.
+//
+// It is `clustersecretstores`, not `secretstores`: the namespaced SecretStore is a different CRD and
+// waiting on it would report Established while the cluster-scoped kind these manifests use is still
+// unknown to the API server — a wait that passes for the wrong reason.
+const clusterSecretStoreCRD = "clustersecretstores.external-secrets.io"
+
+// clusterSecretStoreCRDPollInterval is how long awaitClusterSecretStoreCRD sleeps between polls of a
+// CRD that has not appeared yet. A var only so the tests can prove the retry ACTUALLY retries without
+// sleeping fifteen seconds to do it — a loop whose repeat is never executed in a test is a loop no
+// test covers.
+var clusterSecretStoreCRDPollInterval = 15 * time.Second
+
+// isCRDPendingEstablishment reports whether a `kubectl wait --for=condition=established` failure is
+// the transient "the operator has not finished installing this CRD yet" race, which is worth waiting
+// out, as opposed to a condition no amount of waiting fixes.
+//
+// The two retryable shapes are the two stages of the same race: the CRD object does not exist at all
+// (kubectl wait on a named resource fails IMMEDIATELY with `Error from server (NotFound)` — it does
+// not block waiting for the object to appear, which is exactly why an unconditional single wait would
+// be useless on a fresh cluster), and the CRD exists but has not been Established inside
+// crdEstablishTimeout.
+//
+// Everything else is deliberately NOT matched and therefore NOT retried here: `(Forbidden)` from an
+// RBAC refusal, `Unable to connect to the server`, a `kubectl` that is not on PATH. Those say the
+// question could not be ASKED, and burning the whole store budget re-asking it would only delay the
+// apply that reports the real failure. `(NotFound)` carries kubectl's server-error parenthesis on
+// purpose: a bare "not found" would also match `kubectl: command not found` and turn a missing binary
+// into a fifteen-minute wait.
+func isCRDPendingEstablishment(kubectlOutput string) bool {
+	for _, marker := range []string{
+		"(NotFound)",                          // the operator has not created the CRD yet
+		"no matching resources found",         // ditto, as older kubectl phrases it
+		"timed out waiting for the condition", // it exists, but is not Established yet
+	} {
+		if strings.Contains(kubectlOutput, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// awaitClusterSecretStoreCRD waits for clusterSecretStoreCRD to report Established and reports
+// whether it CONFIRMED that. It never returns an error and never fails a deploy on its own.
+//
+// Three outcomes, and they are three, not two:
+//
+//   - Established — returns true. The apply that follows is then deterministic rather than racing
+//     the operator, which is the whole point of #2652: the retry converged, but only by absorbing an
+//     ordering bug it could not report.
+//   - Not Established yet (CRD absent, or present and unestablished) — retried on the SHARED
+//     deadline below until it is, or until that deadline expires, then returns false.
+//   - The question could not be asked at all (cluster unreachable, RBAC refusal, no kubectl) —
+//     returns false IMMEDIATELY, having written the reason to stderr.
+//
+// False is not "the CRD is ready" and is not "the deploy failed". It means UNCONFIRMED, and the
+// caller's answer to unconfirmed is to go on and apply, exactly as it did before this wait existed:
+// the retry loop is still there and still absorbs a CRD that is mid-registration. So a slow establish
+// stays recoverable — it cannot become a hard failure here, because nothing here returns one — while
+// a cluster that cannot answer is stated in the log instead of being silently read as readiness.
+//
+// The deadline is the CALLER's, shared with the apply loop rather than added to it: patience is
+// bounded by externalSecretsStoreMaxWait in total, so this wait cannot double the deploy's worst case.
+func awaitClusterSecretStoreCRD(deadline time.Time, stdout, stderr io.Writer) bool {
+	fmt.Fprintf(stdout, "Waiting for the %s CRD to become Established...\n", clusterSecretStoreCRD)
+	for attempt := 1; ; attempt++ {
+		// Both streams are captured: kubectl writes `Error from server (NotFound)` to stderr, but
+		// classifying on one stream is how a diagnostic ends up reading a failure it never saw.
+		var captured bytes.Buffer
+		err := waitForCRDEstablished(clusterSecretStoreCRD,
+			io.MultiWriter(stdout, &captured), io.MultiWriter(stderr, &captured))
+		if err == nil {
+			fmt.Fprintf(stdout, "  ✓ %s is Established.\n", clusterSecretStoreCRD)
+			return true
+		}
+		if !isCRDPendingEstablishment(captured.String()) || !time.Now().Before(deadline) {
+			fmt.Fprintf(stderr, "Warning: could not confirm the %s CRD is Established (%v) — "+
+				"NOT treating that as ready. Applying the store anyway; its retry still absorbs a CRD "+
+				"that is mid-registration, and the apply's own outcome decides this step.\n",
+				clusterSecretStoreCRD, err)
+			return false
+		}
+		fmt.Fprintf(stdout, "  %s isn't Established yet (attempt %d) — waiting %s for ArgoCD to "+
+			"finish installing the external-secrets operator...\n",
+			clusterSecretStoreCRD, attempt, clusterSecretStoreCRDPollInterval)
+		time.Sleep(clusterSecretStoreCRDPollInterval)
+	}
+}
+
+// applyStoreAwaitingOperator waits for the ClusterSecretStore CRD to be Established, then applies a
+// ClusterSecretStore manifest, retrying ONLY the transient "the external-secrets operator is not up
+// yet" markers until it is. Shared by the per-cloud stores above and by the in-cluster Vault store
+// (vault.go), which faces exactly the same race and must not grow a second, subtly-different copy of
+// this loop — so the CRD wait added for #2652 covers BOTH callers by construction, rather than by two
+// call sites that can drift apart.
+//
+// The wait makes the common path deterministic; the retry is KEPT as the backstop for what the wait
+// cannot confirm (a CRD that establishes late, and the second stage of the race — the validating
+// webhook having no ready endpoints, which no CRD condition reports).
+//
+// The success line names the attempt count and whether the CRD was confirmed first, because #2652's
+// point 3 is that a green run currently carries no evidence of any of this: a retry that converges
+// prints the same one line as an apply that never raced, so "we have never seen it fail" was not
+// evidence it worked. `attempt 1, CRD confirmed` and `attempt 9, unconfirmed` are now different
+// sentences in the job log.
 func applyStoreAwaitingOperator(manifest string, stdout, stderr io.Writer) error {
 	deadline := time.Now().Add(externalSecretsStoreMaxWait)
+	crdEstablished := awaitClusterSecretStoreCRD(deadline, stdout, stderr)
 	for attempt := 1; ; attempt++ {
 		var captured bytes.Buffer
 		applyErr := applyManifestServerSide(manifest, stdout, io.MultiWriter(stderr, &captured))
 		if applyErr == nil {
-			fmt.Fprintln(stdout, "ClusterSecretStore applied.")
+			if crdEstablished {
+				fmt.Fprintf(stdout, "ClusterSecretStore applied on attempt %d, after %s was confirmed Established.\n",
+					attempt, clusterSecretStoreCRD)
+			} else {
+				fmt.Fprintf(stdout, "ClusterSecretStore applied on attempt %d, WITHOUT %s having been confirmed "+
+					"Established first — the apply retry absorbed the race.\n", attempt, clusterSecretStoreCRD)
+			}
 			return nil
 		}
 		if !isOperatorNotReady(captured.String()) || time.Now().After(deadline) {
