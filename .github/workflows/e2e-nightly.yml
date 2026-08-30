@@ -1798,6 +1798,12 @@ jobs:
             echo "::warning::E2E_CLUSTER/E2E_ENV unset at cancellation — nothing was provisioned yet, nothing to sweep."
             exit 0
           fi
+          # The run-scoped Load Balancer binding the test captured BEFORE `tofu destroy` deleted
+          # the private network that carries it (#3481). A fixed path both ends agree on, because
+          # the test process exits long before this step runs and can hand nothing over. Absent is
+          # normal — a hard-killed run never got to capture — and the sweeper falls back to the
+          # project-wide question, which over-reports rather than under-reports.
+          export ALETHIA_E2E_HCLOUD_LB_IDS="${RUNNER_TEMP}/hcloud-lb-ids.txt"
           case "$PROVIDER" in
             hetzner) SCRIPT="./scripts/e2e/hcloud-cleanup.sh" ;;
             aws)     SCRIPT="./scripts/e2e/aws-cleanup.sh" ;;
@@ -1970,6 +1976,12 @@ jobs:
             echo "::error::E2E_CLUSTER/E2E_ENV is unset — refusing to run an unscoped cleanup."
             exit 1
           fi
+          # The run-scoped Load Balancer binding the test captured BEFORE `tofu destroy` deleted
+          # the private network that carries it (#3481). A fixed path both ends agree on, because
+          # the test process exits long before this step runs and can hand nothing over. Absent is
+          # normal — a hard-killed run never got to capture — and the sweeper falls back to the
+          # project-wide question, which over-reports rather than under-reports.
+          export ALETHIA_E2E_HCLOUD_LB_IDS="${RUNNER_TEMP}/hcloud-lb-ids.txt"
           case "$PROVIDER" in
             hetzner) SCRIPT="./scripts/e2e/hcloud-cleanup.sh" ;;
             aws)     SCRIPT="./scripts/e2e/aws-cleanup.sh" ;;
