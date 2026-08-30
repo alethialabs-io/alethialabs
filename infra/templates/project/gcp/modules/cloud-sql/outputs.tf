@@ -28,5 +28,5 @@ output "instance_name" {
 # lowercased SA local part on MySQL (Cloud SQL truncates the @ and the domain).
 output "app_iam_user" {
   description = "Keyless app database username — the CLOUD_IAM_SERVICE_ACCOUNT login as the engine stores it (#722, #1505); null when no app GSA was passed"
-  value       = var.app_iam_sa_email != null ? google_sql_user.app_iam[0].name : null
+  value       = var.app_iam_sa_email != null ? one(google_sql_user.app_iam[*].name) : null
 }

@@ -69,7 +69,7 @@ resource "aws_secretsmanager_secret_version" "dbsecret_extra_version" {
   secret_id = aws_secretsmanager_secret.dbsecret_extra.id
   secret_string = jsonencode({
     username = var.rds_extra_credentials.username
-    password = coalesce(var.rds_extra_credentials.password, random_password.dbpass_extra[0].result)
+    password = coalesce(var.rds_extra_credentials.password, one(random_password.dbpass_extra[*].result))
     database = var.rds_extra_credentials.database
   })
 }

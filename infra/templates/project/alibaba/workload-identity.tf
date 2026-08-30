@@ -66,7 +66,7 @@ resource "alicloud_ram_policy" "external_secrets_read" {
 resource "alicloud_ram_role_policy_attachment" "external_secrets_read" {
   count = local.eso_rrsa_enabled ? 1 : 0
 
-  role_name   = alicloud_ram_role.external_secrets[0].id
-  policy_name = alicloud_ram_policy.external_secrets_read[0].policy_name
+  role_name   = one(alicloud_ram_role.external_secrets[*].id)
+  policy_name = one(alicloud_ram_policy.external_secrets_read[*].policy_name)
   policy_type = "Custom"
 }

@@ -57,7 +57,7 @@ module "rds_iam_auth" {
   create_role                = true
   role_name                  = "rds-iam-auth-${local.eks_name}"
   role_policy_arns = {
-    rds_iam_auth_policy = aws_iam_policy.rds_iam_auth[0].arn
+    rds_iam_auth_policy = one(aws_iam_policy.rds_iam_auth[*].arn)
   }
   oidc_providers = {
     main = {
@@ -127,7 +127,7 @@ module "irsa_alethia_agent" {
   create_role                = true
   role_name                  = "irsa-alethia-${local.eks_name}"
   role_policy_arns = {
-    alethia_agent_policy = aws_iam_policy.irsa_alethia_agent[0].arn
+    alethia_agent_policy = one(aws_iam_policy.irsa_alethia_agent[*].arn)
   }
   oidc_providers = {
     main = {
@@ -310,7 +310,7 @@ module "irsa_karpenter" {
   create_role                = true
   role_name                  = "KarpenterIRSA-${local.eks_name}"
   role_policy_arns = {
-    alethia_agent_policy = aws_iam_policy.irsa_karpenter[0].arn
+    alethia_agent_policy = one(aws_iam_policy.irsa_karpenter[*].arn)
   }
   oidc_providers = {
     main = {
@@ -335,8 +335,8 @@ module "irsa_ai_bedrock" {
   role_name                  = "ai-bedrock-${local.eks_name}"
   role_policy_arns = {
     aws_managed_policy            = "arn:aws:iam::aws:policy/AmazonBedrockFullAccess",
-    irsa_ai_bedrock_custom_policy = aws_iam_policy.irsa_ai_bedrock_custom[0].arn
-    irsa_ai_bedrock_s3_policy     = aws_iam_policy.irsa_ai_bedrock_s3[0].arn
+    irsa_ai_bedrock_custom_policy = one(aws_iam_policy.irsa_ai_bedrock_custom[*].arn)
+    irsa_ai_bedrock_s3_policy     = one(aws_iam_policy.irsa_ai_bedrock_s3[*].arn)
 
   }
   oidc_providers = {
@@ -463,7 +463,7 @@ module "irsa_ecr_build" {
   create_role                = true
   role_name                  = "ecr-build-${local.eks_name}"
   role_policy_arns = {
-    ecr_build_policy = aws_iam_policy.irsa_ecr_build[0].arn
+    ecr_build_policy = one(aws_iam_policy.irsa_ecr_build[*].arn)
   }
   oidc_providers = {
     main = {

@@ -21,7 +21,7 @@ module "gke" {
   # finish first (#2004).
   depends_on = [module.vpc_network, google_kms_crypto_key_iam_member.gke_secrets]
 
-  secrets_kms_key_id = local.gke_secrets_encryption ? google_kms_crypto_key.gke_secrets[0].id : ""
+  secrets_kms_key_id = local.gke_secrets_encryption ? one(google_kms_crypto_key.gke_secrets[*].id) : ""
 
   project_id  = var.project_id
   region      = var.region

@@ -71,6 +71,20 @@ jobs:
       - name: Project templates must be plan-out-safe (no in-tofu k8s-apply resources)
         run: bash scripts/check-templates-plan-safe.sh
 
+      # The same class one command later in the runner's life. `plan -out` is how it DEPLOYS;
+      # `plan -refresh-only` is how it detects DRIFT, and refresh-only never plans a create — so a
+      # counted resource the environment has not applied yet is an empty tuple and `[0]` aborts the
+      # whole check. That killed drift detection on a production environment for five weeks, and no
+      # apply-and-check e2e can see it: the failure needs an environment whose template has moved
+      # since its last apply (#3351).
+      - name: Project templates must be refresh-only safe (no bare [0] into a counted resource)
+        run: node scripts/check-templates-refresh-safe.mjs
+
+      # The guard's own fixtures: a detector that only ever runs against a clean tree cannot tell
+      # "found nothing" from "asks nothing".
+      - name: Refresh-safety guard self-test
+        run: node scripts/check-templates-refresh-safe.mjs --self-test
+
   check:
     runs-on: ubuntu-latest
     strategy:

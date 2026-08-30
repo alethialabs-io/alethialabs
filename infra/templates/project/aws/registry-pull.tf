@@ -59,7 +59,7 @@ module "ecr_pull_xacct" {
   create_role                = true
   role_name                  = "ecr-pull-xacct-${local.eks_name}"
   role_policy_arns = {
-    ecr_pull = aws_iam_policy.ecr_pull_xacct[0].arn
+    ecr_pull = one(aws_iam_policy.ecr_pull_xacct[*].arn)
   }
   oidc_providers = {
     main = {
