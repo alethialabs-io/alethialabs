@@ -6,6 +6,7 @@ import { Bell, ClipboardList, LifeBuoy } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useMemo } from "react";
+import { formatRelative } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@repo/ui/popover";
 import {
@@ -170,7 +171,7 @@ function JobRow({
           </p>
           <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
             {scope ? `${scope} · ` : ""}
-            {new Date(n.createdAt).toLocaleTimeString()}
+            {formatRelative(n.createdAt)}
           </p>
         </div>
         {!n.read && TERMINAL_BADGE.has(n.status) && (
@@ -219,7 +220,7 @@ function SupportRow({
           </p>
           <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
             {SUPPORT_STATUS_LABELS[n.status]} ·{" "}
-            {new Date(n.lastMessageAt).toLocaleTimeString()}
+            {formatRelative(n.lastMessageAt)}
           </p>
         </div>
         {!n.read && (

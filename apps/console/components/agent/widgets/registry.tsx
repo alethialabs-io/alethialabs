@@ -11,7 +11,7 @@
 
 import type { ComponentType } from "react";
 import { z } from "zod";
-import { formatMinutes } from "@repo/format";
+import { formatMinutes, formatMoney } from "@repo/format";
 import type { Artifact, ArtifactTab } from "@/lib/stores/use-artifact-store";
 import type { WidgetKind } from "@/types/jsonb.types";
 import {
@@ -125,9 +125,14 @@ function rowsDetail(n: number): string {
 	return `${n} ${n === 1 ? "row" : "rows"}`;
 }
 
-/** Render a `$`-prefixed USD amount (or an em-dash). */
+/**
+ * A billed amount, or an em dash when the widget has none.
+ *
+ * `overage_cost_usd` and `unit_amount_usd` are MAJOR units — dollars — and `formatMoney` takes
+ * minor on purpose, so the conversion is spelled out once here rather than guessed at each caller.
+ */
 function usd(v: number | null | undefined): string {
-	return typeof v === "number" ? `$${v.toFixed(2)}` : "—";
+	return typeof v === "number" ? formatMoney(Math.round(v * 100)) : "—";
 }
 
 /** Projects list body. */

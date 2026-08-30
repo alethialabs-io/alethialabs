@@ -394,11 +394,56 @@ func RequireAllAddOnsExpected(expected []string) error {
 // NUMERICALLY IDENTICAL, and the only thing distinguishing them was the prose "(T2-asserted)",
 // which is a claim rather than a measurement.
 //
-// The counts exist HERE, at the moment the assertion is made, and nowhere else afterwards. So
-// they are written here, on EVERY exit path — converged, timed out, cancelled, or refused as
-// vacuous. Writing only on success would reproduce the original defect in a new place: a
-// missing file reads as "nothing went wrong" exactly as 0/0 did.
-func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected []string, timeout time.Duration) (err error) {
+// The counts exist at the moment the assertion is made, and nowhere else afterwards. So they are
+// written there, on EVERY exit path — converged, timed out, cancelled, or refused as vacuous.
+// Writing only on success would reproduce the original defect in a new place: a missing file
+// reads as "nothing went wrong" exactly as 0/0 did. That write lives in assertArgoConvergence,
+// which is the single loop this and A0.6's assertion both delegate to; see #3281 for why being
+// two loops made the counts vanish from every bundle the programme actually counts.
+func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected []string, timeout time.Duration) error {
+	return assertArgoConvergence(ctx, kubeconfigPath, expected, nil, timeout, argoConvergeSubject{
+		vacuous:  "refusing a VACUOUS ArgoCD health assertion: the expected Application set is empty",
+		deadline: "ArgoCD Applications",
+		name:     "AssertArgoAppsHealthy",
+	})
+}
+
+// argoConvergeSubject carries the only thing that differs between the two public assertions —
+// their wording — so one loop can serve both without either losing the message an operator greps
+// a red run for.
+type argoConvergeSubject struct {
+	// vacuous is the refusal returned for an empty expected set.
+	vacuous string
+	// deadline is the noun phrase the timeout error opens with.
+	deadline string
+	// name identifies WHICH assertion wrote a summary. Two convergence waits share this file and a
+	// bundle that carries the wrong one gives no way to tell which — azure/addons run 33277183092
+	// shipped a `vacuous` summary from a call nobody could identify from the artifact.
+	name string
+}
+
+// assertArgoConvergence is THE ArgoCD convergence wait. Both public assertions delegate to it, and
+// it is the ONLY place the convergence summary is registered.
+//
+// # Why this is one function and not two (#3281)
+//
+// It used to be two. AssertArgoAppsHealthy carried the deferred summary write; A0.6's
+// AssertArgoReposConverge was a near-identical copy of the same poll that carried none. Every real
+// run enables A0.6 — the nightly sets ALETHIA_E2E_ARGO_REPOS_REQUIRE whenever the apps-repo var is
+// set, which is always — so every run took the copy WITHOUT the write, and shipped a bundle reading
+// `argocd_assert_outcome: unmeasured` on an assertion that had just counted 22 Applications. The
+// evidence for the add-on cells lived only in an expiring job log.
+//
+// Adding a second `defer` to the second copy would have been the same defect one layer along, and
+// it would have written `unreadable`: that copy recorded `observed` only on the LOSING path, so on
+// success there would have been no map to count. So there is one loop. A third convergence path
+// cannot now be acquired without this instrumentation arriving with it.
+//
+// manualSync may be empty. A hardened bring-your-own chart renders with MANUAL sync and would sit
+// OutOfSync forever, so any listed app not yet Healthy+Synced is re-issued a sync over its CR on
+// each iteration, as an operator would; the last error per app is kept so a persistently REJECTED
+// sync is reported rather than reading as merely slow.
+func assertArgoConvergence(ctx context.Context, kubeconfigPath string, expected, manualSync []string, timeout time.Duration, subj argoConvergeSubject) (err error) {
 	// Declared before the vacuity check so the deferred write covers that exit too — a run that
 	// asserted over an empty set must leave evidence that it asserted nothing.
 	var lastErr error
@@ -407,9 +452,28 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 	// Carried so the deadline dump can tell an OutOfSync loser (which HAS a diff to fetch) from a
 	// Degraded-but-Synced one (which does not).
 	var lastObserved map[string]argoAppState
+	// Per manual-sync app, the error from its LAST sync attempt. A success voids an earlier
+	// failure: carrying a stale error forward would report a problem that has since resolved.
+	lastSyncErr := map[string]error{}
 	if path := os.Getenv(ArgoSummaryEnv); path != "" {
 		defer func() {
 			s := newArgoConvergenceSummary(expected, lastObserved, lastLosers, timeout, err)
+			s.Assertion = subj.name
+			// ⚠️ A VACUOUS WRITE MUST NOT CLOBBER A MEASUREMENT. The file carries the RUN's
+			// convergence evidence and every call writes it, so last-writer-wins is the wrong rule
+			// the moment one of those writers asserted nothing: azure/addons run 33277183092
+			// converged 20 of 20 and shipped `outcome: vacuous, expected_total: 0`, which
+			// check-proof-integrity refuses — a cell that passed and cannot be promoted.
+			//
+			// Only the measured→vacuous DOWNGRADE is refused. When no measured summary exists the
+			// vacuous one is still written, because "this run asserted nothing" is itself evidence
+			// and losing it is how #3281 happened.
+			if s.Outcome == "vacuous" && measuredSummaryExists(path) {
+				fmt.Fprintf(os.Stderr, "argocd assert: %s asserted nothing over an empty set; "+
+					"keeping the measured summary already at %s rather than overwriting it\n",
+					orNone(subj.name), path)
+				return
+			}
 			if werr := writeArgoSummary(path, s); werr != nil {
 				// Never fatal: the assertion's verdict is the test's, not this file's. But it is
 				// never silent either — a bundle that quietly lost its numbers is the defect.
@@ -418,7 +482,7 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 		}()
 	}
 	if len(expected) == 0 {
-		return errors.New("refusing a VACUOUS ArgoCD health assertion: the expected Application set is empty")
+		return errors.New(subj.vacuous)
 	}
 	deadline := time.Now().Add(timeout)
 	for {
@@ -433,6 +497,18 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 			lastErr = fmt.Errorf("parsing ArgoCD Applications failed: %w", perr)
 			lastLosers, lastRefs, lastObserved = nil, nil, nil
 		} else {
+			// Nudge the manual-sync (hardened BYO) apps that have not converged yet. A no-op when
+			// manualSync is empty, which is the plain assertion's shape.
+			for _, name := range manualSync {
+				st, ok := observed[name]
+				if !ok || st.Health != "Healthy" || st.Sync != "Synced" {
+					if serr := triggerArgoSync(ctx, kubeconfigPath, name); serr != nil {
+						lastSyncErr[name] = serr
+					} else {
+						delete(lastSyncErr, name)
+					}
+				}
+			}
 			losers, everr := evaluateArgoApps(observed, expected)
 			// Recorded on the WINNING path too, not just the losing one: on success the
 			// deferred summary is the whole point, and `observed` is only in scope here.
@@ -444,8 +520,9 @@ func AssertArgoAppsHealthy(ctx context.Context, kubeconfigPath string, expected 
 			lastRefs = refsForLosers(observed, losers)
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("ArgoCD Applications did not all reach Healthy+Synced within %s:\n%v%s",
-				timeout, lastErr,
+			return fmt.Errorf("%s did not all reach Healthy+Synced within %s:\n%v%s%s",
+				subj.deadline, timeout, lastErr,
+				renderSyncErrors(lastSyncErr),
 				argoDeadlineDump(ctx, kubeconfigPath, lastObserved, lastLosers, lastRefs))
 		}
 		select {
@@ -473,6 +550,10 @@ const ArgoSummaryEnv = "ALETHIA_E2E_ARGOCD_SUMMARY"
 // `null` says "not measured"; a `0` says "measured, and it was zero".
 type ArgoConvergenceSummary struct {
 	AssertedAt string `json:"asserted_at"`
+	// Assertion names the wait that wrote this. Without it, a bundle carrying the wrong summary
+	// gives a reader no way to tell WHICH of the two convergence waits produced it — which is the
+	// question azure/addons run 33277183092 could not answer from its artifact.
+	Assertion string `json:"assertion"`
 	// Outcome is one of: converged · unconverged · unreadable · vacuous.
 	Outcome string `json:"outcome"`
 	// ExpectedTotal is the size of the derived expected set — the field #2671 needs in order to
@@ -520,6 +601,23 @@ func newArgoConvergenceSummary(expected []string, observed map[string]argoAppSta
 	s.Verdict = fmt.Sprintf("%d of %d expected Applications Healthy+Synced within %s; %d did not converge: %s",
 		hs, len(expected), timeout, len(s.Losers), strings.Join(s.Losers, ", "))
 	return s
+}
+
+// measuredSummaryExists reports whether the summary file already holds a real measurement.
+//
+// "Measured" means an outcome other than `vacuous` — converged, unconverged and unreadable all say
+// something about a set that was actually asserted over. An unreadable or absent file is NOT
+// measured, so the first writer always wins the empty slot.
+func measuredSummaryExists(path string) bool {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var prev ArgoConvergenceSummary
+	if err := json.Unmarshal(raw, &prev); err != nil {
+		return false
+	}
+	return prev.Outcome != "" && prev.Outcome != "vacuous"
 }
 
 // writeArgoSummary persists the summary as indented JSON, mirroring writeAccessSummary.
@@ -820,6 +918,47 @@ func kubectlGetArgoApps(ctx context.Context, kubeconfigPath string) ([]byte, err
 	return out, nil
 }
 
+// describeHeadBudget is how much of the TOP of a describe survives truncation: enough for the
+// identity block (Name, Namespace, Labels, Annotations) and no more.
+const describeHeadBudget = 600
+
+// truncateDescribe keeps BOTH ENDS of `kubectl describe`, dropping the middle.
+//
+// This used to keep the first 2500 characters, on the stated reasoning that "the useful part is at
+// the top". It is not. `kubectl describe application` prints Name, Labels, Annotations, Metadata,
+// Spec, Status, Events — in that order — and the Spec of a Helm Application is the entire values
+// block. So the budget was spent on values we already chose, and Status, Conditions and Events —
+// the only part that says what went wrong — were exactly what got cut.
+//
+// azure/addons run 33255369578 shows the cut landing mid-word inside the spec (`Rev…(truncated)`),
+// with not one line of status for the one Application that failed.
+//
+// The head is kept because the identity block is genuinely useful and cheap: it names the project,
+// the sync-wave and the add-on labels in about four hundred characters. Everything after that up to
+// the tail budget is dropped, and the marker says how much — a truncation that does not admit its
+// size reads as a complete document.
+func truncateDescribe(s string, head, total int) string {
+	if len(s) <= total {
+		return s
+	}
+	if head < 0 {
+		head = 0
+	}
+	if head >= total {
+		// A head budget that leaves no tail would reproduce the bug this function replaced. Refuse
+		// it here rather than silently honour it: keep the tail, which is the half that was missing.
+		head = 0
+	}
+	tail := total - head
+	var b strings.Builder
+	if head > 0 {
+		b.WriteString(s[:head])
+	}
+	fmt.Fprintf(&b, "\n…(%d characters of the spec dropped; the tail below is the status and events)…\n", len(s)-total)
+	b.WriteString(s[len(s)-tail:])
+	return b.String()
+}
+
 // describeArgoApps returns `kubectl describe` output for each losing Application
 // (best-effort, truncated per app, capped at 5 apps) formatted for appending to the
 // timeout error — the "full dump" that makes a red nightly diagnosable from logs.
@@ -833,7 +972,7 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 	//
 	// 18 marketplace add-ons plus the platform rail is the realistic ceiling on how many can fail at
 	// once, so cover all of them. The per-app budget shrinks to compensate — `describe` is mostly the
-	// spec, which the Application already rendered above, and the useful part is at the top.
+	// spec, which the Application already rendered above.
 	const maxApps = 20
 	const maxPerApp = 2500
 	var b strings.Builder
@@ -852,11 +991,7 @@ func describeArgoApps(ctx context.Context, kubeconfigPath string, losers []strin
 			fmt.Fprintf(&b, "(describe failed: %v)\n%s", err, out)
 			continue
 		}
-		s := string(out)
-		if len(s) > maxPerApp {
-			s = s[:maxPerApp] + "…(truncated)"
-		}
-		b.WriteString(s)
+		b.WriteString(truncateDescribe(string(out), describeHeadBudget, maxPerApp))
 		// `describe application` shows the DESIRED spec and the sync status. It says nothing about
 		// the workload, so a Degraded app — which ArgoCD derives from the underlying Deployment —
 		// reports a verdict with no cause attached. See dumpUnhealthyPods.
@@ -1116,6 +1251,92 @@ func (r outOfSyncRef) kubectlTarget() string {
 //
 // Best-effort and hard-capped: this runs on an ALREADY-FAILING path, so it must never be the reason
 // a run hangs or an error is lost.
+// argoDumpBudget is the CEILING on the whole failing-path dump — never a reservation.
+//
+// It is not a term in ResolveT2Budget and it is not carved out of t2BaseHeadroom, because
+// t2BaseHeadroom is not slack: its own definition is "runner build + snapshot seeding + the slack
+// the old comment called headroom", and t2BuildRunner alone carries a five-minute ceiling that is
+// spent after ctx is created. Treating seven minutes as seven minutes of spare time is how a
+// fixed budget comes to be justified by an allowance that was never free.
+//
+// So the dump takes whatever is ACTUALLY left, capped here. planArgoDump decides, the notice says
+// which of the two bound it, and nothing downstream has to believe an arithmetic claim about
+// headroom that the ladder does not make.
+const argoDumpBudget = 4 * time.Minute
+
+// argoDumpMinimum is the least remaining time the dump is worth starting with. Below it, every
+// section would report its own timeout and the reader would get eight lines of context-deadline
+// noise instead of one line saying the leg had already run out.
+const argoDumpMinimum = 5 * time.Second
+
+// argoDumpSectionFloor keeps a starved section from being handed a share too small to say anything.
+// A section given 200ms produces a timeout message, which is worse than being named as not run.
+const argoDumpSectionFloor = 3 * time.Second
+
+// dumpPlan is how long the dump may take and WHAT BOUND IT — two different findings that the same
+// expired context produces.
+//
+// "The dump budget was spent" means the dump is too slow for what it was asked, and the lever is
+// argoDumpBudget. "The T2 context ran out" means the leg is out of time, this budget never applied,
+// and the lever is the ladder. Printing the first when the second happened sends a maintainer to
+// tune a number that had nothing to do with it.
+type dumpPlan struct {
+	Budget     time.Duration
+	BoundByCtx bool
+	Startable  bool
+}
+
+// planArgoDump is pure so both branches are pinned by a test rather than by a run that costs money.
+func planArgoDump(remaining time.Duration, hasDeadline bool) dumpPlan {
+	if !hasDeadline {
+		// No deadline on the parent at all — the ceiling is the only bound there is.
+		return dumpPlan{Budget: argoDumpBudget, Startable: true}
+	}
+	switch {
+	case remaining <= argoDumpMinimum:
+		return dumpPlan{Budget: 0, BoundByCtx: true, Startable: false}
+	case remaining < argoDumpBudget:
+		return dumpPlan{Budget: remaining, BoundByCtx: true, Startable: true}
+	default:
+		return dumpPlan{Budget: argoDumpBudget, Startable: true}
+	}
+}
+
+// dumpSection is one diagnostic and the name it is reported under when it does not get to run.
+type dumpSection struct {
+	name string
+	run  func(context.Context) string
+}
+
+// sectionNames lists a run of sections for the skipped notice.
+func sectionNames(secs []dumpSection) []string {
+	names := make([]string, 0, len(secs))
+	for _, s := range secs {
+		names = append(names, s.name)
+	}
+	return names
+}
+
+// renderDumpStopped names the sections that did not run, and says which clock ran out.
+//
+// NAMED, never silently dropped: this file's stated principle is that a dump which stops before the
+// interesting failure has the same effect as no dump, at the same price. A reader who can see that
+// "argocd app diff" was not reached knows to look for it; a reader shown nothing concludes there
+// was nothing to show.
+func renderDumpStopped(skipped []dumpSection, plan dumpPlan) string {
+	if len(skipped) == 0 {
+		return ""
+	}
+	names := strings.Join(sectionNames(skipped), ", ")
+	if plan.BoundByCtx {
+		return fmt.Sprintf("\n──── the T2 context ran out first (%s left, under the %s dump ceiling); "+
+			"%d section(s) NOT run: %s. The LEG is out of time — look at the ladder, not at this "+
+			"ceiling. ────\n", plan.Budget, argoDumpBudget, len(skipped), names)
+	}
+	return fmt.Sprintf("\n──── dump ceiling of %s spent; %d section(s) NOT run: %s ────\n",
+		argoDumpBudget, len(skipped), names)
+}
+
 // argoDeadlineDump is EVERY diagnostic a timed-out ArgoCD wait should carry, in one place.
 //
 // It exists because there are two of these waits — AssertArgoAppsHealthy here, and the A0.6
@@ -1134,9 +1355,80 @@ func argoDeadlineDump(
 	losers []string,
 	refs []outOfSyncRef,
 ) string {
-	return describeArgoApps(ctx, kubeconfigPath, losers) +
-		dumpOutOfSyncResources(ctx, kubeconfigPath, refs) +
-		dumpArgoAppDiffs(ctx, kubeconfigPath, observed, losers)
+	// ONE budget for the whole dump, and a SHARE of it for each section.
+	//
+	// Nine sections, each with its own per-call timeout and its own per-app cap, and the caps
+	// MULTIPLY: describeArgoApps alone is twenty losers × 30s, and dumpArgoAppDiff's per-app
+	// timeout is 300s — longer than the whole ceiling. Every section was sized as though it were
+	// the only one, which is how a chain of individually reasonable timeouts overruns.
+	//
+	// A pooled budget alone would not fix it: the cheap early sections would eat the pool on a
+	// many-loser run and `argocd app diff` — the LAST section, the most expensive, and the one
+	// #2834 added the shared dump for — would be starved by the very cap meant to protect the run.
+	// So each section takes an equal share of what is left at the moment it starts, and a section
+	// that finishes early returns its remainder to the ones after it.
+	sections := []dumpSection{
+		// FIRST, because it is the only one that speaks for a loser whose resources were never
+		// created, and because it is one small `kubectl get` rather than a chart render. See
+		// argo_sync_failure.go.
+		{"sync failures", func(c context.Context) string { return dumpArgoSyncFailures(c, kubeconfigPath, losers) }},
+		// IMMEDIATELY after it, because it answers the question that dump's own output raises: the
+		// Application names the hook it is waiting for and stops there. See argo_pending_hook.go.
+		{"pending hooks", func(c context.Context) string { return dumpPendingHooks(c, kubeconfigPath, losers) }},
+		// An add-on that installs SEALED cannot converge on the chart alone, and nothing on this
+		// path was looking at the Job that opens it. One `kubectl get jobs -A`; see
+		// bootstrap_job_dump.go for the run that needed it.
+		{"bootstrap jobs", func(c context.Context) string { return dumpAddOnBootstrapJobs(c, kubeconfigPath) }},
+		// The two sources that speak for a sync still RUNNING — an Application waiting on a hook it
+		// never applied has nothing further to say, and both of these do. See argo_stuck_sync.go.
+		{"controller log", func(c context.Context) string { return dumpArgoControllerLog(c, kubeconfigPath, losers) }},
+		{"cluster warnings", func(c context.Context) string { return dumpDestinationWarnings(c, kubeconfigPath, losers) }},
+		{"describe", func(c context.Context) string { return describeArgoApps(c, kubeconfigPath, losers) }},
+		{"out-of-sync objects", func(c context.Context) string { return dumpOutOfSyncResources(c, kubeconfigPath, refs) }},
+		{"argocd app diff", func(c context.Context) string { return dumpArgoAppDiffs(c, kubeconfigPath, observed, losers) }},
+	}
+
+	// ALREADY DONE beats any arithmetic about deadlines: a context cancelled by hand carries NO
+	// deadline at all, so asking Deadline() first would compute a four-minute ceiling against a
+	// context that is finished, run every section, and report eight sections "CUT OFF" instead of
+	// one line saying the leg had already ended.
+	if ctx.Err() != nil {
+		return renderDumpStopped(sections, dumpPlan{BoundByCtx: true})
+	}
+	deadline, hasDeadline := ctx.Deadline()
+	plan := planArgoDump(time.Until(deadline), hasDeadline)
+	if !plan.Startable {
+		return renderDumpStopped(sections, plan)
+	}
+	dctx, cancel := context.WithTimeout(ctx, plan.Budget)
+	defer cancel()
+	dumpDeadline, _ := dctx.Deadline()
+
+	var b strings.Builder
+	for i := range sections {
+		left := time.Until(dumpDeadline)
+		if dctx.Err() != nil || left <= 0 {
+			b.WriteString(renderDumpStopped(sections[i:], plan))
+			return b.String()
+		}
+		share := left / time.Duration(len(sections)-i)
+		if share < argoDumpSectionFloor {
+			share = min(left, argoDumpSectionFloor)
+		}
+		sctx, scancel := context.WithTimeout(dctx, share)
+		b.WriteString(sections[i].run(sctx))
+		cut := sctx.Err() != nil
+		scancel()
+		if cut {
+			// SAID, because a section that ran out mid-way otherwise renders as a section that
+			// found nothing — which is the reading this whole file exists to prevent, and the guard
+			// at the top of the loop cannot see it: exhaustion INSIDE the last section leaves the
+			// loop normally and would print nothing at all.
+			fmt.Fprintf(&b, "\n  (the %q section was CUT OFF after %s — what it printed is partial)\n",
+				sections[i].name, share)
+		}
+	}
+	return b.String()
 }
 
 // dumpArgoAppDiffs asks ArgoCD for the desired-vs-live diff of every OUT-OF-SYNC loser.
@@ -1440,29 +1732,42 @@ func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []o
 			break
 		}
 		shown++
-		args := []string{"--kubeconfig", kubeconfigPath, "get", r.kubectlTarget(), "-o", "json"}
-		if r.Namespace != "" {
-			args = append(args, "-n", r.Namespace)
-		}
-		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		out, err := exec.CommandContext(cctx, "kubectl", args...).Output()
-		cancel()
+		args := foreignOwnerKubectlArgs(kubeconfigPath, r.kubectlTarget(), r.Namespace)
+		// `args[2:]` drops the `--kubeconfig <path>` pair foreignOwnerKubectlArgs puts first, because
+		// kubectlRead prepends its own. The PATH still has to be handed over: passing "" here made
+		// kubectlRead prepend `--kubeconfig ""`, and kubectl does not reject an empty value — it
+		// falls back to its default loading rules ($KUBECONFIG, then ~/.kube/config, then
+		// localhost:8080). So this probe read whatever cluster the machine happened to be pointed
+		// at, or none, and reported the answer as if it came from the cluster under test.
+		out, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath, args[2:]...)
 		if err != nil {
 			// Naming the failure matters as much as the dump: "could not read it" and "it had
 			// nothing interesting" must not look the same.
 			fmt.Fprintf(&b, "\n    - %s: could not fetch (%v)", r.kubectlTarget(), err)
 			continue
 		}
-		byManager, perr := foreignFieldOwners(out)
+		byManager, total, perr := foreignFieldOwners(out)
 		if perr != nil {
 			fmt.Fprintf(&b, "\n    - %s: could not read managedFields (%v)", r.kubectlTarget(), perr)
+			continue
+		}
+		if total == 0 {
+			// THREE outcomes, not two. An object with NO managedFields at all is not an object
+			// every field of which belongs to ArgoCD — it is an object this probe could not read,
+			// and conflating the two is the whole defect: the reassuring sentence below was printed
+			// on an empty list for the life of this check. Every real object on a modern apiserver
+			// has at least one entry, so zero means the read was wrong, not the cluster.
+			fmt.Fprintf(&b, "\n    - %s: NO managedFields on the object — this probe measured NOTHING. "+
+				"(kubectl strips them without --show-managed-fields; if the flag is present and this still "+
+				"prints, the apiserver is not tracking ownership for this resource.)", r.kubectlTarget())
 			continue
 		}
 		if len(byManager) == 0 {
 			// A DIFFERENT fact from "we could not tell", and it must read differently: every field
 			// on this object belongs to ArgoCD, so an apiserver default is not the explanation here
-			// and the cause is elsewhere.
-			fmt.Fprintf(&b, "\n    - %s: every field is ArgoCD-owned — no foreign default to blame", r.kubectlTarget())
+			// and the cause is elsewhere. Trustworthy ONLY because `total > 0` above proved there
+			// were entries to classify.
+			fmt.Fprintf(&b, "\n    - %s: every field is ArgoCD-owned across %d manager entr(ies) — no foreign default to blame", r.kubectlTarget(), total)
 			continue
 		}
 		fmt.Fprintf(&b, "\n    - %s:", r.kubectlTarget())
@@ -1478,6 +1783,27 @@ func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []o
 	return b.String()
 }
 
+// foreignOwnerKubectlArgs builds the read this probe depends on. Extracted so the ONE flag that
+// makes it a measurement can be asserted without a cluster.
+//
+// `--show-managed-fields` IS LOAD-BEARING, and its absence is why this probe answered vacuously for
+// the whole of its life. Since kubectl 1.21, `get -o json|yaml` STRIPS `metadata.managedFields`
+// unless the flag is given — so foreignFieldOwners parsed an empty list on every object, found zero
+// foreign managers every time, and printed "every field is ArgoCD-owned — no foreign default to
+// blame". That sentence was TRUE OF NOTHING: it appeared for seven Applications across four paid
+// runs (see the #2778 note above) and never once described a measurement.
+//
+// Measured on a kind cluster, keda 2.15.1: without the flag `metadata.managedFields` is absent
+// entirely; with it, `manager=keda` owns exactly `webhooks[*].clientConfig.caBundle` — which is the
+// field azure/addons run 33243601159 sat OutOfSync on while this probe called it ArgoCD-owned.
+func foreignOwnerKubectlArgs(kubeconfigPath, target, namespace string) []string {
+	args := []string{"--kubeconfig", kubeconfigPath, "get", target, "-o", "json", "--show-managed-fields"}
+	if namespace != "" {
+		args = append(args, "-n", namespace)
+	}
+	return args
+}
+
 // argoFieldManagers are the manager names ArgoCD applies under. A field owned by one of these was
 // authored by the chart, so it is NOT a candidate.
 //
@@ -1488,8 +1814,13 @@ func dumpOutOfSyncResources(ctx context.Context, kubeconfigPath string, refs []o
 var argoFieldManagers = []string{"argocd"}
 
 // foreignFieldOwners returns manager → the field paths that manager owns, for every manager that is
-// NOT ArgoCD. Paths are rendered dotted, from the apiserver's `f:`-prefixed fieldsV1 tree.
-func foreignFieldOwners(objJSON []byte) (map[string][]string, error) {
+// NOT ArgoCD, AND the total number of managedFields entries the object carried.
+//
+// The total is returned, not derived by the caller, because "no foreign owner" and "no owners at
+// all" are different answers and only one of them is about the cluster. Returning a single empty
+// map for both is what let this probe report `every field is ArgoCD-owned` on objects whose
+// managedFields kubectl had silently stripped.
+func foreignFieldOwners(objJSON []byte) (map[string][]string, int, error) {
 	var obj struct {
 		Metadata struct {
 			ManagedFields []struct {
@@ -1499,7 +1830,7 @@ func foreignFieldOwners(objJSON []byte) (map[string][]string, error) {
 		} `json:"metadata"`
 	}
 	if err := json.Unmarshal(objJSON, &obj); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	out := map[string][]string{}
 	for _, mf := range obj.Metadata.ManagedFields {
@@ -1515,7 +1846,7 @@ func foreignFieldOwners(objJSON []byte) (map[string][]string, error) {
 			out[mf.Manager] = append(out[mf.Manager], paths...)
 		}
 	}
-	return out, nil
+	return out, len(obj.Metadata.ManagedFields), nil
 }
 
 // isArgoManager reports whether a field manager is ArgoCD's.
@@ -1637,12 +1968,10 @@ var podProducingKinds = map[string]bool{
 // managedWorkloads reads the pod-producing resources an Application believes it created, from
 // `.status.resources` — ArgoCD's own record of what it applied.
 func managedWorkloads(ctx context.Context, kubeconfigPath, app string) ([]managedWorkload, error) {
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+	out, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath,
 		"get", "applications.argoproj.io", "-n", "argocd", app,
 		"-o", "jsonpath={range .status.resources[*]}{.kind}|{.name}|{.namespace}|{.health.status}{\"\\n\"}{end}",
-	).Output()
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1677,12 +2006,10 @@ func parseManagedWorkloads(raw string) []managedWorkload {
 // chart. Reading `.spec.selector.matchLabels` cannot go stale, because it is definitionally the
 // selector the workload itself matches on.
 func podSelectorFor(ctx context.Context, kubeconfigPath string, w managedWorkload) (string, error) {
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+	out, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath,
 		"get", strings.ToLower(w.Kind), "-n", w.Namespace, w.Name,
 		"-o", "jsonpath={.spec.selector.matchLabels}",
-	).Output()
+	)
 	if err != nil {
 		return "", err
 	}

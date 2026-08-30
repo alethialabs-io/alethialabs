@@ -136,11 +136,26 @@ func externalDNSSkipReason(f *InfraFacts) string {
 // things for the operator to do next, and a single generic skip would hide which one it is.
 func certManagerDecision(f *InfraFacts) InfraServiceDecision {
 	d := InfraServiceDecision{Service: "cert-manager"}
-	if f.CertManagerEnabled() {
+	if f.CertManagerIssuerEnabled() {
 		d.Status = infraStatusInstalled
 		d.Reason = fmt.Sprintf(
 			"installed (cert-manager) — the %q ClusterIssuer solves ACME DNS01 challenges for %s via the %s solver, reusing external-dns's identity.",
 			CertManagerIssuerName, f.DomainName, f.CertManagerSolver())
+		return d
+	}
+	// Installed, but ISSUER-FREE. This deploy cannot solve a DNS01 challenge — and does not need to:
+	// cert-manager is here to sign an operator's own admission-webhook certificate from a
+	// self-signed Issuer the chart creates, which involves no ACME server and no public domain.
+	//
+	// It gets its own sentence rather than reusing the one above, because that one names a
+	// ClusterIssuer, a domain and a solver, none of which exist on this path. A decision that
+	// claimed them would be the console telling an operator to go look for something that was never
+	// created — the exact failure certManagerSkipReason's per-arm reasons exist to avoid.
+	if f.CertManagerWebhookCARequired() {
+		d.Status = infraStatusInstalled
+		d.Reason = fmt.Sprintf(
+			"installed (cert-manager) — NO ClusterIssuer: this deploy issues no certificate. The controller is here to inject the admission-webhook serving CA that %s needs (cert-manager.io/inject-ca-from); its webhook fails closed, so without the CA every custom resource it owns is rejected. %s",
+			strings.Join(f.WebhookCAAddOns, ", "), certManagerSkipReason(f))
 		return d
 	}
 	d.Status = infraStatusSkipped

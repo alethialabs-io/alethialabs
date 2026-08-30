@@ -13,6 +13,7 @@
 // Hobby orgs get an inline "Upgrade to Pro" (UpgradeOrgSheet); subscription/payment
 // management still lives on the Billing page.
 
+import { formatMonthlyRate } from "@repo/format";
 import { ArrowUpRight, Info } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
@@ -160,9 +161,6 @@ export function UsagePanel() {
 			? (summary.memberCount / summary.seats) * 100
 			: 100;
 	const concurrencyMax = usage?.maxConcurrentJobs ?? null;
-
-	const currency = (n: number) =>
-		`$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 	return (
 		<div className="space-y-2">
@@ -315,7 +313,7 @@ export function UsagePanel() {
 							Estimated cloud spend under management
 						</span>
 						<span className="font-mono text-text-secondary">
-							{counts ? currency(counts.spendUnderManagement) : "—"}/mo
+							{counts ? formatMonthlyRate(counts.spendUnderManagement) : "—"}
 						</span>
 					</div>
 				</div>

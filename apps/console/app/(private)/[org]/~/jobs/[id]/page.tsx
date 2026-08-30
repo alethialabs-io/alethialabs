@@ -9,6 +9,8 @@ import { useJobLogStream } from "@/hooks/use-job-log-stream";
 import { useJobQuery } from "@/lib/query/use-jobs-query";
 import { JOB_TYPES } from "@/components/jobs/columns";
 import { RunnerSelectPopover } from "@/components/runners/runner-select-popover";
+import { formatDate, formatRelative } from "@repo/format";
+import { PageHeader } from "@repo/ui/page-header";
 import { StatusBadge } from "@repo/ui/status-badge";
 import { Button } from "@repo/ui/button";
 import { ScrollArea } from "@repo/ui/scroll-area";
@@ -31,7 +33,6 @@ import {
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { formatDistanceToNow } from "date-fns";
 
 /** Full-page job detail view with realtime log streaming (SSE). */
 export default function JobDetailPage() {
@@ -133,48 +134,49 @@ export default function JobDetailPage() {
 		<div className="flex flex-col h-[calc(100vh-3.5rem)] -m-4 sm:-m-6 lg:-m-8 xl:-m-10">
 			{/* Header */}
 			<div className="px-6 py-4 border-b border-border/40 bg-muted/5 shrink-0">
-				<div className="flex items-center justify-between">
-					<div className="flex items-center gap-3">
-						{Icon && <Icon className="h-5 w-5 text-muted-foreground" />}
-						<div>
-							<div className="flex items-center gap-2">
-								<h1 className="text-base font-semibold">{info?.label ?? job.job_type}</h1>
+				<div className="flex items-start gap-3">
+					{Icon && <Icon className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />}
+					<PageHeader
+						className="min-w-0 flex-1"
+						title={info?.label ?? job.job_type}
+						description={
+							<span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
 								<StatusBadge status={jobState ?? job.status} />
-								{duration() && <span className="text-xs text-muted-foreground">{duration()}</span>}
-							</div>
-							<p className="text-xs text-muted-foreground">
+								{duration() && <span>{duration()}</span>}
 								<span className="font-mono">{job.id.slice(0, 8)}</span>
-								{job.runner_id && <> · Runner <span className="font-mono">{job.runner_id.slice(0, 8)}</span></>}
-								{job.created_at && <> · {formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}</>}
-							</p>
-						</div>
-					</div>
-					<div className="flex items-center gap-2">
-						{isActive && (
-							<Button variant="outline" size="sm" className="h-8 text-xs text-destructive hover:text-destructive" onClick={handleCancel} disabled={actionLoading}>
-								{actionLoading ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Ban className="h-3.5 w-3.5 mr-1.5" />}
-								Cancel
-							</Button>
-						)}
-						{isPlanSuccess && job.project_id && (
-							<RunnerSelectPopover
-								trigger={
-									<Button size="sm" className="h-8 text-xs" disabled={actionLoading}>
-										<Rocket className="h-3.5 w-3.5 mr-1.5" />
-										Apply
+								{job.runner_id && <span>· Runner <span className="font-mono">{job.runner_id.slice(0, 8)}</span></span>}
+								{job.created_at && <span>· {formatRelative(job.created_at)}</span>}
+							</span>
+						}
+						actions={
+							<>
+								{isActive && (
+									<Button variant="outline" size="sm" className="h-8 text-xs text-destructive hover:text-destructive" onClick={handleCancel} disabled={actionLoading}>
+										{actionLoading ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Ban className="h-3.5 w-3.5 mr-1.5" />}
+										Cancel
 									</Button>
-								}
-								onConfirm={handleApply}
-								disabled={actionLoading}
-							/>
-						)}
-						{isTerminal && (
-							<Button variant="outline" size="sm" className="h-8 text-xs" onClick={handleRerun} disabled={actionLoading}>
-								{actionLoading ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
-								Re-run
-							</Button>
-						)}
-					</div>
+								)}
+								{isPlanSuccess && job.project_id && (
+									<RunnerSelectPopover
+										trigger={
+											<Button size="sm" className="h-8 text-xs" disabled={actionLoading}>
+												<Rocket className="h-3.5 w-3.5 mr-1.5" />
+												Apply
+											</Button>
+										}
+										onConfirm={handleApply}
+										disabled={actionLoading}
+									/>
+								)}
+								{isTerminal && (
+									<Button variant="outline" size="sm" className="h-8 text-xs" onClick={handleRerun} disabled={actionLoading}>
+										{actionLoading ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+										Re-run
+									</Button>
+								)}
+							</>
+						}
+					/>
 				</div>
 			</div>
 
@@ -203,7 +205,7 @@ export default function JobDetailPage() {
 								>
 									<span className="text-muted-foreground/40 select-none shrink-0 w-8 text-right">{i + 1}</span>
 									<span className="text-muted-foreground/60 select-none shrink-0 w-[85px]">
-										{new Date(log.created_at || Date.now()).toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+										{formatDate(log.created_at || Date.now(), "time")}
 									</span>
 									<span className={`break-all leading-relaxed ${log.stream_type === "STDERR" || log.stream_type === "stderr" ? "text-destructive" : "text-foreground/80"}`}>
 										{log.log_chunk}

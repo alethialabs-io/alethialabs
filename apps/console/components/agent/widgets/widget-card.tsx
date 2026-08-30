@@ -5,6 +5,7 @@
 import { useDraggable } from "@dnd-kit/core";
 import { GripVertical, RefreshCw, Snowflake, Trash2, Zap } from "lucide-react";
 import { useState } from "react";
+import { formatRelative } from "@repo/format";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@repo/ui/tooltip";
 import { cn } from "@repo/ui/utils";
 import type { ThreadWidget } from "@/lib/db/schema";
@@ -231,7 +232,7 @@ export function WidgetCard({
                 ? "Live: refreshes on its own. Click to freeze as a fixed snapshot."
                 : "Frozen: a fixed snapshot that won't update. Click to make it live."}
               {widget.refreshed_at
-                ? ` · updated ${new Date(widget.refreshed_at).toLocaleTimeString()}`
+                ? ` · updated ${formatRelative(widget.refreshed_at)}`
                 : ""}
             </TooltipContent>
           </Tooltip>

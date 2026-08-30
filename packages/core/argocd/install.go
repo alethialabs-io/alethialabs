@@ -22,6 +22,14 @@ import (
 var applyCRDRaceMaxWait = 5 * time.Minute
 
 func ApplyApplications(renderedDir string, stdout, stderr io.Writer) error {
+	// Before the apply, not beside it: a StorageClass whose `provisioner` differs from the live one
+	// cannot be updated (the field is immutable), so the apply below would fail outright rather than
+	// converge. Making the applies POSSIBLE is part of applying them, which is why this lives here
+	// and not in the caller — deploy.go should not have to know that one manifest kind has an
+	// immutable field. See storage_class_reconcile.go.
+	if scErr := ReconcileImmutableStorageClasses(renderedDir, stdout, stderr); scErr != nil {
+		return scErr
+	}
 	cmd := fmt.Sprintf("kubectl apply -f %s", renderedDir)
 	fmt.Fprintln(stdout, "Applying ArgoCD infrastructure applications...")
 	// ArgoCD Applications install their CRDs + admission webhooks ASYNCHRONOUSLY via ArgoCD sync
@@ -620,7 +628,11 @@ func CleanupSkippedInfraServices(facts *InfraFacts, stdout, stderr io.Writer) {
 	// that have nothing to do with this switch. Re-issuing them all then meets Let's Encrypt's
 	// duplicate-certificate rate limit (5 per week), which no retry recovers from. An idle
 	// controller is the strictly smaller harm, and certManagerDecision still records the skip.
-	if !facts.CertManagerEnabled() {
+	// The ISSUER predicate, not the controller one: cert-manager may now be installed with no
+	// issuer at all (to inject an operator's webhook CA), and on that deploy the ClusterIssuer
+	// SHOULD be reaped — there is none to keep. Reading the controller gate here would leave a
+	// stale issuer standing on exactly the deploys that never create one.
+	if !facts.CertManagerIssuerEnabled() {
 		cmd := fmt.Sprintf("kubectl delete clusterissuer %s --ignore-not-found --timeout=60s", CertManagerIssuerName)
 		if err := utils.ExecuteCommand(cmd, ".", nil, stdout, stderr); err != nil {
 			fmt.Fprintf(stderr, "Warning: could not remove stale cert-manager ClusterIssuer %s: %v\n", CertManagerIssuerName, err)

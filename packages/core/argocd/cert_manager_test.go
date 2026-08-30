@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -153,12 +154,112 @@ func TestCertManagerRendersOnlyWhereItCanIssue(t *testing.T) {
 	}
 	for _, provider := range []string{"alibaba", "hetzner", "digitalocean"} {
 		f := certManagerFacts(provider)
-		if f.CertManagerEnabled() {
+		// The ISSUER predicate is the one this test is about, and it is now a different question
+		// from whether the CONTROLLER installs. With nothing asking for a webhook CA the two still
+		// coincide, and both are asserted so a future divergence cannot slip through here.
+		if f.CertManagerIssuerEnabled() {
 			t.Errorf("%s has no in-box cert-manager DNS01 solver — it must NOT render an issuer", provider)
+		}
+		if f.CertManagerEnabled() {
+			t.Errorf("%s: with no webhook-CA add-on there is nothing to install cert-manager FOR", provider)
 		}
 		if got := certManagerDecision(f).Status; got != infraStatusSkipped {
 			t.Errorf("%s: decision status = %q, want skipped", provider, got)
 		}
+	}
+}
+
+// TestCertManagerInstallsForAWebhookCAWithoutAnIssuer is the whole point of splitting the gate.
+//
+// An operator whose admission webhook is `failurePolicy: Fail` and whose serving certificate is
+// annotated `cert-manager.io/inject-ca-from` needs the cert-manager CONTROLLER — on any cloud,
+// with or without DNS, with or without a domain. Refusing it because the cloud cannot solve an
+// ACME challenge is refusing the operator, and that is how `nosql` came to read as a hetzner
+// ceiling when ScyllaDB carries the kind natively (#3228).
+//
+// What must NOT follow is a ClusterIssuer. The issuer template selects on the solver name, so with
+// no solver it would render `dns01:` with an empty body — an issuer that exists and never issues.
+func TestCertManagerInstallsForAWebhookCAWithoutAnIssuer(t *testing.T) {
+	f := certManagerFacts("hetzner")
+	f.WebhookCAAddOns = []string{"scylla-operator"}
+
+	if !f.CertManagerEnabled() {
+		t.Fatal("the controller must install: a fail-closed webhook with no CA rejects every CR the operator owns")
+	}
+	if f.CertManagerIssuerEnabled() {
+		t.Error("hetzner has no DNS01 solver — the ISSUER half must stay closed")
+	}
+	manifest, err := certManagerIssuerManifest(f)
+	if err != nil {
+		t.Fatalf("issuer render: %v", err)
+	}
+	if manifest != "" {
+		t.Errorf("a ClusterIssuer was rendered with no solver — it could never issue:\n%s", manifest)
+	}
+
+	d := certManagerDecision(f)
+	if d.Status != infraStatusInstalled {
+		t.Errorf("decision status = %q, want installed", d.Status)
+	}
+	// The reason must not claim a ClusterIssuer, a domain or a solver — none of them exist here.
+	// A decision naming an issuer nobody created sends the operator looking for it.
+	if strings.Contains(d.Reason, CertManagerIssuerName) {
+		t.Errorf("the reason names a ClusterIssuer that is not created:\n%s", d.Reason)
+	}
+	for _, want := range []string{"NO ClusterIssuer", "scylla-operator", "fails closed"} {
+		if !strings.Contains(d.Reason, want) {
+			t.Errorf("the reason does not say %q — an operator reading it cannot tell why cert-manager is here:\n%s", want, d.Reason)
+		}
+	}
+}
+
+// TestCertManagerIssuerStillWinsWhenBothHold — a cloud that can issue AND has a webhook-CA add-on
+// must still get its ClusterIssuer and the issuer-shaped decision. The webhook arm is additive; it
+// must never shadow the issuing one.
+func TestCertManagerIssuerStillWinsWhenBothHold(t *testing.T) {
+	f := certManagerFacts("aws")
+	f.WebhookCAAddOns = []string{"scylla-operator"}
+
+	if !f.CertManagerIssuerEnabled() || !f.CertManagerEnabled() {
+		t.Fatal("aws with a full fact set must both install and issue")
+	}
+	manifest, err := certManagerIssuerManifest(f)
+	if err != nil {
+		t.Fatalf("issuer render: %v", err)
+	}
+	if manifest == "" {
+		t.Fatal("no ClusterIssuer rendered on a cloud that can issue")
+	}
+	if d := certManagerDecision(f); !strings.Contains(d.Reason, CertManagerIssuerName) {
+		t.Errorf("the issuing decision was shadowed by the webhook-CA one:\n%s", d.Reason)
+	}
+}
+
+// TestWebhookCAAddOnsIsDerivedFromTheInstallSpecs pins the DIRECTION the fact travels.
+//
+// The tempting shortcut is to ask, in Go, "is this hetzner and does the project have a nosql
+// node?". That puts a second copy of the carriage decision here, where it stops agreeing with the
+// TypeScript mapper the day a second operator needs a webhook CA or another cloud carries a kind
+// in-cluster. The spec that CAUSES the requirement is the only thing that states it.
+func TestWebhookCAAddOnsIsDerivedFromTheInstallSpecs(t *testing.T) {
+	vc := &types.ProjectConfig{
+		Provider: "hetzner",
+		AddOns: []types.AddOnInstall{
+			{ID: "cnpg-operator"},
+			{ID: "scylla-operator", RequiresCertManager: true},
+			{ID: "topic-events"},
+		},
+	}
+	got := webhookCAAddOns(vc)
+	if len(got) != 1 || got[0] != "scylla-operator" {
+		t.Fatalf("webhookCAAddOns = %v, want exactly [scylla-operator]", got)
+	}
+
+	// And nothing at all when no spec asks — so the predicate cannot drift on by default, which
+	// would install cert-manager on every cluster in the fleet.
+	vc.AddOns[1].RequiresCertManager = false
+	if got := webhookCAAddOns(vc); len(got) != 0 {
+		t.Errorf("webhookCAAddOns = %v with no spec asking, want empty", got)
 	}
 }
 

@@ -903,8 +903,11 @@ async function buildConfigSnapshot(
 			: [];
 
 		// Fail-closed KIND gate: reject any present component whose KIND the target cloud's
-		// built-in template can't provision (Hetzner: topic/nosql/registry/secret — NOT bucket,
-		// which Hetzner Object Storage provisions natively via minio_s3_bucket). Derived from
+		// built-in template can't provision. NO CLOUD REFUSES ANYTHING TODAY — Hetzner was the last
+		// and nosql its last entry (#3228, ScyllaDB) — so `blocked.size > 0` is false and this gate
+		// does not execute on any real deploy. It stays because the failure it prevents is silent:
+		// the snapshot mapper drops an unmappable component and reports SUCCESS without it. Derived
+		// from
 		// the SAME UNSUPPORTED_KINDS_BY_PROVIDER set the Add-palette hides — a cloud-switch or an
 		// AI-composed graph can smuggle a hidden kind past the palette, and the snapshot mapper
 		// would then silently drop it (SUCCESS without the component). Skipped in BYO-IaC replace
@@ -1088,6 +1091,17 @@ async function buildConfigSnapshot(
 					// exactly as a `queue` node is a RabbitMQ release rather than an AMQP queue. That
 					// is why it needs no bootstrap Job of the kind `secret` and `registry` do.
 					topics,
+					// A `nosql` node maps to an in-cluster ScyllaCluster: Hetzner sells no
+					// DynamoDB-shaped product, so the kind reaches the cluster as an ArgoCD
+					// Application rather than as tofu state.
+					//
+					// Same "a node is one SERVER" rule as `topic` above: the ScyllaCluster is the
+					// server and the application creates its tables, exactly as a `database` node
+					// is a Postgres cluster rather than a schema. Scylla is chosen because the kind
+					// is wide-column (partition key + sort key) and Scylla ships Alternator, a
+					// DynamoDB-compatible API — so a client written against DynamoDB on AWS works
+					// here unchanged (#3228).
+					nosqlTables,
 				}),
 			);
 		}

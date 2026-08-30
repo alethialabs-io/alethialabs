@@ -24,6 +24,7 @@ import { DEFAULT_REGION, type CloudProviderSlug } from "@/lib/cloud-providers";
 import type { EnvironmentSpec } from "@/lib/queries/projects";
 import { globalHref, projectHref, slugify } from "@/lib/routing";
 import type { ScanProposal } from "@/lib/scanner/schema";
+import { PageHeader } from "@repo/ui/page-header";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 
@@ -246,15 +247,11 @@ export function ConfigureProject({
 				>
 					<ChevronLeft className="size-4" />
 				</button>
-				<div className="flex-1">
-					<h1 className="text-2xl font-semibold tracking-tight">
-						Configure your project
-					</h1>
-					<p className="mt-0.5 text-sm text-muted-foreground">
-						Set the essentials — you’ll review and deploy the full design on the
-						canvas.
-					</p>
-				</div>
+				<PageHeader
+					className="flex-1"
+					title="Configure your project"
+					description="Set the essentials — you’ll review and deploy the full design on the canvas."
+				/>
 				<span className="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground sm:block">
 					source · <span className="text-foreground">configure</span> · canvas
 				</span>

@@ -5,10 +5,26 @@
 # rolls its pods on every reconcile if it stamps a checksum annotation. Two catalogued add-ons were
 # shipping exactly that (#2822, #2823). See scripts/addons/check-render-determinism.sh.
 #
-# NOT part of the required per-PR rollup, and deliberately so: the sweep pulls eighteen charts from
-# ten upstream Helm repositories, and an upstream outage must not red a PR that has nothing to do
-# with add-ons. The chart versions are PINNED, so the answer can only change when the catalogue
-# changes — which is precisely what the paths filter below keys on.
+# NOT part of the required per-PR rollup, and deliberately so: the sweeps pull 27 charts from 22
+# upstream Helm repositories, and an upstream outage must not red a PR that has nothing to do with
+# add-ons. The chart versions are PINNED, so the answer can only change when a chart COORDINATE
+# changes — which is what the paths filter below keys on.
+#
+# ONE filter, THREE sweeps. This workflow's single job runs check-render-determinism.sh,
+# check-published-defaults.sh and check-resource-fit.sh as three steps, so every path listed below
+# governs all three and none of them can be gated separately.
+#
+# There are TWO places a coordinate lives, and for a while this filter knew about one of them.
+# #3305 taught the determinism sweep to read `test/e2e/fixtures/hetzner_data_services.json` — the
+# in-cluster carriers for the database, cache, queue, registry, secret, topic and nosql KINDS,
+# generated from `apps/console/lib/cloud-providers/hetzner-services.ts`. Neither path was listed
+# here, so a PR that bumped a data-service chart version and regenerated that fixture ran this
+# workflow ZERO times: the guard could see the second source, CI could not see the second source
+# change. Harbor is rendered from BOTH, which is the whole reason the sweep was widened — so the
+# filter that decides when to run it has to be as wide as the widest sweep it gates.
+#
+# #3316 widens the other two steps to that same fixture. Because they share this filter, they are
+# covered the moment they land, with nothing further to remember here.
 name: Add-on chart guards
 
 on:
@@ -16,6 +32,11 @@ on:
     paths:
       - "apps/console/lib/addons/**"
       - "test/e2e/fixtures/addon_catalog.*.json"
+      # The SECOND chart source — see the header. The fixture is what the guards read; the .ts is
+      # what generates it, and a PR that edits one without regenerating the other is exactly the
+      # drift worth running on.
+      - "test/e2e/fixtures/hetzner_data_services.json"
+      - "apps/console/lib/cloud-providers/hetzner-services*.ts"
       - "scripts/addons/**"
       - ".github/workflows/addon-render-determinism.yml"
   push:
@@ -23,6 +44,8 @@ on:
     paths:
       - "apps/console/lib/addons/**"
       - "test/e2e/fixtures/addon_catalog.*.json"
+      - "test/e2e/fixtures/hetzner_data_services.json"
+      - "apps/console/lib/cloud-providers/hetzner-services*.ts"
       - "scripts/addons/**"
   workflow_dispatch:
 
@@ -40,7 +63,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.16.2
       - uses: actions/setup-node@v7

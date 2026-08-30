@@ -13,3 +13,24 @@
 # receives `existingSecret` and stops minting per render. The ratchet MEASURED that independently
 # ("declared non-deterministic but now stable") — it was not removed because someone believed the
 # fix worked.
+
+# ── The hetzner DATA-SERVICE specs, which this check did not see until #3299. ───────────────────
+# `hetzner-services.ts` renders seven more charts — the in-cluster carriers for the database,
+# cache, queue, registry, secret, topic and nosql node KINDS — from the same pinned coordinates,
+# and often the same chart. Harbor is rendered from BOTH sources, and every hardening the
+# marketplace copy received had to be applied twice because nothing compared them. Twice, it was
+# applied once. These two are what covering the second fixture found on its first run.
+
+hetzner-service.registry-app-images
+# The `registry` node's Harbor. 28 differing lines across core-secret, jobservice-secrets and
+# registry-secret, plus the `checksum/secret-*` annotations they stamp onto the three Deployments —
+# which is what rolls the pods and, on ReadWriteOnce storage, deadlocks the rollout (#3286).
+# #2823 pinned all of this for the marketplace `harbor` add-on through the add-on Secret machinery;
+# the `registry` node path does not use that machinery and never got it. See #3299, which also
+# covers the harder half — this path ships the chart's PUBLISHED `secretKey` and registry password.
+
+hetzner-service.queue-jobs
+# The `queue` node's RabbitMQ mints `password` and `erlang-cookie` per render. Worse than an
+# OutOfSync Application: the cookie is the cluster's shared secret, so rotating it partitions the
+# cluster, and the password is the credential the customer's queue binding hands to their app.
+# See #3304.

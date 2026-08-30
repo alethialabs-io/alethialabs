@@ -123,6 +123,10 @@ exit 0
 type covBuildKubeRule struct {
 	match  string
 	stdout string
+	// stderr is what the rule writes to fd 2. It exists because the stub could previously only
+	// succeed or fail SILENTLY, and a stub that cannot produce stderr cannot show a bug in how
+	// stderr is handled — which is exactly where `kubectlOutput` was discarding it.
+	stderr string
 	exit   int
 }
 
@@ -134,8 +138,11 @@ func covBuildKubectlStub(t *testing.T, s *covBuildStubs, defaultExit int, rules 
 		for i, r := range rules {
 			name := fmt.Sprintf("kout-%d", i)
 			s.write(t, name, r.stdout)
-			fmt.Fprintf(&b, "  *%s*) cat %s; exit %d;;\n",
-				covBuildShQuote(r.match), covBuildShQuote(filepath.Join(s.dir, name)), r.exit)
+			errName := fmt.Sprintf("kerr-%d", i)
+			s.write(t, errName, r.stderr)
+			fmt.Fprintf(&b, "  *%s*) cat %s; cat %s >&2; exit %d;;\n",
+				covBuildShQuote(r.match), covBuildShQuote(filepath.Join(s.dir, name)),
+				covBuildShQuote(filepath.Join(s.dir, errName)), r.exit)
 		}
 		b.WriteString("esac\n")
 	}
@@ -1589,6 +1596,19 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 	ctx := context.Background()
 	const digest = "sha256:aa11bb22cc33dd44ee55ff667788990011223344556677889900aabbccddeeff"
 
+	// The stub answers any `get pods` with the same canned stdout, so a behavioural assertion alone
+	// would pass just as well with the old `items[0]` jsonpath — it would be a test of
+	// parseKanikoDigest, not of the read. These two pin the ARGV, which is what actually changed.
+	assertReadsEveryPod := func(t *testing.T, s *covBuildStubs) {
+		t.Helper()
+		if !s.sawCall("get pods", "range .items[*]") {
+			t.Errorf("the termination-message read is not ranging over every pod: %v", s.calls())
+		}
+		if s.sawCall("get pods", ".items[0]") {
+			t.Errorf("the arbitrary-pod read is back: %v", s.calls())
+		}
+	}
+
 	run := func(t *testing.T, terminated, logs string) (map[string]string, string, error) {
 		t.Helper()
 		t.Setenv("KUBECONFIG", "")
@@ -1604,6 +1624,7 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 		out, errl := covBuildLoggers(t, api)
 		identity := &CloudIdentity{Provider: "hetzner", AccountID: "acct-1"}
 		err := w.executeBuild(ctx, covBuildJob(url), "", identity, out, errl)
+		assertReadsEveryPod(t, s)
 
 		var result map[string]string
 		for _, u := range api.getStatusUpdates() {
@@ -1615,7 +1636,7 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 	}
 
 	t.Run("termination message", func(t *testing.T) {
-		result, _, err := run(t, "image pushed "+digest, "")
+		result, _, err := run(t, "image pushed registry.test/web@"+digest, "")
 		if err != nil {
 			t.Fatalf("build: %v", err)
 		}
@@ -1634,6 +1655,101 @@ func TestBuild_ExecuteBuild_Digest(t *testing.T) {
 		}
 		if result["web"] != "registry.test/web@"+digest {
 			t.Errorf("digest = %q, want the log-derived one", result["web"])
+		}
+	})
+
+	// THE RETRY. backoffLimit is 1 by default, so a build that failed once and succeeded on the
+	// retry leaves TWO pods. The termination-message read used to take `items[0]`, and half the
+	// time that is the failed attempt — which carries no digest, because kaniko writes the digest
+	// file only on success. Reading every pod is what makes the outcome independent of the order
+	// the API server happens to list them in.
+	t.Run("a failed attempt listed first must not hide the successful one's digest", func(t *testing.T) {
+		// Two termination messages, newline-joined, the empty one first — the jsonpath now ranges
+		// over `.items[*]` and produces exactly this shape.
+		result, _, err := run(t, "\nimage pushed registry.test/web@"+digest, "")
+		if err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		if result["web"] != "registry.test/web@"+digest {
+			t.Errorf("digest = %q — a failed attempt listed first swallowed the successful one, "+
+				"and the build silently degraded to a tag", result["web"])
+		}
+	})
+
+	// A selector read that stops at an unopenable pod has already written the ones before it, and
+	// the successful attempt — the only one carrying a digest — may be among them. Failing on the
+	// error while holding the answer degrades a digest-pinned image to a tag for a reason that is
+	// in hand.
+	t.Run("a log read that stopped early still yields its digest", func(t *testing.T) {
+		t.Setenv("KUBECONFIG", "")
+		t.Setenv("HOME", t.TempDir())
+		_, url := covBuildGitRepo(t)
+		s := covBuildNewStubs(t)
+		covBuildTofuStub(t, s)
+		s.write(t, "out.output", covBuildTofuOutputs("registry.test/web"))
+		covBuildKubectlStub(t, s, 0,
+			covBuildKubeRule{match: "get job", stdout: "Complete=True ", exit: 0},
+			covBuildKubeRule{match: "get pods", stdout: "no digest", exit: 0},
+			covBuildKubeRule{
+				match:  "logs",
+				stdout: "INFO pushed registry.test/web@" + digest + "\n",
+				stderr: `error: container "kaniko" in pod "build-web-2" is waiting to start: ContainerCreating`,
+				exit:   1,
+			},
+		)
+		api := &covBuildAPI{mockAPI: &mockAPI{}, gitToken: "ghp_test"}
+		w := covBuildRunner(t, api)
+		out, errl := covBuildLoggers(t, api)
+		identity := &CloudIdentity{Provider: "hetzner", AccountID: "acct-1"}
+		if err := w.executeBuild(ctx, covBuildJob(url), "", identity, out, errl); err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		var result map[string]string
+		for _, u := range api.getStatusUpdates() {
+			if m, ok := u.metadata[buildResultKey].(map[string]string); ok {
+				result = m
+			}
+		}
+		if result["web"] != "registry.test/web@"+digest {
+			t.Errorf("digest = %q — the partial log was discarded and the image degraded to a tag", result["web"])
+		}
+	})
+
+	// `-o jsonpath` fails the whole read on the first pod with no containerStatuses — Pending or
+	// evicted — after emitting the ones before it. Ranging over every item makes that more likely
+	// than items[0] did, and the successful attempt's message may be among the ones already out.
+	t.Run("a jsonpath read that errored still yields the digest it printed", func(t *testing.T) {
+		t.Setenv("KUBECONFIG", "")
+		t.Setenv("HOME", t.TempDir())
+		_, url := covBuildGitRepo(t)
+		s := covBuildNewStubs(t)
+		covBuildTofuStub(t, s)
+		s.write(t, "out.output", covBuildTofuOutputs("registry.test/web"))
+		covBuildKubectlStub(t, s, 0,
+			covBuildKubeRule{match: "get job", stdout: "Complete=True ", exit: 0},
+			covBuildKubeRule{
+				match:  "get pods",
+				stdout: "image pushed registry.test/web@" + digest + "\n",
+				stderr: `error: error executing jsonpath "...": containerStatuses is not found`,
+				exit:   1,
+			},
+			covBuildKubeRule{match: "logs", stdout: "", exit: 0},
+		)
+		api := &covBuildAPI{mockAPI: &mockAPI{}, gitToken: "ghp_test"}
+		w := covBuildRunner(t, api)
+		out, errl := covBuildLoggers(t, api)
+		identity := &CloudIdentity{Provider: "hetzner", AccountID: "acct-1"}
+		if err := w.executeBuild(ctx, covBuildJob(url), "", identity, out, errl); err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		var result map[string]string
+		for _, u := range api.getStatusUpdates() {
+			if m, ok := u.metadata[buildResultKey].(map[string]string); ok {
+				result = m
+			}
+		}
+		if result["web"] != "registry.test/web@"+digest {
+			t.Errorf("digest = %q — a jsonpath error discarded a message that carried the answer", result["web"])
 		}
 	})
 
@@ -1716,8 +1832,17 @@ func TestBuild_ExecuteBuild_Failures(t *testing.T) {
 			!strings.Contains(err.Error(), "build web:") {
 			t.Fatalf("want a per-service build error, got %v", err)
 		}
-		if !s.sawCall("logs", "job/build-web") {
+		// By SELECTOR and with --prefix: `kubectl logs job/<name>` picks one pod arbitrarily, and a
+		// build Job runs to its backoffLimit — so an operator could be shown a retry instead of the
+		// failure that started it.
+		if !s.sawCall("logs", "-l job-name=build-web") {
 			t.Errorf("the kaniko log tail must be surfaced: %v", s.calls())
+		}
+		if !s.sawCall("logs", "--prefix") {
+			t.Errorf("every attempt must be distinguishable in the tail: %v", s.calls())
+		}
+		if s.sawCall("logs", "job/build-web") {
+			t.Errorf("the one-pod read is back: %v", s.calls())
 		}
 	})
 
@@ -1850,5 +1975,41 @@ func TestBuild_ExtractOutputStr(t *testing.T) {
 	}, "k")
 	if len(got) != 1 || got["a"] != "x" {
 		t.Errorf("non-string / empty members must be dropped: %v", got)
+	}
+}
+
+// `.Output()` fills ExitError.Stderr and nothing was reading it, so a missing CRD, an RBAC refusal
+// and an unreachable API server all reached the operator as `exit status 1`.
+func TestBuild_KubectlOutput_SurfacesStderr(t *testing.T) {
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("HOME", t.TempDir())
+	s := covBuildNewStubs(t)
+	const refusal = `Error from server (Forbidden): pods is forbidden: User "system:serviceaccount:x:y" cannot list resource "pods"`
+	covBuildKubectlStub(t, s, 0, covBuildKubeRule{match: "get pods", stderr: refusal, exit: 1})
+
+	w := covBuildRunner(t, &covBuildAPI{mockAPI: &mockAPI{}})
+	_, err := w.kubectlOutput(context.Background(), "get", "pods", "-n", "alethia-build")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if !strings.Contains(err.Error(), "Forbidden") {
+		t.Errorf("kubectl said why and the operator gets %q instead", err)
+	}
+}
+
+// And a failure with nothing on stderr must not gain a dangling colon.
+func TestBuild_KubectlOutput_SilentFailureHasNoDanglingColon(t *testing.T) {
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("HOME", t.TempDir())
+	s := covBuildNewStubs(t)
+	covBuildKubectlStub(t, s, 0, covBuildKubeRule{match: "get pods", exit: 1})
+
+	w := covBuildRunner(t, &covBuildAPI{mockAPI: &mockAPI{}})
+	_, err := w.kubectlOutput(context.Background(), "get", "pods", "-n", "alethia-build")
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if strings.HasSuffix(strings.TrimSpace(err.Error()), ":") {
+		t.Errorf("the message ends in a bare colon: %q", err)
 	}
 }

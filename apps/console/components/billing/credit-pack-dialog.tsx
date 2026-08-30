@@ -12,6 +12,7 @@
 // the same `paidTiersEnabled` switch as the tier chooser: until the deployment mints its
 // Stripe AI prices the packs render disabled ("Coming soon").
 
+import { formatMoney } from "@repo/format";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -48,9 +49,14 @@ interface CreditPackDialogProps {
 	onUpgradeInstead?: () => void;
 }
 
-/** Format a USD-cent amount as a plain dollar figure (packs are billed in USD). */
+/**
+ * Format a USD-cent amount as a plain dollar figure (packs are billed in USD).
+ *
+ * `formatMoney` rather than a local `$${cents / 100}`: the hand-rolled form dropped a trailing
+ * zero, so a $12.50 pack read `$12.5` here and `$12.50` on the invoice for the same purchase.
+ */
 function usd(cents: number): string {
-	return `$${(cents / 100).toLocaleString("en-US")}`;
+	return formatMoney(cents);
 }
 
 /** The pack with the lowest $/credit (the "Best value" badge). */

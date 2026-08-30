@@ -167,19 +167,19 @@ maintainer must actually wire can be `unwired`, and a gate the workflow never me
 
 ## Where the programme actually is
 
-**19 of 30 proof cells are proven.** 1 failing · 1 stale (cause fixed, needs a re-run) · 0 blocked · 9 never run.
+**23 of 35 proof cells are proven.** 0 failing · 0 stale (cause fixed, needs a re-run) · 0 blocked · 12 never run.
 
 A cell is `proven` only when the proof ledger's surviving claim is PASS **and** its bundle is a committed path that exists. A PASS carrying an expiring CI run tag is not a proof — that is why every 2026-07-22 row was retracted, and the rule is enforced here rather than remembered.
 
 ### Proof grid — cloud × dimension
 
-| cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **aws** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
-| **gcp** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
-| **azure** | ✅ | ✅ | · | ✅ | ✅ | ✅ |
-| **alibaba** | · | · | · | · | · | · |
-| **hetzner** | ✅ | ♻️ | ❌ | ✅ | ✅ | ✅ |
+| cloud | floor | all kinds | 18 add-ons | GitOps repos | BYO-IaC | day-2 | CLI-driven |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **aws** | ✅ | ✅ | · | ✅ | ✅ | ✅ | · |
+| **gcp** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
+| **azure** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
+| **alibaba** | · | · | · | · | · | · | · |
+| **hetzner** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | · |
 
 Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale · ⚠️ contested · — ceiling · 🔶 deferred · 💰 cost
 
@@ -192,17 +192,19 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 - `aws/day2` **proven** — ledger 2026-08-28, bundle `demos/proofs/aws/20260828T190408Z`
 - `gcp/floor` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T120037Z`
 - `gcp/maxconfig` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T124233Z`
+- `gcp/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/gcp/20260829T093816Z` (⚠️ argocd counts unmeasured: pre-#3281 binary (A0.6's convergence loop wrote no summary); the assertion DID run and pass — run 33243600150 logs `all 20 asserted ArgoCD Applications are Healthy+Synced (1 withheld)`)
 - `gcp/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/gcp/20260825T200519Z`
 - `gcp/byo-iac` **proven** — ledger 2026-08-28, bundle `demos/proofs/gcp/20260828T110456Z`
 - `gcp/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/gcp/20260825T210602Z`
 - `azure/floor` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T215237Z`
 - `azure/maxconfig` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T211849Z`
+- `azure/addons` **proven** — ledger 2026-08-30, bundle `demos/proofs/azure/20260830T005214Z`
 - `azure/gitops` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T210320Z`
 - `azure/byo-iac` **proven** — ledger 2026-08-27, bundle `demos/proofs/azure/20260827T204358Z`
 - `azure/day2` **proven** — ledger 2026-08-26, bundle `demos/proofs/azure/20260825T235236Z`
 - `hetzner/floor` **proven** — ledger 2026-08-27, bundle `demos/proofs/hetzner/20260827T192915Z`
-- `hetzner/maxconfig` **stale** — ledger 2026-08-25 (via the `full` composite run) — but #2568 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix (#2568)
-- `hetzner/addons` **failing** — ledger 2026-08-27 (#2717)
+- `hetzner/maxconfig` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T105705Z`
+- `hetzner/addons` **proven** — ledger 2026-08-29, bundle `demos/proofs/hetzner/20260829T085104Z`
 - `hetzner/gitops` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/2026-08-25T175213Z`
 - `hetzner/byo-iac` **proven** — ledger 2026-08-27, bundle `demos/proofs/hetzner/20260827T210204Z`
 - `hetzner/day2` **proven** — ledger 2026-08-25, bundle `demos/proofs/hetzner/20260825T192100Z`
@@ -211,38 +213,34 @@ Legend: ✅ proven · ❌ failing · ⛔ blocked · · never-run · ♻️ stale
 
 ### The mechanical next
 
-**`hetzner/maxconfig`** — stale. ledger 2026-08-25 (via the `full` composite run) — but #2568 is CLOSED, so the cause is fixed and this needs a fresh run, not a fix
+**`alibaba/floor`** — never_run. no surviving ledger claim
 
 Failing cells rank above never-run ones: a red cell already has a diagnosed cause and costs nothing new to re-drive, where a never-run cell needs its gate enabled first. This RANKS; it never claims — `scripts/claim-work.sh` claims.
 
 <details><summary>The next 10</summary>
 
-1. `hetzner/maxconfig` — stale
-1. `hetzner/addons` — failing
 1. `alibaba/floor` — never_run
 1. `alibaba/maxconfig` — never_run
 1. `aws/addons` — never_run
-1. `gcp/addons` — never_run
-1. `azure/addons` — never_run
 1. `alibaba/addons` — never_run
 1. `alibaba/gitops` — never_run
 1. `alibaba/byo-iac` — never_run
+1. `alibaba/day2` — never_run
+1. `aws/cli-demo` — never_run
+1. `gcp/cli-demo` — never_run
+1. `azure/cli-demo` — never_run
 
 </details>
 
 ### Capability surface
 
-**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 47 carried by tofu · 6 carried in-cluster · 1 cloud ceilings · **0 deferred (our debt)** · 1 excluded by cost.
+**Proof grid (11 provisionable kinds × 5 clouds = 55 cells):** 47 carried by tofu · 7 carried in-cluster · 0 cloud ceilings · **0 deferred (our debt)** · 1 excluded by cost.
 
 Excluded by **cost** — the cloud offers the kind and the product ships it, but provisioning it in the harness would buy something not billed by the hour. These are spend decisions, not capability limits, and the price is printed so the decision can be re-taken rather than inherited:
 
 - `alibaba/registry` → alicloud_cr_ee_instance — 150 USD/month (Basic, eu-central-1; 1800/year, no term discount; Advanced 617; no tier below Basic), bought PER RUN because instance_name carries the environment
 
-Cloud ceilings (the cloud genuinely does not offer the kind — not our debt):
-
-- `hetzner/nosql`
-
-**Parity grid (19 canvas NodeKinds × 5 clouds):** hetzner refuses 1 (nosql); every other cloud backs all 19.
+**Parity grid (19 canvas NodeKinds × 5 clouds):** every cloud backs every kind.
 
 ### Driven from the CLI
 
@@ -267,11 +265,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33190000558 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 33184624136 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 33184624136 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33184624136 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 33199532768 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33249968471 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 33246836785 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 33249209041 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33246836785 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 33247735979 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -283,22 +281,14 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 | GitOps repos | `E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN` | ✅ wired: `E2E_ARGO_APPS_REPO`<br>✅ wired: `E2E_GIT_TOKEN` | a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource |
 | BYO-IaC | `ALETHIA_E2E_BYO_IAC` | ✅ by dimension: `ALETHIA_E2E_BYO_IAC` | a customer OpenTofu root module is refused when unsafe, applied through the state proxy, drifts, heals and destroys — with state cleared |
 | day-2 | `ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS` | ✅ by dimension: `ALETHIA_E2E_SOAK`<br>✅ wired: `E2E_DAY2_ACCESS` | a real access path beyond the soak — kubeconfig / ArgoCD surface |
+| CLI-driven | `ALETHIA_E2E_CLI_DEMO_PROVISION` | ✅ by dimension: `ALETHIA_E2E_CLI_DEMO_PROVISION` | a floor-shaped cluster provisioned through the real `alethia` binary rather than a seeded job row — the ACTOR, not the surface area |
 
 ### Open REDs
 
-| cell | state | issue | issue state |
-|---|---|---|:---:|
-| `hetzner/maxconfig` | stale | #2568 | ⛔ **CLOSED** |
-| `hetzner/addons` | failing | #2717 | open |
-
-♻️ **1 cell(s) cite a CLOSED issue**, so they are rendered `stale` rather than `failing`: the cause is fixed and what they need is a **re-run**, not a fix. They rank first in the mechanical next for exactly that reason — it is the cheapest action on the board.
-
-The ledger row itself is not wrong and is not rewritten (it is append-only, and it was true when written). What was wrong was reading it as open work — the same defect that had the parity board citing four closed issues as live floor blockers.
-
+No cell is failing or blocked.
 ### Blocked on a human
 
 - #3145 — cli: two projects may share a name — silent-oldest is deterministic, but is it the contract?
-- #2788 — byo: --git-credential-id accepts an id that nothing in the product can create
 - #2482 — release: the console never learns about a new CLI version — the notification's credentials cannot mint from a tag
 - #2465 — programme: two of the six MVP predicates assert something no script can check
 - #2462 — infra(e2e): make the e2e-dev OIDC trust widening authoritative — four applies, currently hand-applied
@@ -314,7 +304,7 @@ The ledger row itself is not wrong and is not rewritten (it is append-only, and 
 
 | board | recorded debt |
 |---|---|
-| `infra/offer-exclusions.yaml` | exclusions: 25 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
+| `infra/offer-exclusions.yaml` | exclusions: 26 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/config-carriage-exclusions.yaml` | exclusions: 31 · baseline: 0 · wired: 2 · carried_in_cluster: 6 |
 | `infra/template-parity-exclusions.yaml` | exclusions: 0 · baseline: 301 · uniform: 12 |
 
@@ -330,11 +320,11 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-08-28T18:32:05Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-08-29T12:37:53Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 
-Ledger rows read: **56** · surviving claims: **23** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
+Ledger rows read: **60** · surviving claims: **26** (a `RETRACTED` row voids a claim rather than replacing it, so surviving < rows is expected).
 
 _Generated by `scripts/programme-rollup.mjs`. Do not edit below the marker — run `pnpm gen:programme`._
 

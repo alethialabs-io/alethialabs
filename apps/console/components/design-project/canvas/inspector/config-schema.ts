@@ -1582,6 +1582,19 @@ export const CONFIG_SCHEMA: ConfigSchemaMap = {
 						type: "switch",
 						label: "Point-in-time recovery",
 						description: "Continuous backups for restore to any second in the retention window.",
+						// Hetzner's nosql kind is an in-cluster ScyllaDB, and Scylla has no
+						// continuous-backup equivalent: Scylla Manager takes SCHEDULED snapshots,
+						// which restore to a backup point, not to any second. Offering the switch
+						// anyway would be the exact state the cloud-parity rule forbids — offered,
+						// unbuildable, and silent — so it is WITHDRAWN here rather than recorded as
+						// carried in-cluster, which would claim delivery of something Scylla does
+						// not do. `unavailableWhen`, not `visibleWhen`: the field stays visible with
+						// its reason, so the exclusion is legible to the user and measurable by the
+						// offer-parity guard instead of vanishing from the surface.
+						unavailableWhen: (_c, { provider }) =>
+							provider === "hetzner"
+								? "Hetzner has no managed NoSQL service, so this table runs as an in-cluster ScyllaDB. Scylla backs up on a schedule rather than continuously, so there is no point-in-time restore to offer. Every other cloud here supports it."
+								: null,
 					},
 				],
 			},

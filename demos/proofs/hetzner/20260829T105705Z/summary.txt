@@ -1,0 +1,28 @@
+Starting deployment for project: alethia-nl (provider: hetzner)
+Verification gate: verdict=warn (pass=1 fail=0 warn=1 not_evaluable=1, catalog elench-controls-0.5.2)
+Evidence receipt signed (key f956b4d54fa8f713, plan sha256 f5d8d18531f0…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 36 added, 0 changed, 0 destroyed.
+Waiting for the cluster to become reachable (timeout 8m0s)...
+Cluster API server is reachable.
+4/7 nodes Ready.
+ArgoCD installed.
+ArgoCD ready (no ingress on this cloud yet — access via port-forward; retrieve the admin password on-demand from argocd-initial-admin-secret).
+Deployment completed successfully.
+Starting deployment for project: alethia-nl (provider: hetzner)
+Starting deployment for project: alethia-nl (provider: hetzner)
+Verification gate: verdict=pass (pass=2 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key f956b4d54fa8f713, plan sha256 f48197a0c9a2…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+Deployment completed successfully.
+Starting deployment for project: alethia-nl (provider: hetzner)
+Verification gate: verdict=pass (pass=2 fail=0 warn=0 not_evaluable=0, catalog elench-controls-0.5.2)
+Evidence receipt signed (key f956b4d54fa8f713, plan sha256 afe3b742f8f8…)
+Applying OpenTofu changes...
+Applying OpenTofu plan...
+Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
+Deployment completed successfully.
+Destroy complete! Resources: 1 destroyed.

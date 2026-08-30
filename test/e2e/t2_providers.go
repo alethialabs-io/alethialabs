@@ -264,14 +264,24 @@ func t2LookupProvider(name string) (t2Provider, bool) {
 	return p, ok
 }
 
-// t2SupportedProviders lists the table's provider keys (sorted) for error messages.
-func t2SupportedProviders() string {
+// t2ProviderNames lists the table's provider keys, sorted.
+//
+// Derived rather than hand-typed so a cloud cannot join the harness without joining everything
+// keyed on the cloud list. TestA05FixtureExistsForEveryProvider is the first consumer: adding a
+// sixth provider here now reds until its config-snapshot fixture is generated, instead of leaving
+// A0.5 to fail at load time on a real, billable run.
+func t2ProviderNames() []string {
 	keys := make([]string, 0, len(t2ProviderTable))
 	for k := range t2ProviderTable {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	return strings.Join(keys, ", ")
+	return keys
+}
+
+// t2SupportedProviders lists the table's provider keys (sorted) for error messages.
+func t2SupportedProviders() string {
+	return strings.Join(t2ProviderNames(), ", ")
 }
 
 // t2AllEnvPresent reports whether every named env var is non-empty (after trimming).

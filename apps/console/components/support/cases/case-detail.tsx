@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { PageHeader } from "@repo/ui/page-header";
 import { formatBytes, formatDate } from "@repo/format";
 import { Button } from "@repo/ui/button";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -103,29 +104,28 @@ export function CaseDetail({
 					My cases
 				</Button>
 
-				<div className="flex flex-wrap items-start justify-between gap-4">
-					<div className="min-w-0 space-y-2">
-						<div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-							{formatCaseNumber(supportCase.case_number)}
-						</div>
-						<h1 className="text-lg font-medium text-foreground">
-							{supportCase.subject}
-						</h1>
-						<div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-							<CaseStatusBadge status={supportCase.status} />
-							<CaseSeverityBadge severity={supportCase.severity} />
-							<span>{SUPPORT_CASE_TYPE_LABELS[supportCase.type]}</span>
-							<span aria-hidden>·</span>
-							<span>{SUPPORT_CATEGORY_LABELS[supportCase.category]}</span>
-							<span aria-hidden>·</span>
-							<span>Opened {formatDate(supportCase.created_at)}</span>
-						</div>
-						{/* Structured classification (Workstream B). The control shows a picker only
-						    for org:edit holders (org taxonomy is an admin action), else read-only chips. */}
-						<ClassificationControl kind="support_case" id={caseId} canEdit />
-
+				<div className="space-y-2">
+					<div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+						{formatCaseNumber(supportCase.case_number)}
 					</div>
-					<CaseActions caseId={caseId} status={supportCase.status} />
+					<PageHeader
+						title={supportCase.subject}
+						description={
+							<span className="flex flex-wrap items-center gap-2 text-xs">
+								<CaseStatusBadge status={supportCase.status} />
+								<CaseSeverityBadge severity={supportCase.severity} />
+								<span>{SUPPORT_CASE_TYPE_LABELS[supportCase.type]}</span>
+								<span aria-hidden>·</span>
+								<span>{SUPPORT_CATEGORY_LABELS[supportCase.category]}</span>
+								<span aria-hidden>·</span>
+								<span>Opened {formatDate(supportCase.created_at)}</span>
+							</span>
+						}
+						actions={<CaseActions caseId={caseId} status={supportCase.status} />}
+					/>
+					{/* Structured classification (Workstream B). The control shows a picker only
+					    for org:edit holders (org taxonomy is an admin action), else read-only chips. */}
+					<ClassificationControl kind="support_case" id={caseId} canEdit />
 				</div>
 			</div>
 

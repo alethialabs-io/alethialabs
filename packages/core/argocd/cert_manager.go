@@ -104,12 +104,18 @@ type certManagerIssuerData struct {
 	IssuerName string
 }
 
-// certManagerIssuerManifest renders the ClusterIssuer for these facts, or "" when cert-manager
-// does not ship on this deploy at all. It reads CertManagerEnabled — the SAME predicate the
-// Application template gates on — so the issuer and the controller can never disagree about
-// whether cert-manager is present.
+// certManagerIssuerManifest renders the ClusterIssuer for these facts, or "" when this deploy
+// cannot honestly issue. It reads CertManagerIssuerEnabled — NOT CertManagerEnabled, which is now
+// the wider CONTROLLER gate.
+//
+// The distinction is load-bearing rather than cosmetic. The controller may be installed purely to
+// inject an operator's webhook CA, on a cloud with no DNS01 solver at all; the template below
+// renders `spec.acme.solvers[0].dns01` and then selects on the solver name, so with Solver == ""
+// every arm is false and it would emit a `dns01:` key with an empty body — a ClusterIssuer that
+// exists, never issues, and reports nothing. The narrower predicate is what keeps that
+// unrepresentable.
 func certManagerIssuerManifest(facts *InfraFacts) (string, error) {
-	if !facts.CertManagerEnabled() {
+	if !facts.CertManagerIssuerEnabled() {
 		return "", nil
 	}
 	var buf bytes.Buffer

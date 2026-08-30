@@ -95,6 +95,7 @@ on:
           - byo-iac
           - byo
           - day2
+          - cli-demo
           - full
         default: ""
       full_bar:
@@ -110,8 +111,141 @@ permissions:
   contents: read
 
 jobs:
+  # ── Which dimension is this, resolved ONCE, before anything is built or bought. ──
+  #
+  # `provision` resolves the dimension again for its own env, from the SAME pure script with the
+  # SAME inputs — that is mirroring one deriver, not forking it (#1755). This job exists only
+  # because a job-level `if:` cannot call a script, and the runner-image build below has to be
+  # skippable: it is 8 minutes that only a vault-installing dimension needs.
+  resolve:
+    name: Resolve dimension
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      dimension: ${{ steps.d.outputs.dimension }}
+      heavy: ${{ steps.d.outputs.heavy }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: d
+        env:
+          EVENT: ${{ github.event_name }}
+          DISPATCH_FULL: ${{ github.event.inputs.full_bar }}
+          DISPATCH_DIMENSION: ${{ github.event.inputs.dimension }}
+          SCHEDULE: ${{ github.event.schedule }}
+          E2E_SOAK: ${{ vars.E2E_SOAK }}
+        run: |
+          dim="$(bash scripts/e2e/resolve-dimension.sh)"
+          heavy="$(bash scripts/e2e/resolve-dimension.sh --heavy "$dim")"
+          {
+            echo "dimension=$dim"
+            echo "heavy=$heavy"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice::dimension=$dim heavy=$heavy"
+
+  # ── The image the in-cluster bootstrap Jobs run, built FROM THE COMMIT UNDER TEST. ──
+  #
+  # WHY THIS EXISTS. `EnsureAddOnBootstraps` and `EnsureHetznerVault` render a one-shot Job whose
+  # image is `selfimage.Ref()`. The e2e runs the runner as a NATIVELY BUILT BINARY, so neither
+  # ALETHIA_RUNNER_IMAGE nor the baked ALETHIA_RUNNER_SELF_IMAGE is set, `Ref()` correctly returns
+  # "", and both renderers fail closed with "refusing to render a Vault bootstrap Job with no
+  # runner image". The add-on then sits Progressing forever. That is why `addon-vault` has never
+  # been green on any cloud, and why hetzner/maxconfig's `secrets` cell — which needs a Ready
+  # ClusterSecretStore, i.e. an actually-UNSEALED Vault — could not pass either (#3216).
+  #
+  # WHY NOT JUST POINT AT A PUBLISHED TAG. Because the e2e would then prove a DIFFERENT BINARY
+  # than the one it is testing: a released image is built from some earlier commit, while
+  # everything else in the run is built from this SHA. Two binaries in one run is how a regression
+  # ships green — the run proves something nobody ships, or ships something nobody proved. So the
+  # image is built here, from this commit, and consumed BY DIGEST (below) rather than by tag, so
+  # there is no tag-reuse window and no `retag-unchanged` class of staleness to guard against.
+  #
+  # WHY IT IS ITS OWN JOB. `packages: write` and NOTHING else — no `id-token: write`, no cloud
+  # credential step, no SSH. The `provision` job's permission block is untouched, so the job that
+  # holds live credentials for five clouds never gains registry-write. Per-job permissions are
+  # already how this workflow separates `provision` from `rollup`.
+  runner-image:
+    name: Publish the runner image the bootstrap Jobs run
+    needs: resolve
+    # Only a dimension that installs Vault needs it. `heavy` is true for exactly maxconfig, addons
+    # and full — derived by resolve-dimension.sh from the FIDELITY, so it cannot drift from the
+    # set of dimensions that switch ALL_ADDONS/MAX_CONFIG on.
+    if: ${{ needs.resolve.outputs.heavy == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # amd64 only: every heavy node shape in this workflow is amd64 (t3/e2-standard/E2s_v3/cpx),
+      # so the arm64 half deploy-console builds for the fleet would be 5 minutes bought for nothing.
+      - name: Build runner-base (amd64)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/runner/Dockerfile.base
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ github.sha }}
+          tags: ghcr.io/alethialabs-io/runner-base:e2e-${{ github.sha }}
+          push: true
+          # BOTH scopes, own first. This job WRITES e2e-runner-base-amd64, so reading only
+          # deploy-console's scope meant every heavy dispatch paid the full build while the cache
+          # it had just written was never read by anything. deploy-console's stays as the fallback
+          # for the first run after a cache eviction — it is built from the same Dockerfile.
+          cache-from: |
+            type=gha,scope=e2e-runner-base-amd64
+            type=gha,scope=runner-base-amd64
+          cache-to: type=gha,mode=max,scope=e2e-runner-base-amd64
+      - name: Build runner (amd64)
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/runner/Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ github.sha }}
+            RUNNER_BASE=ghcr.io/alethialabs-io/runner-base:e2e-${{ github.sha }}
+            SELF_IMAGE=ghcr.io/alethialabs-io/runner:e2e-${{ github.sha }}
+          tags: ghcr.io/alethialabs-io/runner:e2e-${{ github.sha }}
+          push: true
+          cache-from: |
+            type=gha,scope=e2e-runner-amd64
+            type=gha,scope=runner-amd64
+          cache-to: type=gha,mode=max,scope=e2e-runner-amd64
+      # Consume the DIGEST, never the tag. A tag can be moved; a digest names these exact bytes, so
+      # the cluster cannot pull an image built from a different commit however the tag is reused.
+      - name: Pin the digest
+        id: ref
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          if [ -z "$DIGEST" ]; then
+            echo "::error::the build produced no digest — refusing to hand the run an unpinned image"
+            exit 1
+          fi
+          echo "image=ghcr.io/alethialabs-io/runner@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "::notice::bootstrap Job image ghcr.io/alethialabs-io/runner@${DIGEST} (tag e2e-${GITHUB_SHA})"
+
   provision:
     name: Provision + verify + teardown (real cloud)
+    needs: [resolve, runner-image]
+    # `needs:` implies success(), and a skipped dependency is NOT a success — so without this the
+    # whole provision matrix would silently skip on every non-heavy dimension (floor, gitops,
+    # byo-iac, day2), which is every cheap run. `!cancelled()` rather than `always()` so a Ctrl-C
+    # still cancels, and an explicit `!= 'failure'` so a BROKEN image build stops the run before it
+    # buys a cluster it cannot finish.
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.runner-image.result != 'failure' }}
     runs-on: ubuntu-latest
     # `id-token: write` mints the GitHub OIDC token the AWS path exchanges for the
     # `alethia-e2e-nightly` role (aws-actions/configure-aws-credentials). This is SAFE: the
@@ -454,6 +588,8 @@ jobs:
               echo "::notice::DAY-2 dimension — floor shape, then the A0.3 soak for ${soak:-10m} with its FATAL drift check." ;;
             gitops | byo)
               echo "::notice::GITOPS dimension — floor shape plus the A0.6 apps-repo + BYO Helm chart proof, REQUIRED on this dimension (it reds rather than skipping when the apps-repo env is unset). This is NOT the BYO-IaC custody chain; that is the byo-iac dimension." ;;
+            cli-demo)
+              echo "::notice::CLI-DEMO dimension — a FLOOR-shaped cluster provisioned through the real \`alethia\` binary rather than a seeded job row (MVP predicate 4). No max-config, no add-on sweep, no day-2 soak: what is under test is the ACTOR, not the surface area. Needs a built console and a seeded service token, so it is dispatch-only by construction." ;;
             byo-iac)
               echo "::notice::BYO-IaC dimension — floor shape plus the seven-job custody chain: a customer OpenTofu module refused when unsafe, applied through the state proxy, drifted, healed, destroyed, state cleared. No partial credit." ;;
             *)
@@ -1420,6 +1556,19 @@ jobs:
           #    Both plain VARIABLES. Unset ⇒ empty ⇒ a clean skip. ──
           ALETHIA_E2E_CLI_DEMO: ${{ vars.E2E_CLI_DEMO }}
           ALETHIA_E2E_CLI_BIN: ${{ vars.E2E_CLI_BIN }}
+          # ── The image the in-cluster bootstrap Jobs run (#3216). `selfimage.Ref()` reads this
+          #    FIRST, ahead of the ALETHIA_RUNNER_SELF_IMAGE a published image bakes in — which is
+          #    exactly the override it was built for, and which nothing that shipped ever set.
+          #
+          #    A DIGEST, from the runner-image job, built from THIS commit. Not a released tag: the
+          #    e2e must not prove a binary built from a different commit than the one under test.
+          #
+          #    EMPTY on a non-heavy dimension, because the job is skipped there — and empty is the
+          #    correct answer, not a broken one. `Ref()` returns "", both renderers fail closed and
+          #    say so, and no dimension below `maxconfig`/`addons`/`full` installs a Vault to
+          #    bootstrap. So this degrades to exactly today's behaviour rather than to a Job that
+          #    cannot succeed.
+          ALETHIA_RUNNER_IMAGE: ${{ needs.runner-image.outputs.image }}
           # ── Pre-apply cost ceiling (BYOC A1.4). The in-process runner reads INFRACOST_API_KEY to
           #    price the apply's plan and ALETHIA_COST_CEILING_MONTHLY_USD to fail-closed a real
           #    apply whose estimated monthly cost exceeds the ceiling (or that can't be priced).
@@ -1583,7 +1732,19 @@ jobs:
           E2E_GIT_TOKEN: ${{ secrets.E2E_GIT_TOKEN }}
           ALETHIA_E2E_PROOF_OUTCOME: ${{ steps.t2.outcome }}
           ALETHIA_E2E_PROOF_RUN_TAG: nightly-${{ github.run_id }}-${{ github.run_attempt }}
+          # WHICH CLAIM this bundle makes. Passed explicitly rather than left to the inherited job
+          # env: the same fields read identically for an add-on sweep (where the ArgoCD convergence
+          # IS the verdict) and a floor run (where it is a supporting fact), and nothing downstream
+          # could tell them apart — which is how a cell was promoted on unmeasured counts (#3281).
+          ALETHIA_E2E_DIMENSION: ${{ env.E2E_DIMENSION }}
           ALETHIA_E2E_T2_RUNNER_LOG: ${{ runner.temp }}/t2-runner.log
+          # The go-test stream, which is where the ASSERTIONS come from. Declared on the t2 step
+          # since #2645 and never here, so `capture-proof.sh` always took its else branch and every
+          # bundle warned "carries NO test assertions". `env:` on a step does not inherit from a
+          # sibling step, only from the job — and this step re-declares fifteen other summary paths
+          # for exactly that reason, which is what made the omission invisible: the list LOOKS
+          # exhaustive. Measured before this line: 0 assertions.txt across 45 committed bundles.
+          ALETHIA_E2E_T2_TEST_LOG: ${{ runner.temp }}/t2-test.log
           # Day-2 soak summary (BYOC A0.3), written by the T2 test; folded into the bundle +
           # step-summary verdict when present (absent ⇒ the capture is unchanged).
           ALETHIA_E2E_SOAK_SUMMARY: ${{ runner.temp }}/soak-summary.json

@@ -1,0 +1,10 @@
+{
+  "asserted_at": "2026-08-29T10:53:09Z",
+  "outcome": "converged",
+  "expected_total": 16,
+  "healthy_synced": 16,
+  "observed_total": 17,
+  "losers": null,
+  "timeout_seconds": 480,
+  "verdict": "16 of 16 expected Applications Healthy+Synced"
+}

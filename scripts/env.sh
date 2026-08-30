@@ -670,7 +670,19 @@ mint_env() {
   local secret1 secret2 secret3 secret4 oidc_key receipt_key snapshot_key bootstrap_token
   secret1="$(openssl rand -hex 32)"
   secret2="$(openssl rand -hex 32)"
-  secret3="$(openssl rand -hex 32)"
+  # BASE64, not hex, and the difference is not cosmetic: this becomes
+  # ALETHIA_CRED_ENCRYPTION_KEY, and apps/console/lib/crypto/secrets.ts does
+  # `Buffer.from(raw, "base64")` and refuses anything that does not decode to exactly 32 bytes.
+  #
+  # `openssl rand -hex 32` is 64 characters; base64-decoding 64 characters yields 48 bytes, so
+  # every env built before this line was fixed rejected its own key:
+  #
+  #   ALETHIA_CRED_ENCRYPTION_KEY must decode to 32 bytes (got 48) (status 400)
+  #
+  # i.e. NO connector could be created in ANY branch env. It went unnoticed because branch envs
+  # cannot sign in (#2953), so nothing reached the connector flow — the sign-in gap was masking
+  # whether the env worked. `-base64 32` is 44 characters and decodes to exactly 32 (#3372).
+  secret3="$(openssl rand -base64 32)"
   secret4="$(openssl rand -hex 16)"
   # base64(PKCS8 RSA-2048 PEM) on ONE line — mirrors rsa_b64() in scripts/bootstrap-secrets.sh.
   oidc_key="$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null | openssl base64 -A)"
@@ -832,14 +844,56 @@ cmd_ssh() {
   ssh -o StrictHostKeyChecking=accept-new -t "root@$ip" "cd $REMOTE/envs/$(slug) 2>/dev/null; exec bash -l"
 }
 
+# vitest_workers derives a worker cap for the console suite FROM AVAILABLE MEMORY, on the box, at
+# the moment the suite is about to run.
+#
+# WHY THIS IS NOT A CONSTANT, AND NOT DERIVED FROM vCPU. Vitest defaults to one worker per vCPU —
+# eight on this cpx42 — and each console worker measured ~2.7 GB resident. That is ~21 GB of demand
+# on a 15 GB box which is ALSO holding an environment (next-server, seaweed, the shared postgres and
+# openfga) and sometimes a kind cluster. On 2026-08-29 that combination took the box to load 380
+# with 0 MB available for the better part of two hours: ssh timed out during banner exchange, docker
+# and kind stopped answering entirely, and `env1-dev` — the integration environment every other
+# session resolves against — served HTTP 000 for 30 s at a time.
+#
+# `next-server` NEVER DIED. Same pid throughout, answering 127.0.0.1:3100 in 12.4 s instead of 0.2 s.
+# So nothing restarted it and no health check fired: the failure mode of an over-committed box is a
+# environment that TIMES OUT, not one that exits, which is why sizing this correctly matters more
+# than any recovery would.
+#
+# AVAILABLE, not total. Sizing against 15 GB total is exactly what makes eight workers look
+# survivable — right up until an env is resident. `free -m`'s `available` column already accounts
+# for reclaimable page cache, so it is the number that answers "how much can this run actually
+# have". 2 GB is left aside for everything the suite itself is not.
+#
+# Clamped to at least 1 (a run that cannot fit still has to happen — slowly beats not at all) and at
+# most nproc (more workers than cores buys nothing).
+vitest_workers() {
+  ssh_box 'avail=$(free -m | awk "/^Mem:/ {print \$7}"); cpus=$(nproc 2>/dev/null || echo 2); \
+           w=$(( (avail - 2048) / 2700 )); \
+           [ "$w" -lt 1 ] && w=1; [ "$w" -gt "$cpus" ] && w=$cpus; \
+           echo "$w avail=${avail}MiB cpus=$cpus"'
+}
+
 # Worktrees are de-hydrated (no node_modules), so the checks that used to run locally
 # run here. The box already has the install warm from env:up.
 cmd_check() {
-  local slug_
+  local slug_ sizing workers
   slug_="$(slug)"
   push_tree
+  # Measured on the box, not assumed here: another session's env may have landed since this one
+  # started, and the right cap then is a different number.
+  sizing="$(vitest_workers)"
+  workers="${sizing%% *}"
+  echo "→ console suite with --maxWorkers=$workers  (${sizing#* })  — the box is SHARED; vitest's"
+  echo "  default of one worker per vCPU is ~2.7GiB each and has OOM'd this box before."
+  # BOTH BOUNDS, and this is not belt-and-braces. Passing --maxWorkers alone dies with
+  #   RangeError: options.minThreads and options.maxThreads must not conflict
+  # because the pool's minimum comes from the default (vCPU-derived) while the maximum comes from
+  # the flag, and a max below that minimum is rejected. Measured, not reasoned: `--maxWorkers=1`
+  # alone fails on this repo's console config; with `--minWorkers=1` the same run passes.
   ssh_box "cd $REMOTE/envs/$slug_ && pnpm install --frozen-lockfile >/dev/null && \
-           pnpm -F console check-types && pnpm -F console lint && pnpm -F console test"
+           pnpm -F console check-types && pnpm -F console lint && \
+           pnpm -F console test -- --maxWorkers=$workers --minWorkers=$workers"
 }
 
 # Browser tests, on the box. This is what the box is FOR — the Mac cannot run them.

@@ -45,6 +45,16 @@ var subcommands = map[string]func(context.Context, []string) error{
 	// Harbor's API answers only on the cluster network — which also keeps the credential out of the
 	// runner process entirely.
 	"harbor-bootstrap": agent.RunHarborBootstrap,
+	// In-cluster Vault bootstrap (#2432 platform, #3154 marketplace): a one-shot Job running
+	// `vault operator init`, unsealing, mounting KV v2 and revoking the root token before it exits.
+	// It runs IN the cluster for the same two reasons harbor-bootstrap does — Vault answers on the
+	// cluster network only, and the unseal key is generated, used and stored without ever entering
+	// the runner process, a log line, or execution_metadata.
+	//
+	// Both renderers emit it: packages/core/argocd/addon_bootstrap.go (the marketplace add-on, with
+	// --init-only) and packages/core/argocd/vault.go (the platform Vault carrying hetzner's `secret`
+	// kind, which also seeds secrets and mints the ESO token).
+	"vault-bootstrap": agent.RunVaultBootstrap,
 	// Keyless cross-account registry-pull refresher: a standalone in-cluster Deployment keeping the
 	// <slug>-pull dockerconfigjson fresh from the pod's Workload Identity. Long-running.
 	"registry-token": agent.RunRegistryToken,

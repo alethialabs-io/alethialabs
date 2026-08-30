@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // BYOC A0.5 — snapshot-fidelity guard. Freezes the REAL console `config_snapshot` that the
-// REAL buildConfigSnapshot produces for a canonical, cheap Hetzner environment, into a shared
-// fixture the Go T2 harness (test/e2e) reads to prove its seeded DEPLOY snapshot has NOT
-// diverged from what a real customer deploy freezes.
+// REAL buildConfigSnapshot produces for a canonical, cheap environment ON EACH SUPPORTED CLOUD,
+// into shared fixtures the Go T2 harness (test/e2e) reads to prove its seeded DEPLOY snapshot has
+// NOT diverged from what a real customer deploy freezes.
+//
+// One fixture per cloud since #3122/#2499 — before that there was one, hetzner's, compared against
+// all five, so `provider` diverged by construction on four of them and A0.5's assurance existed on
+// hetzner alone.
 //
 // # Why a fixture (finding #4)
 //
@@ -33,6 +37,7 @@ vi.mock("@/lib/billing/usage-guard", () => ({ assertUsageAllowed: vi.fn() }));
 vi.mock("@/lib/authz/runner-org", () => ({ assertRunnerInOrg: vi.fn() }));
 
 import { provisionProject } from "@/app/server/actions/projects";
+import { EXPORT_CLOUDS } from "@/lib/addons/catalog-export";
 import { requireOwner } from "@/lib/auth/owner";
 import { authorize } from "@/lib/authz/guard";
 import { assertUsageAllowed } from "@/lib/billing/usage-guard";
@@ -63,10 +68,28 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // apps/console/tests/e2e-fixtures → repo root is four levels up.
-const FIXTURE = join(
-	__dirname,
-	"../../../../test/e2e/fixtures/t2_config_snapshot.hetzner.json",
-);
+const fixtureFor = (cloud: string) =>
+	join(__dirname, `../../../../test/e2e/fixtures/t2_config_snapshot.${cloud}.json`);
+
+// ONE FIXTURE PER CLOUD (#3122/#2499). There used to be one, hetzner's, and the Go comparator
+// loaded it on every provider — so `provider` diverged BY CONSTRUCTION on aws, gcp, azure and
+// alibaba, every run, regardless of correctness. A0.5's fidelity assurance therefore only existed
+// on hetzner, and ALETHIA_E2E_A05_ENFORCE (the escalation its own warning advertises) would have
+// hard-failed every managed-cloud run on a baseline mismatch.
+//
+// The cloud list is EXPORT_CLOUDS — the same list addon_catalog.<cloud>.json is generated from,
+// which went per-cloud for the identical reason (#2717 class (c)). Two lists would drift.
+//
+// The region per cloud is each stack's own canonical e2e region. It is a DYNAMIC key (the Go
+// comparator excludes it), so it changes nothing that is compared — it is here so the fixture reads
+// like a real project rather than a hetzner project wearing another provider's name.
+const REGION_FOR: Record<string, string> = {
+	hetzner: "nbg1",
+	aws: "us-east-1",
+	gcp: "europe-west3",
+	azure: "germanywestcentral",
+	alibaba: "eu-central-1",
+};
 // The COMPONENT-shape fixture (#1974). Deliberately a second file, and deliberately AWS: the
 // canonical fixture above is Hetzner, where hetznerDataServicesToAddOns() folds every database /
 // cache / queue into `addons[]` — and `addons` is one of the two keys the Go A0.5 comparator
@@ -139,7 +162,7 @@ afterEach(() => vi.restoreAllMocks());
  * `reloader` marketplace add-on (matches the Go harness's seedAddOns, so the resolved
  * add-on install spec is fidelity-checked). Returns a FRESH map per call so a test can
  * layer extra component rows on without leaking into the frozen shape. */
-function canonicalSelect(): Map<unknown, Rows> {
+function canonicalSelect(cloud = "hetzner"): Map<unknown, Rows> {
 	return new Map<unknown, Rows>([
 			[
 				projects,
@@ -151,7 +174,7 @@ function canonicalSelect(): Map<unknown, Rows> {
 						cloud_identity_id: "ci-1",
 						project_name: "alethia-fixture",
 						slug: "alethia-fixture",
-						region: "nbg1",
+						region: REGION_FOR[cloud] ?? "nbg1",
 						iac_version: "1.0.0",
 					},
 				],
@@ -176,7 +199,7 @@ function canonicalSelect(): Map<unknown, Rows> {
 				],
 			],
 			[projectFabrics, [{ id: "fab-1", project_id: "p1", name: "fixture" }]],
-			[cloudIdentities, [{ id: "ci-1", provider: "hetzner" }]],
+			[cloudIdentities, [{ id: "ci-1", provider: cloud }]],
 			[
 				projectCluster,
 				[
@@ -221,24 +244,31 @@ async function frozenSnapshot(select: Map<unknown, Rows>): Promise<unknown> {
 }
 
 describe("T2 config_snapshot fidelity fixture (BYOC A0.5)", () => {
-	it("the REAL buildConfigSnapshot freezes the committed Hetzner shape", async () => {
-		const snapshot = await frozenSnapshot(canonicalSelect());
-		// Runtime secret placeholder — never part of the frozen fidelity shape.
-		expect((snapshot as { git_access_token?: string }).git_access_token).toBe("");
+	it.each(EXPORT_CLOUDS)(
+		"the REAL buildConfigSnapshot freezes the committed %s shape",
+		async (cloud) => {
+			const fixture = fixtureFor(cloud);
+			const snapshot = await frozenSnapshot(canonicalSelect(cloud));
+			// Runtime secret placeholder — never part of the frozen fidelity shape.
+			expect((snapshot as { git_access_token?: string }).git_access_token).toBe("");
+			// The one key the whole per-cloud split exists for: it must be THIS cloud's, or the Go
+			// comparator is back to measuring four clouds against a fifth.
+			expect((snapshot as { provider?: string }).provider).toBe(cloud);
 
-		const serialized = `${JSON.stringify(snapshot, null, "\t")}\n`;
-		if (process.env.UPDATE_FIXTURES) {
-			mkdirSync(dirname(FIXTURE), { recursive: true });
-			writeFileSync(FIXTURE, serialized);
-		}
-		expect(
-			existsSync(FIXTURE),
-			`fixture missing — regenerate with UPDATE_FIXTURES=1`,
-		).toBe(true);
-		// Deep-equal against the committed fixture: any drift between buildConfigSnapshot and the
-		// shared fixture the Go harness trusts reds here (regenerate intentionally).
-		expect(JSON.parse(serialized)).toEqual(JSON.parse(readFileSync(FIXTURE, "utf8")));
-	});
+			const serialized = `${JSON.stringify(snapshot, null, "\t")}\n`;
+			if (process.env.UPDATE_FIXTURES) {
+				mkdirSync(dirname(fixture), { recursive: true });
+				writeFileSync(fixture, serialized);
+			}
+			expect(
+				existsSync(fixture),
+				`${cloud} fixture missing — regenerate with UPDATE_FIXTURES=1`,
+			).toBe(true);
+			// Deep-equal against the committed fixture: any drift between buildConfigSnapshot and the
+			// shared fixture the Go harness trusts reds here (regenerate intentionally).
+			expect(JSON.parse(serialized)).toEqual(JSON.parse(readFileSync(fixture, "utf8")));
+		},
+	);
 });
 
 // #1974 — the CI-time counterpart to the runner's strict decode.
@@ -270,8 +300,10 @@ const BOOKKEEPING = {
 
 /** canonicalSelect(), re-pointed at AWS and layered with one row of every component kind. */
 function componentSelect(): Map<unknown, Rows> {
-	const select = canonicalSelect();
-	select.set(cloudIdentities, [{ id: "ci-1", provider: "aws" }]);
+	// `canonicalSelect("aws")` rather than the hetzner default plus an override: on hetzner
+	// hetznerDataServicesToAddOns() folds every database / cache / queue into `addons[]`, and this
+	// fixture's whole point is the ten component lists.
+	const select = canonicalSelect("aws");
 	select.set(projects, [
 		{
 			id: "p1",

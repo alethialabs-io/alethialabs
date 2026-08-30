@@ -84,6 +84,35 @@ one machine, no versioning, no recovery. `infra/.gitignore` refuses to track `*_
 reason: OpenTofu merges override files over the stack's own config, so a committed one silently
 re-points every operator. That is exactly how `azure-e2e` spent months on local state (#1887).
 
+## Inputs — a default is a decision
+
+A stack's variables are its inputs on paper. In practice they are its inputs *when someone supplies
+them*, and the thing that actually runs on a fresh checkout, in CI, or in a worktree is the
+**defaults**. So:
+
+- **An input that cannot be committed is declared REQUIRED, with no default.** Personal email
+  addresses, an external id, anything the public repo must not carry: leave `default` off, say why
+  in the description, and carry the value in a gitignored `*.auto.tfvars`. `tofu plan` then exits 1
+  with *"No value for required variable"* instead of applying a silent substitute. See
+  `aws-oidc.e2e_budget_alert_emails` and its twin in `azure-e2e`.
+- **An input whose value is already public is COMMITTED**, in a `terraform.tfvars` tracked by a
+  `!terraform.tfvars` negation in the stack's own `.gitignore` (it has to live there: both
+  `infra/.gitignore` and the root `/.gitignore` ignore the file, and only a deeper rule wins).
+  `aws-oidc`, `github`, `gcp-e2e`, `azure-e2e` and `alibaba-e2e` do this today.
+- **An empty default — `""`, `[]`, `{}`, `false`, `null` — is never neutral.** Gating a `count` or
+  `for_each` on one means the default is a **destroy**; steering a ternary on one means the default
+  silently narrows or widens. Both have already happened: `aws-oidc` would have destroyed a Route53
+  zone delegated at Cloudflare, and `gcp-e2e` narrowed its OIDC trust to ref-only so every
+  `workflow_dispatch` from `dev` died at federation while the scheduled run kept passing.
+- **A comment saying "never bare-apply" is not a control.** `prevent_destroy` on the irreplaceable
+  resource is; a required variable is; a committed input is.
+
+`pnpm check:tfvars-safety` enforces this. It is a static read of the HCL, because nothing in CI runs
+`tofu plan` and `tofu validate` evaluates neither `check`, `validation` nor `prevent_destroy`. It
+ratchets against `infra/tfvars-safety-baseline.json`: every empty default that still reaches a
+decision is recorded there with the reason, a new one fails on the PR that adds it, and an entry
+that stops describing anything fails too.
+
 ## Conventions
 
 - Resource names `alethia-<purpose>`; vars `snake_case`; uniform tag block

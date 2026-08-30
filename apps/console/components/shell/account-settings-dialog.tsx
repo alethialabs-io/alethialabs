@@ -9,6 +9,7 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 import { authClient } from "@/lib/auth/client";
+import { formatDate } from "@repo/format";
 import { Avatar, AvatarFallback, AvatarImage } from "@repo/ui/avatar";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
@@ -149,13 +150,7 @@ export function AccountSettingsDialog({
 								Member Since
 							</Label>
 							<p className="text-sm font-medium text-foreground">
-								{user?.createdAt
-									? new Date(user.createdAt).toLocaleDateString("en-US", {
-											year: "numeric",
-											month: "long",
-											day: "numeric",
-										})
-									: "Unknown"}
+								{user?.createdAt ? formatDate(user.createdAt) : "Unknown"}
 							</p>
 						</div>
 					</div>

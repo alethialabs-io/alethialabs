@@ -1,0 +1,14 @@
+# infra/github inputs.
+#
+# terraform.tfvars IS COMMITTED in this stack (see .gitignore) and already carries the three
+# deployer-role ARNs, because their absence plans a destroy. This example exists for the inputs that
+# are NOT committed, and to document the full set.
+#
+#   github_token   REQUIRED, no default, never committed. `-var github_token=$(gh auth token)` —
+#                  needs Administration (rulesets) + Contents + Actions variables write.
+#   public_app_url has a default; override only when the public origin moves.
+#
+# Everything else (github_owner, repository, integration_branch, rc_branch,
+# required_status_checks) has a correct non-empty default. See variables.tf.
+
+# public_app_url = "https://alethialabs.io"

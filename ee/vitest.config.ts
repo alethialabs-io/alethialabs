@@ -12,8 +12,9 @@ export default defineConfig({
 		include: ["src/**/*.test.ts"],
 		coverage: {
 			provider: "v8",
-			// See the note in apps/marketing/vitest.config.ts on why "json" is listed explicitly.
-			reporter: ["text", "json"],
+			// See the note in apps/marketing/vitest.config.ts on why "json" and "json-summary" are
+			// listed explicitly.
+			reporter: ["text", "json", "json-summary"],
 			reportsDirectory: "./coverage",
 			// The WHOLE licensed tier. ee/ is the paid surface and was measured by nothing at all —
 			// no coverage block, so no artefact, so nothing for the ratchet to hold. Six files, one

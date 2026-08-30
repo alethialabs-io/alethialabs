@@ -1,4 +1,28 @@
 {{- if eq .Provider "aws" }}
+{{- /*
+  THE PROVISIONER NAME IS THE DRIVER'S, AND THERE ARE TWO THAT LOOK ALIKE.
+
+  `ebs.csi.aws.com` is the CSIDriver the `aws-ebs-csi-driver` EKS add-on registers — the add-on
+  this cluster installs (modules/eks/eks.tf `aws_eks_addon "ebs-csi"`, with its IRSA role bound to
+  `kube-system:ebs-csi-controller-sa`). Verified from the upstream chart rather than remembered:
+
+      helm template ebs aws-ebs-csi-driver/aws-ebs-csi-driver | grep -A2 'kind: CSIDriver'
+      → name: ebs.csi.aws.com
+
+  `ebs.csi.eks.amazonaws.com` — which this class used to name — belongs to EKS AUTO MODE's built-in
+  storage capability. This cluster is not Auto Mode: it runs managed node groups and installs the
+  add-on explicitly. So the default StorageClass named a provisioner NO controller on the cluster
+  watched, and with `volumeBindingMode: WaitForFirstConsumer` the failure is silent and slow: the
+  PVC stays Pending, and the pod's only symptom is the scheduler giving up —
+
+      Warning FailedScheduling  running PreBind plugin "VolumeBinding":
+                                binding volumes: context deadline exceeded
+
+  aws/addons run 33243599078 lost six Applications to it — harbor, kube-prometheus-stack, loki,
+  minio, tempo and vault — every one of them a chart that owns a volume. It went unnoticed until
+  then because no earlier aws cell provisions a PVC at all: floor, gitops, byo-iac and day2 install
+  only controllers.
+*/}}
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -6,7 +30,7 @@ metadata:
   annotations:
     storageclass.kubernetes.io/is-default-class: "true"
 allowVolumeExpansion: true
-provisioner: ebs.csi.eks.amazonaws.com
+provisioner: ebs.csi.aws.com
 volumeBindingMode: WaitForFirstConsumer
 parameters:
   type: gp3
