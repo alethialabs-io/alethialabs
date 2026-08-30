@@ -96,6 +96,7 @@ import {
 	measure,
 	regressed,
 	UnusableCoverageError,
+	measureByFile,
 } from "./lib/ts-coverage-measure.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -197,11 +198,26 @@ function renderFloors(project, dirs, env) {
 	return `${JSON.stringify({ _: BANNER, project, metric: "statements", env, directories }, null, 2)}\n`;
 }
 
-/** Emit a single-line GitHub annotation. A literal newline truncates a workflow command. */
+/**
+ * Emit a single-line GitHub annotation. A literal newline truncates a workflow command.
+ *
+ * STDERR, NOT STDOUT — and that is load-bearing, not tidiness. Actions parses workflow commands on
+ * both streams, but stdout here is a DATA channel: `--print` writes `<dir> <covered> <total>` rows
+ * that `scripts/ci/ts-coverage-probe.sh` consumes as `$TSCOV --print | sed "s|^|$p |"`.
+ *
+ * With annotations on stdout, a warning became a row. `assert_measured` matches `$1 == project`,
+ * and `sed` had just made `$1` the project name — so `packages/foo ::warning::…` satisfied the
+ * assertion, and the probe could report "every recorded project produced measured rows" having
+ * measured nothing at all. A diagnostic whose failure branch reports success is worse than no
+ * diagnostic: it is the reason #3342 was un-diagnosable rather than merely broken.
+ *
+ * `assert_measured` now also checks the row SHAPE, so the two fixes are independent — but a data
+ * channel that carries commentary is the defect, and this is where it is fixed.
+ */
 function annotate(level, file, line, message) {
 	const flat = message.replace(/\r?\n/g, " ").trim();
 	const loc = file ? `file=${file}${line ? `,line=${line}` : ""}` : "";
-	process.stdout.write(`::${level}${loc ? ` ${loc}` : ""}::${flat}\n`);
+	process.stderr.write(`::${level}${loc ? ` ${loc}` : ""}::${flat}\n`);
 }
 
 /**
@@ -271,7 +287,7 @@ function perFileBreakdown(projectDir, dir) {
 	}
 }
 
-function measureOrFailOpen(projectDir, project) {
+function measureOrFailOpen(projectDir, project, measureFn = measure) {
 	const cov = coveragePath(projectDir);
 	// F2 — no artefact. The only ways here: the `Unit tests` step already failed (and already
 	// failed the job — failing twice misattributes the cause), the project has no coverage config,
@@ -288,7 +304,7 @@ function measureOrFailOpen(projectDir, project) {
 		failOpen("F4", `${project}: coverage-final.json is not valid JSON (truncated write?): ${err.message}`);
 	}
 	try {
-		return measure(parsed, projectDir);
+		return measureFn(parsed, projectDir);
 	} catch (err) {
 		if (err instanceof UnusableCoverageError) {
 			// F6 — the artefact is structurally untrustworthy. A ratchet must not compare against a
@@ -516,10 +532,23 @@ function runUpdate(project, { allowLower }) {
 }
 
 /** --print: one `dir covered total` line per directory, for the determinism probe. */
-function runPrint(project) {
+/**
+ * `<dir> <covered> <total>` rows on stdout — the data channel `scripts/ci/ts-coverage-probe.sh`
+ * consumes. Annotations go to stderr precisely so they cannot arrive here looking like rows.
+ *
+ * `--per-file` prints `<file> <covered> <total>` instead. The floors are per DIRECTORY, so the
+ * ratchet can only ever say "apps/console/lib/billing moved by one statement" — a hundred files and
+ * no culprit. Diffing two per-file runs names the flapping file in one command, which is what
+ * #3342 needed and did not have:
+ *
+ *   for i in 1 2; do pnpm vitest --project apps/console >/dev/null 2>&1; \
+ *     node scripts/ts-coverage.mjs --project apps/console --print --per-file >run.$i; done
+ *   diff run.1 run.2
+ */
+function runPrint(project, perFile = false) {
 	const projectDir = path.join(ROOT, project);
-	const measured = measureOrFailOpen(projectDir, project);
-	for (const [dir, v] of measured.entries()) process.stdout.write(`${dir} ${v.covered} ${v.total}\n`);
+	const measured = measureOrFailOpen(projectDir, project, perFile ? measureByFile : measure);
+	for (const [key, v] of measured.entries()) process.stdout.write(`${key} ${v.covered} ${v.total}\n`);
 }
 
 /**
@@ -986,6 +1015,10 @@ function runCli() {
 	/** @type {string|undefined} */
 	let project;
 	let mode = "check";
+	// `--print` only. Declared in the parser rather than sniffed out of process.argv later, because
+	// the `else` below REFUSES an argument it does not know — an unregistered flag would exit 2 with
+	// "unknown argument", which is the correct behaviour and the reason it must be registered here.
+	let perFile = false;
 	for (let i = 0; i < argv.length; i += 1) {
 		const a = argv[i];
 		if (a === "--project") { project = argv[i + 1]; i += 1; }
@@ -993,6 +1026,7 @@ function runCli() {
 		else if (a === "--update") mode = "update";
 		else if (a === "--accept-regression") mode = "accept";
 		else if (a === "--print") mode = "print";
+		else if (a === "--per-file") perFile = true;
 		else if (a === "--self-test") mode = "self-test";
 		else {
 			process.stderr.write(`ts-coverage: unknown argument ${a}\n`);
@@ -1008,7 +1042,7 @@ function runCli() {
 		process.stderr.write(`ts-coverage: no such project directory: ${project}\n`);
 		process.exit(2);
 	} else if (mode === "check") runCheck(project);
-	else if (mode === "print") runPrint(project);
+	else if (mode === "print") runPrint(project, perFile);
 	else runUpdate(project, { allowLower: mode === "accept" });
 }
 
