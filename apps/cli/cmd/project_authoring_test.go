@@ -319,6 +319,56 @@ func TestCoerceSetValue(t *testing.T) {
 	}
 }
 
+// A JSON-quoted value must decode to its CONTENT, not to the six characters that were typed.
+//
+// Quoting is the only way to give a string field a value that also parses as a number:
+// `--set cluster_version=1.35` coerces to the number 1.35 and the server refuses it, so the
+// documented answer is `--set 'cluster_version="1.35"'`. That form used to fall through to the
+// raw text and store `"1.35"` WITH the quote marks — length 6, never equal to `1.35` — which
+// surfaced far downstream as a compatibility gate calling the version "unset or unparseable".
+//
+// The axis under test is the VALUE's shape, not the key: a quoted numeric-looking string, a
+// quoted ordinary word, and the unquoted forms that must keep their existing types.
+func TestCoerceSetValueUnwrapsQuotedStrings(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"quoted numeric-looking version", `"1.35"`, "1.35"},
+		{"quoted version with patch", `"1.33.12"`, "1.33.12"},
+		{"quoted ordinary word", `"postgres"`, "postgres"},
+		{"quoted string with a space", `"eu central"`, "eu central"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			v := coerceSetValue(c.raw)
+			s, ok := v.(string)
+			if !ok {
+				t.Fatalf("coerceSetValue(%s) = %#v, want a string", c.raw, v)
+			}
+			if s != c.want {
+				t.Errorf("coerceSetValue(%s) = %q (len %d), want %q", c.raw, s, len(s), c.want)
+			}
+		})
+	}
+
+	// The other direction: unquoted values must keep the types they already had, or this fix
+	// would silently turn every number and bool into text.
+	if v, ok := coerceSetValue("1.35").(float64); !ok || v != 1.35 {
+		t.Errorf("unquoted 1.35 must stay a number, got %#v", coerceSetValue("1.35"))
+	}
+	if v, ok := coerceSetValue("true").(bool); !ok || !v {
+		t.Errorf("unquoted true must stay a bool, got %#v", coerceSetValue("true"))
+	}
+	if v, ok := coerceSetValue(`["cx33"]`).([]interface{}); !ok || len(v) != 1 || v[0] != "cx33" {
+		t.Errorf(`["cx33"] must stay an array, got %#v`, coerceSetValue(`["cx33"]`))
+	}
+	// Unquoted text is not JSON at all, so it still comes back as the literal it was typed as.
+	if v := coerceSetValue("postgres"); v != "postgres" {
+		t.Errorf("bare word must stay literal, got %#v", v)
+	}
+}
+
 func TestRunComponentAdd(t *testing.T) {
 	var buf bytes.Buffer
 	f := &fakeClient{}

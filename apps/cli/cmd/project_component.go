@@ -217,13 +217,24 @@ func parseSetValues(sets []string) (map[string]interface{}, error) {
 	return out, nil
 }
 
-// coerceSetValue returns the JSON-typed value of raw (number/bool/array/object/null) or the
-// literal string when raw is not non-string JSON.
+// coerceSetValue returns the JSON-typed value of raw (string/number/bool/array/object/null),
+// or the literal text when raw is not JSON at all.
+//
+// `case string` is load-bearing and was the one type missing. Quoting is the ONLY way to give a
+// string field a value that also parses as a number — `--set cluster_version=1.35` coerces to the
+// number 1.35 and the server refuses it ("expected string, received number"), so the documented
+// answer is `--set 'cluster_version="1.35"'`. Without this arm that quoted form decoded to a Go
+// string, failed the switch, and fell through to `return raw` — storing SIX characters, quote
+// marks and all. Both halves of the documented workaround were then wrong: unquoted was refused,
+// quoted was silently corrupted, and the corruption only surfaced much later as a compatibility
+// gate reporting the Kubernetes version "unset or unparseable".
+//
+// Non-JSON text is unaffected: `--set engine=postgres` fails json.Unmarshal and returns raw.
 func coerceSetValue(raw string) interface{} {
 	var v interface{}
 	if err := json.Unmarshal([]byte(raw), &v); err == nil {
 		switch v.(type) {
-		case float64, bool, []interface{}, map[string]interface{}, nil:
+		case string, float64, bool, []interface{}, map[string]interface{}, nil:
 			return v
 		}
 	}
