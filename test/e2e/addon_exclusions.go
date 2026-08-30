@@ -167,11 +167,20 @@ var addOnExclusions = map[string]AddOnExclusion{
 			"run 33001235713). alibaba is a fourth case with the same outcome: " +
 			"EXTERNAL_DNS_NATIVE_PROVIDER has no entry for it, so its fixture still carries " +
 			"provider=cloudflare with no token. Supplying an IAM role ARN / GSA email / client id, " +
-			"or a provider API token, is a CUSTOMER action. UNVERIFIED on these four since #3048: " +
-			"the only add-on sweep that has run since it merged was hetzner's, which is exactly " +
-			"the cloud this exclusion no longer covers.",
-		Issue:  "#2717",
-		Clouds: []string{"aws", "gcp", "azure", "alibaba"},
+			"or a provider API token, is a CUSTOMER action. " +
+			"NOT AWS — MEASURED THREE TIMES: runs 33262881462, 33277594471 and 33282358378 all " +
+			"report `addon-external-dns: health=Healthy sync=Synced` at catalog defaults. The " +
+			"reason is the one this entry's own text names and AWS happens to satisfy: the " +
+			"controller runs with a provider name and no explicit identity, and on EKS the AWS SDK " +
+			"default chain then finds the NODE ROLE through IMDS. gcp and azure have no equivalent " +
+			"ambient credential — their controllers need the workload-identity annotation nothing " +
+			"fills — and alibaba still carries provider=cloudflare with no token. So the knob is " +
+			"genuinely unfilled on all four and only three of them are unable to converge because " +
+			"of it. gcp/azure/alibaba remain UNVERIFIED since #3048.",
+		Issue: "#2717",
+		// aws left in 2026-08-30 on the measurement above — the list shrinking because the product
+		// turned out to work, which is the only reason this file wants it to shrink.
+		Clouds: []string{"gcp", "azure", "alibaba"},
 	},
 }
 
