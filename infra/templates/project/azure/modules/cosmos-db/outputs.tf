@@ -16,7 +16,7 @@ output "primary_key" {
 
 output "database_name" {
   description = "The name of the SQL database (empty string if kind is MongoDB)"
-  value       = var.kind == "GlobalDocumentDB" ? azurerm_cosmosdb_sql_database.this[0].name : ""
+  value       = var.kind == "GlobalDocumentDB" ? one(azurerm_cosmosdb_sql_database.this[*].name) : ""
 }
 
 # Read off the RESOURCE, not off `var.backup_type`. An output echoing the input would still pass if

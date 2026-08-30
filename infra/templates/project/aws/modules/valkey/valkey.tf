@@ -19,7 +19,7 @@ module "elasticache_serverless_valkey" {
   major_engine_version = var.engine_version
   security_group_ids   = [aws_security_group.valkey_sg.id]
   subnet_ids           = var.subnet_ids # slice(module.common_vpc.database_subnets, 0, 2)
-  user_group_id        = var.create_valkey_user_and_secret ? aws_elasticache_user_group.valkey_users[0].id : null
+  user_group_id        = var.create_valkey_user_and_secret ? one(aws_elasticache_user_group.valkey_users[*].id) : null
 
   tags = {
     Name        = "${var.product_name}-${var.environment}-valkey"
@@ -41,7 +41,7 @@ resource "aws_elasticache_user" "valkey_user" {
   user_id       = local.valkey_user_name
   user_name     = local.valkey_user_name
   engine        = "valkey"
-  passwords     = [random_password.valkey_special_password[0].result]
+  passwords     = [one(random_password.valkey_special_password[*].result)]
   access_string = "on ~* +@all"
 }
 
@@ -49,7 +49,7 @@ resource "aws_elasticache_user_group" "valkey_users" {
   count         = var.create_valkey_user_and_secret ? 1 : 0
   user_group_id = local.valkey_user_group_name
   engine        = "valkey"
-  user_ids      = [aws_elasticache_user.valkey_user[0].user_id]
+  user_ids      = [one(aws_elasticache_user.valkey_user[*].user_id)]
 }
 
 resource "aws_security_group" "valkey_sg" {
@@ -88,7 +88,7 @@ module "valkey_additional_secrets" {
     (local.valkey_user_name) = {
       secret_key_value = {
         username = local.valkey_user_name
-        password = random_password.valkey_special_password[0].result
+        password = one(random_password.valkey_special_password[*].result)
       }
     }
   }

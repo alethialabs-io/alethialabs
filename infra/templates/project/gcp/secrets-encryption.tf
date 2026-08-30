@@ -89,7 +89,7 @@ resource "google_kms_crypto_key" "gke_secrets" {
   count = local.gke_secrets_encryption ? 1 : 0
 
   name     = local.gke_kms_key_name
-  key_ring = google_kms_key_ring.gke_secrets[0].id
+  key_ring = one(google_kms_key_ring.gke_secrets[*].id)
   purpose  = "ENCRYPT_DECRYPT"
 
   # 90 days. Cloud KMS re-encrypts the DEK on rotation; existing Secrets stay readable because the
@@ -109,7 +109,7 @@ resource "google_kms_crypto_key" "gke_secrets" {
 resource "google_kms_crypto_key_iam_member" "gke_secrets" {
   count = local.gke_secrets_encryption ? 1 : 0
 
-  crypto_key_id = google_kms_crypto_key.gke_secrets[0].id
+  crypto_key_id = one(google_kms_crypto_key.gke_secrets[*].id)
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
   member        = local.gke_service_agent
 }

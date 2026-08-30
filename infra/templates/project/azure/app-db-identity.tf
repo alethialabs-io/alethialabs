@@ -71,7 +71,7 @@ resource "azurerm_federated_identity_credential" "app_db" {
   count               = local.enable_app_db_identity ? 1 : 0
   name                = "app-db"
   resource_group_name = azurerm_resource_group.main.name
-  parent_id           = azurerm_user_assigned_identity.app_db[0].id
+  parent_id           = one(azurerm_user_assigned_identity.app_db[*].id)
   audience            = ["api://AzureADTokenExchange"]
   issuer              = module.aks[0].oidc_issuer_url
   subject             = "system:serviceaccount:${local.azure_app_ksa_namespace}:${local.azure_app_ksa_name}"
@@ -93,7 +93,7 @@ resource "azurerm_federated_identity_credential" "db_admin" {
   count               = local.enable_app_db_identity ? 1 : 0
   name                = "db-admin"
   resource_group_name = azurerm_resource_group.main.name
-  parent_id           = azurerm_user_assigned_identity.db_admin[0].id
+  parent_id           = one(azurerm_user_assigned_identity.db_admin[*].id)
   audience            = ["api://AzureADTokenExchange"]
   issuer              = module.aks[0].oidc_issuer_url
   subject             = "system:serviceaccount:${local.azure_app_ksa_namespace}:${local.azure_bootstrap_ksa_name}"
@@ -106,8 +106,8 @@ resource "azurerm_postgresql_flexible_server_active_directory_administrator" "db
   server_name         = module.azure_db[0].server_name
   resource_group_name = azurerm_resource_group.main.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
-  object_id           = azurerm_user_assigned_identity.db_admin[0].principal_id
-  principal_name      = azurerm_user_assigned_identity.db_admin[0].name
+  object_id           = one(azurerm_user_assigned_identity.db_admin[*].principal_id)
+  principal_name      = one(azurerm_user_assigned_identity.db_admin[*].name)
   principal_type      = "ServicePrincipal"
 }
 
@@ -120,9 +120,9 @@ resource "azurerm_mysql_flexible_server_active_directory_administrator" "db_admi
   count = local.enable_mysql_entra ? 1 : 0
 
   server_id   = module.azure_db[0].server_id
-  identity_id = azurerm_user_assigned_identity.db_admin[0].id
-  login       = azurerm_user_assigned_identity.db_admin[0].name
-  object_id   = azurerm_user_assigned_identity.db_admin[0].principal_id
+  identity_id = one(azurerm_user_assigned_identity.db_admin[*].id)
+  login       = one(azurerm_user_assigned_identity.db_admin[*].name)
+  object_id   = one(azurerm_user_assigned_identity.db_admin[*].principal_id)
   tenant_id   = data.azurerm_client_config.current.tenant_id
 }
 

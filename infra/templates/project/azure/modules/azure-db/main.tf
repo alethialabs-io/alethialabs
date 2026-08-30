@@ -45,7 +45,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
   count = local.is_postgres ? 1 : 0
 
   name                  = "${local.server_name}-dns-link"
-  private_dns_zone_name = azurerm_private_dns_zone.postgres[0].name
+  private_dns_zone_name = one(azurerm_private_dns_zone.postgres[*].name)
   resource_group_name   = var.resource_group_name
   virtual_network_id    = local.vnet_id_from_subnet
 
@@ -76,7 +76,7 @@ resource "azurerm_postgresql_flexible_server" "this" {
   administrator_password        = random_password.admin.result
   backup_retention_days         = var.backup_retention_days
   delegated_subnet_id           = var.subnet_id
-  private_dns_zone_id           = azurerm_private_dns_zone.postgres[0].id
+  private_dns_zone_id           = one(azurerm_private_dns_zone.postgres[*].id)
   public_network_access_enabled = false
   zone                          = "1"
 
@@ -115,7 +115,7 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "allowlist" {
   for_each = local.is_postgres ? { for cidr in var.allowed_cidrs : cidr => cidr } : {}
 
   name             = "allow-${replace(replace(each.value, "/", "-"), ".", "-")}"
-  server_id        = azurerm_postgresql_flexible_server.this[0].id
+  server_id        = one(azurerm_postgresql_flexible_server.this[*].id)
   start_ip_address = cidrhost(each.value, 0)
   end_ip_address   = cidrhost(each.value, -1)
 }
@@ -128,7 +128,7 @@ resource "azurerm_postgresql_flexible_server_database" "this" {
   count = local.is_postgres ? 1 : 0
 
   name      = local.db_name
-  server_id = azurerm_postgresql_flexible_server.this[0].id
+  server_id = one(azurerm_postgresql_flexible_server.this[*].id)
   charset   = "UTF8"
   collation = "en_US.utf8"
 }
@@ -165,7 +165,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "mysql" {
   count = local.is_postgres ? 0 : 1
 
   name                  = "${local.server_name}-dns-link"
-  private_dns_zone_name = azurerm_private_dns_zone.mysql[0].name
+  private_dns_zone_name = one(azurerm_private_dns_zone.mysql[*].name)
   resource_group_name   = var.resource_group_name
   virtual_network_id    = local.vnet_id_from_subnet
 
@@ -184,7 +184,7 @@ resource "azurerm_mysql_flexible_server" "this" {
   administrator_password = random_password.admin.result
   backup_retention_days  = var.backup_retention_days
   delegated_subnet_id    = var.subnet_id
-  private_dns_zone_id    = azurerm_private_dns_zone.mysql[0].id
+  private_dns_zone_id    = one(azurerm_private_dns_zone.mysql[*].id)
   zone                   = "1"
 
   # Storage is a block here, and auto-grow is REQUIRED when high availability is on (the service
@@ -228,7 +228,7 @@ resource "azurerm_mysql_flexible_server_firewall_rule" "allowlist" {
 
   name                = "allow-${replace(replace(each.value, "/", "-"), ".", "-")}"
   resource_group_name = var.resource_group_name
-  server_name         = azurerm_mysql_flexible_server.this[0].name
+  server_name         = one(azurerm_mysql_flexible_server.this[*].name)
   start_ip_address    = cidrhost(each.value, 0)
   end_ip_address      = cidrhost(each.value, -1)
 }
@@ -242,7 +242,7 @@ resource "azurerm_mysql_flexible_database" "this" {
 
   name                = local.db_name
   resource_group_name = var.resource_group_name
-  server_name         = azurerm_mysql_flexible_server.this[0].name
+  server_name         = one(azurerm_mysql_flexible_server.this[*].name)
   charset             = "utf8mb4"
   collation           = "utf8mb4_unicode_ci"
 }

@@ -59,7 +59,7 @@ resource "aws_elasticache_user" "iam_tenants" {
 resource "aws_elasticache_user_group" "redis_tenants" {
   engine        = "REDIS"
   user_group_id = local.redis_user_group_name
-  user_ids      = var.aws_existing_default_user ? [local.redis_default_user_id] : [aws_elasticache_user.default_user[0].user_id]
+  user_ids      = var.aws_existing_default_user ? [local.redis_default_user_id] : [one(aws_elasticache_user.default_user[*].user_id)]
 
   lifecycle {
     ignore_changes        = [user_ids]
