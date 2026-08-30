@@ -262,9 +262,16 @@ func (r releaseOutcome) billingWarning() string {
 		fmt.Fprintf(&b, "The pre-destroy release did not run: %s. Anything this environment exposed "+
 			"through a Service of type LoadBalancer or an Ingress owns a cloud load balancer that is "+
 			"not in the state file, so `tofu destroy` cannot remove it.\n", r.Skipped)
-	case r.Unknown:
+	case r.Unknown && len(r.Remaining) > 0:
 		b.WriteString("The cluster stopped answering while the release was waiting, so what follows " +
 			"is not a complete list — there may be more.\n")
+	case r.Unknown:
+		// Reached when the cluster was unreadable from the FIRST list, so nothing was ever
+		// observed. Saying "what follows is not a complete list" and then following it with
+		// nothing reads as "there is nothing" — the one meaning this type exists to keep apart
+		// from "we could not look".
+		b.WriteString("The cluster stopped answering before anything could be listed, so this " +
+			"environment's LoadBalancer Services and Ingresses are UNKNOWN — not empty.\n")
 	}
 	if len(r.Remaining) > 0 {
 		names := make([]string, 0, len(r.Remaining))
@@ -273,8 +280,15 @@ func (r releaseOutcome) billingWarning() string {
 		}
 		fmt.Fprintf(&b, "Still holding one when the destroy ran: %s.\n", strings.Join(names, ", "))
 	}
-	b.WriteString("NOTHING SWEEPS THESE AUTOMATICALLY. Either delete those objects from the cluster " +
-		"and run the destroy again, or delete the load balancers in the cloud console directly.")
+	if len(r.Remaining) > 0 {
+		b.WriteString("NOTHING SWEEPS THESE AUTOMATICALLY. Either delete those objects from the cluster " +
+			"and run the destroy again, or delete the load balancers in the cloud console directly.")
+	} else {
+		// "delete those objects" refers to nothing when nothing was named, which leaves the reader
+		// with an alarm and no first step.
+		b.WriteString("NOTHING SWEEPS THESE AUTOMATICALLY. Check this environment's load balancers " +
+			"in the cloud console and delete any that remain.")
+	}
 	return b.String()
 }
 
@@ -312,6 +326,12 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) (releaseOutco
 	deadline := started.Add(lbReleaseTimeout)
 	var lastErr error
 	consecutiveErrs := 0
+	// The last list we actually got an answer to. `remaining` is nil on every error path, because
+	// listCloudBackedObjects returns `nil, err` — so reporting `remaining` when the cluster stopped
+	// answering names NOTHING, on exactly the path where the operator most needs a starting point.
+	// This is what the billing warning is allowed to print: objects we really saw, stale by at most
+	// one poll, rather than an empty list dressed up as an incomplete one.
+	lastKnown := objs
 	for {
 		remaining, lerr := listCloudBackedObjects(ctx)
 		switch {
@@ -326,12 +346,13 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) (releaseOutco
 			return releaseOutcome{Clean: true}, nil
 		default:
 			lastErr, consecutiveErrs = nil, 0
+			lastKnown = remaining
 			// Quietly, because a warning per object per poll would bury the outcome.
 			deleteAll(ctx, out, remaining, true)
 		}
 		if time.Now().After(deadline) {
 			if lastErr != nil {
-				return releaseOutcome{Unknown: true, Remaining: remaining}, fmt.Errorf("could not confirm the load balancers were released: the cluster "+
+				return releaseOutcome{Unknown: true, Remaining: lastKnown}, fmt.Errorf("could not confirm the load balancers were released: the cluster "+
 					"has been unreachable for the last %d poll(s) over %s (%w) — if it is gone, so "+
 					"are they; if it is throttling, they may still be live and the destroy that "+
 					"follows will fail on whatever they are attached to",
@@ -348,7 +369,7 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) (releaseOutco
 		}
 		select {
 		case <-ctx.Done():
-			return releaseOutcome{Unknown: true, Remaining: remaining}, fmt.Errorf("context ended while waiting for the load balancers to be released: %w", ctx.Err())
+			return releaseOutcome{Unknown: true, Remaining: lastKnown}, fmt.Errorf("context ended while waiting for the load balancers to be released: %w", ctx.Err())
 		case <-time.After(lbReleasePoll):
 		}
 	}
