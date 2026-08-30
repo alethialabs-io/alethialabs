@@ -50,7 +50,7 @@ ARGO_CLAIM_DIMENSIONS="addons maxconfig full gitops byo"
 ARGO_SUPPORTING_DIMENSIONS="floor byo-iac day2 cli-demo"
 
 _integrity_verdict() { # _integrity_verdict <bundle-dir> <dimension>  → prints reason; returns 0/1/3
-	local dir="$1" dim="$2" outcome assert healthy
+	local dir="$1" dim="$2" outcome assert healthy plan_short plan_full
 	if [ ! -f "$dir/provision-summary.json" ]; then
 		echo "no provision-summary.json in $dir — this is not a proof bundle"
 		return 3
@@ -71,6 +71,47 @@ _integrity_verdict() { # _integrity_verdict <bundle-dir> <dimension>  → prints
 	if [ "$outcome" != "success" ]; then
 		echo "outcome=$outcome — a non-success bundle records a failure, not a claim; nothing required"
 		return 0
+	fi
+
+	# ── THE SIGNED RECEIPT MUST COVER THE PLAN THIS BUNDLE REPORTS. ───────────────────────────
+	#
+	# Same shape as #3281, one artifact over: capture-proof.sh pins the receipt by asking the DB
+	# for the DEPLOY job whose receipt matches the plan the runner log named
+	# (`LIKE '$receipt_plan_sha%'`), and when no job matches it FALLS BACK to the earliest
+	# receipt-bearing job and prints
+	#
+	#     ::warning::… no DEPLOY job carries a receipt for plan <sha>; fell back … The committed
+	#     receipt may not cover the plan this bundle reports.
+	#
+	# Nothing was required to act on that warning, so the bundle ships anyway: VERDICT.txt reads
+	# `receipt: signed=true sha256=710ebacbbecc` while receipt.json attests
+	# `plan_sha256: 7b60f65b1578fe55…`. MEASURED on azure/20260830T005214Z (#3426) and
+	# aws/20260828T125612Z — 2 of 22 bundles on dev. A warning nobody must act on is
+	# indistinguishable from silence; that sentence is already in this file's header, and this is
+	# the second artifact it applies to.
+	#
+	# `signed=true` next to a hash the receipt does not carry is the worst of both: it reads as
+	# cryptographic attestation of THIS plan while attesting a different one.
+	#
+	# PREFIX, NOT EQUALITY. The runner logs a short hash and the receipt carries the full 64; the
+	# capture's own SQL already compares them that way, so this asks the identical question rather
+	# than a new one.
+	#
+	# ONLY WHEN BOTH ARE PRESENT. An unsigned run, or one whose bundle carries no receipt, is a
+	# different state and is not this check's business — silence about a value that is absent is
+	# correct, and newly failing on absence would refuse bundles this defect never touched.
+	if [ -f "$dir/receipt.json" ]; then
+		plan_short="$(jq -r '.receipt_plan_sha256 // ""' "$dir/provision-summary.json")"
+		plan_full="$(jq -r '.receipt.plan_sha256 // ""' "$dir/receipt.json")"
+		if [ -n "$plan_short" ] && [ -n "$plan_full" ] && [ "${plan_full#"$plan_short"}" = "$plan_full" ]; then
+			echo "the committed receipt does not cover the plan this bundle reports: provision-summary.json
+  says receipt_plan_sha256=$plan_short but receipt.json attests plan_sha256=$plan_full.
+  So \`signed=true\` here attests a DIFFERENT plan than the one the cell is claiming. capture-proof.sh
+  warned about exactly this at capture time and nothing was required to act on it (#3426).
+  Re-capture from the run whose DEPLOY job carries the receipt for $plan_short, rather than promoting
+  a bundle whose signature and whose claim are about two different plans."
+			return 1
+		fi
 	fi
 
 	case " $ARGO_CLAIM_DIMENSIONS " in
@@ -200,6 +241,31 @@ if [ "${1:-}" = "--self-test" ]; then
 			echo "  ✓ every classified dimension is one the resolver can actually emit"
 		fi
 	fi
+
+	# ── The receipt must cover the plan the bundle reports (#3426). Four cases, because the two
+	#    that matter are the two ABSENCE shapes: a check that refused whenever it could not find
+	#    both values would reject every unsigned run, and a check that skipped whenever either
+	#    lookup returned empty would be satisfied by a typo in the jq path — the mismatch case
+	#    below is what proves the path resolves.
+	_mk_receipt() { # _mk_receipt <label> <short-in-summary> <full-in-receipt>  → echoes bundle dir
+		local d
+		d="$(_mk "$1" success converged 20 addons)"
+		[ -n "$2" ] && jq --arg s "$2" '. + {receipt_plan_sha256:$s}' "$d/provision-summary.json" >"$d/ps.tmp" \
+			&& mv "$d/ps.tmp" "$d/provision-summary.json"
+		[ -n "$3" ] && jq -n --arg f "$3" '{key_id:"deadbeef", receipt:{plan_sha256:$f}}' >"$d/receipt.json"
+		printf '%s' "$d"
+	}
+	full_sha=7b60f65b1578fe552eaef50e1d76809aa217a8820ace2e76251ac489bce7a871
+	_expect "a receipt covering the reported plan is promotable" \
+		"$(_mk_receipt rcpt_match 7b60f65b1578 "$full_sha")" addons 0
+	# THE DEFECT ITSELF, with the real hashes off azure/20260830T005214Z.
+	_expect "a receipt attesting a DIFFERENT plan is refused" \
+		"$(_mk_receipt rcpt_mismatch 710ebacbbecc "$full_sha")" addons 1
+	_expect "a bundle with no receipt.json is not newly refused" \
+		"$(_mk_receipt rcpt_noreceipt 710ebacbbecc "")" addons 0
+	_expect "a bundle recording no plan sha is not newly refused" \
+		"$(_mk_receipt rcpt_nosha "" "$full_sha")" addons 0
+	rows=$((rows + 4))
 
 	if [ "$fails" -ne 0 ]; then
 		echo "check-proof-integrity --self-test: $fails assertion(s) FAILED" >&2
