@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alethialabs-io/alethialabs/packages/core/compat"
 )
@@ -720,5 +721,117 @@ change and then refuses, or admits, on a number the matrix never said. Put prove
 	})
 	if literals == 0 {
 		t.Fatalf("%s yielded ZERO string literals — the scan did not work, so its silence is not a pass", name)
+	}
+}
+
+// ── the narrow helpers, and the branches only a direct call reaches ──────────────────────────
+
+func TestArgoProbeRequestTimeout(t *testing.T) {
+	for _, tc := range []struct{ total, want time.Duration }{
+		{argoPreflightTimeout, argoPreflightTimeout - 2*time.Second},
+		{30 * time.Second, 28 * time.Second},
+		{4 * time.Second, 2 * time.Second},
+		// The arm that matters if somebody makes the preflight "quicker": kubectl refuses a
+		// negative --request-timeout outright, which would turn every probe into UNREADABLE.
+		{3 * time.Second, 2 * time.Second},
+		{time.Second, 2 * time.Second},
+		{0, 2 * time.Second},
+		{-time.Minute, 2 * time.Second},
+	} {
+		if got := argoProbeRequestTimeout(tc.total); got != tc.want {
+			t.Errorf("argoProbeRequestTimeout(%s) = %s, want %s", tc.total, got, tc.want)
+		}
+	}
+}
+
+func TestClassifyNamesAWorkloadItCannotName(t *testing.T) {
+	// A workload with no metadata.name still has to appear in the refusal, because the count and
+	// the list are what tell the operator WHERE to look. Falling back to the kind, then to a
+	// visible placeholder, beats an empty string inside a comma-separated list.
+	obs := classifyLiveArgoWorkloads([]byte(
+		`{"kind":"List","items":[{"kind":"Deployment","metadata":{}},{"metadata":{}}]}`), nil, nil)
+	if !obs.Answered {
+		t.Fatalf("a valid list is an answer: %q", obs.Reason)
+	}
+	if strings.Join(obs.Workloads, ",") != "Deployment,(unnamed workload)" {
+		t.Fatalf("workloads = %v", obs.Workloads)
+	}
+	if strings.Join(obs.Unversioned, ",") != "Deployment,(unnamed workload)" {
+		t.Fatalf("unversioned = %v", obs.Unversioned)
+	}
+}
+
+func TestClassifyReadsAnInitContainersTag(t *testing.T) {
+	// argocd's own workloads use init containers (the copy-util that seeds the argocd binary), so
+	// a cluster whose only argocd image sits there must still be identified rather than refused
+	// as unversioned.
+	obs := classifyLiveArgoWorkloads([]byte(
+		`{"kind":"List","items":[{"kind":"Deployment","metadata":{"name":"argocd-dex-server"},"spec":{"template":{"spec":{`+
+			`"containers":[{"image":"ghcr.io/dexidp/dex:v2.45.1"}],`+
+			`"initContainers":[{"image":"quay.io/argoproj/argocd:v3.3.9"}]}}}}]}`), nil, nil)
+	if strings.Join(obs.Versions, ",") != "v3.3.9" {
+		t.Fatalf("versions = %v (dex must not answer for ArgoCD)", obs.Versions)
+	}
+}
+
+func TestClassifyPrefersStderrButFallsBackToStdout(t *testing.T) {
+	// kubectl's diagnostic normally lands on stderr. The stdout fallback exists so a kubectl that
+	// ever writes it the other way round still classifies, rather than being reported as opaque.
+	obs := classifyLiveArgoWorkloads([]byte("the server rejected the request"), nil, errors.New("exit status 1"))
+	if obs.Answered || !strings.Contains(obs.Reason, "rejected the request") {
+		t.Fatalf("obs = %+v", obs)
+	}
+}
+
+func TestArgoDowngradedBy(t *testing.T) {
+	if got := argoDowngradedBy("  ", []string{"v9.9.9"}); got != nil {
+		// A pin we could not read cannot be called a downgrade — that would be naming a version
+		// we do not know, in the loudest sentence this check prints.
+		t.Fatalf("an unknown pin is not a downgrade, got %v", got)
+	}
+	if got := argoDowngradedBy("v3.3.9", []string{"v3.3.9", "v3.4.0", "v3.1.8"}); strings.Join(got, ",") != "v3.4.0" {
+		t.Fatalf("argoDowngradedBy = %v, want just the higher running version", got)
+	}
+}
+
+func TestPinnedArgoAppVersionOnAChartTheMatrixDoesNotRecord(t *testing.T) {
+	// The chart pin is overridable at run time (ALETHIA_ARGOCD_CHART_VERSION), so it can point at
+	// a release the matrix has never seen. Saying so beats naming a version we did not read.
+	t.Setenv(ArgoChartVersionEnv, "0.0.0-not-a-real-chart")
+	if got := pinnedArgoAppVersion(); got != "" {
+		t.Fatalf("pinnedArgoAppVersion() = %q, want empty for an unrecorded chart", got)
+	}
+	if d := describeArgoPin(""); !strings.Contains(d, "does not record") {
+		t.Fatalf("describeArgoPin must admit it does not know: %s", d)
+	}
+}
+
+func TestDescribeArgoVersionsWithNothingRead(t *testing.T) {
+	// Reached when the matrix declares no window and the cluster reports workloads but no
+	// versions — the one path where a present-but-unreadable ArgoCD is REPORTED rather than
+	// refused, so the sentence must not read as if a version were known.
+	got := decideArgoVersionPreflight(
+		LiveArgoObservation{Answered: true, Workloads: []string{"argocd-server"}, Unversioned: []string{"argocd-server"}},
+		compat.SupportedWindow{}, false, "v3.3.9")
+	if got.Verdict != ArgoPreflightNoWindow || !got.Proceed {
+		t.Fatalf("verdict = %s/%v", got.Verdict, got.Proceed)
+	}
+	if !strings.Contains(got.Message, "(no readable version)") {
+		t.Fatalf("an unread version must not be rendered as one: %s", got.Message)
+	}
+}
+
+func TestTrimArgoPreflightReason(t *testing.T) {
+	if got := trimArgoPreflightReason("   \n\t "); got != "kubectl produced no diagnostic" {
+		// "" would render as `the cluster did not answer ()`, which reads like a bug in us.
+		t.Fatalf("an empty diagnostic must still say something, got %q", got)
+	}
+	if got := trimArgoPreflightReason("Error from\nserver\t(Forbidden)"); got != "Error from server (Forbidden)" {
+		t.Fatalf("newlines must collapse, got %q", got)
+	}
+	long := strings.Repeat("x", argoPreflightReasonMax*3)
+	got := trimArgoPreflightReason(long)
+	if len([]rune(got)) != argoPreflightReasonMax+1 || !strings.HasSuffix(got, "…") {
+		t.Fatalf("a verbose upstream message must be bounded and marked, got %d runes", len([]rune(got)))
 	}
 }

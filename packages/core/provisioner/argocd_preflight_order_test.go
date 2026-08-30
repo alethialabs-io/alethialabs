@@ -20,6 +20,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -110,5 +113,47 @@ func TestArgoVersionPreflightRunsBeforeAnyClusterWrite(t *testing.T) {
 		t.Errorf("the live-ArgoCD version preflight (%s) runs AFTER `helm repo add` (%s) — it must be the first "+
 			"thing installArgoCD does, so a refusal costs neither a network round trip nor a mutation.",
 			fset.Position(token.Pos(preflight)), fset.Position(token.Pos(repoAdd)))
+	}
+}
+
+// TestInstallArgoCDSurfacesTheRefusalUnwrapped drives the real installArgoCD against a cluster
+// that already runs an ArgoCD below the supported floor, and pins the two things a caller sees.
+//
+// It is the ORDER test's other half: that one proves the check runs first, this one proves it
+// STOPS the install, and that the message reaching the operator is a refusal rather than
+// "failed to install ArgoCD: …". Every other refusal in this function is wrapped, so an
+// unwrapped return is easy to "tidy up" into the surrounding style, and the cost of that tidy-up
+// is an operator sent to look at a chart that is fine.
+func TestInstallArgoCDSurfacesTheRefusalUnwrapped(t *testing.T) {
+	// v3.1.8 is the pin #2717 measured as broken and the matrix records as `unsupported`. If the
+	// declared floor ever drops below it this test goes red, which is the correct outcome: the
+	// window moving is a decision, not a side effect.
+	const brokenLive = `{"kind":"List","items":[{"kind":"StatefulSet","metadata":{"name":"argocd-application-controller"},` +
+		`"spec":{"template":{"spec":{"containers":[{"image":"quay.io/argoproj/argocd:v3.1.8"}]}}}}]}`
+
+	dir := t.TempDir()
+	body := filepath.Join(dir, "live.json")
+	if err := os.WriteFile(body, []byte(brokenLive), 0o600); err != nil {
+		t.Fatalf("write stub body: %v", err)
+	}
+	// Anything the preflight does NOT ask for exits non-zero, so a run that got past the refusal
+	// fails for its own reason rather than quietly succeeding.
+	script := "#!/bin/sh\ncase \"$*\" in\n  *'get statefulsets.apps,deployments.apps'*) cat '" + body + "'; exit 0;;\nesac\nexit 7\n"
+	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
+		t.Fatalf("write kubectl stub: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var result PlanResult
+	err := installArgoCD(t.Context(), newLocalProjectConfig("alethia", "argo"), nil, &result, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("installing over an ArgoCD below the measured floor = nil, want the deploy refused")
+	}
+	if !strings.HasPrefix(err.Error(), "refusing to install ArgoCD") {
+		t.Fatalf("the refusal must reach the caller UNWRAPPED — a deliberate refusal dressed as a "+
+			"failure reads as a broken chart. Got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "v3.1.8") {
+		t.Errorf("the refusal must name what it found on the cluster: %v", err)
 	}
 }

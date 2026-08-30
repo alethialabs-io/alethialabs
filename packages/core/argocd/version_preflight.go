@@ -177,14 +177,8 @@ func probeLiveArgoWorkloads(ctx context.Context) LiveArgoObservation {
 	cctx, cancel := context.WithTimeout(ctx, argoPreflightTimeout)
 	defer cancel()
 
-	// kubectl's own request timeout sits under the context bound so it returns a clean dial error
-	// rather than being SIGKILLed at the deadline with nothing to report.
-	req := argoPreflightTimeout - 2*time.Second
-	if req < 2*time.Second {
-		req = 2 * time.Second
-	}
 	cmd := exec.CommandContext(cctx, "kubectl",
-		"--request-timeout="+req.String(),
+		"--request-timeout="+argoProbeRequestTimeout(argoPreflightTimeout).String(),
 		"-n", argoPreflightNamespace,
 		"get", "statefulsets.apps,deployments.apps",
 		"-l", argoPartOfSelector,
@@ -194,6 +188,22 @@ func probeLiveArgoWorkloads(ctx context.Context) LiveArgoObservation {
 	cmd.Stderr = &errOut
 	err := cmd.Run()
 	return classifyLiveArgoWorkloads(out.Bytes(), errOut.Bytes(), err)
+}
+
+// argoProbeRequestTimeout sits kubectl's OWN request timeout under the context bound, so a probe
+// that runs out of time returns a clean dial error rather than being SIGKILLed at the deadline
+// with nothing to report — and UNREADABLE then carries a sentence instead of a shrug.
+//
+// The floor matters even though today's bound leaves room for it: this is the number somebody
+// lowers when they want the preflight to be quicker, and a negative --request-timeout makes
+// kubectl refuse the call outright, which would turn every deploy's preflight into UNREADABLE
+// silently. Pure and separated so both arms are pinned rather than one being dead by arithmetic.
+func argoProbeRequestTimeout(total time.Duration) time.Duration {
+	const floor = 2 * time.Second
+	if req := total - floor; req >= floor {
+		return req
+	}
+	return floor
 }
 
 // argoWorkloadList is the shape of `kubectl get statefulsets.apps,deployments.apps -o json`.
