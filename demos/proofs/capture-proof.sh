@@ -182,6 +182,32 @@ if [ "${1:-}" = "--self-test" ]; then
 		echo "  ✓ the extract stays selective: ordinary chatter is not captured"
 	fi
 
+	# 6 · AN ABSTENTION LEAVES A TRACE (#3472). Same defect class as 5, one guard further on. The
+	#     stale-exclusion ratchet ABSTAINS instead of firing when an add-on's Healthy is recorded
+	#     fail-open on this cloud (external-dns on aws: the pod is Ready and every Route53 write is
+	#     denied). The abstention is REPORTED on stderr precisely so that "the ratchet did not fire"
+	#     cannot render as "the ratchet found nothing wrong" — but the alternation above decides
+	#     what outlives the run, and an abstention it does not match survives only in a CI log that
+	#     expires in 30 days. The committed bundle would then read exactly like a run where every
+	#     exclusion was re-validated.
+	#
+	#     This case pins the coupling itself, not the wording: the message carries the
+	#     `argocd assert: ` prefix ONLY because this filter is what captures it, and nothing else
+	#     in the tree records that dependency.
+	printf '%s\n' \
+		'=== RUN   TestT2RealCloudProvisioning' \
+		'    t2_provision_test.go:1: some ordinary progress chatter that is not an assertion' \
+		'argocd assert: stale-exclusion check ABSTAINED on 1 add-on(s) that are Healthy+Synced — their health is fail-open, so it is not evidence they work:' \
+		'--- PASS: TestT2RealCloudProvisioning (1200.00s)' \
+		>"$tmp/abstain.log"
+	abstain_dir="$(_capture abstain success "$tmp/pass.json" addons "$tmp/abstain.log")"
+	if [ -s "$abstain_dir/assertions.txt" ] && grep -q 'ABSTAINED on 1 add-on' "$abstain_dir/assertions.txt"; then
+		echo "  ✓ a stale-exclusion abstention is recorded in the bundle"
+	else
+		echo "  ✗ the bundle carries NO trace of the abstention — it reads as a run that re-validated every exclusion" >&2
+		fails=$((fails + 1))
+	fi
+
 	if [ "$fails" -ne 0 ]; then
 		echo "capture-proof --self-test: $fails assertion(s) FAILED" >&2
 		exit 1
