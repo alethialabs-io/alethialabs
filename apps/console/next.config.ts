@@ -148,7 +148,30 @@ const nextConfig: NextConfig = {
 			},
 			{ source: "/ingest/:path*", destination: "https://eu.i.posthog.com/:path*" },
 		];
-		return { beforeFiles: getHost, afterFiles: [...docs, ...posthog] };
+		// RFC 9728 protected-resource metadata for the MCP endpoint (#3318). The document is
+		// served by Better Auth's mcp() plugin, whose onRequest hook matches the ABSOLUTE
+		// `/.well-known/oauth-protected-resource…` pathname — but Better Auth is mounted at
+		// /api/auth, so Next never routed those requests to it and they fell through to the
+		// catch-all page render, answering 200 text/html to a discovery request.
+		//
+		// `beforeFiles`, not `afterFiles`: the console owns the `/{org}` wildcard, so a page
+		// route can otherwise claim these paths — which is exactly how the HTML shell came to
+		// answer them. The `:path*` rule is deliberately broad so that a request naming SOME
+		// OTHER resource gets the handler's JSON 404 instead of the same HTML.
+		const oauthProtectedResource = [
+			{
+				source: "/.well-known/oauth-protected-resource",
+				destination: "/api/oauth-protected-resource",
+			},
+			{
+				source: "/.well-known/oauth-protected-resource/:path*",
+				destination: "/api/oauth-protected-resource/:path*",
+			},
+		];
+		return {
+			beforeFiles: [...getHost, ...oauthProtectedResource],
+			afterFiles: [...docs, ...posthog],
+		};
 	},
 };
 

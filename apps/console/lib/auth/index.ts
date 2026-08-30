@@ -14,6 +14,7 @@ import type {
 } from "better-auth";
 import { getAuthConfig, getAuthRateLimit, getGitlabBaseUrl } from "@/lib/config/auth";
 import { getAuthPlugins } from "@/lib/auth/plugins";
+import { mcpResourceFromBaseUrl } from "@/lib/auth/mcp-resource";
 import { ensureMemberGrant } from "@/lib/authz/grants";
 import { provisionPrimaryOrg } from "@/lib/auth/onboarding";
 import { getServiceDb } from "@/lib/db";
@@ -141,17 +142,13 @@ const plugins: BetterAuthOptions["plugins"] = [
  * So it is computed defensively and MCP is registered only when it succeeds, the same way the
  * social providers above are registered only when configured. A self-host with a missing or
  * relative NEXT_PUBLIC_APP_URL loses the MCP connector and keeps its login page.
+ *
+ * EXPORTED because it is the audience three separate things must agree on — see
+ * lib/auth/mcp-resource.ts. The route that verifies MCP access tokens
+ * (app/api/mcp/route.ts) and the route that serves the resource's RFC 9728 metadata
+ * (app/api/oauth-protected-resource) both read this value rather than re-deriving one.
  */
-function mcpResource(): string | null {
-	if (!cfg.baseURL) return null;
-	try {
-		const url = new URL("/api/mcp", cfg.baseURL);
-		if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-		return url.toString();
-	} catch {
-		return null;
-	}
-}
+export const mcpResourceUrl: string | null = mcpResourceFromBaseUrl(cfg.baseURL);
 
 // OAuth 2.1 authorization server for the MCP endpoint (B7): lets remote MCP clients (Claude /
 // claude.ai connectors) obtain an access token that the /api/mcp route resolves into a PDP-scoped
@@ -160,7 +157,7 @@ function mcpResource(): string | null {
 // 1.7 moved this plugin into @better-auth/mcp, flattened the old `oidcConfig` nesting, and made
 // `resource` mandatory: tokens are audience-bound to it (RFC 8707) and the RFC 9728
 // protected-resource metadata is published for it. Its endpoints moved from /mcp/* to /oauth2/*.
-const resource = mcpResource();
+const resource = mcpResourceUrl;
 if (resource !== null) {
 	// mcp() IS the OAuth provider — never also register oauthProvider() here.
 	plugins.push(
