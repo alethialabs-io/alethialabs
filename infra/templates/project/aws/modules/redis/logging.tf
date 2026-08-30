@@ -10,13 +10,13 @@ locals {
 
   redis_log_delivery_cloudwatch_configuration = !var.cloudwatch_logs_enabled ? [] : [
     {
-      destination      = aws_cloudwatch_log_group.redis[0].name
+      destination      = one(aws_cloudwatch_log_group.redis[*].name)
       destination_type = "cloudwatch-logs"
       log_format       = var.log_format
       log_type         = "slow-log"
     },
     {
-      destination      = aws_cloudwatch_log_group.redis[0].name
+      destination      = one(aws_cloudwatch_log_group.redis[*].name)
       destination_type = "cloudwatch-logs"
       log_format       = var.log_format
       log_type         = "engine-log"
@@ -25,13 +25,13 @@ locals {
 
   redis_log_delivery_firehose_configuration = !var.firehose_logs_enabled ? [] : [
     {
-      destination      = aws_kinesis_firehose_delivery_stream.redis[0].name
+      destination      = one(aws_kinesis_firehose_delivery_stream.redis[*].name)
       destination_type = "kinesis-firehose"
       log_format       = var.log_format
       log_type         = "slow-log"
     },
     {
-      destination      = aws_kinesis_firehose_delivery_stream.redis[0].name
+      destination      = one(aws_kinesis_firehose_delivery_stream.redis[*].name)
       destination_type = "kinesis-firehose"
       log_format       = var.log_format
       log_type         = "engine-log"
@@ -118,8 +118,8 @@ resource "aws_iam_role" "firehose_role" {
 # Associate tenant IAM policy to relevant role
 resource "aws_iam_role_policy_attachment" "attach_s3_policy_to_firehose_role" {
   count      = var.s3_logs_enabled ? 1 : 0
-  role       = aws_iam_role.firehose_role[0].name
-  policy_arn = aws_iam_policy.s3_firehose_policy[0].arn
+  role       = one(aws_iam_role.firehose_role[*].name)
+  policy_arn = one(aws_iam_policy.s3_firehose_policy[*].arn)
 }
 
 
@@ -130,7 +130,7 @@ resource "aws_kinesis_firehose_delivery_stream" "redis" {
 
 
   extended_s3_configuration {
-    role_arn   = aws_iam_role.firehose_role[0].arn
+    role_arn   = one(aws_iam_role.firehose_role[*].arn)
     bucket_arn = data.aws_s3_bucket.engine_logs[0].arn
     prefix     = coalesce(var.s3_logs_prefix, local.s3_logs_prefix)
   }

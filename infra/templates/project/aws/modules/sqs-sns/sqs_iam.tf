@@ -13,13 +13,13 @@ resource "aws_iam_user" "sqs" {
 
 resource "aws_iam_access_key" "sqs" {
   count = var.sqs_username == "" ? 0 : 1
-  user  = aws_iam_user.sqs[0].name
+  user  = one(aws_iam_user.sqs[*].name)
 }
 
 resource "aws_iam_user_policy" "sns_granular_access" {
   count = var.sqs_username == "" ? 0 : 1
   name  = "SQS-Granular-Access"
-  user  = aws_iam_user.sqs[0].name
+  user  = one(aws_iam_user.sqs[*].name)
 
   policy = data.aws_iam_policy_document.sqsmq.json
 }
@@ -63,6 +63,6 @@ resource "aws_iam_role" "sqsmq" {
 resource "aws_iam_role_policy" "sqsmq" {
   count  = var.sqs_iam_role_name == "" ? 0 : 1
   name   = "${var.sqs_iam_role_name}-policy"
-  role   = aws_iam_role.sqsmq[0].id
+  role   = one(aws_iam_role.sqsmq[*].id)
   policy = data.aws_iam_policy_document.sqsmq.json
 }

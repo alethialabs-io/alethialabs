@@ -70,7 +70,7 @@ resource "azurerm_cosmosdb_sql_container" "this" {
   name                = each.value.name
   resource_group_name = var.resource_group_name
   account_name        = azurerm_cosmosdb_account.this.name
-  database_name       = azurerm_cosmosdb_sql_database.this[0].name
+  database_name       = one(azurerm_cosmosdb_sql_database.this[*].name)
 
   # Cosmos wants a PATH; the product collects an ATTRIBUTE NAME.
   #

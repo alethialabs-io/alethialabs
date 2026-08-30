@@ -13,8 +13,8 @@ module "aks" {
   cluster_name    = local.aks_name
   cluster_version = var.aks_cluster_version
 
-  cluster_identity_id = local.azure_secrets_encryption ? azurerm_user_assigned_identity.aks[0].id : ""
-  secrets_kms_key_id  = local.azure_secrets_encryption ? azurerm_key_vault_key.aks_secrets[0].id : ""
+  cluster_identity_id = local.azure_secrets_encryption ? one(azurerm_user_assigned_identity.aks[*].id) : ""
+  secrets_kms_key_id  = local.azure_secrets_encryption ? one(azurerm_key_vault_key.aks_secrets[*].id) : ""
 
   # Derived in checks_naming.tf (NAMING-002), not left to Azure: the auto-derived
   # "MC_<resource_group>_<cluster_name>_<location>" rendered 82 characters against an 80-character

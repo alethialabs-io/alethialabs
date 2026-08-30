@@ -59,17 +59,17 @@ resource "alicloud_eip_address" "nat" {
 resource "alicloud_eip_association" "nat" {
   count = var.single_cloud_nat ? 1 : 0
 
-  allocation_id = alicloud_eip_address.nat[0].id
-  instance_id   = alicloud_nat_gateway.this[0].id
+  allocation_id = one(alicloud_eip_address.nat[*].id)
+  instance_id   = one(alicloud_nat_gateway.this[*].id)
 }
 
 # SNAT entries so vswitch traffic egresses through the NAT gateway.
 resource "alicloud_snat_entry" "this" {
   count = var.single_cloud_nat ? var.vswitch_count : 0
 
-  snat_table_id     = alicloud_nat_gateway.this[0].snat_table_ids
+  snat_table_id     = one(alicloud_nat_gateway.this[*].snat_table_ids)
   source_vswitch_id = alicloud_vswitch.this[count.index].id
-  snat_ip           = alicloud_eip_address.nat[0].ip_address
+  snat_ip           = one(alicloud_eip_address.nat[*].ip_address)
 
   depends_on = [alicloud_eip_association.nat]
 }
@@ -101,6 +101,6 @@ resource "alicloud_security_group_rule" "operator_allow_list" {
   port_range        = "-1/-1"
   policy            = "accept"
   priority          = 1
-  security_group_id = alicloud_security_group.operator_allow_list[0].id
+  security_group_id = one(alicloud_security_group.operator_allow_list[*].id)
   cidr_ip           = each.value
 }
