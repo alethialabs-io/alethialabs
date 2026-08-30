@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"golang.org/x/mod/semver"
 )
 
 // Evaluate judges a proposed config against the embedded matrix and returns a
@@ -243,4 +245,97 @@ func (r *Report) finalize() {
 	default:
 		r.Verdict = StatusNotEvaluable
 	}
+}
+
+// SupportedWindow is a component's declared Alethia-support window, on the
+// component's APP-VERSION axis — what a live cluster reports — as opposed to
+// ComponentRelease's Kubernetes window, which is what a chart version tolerates.
+//
+// The two axes are different scales and must not be compared with each other: a
+// chart version cannot be read off a cluster somebody else installed from the
+// upstream manifests, and #2717 was expensive precisely because chart and app
+// versions were reasoned about interchangeably.
+//
+// Empty bounds follow ComponentRelease's convention: an empty single bound is
+// unbounded on that side, and BOTH empty means no window is recorded — which is
+// not_evaluable, never a pass.
+type SupportedWindow struct {
+	AppVersionMin string `json:"app_version_min"`
+	AppVersionMax string `json:"app_version_max"`
+	Note          string `json:"note,omitempty"`
+}
+
+// SupportedWindow returns a component's declared support window.
+//
+// ok is false when the component declares none AND when it declares one with both
+// bounds empty. Those are the same statement — "we have not said" — and a caller
+// must not read either as "in range". An undeclared window is not an open one.
+func (m *Matrix) SupportedWindow(componentID string) (SupportedWindow, bool) {
+	c, ok := m.Component(componentID)
+	if !ok || c.Supported == nil || (c.Supported.AppVersionMin == "" && c.Supported.AppVersionMax == "") {
+		return SupportedWindow{}, false
+	}
+	return *c.Supported, true
+}
+
+// CheckSemverWindow is checkK8sRange's contract on the full-semver axis: both
+// bounds empty → not_evaluable; an unparseable subject or bound → not_evaluable
+// naming WHICH one; otherwise pass or fail.
+//
+// Exported because the live-cluster guard needs the same rule, and a second copy
+// of a range comparison is how the two ends of a window drift apart.
+//
+// Comparison is golang.org/x/mod/semver, already a direct dependency of this
+// module and already used for exactly this job in packages/core/helmoci
+// (highestReleaseTag). Two of its properties are load-bearing here and are why
+// this must not be hand-rolled: it accepts the truncated "vMAJOR.MINOR" form
+// (so the recorded "v2.11" participates in a comparison instead of tripping the
+// unparseable arm), and it sorts a pre-release BELOW its release, which is the
+// correct behaviour for a floor and the thing a naive field-by-field compare
+// gets wrong.
+func CheckSemverWindow(v, min, max string) (Status, string) {
+	if min == "" && max == "" {
+		return StatusNotEvaluable, "no supported version window recorded"
+	}
+	sv := normalizeSemver(v)
+	if !semver.IsValid(sv) {
+		return StatusNotEvaluable, fmt.Sprintf("version %q is unset or unparseable", v)
+	}
+	if min != "" {
+		mn := normalizeSemver(min)
+		if !semver.IsValid(mn) {
+			return StatusNotEvaluable, fmt.Sprintf("recorded lower bound %q is unparseable", min)
+		}
+		if semver.Compare(sv, mn) < 0 {
+			return StatusFail, ""
+		}
+	}
+	if max != "" {
+		mx := normalizeSemver(max)
+		if !semver.IsValid(mx) {
+			return StatusNotEvaluable, fmt.Sprintf("recorded upper bound %q is unparseable", max)
+		}
+		if semver.Compare(sv, mx) > 0 {
+			return StatusFail, ""
+		}
+	}
+	return StatusPass, ""
+}
+
+// SemverLabel renders a [min, max] window for a human message, e.g. "v3.3.9+",
+// "≤v3.4.0", "v3.3.9–v3.4.0". rangeLabel's sibling, kept separate so the
+// Kubernetes label keeps saying "1.33+" without a leading v.
+func SemverLabel(min, max string) string { return rangeLabel(min, max) }
+
+// normalizeSemver supplies the "v" prefix golang.org/x/mod/semver requires.
+//
+// Mirrors helmoci.tagToSemver, and is kept local rather than shared because that
+// one also has to undo Helm's OCI "+"→"_" tag encoding, which has nothing to do
+// with a version window and would be a confusing import to reach for here.
+func normalizeSemver(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasPrefix(s, "v") {
+		return s
+	}
+	return "v" + s
 }

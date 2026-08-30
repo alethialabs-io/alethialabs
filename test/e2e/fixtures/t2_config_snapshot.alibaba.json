@@ -87,7 +87,7 @@
 	],
 	"compat": {
 		"verdict": "not_evaluable",
-		"catalog_version": "compat-matrix-0.1.0",
+		"catalog_version": "compat-matrix-0.2.0",
 		"controls": [
 			{
 				"id": "COMPAT-K8S-CLOUD-ALIBABA",
