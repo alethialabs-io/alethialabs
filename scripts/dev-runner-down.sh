@@ -9,8 +9,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-LOCK=/tmp/alethia-dev-runner.lock
-CONTAINER_PREFIX=alethia-runner
+# ENV_KEY must be derived EXACTLY as dev-runner.sh derives it, or this script tears down nothing.
+# It used to hardcode /tmp/alethia-dev-runner.lock and alethia-runner-, while dev-runner.sh has
+# written per-environment names (…-$ENV_KEY) since branch envs arrived — so `pnpm dev:runner:down`
+# read a lock directory that nothing creates, matched no containers, printed "no local runners were
+# running" and exited 0, with the runner still up and still claiming jobs. The failure is invisible
+# precisely because the honest-looking answer and the broken one are the same sentence.
+ENV_KEY="${ALETHIA_ENV_SLUG:-$(basename "$ROOT")}"
+LOCK="/tmp/alethia-dev-runner-$ENV_KEY.lock"
+CONTAINER_PREFIX="alethia-runner-$ENV_KEY"
 MODE="$(cat "$LOCK/mode" 2>/dev/null || echo "")"
 
 stopped=0
