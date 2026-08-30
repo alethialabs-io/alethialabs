@@ -6,7 +6,7 @@ package compat
 // The Report contract below mirrors packages/core/verify verbatim (Status,
 // Severity, Finding, ControlResult, Summary, Report, Override, Unwaived). The
 // shapes are intentionally REDECLARED here rather than imported so the two
-// engines stay disjoint and independently versioned (compat-matrix-0.1.0 vs
+// engines stay disjoint and independently versioned (compat-matrix-0.2.0 vs
 // elench-controls-0.5.2) — the compat seam owns no verify code and vice-versa.
 // The Go type names match verify (compat.Report, compat.ControlResult); the
 // generated TS mirror uses CompatReport / CompatControlResult (no package
