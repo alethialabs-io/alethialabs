@@ -154,9 +154,30 @@ jobs:
         continue-on-error: true
         run: node scripts/programme-rollup.mjs
 
+      # ── THE PR MUST NOT BE AUTHORED BY GITHUB_TOKEN (#3476). ──────────────────────────────────
+      # A pull request opened with the default GITHUB_TOKEN does NOT trigger other workflows, so
+      # `CI`, `TypeScript` and `Authz / open-core guards` never run on it. The PR then sits with an
+      # EMPTY check rollup — never red, just permanently BLOCKED and unmergeable — which reads like
+      # a CI problem and is not one. Every nightly refresh since this workflow shipped has landed in
+      # that state.
+      #
+      # Same cause, same remedy, same custody as release-please.yml:25-40 — that file's comment
+      # records the identical failure on protect-main. The App-installation token makes the PR
+      # App-authored, so the checks run. TAP_APP_ID / TAP_APP_PRIVATE_KEY are already used by
+      # release-please.yml, mirror-cli.yml and release-cli.yml, so nothing new is trusted here.
+      - name: Mint the ledger-PR token (GitHub App)
+        id: ledger_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: alethialabs
+
       - name: Open or update the refresh PR
         uses: peter-evans/create-pull-request@v8
         with:
+          token: ${{ steps.ledger_token.outputs.token }}
           base: dev
           branch: chore/programme-ledger-refresh
           # A stable branch means one long-lived PR that gets updated, not a new PR every morning.
