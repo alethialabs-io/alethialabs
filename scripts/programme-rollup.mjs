@@ -353,6 +353,42 @@ export function canonicalDimension(token) {
 	return DIMENSION_ALIASES.get(token) ?? token;
 }
 
+/**
+ * The ONE dimension label that names a composite run rather than a grid column.
+ *
+ * `scripts/e2e/resolve-dimension.sh`'s `dimension_label()` is the emitter, and its vocabulary is
+ * closed: `full` → `full-bar`; `maxconfig|addons|byo|gitops|byo-iac|day2` → itself; anything else →
+ * `floor`. Every one of those is a grid column (`byo` through DIMENSION_ALIASES) EXCEPT `full-bar`,
+ * which names a bar that exercises the whole row. `--self-test` pins the two vocabularies together.
+ */
+export const COMPOSITE_RED_DIMENSION = "full-bar";
+
+/**
+ * Which grid columns a nightly RED's dimension label refers to.
+ *
+ * THREE ANSWERS, NEVER TWO. A label this file does not recognise returns an EMPTY list with
+ * `known:false`, and the caller must not read that as "no cells affected" — it is "we could not
+ * tell", which is a different statement and the one that has to be reported.
+ *
+ * This existed as a bare `grid[cloud]?.[dim]` lookup whose miss was a silent `continue`, and
+ * `full-bar` fell straight through it: five open bar-wide REDs (#2550 #2384 #2383 #2382 #2099) were
+ * invisible to the contested check in BOTH directions, so a bar that went red after a cell was
+ * proven contested nothing at all.
+ *
+ * `compositeIds` is the set the BAR actually exercises, which is NOT every column: `cli-demo`
+ * carries `composedByFull: false` (mirroring FULL_EXCLUDES) because `full` re-drives the spine
+ * through a seeded job row and must never credit the real-binary cell. Passing every column instead
+ * would hold a bar-wide red open forever on a cell that bar never ran.
+ *
+ * @returns {{known: boolean, composite: boolean, dimensions: string[]}}
+ */
+export function redDimensions(label, dimensionIds, compositeIds) {
+	const dim = canonicalDimension(label);
+	if (dim === COMPOSITE_RED_DIMENSION) return { known: true, composite: true, dimensions: [...compositeIds] };
+	if (dimensionIds.includes(dim)) return { known: true, composite: false, dimensions: [dim] };
+	return { known: false, composite: false, dimensions: [] };
+}
+
 export function collapseLedger(rows) {
 	/** @type {Map<string, object|null>} */
 	const claims = new Map();
@@ -1061,18 +1097,122 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	// Resolution is one of two human acts: close the issue if that run was a flake, or append a
 	// FAIL row for it if it was not. Either one clears the ⚠️ on the next derivation.
 	const contested = [];
+	/** Open REDs a LATER proof has already answered — stale board entries, safe to close. */
+	const supersededReds = [];
+	/** Open bar-wide REDs that are NOT superseded, with the cells still missing a later proof. */
+	const compositeReds = [];
+	/** Open REDs whose dimension label this file could not resolve. Reported, never dropped. */
+	const unmappedReds = [];
+	const dimensionIds = DIMENSIONS.map((d) => d.id);
+	// What the BAR exercises — the same `composedByFull` declaration deriveCell's composite credit
+	// reads, so the two can never disagree about what a `full` run covers.
+	const compositeDimensionIds = DIMENSIONS.filter((d) => d.composedByFull !== false).map((d) => d.id);
+
+	// Snapshot every cell's proving date BEFORE the loop mutates any of them. A composite red reads
+	// the whole row, so without this its answer would depend on whether a per-cell red for the same
+	// cloud happened to be processed first and flipped that cell to `contested` — a verdict that
+	// varies with issue-number order is not a derivation.
+	const provenOnBefore = {};
+	for (const cloud of clouds) {
+		provenOnBefore[cloud] = {};
+		for (const d of DIMENSIONS) {
+			const cell = grid[cloud]?.[d.id];
+			provenOnBefore[cloud][d.id] = cell?.state === STATE.proven ? (cell.row?.date ?? "") : "";
+		}
+	}
+	/** Did a run that PROVED this cell land on or after `redDate`? */
+	const answeredBy = (cloud, dim, redDate) => {
+		const provenOn = provenOnBefore[cloud]?.[dim] ?? "";
+		return provenOn && redDate <= provenOn ? provenOn : "";
+	};
+
 	for (const red of board.openRedIssues) {
-		const dim = canonicalDimension(red.dimension);
+		const { known, composite, dimensions } = redDimensions(red.dimension, dimensionIds, compositeDimensionIds);
+		if (!known) {
+			unmappedReds.push({ cloud: red.cloud, dimension: red.dimension, issue: `#${red.number}`, redFiledOn: red.date });
+			// A NOTE, not a failure. The subject is an issue TITLE, which a human can edit at any
+			// time — reding every PR in the repo over someone's typo is the wrong lever. Genuine
+			// drift between this file's vocabulary and the emitter's is caught by `--self-test`,
+			// which compares the two statically and IS a build failure.
+			notes.push(
+				`#${red.number} is an open nightly RED whose dimension \`${red.dimension}\` resolves to no grid column, so it contests nothing and supersedes nothing. ` +
+					`The emitter is \`dimension_label()\` in scripts/e2e/resolve-dimension.sh; its labels are ${[...dimensionIds, COMPOSITE_RED_DIMENSION].map((d) => `\`${d}\``).join(", ")}. ` +
+					`Either the title was hand-edited, or the two vocabularies have drifted.`,
+			);
+			continue;
+		}
+
+		if (composite) {
+			// A bar-wide red is superseded only when EVERY cell it should have covered has since been
+			// proven. Anything less and it stays open.
+			const missing = dimensions.filter((d) => !answeredBy(red.cloud, d, red.date));
+			if (missing.length === 0) {
+				supersededReds.push({
+					cloud: red.cloud,
+					dimension: COMPOSITE_RED_DIMENSION,
+					issue: `#${red.number}`,
+					redFiledOn: red.date,
+					provenOn: dimensions.map((d) => provenOnBefore[red.cloud][d]).sort().at(-1) ?? "",
+					evidence: dimensions.map((d) => `${d} ${provenOnBefore[red.cloud][d]}`).join(" · "),
+				});
+			} else {
+				compositeReds.push({ cloud: red.cloud, issue: `#${red.number}`, redFiledOn: red.date, missing });
+			}
+			// It contests NO individual cell, deliberately. A bar does not necessarily reach every
+			// dimension — `byo` and `day2` activate only from caller vars, which is why
+			// `compositeCredits` already refuses to CREDIT them from a bar PASS. Contesting a cell the
+			// bar may never have run would be that same overstatement pointed the other way.
+			continue;
+		}
+
+		const [dim] = dimensions;
+		const answered = answeredBy(red.cloud, dim, red.date);
+		if (answered) {
+			supersededReds.push({
+				cloud: red.cloud,
+				dimension: dim,
+				issue: `#${red.number}`,
+				redFiledOn: red.date,
+				provenOn: answered,
+				evidence: grid[red.cloud]?.[dim]?.row?.bundle ?? "",
+			});
+			continue;
+		}
 		const cell = grid[red.cloud]?.[dim];
 		if (!cell || cell.state !== STATE.proven) continue;
 		const provenOn = cell.row?.date ?? "";
-		if (!provenOn || red.date <= provenOn) continue;
+		if (!provenOn) continue;
 		grid[red.cloud][dim] = {
 			...cell,
 			state: STATE.contested,
 			why: `${cell.why} — but #${red.number} is OPEN and was filed ${red.date}, AFTER the ${provenOn} run that proved it`,
 		};
 		contested.push({ cloud: red.cloud, dimension: dim, issue: `#${red.number}`, provenOn, redFiledOn: red.date });
+	}
+
+	// ── SUPERSEDED: the inverse of `contested`, and the direction nothing reported ──
+	//
+	// `contested` fires when a red is filed AFTER the run that proved a cell. The complement among
+	// proven cells — a proof that landed AFTER the red — means the red has already been ANSWERED and
+	// the board is carrying a resolved cell as open work. That was a bare `continue`, so these
+	// accumulated indefinitely: thirteen of seventeen open nightly REDs were in this state, and
+	// MVP predicate 6 ("no board cites a closed issue as open") cannot be met while they are.
+	//
+	// An ADVISORY, like the unfiled-red note above and for the same reason: a stale issue is a
+	// bookkeeping gap, not a lying cell, and `render()` never reads `notes` — so this cannot churn
+	// PROGRAMME.md's diff-gated generated half. `--superseded-reds` prints the list for the board
+	// report; closing is a human act, because only a human can confirm the run really did answer it.
+	for (const s of supersededReds) {
+		notes.push(
+			`${s.issue} (\`${s.cloud}/${s.dimension}\`, filed ${s.redFiledOn}) is SUPERSEDED — that cell was proven ${s.provenOn}, on or after the red. ` +
+				`Evidence: ${s.evidence || "(none recorded)"}. Close it, or append a FAIL row if the later run did not in fact answer it.`,
+		);
+	}
+	for (const c of compositeReds) {
+		notes.push(
+			`${c.issue} (\`${c.cloud}/${COMPOSITE_RED_DIMENSION}\`, filed ${c.redFiledOn}) stays OPEN: it names the whole bar, and ${c.missing.length} of ${compositeDimensionIds.length} cells have no proof dated on or after it — ${c.missing.join(", ")}. ` +
+				`It contests no single cell, because a bar does not necessarily reach every dimension.`,
+		);
 	}
 
 	// Gate reality, three-valued.
@@ -1148,7 +1288,7 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		);
 	}
 
-	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, costCells, gateReality, cloudGates };
+	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, supersededReds, compositeReds, unmappedReds, costCells, gateReality, cloudGates };
 }
 
 // ───────────────────────────── rendering ─────────────────────────────
@@ -2286,6 +2426,55 @@ function runSelfTest() {
 		);
 	}
 
+	// ── THE SECOND TWO-FILE INVARIANT: the RED-ISSUE vocabulary. ──
+	//
+	// `dimension_label()` in the same resolver decides the words that go in a nightly issue TITLE,
+	// and `redDimensions` above has to resolve every one of them. They drifted by exactly one:
+	// `full` labels as `full-bar`, which is not a grid column, so `grid[cloud]?.["full-bar"]` was
+	// `undefined` and the contested check `continue`d — five open bar-wide REDs were invisible in
+	// BOTH directions, and the "nothing found" branch was indistinguishable from "nothing wrong".
+	//
+	// A LITERAL list would drift the same way. So read the shell `case` and hold it to this file.
+	{
+		const resolver = fs.readFileSync(new URL("./e2e/resolve-dimension.sh", import.meta.url), "utf8");
+		const body = /dimension_label\(\)\s*\{([\s\S]*?)\n\}/.exec(resolver)?.[1] ?? "";
+		// Every quoted word the case arms can echo, plus the bare `$1` passthrough arm's own patterns.
+		const emitted = new Set();
+		for (const m of body.matchAll(/^\s*([a-z0-9|\- \t]+?)\)\s*echo\s+"([^"]*)"/gm)) {
+			const [, patterns, out] = m;
+			if (out === "$1") for (const t of patterns.split("|").map((x) => x.trim()).filter(Boolean)) emitted.add(t);
+			else if (out) emitted.add(out);
+		}
+		ok(
+			"dimension_label's vocabulary was actually parsed out of the resolver",
+			emitted.size >= 6,
+			`parsed ${JSON.stringify([...emitted])} from dimension_label() — the regex or the shell case changed shape`,
+		);
+		ok(
+			"`full-bar` is among the labels, so this check covers the composite that broke",
+			emitted.has(COMPOSITE_RED_DIMENSION),
+			`parsed ${JSON.stringify([...emitted])}`,
+		);
+		const ids = DIMENSIONS.map((d) => d.id);
+		const comp = DIMENSIONS.filter((d) => d.composedByFull !== false).map((d) => d.id);
+		const unresolved = [...emitted].filter((label) => !redDimensions(label, ids, comp).known);
+		ok(
+			"every label a nightly issue title can carry resolves to at least one grid column",
+			unresolved.length === 0,
+			`these labels resolve to nothing, so a RED carrying one is silently dropped: ${JSON.stringify(unresolved)}`,
+		);
+		ok(
+			"...and an unknown label is reported as unknown rather than as an empty match",
+			redDimensions("no-such-dimension", ids, comp).known === false && redDimensions("floor", ids, comp).known === true,
+			JSON.stringify(redDimensions("no-such-dimension", ids, comp)),
+		);
+		ok(
+			"the composite expands to what the BAR runs, not to every column",
+			redDimensions(COMPOSITE_RED_DIMENSION, ids, comp).dimensions.length === comp.length && comp.length < ids.length,
+			`composite=${JSON.stringify(comp)} all=${JSON.stringify(ids)}`,
+		);
+	}
+
 	// A renamed dimension's OLD ledger rows must still land on its column — the whole reason nothing
 	// was retracted. Keyed under `byo`, read out as `gitops`.
 	{
@@ -2460,6 +2649,29 @@ if (!executedDirectly) {
 	// imported — expose the helpers, touch nothing.
 } else if (process.argv.includes("--self-test")) {
 	runSelfTest();
+} else if (process.argv.includes("--superseded-reds")) {
+	// The closable list, for `scripts/coordinate.sh --report`.
+	//
+	// stdout, machine-readable, and it MUTATES NOTHING — closing an issue is a human act, because
+	// only a human can confirm the later run really answered this red rather than merely postdating
+	// it. Exit 0 with a stated "none" line when the list is empty: a silent success and a genuine
+	// zero must not look the same, which is the defect this whole reporter exists to fix.
+	const v = derive(readInputs());
+	const rows = v.supersededReds;
+	if (rows.length === 0) {
+		console.log("superseded-reds: none — every open nightly RED is either unanswered or already contested.");
+	} else {
+		console.log(`superseded-reds: ${rows.length} open nightly RED(s) have been answered by a LATER proof and can be closed.`);
+		for (const r of rows) {
+			console.log(`  ${r.issue}\t${r.cloud}/${r.dimension}\tfiled ${r.redFiledOn}\tproven ${r.provenOn}\t${r.evidence || "(no bundle recorded)"}`);
+		}
+	}
+	for (const c of v.compositeReds) {
+		console.log(`  (stays open) ${c.issue}\t${c.cloud}/${COMPOSITE_RED_DIMENSION}\tno proof on/after for: ${c.missing.join(",")}`);
+	}
+	for (const u of v.unmappedReds) {
+		console.log(`  (UNMAPPED) ${u.issue}\t${u.cloud}/${u.dimension}\t— this file could not resolve that dimension label`);
+	}
 } else if (process.argv.includes("--epic-body")) {
 	// The tracking epic is a RENDERING of the generated grid, never a second board.
 	//

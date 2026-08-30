@@ -310,6 +310,28 @@ if [ -n "$ship" ]; then
   echo "$ship"
 fi
 
+# ── superseded nightly REDs: the board carrying an ANSWERED cell as open work ────
+#
+# A DIFFERENT AND STRONGER QUESTION than possibly-shipped above. That one asks "does a merged PR
+# mention this number?", which is text proximity — it cannot tell a PR that FIXED an issue from one
+# that merely named it as still-red or deliberately deferred it. This asks the proof ledger whether
+# a run that PROVED the cell has landed since the red was filed, and answers with the committed
+# bundle path. An `e2e nightly:` issue does not close on a merge at all; it closes on a green run,
+# so a merge-based verifier is structurally wrong for the whole `from:e2e-nightly` class.
+#
+# Read-only, and it mutates nothing: only a human can confirm the later run really answered the red
+# rather than merely postdating it. `--superseded-reds` exits non-zero only if the rollup's own
+# inputs are missing, which is worth surfacing rather than swallowing.
+if superseded="$(node "$(dirname "$0")/programme-rollup.mjs" --superseded-reds 2>/dev/null)"; then
+  if [ -n "$superseded" ]; then
+    echo "  ── superseded nightly REDs (the proof ledger has already answered these) ──"
+    printf '%s\n' "$superseded" | sed 's/^/  /'
+    echo "     close one with:  gh issue close <n> --comment \"superseded by <bundle>\""
+  fi
+else
+  echo "  ⚠ superseded-reds: could not evaluate (programme-rollup failed) — advisory SKIPPED." >&2
+fi
+
 # ── stalled: claimed, lease long dead, and the PR holding it is stuck too ────
 # Not reclaimed on purpose (see the reclaim block). These are the units that would otherwise sit
 # invisible forever: the board says someone owns them, and nothing says the owner left.
