@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // CLIDemoRun is the state the beats thread through one another: ids the CLI mints as it goes.
@@ -70,10 +71,59 @@ type CLIDemoRun struct {
 	IdentityID string
 	// ApplyJobID is the DEPLOY job `project apply` enqueued — what `jobs logs` follows.
 	ApplyJobID string
+	// Token is the seeded service token the CLI authenticates with (ALETHIA_TOKEN).
+	Token string
+	// OrgID is the org that token is pinned to, and the org the harness MUST register its runner
+	// in — see #392 and LoadCLIDemoCreds.
+	OrgID string
+	// APIBase is the REAL console the CLI talks to — never the runner shim, which serves no
+	// user-facing endpoint and whose whole point is that faking those would prove the CLI against
+	// a mock.
+	APIBase string
+	// ClusterSets are the `--set` pairs that carry the workflow's cheap node shape into the
+	// CLI-authored project. Built by CLIDemoClusterSets from ALETHIA_E2E_CLUSTER_JSON — the same
+	// variable the seeded path merges — so the two cannot disagree. Empty on hetzner, which passes
+	// no override.
+	ClusterSets []string
+	// RunnerID is the runner the harness registered. `project apply` REQUIRES it: without
+	// --runner-id the CLI calls selectRunner(), which prompts — and a prompt in CI hangs until the
+	// context kills it, reporting as "the CLI cannot reach apply" when the truth is that nobody
+	// answered it.
+	RunnerID string
 }
+
+// CLIDemoPhase says WHERE in the provisioning spine a beat can run. It exists because the demo's
+// order and the harness's order are not the same order, and pretending otherwise deadlocks.
+//
+// The spine registers a runner row, enqueues a job, THEN starts the runner process, then waits.
+// A beat that enqueues a job and blocks on it (`--wait`) before that process exists would wait
+// forever on a claimer that has not started. A beat that reads the cluster before convergence
+// would read nothing. So each beat declares the window it is valid in, and the driver runs one
+// window at a time from the place in the spine that window means.
+type CLIDemoPhase string
+
+const (
+	// CLIDemoAuthoring — needs the CONSOLE only: identity, the connector, and authoring the
+	// project. No job, no runner, no cluster.
+	CLIDemoAuthoring CLIDemoPhase = "authoring"
+	// CLIDemoEnqueue — creates the PLAN and DEPLOY jobs. Runs where the spine used to seed its job
+	// row, so the runner process starts immediately after and claims both. These beats must NOT
+	// pass `--wait`: the CLI would block on a runner that does not exist yet.
+	CLIDemoEnqueue CLIDemoPhase = "enqueue"
+	// CLIDemoConverged — the read-backs, valid only once the cluster is up and asserted: logs, the
+	// cluster, the signed receipt, drift, cost, add-ons.
+	CLIDemoConverged CLIDemoPhase = "converged"
+	// CLIDemoTeardown — the demo ends where it started. The spine's own teardown remains as the
+	// guaranteed backstop; it is idempotent, so a cluster the CLI already destroyed costs a no-op.
+	CLIDemoTeardown CLIDemoPhase = "teardown"
+)
 
 // CLIDemoBeat is one step of the demo, performed through the real binary.
 type CLIDemoBeat struct {
+	// Phase is the window this beat is valid in. Required: a beat with no phase would be silently
+	// dropped by every driver call, which is the "defined but never executed" state this whole
+	// tier exists to make impossible.
+	Phase CLIDemoPhase
 	// StepID names the CLIDemoSteps entry this performs. Validated: a beat naming a step that does
 	// not exist is a typo that would otherwise make the cross-check pass by accident.
 	StepID string
@@ -84,10 +134,22 @@ type CLIDemoBeat struct {
 	// credentials must NOT travel in argv — /proc is world-readable and argv reaches the process
 	// list, which is the same reason the runner's bootstrap Jobs pass names and never values.
 	Stdin func(r *CLIDemoRun) string
+	// ReadBack, when set, is a READ-ONLY command run after the beat succeeds, whose output is what
+	// After receives instead of the beat's own.
+	//
+	// It exists because some commands DO something and then print a progress UI rather than the id
+	// they created. `connector <cloud>` is the case: it renders a three-step stepper and keeps
+	// `initResp.IdentityID` to itself. Parsing a stepper for an id would be reading a UI; asking
+	// the product what now EXISTS is the same answer from a stable surface.
+	ReadBack func(r *CLIDemoRun) []string
 	// After runs on success with the command's combined output: it captures ids into the run and
 	// asserts what the step must have produced. A beat with no After proves only that the command
 	// exited 0, which for a read-only step is the whole claim.
 	After func(r *CLIDemoRun, out string) error
+	// Timeout overrides the default per-beat bound. Zero means the default. Only the teardown
+	// needs it: `project destroy --wait` blocks on a real cloud destroy, which outlasts a bound
+	// sized for a command that talks to a console.
+	Timeout time.Duration
 	// Why documents anything surprising about the invocation. Optional.
 	Why string
 }
@@ -130,92 +192,156 @@ var cliDemoNotDriven = map[string]string{
 var CLIDemoBeats = []CLIDemoBeat{
 	{
 		StepID: "whoami",
-		Args:   func(_ *CLIDemoRun) []string { return []string{"whoami"} },
+		Phase:  CLIDemoAuthoring,
+		Args:   func(_ *CLIDemoRun) []string { return []string{"whoami", "--no-input"} },
 		Why:    "first command on a fresh machine — it proves the service token resolved to an org before anything is created.",
 	},
 	{
 		StepID: "org-switch",
-		Args:   func(_ *CLIDemoRun) []string { return []string{"org", "list"} },
+		Phase:  CLIDemoAuthoring,
+		Args:   func(_ *CLIDemoRun) []string { return []string{"org", "list", "--no-input"} },
 		Why: "`org list` rather than `org switch`: a service token is PINNED to one org by construction " +
 			"(lib/cli/service-token.ts service_token_org_id), so switching is not a thing this credential " +
 			"can do. Listing exercises the same org surface and does not pretend otherwise.",
 	},
 	{
-		StepID: "connector",
-		Args:   func(r *CLIDemoRun) []string { return []string{"connector", r.Provider} },
-		Stdin:  func(r *CLIDemoRun) string { return cliDemoConnectorStdin(r) },
-		Why:    "credentials over STDIN, never argv — argv reaches /proc and the process list.",
+		StepID:   "connector",
+		Phase:    CLIDemoAuthoring,
+		Args:     func(r *CLIDemoRun) []string { return []string{"connector", r.Provider, "--token-stdin", "--no-input"} },
+		Stdin:    func(r *CLIDemoRun) string { return cliDemoConnectorStdin(r) },
+		ReadBack: func(_ *CLIDemoRun) []string { return []string{"connector", "list", "--output", "json", "--no-input"} },
+		After:    captureIdentityID,
+		Why:      "credentials over STDIN, never argv — argv reaches /proc and the process list.",
 	},
 	{
 		StepID: "project-create",
+		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "create", r.Project, "--region", r.Region, "--stage", "development", "--output", "json"}
+			// --cloud-identity-id is what makes the project PROVISIONABLE. Without it the project
+			// is created with `cloud_identity_id: null` and the deploy has no credential to
+			// provision with — a failure that surfaces during apply, long after the beat that
+			// should have caught it. The id comes from the connector beat's read-back.
+			return []string{
+				"project", "create", r.Project, "--region", r.Region, "--stage", "development",
+				"--cloud-identity-id", r.IdentityID, "--output", "json", "--no-input",
+			}
 		},
+		After: captureProjectID,
 	},
 	{
 		StepID: "project-env",
-		Args:   func(r *CLIDemoRun) []string { return []string{"project", "env", "list", "--project-id", r.ProjectID} },
+		Phase:  CLIDemoAuthoring,
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"project", "env", "list", "--project", r.ProjectID, "--output", "json", "--no-input"}
+		},
+		After: captureDefaultEnv,
+		Why: "captures the DEFAULT environment rather than assuming one. `project create --stage " +
+			"development` makes `development` and `preview`, and the harness's own env name is a " +
+			"different thing entirely — addressing the wrong one fails with `Environment \"x\" not " +
+			"found`, which reads as a CLI defect and is a harness assumption.",
 	},
 	{
 		StepID: "component-kinds",
-		Args:   func(_ *CLIDemoRun) []string { return []string{"project", "component", "kinds"} },
+		Phase:  CLIDemoAuthoring,
+		Args:   func(_ *CLIDemoRun) []string { return []string{"project", "component", "kinds", "--no-input"} },
 	},
 	{
 		StepID: "component-add",
+		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "component", "add", "cluster", "--project-id", r.ProjectID, "--env", r.EnvName}
+			// `--set` is REQUIRED: a cluster with no fields is refused server-side with
+			// "No values to set". And `--name` is omitted deliberately — cluster is a singleton
+			// and the CLI ignores the flag for singletons, so passing it would be cargo.
+			//
+			// The node shape comes from the workflow's own ALETHIA_E2E_CLUSTER_JSON rather than
+			// being written here: the seeded path merges that variable into its snapshot, and the
+			// CLI path must land on the same shape or aws takes the template default
+			// (m5a.4xlarge x2) and the cost guard refuses the run. The min/max below are the floor
+			// the shape overrides where it says so.
+			argv := []string{
+				"project", "component", "add", "--project", r.ProjectID, "--kind", "cluster",
+				"--env", r.EnvName, "--set", "node_min_size=1", "--set", "node_max_size=2",
+			}
+			argv = append(argv, r.ClusterSets...)
+			return append(argv, "--no-input")
 		},
 	},
 	{
 		StepID: "staged",
+		Phase:  CLIDemoAuthoring,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "get", "--project-id", r.ProjectID, "--output", "json"}
+			// BY NAME. `project get` takes `[project_name]`, and handing it an id returns 404 —
+			// which reads as "the project vanished" rather than "wrong argument".
+			return []string{"project", "get", r.Project, "--output", "json", "--no-input"}
 		},
 	},
 	{
 		StepID: "plan",
+		Phase:  CLIDemoEnqueue,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "plan", "--project-id", r.ProjectID, "--env", r.EnvName, "--wait"}
+			// NO --wait. The runner process starts AFTER this phase, so blocking here would wait
+			// on a claimer that does not exist. The spine waits instead, on the DEPLOY job.
+			return []string{"project", "plan", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--no-input"}
 		},
 	},
 	{
 		StepID: "apply",
+		Phase:  CLIDemoEnqueue,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "apply", "--project-id", r.ProjectID, "--env", r.EnvName, "--wait"}
+			return []string{"project", "apply", "--project-id", r.ProjectID, "--env", r.EnvName, "--runner-id", r.RunnerID, "--no-input"}
 		},
-		Why: "the beat the whole dimension exists for — the DEPLOY job is enqueued BY THE CLI, not by a seeded row.",
+		After: captureApplyJobID,
+		Why: "the beat the whole dimension exists for — the DEPLOY job is enqueued BY THE CLI, not by a " +
+			"seeded row. --runner-id is REQUIRED: without it the CLI calls selectRunner(), which prompts, " +
+			"and a prompt in CI hangs until the context kills it and reports as an unreachable command.",
 	},
 	{
 		StepID: "jobs-logs",
-		Args:   func(r *CLIDemoRun) []string { return []string{"jobs", "logs", r.ApplyJobID} },
+		Phase:  CLIDemoConverged,
+		Args:   func(r *CLIDemoRun) []string { return []string{"jobs", "logs", r.ApplyJobID, "--no-input"} },
 	},
 	{
 		StepID: "cluster-get",
-		Args:   func(r *CLIDemoRun) []string { return []string{"clusters", "get", "--project-id", r.ProjectID} },
+		Phase:  CLIDemoConverged,
+		Args:   func(r *CLIDemoRun) []string { return []string{"clusters", "get", r.ProjectID, "--no-input"} },
 	},
 	{
 		StepID: "receipt-verify",
-		Args:   func(r *CLIDemoRun) []string { return []string{"verify", "--job-id", r.ApplyJobID} },
-		Why:    "the signed ed25519 receipt sealed to the plan hash — the claim the demo's close rests on.",
+		Phase:  CLIDemoConverged,
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"verify", "receipt", "--job", r.ApplyJobID, "--no-input"}
+		},
+		Why: "the signed ed25519 receipt sealed to the plan hash — the claim the demo's close rests on.",
 	},
 	{
 		StepID: "drift",
-		Args:   func(r *CLIDemoRun) []string { return []string{"drift", "--project-id", r.ProjectID} },
+		Phase:  CLIDemoConverged,
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"drift", "show", "--project", r.ProjectID, "--env", r.EnvName, "--no-input"}
+		},
 	},
 	{
 		StepID: "cost",
-		Args:   func(r *CLIDemoRun) []string { return []string{"cost", "--project-id", r.ProjectID} },
+		Phase:  CLIDemoConverged,
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"cost", "show", "--project", r.ProjectID, "--env", r.EnvName, "--no-input"}
+		},
 	},
 	{
 		StepID: "addons",
-		Args:   func(r *CLIDemoRun) []string { return []string{"addon", "list", "--project-id", r.ProjectID} },
+		Phase:  CLIDemoConverged,
+		Args: func(r *CLIDemoRun) []string {
+			return []string{"addon", "list", "--project", r.ProjectID, "--env", r.EnvName, "--no-input"}
+		},
 	},
 	{
 		StepID: "destroy",
+		Phase:  CLIDemoTeardown,
 		Args: func(r *CLIDemoRun) []string {
-			return []string{"project", "destroy", "--project-id", r.ProjectID, "--env", r.EnvName, "--yes", "--wait"}
+			return []string{"project", "destroy", "--project-id", r.ProjectID, "--env", r.EnvName, "--yes", "--wait", "--no-input"}
 		},
-		Why: "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
+		Timeout: 30 * time.Minute,
+		Why:     "the demo ends where it started — and an un-torn-down demo is a standing bill, which the orphan reaper would otherwise find.",
 	},
 }
 
@@ -255,6 +381,15 @@ func ValidateCLIDemoBeats() error {
 		}
 		if b.Args == nil {
 			problems = append(problems, fmt.Sprintf("beat %q has no Args — it would perform nothing", b.StepID))
+		}
+		// A beat with no phase is silently dropped by every DriveCLIDemoPhase call — defined,
+		// counted by the cross-check, and never executed. That is the exact shape this tier exists
+		// to make impossible, so it is a hard error rather than a default.
+		switch b.Phase {
+		case CLIDemoAuthoring, CLIDemoEnqueue, CLIDemoConverged, CLIDemoTeardown:
+		default:
+			problems = append(problems, fmt.Sprintf(
+				"beat %q has phase %q, which no driver call runs — it would be defined and never executed", b.StepID, b.Phase))
 		}
 		driven[b.StepID]++
 	}
