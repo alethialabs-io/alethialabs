@@ -78,25 +78,57 @@ func TestRunProjectCreateError(t *testing.T) {
 
 // --- project env ---
 
+// Two environments on ONE Fabric, at different isolation rungs — the shape the table exists to
+// show. The dedicated env carries no namespace, which is why Namespace is an optional column.
 func sampleEnvironments() []api.Environment {
 	region := "us-east-1"
+	fabric := "prod"
+	ns := "boutique-staging"
 	return []api.Environment{
-		{ID: "e1", Name: "development", Stage: "development", Status: "DRAFT", IsDefault: true, Region: nil},
-		{ID: "e2", Name: "staging", Stage: "staging", Status: "ACTIVE", IsDefault: false, Region: &region},
+		{
+			ID: "e1", Name: "development", Stage: "development", Status: "DRAFT",
+			IsDefault: true, Region: nil,
+			PlacementMode: "dedicated", Namespace: nil, Fabric: &fabric,
+		},
+		{
+			ID: "e2", Name: "staging", Stage: "staging", Status: "ACTIVE",
+			IsDefault: false, Region: &region,
+			PlacementMode: "vcluster", Namespace: &ns, Fabric: &fabric,
+		},
 	}
 }
 
+// Columns: Name(0) Stage(1) Placement(2) Namespace(3) Fabric(4) Status(5) Default(6) Region(7).
 func TestEnvRows(t *testing.T) {
 	rows := envRows(sampleEnvironments())
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
-	// Default env: brand marker + dash region.
-	if rows[0][3] != ui.SymbolDefault || rows[0][4] != ui.SymbolDash {
+	if got := len(rows[0]); got != len(envListColumns) {
+		t.Fatalf("row has %d cells, header has %d — a table whose header and rows disagree "+
+			"mislabels every value in it", got, len(envListColumns))
+	}
+
+	// Default env: dedicated, no namespace, brand marker, dash region.
+	if rows[0][2] != "dedicated" || rows[0][3] != ui.SymbolDash || rows[0][4] != "prod" {
+		t.Errorf("unexpected dedicated row placement cells: %+v", rows[0])
+	}
+	if rows[0][6] != ui.SymbolDefault || rows[0][7] != ui.SymbolDash {
 		t.Errorf("unexpected default row: %+v", rows[0])
 	}
-	if rows[1][3] != ui.SymbolDash || rows[1][4] != "us-east-1" {
+
+	// Shared env: a vcluster placed on the SAME Fabric, with its destination namespace.
+	if rows[1][2] != "vcluster" || rows[1][3] != "boutique-staging" || rows[1][4] != "prod" {
+		t.Errorf("unexpected vcluster row placement cells: %+v", rows[1])
+	}
+	if rows[1][6] != ui.SymbolDash || rows[1][7] != "us-east-1" {
 		t.Errorf("unexpected named row: %+v", rows[1])
+	}
+
+	// The claim the table is FOR: both tiers name one Fabric, so only one cluster was bought.
+	if rows[0][4] != rows[1][4] {
+		t.Errorf("both environments should report the same Fabric, got %q and %q",
+			rows[0][4], rows[1][4])
 	}
 }
 

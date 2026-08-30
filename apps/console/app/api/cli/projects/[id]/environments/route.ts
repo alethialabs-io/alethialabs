@@ -91,8 +91,15 @@ async function findDefaultFabric(
 	return earliest?.id ?? null;
 }
 
-/** Maps an environment row to its CLI wire shape. */
-function toEnvironmentWire(row: typeof projectEnvironments.$inferSelect) {
+/** Maps an environment row to its CLI wire shape.
+ *
+ * `fabricName` is passed in rather than read off the row, because the row carries only
+ * `fabric_id` and a uuid does not communicate the thing worth seeing: that five environments
+ * share ONE Fabric. Callers resolve the name (GET joins, POST looks up the one it just placed). */
+function toEnvironmentWire(
+	row: typeof projectEnvironments.$inferSelect,
+	fabricName: string | null,
+) {
 	return {
 		id: row.id,
 		name: row.name,
@@ -100,6 +107,9 @@ function toEnvironmentWire(row: typeof projectEnvironments.$inferSelect) {
 		status: row.status,
 		is_default: row.is_default,
 		region: row.region,
+		placement_mode: row.placement_mode,
+		namespace: row.namespace,
+		fabric: fabricName,
 	};
 }
 
@@ -119,14 +129,21 @@ export async function GET(
 			return NextResponse.json({ error: "Project not found" }, { status: 404 });
 		}
 
+		// LEFT join: a `dedicated` environment whose Fabric has not been created yet, and any
+		// environment placed on none, must still appear. An inner join would silently drop rows
+		// from a list whose job is to account for every tier.
 		const rows = await getServiceDb()
-			.select()
+			.select({
+				environment: projectEnvironments,
+				fabricName: projectFabrics.name,
+			})
 			.from(projectEnvironments)
+			.leftJoin(projectFabrics, eq(projectEnvironments.fabric_id, projectFabrics.id))
 			.where(eq(projectEnvironments.project_id, project.id))
 			.orderBy(desc(projectEnvironments.is_default), projectEnvironments.created_at);
 
 		return cliJson(cliEnvironmentsResponse, {
-			environments: rows.map(toEnvironmentWire),
+			environments: rows.map((r) => toEnvironmentWire(r.environment, r.fabricName)),
 		});
 	} catch (err: unknown) {
 		const message = err instanceof Error ? err.message : "Internal Server Error";
@@ -203,9 +220,22 @@ export async function POST(
 			})
 			.returning();
 
+		// Resolve the Fabric's NAME for the response. It is not necessarily the one the caller
+		// typed: a shared placement with no `--fabric` defaults to the project's default Fabric,
+		// and echoing back which one it actually landed on is the confirmation that matters.
+		let fabricName: string | null = null;
+		if (fabricId) {
+			const [f] = await db
+				.select({ name: projectFabrics.name })
+				.from(projectFabrics)
+				.where(eq(projectFabrics.id, fabricId))
+				.limit(1);
+			fabricName = f?.name ?? null;
+		}
+
 		return cliJson(
 			cliEnvironmentResponse,
-			{ environment: toEnvironmentWire(row) },
+			{ environment: toEnvironmentWire(row, fabricName) },
 			{ status: 201 },
 		);
 	} catch (err: unknown) {

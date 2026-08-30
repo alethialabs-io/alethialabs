@@ -1684,6 +1684,12 @@ type Environment struct {
 	Status    string  `json:"status"`
 	IsDefault bool    `json:"is_default"`
 	Region    *string `json:"region"`
+	// PlacementMode is the isolation rung — dedicated / vcluster / namespace. Namespace and
+	// Fabric are pointers because a dedicated environment has no destination namespace, and a
+	// Fabric may not exist yet.
+	PlacementMode string  `json:"placement_mode"`
+	Namespace     *string `json:"namespace"`
+	Fabric        *string `json:"fabric"`
 }
 
 // Component is one project component, uniform across every kind. Config holds the
