@@ -76,8 +76,13 @@ func TestPartitionExcludedAddOnsLosesNothing(t *testing.T) {
 		argocd.AddOnAppName("loki"),
 		argocd.AddOnAppName("external-dns"),
 	}
-	// aws, where every remaining exclusion applies — the shape this test was written against.
-	asserted, withheld := PartitionExcludedAddOns("aws", expected)
+	// DERIVED, not hardcoded. This test was written against "aws", where every remaining exclusion
+	// applied — and then external-dns was measured Healthy+Synced on aws three times and aws came
+	// off its Clouds list, which broke a test about the partition MECHANISM for a reason that had
+	// nothing to do with the mechanism. Asking the entry which cloud it claims keeps this pinned to
+	// the machinery instead of to one cloud's current facts.
+	cloud := aCloudClaimedBy(t, "external-dns")
+	asserted, withheld := PartitionExcludedAddOns(cloud, expected)
 	if got, want := len(asserted)+len(withheld), len(expected); got != want {
 		t.Fatalf("partition returned %d names for %d inputs — the split dropped or duplicated one", got, want)
 	}
@@ -158,12 +163,13 @@ func TestStaleExclusionsOnlyFireOnHealthyAndSynced(t *testing.T) {
 // The empty case has to read differently from the populated one, or "nothing withheld" and
 // "withheld, undisclosed" look identical in the log.
 func TestDescribeWithheldAddOnsIsNotVacuous(t *testing.T) {
-	empty := DescribeWithheldAddOns("aws", nil)
+	cloud := aCloudClaimedBy(t, "external-dns")
+	empty := DescribeWithheldAddOns(cloud, nil)
 	if !strings.Contains(empty, "no add-ons withheld") {
 		t.Errorf("empty description = %q, want it to state plainly that nothing was withheld", empty)
 	}
 	app := argocd.AddOnAppName("external-dns")
-	got := DescribeWithheldAddOns("aws", []string{app})
+	got := DescribeWithheldAddOns(cloud, []string{app})
 	for _, want := range []string{app, string(NeedsUserConfig), "#2717", "CUSTOMER action"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("description does not mention %q:\n%s", want, got)
@@ -208,38 +214,52 @@ func TestExclusionCloudsAreRealFixtureClouds(t *testing.T) {
 //
 // Run 33124236998 (hetzner · `addons`, the first sweep after #3048 repointed the fixture at each
 // cloud's native provider) reported `addon-external-dns: health=Healthy sync=Synced`. It reached
-// the cluster and converged. Withholding it on hetzner would now red that run for a STALE
-// EXCLUSION, which is the ratchet firing on a true statement — so hetzner must ASSERT it while the
-// four clouds whose providers have no identity to assume still withhold it.
+// the cluster and converged. Withholding it there would red that run for a STALE EXCLUSION, which
+// is the ratchet firing on a true statement — so hetzner must ASSERT it.
+//
+// AWS JOINED IT on 2026-08-30, and the ratchet is what said so: runs 33262881462, 33277594471 and
+// 33282358378 all reported Healthy+Synced, and 33282358378 FAILED for the stale exclusion alone
+// after its convergence and its teardown both passed. On EKS the controller runs with a provider
+// name and no explicit identity, and the AWS SDK default chain then finds the node role through
+// IMDS — the knob really is unfilled, and aws is the one cloud where that does not matter. gcp and
+// azure have no equivalent ambient credential; alibaba still carries provider=cloudflare.
 //
 // A test that only varied the add-on would pass against a global list and prove nothing.
 func TestExternalDnsExclusionIsPerCloud(t *testing.T) {
 	app := argocd.AddOnAppName("external-dns")
 	expected := []string{app, argocd.AddOnAppName("kyverno")}
 
-	t.Run("hetzner asserts it — measured Healthy+Synced on run 33124236998", func(t *testing.T) {
-		asserted, withheld := PartitionExcludedAddOns("hetzner", expected)
-		if contains(withheld, app) {
-			t.Errorf("%s is withheld on hetzner, where it was measured Healthy+Synced — "+
-				"the stale-exclusion ratchet will red the next addons run", app)
-		}
-		if !contains(asserted, app) {
-			t.Errorf("%s is neither asserted nor withheld on hetzner", app)
-		}
-		// And the ratchet must NOT fire there: a cloud that asserts an add-on never withholds it,
-		// so a Healthy+Synced reading is a pass, not a stale exclusion.
-		observed := map[string]argoAppState{app: {Health: "Healthy", Sync: "Synced"}}
-		if got := staleExclusions(observed, "hetzner", withheld); len(got) != 0 {
-			t.Errorf("hetzner reported a stale exclusion for an add-on it asserts: %v", got)
-		}
-	})
+	// Each of these came off the exclusion by MEASUREMENT, and each is named with the run that took
+	// it off, because "it works now" without a run id is the shape this whole file refuses.
+	for _, m := range []struct{ cloud, runs string }{
+		{"hetzner", "run 33124236998"},
+		{"aws", "runs 33262881462, 33277594471 and 33282358378"},
+	} {
+		t.Run(m.cloud+" asserts it — measured Healthy+Synced on "+m.runs, func(t *testing.T) {
+			asserted, withheld := PartitionExcludedAddOns(m.cloud, expected)
+			if contains(withheld, app) {
+				t.Errorf("%s is withheld on %s, where it was measured Healthy+Synced (%s) — "+
+					"the stale-exclusion ratchet will red the next addons run", app, m.cloud, m.runs)
+			}
+			if !contains(asserted, app) {
+				t.Errorf("%s is neither asserted nor withheld on %s", app, m.cloud)
+			}
+			// And the ratchet must NOT fire there: a cloud that asserts an add-on never withholds
+			// it, so a Healthy+Synced reading is a pass, not a stale exclusion.
+			observed := map[string]argoAppState{app: {Health: "Healthy", Sync: "Synced"}}
+			if got := staleExclusions(observed, m.cloud, withheld); len(got) != 0 {
+				t.Errorf("%s reported a stale exclusion for an add-on it asserts: %v", m.cloud, got)
+			}
+		})
+	}
 
-	for _, cloud := range []string{"aws", "gcp", "azure", "alibaba"} {
+	for _, cloud := range []string{"gcp", "azure", "alibaba"} {
 		t.Run(cloud+" still withholds it", func(t *testing.T) {
 			_, withheld := PartitionExcludedAddOns(cloud, expected)
 			if !contains(withheld, app) {
-				t.Errorf("%s is asserted on %s, which has never run the sweep since #3048 — "+
-					"asserting it there bets a real run on an unmeasured convergence", app, cloud)
+				t.Errorf("%s is asserted on %s, where its controller has no identity to assume and "+
+					"the sweep has not run since #3048 — asserting it there bets a real run on an "+
+					"unmeasured convergence", app, cloud)
 			}
 			// The ratchet must still fire on these clouds if it does start converging.
 			observed := map[string]argoAppState{app: {Health: "Healthy", Sync: "Synced"}}
@@ -279,4 +299,22 @@ func TestUnscopedExclusionsApplyToEveryCloud(t *testing.T) {
 			t.Errorf("an exclusion naming only aws also applies to %s", cloud)
 		}
 	}
+}
+
+// aCloudClaimedBy returns a cloud the named exclusion actually applies to, so a test about the
+// exclusion MACHINERY does not fail when one cloud legitimately leaves an entry's list.
+//
+// It fails loudly on an entry that claims no cloud: an exclusion nothing applies to is not a
+// fixture, it is a dead entry, and silently skipping would let this test pass while checking
+// nothing.
+func aCloudClaimedBy(t *testing.T, addOn string) string {
+	t.Helper()
+	e, ok := addOnExclusions[addOn]
+	if !ok {
+		t.Fatalf("no exclusion for %q — this test needs one to exercise the partition", addOn)
+	}
+	if len(e.Clouds) == 0 {
+		t.Fatalf("the %q exclusion claims no cloud, so nothing it says can be exercised", addOn)
+	}
+	return e.Clouds[0]
 }
