@@ -163,11 +163,36 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	// workflow's (`scripts/e2e/*-cleanup.sh`); nothing here sweeps cloud load balancers after a
 	// failed destroy, so on a customer's teardown the warning below is the only signal that
 	// something is still billing.
-	releaseLoadBalancersBeforeDestroy(ctx, provider, vc, wd, out)
+	rel := releaseLoadBalancersBeforeDestroy(ctx, provider, vc, wd, out)
 
 	fmt.Fprintln(out, "   Destroying Cloud Resources (this may take 10-15 mins)...")
-	if err := wd.tf.Destroy(ctx, wd.varFile); err != nil {
-		return fmt.Errorf("tofu destroy failed: %w", err)
+	err = wd.tf.Destroy(ctx, wd.varFile)
+
+	// ONE RETRY, AND ONLY AFTER THE BLOCKER WAS ACTUALLY CLEARED.
+	//
+	// A destroy that failed with cloud-backed objects still held has almost certainly failed ON
+	// them — the network they are attached to cannot be deleted while they exist. The cluster is
+	// still up, because the destroy did not finish, so the release can be tried again with a fresh
+	// window.
+	//
+	// The guard is `rel2.Clean`, not "the destroy failed": retrying without having changed anything
+	// pays twice for the same failure, and doubles a teardown that is already the longest thing in
+	// the job. The second destroy runs only when the second release positively removed what the
+	// first could not — a fact this code holds, not a guess from the destroy's error text.
+	if err != nil && !rel.Clean {
+		fmt.Fprintln(out, "   Destroy failed with cloud-backed objects still held — releasing again "+
+			"and retrying the destroy ONCE.")
+		if rel2 := releaseLoadBalancersBeforeDestroy(ctx, provider, vc, wd, out); rel2.Clean {
+			rel = rel2
+			err = wd.tf.Destroy(ctx, wd.varFile)
+		} else {
+			rel = rel2
+			fmt.Fprintln(out, "   The second release did not clear them either — not retrying the "+
+				"destroy, which would fail the same way.")
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("tofu destroy failed: %w%s", err, rel.billingWarning())
 	}
 
 	fmt.Fprintln(out, "Environment destroyed successfully!")
@@ -349,7 +374,7 @@ func releaseLoadBalancersBeforeDestroy(
 	vc *types.ProjectConfig,
 	wd *destroyWorkdir,
 	out io.Writer,
-) {
+) releaseOutcome {
 	// ⚠️ A WORKING KUBECONFIG IS NOT OVERWRITTEN, and that is not a micro-optimisation.
 	//
 	// `awsProvider.ConfigureKubeconfig` writes an EXEC-PLUGIN kubeconfig whose command is
@@ -380,7 +405,7 @@ func releaseLoadBalancersBeforeDestroy(
 	outputs, err := wd.tf.Output(ctx)
 	if err != nil {
 		fmt.Fprintf(out, "   Skipping load-balancer release: could not read state outputs (%v).\n", err)
-		return
+		return releaseOutcome{Skipped: fmt.Sprintf("the state outputs could not be read (%v)", err)}
 	}
 	reachable, why := clusterReachable(ctx, cloud.ExtractClusterEndpoint(outputs))
 	fmt.Fprint(out, kubeconfigDecisionLine(reachable, why))
@@ -396,19 +421,21 @@ func releaseLoadBalancersBeforeDestroy(
 		// template provider that falls back to it, and the same state the DEPLOY path leaves behind.
 		if err := provider.ConfigureKubeconfig(ctx, vc, outputs, out); err != nil {
 			fmt.Fprintf(out, "   Skipping load-balancer release: the cluster is not reachable (%v).\n", err)
-			return
+			return releaseOutcome{Skipped: fmt.Sprintf("the cluster could not be reached (%v)", err)}
 		}
 		if ok, why2 := clusterReachable(ctx, cloud.ExtractClusterEndpoint(outputs)); !ok {
 			// CHECKED AFTER CONFIGURING, not assumed. ConfigureKubeconfig succeeding means it WROTE
 			// a kubeconfig, not that the kubeconfig works — the exec-plugin case above writes
 			// happily and then fails on every call.
 			fmt.Fprint(out, postConfigureFailureLine(why2))
-			return
+			return releaseOutcome{Skipped: "a kubeconfig was written but the cluster did not answer with it (" + why2 + ")"}
 		}
 	}
-	if err := releaseCloudLoadBalancers(ctx, out); err != nil {
+	rel, err := releaseCloudLoadBalancers(ctx, out)
+	if err != nil {
 		fmt.Fprintf(out, "   WARNING — cloud load balancers may still exist and still bill: %v\n", err)
 	}
+	return rel
 }
 
 // clusterReachable asks the API server one cheap question with whatever credential is in scope.
