@@ -268,6 +268,26 @@ func TestExclusionCloudsAreRealFixtureClouds(t *testing.T) {
 					"assert this add-on. Typo?", id, cloud, path)
 			}
 		}
+		// The SAME anti-typo question for the fail-open keys, and it has to be asked here rather
+		// than left to the appliesTo check in TestAddOnExclusionsAreLegible. That check is VACUOUS
+		// for an unscoped entry: appliesTo returns true for ANY string when Clouds is empty — the
+		// documented "empty means every cloud" — so it can only ever fire on an entry that already
+		// carries an explicit Clouds list. It happens to cover external-dns today and covers
+		// nothing on the next unscoped one.
+		//
+		// Concrete: an entry with Clouds nil declaring HealthFailsOpenOn{"awz": …} passes appliesTo
+		// and reads as protected. At runtime staleExclusions looks up "aws", gets "", and reds a
+		// real aws run for a stale exclusion — the exact opposite of what the field was written
+		// for, discovered only by burning a cloud run. Stat-ing the fixture closes both the
+		// unreachable-key case and the plausible-spelling case; appliesTo alone closes neither.
+		for cloud := range e.HealthFailsOpenOn {
+			path := filepath.Join("fixtures", "addon_catalog."+cloud+".json")
+			if _, err := os.Stat(path); err != nil {
+				t.Errorf("addOnExclusions[%q].HealthFailsOpenOn names %q, which has no add-on "+
+					"fixture (%s): the key can never be looked up, so the ratchet still fires on "+
+					"the cloud the author meant to make it abstain on. Typo?", id, cloud, path)
+			}
+		}
 	}
 }
 
@@ -313,7 +333,7 @@ func TestExternalDnsExclusionIsPerCloud(t *testing.T) {
 		// And the ratchet must NOT fire there: a cloud that asserts an add-on never withholds it,
 		// so a Healthy+Synced reading is a pass, not a stale exclusion.
 		observed := map[string]argoAppState{app: {Health: "Healthy", Sync: "Synced"}}
-		stale, _ := staleExclusions(observed, excludedAddOnAppNames("hetzner"), "hetzner", withheld)
+		stale, _ := staleExclusions(observed, allAddOnExclusionsByAppName(), "hetzner", withheld)
 		if len(stale) != 0 {
 			t.Errorf("hetzner reported a stale exclusion for an add-on it asserts: %v", stale)
 		}
@@ -336,7 +356,7 @@ func TestExternalDnsExclusionIsPerCloud(t *testing.T) {
 	t.Run("aws abstains rather than reporting it stale", func(t *testing.T) {
 		_, withheld := PartitionExcludedAddOns("aws", expected)
 		observed := map[string]argoAppState{app: {Health: "Healthy", Sync: "Synced"}}
-		stale, abstained := staleExclusions(observed, excludedAddOnAppNames("aws"), "aws", withheld)
+		stale, abstained := staleExclusions(observed, allAddOnExclusionsByAppName(), "aws", withheld)
 		if len(stale) != 0 {
 			t.Errorf("aws reported %s stale on the Healthy+Synced that #3432 established means "+
 				"'running, writing nothing': %v", app, stale)
@@ -353,12 +373,61 @@ func TestExternalDnsExclusionIsPerCloud(t *testing.T) {
 		t.Run(cloud+" still reports it stale if it converges", func(t *testing.T) {
 			_, withheld := PartitionExcludedAddOns(cloud, expected)
 			observed := map[string]argoAppState{app: {Health: "Healthy", Sync: "Synced"}}
-			stale, _ := staleExclusions(observed, excludedAddOnAppNames(cloud), cloud, withheld)
+			stale, _ := staleExclusions(observed, allAddOnExclusionsByAppName(), cloud, withheld)
 			if len(stale) != 1 {
 				t.Errorf("%s: a withheld add-on that reached Healthy+Synced was not reported "+
 					"stale (got %v) — the exclusion could then never come off", cloud, stale)
 			}
 		})
+	}
+}
+
+// TestStaleExclusionsNarrowsByTheCloudItWasGiven pins the property that replaced a pair of
+// parameters which had to agree and nothing made them (#3472 review).
+//
+// staleExclusions used to take an ALREADY cloud-filtered map beside the cloud, and used the cloud
+// for exactly one thing: the healthFailsOpenOn lookup. A caller pairing a gcp-filtered map with
+// "aws" got a wrong verdict silently — both arguments were well-formed, so no test could see it,
+// and the concrete failure it invited is the one HealthFailsOpenOn exists to prevent: copy the aws
+// call site into a gcp loop, forget the third argument, and gcp ABSTAINS on a Healthy external-dns
+// instead of reporting it stale.
+//
+// It now takes the UNFILTERED map and narrows it itself, so the cloud decides BOTH questions. This
+// test is what makes that narrowing more than a defensive line: an entry scoped away from the cloud
+// under test must produce neither verdict, even when the add-on is Healthy+Synced and the caller
+// wrongly listed it as withheld.
+func TestStaleExclusionsNarrowsByTheCloudItWasGiven(t *testing.T) {
+	const app = "addon-elsewhere"
+	all := map[string]AddOnExclusion{
+		app: {
+			Kind:   NeedsUserConfig,
+			Why:    "scoped to gcp only, so on any other cloud this entry withholds nothing at all",
+			Issue:  "#2717",
+			Clouds: []string{"gcp"},
+			HealthFailsOpenOn: map[string]string{
+				"gcp": "would abstain on gcp, and must not leak that abstention onto a cloud this entry does not apply to",
+			},
+		},
+	}
+	observed := map[string]argoAppState{app: {Health: "Healthy", Sync: "Synced"}}
+
+	stale, abstained := staleExclusions(observed, all, "aws", []string{app})
+	if len(stale) != 0 {
+		t.Errorf("an exclusion scoped to gcp produced a STALE verdict on aws (%v) — it withholds "+
+			"nothing there, so it has nothing to be stale about, and the message would cite an "+
+			"entry the reader cannot find for that cloud", stale)
+	}
+	if len(abstained) != 0 {
+		t.Errorf("an exclusion scoped to gcp ABSTAINED on aws (%v) — that is the ratchet switching "+
+			"itself off on a cloud the entry never applied to, which is exactly the un-keyed "+
+			"fail-open this field was keyed by cloud to prevent", abstained)
+	}
+
+	// The positive control, without which the two assertions above pass for a function that always
+	// returns nothing: the SAME entry and the SAME reading must abstain on the cloud it does name.
+	if _, ab := staleExclusions(observed, all, "gcp", []string{app}); len(ab) != 1 {
+		t.Fatalf("the same entry did not abstain on gcp, the cloud it is scoped to (%v) — the "+
+			"narrowing above is then indistinguishable from a function that decides nothing", ab)
 	}
 }
 

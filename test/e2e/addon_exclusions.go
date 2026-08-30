@@ -273,6 +273,18 @@ func excludedAddOnAppNames(cloud string) map[string]AddOnExclusion {
 	return out
 }
 
+// allAddOnExclusionsByAppName is addOnExclusions keyed by ArgoCD Application name and UNFILTERED by
+// cloud — the input staleExclusions narrows itself, so that the cloud is named exactly once at the
+// call site and cannot disagree with the map it arrived beside. Every other consumer wants
+// excludedAddOnAppNames, which decides by PRESENCE and must stay per-cloud.
+func allAddOnExclusionsByAppName() map[string]AddOnExclusion {
+	out := make(map[string]AddOnExclusion, len(addOnExclusions))
+	for id, e := range addOnExclusions {
+		out[argocd.AddOnAppName(id)] = e
+	}
+	return out
+}
+
 // appliesTo reports whether this exclusion holds on `cloud`. An empty Clouds list means every
 // cloud — the common case, and the one vault and velero use.
 func (e AddOnExclusion) appliesTo(cloud string) bool {
@@ -347,14 +359,21 @@ func AssertNoStaleAddOnExclusions(ctx context.Context, kubeconfigPath, cloud str
 	if err != nil {
 		return fmt.Errorf("stale-exclusion check could not parse ArgoCD Applications: %w", err)
 	}
-	stale, abstained := staleExclusions(observed, excludedAddOnAppNames(cloud), cloud, withheld)
+	stale, abstained := staleExclusions(observed, allAddOnExclusionsByAppName(), cloud, withheld)
 	// Reported BEFORE the verdict and regardless of it: an abstention means this run did not
 	// re-validate that exclusion at all, which the reader must be told whether or not anything
 	// else was stale.
 	if len(abstained) > 0 {
 		sort.Strings(abstained)
+		// The `argocd assert: ` prefix is LOAD-BEARING, not decoration. demos/proofs/capture-proof.sh
+		// builds the committed bundle's assertions.txt from a fixed alternation, and an abstention
+		// that matches none of its branches survives only in the 30-day CI log: the DURABLE artifact
+		// then reads exactly like a run where nothing abstained. That is this check's own thesis
+		// — "nothing found" must not render as "nothing wrong" — failing on the one file that
+		// outlives the run. capture-proof.sh's self-test #5 pins the same defect for the #3418
+		// vacuous-overwrite refusal, which was dropped this exact way.
 		fmt.Fprintf(os.Stderr,
-			"stale-exclusion check ABSTAINED on %d add-on(s) that are Healthy+Synced — their health is fail-open, so it is not evidence they work:\n  - %s\n",
+			"argocd assert: stale-exclusion check ABSTAINED on %d add-on(s) that are Healthy+Synced — their health is fail-open, so it is not evidence they work:\n  - %s\n",
 			len(abstained), strings.Join(abstained, "\n  - "))
 	}
 	if len(stale) == 0 {
@@ -381,8 +400,24 @@ func AssertNoStaleAddOnExclusions(ctx context.Context, kubeconfigPath, cloud str
 // driven from a synthetic map: with only one real entry left in addOnExclusions, and that one
 // declaring HealthFailsOpen, there is otherwise no way to exercise the stale arm and the abstain arm
 // against each other — and a check whose firing arm is untestable is a check that reports green.
-func staleExclusions(observed map[string]argoAppState, ex map[string]AddOnExclusion, cloud string, withheld []string) (stale, abstained []string) {
+//
+// It takes the UNFILTERED map and narrows it here, rather than an already-narrowed one beside the
+// cloud that narrowed it. Those were two parameters that had to agree and nothing made them: `cloud`
+// was used for exactly one thing, the healthFailsOpenOn lookup, so a caller pairing a gcp-filtered
+// map with "aws" got a wrong verdict SILENTLY — no test could see it, because both arguments were
+// well-formed. The concrete failure that shape invites is the one this field exists to prevent:
+// copy the aws call site into a gcp/azure loop, forget to change the third argument, and gcp
+// ABSTAINS on a Healthy external-dns instead of reporting it stale — the ratchet switched off on a
+// cloud where Healthy is real evidence. Now the cloud is named once and decides both questions.
+func staleExclusions(observed map[string]argoAppState, all map[string]AddOnExclusion, cloud string, withheld []string) (stale, abstained []string) {
 	for _, name := range withheld {
+		e, isExcluded := all[name]
+		// Not excluded on THIS cloud is not a verdict. A name that reaches here without an entry
+		// that applies is a caller bug (withheld is derived from the same cloud), and inventing a
+		// stale verdict from a zero-value entry would red a run citing an empty issue and reason.
+		if !isExcluded || !e.appliesTo(cloud) {
+			continue
+		}
 		st, ok := observed[name]
 		if !ok {
 			// Absent is not working. A withheld add-on that never rendered an Application says
@@ -392,11 +427,11 @@ func staleExclusions(observed map[string]argoAppState, ex map[string]AddOnExclus
 		if st.Health != "Healthy" || st.Sync != "Synced" {
 			continue
 		}
-		if reason := ex[name].healthFailsOpenOn(cloud); reason != "" {
-			abstained = append(abstained, fmt.Sprintf("%s (%s, health is fail-open here: %s)", name, ex[name].Issue, reason))
+		if reason := e.healthFailsOpenOn(cloud); reason != "" {
+			abstained = append(abstained, fmt.Sprintf("%s (%s, health is fail-open here: %s)", name, e.Issue, reason))
 			continue
 		}
-		stale = append(stale, fmt.Sprintf("%s (%s, recorded as: %s)", name, ex[name].Issue, ex[name].Why))
+		stale = append(stale, fmt.Sprintf("%s (%s, recorded as: %s)", name, e.Issue, e.Why))
 	}
 	return stale, abstained
 }
