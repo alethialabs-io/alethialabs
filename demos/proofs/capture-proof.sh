@@ -61,12 +61,13 @@ if [ "${1:-}" = "--self-test" ]; then
 	# because every capture in a self-test stamps to the same UTC second. Two assertions then
 	# compared a bundle against itself and one of them PASSED, on 'READ-FAILED' != '22'. A
 	# harness that can pass for the wrong reason is worth less than no harness.
-	_capture() { # _capture <label> <outcome> <summary-path-or-empty> [dimension] → echoes the bundle dir
-		local label="$1" outcome="$2" summary="$3" dimension="${4:-}" dir
+	_capture() { # _capture <label> <outcome> <summary-path-or-empty> [dimension] [test-log] → echoes the bundle dir
+		local label="$1" outcome="$2" summary="$3" dimension="${4:-}" testlog="${5:-}" dir
 		ALETHIA_E2E_PROOF_OUT_ROOT="$tmp/$label" \
 			ALETHIA_E2E_PROOF_OUTCOME="$outcome" \
 			ALETHIA_E2E_ARGOCD_SUMMARY="$summary" \
 			ALETHIA_E2E_DIMENSION="$dimension" \
+			ALETHIA_E2E_T2_TEST_LOG="$testlog" \
 			E2E_DIMENSION="" \
 			KUBECONFIG="" \
 			PROVIDER=_selftest \
@@ -145,6 +146,40 @@ if [ "${1:-}" = "--self-test" ]; then
 		fails=$((fails + 1))
 	else
 		echo "  ✓ an unmeasured addons bundle is refused by check-proof-integrity.sh"
+	fi
+
+	# 5 · A REFUSAL LEAVES A TRACE (#3418 follow-up). The convergence summary is written by a
+	#     deferred writer that REFUSES a vacuous overwrite of a measured one — the right call, and
+	#     the bundle keeps its real numbers. But the refusal is announced only on stderr, and the
+	#     assertions extract above is a grep with a fixed alternation: `argocd assert:` matched none
+	#     of its branches, so the bundle shipped `converged` with nothing recording that a second
+	#     call asserted nothing over an empty set. A run that partly asserted nothing then reads
+	#     exactly like one that asserted everything, which is the shape this whole block exists for.
+	#
+	#     The workflow tees the go-test stream with `2>&1`, so the line IS in the log; only the
+	#     filter dropped it.
+	printf '%s\n' \
+		'=== RUN   TestT2RealCloudProvisioning' \
+		'    t2_provision_test.go:1: some ordinary progress chatter that is not an assertion' \
+		'argocd assert: addons asserted nothing over an empty set; keeping the measured summary already at /tmp/argocd-summary.json rather than overwriting it' \
+		'--- PASS: TestT2RealCloudProvisioning (1200.00s)' \
+		>"$tmp/refusal.log"
+	refusal_dir="$(_capture refusal success "$tmp/pass.json" addons "$tmp/refusal.log")"
+	if [ -s "$refusal_dir/assertions.txt" ] && grep -q 'asserted nothing over an empty set' "$refusal_dir/assertions.txt"; then
+		echo "  ✓ a refusal to overwrite a measured summary is recorded in the bundle"
+	else
+		echo "  ✗ the bundle carries NO trace of the refusal — it reads as a run that asserted everything" >&2
+		fails=$((fails + 1))
+	fi
+	# NEGATIVE CONTROL, and the reason the assertion above means anything: the extract must still
+	# be a FILTER. Widening the alternation until it matches everything would satisfy the check
+	# above while turning assertions.txt into a copy of the log — the payload the block's own
+	# comment refuses. So a non-assertion line from the same log must NOT appear.
+	if [ -f "$refusal_dir/assertions.txt" ] && grep -q 'ordinary progress chatter' "$refusal_dir/assertions.txt"; then
+		echo "  ✗ assertions.txt captured a non-assertion line — the extract is no longer a filter" >&2
+		fails=$((fails + 1))
+	else
+		echo "  ✓ the extract stays selective: ordinary chatter is not captured"
 	fi
 
 	if [ "$fails" -ne 0 ]; then
@@ -250,7 +285,7 @@ fi
 #    short-retention artifact. What goes in is the verdict line and the scenario DECISIONS —
 #    which cell was asserted, and which were skipped and why.
 if [ -n "${ALETHIA_E2E_T2_TEST_LOG:-}" ] && [ -r "${ALETHIA_E2E_T2_TEST_LOG}" ]; then
-	grep -E -- '--- (PASS|FAIL|SKIP): |^(ok|FAIL|PASS)\b|asserting ArgoCD Applications|A0\.[0-9]+[: ]|#(1773|1511|1268|2503): |soak [0-9]+s:|ArgoCD .*(Healthy|Synced)' \
+	grep -E -- '--- (PASS|FAIL|SKIP): |^(ok|FAIL|PASS)\b|asserting ArgoCD Applications|A0\.[0-9]+[: ]|#(1773|1511|1268|2503): |soak [0-9]+s:|ArgoCD .*(Healthy|Synced)|argocd assert: ' \
 		"${ALETHIA_E2E_T2_TEST_LOG}" 2>/dev/null \
 		| awk 'length($0) <= 2000' \
 		| scrub_stream >"$out/assertions.txt" || true
