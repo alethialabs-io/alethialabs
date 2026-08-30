@@ -206,7 +206,7 @@
 		},
 		{
 			"kind": "nosql",
-			"doc": "a NoSQL table — DynamoDB / Firestore / Cosmos DB container / Tablestore. Hetzner has neither a service nor an offered chart for it.",
+			"doc": "a NoSQL table — DynamoDB / Firestore / Cosmos DB container / Tablestore, and on Hetzner a ScyllaCluster serving the DynamoDB-compatible Alternator API.",
 			"foundational": false,
 			"cells": {
 				"alibaba": {
@@ -230,9 +230,10 @@
 					"resource": "google_firestore_database"
 				},
 				"hetzner": {
-					"carriage": "ceiling",
-					"offered": false,
-					"why": "Hetzner has no such service, and this repo offers no chart wired for the kind either — hidden on the canvas and REJECTED at deploy (unsupported-kinds.ts UNSUPPORTED_KINDS_BY_PROVIDER.hetzner)"
+					"carriage": "in_cluster",
+					"offered": true,
+					"why": "Hetzner has no managed equivalent; the console synthesizes an in-cluster chart (hetzner-services.ts) which the runner installs as an ArgoCD Application — nothing reaches tofu state (ScyllaDB, scylla-operator + scylla charts; one ScyllaCluster per nosql node, serving the DynamoDB-compatible Alternator API)",
+					"argo_app": "addon-nosql-items"
 				}
 			}
 		},

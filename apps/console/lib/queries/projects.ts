@@ -22,7 +22,7 @@ import {
 
 /** One environment the front door seeds, with its placement onto a Fabric. The placement selector
  * (#844) emits these; the fan-out below turns them into `project_fabrics` + `project_environments`
- * rows (a Fabric per `dedicated` env, one shared Fabric for all `namespace`/`vcluster` envs). */
+ * rows — see {@link planFabricPlacement} for which Fabric each one lands on. */
 export interface EnvironmentSpec {
 	/** Slug-safe env name — also the Fabric name for a `dedicated` env and the tofu state segment. */
 	name: string;
@@ -34,6 +34,51 @@ export interface EnvironmentSpec {
 	namespace?: string | null;
 	/** Exactly one spec must be the default — the representative env for single-value surfaces. */
 	is_default?: boolean;
+}
+
+/**
+ * Decide which Fabric each environment in a create-matrix is placed onto.
+ *
+ * Only a `dedicated` environment provisions a cluster, so a `namespace`/`vcluster` environment must
+ * be hosted on some dedicated env's Fabric. `packages/core/provisioner/deploy_namespace.go` enforces
+ * the same rule at deploy time and fails closed: "the Fabric's cluster must be provisioned (a
+ * 'dedicated' env owning the Fabric) before a namespace env can be placed onto it".
+ *
+ * This used to mint a separate Fabric literally named `shared` to carry every shared placement — a
+ * Fabric NO environment owned, which nothing therefore ever provisioned, leaving every tier on it
+ * undeployable from birth. Both sibling paths already had it right (the legacy shape puts Prod and
+ * its `preview` namespace env on ONE Fabric; the `project env add` route resolves onto the DEFAULT
+ * environment's Fabric), so this is the third path being brought into line rather than a new policy.
+ *
+ * Pure and exported so the decision is testable without Postgres — the bug lived for as long as it
+ * did because the only coverage of the fan-out needed a real database.
+ *
+ * @throws if a shared placement is present with no `dedicated` env to host it.
+ */
+export function planFabricPlacement(specs: EnvironmentSpec[]): {
+	/** Fabric names to create — one per `dedicated` env, in spec order. */
+	fabricNames: string[];
+	/** The Fabric name a given spec is placed onto. */
+	hostFor: (spec: EnvironmentSpec) => string;
+} {
+	const dedicated = specs.filter((s) => s.placement_mode === "dedicated");
+	const hasShared = specs.some((s) => s.placement_mode !== "dedicated");
+	if (hasShared && dedicated.length === 0) {
+		throw new Error(
+			"At least one environment must be `dedicated`: it owns the Fabric and is what brings the cluster into being. `namespace` and `vcluster` environments are placed onto a cluster that already exists.",
+		);
+	}
+	// Host the cheap tiers on the default env's Fabric when the default is dedicated, so they ride
+	// the project's primary cluster; otherwise the first dedicated env in spec order.
+	const host = dedicated.find((s) => s.is_default) ?? dedicated[0];
+	return {
+		fabricNames: dedicated.map((s) => s.name),
+		hostFor: (spec) => {
+			const name = spec.placement_mode === "dedicated" ? spec.name : host?.name;
+			if (!name) throw new Error(`No Fabric for environment "${spec.name}".`);
+			return name;
+		},
+	};
 }
 
 /** Scalar inputs the create front door needs — the `project` sub-object of `CreateProjectInput`
@@ -54,9 +99,10 @@ export interface CreateProjectCoreInput {
 	 *  is provided (the full matrix carries its own placements). */
 	placement_mode?: PlacementMode;
 	/** The full environment matrix from the placement selector (#844). When present, the core fans it
-	 *  out into a Fabric per `dedicated` env + one shared Fabric for the `namespace`/`vcluster` envs.
-	 *  When ABSENT the core keeps the legacy Prod(dedicated)+Preview(namespace-on-Prod-Fabric) shape
-	 *  — so the CLI route and any caller that doesn't set it are byte-identical to before. */
+	 *  out via {@link planFabricPlacement}: a Fabric per `dedicated` env, with every shared placement
+	 *  hosted on a dedicated env's Fabric. When ABSENT the core keeps the legacy
+	 *  Prod(dedicated)+Preview(namespace-on-Prod-Fabric) shape — so the CLI route and any caller that
+	 *  doesn't set it are byte-identical to before. */
 	environments?: EnvironmentSpec[];
 	/** The creating user id — stamped on every row. */
 	owner: string;
@@ -133,8 +179,9 @@ export async function insertProjectWithDefaultFabric(
 
 	if (input.environments && input.environments.length > 0) {
 		// --- Fan-out: the full environment matrix from the placement selector (#844) ---------------
-		// Placement model: a `dedicated` env OWNS its Fabric 1:1; every `namespace`/`vcluster` env
-		// shares ONE Fabric. Everything is `DRAFT` — no cluster is provisioned until a deploy.
+		// Placement model: a `dedicated` env OWNS its Fabric 1:1; every `namespace`/`vcluster` env is
+		// placed onto the Fabric of a dedicated env, because only a dedicated env provisions a cluster.
+		// Everything is `DRAFT` — no cluster is provisioned until a deploy.
 		const specs = input.environments;
 		// Bound the fan-out HERE, not just in the form schema — createProject doesn't re-parse the
 		// client input, so the core is the real choke point against a crafted many-env request.
@@ -157,6 +204,9 @@ export async function insertProjectWithDefaultFabric(
 				throw new Error(`Invalid namespace "${s.namespace}".`);
 			}
 		}
+		// Still reserved even though the fan-out no longer mints a Fabric by this name: projects
+		// created before that fix carry one, so the name would be ambiguous in a state key and in
+		// `project env add --fabric shared`.
 		const SHARED_FABRIC = "shared";
 		if (specs.some((s) => s.name === SHARED_FABRIC)) {
 			throw new Error(`"${SHARED_FABRIC}" is a reserved environment name.`);
@@ -165,25 +215,17 @@ export async function insertProjectWithDefaultFabric(
 		if (new Set(specs.map((s) => s.name)).size !== specs.length) {
 			throw new Error("Environment names must be unique.");
 		}
-		const hasShared = specs.some((s) => s.placement_mode !== "dedicated");
-
-		// One Fabric per dedicated env + a single shared Fabric when any env is namespace/vcluster.
+		// One Fabric per dedicated env; shared placements join a dedicated env's Fabric rather than a
+		// Fabric of their own, because only a dedicated env provisions a cluster. See the rationale on
+		// planFabricPlacement — this is the decision that used to mint an unprovisionable `shared`.
+		const { fabricNames, hostFor } = planFabricPlacement(specs);
 		const fabricRows = await tx
 			.insert(projectFabrics)
-			.values([
-				...specs
-					.filter((s) => s.placement_mode === "dedicated")
-					.map((s) => ({ ...fabricBase, name: s.name })),
-				...(hasShared ? [{ ...fabricBase, name: SHARED_FABRIC }] : []),
-			])
+			.values(fabricNames.map((name) => ({ ...fabricBase, name })))
 			.returning({ id: projectFabrics.id, name: projectFabrics.name });
 		const fabricByName = new Map(fabricRows.map((f) => [f.name, f.id]));
-		/** The Fabric a spec is placed on: its own (dedicated) or the shared one. */
 		const fabricFor = (s: EnvironmentSpec): string => {
-			const id =
-				s.placement_mode === "dedicated"
-					? fabricByName.get(s.name)
-					: fabricByName.get(SHARED_FABRIC);
+			const id = fabricByName.get(hostFor(s));
 			if (!id) throw new Error(`No Fabric for environment "${s.name}".`);
 			return id;
 		};

@@ -42,16 +42,80 @@ func TestGitContextFor(t *testing.T) {
 	}
 }
 
+const kanikoTestDest = "123.dkr.ecr.eu-west-1.amazonaws.com/proj-web"
+
 func TestParseKanikoDigest(t *testing.T) {
 	logs := `INFO[0042] Taking snapshot of full filesystem...
 INFO[0055] Pushing image to 123.dkr.ecr.eu-west-1.amazonaws.com/proj-web:3f1a9c2b
 INFO[0058] Pushed 123.dkr.ecr.eu-west-1.amazonaws.com/proj-web@sha256:aa11bb22cc33dd44ee55ff667788990011223344556677889900aabbccddeeff`
 	want := "sha256:aa11bb22cc33dd44ee55ff667788990011223344556677889900aabbccddeeff"
-	if got := parseKanikoDigest(logs); got != want {
+	if got := parseKanikoDigest(logs, kanikoTestDest); got != want {
 		t.Errorf("parseKanikoDigest = %q, want %q", got, want)
 	}
-	if got := parseKanikoDigest("no digest here"); got != "" {
+	if got := parseKanikoDigest("no digest here", kanikoTestDest); got != "" {
 		t.Errorf("parseKanikoDigest on digest-less logs = %q, want empty", got)
+	}
+}
+
+// THE REASON THE MATCH IS ANCHORED. A Dockerfile that pins its base by digest is the recommended
+// supply-chain practice, and kaniko logs that base digest in EVERY attempt — including the ones
+// that failed — before it logs anything about the push. `kubectl logs -l` emits selector-matched
+// pods in Go MAP order, so a failed attempt's log routinely comes first.
+//
+// An unanchored `sha256:[a-f0-9]{64}` with FindString returns the base image's digest here. That
+// is not a visible failure: `dest@sha256:<base>` passes isValidImageRef, passes verify's IMAGE-001
+// because it IS digest-pinned, is persisted to resolved_image, renders into the Deployment, and
+// dies at ImagePullBackOff with nothing saying the digest was wrong.
+func TestParseKanikoDigestIgnoresABaseImageDigestFromAFailedAttempt(t *testing.T) {
+	const base = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	const pushed = "sha256:aa11bb22cc33dd44ee55ff667788990011223344556677889900aabbccddeeff"
+
+	// Attempt 1 failed after resolving the digest-pinned base; attempt 2 succeeded. Map order put
+	// the failure first, which is the arrangement that makes the unanchored read wrong.
+	logs := "[pod/build-web-aaaaa] INFO[0001] Retrieving image manifest node@" + base + "\n" +
+		"[pod/build-web-aaaaa] error building image: unexpected EOF\n" +
+		"[pod/build-web-bbbbb] INFO[0001] Retrieving image manifest node@" + base + "\n" +
+		"[pod/build-web-bbbbb] INFO[0058] Pushed " + kanikoTestDest + "@" + pushed
+
+	got := parseKanikoDigest(logs, kanikoTestDest)
+	if got == base {
+		t.Fatalf("returned the BASE IMAGE digest %q — this ships a digest-pinned reference to an "+
+			"image that was never built, and every downstream check passes it", got)
+	}
+	if got != pushed {
+		t.Fatalf("parseKanikoDigest = %q, want the pushed digest %q", got, pushed)
+	}
+}
+
+// A digest for a DIFFERENT destination must not answer for this one. The Job name
+// (`job-name=build-<svc>`) is identical across runs and `delete job --wait=true` waits for the Job
+// rather than its pods, so a previous run's pod can still be in the selector's result.
+func TestParseKanikoDigestIgnoresAnotherDestinationsPush(t *testing.T) {
+	const other = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	logs := "INFO[0058] Pushed 123.dkr.ecr.eu-west-1.amazonaws.com/proj-api@" + other
+
+	if got := parseKanikoDigest(logs, kanikoTestDest); got != "" {
+		t.Fatalf("parseKanikoDigest = %q for a push to a different repository — want empty so the "+
+			"caller degrades to the git-SHA tag rather than pinning another service's image", got)
+	}
+}
+
+// An empty destination cannot anchor anything, so it must answer nothing rather than match the
+// first digest in the text.
+func TestParseKanikoDigestWithNoDestinationAnswersNothing(t *testing.T) {
+	logs := "INFO[0058] Pushed anything@sha256:aa11bb22cc33dd44ee55ff667788990011223344556677889900aabbccddeeff"
+	if got := parseKanikoDigest(logs, ""); got != "" {
+		t.Fatalf("parseKanikoDigest with an empty dest = %q, want empty", got)
+	}
+}
+
+// The destination is interpolated into a regexp, and a registry host carries dots. Unescaped, `.`
+// matches any character, so a lookalike host would satisfy the anchor.
+func TestParseKanikoDigestEscapesTheDestination(t *testing.T) {
+	const d = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+	logs := "INFO[0058] Pushed 123Xdkr!ecr!eu-west-1!amazonaws!com/proj-web@" + d
+	if got := parseKanikoDigest(logs, kanikoTestDest); got != "" {
+		t.Fatalf("parseKanikoDigest = %q — the dots in the destination were treated as wildcards", got)
 	}
 }
 

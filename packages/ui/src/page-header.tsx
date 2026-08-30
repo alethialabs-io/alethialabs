@@ -58,7 +58,16 @@ function PageHeader({
 		>
 			<div className="flex min-w-0 flex-col gap-1">
 				<div className="flex items-center gap-2">
-					<Heading data-slot="page-header-title" className="truncate text-lg font-medium tracking-tight">
+					{/* `title` on the heading whenever the caller passed a plain string: the heading
+					    truncates, and the support case detail page — where the subject IS the page's
+					    primary content — clipped a long subject with the full text recoverable
+					    nowhere on screen (the list item beside it truncates too). Screen readers
+					    already read it in full; `truncate` is CSS only. */}
+					<Heading
+						data-slot="page-header-title"
+						title={typeof title === "string" ? title : undefined}
+						className="truncate text-lg font-medium tracking-tight"
+					>
 						{title}
 					</Heading>
 					<CountPill count={count} />

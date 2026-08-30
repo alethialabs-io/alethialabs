@@ -16,6 +16,7 @@ import {
 	type SubmitCaseInput,
 	submitCaseSchema,
 } from "@/lib/validations/support";
+import { PageHeader } from "@repo/ui/page-header";
 import { Button } from "@repo/ui/button";
 import { Input } from "@repo/ui/input";
 import { Label } from "@repo/ui/label";
@@ -92,13 +93,10 @@ export function AbuseForm({ orgSlug, defaultEmail }: AbuseFormProps) {
 
 	return (
 		<form onSubmit={onSubmit} className="max-w-2xl space-y-8 py-2">
-			<header className="space-y-1">
-				<h1 className="text-2xl font-semibold tracking-tight">Report abuse</h1>
-				<p className="text-sm text-muted-foreground">
-					Flag phishing, malware, spam, copyright, or other policy violations.
-					Our trust & safety team reviews every report.
-				</p>
-			</header>
+			<PageHeader
+				title="Report abuse"
+				description="Flag phishing, malware, spam, copyright, or other policy violations. Our trust & safety team reviews every report."
+			/>
 
 			<section className="space-y-5">
 				<div className="space-y-2">

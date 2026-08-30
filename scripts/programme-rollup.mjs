@@ -161,6 +161,16 @@ const DIMENSIONS = [
 	// shell file and fails if the two disagree, because a hand-kept second copy is how they drift.
 	{ id: "byo-iac", label: "BYO-IaC", gate: "ALETHIA_E2E_BYO_IAC", gates: [{ name: "ALETHIA_E2E_BYO_IAC", kind: "derived" }], composedByFull: false, what: "a customer OpenTofu root module is refused when unsafe, applied through the state proxy, drifts, heals and destroys — with state cleared" },
 	{ id: "day2", label: "day-2", gate: "ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS", gates: [{ name: "ALETHIA_E2E_SOAK", kind: "derived" }, { name: "E2E_DAY2_ACCESS", kind: "repo" }], what: "a real access path beyond the soak — kubeconfig / ArgoCD surface" },
+	// MVP predicate 4's second half. The reachability bar already answers the first — the command
+	// surface resolves, with zero CLI gaps — but the product has never been PROVISIONED through the
+	// binary: the T2 spine writes the DEPLOY job straight into Postgres, so the CLI has never been
+	// the actor. This column exists so that gap is COUNTED rather than described, which is the same
+	// reason `byo-iac` got a column of its own.
+	//
+	// `composedByFull: false`, mirroring FULL_EXCLUDES: `full` re-drives the same spine through a
+	// seeded job row, so composing it in would buy a second cluster plus a console build per bar and
+	// red three cells on a CLI defect. A full-bar PASS must never credit this.
+	{ id: "cli-demo", label: "CLI-driven", gate: "ALETHIA_E2E_CLI_DEMO_PROVISION", gates: [{ name: "ALETHIA_E2E_CLI_DEMO_PROVISION", kind: "derived" }], composedByFull: false, what: "a floor-shaped cluster provisioned through the real `alethia` binary rather than a seeded job row — the ACTOR, not the surface area" },
 ];
 // The composite dimension. A PASS here is evidence for every dimension the full bar ACTUALLY
 // EXERCISES — which is not the same as every dimension in DIMENSIONS, and the difference is

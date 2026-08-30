@@ -177,7 +177,22 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "patch"]
+    # "list" is what the state READ needs, not a convenience. vault_state.go reads the state
+    # Secret with a field selector (kubectl get secret --field-selector metadata.name=NAME), and a
+    # field selector is a LIST against the collection, never a GET of one object. Without this verb
+    # every read is Forbidden -- and since an unreadable state is now fatal by design,
+    # vaultBootstrap returns before waitForVault on EVERY cluster, through all four backoffLimit
+    # attempts.
+    #
+    # The read is a list on purpose: a list has no NotFound path, so an absent Secret is a 200
+    # carrying an empty items array -- the API server stating it looked and found nothing -- while
+    # every fault exits non-zero. The --ignore-not-found flag on a GET cannot do that: it suppresses
+    # ANY 404, so a proxy or a mis-pathed endpoint answering 404 exits 0 with empty output and reads
+    # as "no unseal key", which turns the data-loss guard off.
+    #
+    # The added privilege is ENUMERATION only. These rules carry no resourceNames, so "get" already
+    # permits reading any Secret in this namespace by name; "list" adds discovering names.
+    verbs: ["get", "list", "create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -200,7 +215,25 @@ metadata:
   namespace: %[2]s
 spec:
   backoffLimit: 4
-  ttlSecondsAfterFinished: 600
+  # THE TTL DELETED THE EVIDENCE BEFORE ANYTHING READ IT.
+  #
+  # This Job is deliberately not waited on — the comment on EnsureAddOnBootstraps says so, and it is
+  # right: "the health wait that follows is what observes the result". But that wait is the ArgoCD
+  # convergence budget, which is 35 MINUTES for the 18-chart surface. At 600s the Job and its pod
+  # were garbage-collected twenty-five minutes BEFORE the deadline dump ran, so the one artefact
+  # that says why the bootstrap failed no longer existed by the time anything looked.
+  #
+  # Measured on aws/addons run 33249968471: 24 of 25 Applications Healthy+Synced, addon-vault
+  # Progressing, and the vault pod own log ending at "core: root token generated" then "pre-seal
+  # teardown complete" — Vault initialised and re-sealed, which is an init with no unseal after it.
+  # The bootstrap therefore failed between those two steps, and the only step there is persisting
+  # the unseal key. Which of init, persist or unseal it was is one line in the Job log, and the Job
+  # was gone.
+  #
+  # 3600 outlives the whole convergence budget plus slack, and still cleans up long before the
+  # cluster is torn down. It applies to Failed Jobs as much as Complete ones, which is the case that
+  # matters: a Complete Job leaves nothing anyone needs.
+  ttlSecondsAfterFinished: 3600
   template:
     spec:
       serviceAccountName: %[1]s

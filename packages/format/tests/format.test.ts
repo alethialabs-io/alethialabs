@@ -10,6 +10,7 @@ import {
 	formatMinutes,
 	formatQuota,
 	formatMoney,
+	formatMonthlyRate,
 	formatRelative,
 } from "../src/index";
 
@@ -110,6 +111,16 @@ describe("formatDate", () => {
 		expect(formatDate(iso)).toBe("27 Aug 2026");
 		expect(formatDate(iso, "month")).toBe("August 2026");
 		expect(formatDate(iso, "datetime")).toMatch(/^27 Aug 2026, \d{2}:\d{2}$/);
+		expect(formatDate(iso, "time")).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+	});
+
+	// The log gutter's shape: seconds, no date, and 24-hour. Pinned to a zone because the whole
+	// point of the assertion is the DIGITS, and without one they follow whoever runs the suite.
+	it("renders `time` as a 24-hour log timestamp", () => {
+		expect(formatDate(iso, "time", "UTC")).toBe("14:05:00");
+		// `hourCycle: "h23"` rather than `hour12: false`, which renders midnight as 24:00:00 in
+		// some locales. This is the case that distinguishes them.
+		expect(formatDate("2026-08-27T00:04:09.000Z", "time", "UTC")).toBe("00:04:09");
 	});
 
 	it("accepts every input shape the call sites use", () => {
@@ -179,5 +190,79 @@ describe("formatMoney", () => {
 
 	it("does not render NaN into a billing table", () => {
 		expect(formatMoney(Number.NaN)).toBe("$0.00");
+	});
+});
+
+describe("formatMonthlyRate", () => {
+	// The unit split is the whole reason this is a second function. Same money, both spellings.
+	it("takes MAJOR units, where formatMoney takes minor", () => {
+		expect(formatMonthlyRate(12.5)).toBe("$12.50/mo");
+		expect(formatMoney(1250)).toBe("$12.50");
+	});
+
+	// THE REGRESSION TEST. The first cut dropped cents above $100, which broke the one property a
+	// cost breakdown must have: the lines add up to the total printed under them. These are the
+	// real numbers from plan-tab's cost result.
+	it("keeps a breakdown's lines summing to its own total, at every magnitude", () => {
+		const lines = [60.25, 45.1];
+		expect(lines.map((n) => formatMonthlyRate(n, "exact"))).toEqual(["$60.25/mo", "$45.10/mo"]);
+		expect(formatMonthlyRate(105.35, "exact")).toBe("$105.35/mo");
+	});
+
+	// Two canvas node cards side by side rendered the same field at two precisions. There is no
+	// magnitude at which the precision may change, in EITHER register.
+	it("never changes precision with magnitude", () => {
+		expect(formatMonthlyRate(99.99)).toBe("$99.99/mo");
+		expect(formatMonthlyRate(100)).toBe("$100.00/mo");
+		expect(formatMonthlyRate(1240.37)).toBe("$1,240.37/mo");
+		expect(formatMonthlyRate(99.99, "exact")).toBe("$99.99/mo");
+		expect(formatMonthlyRate(100, "exact")).toBe("$100.00/mo");
+		expect(formatMonthlyRate(1240.37, "exact")).toBe("$1,240.37/mo");
+	});
+
+	// The Cost tab lists one row per Terraform address, and sub-$1 cloud line items (hosted zones,
+	// buckets, small volumes) are the common case. Five `<$1/mo` rows over a `$2.00/mo` total is a
+	// breakdown that cannot be reconciled at all.
+	it("does not collapse a sub-unit LINE ITEM, which the reader is adding up", () => {
+		expect(formatMonthlyRate(0.5, "exact")).toBe("$0.50/mo");
+		expect(formatMonthlyRate(0.03, "exact")).toBe("$0.03/mo");
+		expect(formatMonthlyRate(0.4, "exact")).toBe("$0.40/mo");
+	});
+
+	// The boundary where the two registers would disagree if the value were rounded inside each
+	// branch instead of once, before them.
+	it("rounds to cents ONCE, before the sub-unit test", () => {
+		expect(formatMonthlyRate(0.999)).toBe("$1.00/mo");
+		expect(formatMonthlyRate(0.999, "exact")).toBe("$1.00/mo");
+	});
+
+	// `$0.02/mo` for a WHOLE PROJECT reads as a broken number, not a cheap one; `<$1/mo` is the
+	// same admission formatMinutes makes with `<1 min`. That argument is about a lone headline.
+	it("admits a sub-unit ESTIMATE rather than printing a figure it cannot stand behind", () => {
+		expect(formatMonthlyRate(0.023)).toBe("<$1/mo");
+		// Rounds to zero cents but is NOT zero — "nothing is running" would be a lie.
+		expect(formatMonthlyRate(0.001)).toBe("<$1/mo");
+	});
+
+	// Nothing provisioned is a real, distinct state, and `$0.00/mo` reads like a bill for nothing
+	// — in a headline. In a column of line items a genuine zero has to align with its neighbours.
+	it("distinguishes NOTHING from A LITTLE, and only in the headline register", () => {
+		expect(formatMonthlyRate(0)).toBe("$0/mo");
+		expect(formatMonthlyRate(-1)).toBe("$0/mo");
+		expect(formatMonthlyRate(Number.NaN)).toBe("$0/mo");
+		expect(formatMonthlyRate(Number.POSITIVE_INFINITY)).toBe("$0/mo");
+		expect(formatMonthlyRate(0, "exact")).toBe("$0.00/mo");
+		expect(formatMonthlyRate(-1, "exact")).toBe("$0.00/mo");
+		expect(formatMonthlyRate(Number.NaN, "exact")).toBe("$0.00/mo");
+	});
+
+	// The runner fleet prices in euros. One symbol decision, shared with formatMoney.
+	it("honours a currency in every branch of both registers", () => {
+		expect(formatMonthlyRate(12.5, "estimate", "EUR")).toBe("€12.50/mo");
+		expect(formatMonthlyRate(0, "estimate", "EUR")).toBe("€0/mo");
+		expect(formatMonthlyRate(0.4, "estimate", "EUR")).toBe("<€1/mo");
+		expect(formatMonthlyRate(1240, "estimate", "EUR")).toBe("€1,240.00/mo");
+		expect(formatMonthlyRate(0.4, "exact", "EUR")).toBe("€0.40/mo");
+		expect(formatMonthlyRate(0, "exact", "EUR")).toBe("€0.00/mo");
 	});
 });

@@ -158,7 +158,16 @@ just picked disappears, which makes the filter bar un-un-selectable.
 
 No stat-card strips.
 
-Two mechanical checks back this up rather than restating it: `pnpm -F console check:dead-code`
+`pnpm check:shared-surface` mechanises PART of the first two rows, and the part matters: it fails
+on `toFixed(`, `toLocaleDateString`, `toLocaleTimeString`, a hand-written `$` in front of an
+interpolation, and a byte division by 1024; and on a raw `<h1>` — not on a hand-rolled `<h2>`
+section heading, and not on a direct `date-fns` import. Every exception is a line in
+`apps/console/shared-surface-allowlist.yaml` carrying its reason, and that list only shrinks.
+**Everything else in the table is prose** — `scripts/check-shared-surface.mjs` states exactly which
+token shapes and which console directories it covers, because an unstated exception is how the next
+reader concludes the whole table is enforced.
+
+Two further checks back up the section rather than restating it: `pnpm -F console check:dead-code`
 fails on an unreferenced module or an unused dependency, and `pnpm -F console check:action-boundary`
 on a server action that escapes its boundary.
 

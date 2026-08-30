@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alethia Labs <legal@alethialabs.io>
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { formatMonthlyRate } from "@repo/format";
 import { Badge } from "@repo/ui/badge";
 import {
   Collapsible,
@@ -141,7 +142,7 @@ export function ResourceCard({ resource, cost }: ResourceCardProps) {
         </div>
         {cost !== undefined && cost !== null && (
           <span className="text-xs text-muted-foreground shrink-0">
-            ${cost.toFixed(2)}/mo
+            {formatMonthlyRate(cost, "exact")}
           </span>
         )}
         <Badge

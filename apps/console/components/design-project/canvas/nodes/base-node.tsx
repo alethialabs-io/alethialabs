@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Handle, Position } from "@xyflow/react";
+import { formatMonthlyRate } from "@repo/format";
 import { cn } from "@repo/ui/utils";
 import type { CloudProviderSlug } from "@/lib/cloud-providers";
 import { NODE_REGISTRY, type NodeFact } from "../graph/node-registry";
@@ -210,7 +211,7 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 						<div className="flex items-center gap-1.5 font-mono text-[9px] text-muted-foreground">
 							{resolved.monthlyCost != null && (
 								<span className="shrink-0 text-muted-foreground">
-									{formatMonthly(resolved.monthlyCost)}
+									{formatMonthlyRate(resolved.monthlyCost, "exact")}
 								</span>
 							)}
 							{resolved.monthlyCost != null && primaryFact && (
@@ -329,7 +330,7 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 			{resolved.monthlyCost != null && (
 				<div className="flex items-center gap-2 border-t border-border/60 px-2.5 py-1.5">
 					<span className="font-mono text-[10px] text-foreground">
-						{formatMonthly(resolved.monthlyCost)}
+						{formatMonthlyRate(resolved.monthlyCost, "exact")}
 					</span>
 					{drifted > 0 && (
 						<span className="ml-auto border border-border-strong px-1 font-mono text-[9px] uppercase tracking-wide">
@@ -344,11 +345,6 @@ export function BaseNode({ id, selected }: BaseNodeProps) {
 			)}
 		</div>
 	);
-}
-
-/** A monthly figure, in the terse mono the board speaks. Money is precise (the design system's rule). */
-function formatMonthly(value: number): string {
-	return `$${value.toFixed(2)}/mo`;
 }
 
 /**

@@ -241,10 +241,24 @@ func TestProgrammeExportIsNotVacuous(t *testing.T) {
 			seen[c.Carriage] = true
 		}
 	}
-	for _, want := range []string{string(CarriedByTofu), string(CarriedInCluster), string(CloudCeiling)} {
+	// CloudCeiling LEFT this list when hetzner's nosql was wired to ScyllaDB. It was the last
+	// ceiling in the whole 55-cell grid, so no real cell carries the verdict any more — and
+	// demanding a real one would fail for the best possible reason, which is exactly the trap
+	// DeferredInProduct was already moved out of below. The projection's ability to CARRY a ceiling
+	// is asserted on a synthetic cell instead, so the verdict keeps its teeth whether or not a cloud
+	// ever refuses a kind again.
+	for _, want := range []string{string(CarriedByTofu), string(CarriedInCluster)} {
 		if !seen[want] {
 			t.Errorf("no cell exported carriage %q — either the surface changed or the projection is dropping a verdict", want)
 		}
+	}
+	if seen[string(CloudCeiling)] {
+		// A NOTICE, and the mirror of the deferred one below: a cloud has started refusing a kind
+		// again, which is a real change someone should have made deliberately.
+		t.Logf("the table carries %s cells again — a cloud refuses a kind", CloudCeiling)
+	}
+	if got := projectedCarriage(ceilingCell("the cloud has no such service")); got != string(CloudCeiling) {
+		t.Errorf("projectedCarriage(ceilingCell) = %q, want %q — the projection has lost the ceiling verdict", got, CloudCeiling)
 	}
 	if seen[string(DeferredInProduct)] {
 		// Not a failure — a NOTICE, so a reader of a red or green log knows which state the table is

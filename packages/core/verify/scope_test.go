@@ -7,6 +7,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	tfjson "github.com/hashicorp/terraform-json"
 )
 
 // evalCorpus loads + evaluates a labeled corpus fixture (testdata/corpus), which is
@@ -174,6 +176,45 @@ func TestProviderToken(t *testing.T) {
 	for rtype, want := range cases {
 		if got := providerToken(rtype); got != want {
 			t.Errorf("providerToken(%q) = %q, want %q", rtype, got, want)
+		}
+	}
+}
+
+// TestTerraformDataDoesNotDenyScope — `terraform_data` is the BUILT-IN no-op resource that replaced
+// `null_resource`. It creates no cloud authority, and `null` has always been on the
+// supported-no-controls allowlist; `terraform` was not, purely because nobody added it.
+//
+// That omission was not conservative, it was total: all five shipped project templates use
+// `terraform_data` for their precondition guards, so SCOPE-001 fired on EVERY plan the product
+// itself produces. Every committed receipt under demos/proofs/ carries `SCOPE-001: not_evaluable`,
+// and a live production Azure plan (job 0d9850b1) returned `not_evaluable` with all three Azure
+// controls passing — the six findings were all `terraform_data.*_guard` from our own template.
+//
+// The test injects the real guard resource into an otherwise-passing plan, so it fails on the
+// resource alone: if `terraform` leaves the allowlist, this reds.
+func TestTerraformDataDoesNotDenyScope(t *testing.T) {
+	plan := loadBasePlan(t, "hetzner_utility_pass.json")
+	plan.ResourceChanges = append(plan.ResourceChanges, &tfjson.ResourceChange{
+		Address: "terraform_data.compat_k8s_guard",
+		Type:    "terraform_data",
+		Name:    "compat_k8s_guard",
+		Mode:    tfjson.ManagedResourceMode,
+		Change: &tfjson.Change{
+			Actions: tfjson.Actions{tfjson.ActionCreate},
+			After:   map[string]interface{}{"input": "ok"},
+		},
+	})
+
+	rep, err := Evaluate(context.Background(), plan)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if rep.Verdict != StatusPass {
+		t.Errorf("verdict = %q, want pass — a built-in no-op resource must not deny scope", rep.Verdict)
+	}
+	for _, c := range rep.Controls {
+		if c.ID == "SCOPE-001" {
+			t.Errorf("SCOPE-001 fired on terraform_data, the successor to the allowlisted null_resource: %+v", c)
 		}
 	}
 }

@@ -324,6 +324,28 @@ exclusions:
   - offer: nosql:point_in_time_recovery
     cloud: alibaba
     reason: Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do.
+  # ── Hetzner nosql — the one field ScyllaDB genuinely does not do ─────────────────────
+  # `nosql` stopped being a Hetzner ceiling when the kind was wired to an in-cluster ScyllaDB with
+  # Alternator (its DynamoDB-compatible API). Every other field on the kind is delivered by that
+  # carriage. Point-in-time recovery is not, and it is recorded here rather than under
+  # `carried_in_cluster:` BECAUSE THAT SECTION IS FOR OFFERS THAT ARE HONORED — claiming this one
+  # would print delivery of something Scylla does not do.
+  #
+  # The distinction is real and not a technicality: DynamoDB PITR restores to any second in the
+  # window by replaying a continuous change log. Scylla Manager takes SCHEDULED snapshots, so the
+  # best it can offer is "restore to a backup point", which is a different product promise. Adding
+  # scylla-manager to the carriage would buy scheduled backups; it would still not buy PITR, so this
+  # is a ceiling of the OSS carriage rather than work that is merely unstarted — which is why it is
+  # an exclusion and not a `baseline:` entry.
+  #
+  # The user is told, not silently ignored: the field carries an `unavailableWhen` on hetzner
+  # (config-schema.ts) that renders it disabled with this reason. `unavailableWhen`, never
+  # `visibleWhen` — a field that vanishes takes the explanation with it, and `offeredOn` deliberately
+  # still lists hetzner so this exclusion stays MEASURABLE instead of disappearing from the surface.
+  - offer: nosql:point_in_time_recovery
+    cloud: hetzner
+    reason: Hetzner has no managed NoSQL service, so the kind is an in-cluster ScyllaDB. Scylla backs up on a schedule (Scylla Manager snapshots) rather than continuously, so there is no point-in-time restore to carry — the offer is withdrawn in the canvas with that reason rather than accepted and ignored.
+
 
   # ── Ordered delivery on Alibaba — an argument with nothing behind it ─────────────────
   # The other three clouds are built (#1812). Alibaba is not, and the reason is NOT that the

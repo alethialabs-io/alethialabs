@@ -94,7 +94,7 @@ which is the [e2e ledger](../../demos/proofs/provisioning-e2e-log.md)'s job, not
 | `dns:waf_enabled` | — | 🟡 | 🟡 | 🟡 | — | · |
 | `network:provision_network` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | · |
 | `network:single_nat_gateway` | 🟡 | 🟡 | 🟡 | 🟡 | — | · |
-| `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | · | · |
+| `nosql:point_in_time_recovery` | — | 🟡 | 🟡 | 🟡 | — | · |
 | `queue:ordered` | — | 🟡 | 🟡 | 🟡 | · | · |
 | `registry:immutable_tags` | 🟡 | 🟡 | — | 🟡 | ☸️ | · |
 | `registry:vulnerability_scanning` | 🟡 | 🟡 | — | 🟡 | ☸️ | · |
@@ -196,6 +196,7 @@ predicate stops listing the cloud, the entry fails until it is corrected.
 | `network:single_nat_gateway` | hetzner | Hetzner Cloud has no managed NAT gateway — egress routes through the cluster's own nodes, so there is nothing to have one of or one per zone. |
 | `dns:managed_certificate` | alibaba | Unavailable on Alibaba Cloud. The alicloud provider can only upload a certificate you already hold, never order one, and cert-manager ships no Alibaba DNS01 solver — so nothing issues a certificate here, by OpenTofu or in-cluster. Bring your own certificate. |
 | `nosql:point_in_time_recovery` | alibaba | Tablestore has no point-in-time recovery setting on the table — restoring is a job you run in Cloud Backup, a separately-billed service, against a backup plan you schedule yourself, rather than something the table can be told to do. |
+| `nosql:point_in_time_recovery` | hetzner | Hetzner has no managed NoSQL service, so the kind is an in-cluster ScyllaDB. Scylla backs up on a schedule (Scylla Manager snapshots) rather than continuously, so there is no point-in-time restore to carry — the offer is withdrawn in the canvas with that reason rather than accepted and ignored. |
 | `queue:ordered` | alibaba | Alibaba Cloud's queue service accepts a FIFO queue type but publishes no ordering guarantee behind it — no delivery order, no message key to group by, no throughput limit — so Alethia does not offer ordered delivery there. |
 | `registry:immutable_tags` | azure | Azure Container Registry has no tag-immutability setting on the registry — locking a repository is an operation outside Resource Manager, so no template argument can carry your choice. |
 | `registry:vulnerability_scanning` | azure | Image scanning on Azure is Microsoft Defender for Containers, a billed security plan that switches on for the whole subscription — not something one project's registry can turn on for itself. |

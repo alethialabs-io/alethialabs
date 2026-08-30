@@ -10,6 +10,7 @@
 import { formatDistanceToNow } from "date-fns";
 import { Box, GitBranch } from "lucide-react";
 import Link from "next/link";
+import { formatMonthlyRate } from "@repo/format";
 import { ProviderIcon } from "@repo/ui/provider-icon";
 import type { ProjectListItem } from "@/app/server/actions/projects";
 import { ProjectActionsMenu } from "@/components/overview/project-actions-menu";
@@ -93,7 +94,7 @@ export function ProjectCard({
 					</span>
 					{project.estimated_monthly_cost ? (
 						<span className="shrink-0 font-mono text-[10.5px] text-foreground">
-							${project.estimated_monthly_cost.toFixed(2)}/mo
+							{formatMonthlyRate(project.estimated_monthly_cost)}
 						</span>
 					) : null}
 				</div>

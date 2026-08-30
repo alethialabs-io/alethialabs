@@ -33,6 +33,10 @@ type a05Session struct {
 	enforce bool
 	graph   *a05Graph
 	fixture map[string]any
+	// provider is the run's cloud — which fixture was loaded, and what every A0.5 line says it
+	// compared against. Recorded even when loading FAILED, so the warning can name the cloud whose
+	// fixture is missing rather than "the fixture".
+	provider string
 }
 
 // jobGraph returns the graph to LINK the DEPLOY job to, or nil when A0.5 is disabled (so the job is
@@ -56,12 +60,14 @@ func a05Soft(t *testing.T, s *a05Session, msg string) {
 
 // setupA05 loads the fidelity fixture and seeds the console object graph. Best-effort: any failure
 // disables A0.5 (base T2 unaffected) with a warning, or hard-fails under enforce.
-func setupA05(t *testing.T, ctx context.Context, cp *ControlPlane, root, project, env, region string) *a05Session {
+func setupA05(t *testing.T, ctx context.Context, cp *ControlPlane, root, project, env, provider, region string) *a05Session {
 	t.Helper()
-	s := &a05Session{enforce: a05EnforceEnabled()}
-	fx, err := loadA05Fixture(root)
+	s := &a05Session{enforce: a05EnforceEnabled(), provider: provider}
+	// The fixture is THIS RUN'S CLOUD's since #3122: one hetzner baseline compared against five
+	// clouds made `provider` diverge by construction on four of them, every run.
+	fx, err := loadA05Fixture(root, provider)
 	if err != nil {
-		a05Soft(t, s, fmt.Sprintf("load fidelity fixture: %v", err))
+		a05Soft(t, s, fmt.Sprintf("load fidelity fixture for %s: %v", provider, err))
 		return s
 	}
 	g, err := cp.SeedA05Graph(ctx, project, env, region)
@@ -70,8 +76,8 @@ func setupA05(t *testing.T, ctx context.Context, cp *ControlPlane, root, project
 		return s
 	}
 	s.fixture, s.graph, s.enabled = fx, g, true
-	t.Logf("A0.5: seeded console graph (project=%s env=%s) + loaded fidelity fixture; enforce=%v real_snapshot=%v",
-		g.projectID, g.envID, s.enforce, a05RealSnapshotEnabled())
+	t.Logf("A0.5: seeded console graph (project=%s env=%s) + loaded the %s fidelity fixture; enforce=%v real_snapshot=%v",
+		g.projectID, g.envID, provider, s.enforce, a05RealSnapshotEnabled())
 	return s
 }
 
@@ -225,14 +231,27 @@ func a05CheckFidelity(t *testing.T, s *a05Session, base map[string]any) {
 	}
 	sort.Strings(compared)
 	diffs := a05SnapshotFidelity(norm, s.fixture)
+	// `addons` is compared element-wise, so its reach is stated separately: "no divergence" over a
+	// list whose fixture side carries one entry and whose seeded side carries eighteen is a claim
+	// about one add-on, not eighteen.
+	addonScope := ""
+	if seededAddOns, ok := norm[a05AddOnsKey]; ok {
+		cmp, skipped := a05AddOnsScope(seededAddOns, s.fixture[a05AddOnsKey])
+		addonScope = fmt.Sprintf("; addons compared element-wise by id: %d of %d [%s]",
+			len(cmp), len(cmp)+len(skipped), strings.Join(cmp, " "))
+		if len(skipped) > 0 {
+			addonScope += fmt.Sprintf(", NOT compared (absent from the canonical fixture, guarded instead by addon_catalog.%s.json): %s",
+				s.provider, strings.Join(skipped, " "))
+		}
+	}
 	if len(diffs) == 0 {
-		t.Logf("A0.5: no divergence across the %d key(s) this compares [%s] — NOT a statement about "+
-			"the other %d fixture key(s), which the seed does not carry",
-			len(compared), strings.Join(compared, " "), len(s.fixture)-len(compared))
+		t.Logf("A0.5: no divergence across the %d key(s) this compares [%s] against the %s fixture — NOT a statement about "+
+			"the other %d fixture key(s), which the seed does not carry%s",
+			len(compared), strings.Join(compared, " "), s.provider, len(s.fixture)-len(compared), addonScope)
 		return
 	}
-	a05Soft(t, s, fmt.Sprintf("snapshot fidelity — %d divergence(s) across the %d compared key(s) [%s]: %s",
-		len(diffs), len(compared), strings.Join(compared, " "), strings.Join(diffs, "; ")))
+	a05Soft(t, s, fmt.Sprintf("snapshot fidelity vs the %s fixture — %d divergence(s) across the %d compared key(s) [%s]: %s%s",
+		s.provider, len(diffs), len(compared), strings.Join(compared, " "), strings.Join(diffs, "; "), addonScope))
 }
 
 // runA05ConsoleActive replays the REAL finalizeDeployment and asserts the env reached ACTIVE with a

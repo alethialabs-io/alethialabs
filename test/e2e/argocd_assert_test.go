@@ -11,7 +11,12 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1464,5 +1469,287 @@ func TestArgoReportNamesWithheldAppsResources(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("a withheld app's detail must reach the report (%q):\n%s", want, err)
 		}
+	}
+}
+
+// ── #3281 · the convergence summary must survive whichever assertion a run takes. ──────────────
+//
+// THE DEFECT. There were two ArgoCD convergence loops: AssertArgoAppsHealthy, which registered the
+// deferred summary write, and A0.6's AssertArgoReposConverge, which did not. A0.6 is enabled on
+// EVERY real run (the nightly sets ALETHIA_E2E_ARGO_REPOS_REQUIRE whenever the apps-repo var is
+// set, which is always), so every run took the uninstrumented copy and every proof bundle recorded
+// `argocd_assert_outcome: unmeasured` on an assertion that had just counted 22 Applications. The
+// add-on cells' evidence lived only in an expiring job log.
+//
+// Nothing caught it, because the only test of the write path called ONE of the two entry points —
+// the axis that mattered was WHICH ASSERTION, and the tests varied the expected set instead. So
+// both entry points are tabulated below, and the sibling test asserts there is exactly one loop
+// for a third entry point to be unable to avoid.
+
+// argoConvergenceEntryPoints is EVERY exported ArgoCD convergence assertion, each normalised to one
+// signature. A new one must be added here; TestOnlyOneArgoConvergenceLoop is what makes that
+// unavoidable rather than merely polite.
+var argoConvergenceEntryPoints = []struct {
+	name string
+	call func(ctx context.Context, kubeconfig string, expected []string, timeout time.Duration) error
+}{
+	{"AssertArgoAppsHealthy", func(ctx context.Context, kc string, exp []string, to time.Duration) error {
+		return AssertArgoAppsHealthy(ctx, kc, exp, to)
+	}},
+	{"AssertArgoReposConverge", func(ctx context.Context, kc string, exp []string, to time.Duration) error {
+		return AssertArgoReposConverge(ctx, kc, exp, nil, to)
+	}},
+}
+
+func TestEveryArgoConvergenceEntryPointWritesTheSummary(t *testing.T) {
+	for _, tc := range argoConvergenceEntryPoints {
+		t.Run(tc.name, func(t *testing.T) {
+			// The VACUOUS exit is the only one reachable without a cluster, and it is also the
+			// exit the writer is hardest to get right — the defer has to be registered BEFORE the
+			// emptiness check. A run that asserted nothing must still leave evidence that it
+			// asserted nothing.
+			path := filepath.Join(t.TempDir(), "argocd-summary.json")
+			t.Setenv(ArgoSummaryEnv, path)
+
+			err := tc.call(context.Background(), "/nonexistent/kubeconfig", nil, time.Minute)
+			if err == nil || !strings.Contains(err.Error(), "VACUOUS") {
+				t.Fatalf("%s: want an immediate vacuity error, got: %v", tc.name, err)
+			}
+			raw, rerr := os.ReadFile(path)
+			if rerr != nil {
+				t.Fatalf("%s ran and left NO convergence summary at %s (%v).\n"+
+					"This is #3281 exactly: the assertion happens, the bundle cannot say what it counted, "+
+					"and the cell is left resting on an expiring job log.", tc.name, path, rerr)
+			}
+			var s ArgoConvergenceSummary
+			if uerr := json.Unmarshal(raw, &s); uerr != nil {
+				t.Fatalf("%s wrote an unparseable summary: %v\n%s", tc.name, uerr, raw)
+			}
+			if s.Outcome != "vacuous" {
+				t.Fatalf("%s: want outcome 'vacuous', got %q (verdict: %s)", tc.name, s.Outcome, s.Verdict)
+			}
+			if s.HealthySynced != nil || s.ObservedTotal != nil {
+				t.Fatalf("%s: a vacuous assertion measured nothing, so both counts must be null; got %v/%v",
+					tc.name, s.HealthySynced, s.ObservedTotal)
+			}
+		})
+	}
+}
+
+// TestEveryArgoConvergenceEntryPointIsSilentWithoutTheEnv is the other direction: no env, no file,
+// and no crash. Without it the test above would pass against a writer that wrote unconditionally to
+// a fixed path, which is a different defect wearing the same green tick.
+func TestEveryArgoConvergenceEntryPointIsSilentWithoutTheEnv(t *testing.T) {
+	for _, tc := range argoConvergenceEntryPoints {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv(ArgoSummaryEnv, "")
+			if err := tc.call(context.Background(), "/nonexistent/kubeconfig", nil, time.Minute); err == nil {
+				t.Fatalf("%s: want a vacuity error even with no summary path", tc.name)
+			}
+			ents, rerr := os.ReadDir(dir)
+			if rerr != nil {
+				t.Fatalf("read temp dir: %v", rerr)
+			}
+			if len(ents) != 0 {
+				t.Fatalf("%s wrote %d file(s) with %s unset", tc.name, len(ents), ArgoSummaryEnv)
+			}
+		})
+	}
+}
+
+// TestOnlyOneArgoConvergenceLoop is the structural half, and the one that generalises. The table
+// above proves the two entry points that exist today are instrumented; this proves a THIRD cannot
+// appear without arriving through the same seam.
+//
+// The invariant: `evaluateArgoApps` — the per-poll decision every convergence wait must make — is
+// called from exactly one non-test function, `assertArgoConvergence`, which is where the deferred
+// summary write lives. Any new poll loop has to call it, and would fail here.
+//
+// Read with go/parser rather than grepped, for the reason #3246 retired the regex scenario guard: a
+// text match cannot tell a call from a mention in a comment, and the guard would go quietly green
+// on a rename.
+func TestOnlyOneArgoConvergenceLoop(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
+		// Non-test sources ONLY, and build tags deliberately ignored: a loop hidden behind
+		// `//go:build e2e_t2` is exactly as capable of losing the counts as one in plain sight,
+		// and `go vet` would not have read it either.
+		return strings.HasSuffix(fi.Name(), ".go") && !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parse test/e2e: %v", err)
+	}
+	if len(pkgs) == 0 {
+		t.Fatal("parsed no packages — this guard would report green having read nothing")
+	}
+
+	callers := map[string]string{}
+	files := 0
+	for _, pkg := range pkgs {
+		for name, f := range pkg.Files {
+			files++
+			for _, decl := range f.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "evaluateArgoApps" {
+						callers[fn.Name.Name] = filepath.Base(name)
+					}
+					return true
+				})
+			}
+		}
+	}
+	// A guard whose "nothing found" branch is indistinguishable from "nothing wrong" is not a
+	// guard. If the decision function is never called, this test has read the wrong tree.
+	if len(callers) == 0 {
+		t.Fatalf("found NO caller of evaluateArgoApps across %d parsed file(s) — the guard read the wrong tree, or the function was renamed and this check silently stopped checking", files)
+	}
+	want := map[string]string{"assertArgoConvergence": "argocd_assert.go"}
+	if !reflect.DeepEqual(callers, want) {
+		t.Fatalf("there must be exactly ONE ArgoCD convergence loop, and it must be the one that writes the convergence summary.\n"+
+			"  want: %v\n  got:  %v\n"+
+			"A second loop is #3281: A0.6 had its own copy, every real run took it, and every proof bundle recorded `unmeasured` on an assertion that had counted. Delegate to assertArgoConvergence instead.",
+			want, callers)
+	}
+}
+
+// A VACUOUS WRITE MUST NOT CLOBBER A MEASUREMENT.
+//
+// azure/addons run 33277183092 converged 20 of 20 — `assertions.txt` records it — and shipped a
+// bundle whose argocd-summary.json read `outcome: vacuous, expected_total: 0`. The file carries the
+// RUN's evidence and every convergence call writes it, so last-writer-wins is the wrong rule the
+// moment one of those writers asserted nothing: a cell that passed becomes one
+// check-proof-integrity refuses to promote.
+func TestVacuousSummaryDoesNotOverwriteAMeasuredOne(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "argocd-summary.json")
+
+	measured := ArgoConvergenceSummary{Outcome: "converged", ExpectedTotal: 20, Assertion: "AssertArgoReposConverge"}
+	if err := writeArgoSummary(path, measured); err != nil {
+		t.Fatal(err)
+	}
+	if !measuredSummaryExists(path) {
+		t.Fatal("a converged summary must count as measured")
+	}
+
+	// The other direction, which is the one that must still be written: with nothing there, a
+	// vacuous assertion's own evidence is all there is, and losing it is how #3281 happened.
+	empty := filepath.Join(dir, "empty.json")
+	if measuredSummaryExists(empty) {
+		t.Error("an absent file must not count as measured")
+	}
+	if err := os.WriteFile(empty, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if measuredSummaryExists(empty) {
+		t.Error("an unreadable file must not count as measured — the first real writer wins the slot")
+	}
+	vac := filepath.Join(dir, "vac.json")
+	if err := writeArgoSummary(vac, ArgoConvergenceSummary{Outcome: "vacuous"}); err != nil {
+		t.Fatal(err)
+	}
+	if measuredSummaryExists(vac) {
+		t.Error("a vacuous summary is not a measurement, so it must not block a later real one")
+	}
+	// unreadable and unconverged ARE measurements: they say something about a set that was really
+	// asserted over, and a vacuous write must not replace either.
+	for _, o := range []string{"unconverged", "unreadable"} {
+		p := filepath.Join(dir, o+".json")
+		if err := writeArgoSummary(p, ArgoConvergenceSummary{Outcome: o, ExpectedTotal: 20}); err != nil {
+			t.Fatal(err)
+		}
+		if !measuredSummaryExists(p) {
+			t.Errorf("%q is a measurement over a real set and must be protected", o)
+		}
+	}
+}
+
+// The summary must name WHICH wait wrote it. Two convergence waits share one file, and a bundle
+// carrying the wrong one gave no way to tell them apart.
+func TestConvergenceSummaryNamesItsAssertion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "argocd-summary.json")
+	t.Setenv(ArgoSummaryEnv, path)
+
+	// A vacuous call is the cheapest one to drive — it returns before touching a cluster.
+	_ = AssertArgoAppsHealthy(context.Background(), "/nonexistent/kubeconfig", nil, time.Minute)
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("no summary written: %v", err)
+	}
+	var s ArgoConvergenceSummary
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.Assertion != "AssertArgoAppsHealthy" {
+		t.Errorf("assertion = %q, want the wait's own name", s.Assertion)
+	}
+}
+
+// THE BEHAVIOUR, not just the predicate. The previous test exercises `measuredSummaryExists` and
+// would pass with the guard in `assertArgoConvergence` deleted — mutation-checked, and it did.
+// This one drives the real call: a measured summary on disk, then a VACUOUS assertion over the same
+// path, and the measurement must survive.
+func TestAVacuousAssertionLeavesAMeasuredSummaryAlone(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "argocd-summary.json")
+	hs, ot := 20, 20
+	measured := ArgoConvergenceSummary{
+		Outcome: "converged", ExpectedTotal: 20, HealthySynced: &hs, ObservedTotal: &ot,
+		Assertion: "AssertArgoReposConverge", Verdict: "20 of 20 expected Applications Healthy+Synced",
+	}
+	if err := writeArgoSummary(path, measured); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(ArgoSummaryEnv, path)
+
+	if err := AssertArgoAppsHealthy(context.Background(), "/nonexistent/kubeconfig", nil, time.Minute); err == nil {
+		t.Fatal("a vacuous assertion must still FAIL — the refusal is the point")
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got ArgoConvergenceSummary
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Outcome != "converged" || got.ExpectedTotal != 20 {
+		t.Fatalf("the measurement was overwritten by a call that asserted nothing: %+v", got)
+	}
+	if got.Assertion != "AssertArgoReposConverge" {
+		t.Errorf("assertion = %q — the surviving summary must still name the wait that measured it", got.Assertion)
+	}
+}
+
+// And with NOTHING there, the vacuous summary is written: "this run asserted nothing" is itself
+// evidence, and losing it is the defect #3281 was filed for.
+func TestAVacuousAssertionStillWritesWhenNothingIsThere(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "argocd-summary.json")
+	t.Setenv(ArgoSummaryEnv, path)
+
+	_ = AssertArgoAppsHealthy(context.Background(), "/nonexistent/kubeconfig", nil, time.Minute)
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the vacuity evidence was not written: %v", err)
+	}
+	var got ArgoConvergenceSummary
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Outcome != "vacuous" {
+		t.Errorf("outcome = %q, want vacuous", got.Outcome)
 	}
 }

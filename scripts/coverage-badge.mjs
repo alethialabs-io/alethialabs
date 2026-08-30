@@ -14,26 +14,51 @@ import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-// Each project that emits a coverage-summary.json (turbo fan-out). Missing ones are skipped
-// so the script still works if a project hasn't been built.
-const SUMMARIES = [
-	"apps/console/coverage/coverage-summary.json",
-	"packages/ui/coverage/coverage-summary.json",
-	"packages/plan-catalog/coverage/coverage-summary.json",
-];
+// The projects to merge come from scripts/ts-coverage-sweep.json — the committed record of which
+// vitest projects declare a coverage block, and the same record the ratchet and the determinism
+// probe read.
+//
+// It used to be a hand-typed list of three, against a record of six, with a `catch` that WARNED
+// and moved on. So the published badge quietly described half the repository — apps/marketing, ee
+// and packages/format contributed nothing to a number the README presents as "coverage" — and its
+// "I could not read that project" branch was indistinguishable from its "everything is fine"
+// branch. That is the same shape as the Go badge advertising 21.6% against a real 61.2% for five
+// weeks, and it is why a missing summary is now an ERROR that names the project.
+const SWEEP = "scripts/ts-coverage-sweep.json";
+const projects = JSON.parse(readFileSync(join(root, SWEEP), "utf8"))?.coverage_emitting_projects;
+if (!Array.isArray(projects) || projects.length === 0) {
+	console.error(`✗ ${SWEEP} records no coverage-emitting projects — refusing to publish a badge over nothing.`);
+	process.exit(1);
+}
 
 let covered = 0;
 let total = 0;
-for (const rel of SUMMARIES) {
+const missing = [];
+for (const project of projects) {
+	const rel = `${project}/coverage/coverage-summary.json`;
+	let lines;
 	try {
-		const lines = JSON.parse(readFileSync(join(root, rel), "utf8"))?.total?.lines;
-		if (lines && typeof lines.covered === "number" && typeof lines.total === "number") {
-			covered += lines.covered;
-			total += lines.total;
-		}
+		lines = JSON.parse(readFileSync(join(root, rel), "utf8"))?.total?.lines;
 	} catch {
-		console.warn(`• skipped ${rel} (no coverage summary)`);
+		missing.push(`${rel} (not readable)`);
+		continue;
 	}
+	if (!lines || typeof lines.covered !== "number" || typeof lines.total !== "number") {
+		missing.push(`${rel} (no total.lines — is "json-summary" in its vitest reporter list?)`);
+		continue;
+	}
+	covered += lines.covered;
+	total += lines.total;
+	console.log(`• ${project}: ${lines.covered}/${lines.total} lines`);
+}
+
+if (missing.length > 0) {
+	console.error(`✗ ${missing.length} of ${projects.length} recorded project(s) produced no usable coverage summary:`);
+	for (const m of missing) console.error(`    ${m}`);
+	console.error("  A badge merged over a subset UNDER-REPORTS and looks identical to one that is right.");
+	console.error("  Run `pnpm exec turbo run test` first; if a project genuinely stopped emitting");
+	console.error(`  coverage, remove it from ${SWEEP} in the same PR.`);
+	process.exit(1);
 }
 
 if (total === 0) {

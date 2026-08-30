@@ -1,0 +1,18 @@
+    t2_provision_test.go:144: A0.6: ArgoCD-with-repos ENABLED — apps repo "https://github.com/alethialabs-io/alethia-e2e-apps" + BYO chart repo "https://github.com/alethialabs-io/alethia-e2e-chart" will be wired and asserted
+    t2_provision_test.go:164: #1268: cross-account keyless secrets SKIPPED — set ALETHIA_E2E_SECRETS_XACCT (+ its target vars) to enable.
+    t2_provision_test.go:185: #1773: ACM certificate NOT RUN on azure — Azure: TLS is issued in-cluster by cert-manager, the same convergence GCP made — an Application Gateway certificate is a different product surface and is not what the template builds.
+    t2_provision_test.go:229: #1511: keyless DB auth SKIPPED — set ALETHIA_E2E_KEYLESS_DB (+ its engine vars) to enable.
+    t2_provision_test.go:329: A0.5: seeded console graph (project=ad2e79d8-ec7f-4bd0-8c57-5f2221ac623e env=a795ef63-f0c0-4992-8b21-7f552283ed3b) + loaded the azure fidelity fixture; enforce=false real_snapshot=false
+    t2_provision_test.go:387: A0.5: no divergence across the 2 key(s) this compares [addons provider] against the azure fixture — NOT a statement about the other 33 fixture key(s), which the seed does not carry; addons compared element-wise by id: 1 of 18 [reloader], NOT compared (absent from the canonical fixture, guarded instead by addon_catalog.azure.json): argo-rollouts external-dns falco goldilocks harbor ingress-nginx keda kube-prometheus-stack kyverno loki minio opentelemetry-collector sealed-secrets tempo trivy-operator vault velero
+    t2_provision_test.go:577: asserting ArgoCD Applications reach Healthy+Synced: [addon-argo-rollouts addon-byo-e2e addon-falco addon-goldilocks addon-harbor addon-ingress-nginx addon-keda addon-kube-prometheus-stack addon-kyverno addon-loki addon-minio addon-opentelemetry-collector addon-reloader addon-sealed-secrets addon-tempo addon-trivy-operator addon-vault addon-velero apps external-secrets-operator]
+    t2_provision_test.go:612: A0.6: repo-apps (apps) + repo-byo (addon-byo-e2e) derived + credentialed; converging (BYO auto-syncs, unaided)...
+    t2_provision_test.go:625: A0.6: ArgoCD-with-repos proven — repo-apps + repo-byo Applications Healthy+Synced and managing real resources on real infra
+    t2_provision_test.go:635: all 20 asserted ArgoCD Applications are Healthy+Synced (1 withheld)
+    t2_provision_test.go:687: A0.5: replayed real finalizeDeployment; shim: finalizeDeployment(72628a42-3a5a-44e3-9822-cc12de87df22) completed
+    t2_provision_test.go:687: A0.5: env a795ef63-f0c0-4992-8b21-7f552283ed3b is ACTIVE (real finalizeDeployment)
+    t2_provision_test.go:687: A0.5: persisted reloader health row: health="Healthy" status="ACTIVE"
+    t2_provision_test.go:687: A0.5: persisted Trivy security-posture row present (bonus)
+    t2_provision_test.go:719: A0.3 soak: SKIPPED (ALETHIA_E2E_SOAK unset) — base T2 proof unchanged
+--- PASS: TestT2RealCloudProvisioning (2753.46s)
+PASS
+ok  	github.com/alethialabs-io/alethialabs/test/e2e	2753.469s

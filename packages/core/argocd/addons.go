@@ -109,8 +109,14 @@ type addonAppDestination struct {
 }
 
 type addonIgnoreDifference struct {
-	Group             string   `yaml:"group"`
-	Kind              string   `yaml:"kind"`
+	Group string `yaml:"group"`
+	Kind  string `yaml:"kind"`
+	// Name scopes an entry to ONE object. Every entry above it is a fact about a Kubernetes API
+	// (a removed field, an API-server-managed default) and rightly applies to every object of that
+	// kind; the keda one below is a fact about ONE controller's behaviour, and applying it to every
+	// ValidatingWebhookConfiguration would ignore a caBundle on webhooks whose caBundle nobody
+	// writes — which is the shape #2778 warns about, a guessed entry masking real drift.
+	Name              string   `yaml:"name,omitempty"`
 	JSONPointers      []string `yaml:"jsonPointers,omitempty"`
 	JQPathExpressions []string `yaml:"jqPathExpressions,omitempty"`
 }
@@ -300,6 +306,53 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 					Group:        "apiextensions.k8s.io",
 					Kind:         "CustomResourceDefinition",
 					JSONPointers: []string{"/spec/preserveUnknownFields"},
+				},
+				{
+					// keda's admission webhook, and the ONLY entry here scoped to a single object.
+					//
+					// MEASURED on azure/addons run 33249209041, by the field-ownership probe #3301
+					// repaired — before that repair the same probe reported "every field is
+					// ArgoCD-owned — no foreign default to blame" on this very object, because
+					// `kubectl get -o json` strips managedFields without --show-managed-fields:
+					//
+					//   owned by "admissionsenforcer": .webhooks[*].namespaceSelector
+					//   owned by "keda":               .webhooks[*].clientConfig.caBundle
+					//
+					// TWO writers, and they explain the cloud split that made this look like a
+					// flake. `keda` is the operator injecting its own serving CA, on every cloud.
+					// `admissionsenforcer` is AKS's Admissions Enforcer, which exists on AKS ALONE —
+					// which is why gcp and hetzner converged with the identical chart and values
+					// (`{"operator":{"replicaCount":1}}`, byte-identical in all five fixtures) while
+					// azure sat Healthy+OutOfSync from the ten-minute mark to the 35-minute deadline
+					// across two paid runs.
+					//
+					// THE TWO FIELDS ARE NOT ALIKE, and an earlier version of this comment claimed
+					// they were. It said the chart renders "no namespaceSelector for the enforcer to
+					// conflict with". That is FALSE, and rendering the pinned chart settles it:
+					//
+					//   helm template addon-keda kedacore/keda --version 2.15.1 -n keda \
+					//     --set operator.replicaCount=1
+					//   → namespaceSelector: {}   on all three webhooks
+					//
+					// `caBundle` genuinely is absent from the render — keda writes it and ArgoCD has
+					// no opinion. `namespaceSelector` is ours: the chart authors `{}`, ArgoCD applies
+					// it and therefore OWNS it, and AKS's enforcer overwrites it. That conflict is
+					// exactly the mechanism, and it is why ignoring the field is the right remedy on
+					// AKS — but it is NOT the same claim as "we never wrote it".
+					//
+					// THE COST OF SAYING IT THIS WAY. Because this ignores a path rather than an
+					// owner, a future chart that scopes the selector to a real namespace would be
+					// silently unenforced — ArgoCD would stop comparing a value we do care about.
+					// `spec.ignoreDifferences[].managedFieldsManagers` is the primitive that says
+					// what is actually meant ("ignore what admissionsenforcer and keda own"), and
+					// swapping to it is #3346. It is deliberately NOT done in the same change as
+					// the entry an azure run is currently testing: verifying the mechanism and
+					// refining the expression are two things, and doing both at once would leave
+					// neither verified.
+					Group:             "admissionregistration.k8s.io",
+					Kind:              "ValidatingWebhookConfiguration",
+					Name:              "keda-admission",
+					JQPathExpressions: []string{".webhooks[]?.clientConfig.caBundle", ".webhooks[]?.namespaceSelector"},
 				},
 			},
 			SyncPolicy: addonSyncPolicy{

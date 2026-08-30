@@ -64,6 +64,11 @@ const (
 	t2KeylessPostDwell   = 20 * time.Minute
 	t2RegistryPollBudget = 25 * time.Minute
 	t2SoakHeadroom       = 15 * time.Minute // drift wait (10m) + PVC bind (5m)
+	// cliDemoProvisionBudget bounds the BEATS, not the cluster: the apply's wait is already
+	// reserved as deploy-wait. It covers the ordered command sequence plus the console the job
+	// booted answering them — generous, because a beat that times out on a slow first request would
+	// report the CLI cannot reach something it can.
+	cliDemoProvisionBudget = 20 * time.Minute
 
 	// The day-2 access layer had NO ladder term at all, so its probes spent against `headroom`
 	// unnoticed. At the old flat 3m that was survivable by luck; with a URL ceiling sized for an
@@ -141,6 +146,18 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 			add("day2-url", Day2URLTimeout())
 		}
 	}
+	// The CLI-demo provision (#3038): the beats re-drive the floor spine through the real binary,
+	// so the cluster time is already covered by deploy-wait above. What is NOT covered is the beats
+	// themselves — a sequence of real commands against a console this job booted — so they get their
+	// OWN term rather than being absorbed into someone else's headroom.
+	//
+	// Folding it into `headroom` was the tempting shortcut and is the wrong one: headroom is what
+	// absorbs variance in terms that ARE reserved, and a scenario hidden inside it is a scenario
+	// nobody can see in the ladder the workflow prints. Every other opt-in scenario here is a named
+	// term for that reason.
+	if CLIDemoProvisionEnabled() {
+		add("cli-demo", cliDemoProvisionBudget)
+	}
 	if secretsXacctEnabled() {
 		add("secrets-xacct", t2XacctPollBudget)
 	}
@@ -164,6 +181,24 @@ func ResolveT2Budget(provider, env string) (T2Budget, error) {
 		d := fabricDemoTimeout()
 		add("fabric-demo", time.Duration(len(tiers))*2*d+d+vclusterTenantBudget)
 	}
+	// ⚠️ HEADROOM ALSO PAYS FOR THE FAILING-PATH DUMP, and that is a deliberate exception to the
+	// rule this function otherwise keeps.
+	//
+	// Every other real cost here is a NAMED term, because a cost hidden inside headroom is a cost
+	// nobody can see in the ladder the workflow prints. `argoDeadlineDump` is the exception: it runs
+	// only when a leg has already failed, so reserving for it would inflate every ladder including
+	// the widest — and the widest is already within four minutes of T2_JOB_CAP_MINUTES. Buying
+	// visibility by raising the cap on every cloud, for time only a failing run can spend, is the
+	// worse trade.
+	//
+	// And it is NOT carved out of headroom either, because headroom is not slack: this constant is
+	// "runner build + snapshot seeding + the slack the old comment called headroom", and
+	// t2BuildRunner alone carries a five-minute ceiling spent after ctx is created. Sizing the dump
+	// against seven minutes would be arithmetic on an allowance that was never free.
+	//
+	// Instead the dump takes whatever is ACTUALLY left, capped by `argoDumpBudget` (argocd_assert.go)
+	// and decided by `planArgoDump`, whose notice says which of the two bound it. If it ever needs
+	// more than the leg can spare, that is the moment to make it a term and raise the cap.
 	add("headroom", t2BaseHeadroom)
 
 	for _, t := range b.Terms {
