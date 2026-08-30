@@ -118,8 +118,16 @@ assert_measured() {
   if [ -n "$missing" ]; then
     echo "::error::ts-coverage-probe: recorded project(s) produced NO measured rows:$missing"
     echo "  --print fails OPEN (F2: no coverage/coverage-final.json), so this is silence, not a zero."
-    echo "  Either the project stopped emitting coverage — fix its vitest config, or remove it from"
-    echo "  the sweep record in the same PR — or the suite command did not build it."
+    echo "  TWO causes reach this line, and they send you to different places:"
+    echo "  1. The project measured nothing. Either it stopped emitting coverage — fix its vitest"
+    echo "     config, or remove it from the sweep record in the same PR — or the suite command did"
+    echo "     not build it."
+    echo "  2. It measured, but every row was the wrong SHAPE. A row is '<project> <dir> <covered>"
+    echo "     <total>' — four fields, the last two integers. Anything the child wrote to STDOUT"
+    echo "     that is not a measurement lands here looking like a row and is rejected. Check the"
+    echo "     raw rows before assuming the vitest config: 'ts-coverage.mjs --project P --print'."
+    echo "  Naming only cause 1 sent an operator to the vitest config once when the real cause was"
+    echo "  commentary in the data channel, which is expensive in a workflow_dispatch-only job."
     return 1
   fi
   echo "✓ every recorded project produced measured rows ($# project(s))"
