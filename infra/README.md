@@ -31,7 +31,7 @@ authenticate the backend and no static state keys exist.
 
 | Stack | Purpose | State | Bootstrap |
 |---|---|---|---|
-| `aws-oidc/` | GitHub-OIDC deploy roles + the `alethia-e2e-nightly` provisioning role + budget | `s3` · `alethia-tofu-state-270587882865` · `aws-oidc/` | `email-ses/bootstrap/` already owns the bucket |
+| `aws-oidc/` | GitHub-OIDC deploy roles + the runner ECR repository + the `alethia-e2e-nightly` provisioning role + budget | `s3` · `alethia-tofu-state-270587882865` · `aws-oidc/` | `email-ses/bootstrap/` already owns the bucket |
 | `gcp-e2e/` | WIF pool + ref-bound provider + provisioner SA + billing budget | `gcs` · `alethia-tofu-state-<project_id>` · `gcp-e2e/` | `gcp-e2e/bootstrap/` — the GCS bucket |
 | `azure-e2e/` | Entra app + federated credential + subscription roles + AKS admin group | `azurerm` · `alethiatfstate`/`tfstate` · `azure-e2e.tfstate` | `azure-e2e/bootstrap/` — RG + storage account + container |
 | `alibaba-e2e/` | RAM OIDC provider + `alethia-e2e-nightly` role + least-priv policy | `oss` · `alethia-tofu-state-e2e-alibaba` · `alibaba-e2e/` | `alibaba-e2e/bootstrap/` — the OSS bucket |
