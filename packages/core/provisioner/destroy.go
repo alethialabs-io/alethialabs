@@ -179,24 +179,132 @@ func RunDestroy(ctx context.Context, params DestroyParams) error {
 	// pays twice for the same failure, and doubles a teardown that is already the longest thing in
 	// the job. The second destroy runs only when the second release positively removed what the
 	// first could not — a fact this code holds, not a guess from the destroy's error text.
-	if err != nil && !rel.Clean {
-		fmt.Fprintln(out, "   Destroy failed with cloud-backed objects still held — releasing again "+
-			"and retrying the destroy ONCE.")
-		if rel2 := releaseLoadBalancersBeforeDestroy(ctx, provider, vc, wd, out); rel2.Clean {
-			rel = rel2
-			err = wd.tf.Destroy(ctx, wd.varFile)
-		} else {
-			rel = rel2
-			fmt.Fprintln(out, "   The second release did not clear them either — not retrying the "+
-				"destroy, which would fail the same way.")
-		}
-	}
+	// The condition is `len(rel.Remaining) > 0`, NOT `!rel.Clean`. Not-Clean covers four different
+	// facts — objects observed still held, the cluster stopped answering, the step never ran, the
+	// context ended — and the retry's rationale ("the destroy almost certainly failed ON them")
+	// only holds for the first. On the others a second pass pays for a full Output +
+	// reachability + ConfigureKubeconfig round to learn nothing, and then prints "the second
+	// release did not clear them either" about objects nobody ever observed. A repeat teardown of
+	// an already-gone cluster is exactly that case, and it is the common one.
+	//
+	// ctx.Err() guards the fourth: a cancelled teardown must stop, not start another wait.
+	rel, err = retryReleaseAndDestroy(ctx, out, rel, err,
+		func() releaseOutcome { return releaseLoadBalancersBeforeDestroy(ctx, provider, vc, wd, out) },
+		func() error { return wd.tf.Destroy(ctx, wd.varFile) })
 	if err != nil {
 		return fmt.Errorf("tofu destroy failed: %w%s", err, rel.billingWarning())
 	}
 
+	if notice := postDestroySuccessNotice(rel); notice != "" {
+		fmt.Fprintln(out, notice)
+	}
+
 	fmt.Fprintln(out, "Environment destroyed successfully!")
 	return nil
+}
+
+// retryReleaseAndDestroy is the whole retry policy: whether to try again, which release outcome to
+// keep, what to tell the operator, and whether to re-run the destroy.
+//
+// It takes its two collaborators as closures rather than reaching for the workdir, so the policy can
+// be driven without a tofu binary or a cluster. That is not decoration — reaching this branch for
+// real needs a `tofu destroy` that fails AND a cluster that answers with LoadBalancer Services, and
+// because it could not be reached it shipped in #3433 with no test at all, erasing the object list
+// it existed to preserve. A retry nobody can exercise is a retry nobody has checked.
+func retryReleaseAndDestroy(
+	ctx context.Context,
+	out io.Writer,
+	rel releaseOutcome,
+	destroyErr error,
+	release func() releaseOutcome,
+	destroy func() error,
+) (releaseOutcome, error) {
+	if !shouldRetryRelease(destroyErr, rel, ctx.Err()) {
+		return rel, destroyErr
+	}
+	fmt.Fprintln(out, "   Destroy failed with cloud-backed objects still held — releasing again "+
+		"and retrying the destroy ONCE.")
+	second := release()
+	adopted, note := adoptRetryOutcome(rel, second)
+	fmt.Fprintln(out, note)
+	if second.Clean {
+		return adopted, destroy()
+	}
+	return adopted, destroyErr
+}
+
+// shouldRetryRelease decides whether a FAILED destroy is worth a second release plus a second
+// destroy. Split out as a pure function because the branch it guards cannot otherwise be tested:
+// reaching it for real needs a tofu that fails and a cluster that answers, and an untested retry is
+// how the first version of this shipped erasing the list it existed to preserve.
+//
+// The condition is `len(rel.Remaining) > 0`, NOT `!rel.Clean`. Not-Clean covers four different
+// facts — objects observed still held, the cluster stopped answering, the step never ran, the
+// context ended — and the retry's rationale ("the destroy almost certainly failed ON them") holds
+// only for the first. On the others a second pass pays for a full Output + reachability +
+// ConfigureKubeconfig round to learn nothing, then reports "the second release did not clear them
+// either" about objects nobody ever observed. A repeat teardown of an already-gone cluster is
+// exactly that case, and it is the common one.
+func shouldRetryRelease(destroyErr error, rel releaseOutcome, ctxErr error) bool {
+	// A cancelled teardown must stop, not start another wait.
+	return destroyErr != nil && ctxErr == nil && len(rel.Remaining) > 0
+}
+
+// adoptRetryOutcome picks which release outcome the billing warning speaks from after a retry.
+//
+// ⚠️ THE SECOND ATTEMPT CAN ESTABLISH LESS THAN THE FIRST, and in the motivating scenario it
+// usually does: by the time a teardown fails on subnet DependencyViolations the control plane is
+// often already gone, so the second release returns Skipped, carrying no Remaining. Taking it
+// unconditionally makes the error read "the pre-destroy release did not run: the cluster could not
+// be reached" and name ZERO objects — discarding the only list anyone has, which is strictly worse
+// than never having retried at all.
+// It returns the operator-facing line with the outcome, rather than leaving the caller to re-derive
+// which case it is: the note and the adoption are one decision, and splitting them is how they come
+// to disagree — the shipped bug printed "the second release did not clear them either" about
+// objects nobody had ever observed.
+func adoptRetryOutcome(first, second releaseOutcome) (releaseOutcome, string) {
+	switch {
+	case second.Clean:
+		return second, "   The second release cleared them — retrying the destroy."
+	case len(second.Remaining) > 0:
+		// The second attempt also observed objects: it established at least as much as the first,
+		// so its list is the fresher one.
+		return second, "   The second release did not clear them either — not retrying the " +
+			"destroy, which would fail the same way."
+	default:
+		return first, "   The second release established nothing new — keeping what the first one " +
+			"saw, and not retrying the destroy."
+	}
+}
+
+// postDestroySuccessNotice renders what a destroy that SUCCEEDED must still say about cloud load
+// balancers, or "" when there is nothing to say.
+//
+// ⚠️ A GREEN TEARDOWN CAN LEAVE A LOAD BALANCER BILLING, and until this existed it said nothing.
+// tofu deletes what is in the state file; a Service of type LoadBalancer or an Ingress is not in it.
+// AWS is merely where that SHOWS — a subnet refuses to delete under an attached ENI, so the destroy
+// fails and the error path's warning fires. Other clouds release faster or tolerate more, so there
+// the release can time out, the state-file resources delete cleanly, the job goes green, and the
+// cloud load balancer keeps charging with no signal anywhere. That is the exact failure class this
+// whole path exists for, and attaching the warning only to a FAILED destroy left it uncovered.
+//
+// The full alarm needs POSITIVE evidence — objects observed, or a cluster that stopped answering.
+// A bare Skipped gets the quieter line: on a repeat teardown of an environment that is already gone
+// the step cannot run at all, and an alarm on every one of those teaches the reader to scroll past
+// the alarm that matters. Not silence either — it still says what did not happen.
+//
+// It renders THROUGH billingWarning rather than beside it, so the two cannot drift into disagreeing
+// about what is still held.
+func postDestroySuccessNotice(rel releaseOutcome) string {
+	switch {
+	case len(rel.Remaining) > 0 || rel.Unknown:
+		return rel.billingWarning()
+	case rel.Skipped != "":
+		return fmt.Sprintf("   Note: the pre-destroy load-balancer release did not run (%s). "+
+			"Everything in the state file is gone; a Service of type LoadBalancer or an Ingress "+
+			"would not have been, so check the cloud console if this environment exposed one.", rel.Skipped)
+	}
+	return ""
 }
 
 // RunDestroyPlan PLANS a project teardown and returns the plan JSON without applying
