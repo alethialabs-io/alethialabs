@@ -282,6 +282,25 @@ discover_cluster() {
 		done <<<"$(aws elbv2 describe-load-balancers \
 			--query 'LoadBalancers[].LoadBalancerArn' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
 	fi
+	# THIRD fallback: classic ELB `kubernetes.io/cluster/<name>` tag KEYS. A run hard-killed before
+	# its cluster and instances went away leaves an ingress-nginx classic ELB and nothing else that
+	# names the cluster — the elbv2 scan above cannot see it, because it is a different service.
+	if [ -z "$CLUSTER" ]; then
+		local c_name c_key
+		while IFS= read -r c_name; do
+			[ -n "$c_name" ] || continue
+			# shellcheck disable=SC2016 # backticks are JMESPath, not command substitution
+			c_key="$(aws elb describe-tags --load-balancer-names "$c_name" \
+				--query 'TagDescriptions[].Tags[?starts_with(Key, `kubernetes.io/cluster/`)].Key' \
+				--output text 2>/dev/null | tr '\t' '\n' | sed -E 's#^kubernetes.io/cluster/##' \
+				| grep -E -- "-${ENV}-" | head -n1 || true)"
+			if [ -n "$c_key" ]; then
+				CLUSTER="$c_key"
+				break
+			fi
+		done <<<"$(aws elb describe-load-balancers \
+			--query 'LoadBalancerDescriptions[].LoadBalancerName' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
+	fi
 	if [ -n "$CLUSTER" ]; then
 		echo "  · cluster (secondary scope): ${CLUSTER}"
 	else
@@ -382,6 +401,45 @@ sweep_instances() {
 	fi
 }
 
+# cluster_classic_lb_names — CLASSIC ELB names tagged kubernetes.io/cluster/<CLUSTER>=owned|shared.
+#
+# ⚠️ A DIFFERENT API AND A DIFFERENT TAG, and the reason this exists is that neither was covered.
+# `cluster_lb_arns` above reads `elbv2` only, and matches `elbv2.k8s.aws/cluster` — the AWS Load
+# Balancer Controller's tag on an ALB/NLB. A `Service: LoadBalancer` handled by the IN-TREE cloud
+# provider — which is what ingress-nginx gets by default — creates a CLASSIC ELB through
+# `aws elb`, tagged `kubernetes.io/cluster/<name>: owned` and `kubernetes.io/service-name`. This
+# script never called `aws elb` at all, so that whole class was invisible to the sweep AND to
+# verify_swept.
+#
+# MEASURED, 2026-08-30. Two classic ELBs were found alive in us-east-1 by hand:
+#
+#   a19d04c70d3934e4996ce17cb9ae9ea6  kubernetes.io/cluster/eks-ue1-33243599078-1-alethia-nl  23h
+#   a8a8791a7a6b249319f24b2e2b727584  kubernetes.io/cluster/eks-ue1-33271997812-1-alethia-nl  12h
+#
+# both `ingress-nginx/addon-ingress-nginx-controller`, both billing, and the first had survived FOUR
+# preflight sweeps. Run 33271997812's own sweep deleted its elbv2 ("deleted elb ff6be6b…") and left
+# its classic ELB standing.
+#
+# This is the same leak the discover_cluster comment above already records for run 31929564177 —
+# "the sweep exited green while the load balancer billed" — one AWS API over. The fix there taught
+# discovery to read elbv2 tags; it did not teach it that `elb` and `elbv2` are two services.
+cluster_classic_lb_names() {
+	[ -z "$CLUSTER" ] && return 0
+	local names name tags
+	names="$(probe_run classic-load-balancer aws elb describe-load-balancers \
+		--query 'LoadBalancerDescriptions[].LoadBalancerName' --output text | tr '\t' '\n' | grep -v '^$' || true)"
+	while IFS= read -r name; do
+		[ -n "$name" ] || continue
+		# Captured, THEN matched — same reason as cluster_lb_arns: a `| grep -q .` can SIGPIPE the
+		# capture and, under pipefail, turn a TAGGED balancer into an untagged-looking one.
+		tags="$(probe_run classic-load-balancer aws elb describe-tags --load-balancer-names "$name" \
+			--query "TagDescriptions[].Tags[?Key=='kubernetes.io/cluster/${CLUSTER}'].Value" --output text || true)"
+		if printf '%s' "$tags" | grep -Eq 'owned|shared'; then
+			printf '%s\n' "$name"
+		fi
+	done <<<"$names"
+}
+
 # ── 2. Load balancers (LB-controller out-of-band) + target groups. Delete before subnets. ──
 sweep_load_balancers() {
 	local arns arn tgs tg
@@ -394,6 +452,19 @@ sweep_load_balancers() {
 		done <<<"$arns"
 	else
 		echo "  · load balancers: none"
+	fi
+	# Classic ELBs are a SEPARATE service and a separate call. Deleted here, before subnets, for the
+	# same reason the elbv2 ones are: their ENIs hold the subnets the network sweep needs to delete.
+	local cnames cname
+	cnames="$(cluster_classic_lb_names)"
+	if [ -n "$cnames" ]; then
+		echo "  · classic load balancers: $(printf '%s' "$cnames" | grep -c .) to delete"
+		while IFS= read -r cname; do
+			[ -n "$cname" ] || continue
+			retry_delete "classic-elb ${cname}" aws elb delete-load-balancer --load-balancer-name "$cname"
+		done <<<"$cnames"
+	else
+		echo "  · classic load balancers: none"
 	fi
 	[ -z "$CLUSTER" ] && return 0
 	tgs="$(aws elbv2 describe-target-groups --query 'TargetGroups[].TargetGroupArn' --output text 2>/dev/null | tr '\t' '\n' | grep -v '^$' || true)"
@@ -866,7 +937,13 @@ alive_nats() {
 		--filter "Name=tag:alethia:project-id,Values=${PROJECT_ID_TAG}" \
 		--query 'NatGateways[?State!=`deleted`].NatGatewayId' --output text | tr '\t' '\n' | grep -v '^$' || true
 }
-alive_lbs() { cluster_lb_arns; }
+# BOTH services. verify_swept's whole job is to refuse a green exit over something that bills, and
+# it was blind to exactly the class that survived four sweeps. A classic ELB in us-east-1 is
+# $0.025/hour whether or not this script could see it.
+alive_lbs() {
+	cluster_lb_arns
+	cluster_classic_lb_names
+}
 # probe_confirm, not probe_run: a deleted cluster answers ResourceNotFoundException, and that IS
 # the answer "gone". Any other error means the control plane's existence is unknown — and an EKS
 # control plane is $0.10/hour whether or not this script could see it.
@@ -1366,6 +1443,10 @@ if [ "$SELF_TEST" = "1" ]; then
 		case "$1 ${2:-}" in
 		"elbv2 describe-load-balancers") printf '%s\n' "$st_lb" ;;
 		"elbv2 describe-tags") printf '%s\n' "$ST_LB_CLUSTER" ;;
+		# The CLASSIC service answers separately, because it IS a separate service — the whole
+		# defect this stub now covers was `elb` and `elbv2` being treated as one.
+		"elb describe-load-balancers") printf '%s\n' "$ST_CLASSIC_LB" ;;
+		"elb describe-tags") printf '%s\n' "$ST_CLASSIC_TAG" ;;
 		*) : ;;
 		esac
 	}
@@ -1373,6 +1454,8 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_case() { # <name> <lb cluster tag> <expected CLUSTER>
 		CLUSTER=""
 		ST_LB_CLUSTER="$2"
+		ST_CLASSIC_LB=""
+		ST_CLASSIC_TAG=""
 		discover_cluster >/dev/null 2>&1
 		if [ "$CLUSTER" = "$3" ]; then
 			echo "  ✓ $1"
@@ -1386,6 +1469,46 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_case "LB tag for THIS run resolves the cluster" "eks-ue1-${ENV}-alethia-nl" "eks-ue1-${ENV}-alethia-nl"
 	st_case "LB tag for ANOTHER run is ignored" "eks-ue1-99999999-9-alethia-nl" ""
 	st_case "no LB tag at all leaves CLUSTER unset" "" ""
+
+	# ── CLASSIC ELBs. `elb` and `elbv2` are two AWS services, and this script called only the
+	# second — so an ingress-nginx `Service: LoadBalancer`, which the in-tree provider creates as a
+	# CLASSIC ELB, was invisible to discovery, to the sweep and to verify_swept. Two of them were
+	# found alive by hand on 2026-08-30, one after surviving four preflight sweeps.
+	st_classic_case() { # <name> <classic lb name> <its cluster tag KEY suffix> <expected CLUSTER>
+		CLUSTER=""
+		ST_LB_CLUSTER=""
+		ST_CLASSIC_LB="$2"
+		ST_CLASSIC_TAG="kubernetes.io/cluster/$3"
+		discover_cluster >/dev/null 2>&1
+		if [ "$CLUSTER" = "$4" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected CLUSTER='$4', got '$CLUSTER'" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_classic_case "classic ELB tag for THIS run resolves the cluster" \
+		"a19d04c70d3934e4996ce17cb9ae9ea6" "eks-ue1-${ENV}-alethia-nl" "eks-ue1-${ENV}-alethia-nl"
+	# BOTH DIRECTIONS: another run's classic ELB must not widen this run's scope, or a sweep would
+	# delete a live cluster's load balancer. Same-cloud runs are serialized, but that is a schedule,
+	# not a guarantee this script may lean on.
+	st_classic_case "classic ELB tag for ANOTHER run is ignored" \
+		"a8a8791a7a6b249319f24b2e2b727584" "eks-ue1-99999999-9-alethia-nl" ""
+
+	# And the sweep + verification must SEE one once the cluster is known — discovery alone was
+	# never the gap. alive_lbs is what makes verify_swept refuse a green exit, and it read one
+	# service.
+	CLUSTER="eks-ue1-${ENV}-alethia-nl"
+	ST_LB_CLUSTER=""
+	ST_CLASSIC_LB="a19d04c70d3934e4996ce17cb9ae9ea6"
+	ST_CLASSIC_TAG="owned"
+	if alive_lbs 2>/dev/null | grep -q "a19d04c70d3934e4996ce17cb9ae9ea6"; then
+		echo "  ✓ alive_lbs reports a classic ELB, so verify_swept cannot exit green over one"
+	else
+		echo "  ✗ alive_lbs is blind to classic ELBs — a billing load balancer would read as swept" >&2
+		st_fails=$((st_fails + 1))
+	fi
+	CLUSTER=""
 
 	# The VPC-scoped security-group discovery. $ST_SGS is what the stub reports for the run's VPC;
 	# `default` must never appear in the result, or the sweep would retry an undeletable group forever.
