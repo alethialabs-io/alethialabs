@@ -102,52 +102,71 @@ Run this to a finished cluster, so in the demo you run the *interesting* command
 that already exists.
 
 ```bash
-# 1 · The project, with prod owning the Fabric it will provision.
+# 1 · The project, with the WHOLE matrix. The `--env` matrix does express the shared-Fabric
+# shape — every non-dedicated tier is placed onto the dedicated env's Fabric. Verified live:
+# five environments, one Fabric, no orphan.
 alethia project create boutique-demo \
   --region nbg1 --cloud-identity-id <id> \
-  --env prod:production:dedicated
+  --env prod:production:dedicated \
+  --env staging:staging:vcluster:boutique-staging \
+  --env dev-1:development:namespace:boutique-dev-1 \
+  --env dev-2:development:namespace:boutique-dev-2 \
+  --env dev-3:development:namespace:boutique-dev-3
 
 # 2 · The cluster is a property of the FABRIC, so it is configured on its owner.
-# `cluster_version` is a STRING: unquoted, `--set` coerces 1.31 to a number and the server 400s.
+# `cluster_version` is a STRING: unquoted, `--set` coerces 1.35 to a number and the server 400s.
+# Hetzner offers ONE version (1.35) — `alethia project component kinds` and the catalog are the
+# source of truth per cloud. Leaving it unset makes the compatibility gate `not_evaluable`,
+# which is a weaker thing to show in Beat 4 than a pass.
+#
+# The node shape is NOT the template default. test/e2e/t2_providers.go measures the floor from
+# the workload the demo places: copies = tiers + 1 (staging is placed a SECOND time inside the
+# vcluster, whose pods schedule on the host) at ~1.7 vCPU / 1.5 GB each, plus 1.8 vCPU / 3.0 GB
+# for ArgoCD + the vcluster control plane + the platform rail. Five tiers ⇒ 6 copies ⇒ 12 vCPU
+# / 12 GB. The shipped profile (cx33 x3) was sized for the default TWO tiers and sits exactly on
+# that floor, so use four: 16 vCPU / 32 GB, about EUR 0.06/hr for the whole cluster.
 alethia project component add --project boutique-demo --env prod --kind cluster \
-  --set 'cluster_version="1.31"' \
-  --set node_desired_size=3 --set node_min_size=3 --set node_max_size=4
+  --set 'cluster_version="1.35"' \
+  --set 'instance_types=["cx33"]' \
+  --set node_desired_size=4 --set node_min_size=4 --set node_max_size=4
 
 alethia project component add --project boutique-demo --env prod --kind repositories \
   --set apps_destination_repo=https://github.com/alethialabs-io/enterprise-demo \
   --set apps_path=overlays/prod
 
-# 3 · Provision it. The shared tiers cannot be placed until this cluster exists.
+# 3 · One repositories component per tier — same repo, different overlay.
+for tier in prod staging dev-1 dev-2 dev-3; do
+  alethia project component add --project boutique-demo --env "$tier" --kind repositories \
+    --set apps_destination_repo=https://github.com/alethialabs-io/enterprise-demo \
+    --set "apps_path=overlays/$tier"
+done
+
+# 4 · Provision the Fabric FIRST. The shared tiers cannot be placed until this cluster exists.
 #     --project-id wants the UUID, not the name: `alethia project list -o json` has it.
 #     Pass --runner-id too, or the command prompts and dies under --no-input.
 alethia project plan  --project-id <uuid> --runner-id <uuid> --wait
 alethia project apply --project-id <uuid> --plan-job-id <id> --wait
 ```
 
-Then add the tiers that cost nothing:
+**`plan` and `apply` are PER-ENVIRONMENT.** Both take `--env`, defaulting to the project's
+*default* environment — so the two commands above provision `prod` and nothing else. Run the pair
+again per tier, and read the plan job id out of each plan rather than reusing one:
 
 ```bash
-alethia project env add staging --project boutique-demo --stage staging \
-  --placement-mode vcluster --fabric prod --namespace boutique-staging
-
-for n in 1 2 3; do
-  alethia project env add "dev-$n" --project boutique-demo --stage development \
-    --placement-mode namespace --fabric prod --namespace "boutique-dev-$n"
+for tier in staging dev-1 dev-2 dev-3; do
+  alethia project plan --project-id <uuid> --runner-id <uuid> --env "$tier" --wait
+  alethia project apply --project-id <uuid> --plan-job-id <that plan's id> \
+    --runner-id <uuid> --env "$tier" --wait
 done
-
-alethia project component add --project boutique-demo --env staging --kind repositories \
-  --set apps_destination_repo=https://github.com/alethialabs-io/enterprise-demo \
-  --set apps_path=overlays/staging
-
-for n in 1 2 3; do
-  alethia project component add --project boutique-demo --env "dev-$n" --kind repositories \
-    --set apps_destination_repo=https://github.com/alethialabs-io/enterprise-demo \
-    --set apps_path="overlays/dev-$n"
-done
-
-alethia project plan  --project-id <uuid> --runner-id <uuid> --wait
-alethia project apply --project-id <uuid> --plan-job-id <id> --wait
 ```
+
+> This is the single easiest way to lose twenty minutes. An `apply` that names no `--env` returns
+> **SUCCESS** having placed nothing — the shared tiers simply stay `DRAFT`, and the success line
+> gives you no reason to look. Check `alethia project env list` after each apply: the tier you just
+> placed should read `ACTIVE`.
+
+Each shared tier takes about a minute; only the Fabric's own apply builds machines (~6 min on
+Hetzner for four cx33 workers plus a control plane).
 
 **For the two-Fabric shape**, add a second dedicated env before the tiers and point them at it:
 
@@ -194,6 +213,18 @@ alethia project component list --project boutique-demo --env staging
 alethia project component list --project boutique-demo --env dev-1
 ```
 
+`env list` carries the whole claim in one table — placement, namespace and the Fabric each tier sits
+on. Read the Fabric column out loud: it is the same value on every row.
+
+```
+Name     Stage        Placement  Namespace         Fabric  Status  Default  Region
+prod     production   dedicated  —                 prod    ACTIVE  ◆        nbg1
+staging  staging      vcluster   boutique-staging  prod    ACTIVE  —        nbg1
+dev-1    development  namespace  boutique-dev-1    prod    ACTIVE  —        nbg1
+dev-2    development  namespace  boutique-dev-2    prod    ACTIVE  —        nbg1
+dev-3    development  namespace  boutique-dev-3    prod    ACTIVE  —        nbg1
+```
+
 Same repository, different `apps_path`. If they ask why that matters: because it is how a real team
 runs its tiers from one source of truth, and because the alternative — a cluster per tier — is what
 they are paying for today.
@@ -217,12 +248,25 @@ kubectl get pods -n boutique-staging
 kubectl get pods -n boutique-dev-1
 ```
 
-Then ArgoCD: one Application per placement, `app-boutique-demo-<namespace>`, each pinned to its own
-AppProject `tenant-boutique-demo-<namespace>`. The AppProject is what stops one tier reaching into
-another.
+Then ArgoCD: one Application per placement, each pinned to its own AppProject. The AppProject is what
+stops one tier reaching into another. **The two rungs are named differently** — read them off a live
+cluster before the demo rather than from memory:
+
+| Placement | Application | AppProject |
+|---|---|---|
+| `namespace` | `app-boutique-demo-<namespace>` | `tenant-boutique-demo-<namespace>` |
+| `vcluster` | `vc-app-boutique-demo-<namespace>` | `vc-boutique-demo-<namespace>` |
+
+A vcluster tier is also registered as an ArgoCD **cluster** — `kubectl get secret -n argocd -l
+argocd.argoproj.io/secret-type=cluster` shows it by name — which is what lets its Application target
+`destination.name` instead of a namespace on the host.
 
 > Those names are what `test/e2e/t2_fabric_demo.go` asserts. If this page and that test disagree, the
 > test is right.
+
+**Read `SYNC STATUS`, not `HEALTH STATUS`.** An Application that cannot reach its target reports
+`Healthy` with sync `Unknown` — ArgoCD is telling you it has no idea, and it does not look like a
+failure. `kubectl get applications -n argocd` shows both columns; the one that matters is the first.
 
 ### Beat 6 — the close (2 min) ★★
 
@@ -330,10 +374,20 @@ artifact, never on a green harness.
 
 ## 8 · Known dead-ends — do not walk into these
 
-- **`--set cluster_version=1.31` is refused.** `--set` coerces anything that parses as JSON, so
-  `1.31` arrives as a *number* and the server wants a string: *"Invalid value for cluster_version:
-  expected string, received number"*. Quote it as JSON — `--set 'cluster_version="1.31"'`. The same
-  trap waits on any string field whose value looks numeric.
+- **`--set cluster_version=1.35` is refused.** `--set` coerces anything that parses as JSON, so
+  `1.35` arrives as a *number* and the server wants a string: *"Invalid value for cluster_version:
+  expected string, received number"*. Quote it as JSON — `--set 'cluster_version="1.35"'`. The same
+  trap waits on any string field whose value looks numeric. **Check `alethia --version` is newer than
+  the fix**: before it, the quoted form stored the quote marks too — a six-character
+  `"1.35"` that no gate could parse, surfacing much later as *"cluster Kubernetes version is unset or
+  unparseable"*.
+- **`project component add` is an UPSERT, and a partial one.** Re-running it with a single `--set`
+  amends that field and leaves the rest of the row alone — which is the only way to change a
+  component, since there is no `component update`. There is no dry-run; check the result with
+  `alethia project component list --project <p> --env <e>`.
+- **A component field the CLI rejects is not necessarily a field the product lacks.**
+  `--set node_size=…` returns *"Unknown field(s) for cluster"* and lists the eight it does take;
+  `node_size` is derived server-side from `instance_types` via the catalog.
 - **`--project-id` takes the project's UUID, not its name.** `alethia project list -o json` has it.
 - **`plan`/`apply`/`destroy` prompt for a runner** when `--runner-id` is omitted, so under `--no-input`
   they die with *"interactive input required"* — a message that reads like it is complaining about the
