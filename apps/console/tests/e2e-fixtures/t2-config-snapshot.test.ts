@@ -626,21 +626,21 @@ describe("repositories.apps_path reaches the config snapshot (#1767)", () => {
 
 	it("carries the overlay path when the row sets one", async () => {
 		const repositories = await repositoriesOf({
-			apps_destination_repo: "https://github.com/alethialabs-io/enterprise-demo",
+			apps_destination_repo: "https://github.com/alethialabs-io/alethia-examples",
 			apps_path: "overlays/dev",
 		});
 		// EXHAUSTIVE, not `.apps_path`: the emitted block is the whole runner-side
 		// ProjectRepositoriesConfig, so `toEqual` also fails when a future column spills into
 		// the snapshot — the shape the Go struct strict-decodes is pinned, not just this key.
 		expect(repositories).toEqual({
-			apps_destination_repo: "https://github.com/alethialabs-io/enterprise-demo",
+			apps_destination_repo: "https://github.com/alethialabs-io/alethia-examples",
 			apps_path: "overlays/dev",
 		});
 	});
 
 	it("leaves the key ABSENT when the row is null — not null, not empty string", async () => {
 		const repositories = await repositoriesOf({
-			apps_destination_repo: "https://github.com/alethialabs-io/enterprise-demo",
+			apps_destination_repo: "https://github.com/alethialabs-io/alethia-examples",
 			apps_path: null,
 		});
 		expect("apps_path" in repositories).toBe(false);
@@ -648,7 +648,7 @@ describe("repositories.apps_path reaches the config snapshot (#1767)", () => {
 
 	it("leaves the key ABSENT for an empty string — '' is the unset form, not a value", async () => {
 		const repositories = await repositoriesOf({
-			apps_destination_repo: "https://github.com/alethialabs-io/enterprise-demo",
+			apps_destination_repo: "https://github.com/alethialabs-io/alethia-examples",
 			apps_path: "",
 		});
 		expect("apps_path" in repositories).toBe(false);

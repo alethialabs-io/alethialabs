@@ -78,25 +78,57 @@ func TestRunProjectCreateError(t *testing.T) {
 
 // --- project env ---
 
+// Two environments on ONE Fabric, at different isolation rungs — the shape the table exists to
+// show. The dedicated env carries no namespace, which is why Namespace is an optional column.
 func sampleEnvironments() []api.Environment {
 	region := "us-east-1"
+	fabric := "prod"
+	ns := "boutique-staging"
 	return []api.Environment{
-		{ID: "e1", Name: "development", Stage: "development", Status: "DRAFT", IsDefault: true, Region: nil},
-		{ID: "e2", Name: "staging", Stage: "staging", Status: "ACTIVE", IsDefault: false, Region: &region},
+		{
+			ID: "e1", Name: "development", Stage: "development", Status: "DRAFT",
+			IsDefault: true, Region: nil,
+			PlacementMode: "dedicated", Namespace: nil, Fabric: &fabric,
+		},
+		{
+			ID: "e2", Name: "staging", Stage: "staging", Status: "ACTIVE",
+			IsDefault: false, Region: &region,
+			PlacementMode: "vcluster", Namespace: &ns, Fabric: &fabric,
+		},
 	}
 }
 
+// Columns: Name(0) Stage(1) Placement(2) Namespace(3) Fabric(4) Status(5) Default(6) Region(7).
 func TestEnvRows(t *testing.T) {
 	rows := envRows(sampleEnvironments())
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
-	// Default env: brand marker + dash region.
-	if rows[0][3] != ui.SymbolDefault || rows[0][4] != ui.SymbolDash {
+	if got := len(rows[0]); got != len(envListColumns) {
+		t.Fatalf("row has %d cells, header has %d — a table whose header and rows disagree "+
+			"mislabels every value in it", got, len(envListColumns))
+	}
+
+	// Default env: dedicated, no namespace, brand marker, dash region.
+	if rows[0][2] != "dedicated" || rows[0][3] != ui.SymbolDash || rows[0][4] != "prod" {
+		t.Errorf("unexpected dedicated row placement cells: %+v", rows[0])
+	}
+	if rows[0][6] != ui.SymbolDefault || rows[0][7] != ui.SymbolDash {
 		t.Errorf("unexpected default row: %+v", rows[0])
 	}
-	if rows[1][3] != ui.SymbolDash || rows[1][4] != "us-east-1" {
+
+	// Shared env: a vcluster placed on the SAME Fabric, with its destination namespace.
+	if rows[1][2] != "vcluster" || rows[1][3] != "boutique-staging" || rows[1][4] != "prod" {
+		t.Errorf("unexpected vcluster row placement cells: %+v", rows[1])
+	}
+	if rows[1][6] != ui.SymbolDash || rows[1][7] != "us-east-1" {
 		t.Errorf("unexpected named row: %+v", rows[1])
+	}
+
+	// The claim the table is FOR: both tiers name one Fabric, so only one cluster was bought.
+	if rows[0][4] != rows[1][4] {
+		t.Errorf("both environments should report the same Fabric, got %q and %q",
+			rows[0][4], rows[1][4])
 	}
 }
 
@@ -316,6 +348,56 @@ func TestCoerceSetValue(t *testing.T) {
 	}
 	if v, ok := coerceSetValue("false").(bool); !ok || v {
 		t.Errorf("false: %#v", coerceSetValue("false"))
+	}
+}
+
+// A JSON-quoted value must decode to its CONTENT, not to the six characters that were typed.
+//
+// Quoting is the only way to give a string field a value that also parses as a number:
+// `--set cluster_version=1.35` coerces to the number 1.35 and the server refuses it, so the
+// documented answer is `--set 'cluster_version="1.35"'`. That form used to fall through to the
+// raw text and store `"1.35"` WITH the quote marks — length 6, never equal to `1.35` — which
+// surfaced far downstream as a compatibility gate calling the version "unset or unparseable".
+//
+// The axis under test is the VALUE's shape, not the key: a quoted numeric-looking string, a
+// quoted ordinary word, and the unquoted forms that must keep their existing types.
+func TestCoerceSetValueUnwrapsQuotedStrings(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"quoted numeric-looking version", `"1.35"`, "1.35"},
+		{"quoted version with patch", `"1.33.12"`, "1.33.12"},
+		{"quoted ordinary word", `"postgres"`, "postgres"},
+		{"quoted string with a space", `"eu central"`, "eu central"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			v := coerceSetValue(c.raw)
+			s, ok := v.(string)
+			if !ok {
+				t.Fatalf("coerceSetValue(%s) = %#v, want a string", c.raw, v)
+			}
+			if s != c.want {
+				t.Errorf("coerceSetValue(%s) = %q (len %d), want %q", c.raw, s, len(s), c.want)
+			}
+		})
+	}
+
+	// The other direction: unquoted values must keep the types they already had, or this fix
+	// would silently turn every number and bool into text.
+	if v, ok := coerceSetValue("1.35").(float64); !ok || v != 1.35 {
+		t.Errorf("unquoted 1.35 must stay a number, got %#v", coerceSetValue("1.35"))
+	}
+	if v, ok := coerceSetValue("true").(bool); !ok || !v {
+		t.Errorf("unquoted true must stay a bool, got %#v", coerceSetValue("true"))
+	}
+	if v, ok := coerceSetValue(`["cx33"]`).([]interface{}); !ok || len(v) != 1 || v[0] != "cx33" {
+		t.Errorf(`["cx33"] must stay an array, got %#v`, coerceSetValue(`["cx33"]`))
+	}
+	// Unquoted text is not JSON at all, so it still comes back as the literal it was typed as.
+	if v := coerceSetValue("postgres"); v != "postgres" {
+		t.Errorf("bare word must stay literal, got %#v", v)
 	}
 }
 

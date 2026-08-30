@@ -5,6 +5,9 @@
 		"stage": "string",
 		"status": "string",
 		"is_default": false,
-		"region": "string"
+		"region": "string",
+		"placement_mode": "string",
+		"namespace": "string",
+		"fabric": "string"
 	}
 }

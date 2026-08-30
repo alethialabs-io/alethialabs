@@ -53,7 +53,7 @@
 // # The namespace is load-bearing, not cosmetic
 //
 // RenderNamespaceTenant pins the tenant AppProject to `destinations: [{server: in-cluster, namespace:
-// <ns>}]`. The enterprise-demo overlays stamp their own namespaces (overlays/dev → boutique-dev,
+// <ns>}]`. The alethia-examples overlays stamp their own namespaces (overlays/dev-1 → boutique-dev-1,
 // overlays/staging → boutique-staging, per the product's own template comment in
 // infra/templates/argocd/user-apps-overlays.yaml). An overlay whose manifests carry a DIFFERENT
 // namespace than the placement is refused by ArgoCD ("destination is not permitted in project") and
@@ -84,13 +84,17 @@ const (
 // fabricDemoDefaultRepo is the PUBLIC enterprise-demo repo. Public matters: ArgoCD clones it
 // anonymously (argocd.IsRepoAnonymouslyCloneable), so unlike the A0.6 apps-repo path this scenario
 // needs NO git token — one less maintainer-held secret between the board and a real proof.
-const fabricDemoDefaultRepo = "https://github.com/alethialabs-io/enterprise-demo"
+const fabricDemoDefaultRepo = "https://github.com/alethialabs-io/alethia-examples"
 
-// fabricDemoDefaultOverlays tracks the enterprise-demo layout — the dev+staging pair #845 asks for,
+// fabricDemoDefaultOverlays tracks the alethia-examples layout — the two-tier pair #845 asks for,
 // each mapped to the namespace ITS OVERLAY DECLARES (see the package comment: a mismatch is refused
 // by the tenant AppProject and can never converge). Overridable per-provider so a cloud-specific
 // fork can carry a different set.
-const fabricDemoDefaultOverlays = "dev=boutique-dev,staging=boutique-staging"
+//
+// `dev-1`, not `dev`: the flat `overlays/dev` was dropped when the repo became a multi-example
+// monorepo. It hardcoded `namespace: boutique-dev`, which is exactly why it could not be reused for
+// more than one tier — three dev tiers pointed at it would render into one namespace and fight.
+const fabricDemoDefaultOverlays = "dev-1=boutique-dev-1,staging=boutique-staging"
 
 // fabricDemoDefaultVClusterTier names which tier is ALSO placed as a vcluster. #845 requires at least
 // one vcluster placement — it is the isolation rung neither Porter nor Qovery offers, so it is the
@@ -104,7 +108,7 @@ const fabricDemoPollInterval = 15 * time.Second
 // fabricDemoOverlayTier is one placed tier: the overlay directory to sync AND the namespace that
 // overlay's kustomization stamps on every resource.
 type fabricDemoOverlayTier struct {
-	Tier      string // "dev"          → source path overlays/dev
+	Tier      string // "dev-1"        → source path examples/online-boutique/overlays/dev-1
 	Namespace string // "boutique-dev" → what the overlay declares, and where the placement must land
 }
 
@@ -146,11 +150,16 @@ func fabricDemoTimeout() time.Duration {
 	return 10 * time.Minute
 }
 
+// fabricDemoOverlayRoot is where the example's overlays live in the apps repo. The repo became a
+// multi-example monorepo (alethia-examples), so overlays are no longer at the root — an example owns
+// its own subtree and the root belongs to none of them.
+const fabricDemoOverlayRoot = "examples/online-boutique/overlays/"
+
 // fabricDemoOverlayPath is the single definition of a tier's source path, used by BOTH the snapshot
 // that requests it and the assertion that checks it. One definition, so the request and the check
 // can never drift into agreeing about the wrong thing.
 func fabricDemoOverlayPath(tier string) string {
-	return "overlays/" + strings.ToLower(strings.TrimSpace(tier))
+	return fabricDemoOverlayRoot + strings.ToLower(strings.TrimSpace(tier))
 }
 
 // fabricDemoStage maps a tier name onto a real environment_stage enum value

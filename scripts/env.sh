@@ -1038,7 +1038,13 @@ cmd_runner() {
   # CRED is load-bearing beyond credentials: dev-runner.sh derives the runner's OPERATOR
   # from it (bootstrap → managed, self → self), and the keyless AWS and GCP federation
   # branches only run when operator=managed. Leave it at bootstrap to exercise keyless.
+  # go lives at /usr/local/go/bin, exposed by /etc/profile.d/go.sh — which only a LOGIN
+  # shell sources. ssh_box runs a non-login, non-interactive shell, so native MODE's
+  # `go build` died with "go: command not found" every time and no runner could ever be
+  # built on the box. The path is the constant cloud-init installs to, not a guess:
+  # infra/sandbox/templates/cloud-init.yaml.tftpl untars the toolchain into /usr/local.
   ssh_box "cd $REMOTE/envs/$slug_ && \
+    PATH=\"/usr/local/go/bin:\$PATH\" \
     MODE='${MODE:-native}' CRED='${CRED:-bootstrap}' RUNNERS='${RUNNERS:-1}' \
     ${SLOTS:+SLOTS='$SLOTS'} ${PROVIDERS:+PROVIDERS='$PROVIDERS'} ${RUNNER_IMAGE:+RUNNER_IMAGE='$RUNNER_IMAGE'} \
     ALETHIA_WEB_ORIGIN=http://localhost:$cport bash scripts/dev-runner.sh"

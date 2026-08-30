@@ -37,15 +37,17 @@ import (
 // fail-closed (vclusterRemintProviders), mirroring namespace.
 
 const (
-	// vclusterArgoNamespace is where ArgoCD runs on the Fabric — the host namespace the exported vcluster
-	// kubeconfig Secret is written into (and where the cluster-registration Secret lives).
-	vclusterArgoNamespace = "argocd"
 	// vclusterHostNamespacePrefix / vclusterServiceAccountPrefix / vclusterKubeconfigSecretPrefix derive
 	// the per-env resource names from the env's namespace. Distinct prefixes keep the control-plane host
 	// namespace, the SA, and the exported Secret from colliding.
-	vclusterHostNamespacePrefix    = "vcluster-"
-	vclusterServiceAccountPrefix   = "vcluster-argocd-"
-	vclusterKubeconfigSecretPrefix = "vcluster-kubeconfig-"
+	vclusterHostNamespacePrefix  = "vcluster-"
+	vclusterServiceAccountPrefix = "vcluster-argocd-"
+	// vclusterKubeconfigSecretPrefix is the loft chart's OWN default for the exported kubeconfig
+	// Secret — "If this is not defined, vCluster will create it with `vc-NAME`". We read that
+	// primary Secret rather than requesting an additional one, because `exportKubeConfig.server`
+	// and `exportKubeConfig.serviceAccount` apply ONLY to it: an `additionalSecrets` entry is
+	// written with the default admin CERTIFICATE kubeconfig pointed at https://localhost:8443.
+	vclusterKubeconfigSecretPrefix = "vc-"
 )
 
 // vclusterRemintProviders is the allowlist of clouds whose OUTPUT-FREE keyless host re-mint is wired for
@@ -118,12 +120,33 @@ func buildVClusterSpec(vc *types.ProjectConfig) (VClusterSpec, error) {
 	if name == "" {
 		return VClusterSpec{}, fmt.Errorf("vcluster: no destination namespace on the config snapshot — a vcluster env needs a resolved namespace (its ArgoCD destination name)")
 	}
+	hostNamespace := vclusterHostNamespacePrefix + name
 	spec := VClusterSpec{
-		Name:                name,
-		HostNamespace:       vclusterHostNamespacePrefix + name,
-		ServiceAccount:      vclusterServiceAccountPrefix + name,
-		KubeconfigSecret:    vclusterKubeconfigSecretPrefix + name,
-		KubeconfigNamespace: vclusterArgoNamespace,
+		Name:             name,
+		HostNamespace:    hostNamespace,
+		ServiceAccount:   vclusterServiceAccountPrefix + name,
+		KubeconfigSecret: vclusterKubeconfigSecretPrefix + name,
+		// The chart exports its kubeconfig into the vcluster's OWN host namespace, not `argocd`.
+		//
+		// It used to name `argocd`, and the loft chart's RBAC is scoped to its release namespace —
+		// it creates Role/RoleBinding `vc-<name>` there and nowhere else. So the syncer, told to
+		// manage a Secret in `argocd`, opened informers on that namespace and was refused:
+		//
+		//   pods is forbidden: User "system:serviceaccount:vcluster-<ns>:vc-<ns>" cannot list
+		//   resource "pods" in API group "" in the namespace "argocd"
+		//
+		// Those caches never synced, so the control plane never served /readyz, the startup probe
+		// failed ~101 times over 12 minutes, and `helm install --wait` timed out. The deploy
+		// surfaced it as "helm install of <name> failed: exit status 1" — a message with no
+		// mention of RBAC, a namespace, or ArgoCD. The vcluster rung could never come up.
+		//
+		// Writing it here needs no new permission: the chart already owns this namespace. Nothing
+		// downstream is affected, because the ArgoCD registration Secret this feeds is written by
+		// the RUNNER (vclusterClusterSecretManifest hardcodes `namespace: argocd`) over the
+		// already-minted keyless host kubeconfig, and teardown deletes the export from whatever
+		// namespace this names. The alternative — granting the vcluster SA `create secrets` in the
+		// namespace ArgoCD lives in — buys the same outcome for strictly more privilege.
+		KubeconfigNamespace: hostNamespace,
 		// APIServerURL "" + Expose false ⇒ the in-cluster ClusterIP Service address (on-host ArgoCD reach).
 	}
 	if err := spec.Validate(); err != nil {
