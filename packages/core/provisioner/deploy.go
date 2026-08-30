@@ -1005,6 +1005,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			result.GitopsStatus = gitopsFailed(argocd.GitopsStepTemplatesMissing, err)
 			return &result, err
 		}
+		// apps_path now reaches the dedicated templates too, so it gets the same fail-closed guard
+		// the namespace and vcluster placements apply (deploy_vcluster.go, namespace_tenant.go). It
+		// is interpolated into a YAML scalar the runner hands to ArgoCD, so an absolute path, a
+		// traversal or a quote-break must be refused here rather than rendered.
+		if err := argocd.ValidateAppsPath(vc.Repositories.AppsPath); err != nil {
+			result.GitopsStatus = gitopsFailed(argocd.GitopsStepTemplatesMissing, err)
+			return &result, fmt.Errorf("apps_path is not a usable repo subpath: %w", err)
+		}
 		facts := argocd.BuildFromOutputs(result.Outputs, vc)
 		// Record the honest per-service install/skip decisions from the SAME gates the
 		// render below uses, so the console/CLI can show what shipped (and why a service

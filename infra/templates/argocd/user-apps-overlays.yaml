@@ -1,4 +1,22 @@
-{{- if .AppsDestinationRepo }}
+{{- if and .AppsDestinationRepo (not .AppsPath) }}
+# RENDERED ONLY WHEN THE ENVIRONMENT NAMES NO apps_path.
+#
+# This ApplicationSet exists to DISCOVER environments in a repo that has none declared — a plain
+# Kustomize repo pointed at Alethia with no per-tier configuration. Once an environment names an
+# `apps_path`, discovery is not merely redundant: it is actively wrong. The generator below is
+# anchored at the repo root and globs `overlays/*`, so the Fabric's own environment adopted EVERY
+# overlay in the repo, including the ones its shared `namespace`/`vcluster` tiers were placing
+# themselves. Both Applications then claimed the same Deployments, both with selfHeal: true:
+#
+#   Deployment/adservice is part of applications argocd/app-<project>-<ns> and apps-<ns>
+#
+# leaving those tiers OutOfSync/Missing. test/e2e/t2_fabric_demo.go already refuses to run in that
+# configuration ("the base dedicated deploy's apps-overlays ApplicationSet already delivers them,
+# so the placements would prove nothing and would collide") — this makes the product agree with the
+# harness instead of relying on the caller to keep two repos apart.
+#
+# An explicit path wins over a glob. Naming no path is unchanged: root Application + this discovery.
+#
 # Multi-environment apps delivery (decoupled env-model, #838). An ApplicationSet whose Git
 # directories generator discovers every overlays/ENV directory in the apps repo and renders one
 # ArgoCD Application per overlay — the standard Kustomize GitOps layout (base + overlays/ENV), and
