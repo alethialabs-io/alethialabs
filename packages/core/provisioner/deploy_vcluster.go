@@ -122,9 +122,9 @@ func buildVClusterSpec(vc *types.ProjectConfig) (VClusterSpec, error) {
 	}
 	hostNamespace := vclusterHostNamespacePrefix + name
 	spec := VClusterSpec{
-		Name:           name,
-		HostNamespace:  hostNamespace,
-		ServiceAccount: vclusterServiceAccountPrefix + name,
+		Name:             name,
+		HostNamespace:    hostNamespace,
+		ServiceAccount:   vclusterServiceAccountPrefix + name,
 		KubeconfigSecret: vclusterKubeconfigSecretPrefix + name,
 		// The chart exports its kubeconfig into the vcluster's OWN host namespace, not `argocd`.
 		//
