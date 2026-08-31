@@ -34,6 +34,7 @@ import {
 	resolveAiTier,
 } from "@/lib/billing/ai-plan";
 import { canOrgInvite } from "@/lib/billing/collaboration";
+import { effectiveBillingPeriodStart } from "@/lib/billing/period";
 import {
 	type PaidConversionContext,
 	assertOrgPaidConversionAllowed,
@@ -256,9 +257,11 @@ export async function getOrgUsage(): Promise<UsageReport> {
 	const included = quotas.includedRunnerMinutes;
 
 	const now = new Date();
-	const from =
-		billing?.currentPeriodStart ??
-		new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+	const from = effectiveBillingPeriodStart(
+		billing?.currentPeriodStart,
+		billing?.currentPeriodEnd,
+		now,
+	);
 
 	const hasOrg = actor.orgId !== actor.userId;
 	const [rows, runningJobs] = await Promise.all([
@@ -718,20 +721,20 @@ export interface SubscriptionIntent {
 export async function createSubscriptionIntent(
 	plan: PaidPlan,
 	opts?: { billingEmail?: string; currency?: SupportedCurrency },
-): Promise<SubscriptionIntent> {
+): Promise<SubscriptionIntent | { error: string }> {
 	const actor = await authorize("manage_billing", { type: "billing" });
 	requireHostedBilling();
 	if (actor.orgId === actor.userId) {
-		throw new Error("Create an organization before subscribing to a plan.");
+		return { error: "Create an organization before subscribing to a plan." };
 	}
 	const existing = await getOrgBilling(actor.orgId);
 	if (
 		existing?.stripeSubscriptionId &&
 		(existing.status === "active" || existing.status === "trialing")
 	) {
-		throw new Error(
-			"This organization already has an active subscription — change the plan instead.",
-		);
+		return {
+			error: "This organization already has an active subscription — change the plan instead.",
+		};
 	}
 	await gatePaidConversion(actor);
 	const customerId = await ensureCustomer(
