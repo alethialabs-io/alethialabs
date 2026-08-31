@@ -186,7 +186,16 @@ export async function enableAddon(input: {
 	// mid-deploy.
 	const parsed = def.configSchema.safeParse(input.values ?? {});
 	if (!parsed.success) {
-		throw new Error(`Invalid add-on configuration: ${parsed.error.message}`);
+		// Surface the PROSE, not the serialised error. `ZodError.message` is the issues array as
+		// JSON, which reaches the configure form (and the CLI, which returns this same string) as a
+		// wall of braces with the sentence buried inside it. Add-on schemas state their refusals in
+		// words a user can act on — "AWS Route 53 authenticates ExternalDNS through workload
+		// identity, not a token, so a Workload identity is required — an IAM role ARN" (#3469) — and
+		// a refusal nobody can read is only marginally better than the silent install it replaced.
+		const detail = parsed.error.issues
+			.map((i) => (i.path.length > 0 ? `${i.path.join(".")}: ${i.message}` : i.message))
+			.join("; ");
+		throw new Error(`Invalid add-on configuration: ${detail}`);
 	}
 	// Validate the raw YAML override parses to a mapping (reject a scalar/list/garbage here).
 	const valuesYaml = input.valuesYaml?.trim() ? input.valuesYaml : null;

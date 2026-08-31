@@ -26,6 +26,15 @@
 		"values": {
 			"provider": {
 				"name": "azure"
+			},
+			"serviceAccount": {
+				"name": "addon-external-dns-sa",
+				"annotations": {
+					"azure.workload.identity/client-id": "00000000-0000-0000-0000-000000000000"
+				}
+			},
+			"podLabels": {
+				"azure.workload.identity/use": "true"
 			}
 		},
 		"syncWave": 2

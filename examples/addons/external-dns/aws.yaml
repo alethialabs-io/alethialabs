@@ -11,7 +11,16 @@ provider: aws
 
 # The IAM role external-dns assumes. It needs route53:ChangeResourceRecordSets on the hosted zone
 # plus route53:ListHostedZones / ListResourceRecordSets. Create it with a trust policy for the
-# cluster's OIDC provider and this ServiceAccount.
+# cluster's OIDC provider and the add-on's ServiceAccount, `external-dns:addon-external-dns-sa`.
+#
+# NOT `external-dns:external-dns-sa` — that is the platform's OWN external-dns, which Alethia
+# installs into the same namespace when the environment manages DNS, and its role is not this
+# add-on's to borrow.
+#
+# REQUIRED, not optional. Left empty, the controller falls back to the node role, which has no DNS
+# permission — and on AWS that install does not fail loudly: the pod stays Ready and ArgoCD reports
+# Healthy while every record write is refused. So the console refuses the configuration instead
+# (#3469).
 workloadIdentity: arn:aws:iam::000000000000:role/external-dns
 
 # Restrict record management to one zone. STRONGLY RECOMMENDED, and not merely tidiness: without it
