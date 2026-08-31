@@ -106,7 +106,7 @@ resource "google_service_account_iam_member" "cert_manager_wi" {
 }
 
 # The SAME GSA, bound to a THIRD KSA: the MARKETPLACE external-dns add-on
-# (apps/console/lib/addons/catalog.ts, EXTERNAL_DNS_ADDON_SA = "addon-external-dns").
+# (apps/console/lib/addons/catalog.ts, EXTERNAL_DNS_ADDON_SA = "addon-external-dns-sa").
 #
 # A distinct KSA from the rail's `external-dns-sa` on purpose: both Applications deploy into the
 # `external-dns` namespace, so naming one object would put two ArgoCD Applications on it. The zone
@@ -116,7 +116,7 @@ resource "google_service_account_iam_member" "external_dns_addon_wi" {
   count              = var.provision_gke ? 1 : 0
   service_account_id = local.external_dns_sa_name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[external-dns/addon-external-dns]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[external-dns/addon-external-dns-sa]"
 
   # Same Identity-Pool race as external_dns_wi above — the edge must be explicit.
   depends_on = [module.gke]

@@ -19,7 +19,7 @@ func externalDNSWithPlaceholder(annKey string) []types.AddOnInstall {
 		{ID: "external-dns", Values: map[string]interface{}{
 			"provider": map[string]interface{}{"name": "aws"},
 			"serviceAccount": map[string]interface{}{
-				"name":        "addon-external-dns",
+				"name":        "addon-external-dns-sa",
 				"annotations": map[string]interface{}{annKey: CloudIdentityPlaceholder},
 			},
 		}},
