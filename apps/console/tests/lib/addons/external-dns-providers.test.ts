@@ -197,11 +197,9 @@ describe("the workload-identity providers", () => {
 			"utf8",
 		);
 		const railSa = /serviceAccount:\s*\n\s*name:\s*(\S+)/.exec(template)?.[1];
-		expect(
-			railSa,
-			"the platform rail template declares no serviceAccount.name — this guard has nothing to " +
-				"compare against and must not report green",
-		).toBeTruthy();
+		// A template that has stopped declaring a ServiceAccount name leaves this guard with nothing
+		// to compare against — it must say so rather than pass.
+		expect(railSa, "the platform rail template declares no serviceAccount.name").toBeTruthy();
 		const addonSa = serviceAccountOf({ provider: "aws", workloadIdentity: "arn" }).name;
 		expect(addonSa, "the add-on renders no ServiceAccount to compare").toBeTruthy();
 		expect(addonSa).not.toBe(railSa);

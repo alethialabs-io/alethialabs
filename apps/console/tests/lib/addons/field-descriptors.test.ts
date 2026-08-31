@@ -62,13 +62,14 @@ describe("add-on field descriptors are consistent with their Zod configSchema", 
 						[field.key]: "__not_a_valid_choice__",
 					});
 					expect(rejection.success).toBe(false);
-					if (!rejection.success) {
-						expect(
-							rejection.error.issues.some((i) => i.path[0] === field.key),
-							`${def.id}.${field.key} rejected an off-menu value, but blamed another field: ` +
-								JSON.stringify(rejection.error.issues),
-						).toBe(true);
-					}
+					// An accepted off-menu value yields NO issues, so `some()` is false and this fails
+					// too — the assertion does not need the refusal to have happened, which is what
+					// lets it live outside a conditional.
+					const offMenu = rejection.success ? [] : rejection.error.issues;
+					expect(
+						offMenu.some((i) => i.path[0] === field.key),
+						`${def.id}.${field.key} rejected an off-menu value, but blamed another field: ${JSON.stringify(offMenu)}`,
+					).toBe(true);
 				});
 			}
 		}
