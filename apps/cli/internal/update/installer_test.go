@@ -215,6 +215,29 @@ func TestManualInstructions(t *testing.T) {
 	}
 }
 
+func TestManualUpdateErrorAndPlatformHelpers(t *testing.T) {
+	manual := &ManualUpdateError{Instruction: "use package manager"}
+	if manual.Error() != manual.Instruction {
+		t.Fatalf("manual error = %q, want instruction", manual.Error())
+	}
+	if !samePath("windows", `C:\Alethia\alethia.exe`, `c:\alethia\ALETHIA.EXE`) {
+		t.Fatal("Windows paths should compare case-insensitively")
+	}
+	if samePath("linux", "/usr/bin/alethia", "/usr/local/bin/alethia") {
+		t.Fatal("different Unix paths must not compare equal")
+	}
+	if got := testUpdater("linux", "amd64", "/usr/bin/alethia", &fakeCommandRunner{}).nonWritableInstruction(); got == nil {
+		t.Fatal("non-writable installs must return a manual instruction")
+	}
+}
+
+func TestApplyRejectsInvalidReleaseBeforeInstall(t *testing.T) {
+	err := Apply(context.Background(), "1.0.0", Release{Version: "not-a-version"}, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "invalid CLI version") {
+		t.Fatalf("expected invalid release error, got %v", err)
+	}
+}
+
 func TestStandaloneUpdateVerifiesChecksumAndReplacesBinary(t *testing.T) {
 	dir := t.TempDir()
 	executable := filepath.Join(dir, "alethia")

@@ -37,6 +37,22 @@ func TestRunUpdateReportsCurrentVersionWithoutInstalling(t *testing.T) {
 	}
 }
 
+func TestRunUpdateRejectsInvalidReleasePayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"version":"not-a-version"}`))
+	}))
+	defer server.Close()
+	if err := runUpdate(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, "1.0.0", server.URL); err == nil || !strings.Contains(err.Error(), "invalid CLI version") {
+		t.Fatalf("expected invalid release error, got %v", err)
+	}
+}
+
+func TestRunUpdateReportsReleaseLookupFailure(t *testing.T) {
+	if err := runUpdate(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, "1.0.0", "https://example.invalid"); err == nil || !strings.Contains(err.Error(), "check the latest alethia release") {
+		t.Fatalf("expected release lookup error, got %v", err)
+	}
+}
+
 func TestUpdateCommandIsRegistered(t *testing.T) {
 	command, _, err := rootCmd.Find([]string{"update"})
 	if err != nil || command != updateCmd {
