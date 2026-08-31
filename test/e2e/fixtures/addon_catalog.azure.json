@@ -27,10 +27,13 @@
 			"provider": {
 				"name": "azure"
 			},
+			"domainFilters": [
+				"addon-e2e.invalid"
+			],
 			"serviceAccount": {
-				"name": "addon-external-dns-sa",
+				"name": "addon-external-dns",
 				"annotations": {
-					"azure.workload.identity/client-id": "00000000-0000-0000-0000-000000000000"
+					"azure.workload.identity/client-id": "alethia-infra:external-dns-workload-identity"
 				}
 			},
 			"podLabels": {

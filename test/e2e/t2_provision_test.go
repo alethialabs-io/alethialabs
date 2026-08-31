@@ -699,6 +699,9 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	} else if err := AssertArgoAppsHealthy(ctx, kc, assertedApps, ArgoAssertTimeout()); err != nil {
 		t.Fatalf("ArgoCD application health assertion failed: %v", err)
 	}
+	if AllAddOnsEnabled() {
+		assertMarketplaceExternalDnsIdentity(t, ctx, kc, provider, meta.ClusterName)
+	}
 	// The exclusions RATCHET. A withheld add-on that reached Healthy+Synced means the reason it was
 	// withheld no longer holds, and leaving it on the list would make every later run assert less
 	// than it could. One read, not a poll: staleness does not resolve by waiting.

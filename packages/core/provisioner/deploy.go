@@ -1272,7 +1272,9 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// the knob could not have known it. Mutating vc.AddOns rather than the rendered output
 			// also means writeAddOnGitOps below writes the resolved value into the customer's repo,
 			// which is correct and free.
-			argocd.ResolveAddOnCloudIdentity(vc.AddOns, facts, stdout, stderr)
+			if err := argocd.ResolveAddOnCloudIdentity(vc.AddOns, facts, stdout, stderr); err != nil {
+				return nil, fmt.Errorf("external-dns identity resolution failed: %w", err)
+			}
 
 			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns, facts.Labels)
 			if addonErr != nil {
