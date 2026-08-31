@@ -116,7 +116,7 @@ resource "google_service_account_iam_member" "external_dns_addon_wi" {
   count              = var.provision_gke ? 1 : 0
   service_account_id = local.external_dns_sa_name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[external-dns/addon-external-dns-sa]"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[external-dns/addon-external-dns]"
 
   # Same Identity-Pool race as external_dns_wi above — the edge must be explicit.
   depends_on = [module.gke]

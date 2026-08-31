@@ -176,7 +176,7 @@ describe("the workload-identity providers", () => {
 			serviceAccount: { name: string; annotations: Record<string, string> };
 		};
 		expect(v.serviceAccount.annotations[annotation]).toBe("the-identity");
-		expect(v.serviceAccount.name).toBe("addon-external-dns-sa");
+		expect(v.serviceAccount.name).toBe("addon-external-dns");
 	});
 
 	// THE ADD-ON MUST NOT OWN THE PLATFORM RAIL'S SERVICEACCOUNT.
