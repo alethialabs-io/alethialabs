@@ -30,6 +30,41 @@ queue_rules:
     queue_conditions:
       - base = dev
       - "-draft"
+      # UNRESOLVED CODE-REVIEW FINDINGS KEEP A PR OUT OF THE QUEUE (#3498).
+      #
+      # There is no required human approval here and there should not be — the maintainer is the
+      # only person in the repo and cannot approve his own PR. What DOES exist is a second Claude
+      # instance that babysits this queue and runs /code-review on every PR, posting findings as
+      # INLINE review comments, i.e. GitHub review threads. Five PRs squash-merged with those
+      # findings unaddressed (#3433, #3437, #3444, #3477, #3479 — margins of four, fifteen and five
+      # minutes), because the required checks were green and nothing else was consulted.
+      #
+      # `#review-threads-unresolved` is the count of threads GitHub does NOT have marked resolved.
+      # It is NOT filtered by author, so the maintainer's own review of his own PR counts — which is
+      # the entire mechanism here. It is not cleared by pushing a fix either: a thread whose line
+      # has moved becomes `isOutdated` but stays unresolved, so the gate is released only by
+      # explicitly resolving the conversation. That is deliberate. It also means the gate binds ONLY
+      # on inline review comments — a top-level PR comment creates no thread, so if /code-review
+      # ever stops posting inline, this condition silently stops gating.
+      #
+      # ── WHY queue_conditions AND NOT merge_conditions ──
+      # merge_conditions are evaluated on the TEMPORARY MERGE, not on this PR — the same speculative
+      # draft the CLA note below describes. That draft is a fresh pull request with no review
+      # threads, so the condition would read 0 = 0 and be TRUE FOREVER: a gate that looks installed
+      # and gates nothing. And in the event it is not dead, it is worse — an unsatisfied CONDITION
+      # is not a FAILED CHECK, so Mergify does not eject the PR; it holds the head of the train
+      # pending, indefinitely, with no checks_timeout configured to break it. Dead or wedged, with
+      # no third outcome.
+      #
+      # queue_conditions is the only layer that is both binding on the REAL pull request and
+      # continuously re-evaluated: a PR that stops matching is REMOVED from the queue. That is what
+      # closes the #3444 case, where the review landed AFTER the PR was already queued —
+      # auto_merge_conditions alone only decides whether to enqueue, never to evict. An un-queued PR
+      # also holds no train slot, so open findings cannot stall anyone else's merge.
+      #
+      # ⚠️ THE QUOTES ARE LOAD-BEARING. Unquoted, `- #review-threads-unresolved = 0` is a YAML
+      # comment and the list item parses as null.
+      - "#review-threads-unresolved = 0"
     merge_conditions:
       # The protect-dev required checks (quoted — names contain `·`, `(`, `)`, `/`).
       # This list, the merge_protections list below and infra/github/variables.tf must agree;
@@ -129,3 +164,9 @@ merge_protections_settings:
   auto_merge_conditions:
     - base = dev
     - "-draft"
+    # The outer half of the review-thread gate — same condition, same reason, see the long note in
+    # queue_conditions above. This one stops the auto-queue being ATTEMPTED on a PR with open
+    # findings; queue_conditions is the one that EVICTS a PR whose findings arrive after it was
+    # already queued. Both are needed, and check-required-checks.mjs fails the build if the gate is
+    # in only one of them — or in merge_conditions/success_conditions, where it is dead.
+    - "#review-threads-unresolved = 0"
