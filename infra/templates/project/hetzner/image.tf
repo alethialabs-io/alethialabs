@@ -87,7 +87,7 @@ data "talos_image_factory_urls" "amd64" {
 # the failure path is how the scaffolding gets left behind billing (#2463).
 resource "imager_image" "arm64" {
   count        = local.need_arm64 ? 1 : 0
-  image_url    = data.talos_image_factory_urls.arm64[0].urls.disk_image
+  image_url    = one(data.talos_image_factory_urls.arm64[*].urls).disk_image
   architecture = "arm"
   location     = var.region
   description  = "${local.cluster_name}-talos-${var.talos_version}-arm64"
@@ -101,7 +101,7 @@ resource "imager_image" "arm64" {
 
 resource "imager_image" "amd64" {
   count        = local.need_amd64 ? 1 : 0
-  image_url    = data.talos_image_factory_urls.amd64[0].urls.disk_image
+  image_url    = one(data.talos_image_factory_urls.amd64[*].urls).disk_image
   architecture = "x86"
   location     = var.region
   description  = "${local.cluster_name}-talos-${var.talos_version}-amd64"

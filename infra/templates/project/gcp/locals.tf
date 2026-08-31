@@ -122,12 +122,12 @@ locals {
   external_dns_adopted = var.provision_gke && var.external_dns_service_account_email != ""
   external_dns_sa_email = var.provision_gke ? (
     local.external_dns_adopted
-    ? data.google_service_account.external_dns_adopted[0].email
+    ? one(data.google_service_account.external_dns_adopted[*].email)
     : one(google_service_account.external_dns[*].email)
   ) : ""
   external_dns_sa_name = var.provision_gke ? (
     local.external_dns_adopted
-    ? data.google_service_account.external_dns_adopted[0].name
+    ? one(data.google_service_account.external_dns_adopted[*].name)
     : one(google_service_account.external_dns[*].name)
   ) : ""
 
@@ -139,12 +139,12 @@ locals {
   external_secrets_adopted = var.provision_gke && var.external_secrets_service_account_email != ""
   external_secrets_sa_email = var.provision_gke ? (
     local.external_secrets_adopted
-    ? data.google_service_account.external_secrets_adopted[0].email
+    ? one(data.google_service_account.external_secrets_adopted[*].email)
     : one(google_service_account.external_secrets[*].email)
   ) : ""
   external_secrets_sa_name = var.provision_gke ? (
     local.external_secrets_adopted
-    ? data.google_service_account.external_secrets_adopted[0].name
+    ? one(data.google_service_account.external_secrets_adopted[*].name)
     : one(google_service_account.external_secrets[*].name)
   ) : ""
 
