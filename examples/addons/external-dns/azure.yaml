@@ -8,7 +8,14 @@
 provider: azure
 
 # The managed identity's CLIENT ID (not its object id, and not the tenant id). Give it the
-# "DNS Zone Contributor" role on the zone's resource group.
+# "DNS Zone Contributor" role on the zone's resource group, and a federated credential whose subject
+# is the add-on's ServiceAccount — `system:serviceaccount:external-dns:addon-external-dns-sa`.
+#
+# NOT `…:external-dns-sa`: that subject belongs to the platform's own external-dns, installed into
+# the same namespace when the environment manages DNS.
+#
+# REQUIRED, not optional: an Azure DNS install with no identity is refused at configure time rather
+# than installed to run without one (#3469).
 workloadIdentity: 00000000-0000-0000-0000-000000000000
 
 domainFilter: example.com

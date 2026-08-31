@@ -304,9 +304,11 @@ func TestExclusionCloudsAreRealFixtureClouds(t *testing.T) {
 // the stale exclusion ALONE, after its convergence and its teardown both passed. The ratchet reds on
 // Healthy, so there were exactly two exits — take the exclusion off, or teach the ratchet that
 // Healthy is fail-open for this add-on. #3428 took the first and asserted a green that means
-// "running, writing nothing": the add-on has no serviceAccount block at all with `workloadIdentity`
+// "running, writing nothing": the add-on had no serviceAccount block at all with `workloadIdentity`
 // empty, the node role carries only AmazonSSMManagedInstanceCore, and the sole Route53 grant is an
-// IRSA role trusted for a service-account name the add-on never creates. The PLATFORM RAIL
+// IRSA role trusted for a service-account name the add-on does not use. (#3469 has since made the
+// identity REQUIRED, so the fixture annotates `addon-external-dns-sa` with a stand-in ARN naming no
+// role — the reading is unchanged: no Route53 grant, still inert.) The PLATFORM RAIL
 // Application — `external-dns`, asserted in the same run — IS wired that way, and that is what was
 // actually observed working.
 //
