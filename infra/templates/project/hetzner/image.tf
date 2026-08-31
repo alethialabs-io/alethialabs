@@ -312,7 +312,7 @@ data "talos_image_factory_urls" "amd64" {
 # Talos has long since installed itself to disk — and the snapshot being removed is by then dead
 # weight superseded by the cache entry. It is a reclaim, not a loss.
 resource "imager_image" "arm64" {
-  count        = local.need_arm64 && local.talos_image_build.arm64 ? 1 : 0
+  count        = local.talos_image_build.arm64 ? 1 : 0
   image_url    = one(data.talos_image_factory_urls.arm64[*].urls).disk_image
   architecture = "arm"
   location     = var.region
@@ -334,7 +334,7 @@ resource "imager_image" "arm64" {
 }
 
 resource "imager_image" "amd64" {
-  count        = local.need_amd64 && local.talos_image_build.amd64 ? 1 : 0
+  count        = local.talos_image_build.amd64 ? 1 : 0
   image_url    = one(data.talos_image_factory_urls.amd64[*].urls).disk_image
   architecture = "x86"
   location     = var.region
