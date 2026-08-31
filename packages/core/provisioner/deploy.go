@@ -1266,6 +1266,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// BEFORE the Applications render, so the write-back rides the same helm.values block.
 			appliedBindingSecrets = applyByoChartBindings(vc, result.Outputs, params.Provider, stdout, stderr)
 
+			// Resolve the platform-provisioned cloud identity into the add-on's values BEFORE the
+			// Applications render — the same seam, and the same reason, as applyByoChartBindings
+			// above: the value exists only in this run's tofu outputs, and the console that stored
+			// the knob could not have known it. Mutating vc.AddOns rather than the rendered output
+			// also means writeAddOnGitOps below writes the resolved value into the customer's repo,
+			// which is correct and free.
+			argocd.ResolveAddOnCloudIdentity(vc.AddOns, facts, stdout, stderr)
+
 			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns, facts.Labels)
 			if addonErr != nil {
 				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
