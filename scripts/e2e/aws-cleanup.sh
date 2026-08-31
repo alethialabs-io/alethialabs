@@ -292,9 +292,11 @@ discover_cluster() {
 		done <<<"$(probe_run cluster-discovery aws elbv2 describe-load-balancers \
 			--query 'LoadBalancers[].LoadBalancerArn' --output text | tr '\t' '\n' | grep -v '^$' || true)"
 	fi
-	# ⚠️ EVERY read in this function goes through probe_run (or probe_confirm for a per-resource
-	# existence check). It used to use `aws … 2>/dev/null || true`, which resolves a denied or
-	# throttled call to CLUSTER="" — and CLUSTER is the SCOPE: empty makes cluster_classic_lb_names
+	# ⚠️ EVERY read in this function goes through probe_run (or probe_confirm_re for a per-resource
+	# existence check — never bare probe_confirm, whose looks_gone union is wider than any single
+	# call here can answer with; see the note on the classic describe-tags below). It used to use
+	# `aws … 2>/dev/null || true`, which resolves a denied or throttled call to CLUSTER="" — and
+	# CLUSTER is the SCOPE: empty makes cluster_classic_lb_names
 	# and cluster_lb_arns return nothing, which makes alive_lbs empty, which lets
 	# finalize_verification exit 0 printing "no billable resources remain" over a live load
 	# balancer. That is the same silent green the classic-ELB fix was written to remove, one API
@@ -308,7 +310,18 @@ discover_cluster() {
 		while IFS= read -r c_name; do
 			[ -n "$c_name" ] || continue
 			# shellcheck disable=SC2016 # backticks are JMESPath, not command substitution
-			c_key="$(probe_confirm cluster-discovery aws elb describe-tags --load-balancer-names "$c_name" \
+			# probe_confirm_re, NOT probe_confirm — the SAME argument as the elbv2 describe above
+			# and cluster_classic_lb_names below, and this call is the one that motivated it. A
+			# `describe-tags` reaching a proxy or a misrouted endpoint answers "An error occurred
+			# (404) … Not Found", which matches THREE alternatives of looks_gone, so plain
+			# probe_confirm resolves it CLEAN, c_key stays empty, CLUSTER stays "" — and CLUSTER is
+			# the SCOPE. Empty scope makes cluster_classic_lb_names and cluster_lb_arns return
+			# nothing, alive_lbs empty, and finalize_verification prints "no billable resources
+			# remain" and exits 0 over a live classic ELB, with the ledger recording nothing
+			# because nothing asked. LoadBalancerNotFound is the one shape this call can mean by
+			# "gone"; everything else stays UNVERIFIABLE so the gate still fires.
+			c_key="$(probe_confirm_re cluster-discovery 'LoadBalancerNotFound' \
+				aws elb describe-tags --load-balancer-names "$c_name" \
 				--query 'TagDescriptions[].Tags[?starts_with(Key, `kubernetes.io/cluster/`)].Key' \
 				--output text | tr '\t' '\n' | sed -E 's#^kubernetes.io/cluster/##' \
 				| grep -E -- "-${ENV}-" | head -n1 || true)"
@@ -982,7 +995,7 @@ alive_lbs() {
 # probe_confirm, not probe_run: a deleted cluster answers ResourceNotFoundException, and that IS
 # the answer "gone". Any other error means the control plane's existence is unknown — and an EKS
 # control plane is $0.10/hour whether or not this script could see it.
-alive_eks() { [ -n "$CLUSTER" ] && probe_confirm eks-cluster aws eks describe-cluster --name "$CLUSTER" --query 'cluster.name' --output text || true; }
+alive_eks() { [ -n "$CLUSTER" ] && probe_confirm_re eks-cluster 'ResourceNotFoundException' aws eks describe-cluster --name "$CLUSTER" --query 'cluster.name' --output text || true; }
 
 # A surviving hosted zone bills at $0.50/month FOREVER — small per run, but it never ages out and
 # nothing else would ever notice it. Unlike the describes above there is no tag-filtered Route 53
@@ -998,7 +1011,7 @@ alive_acm_certs() {
 	local arn
 	while IFS= read -r arn; do
 		[ -n "$arn" ] || continue
-		probe_confirm acm-certificate aws acm describe-certificate --certificate-arn "$arn" \
+		probe_confirm_re acm-certificate 'ResourceNotFoundException' aws acm describe-certificate --certificate-arn "$arn" \
 			--query 'Certificate.DomainName' --output text | grep -v '^$' || true
 	done <<<"$(tagged_arns acm:certificate)"
 }
@@ -1016,7 +1029,7 @@ alive_rds_clusters() {
 	local id
 	for id in $(tagged_arns rds:cluster | while read -r a; do arn_id "$a"; done); do
 		# shellcheck disable=SC2016 # backtick is JMESPath
-		probe_confirm rds-cluster aws rds describe-db-clusters --db-cluster-identifier "$id" \
+		probe_confirm_re rds-cluster 'DBClusterNotFound' aws rds describe-db-clusters --db-cluster-identifier "$id" \
 			--query 'DBClusters[?Status!=`deleting`].DBClusterIdentifier' --output text || true
 	done | tr '\t' '\n' | grep -v '^$' || true
 }
@@ -1024,7 +1037,7 @@ alive_rds_instances() {
 	local id
 	for id in $(tagged_arns rds:db | while read -r a; do arn_id "$a"; done); do
 		# shellcheck disable=SC2016
-		probe_confirm rds-instance aws rds describe-db-instances --db-instance-identifier "$id" \
+		probe_confirm_re rds-instance 'DBInstanceNotFound' aws rds describe-db-instances --db-instance-identifier "$id" \
 			--query 'DBInstances[?DBInstanceStatus!=`deleting`].DBInstanceIdentifier' --output text || true
 	done | tr '\t' '\n' | grep -v '^$' || true
 }
@@ -1032,7 +1045,7 @@ alive_elasticache() {
 	local id
 	for id in $(tagged_arns elasticache:replicationgroup | while read -r a; do arn_id "$a"; done); do
 		# shellcheck disable=SC2016
-		probe_confirm elasticache-replication-group aws elasticache describe-replication-groups --replication-group-id "$id" \
+		probe_confirm_re elasticache-replication-group 'ReplicationGroupNotFoundFault' aws elasticache describe-replication-groups --replication-group-id "$id" \
 			--query 'ReplicationGroups[?Status!=`deleting`].ReplicationGroupId' --output text || true
 	done | tr '\t' '\n' | grep -v '^$' || true
 }
@@ -1042,7 +1055,7 @@ alive_ddb_tables() {
 	# compare in shell instead.
 	local id state
 	for id in $(tagged_arns dynamodb:table | while read -r a; do arn_id "$a"; done); do
-		state="$(probe_confirm dynamodb-table aws dynamodb describe-table --table-name "$id" --query 'Table.TableStatus' --output text || true)"
+		state="$(probe_confirm_re dynamodb-table 'ResourceNotFoundException' aws dynamodb describe-table --table-name "$id" --query 'Table.TableStatus' --output text || true)"
 		case "$state" in "" | None | DELETING) ;; *) printf '%s\n' "$id" ;; esac
 	done
 }
@@ -1052,13 +1065,13 @@ alive_s3_buckets() {
 		[ -n "$arn" ] || continue
 		name="${arn##*:}"
 		[ -n "$name" ] || continue
-		probe_confirm s3-bucket aws s3api head-bucket --bucket "$name" >/dev/null && printf '%s\n' "$name"
+		probe_confirm_re s3-bucket '\(404\)|Not Found|NoSuchBucket' aws s3api head-bucket --bucket "$name" >/dev/null && printf '%s\n' "$name"
 	done <<<"$(tagged_arns s3)"
 }
 alive_ecr_repos() {
 	local id
 	for id in $(tagged_arns ecr:repository | while read -r a; do arn_id "$a"; done); do
-		probe_confirm ecr-repository aws ecr describe-repositories --repository-names "$id" \
+		probe_confirm_re ecr-repository 'RepositoryNotFoundException' aws ecr describe-repositories --repository-names "$id" \
 			--query 'repositories[].repositoryName' --output text || true
 	done | tr '\t' '\n' | grep -v '^$' || true
 }
@@ -1066,14 +1079,14 @@ alive_secrets() {
 	local arn
 	while IFS= read -r arn; do
 		[ -n "$arn" ] || continue
-		probe_confirm secretsmanager-secret aws secretsmanager describe-secret --secret-id "$arn" >/dev/null && printf '%s\n' "${arn##*:}"
+		probe_confirm_re secretsmanager-secret 'ResourceNotFoundException' aws secretsmanager describe-secret --secret-id "$arn" >/dev/null && printf '%s\n' "${arn##*:}"
 	done <<<"$(tagged_arns secretsmanager:secret)"
 }
 alive_sqs_queues() {
 	local arn url
 	while IFS= read -r arn; do
 		[ -n "$arn" ] || continue
-		url="$(probe_confirm sqs-queue aws sqs get-queue-url --queue-name "${arn##*:}" --query 'QueueUrl' --output text || true)"
+		url="$(probe_confirm_re sqs-queue 'NonExistentQueue' aws sqs get-queue-url --queue-name "${arn##*:}" --query 'QueueUrl' --output text || true)"
 		[ -n "$url" ] && [ "$url" != "None" ] && printf '%s\n' "${arn##*:}"
 	done <<<"$(tagged_arns sqs)"
 }
@@ -1081,7 +1094,7 @@ alive_sns_topics() {
 	local arn
 	while IFS= read -r arn; do
 		[ -n "$arn" ] || continue
-		probe_confirm sns-topic aws sns get-topic-attributes --topic-arn "$arn" >/dev/null && printf '%s\n' "${arn##*:}"
+		probe_confirm_re sns-topic 'NotFoundException' aws sns get-topic-attributes --topic-arn "$arn" >/dev/null && printf '%s\n' "${arn##*:}"
 	done <<<"$(tagged_arns sns)"
 }
 alive_kms_keys() {
@@ -1089,7 +1102,7 @@ alive_kms_keys() {
 	# can shorten it. Only a key still Enabled/Disabled means the sweep did not reach it.
 	local id state
 	for id in $(tagged_arns kms:key | while read -r a; do arn_id "$a"; done); do
-		state="$(probe_confirm kms-key aws kms describe-key --key-id "$id" --query 'KeyMetadata.KeyState' --output text || true)"
+		state="$(probe_confirm_re kms-key 'NotFoundException' aws kms describe-key --key-id "$id" --query 'KeyMetadata.KeyState' --output text || true)"
 		case "$state" in Enabled | Disabled) printf '%s\n' "$id" ;; esac
 	done
 }
@@ -1517,9 +1530,19 @@ if [ "$SELF_TEST" = "1" ]; then
 				# matches nothing, which is the whole safety property. Answering unconditionally
 				# let that literal be replaced with a nonsense string unnoticed.
 				*"&& Value=='"*)
-					[ -n "$ST_LB_CLUSTER" ] && case "$q" in
-					*"&& Value=='${ST_LB_CLUSTER}'"*) printf '%s\n' "cluster=${ST_LB_CLUSTER}" ;;
-					esac
+					# `if`, NOT `[ -n … ] && case`. That form is the LAST command in this arm, so
+					# an unset ST_LB_CLUSTER made the test fail and st_aws_main return 1 — a FAKE
+					# API FAILURE. Real AWS answers exit 0 with empty output when a JMESPath
+					# predicate matches nothing. Three cases set ST_LB_CLUSTER="" with CLUSTER
+					# non-empty, so cluster_lb_arns burned its retries and wrote a spurious
+					# UNVERIFIABLE: the elbv2 half of sweep_load_balancers reached its verdict
+					# through a stubbed outage rather than through the predicate under test, which
+					# is the "green for the wrong reason" these positive controls exist to catch.
+					if [ -n "$ST_LB_CLUSTER" ]; then
+						case "$q" in
+						*"&& Value=='${ST_LB_CLUSTER}'"*) printf '%s\n' "cluster=${ST_LB_CLUSTER}" ;;
+						esac
+					fi
 					;;
 				# Discovery projects `.Value` to learn the cluster NAME. A separate answer from the
 				# predicate above, so neither can stand in for the other under mutation.
@@ -1765,12 +1788,37 @@ if [ "$SELF_TEST" = "1" ]; then
 		case "$ST_DISC_ON" in
 		all) ;;
 		describe-tags)
-			# The list answers; only the per-resource describe fails.
+			# BOTH lists answer; only the per-resource describes fail. The classic list used to
+			# fall through to `*) return 0` — exit 0 with no output — so discover_cluster's while
+			# loop over it had nothing to iterate and the THIRD fallback's `elb describe-tags`
+			# (the classic one) executed in NO case at all. That is precisely how a bare
+			# probe_confirm survived there through four green discovery cases.
 			case "$1 ${2:-}" in
 			*"describe-tags") ;;
 			"elbv2 describe-load-balancers") printf '%s\n' "$st_lb"; return 0 ;;
+			"elb describe-load-balancers") printf '%s\n' "$ST_CLASSIC_LB"; return 0 ;;
 			*) return 0 ;;
 			esac
+			;;
+		classic-describe-tags)
+			# The elbv2 half answers COMPLETELY and resolves no cluster, so discovery falls all the
+			# way through to the classic describe-tags — the one call the mode above still reaches
+			# only incidentally. Failing exactly this call is what makes the two classic outcomes
+			# (an ANSWER vs a failure to look) separable, which is the whole point of the split.
+			case "$1 ${2:-}" in
+			"elb describe-tags") ;;
+			"elbv2 describe-load-balancers") printf '%s\n' "$st_lb"; return 0 ;;
+			"elbv2 describe-tags") return 0 ;;
+			"elb describe-load-balancers") printf '%s\n' "$ST_CLASSIC_LB"; return 0 ;;
+			*) return 0 ;;
+			esac
+			;;
+		*)
+			# No silent default. An unrecognised mode used to mean "every call fails", which passes
+			# vacuously in any case expecting unverifiable=yes while testing a different state
+			# entirely — a typo'd mode argument would never be noticed.
+			echo "st_disc_aws: unknown ST_DISC_ON='${ST_DISC_ON}'" >&2
+			exit 1
 			;;
 		esac
 		printf '%s\n' "${ST_DISC_ERR}" >&2
@@ -1780,6 +1828,10 @@ if [ "$SELF_TEST" = "1" ]; then
 		probe_reset
 		CLUSTER=""
 		ST_DISC_ON="$2" ST_DISC_RC="$3" ST_DISC_ERR="$4"
+		# Set HERE, not inherited from whichever block ran last: the classic fallback is only
+		# reachable when the classic LIST answers, so leaving this to a previous block's leftover
+		# makes a case's reachability depend on test ORDER.
+		ST_CLASSIC_LB="a19d04c70d3934e4996ce17cb9ae9ea6"
 		local unv=no
 		aws() { st_disc_aws "$@"; }
 		discover_cluster >/dev/null 2>&1 || true
@@ -1802,6 +1854,18 @@ if [ "$SELF_TEST" = "1" ]; then
 	# probe_run: this is the entire reason the per-resource describes use probe_confirm_re.
 	st_discovery_probe_case "a LoadBalancerNotFound on a per-resource describe is an ANSWER, not a failure to look" \
 		describe-tags 255 "An error occurred (LoadBalancerNotFound) when calling the DescribeTags operation" no
+	# ── The CLASSIC per-resource describe, which no case above reaches (#3493 review, finding 1).
+	# discover_cluster's THIRD fallback is the branch a hard-killed run depends on: the cluster and
+	# its instances are gone, an ingress-nginx classic ELB is all that still names the cluster, and
+	# the elbv2 scan cannot see it because it is a different service. Its describe-tags used bare
+	# probe_confirm, so a 404 through a proxy — three alternatives of the looks_gone union — read
+	# as "gone", left CLUSTER="" and took the SCOPE with it: alive_lbs empty, exit 0, live balancer.
+	st_discovery_probe_case "a 404 on the CLASSIC discovery describe is UNVERIFIABLE — it must not empty the SCOPE" \
+		classic-describe-tags 254 "An error occurred (404) when calling the DescribeTags operation: Not Found" yes
+	# The negative control for the same call: LoadBalancerNotFound really is an answer, and reading
+	# it as UNVERIFIABLE would red an otherwise clean teardown over another run's deleted balancer.
+	st_discovery_probe_case "a LoadBalancerNotFound on the CLASSIC discovery describe is an ANSWER" \
+		classic-describe-tags 255 "An error occurred (LoadBalancerNotFound) when calling the DescribeTags operation" no
 	# ⚠️ And the shape that motivated probe_confirm_re over plain probe_confirm: looks_gone is a
 	# union over every resource kind this sweeper touches, so a 404 through a misrouted endpoint or
 	# a proxy hits three of its eleven alternatives. Under probe_confirm that reads as "gone" and
@@ -1834,7 +1898,7 @@ if [ "$SELF_TEST" = "1" ]; then
 	}
 	st_sg_case "cluster-created groups in the run's VPC are swept" "sg-k8sing sg-k8straffic" "sg-k8sing sg-k8straffic"
 	st_sg_case "a VPC with no extra groups yields nothing" "" ""
-	unset -f aws
+	st_aws_restore
 
 	# ── classify_arn. The preflight spent ten weeks calling 28 non-leaks "UNSWEPT and BILLING"
 	# (#2485), so the rule now has a test. $ST_KEY_STATE / $ST_LOG_BYTES are what the stub reports.
@@ -1886,7 +1950,7 @@ if [ "$SELF_TEST" = "1" ]; then
 	st_cls_case "a load balancer bills" "arn:aws:elasticloadbalancing:us-east-1:0:loadbalancer/net/k8s/abc" "BILLING"
 	st_cls_case "a NAT gateway bills" "arn:aws:ec2:us-east-1:0:natgateway/nat-0abc" "BILLING"
 	st_cls_case "an UNKNOWN resource type bills (fail-closed)" "arn:aws:quantumledger:us-east-1:0:ledger/whatever" "BILLING"
-	unset -f aws
+	st_aws_restore
 
 	# ── THE THREE STATES, end to end through verify_swept and the exit code (#3xxx).
 	#
@@ -1982,7 +2046,55 @@ if [ "$SELF_TEST" = "1" ]; then
 		"An error occurred (ResourceNotFoundException): No cluster found" no
 	st_eks_case "a THROTTLE on describe-cluster is UNVERIFIABLE, not gone" \
 		"An error occurred (ThrottlingException): Rate exceeded" yes
-	unset -f aws
+	st_aws_restore
+
+	# ── THE OTHER ELEVEN alive_* PROBES (#3493 review, finding 2). ────────────────────────────────
+	#
+	# alive_eks above is one of TWELVE per-resource confirms, and every one of the others is
+	# reachable ONLY through alive_* → verify_swept → finalize_verification — the verify-only path,
+	# where a wrong CLEAN is not a cosmetic mislabel but an exit 0 over a billing resource. They all
+	# used the wide looks_gone union, whose `Not Found`/`(404)` alternatives exist for s3api
+	# head-bucket, so `An error occurred (404) … Not Found` through a proxy resolved a live Aurora
+	# cluster to "gone" — strictly more expensive than the classic ELB that motivated the fix.
+	#
+	# RDS is the case asserted here because it is the dearest, and because the same narrowing was
+	# applied to all eleven in one pass. s3api is DELIBERATELY excluded from that narrowing: 404 /
+	# Not Found genuinely IS how head-bucket says "gone", which is exactly why the union was too
+	# wide for everyone else.
+	st_alive_case() { # <name> <tagged arn> <describe stderr> <expect unverifiable: yes|no>
+		probe_reset
+		ST_ALIVE_ARN="$2" ST_ALIVE_ERR="$3"
+		aws() {
+			case "$1 ${2:-}" in
+			"resourcegroupstaggingapi get-resources") printf '%s\n' "$ST_ALIVE_ARN"; return 0 ;;
+			esac
+			printf '%s\n' "$ST_ALIVE_ERR" >&2
+			return 254
+		}
+		local got=no
+		alive_rds_clusters >/dev/null 2>&1 || true
+		st_aws_restore
+		probe_has_unverifiable && got=yes
+		if [ "$got" = "$4" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected unverifiable=$4, got ${got}" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_alive_case "a DBClusterNotFound on the RDS confirm is an ANSWER — no false red" \
+		"arn:aws:rds:us-east-1:0:cluster:alethia-e2e" \
+		"An error occurred (DBClusterNotFoundFault) when calling the DescribeDBClusters operation" no
+	# The finding: this 404 hits `Not Found` AND `(404)` in looks_gone, so under plain probe_confirm
+	# a LIVE Aurora cluster dropped out of the leak list and the run exited 0.
+	st_alive_case "a 404 through a proxy on the RDS confirm is UNVERIFIABLE, not 'gone'" \
+		"arn:aws:rds:us-east-1:0:cluster:alethia-e2e" \
+		"An error occurred (404) when calling the DescribeDBClusters operation: Not Found" yes
+	# And a throttle, the shape that has nothing to do with 404 at all.
+	st_alive_case "a THROTTLE on the RDS confirm is UNVERIFIABLE, not 'gone'" \
+		"arn:aws:rds:us-east-1:0:cluster:alethia-e2e" \
+		"An error occurred (ThrottlingException): Rate exceeded" yes
+	st_aws_restore
 
 	if [ "$st_fails" -ne 0 ]; then
 		echo "✗ aws-cleanup.sh self-test: ${st_fails} failure(s)" >&2

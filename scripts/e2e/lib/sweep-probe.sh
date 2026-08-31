@@ -266,28 +266,26 @@ probe_run() {
 probe_confirm() {
 	local ptype="$1"
 	shift
-	[ -n "$PROBE_ERR_DIR" ] || probe_reset
-	local out="" rc=0 attempt=1 delay="$PROBE_RETRY_DELAY" errf err why
-	errf="${PROBE_ERR_DIR}/err.${BASHPID:-$$}"
-	while :; do
-		rc=0
-		out="$("$@" 2>"$errf")" || rc=$?
-		[ "$rc" -eq 0 ] && break
-		err="$(cat "$errf" 2>/dev/null || true)"
-		if declare -F looks_gone >/dev/null 2>&1 && looks_gone "$err"; then
-			return 0 # confirmed absent — CLEAN, and nothing to print
-		fi
-		[ "$attempt" -ge "$PROBE_RETRIES" ] && break
-		[ "$delay" -gt 0 ] && sleep "$delay"
-		attempt=$((attempt + 1))
-		delay=$((delay * 2))
-	done
-	if [ "$rc" -ne 0 ]; then
-		why="$(tr '\n' ' ' <"$errf" 2>/dev/null | tr -s ' ' | cut -c1-200)"
-		probe_note_unverifiable "$ptype" "exit ${rc} after ${attempt} attempt(s)${why:+ — ${why}}"
+	probe_confirm_re "$ptype" "$PROBE_GONE_BY_LOOKS_GONE" "$@"
+}
+
+# The sentinel that makes probe_confirm_re consult the caller's `looks_gone` instead of a regex.
+# Deliberately a shape no cloud's error text can contain, so it can never be mistaken for one.
+PROBE_GONE_BY_LOOKS_GONE='@@probe:looks_gone@@'
+
+# probe_is_gone <stderr-text> <gone-regex-or-sentinel> — THE one place that decides whether an
+# error means "confirmed absent" (CLEAN) or "the API did not answer" (UNVERIFIABLE).
+#
+# probe_confirm and probe_confirm_re were verbatim copies differing only in this test, in a file
+# whose whole thesis is that this decision must live in one place. Two copies of a retry loop, a
+# ledger entry and an output contract can drift independently, and the drift would be invisible
+# until a cloud bills for it.
+probe_is_gone() {
+	if [ "$2" = "$PROBE_GONE_BY_LOOKS_GONE" ]; then
+		declare -F looks_gone >/dev/null 2>&1 && looks_gone "$1"
+		return
 	fi
-	if [ -n "$out" ]; then printf '%s\n' "$out"; fi
-	return "$rc"
+	printf '%s' "$1" | grep -Eqi -- "$2"
 }
 
 # probe_confirm_re <type> <gone-regex> <cmd…> — probe_confirm with an EXPLICIT "gone" shape,
@@ -314,8 +312,8 @@ probe_confirm_re() {
 		out="$("$@" 2>"$errf")" || rc=$?
 		[ "$rc" -eq 0 ] && break
 		err="$(cat "$errf" 2>/dev/null || true)"
-		if printf '%s' "$err" | grep -Eqi -- "$gone_re"; then
-			return 0 # confirmed absent, by the ONE shape this call can answer with — CLEAN
+		if probe_is_gone "$err" "$gone_re"; then
+			return 0 # confirmed absent, by the shape this call can answer with — CLEAN
 		fi
 		[ "$attempt" -ge "$PROBE_RETRIES" ] && break
 		[ "$delay" -gt 0 ] && sleep "$delay"
