@@ -367,6 +367,8 @@ func (u *updater) manualInstruction(method installMethod, version string) error 
 		instruction = fmt.Sprintf("Alpine package installs are updated through apk: download %s/%s, then run `sudo apk add --allow-untrusted %s`", base, name, name)
 	case installDocker:
 		instruction = fmt.Sprintf("Docker images are updated on the host: run `docker pull %s:%s` and recreate the container", dockerImageBase, v)
+	case installHomebrew, installScoop, installStandalone:
+		instruction = "this Alethia installation must be updated by its package manager"
 	default:
 		instruction = "this Alethia installation must be updated by its package manager"
 	}
