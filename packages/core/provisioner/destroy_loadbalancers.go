@@ -228,10 +228,18 @@ func deleteAll(ctx context.Context, out io.Writer, objs []cloudBackedObject, qui
 // blocker was cleared (may the destroy be retried?), what is still holding cloud resources (what
 // does the operator go and delete?), and whether we simply could not see (a claim we must not make).
 type releaseOutcome struct {
-	// Clean is true only when every cloud-backed object was released, or there were none. It is the
-	// ONE field the retry is allowed to branch on: retrying a destroy without having changed
-	// anything is just paying twice for the same failure.
+	// Clean is true only when every cloud-backed object was released, or there were none.
 	Clean bool
+	// Released counts what this attempt actually DELETED, and it is what separates the two facts
+	// Clean folds together: "the blocker was cleared" and "there was never a blocker".
+	//
+	// The retry branches on Clean to decide whether to pay for a SECOND `tofu destroy` — 10-15
+	// minutes, the longest thing in the job — and its own rationale is "the second release
+	// positively removed what the first could not". A cluster with zero LoadBalancer Services
+	// returns Clean too, so a destroy that failed for an unrelated reason bought a second full
+	// destroy that changed nothing: precisely the "paying twice for the same failure" the guard
+	// forbids in the sentence above it.
+	Released int
 	// Remaining names what was still holding a cloud load balancer when we stopped waiting.
 	Remaining []cloudBackedObject
 	// Unknown records that the cluster stopped answering, so Remaining is not a complete list —
@@ -241,6 +249,16 @@ type releaseOutcome struct {
 	// Skipped records why the step did not run at all (no cluster access, no state outputs). It is
 	// not Clean: nothing was established.
 	Skipped string
+	// NoCluster narrows Skipped to the one case that is PERMANENT: this environment's state names
+	// no API endpoint at all, so there was never a control plane to hold a load balancer. Every
+	// other skip is potentially transient — a throttled apiserver, an exec-credential refresh, a
+	// state-proxy blip — and those are worth a second attempt.
+	//
+	// It is a separate field rather than a match on Skipped's text because the two consumers both
+	// decide something expensive with it (whether to retry a destroy, whether to alarm an
+	// operator), and a sentence written for a human is not a predicate. Reworded once and both
+	// silently change behaviour.
+	NoCluster bool
 }
 
 // billingWarning renders the block appended to a failed destroy's error, or "" when there is
@@ -251,9 +269,36 @@ type releaseOutcome struct {
 // sweeps cloud load balancers after a failed destroy. So on a customer's teardown this text is the
 // whole signal that something is still running and still charging — which is why it names the
 // objects, says nothing will remove them, and gives the two ways out.
-func (r releaseOutcome) billingWarning() string {
+func (r releaseOutcome) billingWarning() string { return r.warning(toneAlarm) }
+
+// warningTone is the volume the same facts are rendered at. A destroy that FAILED and one that
+// SUCCEEDED owe the reader different things about an unreleased load balancer, and the difference
+// is presentation, not fact — so it is a parameter here rather than a second renderer somewhere
+// else. The comment on postDestroySuccessNotice used to claim this ("they cannot drift into
+// disagreeing about what is still held") while its Skipped arm hand-wrote its own sentence.
+type warningTone int
+
+const (
+	toneAlarm warningTone = iota // the destroy FAILED: the loudest thing the operator will see
+	toneNote                     // the destroy SUCCEEDED: say what did not happen, quietly
+)
+
+func (r releaseOutcome) warning(tone warningTone) string {
 	if r.Clean {
 		return ""
+	}
+	// A BARE Skipped — nothing observed, the cluster never went unreadable mid-wait — is the only
+	// outcome whose volume the tone changes. On a succeeded destroy it is a note, and on an
+	// environment that never had a control plane it is nothing at all: alarming on every repeat
+	// teardown of an already-gone environment is how a reader learns to scroll past the alarm that
+	// matters.
+	if tone == toneNote && r.Skipped != "" && len(r.Remaining) == 0 && !r.Unknown {
+		if r.NoCluster {
+			return ""
+		}
+		return fmt.Sprintf("   Note: the pre-destroy load-balancer release did not run (%s). "+
+			"Everything in the state file is gone; a Service of type LoadBalancer or an Ingress "+
+			"would not have been, so check the cloud console if this environment exposed one.", r.Skipped)
 	}
 	var b strings.Builder
 	b.WriteString("\n\n⚠️  CLOUD LOAD BALANCERS MAY STILL EXIST AND STILL BILL.\n")
@@ -309,6 +354,7 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) (releaseOutco
 	}
 	if len(objs) == 0 {
 		fmt.Fprintln(out, "   No LoadBalancer Services or Ingresses — nothing outside the state file to release.")
+		// Released stays 0: nothing was cleared, because nothing was held.
 		return releaseOutcome{Clean: true}, nil
 	}
 
@@ -343,7 +389,7 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) (releaseOutco
 			lastErr, consecutiveErrs = lerr, consecutiveErrs+1
 		case len(remaining) == 0:
 			fmt.Fprintf(out, "   All cloud-backed objects released after %s.\n", time.Since(started).Round(time.Second))
-			return releaseOutcome{Clean: true}, nil
+			return releaseOutcome{Clean: true, Released: len(objs)}, nil
 		default:
 			lastErr, consecutiveErrs = nil, 0
 			lastKnown = remaining
