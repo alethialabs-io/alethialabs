@@ -467,13 +467,22 @@ func soakAddonReRead(t *testing.T, ctx context.Context, kc string, p soakParams,
 }
 
 // soakKubectl runs a kubectl command against the given kubeconfig, bounded by timeout.
+// ⚠️ Stderr stays OUT of the value, for the reason nsKubectl's comment gives: kubectl writes
+// warnings on calls that SUCCEED, and this helper's callers parse what it returns.
+//
+// The explicit KUBECONFIG in the environment is kept: `kubectlRead` passes `--kubeconfig` on the
+// argv, but a chart or exec-credential plugin invoked BY kubectl reads the variable.
 func soakKubectl(ctx context.Context, kc string, timeout time.Duration, args ...string) ([]byte, error) {
-	cctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	full := append([]string{"--kubeconfig", kc}, args...)
-	cmd := exec.CommandContext(cctx, "kubectl", full...)
-	cmd.Env = append(os.Environ(), "KUBECONFIG="+kc)
-	return cmd.CombinedOutput()
+	prev, had := os.LookupEnv("KUBECONFIG")
+	_ = os.Setenv("KUBECONFIG", kc)
+	defer func() {
+		if had {
+			_ = os.Setenv("KUBECONFIG", prev)
+			return
+		}
+		_ = os.Unsetenv("KUBECONFIG")
+	}()
+	return kubectlRead(ctx, timeout, kc, args...)
 }
 
 // soakKubectlApply pipes a manifest to `kubectl apply -f -`.

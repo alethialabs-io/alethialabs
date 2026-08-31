@@ -13,18 +13,26 @@ package e2e
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
 )
 
 // nsKubectl runs a bounded kubectl against the host-usable kubeconfig the runner wrote.
+//
+// ⚠️ STDERR STAYS OUT OF THE VALUE. This used to be CombinedOutput, and 19 of its 54 call sites are
+// jsonpath reads whose stdout IS a value — several of them assertions that decide a PAID run.
+// kubectl writes to stderr on calls that SUCCEED (a `Warning:` deprecation header, or an
+// exec-credential plugin notice — the ordinary shape of authenticating to EKS, GKE and AKS), so
+// fusing the streams broke the annotation assertions in BOTH directions at once: an absent
+// annotation read as PRESENT because `strings.TrimSpace(out) != ""` was satisfied by the warning,
+// and a real value arrived with the warning glued to its front.
+//
+// The error still carries kubectl's own words — via kubectlErrorLine, the same line-picking
+// kubectlRead uses, which deliberately skips the leading warning to find the real cause — so
+// callers that print `%v` lose nothing.
 func nsKubectl(ctx context.Context, kc string, args ...string) (string, error) {
-	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	full := append([]string{"--kubeconfig", kc}, args...)
-	out, err := exec.CommandContext(cctx, "kubectl", full...).CombinedOutput()
+	out, err := kubectlRead(ctx, 60*time.Second, kc, args...)
 	return string(out), err
 }
 

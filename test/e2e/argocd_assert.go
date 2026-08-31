@@ -1689,12 +1689,12 @@ const argoReconcileInterval = 3 * time.Minute
 // readArgoReconciledAt reads an Application's last reconcile timestamp. Best-effort: this runs on an
 // already-failing path and an empty string is handled by argoSyncStaleness as "cannot say".
 func readArgoReconciledAt(ctx context.Context, kubeconfigPath, app string) string {
-	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+	// Same read, same reason: the value is parsed as a timestamp by argoSyncStaleness, and a
+	// `Warning:` line glued to the front makes a perfectly good reconciledAt unparseable — which
+	// this function reports as "cannot say" rather than as the read problem it is.
+	out, err := kubectlRead(ctx, 30*time.Second, kubeconfigPath,
 		"-n", "argocd", "get", "applications.argoproj.io", app,
 		"-o", "jsonpath={.status.reconciledAt}")
-	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return ""
 	}
@@ -2159,9 +2159,13 @@ func argoHardRefreshVerdict(ctx context.Context, kubeconfigPath, target, app str
 	if out, err := inPod("argocd", "app", "get", app, "--core", "--hard-refresh", "-o", "json"); err != nil {
 		return interpretHardRefresh("", err, out)
 	}
-	raw, err := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfigPath,
+	// kubectlRead, NOT CombinedOutput: this value becomes a VERDICT. interpretHardRefresh maps the
+	// string to Synced/OutOfSync, and kubectl writes a `Warning:` or an exec-credential notice to
+	// stderr on calls that SUCCEED — so a fused `Warning: …\nSynced` matches neither, and a
+	// correct hard refresh reads as an unrecognised state.
+	raw, err := kubectlRead(ctx, 20*time.Second, kubeconfigPath,
 		"-n", "argocd", "get", "applications.argoproj.io", app,
-		"-o", "jsonpath={.status.sync.status}").CombinedOutput()
+		"-o", "jsonpath={.status.sync.status}")
 	if err != nil {
 		return interpretHardRefresh("", err, strings.TrimSpace(string(raw)))
 	}
