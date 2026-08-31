@@ -96,6 +96,22 @@ const BEGIN = "<!-- BEGIN GENERATED: programme-rollup · tree-derived · DO NOT 
 const END = "<!-- END GENERATED: programme-rollup -->";
 
 /**
+ * How far the deploy spine got, LOWEST FIRST — the ladder `demos/proofs/capture-proof.sh` writes into
+ * every bundle's `provision-summary.json` as `deploy_stage`.
+ *
+ * It is a monotone ladder because that is how the emitter builds it: `deploy_stage` starts at
+ * `queued` and each successive `log_has` for the next banner OVERWRITES it, so the recorded value is
+ * the HIGHEST rung whose banner appeared. That single property is what makes "did the run reach rung
+ * N?" answerable at all, and it is why this list must stay in the emitter's order rather than in any
+ * order that reads nicely here.
+ *
+ * A hand-kept copy of another file's vocabulary is how two sources of truth drift, so `--self-test`
+ * parses the ladder back out of capture-proof.sh and fails if the two disagree — the same treatment
+ * FULL_EXCLUDES already gets.
+ */
+export const DEPLOY_STAGES = ["queued", "planning", "applying", "applied", "deployed", "argocd-installed", "argocd-ready"];
+
+/**
  * The dimensions one cloud must clear, in the order they are attempted, and the gate that turns each
  * on. Vocabulary is `provisioning-e2e.sh`'s (`floor|maxconfig|addons|byo|day2|full`) so a row it
  * appends and a cell rendered here always name the same thing.
@@ -112,14 +128,35 @@ const END = "<!-- END GENERATED: programme-rollup -->";
 //               fidelity table). Always reachable via a dispatch; there is no repo variable to set,
 //               so reporting it "unwired" sends somebody hunting for a variable that cannot exist.
 //   `repo`    — a maintainer sets a repo variable or secret. THIS is what "unwired" means.
+//
+// `reachedAt` is the rung of DEPLOY_STAGES at which this dimension's surface FIRST comes into play
+// — the earliest point at which a composite failure could honestly be this dimension's fault. It
+// exists because a `full` bar credits and DISCREDITS several columns at once, and a bar that died in
+// `apply` never asserted the add-on surface, the GitOps surface or a day-2 access path. See
+// `compositeReached` for the one direction this licenses (#3243).
+//
+// EVERY value here is the EARLIEST plausible rung, not the likeliest one, because the inference is
+// one-directional: it may only rule a dimension OUT. Picking a higher rung would erase reds the
+// evidence does not answer for.
 const DIMENSIONS = [
-	{ id: "floor", label: "floor", gate: "(the cloud gate alone)", gates: [], what: "real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set" },
-	{ id: "maxconfig", label: "all kinds", gate: "ALETHIA_E2E_MAX_CONFIG", gates: [{ name: "ALETHIA_E2E_MAX_CONFIG", kind: "derived" }], what: "every kind this cloud offers lands in tofu state (or converges as its named Application)" },
+	// `queued`, the bottom rung: the floor IS the spine, so a bar that failed anywhere failed
+	// somewhere on it. There is no stage at which a composite FAIL stops being a floor concern, and
+	// saying so explicitly beats omitting the field and leaving the next reader to guess whether it
+	// was forgotten.
+	{ id: "floor", label: "floor", gate: "(the cloud gate alone)", gates: [], reachedAt: "queued", what: "real apply → cluster_ready → ArgoCD Healthy+Synced over the derived app set" },
+	// `applying`: the extra kinds are created by the SAME tofu apply as the floor's, so a bar that
+	// never started applying created none of them and cannot have failed on one. This is the rung
+	// azure's 2026-08-25 bar DID reach — its cache kind is a maxconfig kind and is what died — so
+	// that cell keeps its red.
+	{ id: "maxconfig", label: "all kinds", gate: "ALETHIA_E2E_MAX_CONFIG", gates: [{ name: "ALETHIA_E2E_MAX_CONFIG", kind: "derived" }], reachedAt: "applying", what: "every kind this cloud offers lands in tofu state (or converges as its named Application)" },
 	{
 		id: "addons",
 		label: "18 add-ons",
 		gate: "ALETHIA_E2E_ALL_ADDONS",
 		gates: [{ name: "ALETHIA_E2E_ALL_ADDONS", kind: "derived" }],
+		// The marketplace add-ons converge as ArgoCD Applications. Nothing about them is asserted, or
+		// can be, before ArgoCD exists — which is exactly what azure's 2026-08-25 bar never got to.
+		reachedAt: "argocd-installed",
 		what: "all 18 marketplace add-ons Healthy+Synced",
 		// THE ONE DIMENSION WHOSE COMPOSITE CREDIT COULD NEVER BE WITHHELD (#2671).
 		//
@@ -150,7 +187,9 @@ const DIMENSIONS = [
 	//
 	// NOTHING IS RETRACTED. The rows are true — the label was wrong, not the evidence — and `aliases`
 	// carries them forward: ledger rows filed under `byo` key onto this column unchanged.
-	{ id: "gitops", label: "GitOps repos", aliases: ["byo"], gate: "E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN", gates: [{ name: "E2E_ARGO_APPS_REPO", kind: "repo" }, { name: "E2E_GIT_TOKEN", kind: "repo" }], what: "a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource" },
+	// `argocd-installed`, for the same reason as `addons`: the customer repo and the BYO chart are
+	// ArgoCD Applications, and there is no such surface to fail on until ArgoCD is up.
+	{ id: "gitops", label: "GitOps repos", aliases: ["byo"], gate: "E2E_ARGO_APPS_REPO + E2E_GIT_TOKEN", gates: [{ name: "E2E_ARGO_APPS_REPO", kind: "repo" }, { name: "E2E_GIT_TOKEN", kind: "repo" }], reachedAt: "argocd-installed", what: "a customer apps-destination repo and a BYO Helm chart converge, and each manages at least one real resource" },
 	// The proof the old `byo` column CLAIMED and never delivered: test/e2e/t2_byo_iac.go's seven-job
 	// custody chain. It had never executed in CI — ALETHIA_E2E_BYO_IAC was a step-level `env:` key in
 	// e2e-nightly.yml and a step-level key wins over $GITHUB_ENV, so no dimension could switch it on.
@@ -160,7 +199,11 @@ const DIMENSIONS = [
 	// not compose this dimension, so a full-bar PASS must never credit it. The self-test READS that
 	// shell file and fails if the two disagree, because a hand-kept second copy is how they drift.
 	{ id: "byo-iac", label: "BYO-IaC", gate: "ALETHIA_E2E_BYO_IAC", gates: [{ name: "ALETHIA_E2E_BYO_IAC", kind: "derived" }], composedByFull: false, what: "a customer OpenTofu root module is refused when unsafe, applied through the state proxy, drifts, heals and destroys — with state cleared" },
-	{ id: "day2", label: "day-2", gate: "ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS", gates: [{ name: "ALETHIA_E2E_SOAK", kind: "derived" }, { name: "E2E_DAY2_ACCESS", kind: "repo" }], what: "a real access path beyond the soak — kubeconfig / ArgoCD surface" },
+	// `deployed`, deliberately one rung BELOW the ArgoCD surface it mostly exercises. Day-2 access is
+	// "kubeconfig / ArgoCD surface", so `argocd-ready` would be the tighter guess — and a tighter
+	// guess here erases reds on a hunch. `deployed` is the point past which a day-2 failure is at
+	// least possible, which is all this is allowed to assert.
+	{ id: "day2", label: "day-2", gate: "ALETHIA_E2E_SOAK (dimension) / E2E_DAY2_ACCESS", gates: [{ name: "ALETHIA_E2E_SOAK", kind: "derived" }, { name: "E2E_DAY2_ACCESS", kind: "repo" }], reachedAt: "deployed", what: "a real access path beyond the soak — kubeconfig / ArgoCD surface" },
 	// MVP predicate 4's second half. The reachability bar already answers the first — the command
 	// surface resolves, with zero CLI gaps — but the product has never been PROVISIONED through the
 	// binary: the T2 spine writes the DEPLOY job straight into Postgres, so the CLI has never been
@@ -346,6 +389,56 @@ export function assertsFullAddOnSweep(summary, required) {
 	return expected >= required && asserted >= required ? "yes" : "no";
 }
 
+/**
+ * Did this run get FAR ENOUGH for `requiredStage`'s dimension to be at fault? `"yes"` · `"no"` ·
+ * `"unknown"`.
+ *
+ * THE DEFECT THIS ANSWERS (#3243). `full` credits and discredits four columns together, and the two
+ * directions were reading DIFFERENT facts. `compositeCredits` already refuses to CREDIT a dimension
+ * from a bar PASS unless the bar demonstrably exercised it — `composedByFull`, the repo gates, and
+ * (for `addons`) the bundle's own assertion counts. Nothing symmetrical governed the DISCREDIT, so a
+ * bar that died in `apply` marked every composed column FAIL, including three surfaces it never
+ * touched. `azure/addons` read ❌ off a 2026-08-25 bar that died on the `cache` kind at
+ * `deploy_stage: applying`, 1724 seconds in and long before ArgoCD existed: nobody has ever observed
+ * an add-on fail on azure, and the cell said somebody had.
+ *
+ * ONE DIRECTION ONLY, AND THAT IS THE WHOLE DESIGN. `deploy_stage` supports the inference "the run
+ * never reached rung N, so the failure cannot belong to a dimension that begins at rung N". It does
+ * NOT support the converse — reaching `argocd-ready` does not make a failure the add-ons' fault, it
+ * only stops ruling them out. So this rules dimensions OUT and never in, and a `"yes"` leaves the
+ * red exactly where it was.
+ *
+ * THREE-VALUED, AND `"unknown"` KEEPS THE RED — the opposite of `assertsFullAddOnSweep`, on purpose.
+ * There, refusing was safe: the cost of being wrong is a cell reading `never_run` until somebody
+ * re-runs it. Here the costs are reversed. Withholding a discredit turns ❌ into `never_run`, which
+ * un-ranks the cell and drops a diagnosed failure off the board — so an unreadable bundle must not
+ * be able to erase a recorded FAIL. Only a bundle that positively says the run stopped short does
+ * that. Both directions still land in `never_run` and NEITHER can produce `proven`: turning a false
+ * FAIL into a false PASS would be a worse bug than the one this fixes.
+ *
+ * @param {unknown} summary the run's parsed `provision-summary.json`, or null when unreadable
+ * @param {unknown} requiredStage the dimension's `reachedAt`
+ * @returns {"yes"|"no"|"unknown"}
+ */
+export function compositeReached(summary, requiredStage) {
+	if (!summary || typeof summary !== "object") return "unknown";
+	// A stage this file's ladder does not carry means capture-proof.sh has grown a rung and the two
+	// vocabularies have drifted. `indexOf` would answer -1, and -1 compares as "before everything",
+	// which would silently withhold every discredit — the "nothing found" branch reading as "nothing
+	// wrong". `--self-test` fails the build on that drift; here it is `unknown`, which keeps the red.
+	const stage = /** @type {{deploy_stage?: unknown}} */ (summary).deploy_stage;
+	if (typeof stage !== "string") return "unknown";
+	const got = DEPLOY_STAGES.indexOf(stage);
+	if (got < 0) return "unknown";
+	// The same trap pointed the other way: an undeclared or misspelled `reachedAt` also answers -1,
+	// and `got >= -1` is true for every run, which would grant every discredit and quietly restore
+	// the bug. A requirement nobody declared is not a requirement of zero.
+	if (typeof requiredStage !== "string") return "unknown";
+	const need = DEPLOY_STAGES.indexOf(requiredStage);
+	if (need < 0) return "unknown";
+	return got >= need ? "yes" : "no";
+}
+
 export const DIMENSION_ALIASES = new Map(DIMENSIONS.flatMap((d) => (d.aliases ?? []).map((a) => [a, d.id])));
 
 /** Resolve a ledger row's dimension token to its column id. */
@@ -490,12 +583,34 @@ const STATE_GLYPH = {
  * and the hardcoded sentence below would confidently name the wrong cause for every new reason — a
  * refusal that names a cause it did not establish is a defect this file has already shipped twice.
  *
+ * `compositeDiscredits` is the SAME question pointed at a FAIL, and it exists because the two
+ * directions were not symmetrical (#3243). A composite claim that counts against this dimension is a
+ * positive statement — "this dimension was exercised, and it broke" — so it has to earn the same
+ * thing a credit does: evidence that the bar reached the dimension at all. `azure/addons` read ❌ off
+ * a bar that died in `apply` on the `cache` kind, which is a cause never observed on that surface.
+ *
+ * BOTH REFUSALS LAND IN `never_run`, AND NEITHER CAN REACH `proven`. A withheld discredit removes a
+ * verdict; it never manufactures one. Turning a false FAIL into a false PASS would be strictly worse
+ * than the bug being fixed here, so the refusal path returns the same honest "nothing was measured"
+ * state as every other refusal, carrying a `why` that says which of the two it was.
+ *
  * @returns {{state: string, why: string, row: object|null}}
  */
-export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCredits = true, compositeRefusedWhy = null }) {
+export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCredits = true, compositeRefusedWhy = null, compositeDiscredits = true, compositeWithheldWhy = null }) {
 	const direct = claims.get(`${cloud}/${dimension}`) ?? null;
 	const compositeClaim = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
-	const composite = compositeCredits ? compositeClaim : null;
+	// Which direction is this composite claim pointing? A FAIL counts AGAINST the dimension, so the
+	// caller's discredit gate governs it; everything else counts FOR it (or is neutral) and the credit
+	// gate governs. Reading one gate for both is the asymmetry #3243 names: a bar PASS could not
+	// credit a green-skipped layer, and the identical bar FAIL discredited it anyway.
+	//
+	// BLOCKED is deliberately left on the credit side and is NOT reach-checked. Its rendered sentence
+	// is "the harness refused before spending", which is true of every dimension in a refused bar and
+	// attributes the failure to none of them. There is no false accusation to withhold.
+	const against = compositeClaim !== null && compositeClaim.verdict === "FAIL";
+	const counts = against ? compositeDiscredits : compositeCredits;
+	const refusedWhy = against ? compositeWithheldWhy : compositeRefusedWhy;
+	const composite = counts ? compositeClaim : null;
 	// A direct claim beats the composite: it is the more specific statement about this dimension.
 	const row = direct ?? composite;
 	if (row === null) {
@@ -504,8 +619,8 @@ export function deriveCell({ cloud, dimension, claims, bundleExists, compositeCr
 		const why =
 			compositeClaim === null
 				? "no surviving ledger claim"
-				: compositeRefusedWhy
-					? `no surviving ledger claim — ${compositeRefusedWhy}`
+				: refusedWhy
+					? `no surviving ledger claim — ${refusedWhy}`
 					: `no surviving ledger claim — this cloud's \`${COMPOSITE}\` run does NOT count for this dimension, whose layer green-skips until its repo gate is set`;
 		return { state: STATE.neverRun, why, row: null };
 	}
@@ -684,41 +799,87 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 	//                   asserting what this dimension claims. This one is per-CLOUD, because the
 	//                   evidence is a bundle and each cloud has its own — which is why the credit is
 	//                   computed inside the loop rather than once per dimension (#2671).
-	const compositeCreditsFor = new Map(
+	//
+	// THE FIRST TWO ARE STRUCTURAL AND GOVERN BOTH DIRECTIONS (#3243). "`full` never turned this
+	// switch on" and "the layer green-skipped for want of a repo variable" both say the code did not
+	// run — which disqualifies the bar as evidence FOR the dimension and equally as evidence AGAINST
+	// it. Only the third condition is direction-specific, and it forks: a PASS must satisfy
+	// `asserts()`, a FAIL must satisfy `reachedAt`.
+	const compositeAppliesTo = new Map(
 		DIMENSIONS.map((d) => [
 			d.id,
 			d.composedByFull !== false && d.gates.filter((g) => g.kind === "repo").every((g) => board.gateState(g.name) === "wired"),
 		]),
 	);
+	/** Cells whose composite DISCREDIT was withheld because the bar stopped short of the dimension. */
+	const unreachedComposites = [];
 	for (const cloud of clouds) {
 		grid[cloud] = {};
+		const compositeClaim = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
+		const compositeBundle = compositeClaim && bundleKind(compositeClaim.bundle) === "path" ? compositeClaim.bundle : null;
+		const compositeSummary = compositeBundle ? readBundleSummary(path.join(bundlePath(compositeBundle), "provision-summary.json")) : null;
 		for (const d of DIMENSIONS) {
-			let credits = compositeCreditsFor.get(d.id);
+			const applies = compositeAppliesTo.get(d.id);
+			let credits = applies;
+			let discredits = applies;
 			// The default message names the repo-gate cause, which is the ONLY cause it could have had
 			// before this. A refusal that names a cause it did not establish is the defect this file
 			// has now been fixed for twice, so every new refusal carries its own sentence.
 			let refusedWhy;
-			if (credits && typeof d.asserts === "function") {
-				const compositeClaim = claims.get(`${cloud}/${COMPOSITE}`) ?? null;
-				const bundle = compositeClaim && bundleKind(compositeClaim.bundle) === "path" ? compositeClaim.bundle : null;
-				const summary = bundle ? readBundleSummary(path.join(bundlePath(bundle), "provision-summary.json")) : null;
-				const verdict = d.asserts(summary, assertRequirements[d.id]);
+			let withheldWhy;
+			// ── the CREDIT half: a PASS must show it asserted what the column claims (#2671).
+			//
+			// Guarded on the verdict, which it was not before. `assertsFullAddOnSweep` asks a
+			// PASS-shaped question and its refusal prose is PASS-shaped prose — "crediting it would
+			// promote a floor-sized run to a full one", "a re-run closes it". Run against a FAIL bundle
+			// it answered `unknown` (a bar that died in apply records no assertion counts) and reported
+			// a bar that BROKE as one that "could have been credited". Same wrong-cause class.
+			//
+			// `compositeClaim !== null` for the same reason: with no `full` row at all there is no credit
+			// to refuse, and reporting one made the note below name clouds that have never run a bar.
+			if (credits && compositeClaim !== null && compositeClaim.verdict !== "FAIL" && typeof d.asserts === "function") {
+				const verdict = d.asserts(compositeSummary, assertRequirements[d.id]);
 				if (verdict === "no") {
 					credits = false;
 					refusedWhy =
 						`this cloud's \`${COMPOSITE}\` run did not assert what this column claims — its own bundle ` +
-						`\`${bundle}\` records a smaller add-on sweep than the ${assertRequirements[d.id]} the catalog carries, ` +
+						`\`${compositeBundle}\` records a smaller add-on sweep than the ${assertRequirements[d.id]} the catalog carries, ` +
 						`so crediting it would promote a floor-sized run to a full one`;
 				} else if (verdict === "unknown") {
 					credits = false;
 					refusedWhy =
 						`this cloud's \`${COMPOSITE}\` run cannot be shown to have asserted what this column claims — ` +
-						`${bundle ? `its bundle \`${bundle}\` records no assertion-time add-on counts` : "it has no committed bundle to read"}. ` +
+						`${compositeBundle ? `its bundle \`${compositeBundle}\` records no assertion-time add-on counts` : "it has no committed bundle to read"}. ` +
 						`Unmeasured is not proven: re-run it, or record a direct claim for this dimension`;
-					unmeasuredComposites.push(`${cloud}/${d.id}${bundle ? ` (\`${bundle}\`)` : ""}`);
+					unmeasuredComposites.push(`${cloud}/${d.id}${compositeBundle ? ` (\`${compositeBundle}\`)` : ""}`);
 				}
 			}
-			grid[cloud][d.id] = deriveCell({ cloud, dimension: d.id, claims, bundleExists, compositeCredits: credits, compositeRefusedWhy: refusedWhy });
+			// ── the DISCREDIT half: a FAIL must show the bar REACHED this dimension (#3243).
+			//
+			// Only `"no"` withholds. `"unknown"` keeps the red — see `compositeReached` for why the safe
+			// direction is the opposite of the credit half's. And a withheld discredit yields
+			// `never_run`, never `proven`: this removes an unearned verdict, it never invents one.
+			if (discredits && compositeClaim?.verdict === "FAIL") {
+				const reach = compositeReached(compositeSummary, d.reachedAt);
+				if (reach === "no") {
+					discredits = false;
+					withheldWhy =
+						`this cloud's \`${COMPOSITE}\` run FAILED, but its own bundle \`${compositeBundle}\` records ` +
+						`\`deploy_stage: "${compositeSummary?.deploy_stage}"\` — it stopped before \`${d.reachedAt}\`, where this column's surface ` +
+						`begins, so it never exercised this dimension and cannot have failed on it. NOT a pass: nothing here has been measured`;
+					unreachedComposites.push({ cloud, dimension: d.id, bundle: compositeBundle, stage: String(compositeSummary?.deploy_stage ?? ""), reachedAt: String(d.reachedAt ?? "") });
+				}
+			}
+			grid[cloud][d.id] = deriveCell({
+				cloud,
+				dimension: d.id,
+				claims,
+				bundleExists,
+				compositeCredits: credits,
+				compositeRefusedWhy: refusedWhy,
+				compositeDiscredits: discredits,
+				compositeWithheldWhy: withheldWhy,
+			});
 		}
 	}
 
@@ -1288,7 +1449,25 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 		);
 	}
 
-	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, supersededReds, compositeReds, unmappedReds, costCells, gateReality, cloudGates };
+	// The same argument for the DISCREDIT direction (#3243). A withheld discredit removes a ❌ from
+	// the grid, and a verdict that silently DISAPPEARS is worse than one that was wrong: somebody
+	// looked at that cell yesterday. So say which cells lost a red and why, every run.
+	//
+	// Reported ONLY where it changed the answer. A direct claim beats the composite, so a cell that
+	// is proven from its own ledger row never saw this rule at all, and listing it would advertise a
+	// correction nobody made — the same wrong-cause reporting this whole mechanism exists to stop.
+	{
+		const changed = unreachedComposites.filter((u) => grid[u.cloud]?.[u.dimension]?.state === STATE.neverRun);
+		if (changed.length > 0) {
+			notes.push(
+				`${changed.length} cell(s) are NOT credited with their cloud's \`${COMPOSITE}\` FAIL, because that bar stopped before their surface: ` +
+					`${changed.map((u) => `${u.cloud}/${u.dimension} (\`${u.bundle}\` reached \`${u.stage}\`, this column begins at \`${u.reachedAt}\`)`).join(", ")}. ` +
+					`They read never-run, NOT proven — the bar never measured them in either direction, and a standalone dispatch is what settles it.`,
+			);
+		}
+	}
+
+	return { rows, claims, clouds, notes, kindCount: spine.kinds.length, grid, carriage, deferredCells, ceilingCells, cli, cliBlockers, gates, unsupported, tally, next, failures, exclusionCounts, board, reds, staleCitations, contested, supersededReds, compositeReds, unmappedReds, costCells, gateReality, cloudGates, unreachedComposites };
 }
 
 // ───────────────────────────── rendering ─────────────────────────────
