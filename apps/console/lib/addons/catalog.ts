@@ -131,7 +131,7 @@ interface ExternalDnsProviderAuth {
 }
 
 /** The provider ids the catalog offers. */
-const EXTERNAL_DNS_PROVIDER_IDS = ["cloudflare", "digitalocean", "hetzner", "aws", "google", "azure"] as const;
+export const EXTERNAL_DNS_PROVIDER_IDS = ["cloudflare", "digitalocean", "hetzner", "aws", "google", "azure"] as const;
 
 /**
  * Exported so `catalog-export.ts` can map a CLOUD to the external-dns provider that cloud manages
