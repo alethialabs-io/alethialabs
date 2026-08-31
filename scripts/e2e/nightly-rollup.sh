@@ -44,8 +44,10 @@
 #
 # Writes into OUT_DIR:
 #   summary.md              the step-summary block (table + coverage)
-#   state.env               REDS / SKIPS / JOB_NO_SUMMARY / DIED_EARLY / ENABLED_N / SKIP_N / TOTAL
-#                           / COV_TITLE / COV_LABEL / DIMENSION / DIMENSION_LABEL
+#   state.env               REDS / SKIPS / JOB_NO_SUMMARY / DIED_EARLY / POST_CAPTURE / UNSWEPT /
+#                           ENABLED_N / SKIP_N / TOTAL / COV_TITLE / COV_LABEL / DIMENSION /
+#                           DIMENSION_LABEL
+#   failed-steps-<p>.txt    the failing step names for a POST_CAPTURE leg — written only for those
 #   issue-red-<id>.md       one body per red leg, with its title on the first `title:` line
 #   issue-body-coverage.md  the standing coverage-issue body
 #   ledger.tsv              provider<TAB>verdict<TAB>detail<TAB>bundle — one row per PASS/FAIL leg;
@@ -226,6 +228,77 @@ jobs_payload_is_broken() {
 		'[(.jobs // [])[] | select(.name | startswith($pre))] | length == 0' "$JOBS_JSON" >/dev/null 2>&1
 }
 
+# in_list <space-separated list> <item> — membership, the one shape this file's accumulators use.
+# Written once because the ad-hoc `case " $list " in *" $item "*)` it replaces is easy to get
+# subtly wrong (drop either padding space and `aws` starts matching inside `awsx`).
+in_list() {
+	case " ${1} " in
+	*" ${2} "*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# job_conclusion <provider> — the Actions conclusion of this cloud's matrix JOB (#2512).
+# Echoes success | failure | cancelled | skipped | … | unknown.
+#
+# WHY A PASSING BUNDLE IS NOT A PASSING LEG. `Capture proof` is NOT the last step of the provision
+# job. `Guaranteed teardown` and `CLI-only demo bar` both run after it, deliberately — the bar was
+# MOVED below the capture (see e2e-nightly.yml, "Only the ORDER moves, so the provisioning proof
+# gets to run and record a real verdict before the bar reports on itself") while keeping its verdict
+# fail-closed. That reordering created a leg state this rollup had no vocabulary for: bundle says
+# `outcome: success`, job says `failure`.
+#
+# Nothing classified such a leg as red, so `reds` came back EMPTY on a `failure` matrix and the
+# matrix fallback below fired — filing "matrix RED (<dim> · no per-leg proof)", a body asserting
+# that no cloud produced a bundle, in the very same job that had just read that cloud's bundle and
+# appended its PASS row to the parity ledger. It happened four nights running: #2512 (floor, run
+# 32816061207, azure), #2631 (byo, 32878485034), #2640 (addons, 32883521925) and #2657 (day2,
+# 32886071207) — all four with `recorded: PASS → e2e-proof-<cloud>-<run>` in the same step log.
+#
+# e2e-nightly.yml's own header already promised this cross-check — "derived from each leg's
+# provision-summary.json, cross-checked against that leg's JOB CONCLUSION" — but only EXISTENCE was
+# ever read (job_exists). This reads the conclusion the comment names.
+#
+# `unknown` is deliberate and distinct from every real conclusion: it means we could not ask (no
+# payload, unreadable payload, no matching job, or a job still running with a null conclusion), and
+# the caller must NOT infer a verdict from it. The matrix fallback below states that degraded case
+# rather than reusing the "no bundle" wording for it.
+job_conclusion() {
+	local want="$1" c
+	[ -n "${JOBS_JSON:-}" ] && [ -r "${JOBS_JSON:-}" ] || { echo unknown; return; }
+	c="$(jq -r --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" '
+		[ (.jobs // [])[]
+		  | select((.name | startswith($pre)) and (.name | endswith("(" + $p + ")")))
+		] | first | if . == null then "" else (.conclusion // "") end
+	' "$JOBS_JSON" 2>/dev/null || echo "")"
+	case "$c" in
+	"" | null) echo unknown ;;
+	*) echo "$c" ;;
+	esac
+}
+
+# failed_steps <provider> — comma-joined names of this job's steps whose conclusion is `failure`.
+#
+# This is what turns "the job went red after the capture" into an ACTIONABLE issue: the step name is
+# the whole diagnosis, and it is already sitting in the jobs payload. Called ONLY after
+# job_conclusion has returned `failure`, which already establishes that the payload is readable and
+# that this cloud's job is in it — so an empty result here means "the job list names no failed
+# step", never "could not ask". The caller renders that distinction rather than printing an empty
+# list, because a blank where a cause belongs reads as "no cause" (#2512 is that mistake once
+# already).
+failed_steps() {
+	local want="$1"
+	[ -n "${JOBS_JSON:-}" ] && [ -r "${JOBS_JSON:-}" ] || return 0
+	jq -r --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" '
+		[ (.jobs // [])[]
+		  | select((.name | startswith($pre)) and (.name | endswith("(" + $p + ")")))
+		  | (.steps // [])[]
+		  | select((.conclusion // "") == "failure")
+		  | .name
+		] | join(", ")
+	' "$JOBS_JSON" 2>/dev/null || true
+}
+
 # ── derivation ─────────────────────────────────────────────────────────────────────────────────
 derive() {
 	local run_id="${RUN_ID:?RUN_ID is required — it is what scopes a bundle to this run}"
@@ -237,6 +310,14 @@ derive() {
 	local reds="" skips="" job_no_summary="" died_early="" p hit path outcome verdict detail status exists stage
 	# Legs whose cloud sweep never reached a conclusion — resources may still be BILLING (#2330).
 	local unswept=""
+	# Legs whose bundle says PASS. Kept because the matrix fallback below MUST be able to tell
+	# "nothing produced a bundle" from "everything did and they all passed" — those two states had
+	# one issue body between them, and it asserted the first (#2512).
+	local passes=""
+	# Legs whose provisioning PASSED and whose JOB then went red — a red outside the proof window
+	# (#2512). A subset of `reds`, exported separately so the ledger/notification steps can name the
+	# failure mode, exactly as DIED_EARLY does for #1922.
+	local post_capture="" concl steps
 
 	if jobs_payload_is_broken; then
 		echo "::warning::the jobs payload has no job starting with '${PROVISION_JOB_PREFIX}' — the existence cross-check is DEAD (was the matrix job renamed?). Falling back to proof-presence, which cannot tell a red leg from an unwired one."
@@ -260,8 +341,33 @@ derive() {
 			verdict="$(jq -r '.verdict // ""' "$path" 2>/dev/null || echo "")"
 			detail="${verdict:-$outcome}"
 			if [ "$outcome" = "success" ]; then
-				status="PASS"
-				printf '%s\t%s\t%s\t%s\n' "$p" "$status" "$detail" "e2e-proof-${p}-${run_id}" >>"$out/ledger.tsv"
+				# The PARITY LEDGER row stays PASS on the bundle's evidence, whatever the job did
+				# afterwards. That ledger measures one thing — did provisioning work on this cloud —
+				# and it did: the harness ran, ArgoCD went Healthy+Synced, the capture recorded it.
+				# Downgrading the row because a LATER step failed would erase a real proof.
+				printf '%s\t%s\t%s\t%s\n' "$p" "PASS" "$detail" "e2e-proof-${p}-${run_id}" >>"$out/ledger.tsv"
+				# The LEG verdict is a different question, and it is the job that answers it. A red
+				# job is a red leg even on a green bundle (#2512) — see job_conclusion() for the four
+				# nights this cost. Only `failure` counts: a `cancelled` job is a human or a timeout,
+				# it does not aggregate to MATRIX_RESULT=failure, and filing a red for it would train
+				# the signal into noise.
+				concl="$(job_conclusion "$p")"
+				if [ "$concl" = "failure" ]; then
+					status="FAIL"
+					steps="$(failed_steps "$p")"
+					# Distinguish "no step is marked failed" from "we could not ask". We CAN ask —
+					# job_conclusion already proved the payload readable — so an empty list is a real
+					# and reportable answer (a job can go red in `Set up job` or a post step, neither
+					# of which lands in `steps[]` with a failure conclusion).
+					[ -n "$steps" ] || steps="none — the job list marks no step \`failure\` (set-up or post step?)"
+					detail="provisioned OK (bundle PASS) but the JOB went red AFTER the capture — failing step(s): ${steps}"
+					reds="$reds $p"
+					post_capture="$post_capture $p"
+					printf '%s\n' "$steps" >"$out/failed-steps-${p}.txt"
+				else
+					status="PASS"
+					passes="$passes $p"
+				fi
 			elif [ "$outcome" = "skipped" ] && gate_off_bundle "$path" "$run_id"; then
 				# Provably the gate-off emitter's own bundle: correct, inert, nothing to report.
 				status="SKIP"
@@ -313,10 +419,25 @@ derive() {
 	# `(matrix)` and NOT `job`: the label lands in an issue title, the title IS the dedup key, and
 	# `job` was indistinguishable from a cloud name — so every cloud's red collapsed onto one
 	# nameless issue (#1601).
+	#
+	# It is TWO states, not one, and they need different words (#2512). The condition tests "no cloud
+	# was classified red" — it never tested what the issue body went on to assert, that no cloud
+	# produced a bundle. A run whose leg passed provisioning, wrote a bundle, and then went red on a
+	# step below the capture landed here and was told the opposite of the truth, with an instruction
+	# ("A leg that ran and left no bundle usually died before the always() proof capture") that sent
+	# four readers looking for a missing artifact that was sitting in the run.
+	#
+	# The per-leg cross-check above now attributes that case to its cloud, so reaching this branch
+	# WITH passes means the jobs payload could not answer — degraded, and it says so.
 	local matrix_red=""
 	if [ "${MATRIX_RESULT:-}" = "failure" ] && [ -z "${reds// /}" ]; then
-		echo "| (matrix) | FAIL | provision matrix failed with no per-leg proof bundle |" >>"$out/summary.md"
-		matrix_red="matrix"
+		if [ -n "${passes// /}" ]; then
+			matrix_red="unattributed"
+			echo "| (matrix) | FAIL | matrix red, but every leg that ran left a PASS bundle:${passes} — and no leg's job conclusion reads \`failure\`, so the red cannot be attributed |" >>"$out/summary.md"
+		else
+			matrix_red="no-proof"
+			echo "| (matrix) | FAIL | provision matrix failed with no per-leg proof bundle |" >>"$out/summary.md"
+		fi
 		reds="$reds matrix"
 	fi
 
@@ -339,6 +460,13 @@ derive() {
 		if [ -n "${died_early// /}" ]; then
 			echo
 			echo "> ⚠️ Gate ON but the leg never reached the harness:${died_early} — \`outcome: skipped\` from the capture path, not the gate-off proof. Counted as FAIL, and NOT as an unwired leg (#1922)."
+		fi
+		if [ -n "${post_capture// /}" ]; then
+			echo
+			echo "> ⚠️ Red BELOW the proof window:${post_capture} — provisioning passed and the bundle proves it, then a"
+			echo "> step after \`Capture proof\` failed. The leg is FAIL here because its job is red, while the"
+			echo "> provisioning-parity ledger keeps its PASS row: those are two different questions and this is the"
+			echo "> one run shape where they disagree. Read the named step, not the deploy spine (#2512)."
 		fi
 		# The money line (#2330). Deliberately separate from the PASS/FAIL table: the verdict says
 		# whether the product worked, this says whether the account is clean. Run 31459117502 was
@@ -401,14 +529,49 @@ derive() {
 
 	local cloud title
 	for cloud in $reds; do
+		if [ "$cloud" = "matrix" ] && [ "$matrix_red" = "unattributed" ]; then
+			# Distinct TITLE, because it is a distinct claim and the title is the dedup key. Filing
+			# this one under the "no per-leg proof" title would re-open #2512's lie under a new number.
+			title="e2e nightly: matrix RED (${dim_label} · every leg PASSED)"
+			printf '%s\n' "$title" >"$out/issue-red-${cloud}.title"
+			{
+				printf '%s\n\n' "The T2 real-cloud **${dim_label}** nightly matrix went **RED**, but every leg that ran left a proof bundle and every one of them says **PASS** (\`outcome: success\`):${passes}."
+				printf '%s\n\n' "Run: ${RUN_URL:-}"
+				printf '%s\n\n' "**This is the degraded path, and that is the finding.** A red job on a passing bundle is normally attributed to its cloud by reading that leg's JOB CONCLUSION from the run's jobs API — \`Capture proof\` is not the last step, so a leg can pass provisioning and still go red below it. Reaching this issue means that cross-check could not answer — one of exactly four things: no jobs payload was fetched, the payload is unreadable, it holds no job whose name ends \`(<cloud>)\`, or that job carries a null conclusion (still running). Nothing else reaches this issue."
+				printf '%s\n' "So start with the rollup job's own log: if it warns that the existence cross-check is DEAD, the provision job was RENAMED and \`PROVISION_JOB_PREFIX\` in \`scripts/e2e/nightly-rollup.sh\` must follow it. Otherwise open the red matrix job and read its first failed step directly."
+				printf '%s\n' "_Auto-created by the e2e-nightly rollup and deduped by title._"
+			} >"$out/issue-red-${cloud}.md"
+			continue
+		fi
 		if [ "$cloud" = "matrix" ] && [ -n "$matrix_red" ]; then
 			title="e2e nightly: matrix RED (${dim_label} · no per-leg proof)"
 			printf '%s\n' "$title" >"$out/issue-red-${cloud}.title"
 			{
 				printf '%s\n\n' "The T2 real-cloud **${dim_label}** nightly matrix went **RED** without producing a per-leg proof bundle for any cloud, so no single cloud can be named."
 				printf '%s\n\n' "Run: ${RUN_URL:-}"
-				printf '%s\n' "Start from the run's job list: the leg that died is the one whose job is red. A leg that ran and left no bundle usually died before the \`always()\` proof capture."
+				printf '%s\n\n' "Start from the run's job list: the leg that died is the one whose job is red. A leg that ran and left no bundle usually died before the \`always()\` proof capture."
+				printf '%s\n' "This title is now reserved for legs that left NO bundle. A leg that left a PASSING bundle and then went red below the capture is filed against its own cloud as \`… RED (<dimension> · after proof capture)\` (#2512)."
 				printf '%s\n' "_Auto-created by the e2e-nightly rollup and deduped by title._"
+			} >"$out/issue-red-${cloud}.md"
+			continue
+		fi
+		# A red BELOW the proof window is its own title, for two reasons that pull the same way.
+		# It is a different failure with a different first move — the named step, not the deploy
+		# spine — so collapsing it onto the provisioning red would dedup two unrelated causes onto
+		# one issue, which is #1755's mistake in a new place. And it keeps the `(<dim> · …)` shape
+		# that scripts/programme-rollup.mjs's openRedIssues regex parses, so the red still CONTESTS
+		# this cloud's cell in the programme grid: the maintainer's ruling is that a ceiling is
+		# still a FAIL, so a red job must not leave a cell reading "proven" (#2512).
+		if in_list "$post_capture" "$cloud"; then
+			title="e2e nightly: ${cloud} RED (${dim_label} · after proof capture)"
+			printf '%s\n' "$title" >"$out/issue-red-${cloud}.title"
+			{
+				printf '%s\n\n' "The T2 real-cloud nightly went **RED** for \`${cloud}\` on the **${dim_label}** dimension **after** the proof capture."
+				printf '%s\n\n' "Run: ${RUN_URL:-}"
+				printf '%s\n\n' "**Provisioning PASSED and the bundle proves it.** \`e2e-proof-${cloud}-${run_id}\` carries \`outcome: \"success\"\`, and the provisioning-parity ledger keeps its PASS row for this leg. \`Capture proof\` is not the last step of the job — \`Guaranteed teardown\` and the \`CLI-only demo bar\` run below it — so this red is real but it is NOT a provisioning failure. Do not start at the deploy spine."
+				printf '%s\n\n' "Failing step(s), from the run's jobs API: **$(cat "$out/failed-steps-${cloud}.txt")**"
+				printf '%s\n' "Until #2512 this state had no name: the leg was not in \`reds\`, so the matrix fallback fired and filed \`matrix RED (${dim_label} · no per-leg proof)\` — asserting no cloud had produced a bundle, in the same rollup job that read this bundle and ledgered its PASS."
+				printf '%s\n' "_Auto-created by the e2e-nightly rollup and deduped by title — close it once \`${cloud}\` is green again._"
 			} >"$out/issue-red-${cloud}.md"
 			continue
 		fi
@@ -446,6 +609,10 @@ derive() {
 		# Legs whose gate was ON but which died before the harness (#1922). A subset of REDS —
 		# exported separately so the ledger/notification steps can name the failure mode.
 		echo "DIED_EARLY='${died_early# }'"
+		# Legs that PROVISIONED fine and then went red below `Capture proof` (#2512). A subset of
+		# REDS, and the one red category whose parity-ledger row is PASS — exported so a downstream
+		# consumer can tell the two apart instead of re-deriving it from a job list it does not hold.
+		echo "POST_CAPTURE='${post_capture# }'"
 		# Legs whose cloud sweep reached NO conclusion — resources may still be billing (#2330).
 		# Orthogonal to REDS on purpose: a green leg can be UNSWEPT (its teardown was killed) and a
 		# red one can be clean (it never provisioned). Exported so the notification step can say
@@ -494,28 +661,67 @@ write_gate_off() { # <proofs-root> <provider> <run_id> <attempt>
 EOF
 }
 
-write_jobs() { # <file> <provider...>
-	local f="$1" p names=""
+# write_jobs <file> <spec...> — each spec is `<provider>` or `<provider>=<conclusion>`; a bare
+# provider keeps the historical `failure`.
+#
+# The conclusion is a PARAMETER now because the derivation READS it (#2512): a leg whose bundle says
+# PASS is red iff its job conclusion is `failure`. While nothing consumed it, every fixture here
+# stamped `failure` on every job — including the all-green one — and that was invisible. It is not
+# invisible any more, and a fixture whose job conclusion contradicts its own bundle is not a fixture
+# of anything real.
+write_jobs() { # <file> <provider[=conclusion]...>
+	local f="$1" spec p concl names=""
 	shift
-	for p in "$@"; do
-		names="${names}{\"name\":\"Provision + verify + teardown (real cloud) (${p})\",\"conclusion\":\"failure\"},"
+	for spec in "$@"; do
+		p="${spec%%=*}"
+		concl="failure"
+		[ "$spec" = "$p" ] || concl="${spec#*=}"
+		names="${names}{\"name\":\"Provision + verify + teardown (real cloud) (${p})\",\"conclusion\":\"${concl}\"},"
 	done
 	printf '{"jobs":[%s{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' "$names" >"$f"
+}
+
+# write_jobs_post_capture — a jobs payload for ONE leg, carrying the REAL step spine of a provision
+# job: the harness, then `Capture proof`, then `Guaranteed teardown`, then whatever runs below the
+# capture. Any step names passed after the job conclusion are appended with `conclusion: failure`.
+#
+# This reproduces run 32816061207 exactly (verified against the API): steps 31 `T2 — real runner
+# provisions a real cloud cluster` success, 33 `Capture proof` success, 38 `Guaranteed teardown`
+# success, 39 `CLI-only demo bar` FAILURE — job conclusion `failure`, bundle `outcome: success`.
+# Runs 32878485034 / 32883521925 / 32886071207 produced the same shape on hetzner.
+#
+# The JOB CONCLUSION is a parameter so the two directions can be pinned by fixtures that differ in
+# NOTHING ELSE: pass `failure` and the leg must be red, pass `success` and it must stay green. The
+# teardown step is `success` on purpose — it keeps #2330's UNSWEPT axis quiet so these cases assert
+# the #2512 behaviour and not a second signal riding along.
+write_jobs_post_capture() { # <file> <provider> <job-conclusion> [failed-step-name...]
+	local f="$1" p="$2" job_concl="$3" s extra=""
+	shift 3
+	for s in "$@"; do
+		extra="${extra},{\"name\":\"${s}\",\"conclusion\":\"failure\"}"
+	done
+	printf '{"jobs":[{"name":"Provision + verify + teardown (real cloud) (%s)","conclusion":"%s","steps":[{"name":"T2 — real runner provisions a real cloud cluster","conclusion":"success"},{"name":"Capture proof (scrubbed bundle + step-summary verdict)","conclusion":"success"},{"name":"Guaranteed teardown (scope-locked cloud sweep)","conclusion":"success"}%s]},{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' \
+		"$p" "$job_concl" "$extra" >"$f"
 }
 
 # write_jobs_steps — a jobs payload carrying the teardown STEP, which is what #2330 reads. The
 # third argument is the step's conclusion; pass `null` for the fingerprint of a worker killed
 # mid-step (the runner never finishes uploading a conclusion), or omit the step entirely with
 # `none` to prove teardown_outcome reports `unknown` rather than inventing `done`.
-write_jobs_steps() { # <file> <provider> <teardown-conclusion|null|none>
-	local f="$1" p="$2" concl="$3" steps=""
+#
+# The fourth argument is the JOB's conclusion (default `failure`), a parameter for the same reason
+# write_jobs's is (#2512): T5 pairs a `success` bundle with this payload, and while the job
+# conclusion was an unread constant that fixture could stamp `failure` on a green leg and nobody
+# noticed. It is read now, so the fixture has to mean it.
+write_jobs_steps() { # <file> <provider> <teardown-conclusion|null|none> [job-conclusion]
+	local f="$1" p="$2" concl="$3" job_concl="${4:-failure}" steps=""
 	case "$concl" in
 	none) steps="" ;;
 	null) steps='{"name":"Guaranteed teardown (scope-locked cloud sweep)","conclusion":null},' ;;
 	*) steps="{\"name\":\"Guaranteed teardown (scope-locked cloud sweep)\",\"conclusion\":\"${concl}\"}," ;;
 	esac
-	printf '{"jobs":[{"name":"Provision + verify + teardown (real cloud) (%s)","conclusion":"failure","steps":[%s{"name":"Checkout","conclusion":"success"}]},{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' \
-		"$p" "$steps" >"$f"
+	printf '{"jobs":[{"name":"Provision + verify + teardown (real cloud) (%s)","conclusion":"%s","steps":[%s{"name":"Checkout","conclusion":"success"}]},{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' \
+		"$p" "$job_concl" "$steps" >"$f"
 }
 
 run_self_test() {
@@ -582,7 +788,11 @@ run_self_test() {
 	for p in hetzner aws gcp azure alibaba; do
 		write_gate_off "$c/proofs" "$p" 777 1
 	done
-	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
+	# A gate-off leg's job really does exit 0 — it records the skip proof and stops — so the fixture
+	# says `success`. It would pass either way (a gate-off leg never reaches the conclusion read),
+	# and that is precisely why it is worth writing down: the reason this case is green must be the
+	# gate-off discriminator, not a job conclusion that happens not to be consulted.
+	write_jobs "$c/jobs.json" hetzner=success aws=success gcp=success azure=success alibaba=success
 	_a "|hetzner aws gcp azure alibaba|0" "$(CASE_MATRIX=success _derive "$c")" \
 		"explicit gate-off summaries stay SKIP even though all matrix jobs exist (#1683)"
 	_a "0" "$(wc -l <"$c/out/ledger.tsv" | tr -d ' ')" "gate-off legs do not enter the execution ledger"
@@ -602,7 +812,7 @@ run_self_test() {
 	#    would find out from reading either file alone.
 	c="$tmp/dispatch"
 	write_summary "$c/proofs/20260811T090000Z" aws "nightly-777-1" success
-	write_jobs "$c/jobs.json" aws
+	write_jobs "$c/jobs.json" aws=success
 	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
 		"a single-provider dispatch counts the four UNDISPATCHED clouds as SKIP — so the 5-cloud coverage aggregate is unknowable from it"
 	_a "1" "$(wc -l <"$c/out/ledger.tsv" | tr -d ' ')" "a dispatch ledgers ONLY the cloud it ran (the other four leave no row to mislead)"
@@ -646,7 +856,7 @@ run_self_test() {
 	# (3) SUCCESS ⇒ PASS.
 	c="$tmp/s3-success"
 	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-03T031545Z" aws "nightly-777-1" success argocd-ready
-	write_jobs "$c/jobs.json" aws
+	write_jobs "$c/jobs.json" aws=success
 	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" "(3) success ⇒ PASS"
 
 	# (4) EXPLICIT FAILURE ⇒ FAIL.
@@ -720,7 +930,7 @@ run_self_test() {
 	c="$tmp/green"
 	local p
 	for p in hetzner aws gcp azure alibaba; do write_summary "$c/proofs/$p/stamp" "$p" "nightly-777-1" success; done
-	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
+	write_jobs "$c/jobs.json" hetzner=success aws=success gcp=success azure=success alibaba=success
 	_a "||5" "$(CASE_MATRIX=success _derive "$c")" "all-green: 5/5 enabled and no red filed"
 
 	# 9. A MIXED night, which is what a real 5-cloud run looks like once more legs are wired.
@@ -729,7 +939,7 @@ run_self_test() {
 	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
 	write_summary "$c/proofs/e2e-proof-gcp-777/s" gcp "nightly-777-1" success
 	write_gate_off "$c/proofs" alibaba 777 1
-	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
+	write_jobs "$c/jobs.json" hetzner=success aws=failure gcp=success azure=failure alibaba=success
 	_a "aws azure|hetzner alibaba|3" "$(_derive "$c")" "mixed: aws FAIL + gcp PASS + azure ran-without-proof"
 
 	# 10. The existence cross-check DEGRADING must be loud. A renamed matrix job would otherwise put
@@ -844,11 +1054,197 @@ run_self_test() {
 	#      express, and the reason the signal is a separate axis rather than a detail on a red.
 	c="$tmp/t5-green-but-unswept"
 	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-11T060000Z" aws "nightly-777-1" success applied
-	write_jobs_steps "$c/jobs.json" aws null
+	write_jobs_steps "$c/jobs.json" aws null success
 	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
 		"(T5) the leg still PASSES — teardown outcome does not rewrite the verdict"
 	_a "aws" "$(_state "$c/out" UNSWEPT)" \
 		"(T5) a PASSING leg whose teardown was killed is still reported as possibly billing"
+
+	# ── A PASS bundle is not a PASS leg (#2512 · #2631 · #2640 · #2657) ─────────────────────────────
+	# `Capture proof` is step 33 of the provision job; `Guaranteed teardown` is 38 and the `CLI-only
+	# demo bar` is 39. So a leg can write `outcome: success`, have that bundle read and ledgered, and
+	# STILL end on a red job. Four nights ran exactly that shape — 32816061207 (azure, floor),
+	# 32878485034 / 32883521925 / 32886071207 (hetzner; byo, addons, day2) — each with the demo bar as
+	# the ONLY failed step, and each producing a `matrix RED (<dim> · no per-leg proof)` issue in the
+	# same rollup job whose log says `recorded: PASS → e2e-proof-<cloud>-<run>`.
+	#
+	# The cases below pin BOTH directions, because a fix that reds every green leg is worse than the
+	# bug: P1 and P2b are the same fixture with ONE byte of difference, the job conclusion.
+	local step_bar="CLI-only demo bar (reachability — no cloud, no spend)"
+
+	# (P1) PASS bundle + `failure` job ⇒ RED, attributed to its cloud, with the step named.
+	c="$tmp/p1-post-capture-red"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-25T060000Z" aws "nightly-777-1" success applied
+	write_jobs_post_capture "$c/jobs.json" aws failure "$step_bar"
+	_a "aws|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=failure _derive "$c")" \
+		"(P1) a PASS bundle whose JOB conclusion is 'failure' is RED — the state that had no name (#2512)"
+	_a "aws" "$(_state "$c/out" POST_CAPTURE)" \
+		"(P1) state.env names it as a red BELOW the proof window, not as a provisioning failure"
+	# The whole point of attributing it: the matrix fallback must NOT fire, because the red now has
+	# a cloud's name on it. On all four real nights it did fire, and said the opposite of the truth.
+	_a "absent" "$([ -e "$c/out/issue-red-matrix.title" ] && echo present || echo absent)" \
+		"(P1) no 'matrix RED (… · no per-leg proof)' is filed once the red is attributed to its cloud"
+	_a "e2e nightly: aws RED (floor · after proof capture)" "$(cat "$c/out/issue-red-aws.title")" \
+		"(P1) its own title, so it cannot dedup onto the provisioning red or onto the matrix fallback"
+	_a "1" "$(grep -cF "$step_bar" "$c/out/issue-red-aws.md")" \
+		"(P1) the FAILING STEP NAME is in the body — that step is the entire diagnosis"
+	_a "1" "$(grep -c 'Do not start at the deploy spine' "$c/out/issue-red-aws.md")" \
+		"(P1) and the body says where NOT to start, because provisioning is provably fine"
+	_a "$step_bar" "$(cat "$c/out/failed-steps-aws.txt")" \
+		"(P1) failed-steps-aws.txt carries the step for the downstream notification step"
+	# The ledger measures provisioning parity and provisioning PASSED. Downgrading this row because a
+	# step below the capture failed would erase a real, captured proof.
+	_a "aws	PASS	aws: verdict for nightly-777-1	e2e-proof-aws-777" \
+		"$(cat "$c/out/ledger.tsv")" \
+		"(P1) the parity ledger keeps its PASS row — and exactly one row, not a PASS plus a FAIL"
+	_a "1" "$(grep -c '^| aws | FAIL | provisioned OK (bundle PASS) but the JOB went red AFTER the capture' "$c/out/summary.md")" \
+		"(P1) the leg's own table row is FAIL and says why the two verdicts disagree"
+	_a "1" "$(grep -c 'Red BELOW the proof window' "$c/out/summary.md")" \
+		"(P1) and a standalone block survives someone scanning only the prose"
+
+	# (P2) PASS bundle + `success` job ⇒ PASS. Same payload shape, same steps, green conclusion.
+	c="$tmp/p2-green-job"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-25T060000Z" aws "nightly-777-1" success applied
+	write_jobs_post_capture "$c/jobs.json" aws success
+	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
+		"(P2) a PASS bundle whose job also PASSED stays green — the fix must not red every leg"
+	_a "" "$(_state "$c/out" POST_CAPTURE)" "(P2) and is not listed as a red below the proof window"
+	_a "absent" "$([ -e "$c/out/issue-red-aws.title" ] && echo present || echo absent)" \
+		"(P2) no red issue is filed for a green leg"
+
+	# (P2b) The SAME fixture as P1 with only the job conclusion flipped, matrix result held at
+	#       `failure`. This is the one-variable pin: nothing else about the leg changed, so any
+	#       difference in the aws verdict is attributable to the conclusion and to nothing else.
+	c="$tmp/p2b-one-variable"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-25T060000Z" aws "nightly-777-1" success applied
+	write_jobs_post_capture "$c/jobs.json" aws success "$step_bar"
+	_a "matrix|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=failure _derive "$c")" \
+		"(P2b) flipping ONLY the job conclusion moves the red off aws — the leg is no longer red"
+	_a "" "$(_state "$c/out" POST_CAPTURE)" "(P2b) POST_CAPTURE is driven by the conclusion, not by the presence of a failed step"
+	_a "1" "$(grep -c '^| aws | PASS |' "$c/out/summary.md")" "(P2b) the aws row reads PASS"
+
+	# ── `unknown` is a THIRD answer and must render as itself ──────────────────────────────────────
+	# job_conclusion returns `unknown` when it could not ask: no payload, an unreadable one, no job
+	# named `(<cloud>)`, or a job still running with a null conclusion. It must not collapse into
+	# either verdict — and when it leaves the matrix red unattributable, the fallback must say THAT,
+	# not reuse "no cloud produced a bundle". That sentence is #2512's lie; reusing it here would
+	# reintroduce the bug under a new branch: a guard's "nothing found" has to differ from "nothing
+	# wrong".
+	local t_unattributed=""
+
+	# (P3a) The payload is readable and has provision jobs — just not one for this cloud. hetzner is
+	#       gate-off (so the payload is not "broken" and hetzner itself stays inert).
+	c="$tmp/p3a-no-job-for-cloud"
+	write_gate_off "$c/proofs" hetzner 777 1
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-25T060000Z" aws "nightly-777-1" success applied
+	write_jobs "$c/jobs.json" hetzner=success
+	_a "matrix|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=failure _derive "$c")" \
+		"(P3a) no job named '(aws)' ⇒ unknown ⇒ the leg is NOT invented red, and the matrix red is unattributed"
+	t_unattributed="$(cat "$c/out/issue-red-matrix.title")"
+	_a "e2e nightly: matrix RED (floor · every leg PASSED)" "$t_unattributed" \
+		"(P3a) the degraded case gets its OWN title — it is a different claim from 'no per-leg proof'"
+	_a "1" "$(grep -c 'that cross-check could not answer' "$c/out/issue-red-matrix.md")" \
+		"(P3a) the body says the cross-check could not answer, not that no bundle exists"
+	_a "0" "$(grep -c 'without producing a per-leg proof bundle' "$c/out/issue-red-matrix.md")" \
+		"(P3a) and it does NOT repeat the assertion that four real issues got wrong"
+	_a "1" "$(grep -c '^| (matrix) | FAIL | matrix red, but every leg that ran left a PASS bundle: aws' "$c/out/summary.md")" \
+		"(P3a) the summary row names the legs that passed instead of claiming none did"
+
+	# (P3b) The job EXISTS and is still running — Actions reports `conclusion: null`. Absence of a
+	#       conclusion is not a conclusion of success.
+	c="$tmp/p3b-null-conclusion"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-25T060000Z" aws "nightly-777-1" success applied
+	printf '{"jobs":[{"name":"Provision + verify + teardown (real cloud) (aws)","conclusion":null},{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' >"$c/jobs.json"
+	_a "matrix|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=failure _derive "$c")" \
+		"(P3b) a null conclusion is unknown, never a silent PASS and never an invented red"
+	_a "$t_unattributed" "$(cat "$c/out/issue-red-matrix.title")" \
+		"(P3b) it renders the same degraded case as P3a"
+	# The body enumerates the causes, and P3a/P3b/P3c are three of the four. A reader who is told
+	# "the cross-check could not answer" and NOT told what could cause that has to go and read the
+	# script; the list is what makes the degraded issue actionable instead of merely honest.
+	_a "1" "$(grep -c 'null conclusion (still running)' "$c/out/issue-red-matrix.md")" \
+		"(P3b) the body names the null-conclusion cause this fixture actually exercises"
+
+	# (P3c) NO jobs payload at all — the file was never fetched. job_conclusion's readability guard.
+	c="$tmp/p3c-no-payload"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-25T060000Z" aws "nightly-777-1" success applied
+	mkdir -p "$c"
+	_a "matrix|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=failure _derive "$c")" \
+		"(P3c) an absent jobs payload is unknown too — the guard reads the file, it does not assume one"
+	_a "$t_unattributed" "$(cat "$c/out/issue-red-matrix.title")" "(P3c) same degraded rendering"
+
+	# (P3d) THE TWO FALLBACK TITLES MUST DIFFER, and the surviving "no per-leg proof" body must now
+	#       say what it is reserved for. The title IS the dedup key: if these two collided, the
+	#       degraded case would re-open #2512's wrong body under #2512's own title.
+	_a "differ" "$([ "$t_unattributed" != "$(cat "$tmp/matrix/out/issue-red-matrix.title")" ] && echo differ || echo COLLIDE)" \
+		"(P3d) 'every leg PASSED' and 'no per-leg proof' cannot dedup onto one issue"
+	_a "1" "$(grep -c 'This title is now reserved for legs that left NO bundle' "$tmp/matrix/out/issue-red-matrix.md")" \
+		"(P3d) the genuine no-bundle body states what it is NOT, so the next reader is not sent hunting"
+
+	# (P4) `cancelled` is not `failure`. A cancelled job is a human or a timeout; it does not
+	#      aggregate to MATRIX_RESULT=failure, and filing a red for it every time somebody cancels a
+	#      run trains the signal into noise.
+	c="$tmp/p4-cancelled"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-25T060000Z" aws "nightly-777-1" success applied
+	write_jobs_post_capture "$c/jobs.json" aws cancelled
+	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
+		"(P4) a CANCELLED job on a passing bundle is not red — only 'failure' is"
+	_a "" "$(_state "$c/out" POST_CAPTURE)" "(P4) and it is not a red below the proof window either"
+
+	# (P5) The job is red and the payload names NO failed step — a `Set up job` or post-step failure,
+	#      neither of which lands in `steps[]` with a `failure` conclusion. We CAN ask here (P3 covers
+	#      "could not ask"), so this is a real answer and must be rendered as one. A blank where a
+	#      cause belongs reads as "no cause" — which is the mistake this whole PR exists to undo.
+	c="$tmp/p5-no-failed-step"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-25T060000Z" aws "nightly-777-1" success applied
+	write_jobs_post_capture "$c/jobs.json" aws failure
+	_a "aws|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=failure _derive "$c")" \
+		"(P5) a red job with no failed step listed is still a red leg"
+	# shellcheck disable=SC2016  # single-quoted ON PURPOSE: the backticks are literal characters in
+	# the sentence the script writes, and the assertion is that it writes exactly that sentence.
+	_a 'none — the job list marks no step `failure` (set-up or post step?)' \
+		"$(cat "$c/out/failed-steps-aws.txt")" \
+		"(P5) 'no step is marked failed' is stated in words, not left blank"
+	# Paired ON PURPOSE, and the positive half comes first. A lone `grep -c … = 0` passes just as
+	# happily when the line it is policing has been renamed out of existence — a "nothing found"
+	# branch that cannot tell itself from "nothing wrong", which is the very defect this PR removes.
+	# The positive assertion is what makes the negative one mean something.
+	_a "1" "$(grep -c 'jobs API: \*\*none — the job list marks no step' "$c/out/issue-red-aws.md")" \
+		"(P5) the body renders the sentence INSIDE the bold where the cause belongs"
+	_a "0" "$(grep -c 'jobs API: \*\*\*\*' "$c/out/issue-red-aws.md")" \
+		"(P5) …and never an EMPTY bold there"
+
+	# (P6) Several steps below the capture failed. All of them are named, joined — reading one and
+	#      guessing at the rest is how a two-cause red gets closed on one fix.
+	c="$tmp/p6-two-failed-steps"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-25T060000Z" aws "nightly-777-1" success applied
+	write_jobs_post_capture "$c/jobs.json" aws failure "Scrub the runner log before upload" "$step_bar"
+	_a "aws|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=failure _derive "$c")" "(P6) two steps below the capture failed ⇒ still one red leg"
+	_a "Scrub the runner log before upload, $step_bar" \
+		"$(cat "$c/out/failed-steps-aws.txt")" "(P6) every failed step below the capture is named, not just the first"
+
+	# (P7) A post-capture red and an ORDINARY provisioning red on the same night. POST_CAPTURE must be
+	#      a strict subset of REDS, and the two must get different titles — collapsing them would
+	#      dedup two unrelated causes onto one issue, which is #1755's mistake in a new place.
+	c="$tmp/p7-mixed-reds"
+	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" success applied
+	write_summary "$c/proofs/e2e-proof-gcp-777/s" gcp "nightly-777-1" failure applying
+	printf '{"jobs":[{"name":"Provision + verify + teardown (real cloud) (aws)","conclusion":"failure","steps":[{"name":"%s","conclusion":"failure"}]},{"name":"Provision + verify + teardown (real cloud) (gcp)","conclusion":"failure"},{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' \
+		"$step_bar" >"$c/jobs.json"
+	_a "aws gcp|hetzner azure alibaba|2" "$(CASE_MATRIX=failure _derive "$c")" \
+		"(P7) both reds are reported — the post-capture one does not swallow or hide the other"
+	_a "aws" "$(_state "$c/out" POST_CAPTURE)" \
+		"(P7) POST_CAPTURE is a STRICT subset: only the leg whose bundle passed is in it"
+	_a "e2e nightly: gcp RED (floor)" "$(cat "$c/out/issue-red-gcp.title")" \
+		"(P7) the ordinary provisioning red keeps the plain title"
+	_a "differ" \
+		"$([ "$(cat "$c/out/issue-red-gcp.title")" != "$(cat "$c/out/issue-red-aws.title")" ] && echo differ || echo COLLIDE)" \
+		"(P7) and the two causes cannot dedup onto one issue"
+	# The ledger disagrees with the table for aws and agrees for gcp — deliberately, and this is the
+	# only run shape where that happens. Pinned so a later 'simplification' cannot quietly align them.
+	_a "aws	PASS
+gcp	FAIL" "$(cut -f1,2 "$c/out/ledger.tsv")" \
+		"(P7) the parity ledger keeps aws PASS while the table calls it FAIL — two different questions"
 
 	if [ "$fails" -eq 0 ]; then
 		echo "self-test: all passed"
