@@ -31,9 +31,16 @@
 //
 //   `proven`     a ledger row for (cloud × dimension) whose latest claim is PASS, NOT superseded by
 //                a later RETRACTED, AND whose bundle is a path that EXISTS in the tree.
-//   `failing`    the latest claim is FAIL.
+//   `failing`    the latest claim is FAIL — and where that claim is the `full` composite's rather
+//                than this cell's own, the bar has to have REACHED this dimension. A bar that died
+//                in `apply` never asserted the add-on surface, so it cannot red it. Credit and
+//                discredit are governed by the same fact about what a run actually reached; they
+//                were not, and `azure/addons` read ❌ off a cause never observed there (#3243).
 //   `blocked`    the latest claim is BLOCKED (the harness refused before spending).
-//   `never_run`  no surviving claim, and a vehicle exists.
+//   `never_run`  no surviving claim, and a vehicle exists — INCLUDING a claim there was but that
+//                this cell may not be credited or discredited with. Every refusal lands here and
+//                none can land on `proven`: withholding a red removes a verdict, it never invents
+//                one, and a false PASS is worse than the false FAIL it would replace.
 //   `no_vehicle` nothing asserts this cell at all.
 //   `ceiling`    the cloud genuinely cannot (MaxConfigCarriage.CloudCeiling / CLIReach.CloudManual).
 //   `deferred`   OUR debt — a shipped chart backs it and only the mapping is missing
