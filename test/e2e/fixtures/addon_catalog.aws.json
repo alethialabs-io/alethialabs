@@ -26,6 +26,12 @@
 		"values": {
 			"provider": {
 				"name": "aws"
+			},
+			"serviceAccount": {
+				"name": "addon-external-dns-sa",
+				"annotations": {
+					"eks.amazonaws.com/role-arn": "arn:aws:iam::000000000000:role/external-dns"
+				}
 			}
 		},
 		"syncWave": 2

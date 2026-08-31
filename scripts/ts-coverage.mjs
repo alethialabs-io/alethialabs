@@ -96,6 +96,7 @@ import {
 	measure,
 	regressed,
 	UnusableCoverageError,
+	measureByFile,
 } from "./lib/ts-coverage-measure.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -197,11 +198,26 @@ function renderFloors(project, dirs, env) {
 	return `${JSON.stringify({ _: BANNER, project, metric: "statements", env, directories }, null, 2)}\n`;
 }
 
-/** Emit a single-line GitHub annotation. A literal newline truncates a workflow command. */
+/**
+ * Emit a single-line GitHub annotation. A literal newline truncates a workflow command.
+ *
+ * STDERR, NOT STDOUT — and that is load-bearing, not tidiness. Actions parses workflow commands on
+ * both streams, but stdout here is a DATA channel: `--print` writes `<dir> <covered> <total>` rows
+ * that `scripts/ci/ts-coverage-probe.sh` consumes as `$TSCOV --print | sed "s|^|$p |"`.
+ *
+ * With annotations on stdout, a warning became a row. `assert_measured` matches `$1 == project`,
+ * and `sed` had just made `$1` the project name — so `packages/foo ::warning::…` satisfied the
+ * assertion, and the probe could report "every recorded project produced measured rows" having
+ * measured nothing at all. A diagnostic whose failure branch reports success is worse than no
+ * diagnostic: it is the reason #3342 was un-diagnosable rather than merely broken.
+ *
+ * `assert_measured` now also checks the row SHAPE, so the two fixes are independent — but a data
+ * channel that carries commentary is the defect, and this is where it is fixed.
+ */
 function annotate(level, file, line, message) {
 	const flat = message.replace(/\r?\n/g, " ").trim();
 	const loc = file ? `file=${file}${line ? `,line=${line}` : ""}` : "";
-	process.stdout.write(`::${level}${loc ? ` ${loc}` : ""}::${flat}\n`);
+	process.stderr.write(`::${level}${loc ? ` ${loc}` : ""}::${flat}\n`);
 }
 
 /**
@@ -254,14 +270,18 @@ function perFileBreakdown(projectDir, dir) {
 	try {
 		const raw = JSON.parse(readFileSync(coveragePath(projectDir), "utf8"));
 		const abs = path.resolve(ROOT, projectDir);
+		// THE SAME WALK THE GATE USED. This was a third, independent traversal of the artefact, and
+		// it disagreed with the other two in three ways that all point the same direction — quieter:
+		// it took `total` from `s` rather than `statementMap` (so the F6 length-mismatch tripwire was
+		// invisible here), it counted a non-integer hit as uncovered instead of throwing, and it
+		// `continue`d past an out-of-root path instead of throwing. An engineer comparing a failing
+		// ratchet's breakdown against `--print --per-file` could get two different tables for the
+		// same files with nothing saying which one the gate actually read.
 		const out = [];
-		for (const [file, data] of Object.entries(raw)) {
-			const rel = path.relative(abs, file);
-			if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
-			const owner = path.dirname(rel) === "" ? "." : path.dirname(rel);
+		for (const [rel, v] of measureByFile(raw, abs).entries()) {
+			const owner = path.posix.dirname(rel) === "." ? "." : path.posix.dirname(rel);
 			if (owner !== dir) continue;
-			const s = Object.values(data?.s ?? {});
-			out.push({ file: path.basename(rel), covered: s.filter((n) => n > 0).length, total: s.length });
+			out.push({ file: path.posix.basename(rel), covered: v.covered, total: v.total });
 		}
 		return out.sort((a, b) => b.total - b.covered - (a.total - a.covered));
 	} catch {
@@ -271,7 +291,7 @@ function perFileBreakdown(projectDir, dir) {
 	}
 }
 
-function measureOrFailOpen(projectDir, project) {
+function measureOrFailOpen(projectDir, project, measureFn = measure) {
 	const cov = coveragePath(projectDir);
 	// F2 — no artefact. The only ways here: the `Unit tests` step already failed (and already
 	// failed the job — failing twice misattributes the cause), the project has no coverage config,
@@ -288,7 +308,7 @@ function measureOrFailOpen(projectDir, project) {
 		failOpen("F4", `${project}: coverage-final.json is not valid JSON (truncated write?): ${err.message}`);
 	}
 	try {
-		return measure(parsed, projectDir);
+		return measureFn(parsed, projectDir);
 	} catch (err) {
 		if (err instanceof UnusableCoverageError) {
 			// F6 — the artefact is structurally untrustworthy. A ratchet must not compare against a
@@ -515,11 +535,34 @@ function runUpdate(project, { allowLower }) {
 	process.stdout.write(`✓ wrote ${path.relative(ROOT, fp)} (${next.size} directories)\n`);
 }
 
-/** --print: one `dir covered total` line per directory, for the determinism probe. */
-function runPrint(project) {
+/**
+ * `<dir> <covered> <total>` rows on stdout — the data channel `scripts/ci/ts-coverage-probe.sh`
+ * consumes. Annotations go to stderr precisely so they cannot arrive here looking like rows.
+ *
+ * `--per-file` prints `<file> <covered> <total>` instead. The floors are per DIRECTORY, so the
+ * ratchet can only ever say "apps/console/lib/billing moved by one statement" — a hundred files and
+ * no culprit. Diffing two per-file runs names the flapping file in one command, which is what
+ * #3342 needed and did not have:
+ *
+ *   set -e
+ *   for i in 1 2; do
+ *     pnpm -F console test
+ *     node scripts/ts-coverage.mjs --project apps/console --print --per-file >"run.$i"
+ *   done
+ *   diff run.1 run.2
+ *
+ * `pnpm -F console test` — NOT `pnpm vitest --project apps/console`, which was written here first
+ * and cannot run: the root package.json declares no `test` script and no vitest dependency, there
+ * is no root vitest config, and the invocation fails with `Command "vitest" not found` AND EXITS 0.
+ * The original recipe also sent that to /dev/null, so a follower got two empty files (or two stale
+ * ones), diffed them, and read "nothing flaps" from a run that measured nothing — the exact defect
+ * class this flag was added to close. `set -e` and un-silenced output are the load-bearing parts;
+ * console coverage is opt-in and only the `-F console test` script passes `--coverage`.
+ */
+function runPrint(project, perFile = false) {
 	const projectDir = path.join(ROOT, project);
-	const measured = measureOrFailOpen(projectDir, project);
-	for (const [dir, v] of measured.entries()) process.stdout.write(`${dir} ${v.covered} ${v.total}\n`);
+	const measured = measureOrFailOpen(projectDir, project, perFile ? measureByFile : measure);
+	for (const [key, v] of measured.entries()) process.stdout.write(`${key} ${v.covered} ${v.total}\n`);
 }
 
 /**
@@ -815,6 +858,32 @@ function runSelfTest() {
 	process.stdout.write("\n annotation format\n");
 	check("annotation is a single line even from multi-line input", !`::error file=a,line=2::${"x\ny".replace(/\r?\n/g, " ")}`.slice(8).includes("\n"));
 
+	// THE STREAM SPLIT, DRIVEN THROUGH THE REAL FUNCTION.
+	//
+	// The case above asserts a property of a string literal it builds inline — it never calls
+	// `annotate`, so reverting the stream back to stdout left it green. That mattered: stdout is the
+	// DATA channel `--print` feeds the determinism probe through, and an annotation landing there is
+	// the whole defect #3444 existed to fix. A fix whose own test cannot observe it is not covered.
+	{
+		const outChunks = [];
+		const errChunks = [];
+		const realOut = process.stdout.write.bind(process.stdout);
+		const realErr = process.stderr.write.bind(process.stderr);
+		process.stdout.write = (c) => { outChunks.push(String(c)); return true; };
+		process.stderr.write = (c) => { errChunks.push(String(c)); return true; };
+		try {
+			annotate("warning", null, null, "ts-coverage F2: proj: no coverage/coverage-final.json");
+			annotate("error", "apps/console/coverage-floors.json", 12, "line one\nline two");
+		} finally {
+			process.stdout.write = realOut;
+			process.stderr.write = realErr;
+		}
+		check("annotate writes NOTHING to stdout — that stream is the probe's data channel", outChunks.length === 0);
+		check("annotate writes the workflow command to stderr", errChunks.join("").includes("::warning::ts-coverage F2:"));
+		check("annotate keeps file/line on stderr too", errChunks.join("").includes("::error file=apps/console/coverage-floors.json,line=12::"));
+		check("a multi-line message is still one line", errChunks.every((c) => c.split("\n").filter(Boolean).length === 1));
+	}
+
 	process.stdout.write("\n scope — every coverage-emitting project must have a ratchet step\n");
 	try {
 		const ci = readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
@@ -986,6 +1055,10 @@ function runCli() {
 	/** @type {string|undefined} */
 	let project;
 	let mode = "check";
+	// `--print` only. Declared in the parser rather than sniffed out of process.argv later, because
+	// the `else` below REFUSES an argument it does not know — an unregistered flag would exit 2 with
+	// "unknown argument", which is the correct behaviour and the reason it must be registered here.
+	let perFile = false;
 	for (let i = 0; i < argv.length; i += 1) {
 		const a = argv[i];
 		if (a === "--project") { project = argv[i + 1]; i += 1; }
@@ -993,11 +1066,22 @@ function runCli() {
 		else if (a === "--update") mode = "update";
 		else if (a === "--accept-regression") mode = "accept";
 		else if (a === "--print") mode = "print";
+		else if (a === "--per-file") perFile = true;
 		else if (a === "--self-test") mode = "self-test";
 		else {
 			process.stderr.write(`ts-coverage: unknown argument ${a}\n`);
 			process.exit(2);
 		}
+	}
+
+	// `--per-file` only means anything to `--print`. It is registered in the loop above so the
+	// parser's `else` cannot reject it, and that registration is exactly how it became the one flag
+	// that escapes the strictness the registration was justified by: `--update --per-file` parsed
+	// fine, dropped the flag, and wrote per-DIRECTORY floors while exiting 0. Refusing here restores
+	// the property — an argument that cannot take effect is an error, not a no-op.
+	if (perFile && mode !== "print") {
+		process.stderr.write(`ts-coverage: --per-file applies to --print only (mode is --${mode})\n`);
+		process.exit(2);
 	}
 
 	if (mode === "self-test") runSelfTest();
@@ -1008,7 +1092,7 @@ function runCli() {
 		process.stderr.write(`ts-coverage: no such project directory: ${project}\n`);
 		process.exit(2);
 	} else if (mode === "check") runCheck(project);
-	else if (mode === "print") runPrint(project);
+	else if (mode === "print") runPrint(project, perFile);
 	else runUpdate(project, { allowLower: mode === "accept" });
 }
 

@@ -43,12 +43,12 @@ output "azure_db_fqdn" {
 # lane annotates the app KSA with azure_db_client_id.
 output "azure_db_aad_user" {
   description = "Keyless app database username — the Entra (UAMI) principal name (#722)"
-  value       = local.enable_app_db_identity ? azurerm_user_assigned_identity.app_db[0].name : null
+  value       = local.enable_app_db_identity ? one(azurerm_user_assigned_identity.app_db[*].name) : null
 }
 
 output "azure_db_client_id" {
   description = "Client id of the app Entra Workload-Identity UAMI — annotated onto the generated app KSA; also the MySQL keyless bind value (`db-bootstrap --app-client-id`) (#722)"
-  value       = local.enable_app_db_identity ? azurerm_user_assigned_identity.app_db[0].client_id : null
+  value       = local.enable_app_db_identity ? one(azurerm_user_assigned_identity.app_db[*].client_id) : null
 }
 
 # Keyless least-privilege (#722 R5): the dedicated DB-admin identity the bootstrap Job runs as, and
@@ -56,17 +56,17 @@ output "azure_db_client_id" {
 # LABEL; MySQL: client id via CREATE AADUSER).
 output "azure_db_admin_client_id" {
   description = "Client id of the dedicated DB-admin Entra Workload-Identity UAMI — annotated onto the bootstrap Job KSA (#722)"
-  value       = local.enable_app_db_identity ? azurerm_user_assigned_identity.db_admin[0].client_id : null
+  value       = local.enable_app_db_identity ? one(azurerm_user_assigned_identity.db_admin[*].client_id) : null
 }
 
 output "azure_db_app_oid" {
   description = "Object (principal) id of the app UAMI — the POSTGRES bootstrap Job binds the app's scoped role to it via `db-bootstrap --app-oid` (MySQL binds on azure_db_client_id instead) (#722)"
-  value       = local.enable_app_db_identity ? azurerm_user_assigned_identity.app_db[0].principal_id : null
+  value       = local.enable_app_db_identity ? one(azurerm_user_assigned_identity.app_db[*].principal_id) : null
 }
 
 output "azure_db_admin_user" {
   description = "Entra login name (UAMI principal name) the keyless bootstrap Job connects as — the dedicated DB admin (#722)"
-  value       = local.enable_app_db_identity ? azurerm_user_assigned_identity.db_admin[0].name : null
+  value       = local.enable_app_db_identity ? one(azurerm_user_assigned_identity.db_admin[*].name) : null
 }
 
 output "azure_db_name" {
@@ -135,7 +135,7 @@ output "azure_dns_zone_name" {
 # web ACL is genuinely bound (argocd wafAttachments); null means neither.
 output "application_gateway_name" {
   description = "Name of the Application Gateway — the AGIC chart's appgw.name, and the resource a WAF policy binds to"
-  value       = local.enable_application_gateway ? azurerm_application_gateway.this[0].name : null
+  value       = local.enable_application_gateway ? one(azurerm_application_gateway.this[*].name) : null
 }
 
 # modules/azure-waf has exported policy_id since it was written; nothing re-exported it, so the
@@ -171,7 +171,7 @@ output "azure_subscription_id" {
 
 output "external_dns_client_id" {
   description = "external-dns managed identity client id (Workload Identity)"
-  value       = var.provision_aks ? azurerm_user_assigned_identity.external_dns[0].client_id : null
+  value       = var.provision_aks ? one(azurerm_user_assigned_identity.external_dns[*].client_id) : null
 }
 
 # InfraFacts.AzureIngressClient has read an `ingress_client_id` output since the facts struct
@@ -180,7 +180,7 @@ output "external_dns_client_id" {
 # last, rather than a second name for the same thing.
 output "ingress_client_id" {
   description = "AGIC managed identity client id (Workload Identity) — rendered onto the AGIC ServiceAccount as armAuth.identityClientID; gates the AGIC ArgoCD Application"
-  value       = local.enable_agic ? azurerm_user_assigned_identity.agic[0].client_id : null
+  value       = local.enable_agic ? one(azurerm_user_assigned_identity.agic[*].client_id) : null
 }
 
 output "external_secrets_client_id" {

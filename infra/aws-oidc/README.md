@@ -13,8 +13,17 @@ from those workflows — they assume a scoped role via OIDC instead.
 |---|---|---|
 | `alethia-cp-deployer` | `infra-cp-hetzner.yml`, `infra-status.yml` | S3 state on `hetzner/*` + `status/*`; read/write the `alethia/prod/env` secret (read TF-var inputs, write `TUNNEL_TOKEN`/`DEPLOY_HOST`) |
 | `alethia-deploy-reader` | `deploy-console.yml` | **read** the `alethia/prod/env` secret only |
-| `alethia-runner-release-deployer` | `release-runner.yml`, `deploy-fleet-aws.yml` | ECR push to the runner repo + `ecs:UpdateService` on the one service |
+| `alethia-runner-release-deployer` | `release-runner.yml`, `deploy-fleet-aws.yml` | ECR push to the runner repo (created here since #3438) + `ecs:UpdateService` on the one service |
 | `alethia-e2e-nightly` | `e2e-nightly.yml` (schedule/dispatch **only**) | Provision + tear down an ephemeral AWS EKS estate — see below |
+
+This module also creates the **runner ECR repository** (`runner-ecr.tf`, #3438) — the registry
+`alethia-runner-release-deployer` pushes to. It was created by nothing for two months: the name
+lived in this stack's variable, in `release-runner.yml` and in `deploy-fleet-aws.yml`, and the role
+held `ecr:PutImage` on an ARN that named no resource, so **every** `release-runner` run — both of
+them — died on `The repository … does not exist in the registry`. The IAM grant now references
+`aws_ecr_repository.runner.arn` directly, so the permission and the registry cannot name different
+repositories again. It is regional, so it comes up through an `aws.runner` provider pinned to
+`runner_aws_region`; a `check` block asserts that is where it landed.
 
 This module also creates the **`alethia/prod/env` Secrets Manager container** (`asm.tf`) —
 the single vault for all runtime + infra secrets. Only the container is created here;

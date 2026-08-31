@@ -9,7 +9,7 @@ import { requireMcpAuth } from "@better-auth/mcp";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { registerAiToolsOnMcp } from "@/lib/ai/mcp/adapter";
 import { buildExternalAgentTools } from "@/lib/ai/tools";
-import { auth } from "@/lib/auth";
+import { auth, mcpResourceUrl } from "@/lib/auth";
 import { getActiveScope } from "@/lib/auth/scope";
 import { runWithActor } from "@/lib/authz/actor-context";
 import { isAiSurfaceEnabled } from "@/lib/billing/ai-guard";
@@ -57,7 +57,20 @@ const mcpHandler = createMcpHandler(
 // verified access-token CLAIMS (a JWTPayload), not a session object. The subject claim is
 // the user id. It is typed optional, so fail closed rather than coercing — an actor
 // resolved from an absent subject would be an actor with no user behind it.
-const handler = requireMcpAuth(auth, async (_req, accessTokenClaims) => {
+//
+// THE THIRD ARGUMENT IS NOT OPTIONAL IN PRACTICE (#3318). Left off, `requireMcpAuth` defaults
+// `resource` to the auth BASE URL — `https://<host>/api/auth` — and uses it for two things at
+// once: the RFC 9728 `resource_metadata` pointer in the 401 challenge, and the `aud` it demands
+// of the access token. `mcp()` binds issued tokens (RFC 8707) to `https://<host>/api/mcp`, so the
+// default made the 401 advertise metadata for a resource nobody serves AND made every correctly
+// issued token fail audience verification — MCP could not authenticate at all, not just fail to
+// be discovered. Same constant as the plugin's; see lib/auth/mcp-resource.ts.
+//
+// Deleting that argument leaves types, lint and the whole suite green while remote MCP auth is
+// dead, which is why tests/app/api/mcp-route-audience.test.ts asserts the value that reaches the
+// library rather than trusting the wiring to stay put (#3511).
+/** Resolves a verified access token into the same Actor every other caller uses. */
+const withActorFromToken: Parameters<typeof requireMcpAuth>[1] = async (_req, accessTokenClaims) => {
 	const subject = accessTokenClaims.sub;
 	if (typeof subject !== "string" || subject.length === 0) {
 		return new Response(JSON.stringify({ error: "Access token carries no subject." }), {
@@ -80,7 +93,40 @@ const handler = requireMcpAuth(auth, async (_req, accessTokenClaims) => {
 	// Bind the token-derived actor for the whole request so currentActor()/
 	// requireOwner() inside the tools resolve to it instead of a (absent) session.
 	return runWithActor(actor, () => mcpHandler.fetch(_req));
-});
+};
+
+/**
+ * The deployment cannot form an MCP resource (no absolute, https base URL), so `mcp()` was never
+ * registered and there is no OAuth provider behind this route.
+ *
+ * 503 rather than the library's default 401 (#3511). That default advertises
+ * `resource_metadata=…/.well-known/oauth-protected-resource/api/auth` — a document this
+ * deployment deliberately 404s, since it describes the authorization server rather than the
+ * resource. Pointing a client at a document we answer 404 to is a worse answer than saying the
+ * feature is not configured.
+ */
+function notConfigured(): Response {
+	return new Response(
+		JSON.stringify({
+			jsonrpc: "2.0",
+			error: {
+				code: -32000,
+				message:
+					"MCP is not configured on this deployment: NEXT_PUBLIC_APP_URL must be an absolute https URL.",
+			},
+			id: null,
+		}),
+		{ status: 503, headers: { "content-type": "application/json" } },
+	);
+}
+
+// The ternary is what keeps `requireMcpAuth` off the unconfigured path entirely: it validates
+// `opts.resource` EAGERLY, so calling it with a null resource would throw at module load and take
+// the route down instead of answering 503.
+const handler =
+	mcpResourceUrl === null
+		? notConfigured
+		: requireMcpAuth(auth, withActorFromToken, { resource: mcpResourceUrl });
 
 // POST only. 1.7's upgrade guide requires dropping the MCP-route GET and DELETE exports
 // (the SSE/session transports they served are the `legacy` mode now rejected above).

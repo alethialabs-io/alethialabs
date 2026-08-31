@@ -55,9 +55,13 @@ type CloudK8s struct {
 
 // Component is a platform component with its recorded releases.
 type Component struct {
-	ID       string             `json:"id"`
-	Title    string             `json:"title"`
-	Releases []ComponentRelease `json:"versions"`
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// Supported is the window Alethia itself supports operating, on the
+	// app-version axis. A nil pointer means the component declares none, which
+	// SupportedWindow reports as "not declared" rather than as an open window.
+	Supported *SupportedWindow   `json:"supported,omitempty"`
+	Releases  []ComponentRelease `json:"versions"`
 }
 
 // ComponentRelease pins one released version of a component to the Kubernetes
@@ -68,7 +72,12 @@ type ComponentRelease struct {
 	AppVersion string `json:"app_version,omitempty"`
 	K8sMin     string `json:"k8s_min"`
 	K8sMax     string `json:"k8s_max"`
-	Note       string `json:"note,omitempty"`
+	// Unsupported records that this release is known-broken, so the prose in Note
+	// becomes checkable: TestCouplingArgoCD refuses a support window that would
+	// admit it. Absent means supported, which is the common case and the safe
+	// zero value — a release admitted in error is still held to the window.
+	Unsupported bool   `json:"unsupported,omitempty"`
+	Note        string `json:"note,omitempty"`
 }
 
 // K8sRange is a supported Kubernetes minor window [K8sMin, K8sMax]. Empty bounds
@@ -165,6 +174,18 @@ func (m *Matrix) Cloud(slug string) (CloudK8s, bool) {
 }
 
 // Release returns a component's recorded release by version.
+// Component returns a component by id. Two-value, like Cloud and Release: a
+// missing component is a fact the caller has to handle, not a zero value it can
+// read fields off.
+func (m *Matrix) Component(id string) (Component, bool) {
+	for _, c := range m.Components {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return Component{}, false
+}
+
 func (m *Matrix) Release(componentID, version string) (ComponentRelease, bool) {
 	for _, c := range m.Components {
 		if c.ID != componentID {

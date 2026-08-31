@@ -131,14 +131,40 @@ module "iam_assumable_role_external_dns" {
   create_role = true
   role_name   = "${var.eks_cluster_name}-external-dns"
   role_policy_arns = {
-    external_dns_policy = "arn:aws:iam::aws:policy/AmazonRoute53FullAccess"
+    external_dns_policy = aws_iam_policy.external_dns.arn
   }
   oidc_providers = {
     main = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["external-dns:external-dns-sa", "cert-manager:cert-manager"]
+      provider_arn = module.eks.oidc_provider_arn
+      # THREE service accounts on one role, for the reason the header above gives about the second.
+      # `external-dns:addon-external-dns-sa` is the MARKETPLACE add-on's KSA (apps/console/lib/addons/
+      # catalog.ts, EXTERNAL_DNS_ADDON_SA). It is a distinct object from the rail's
+      # `external-dns-sa` deliberately: both Applications live in the `external-dns` namespace and
+      # naming one KSA would put two ArgoCD Applications on it. The policy it needs is the one
+      # already attached, so a second role with an identical policy would be pure duplication.
+      namespace_service_accounts = ["external-dns:external-dns-sa", "external-dns:addon-external-dns-sa", "cert-manager:cert-manager"]
     }
   }
+}
+
+resource "aws_iam_policy" "external_dns" {
+  name_prefix = "${var.eks_cluster_name}-external-dns-"
+  description = "Route53 access for the project's external-dns hosted zone"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"]
+        Resource = var.external_dns_zone_id == "" ? "arn:aws:route53:::hostedzone/00000000" : "arn:aws:route53:::hostedzone/${var.external_dns_zone_id}"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["route53:GetChange", "route53:ListHostedZones", "route53:ListHostedZonesByName", "route53:ListTagsForResource"]
+        Resource = "*"
+      },
+    ]
+  })
 }
 
 # Least-privilege: read-only on the PROJECT'S secrets only (custom-secrets prefix + the
@@ -439,4 +465,3 @@ resource "aws_iam_policy" "aws_load_balancer_controller" {
 }
 EOT
 }
-

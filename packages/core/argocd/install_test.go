@@ -4,10 +4,12 @@
 package argocd
 
 import (
+	"bytes"
 	"encoding/base64"
 	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsOperatorNotReady(t *testing.T) {
@@ -224,5 +226,230 @@ func TestExternalSecretsStoreManifest_XacctOmitsAbsentExternalID(t *testing.T) {
 	}
 	if strings.Contains(m, "externalID") {
 		t.Fatalf("externalID must be omitted when unset, got:\n%s", m)
+	}
+}
+
+// ── #2652: the ClusterSecretStore CRD wait ───────────────────────────────────────────────────────
+
+// TestIsCRDPendingEstablishment pins BOTH halves of the classifier, because the two halves have
+// opposite costs. Matching too little turns a normal fresh-cluster wait into no wait at all; matching
+// too much turns "the cluster cannot answer" into a fifteen-minute stall before the apply that would
+// have reported the real cause. `kubectl: command not found` is in the reject list specifically —
+// a bare "not found" marker would have matched it.
+func TestIsCRDPendingEstablishment(t *testing.T) {
+	pending := map[string]string{
+		"the CRD does not exist yet": `Error from server (NotFound): customresourcedefinitions.apiextensions.k8s.io "clustersecretstores.external-secrets.io" not found`,
+		"older kubectl phrasing":     `error: no matching resources found`,
+		"exists but not Established": `error: timed out waiting for the condition on customresourcedefinitions/clustersecretstores.external-secrets.io`,
+	}
+	for name, output := range pending {
+		if !isCRDPendingEstablishment(output) {
+			t.Errorf("%s: isCRDPendingEstablishment=false, want true — the operator is still installing", name)
+		}
+	}
+
+	unanswerable := map[string]string{
+		"rbac refusal":     `Error from server (Forbidden): customresourcedefinitions.apiextensions.k8s.io is forbidden: User "runner" cannot get resource`,
+		"no cluster":       `Unable to connect to the server: dial tcp 127.0.0.1:6443: connect: connection refused`,
+		"no kubectl":       `bash: line 1: kubectl: command not found`,
+		"empty output":     "",
+		"unrelated stdout": "customresourcedefinition.apiextensions.k8s.io/clustersecretstores.external-secrets.io condition met",
+	}
+	for name, output := range unanswerable {
+		if isCRDPendingEstablishment(output) {
+			t.Errorf("%s: isCRDPendingEstablishment=true, want false — waiting cannot fix this", name)
+		}
+	}
+}
+
+// firstCallIndex returns the index of the first recorded kubectl invocation containing every
+// fragment, or -1. Order of invocations is the assertion #2652 is about, so the tests need indices
+// rather than calledWith's boolean.
+func firstCallIndex(calls []string, fragments ...string) int {
+	for i, c := range calls {
+		all := true
+		for _, f := range fragments {
+			if !strings.Contains(c, f) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestTheStoreWaitsForItsCRDBeforeApplyingIt is #2652's ordering fix.
+//
+// The store's kind is installed asynchronously by ArgoCD, and the apply's retry loop was ABSORBING
+// `no matches for kind` for up to fifteen minutes instead of waiting for the CRD — so the deploy's
+// correctness rested on a retry rather than on order. The wait must be issued, must name the
+// cluster-scoped CRD, and must come BEFORE the apply; issuing it afterwards would assert nothing.
+func TestTheStoreWaitsForItsCRDBeforeApplyingIt(t *testing.T) {
+	stub := newKubectlStub(t, 0)
+	facts := &InfraFacts{
+		Provider: "aws", Region: "us-east-1",
+		IRSAExternalSecretsArn: "arn:aws:iam::123:role/eso",
+	}
+	var stdout, stderr bytes.Buffer
+	if err := EnsureExternalSecretsStore(facts, &stdout, &stderr); err != nil {
+		t.Fatalf("EnsureExternalSecretsStore() error = %v, want nil", err)
+	}
+
+	calls := stub.calls()
+	waitAt := firstCallIndex(calls, "wait --for=condition=established", "crd/clustersecretstores.external-secrets.io")
+	applyAt := firstCallIndex(calls, "apply --server-side")
+	if waitAt < 0 {
+		t.Fatalf("no wait on the ClusterSecretStore CRD was issued at all: %v", calls)
+	}
+	if applyAt < 0 {
+		t.Fatalf("the store was never applied: %v", calls)
+	}
+	if waitAt > applyAt {
+		t.Fatalf("the CRD wait was issued AFTER the apply (wait=%d apply=%d) — it cannot order anything: %v",
+			waitAt, applyAt, calls)
+	}
+
+	// #2652 point 3: a green run must carry evidence of WHICH path it took. A converged retry and a
+	// clean first apply printed the same single line before this.
+	if !strings.Contains(stdout.String(), "applied on attempt 1, after clustersecretstores.external-secrets.io was confirmed Established") {
+		t.Errorf("the success line does not record the attempt count and the confirmed CRD:\n%s", stdout.String())
+	}
+}
+
+// TestTheVaultStoreRidesTheSameCRDWait covers vault.go's caller. EnsureHetznerSecretStore applies the
+// same kind against the same CRD and shares applyStoreAwaitingOperator deliberately, so the wait must
+// reach it too — a fix applied at one of two call sites is a fix that drifts.
+func TestTheVaultStoreRidesTheSameCRDWait(t *testing.T) {
+	stub := newKubectlStub(t, 0)
+	var stdout, stderr bytes.Buffer
+	if err := EnsureHetznerSecretStore(
+		&InfraFacts{Provider: "hetzner", HetznerInClusterVault: true}, &stdout, &stderr,
+	); err != nil {
+		t.Fatalf("EnsureHetznerSecretStore() error = %v, want nil", err)
+	}
+	calls := stub.calls()
+	waitAt := firstCallIndex(calls, "wait --for=condition=established", "crd/clustersecretstores.external-secrets.io")
+	applyAt := firstCallIndex(calls, "apply --server-side")
+	if waitAt < 0 || applyAt < 0 || waitAt > applyAt {
+		t.Fatalf("the in-cluster Vault store did not wait for its CRD before applying (wait=%d apply=%d): %v",
+			waitAt, applyAt, calls)
+	}
+}
+
+// TestAnUnanswerableCRDWaitIsNeitherReadinessNorFailure is the failure branch, which is this repo's
+// dominant defect class: a check whose "could not look" outcome is indistinguishable from "nothing
+// wrong". Three separate things must hold when the wait cannot be answered at all —
+//
+//   - it must NOT read as ready: the log says the CRD was not confirmed, and the success line says
+//     the apply ran without a confirmation rather than claiming one;
+//   - it must NOT become a hard failure: the apply still runs, and a working apply still returns nil,
+//     so a slow establish stays as recoverable as it was before the wait existed;
+//   - it must NOT consume the store's budget: an RBAC refusal is not a race, so re-asking it fifteen
+//     minutes long would only delay the apply that reports the real cause. The default
+//     externalSecretsStoreMaxWait is left in place here precisely so a regression to "retry
+//     everything" hangs this test instead of passing it.
+func TestAnUnanswerableCRDWaitIsNeitherReadinessNorFailure(t *testing.T) {
+	stub := newKubectlStub(t, 0, stubRule{
+		Match:  "wait --for=condition=established",
+		Stdout: `Error from server (Forbidden): customresourcedefinitions.apiextensions.k8s.io is forbidden: User "runner" cannot get resource`,
+		Exit:   1,
+	})
+	facts := &InfraFacts{
+		Provider: "aws", Region: "us-east-1",
+		IRSAExternalSecretsArn: "arn:aws:iam::123:role/eso",
+	}
+	var stdout, stderr bytes.Buffer
+
+	start := time.Now()
+	err := EnsureExternalSecretsStore(facts, &stdout, &stderr)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("a CRD wait that could not be answered failed the deploy: %v", err)
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("an unanswerable CRD wait was retried on the store's budget (took %s)", elapsed)
+	}
+	if !stub.calledWith("apply --server-side") {
+		t.Fatalf("the store was never applied — an unconfirmed CRD must not skip the apply: %v", stub.calls())
+	}
+	if !strings.Contains(stderr.String(), "could not confirm") ||
+		!strings.Contains(stderr.String(), "NOT treating that as ready") {
+		t.Errorf("the unconfirmed CRD was not reported as unconfirmed:\n%s", stderr.String())
+	}
+	if strings.Contains(stdout.String(), "was confirmed Established") {
+		t.Errorf("a wait that never answered was logged as a confirmation:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "WITHOUT clustersecretstores.external-secrets.io having been confirmed") {
+		t.Errorf("the success line does not admit the CRD was unconfirmed:\n%s", stdout.String())
+	}
+}
+
+// TestTheCRDWaitRetriesWhileTheCRDIsStillRegistering proves the wait actually WAITS. `kubectl wait`
+// on a named resource that does not exist yet fails immediately rather than blocking, so on a fresh
+// cluster — the exact case #2652 is about — a single unconditional wait would return at once and
+// order nothing. Only the poll makes it an ordering primitive.
+func TestTheCRDWaitRetriesWhileTheCRDIsStillRegistering(t *testing.T) {
+	// THE LOOP MUST END ON STATE, NOT ON A CLOCK.
+	//
+	// This test used to cap `externalSecretsStoreMaxWait` at 300ms against a stub that answered
+	// NotFound forever, and assert the wait had been issued at least twice before the deadline
+	// elapsed. Every stub call spawns a `/bin/sh`, so the assertion was really "can this machine
+	// fork twice in 300ms" — true on an idle laptop, false under coverage instrumentation or on a
+	// loaded CI runner. It failed exactly that way once, and a wall-clock flake in a shared repo
+	// reds pull requests that have nothing to do with it.
+	//
+	// So the CRD now BECOMES Established on the third answer, and the deadline is set far beyond
+	// anything the test needs. The loop exits because the condition it waits for came true, which
+	// is the behaviour under test; the count is then exact rather than a lower bound, and no
+	// amount of machine load can change it.
+	origWait, origPoll := externalSecretsStoreMaxWait, clusterSecretStoreCRDPollInterval
+	externalSecretsStoreMaxWait = time.Minute
+	clusterSecretStoreCRDPollInterval = time.Millisecond
+	t.Cleanup(func() {
+		externalSecretsStoreMaxWait, clusterSecretStoreCRDPollInterval = origWait, origPoll
+	})
+
+	notFound := `Error from server (NotFound): customresourcedefinitions.apiextensions.k8s.io "clustersecretstores.external-secrets.io" not found`
+	stub := newKubectlStub(t, 0, stubRule{
+		Match:  "wait --for=condition=established",
+		Stdout: notFound,
+		Exit:   1,
+		Then: []stubAnswer{
+			{Stdout: notFound, Exit: 1},
+			{Stdout: "customresourcedefinition.apiextensions.k8s.io/clustersecretstores.external-secrets.io condition met", Exit: 0},
+		},
+	})
+	facts := &InfraFacts{
+		Provider: "aws", Region: "us-east-1",
+		IRSAExternalSecretsArn: "arn:aws:iam::123:role/eso",
+	}
+	var stdout, stderr bytes.Buffer
+	if err := EnsureExternalSecretsStore(facts, &stdout, &stderr); err != nil {
+		t.Fatalf("EnsureExternalSecretsStore() error = %v, want nil", err)
+	}
+
+	waits := 0
+	for _, c := range stub.calls() {
+		if strings.Contains(c, "wait --for=condition=established") {
+			waits++
+		}
+	}
+	// EXACTLY three: two NotFounds and the one that succeeded. Fewer means the poll gave up on a
+	// CRD that was still registering; more means it kept asking after the answer was yes.
+	if waits != 3 {
+		t.Fatalf("the CRD wait was issued %d time(s), want exactly 3 (NotFound, NotFound, Established): %v",
+			waits, stub.calls())
+	}
+	if !strings.Contains(stdout.String(), "isn't Established yet (attempt 1)") {
+		t.Errorf("the poll never reported that it was waiting:\n%s", stdout.String())
+	}
+	// The point of polling is to reach a CONFIRMED establish. A run that only ever saw NotFound
+	// and fell through to the apply retry would satisfy the count above but not this.
+	if !strings.Contains(stdout.String(), "was confirmed Established") {
+		t.Errorf("the poll never reported the establish it was waiting for:\n%s", stdout.String())
 	}
 }

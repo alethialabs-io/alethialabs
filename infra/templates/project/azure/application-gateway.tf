@@ -75,7 +75,7 @@ resource "azurerm_application_gateway" "this" {
 
   frontend_ip_configuration {
     name                 = "appgw-frontend-ip"
-    public_ip_address_id = azurerm_public_ip.application_gateway[0].id
+    public_ip_address_id = one(azurerm_public_ip.application_gateway[*].id)
   }
 
   frontend_port {
@@ -170,7 +170,7 @@ resource "azurerm_federated_identity_credential" "agic" {
 
   name                = "agic"
   resource_group_name = azurerm_resource_group.main.name
-  parent_id           = azurerm_user_assigned_identity.agic[0].id
+  parent_id           = one(azurerm_user_assigned_identity.agic[*].id)
   audience            = ["api://AzureADTokenExchange"]
   issuer              = module.aks[0].oidc_issuer_url
   # Must match the namespace + ServiceAccount the AGIC Application creates
@@ -187,9 +187,9 @@ resource "azurerm_federated_identity_credential" "agic" {
 resource "azurerm_role_assignment" "agic_gateway" {
   count = local.enable_agic ? 1 : 0
 
-  scope                = azurerm_application_gateway.this[0].id
+  scope                = one(azurerm_application_gateway.this[*].id)
   role_definition_name = "Contributor"
-  principal_id         = azurerm_user_assigned_identity.agic[0].principal_id
+  principal_id         = one(azurerm_user_assigned_identity.agic[*].principal_id)
 }
 
 resource "azurerm_role_assignment" "agic_resource_group_reader" {
@@ -197,5 +197,5 @@ resource "azurerm_role_assignment" "agic_resource_group_reader" {
 
   scope                = azurerm_resource_group.main.id
   role_definition_name = "Reader"
-  principal_id         = azurerm_user_assigned_identity.agic[0].principal_id
+  principal_id         = one(azurerm_user_assigned_identity.agic[*].principal_id)
 }

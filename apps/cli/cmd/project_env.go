@@ -62,19 +62,41 @@ var projectEnvListCmd = &cobra.Command{
 	},
 }
 
-var envListColumns = []string{"Name", "Stage", "Status", "Default", "Region"}
+// Placement, Namespace and Fabric sit next to each other deliberately: read across a row and
+// you get the whole claim — this tier is a namespace, in boutique-dev-1, on the Fabric named
+// prod, which the row above owns. Without them the list answered Name/Stage/Status/Default/
+// Region, none of which distinguishes an environment that bought a cluster from one that
+// cost nothing, which is the single thing the isolation ladder exists to show.
+var envListColumns = []string{
+	"Name", "Stage", "Placement", "Namespace", "Fabric", "Status", "Default", "Region",
+}
 
 // envRows projects environments into plain table rows.
 func envRows(envs []api.Environment) [][]string {
 	rows := make([][]string, len(envs))
 	for i, e := range envs {
-		region := ui.SymbolDash
-		if e.Region != nil && *e.Region != "" {
-			region = *e.Region
+		rows[i] = []string{
+			e.Name,
+			e.Stage,
+			orDash(e.PlacementMode),
+			derefOrDash(e.Namespace),
+			derefOrDash(e.Fabric),
+			e.Status,
+			yesNo(e.IsDefault),
+			derefOrDash(e.Region),
 		}
-		rows[i] = []string{e.Name, e.Stage, e.Status, yesNo(e.IsDefault), region}
 	}
 	return rows
+}
+
+// derefOrDash is orDash for an optional field: nil and "" both render as the table's dash, so a
+// blank cell is never mistaken for a value the server actually returned. The pointer cases are
+// real — a dedicated environment has no namespace, and a Fabric may not exist yet.
+func derefOrDash(s *string) string {
+	if s == nil {
+		return ui.SymbolDash
+	}
+	return orDash(*s)
 }
 
 // runProjectEnvList fetches and renders a project's environments (non-interactive path).

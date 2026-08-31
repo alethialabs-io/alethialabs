@@ -38,6 +38,13 @@ concurrency:
 # `contents: read` is not enough — the push came back 403 ("Permission to alethialabs-io/alethialabs
 # .git denied to github-actions[bot]") on every scheduled run, and the snapshot stopped refreshing.
 #
+# ⚠️ AS OF THE APP TOKEN BELOW, GITHUB_TOKEN IS ONLY THE FALLBACK. v8's `branchToken` defaults to
+# `token`, so on the normal path the branch push and the PR are both the App's, and GITHUB_TOKEN
+# needs no more than `contents: read` for the checkout. The write stays because the mint is
+# `continue-on-error` and the fallback is `github.token` — the permission is what keeps the
+# degraded path working, not the main one. The real prerequisite now is the App installation
+# carrying contents + pull-requests + issues write, as release-please.yml:29-30 records.
+#
 # That failure is on a timer, which is the dangerous part. PROGRAMME.md's live half warns past 48
 # hours and FAILS past 7 days, deliberately — "a broken refresh produces no signal at all". So a
 # silently dead refresher does not just go stale, it reds `pnpm check:programme` for everyone about
@@ -154,9 +161,49 @@ jobs:
         continue-on-error: true
         run: node scripts/programme-rollup.mjs
 
+      # ── THE PR MUST NOT BE AUTHORED BY GITHUB_TOKEN (#3476). ──────────────────────────────────
+      # A PR opened by `github-actions[bot]` sits with an EMPTY check rollup — never red, just
+      # permanently BLOCKED and unmergeable — which reads like a CI problem and is not one.
+      #
+      # ⚠️ THE MECHANISM IS NOT "the workflows never start". That was the first diagnosis and this
+      # branch's own history refutes it: `gh run list --branch chore/programme-ledger-refresh` shows
+      # CI, Validate console build and capabilities-security CREATED within seconds of the PR — and
+      # sitting at `conclusion: action_required`, a manual approval gate. An `action_required` run
+      # publishes no check-run against the head SHA, which is why the rollup looks empty and why
+      # "no run was ever created" is the natural wrong inference. Nor has every refresh landed
+      # there: #3329, #3207 and #2774 ran green and were merged by Mergify after the maintainer
+      # approved them.
+      #
+      # The remedy is the same either way — an App-authored PR is not subject to the approval gate
+      # that fires for `github-actions[bot]` — but the reason has to be right, or the next person to
+      # read this hunts a workflow trigger that was never the problem.
+      #
+      # Same custody as release-please.yml:25-40. TAP_APP_ID / TAP_APP_PRIVATE_KEY are already used
+      # by release-please.yml, mirror-cli.yml and release-cli.yml, so nothing new is trusted here.
+      #
+      # ⚠️ AND IT DOES NOTHING UNTIL IT REACHES `main`. `schedule:` fires the DEFAULT branch's copy
+      # of a workflow, and the default branch is `main` — where this file still has no `token:`. So
+      # merging to dev leaves every nightly exactly as it is until dev → staging → main promotes it.
+      # Checking "the next scheduled run" before then will read as a failed fix. workflow-health.yml
+      # documents the same trap.
+      - name: Mint the ledger-PR token (GitHub App)
+        id: ledger_token
+        # ⚠️ NON-FATAL, WITH A FALLBACK. Without this an App-token outage aborts the job before the
+        # PR is opened, so the snapshot never lands at all — and PROGRAMME.md's live half reds
+        # `pnpm check:programme` for everyone seven days later, which the header above calls the
+        # dangerous failure. A PR that needs an approval click is strictly better than no PR.
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.TAP_APP_ID }}
+          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
+          owner: alethialabs-io
+          repositories: alethialabs
+
       - name: Open or update the refresh PR
         uses: peter-evans/create-pull-request@v8
         with:
+          token: ${{ steps.ledger_token.outputs.token || github.token }}
           base: dev
           branch: chore/programme-ledger-refresh
           # A stable branch means one long-lived PR that gets updated, not a new PR every morning.

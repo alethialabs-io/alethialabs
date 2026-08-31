@@ -43,4 +43,6 @@ module "eks" {
   secret_resource_arns = local.eso_secret_arns
 
   allow_long_names = var.allow_long_names
+
+  external_dns_zone_id = var.cloud_dns_enabled ? module.route53[0].zone_id : var.dns_hosted_zone
 }

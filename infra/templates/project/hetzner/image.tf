@@ -114,6 +114,6 @@ resource "imager_image" "amd64" {
 }
 
 locals {
-  image_id_arm64 = local.need_arm64 ? imager_image.arm64[0].image_id : ""
-  image_id_amd64 = local.need_amd64 ? imager_image.amd64[0].image_id : ""
+  image_id_arm64 = local.need_arm64 ? one(imager_image.arm64[*].image_id) : ""
+  image_id_amd64 = local.need_amd64 ? one(imager_image.amd64[*].image_id) : ""
 }

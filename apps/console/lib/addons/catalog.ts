@@ -117,12 +117,21 @@ interface ExternalDnsProviderAuth {
 	tokenEnv?: string;
 	/** Workload-identity providers: the ServiceAccount annotation that carries the cloud identity. */
 	saAnnotation?: string;
+	/** Workload-identity providers: what the identity IS on this cloud, in the words a user needs to
+	 * go and find one ("an IAM role ARN"). Set exactly when `saAnnotation` is — a compile-time pair
+	 * is not expressible in TypeScript, so `externalDnsIdentityRequirement` reads them together and
+	 * `external-dns-providers.test.ts` sweeps the table for the mismatch.
+	 *
+	 * It exists because the REFUSAL below has to be actionable. "workloadIdentity is required" tells
+	 * a user nothing they can act on; "AWS Route 53 authenticates by IAM role — set it to an IAM
+	 * role ARN" tells them what to go and get. One copy, here, next to the annotation it fills. */
+	identityLabel?: string;
 	/** Providers ExternalDNS has no native support for, reached through a webhook sidecar instead. */
 	webhook?: { image: { repository: string; tag: string } };
 }
 
 /** The provider ids the catalog offers. */
-const EXTERNAL_DNS_PROVIDER_IDS = ["cloudflare", "digitalocean", "hetzner", "aws", "google", "azure"] as const;
+export const EXTERNAL_DNS_PROVIDER_IDS = ["cloudflare", "digitalocean", "hetzner", "aws", "google", "azure"] as const;
 
 /**
  * Exported so `catalog-export.ts` can map a CLOUD to the external-dns provider that cloud manages
@@ -136,7 +145,7 @@ export type ExternalDnsProvider = (typeof EXTERNAL_DNS_PROVIDER_IDS)[number];
  * an id to the tuple above without giving it a credential path is a COMPILE error, so the offer and
  * the wiring cannot diverge again.
  */
-const EXTERNAL_DNS_PROVIDERS: Record<ExternalDnsProvider, ExternalDnsProviderAuth> = {
+export const EXTERNAL_DNS_PROVIDERS: Record<ExternalDnsProvider, ExternalDnsProviderAuth> = {
 	cloudflare: { label: "Cloudflare", tokenEnv: "CF_API_TOKEN" },
 	digitalocean: { label: "DigitalOcean", tokenEnv: "DO_TOKEN" },
 	hetzner: {
@@ -147,10 +156,90 @@ const EXTERNAL_DNS_PROVIDERS: Record<ExternalDnsProvider, ExternalDnsProviderAut
 		// cannot drift into two different Hetzner integrations.
 		webhook: { image: { repository: "docker.io/hetzner/external-dns-hetzner-webhook", tag: "v0.3.3" } },
 	},
-	aws: { label: "AWS Route 53", saAnnotation: "eks.amazonaws.com/role-arn" },
-	google: { label: "Google Cloud DNS", saAnnotation: "iam.gke.io/gcp-service-account" },
-	azure: { label: "Azure DNS", saAnnotation: "azure.workload.identity/client-id" },
+	aws: {
+		label: "AWS Route 53",
+		saAnnotation: "eks.amazonaws.com/role-arn",
+		identityLabel: "an IAM role ARN",
+	},
+	google: {
+		label: "Google Cloud DNS",
+		saAnnotation: "iam.gke.io/gcp-service-account",
+		identityLabel: "a service-account email",
+	},
+	azure: {
+		label: "Azure DNS",
+		saAnnotation: "azure.workload.identity/client-id",
+		identityLabel: "a managed-identity client id",
+	},
 };
+
+/**
+ * The ServiceAccount the marketplace external-dns add-on runs under.
+ *
+ * NOT `external-dns-sa`, and the difference is the whole reason this is a named constant.
+ *
+ * The PLATFORM RAIL (`infra/templates/argocd/external-dns.yaml`) installs its own external-dns into
+ * this same namespace and sets `serviceAccount.name: external-dns-sa`, and all three clouds bind
+ * their platform DNS identity to that exact name — `external-dns:external-dns-sa` in the EKS IRSA
+ * trust policy (infra/templates/project/aws/modules/eks/irsa.tf:139), in the GKE member
+ * (gcp/workload-identity.tf:74) and in the Azure federated-credential subject
+ * (azure/workload-identity.tf:26).
+ *
+ * So an add-on that also named its ServiceAccount `external-dns-sa` would not merely sit beside the
+ * rail — it would be the SAME Kubernetes object, owned by two ArgoCD Applications with different
+ * content. The rail syncs `selfHeal: true`, so the two would take turns rewriting the annotation,
+ * and the loser is the PLATFORM's DNS controller: the one that publishes the environment's Ingress
+ * records. A marketplace add-on must not be able to do that to the platform by being installed.
+ *
+ * It was unreachable until now only because `workloadIdentity` was optional and empty by default, so
+ * `toValues` emitted no serviceAccount block at all — the very hole #3469 closes. Requiring the
+ * identity makes the collision the NORMAL path, which is why it is fixed in the same change.
+ *
+ * ⚠️ FOR #3470, which plans to make the add-on assume the role the platform template already
+ * creates: that role's trust is bound to `external-dns-sa` above. It has to gain
+ * `external-dns:addon-external-dns-sa` (and the GKE/Azure equivalents — all three clouds, one pass)
+ * rather than have the add-on borrow the rail's ServiceAccount, which cannot work for the reason
+ * just given.
+ */
+export const EXTERNAL_DNS_ADDON_SA = "addon-external-dns-sa";
+
+/**
+ * Why an external-dns configuration cannot be installed, or null when it can.
+ *
+ * ONE rule, read off `EXTERNAL_DNS_PROVIDERS` rather than off a list of cloud names, so it covers
+ * every workload-identity provider the catalog declares — aws, google and azure today, and any
+ * fourth one the moment it is added with a `saAnnotation`. A refusal that named the three clouds
+ * would be a parity break waiting to happen.
+ *
+ * WHAT IT REFUSES, and why only this: a provider that authenticates by ANNOTATION, with no identity
+ * to put in the annotation. `toValues` then emits no serviceAccount block, the controller runs under
+ * the chart's default ServiceAccount with no identity, and on AWS that install comes up **Healthy
+ * and writes nothing** — the SDK's default chain always yields some credential through IMDS, so the
+ * provider constructs and a per-record Route53 `AccessDenied` is not a constructor error. gcp and
+ * azure fail inside the constructor and CrashLoop, so the product at least says something there;
+ * aws reports success. #3469.
+ *
+ * WHAT IT DELIBERATELY DOES NOT REFUSE: a token provider with no `apiToken`. Not an oversight and
+ * not a parity gap — `apiToken` is a SECRET knob, and secret knobs are stripped to their schema
+ * default BEFORE validation (`stripAddonSecrets`, W4.5/#640), so the schema can never see whether
+ * one is stored. A refine on it would fire on every install, including the ones that are correctly
+ * configured. The identity path is closable here precisely because an identity is an IDENTIFIER
+ * rather than a credential — it rides in the clear, so validation can see it.
+ */
+function externalDnsIdentityRequirement(config: {
+	provider: ExternalDnsProvider;
+	workloadIdentity: string;
+}): string | null {
+	const p = EXTERNAL_DNS_PROVIDERS[config.provider];
+	if (!p.saAnnotation) return null;
+	if (config.workloadIdentity.trim() !== "") return null;
+	return (
+		`${p.label} authenticates ExternalDNS through workload identity, not a token, so a ` +
+		`"Workload identity" is required — ${p.identityLabel ?? "the cloud identity to assume"}. ` +
+		`Without it the controller runs with no identity: on AWS it starts, reports healthy and ` +
+		`silently writes no DNS records at all.`
+	);
+}
 
 /**
  * The object-store PLUGINS velero can talk to a backup location through.
@@ -1667,9 +1756,29 @@ export const ADDON_CATALOG: AddOnDef[] = [
 			/** The cloud identity external-dns assumes on a workload-identity provider: an IAM role
 			 * ARN (aws), a service-account email (google) or a managed-identity client id (azure).
 			 * NOT a secret — it is an identifier, and the whole point of the keyless path is that
-			 * there is no credential to store. Ignored by the token providers. */
+			 * there is no credential to store. Ignored by the token providers.
+			 *
+			 * REQUIRED on a workload-identity provider — see the superRefine below. */
 			workloadIdentity: z.string().default(""),
-		}),
+		})
+			// #3469. A provider that authenticates by ANNOTATION with nothing to annotate is not a
+			// half-configured install, it is an install that CANNOT work — and on AWS it does not
+			// say so: it comes up Healthy and writes nothing. Refusing the combination here means
+			// the console and the CLI both reject it at configure time (both call
+			// `configSchema.safeParse`), which is the only moment a user can still fix it.
+			//
+			// The rule itself lives in `externalDnsIdentityRequirement` so that the refusal and its
+			// reason have exactly one definition; this closure only reports it.
+			.superRefine((c, ctx) => {
+				const why = externalDnsIdentityRequirement(c);
+				if (why) {
+					ctx.addIssue({
+						code: "custom",
+						path: ["workloadIdentity"],
+						message: why,
+					});
+				}
+			}),
 		toValues: (c) => {
 			const p = EXTERNAL_DNS_PROVIDERS[c.provider];
 			return {
@@ -1678,14 +1787,25 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				// `secretValues` and deep-merged onto this.
 				provider: p.webhook ? { name: "webhook", webhook: { image: p.webhook.image } } : { name: c.provider },
 				...(c.domainFilter ? { domainFilters: [c.domainFilter] } : {}),
-				// A workload-identity provider authenticates by ANNOTATION, not by env var. Without
-				// this the chart's ServiceAccount carries no identity and the controller falls back
-				// to the node role, which has no DNS permission — so it starts, fails every write,
-				// and reports Degraded exactly as an unconfigured token provider does.
-				...(p.saAnnotation && c.workloadIdentity
+				// A workload-identity provider authenticates by ANNOTATION, not by env var.
+				//
+				// Gated on `p.saAnnotation` ALONE, deliberately — not on `&& c.workloadIdentity` as
+				// it used to be. The schema now refuses an empty identity on these providers
+				// (#3469), so the identity is guaranteed present here; and if that refusal were ever
+				// removed, this renders an EMPTY annotation, which is visibly broken in the manifest
+				// rather than silently absent from it. The old gate is what produced the defect:
+				// with no identity it emitted no serviceAccount block at all, the controller ran
+				// under the chart's default ServiceAccount, and the comment that used to sit here
+				// claimed the result "reports Degraded exactly as an unconfigured token provider
+				// does". That is true on gcp and azure, which fail inside the provider constructor,
+				// and FALSE on aws, where the SDK's default chain always yields a credential through
+				// IMDS: the pod stays Ready, ArgoCD reports Healthy, and every Route53 write is
+				// refused one record at a time. Fail-open on exactly the cloud a user is most likely
+				// to be on.
+				...(p.saAnnotation
 					? {
 							serviceAccount: {
-								name: "external-dns-sa",
+								name: EXTERNAL_DNS_ADDON_SA,
 								annotations: { [p.saAnnotation]: c.workloadIdentity },
 							},
 							// Azure's workload-identity webhook only injects into labelled pods.
@@ -1728,7 +1848,11 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				label: "Workload identity (AWS / Google / Azure)",
 				type: "string",
 				default: "",
-				help: "The identity external-dns assumes: an IAM role ARN (AWS), a service-account email (Google) or a managed-identity client id (Azure). Not needed for the token providers.",
+				help:
+					"REQUIRED for AWS, Google and Azure — the identity external-dns assumes: an IAM role ARN (AWS), " +
+					`a service-account email (Google) or a managed-identity client id (Azure). Bind it to the ` +
+					`add-on's ServiceAccount, "${EXTERNAL_DNS_ADDON_SA}" in the "external-dns" namespace. Not needed ` +
+					"for the token providers, which take an API token above instead.",
 			},
 		],
 		syncWave: 2,
@@ -1796,9 +1920,26 @@ export function resolveAddOnInstall(row: {
 	// Strip secret-typed knobs BEFORE validation — the schema sees its default, never a
 	// credential (neither an EncryptedSecret envelope nor a legacy pre-W4 plaintext).
 	const sansSecrets = stripAddonSecrets(def, stored);
-	// Validate the stored knobs; fall back to schema defaults on any mismatch so a stale row
-	// never blocks a deploy.
+	// Validate the stored knobs. Two failure modes, and they must NOT be treated alike:
+	//
+	//   SHAPE mismatch (invalid_type, invalid_value, too_small …) — a stale row left behind by a
+	//     schema that moved. Fall back to the schema defaults so it never blocks a deploy: the
+	//     add-on installs in its default configuration, which is the one the catalog ships.
+	//
+	//   A CUSTOM issue — a rule the catalog author wrote on purpose, saying this combination cannot
+	//     work (external-dns on a workload-identity provider with no identity, #3469). Falling back
+	//     to defaults here would be worse than useless: it would resolve a DIFFERENT add-on
+	//     configuration than the row asks for and install it silently. Concretely, an AWS
+	//     external-dns row would deploy pointed at CLOUDFLARE, because that is the schema default —
+	//     a refusal laundered into a wrong install. Fail closed instead: the add-on does not resolve,
+	//     exactly as a retired one does not, and the caller skips it.
+	//
+	// Reachable only for a row stored BEFORE the rule existed — `enableAddon` and the CLI route both
+	// run this same schema and reject a new one — so "skipped" means "an install that could never
+	// have worked is no longer applied". The row stays enabled and the configure form states the
+	// reason, which is where a user can act on it.
 	const parsed = def.configSchema.safeParse(sansSecrets);
+	if (!parsed.success && parsed.error.issues.some((i) => i.code === "custom")) return null;
 	const config = parsed.success ? parsed.data : def.configSchema.parse({});
 	const knobValues = def.toValues ? def.toValues(config) : {};
 	// Which secret fields actually HAVE a stored value → the Secret's data keys + the refs

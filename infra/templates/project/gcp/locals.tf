@@ -123,12 +123,12 @@ locals {
   external_dns_sa_email = var.provision_gke ? (
     local.external_dns_adopted
     ? data.google_service_account.external_dns_adopted[0].email
-    : google_service_account.external_dns[0].email
+    : one(google_service_account.external_dns[*].email)
   ) : ""
   external_dns_sa_name = var.provision_gke ? (
     local.external_dns_adopted
     ? data.google_service_account.external_dns_adopted[0].name
-    : google_service_account.external_dns[0].name
+    : one(google_service_account.external_dns[*].name)
   ) : ""
 
   # The external-secrets GSA this deploy uses: the caller's adopted one, or the one we created.
@@ -140,12 +140,12 @@ locals {
   external_secrets_sa_email = var.provision_gke ? (
     local.external_secrets_adopted
     ? data.google_service_account.external_secrets_adopted[0].email
-    : google_service_account.external_secrets[0].email
+    : one(google_service_account.external_secrets[*].email)
   ) : ""
   external_secrets_sa_name = var.provision_gke ? (
     local.external_secrets_adopted
     ? data.google_service_account.external_secrets_adopted[0].name
-    : google_service_account.external_secrets[0].name
+    : one(google_service_account.external_secrets[*].name)
   ) : ""
 
   # Whether the customer asked for provisioned boot-disk performance at all. Hoisted to the ROOT

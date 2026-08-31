@@ -134,6 +134,19 @@ func (s VClusterSpec) effectiveServer() string {
 	return s.InClusterAPIServerURL()
 }
 
+// proxySANs are the hostnames the vcluster proxy certificate must carry, so that the address we pin
+// into the exported kubeconfig actually verifies. Derived from the same Name/HostNamespace that build
+// InClusterAPIServerURL, so the certificate cannot drift from the address — the two must agree, and
+// making them share a derivation is the only way to keep that true.
+//
+// An explicit APIServerURL (the off-host expose flow) names a host this code cannot know — a
+// LoadBalancer address or a DNS name assigned later — so it is not derivable here; that flow signs
+// the in-cluster names and relies on its own endpoint being covered.
+func (s VClusterSpec) proxySANs() []string {
+	base := fmt.Sprintf("%s.%s.svc", s.Name, s.HostNamespace)
+	return []string{base, base + ".cluster.local"}
+}
+
 // resolvedClusterRole returns the spec's ClusterRole or the default.
 func (s VClusterSpec) resolvedClusterRole() string {
 	if strings.TrimSpace(s.ClusterRole) != "" {
@@ -183,35 +196,63 @@ func (s VClusterSpec) Validate() error {
 func renderVClusterValues(spec VClusterSpec) string {
 	var b strings.Builder
 	version := strings.TrimSpace(spec.KubernetesVersion)
-	// Only emit controlPlane when it has content (an empty mapping is pointless).
-	if spec.Expose || version != "" {
-		b.WriteString("controlPlane:\n")
-		if spec.Expose {
-			// Optional: expose the vcluster API off-host (LoadBalancer; on Talos/Hetzner this needs an LB
-			// controller — a Fabric-provisioning concern). The default (ClusterIP) is reached in-cluster.
-			b.WriteString("  service:\n")
-			b.WriteString("    spec:\n")
-			b.WriteString("      type: LoadBalancer\n")
-		}
-		if version != "" {
-			// Pin the k8s distro version independently of the host (validated as a version token).
-			b.WriteString("  distro:\n")
-			b.WriteString("    k8s:\n")
-			b.WriteString("      image:\n")
-			fmt.Fprintf(&b, "        tag: v%s\n", version)
-		}
+	// controlPlane is now ALWAYS emitted, because proxy.extraSANs is unconditional.
+	b.WriteString("controlPlane:\n")
+	if spec.Expose {
+		// Optional: expose the vcluster API off-host (LoadBalancer; on Talos/Hetzner this needs an LB
+		// controller — a Fabric-provisioning concern). The default (ClusterIP) is reached in-cluster.
+		b.WriteString("  service:\n")
+		b.WriteString("    spec:\n")
+		b.WriteString("      type: LoadBalancer\n")
 	}
-	// exportKubeConfig: emit a SCOPED service-account-token kubeconfig (not the admin cert) into the
-	// ArgoCD namespace on the host, with the API endpoint pinned to the address ArgoCD reaches it at
-	// (in-cluster Service by default; the explicit override when exposed off-host).
+	if version != "" {
+		// Pin the k8s distro version independently of the host (validated as a version token).
+		b.WriteString("  distro:\n")
+		b.WriteString("    k8s:\n")
+		b.WriteString("      image:\n")
+		fmt.Fprintf(&b, "        tag: v%s\n", version)
+	}
+	// Sign the proxy certificate for the address we PIN INTO THE KUBECONFIG. The chart's default SANs
+	// are kubernetes.default[.svc[.cluster.local]], localhost and *.nodes.vcluster.com — none of which
+	// is the release's own ClusterIP Service DNS name. So ArgoCD dialled the server it was handed and
+	// rejected the certificate:
+	//
+	//   Failed to load live state: failed to get cluster info for
+	//   "https://boutique-staging.vcluster-boutique-staging.svc": tls: failed to verify certificate:
+	//   x509: certificate is valid for kubernetes.default.svc.cluster.local, …, not for it
+	//
+	// The Application sat SYNC STATUS Unknown while reporting Healthy — an unsynced tier that does not
+	// read as broken, which is worse than a red one.
+	//
+	// Both forms are signed: the `.svc` name is what exportKubeConfig.server pins, and `.svc.cluster.local`
+	// is what a client with a search-domain-completing resolver may present. `insecure: true` would also
+	// have silenced this, by turning off verification on the credential that grants cluster-admin inside
+	// the tenant — a fix that trades a working demo for an unverified control-plane connection.
+	b.WriteString("  proxy:\n")
+	b.WriteString("    extraSANs:\n")
+	for _, san := range spec.proxySANs() {
+		fmt.Fprintf(&b, "      - %s\n", san)
+	}
+	// exportKubeConfig: emit a SCOPED service-account-token kubeconfig (not the admin cert), with the
+	// API endpoint pinned to the address ArgoCD reaches it at (in-cluster Service by default; the
+	// explicit override when exposed off-host).
+	//
+	// These two keys govern the chart's PRIMARY exported Secret (`vc-<name>`, in the release
+	// namespace) and nothing else. An `additionalSecrets` entry does NOT inherit them: it is written
+	// with the chart's default admin CERTIFICATE kubeconfig, user `kubernetes-super-admin`, server
+	// `https://localhost:8443`, and an EMPTY token key. Requesting one and reading it back is how
+	// registration failed with "vcluster kubeconfig has no user token" — the code was reading a
+	// kubeconfig that could not have worked even had it parsed, since localhost:8443 is not an
+	// address ArgoCD can reach, and it carried the admin cert this comment promises to avoid.
+	//
+	// So no additionalSecrets: the spec's KubeconfigSecret IS the chart's default name, and
+	// KubeconfigNamespace the release namespace, which is also the only namespace the chart holds
+	// RBAC in.
 	b.WriteString("exportKubeConfig:\n")
 	fmt.Fprintf(&b, "  server: %s\n", spec.effectiveServer())
 	b.WriteString("  serviceAccount:\n")
 	fmt.Fprintf(&b, "    name: %s\n", spec.ServiceAccount)
 	fmt.Fprintf(&b, "    clusterRole: %s\n", spec.resolvedClusterRole())
-	b.WriteString("  additionalSecrets:\n")
-	fmt.Fprintf(&b, "    - name: %s\n", spec.KubeconfigSecret)
-	fmt.Fprintf(&b, "      namespace: %s\n", spec.KubeconfigNamespace)
 	return b.String()
 }
 

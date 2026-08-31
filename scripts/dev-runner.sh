@@ -94,10 +94,22 @@ trap 'rm -rf "$LOCK"' EXIT
 echo "$MODE" > "$LOCK/mode"
 
 # Load the canonical dev env (storage creds, web origin, runner self creds).
+#
+# A caller-supplied ALETHIA_WEB_ORIGIN OUTRANKS .env's, so capture it first: `set -a;
+# source ./.env` overwrites the caller's exported value rather than deferring to it, and
+# it does so silently. scripts/env.sh passes http://localhost:<console port> precisely so
+# a branch runner does not depend on the Cloudflare tunnel being warm; that value was
+# being discarded in favour of .env's public URL, and the runner then refused to start —
+# "console not reachable" — seconds after env:up rebuilt the tunnel ingress, against a
+# console that was up and answering on localhost in 116ms.
+_caller_web_origin="${ALETHIA_WEB_ORIGIN:-}"
 set -a
 # shellcheck disable=SC1091
 source ./.env
 set +a
+if [[ -n "$_caller_web_origin" ]]; then
+  export ALETHIA_WEB_ORIGIN="$_caller_web_origin"
+fi
 
 WEB_ORIGIN="${ALETHIA_WEB_ORIGIN:-http://localhost:3000}"
 

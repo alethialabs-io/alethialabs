@@ -19,8 +19,25 @@ import (
 
 // stubRule is one canned kubectl answer: when the joined argument string contains Match, the stub
 // writes Stdout and exits with Exit.
+//
+// `Then` makes a rule ANSWER DIFFERENTLY on later matching calls: the first call gets
+// Stdout/Exit, the Nth gets Then[N-2], and the last entry repeats forever. That is what lets a
+// test drive a retry loop to its natural end — the CRD is NotFound, NotFound, then Established —
+// instead of budgeting wall-clock and hoping the loop gets round twice before the deadline.
+//
+// The counter lives in a FILE, not a shell variable. The stub's answer is read through a command
+// substitution, and `$( )` runs in a SUBSHELL: an incremented variable is discarded the moment it
+// returns, so every call would read `1` and the sequence would never advance. This repository has
+// already paid for that exact mistake once in a different stub.
 type stubRule struct {
 	Match  string
+	Stdout string
+	Exit   int
+	Then   []stubAnswer
+}
+
+// stubAnswer is one later answer in a stubRule's sequence.
+type stubAnswer struct {
 	Stdout string
 	Exit   int
 }
@@ -44,12 +61,32 @@ func newKubectlStub(t *testing.T, defaultExit int, rules ...stubRule) *kubectlSt
 	if len(rules) > 0 {
 		b.WriteString("case \"$*\" in\n")
 		for i, r := range rules {
-			body := filepath.Join(dir, fmt.Sprintf("stdout-%d", i))
-			if err := os.WriteFile(body, []byte(r.Stdout), 0o600); err != nil {
-				t.Fatalf("write stub body: %v", err)
+			answers := append([]stubAnswer{{Stdout: r.Stdout, Exit: r.Exit}}, r.Then...)
+			for j, a := range answers {
+				body := filepath.Join(dir, fmt.Sprintf("stdout-%d-%d", i, j))
+				if err := os.WriteFile(body, []byte(a.Stdout), 0o600); err != nil {
+					t.Fatalf("write stub body: %v", err)
+				}
 			}
-			fmt.Fprintf(&b, "  *%s*) cat %s; exit %d;;\n",
-				shellSingleQuote(r.Match), shellSingleQuote(body), r.Exit)
+			if len(answers) == 1 {
+				fmt.Fprintf(&b, "  *%s*) cat %s; exit %d;;\n",
+					shellSingleQuote(r.Match), shellSingleQuote(filepath.Join(dir, fmt.Sprintf("stdout-%d-0", i))), r.Exit)
+				continue
+			}
+			// Counter in a file, incremented BEFORE the answer is chosen, and clamped to the last
+			// entry so the sequence ends by repeating rather than falling off into the default exit.
+			counter := filepath.Join(dir, fmt.Sprintf("seq-%d", i))
+			fmt.Fprintf(&b, "  *%s*)\n", shellSingleQuote(r.Match))
+			fmt.Fprintf(&b, "    n=$(cat %s 2>/dev/null || echo 0); n=$((n+1)); printf '%%s' \"$n\" > %s\n",
+				shellSingleQuote(counter), shellSingleQuote(counter))
+			fmt.Fprintf(&b, "    if [ \"$n\" -gt %d ]; then n=%d; fi\n", len(answers), len(answers))
+			fmt.Fprintf(&b, "    cat %s\"$((n-1))\"\n", shellSingleQuote(filepath.Join(dir, fmt.Sprintf("stdout-%d-", i))))
+			fmt.Fprintf(&b, "    case \"$n\" in\n")
+			for j, a := range answers {
+				fmt.Fprintf(&b, "      %d) exit %d;;\n", j+1, a.Exit)
+			}
+			fmt.Fprintf(&b, "    esac\n")
+			fmt.Fprintf(&b, "    ;;\n")
 		}
 		b.WriteString("esac\n")
 	}

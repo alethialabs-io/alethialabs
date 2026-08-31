@@ -80,7 +80,7 @@ module "helm_repo_pull" {
   create_role                = true
   role_name                  = "helm-repo-pull-${local.eks_name}"
   role_policy_arns = {
-    helm_repo_pull = aws_iam_policy.helm_repo_pull[0].arn
+    helm_repo_pull = one(aws_iam_policy.helm_repo_pull[*].arn)
   }
   oidc_providers = {
     main = {

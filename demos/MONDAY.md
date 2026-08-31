@@ -74,7 +74,14 @@ being. A `namespace` or `vcluster` environment must be placed onto a Fabric whos
 exists**. So the order is always: create with a dedicated env → `plan` → `apply` → *then*
 `project env add … --fabric <that fabric>` for the shared tiers.
 
-The `--env` matrix on `project create` **cannot** express this (see §4, R1). Use `project env add`.
+The `--env` matrix on `project create` **can** express this, since R1's `planFabricPlacement` fix:
+every non-dedicated tier is placed onto the dedicated env's Fabric. Verified live on 2026-08-30 —
+one command produced five environments on one Fabric with no orphan. (This line previously said the
+opposite; that was true before R1 and is superseded by it, not by a change of opinion.)
+
+**`plan` and `apply` are per-environment.** Both take `--env` and default to the project's *default*
+environment, so the Fabric's apply places no shared tier — and an apply that places nothing still
+reports SUCCESS. Run the pair once per tier and confirm with `project env list`.
 
 ### Clouds
 
@@ -115,7 +122,18 @@ the blocker) · *(blank)* = not yet attempted.
 | 6 | AWS ladder proof attempted | **BLOCKED** | [#3348](https://github.com/alethialabs-io/alethialabs/issues/3348) — the prod runner is `self` with no ambient AWS creds; the PLAN job fails before tofu runs | 2026-08-29 |
 | 6a | Azure plan on the SAME runner | PASS | job `0d9850b1` — keyless federated identity activated, tofu init clean. Azure/Alibaba/token clouds have no operator gate | 2026-08-29 |
 | 6b | Elench gate could never pass its own templates | FIXED | `terraform_data` denied SCOPE-001 on all 5 clouds; every committed receipt shows it | 2026-08-29 |
-| 7 | Isolation ladder proven (cloud TBD — Azure is the only unblocked one) | | | |
+| 7 | **Isolation ladder proven on a real cloud — Hetzner** | **PASS** | Live `boutique-demo`: 5 envs / 4 isolation levels / **1 cluster** (`boutique-demo-prod`, k8s 1.35.6, 4×cx33 + cp). `prod` dedicated · `staging` vcluster **Synced/Healthy with Online Boutique running INSIDE the vcluster** · `dev-1/2/3` namespace, all ACTIVE. PR [#3449](https://github.com/alethialabs-io/alethialabs/pull/3449) | 2026-08-30 |
+| 7a | R2's cause found: a cluster is never linked to its Fabric | FIXED | `project_cluster.fabric_id` left null on every write path; only a migration-time backfill ever set it, so it cannot reach any project created later. `dedicated` still resolved via the env-key fallback, so nothing looked wrong — but shared placements resolve ONLY by Fabric and failed with "no serving cluster… must be provisioned" against an ACTIVE, serving cluster. **This is why rows 7/8 were blank for weeks.** | 2026-08-30 |
+| 7b | vcluster rung: three further defects, all fixed | FIXED | (i) export named `argocd`, a namespace the loft chart has no RBAC in → caches never sync → `/readyz` never serves → `helm --wait` times out as "exit status 1"; (ii) registration read the `additionalSecrets` copy, which holds the **admin cert** at `localhost:8443` with an empty token, while the scoped SA token sat in the primary Secret; (iii) the proxy cert was never signed for the address we hand ArgoCD → `SYNC Unknown` while reporting `Healthy` | 2026-08-30 |
+| 7c | `dev-1/2/3` cannot sync until enterprise-demo PR #6 lands | **BLOCKED** | ArgoCD says it exactly: `overlays/dev-1: app path does not exist`. Placement itself is proven — namespace, AppProject `tenant-boutique-demo-<ns>` and Application `app-boutique-demo-<ns>` all created. See M6. | 2026-08-30 |
+| 7d | CLI/harness defects found driving the ladder | FIXED | `--set 'k="1.35"'` stored the quote marks (gate read it "unparseable"; now `verdict=pass`) · `env:runner` could never start a runner (origin clobbered by `source ./.env`; `go` absent from the non-login PATH) · `dev:runner:down` read a lock nothing writes and called it success · `project env list` showed no placement/namespace/Fabric | 2026-08-30 |
+| 7e | Five tiers Synced/Healthy against the renamed examples repo | **PASS** | `alethia-examples` (renamed from `enterprise-demo`), overlays nested under `examples/online-boutique/`. All five ArgoCD Applications Synced/Healthy on ONE cluster: prod 14 pods · dev-1/2/3 11 each · staging 15 inside its vcluster · zero resource-ownership conflicts | 2026-08-30 |
+| 7f | The Fabric was adopting every tier's overlay | FIXED | `apps_path` was silently ignored on a `dedicated` env (no `AppsPath` in `infra_facts.go`), so the Fabric rendered a root Application at `.` plus an ApplicationSet globbing `overlays/*` — claiming the same Deployments as each tier's own placement, both with `selfHeal: true`. `apps_path` now works on all three modes and suppresses the discovery glob | 2026-08-30 |
+| 7g | The tenant quota was smaller than our own demo | FIXED | `preview-quota` allowed `services: 10`; Online Boutique declares 12, so a namespace tier applied ten and was refused the last two — OutOfSync/Missing over a half-populated namespace | 2026-08-30 |
+| 7h | A tenant overlay must not declare its own Namespace | FIXED | `clusterResourceWhitelist: []` on the tenant AppProject refuses it. Removed from the shared tiers; KEPT on `prod`, which owns the cluster and whose Application carries no `destination.namespace` | 2026-08-30 |
+| 6c | **#3348 RE-CONFIRMED LIVE on prod** | **FAIL** | Probed 2026-08-30 with a free PLAN on the ONLINE `managed` runner `fleet-147767605`: still `no EC2 IMDS role found`. Being `operator=managed` and ONLINE is NOT enough — **AWS and GCP cannot provision in production.** Demo on Hetzner or Azure | 2026-08-30 |
+| 6d | **Community orgs are capped at 25 provisioning jobs / rolling 24h** | **RISK** | `assertJobQuotaAllowed` — org `TOVR` is plan `community`. The demo needs ~10; the cap is a ROLLING window, so anything queued this morning still counts at 10:00. 4 used as of 16:00 today. Raise it with `ALETHIA_FREE_DAILY_JOB_QUOTA` on the prod deployment, or move the org off `community` | 2026-08-30 |
+| 6e | Stale prod projects cannot be destroyed | **BLOCKED** | `htz3`/`demo-htz-pilot` die on `tofu destroy failed`; `htz2` is stuck QUEUED since July and refuses a job entirely; `ladder-aws` fails via #3348. Each attempt costs one of the 25. Delete them from the console instead — and note `a640`'s AKS **does not exist** (`az aks list` empty, no `MC_*` group): that row is stale inventory, not spend | 2026-08-30 |
 | 8 | Isolation ladder proven on a second cloud | | | |
 | 9 | Browser pass — signed-in surface (overview · clusters · new project) | PASS | `demos/monday-evidence/20260829-new-project-placement-defaults.png`; 2 defects found → rows 9a/9b | 2026-08-29 |
 | 9a | Overview "Recent jobs · last 24h" showed month-old jobs | FIXED | commit `c645c8d2` — no time window exists anywhere; label now "latest 5" | 2026-08-29 |
@@ -148,7 +166,7 @@ once.
 | M5 | **Decide how the demo gets a runner that can provision AWS** | #3348: the prod runner is `self`, so AWS and GCP cannot federate. Either set `ALETHIA_RUNNER_OPERATOR=managed` on the control-plane runner (a security decision — it lets that VM mint assertions into customer roles), or stand up a fleet pool, or demo on **Azure**, which works today. | **OPEN — blocks any AWS demo** |
 | M7 | **Connect Hetzner** — one command, then the ladder proof is unblocked | Hetzner is token-based (`ActivateTokenCloud`), so it has **no operator gate** and is not affected by #3348. It is the cheapest path to the proof (~€0.10/hr). The agent is blocked from handling the token itself. Run, using the `alethia-e2e` project (it is empty — the runbook says never demo from the project the sandbox box lives in):<br>`hcloud context use alethia-e2e`<br>`hcloud context active` → then paste that project's token:<br>`alethia connector hetzner --token-stdin` | **OPEN — cheapest unblock** |
 | M8 | Remove the `ladder-aws` project from the demo org | Created 2026-08-29 to reproduce #3348. It provisioned **nothing** (the plan died before tofu, so there is no cloud spend and nothing to leak), but `project destroy` fails the same way, so it cannot be removed through the CLI while #3348 stands. Delete it from the console before the demo, or leave it as the repro artifact. | OPEN — cosmetic |
-| M6 | Merge `enterprise-demo` PR #6 | The overlays PR targets `main` in a single-branch repo; the merge guard refuses `main` from an agent session. | OPEN — needed only for the 5-tier shape |
+| M6 | **Merge `enterprise-demo` PR #6** | The overlays PR targets `main` in a single-branch repo; the merge guard refuses `main` from an agent session. | **OPEN — now the ONLY thing between us and the full five-tier demo.** Verified CLEAN/MERGEABLE/non-draft; adds exactly `overlays/{prod,dev-1,dev-2,dev-3}` and zeroes `loadgenerator` on the dev tiers. `overlays/dev` cannot be reused for three tiers — it hardcodes `namespace: boutique-dev`, so all three would render into one namespace and fight. ArgoCD currently reports `overlays/dev-1: app path does not exist` on each dev tier. |
 
 ---
 
@@ -173,10 +191,14 @@ once.
   exists to claim the job instead. This is the single biggest risk to Monday and it needs a
   maintainer decision (see M5).
 
-- **R2 · `namespace` and `vcluster` placement have never run on a real cloud.**
-  Every committed bundle in `demos/proofs/*/*/summary.txt` reads `fabric-demo: n/a`. Only `dedicated`
-  is proven. The isolation ladder is the demo, and it is the unproven part — which is why rows 6–8
-  come before everything cosmetic.
+- **R2 · CLOSED 2026-08-30 on Hetzner (row 7).** `namespace` and `vcluster` placement had never run
+  on a real cloud; both now have. The cause was never the clouds — it was four defects on one path,
+  the first of which (`project_cluster.fabric_id` never set, row 7a) made every shared placement
+  fail closed while the `dedicated` env kept working perfectly. That asymmetry is why this looked
+  like a cloud-parity problem for weeks: the thing that worked and the thing that did not shared a
+  code path right up to the resolver.
+  **Still open:** the older bundles in `demos/proofs/*/*/summary.txt` still read `fabric-demo: n/a`,
+  because they were recorded before this; and the ladder is proven on ONE cloud (row 8).
 
 - **R3 · Fixes need a promotion to reach the demo surface.** See M2.
 
@@ -206,7 +228,7 @@ once.
 | Elench prompt pack | [`demos/elench-prompts.md`](./elench-prompts.md) |
 | Browser + CLI pass evidence | `demos/monday-evidence/` |
 | Real-apply proof bundles | `demos/proofs/<cloud>/<stamp>/` |
-| The demo application | <https://github.com/alethialabs-io/enterprise-demo> |
+| The demo application | <https://github.com/alethialabs-io/alethia-examples> |
 | Placement model | `apps/docs/content/docs/concepts/fabrics-and-placement.mdx` |
 
 **Do not quote `demos/DEMO-READINESS.md`** — it is a superseded historical ledger and says so itself.

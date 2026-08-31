@@ -378,7 +378,12 @@ const secretsSaaSNamespaceForStore = "external-secrets-operator"
 
 // EnsureHetznerSecretStore applies the ClusterSecretStore over the in-cluster Vault, on the same
 // retry rail EnsureExternalSecretsStore uses for the four cloud stores — the CRD and its validating
-// webhook are installed asynchronously by ArgoCD, so a fresh cluster races them.
+// webhook are installed asynchronously by ArgoCD, so a fresh cluster races them. That rail is where
+// #2652's CRD-Established wait lives, so this store gets it for free and cannot drift out of step
+// with the cloud ones; it is the SAME CRD (clustersecretstores.external-secrets.io), because it is
+// the same kind. In practice the wait returns at once here — this runs after the add-on stage, by
+// which time the operator is long installed — which is the point: a wait that is normally a no-op
+// still fails loudly on the deploy where it is not.
 //
 // It is applied here rather than from externalSecretsStoreManifest for one reason of ORDER: that
 // path runs before the add-on stage, when the Vault chart has not been installed and the store would

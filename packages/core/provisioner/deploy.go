@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -43,7 +44,28 @@ var (
 	// namespacePostMortem dumps a namespace's pods + events when a helm --wait expires. A seam so
 	// the failure-path test can assert the dump without shelling kubectl (mirrors k8s/probe.go).
 	namespacePostMortem = k8s.NamespacePostMortem
+	// preflightArgoVersion is the live-ArgoCD version check installArgoCD runs before it touches
+	// the cluster. A seam because it is the ONLY cluster-touching call in that function that does
+	// not go through executeCommand: it shells `kubectl` directly, inheriting the process
+	// KUBECONFIG, so every provisioner unit test that drives installArgoCD was really running
+	// kubectl against whatever cluster the developer's environment pointed at (#3495).
+	preflightArgoVersion = argocd.PreflightLiveArgoVersion
 )
+
+// argocdInstallError decides whether an installArgoCD failure is dressed as an install failure.
+//
+// A version-preflight REFUSAL is returned exactly as it was written. installArgoCD keeps it
+// unwrapped deliberately — its own comment says why — and this frame used to undo that, so an
+// operator who was refused read "ArgoCD install failed: refusing to install ArgoCD: …" and went
+// looking for a broken chart. errors.As, not a string match: the sentence is free to change
+// without silently reclassifying the error.
+func argocdInstallError(err error) error {
+	var refusal *argocd.PreflightRefusal
+	if errors.As(err, &refusal) {
+		return err
+	}
+	return fmt.Errorf("ArgoCD install failed: %w", err)
+}
 
 type DeployParams struct {
 	ProjectConfig  *types.ProjectConfig
@@ -973,7 +995,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		setStage("argocd")
 		if err := installArgoCD(ctx, vc, result.Outputs, &result, stdout, stderr); err != nil {
 			result.GitopsStatus = gitopsFailed(argocd.GitopsStepArgocdInstall, err)
-			return &result, fmt.Errorf("ArgoCD install failed: %w", err)
+			return &result, argocdInstallError(err)
 		}
 
 		if gitopsRequested {
@@ -1004,6 +1026,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			err := fmt.Errorf("ArgoCD application templates not found (looked in /home/runner/argocd-templates, argocd-templates, ../../infra/templates/argocd) — the runner image is missing its baked templates")
 			result.GitopsStatus = gitopsFailed(argocd.GitopsStepTemplatesMissing, err)
 			return &result, err
+		}
+		// apps_path now reaches the dedicated templates too, so it gets the same fail-closed guard
+		// the namespace and vcluster placements apply (deploy_vcluster.go, namespace_tenant.go). It
+		// is interpolated into a YAML scalar the runner hands to ArgoCD, so an absolute path, a
+		// traversal or a quote-break must be refused here rather than rendered.
+		if err := argocd.ValidateAppsPath(vc.Repositories.AppsPath); err != nil {
+			result.GitopsStatus = gitopsFailed(argocd.GitopsStepTemplatesMissing, err)
+			return &result, fmt.Errorf("apps_path is not a usable repo subpath: %w", err)
 		}
 		facts := argocd.BuildFromOutputs(result.Outputs, vc)
 		// Record the honest per-service install/skip decisions from the SAME gates the
@@ -1236,6 +1266,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			// BEFORE the Applications render, so the write-back rides the same helm.values block.
 			appliedBindingSecrets = applyByoChartBindings(vc, result.Outputs, params.Provider, stdout, stderr)
 
+			// Resolve the platform-provisioned cloud identity into the add-on's values BEFORE the
+			// Applications render — the same seam, and the same reason, as applyByoChartBindings
+			// above: the value exists only in this run's tofu outputs, and the console that stored
+			// the knob could not have known it. Mutating vc.AddOns rather than the rendered output
+			// also means writeAddOnGitOps below writes the resolved value into the customer's repo,
+			// which is correct and free.
+			argocd.ResolveAddOnCloudIdentity(vc.AddOns, facts, stdout, stderr)
+
 			addonDir, addonErr := argocd.RenderManagedAddOns(vc.AddOns, facts.Labels)
 			if addonErr != nil {
 				fmt.Fprintf(stderr, "Warning: marketplace add-ons skipped: %v\n", addonErr)
@@ -1433,6 +1471,19 @@ func resolveArgoTemplatesDir() string {
 
 func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Installing ArgoCD...")
+
+	// FIRST, before anything else touches the cluster: refuse honestly if it already runs an
+	// ArgoCD Alethia has measured as broken (#3126 item 2). The ORDER is the whole point — this
+	// has to precede `helm repo add` and, critically, `ensureArgoRedisSecret`, which CREATES the
+	// argocd namespace and writes a Secret into it. A guard that runs after its own side effects
+	// cannot tell a fresh cluster from one it just touched.
+	//
+	// Returned UNWRAPPED. Four of the check's six states proceed (see argocd/version_preflight.go);
+	// the two that stop are deliberate refusals, not failures, and prefixing them with "failed to
+	// install ArgoCD" is how a refusal gets misread as a broken chart.
+	if err := preflightArgoVersion(ctx, stdout); err != nil {
+		return err
+	}
 
 	// Repo URL + chart version are config-driven (env override, current literals as defaults) and
 	// shell-quoted since they interpolate into a bash -c command (#951, #944).

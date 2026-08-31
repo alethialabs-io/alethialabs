@@ -102,6 +102,10 @@ on:
         description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws; gcp/azure/alibaba/hetzner are unpriced, so dispatch those one at a time and watch them."
         type: boolean
         default: false
+      azure_redis_allow_known_bad:
+        description: "AZURE ONLY, THIS RUN ONLY. Re-test an azure region whose Managed Redis capacity is a MEASURED failure. The pre-spend gate refuses westeurope/Balanced_B0 outright — run 33108860073 died ~1724s into a paid apply there with InsufficientCapacity, orphan risk likely (#3078) — and Azure publishes no capacity API to re-ask with, so the only way to learn whether capacity came back is to buy an apply. Tick this to buy it. Leave it off and the gate keeps refusing, which is the intended steady state. Deliberately an INPUT and not a repo variable: a variable would keep waving the refusal through on every nightly forever."
+        type: boolean
+        default: false
       argo_timeout:
         description: "ArgoCD convergence budget for THIS RUN ONLY, as a Go duration (e.g. 45m). Blank keeps vars.E2E_ARGO_TIMEOUT, and blank there keeps the derived default — which is now the MEASURED 35m for the 18-chart surface, not the 19m30s guess this input was added to test. It answered #2717 class (b) on run 33107415369: kube-prometheus-stack, loki and vault were slow, not stuck (all three cleared by 35m); falco and harbor were still Progressing and are real defects. Keep it for the next question of the same shape — a chart still Progressing with generous room is a ceiling, not a slow start."
         type: string
@@ -1127,6 +1131,95 @@ jobs:
       #    from this checkout — and the harness logs `alethia --version`, so the proof bundle always
       #    records WHICH binary earned the verdict. A green run against the wrong binary is the one
       #    way this check could mislead, so it is made unambiguous rather than assumed. ──
+      # ── THE `cli-demo` DIMENSION'S CONSOLE (#3038). Four steps, all skipped on every other
+      #    dimension, because they cost ~10 minutes and only this one needs them.
+      #
+      #    WHY A REAL CONSOLE AND NOT THE SHIM. test/e2e/controlplane.go implements the endpoints a
+      #    RUNNER calls (/api/jobs/claim, X-Runner-ID …). The CLI talks to the USER-FACING API with a
+      #    bearer token, and none of those endpoints exist on the shim. Extending it to fake them
+      #    would prove the CLI against a mock, which is the one thing this bar must not do. The two
+      #    halves meet in the `jobs` table instead: the CLI writes through the console, and the shim's
+      #    claim calls the same `claim_next_job` over the same Postgres this job already migrated.
+      #
+      #    The database and the workspace are already here — the job has a postgres service, and
+      #    `pnpm install` + `db:migrate` ran above. ──
+      - name: cli-demo — build @alethia/ee, then the console
+        if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
+        run: |
+          # ee FIRST, and this ordering is not stylistic. ee/dist is gitignored with no prepare
+          # hook, and `pnpm -F console build` calls the console's own script — bypassing turbo, so
+          # `build.dependsOn: ["^build"]` never fires. Without it getEnterprise()'s tolerant require
+          # throws and lib/auth/scope.ts falls back to `{ userId, orgId: userId }`, which is how
+          # ci.yml's hero job was once VACUOUS (see its note at ci.yml:389). A cli-demo run on a
+          # community-scope console would pass while proving the wrong tenancy.
+          pnpm -F @alethia/ee build
+          test -f ee/dist/index.js || { echo "::error::ee/dist/index.js missing — the console would resolve COMMUNITY scope and this dimension would prove the wrong thing"; exit 1; }
+          pnpm -F console build
+
+      - name: cli-demo — seed the org and mint a service token
+        if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
+        env:
+          ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+          ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+          ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+        run: |
+          # The token and the ORG travel together in one 0600 file. `claim_next_job`'s self-runner
+          # branch scopes to `j.org_id = v_runner_org_id` (#392), so the harness registers its runner
+          # in the token's org; reading both from one file is what makes them impossible to set
+          # independently. Nothing is printed — a credential on stdout reaches the job log.
+          pnpm -F console exec tsx scripts/seed-cli-demo-token.mts --out "${RUNNER_TEMP}/cli-demo-creds.json"
+          echo "ALETHIA_E2E_CLI_DEMO_CREDS=${RUNNER_TEMP}/cli-demo-creds.json" >> "$GITHUB_ENV"
+
+      - name: cli-demo — start the console and wait for it to answer
+        if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
+        env:
+          ALETHIA_DATABASE_URL: postgres://alethia:alethia-dev-secret@localhost:5432/alethia
+          ALETHIA_APP_DATABASE_URL: postgres://alethia_app:alethia-app-dev-secret@localhost:5432/alethia
+          ALETHIA_APP_DB_PASSWORD: alethia-app-dev-secret
+          BETTER_AUTH_SECRET: e2e-cli-demo-placeholder-secret
+          # BASE64, 32 bytes decoded — lib/crypto/secrets.ts does `Buffer.from(raw, "base64")` and
+          # refuses anything else with "must decode to 32 bytes". Without it the `connector` beat
+          # fails at credential submission with a 400 that names the key, which reads as a CLI
+          # defect and is a missing console setting.
+          #
+          # A fixed non-secret value on purpose: this console lives for one job against a throwaway
+          # database, nothing it encrypts outlives the run, and a generated key would make a failed
+          # decrypt unreproducible. It must never be reused anywhere real.
+          ALETHIA_CRED_ENCRYPTION_KEY: YWxldGhpYS1lMmUtY2xpLWRlbW8tdGhyb3dhd2F5ISE=
+          BETTER_AUTH_URL: http://localhost:3000
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          ALETHIA_STORAGE_ENDPOINT: http://localhost:8333
+          ALETHIA_STORAGE_ACCESS_KEY_ID: e2e
+          ALETHIA_STORAGE_SECRET_ACCESS_KEY: e2e
+        run: |
+          pnpm -F console exec next start -p 3000 >"${RUNNER_TEMP}/cli-demo-console.log" 2>&1 &
+          # POLL for a real answer rather than sleeping. A fixed sleep is either too short — and the
+          # first beat fails on a console that was still booting, reported as "the CLI cannot reach
+          # whoami" — or too long on every run that did not need it.
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null "http://localhost:3000/api/health" 2>/dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          if [ -z "${ok:-}" ]; then
+            echo "::error::the console did not answer /api/health within 120s — the cli-demo beats would all fail as unreachable commands"
+            tail -60 "${RUNNER_TEMP}/cli-demo-console.log" || true
+            exit 1
+          fi
+          echo "ALETHIA_E2E_CONSOLE_URL=http://localhost:3000" >> "$GITHUB_ENV"
+
+      - name: cli-demo — build the `alethia` binary under test
+        if: steps.gate.outputs.run == 'true' && env.E2E_DIMENSION == 'cli-demo'
+        run: |
+          # Built from THIS checkout unless a maintainer pinned a release artifact — the same rule
+          # the reachability bar states, and for the same reason: a green run against the wrong
+          # binary is the one way this check could mislead.
+          if [ -n "${{ vars.E2E_CLI_BIN }}" ]; then
+            echo "ALETHIA_E2E_CLI_BIN=${{ vars.E2E_CLI_BIN }}" >> "$GITHUB_ENV"
+          else
+            GOWORK=off go build -C apps/cli -o "${RUNNER_TEMP}/alethia" .
+            echo "ALETHIA_E2E_CLI_BIN=${RUNNER_TEMP}/alethia" >> "$GITHUB_ENV"
+          fi
+
       - name: T2 — real runner provisions a real cloud cluster
         id: t2
         if: steps.gate.outputs.run == 'true'
@@ -1249,7 +1342,7 @@ jobs:
           #    DeriveExpectedArgoApps blindness to ApplicationSet-generated apps is real, but it
           #    belongs to the A0.6 base leg where that ApplicationSet is genuinely rendered.
           #
-          #    The default repo is the PUBLIC github.com/alethialabs-io/enterprise-demo, which ArgoCD
+          #    The default repo is the PUBLIC github.com/alethialabs-io/alethia-examples, which ArgoCD
           #    clones anonymously — so unlike the A0.6 layer above this needs NO git token, and
           #    E2E_FABRIC_DEMO is the only variable a maintainer must set to turn it on. UNSET ⇒
           #    empty ⇒ a clean skip, so these lines change nothing until then. Real-apply is
@@ -1278,7 +1371,7 @@ jobs:
           #    VM, no gateway: the module emits no `cluster_name`, which is precisely what keeps the
           #    kubeconfig → CNI → ArgoCD tail off.
           #
-          #    The default repo is the PUBLIC github.com/alethialabs-io/enterprise-demo, cloned
+          #    The default repo is the PUBLIC github.com/alethialabs-io/alethia-examples, cloned
           #    ANONYMOUSLY (prepareByoIacWorkdir clones without auth when the token is empty), so
           #    like the fabric-demo gate above this needs NO git token and NO new secret.
           #    E2E_BYO_IAC is the only variable a maintainer must set to turn it on; the repo, ref,
@@ -1502,6 +1595,22 @@ jobs:
           # A dispatch input is scoped to the single run that asked, and the run's own inputs are a
           # permanent audit trail on its page. The variable stays for a deliberate standing change.
           ALETHIA_E2E_ARGO_TIMEOUT: ${{ inputs.argo_timeout || vars.E2E_ARGO_TIMEOUT }}
+          # ── The azure Managed Redis escape hatch (#3078). ──
+          #
+          #    t2RequireAzureManagedRedisPreflight refuses a (region, sku) pair a real apply has
+          #    already been refused on — today westeurope/Balanced_B0, measured by run 33108860073.
+          #    Capacity DOES come back, and Azure exposes no read-only capacity API to ask with, so
+          #    the only way to re-test is a full paid apply. This input buys exactly one.
+          #
+          #    NO `vars.` FALLBACK, unlike its neighbours above, and for the reason those neighbours
+          #    state: a repo variable is a STANDING change, so setting one here would wave the
+          #    refusal through on every scheduled nightly afterwards — silently reinstating the
+          #    ~1724s failure this gate was built to stop. One run, one dispatch, one audit trail.
+          #
+          #    `&& '1' || ''` is safe here (see the ACM note above for the trap): the TRUE branch is
+          #    a non-empty string, so it cannot fall through to the false branch. On `schedule`
+          #    `inputs.*` is empty ⇒ '' ⇒ the gate refuses, which is the default that costs nothing.
+          ALETHIA_E2E_AZURE_REDIS_ALLOW_KNOWN_BAD: ${{ inputs.azure_redis_allow_known_bad && '1' || '' }}
           ALETHIA_E2E_DAY2_ACCESS_TIMEOUT: ${{ vars.E2E_DAY2_ACCESS_TIMEOUT }}
           ALETHIA_E2E_DAY2_OFFER_TIMEOUT: ${{ vars.E2E_DAY2_OFFER_TIMEOUT }}
           ALETHIA_E2E_KEYLESS_DB_DWELL: ${{ vars.E2E_KEYLESS_DB_DWELL }}
@@ -1709,6 +1818,12 @@ jobs:
             echo "::warning::E2E_CLUSTER/E2E_ENV unset at cancellation — nothing was provisioned yet, nothing to sweep."
             exit 0
           fi
+          # The run-scoped Load Balancer binding the test captured BEFORE `tofu destroy` deleted
+          # the private network that carries it (#3481). A fixed path both ends agree on, because
+          # the test process exits long before this step runs and can hand nothing over. Absent is
+          # normal — a hard-killed run never got to capture — and the sweeper falls back to the
+          # project-wide question, which over-reports rather than under-reports.
+          export ALETHIA_E2E_HCLOUD_LB_IDS="${RUNNER_TEMP}/hcloud-lb-ids.txt"
           case "$PROVIDER" in
             hetzner) SCRIPT="./scripts/e2e/hcloud-cleanup.sh" ;;
             aws)     SCRIPT="./scripts/e2e/aws-cleanup.sh" ;;
@@ -1881,6 +1996,12 @@ jobs:
             echo "::error::E2E_CLUSTER/E2E_ENV is unset — refusing to run an unscoped cleanup."
             exit 1
           fi
+          # The run-scoped Load Balancer binding the test captured BEFORE `tofu destroy` deleted
+          # the private network that carries it (#3481). A fixed path both ends agree on, because
+          # the test process exits long before this step runs and can hand nothing over. Absent is
+          # normal — a hard-killed run never got to capture — and the sweeper falls back to the
+          # project-wide question, which over-reports rather than under-reports.
+          export ALETHIA_E2E_HCLOUD_LB_IDS="${RUNNER_TEMP}/hcloud-lb-ids.txt"
           case "$PROVIDER" in
             hetzner) SCRIPT="./scripts/e2e/hcloud-cleanup.sh" ;;
             aws)     SCRIPT="./scripts/e2e/aws-cleanup.sh" ;;

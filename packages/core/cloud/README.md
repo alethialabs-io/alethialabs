@@ -30,10 +30,20 @@ is these five edits — nothing in the deploy flow itself changes:
 2. **Terraform template + outputs.** Add `infra/templates/project/<cloud>/` provisioning a
    Kubernetes cluster + backing services. It MUST emit:
    - `<engine>_cluster_name` + `<engine>_cluster_endpoint` (the cluster the runner targets),
-   - a **workload-identity** binding for the external-dns KSA (`external-dns/external-dns-sa`)
-     with **no static key**, and export the identity: e.g. `external_dns_service_account`
-     (GCP GSA email) or `external_dns_client_id` (Azure MI client id). See
-     `gcp/workload-identity.tf` / `azure/workload-identity.tf` for the pattern.
+   - a **workload-identity** binding with **no static key** for **both** external-dns KSAs, and
+     export the identity: e.g. `external_dns_service_account` (GCP GSA email) or
+     `external_dns_client_id` (Azure MI client id). The two KSAs are:
+     - `external-dns/external-dns-sa` — the platform DNS **rail**
+       (`infra/templates/argocd/external-dns.yaml`);
+     - `external-dns/addon-external-dns` — the **marketplace add-on**
+       (`apps/console/lib/addons/catalog.ts`, `EXTERNAL_DNS_ADDON_SA`).
+
+     Both, not one. They are separate objects in the same namespace on purpose — naming a single
+     KSA would put two ArgoCD Applications on it — and binding only the rail's leaves the add-on
+     installed, Healthy and writing nothing, which is the failure mode with no signal. Bind
+     cert-manager's KSA to the same identity too; see `gcp/workload-identity.tf` /
+     `azure/workload-identity.tf`, where all three are bound to one identity with the reasoning
+     written out.
    Validate with `tofu validate` in the template dir.
 
 3. **Runner credential activation.** Teach `apps/runner/internal/agent/runner.go` how to

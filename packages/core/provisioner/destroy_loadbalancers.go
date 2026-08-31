@@ -222,6 +222,121 @@ func deleteAll(ctx context.Context, out io.Writer, objs []cloudBackedObject, qui
 	}
 }
 
+// releaseOutcome is what the release step actually established, as data rather than prose.
+//
+// The destroy needs three things from it and a returned error can only carry one: whether the
+// blocker was cleared (may the destroy be retried?), what is still holding cloud resources (what
+// does the operator go and delete?), and whether we simply could not see (a claim we must not make).
+type releaseOutcome struct {
+	// Clean is true only when every cloud-backed object was released, or there were none.
+	Clean bool
+	// Released counts what this attempt actually DELETED, and it is what separates the two facts
+	// Clean folds together: "the blocker was cleared" and "there was never a blocker".
+	//
+	// The retry branches on Clean to decide whether to pay for a SECOND `tofu destroy` — 10-15
+	// minutes, the longest thing in the job — and its own rationale is "the second release
+	// positively removed what the first could not". A cluster with zero LoadBalancer Services
+	// returns Clean too, so a destroy that failed for an unrelated reason bought a second full
+	// destroy that changed nothing: precisely the "paying twice for the same failure" the guard
+	// forbids in the sentence above it.
+	Released int
+	// Remaining names what was still holding a cloud load balancer when we stopped waiting.
+	Remaining []cloudBackedObject
+	// Unknown records that the cluster stopped answering, so Remaining is not a complete list —
+	// "we could not look" and "there is nothing there" are the two answers this file exists to keep
+	// apart.
+	Unknown bool
+	// Skipped records why the step did not run at all (no cluster access, no state outputs). It is
+	// not Clean: nothing was established.
+	Skipped string
+	// NoCluster narrows Skipped to the one case that is PERMANENT: this environment's state names
+	// no API endpoint at all, so there was never a control plane to hold a load balancer. Every
+	// other skip is potentially transient — a throttled apiserver, an exec-credential refresh, a
+	// state-proxy blip — and those are worth a second attempt.
+	//
+	// It is a separate field rather than a match on Skipped's text because the two consumers both
+	// decide something expensive with it (whether to retry a destroy, whether to alarm an
+	// operator), and a sentence written for a human is not a predicate. Reworded once and both
+	// silently change behaviour.
+	NoCluster bool
+}
+
+// billingWarning renders the block appended to a failed destroy's error, or "" when there is
+// nothing to warn about.
+//
+// ⚠️ THE ONLY BACKSTOP A CUSTOMER HAS. The scope-locked sweepers that catch this in CI are
+// `scripts/e2e/*-cleanup.sh`, invoked by the e2e workflow; nothing in apps/runner or packages/core
+// sweeps cloud load balancers after a failed destroy. So on a customer's teardown this text is the
+// whole signal that something is still running and still charging — which is why it names the
+// objects, says nothing will remove them, and gives the two ways out.
+func (r releaseOutcome) billingWarning() string { return r.warning(toneAlarm) }
+
+// warningTone is the volume the same facts are rendered at. A destroy that FAILED and one that
+// SUCCEEDED owe the reader different things about an unreleased load balancer, and the difference
+// is presentation, not fact — so it is a parameter here rather than a second renderer somewhere
+// else. The comment on postDestroySuccessNotice used to claim this ("they cannot drift into
+// disagreeing about what is still held") while its Skipped arm hand-wrote its own sentence.
+type warningTone int
+
+const (
+	toneAlarm warningTone = iota // the destroy FAILED: the loudest thing the operator will see
+	toneNote                     // the destroy SUCCEEDED: say what did not happen, quietly
+)
+
+func (r releaseOutcome) warning(tone warningTone) string {
+	if r.Clean {
+		return ""
+	}
+	// A BARE Skipped — nothing observed, the cluster never went unreadable mid-wait — is the only
+	// outcome whose volume the tone changes. On a succeeded destroy it is a note, and on an
+	// environment that never had a control plane it is nothing at all: alarming on every repeat
+	// teardown of an already-gone environment is how a reader learns to scroll past the alarm that
+	// matters.
+	if tone == toneNote && r.Skipped != "" && len(r.Remaining) == 0 && !r.Unknown {
+		if r.NoCluster {
+			return ""
+		}
+		return fmt.Sprintf("   Note: the pre-destroy load-balancer release did not run (%s). "+
+			"Everything in the state file is gone; a Service of type LoadBalancer or an Ingress "+
+			"would not have been, so check the cloud console if this environment exposed one.", r.Skipped)
+	}
+	var b strings.Builder
+	b.WriteString("\n\n⚠️  CLOUD LOAD BALANCERS MAY STILL EXIST AND STILL BILL.\n")
+	switch {
+	case r.Skipped != "":
+		fmt.Fprintf(&b, "The pre-destroy release did not run: %s. Anything this environment exposed "+
+			"through a Service of type LoadBalancer or an Ingress owns a cloud load balancer that is "+
+			"not in the state file, so `tofu destroy` cannot remove it.\n", r.Skipped)
+	case r.Unknown && len(r.Remaining) > 0:
+		b.WriteString("The cluster stopped answering while the release was waiting, so what follows " +
+			"is not a complete list — there may be more.\n")
+	case r.Unknown:
+		// Reached when the cluster was unreadable from the FIRST list, so nothing was ever
+		// observed. Saying "what follows is not a complete list" and then following it with
+		// nothing reads as "there is nothing" — the one meaning this type exists to keep apart
+		// from "we could not look".
+		b.WriteString("The cluster stopped answering before anything could be listed, so this " +
+			"environment's LoadBalancer Services and Ingresses are UNKNOWN — not empty.\n")
+	}
+	if len(r.Remaining) > 0 {
+		names := make([]string, 0, len(r.Remaining))
+		for _, o := range r.Remaining {
+			names = append(names, o.String())
+		}
+		fmt.Fprintf(&b, "Still holding one when the destroy ran: %s.\n", strings.Join(names, ", "))
+	}
+	if len(r.Remaining) > 0 {
+		b.WriteString("NOTHING SWEEPS THESE AUTOMATICALLY. Either delete those objects from the cluster " +
+			"and run the destroy again, or delete the load balancers in the cloud console directly.")
+	} else {
+		// "delete those objects" refers to nothing when nothing was named, which leaves the reader
+		// with an alarm and no first step.
+		b.WriteString("NOTHING SWEEPS THESE AUTOMATICALLY. Check this environment's load balancers " +
+			"in the cloud console and delete any that remain.")
+	}
+	return b.String()
+}
+
 // releaseCloudLoadBalancers deletes the in-cluster objects that own cloud load balancers and waits
 // for their controllers to release the cloud resources.
 //
@@ -229,17 +344,18 @@ func deleteAll(ctx context.Context, out io.Writer, objs []cloudBackedObject, qui
 // must not abort a teardown on it. A destroy that refuses to start because it could not tidy up
 // first is worse than the bug this fixes — and the common case for a repeated destroy is a cluster
 // that is already gone, where there is nothing to tidy and nothing to reach.
-func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) error {
+func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) (releaseOutcome, error) {
 	// FIRST, always — before anything is listed, let alone deleted.
 	stopArgoCDReconciling(ctx, out)
 
 	objs, err := listCloudBackedObjects(ctx)
 	if err != nil {
-		return err
+		return releaseOutcome{Unknown: true}, err
 	}
 	if len(objs) == 0 {
 		fmt.Fprintln(out, "   No LoadBalancer Services or Ingresses — nothing outside the state file to release.")
-		return nil
+		// Released stays 0: nothing was cleared, because nothing was held.
+		return releaseOutcome{Clean: true}, nil
 	}
 
 	names := make([]string, 0, len(objs))
@@ -256,6 +372,12 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) error {
 	deadline := started.Add(lbReleaseTimeout)
 	var lastErr error
 	consecutiveErrs := 0
+	// The last list we actually got an answer to. `remaining` is nil on every error path, because
+	// listCloudBackedObjects returns `nil, err` — so reporting `remaining` when the cluster stopped
+	// answering names NOTHING, on exactly the path where the operator most needs a starting point.
+	// This is what the billing warning is allowed to print: objects we really saw, stale by at most
+	// one poll, rather than an empty list dressed up as an incomplete one.
+	lastKnown := objs
 	for {
 		remaining, lerr := listCloudBackedObjects(ctx)
 		switch {
@@ -267,15 +389,16 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) error {
 			lastErr, consecutiveErrs = lerr, consecutiveErrs+1
 		case len(remaining) == 0:
 			fmt.Fprintf(out, "   All cloud-backed objects released after %s.\n", time.Since(started).Round(time.Second))
-			return nil
+			return releaseOutcome{Clean: true, Released: len(objs)}, nil
 		default:
 			lastErr, consecutiveErrs = nil, 0
+			lastKnown = remaining
 			// Quietly, because a warning per object per poll would bury the outcome.
 			deleteAll(ctx, out, remaining, true)
 		}
 		if time.Now().After(deadline) {
 			if lastErr != nil {
-				return fmt.Errorf("could not confirm the load balancers were released: the cluster "+
+				return releaseOutcome{Unknown: true, Remaining: lastKnown}, fmt.Errorf("could not confirm the load balancers were released: the cluster "+
 					"has been unreachable for the last %d poll(s) over %s (%w) — if it is gone, so "+
 					"are they; if it is throttling, they may still be live and the destroy that "+
 					"follows will fail on whatever they are attached to",
@@ -285,14 +408,14 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) error {
 			for _, o := range remaining {
 				left = append(left, o.String())
 			}
-			return fmt.Errorf("%d object(s) still held after %s: %s — their controllers have not "+
+			return releaseOutcome{Remaining: remaining}, fmt.Errorf("%d object(s) still held after %s: %s — their controllers have not "+
 				"released the cloud load balancers, and the destroy that follows will fail on "+
 				"whatever those are attached to",
 				len(remaining), lbReleaseTimeout, strings.Join(left, ", "))
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("context ended while waiting for the load balancers to be released: %w", ctx.Err())
+			return releaseOutcome{Unknown: true, Remaining: lastKnown}, fmt.Errorf("context ended while waiting for the load balancers to be released: %w", ctx.Err())
 		case <-time.After(lbReleasePoll):
 		}
 	}

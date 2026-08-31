@@ -279,6 +279,50 @@ if [ -n "$uis" ]; then echo "  ── UI awaiting you ──"; echo "$uis" | sed
 # (heuristic — a reference is not a delivery; verify vs origin/dev before closing). Advisory
 # only, never mutates, like the COLLISION flag above. See .claude/COORDINATION.md.
 fetch_merged_prs
+
+# ── DEBT REGISTERS: where a mention means the debt was NOT paid ──────────────
+#
+# possibly-shipped below asks "does a merged PR mention this number?" and reads a hit as evidence
+# the unit shipped. For one whole class of PR that inference is exactly BACKWARDS.
+#
+# A ratchet/guard PR records the debt it chose NOT to pay by naming the issue in an exclusion file.
+# Fourteen of these were verified by hand against origin/dev and NOT ONE had shipped: #3290/#3291
+# were baselined into infra/tfvars-safety-baseline.json by the very PR the advisory credited
+# (#3298, under a heading literally titled "Filed rather than folded in"); #3299/#3304 were declared
+# in the add-on ratchets by #3305/#3316, which say in as many words "the two real ones are declared,
+# not fixed". The mention IS the deferral.
+#
+# So ask the cheaper, sounder question first. An entry in a register is a committed, reviewed
+# statement that the debt still stands — strictly better evidence than text proximity in a merge,
+# and it costs one grep.
+DEBT_REGISTERS="
+infra/tfvars-safety-baseline.json
+infra/offer-exclusions.yaml
+infra/config-carriage-exclusions.yaml
+infra/template-parity-exclusions.yaml
+scripts/addons/render-nondeterministic.txt
+scripts/addons/published-defaults-allowed.txt
+"
+DEBT_MAP="$(mktemp -t alethia-debt-map)"
+trap 'rm -f "$DEBT_MAP"' EXIT
+debt_registers_read=0
+: >"$DEBT_MAP"
+for _reg in $DEBT_REGISTERS; do
+  [ -f "$_reg" ] || continue
+  debt_registers_read=$((debt_registers_read + 1))
+  # `#1234` anywhere in the register. Registers are prose-with-citations by design — every entry
+  # carries its reason and the issue that owns it — so a line match is the right granularity.
+  grep -oE '#[0-9]{2,6}' "$_reg" 2>/dev/null | tr -d '#' | sort -u | while read -r _n; do
+    [ -n "$_n" ] && printf '%s\t%s\n' "$_n" "$_reg"
+  done >>"$DEBT_MAP"
+done
+
+# GUARD THE GUARD. If not one register resolved, this inverted nothing — and silently letting every
+# unit fall through to possibly-shipped would look identical to a clean sweep. Say which it is.
+if [ "$debt_registers_read" -eq 0 ]; then
+  echo "  ⚠ debt-registers: none of the $(echo "$DEBT_REGISTERS" | grep -c .) declared register files exist here — debt inversion SKIPPED, so possibly-shipped below is un-filtered." >&2
+fi
+
 # Advisory, so a failure warns and continues rather than aborting the report — but it must SAY so.
 # The previous `2>/dev/null || true` turned a jq that could not even be exec'd into a silent
 # "no hits", which is why this section never printed once (see fetch_merged_prs).
@@ -305,9 +349,56 @@ if ! ship="$(jq -r --slurpfile _m "$MERGED_PRS" '
   echo "  ⚠ possibly-shipped: could not evaluate (jq failed) — advisory SKIPPED, the board may be stale." >&2
   ship=""
 fi
+# Partition the rendered rows: a unit a register names is DEBT-RECORDED, and belongs under its own
+# heading saying so, not under a heading inviting somebody to close it.
+debt_rows=""; ship_rows=""
 if [ -n "$ship" ]; then
+  while IFS= read -r _row; do
+    [ -n "$_row" ] || continue
+    _n="$(printf '%s' "$_row" | sed -n 's/^  #\([0-9][0-9]*\) .*/\1/p')"
+    _reg=""
+    [ -n "$_n" ] && _reg="$(awk -F'\t' -v n="$_n" '$1 == n { print $2; exit }' "$DEBT_MAP")"
+    if [ -n "$_reg" ]; then
+      debt_rows="$debt_rows  #$_n  debt-recorded  ($_reg)$(printf '%s' "$_row" | sed 's/^  #[0-9]*  [A-Za-z]*  ([^)]*)//')
+"
+    else
+      ship_rows="$ship_rows$_row
+"
+    fi
+  done <<EOF
+$ship
+EOF
+fi
+if [ -n "$debt_rows" ]; then
+  echo "  ── debt-recorded (a merged PR named it — to RECORD the debt, not to pay it; do NOT close) ──"
+  printf '%s' "$debt_rows"
+  echo "     An exclusion file naming an issue is a reviewed statement that the debt STANDS."
+fi
+if [ -n "$ship_rows" ]; then
   echo "  ── ⚠ possibly-shipped (open, but a MERGED PR references it — verify vs origin/dev, close if delivered) ──"
-  echo "$ship"
+  printf '%s' "$ship_rows"
+fi
+
+# ── superseded nightly REDs: the board carrying an ANSWERED cell as open work ────
+#
+# A DIFFERENT AND STRONGER QUESTION than possibly-shipped above. That one asks "does a merged PR
+# mention this number?", which is text proximity — it cannot tell a PR that FIXED an issue from one
+# that merely named it as still-red or deliberately deferred it. This asks the proof ledger whether
+# a run that PROVED the cell has landed since the red was filed, and answers with the committed
+# bundle path. An `e2e nightly:` issue does not close on a merge at all; it closes on a green run,
+# so a merge-based verifier is structurally wrong for the whole `from:e2e-nightly` class.
+#
+# Read-only, and it mutates nothing: only a human can confirm the later run really answered the red
+# rather than merely postdating it. `--superseded-reds` exits non-zero only if the rollup's own
+# inputs are missing, which is worth surfacing rather than swallowing.
+if superseded="$(node "$(dirname "$0")/programme-rollup.mjs" --superseded-reds 2>/dev/null)"; then
+  if [ -n "$superseded" ]; then
+    echo "  ── superseded nightly REDs (the proof ledger has already answered these) ──"
+    printf '%s\n' "$superseded" | sed 's/^/  /'
+    echo "     close one with:  gh issue close <n> --comment \"superseded by <bundle>\""
+  fi
+else
+  echo "  ⚠ superseded-reds: could not evaluate (programme-rollup failed) — advisory SKIPPED." >&2
 fi
 
 # ── stalled: claimed, lease long dead, and the PR holding it is stuck too ────

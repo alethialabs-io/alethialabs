@@ -57,7 +57,7 @@ locals {
   # `tostring` on the brownfield branch is load-bearing, not decoration: hcloud types the
   # RESOURCE's id as a string and the DATA SOURCE's id as a number, so an unconverted ternary
   # unifies the two by coercion and the type of this local depends on which branch is live.
-  network_id       = var.provision_network ? hcloud_network.this[0].id : tostring(data.hcloud_network.existing[0].id)
+  network_id       = var.provision_network ? one(hcloud_network.this[*].id) : tostring(data.hcloud_network.existing[0].id)
   network_ip_range = var.provision_network ? var.network_cidr : data.hcloud_network.existing[0].ip_range
 
   # The pod and service CIDRs, derived from the network that ACTUALLY RESOLVED rather than from the

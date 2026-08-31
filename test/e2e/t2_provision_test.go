@@ -187,29 +187,10 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		t.Logf("#1773: ACM certificate SKIPPED — set %s (+ %s, %s) to enable.", envAcmCert, envAcmCertZoneID, envAcmCertZoneName)
 	}
 
-	// THE `cli-demo` DIMENSION REFUSES ITSELF UNTIL ITS BEATS ARE DRIVEN, and it refuses EARLY —
-	// before a cluster is bought.
-	//
-	// #3303 landed the vehicle: the dimension resolves, exports ALETHIA_E2E_CLI_DEMO_PROVISION, takes
-	// a budget term, and has a beat table cross-checked against CLIDemoSteps in the pure half. What
-	// it does NOT yet have is a caller: nothing in this test executes CLIDemoBeats. So a dispatch
-	// today would provision a floor-shaped cluster, assert the floor, and go GREEN — having proven
-	// nothing whatever about the ACTOR, which is the only thing the dimension claims.
-	//
-	// A green run that proves the opposite of its own claim is worse than no run: `commit-proof.sh`
-	// would accept the bundle (the ArgoCD convergence is measured and real), the ledger would carry a
-	// PASS, and PROGRAMME.md would render a `cli-demo` cell ✅ on the strength of a floor. That is
-	// "never promote a cell by asserting it", one layer down — the assertion would be TRUE and about
-	// the wrong thing.
-	//
-	// So it fails, loudly, naming what is missing. It costs an operator a dispatch and a minute; the
-	// alternative costs the programme a false cell. Delete this once the beats are driven.
-	if CLIDemoProvisionEnabled() {
-		t.Fatalf("the `cli-demo` dimension is enabled (ALETHIA_E2E_CLI_DEMO_PROVISION), but nothing in "+
-			"this test drives CLIDemoBeats yet — %d beats are defined and none is executed. This run "+
-			"would provision a floor, assert the floor, and be recorded as a CLI-DRIVEN proof. "+
-			"Wire the beats before dispatching this dimension.", len(CLIDemoBeats))
-	}
+	// The `cli-demo` dimension's credential and binary are resolved EARLY — before a cluster is
+	// bought — and nil when the dimension is off. The gate lives in ResolveCLIDemoRun rather than
+	// here; see the note there for why the distinction matters to cli_demo_wiring_pure_test.go.
+	cliDemo := ResolveCLIDemoRun(t)
 
 	// #1511: keyless DB auth, resolved on the same terms and for the same reason — a misconfigured
 	// opt-in must fail in seconds, and an EXCLUDED cell (alibaba/hetzner) resolves to "off" carrying
@@ -340,6 +321,13 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	if g := a05.jobGraph(); g != nil {
 		owner = g.userID
 	}
+	if cliDemo != nil {
+		// #392: claim_next_job's self-runner branch scopes to `j.org_id = v_runner_org_id`. The CLI
+		// creates its job in the org its SERVICE TOKEN is pinned to, so the runner must be
+		// registered in that same org — otherwise the job the CLI creates is never claimed, sits
+		// QUEUED, and the run dies on a deploy timeout that reads as a provisioning defect.
+		owner = cliDemo.OrgID
+	}
 	runnerID, runnerToken, err := cp.SeedRunner(ctx, owner, owner)
 	if err != nil {
 		t.Fatalf("seed runner: %v", err)
@@ -384,18 +372,69 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		}
 		t.Logf("pre-spend %s", msg)
 	}
+	// #3078: the preflight above covers the NODE shape and nothing else. azure/maxconfig passed it
+	// — "Standard_E2s_v3 is available in westeurope" — then built a real AKS cluster for ~1724s and
+	// died in the apply on `azurerm_managed_redis` with InsufficientCapacity, orphan risk likely.
+	// Managed Redis is a different service with its own regional capacity pool, so it needs its own
+	// question asked before the spend. Silent on every cloud but azure, and on any azure run that
+	// provisions no cache — see t2RequireAzureManagedRedisPreflight for the per-cloud reasons.
+	if fatal, msg := t2RequireAzureManagedRedisPreflight(ctx, provider, region, full); msg != "" {
+		if fatal {
+			t.Fatalf("pre-spend %s", msg)
+		}
+		t.Logf("pre-spend %s", msg)
+	}
 	a05CheckFidelity(t, a05, base)
 
-	jobID, err := seedT2DeployJob(ctx, cp, full, a05.jobGraph(), owner)
-	if err != nil {
-		t.Fatalf("seed job: %v", err)
+	var jobID string
+	if cliDemo != nil {
+		// THE WHOLE POINT OF THE DIMENSION: the DEPLOY job is created by the real binary through
+		// the console's user-facing API, not written into `public.jobs` by the harness. The runner
+		// half is untouched — the shim's claim calls the same `claim_next_job` over the same table,
+		// so the same runner claims the same row (#3038).
+		cliDemo.RunnerID = runnerID
+		cliDemo.Provider, cliDemo.Region = provider, region
+		cliDemo.Project, cliDemo.EnvName = project, env
+		// The SAME shape the seeded path merges — read from ALETHIA_E2E_CLUSTER_JSON, not restated.
+		cliDemo.ClusterSets = CLIDemoClusterSets(t)
+		// Before anything is bought: refuse a beat that names a command GROUP. `drift`, `cost` and
+		// `verify` are groups whose help exits 0, so such a beat performs nothing and PASSES.
+		AssertCLIDemoBeatsAreLeafCommands(ctx, t, cliDemo)
+		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoAuthoring)
+		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoEnqueue)
+		jobID = cliDemo.ApplyJobID
+		if jobID == "" {
+			t.Fatal("cli-demo: `project apply` reported no job id — there is nothing to wait on")
+		}
+		t.Logf("cli-demo: DEPLOY job %s was created BY THE CLI (project %s)", jobID, cliDemo.ProjectID)
+		// The CLAIM is asserted separately, just after the runner process starts — see the call
+		// below. It cannot be asserted here: nothing is running yet to claim anything.
+	} else {
+		var jerr error
+		jobID, jerr = seedT2DeployJob(ctx, cp, full, a05.jobGraph(), owner)
+		if jerr != nil {
+			t.Fatalf("seed job: %v", jerr)
+		}
+		t.Logf("seeded QUEUED DEPLOY job %s targeting %s template (cluster %s)", jobID, provider, clusterName)
 	}
-	t.Logf("seeded QUEUED DEPLOY job %s targeting %s template (cluster %s)", jobID, provider, clusterName)
 
 	// GUARANTEED graceful teardown — registered BEFORE launching the runner so a
 	// mid-deploy failure still tears the cluster down. The workflow's always() cleanup
 	// is the hard guarantee for a killed process; this is the in-process best effort.
 	t.Cleanup(func() {
+		// ── BEFORE THE DESTROY, and it has to be here (#3481). ────────────────────────────────
+		// The hetzner CCM's ingress Load Balancer carries no hcloud label and cannot be made to;
+		// its only binding to this run is its private-network attachment. `tofu destroy` deletes
+		// that network FIRST, so the teardown sweep — which runs from the workflow, after this
+		// test — finds the binding already gone and falls back to asking whether the PROJECT holds
+		// any load balancer at all. Any concurrent run's LB then reds this leg, and a FAILED
+		// teardown (network still up) verifies cleanly while a SUCCESSFUL one does not.
+		//
+		// A workflow step cannot get ahead of this: the destroy runs IN-PROCESS below, inside this
+		// closure. So the capture is here, writing to the file the sweeper reads back — the same
+		// $RUNNER_TEMP hand-off the harness already uses for ALETHIA_E2E_ARGOCD_SUMMARY.
+		captureHetznerLoadBalancers(t, provider, clusterName)
+
 		// Per-provider, and the SAME function ResolveT2Budget reserves the window with — a
 		// flat 15m here was hetzner's number charged to every cloud (#2729).
 		window := resolveT2TeardownTimeout(p)
@@ -463,6 +502,14 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	cmd.Stderr = runnerSink
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start runner process: %v", err)
+	}
+
+	// The CLI's job must be CLAIMED, and that is asserted at its own layer rather than folded into
+	// the deploy wait. An unclaimed job sits QUEUED until the wait's full deadline and is then
+	// reported as a deploy TIMEOUT — naming the cluster when the fault is a tenancy mismatch
+	// (#392) that was decidable in ninety seconds. Cheap half first.
+	if cliDemo != nil {
+		AssertCLIDemoJobClaimed(ctx, t, cp, cliDemo)
 	}
 	t.Cleanup(func() {
 		killRunner()
@@ -871,6 +918,20 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	//      guaranteed teardown.
 	if registryOn {
 		runT2XacctRegistry(t, ctx, kc, xacctRegistryParams{cfg: registry, metaRaw: metaRaw})
+	}
+
+	// (14) THE CLI-DEMO READ-BACKS AND THE CLOSE (#3038). Everything above proved the cluster the
+	//      CLI asked for is real; these beats prove the OPERATOR can see it and take it down through
+	//      the binary — job logs, the cluster, the signed receipt, drift, cost, add-ons, destroy.
+	//
+	//      Last, and BEFORE the guaranteed teardown, for the same reason every layer above is: the
+	//      registered t.Cleanup still tears the cluster down afterwards, so a beat that fails here
+	//      cannot leave a standing bill. The destroy beat is the demo's own close; the spine's
+	//      teardown is idempotent, so a cluster the CLI already destroyed costs a no-op.
+	if cliDemo != nil {
+		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoConverged)
+		DriveCLIDemoPhase(ctx, t, cliDemo, CLIDemoTeardown)
+		t.Logf("cli-demo: all %d beats performed through the real binary — the CLI was the actor for the whole demo", len(CLIDemoBeats))
 	}
 }
 

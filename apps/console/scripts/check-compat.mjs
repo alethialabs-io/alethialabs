@@ -95,6 +95,57 @@ function findRelease(matrix, componentId, version) {
 }
 
 /**
+ * Parse a semver into comparable parts. Deliberately dependency-free, like parseMinor above —
+ * this file is the Go-toolchain-free guard and pulling a package in for four lines would be worse.
+ *
+ * Accepts the truncated `vMAJOR.MINOR` form, because the matrix records `v2.11` and it must
+ * participate in a comparison rather than being silently excused as unparseable. Mirrors
+ * golang.org/x/mod/semver, which compat.CheckSemverWindow uses on the Go side.
+ */
+function parseSemver(v) {
+	const m = /^v?(\d+)\.(\d+)(?:\.(\d+))?(-[0-9A-Za-z.-]+)?$/.exec(String(v ?? "").trim());
+	if (!m) return null;
+	return { major: +m[1], minor: +m[2], patch: m[3] === undefined ? 0 : +m[3], pre: m[4] ?? "" };
+}
+
+/** Compare two parsed semvers. A pre-release sorts BELOW its release, as x/mod does. */
+function cmpSemver(a, b) {
+	if (a.major !== b.major) return a.major < b.major ? -1 : 1;
+	if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1;
+	if (a.patch !== b.patch) return a.patch < b.patch ? -1 : 1;
+	if (a.pre === b.pre) return 0;
+	if (a.pre === "") return 1; // a release outranks any pre-release of itself
+	if (b.pre === "") return -1;
+	return a.pre < b.pre ? -1 : 1;
+}
+
+/**
+ * checkRange's contract on the full-semver axis. Mirrors compat.CheckSemverWindow: both bounds
+ * empty is not_evaluable, an unparseable subject or bound is not_evaluable — NEVER a pass.
+ */
+function checkSemverRange(v, min, max) {
+	if (!min && !max) return "not_evaluable";
+	const sv = parseSemver(v);
+	if (!sv) return "not_evaluable";
+	if (min) {
+		const mn = parseSemver(min);
+		if (!mn) return "not_evaluable";
+		if (cmpSemver(sv, mn) < 0) return "fail";
+	}
+	if (max) {
+		const mx = parseSemver(max);
+		if (!mx) return "not_evaluable";
+		if (cmpSemver(sv, mx) > 0) return "fail";
+	}
+	return "pass";
+}
+
+/** Finds a component by id, or undefined. */
+function findComponent(matrix, componentId) {
+	return matrix.components.find((c) => c.id === componentId);
+}
+
+/**
  * Exercises the range evaluator against the #1165 fixtures so a regression in the
  * mirror logic itself reds here rather than silently passing every real check.
  */
@@ -107,6 +158,19 @@ function selfTest() {
 		["within window 1.35 in 1.34–1.36", checkRange("1.35", "1.34", "1.36"), "pass"],
 		["no window recorded", checkRange("1.35", "", ""), "not_evaluable"],
 		["unparseable k8s", checkRange("", "1.33", ""), "not_evaluable"],
+
+		// ── the app-version axis (#3126). Mirrors compat.CheckSemverWindow's table. ──
+		["argo v3.3.9 vs floor v3.3.9", checkSemverRange("v3.3.9", "v3.3.9", ""), "pass"],
+		["argo v3.4.1 vs floor v3.3.9", checkSemverRange("v3.4.1", "v3.3.9", ""), "pass"],
+		["argo v3.1.8 vs floor v3.3.9 (the #2717 release)", checkSemverRange("v3.1.8", "v3.3.9", ""), "fail"],
+		["argo v2.11 — a two-component version still compares", checkSemverRange("v2.11", "v3.3.9", ""), "fail"],
+		["a missing v prefix is normalised", checkSemverRange("3.3.9", "v3.3.9", ""), "pass"],
+		["upper bound is inclusive", checkSemverRange("v3.4.0", "v3.3.0", "v3.4.0"), "pass"],
+		["above the ceiling", checkSemverRange("v3.4.1", "v3.3.0", "v3.4.0"), "fail"],
+		["a pre-release sorts below its release", checkSemverRange("v3.3.9-rc1", "v3.3.9", ""), "fail"],
+		["no window recorded is never a pass", checkSemverRange("v3.3.9", "", ""), "not_evaluable"],
+		["an unparseable subject is never a pass", checkSemverRange("latest", "v3.3.9", ""), "not_evaluable"],
+		["an unparseable bound is never a pass", checkSemverRange("v3.3.9", "banana", ""), "not_evaluable"],
 	];
 	const failed = cases.filter(([, got, want]) => got !== want);
 	for (const [name, got, want] of cases) {
@@ -167,6 +231,42 @@ if (!argocdMatch) {
 			errors.push(
 				`ArgoCD ${argocdPin}: matrix records no k8s_min — the #1165 floor (1.33, where gitops-engine gains the .status.terminatingReplicas schema) must be recorded`,
 			);
+		}
+		// ── The support WINDOW (#3126): the ArgoCD version is a product contract ──
+		// Mirrors TestCouplingArgoCD, in both directions: the pin must be admitted, and no
+		// release the matrix records as `unsupported` may be.
+		const comp = findComponent(matrix, "argocd");
+		const win = comp?.supported;
+		if (!win || (!win.app_version_min && !win.app_version_max)) {
+			errors.push(
+				`matrix.json components[argocd] declares no \`supported\` window — the ArgoCD version is a product contract (#3126), and an undeclared window is not an open one`,
+			);
+		} else if (!rel.app_version) {
+			errors.push(
+				`ArgoCD ${argocdPin}: no app_version recorded, so the shipped pin cannot be placed inside the support window ${rangeLabel(win.app_version_min, win.app_version_max)}`,
+			);
+		} else {
+			const label = rangeLabel(win.app_version_min, win.app_version_max);
+			if (checkSemverRange(rel.app_version, win.app_version_min, win.app_version_max) !== "pass") {
+				errors.push(
+					`shipped ArgoCD chart ${argocdPin} (app ${rel.app_version}) is outside the declared support window ${label} — bump the pin or widen the window, in lockstep`,
+				);
+			}
+			let flagged = 0;
+			for (const r of comp.versions) {
+				if (!r.unsupported) continue;
+				flagged += 1;
+				if (checkSemverRange(r.app_version, win.app_version_min, win.app_version_max) === "pass") {
+					errors.push(
+						`the ArgoCD support window ${label} ADMITS chart ${r.version} (app ${r.app_version}), which matrix.json records as unsupported — widen the window only by recording a known-good release, never by reaching past a broken one`,
+					);
+				}
+			}
+			if (flagged === 0) {
+				errors.push(
+					`no ArgoCD release is marked \`unsupported\`, so the window-vs-rows check compared nothing — a window that refuses nothing is a claim with no content`,
+				);
+			}
 		}
 		if (checkRange(defaultK8s, rel.k8s_min, rel.k8s_max) === "fail") {
 			errors.push(

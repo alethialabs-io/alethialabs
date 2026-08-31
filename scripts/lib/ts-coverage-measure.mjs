@@ -111,6 +111,26 @@ export function measure(coverageFinal, projectAbsDir) {
 	}
 	/** @type {Map<string, {covered: number, total: number}>} */
 	const byDir = new Map();
+	for (const { rel, covered, total } of eachFile(coverageFinal, projectAbsDir)) {
+		const dir = path.posix.dirname(rel) === "." ? "." : path.posix.dirname(rel);
+		const acc = byDir.get(dir) ?? { covered: 0, total: 0 };
+		acc.covered += covered;
+		acc.total += total;
+		byDir.set(dir, acc);
+	}
+	return new Map([...byDir.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+/**
+ * Every measured FILE, project-relative. The same walk `measure` aggregates — extracted so the two
+ * cannot disagree about which files count or how a file is measured, which is the whole reason a
+ * per-file view is trustworthy enough to act on.
+ *
+ * @param {object} coverageFinal
+ * @param {string} projectAbsDir
+ * @returns {Generator<{rel: string, covered: number, total: number}>}
+ */
+function* eachFile(coverageFinal, projectAbsDir) {
 	for (const [absPath, fileCov] of Object.entries(coverageFinal)) {
 		const rel = path.relative(projectAbsDir, absPath).split(path.sep).join("/");
 		// `allowExternal` defaults to false, so a path outside the project root should be
@@ -119,13 +139,31 @@ export function measure(coverageFinal, projectAbsDir) {
 			throw new UnusableCoverageError(`${absPath} does not lie under ${projectAbsDir}`);
 		}
 		const { covered, total } = measureFile(rel, fileCov);
-		const dir = path.posix.dirname(rel) === "." ? "." : path.posix.dirname(rel);
-		const acc = byDir.get(dir) ?? { covered: 0, total: 0 };
-		acc.covered += covered;
-		acc.total += total;
-		byDir.set(dir, acc);
+		yield { rel, covered, total };
 	}
-	return new Map([...byDir.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+/**
+ * Coverage per FILE rather than per directory.
+ *
+ * The floors — and therefore the ratchet, and therefore the merge queue — are per DIRECTORY, so a
+ * directory that moves by one statement names a hundred files and no culprit. That is what made
+ * #3342 un-diagnosable: `apps/console/lib/billing` measures 957 or 958 of 1753 depending on the
+ * run, and nothing in the toolchain could say WHICH statement was flapping. Directory totals are
+ * the gate; file rows are how you find out why it moved.
+ *
+ * @param {object} coverageFinal
+ * @param {string} projectAbsDir
+ * @returns {Map<string, {covered: number, total: number}>} keyed by project-relative file path
+ */
+export function measureByFile(coverageFinal, projectAbsDir) {
+	if (typeof coverageFinal !== "object" || coverageFinal === null) {
+		throw new UnusableCoverageError("coverage-final.json did not parse to an object");
+	}
+	/** @type {Map<string, {covered: number, total: number}>} */
+	const byFile = new Map();
+	for (const { rel, covered, total } of eachFile(coverageFinal, projectAbsDir)) byFile.set(rel, { covered, total });
+	return new Map([...byFile.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
 /**

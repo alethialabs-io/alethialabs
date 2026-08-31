@@ -26,10 +26,16 @@ func resetDeploySeams(t *testing.T) {
 	origExecuteCommand := executeCommand
 	origExecuteCommandWithOutput := executeCommandWithOutput
 	origNamespacePostMortem := namespacePostMortem
+	origPreflightArgoVersion := preflightArgoVersion
+	// The preflight shells kubectl directly, so without this every test that drives installArgoCD
+	// probed whatever cluster the process KUBECONFIG pointed at (#3495). Stubbed to the answer a
+	// fresh cluster gives — proceed — so the tests exercise the install they are about.
+	preflightArgoVersion = func(context.Context, io.Writer) error { return nil }
 	t.Cleanup(func() {
 		executeCommand = origExecuteCommand
 		executeCommandWithOutput = origExecuteCommandWithOutput
 		namespacePostMortem = origNamespacePostMortem
+		preflightArgoVersion = origPreflightArgoVersion
 	})
 }
 

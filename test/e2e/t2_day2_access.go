@@ -491,12 +491,13 @@ func ingressAddressVerdict(address string, err error) string {
 // Best-effort and bounded: this runs only when the day-2 probe has ALREADY failed, so it must never
 // be the reason a run hangs. An empty address with no error is a genuine finding, not a failure.
 func readIngressAddress(ctx context.Context, kubeconfigPath string) (string, error) {
-	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+	// kubectlRead, NOT CombinedOutput. This one is a diagnostic, so the cost is only a misleading
+	// line on an already-failing run — but it is the same read, and "an empty address with no error
+	// is a genuine finding" (above) stops being true the moment a deprecation warning can occupy
+	// the value.
+	out, err := kubectlRead(ctx, 30*time.Second, kubeconfigPath,
 		"-n", "argocd", "get", "ingress",
 		"-o", "jsonpath={.items[*].status.loadBalancer.ingress[*]['hostname','ip']}")
-	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
