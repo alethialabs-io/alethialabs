@@ -316,7 +316,19 @@ func hetznerCapacityPreflight(ctx context.Context, location, wantType string) pr
 // alongside an error: nil-with-error and empty-without-error are the two different answers the
 // decision depends on telling apart.
 func preflightCLIStrings(ctx context.Context, name string, args ...string) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
+	return preflightCLIStringsWithin(ctx, preflightTimeout, name, args...)
+}
+
+// preflightCLIStringsWithin is preflightCLIStrings with an explicit bound.
+//
+// The bound is a parameter and not a constant because 30s is not universal: enumerating azure's
+// SKUs measured 36.5s and every azure run reported `az: signal: killed` while the gate reported
+// UNKNOWN — a check that was inert on a whole cloud (see azurePreflightTimeout). A caller that
+// knows its probe is slower must be able to say so HERE rather than wrap this function in a
+// longer context, which would do nothing: context.WithTimeout takes the shorter of the two, so a
+// 90s parent around a 30s child is still 30s.
+func preflightCLIStringsWithin(ctx context.Context, timeout time.Duration, name string, args ...string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, name, args...).Output()
 	if err != nil {
