@@ -430,11 +430,13 @@ export function compositeReached(summary, requiredStage) {
 	if (typeof stage !== "string") return "unknown";
 	const got = DEPLOY_STAGES.indexOf(stage);
 	if (got < 0) return "unknown";
-	// The same trap pointed the other way: an undeclared or misspelled `reachedAt` also answers -1,
-	// and `got >= -1` is true for every run, which would grant every discredit and quietly restore
-	// the bug. A requirement nobody declared is not a requirement of zero.
-	if (typeof requiredStage !== "string") return "unknown";
-	const need = DEPLOY_STAGES.indexOf(requiredStage);
+	// The same trap pointed the other way, and ONE guard covers every shape of it: an undeclared,
+	// misspelled or non-string `reachedAt` all answer -1, and `got >= -1` is true for every run,
+	// which would grant every discredit and quietly restore the bug. A requirement nobody declared is
+	// not a requirement of zero. (A separate `typeof` check here would be dead code — `indexOf` of a
+	// number or of `undefined` is already -1 — and dead code that looks like a guard is worse than
+	// none, because the next reader trusts it.)
+	const need = DEPLOY_STAGES.indexOf(/** @type {string} */ (requiredStage));
 	if (need < 0) return "unknown";
 	return got >= need ? "yes" : "no";
 }
@@ -829,15 +831,17 @@ export function derive({ ledgerText, spine, workflowText, resolverText = "", uns
 			let withheldWhy;
 			// ── the CREDIT half: a PASS must show it asserted what the column claims (#2671).
 			//
-			// Guarded on the verdict, which it was not before. `assertsFullAddOnSweep` asks a
-			// PASS-shaped question and its refusal prose is PASS-shaped prose — "crediting it would
-			// promote a floor-sized run to a full one", "a re-run closes it". Run against a FAIL bundle
-			// it answered `unknown` (a bar that died in apply records no assertion counts) and reported
-			// a bar that BROKE as one that "could have been credited". Same wrong-cause class.
+			// Guarded on the verdict, which it was not before. PASS is the only verdict that must EARN
+			// its state, and `assertsFullAddOnSweep` asks a PASS-shaped question in PASS-shaped prose —
+			// "crediting it would promote a floor-sized run to a full one", "a re-run closes it". It
+			// ran against every verdict, so a bar that died in apply (no assertion counts, therefore
+			// `unknown`) was reported as one that "could have been credited", and a BLOCKED bar turned
+			// this one column `never_run` while its siblings correctly read `blocked`. Both are the
+			// wrong-cause class this file keeps paying for.
 			//
 			// `compositeClaim !== null` for the same reason: with no `full` row at all there is no credit
 			// to refuse, and reporting one made the note below name clouds that have never run a bar.
-			if (credits && compositeClaim !== null && compositeClaim.verdict !== "FAIL" && typeof d.asserts === "function") {
+			if (credits && compositeClaim !== null && compositeClaim.verdict === "PASS" && typeof d.asserts === "function") {
 				const verdict = d.asserts(compositeSummary, assertRequirements[d.id]);
 				if (verdict === "no") {
 					credits = false;
@@ -2231,6 +2235,201 @@ function runSelfTest() {
 			assertRequirements: { addons: 18 },
 		});
 		ok("a DIRECT addons claim is unaffected by the composite's evidence", r.grid.aws.addons.state === "proven", r.grid.aws.addons.why);
+	}
+
+	// ── #3243: A COMPOSITE **FAIL** MAY ONLY DISCREDIT WHAT THE BAR REACHED. ──
+	//
+	// The mirror image of the block above, and the reason it had to be written: the credit side had
+	// three conditions and the discredit side had none, so one bar FAIL reded every composed column
+	// whether or not the run got within a mile of it. The worked case is azure's 2026-08-25 bar,
+	// which died on the `cache` kind at `deploy_stage: applying` — `azure/gitops` and `azure/day2`
+	// read ❌ off a run that never installed ArgoCD.
+	//
+	// BOTH DIRECTIONS ARE PINNED HERE, because a rule that only ever withholds is the same defect
+	// wearing the opposite sign: it would erase every red on the board and the grid would go quiet.
+	{
+		const FULL = "demos/proofs/azure/full";
+		const at = (v) => (p) => (p === `${FULL}/provision-summary.json` ? v : null);
+		// Every repo gate a composed dimension declares, wired — named from DIMENSIONS rather than
+		// retyped, so renaming a gate cannot leave this passing against a name nothing reads. Without
+		// it `gitops` and `day2` refuse the composite STRUCTURALLY and this block would be measuring
+		// the repo-gate rule instead of the reach rule.
+		const repoGates = DIMENSIONS.filter((d) => d.composedByFull !== false).flatMap((d) => d.gates.filter((g) => g.kind === "repo").map((g) => g.name));
+		const wiredSnap = {
+			gate_observations: [],
+			derived_at: new Date(Date.now() - 3600_000).toISOString(),
+			open_issues: [],
+			closed_issues: [],
+			variables: repoGates,
+			secrets: [],
+		};
+		const bar = (summary) =>
+			derive({
+				...base,
+				ledgerText: hdr + row("2026-08-25", "aws", "full", "FAIL", FULL, "#2383"),
+				readBundleSummary: at(summary),
+				assertRequirements: { addons: 18 },
+				snapshot: wiredSnap,
+			});
+		ok("the reach block's repo gates are actually wired, or it measures the wrong rule", repoGates.length > 0, JSON.stringify(repoGates));
+		// The two real bundles this rule was derived from, by shape.
+		const diedInApply = { outcome: "failure", deploy_stage: "applying", duration_seconds: 1724 };
+		const diedAtArgo = { outcome: "failure", deploy_stage: "argocd-ready" };
+
+		// ── the predicate, alone. Vary the STAGE, which is the axis the rule turns on.
+		ok("a run that reached the rung says yes", compositeReached({ deploy_stage: "argocd-ready" }, "argocd-installed") === "yes");
+		ok("a run that stopped exactly at the rung says yes", compositeReached({ deploy_stage: "applying" }, "applying") === "yes");
+		ok("a run that stopped one rung short says no", compositeReached({ deploy_stage: "applied" }, "deployed") === "no");
+		ok("azure's died-in-apply bundle did NOT reach the add-on surface", compositeReached(diedInApply, "argocd-installed") === "no");
+		ok("...but it DID reach the kinds its own apply creates", compositeReached(diedInApply, "applying") === "yes");
+		// `unknown` KEEPS the red — the opposite default from the credit half, and the one thing about
+		// this rule that is easy to get backwards. An unreadable bundle must not erase a diagnosed FAIL.
+		ok("an unreadable summary is unknown, never 'did not reach'", compositeReached(null, "argocd-installed") === "unknown");
+		ok("a summary with no deploy_stage is unknown", compositeReached({ outcome: "failure" }, "argocd-installed") === "unknown");
+		// THE TWO -1 TRAPS. `indexOf` answers -1 for an unknown token, and -1 compares as "before
+		// everything": an unrecognised STAGE would satisfy no requirement (withholding every red), and
+		// an unrecognised REQUIREMENT would be satisfied by every run (restoring the bug outright).
+		// Both must be `unknown`, and neither may be reached by simply comparing the two numbers.
+		ok("a stage this ladder does not carry is unknown, not 'stopped short'", compositeReached({ deploy_stage: "quiescing" }, "applying") === "unknown");
+		ok("a requirement this ladder does not carry is unknown, not 'satisfied by everything'", compositeReached({ deploy_stage: "queued" }, "no-such-rung") === "unknown");
+		ok("...and an undeclared requirement is unknown, never a requirement of zero", compositeReached({ deploy_stage: "queued" }, undefined) === "unknown");
+
+		// ── end to end, through derive(). DIRECTION ONE: a bar that reached the dimension still reds it.
+		r = bar(diedAtArgo);
+		ok("a bar FAIL that reached the add-on surface STILL discredits addons", r.grid.aws.addons.state === "failing", r.grid.aws.addons.why);
+		ok("...and still discredits gitops", r.grid.aws.gitops.state === "failing", r.grid.aws.gitops.why);
+		ok("...and still discredits day2", r.grid.aws.day2.state === "failing", r.grid.aws.day2.why);
+		ok("...and still discredits the floor and the kinds", r.grid.aws.floor.state === "failing" && r.grid.aws.maxconfig.state === "failing", `${r.grid.aws.floor.state}/${r.grid.aws.maxconfig.state}`);
+		ok("...and reports NO withheld discredit, so 'nothing withheld' is a distinct answer", r.unreachedComposites.length === 0, JSON.stringify(r.unreachedComposites));
+
+		// ── DIRECTION TWO: the azure case. A bar that died in apply reds only what it reached.
+		r = bar(diedInApply);
+		ok("a bar FAIL that died in apply does NOT discredit addons", r.grid.aws.addons.state === "never_run", r.grid.aws.addons.why);
+		ok("...nor gitops", r.grid.aws.gitops.state === "never_run", r.grid.aws.gitops.why);
+		ok("...nor day2", r.grid.aws.day2.state === "never_run", r.grid.aws.day2.why);
+		// THE LINE THAT MATTERS MOST. A withheld discredit removes a verdict; it must never invent
+		// one. Turning a false FAIL into a false PASS is a worse bug than the one being fixed.
+		ok(
+			"a withheld discredit is never_run and NEVER proven",
+			["addons", "gitops", "day2"].every((id) => r.grid.aws[id].state !== "proven"),
+			JSON.stringify(["addons", "gitops", "day2"].map((id) => [id, r.grid.aws[id].state])),
+		);
+		// The cells the bar DID reach keep their reds — this is the half that stops the rule from
+		// quietly emptying the board. azure's cache kind is a maxconfig kind and is what died.
+		ok("...while the floor and the kinds, which that apply DID reach, stay red", r.grid.aws.floor.state === "failing" && r.grid.aws.maxconfig.state === "failing", `${r.grid.aws.floor.state}/${r.grid.aws.maxconfig.state}`);
+		// A refusal that names a cause it did not establish is the defect this file has shipped
+		// twice. The repo-gate sentence and the assertion sentence are both wrong here.
+		ok("...and the withholding names the STAGE, not a repo gate or an assertion", /stopped before/.test(r.grid.aws.addons.why) && !/green-skips/.test(r.grid.aws.addons.why) && !/did not assert/.test(r.grid.aws.addons.why), r.grid.aws.addons.why);
+		ok("...and names the bundle and the stage, so the claim can be checked", r.grid.aws.addons.why.includes(FULL) && r.grid.aws.addons.why.includes("applying"), r.grid.aws.addons.why);
+		ok("...and says plainly that this is not a pass", /NOT a pass/.test(r.grid.aws.addons.why), r.grid.aws.addons.why);
+		ok("...and it is REPORTED, so a vanished red is not a silent one", r.notes.some((n) => /stopped before their surface/.test(n) && /aws\/addons/.test(n)), JSON.stringify(r.notes));
+
+		// ── DIRECTION THREE, and the one a `reach !== "yes"` slip would silently break: UNKNOWN KEEPS
+		// THE RED. Only a bundle that positively says the run stopped short may withhold a discredit.
+		// An unreadable one, or one from before capture-proof.sh recorded a stage, must leave every
+		// red exactly where it was — otherwise a missing file quietly empties the grid, which is this
+		// repo's dominant defect class (a guard whose "nothing found" branch reads as "nothing wrong")
+		// pointed at the proof board itself.
+		for (const [name, summary] of [
+			["an UNREADABLE bundle", null],
+			["a bundle with no deploy_stage", { outcome: "failure" }],
+			["a bundle naming a rung this ladder does not carry", { outcome: "failure", deploy_stage: "quiescing" }],
+		]) {
+			r = bar(summary);
+			ok(
+				`${name} keeps every red the bar filed — unknown never withholds`,
+				["floor", "maxconfig", "addons", "gitops", "day2"].every((id) => r.grid.aws[id].state === "failing"),
+				JSON.stringify(["floor", "maxconfig", "addons", "gitops", "day2"].map((id) => [id, r.grid.aws[id].state])),
+			);
+			ok(`...and ${name} withholds nothing at all`, r.unreachedComposites.length === 0, JSON.stringify(r.unreachedComposites));
+		}
+
+		// A DIRECT claim is the more specific statement and never passes through this at all — in
+		// EITHER direction. A cell with its own FAIL row keeps it however far the bar got.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "aws", "full", "FAIL", FULL, "#2383") + row("2026-08-26", "aws", "addons", "FAIL", "demos/proofs/aws/addons", "#1"),
+			readBundleSummary: at(diedInApply),
+			assertRequirements: { addons: 18 },
+			snapshot: wiredSnap,
+		});
+		ok("a DIRECT FAIL survives a bar that never reached the dimension", r.grid.aws.addons.state === "failing", r.grid.aws.addons.why);
+		// The note must not advertise a correction nobody made — but it must STILL name the two cells
+		// the rule really did change, or "reported nothing" would be indistinguishable from "the rule
+		// stopped firing". Both halves, in one derivation.
+		ok(
+			"...and is NOT reported as a withheld discredit, while its untouched siblings still are",
+			r.notes.some((n) => /stopped before their surface/.test(n) && !/aws\/addons/.test(n) && /aws\/gitops/.test(n) && /aws\/day2/.test(n)),
+			JSON.stringify(r.notes.filter((n) => /stopped before/.test(n))),
+		);
+
+		// A BLOCKED bar is deliberately NOT reach-checked: "the harness refused before spending" is
+		// true of every dimension in a refused bar and accuses none of them, so there is nothing to
+		// withhold. Pinned because the obvious generalisation — reach-check every negative verdict —
+		// would turn ⛔ into `never_run` and hide a run that was refused.
+		r = derive({
+			...base,
+			ledgerText: hdr + row("2026-08-25", "aws", "full", "BLOCKED", FULL),
+			readBundleSummary: at({ outcome: "failure", deploy_stage: "queued" }),
+			assertRequirements: { addons: 18 },
+			snapshot: wiredSnap,
+		});
+		ok(
+			"a BLOCKED bar still marks every composed cell blocked, not never-run",
+			["floor", "maxconfig", "addons", "gitops", "day2"].every((id) => r.grid.aws[id].state === "blocked"),
+			JSON.stringify(["floor", "maxconfig", "addons", "gitops", "day2"].map((id) => [id, r.grid.aws[id].state])),
+		);
+
+		// STRUCTURAL REFUSALS GOVERN BOTH DIRECTIONS — the asymmetry #3243 is named for, in its other
+		// form. `base` carries no snapshot, so every repo gate reads `unknown`, which is not `wired`:
+		// the layer green-skipped inside the bar. A bar PASS could not credit it, and the identical
+		// bar FAIL must not discredit it either. `byo-iac` is the stronger case — `full` does not
+		// compose it at ALL — and this held before, but nothing pinned it against a FAIL.
+		r = bar(diedAtArgo);
+		ok(
+			"a bar FAIL does NOT discredit a dimension full never composes",
+			r.grid.aws["byo-iac"].state === "never_run" && r.grid.aws["cli-demo"].state === "never_run",
+			`${r.grid.aws["byo-iac"].state}/${r.grid.aws["cli-demo"].state}`,
+		);
+
+		// VACUITY. Every one of the assertions above would also pass if `derive` simply never
+		// discredited anything, or if `reachedAt` were silently undefined on every column. Neither is
+		// checkable from a cell state alone, so check the declaration itself.
+		const composedDims = DIMENSIONS.filter((d) => d.composedByFull !== false);
+		ok(
+			"every dimension the bar composes declares a reachedAt rung on the ladder",
+			composedDims.length > 0 && composedDims.every((d) => DEPLOY_STAGES.includes(d.reachedAt)),
+			JSON.stringify(composedDims.map((d) => [d.id, d.reachedAt])),
+		);
+		ok(
+			"...and they do NOT all sit on the same rung, or the rule could not tell them apart",
+			new Set(composedDims.map((d) => d.reachedAt)).size > 1,
+			JSON.stringify(composedDims.map((d) => [d.id, d.reachedAt])),
+		);
+	}
+
+	// ── THE THIRD TWO-FILE INVARIANT: the deploy-stage ladder. ──
+	//
+	// DEPLOY_STAGES is a copy of the rungs `demos/proofs/capture-proof.sh` assigns to `deploy_stage`,
+	// and the whole rule above rests on TWO properties of that copy: the rungs are the same words,
+	// and they are in the same ORDER. A hand-kept copy loses both silently — a renamed rung makes
+	// every bundle read `unknown` (every red kept, the rule inert and green), and a reordered one
+	// would withhold and grant discredits at random. So parse the shell and hold them to each other.
+	{
+		const capture = fs.readFileSync(new URL("../demos/proofs/capture-proof.sh", import.meta.url), "utf8");
+		// The emitter is a run of `deploy_stage="x"` assignments, lowest rung first, each overwriting
+		// the last — which is exactly what makes the ladder monotone. Read them in file order.
+		const emitted = [...capture.matchAll(/^\s*(?:log_has [^\n]*&&\s*)?deploy_stage="([a-z-]+)"/gm)].map((m) => m[1]);
+		ok(
+			"the deploy_stage ladder was actually parsed out of capture-proof.sh",
+			emitted.length >= 5,
+			`parsed ${JSON.stringify(emitted)} — the regex or the shell assignments changed shape`,
+		);
+		ok(
+			"this file's ladder is capture-proof.sh's, in capture-proof.sh's order",
+			JSON.stringify(emitted) === JSON.stringify(DEPLOY_STAGES),
+			`capture-proof.sh emits ${JSON.stringify(emitted)}, this file carries ${JSON.stringify(DEPLOY_STAGES)}`,
+		);
 	}
 
 	// RETRACTED supersession — voids the claim rather than replacing it.
