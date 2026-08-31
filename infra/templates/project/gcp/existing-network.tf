@@ -22,7 +22,7 @@ locals {
   existing_subnet_self_link = var.provision_network ? "" : (
     length(var.subnet_ids) > 0 ? var.subnet_ids[0] : try(
       [
-        for s in data.google_compute_network.existing[0].subnetworks_self_links : s
+        for s in one(data.google_compute_network.existing[*].subnetworks_self_links) : s
         if length(regexall("/regions/${var.region}/", s)) > 0
       ][0],
       "",
@@ -36,7 +36,7 @@ data "google_compute_subnetwork" "existing" {
 }
 
 locals {
-  existing_secondary = var.provision_network ? [] : data.google_compute_subnetwork.existing[0].secondary_ip_range
+  existing_secondary = var.provision_network ? [] : one(data.google_compute_subnetwork.existing[*].secondary_ip_range)
 
   # GKE needs the pod + service secondary-range NAMES. Match by name, else fall back to declared order.
   existing_pods_range_name = var.provision_network ? "pods" : try(
