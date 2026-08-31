@@ -60,20 +60,24 @@ async function beforeFileRewrites(): Promise<RewriteRule[]> {
 	return rewrites.beforeFiles;
 }
 
-describe("the well-known protected-resource rewrites", () => {
-	it("routes the bare metadata path to the handler, before any page route", async () => {
-		expect(await beforeFileRewrites()).toContainEqual({
-			source: "/.well-known/oauth-protected-resource",
-			destination: "/api/oauth-protected-resource",
-		});
-	});
+describe("the well-known OAuth discovery rewrites", () => {
+	it("routes both documents, bare and with any suffix, before any page route", async () => {
+		const rewrites = await beforeFileRewrites();
 
-	it("routes every suffix under it to the handler", async () => {
-		// Broad on purpose: an unrecognised suffix must reach the handler's JSON 404 rather than
-		// fall through to the HTML shell, which is the failure the issue measured.
-		expect(await beforeFileRewrites()).toContainEqual({
-			source: "/.well-known/oauth-protected-resource/:path*",
-			destination: "/api/oauth-protected-resource/:path*",
-		});
+		// Discovery is a chain: the 401 points at the protected-resource document, whose
+		// `authorization_servers` sends the client to the authorization-server one. Both are root
+		// paths, so routing only the first leaves the client at the HTML shell one hop later.
+		for (const document of ["oauth-protected-resource", "oauth-authorization-server"]) {
+			expect(rewrites).toContainEqual({
+				source: `/.well-known/${document}`,
+				destination: `/api/oauth-metadata/${document}`,
+			});
+			// Broad on purpose: an unrecognised suffix must reach the handler's JSON 404 rather
+			// than fall through to the HTML shell, which is the failure #3318 measured.
+			expect(rewrites).toContainEqual({
+				source: `/.well-known/${document}/:path*`,
+				destination: `/api/oauth-metadata/${document}/:path*`,
+			});
+		}
 	});
 });
