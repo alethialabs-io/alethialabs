@@ -102,6 +102,15 @@ summary_for() {
 	return 1
 }
 
+# jobs_payload — normalize the GitHub API's two valid shapes into one object. Plain `gh api`
+# returns `{jobs:[...]}`; `gh api --paginate --slurp` returns `[{jobs:[...]}, ...]`. Keeping the
+# normalization here means every reader below consumes the same complete job list and a future
+# pagination change cannot make one reader disagree with another.
+jobs_payload() {
+	[ -n "${JOBS_JSON:-}" ] && [ -r "${JOBS_JSON:-}" ] || return 1
+	jq -c 'if type == "array" then {jobs: [.[].jobs[]?]} else . end' "$JOBS_JSON"
+}
+
 # gate_off_bundle <summary-path> <run_id> — is this `outcome:skipped` bundle PROVABLY the
 # workflow's gate-off proof, or is it a leg that DIED before the harness ever started? (#1922)
 #
@@ -163,16 +172,15 @@ gate_off_bundle() {
 # ask, and the caller must NOT infer whether the gate was enabled.
 job_exists() {
 	local want="$1"
-	[ -n "${JOBS_JSON:-}" ] && [ -r "${JOBS_JSON:-}" ] || { echo unknown; return; }
-	jq -e '(.jobs // []) | length > 0' "$JOBS_JSON" >/dev/null 2>&1 || { echo unknown; return; }
-	if ! jq -e --arg pre "$PROVISION_JOB_PREFIX" \
-		'[(.jobs // [])[] | select(.name | startswith($pre))] | length > 0' "$JOBS_JSON" >/dev/null 2>&1; then
+	jobs_payload | jq -e '(.jobs // []) | length > 0' >/dev/null 2>&1 || { echo unknown; return; }
+	if ! jobs_payload | jq -e --arg pre "$PROVISION_JOB_PREFIX" \
+		'[(.jobs // [])[] | select(.name | startswith($pre))] | length > 0' >/dev/null 2>&1; then
 		echo unknown
 		return
 	fi
-	if jq -e --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" \
+	if jobs_payload | jq -e --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" \
 		'[(.jobs // [])[] | select((.name | startswith($pre)) and (.name | endswith("(" + $p + ")")))] | length > 0' \
-		"$JOBS_JSON" >/dev/null 2>&1; then
+		 >/dev/null 2>&1; then
 		echo yes
 	else
 		echo no
@@ -203,14 +211,13 @@ job_exists() {
 # must not report it as one.
 teardown_outcome() {
 	local want="$1" concl
-	[ -n "${JOBS_JSON:-}" ] && [ -r "${JOBS_JSON:-}" ] || { echo unknown; return; }
-	concl="$(jq -r --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" --arg step "$TEARDOWN_STEP_PREFIX" '
+	concl="$(jobs_payload | jq -r --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" --arg step "$TEARDOWN_STEP_PREFIX" '
 		[ (.jobs // [])[]
 		  | select((.name | startswith($pre)) and (.name | endswith("(" + $p + ")")))
 		  | (.steps // [])[]
 		  | select(.name | startswith($step))
 		] | first | if . == null then "missing" else (.conclusion // "") end
-	' "$JOBS_JSON" 2>/dev/null || echo missing)"
+	' 2>/dev/null || echo missing)"
 	case "$concl" in
 	missing) echo unknown ;;
 	"" | null | cancelled) echo UNSWEPT ;;
@@ -222,10 +229,9 @@ teardown_outcome() {
 # jobs_payload_is_broken: jobs exist but none is a provision leg ⇒ the display name moved and the
 # cross-check is dead. Loud, because a silent degrade here is the whole bug.
 jobs_payload_is_broken() {
-	[ -n "${JOBS_JSON:-}" ] && [ -r "${JOBS_JSON:-}" ] || return 1
-	jq -e '(.jobs // []) | length > 0' "$JOBS_JSON" >/dev/null 2>&1 || return 1
-	jq -e --arg pre "$PROVISION_JOB_PREFIX" \
-		'[(.jobs // [])[] | select(.name | startswith($pre))] | length == 0' "$JOBS_JSON" >/dev/null 2>&1
+	jobs_payload | jq -e '(.jobs // []) | length > 0' >/dev/null 2>&1 || return 1
+	jobs_payload | jq -e --arg pre "$PROVISION_JOB_PREFIX" \
+		'[(.jobs // [])[] | select(.name | startswith($pre))] | length == 0' >/dev/null 2>&1
 }
 
 # in_list <space-separated list> <item> — membership, the one shape this file's accumulators use.
@@ -265,12 +271,11 @@ in_list() {
 # rather than reusing the "no bundle" wording for it.
 job_conclusion() {
 	local want="$1" c
-	[ -n "${JOBS_JSON:-}" ] && [ -r "${JOBS_JSON:-}" ] || { echo unknown; return; }
-	c="$(jq -r --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" '
+	c="$(jobs_payload | jq -r --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" '
 		[ (.jobs // [])[]
 		  | select((.name | startswith($pre)) and (.name | endswith("(" + $p + ")")))
 		] | first | if . == null then "" else (.conclusion // "") end
-	' "$JOBS_JSON" 2>/dev/null || echo "")"
+	' 2>/dev/null || echo "")"
 	case "$c" in
 	"" | null) echo unknown ;;
 	*) echo "$c" ;;
@@ -288,15 +293,14 @@ job_conclusion() {
 # already).
 failed_steps() {
 	local want="$1"
-	[ -n "${JOBS_JSON:-}" ] && [ -r "${JOBS_JSON:-}" ] || return 0
-	jq -r --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" '
+	jobs_payload | jq -r --arg pre "$PROVISION_JOB_PREFIX" --arg p "$want" '
 		[ (.jobs // [])[]
 		  | select((.name | startswith($pre)) and (.name | endswith("(" + $p + ")")))
 		  | (.steps // [])[]
 		  | select((.conclusion // "") == "failure")
 		  | .name
 		] | join(", ")
-	' "$JOBS_JSON" 2>/dev/null || true
+	' 2>/dev/null || true
 }
 
 # ── derivation ─────────────────────────────────────────────────────────────────────────────────
@@ -952,12 +956,24 @@ run_self_test() {
 		MATRIX_RESULT=success RUN_URL=http://x derive 2>&1 | grep -c 'existence cross-check is DEAD' || true)"
 	_a "1" "$warn" "a renamed provision job warns loudly instead of silently degrading"
 
-	# 11. LEDGER rows come from the same discovery, so the parity ledger cannot lose a run the table
+	# 11. `gh api --paginate --slurp` returns an ARRAY of page objects. The three readers must see
+	#     the same complete list, not just the first page or an unreadable multi-document stream.
+	c="$tmp/paginated"
+	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-25T060000Z" aws "nightly-777-1" success applied
+	printf '%s\n' '[{"jobs":[{"name":"Provision + verify + teardown (real cloud) (aws)","conclusion":"success","steps":[{"name":"Guaranteed teardown (scope-locked cloud sweep)","conclusion":"success"}]}]},{"jobs":[{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}]' >"$c/jobs.json"
+	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
+		"a slurped two-page jobs payload is normalized for every reader"
+	_a "success" "$(JOBS_JSON="$c/jobs.json" job_conclusion aws)" \
+		"the normalized payload still drives the job-conclusion reader"
+	_a "done" "$(JOBS_JSON="$c/jobs.json" teardown_outcome aws)" \
+		"the normalized payload still drives the teardown reader"
+
+	# 12. LEDGER rows come from the same discovery, so the parity ledger cannot lose a run the table
 	#     reported. Run 30341785056 appended nothing while showing a real aws failure.
 	_a "aws	FAIL	aws: verdict for nightly-777-1	e2e-proof-aws-777" \
 		"$(head -1 "$tmp/flat/out/ledger.tsv")" "ledger row is emitted for the leg the table reports"
 
-	# 12. #1755 — THE DEDUP KEY MUST SEPARATE THE TWO DIMENSIONS. The same cloud red on the floor and
+	# 13. #1755 — THE DEDUP KEY MUST SEPARATE THE TWO DIMENSIONS. The same cloud red on the floor and
 	#     on the full bar has to produce two DIFFERENT titles, because the filer dedups on an exact
 	#     title match. Both fixtures are identical apart from the dimension: on 2026-08-02 the floor
 	#     (ArgoCD install) and the full bar (five apply-stage defects) collapsed into one issue and

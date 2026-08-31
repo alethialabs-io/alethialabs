@@ -2135,7 +2135,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -uo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" --paginate \
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/jobs" --paginate --slurp \
             > "${RUNNER_TEMP}/run-jobs.json" \
             || echo "::warning::could not read this run's job list — the rollup will fall back to proof-presence only."
 
