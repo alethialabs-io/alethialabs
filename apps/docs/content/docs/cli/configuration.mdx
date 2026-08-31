@@ -112,8 +112,10 @@ then set `ALETHIA_RUNNER_ID` and `ALETHIA_RUNNER_TOKEN` on the host. See
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `ALETHIA_WEB_ORIGIN` | `https://alethialabs.io` (compiled-in default) | Override the Alethia API base URL |
+| `ALETHIA_NO_UPDATE_CHECK` | unset | Disable the daily interactive new-release notice |
 
-This is the only environment variable alethia uses. All other configuration comes from the JSON files above or command-line flags.
+These are the CLI configuration environment variables. Runner processes use a separate runtime
+environment documented with the runner deployment method.
 
 ## Global Flags
 

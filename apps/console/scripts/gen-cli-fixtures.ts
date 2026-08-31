@@ -167,7 +167,17 @@ mkdirSync(testdataDir, { recursive: true });
 
 for (const [key, file] of typedEntries(FIXTURES)) {
 	const js = asRecord(z.toJSONSchema(cliContract[key], { target: "draft-7" }));
-	const value = sample(js, js);
+	const value =
+		key === "LatestRelease"
+			? {
+					version: "1.2.3",
+					release_notes: "Release notes",
+					released_at: SAMPLE_TS,
+					github_release_url:
+						"https://github.com/alethialabs-io/alethia-cli/releases/tag/v1.2.3",
+					min_supported_version: "1.0.0",
+			  }
+			: sample(js, js);
 	writeFileSync(join(testdataDir, file), `${JSON.stringify(value, null, "\t")}\n`);
 	console.log(`wrote testdata/${file}`);
 }
