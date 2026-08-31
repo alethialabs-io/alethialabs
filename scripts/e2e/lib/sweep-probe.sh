@@ -436,6 +436,15 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	# THE REGRESSION IN ONE LINE. Before this change both of the two cases above that produce no
 	# stdout resolved to the same value, and the sweeper reported "verified complete" for both.
 	st_state "a FAILED probe that also printed a partial page is still UNVERIFIABLE" "i-0abc" 255 UNVERIFIABLE "i-0abc" 255
+	# Explicit gone regexes must both confirm immediately and retry non-matching failures.
+	probe_reset; : >"$PROBE_CALLS"
+	ST_OUT="" ST_RC=255 ST_ERR="LoadBalancerNotFound" ST_FAIL_FIRST=0
+	st_rc=0; probe_confirm_re load-balancer 'LoadBalancerNotFound' stub >/dev/null || st_rc=$?
+	if [ "$st_rc" -eq 0 ] && ! probe_has_unverifiable && [ "$(st_calls)" -eq 1 ]; then ok "explicit gone regex confirms on the first matching attempt"; else bad "explicit gone regex confirms on the first matching attempt" "rc=$st_rc calls=$(st_calls)"; fi
+	probe_reset; : >"$PROBE_CALLS"
+	ST_OUT="ok" ST_RC=0 ST_ERR="transient" ST_FAIL_FIRST=1
+	st_rc=0; probe_confirm_re widget 'LoadBalancerNotFound' stub >/dev/null || st_rc=$?
+	if [ "$st_rc" -eq 0 ] && [ "$(st_calls)" -eq 2 ]; then ok "non-matching explicit regex retries and records no false gone"; else bad "non-matching explicit regex retries and records no false gone" "rc=$st_rc calls=$(st_calls)"; fi
 
 	# ── The exit-code gate. Warning-only was the second half of the old defect. ──
 	probe_reset
