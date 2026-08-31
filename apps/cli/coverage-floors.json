@@ -25,7 +25,7 @@
       "total": 138
     },
     "internal/update": {
-      "covered": 261,
+      "covered": 256,
       "total": 356
     },
     "pkg/utils/ui": {
