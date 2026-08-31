@@ -197,6 +197,77 @@ workload measured at 4.91 vCPU / 4.14 GiB, and burned the full cap on four cloud
 
 ---
 
+## 6 · The review/merge race — a decision, then a promotion
+
+**The problem, measured.** Mergify squash-merges a `dev` PR the moment the required checks pass,
+and an automated review is not one of those checks. The two race by construction, and the review
+loses:
+
+| PR | created | merged | elapsed |
+|---|---|---|---|
+| #3433 | 08:30:45Z | 08:57:18Z | 26m |
+| #3437 | 08:48:34Z | 09:17:56Z | 29m |
+| #3444 | 09:21:55Z | 09:49:03Z | 27m |
+| #3504 | 18:51:47Z | 19:15:51Z | 24m |
+| #3508 | 19:34:09Z | 20:01:04Z | 27m |
+
+All 2026-08-30. The review on #3444 posted its findings at **09:52:51Z** — three minutes and
+forty-eight seconds after the merge. #3433 and #3437 lost the same way, and their findings were
+then re-landed as follow-up PRs (#3477, #3479). The merge window is not the variable here: CI takes
+24–30 minutes and the review arrives at roughly the same time, so **whichever finishes first wins,
+every time.**
+
+### What cannot work, and why it is worth writing down
+
+**Requiring an approving review.** `required_approving_review_count = 1` on `protect-dev` looks
+like the obvious answer and would halt the fleet completely. Every instance and the maintainer push
+as the **same GitHub account**, and GitHub does not allow approving your own pull request — so no
+`dev` PR could ever be approved, and nothing would merge again until a second identity (a GitHub
+App or bot account) existed to author or approve. This is a property of the fleet's identity model,
+not a tunable.
+
+### The change, ready to apply
+
+A soak window on auto-queueing. It keeps the loop autonomous, costs a fixed delay per PR, and needs
+no new identity:
+
+```diff
+ merge_protections_settings:
+   auto_merge_conditions:
+     - base = dev
+     - "-draft"
++    # SOAK WINDOW (the review/merge race). CI settles in 24-30 minutes and the automated review
++    # lands at about the same time, so without a floor the two race and the review loses — three
++    # PRs merged with findings unaddressed on 2026-08-30, one of them by under four minutes.
++    # 45 minutes clears the measured spread with margin. Mergify keeps a calendar for time-based
++    # conditions and re-checks it every minute, so nothing has to touch the PR to wake it.
++    - created-at < 45 minutes ago
+```
+
+`created-at`, deliberately, not `updated-at`: `updated-at` moves every time the review posts a
+comment, so a PR under active review would keep resetting its own window and could sit unmerged
+indefinitely. `created-at` is a fixed floor per PR.
+
+**This takes effect only from `main`.** Mergify reads `.mergify.yml` from the default branch, so
+the edit rides `dev → staging → main` and does nothing until you promote it — and it cannot be
+rehearsed on `dev` first. That is also why it is written here rather than committed: a change that
+silently activates on the next routine promotion is not a decision anyone made.
+
+Nothing in `infra/github` changes. The soak is a queue policy, not a branch protection, and the
+ruleset's `required_approving_review_count = 0` should stay at 0 for the reason above.
+
+### The durable fix, when it is worth building
+
+Make the review **report a check**. Today it runs from an instance's terminal and posts through the
+GitHub API minutes after the fact; nothing in the merge decision can wait for something that never
+announces itself. A review that runs as a CI job and reports a status context can simply be added
+to the three lists that already have to agree (`.mergify.yml` twice and
+`infra/github/variables.tf`, kept in step by `scripts/ci/check-required-checks.mjs`) — and then
+there is no race to tune, because the merge waits on the review the same way it waits on the type
+checker. The cost is an API key in CI and a per-PR spend, which is the decision, not the wiring.
+
+---
+
 ## What this list is not
 
 It is not a backlog of work someone else could pick up. Every item needs a credential, a console
