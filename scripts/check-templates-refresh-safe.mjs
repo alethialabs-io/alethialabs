@@ -26,7 +26,7 @@
  * which is the population drift detection exists to serve. Drift detection was dead on a
  * production environment for five weeks, failing in 13 seconds with nothing else reported.
  *
- * WHAT THIS ASKS — the cheapest sound question. For every RESOURCE counted 0-or-1, is there an
+ * WHAT THIS ASKS — the cheapest sound question. For every RESOURCE or DATA SOURCE counted 0-or-1, is there an
  * unprotected `[0]` index into it in the same module directory? No HCL evaluation, no attempt to
  * know which environments are behind: `one(x[*].attr)` is correct wherever `x[0].attr` was, so
  * over-reporting costs a safer expression and nothing else.
@@ -64,7 +64,10 @@ const ZERO_OR_ONE = /\?\s*1\s*:\s*0|\?\s*0\s*:\s*1/;
 function moduleDirs(dir, out = []) {
 	const entries = fs.readdirSync(dir, { withFileTypes: true });
 	if (entries.some((e) => e.isFile() && e.name.endsWith(".tf"))) out.push(dir);
-	for (const e of entries) if (e.isDirectory()) moduleDirs(path.join(dir, e.name), out);
+	for (const e of entries) {
+		if (e.isDirectory() && !e.name.startsWith("."))
+			moduleDirs(path.join(dir, e.name), out);
+	}
 	return out;
 }
 
@@ -77,9 +80,48 @@ function moduleDirs(dir, out = []) {
  * examined-counts line printed on success is what caught that.
  */
 function stripComments(src) {
-	const lines = src
-		.split("\n")
-		.map((line) => line.replace(/(#|\/\/).*$/, (m) => " ".repeat(m.length)));
+	let inBlockComment = false;
+	const lines = src.split("\n").map((line) => {
+		let quoted = false;
+		let escaped = false;
+		let out = "";
+		for (let i = 0; i < line.length; i++) {
+			const ch = line[i];
+			const next = line[i + 1];
+			if (inBlockComment) {
+				if (ch === "*" && next === "/") {
+					out += "  ";
+					i++;
+					inBlockComment = false;
+				} else out += " ";
+				continue;
+			}
+			if (quoted) {
+				out += ch;
+				if (escaped) escaped = false;
+				else if (ch === "\\") escaped = true;
+				else if (ch === '"') quoted = false;
+				continue;
+			}
+			if (ch === '"') {
+				quoted = true;
+				out += ch;
+				continue;
+			}
+			if (ch === "/" && next === "*") {
+				out += "  ";
+				i++;
+				inBlockComment = true;
+				continue;
+			}
+			if (ch === "#" || (ch === "/" && next === "/")) {
+				out += " ".repeat(line.length - i);
+				break;
+			}
+			out += ch;
+		}
+		return out.padEnd(line.length, " ");
+	});
 	let heredoc = null;
 	return lines
 		.map((line) => {
@@ -87,7 +129,10 @@ function stripComments(src) {
 				if (new RegExp(`^\\s*${heredoc}\\s*$`).test(line)) heredoc = null;
 				return " ".repeat(line.length);
 			}
-			const open = line.match(/<<-?\s*([A-Z][A-Z0-9_]*)/);
+			const withoutStrings = line.replace(/"(?:[^"\\]|\\.)*"/g, (m) =>
+				" ".repeat(m.length),
+			);
+			const open = withoutStrings.match(/<<-?\s*([A-Z][A-Z0-9_]*)/);
 			if (open) heredoc = open[1];
 			return line;
 		})
@@ -101,10 +146,77 @@ function stripComments(src) {
  * is a sentence about this very bug, and flagging it would send a reader to edit an error message.
  */
 function stripNonCode(src) {
-	return stripComments(src)
-		.split("\n")
-		.map((line) => line.replace(/"(?:[^"\\]|\\.)*"/g, (m) => " ".repeat(m.length)))
-		.join("\n");
+	const clean = stripComments(src);
+	let out = "";
+	let inString = false;
+	let escaped = false;
+	let interpolationDepth = 0;
+	for (let i = 0; i < clean.length; i++) {
+		const ch = clean[i];
+		const next = clean[i + 1];
+		if (!inString) {
+			if (ch === '"') {
+				inString = true;
+				out += " ";
+			} else out += ch;
+			continue;
+		}
+		if (interpolationDepth > 0) {
+			out += ch;
+			if (ch === "{") interpolationDepth++;
+			else if (ch === "}") interpolationDepth--;
+			continue;
+		}
+		if (escaped) {
+			escaped = false;
+			out += " ";
+			continue;
+		}
+		if (ch === "\\") {
+			escaped = true;
+			out += " ";
+			continue;
+		}
+		if (ch === '"') {
+			inString = false;
+			out += " ";
+			continue;
+		}
+		if (ch === "$" && next === "{") {
+			out += "${";
+			i++;
+			interpolationDepth = 1;
+			continue;
+		}
+		out += ch === "\n" ? "\n" : " ";
+	}
+	return out;
+}
+
+/** Return the closing brace for a block in position-preserving code, or -1. */
+function closingBrace(code, opening) {
+	let depth = 0;
+	for (let i = opening; i < code.length; i++) {
+		if (code[i] === "{") depth++;
+		else if (code[i] === "}" && --depth === 0) return i;
+	}
+	return -1;
+}
+
+/** Read a possibly multiline count expression from one balanced block body. */
+function countExpression(block) {
+	const match = /^\s*count\s*=\s*/m.exec(block);
+	if (!match) return null;
+	let value = "";
+	let depth = 0;
+	for (let i = match.index + match[0].length; i < block.length; i++) {
+		const ch = block[i];
+		if (ch === "(" || ch === "[" || ch === "{") depth++;
+		else if (ch === ")" || ch === "]" || ch === "}") depth--;
+		if (ch === "\n" && depth === 0) break;
+		value += ch;
+	}
+	return value.replace(/\s+/g, " ").trim();
 }
 
 /** True when the reference at `column` sits inside a `try(…)` call on this line. */
@@ -159,7 +271,9 @@ function isNonEvaluatedContext(lines, index) {
 		}
 		if (
 			/^\s*(to|from)\s*=/.test(line) &&
-			lines.slice(Math.max(0, i - 8), i + 1).some((l) => /^(moved|removed|import)\s*\{/.test(l))
+			lines
+				.slice(Math.max(0, i - 8), i + 1)
+				.some((l) => /^(moved|removed|import)\s*\{/.test(l))
 		) {
 			return true;
 		}
@@ -169,7 +283,8 @@ function isNonEvaluatedContext(lines, index) {
 }
 
 /** An address indexed with a literal `[0]`. */
-const REFERENCE = /(?<![\w.])((?:module\.[a-z0-9_]+)|(?:[a-z][a-z0-9_]*\.[a-z0-9_]+))\[0\]/gi;
+const REFERENCE =
+	/(?<![\w.])((?:module\.[a-z0-9_]+)|(?:data\.[a-z][a-z0-9_]*\.[a-z0-9_]+)|(?:[a-z][a-z0-9_]*\.[a-z0-9_]+))\[0\]/gi;
 
 /**
  * Scan a template root for indexes into counted blocks.
@@ -191,17 +306,26 @@ function scanRoot(root) {
 		const countedBlocks = new Map();
 
 		for (const file of tfFiles) {
-			const src = stripComments(fs.readFileSync(path.join(dir, file), "utf8"));
-			const blocks = /^(resource|module)\s+"([^"]+)"(?:\s+"([^"]+)")?\s*\{/gm;
+			const raw = fs.readFileSync(path.join(dir, file), "utf8");
+			const src = stripComments(raw);
+			const code = stripNonCode(raw);
+			const blocks =
+				/^(resource|data|module)\s+"([^"]+)"(?:\s+"([^"]+)")?\s*\{/gm;
 			let block;
 			while ((block = blocks.exec(src))) {
 				const [, kind, first, second] = block;
-				const address = kind === "module" ? `module.${first}` : `${first}.${second}`;
-				const count = src
-					.slice(block.index, block.index + 4000)
-					.match(/^\s{2}count\s*=\s*(.+)$/m);
-				if (count) {
-					countedBlocks.set(address, count[1].trim());
+				const address =
+					kind === "module"
+						? `module.${first}`
+						: kind === "data"
+							? `data.${first}.${second}`
+							: `${first}.${second}`;
+				const opening = block.index + block[0].lastIndexOf("{");
+				const closing = closingBrace(code, opening);
+				if (closing < 0) continue;
+				const count = countExpression(code.slice(opening + 1, closing));
+				if (count !== null) {
+					countedBlocks.set(address, count);
 					counted++;
 				}
 			}
@@ -209,7 +333,9 @@ function scanRoot(root) {
 
 		for (const file of tfFiles) {
 			files++;
-			const lines = stripNonCode(fs.readFileSync(path.join(dir, file), "utf8")).split("\n");
+			const lines = stripNonCode(
+				fs.readFileSync(path.join(dir, file), "utf8"),
+			).split("\n");
 			lines.forEach((line, i) => {
 				REFERENCE.lastIndex = 0;
 				let ref;
@@ -218,13 +344,13 @@ function scanRoot(root) {
 					if (!countedBlocks.has(address)) continue;
 					const count = countedBlocks.get(address);
 					const where = `${path.join(dir, file)}:${i + 1}`;
+					if (isNonEvaluatedContext(lines, i)) continue;
+					if (isInsideTry(line, ref.index)) continue;
+					if (isLengthGuarded(line, address)) continue;
 					if (!ZERO_OR_ONE.test(count)) {
 						multiCount.push(`${where}: ${address} (count = ${count})`);
 						continue;
 					}
-					if (isNonEvaluatedContext(lines, i)) continue;
-					if (isInsideTry(line, ref.index)) continue;
-					if (isLengthGuarded(line, address)) continue;
 					if (address.startsWith("module.")) {
 						modules.push(`${where}: ${address}[0]`);
 						continue;
@@ -261,6 +387,20 @@ module "cluster" {
   count  = var.provision ? 1 : 0
 }
 
+data "example_item" "url" {
+  count = var.provision ? 1 : 0
+}
+
+resource "example_item" "multi" {
+  count = (
+    var.provision ? 1 : 0
+  )
+}
+
+resource "example_item" "uncounted" {
+  note = "the previous block's count must not leak here"
+}
+
 resource "consumer" "c" {
   identity   = local.encrypt ? azurerm_user_assigned_identity.aks[0].id : ""
   tried      = try(azurerm_user_assigned_identity.dns[0].id, "")
@@ -268,9 +408,19 @@ resource "consumer" "c" {
   guarded    = length(azurerm_user_assigned_identity.dns) > 0 ? azurerm_user_assigned_identity.dns[0].id : ""
   vswitch    = alicloud_vswitch.many[0].id
   from_mod   = var.provision ? module.cluster[0].id : ""
+  url         = "https://\${data.example_item.url[0].id}"
+  comparison  = "compare A << B"
+  after_text  = var.provision ? example_item.multi[0].id : ""
+  uncounted   = example_item.uncounted[0].id
   described  = "azurerm_user_assigned_identity.aks[0].id is what used to break"
   # a comment naming azurerm_user_assigned_identity.aks[0].id is prose, not code
   depends_on = [azurerm_user_assigned_identity.aks[0]]
+}
+
+resource "heredoc_consumer" "c" {
+  document = <<-DOC
+    example_item.multi[0].id is prose inside a heredoc
+  DOC
 }
 
 moved {
@@ -294,25 +444,50 @@ function selfTest() {
 	};
 
 	check(
-		"flags the unprotected conditional index, and ONLY that one",
-		result.findings.length === 1 &&
-			result.findings[0].includes("azurerm_user_assigned_identity.aks[0]"),
+		"flags all three unprotected conditional indexes and no prose/uncounted reference",
+		result.findings.length === 3 &&
+			result.findings.some((f) =>
+				f.includes("azurerm_user_assigned_identity.aks[0]"),
+			) &&
+			result.findings.some((f) => f.includes("data.example_item.url[0]")) &&
+			result.findings.some((f) => f.includes("example_item.multi[0]")),
+		`findings: ${JSON.stringify(result.findings)}`,
+	);
+	check(
+		"preserves interpolation code after https:// inside a quoted string",
+		result.findings.some((f) => f.includes("data.example_item.url[0]")),
+		`findings: ${JSON.stringify(result.findings)}`,
+	);
+	check(
+		"a << token inside a string does not hide the remainder of the file",
+		result.findings.some((f) => f.includes("example_item.multi[0]")),
 		`findings: ${JSON.stringify(result.findings)}`,
 	);
 	check(
 		"reports the module reference separately rather than as a finding",
-		result.modules.length === 1 && result.modules[0].includes("module.cluster[0]"),
+		result.modules.length === 1 &&
+			result.modules[0].includes("module.cluster[0]"),
 		`modules: ${JSON.stringify(result.modules)}`,
 	);
 	check(
 		"reports a non-boolean count as not covered",
-		result.multiCount.length === 1 && result.multiCount[0].includes("alicloud_vswitch.many"),
+		result.multiCount.length === 1 &&
+			result.multiCount[0].includes("alicloud_vswitch.many"),
 		`multiCount: ${JSON.stringify(result.multiCount)}`,
 	);
 	check(
 		"counts what it examined",
-		result.files === 1 && result.counted === 4,
+		result.files === 1 && result.counted === 6,
 		`${result.files} file(s), ${result.counted} counted block(s)`,
+	);
+
+	fs.mkdirSync(path.join(dir, ".terraform", "vendor"), { recursive: true });
+	fs.writeFileSync(path.join(dir, ".terraform", "vendor", "main.tf"), FIXTURE);
+	const withoutVendor = scanRoot(dir);
+	check(
+		"does not recurse into .terraform vendor trees",
+		withoutVendor.files === 1,
+		`${withoutVendor.files} file(s) examined`,
 	);
 
 	// The anti-probe. Every assertion above is about what the detector REJECTS; without this one
@@ -320,7 +495,9 @@ function selfTest() {
 	const fixed = FIXTURE.replace(
 		'local.encrypt ? azurerm_user_assigned_identity.aks[0].id : ""',
 		'local.encrypt ? one(azurerm_user_assigned_identity.aks[*].id) : ""',
-	);
+	)
+		.replace("data.example_item.url[0].id", "one(data.example_item.url[*].id)")
+		.replace("example_item.multi[0].id", "one(example_item.multi[*].id)");
 	fs.writeFileSync(path.join(dir, "main.tf"), fixed);
 	const after = scanRoot(dir);
 	check(
@@ -331,7 +508,9 @@ function selfTest() {
 
 	fs.rmSync(dir, { recursive: true, force: true });
 	if (failures > 0) {
-		console.error(`\ncheck-templates-refresh-safe self-test: ${failures} failure(s)`);
+		console.error(
+			`\ncheck-templates-refresh-safe self-test: ${failures} failure(s)`,
+		);
 		process.exit(1);
 	}
 	console.log("\nself-test: all passed");
@@ -343,28 +522,43 @@ if (process.argv.includes("--self-test")) {
 	selfTest();
 } else {
 	const root = process.argv[2] ?? "infra/templates/project";
-	const { findings, modules, multiCount, files, dirs, counted } = scanRoot(root);
+	const { findings, modules, multiCount, files, dirs, counted } =
+		scanRoot(root);
 	const examined = `examined ${files} .tf file(s) in ${dirs} module dir(s); ${counted} counted block(s)`;
 
 	if (findings.length > 0) {
 		console.error(
-			`❌ refresh-safety violation — ${findings.length} unprotected index(es) into a counted resource:`,
+			`❌ refresh-safety violation — ${findings.length} unprotected index(es) into a counted resource or data source:`,
 		);
 		console.error("");
 		for (const f of findings) console.error(`  ${f}`);
 		console.error("");
-		console.error("`tofu plan -refresh-only` never plans a create, so a counted resource with no");
-		console.error("instance in state is an EMPTY TUPLE and `[0]` aborts the whole plan — drift");
-		console.error("detection dies for every environment whose template has advanced past its");
-		console.error("last apply (#3351). Write `one(<address>[*].<attr>)`: identical where the");
-		console.error("instance exists, null instead of a fatal error where it does not.");
+		console.error(
+			"`tofu plan -refresh-only` never plans a create, so a counted resource with no",
+		);
+		console.error(
+			"instance in state is an EMPTY TUPLE and `[0]` aborts the whole plan — drift",
+		);
+		console.error(
+			"detection dies for every environment whose template has advanced past its",
+		);
+		console.error(
+			"last apply (#3351). Write `one(<address>[*].<attr>)`: identical where the",
+		);
+		console.error(
+			"instance exists, null instead of a fatal error where it does not.",
+		);
 		console.error("");
 		console.error(examined);
 		process.exit(1);
 	}
 
-	console.log(`✓ no unprotected index into a counted RESOURCE — ${examined}.`);
-	console.log("  NOT COVERED, deliberately — the header records the measurement behind each:");
+	console.log(
+		`✓ no unprotected index into a counted RESOURCE or DATA SOURCE — ${examined}.`,
+	);
+	console.log(
+		"  NOT COVERED, deliberately — the header records the measurement behind each:",
+	);
 	console.log(
 		`    ${modules.length} module reference(s): one() on a module splat closed a dependency cycle on aws, and try() hides a typo'd module output. Per-site judgement, not a codemod.`,
 	);
