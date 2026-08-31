@@ -295,11 +295,15 @@ async function writeComponents(
 	// unreachable, because `namespace`/`vcluster` envs own no cluster row and resolve ONLY by
 	// Fabric (lib/queries/cluster-for-env.ts). See the same fix in lib/cli/project-components.ts.
 	const [envRow] = await tx
-		.select({ fabric_id: projectEnvironments.fabric_id })
+		.select({
+			fabric_id: projectEnvironments.fabric_id,
+			placement_mode: projectEnvironments.placement_mode,
+		})
 		.from(projectEnvironments)
 		.where(eq(projectEnvironments.id, environmentId))
 		.limit(1);
-	const clusterBase = envRow?.fabric_id
+	const clusterBase =
+		envRow?.placement_mode === "dedicated" && envRow.fabric_id
 		? { ...base, fabric_id: envRow.fabric_id }
 		: base;
 
