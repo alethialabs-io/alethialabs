@@ -537,7 +537,7 @@ derive() {
 			{
 				printf '%s\n\n' "The T2 real-cloud **${dim_label}** nightly matrix went **RED**, but every leg that ran left a proof bundle and every one of them says **PASS** (\`outcome: success\`):${passes}."
 				printf '%s\n\n' "Run: ${RUN_URL:-}"
-				printf '%s\n\n' "**This is the degraded path, and that is the finding.** A red job on a passing bundle is normally attributed to its cloud by reading that leg's JOB CONCLUSION from the run's jobs API — \`Capture proof\` is not the last step, so a leg can pass provisioning and still go red below it. Reaching this issue means that cross-check could not answer: no jobs payload, an unreadable one, or no job whose name ends \`(<cloud>)\`."
+				printf '%s\n\n' "**This is the degraded path, and that is the finding.** A red job on a passing bundle is normally attributed to its cloud by reading that leg's JOB CONCLUSION from the run's jobs API — \`Capture proof\` is not the last step, so a leg can pass provisioning and still go red below it. Reaching this issue means that cross-check could not answer — one of exactly four things: no jobs payload was fetched, the payload is unreadable, it holds no job whose name ends \`(<cloud>)\`, or that job carries a null conclusion (still running). Nothing else reaches this issue."
 				printf '%s\n' "So start with the rollup job's own log: if it warns that the existence cross-check is DEAD, the provision job was RENAMED and \`PROVISION_JOB_PREFIX\` in \`scripts/e2e/nightly-rollup.sh\` must follow it. Otherwise open the red matrix job and read its first failed step directly."
 				printf '%s\n' "_Auto-created by the e2e-nightly rollup and deduped by title._"
 			} >"$out/issue-red-${cloud}.md"
@@ -1159,6 +1159,11 @@ run_self_test() {
 		"(P3b) a null conclusion is unknown, never a silent PASS and never an invented red"
 	_a "$t_unattributed" "$(cat "$c/out/issue-red-matrix.title")" \
 		"(P3b) it renders the same degraded case as P3a"
+	# The body enumerates the causes, and P3a/P3b/P3c are three of the four. A reader who is told
+	# "the cross-check could not answer" and NOT told what could cause that has to go and read the
+	# script; the list is what makes the degraded issue actionable instead of merely honest.
+	_a "1" "$(grep -c 'null conclusion (still running)' "$c/out/issue-red-matrix.md")" \
+		"(P3b) the body names the null-conclusion cause this fixture actually exercises"
 
 	# (P3c) NO jobs payload at all — the file was never fetched. job_conclusion's readability guard.
 	c="$tmp/p3c-no-payload"
