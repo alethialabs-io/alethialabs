@@ -15,6 +15,7 @@ import {
 	cliJobsPageResponse,
 	cliRepositoriesResponse,
 	cliLatestReleaseWire,
+	cliReleasePublishWire,
 	cliByoChartAttachResponse,
 	cliByoScanResponse,
 	cliRunnerRegistrationResponse,
@@ -76,5 +77,32 @@ describe("CLI wire contract ↔ fixtures", () => {
 			);
 		}
 		expect(result.success).toBe(true);
+	});
+});
+
+describe("CLI release publication contract", () => {
+	it("accepts stable, attributable release metadata", () => {
+		expect(
+			cliReleasePublishWire.safeParse({
+				version: "1.2.3",
+				release_notes: "Notes",
+				released_at: "2026-08-31T05:37:26Z",
+				github_release_url:
+					"https://github.com/alethialabs-io/alethia-cli/releases/tag/v1.2.3",
+				commit_sha: "a".repeat(40),
+			}).success,
+		).toBe(true);
+	});
+
+	it("rejects aliases and unattributable commits", () => {
+		expect(
+			cliReleasePublishWire.safeParse({
+				version: "latest",
+				release_notes: "Notes",
+				released_at: "today",
+				github_release_url: "not-a-url",
+				commit_sha: "short",
+			}).success,
+		).toBe(false);
 	});
 });
