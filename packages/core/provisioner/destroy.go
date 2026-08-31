@@ -578,7 +578,10 @@ func releaseLoadBalancersBeforeDestroy(
 		// An empty endpoint is not a failure to reach a cluster — it is the absence of one in this
 		// state. Carried on the outcome so the retry and the operator notice can both branch on the
 		// FACT rather than on the wording of the sentence below.
-		noCluster := endpoint == ""
+		noCluster := endpoint == "" && cloud.ExtractClusterName(outputs) == ""
+		if _, ok := outputs["kubeconfig"]; ok {
+			noCluster = false
+		}
 		// NO cluster-name gate. `ExtractClusterName` was the obvious pre-check and it is narrower
 		// than what ConfigureKubeconfig accepts: awsProvider handles a BYO-IaC module that emits a
 		// generic `kubeconfig` output for a self-managed, non-EKS cluster — checked BEFORE any
