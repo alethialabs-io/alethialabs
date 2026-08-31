@@ -7,10 +7,12 @@ on:
       - 'infra/.tflint.hcl'
       - 'infra/.trivy.yaml'
       - '.github/actions/iac-checks/**'
+      - 'scripts/check-templates-refresh-safe.mjs'
   push:
     branches: [main]
     paths:
       - 'infra/templates/**'
+      - 'scripts/check-templates-refresh-safe.mjs'
 
 # The customer project templates (infra/templates/project/{aws,gcp,azure,hetzner,alibaba}) are
 # applied at provision time by the runner, NOT by this repo's CI. So this workflow gates them with
