@@ -20,7 +20,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { getAddOn, resolveAddOnInstall } from "@/lib/addons/catalog";
+import {
+	EXTERNAL_DNS_PROVIDER_IDS,
+	EXTERNAL_DNS_PROVIDERS,
+	getAddOn,
+	resolveAddOnInstall,
+} from "@/lib/addons/catalog";
 
 const externalDns = getAddOn("external-dns");
 if (!externalDns) throw new Error("the external-dns catalog entry is missing");
@@ -219,16 +224,18 @@ describe("the workload-identity providers", () => {
 // So the configuration is refused instead — at configure time, where a user can still act on it,
 // by the same `configSchema` the console action and the CLI route both run.
 describe("a workload-identity provider refuses an empty identity (#3469)", () => {
-	/** The providers that authenticate by annotation, derived from the emitter rather than listed. */
-	const IDENTITY_PROVIDERS = OFFERED.filter(annotates);
-	const TOKEN_PROVIDERS = OFFERED.filter((p) => !annotates(p));
+	// Split off the PROVIDER UNION rather than off `OFFERED` (which is `string[]`, read out of the
+	// form descriptor) so each case is typed as a real provider id and the table below can be
+	// indexed without a cast. The two lists must be the same set — asserted, not assumed.
+	const IDENTITY_PROVIDERS = EXTERNAL_DNS_PROVIDER_IDS.filter(annotates);
+	const TOKEN_PROVIDERS = EXTERNAL_DNS_PROVIDER_IDS.filter((p) => !annotates(p));
 
 	// VACUITY FIRST. Both halves of the sweep below are `it.each` over a filtered list, and a filter
 	// that returns nothing makes every case pass by describing an empty set.
-	it("has providers of both kinds to sweep", () => {
+	it("has providers of both kinds to sweep, and sweeps everything the form offers", () => {
 		expect(IDENTITY_PROVIDERS.length).toBeGreaterThan(0);
 		expect(TOKEN_PROVIDERS.length).toBeGreaterThan(0);
-		expect(IDENTITY_PROVIDERS.length + TOKEN_PROVIDERS.length).toBe(OFFERED.length);
+		expect([...IDENTITY_PROVIDERS, ...TOKEN_PROVIDERS].sort()).toEqual([...OFFERED].sort());
 	});
 
 	it.each(IDENTITY_PROVIDERS)("%s is refused with no identity, on the identity's own field", (provider) => {
@@ -241,6 +248,19 @@ describe("a workload-identity provider refuses an empty identity (#3469)", () =>
 		expect(issue, `refused, but not on workloadIdentity: ${JSON.stringify(result.error.issues)}`).toBeDefined();
 		// Actionable, not merely negative — it must name the provider and what to go and get.
 		expect(issue?.message).toMatch(/workload identity/i);
+	});
+
+	// `identityLabel` has to be set on exactly the providers that annotate — TypeScript cannot pair
+	// two optional fields, so the pairing is asserted instead. Without it the refusal quietly falls
+	// back to "the cloud identity to assume" and a user is told a provider needs something, but not
+	// what: the difference between a message that closes the loop and one that just says no.
+	it.each(IDENTITY_PROVIDERS)("%s names what its identity IS, in the refusal itself", (provider) => {
+		const label = EXTERNAL_DNS_PROVIDERS[provider].identityLabel;
+		expect(label, `${provider} annotates but declares no identityLabel`).toBeTruthy();
+		const result = externalDns.configSchema.safeParse({ provider });
+		expect(result.success).toBe(false);
+		if (result.success) return;
+		expect(result.error.issues.map((i) => i.message).join(" ")).toContain(label);
 	});
 
 	it.each(IDENTITY_PROVIDERS)("%s refuses whitespace, which is not an identity either", (provider) => {
