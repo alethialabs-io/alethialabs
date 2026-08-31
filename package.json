@@ -13,6 +13,8 @@
     "dev:runner": "bash scripts/dev-runner.sh",
     "dev:runner:logs": "bash scripts/dev-runner-logs.sh",
     "dev:runner:down": "bash scripts/dev-runner-down.sh",
+    "codex:doctor": "bash scripts/codex-harness.sh doctor",
+    "codex:self-test": "bash scripts/codex-harness.sh self-test",
     "dev:stack": "bash scripts/dev-stack.sh",
     "dev:stack:logs": "docker compose -f docker-compose.dev.yml logs -f --tail=120",
     "dev:stack:down": "docker compose -f docker-compose.dev.yml down --remove-orphans; rm -rf /tmp/alethia-dev-stack.lock",

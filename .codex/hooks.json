@@ -1,0 +1,55 @@
+{
+  "description": "Alethia worktree, runtime, IaC, merge, and migration guards for Codex.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/session-start.sh\"",
+            "timeout": 30,
+            "statusMessage": "Loading Alethia runtime status"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/pre-tool-use.sh\"",
+            "timeout": 30,
+            "statusMessage": "Checking Alethia command guards"
+          }
+        ]
+      },
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/pre-apply-patch.sh\"",
+            "timeout": 30,
+            "statusMessage": "Checking Alethia worktree ownership"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$(git rev-parse --show-toplevel)/.codex/hooks/post-apply-patch.sh\"",
+            "timeout": 30,
+            "statusMessage": "Checking migration chain"
+          }
+        ]
+      }
+    ]
+  }
+}
