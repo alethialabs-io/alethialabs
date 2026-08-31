@@ -1205,8 +1205,14 @@ run_self_test() {
 	_a 'none — the job list marks no step `failure` (set-up or post step?)' \
 		"$(cat "$c/out/failed-steps-aws.txt")" \
 		"(P5) 'no step is marked failed' is stated in words, not left blank"
+	# Paired ON PURPOSE, and the positive half comes first. A lone `grep -c … = 0` passes just as
+	# happily when the line it is policing has been renamed out of existence — a "nothing found"
+	# branch that cannot tell itself from "nothing wrong", which is the very defect this PR removes.
+	# The positive assertion is what makes the negative one mean something.
+	_a "1" "$(grep -c 'jobs API: \*\*none — the job list marks no step' "$c/out/issue-red-aws.md")" \
+		"(P5) the body renders the sentence INSIDE the bold where the cause belongs"
 	_a "0" "$(grep -c 'jobs API: \*\*\*\*' "$c/out/issue-red-aws.md")" \
-		"(P5) the issue body never renders an EMPTY bold where the cause belongs"
+		"(P5) …and never an EMPTY bold there"
 
 	# (P6) Several steps below the capture failed. All of them are named, joined — reading one and
 	#      guessing at the rest is how a two-cause red gets closed on one fix.
