@@ -25,21 +25,51 @@ describe("add-on field descriptors are consistent with their Zod configSchema", 
 			if (field.type === "enum") {
 				it(`${def.id}.${field.key} enum options match what the schema accepts`, () => {
 					expect(field.options?.length ?? 0).toBeGreaterThan(0);
-					// Every offered choice must validate…
+					// Every offered choice must be a choice the schema ACCEPTS AS THIS KEY'S VALUE.
+					//
+					// "Accepts as this key's value" rather than "accepts outright", because a schema
+					// may also carry CROSS-FIELD rules, and one of them fires here: external-dns on a
+					// workload-identity provider requires a `workloadIdentity`, so `provider: "aws"`
+					// on top of the defaults (which leave that empty) is a legitimate refusal of the
+					// COMBINATION, not of the option (#3469). The distinction is the issue's own
+					// path: a refusal that lands on another field says the enum value was fine.
+					//
+					// Deliberately NOT a per-add-on table of companion knobs — that would be a second
+					// copy of a rule the schema already states, and it would go stale silently. And
+					// deliberately not just dropping the assertion for schemas that have refinements:
+					// an option this schema rejects ON ITS OWN KEY is still an offer the form cannot
+					// honour, which is the whole point of the guard.
 					for (const opt of field.options ?? []) {
-						const ok = def.configSchema.safeParse({
+						const result = def.configSchema.safeParse({
 							...defaults,
 							[field.key]: opt.value,
-						}).success;
-						expect(ok).toBe(true);
+						});
+						const blamed = result.success
+							? []
+							: result.error.issues.filter((i) => i.path[0] === field.key);
+						expect(
+							blamed,
+							`${def.id}.${field.key} offers "${opt.value}", which its own schema rejects`,
+						).toEqual([]);
 					}
-					// …and a value NOT among the options must be rejected — proving the schema key is
-					// really an enum, not a free string mislabelled as one.
-					const rejected = def.configSchema.safeParse({
+					// …and a value NOT among the options must be rejected ON THIS KEY — proving the
+					// schema key is really an enum, not a free string mislabelled as one. Checking
+					// the key rather than merely `success === false` matters now that a cross-field
+					// rule can also fail a parse: without it, a schema with any such rule would
+					// report this half green while the key accepted anything at all.
+					const rejection = def.configSchema.safeParse({
 						...defaults,
 						[field.key]: "__not_a_valid_choice__",
-					}).success;
-					expect(rejected).toBe(false);
+					});
+					expect(rejection.success).toBe(false);
+					// An accepted off-menu value yields NO issues, so `some()` is false and this fails
+					// too — the assertion does not need the refusal to have happened, which is what
+					// lets it live outside a conditional.
+					const offMenu = rejection.success ? [] : rejection.error.issues;
+					expect(
+						offMenu.some((i) => i.path[0] === field.key),
+						`${def.id}.${field.key} rejected an off-menu value, but blamed another field: ${JSON.stringify(offMenu)}`,
+					).toBe(true);
 				});
 			}
 		}

@@ -10,7 +10,11 @@
 // It lives here (a normal module) rather than inside the script so the guard test can import it
 // without reaching into a `.mts` entrypoint.
 
-import { ADDON_CATALOG, resolveAddOnInstall } from "@/lib/addons/catalog";
+import {
+	ADDON_CATALOG,
+	EXTERNAL_DNS_PROVIDERS,
+	resolveAddOnInstall,
+} from "@/lib/addons/catalog";
 import type { ExternalDnsProvider } from "@/lib/addons/catalog";
 import type { AddOnInstallSpec } from "@/lib/addons/types";
 import type { CloudProvider } from "@/lib/cloud-providers/connections";
@@ -74,7 +78,65 @@ export const EXPORT_CLOUDS = ["aws", "gcp", "azure", "alibaba", "hetzner"] as co
 function cloudKnobs(addonId: string, cloud: CloudProvider): Record<string, unknown> {
 	if (addonId !== "external-dns") return {};
 	const native = EXTERNAL_DNS_NATIVE_PROVIDER[cloud];
-	return native === null ? {} : { provider: native };
+	if (native === null) return {};
+	const identity = EXTERNAL_DNS_FIXTURE_IDENTITY[native];
+	return { provider: native, ...(identity ? { workloadIdentity: identity } : {}) };
+}
+
+/**
+ * A syntactically real, deliberately NON-EXISTENT cloud identity, per workload-identity provider.
+ *
+ * WHY THE FIXTURE HAS TO CARRY ONE AT ALL. #3469 made `workloadIdentity` REQUIRED on a provider that
+ * authenticates by ServiceAccount annotation, because an empty one installs an add-on that is
+ * Healthy on AWS and writes nothing. The fixture is resolved through the real
+ * `resolveAddOnInstall`, so the moment that rule existed, `{provider: aws}` with no identity stopped
+ * resolving — and the alternatives were both worse than a placeholder: dropping external-dns from
+ * three clouds' fixtures would take it out of the 18-add-on surface entirely (and leave #3470
+ * nothing to un-exclude), and letting it fall back to the catalog default would silently reinstate
+ * `provider: cloudflare` on every cloud, which is the exact #2717 class (c) defect the per-cloud
+ * split was created to end.
+ *
+ * WHAT IT PROVES AND WHAT IT DOES NOT. It proves the SHAPE: that each cloud's fixture names its own
+ * DNS provider and carries that cloud's `saAnnotation`, emitted by the catalog rather than restated
+ * here. It proves NOTHING about the add-on working — the identity does not exist in any account, and
+ * external-dns therefore stays on the withheld list in `test/e2e/addon_exclusions.go`, which says so
+ * in its own words. Supplying a REAL identity is a customer action, and doing it for the e2e (plus
+ * asserting something stronger than Healthy, which is too weak a predicate for this add-on on any
+ * workload-identity cloud) is #3470.
+ *
+ * Each value is in its cloud's real syntax — an ARN, a service-account email, a GUID — because a
+ * value the cloud would reject as MALFORMED tests a different failure than a value it simply cannot
+ * find, and the second is the one a customer with a typo'd role hits. They are the placeholder
+ * shapes the worked examples in `examples/addons/external-dns/` already ship — the aws and azure
+ * strings are identical to them — deliberately: a reader who has seen one recognises the other as a
+ * stand-in rather than as something to copy.
+ *
+ * Keyed by PROVIDER and total over the provider union, mirroring `EXTERNAL_DNS_PROVIDERS` itself:
+ * adding a provider forces a decision here, and `null` states positively that this one needs no
+ * identity. `catalog-export.test.ts` sweeps the two tables against each other, so a `null` against a
+ * provider that DOES annotate — the way this fixture would go quietly back to being unresolvable —
+ * fails there rather than in a nightly.
+ */
+const EXTERNAL_DNS_FIXTURE_IDENTITY: Record<ExternalDnsProvider, string | null> = {
+	cloudflare: null,
+	digitalocean: null,
+	hetzner: null,
+	aws: "arn:aws:iam::000000000000:role/external-dns",
+	google: "external-dns@example-project.iam.gserviceaccount.com",
+	azure: "00000000-0000-0000-0000-000000000000",
+};
+
+/** True when this provider authenticates by ServiceAccount annotation (and so needs an identity). */
+export function externalDnsNeedsIdentity(provider: ExternalDnsProvider): boolean {
+	return EXTERNAL_DNS_PROVIDERS[provider].saAnnotation !== undefined;
+}
+
+/** The fixture's stand-in identity for one provider, or null where the provider needs none.
+ * Exported so the guard test can sweep it against `EXTERNAL_DNS_PROVIDERS` instead of re-listing. */
+export function externalDnsFixtureIdentity(
+	provider: ExternalDnsProvider,
+): string | null {
+	return EXTERNAL_DNS_FIXTURE_IDENTITY[provider];
 }
 
 /** Every catalog add-on, resolved with its default knobs in managed mode, in a stable order. */
@@ -99,7 +161,17 @@ export function exportCatalogSpecs(cloud: CloudProvider): AddOnInstallSpec[] {
 			mode: "managed",
 			...(Object.keys(values).length > 0 ? { values } : {}),
 		});
-		if (!spec) throw new Error(`catalog add-on ${def.id} failed to resolve for ${cloud}`);
+		// Fail LOUD, never silently short. `resolveAddOnInstall` returns null for a retired id and —
+		// since #3469 — for knobs the catalog REFUSES (a workload-identity provider with no
+		// identity). Either way the fixture would otherwise be written one add-on short and the
+		// full-surface run would go green having installed 17 charts.
+		if (!spec) {
+			throw new Error(
+				`catalog add-on ${def.id} failed to resolve for ${cloud}: its id is retired, or the ` +
+					`knobs this exporter supplies (${JSON.stringify(values)}) are refused by its ` +
+					"configSchema — see cloudKnobs / EXTERNAL_DNS_FIXTURE_IDENTITY above",
+			);
+		}
 		specs.push(spec);
 	}
 	// Deterministic order so the generated fixture's diff is stable across regenerations.

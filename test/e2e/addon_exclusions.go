@@ -199,17 +199,23 @@ var addOnExclusions = map[string]AddOnExclusion{
 	// default chain always yields SOME credential through IMDS, so the provider constructs, the pod
 	// stays Ready, and ArgoCD reports Healthy while every record write is refused. gcp (403, #2811)
 	// and azure (config-file, #2868) fail INSIDE the constructor, so they CrashLoop and read
-	// Degraded. The clouds differ in WHERE the failure lands, not in whether the knob is filled —
-	// it is unfilled on all four.
+	// Degraded. The clouds differ in WHERE the failure lands, not in whether the identity is one
+	// the cloud can resolve — it is not, on any of them.
 	//
 	// The IAM chain, read on origin/dev rather than inferred:
 	//   · the node role's default policies are {AmazonSSMManagedInstanceCore} and nothing else
 	//     (modules/eks/variables.tf:141-147); the ONLY Route53 grant in the module is the IRSA role
 	//     (modules/eks/irsa.tf:127-139), trusted for `external-dns:external-dns-sa` and
 	//     `cert-manager:cert-manager`.
-	//   · with `workloadIdentity` empty, `toValues` emits NO serviceAccount block at all
-	//     (catalog.ts:1685), so the add-on runs under the chart-default SA — a name that trust
-	//     policy does not list. The add-on cannot reach the role even in principle.
+	//   · AT THE TIME OF THE MEASUREMENT, `workloadIdentity` was empty and `toValues` emitted no
+	//     serviceAccount block at all, so the add-on ran under the chart-default SA — a name that
+	//     trust policy does not list. #3469 changed the first half and not the second: the fixture
+	//     now annotates its own ServiceAccount, `addon-external-dns-sa`, with a stand-in ARN that
+	//     names no role. The trust policy lists neither that SA nor that role, so the add-on still
+	//     cannot reach a Route53 grant even in principle, and the aws reading below stands.
+	//     (`addon-external-dns-sa`, NOT `external-dns-sa`: the platform rail owns that name in this
+	//     namespace, and one ServiceAccount under two ArgoCD Applications would have the add-on
+	//     rewriting the identity of the controller that serves the environment's DNS.)
 	//
 	// AND THE TRAP THAT PRODUCED THE WRONG READING: there are TWO external-dns deployments in an
 	// addons run, and both are asserted from the same list. The PLATFORM RAIL Application is named
@@ -224,22 +230,35 @@ var addOnExclusions = map[string]AddOnExclusion{
 	// honest move is back onto the list. Making the add-on actually assume the role the template
 	// already creates — and asserting something stronger than Healthy, which is too weak a
 	// predicate for this add-on on ANY workload-identity cloud — is tracked in #3470. The product
-	// half, which is what a customer hits, is #3469.
+	// half, which is what a customer hits, is #3469 and is now closed: a workload-identity provider
+	// with no identity is refused at configure time rather than installed inert.
+	//
+	// ⚠️ FOR #3470. It cannot be done by pointing the add-on at the platform role as it stands. That
+	// role's trust is bound to `external-dns:external-dns-sa` (aws irsa.tf:139, and the GKE member /
+	// Azure federated subject are bound to the same name), which is the RAIL's ServiceAccount; the
+	// add-on now runs as `addon-external-dns-sa` precisely so it cannot take that object over. The
+	// binding has to gain the add-on's name — on all three clouds in one pass — or the add-on needs
+	// a role of its own.
 	"external-dns": {
 		Kind: NeedsUserConfig,
-		Why: "the fixture seeds CATALOG DEFAULTS, and both credential knobs default to empty. " +
+		Why: "the fixture cannot supply a credential that EXISTS, on any of these clouds. " +
 			"#3048 repointed it at each cloud's NATIVE provider (aws→aws, gcp→google, azure→azure) " +
 			"so the old reason — `provider=cloudflare` everywhere — is dead, and #2777 added the " +
-			"`workloadIdentity` knob the old reason said the schema lacked. What is left is that " +
-			"nothing FILLS either knob: `toValues` gates the serviceAccount block on " +
-			"`p.saAnnotation && c.workloadIdentity`, and `secretValues` returns {} with no apiToken " +
-			"ref, so the controller runs with a provider name and no identity and no token. " +
-			"Supplying an IAM role ARN / GSA email / client id, or a provider API token, is a " +
-			"CUSTOMER action. alibaba is a fourth case with the same cause in a different shape: " +
+			"`workloadIdentity` knob the old reason said the schema lacked. " +
+			"#3469 then made that knob REQUIRED on a provider that authenticates by annotation, " +
+			"because an empty one installs an add-on that is Healthy-and-inert on aws — so the " +
+			"fixture no longer leaves it empty (it could not: the config would be refused). It " +
+			"carries a STAND-IN identity instead — `EXTERNAL_DNS_FIXTURE_IDENTITY` in " +
+			"apps/console/lib/addons/catalog-export.ts — an ARN / GSA email / client id in the " +
+			"right syntax that exists in NO account. That buys the annotation SHAPE and nothing " +
+			"else: the controller still cannot write a record, because supplying a REAL identity " +
+			"(or a provider API token, which `secretValues` has no ref for either) is a CUSTOMER " +
+			"action. alibaba is a fourth case with the same cause in a different shape: " +
 			"EXTERNAL_DNS_NATIVE_PROVIDER has no entry for it, so its fixture still carries " +
 			"provider=cloudflare with no token. gcp/azure/alibaba remain UNVERIFIED since #3048, " +
 			"and aws is verified INERT rather than unverified — see the retraction above, which " +
-			"is why Healthy must not be asserted for it.",
+			"is why Healthy must not be asserted for it. Making the add-on assume a real identity, " +
+			"and asserting something stronger than Healthy, is #3470.",
 		Issue:  "#2717",
 		Clouds: []string{"aws", "gcp", "azure", "alibaba"},
 		// aws ONLY. gcp and azure fail inside the provider constructor and read Degraded, so their
