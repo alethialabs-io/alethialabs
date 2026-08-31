@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -90,8 +89,22 @@ const (
 	// ArgoPreflightInRange — a live ArgoCD was read and every version found sits inside the
 	// declared window. PROCEED (loudly, when the pin would move it DOWN).
 	ArgoPreflightInRange ArgoPreflightVerdict = "IN_RANGE"
-	// ArgoPreflightOutOfRange — a live ArgoCD was read and is outside the window. REFUSE.
+	// ArgoPreflightOutOfRange — a live ArgoCD was read and is outside the window, and the version
+	// this deploy would install is no better. REFUSE.
 	ArgoPreflightOutOfRange ArgoPreflightVerdict = "OUT_OF_RANGE"
+	// ArgoPreflightRemediates — a live ArgoCD was read and is outside the window, but the pinned
+	// install is INSIDE it, so this deploy is the remedy rather than the destructive act. PROCEED,
+	// loudly.
+	//
+	// Without this state the refusal cancelled its own fix: every environment Alethia provisioned
+	// before #3128 runs chart 8.6.4 → app v3.1.8, below the v3.3.0 floor, and `installArgoCD` runs
+	// on every non-dry-run deploy — so the deploy that would have upgraded them was the one being
+	// refused, with no way through from the console (#3495).
+	ArgoPreflightRemediates ArgoPreflightVerdict = "OUT_OF_RANGE_REMEDIED"
+	// ArgoPreflightPinOutOfRange — what this deploy would INSTALL is outside the window. REFUSE,
+	// whatever the cluster runs: the chart version is overridable (ALETHIA_ARGOCD_CHART_VERSION)
+	// and matrix.json records versions measured as never converging (7.1.3 → v2.11, #1165).
+	ArgoPreflightPinOutOfRange ArgoPreflightVerdict = "PIN_OUT_OF_RANGE"
 	// ArgoPreflightUnversioned — a live ArgoCD is present but reports no readable version.
 	// REFUSE, naming the escape hatch. Rare by construction: the chart labels every workload.
 	ArgoPreflightUnversioned ArgoPreflightVerdict = "UNVERSIONED"
@@ -133,6 +146,22 @@ type ArgoPreflightDecision struct {
 	Message string
 }
 
+// PreflightRefusal is the error a refusing decision returns.
+//
+// It exists so a caller can tell a deliberate refusal from a broken install WITHOUT parsing the
+// message. `installArgoCD` returned the refusal unwrapped as the comment there demands, and then
+// deploy.go re-dressed it one frame up as "ArgoCD install failed: refusing to install ArgoCD: …"
+// — the exact framing the invariant exists to prevent, recorded against GitopsStepArgocdInstall
+// as if the chart were broken (#3495).
+//
+// Error() is the decision's message verbatim: an errors.As caller keeps the sentence it would
+// have printed anyway.
+type PreflightRefusal struct {
+	Decision ArgoPreflightDecision
+}
+
+func (e *PreflightRefusal) Error() string { return e.Decision.Message }
+
 // PreflightLiveArgoVersion refuses, warns or proceeds on the ArgoCD a cluster ALREADY runs.
 //
 // It must be called before the install touches anything — in particular before the namespace is
@@ -144,7 +173,10 @@ type ArgoPreflightDecision struct {
 func PreflightLiveArgoVersion(ctx context.Context, stdout io.Writer) error {
 	win, declared := compat.MustLoad().SupportedWindow(argoComponentID)
 
-	if skip := strings.TrimSpace(os.Getenv(SkipVersionPreflightEnv)); skip != "" {
+	// `== "1" || == "true"`, not `!= ""`: the repo's convention (k8s/probe.go:287) and the only
+	// reading that does not turn `ALETHIA_ARGOCD_SKIP_VERSION_PREFLIGHT=false` — the natural way to
+	// write "leave the guard on" in a values file — into a silent bypass.
+	if skip := strings.ToLower(strings.TrimSpace(os.Getenv(SkipVersionPreflightEnv))); skip == "1" || skip == "true" {
 		fmt.Fprintf(stdout, "ArgoCD version preflight SKIPPED (%s=%s).\n"+
 			"NOT VERIFIED: whether this cluster already runs an ArgoCD outside Alethia's supported window (%s). "+
 			"No probe was issued, so a successful install here is NOT evidence that the running ArgoCD is supported.\n",
@@ -154,7 +186,7 @@ func PreflightLiveArgoVersion(ctx context.Context, stdout io.Writer) error {
 
 	decision := decideArgoVersionPreflight(probeLiveArgoWorkloads(ctx), win, declared, pinnedArgoAppVersion())
 	if !decision.Proceed {
-		return errors.New(decision.Message)
+		return &PreflightRefusal{Decision: decision}
 	}
 	fmt.Fprintln(stdout, decision.Message)
 	return nil
@@ -354,7 +386,29 @@ func argoTagFromImage(image string) string {
 // false match on redis or dex would refuse a healthy cluster.
 func isArgoImageRepo(repo string) bool {
 	r := strings.ToLower(strings.TrimSpace(repo))
+	// Companion projects that live in the argocd namespace, carry "argocd" in their image name,
+	// and version on an entirely different scale: argocd-image-updater is at v0.x while ArgoCD is
+	// at v3.x. The image tag BEATS the app.kubernetes.io/version label in argoWorkloadVersion, so
+	// a match here cannot be corrected downstream — it would read v0.15.0 as ArgoCD's own version
+	// and refuse a healthy cluster (#3495).
+	for _, companion := range argoCompanionImageMarkers {
+		if strings.Contains(r, companion) {
+			return false
+		}
+	}
 	return strings.Contains(r, "argocd") || strings.Contains(r, "argo-cd")
+}
+
+// argoCompanionImageMarkers name separately-versioned projects, not ArgoCD itself. Kept as data
+// so adding one is a line rather than a new condition.
+var argoCompanionImageMarkers = []string{
+	"image-updater",
+	"applicationset", // versioned separately until it merged into ArgoCD 2.x (v0.4.1 era images)
+	"vault-plugin",
+	"notifications",
+	"argo-rollouts",
+	"argo-workflows",
+	"argo-events",
 }
 
 // decideArgoVersionPreflight turns an observation plus the declared window into a verdict. Pure —
@@ -380,6 +434,27 @@ func decideArgoVersionPreflight(obs LiveArgoObservation, win compat.SupportedWin
 					"Proceeding anyway — an RBAC restriction or an unreachable apiserver is not a reason to block a deploy, "+
 					"and the install that follows will fail with a clearer error if the cluster is genuinely unusable.",
 				obs.Reason, window),
+		}
+	}
+
+	// What this deploy would INSTALL, judged before anything about the cluster: the chart version
+	// is overridable (ALETHIA_ARGOCD_CHART_VERSION) and matrix.json records app versions measured
+	// as never converging on 1.33+ (7.1.3 → v2.11, #1165). This arm needs no cluster, so it sits
+	// ahead of every observation-based one — including ABSENT, where installing a broken pin onto
+	// a fresh cluster is exactly as bad.
+	//
+	// It deliberately does NOT fire on an unreadable pin: describeArgoPin already says so, and
+	// refusing on "I could not read our own chart's appVersion" would punish an offline render.
+	if declared && pinnedWindowStatus(pinned, win) == compat.StatusFail {
+		return ArgoPreflightDecision{
+			Verdict: ArgoPreflightPinOutOfRange,
+			Proceed: false,
+			Message: fmt.Sprintf(
+				"refusing to install ArgoCD: this deploy would install %s, which is OUTSIDE Alethia's supported "+
+					"window %s. The pin is overridable (%s), so this is a configuration to fix rather than a cluster "+
+					"to repair: point it at a chart whose appVersion is inside the window, or set %s=1 to install it "+
+					"anyway and accept the risk.",
+				describeArgoPin(pinned), window, ArgoChartVersionEnv, SkipVersionPreflightEnv),
 		}
 	}
 
@@ -435,19 +510,48 @@ func decideArgoVersionPreflight(obs LiveArgoObservation, win compat.SupportedWin
 	// Known-broken beats unknown: when a cluster reports both, the measured refusal is the more
 	// useful sentence to put in front of the operator.
 	if len(outside) > 0 {
+		// THE DECISION IS ABOUT THE PAIR, not about the cluster alone (#3495). "Upgrading in place
+		// over a version we measured as broken is destructive" is true of an upgrade that lands on
+		// another broken version; upgrading TO a supported one is the documented remedy, and it is
+		// the only remedy a console-driven deploy can reach — SkipVersionPreflightEnv is a runner
+		// process variable no console user can set.
+		//
+		// AND NOT A DOWNGRADE. A cluster above a ceiling is also "outside the window", and moving
+		// it DOWN to the pin is not a remedy — ArgoCD does not support downgrades, so that would
+		// be the destructive in-place move this check exists to prevent, performed in its name.
+		if pinnedWindowStatus(pinned, win) == compat.StatusPass && len(argoDowngradedBy(pinned, obs.Versions)) == 0 {
+			return ArgoPreflightDecision{
+				Verdict: ArgoPreflightRemediates,
+				Proceed: true,
+				Message: fmt.Sprintf(
+					"ArgoCD version preflight: namespace %s runs ArgoCD %s, which is OUTSIDE Alethia's supported window "+
+						"%s — and this deploy installs %s, which is INSIDE it. Proceeding: this upgrade is the remedy. "+
+						"It is an in-place `helm upgrade --install`, so ArgoCD's CRDs and controller state move forward "+
+						"with it.",
+					argoPreflightNamespace, strings.Join(outside, ", "), window, describeArgoPin(pinned)),
+			}
+		}
 		return ArgoPreflightDecision{
 			Verdict: ArgoPreflightOutOfRange,
 			Proceed: false,
 			Message: fmt.Sprintf(
 				"refusing to install ArgoCD: namespace %s already runs ArgoCD %s, which is OUTSIDE Alethia's supported "+
-					"window %s. Upgrading in place over a version Alethia has measured as broken is destructive, so this "+
-					"deploy stops here rather than doing it silently. Move the cluster to a supported ArgoCD first, or set "+
-					"%s=1 to override this refusal and accept the risk.",
-				argoPreflightNamespace, strings.Join(outside, ", "), window, SkipVersionPreflightEnv),
+					"window %s, and this deploy installs %s — which does not move it inside. Upgrading in place over a "+
+					"version Alethia has measured as broken, for no gain, is destructive for nothing; and where the pin "+
+					"is LOWER than what is running, ArgoCD does not support the downgrade at all. Pin a chart whose "+
+					"appVersion is inside the window and at or above the running version (%s), or set %s=1 to override "+
+					"this refusal and accept the risk.",
+				argoPreflightNamespace, strings.Join(outside, ", "), window, describeArgoPin(pinned),
+				ArgoChartVersionEnv, SkipVersionPreflightEnv),
 		}
 	}
 
-	if len(unjudgeable) > 0 {
+	// An unparseable tag refuses ONLY when it is all we have. A workload repointed at `:latest`
+	// while debugging, or a mirror that re-tags, used to refuse a cluster on which an in-window
+	// ArgoCD had actually been read — while the same workload reporting NO version at all was
+	// tolerated fifteen lines below. Two ways of saying "I cannot judge this one" cannot have
+	// opposite verdicts; the governing rule is refuse only what is KNOWN broken.
+	if len(unjudgeable) > 0 && len(unjudgeable) == len(obs.Versions) {
 		return ArgoPreflightDecision{
 			Verdict: ArgoPreflightUnversioned,
 			Proceed: false,
@@ -464,18 +568,49 @@ func decideArgoVersionPreflight(obs LiveArgoObservation, win compat.SupportedWin
 			"window %s. Proceeding; this deploy installs %s.",
 		describeArgoVersions(obs), argoPreflightNamespace, window, describeArgoPin(pinned))
 	if down := argoDowngradedBy(pinned, obs.Versions); len(down) > 0 {
+		// STATES what will happen; does not ask for an intervention nobody can make. This runs
+		// inside the runner, driven from the console: no one is watching stdout mid-job and there
+		// is no stop button, so "stop the deploy now" was advice that could not be taken (#3495).
+		// It stays a warning rather than a refusal deliberately — refusing here would block every
+		// customer whose own ArgoCD is newer than our pin, with the same un-overridable shape this
+		// change is fixing. #3521 tracks whether a downgrade should be skipped instead.
 		message += fmt.Sprintf(
-			"\n  ⚠ WARNING — THIS IS A DOWNGRADE. The pinned install (%s) is LOWER than the %s already running, so this "+
-				"deploy will move the cluster's ArgoCD DOWN. Stop the deploy now if that is not what you intend; the "+
-				"install is a `helm upgrade --install` and will not ask again.",
-			describeArgoPin(pinned), quoteJoin(down))
+			"\n  ⚠ WARNING — THIS IS A DOWNGRADE. The pinned install (%s) is LOWER than the %s already running. This "+
+				"deploy is proceeding and will move the cluster's ArgoCD DOWN in place; ArgoCD does not support "+
+				"downgrades, so its CRD schemas and controller state may not survive it. Pin a chart at or above the "+
+				"running version (%s) if that is not what you intend.",
+			describeArgoPin(pinned), quoteJoin(down), ArgoChartVersionEnv)
+	}
+	if len(unjudgeable) > 0 {
+		message += fmt.Sprintf(
+			"\n  Note: %s could not be compared against the window; the verdict rests on the version(s) that could.",
+			quoteJoin(unjudgeable))
 	}
 	if len(obs.Unversioned) > 0 {
+		// WORKLOADS on both sides of the sentence. `len(obs.Versions)` is the count of DISTINCT
+		// versions, so on our own install — where dex and redis carry neither tag nor label — this
+		// read "2 of the 7 matched workloads reported no version; the verdict rests on the 1 that
+		// did", while five workloads had in fact reported one.
 		message += fmt.Sprintf(
 			"\n  Note: %d of the %d matched workloads reported no version (%s); the verdict rests on the %d that did.",
-			len(obs.Unversioned), len(obs.Workloads), strings.Join(obs.Unversioned, ", "), len(obs.Versions))
+			len(obs.Unversioned), len(obs.Workloads), strings.Join(obs.Unversioned, ", "),
+			len(obs.Workloads)-len(obs.Unversioned))
 	}
 	return ArgoPreflightDecision{Verdict: ArgoPreflightInRange, Proceed: true, Message: message}
+}
+
+// pinnedWindowStatus judges the version this deploy would INSTALL against the declared window.
+//
+// Separated from the arms that use it because both directions matter and each is a different
+// sentence: StatusPass makes an out-of-range cluster a REMEDY, StatusFail makes any cluster a
+// refusal. An unreadable pin is StatusNotEvaluable and decides nothing — describeArgoPin already
+// tells the operator the chart could not be read.
+func pinnedWindowStatus(pinned string, win compat.SupportedWindow) compat.Status {
+	if strings.TrimSpace(pinned) == "" {
+		return compat.StatusNotEvaluable
+	}
+	status, _ := compat.CheckSemverWindow(pinned, win.AppVersionMin, win.AppVersionMax)
+	return status
 }
 
 // argoDowngradedBy returns the running versions the pinned install would move DOWN from.
