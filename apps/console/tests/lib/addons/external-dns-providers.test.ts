@@ -63,9 +63,24 @@ const bothKnobs = (provider: string) => ({
  * by a second copy of EXTERNAL_DNS_PROVIDERS — the emitter is the only description of the table this
  * file is allowed to hold. */
 function annotates(provider: string): boolean {
-	const sa = (values(bothKnobs(provider)) as { serviceAccount?: { annotations?: Record<string, string> } })
-		.serviceAccount;
-	return Object.keys(sa?.annotations ?? {}).length > 0;
+	return serviceAccountOf(bothKnobs(provider)).annotations.length > 0;
+}
+
+/** The rendered `serviceAccount` block, narrowed rather than cast: its name (or null when the block
+ * is absent) and the annotation KEYS it carries. */
+function serviceAccountOf(config: Record<string, unknown>): {
+	name: string | null;
+	annotations: string[];
+} {
+	const sa = values(config).serviceAccount;
+	if (!sa || typeof sa !== "object") return { name: null, annotations: [] };
+	const record: Record<string, unknown> = { ...sa };
+	const annotations = record.annotations;
+	return {
+		name: typeof record.name === "string" ? record.name : null,
+		annotations:
+			annotations && typeof annotations === "object" ? Object.keys(annotations) : [],
+	};
 }
 
 /** Walk a rendered values object and collect every `name` under any `env:` array, at any depth. */
@@ -187,10 +202,9 @@ describe("the workload-identity providers", () => {
 			"the platform rail template declares no serviceAccount.name — this guard has nothing to " +
 				"compare against and must not report green",
 		).toBeTruthy();
-		const v = values({ provider: "aws", workloadIdentity: "arn" }) as {
-			serviceAccount: { name: string };
-		};
-		expect(v.serviceAccount.name).not.toBe(railSa);
+		const addonSa = serviceAccountOf({ provider: "aws", workloadIdentity: "arn" }).name;
+		expect(addonSa, "the add-on renders no ServiceAccount to compare").toBeTruthy();
+		expect(addonSa).not.toBe(railSa);
 	});
 
 	// A token on a keyless provider is not merely useless — it invites a user to paste a long-lived
