@@ -105,6 +105,23 @@ resource "google_service_account_iam_member" "cert_manager_wi" {
   depends_on = [module.gke]
 }
 
+# The SAME GSA, bound to a THIRD KSA: the MARKETPLACE external-dns add-on
+# (apps/console/lib/addons/catalog.ts, EXTERNAL_DNS_ADDON_SA = "addon-external-dns-sa").
+#
+# A distinct KSA from the rail's `external-dns-sa` on purpose: both Applications deploy into the
+# `external-dns` namespace, so naming one object would put two ArgoCD Applications on it. The zone
+# grant it needs is the one this GSA already carries, so — exactly as with cert-manager above — the
+# add-on reuses this identity rather than minting a parallel one with an identical policy.
+resource "google_service_account_iam_member" "external_dns_addon_wi" {
+  count              = var.provision_gke ? 1 : 0
+  service_account_id = local.external_dns_sa_name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[external-dns/addon-external-dns-sa]"
+
+  # Same Identity-Pool race as external_dns_wi above — the edge must be explicit.
+  depends_on = [module.gke]
+}
+
 # GSA for the external-secrets operator: bound to its KSA via Workload Identity so the
 # gcpsm ClusterSecretStore reads Secret Manager with NO static key. Exported as
 # `external_secrets_service_account` and rendered onto the operator's ServiceAccount

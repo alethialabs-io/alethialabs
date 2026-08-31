@@ -473,7 +473,14 @@ func TestOnlyOneKubectlReadHelperExists(t *testing.T) {
 		if rerr != nil {
 			t.Fatalf("could not read %s: %v", f, rerr)
 		}
-		for _, m := range regexp.MustCompile(`(?m)^func (kubectl[A-Za-z0-9_]*)\(ctx context\.Context, timeout time\.Duration`).FindAllStringSubmatch(string(raw), -1) {
+		// ⚠️ MATCHED ON `args ...string`, NOT ON THE TIMEOUT PARAMETER. The previous pattern required
+		// `(ctx context.Context, timeout time.Duration`, and the second helper that actually got
+		// written — `kubectlValue(ctx context.Context, kubeconfigPath string, args ...string)` —
+		// had no timeout at all, so the guard against a second helper could not see the second
+		// helper. What makes a function a competing READ HELPER is that it takes an arbitrary argv;
+		// kubectlGetArgoApps and kubectlGetObject take named parameters and are callers, not
+		// helpers.
+		for _, m := range regexp.MustCompile(`(?m)^func (kubectl[A-Za-z0-9_]*)\(ctx context\.Context[^)]*args \.\.\.string`).FindAllStringSubmatch(string(raw), -1) {
 			defs = append(defs, f+":"+m[1])
 			if m[1] == "kubectlRead" {
 				sawCanonical = true

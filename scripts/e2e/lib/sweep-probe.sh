@@ -266,6 +266,44 @@ probe_run() {
 probe_confirm() {
 	local ptype="$1"
 	shift
+	probe_confirm_re "$ptype" "$PROBE_GONE_BY_LOOKS_GONE" "$@"
+}
+
+# The sentinel that makes probe_confirm_re consult the caller's `looks_gone` instead of a regex.
+# Deliberately a shape no cloud's error text can contain, so it can never be mistaken for one.
+PROBE_GONE_BY_LOOKS_GONE='@@probe:looks_gone@@'
+
+# probe_is_gone <stderr-text> <gone-regex-or-sentinel> — THE one place that decides whether an
+# error means "confirmed absent" (CLEAN) or "the API did not answer" (UNVERIFIABLE).
+#
+# probe_confirm and probe_confirm_re were verbatim copies differing only in this test, in a file
+# whose whole thesis is that this decision must live in one place. Two copies of a retry loop, a
+# ledger entry and an output contract can drift independently, and the drift would be invisible
+# until a cloud bills for it.
+probe_is_gone() {
+	if [ "$2" = "$PROBE_GONE_BY_LOOKS_GONE" ]; then
+		declare -F looks_gone >/dev/null 2>&1 && looks_gone "$1"
+		return
+	fi
+	printf '%s' "$1" | grep -Eqi -- "$2"
+}
+
+# probe_confirm_re <type> <gone-regex> <cmd…> — probe_confirm with an EXPLICIT "gone" shape,
+# for a call where the caller's `looks_gone` union is wider than the answer this call can give.
+#
+# `looks_gone` is a union over every resource kind a sweeper touches — s3api head-bucket's `(404)`,
+# sqs's `NonExistent`, the whole `NoSuch*` S3 family — and its own header already warns that "a
+# shape wrongly ADDED here turns a throttle into 'gone'". Handing that union to a membership test
+# widens it the same way: an `elb describe-tags` failing through a misrouted endpoint or a proxy
+# answers `An error occurred (404) when calling the DescribeTags operation: Not Found`, which hits
+# three alternatives, and a live billing balancer drops out of the leak list on a run that exits 0.
+#
+# So a caller that knows exactly which error means "gone" says so, and EVERYTHING else — including
+# the other ten alternatives — stays UNVERIFIABLE. Same retry and same ledger entry as
+# probe_confirm otherwise; the only difference is how narrow the CLEAN answer is.
+probe_confirm_re() {
+	local ptype="$1" gone_re="$2"
+	shift 2
 	[ -n "$PROBE_ERR_DIR" ] || probe_reset
 	local out="" rc=0 attempt=1 delay="$PROBE_RETRY_DELAY" errf err why
 	errf="${PROBE_ERR_DIR}/err.${BASHPID:-$$}"
@@ -274,8 +312,8 @@ probe_confirm() {
 		out="$("$@" 2>"$errf")" || rc=$?
 		[ "$rc" -eq 0 ] && break
 		err="$(cat "$errf" 2>/dev/null || true)"
-		if declare -F looks_gone >/dev/null 2>&1 && looks_gone "$err"; then
-			return 0 # confirmed absent — CLEAN, and nothing to print
+		if probe_is_gone "$err" "$gone_re"; then
+			return 0 # confirmed absent, by the shape this call can answer with — CLEAN
 		fi
 		[ "$attempt" -ge "$PROBE_RETRIES" ] && break
 		[ "$delay" -gt 0 ] && sleep "$delay"
@@ -398,6 +436,15 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
 	# THE REGRESSION IN ONE LINE. Before this change both of the two cases above that produce no
 	# stdout resolved to the same value, and the sweeper reported "verified complete" for both.
 	st_state "a FAILED probe that also printed a partial page is still UNVERIFIABLE" "i-0abc" 255 UNVERIFIABLE "i-0abc" 255
+	# Explicit gone regexes must both confirm immediately and retry non-matching failures.
+	probe_reset; : >"$PROBE_CALLS"
+	ST_OUT="" ST_RC=255 ST_ERR="LoadBalancerNotFound" ST_FAIL_FIRST=0
+	st_rc=0; probe_confirm_re load-balancer 'LoadBalancerNotFound' stub >/dev/null || st_rc=$?
+	if [ "$st_rc" -eq 0 ] && ! probe_has_unverifiable && [ "$(st_calls)" -eq 1 ]; then ok "explicit gone regex confirms on the first matching attempt"; else bad "explicit gone regex confirms on the first matching attempt" "rc=$st_rc calls=$(st_calls)"; fi
+	probe_reset; : >"$PROBE_CALLS"
+	ST_OUT="ok" ST_RC=0 ST_ERR="transient" ST_FAIL_FIRST=1
+	st_rc=0; probe_confirm_re widget 'LoadBalancerNotFound' stub >/dev/null || st_rc=$?
+	if [ "$st_rc" -eq 0 ] && [ "$(st_calls)" -eq 2 ]; then ok "non-matching explicit regex retries and records no false gone"; else bad "non-matching explicit regex retries and records no false gone" "rc=$st_rc calls=$(st_calls)"; fi
 
 	# ── The exit-code gate. Warning-only was the second half of the old defect. ──
 	probe_reset

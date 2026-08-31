@@ -266,11 +266,11 @@ Whether a dimension can run at all. A gate the workflow never mentions cannot be
 
 | cloud | gate | state | evidence |
 |---|---|:---:|---|
-| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33249968471 |
-| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 33246836785 |
-| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 33249209041 |
-| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33246836785 |
-| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 33247735979 |
+| **aws** | `E2E_AWS_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33303460801 |
+| **gcp** | `E2E_GCP_WIF_PROVIDER` | ✅ wired | a leg reached the gate — run 33303460801 |
+| **azure** | `E2E_AZURE_CLIENT_ID` | ✅ wired | a leg reached the gate — run 33303460801 |
+| **alibaba** | `E2E_ALIBABA_ROLE_ARN` | ✅ wired | a leg reached the gate — run 33303460801 |
+| **hetzner** | `HCLOUD_TOKEN` | ✅ wired | a leg reached the gate — run 33303460801 |
 
 **Which dimensions can run.** A gate the nightly never mentions has no vehicle — setting a variable would not turn it on.
 
@@ -294,7 +294,6 @@ No cell is failing or blocked.
 - #2465 — programme: two of the six MVP predicates assert something no script can check
 - #2462 — infra(e2e): make the e2e-dev OIDC trust widening authoritative — four applies, currently hand-applied
 - #2283 — probe(alibaba-cr): does an AUTO scan rule fire with no VPC endpoint? (#2265 shipped the wiring, not the proof)
-- #2099 — e2e nightly: gcp RED (full-bar)
 - #1513 — feat(keyless): GA — default-on rollout and delete ALETHIA_KEYLESS_DB_AUTH_ENABLED
 - #1450 — test(e2e): azure-mysql keyless real-apply on Azure (main-gated)
 - #1268 — test(e2e): cross-account keyless cloud-SM in-cluster read — AWS/GCP/Azure/Alibaba (main-gated)
@@ -321,7 +320,7 @@ Every number above is derived from these, and from nothing else:
 - `demos/proofs/<cloud>/<stamp>/`
 - `docs/testing/programme-snapshot.json`
 
-Live board snapshot: taken **2026-08-29T12:37:53Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
+Live board snapshot: taken **2026-08-30T11:46:26Z** — refreshed by `.github/workflows/programme.yml`, which opens a PR rather than pushing. Warns past 48h, fails past 7 days.
 
 The timestamp is printed VERBATIM from the snapshot, never as an age. An age is computed from the current clock, so it would drift with no change to any input and make this diff-gated region stale an hour after every refresh — redding CI for everyone. The clock is only ever used to FAIL on a snapshot older than 7 days, which is a deliberate exception: a refresh that has silently stopped produces no other signal.
 

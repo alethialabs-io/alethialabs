@@ -328,18 +328,99 @@ func TestDecideArgoVersionPreflight(t *testing.T) {
 			wantSaid: []string{"v3.3.9", "v3.4.0", "mid-upgrade"},
 		},
 		{
-			name: "a version below the floor REFUSES",
+			// THE CASE THAT WAS TESTED TO THE WRONG SPECIFICATION (#3495). Every environment
+			// Alethia provisioned before #3128 runs v3.1.8, below the floor, and the pin that
+			// would fix it is v3.3.9 — inside the window. Refusing here cancelled the remedy, and
+			// `installArgoCD` runs on every deploy, so those environments had no way forward at
+			// all from the console.
+			name: "a below-floor cluster PROCEEDS when the pin is the remedy",
 			obs:  LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.1.8"}},
 			win:  testWindow, declared: true, pinned: "v3.3.9",
-			wantVerdict: ArgoPreflightOutOfRange, wantProceed: false,
-			wantSaid: []string{"refusing to install ArgoCD", "v3.1.8", "v3.3.0+", SkipVersionPreflightEnv},
+			wantVerdict: ArgoPreflightRemediates, wantProceed: true,
+			wantSaid:    []string{"OUTSIDE", "v3.1.8", "INSIDE", "v3.3.9", "remedy"},
+			wantNotSaid: []string{"refusing"},
 		},
 		{
-			name: "a mid-upgrade cluster with one bad version REFUSES on the bad one",
+			name: "a below-floor cluster and a below-floor pin REFUSES on the pin, which is the fixable half",
+			obs:  LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.1.8"}},
+			win:  testWindow, declared: true, pinned: "v3.2.0",
+			wantVerdict: ArgoPreflightPinOutOfRange, wantProceed: false,
+			// The shipped message never mentioned the pin at all, in any arm that refused.
+			wantSaid: []string{"refusing to install ArgoCD", "v3.2.0", ArgoChartVersionEnv, SkipVersionPreflightEnv},
+		},
+		{
+			name: "a below-floor cluster with an UNREADABLE pin still REFUSES",
+			obs:  LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.1.8"}},
+			win:  testWindow, declared: true, pinned: "",
+			// Nothing is known about what would be installed, so nothing licenses proceeding.
+			wantVerdict: ArgoPreflightOutOfRange, wantProceed: false,
+			wantSaid: []string{"refusing to install ArgoCD", "v3.1.8", SkipVersionPreflightEnv},
+		},
+		{
+			name:     "a cluster ABOVE the ceiling is not remediated by a downgrade",
+			obs:      LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v4.0.0"}},
+			win:      compat.SupportedWindow{AppVersionMin: "v3.3.0", AppVersionMax: "v3.9.9"},
+			declared: true, pinned: "v3.3.9",
+			// The pin is inside the window, but moving v4.0.0 down to it is the destructive
+			// in-place act this check exists to prevent — performed in the name of remedying.
+			wantVerdict: ArgoPreflightOutOfRange, wantProceed: false,
+			wantSaid: []string{"v4.0.0", "downgrade"},
+		},
+		{
+			name: "a mid-upgrade cluster with one bad version remediates on the good pin",
 			obs:  LiveArgoObservation{Answered: true, Workloads: []string{"a", "b"}, Versions: []string{"v3.1.8", "v3.3.9"}},
 			win:  testWindow, declared: true, pinned: "v3.3.9",
-			wantVerdict: ArgoPreflightOutOfRange, wantProceed: false,
+			wantVerdict: ArgoPreflightRemediates, wantProceed: true,
 			wantSaid: []string{"v3.1.8"},
+		},
+		{
+			name: "a pin outside the window REFUSES on a FRESH cluster, before anything is installed",
+			obs:  LiveArgoObservation{Answered: true},
+			win:  testWindow, declared: true, pinned: "v2.11.0",
+			wantVerdict: ArgoPreflightPinOutOfRange, wantProceed: false,
+			wantSaid:    []string{"refusing to install ArgoCD", "v2.11.0", ArgoChartVersionEnv},
+			wantNotSaid: []string{"no existing ArgoCD found"},
+		},
+		{
+			name: "a pin outside the window REFUSES even over a healthy cluster",
+			obs:  LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.3.9"}},
+			win:  testWindow, declared: true, pinned: "v2.11.0",
+			wantVerdict: ArgoPreflightPinOutOfRange, wantProceed: false,
+			wantSaid: []string{"v2.11.0", ArgoChartVersionEnv},
+		},
+		{
+			name: "an unreadable pin decides nothing on its own",
+			obs:  LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.3.9"}},
+			win:  testWindow, declared: true, pinned: "",
+			wantVerdict: ArgoPreflightInRange, wantProceed: true,
+			wantNotSaid: []string{"refusing"},
+		},
+		{
+			name: "one unparseable tag alongside an in-window read PROCEEDS",
+			obs: LiveArgoObservation{
+				Answered: true, Workloads: []string{"a", "b"}, Versions: []string{"v3.3.9", "latest"},
+			},
+			win: testWindow, declared: true, pinned: "v3.3.9",
+			// The same workload reporting NO version was already tolerated fifteen lines below in
+			// the shipped code; two ways of saying "I cannot judge this one" cannot disagree.
+			wantVerdict: ArgoPreflightInRange, wantProceed: true,
+			wantSaid:    []string{"latest", "could not be compared"},
+			wantNotSaid: []string{"refusing"},
+		},
+		{
+			name: "the unversioned note counts WORKLOADS on both sides",
+			obs: LiveArgoObservation{
+				Answered:    true,
+				Workloads:   []string{"a", "b", "c", "d", "e", "dex", "redis"},
+				Versions:    []string{"v3.3.9"},
+				Unversioned: []string{"dex", "redis"},
+			},
+			win: testWindow, declared: true, pinned: "v3.3.9",
+			wantVerdict: ArgoPreflightInRange, wantProceed: true,
+			// Five workloads reported a version; one DISTINCT version was seen. The shipped
+			// sentence said "the verdict rests on the 1 that did".
+			wantSaid:    []string{"2 of the 7 matched workloads", "rests on the 5"},
+			wantNotSaid: []string{"rests on the 1"},
 		},
 		{
 			name: "a present but unreadable ArgoCD REFUSES and names the hatch",
@@ -444,8 +525,14 @@ func TestArgoPreflightRefusalsNameBothVersionAndWindow(t *testing.T) {
 	}
 	label := compat.SemverLabel(win.AppVersionMin, win.AppVersionMax)
 
+	// The shipped pin REMEDIATES this cluster (#3495), so the refusal whose honesty is pinned here
+	// is the one that remains: the same broken cluster with a pin we cannot read, where nothing is
+	// known about what would be installed and nothing licenses proceeding.
 	obs := classifyLiveArgoWorkloads([]byte(ourInstall("v3.1.8")), nil, nil)
-	got := decideArgoVersionPreflight(obs, win, declared, pinnedArgoAppVersion())
+	if remedy := decideArgoVersionPreflight(obs, win, declared, pinnedArgoAppVersion()); !remedy.Proceed {
+		t.Fatalf("the shipped pin must remediate our own older install, got %s: %s", remedy.Verdict, remedy.Message)
+	}
+	got := decideArgoVersionPreflight(obs, win, declared, "")
 	if got.Verdict != ArgoPreflightOutOfRange || got.Proceed {
 		t.Fatalf("the shipped window must refuse the version #2717 measured as broken, got %s/%v", got.Verdict, got.Proceed)
 	}
@@ -554,30 +641,35 @@ func TestArgoPreflightVerdictsAreExhaustive(t *testing.T) {
 	for _, c := range []struct {
 		obs      LiveArgoObservation
 		declared bool
+		pinned   string
 	}{
-		{LiveArgoObservation{Answered: true}, true},
-		{LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.3.9"}}, true},
-		{LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.1.8"}}, true},
-		{LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Unversioned: []string{"a"}}, true},
-		{LiveArgoObservation{Reason: "nope"}, true},
-		{LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.3.9"}}, false},
+		{LiveArgoObservation{Answered: true}, true, "v3.3.9"},
+		{LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.3.9"}}, true, "v3.3.9"},
+		// below the floor with a pin that fixes it → the remedy; with no readable pin → refusal.
+		{LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.1.8"}}, true, "v3.3.9"},
+		{LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.1.8"}}, true, ""},
+		// a pin outside the window refuses whatever the cluster runs.
+		{LiveArgoObservation{Answered: true}, true, "v2.11.0"},
+		{LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Unversioned: []string{"a"}}, true, "v3.3.9"},
+		{LiveArgoObservation{Reason: "nope"}, true, "v3.3.9"},
+		{LiveArgoObservation{Answered: true, Workloads: []string{"a"}, Versions: []string{"v3.3.9"}}, false, "v3.3.9"},
 	} {
 		w := win
 		if !c.declared {
 			w = compat.SupportedWindow{}
 		}
-		reached[decideArgoVersionPreflight(c.obs, w, c.declared, "v3.3.9").Verdict] = true
+		reached[decideArgoVersionPreflight(c.obs, w, c.declared, c.pinned).Verdict] = true
 	}
 	for _, v := range []ArgoPreflightVerdict{
-		ArgoPreflightAbsent, ArgoPreflightInRange, ArgoPreflightOutOfRange,
-		ArgoPreflightUnversioned, ArgoPreflightUnreadable, ArgoPreflightNoWindow,
+		ArgoPreflightAbsent, ArgoPreflightInRange, ArgoPreflightOutOfRange, ArgoPreflightRemediates,
+		ArgoPreflightPinOutOfRange, ArgoPreflightUnversioned, ArgoPreflightUnreadable, ArgoPreflightNoWindow,
 	} {
 		if !reached[v] {
 			t.Errorf("no input reaches the %s verdict — the state is dead code", v)
 		}
 	}
-	if len(reached) != 6 {
-		t.Fatalf("reached %d verdicts, want 6: %v", len(reached), reached)
+	if len(reached) != 8 {
+		t.Fatalf("reached %d verdicts, want 8: %v", len(reached), reached)
 	}
 }
 
@@ -636,20 +728,78 @@ func TestPreflightLiveArgoVersionOnAFreshCluster(t *testing.T) {
 	}
 }
 
-func TestPreflightLiveArgoVersionRefusesABrokenLiveArgo(t *testing.T) {
+// The SHIPPED pin against the version every pre-#3128 Alethia install runs. This used to assert a
+// refusal — with our own previous install as the fixture — and the test and the bug agreed with
+// each other, which is why nothing went red (#3495).
+func TestPreflightLiveArgoVersionRemediatesOurOwnOlderInstall(t *testing.T) {
 	newKubectlStub(t, 0, stubRule{Match: "get statefulsets.apps,deployments.apps", Stdout: ourInstall("v3.1.8")})
+	var out bytes.Buffer
+	if err := PreflightLiveArgoVersion(t.Context(), &out); err != nil {
+		t.Fatalf("the upgrade that moves a below-floor cluster INTO the window must not be refused: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"v3.1.8", "OUTSIDE", "INSIDE", "remedy"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the remediation notice must contain %q, got: %s", want, got)
+		}
+	}
+}
+
+// The refusal that remains at the top level: a pin outside the window. Driven through the real
+// chart→appVersion map (8.6.4 → v3.1.8, marked `unsupported` in the matrix) rather than a literal.
+func TestPreflightLiveArgoVersionRefusesAPinOutsideTheWindow(t *testing.T) {
+	newKubectlStub(t, 0, stubRule{Match: "get statefulsets.apps,deployments.apps", Stdout: ourInstall("v3.1.8")})
+	t.Setenv(ArgoChartVersionEnv, "8.6.4")
 	var out bytes.Buffer
 	err := PreflightLiveArgoVersion(t.Context(), &out)
 	if err == nil {
-		t.Fatal("an ArgoCD below the measured floor must be refused")
+		t.Fatal("a below-floor cluster with a below-floor pin must be refused")
 	}
 	// UNWRAPPED: a refusal that arrives dressed as "failed to install ArgoCD" gets read as a
 	// broken chart and sends the operator to the wrong place.
 	if !strings.HasPrefix(err.Error(), "refusing to install ArgoCD") {
 		t.Fatalf("the refusal must arrive unwrapped and say it is a refusal, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "v3.1.8") {
-		t.Fatalf("the refusal must name what it found: %v", err)
+	// TYPED, so a caller can tell a refusal from a broken install without parsing the sentence.
+	var refusal *PreflightRefusal
+	if !errors.As(err, &refusal) {
+		t.Fatalf("a refusal must be a *PreflightRefusal so callers can classify it, got %T", err)
+	}
+	if refusal.Decision.Verdict != ArgoPreflightPinOutOfRange {
+		t.Errorf("verdict = %q, want %q", refusal.Decision.Verdict, ArgoPreflightPinOutOfRange)
+	}
+	for _, want := range []string{"v3.1.8", ArgoChartVersionEnv} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must contain %q, got: %v", want, err)
+		}
+	}
+}
+
+// The escape hatch reads like the rest of the repo: only 1/true disable the guard.
+func TestPreflightLiveArgoVersionSkipHatchIsNotAnyNonEmptyValue(t *testing.T) {
+	for _, tc := range []struct {
+		value    string
+		wantSkip bool
+	}{
+		{"1", true}, {"true", true}, {"TRUE", true},
+		// The natural way to write "leave the guard on" in a values file. It used to skip.
+		{"false", false}, {"0", false}, {"no", false}, {"off", false},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			stub := newKubectlStub(t, 0, stubRule{Match: "get statefulsets.apps,deployments.apps", Stdout: ourInstall("v3.3.9")})
+			t.Setenv(SkipVersionPreflightEnv, tc.value)
+			var out bytes.Buffer
+			if err := PreflightLiveArgoVersion(t.Context(), &out); err != nil {
+				t.Fatalf("unexpected refusal: %v", err)
+			}
+			probed := len(stub.calls()) > 0
+			if tc.wantSkip && probed {
+				t.Errorf("%q must skip the preflight, but it probed: %v", tc.value, stub.calls())
+			}
+			if !tc.wantSkip && !probed {
+				t.Errorf("%q must NOT skip the preflight, but no probe was issued", tc.value)
+			}
+		})
 	}
 }
 
@@ -833,5 +983,37 @@ func TestTrimArgoPreflightReason(t *testing.T) {
 	got := trimArgoPreflightReason(long)
 	if len([]rune(got)) != argoPreflightReasonMax+1 || !strings.HasSuffix(got, "…") {
 		t.Fatalf("a verbose upstream message must be bounded and marked, got %d runes", len([]rune(got)))
+	}
+}
+
+// ── companion images (#3495) ────────────────────────────────────────────────────────────────
+
+func TestArgoImageRepoRejectsSeparatelyVersionedCompanions(t *testing.T) {
+	// The image tag BEATS the app.kubernetes.io/version label in argoWorkloadVersion, so a false
+	// match here cannot be corrected downstream: argocd-image-updater's v0.15.0 would be read as
+	// ArgoCD's own version and refuse a healthy cluster.
+	for _, repo := range []string{
+		"argocd-image-updater",
+		"quay.io/argoprojlabs/argocd-image-updater",
+		"argocd-applicationset",
+		"argocd-vault-plugin",
+		"argocd-notifications",
+	} {
+		if isArgoImageRepo(repo) {
+			t.Errorf("isArgoImageRepo(%q) = true; a separately-versioned companion is not ArgoCD", repo)
+		}
+	}
+	// Still matched: ArgoCD itself, including the private-mirror renames the substring exists for.
+	for _, repo := range []string{"argocd", "argo-cd", "argocd-server", "mirror/argo-cd-server"} {
+		if !isArgoImageRepo(repo) {
+			t.Errorf("isArgoImageRepo(%q) = false; that is ArgoCD", repo)
+		}
+	}
+}
+
+func TestArgoWorkloadVersionIgnoresACompanionImageTag(t *testing.T) {
+	got := argoTagFromImage("quay.io/argoprojlabs/argocd-image-updater:v0.15.0")
+	if got != "" {
+		t.Fatalf("argoTagFromImage(image-updater) = %q, want \"\" — v0.15.0 is the updater's version, not ArgoCD's", got)
 	}
 }

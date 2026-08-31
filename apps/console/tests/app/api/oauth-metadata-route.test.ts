@@ -26,7 +26,7 @@ vi.mock("@/lib/auth", () => ({
 	mcpResourceUrl: "https://alethialabs.io/api/mcp",
 }));
 
-import { GET, HEAD } from "@/app/api/oauth-protected-resource/[[...path]]/route";
+import { GET, HEAD, OPTIONS } from "@/app/api/oauth-metadata/[[...path]]/route";
 
 /** The route's params arrive as a promise in the App Router. */
 function ctx(path?: string[]) {
@@ -45,7 +45,7 @@ describe("GET /.well-known/oauth-protected-resource/api/mcp", () => {
 	it("serves the document for the MCP resource as JSON", async () => {
 		const res = await GET(
 			get("/.well-known/oauth-protected-resource/api/mcp"),
-			ctx(["api", "mcp"]),
+			ctx(["oauth-protected-resource", "api", "mcp"]),
 		);
 
 		expect(res.status).toBe(200);
@@ -59,7 +59,7 @@ describe("GET /.well-known/oauth-protected-resource/api/mcp", () => {
 		// The plugin serves the document from an onRequest hook that matches the ABSOLUTE
 		// pathname, so the path we hand it is the whole mechanism. Written as a literal: this is
 		// the URL the 401 challenge advertises, and the two must not drift together.
-		await GET(get("/.well-known/oauth-protected-resource/api/mcp"), ctx(["api", "mcp"]));
+		await GET(get("/.well-known/oauth-protected-resource/api/mcp"), ctx(["oauth-protected-resource", "api", "mcp"]));
 
 		expect(handler).toHaveBeenCalledTimes(1);
 		const replayed = new URL(handler.mock.calls[0][0].url);
@@ -72,7 +72,7 @@ describe("GET /.well-known/oauth-protected-resource/api/mcp", () => {
 		// well-known path onto /api/oauth-protected-resource, so forwarding the incoming request
 		// unchanged would hand the plugin a path its onRequest hook does not match — and the
 		// route would 404 through Better Auth's basePath check with nothing naming the cause.
-		await GET(get("/api/oauth-protected-resource/api/mcp"), ctx(["api", "mcp"]));
+		await GET(get("/api/oauth-metadata/oauth-protected-resource/api/mcp"), ctx(["oauth-protected-resource", "api", "mcp"]));
 
 		expect(new URL(handler.mock.calls[0][0].url).pathname).toBe(
 			"/.well-known/oauth-protected-resource/api/mcp",
@@ -80,7 +80,7 @@ describe("GET /.well-known/oauth-protected-resource/api/mcp", () => {
 	});
 
 	it("serves the bare well-known path too", async () => {
-		const res = await GET(get("/.well-known/oauth-protected-resource"), ctx(undefined));
+		const res = await GET(get("/.well-known/oauth-protected-resource"), ctx(["oauth-protected-resource"]));
 
 		expect(res.status).toBe(200);
 		expect(handler).toHaveBeenCalledTimes(1);
@@ -94,7 +94,7 @@ describe("GET /.well-known/oauth-protected-resource/api/mcp", () => {
 			new Request("https://alethialabs.io/.well-known/oauth-protected-resource/api/mcp", {
 				method: "HEAD",
 			}),
-			ctx(["api", "mcp"]),
+			ctx(["oauth-protected-resource", "api", "mcp"]),
 		);
 
 		expect(res.status).toBe(200);
@@ -108,7 +108,7 @@ describe("a metadata path this deployment does not serve", () => {
 		// defect was a discovery URL that answered 200 with an HTML page.
 		const res = await GET(
 			get("/.well-known/oauth-protected-resource/api/auth"),
-			ctx(["api", "auth"]),
+			ctx(["oauth-protected-resource", "api", "auth"]),
 		);
 
 		expect(res.status).toBe(404);
@@ -119,11 +119,73 @@ describe("a metadata path this deployment does not serve", () => {
 	it("404s for an unrelated resource", async () => {
 		const res = await GET(
 			get("/.well-known/oauth-protected-resource/some/other/api"),
-			ctx(["some", "other", "api"]),
+			ctx(["oauth-protected-resource", "some", "other", "api"]),
 		);
 
 		expect(res.status).toBe(404);
 		expect(handler).not.toHaveBeenCalled();
+	});
+});
+
+describe("the authorization-server document (RFC 8414 §3)", () => {
+	it("serves the issuer-path form, the only one RFC 8414 defines", async () => {
+		// The chain is 401 → protected-resource document → `authorization_servers` → THIS. #3318
+		// routed the first hop only, so a spec-following client reached the HTML shell one step
+		// later. Written as a literal: `/.well-known/oauth-authorization-server` + the issuer path.
+		await GET(
+			get("/.well-known/oauth-authorization-server/api/auth"),
+			ctx(["oauth-authorization-server", "api", "auth"]),
+		);
+
+		expect(handler).toHaveBeenCalledTimes(1);
+		expect(new URL(handler.mock.calls[0][0].url).pathname).toBe(
+			"/.well-known/oauth-authorization-server/api/auth",
+		);
+	});
+
+	it("404s the bare prefix, which Better Auth does not answer either", async () => {
+		// The plugin matches `/.well-known/oauth-authorization-server<issuer path>` and
+		// `<issuer path>/.well-known/oauth-authorization-server` — never the bare prefix. Serving
+		// it here would hand back whatever the auth router made of an unmatched path.
+		const res = await GET(
+			get("/.well-known/oauth-authorization-server"),
+			ctx(["oauth-authorization-server"]),
+		);
+
+		expect(res.status).toBe(404);
+		expect(handler).not.toHaveBeenCalled();
+	});
+});
+
+describe("cross-origin access", () => {
+	it("puts CORS headers on the document a browser client fetches", async () => {
+		// Better Auth's metadataResponse sets Content-Type and Cache-Control only. Without this,
+		// a browser-hosted client's fetch succeeds and is then discarded by the browser: curl sees
+		// 200, the client sees nothing.
+		const res = await GET(
+			get("/.well-known/oauth-protected-resource/api/mcp"),
+			ctx(["oauth-protected-resource", "api", "mcp"]),
+		);
+
+		expect(res.headers.get("access-control-allow-origin")).toBe("*");
+	});
+
+	it("puts them on the 404 too", async () => {
+		const res = await GET(
+			get("/.well-known/oauth-protected-resource/api/auth"),
+			ctx(["oauth-protected-resource", "api", "auth"]),
+		);
+
+		expect(res.status).toBe(404);
+		expect(res.headers.get("access-control-allow-origin")).toBe("*");
+	});
+
+	it("answers the preflight", async () => {
+		const res = OPTIONS();
+
+		expect(res.status).toBe(204);
+		expect(res.headers.get("access-control-allow-origin")).toBe("*");
+		expect(res.headers.get("access-control-allow-methods")).toContain("GET");
 	});
 });
 
@@ -139,10 +201,10 @@ describe("a deployment that cannot form an MCP resource", () => {
 			mcpResourceUrl: null,
 		}));
 
-		const route = await import("@/app/api/oauth-protected-resource/[[...path]]/route");
+		const route = await import("@/app/api/oauth-metadata/[[...path]]/route");
 		const res = await route.GET(
 			get("/.well-known/oauth-protected-resource/api/mcp"),
-			ctx(["api", "mcp"]),
+			ctx(["oauth-protected-resource", "api", "mcp"]),
 		);
 
 		expect(res.status).toBe(404);

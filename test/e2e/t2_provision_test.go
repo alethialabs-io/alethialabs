@@ -372,6 +372,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		}
 		t.Logf("pre-spend %s", msg)
 	}
+	// #3078: the preflight above covers the NODE shape and nothing else. azure/maxconfig passed it
+	// — "Standard_E2s_v3 is available in westeurope" — then built a real AKS cluster for ~1724s and
+	// died in the apply on `azurerm_managed_redis` with InsufficientCapacity, orphan risk likely.
+	// Managed Redis is a different service with its own regional capacity pool, so it needs its own
+	// question asked before the spend. Silent on every cloud but azure, and on any azure run that
+	// provisions no cache — see t2RequireAzureManagedRedisPreflight for the per-cloud reasons.
+	if fatal, msg := t2RequireAzureManagedRedisPreflight(ctx, provider, region, full); msg != "" {
+		if fatal {
+			t.Fatalf("pre-spend %s", msg)
+		}
+		t.Logf("pre-spend %s", msg)
+	}
 	a05CheckFidelity(t, a05, base)
 
 	var jobID string
@@ -410,6 +422,19 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 	// mid-deploy failure still tears the cluster down. The workflow's always() cleanup
 	// is the hard guarantee for a killed process; this is the in-process best effort.
 	t.Cleanup(func() {
+		// ── BEFORE THE DESTROY, and it has to be here (#3481). ────────────────────────────────
+		// The hetzner CCM's ingress Load Balancer carries no hcloud label and cannot be made to;
+		// its only binding to this run is its private-network attachment. `tofu destroy` deletes
+		// that network FIRST, so the teardown sweep — which runs from the workflow, after this
+		// test — finds the binding already gone and falls back to asking whether the PROJECT holds
+		// any load balancer at all. Any concurrent run's LB then reds this leg, and a FAILED
+		// teardown (network still up) verifies cleanly while a SUCCESSFUL one does not.
+		//
+		// A workflow step cannot get ahead of this: the destroy runs IN-PROCESS below, inside this
+		// closure. So the capture is here, writing to the file the sweeper reads back — the same
+		// $RUNNER_TEMP hand-off the harness already uses for ALETHIA_E2E_ARGOCD_SUMMARY.
+		captureHetznerLoadBalancers(t, provider, clusterName)
+
 		// Per-provider, and the SAME function ResolveT2Budget reserves the window with — a
 		// flat 15m here was hetzner's number charged to every cloud (#2729).
 		window := resolveT2TeardownTimeout(p)
