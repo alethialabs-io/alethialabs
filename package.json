@@ -46,6 +46,7 @@
     "check:e2e-knob-reach": "node scripts/check-e2e-knob-reach.mjs",
     "check:e2e-spend-guard": "node scripts/check-e2e-spend-guard.mjs",
     "check:hetzner-lb-location": "node scripts/check-hetzner-lb-location.mjs",
+    "check:hetzner-image-cache": "node scripts/check-hetzner-image-cache.mjs",
     "check:tfvars-safety": "node scripts/check-tfvars-safety.mjs",
     "check:templates-refresh-safe": "node scripts/check-templates-refresh-safe.mjs",
     "check:open-core": "node scripts/check-open-core-boundary.mjs",
