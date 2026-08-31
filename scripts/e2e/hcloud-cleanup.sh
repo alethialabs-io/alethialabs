@@ -89,6 +89,27 @@ DELETE_RETRIES="${DELETE_RETRIES:-5}"   # per-resource delete attempts (exponent
 # Bounded like the other four sweepers (#2257): an unbounded best-effort sweep can consume its
 # caller's job budget, which is how run 31459117502 was cancelled at its cap and leaked a stack.
 PREFLIGHT="${PREFLIGHT:-0}"
+# ── CAPTURE MODE (#3481). Writes THIS run's Load Balancer ids to a file while the private network
+# still exists, so the teardown sweep has a run-scoped binding afterwards.
+#
+# The CCM-created ingress Load Balancer carries no hcloud label and cannot be made to; its only
+# binding to this run is its private-network attachment. On the GRACEFUL path `tofu destroy` deletes
+# that network FIRST, so by the time the sweep runs the binding is already gone and the fallback
+# below asks a PROJECT-WIDE question instead — which means any other run's load balancer reds this
+# leg. A failed teardown verifies cleanly and a successful one does not, which is exactly backwards.
+#
+# Capturing beforehand is the only durable binding the tree supports today: hetzner has no
+# `elbv2.k8s.aws/cluster`-style secondary tag for the AWS sweeper to lean on.
+CAPTURE_LBS=""
+if [ "${1:-}" = "--capture-lbs" ]; then
+	CAPTURE_LBS="${2:-}"
+	[ -n "$CAPTURE_LBS" ] || { echo "--capture-lbs needs a file path" >&2; exit 2; }
+	shift 2
+	CLUSTER_NAME="${1:-${ALETHIA_E2E_CLUSTER_NAME:-}}"
+fi
+# The file the teardown sweep reads back. Set by the harness; absent is a normal state (a hard-kill
+# never got to capture), and it falls through to the project-wide question below.
+LB_CAPTURE_FILE="${ALETHIA_E2E_HCLOUD_LB_IDS:-}"
 PREFLIGHT_BUDGET_SECONDS="${PREFLIGHT_BUDGET_SECONDS:-900}" # wall-clock for the whole sweep loop
 PREFLIGHT_MAX_ENVS="${PREFLIGHT_MAX_ENVS:-3}"               # orphans attempted per run
 
@@ -145,15 +166,23 @@ S3_ENDPOINT="${HETZNER_S3_ENDPOINT:-${S3_REGION}.your-objectstorage.com}"
 # not be LOOKED AT, as distinct from looked at and found clean. The two are not the same answer;
 # the final banner must not conflate them, and since this change the exit code must not either.
 
-[ "$SELF_TEST" = "1" ] || echo "→ hcloud belt-and-suspenders cleanup for label ${SELECTOR}"
-[ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
+# ⚠️ A CAPTURE PERFORMS NONE OF THE SWEEP'S SIDE EFFECTS. It used to fall through both the banner
+# and the zone probe below: an extra `hcloud zone list` round-trip inside the teardown window, and,
+# when that failed, a "DNS zones for <cluster> were NOT swept and NOT verified" warning emitted by
+# an invocation that sweeps nothing — whose probe_note_unverifiable is then thrown away by its own
+# `exit 0`. (The dispatch itself stays below, where capture_run_lbs and the helpers it calls are
+# actually defined.)
+[ -n "$CAPTURE_LBS" ] || [ "$SELF_TEST" = "1" ] || echo "→ hcloud belt-and-suspenders cleanup for label ${SELECTOR}"
+[ -z "$CAPTURE_LBS" ] && [ "$DRY_RUN" = "1" ] && echo "  (DRY_RUN=1 — listing only, deleting nothing)"
 
 # ── Does this hcloud CLI know about DNS zones? `hcloud zone` is recent (the template gained
 #    hcloud_zone with #1816, provider 1.56+). An older CLI makes `hcloud zone list` fail, and
 #    list_ids swallows that into an empty list — which reads exactly like "no zones", the
 #    report-clean-without-looking failure this whole file exists to prevent. Probe once, loudly.
 ZONE_SUPPORTED=0
-if [ "$SELF_TEST" = "1" ]; then
+if [ -n "$CAPTURE_LBS" ]; then
+	: # a capture sweeps no zones, so probing for zone support would only cost a call and a warning
+elif [ "$SELF_TEST" = "1" ]; then
 	: # no CLI to probe under the self-test; the zone path is not what it exercises
 elif hcloud zone list -o noheader >/dev/null 2>&1; then
 	ZONE_SUPPORTED=1
@@ -311,6 +340,21 @@ unlabelled_lb_ids() {
 		done || true
 }
 
+# capture_is_ours — does the capture file describe the cluster we are sweeping?
+#
+# A file written for another cluster is worse than no file: it answers this run's question with
+# someone else's binding, and the answer looks authoritative. A file with no `# cluster=` header
+# predates this check and is accepted, so an in-flight run is not stranded mid-upgrade.
+capture_is_ours() {
+	local want stamped
+	want="${SELECTOR#cluster=}"
+	stamped="$(sed -n 's/^# cluster=//p' "$LB_CAPTURE_FILE" | head -n1)"
+	[ -z "$stamped" ] && return 0
+	[ "$stamped" = "$want" ] && return 0
+	echo "::warning::the load-balancer capture at ${LB_CAPTURE_FILE} was written for cluster '${stamped}', not '${want}' — ignoring it and falling back to the project-wide question." >&2
+	return 1
+}
+
 sweep_unlabelled_lbs() {
 	assert_selector
 	local ids id
@@ -336,6 +380,105 @@ sweep_unlabelled_lbs() {
 	local net_for_lbs
 	net_for_lbs="$(cluster_network_id)"
 	if ! printf '%s' "$net_for_lbs" | grep -Eq '^[0-9]+$'; then
+		# ── THE CAPTURED BINDING (#3481). The network is gone, which on the GRACEFUL path is the
+		# NORMAL state: `tofu destroy` deletes it first. If the harness captured this run's load
+		# balancers before the destroy, that file IS the run-scoped binding, and it outlives the
+		# network the live lookup needs.
+		#
+		# Without it the branch below asks "does this project hold ANY load balancer?" and lets that
+		# answer stand for a run-scoped one — so a concurrent run's ingress LB reds this leg, and a
+		# FAILED teardown (network still up, binding resolvable) verifies cleanly while a SUCCESSFUL
+		# one does not.
+		if [ -n "$LB_CAPTURE_FILE" ] && [ -f "$LB_CAPTURE_FILE" ] && capture_is_ours; then
+			local captured live_ids still
+			if [ ! -r "$LB_CAPTURE_FILE" ]; then
+				echo "::warning::the load-balancer capture at ${LB_CAPTURE_FILE} is unreadable — NOT verified; check by hand (#3481)." >&2
+				probe_note_unverifiable ccm-load-balancers "capture-unreadable"
+				return 0
+			fi
+			local crc=0
+			captured="$(grep -E '^[0-9]+$' "$LB_CAPTURE_FILE")" || crc=$?
+			if [ "$crc" -gt 1 ]; then
+				echo "::warning::could not read the load-balancer capture at ${LB_CAPTURE_FILE} (grep exit ${crc}) — NOT verified; check by hand (#3481)." >&2
+				probe_note_unverifiable ccm-load-balancers "capture-read-failed"
+				return 0
+			fi
+			if [ -z "$captured" ]; then
+				# Captured successfully and found none. This is the one place "none" is honest
+				# without a live read: it was measured while the binding still existed.
+				#
+				# ⚠️ KNOWN BOUND, and it is deliberately NOT closed here. The capture is a
+				# point-in-time read taken before RunDestroy, so a CCM that finishes creating the
+				# ingress LB DURING the destroy window (up to 45 min) lands outside it. Re-asking
+				# the project-wide question would catch that — and would also re-red every run
+				# standing next to a concurrent one, which is exactly the #3481 false red this
+				# branch exists to remove. With the network gone and the CCM LB carrying no label
+				# there is no run-scoped binding left to tell the two apart, so the choice is
+				# between a wrong red on every parallel run and a wrong green on a narrow race.
+				# Widening the window is the real fix (capture later, or label the LB), not
+				# re-asking a question that cannot distinguish them.
+				echo "  · unlabelled (CCM) load balancers: none (captured before the destroy: this run held none)"
+				return 0
+			fi
+			local lrc=0
+			live_ids="$(hcloud load-balancer list -o noheader -o columns=id 2>/dev/null)" || lrc=$?
+			if [ "$lrc" -ne 0 ]; then
+				echo "::warning::'hcloud load-balancer list' failed (exit ${lrc}) while re-checking the $(printf '%s' "$captured" | grep -cE '^[0-9]+$') load balancer(s) captured for ${SELECTOR}. NOT verified — check by hand (#3481)." >&2
+				probe_note_unverifiable ccm-load-balancers "list-failed-after-capture"
+				return 0
+			fi
+			still=""
+			while IFS= read -r cid; do
+				[ -n "$cid" ] || continue
+				case " $(printf '%s' "$live_ids" | tr '\n' ' ') " in *" $cid "*) still="${still}${cid}
+" ;; esac
+			done <<<"$captured"
+			if [ -z "$still" ]; then
+				echo "  · unlabelled (CCM) load balancers: none (all $(printf '%s' "$captured" | grep -cE '^[0-9]+$') captured for this run are gone)"
+				return 0
+			fi
+			# THIS RUN's, by a binding taken before the network went away — so these are ours to
+			# delete, not merely someone's to worry about.
+			echo "  · unlabelled (CCM) load balancers captured for this run: $(printf '%s' "$still" | grep -c .) to delete"
+			# ⚠️ THIS BRANCH GATES ITSELF. The obvious comment to write here — "a failed delete is
+			# left for verify_swept to gate authoritatively" — is true of the network-bound branch
+			# below and FALSE here. verify_swept re-checks unlabelled load balancers through
+			# unlabelled_lb_ids, which resolves cluster_network_id and `return 0`s silently when the
+			# id is not numeric; this branch only runs BECAUSE the network is already gone. So a
+			# 409/423/429 from hcloud (delete protection, a transient rate limit — and there is no
+			# retry_delete in this file) printed a WARN nobody gates on, and the run exited 0 with
+			# the ingress LB still billing. One transient API failure was enough.
+			while IFS= read -r id; do
+				[ -n "$id" ] || continue
+				if [ "$DRY_RUN" = "1" ]; then
+					echo "      would delete load-balancer ${id} (captured before the destroy)"
+					continue
+				fi
+				hcloud load-balancer delete "$id" >/dev/null 2>&1 &&
+					echo "      deleted load-balancer ${id}" ||
+					echo "      WARN: could not delete load-balancer ${id}" >&2
+			done <<<"$still"
+			[ "$DRY_RUN" = "1" ] && return 0
+			# RE-READ, and treat an unreadable re-read as unverified rather than as success. The
+			# question is narrow and run-scoped ("are the ids we just deleted gone?"), so it can be
+			# answered without the network the live lookup lost.
+			local vrc=0 after survivors=""
+			after="$(hcloud load-balancer list -o noheader -o columns=id 2>/dev/null)" || vrc=$?
+			if [ "$vrc" -ne 0 ]; then
+				echo "::warning::could not re-check the load balancer(s) deleted for ${SELECTOR} (exit ${vrc}). NOT verified — check by hand (#3481)." >&2
+				probe_note_unverifiable ccm-load-balancers "list-failed-after-delete"
+				return 0
+			fi
+			while IFS= read -r id; do
+				[ -n "$id" ] || continue
+				case " $(printf '%s' "$after" | tr '\n' ' ') " in *" $id "*) survivors="${survivors}${id} " ;; esac
+			done <<<"$still"
+			if [ -n "$survivors" ]; then
+				echo "::warning::load balancer(s) captured for ${SELECTOR} survived the delete and are STILL BILLING: ${survivors}(#3481)" >&2
+				probe_note_unverifiable ccm-load-balancers "delete-failed: ${survivors}"
+			fi
+			return 0
+		fi
 		# The exit status is captured SEPARATELY, and that is the whole point (#2549).
 		#
 		# This was `hcloud ... | grep -c . || true`, which launders the status twice over: the pipe
@@ -582,6 +725,61 @@ list_orphan_clusters() {
 	done | sort -u
 }
 
+# capture_run_lbs — write every Load Balancer id bound to THIS run to a file, while the binding
+# still exists. Both halves: the label-selected ones (belt) and the ones attached to this run's
+# private network but carrying no label (braces — the CCM ingress LB, which is the whole point).
+#
+# A FAILURE TO LOOK MUST NOT WRITE AN EMPTY FILE. An empty capture is read downstream as "this run
+# held no load balancer", which is exactly the silent green this change exists to remove — one step
+# earlier than before. So the file is written only when both reads answered; otherwise nothing is
+# written and the sweep falls through to the project-wide question, which at least reds.
+capture_run_lbs() {
+	assert_selector
+	local net raw ids rc=0
+	net="$(cluster_network_id)"
+	if ! printf '%s' "$net" | grep -Eq '^[0-9]+$'; then
+		echo "::warning::--capture-lbs: this run's private network could not be resolved, so no load-balancer binding was captured. The teardown sweep will fall back to the project-wide question." >&2
+		return 0
+	fi
+	raw="$(hcloud load-balancer list -o json 2>/dev/null)" || rc=$?
+	if [ "$rc" -ne 0 ] || [ -z "$raw" ]; then
+		echo "::warning::--capture-lbs: 'hcloud load-balancer list' failed (exit ${rc}); nothing captured. NOT an empty run — the teardown sweep falls back." >&2
+		return 0
+	fi
+	# jq's STATUS IS CAPTURED, not laundered. `|| true` under pipefail swallowed it, and the write
+	# below is unconditional — so a jq that FAILED (a truncated or oversized payload, a CLI
+	# deprecation line ahead of the JSON, --argjson rejecting the network id) produced an empty
+	# `ids`, wrote an empty file, and the teardown read that as "captured before the destroy: this
+	# run held none" and returned CLEAN with no live look at all. That is the silent green this
+	# whole change exists to remove, moved one step earlier. The two guards above cover a non-zero
+	# `hcloud` and an unresolvable network; neither covers jq itself.
+	local jrc=0
+	ids="$(printf '%s' "$raw" |
+		jq -r --argjson net "$net" --arg sel "$CLUSTER_NAME" \
+			'.[] | select((((.private_net // []) | map(.network) | index($net)) != null) or (.labels.cluster == $sel)) | .id' 2>/dev/null)" || jrc=$?
+	if [ "$jrc" -ne 0 ]; then
+		echo "::warning::--capture-lbs: jq could not read the load-balancer list (exit ${jrc}); nothing captured. NOT an empty run — the teardown sweep falls back." >&2
+		return 0
+	fi
+	# THE FILE SAYS WHOSE IT IS. LB_CAPTURE_FILE is a fixed path and PREFLIGHT re-invokes this
+	# script per orphan (`PREFLIGHT=0 … "$0" "$ocl"`) with the environment inherited, so an exported
+	# ALETHIA_E2E_HCLOUD_LB_IDS would answer every orphan's CCM-load-balancer question with THIS
+	# run's capture. Not reachable today — the nightly's preflight step is aws-only — but the
+	# binding should describe itself rather than depend on that staying true. The reader refuses a
+	# file whose cluster is not the one being swept; `grep -E '^[0-9]+$'` skips this line anyway.
+	{
+		echo "# cluster=${CLUSTER_NAME}"
+		# An empty RESULT after a successful read is a real answer: this run holds none.
+		printf '%s\n' "$ids" | grep -E '^[0-9]+$' || true
+	} >"$CAPTURE_LBS"
+		echo "  · captured $(grep -cE '^[0-9]+$' <"$CAPTURE_LBS" || true) load balancer(s) bound to ${CLUSTER_NAME} (network ${net}) → ${CAPTURE_LBS}"
+}
+
+if [ -n "$CAPTURE_LBS" ]; then
+	capture_run_lbs
+	exit 0
+fi
+
 if [ "$PREFLIGHT" = "1" ]; then
 	# Discovery is entirely jq-driven. Without jq every list would yield nothing, the loop would
 	# find no orphans, and this would exit 0 reporting a clean account it never looked at — the
@@ -763,7 +961,16 @@ if [ "$SELF_TEST" = "1" ]; then
 		# ST_LBS_RC lets a case make the CLI FAIL rather than merely return nothing. Without it the
 		# stub can only ever produce the two OUTPUTS, and "empty because it worked" and "empty
 		# because it could not run" are exactly the pair this function must not confuse.
-		"load-balancer list") printf '%s\n' "$ST_LBS"; return "${ST_LBS_RC:-0}" ;;
+		# ST_LBS_AFTER lets the post-delete re-read answer DIFFERENTLY from the opening list, which
+		# is the only way to tell "the delete worked" from "the delete failed and nobody checked".
+		"load-balancer list")
+			if [ -n "${ST_LBS_AFTER_ACTIVE:-}" ]; then printf '%s\n' "${ST_LBS_AFTER:-}"; return "${ST_LBS_AFTER_RC:-0}"; fi
+			printf '%s\n' "$ST_LBS"
+			return "${ST_LBS_RC:-0}"
+			;;
+		# A delete that FAILS. There is no retry_delete in this file, so one 409/423/429 is the
+		# whole story — and before #3500's review it was a WARN nobody gated on.
+		"load-balancer delete") ST_LBS_AFTER_ACTIVE=1; return "${ST_LB_DELETE_RC:-0}" ;;
 		# The generic `hcloud <type> list` every list_ids call lands on. Output and exit code are
 		# separately controlled, because "empty because it worked" and "empty because it could not
 		# run" is precisely the pair list_ids used to conflate.
@@ -857,6 +1064,206 @@ if [ "$SELF_TEST" = "1" ]; then
 	}
 	st_lb_reason "a failed list is reported as list-failed, not network-already-destroyed" "4711" 1 "ccm-load-balancers(list-failed)"
 	st_lb_reason "a network that is genuinely gone still reports network-already-destroyed" "4711" 0 "ccm-load-balancers(network-already-destroyed)"
+
+	# ── THE CAPTURED BINDING (#3481). ────────────────────────────────────────────────────────────
+	#
+	# #2549 made "none" mean NONE. It did so by asking a question that is not this run's: when the
+	# network is gone, does the PROJECT hold any load balancer? That is the safe direction — it
+	# over-reports — but it is not free, and today it is the reason a hetzner leg reds. The nightly
+	# on 2026-08-30 tore down cleanly and the sweep still returned 4, because another run's ingress
+	# LB was standing. The perverse consequence is that a FAILED teardown (network still up, binding
+	# resolvable) VERIFIES CLEANLY while a SUCCESSFUL one cannot.
+	#
+	# The capture written before `tofu destroy` is the run-scoped binding that outlives the network.
+	# BOTH directions are asserted, because either alone is satisfiable by the wrong change: a
+	# capture must let someone else's load balancer go unremarked, AND must still red on one of ours.
+	# The LEDGER and the SENTENCE are asserted together. Either alone is satisfiable by a wrong
+	# change: two branches can agree that nothing is unverifiable while disagreeing about whether
+	# anything was swept, and the sentence is the only thing that says which happened.
+	st_capture_case() { # <name> <captured ids> <live lb list> <expect UNVERIFIABLE: yes|no> [lb rc] [expected stdout substring]
+		probe_reset
+		ST_NETWORK=""
+		ST_LBS="$3"
+		ST_LBS_RC="${5:-0}"
+		LB_CAPTURE_FILE="${TMPDIR:-/tmp}/alethia-st-capture.$$"
+		printf '%s\n' "$2" | grep -E '^[0-9]+$' >"$LB_CAPTURE_FILE" || : >"$LB_CAPTURE_FILE"
+		local prev_dry="$DRY_RUN" out
+		DRY_RUN=1
+		out="$(sweep_unlabelled_lbs 2>/dev/null || true)"
+		DRY_RUN="$prev_dry"
+		rm -f "$LB_CAPTURE_FILE"
+		LB_CAPTURE_FILE=""
+		local got=no
+		case "$(probe_unverifiable_types)" in *ccm-load-balancers*) got=yes ;; esac
+		if [ "$got" != "$4" ]; then
+			echo "  ✗ $1 — expected ccm-load-balancers-in-UNVERIFIABLE=$4, got $got" >&2
+			st_fails=$((st_fails + 1))
+			return
+		fi
+		if [ -n "${6:-}" ] && ! printf '%s' "$out" | grep -qF -- "$6"; then
+			echo "  ✗ $1 — the sweep did not say '$6'; it said:" >&2
+			printf '%s\n' "$out" >&2
+			st_fails=$((st_fails + 1))
+			return
+		fi
+		echo "  ✓ $1"
+	}
+
+	# ⚠️ THE FAILING NIGHTLY, exactly. Captured before the destroy and this run held none; another
+	# run's load balancer is standing. Today this reds. It must not.
+	st_capture_case "a captured-empty run is CLEAN even though the project holds another run's LB" \
+		"" "4711" no 0 "this run held none"
+	# ⚠️ AND IT MUST NOT GO ON TO ASK ANYWAY. A capture that succeeded and found none has already
+	# answered the question; re-asking the live API means an unrelated list failure can still red a
+	# run we KNOW held nothing. That is the whole value of having captured.
+	st_capture_case "a captured-empty run stays clean even if the live list then FAILS" \
+		"" "" no 1 "this run held none"
+	# ── A FAILED DELETE MUST NOT EXIT GREEN (#3500 review, finding 1). ───────────────────────────
+	#
+	# This branch cannot delegate to verify_swept the way the network-bound one does:
+	# unlabelled_lb_ids resolves cluster_network_id and returns early when it is not numeric, and
+	# this branch runs only BECAUSE the network is gone. So a 409/423/429 from hcloud printed a WARN
+	# that nothing gated on and the run exited 0 with the ingress LB still billing.
+	st_delete_case() { # <name> <captured+live id> <delete rc> <list after> <expect UNVERIFIABLE>
+		probe_reset
+		ST_NETWORK=""
+		ST_LBS="$2"
+		ST_LBS_RC=0
+		ST_LB_DELETE_RC="$3"
+		ST_LBS_AFTER="$4"
+		ST_LBS_AFTER_RC=0
+		ST_LBS_AFTER_ACTIVE=""
+		LB_CAPTURE_FILE="${TMPDIR:-/tmp}/alethia-st-del.$$"
+		printf '%s\n' "$2" >"$LB_CAPTURE_FILE"
+		local prev_dry="$DRY_RUN"
+		DRY_RUN=0
+		sweep_unlabelled_lbs >/dev/null 2>&1 || true
+		DRY_RUN="$prev_dry"
+		rm -f "$LB_CAPTURE_FILE"
+		LB_CAPTURE_FILE=""
+		ST_LB_DELETE_RC=0
+		ST_LBS_AFTER=""
+		ST_LBS_AFTER_ACTIVE=""
+		local got=no
+		case "$(probe_unverifiable_types)" in *ccm-load-balancers*) got=yes ;; esac
+		if [ "$got" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected ccm-load-balancers-in-UNVERIFIABLE=$5, got $got" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	st_delete_case "a captured LB that SURVIVES the delete gates the run — verify_swept cannot see it" \
+		"4711" 1 "4711" yes
+	# The negative control, without which the assertion above is satisfied by gating on everything.
+	st_delete_case "a captured LB that is really deleted does NOT gate" \
+		"4711" 0 "" no
+	# And an unreadable re-read is not proof of success either.
+	st_delete_case "a re-read that cannot answer is UNVERIFIABLE, not a successful delete" \
+		"4711" 0 "4711" yes
+
+	# ...and the direction that must not be lost with it: one of OURS still standing.
+	st_capture_case "a captured LB that is STILL ALIVE is swept, not shrugged at" \
+		"4711" "4711" no 0 "to delete"
+	# Liveness is CHECKED, not assumed: a captured id that is already gone must report none rather
+	# than attempt a delete against an id the API no longer knows.
+	st_capture_case "captured LBs that are all gone report none, and are not re-deleted" \
+		"4711" "" no 0 "are gone"
+	# A read that FAILED after a capture is not "they are all gone". Same #2549 lesson, new branch.
+	st_capture_case "a failed list AFTER a capture is UNVERIFIABLE, not 'all gone'" "4711" "" yes 1
+	# ⚠️ NEGATIVE CONTROL, and the reason the four above mean anything: with NO capture the
+	# project-wide fallback must still gate. A change that simply stopped reporting would pass every
+	# case above.
+	st_lb_case "with NO capture, another run's LB still reds — the fallback is unchanged" "" "4711" yes
+
+	# ── THE CAPTURE SIDE, and the one mistake here that is fatal. ────────────────────────────────
+	#
+	# An EMPTY capture file is read back above as "this run held none" and resolves the sweep CLEAN
+	# without a live look. So a capture that FAILED must write nothing at all — writing an empty
+	# file would convert the loud fallback into exactly the silent green this whole change removes,
+	# one step earlier than the bug it fixes. Asserted in both directions, because "never writes"
+	# and "always writes empty" both satisfy a one-sided test.
+	st_capture_write() { # <name> <network> <lb json> <lb rc> <expect file: absent|empty|ids>
+		ST_NETWORK="$2"
+		ST_LBS="$3"
+		ST_LBS_RC="$4"
+		CAPTURE_LBS="${TMPDIR:-/tmp}/alethia-st-write.$$"
+		rm -f "$CAPTURE_LBS"
+		capture_run_lbs >/dev/null 2>&1 || true
+		local got=absent
+		if [ -f "$CAPTURE_LBS" ]; then
+			# "empty" means NO IDS, not a zero-length file: the capture carries a `# cluster=`
+			# header so it can say whose binding it is, and that header is not an id.
+			if grep -qE '^[0-9]+$' "$CAPTURE_LBS"; then got=ids; else got=empty; fi
+		fi
+		rm -f "$CAPTURE_LBS"
+		CAPTURE_LBS=""
+		if [ "$got" = "$5" ]; then
+			echo "  ✓ $1"
+		else
+			echo "  ✗ $1 — expected the capture file to be $5, got $got" >&2
+			st_fails=$((st_fails + 1))
+		fi
+	}
+	# Finding 7: the capture names its cluster, and one written for a DIFFERENT cluster answers this
+	# run's question with someone else's binding — while looking authoritative.
+	st_foreign_capture() {
+		probe_reset
+		ST_NETWORK=""
+		ST_LBS="4711"
+		ST_LBS_RC=0
+		LB_CAPTURE_FILE="${TMPDIR:-/tmp}/alethia-st-foreign.$$"
+		printf '# cluster=%s\n' "some-other-run" >"$LB_CAPTURE_FILE"
+		local prev_dry="$DRY_RUN" out
+		DRY_RUN=1
+		out="$(sweep_unlabelled_lbs 2>/dev/null || true)"
+		DRY_RUN="$prev_dry"
+		rm -f "$LB_CAPTURE_FILE"
+		LB_CAPTURE_FILE=""
+		# It must NOT have taken the captured-empty shortcut ("this run held none") on a file that
+		# describes another cluster.
+		if printf '%s' "$out" | grep -qF "this run held none"; then
+			echo "  ✗ a capture written for ANOTHER cluster was trusted as this run's binding" >&2
+			st_fails=$((st_fails + 1))
+		else
+			echo "  ✓ a capture written for ANOTHER cluster is ignored, not trusted as this run's"
+		fi
+	}
+	st_foreign_capture
+
+	# ⚠️ The fatal one: a failed list must leave NO file, never an empty one.
+	st_capture_write "a FAILED load-balancer list writes no file, not an empty one" "12345" "" 1 absent
+	st_capture_write "an unresolvable network writes no file" "" '[]' 0 absent
+	# ⚠️ AND THE THIRD WAY THE READ CAN FAIL, which the two above do not cover: jq itself. Its status
+	# was laundered by `|| true` under pipefail and the write below was unconditional, so a
+	# truncated payload, a CLI deprecation line ahead of the JSON, or --argjson rejecting the
+	# network id produced an empty `ids`, wrote an EMPTY FILE, and the teardown read that as
+	# "captured before the destroy: this run held none" — CLEAN, with no live look at all.
+	st_capture_write "malformed JSON writes no file — jq FAILING is not an empty run" "12345" '{not json' 0 absent
+	# ...and the positive controls, or "writes nothing" would pass by never writing at all.
+	st_capture_write "a successful read that finds none writes an EMPTY file — that is a real answer" "12345" '[]' 0 empty
+	st_capture_write "a load balancer on this run's network is captured" "12345" '[{"id":4711,"private_net":[{"network":12345}],"labels":{}}]' 0 ids
+
+	# And the REASON, so a reader of the warning is sent to the right place.
+	st_capture_reason() { # <name> <captured> <live> <rc> <expected substring>
+		probe_reset
+		ST_NETWORK=""
+		ST_LBS="$3"
+		ST_LBS_RC="$4"
+		LB_CAPTURE_FILE="${TMPDIR:-/tmp}/alethia-st-capture.$$"
+		printf '%s\n' "$2" | grep -E '^[0-9]+$' >"$LB_CAPTURE_FILE" || : >"$LB_CAPTURE_FILE"
+		sweep_unlabelled_lbs >/dev/null 2>&1
+		rm -f "$LB_CAPTURE_FILE"
+		LB_CAPTURE_FILE=""
+		case "$(probe_unverifiable_detail)" in
+		*"$5"*) echo "  ✓ $1" ;;
+		*)
+			echo "  ✗ $1 — expected UNVERIFIABLE to name '$5', got '$(probe_unverifiable_detail)'" >&2
+			st_fails=$((st_fails + 1))
+			;;
+		esac
+	}
+	st_capture_reason "a post-capture list failure is named as such, not as a destroyed network" "4711" "" 1 "list-failed-after-capture"
 
 	# ── list_ids — THE GAP #2549 LEFT OPEN, and the exit-code contract that now sits on top of it.
 	#
