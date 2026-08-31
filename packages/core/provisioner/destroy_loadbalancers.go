@@ -228,10 +228,18 @@ func deleteAll(ctx context.Context, out io.Writer, objs []cloudBackedObject, qui
 // blocker was cleared (may the destroy be retried?), what is still holding cloud resources (what
 // does the operator go and delete?), and whether we simply could not see (a claim we must not make).
 type releaseOutcome struct {
-	// Clean is true only when every cloud-backed object was released, or there were none. It is the
-	// ONE field the retry is allowed to branch on: retrying a destroy without having changed
-	// anything is just paying twice for the same failure.
+	// Clean is true only when every cloud-backed object was released, or there were none.
 	Clean bool
+	// Released counts what this attempt actually DELETED, and it is what separates the two facts
+	// Clean folds together: "the blocker was cleared" and "there was never a blocker".
+	//
+	// The retry branches on Clean to decide whether to pay for a SECOND `tofu destroy` — 10-15
+	// minutes, the longest thing in the job — and its own rationale is "the second release
+	// positively removed what the first could not". A cluster with zero LoadBalancer Services
+	// returns Clean too, so a destroy that failed for an unrelated reason bought a second full
+	// destroy that changed nothing: precisely the "paying twice for the same failure" the guard
+	// forbids in the sentence above it.
+	Released int
 	// Remaining names what was still holding a cloud load balancer when we stopped waiting.
 	Remaining []cloudBackedObject
 	// Unknown records that the cluster stopped answering, so Remaining is not a complete list —
@@ -346,6 +354,7 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) (releaseOutco
 	}
 	if len(objs) == 0 {
 		fmt.Fprintln(out, "   No LoadBalancer Services or Ingresses — nothing outside the state file to release.")
+		// Released stays 0: nothing was cleared, because nothing was held.
 		return releaseOutcome{Clean: true}, nil
 	}
 
@@ -380,7 +389,7 @@ func releaseCloudLoadBalancers(ctx context.Context, out io.Writer) (releaseOutco
 			lastErr, consecutiveErrs = lerr, consecutiveErrs+1
 		case len(remaining) == 0:
 			fmt.Fprintf(out, "   All cloud-backed objects released after %s.\n", time.Since(started).Round(time.Second))
-			return releaseOutcome{Clean: true}, nil
+			return releaseOutcome{Clean: true, Released: len(objs)}, nil
 		default:
 			lastErr, consecutiveErrs = nil, 0
 			lastKnown = remaining

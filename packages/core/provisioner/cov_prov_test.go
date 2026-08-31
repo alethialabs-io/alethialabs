@@ -566,8 +566,19 @@ func TestProv_DestroyTearsDownAndUnregisters(t *testing.T) {
 	default:
 		t.Error("RunDestroy never unregistered the cluster from the control plane")
 	}
-	if !strings.Contains(out.String(), "Environment destroyed successfully") {
+	// THE BYO SHAPE, and it must NOT be silent. `provTofuScript`'s outputs are the documented
+	// self-managed BYO-IaC form — a generic `kubeconfig`, no `cluster_endpoint` — so
+	// ConfigureKubeconfig succeeds on the short-circuit and clusterReachable then fails a second
+	// time on the still-empty endpoint. That used to be recorded as NoCluster, which suppressed the
+	// billing Note entirely, and this assertion read "Environment destroyed successfully" as proof
+	// the teardown was fine. It was proof the Note had been swallowed: a self-managed cluster holds
+	// LoadBalancer Services like any other, and nothing else tells the operator to look.
+	if !strings.Contains(out.String(), "Environment destroyed") {
 		t.Errorf("a completed teardown must say so:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "Note: the pre-destroy load-balancer release did not run") {
+		t.Errorf("a BYO environment with no cluster_endpoint was told nothing about its load "+
+			"balancers — 'no endpoint in the state' is not 'there was never a control plane':\n%s", out.String())
 	}
 }
 

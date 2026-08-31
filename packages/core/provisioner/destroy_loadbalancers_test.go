@@ -970,7 +970,7 @@ func TestRetryReleaseAndDestroyDrivesTheWholePolicy(t *testing.T) {
 		destroys := 0
 		var buf bytes.Buffer
 		rel, err := retryReleaseAndDestroy(context.Background(), &buf, releaseOutcome{Remaining: held}, boom,
-			func() releaseOutcome { return releaseOutcome{Clean: true} },
+			func() releaseOutcome { return releaseOutcome{Clean: true, Released: len(held)} },
 			func() error { destroys++; return nil })
 		if destroys != 1 {
 			t.Errorf("the destroy was re-run %d time(s), want exactly 1", destroys)
@@ -980,6 +980,49 @@ func TestRetryReleaseAndDestroyDrivesTheWholePolicy(t *testing.T) {
 		}
 		if !rel.Clean {
 			t.Error("the cleared outcome was not adopted, so a green teardown would still warn")
+		}
+	})
+
+	// THE DISTINCTION `Released` EXISTS FOR. Clean is also what a cluster with zero LoadBalancer
+	// Services returns, so before this the retry paid for a second full `tofu destroy` — 10-15
+	// minutes, the longest thing in the job — after a release that removed nothing, on a destroy
+	// that had failed for an unrelated reason. The guard's own rationale is "the second release
+	// positively removed what the first could not"; a bare Clean is not that fact.
+	t.Run("a second release that finds NOTHING to clear does not re-run the destroy", func(t *testing.T) {
+		destroys := 0
+		var buf bytes.Buffer
+		_, err := retryReleaseAndDestroy(context.Background(), &buf, releaseOutcome{Unknown: true}, boom,
+			func() releaseOutcome { return releaseOutcome{Clean: true} }, // Released stays 0
+			func() error { destroys++; return nil })
+		if destroys != 0 {
+			t.Errorf("a second destroy was paid for after a release that cleared nothing (%d run(s))", destroys)
+		}
+		if err == nil {
+			t.Error("the destroy's failure was dropped by a retry that changed nothing")
+		}
+	})
+
+	// The retry fires on three states and the banner must name the one it is reacting to. Saying
+	// "cloud-backed objects still held" over a skip announces objects nobody ever observed — the
+	// same defect this file fixes in adoptRetryOutcome.
+	t.Run("the banner names the state that actually triggered the retry", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			rel  releaseOutcome
+			want string
+		}{
+			{"observed", releaseOutcome{Remaining: held}, "objects still held"},
+			{"unknown", releaseOutcome{Unknown: true}, "stopped answering"},
+			{"skipped", releaseOutcome{Skipped: "the state outputs could not be read"}, "never ran"},
+		} {
+			if got := retryBanner(tc.rel); !strings.Contains(got, tc.want) {
+				t.Errorf("%s: banner does not name the state that triggered it (want %q):\n%s", tc.name, tc.want, got)
+			}
+		}
+		// The negative control: the three must not all render the same sentence, or naming the
+		// state is decorative and a future edit collapses them without any test noticing.
+		if retryBanner(releaseOutcome{Remaining: held}) == retryBanner(releaseOutcome{Unknown: true}) {
+			t.Error("an observed list and an unreadable cluster produce the same banner")
 		}
 	})
 
