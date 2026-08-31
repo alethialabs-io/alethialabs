@@ -17,12 +17,12 @@
 # silent false-allow, which is to say: the incident again. So it lives here, once.
 #
 # THE MODEL
-#   identity  = (host, CLAUDE_PID, procStart)   — the Claude CLI PROCESS, not the session.
+#   identity  = (host, agent PID, procStart)   — the Claude/Codex agent process, not the session.
 #   lease     = <worktree>/.git-admin-dir/alethia-lease/owner
 #   liveness  = `ps -o lstart=` on the holder pid matches the recorded procStart.
 #
-# Outside Claude, CLAUDE_PID is unset → no lease is taken and nothing is ever blocked. Humans and
-# CI are not gated by this file, by design.
+# Outside Claude/Codex, both agent markers are unset → no lease is taken and nothing is blocked.
+# Humans and CI are not gated by this file, by design.
 #
 # Usage (source it):
 #   . scripts/lib/wt-lease.sh
@@ -33,14 +33,20 @@
 
 # ── identity ────────────────────────────────────────────────────────────────────────────────────
 
-# The Claude CLI process id. The harness injects CLAUDE_PID into BOTH hook processes and Bash-tool
-# shells (one env builder serves both), which is what lets a hook, worktree.sh and a git hook all
-# agree on "who am I" with no plumbing.
+# The agent process id. Claude supplies CLAUDE_PID; Codex supplies a session marker and the hook
+# adapter supplies CODEX_PID or its parent process id. This lets hooks and worktree.sh agree on
+# ownership without making humans or CI acquire leases.
 #
 # NOT the session id. A Task subagent gets its own CLAUDE_CODE_SESSION_ID but shares its parent's
 # CLAUDE_PID — key the lease on the session and every subagent looks foreign inside its own
 # parent's worktree. Ownership is per INSTANCE.
-wt_self_pid() { printf '%s' "${CLAUDE_PID:-}"; }
+wt_self_pid() {
+	if [ -n "${CLAUDE_PID:-}" ]; then
+		printf '%s' "$CLAUDE_PID"
+	elif [ -n "${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-}}" ]; then
+		printf '%s' "${CODEX_PID:-${PPID:-}}"
+	fi
+}
 
 wt_host() { hostname -s 2>/dev/null || hostname 2>/dev/null || echo unknown; }
 
@@ -102,7 +108,7 @@ wt_lease_write() { # <lease-dir> <worktree-path>
 		echo "pid: $pid"
 		echo "procStart: $ps"
 		echo "host: $(wt_host)"
-		echo "session: ${CLAUDE_CODE_SESSION_ID:-}"
+		echo "session: ${CLAUDE_CODE_SESSION_ID:-${CODEX_SESSION_ID:-${CODEX_THREAD_ID:-}}}"
 		echo "branch: $(git -C "$2" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
 		echo "worktree: $2"
 		echo "acquiredAt: $(date +%s)"
@@ -296,8 +302,9 @@ wt_self_test() {
 	wt_lease_acquire "$tmp/main" >/dev/null 2>&1
 	_a "2" "$?" "main checkout is not leasable"
 
-	# No CLAUDE_PID → no lease, no block (humans / CI).
-	(CLAUDE_PID="" wt_lease_acquire "$tmp/wt" >/dev/null 2>&1)
+	# No agent marker → no lease, no block (humans / CI). Clear Codex markers too when the
+	# self-test itself is launched from a Codex session.
+	(CLAUDE_PID="" CODEX_PID="" CODEX_SESSION_ID="" CODEX_THREAD_ID="" wt_lease_acquire "$tmp/wt" >/dev/null 2>&1)
 	_a "0" "$?" "outside Claude: no lease taken, never blocks"
 
 	# Fresh acquire, then re-acquire is idempotent.
