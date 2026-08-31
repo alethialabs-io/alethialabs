@@ -201,7 +201,7 @@ export const EXTERNAL_DNS_PROVIDERS: Record<ExternalDnsProvider, ExternalDnsProv
  * rather than have the add-on borrow the rail's ServiceAccount, which cannot work for the reason
  * just given.
  */
-const EXTERNAL_DNS_ADDON_SA = "addon-external-dns-sa";
+export const EXTERNAL_DNS_ADDON_SA = "addon-external-dns-sa";
 
 /**
  * Why an external-dns configuration cannot be installed, or null when it can.

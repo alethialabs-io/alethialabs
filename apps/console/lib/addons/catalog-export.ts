@@ -20,6 +20,21 @@ import type { AddOnInstallSpec } from "@/lib/addons/types";
 import type { CloudProvider } from "@/lib/cloud-providers/connections";
 
 /**
+ * What the fixture stores in external-dns's `workloadIdentity` on a workload-identity cloud.
+ *
+ * The real value — an IRSA role ARN, a GSA email, a managed-identity client id — is per-run and
+ * exists only after `tofu apply`, in the same deploy job that installs the add-on. So the fixture
+ * carries a sentinel and the RUNNER substitutes the real identity just before the Applications
+ * render (`packages/core/argocd/addon_identity.go`, ResolveAddOnCloudIdentity).
+ *
+ * ⚠️ MIRRORED IN GO as `argocd.CloudIdentityPlaceholder`. A drifted spelling does not fail loudly:
+ * the runner would find no placeholder to replace, the annotation would ship holding this literal
+ * string, and external-dns would construct its provider, report Healthy and write nothing — the
+ * exact defect the substitution exists to remove. `catalog-export.test.ts` pins the two together.
+ */
+export const INFRA_IDENTITY_PLACEHOLDER = "alethia-infra:external-dns-workload-identity";
+
+/**
  * A stand-in for "this secret key has a stored value".
  *
  * `resolveAddOnInstall` decides whether to emit a `secretRef` by asking `hasStoredSecret` which keys
