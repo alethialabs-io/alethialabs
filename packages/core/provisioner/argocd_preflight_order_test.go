@@ -23,9 +23,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/alethialabs-io/alethialabs/packages/core/argocd"
 )
 
 // TestArgoVersionPreflightRunsBeforeAnyClusterWrite asserts the preflight is the first thing
@@ -63,11 +66,18 @@ func TestArgoVersionPreflightRunsBeforeAnyClusterWrite(t *testing.T) {
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.SelectorExpr:
-			// argocd.PreflightLiveArgoVersion(...)
+			// argocd.PreflightLiveArgoVersion(...), if it is ever called directly again.
 			if pkg, ok := node.X.(*ast.Ident); ok && pkg.Name == "argocd" && node.Sel.Name == "PreflightLiveArgoVersion" {
 				note(&preflight, node.Pos())
 			}
 		case *ast.Ident:
+			// The call goes through the `preflightArgoVersion` seam (#3495): it shells kubectl
+			// directly rather than through executeCommand, so without a seam every provisioner
+			// test that drove installArgoCD probed a real cluster. The seam's DEFAULT is asserted
+			// below, so pointing it somewhere else cannot retire this guard quietly.
+			if node.Name == "preflightArgoVersion" {
+				note(&preflight, node.Pos())
+			}
 			if node.Name == "ensureArgoRedisSecret" {
 				note(&redisSecret, node.Pos())
 			}
@@ -92,7 +102,7 @@ func TestArgoVersionPreflightRunsBeforeAnyClusterWrite(t *testing.T) {
 		name string
 		at   int
 	}{
-		{"argocd.PreflightLiveArgoVersion", preflight},
+		{"the version preflight (argocd.PreflightLiveArgoVersion, via the preflightArgoVersion seam)", preflight},
 		{"ensureArgoRedisSecret", redisSecret},
 		{"the `helm repo add` command", repoAdd},
 	} {
@@ -100,6 +110,12 @@ func TestArgoVersionPreflightRunsBeforeAnyClusterWrite(t *testing.T) {
 			t.Fatalf("%s was not found inside installArgoCD — this guard proved nothing. "+
 				"If it was renamed, update this test; if it was REMOVED, that is the defect.", landmark.name)
 		}
+	}
+
+	// The seam must still point at the real check. A seam defaulted to a no-op would satisfy every
+	// ordering assertion above while checking nothing at all.
+	if reflect.ValueOf(preflightArgoVersion).Pointer() != reflect.ValueOf(argocd.PreflightLiveArgoVersion).Pointer() {
+		t.Error("preflightArgoVersion no longer defaults to argocd.PreflightLiveArgoVersion — the guard is wired to something else")
 	}
 
 	if preflight > redisSecret {
@@ -144,16 +160,35 @@ func TestInstallArgoCDSurfacesTheRefusalUnwrapped(t *testing.T) {
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	var result PlanResult
-	err := installArgoCD(t.Context(), newLocalProjectConfig("alethia", "argo"), nil, &result, io.Discard, io.Discard)
-	if err == nil {
-		t.Fatal("installing over an ArgoCD below the measured floor = nil, want the deploy refused")
-	}
-	if !strings.HasPrefix(err.Error(), "refusing to install ArgoCD") {
-		t.Fatalf("the refusal must reach the caller UNWRAPPED — a deliberate refusal dressed as a "+
-			"failure reads as a broken chart. Got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "v3.1.8") {
-		t.Errorf("the refusal must name what it found on the cluster: %v", err)
-	}
+	// The SHIPPED pin (v3.3.9) is inside the window, so this same cluster is now REMEDIATED rather
+	// than refused (#3495) — the deploy proceeds past the preflight and dies at the next stub,
+	// which is how we know it got past.
+	t.Run("the remedy proceeds past the preflight", func(t *testing.T) {
+		var result PlanResult
+		err := installArgoCD(t.Context(), newLocalProjectConfig("alethia", "argo"), nil, &result, io.Discard, io.Discard)
+		if err == nil {
+			t.Fatal("the stubbed kubectl exits 7 for everything after the probe, so this cannot succeed")
+		}
+		if strings.HasPrefix(err.Error(), "refusing to install ArgoCD") {
+			t.Fatalf("the upgrade that moves this cluster INTO the window must not be refused: %v", err)
+		}
+	})
+
+	// The refusal that remains: the pin itself outside the window. 8.6.4 → v3.1.8 is the mapping
+	// the matrix records and marks `unsupported`.
+	t.Run("a refusal reaches the caller unwrapped", func(t *testing.T) {
+		t.Setenv(argocd.ArgoChartVersionEnv, "8.6.4")
+		var result PlanResult
+		err := installArgoCD(t.Context(), newLocalProjectConfig("alethia", "argo"), nil, &result, io.Discard, io.Discard)
+		if err == nil {
+			t.Fatal("installing an ArgoCD below the measured floor = nil, want the deploy refused")
+		}
+		if !strings.HasPrefix(err.Error(), "refusing to install ArgoCD") {
+			t.Fatalf("the refusal must reach the caller UNWRAPPED — a deliberate refusal dressed as a "+
+				"failure reads as a broken chart. Got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "v3.1.8") {
+			t.Errorf("the refusal must name the version it would have installed: %v", err)
+		}
+	})
 }

@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -43,7 +44,28 @@ var (
 	// namespacePostMortem dumps a namespace's pods + events when a helm --wait expires. A seam so
 	// the failure-path test can assert the dump without shelling kubectl (mirrors k8s/probe.go).
 	namespacePostMortem = k8s.NamespacePostMortem
+	// preflightArgoVersion is the live-ArgoCD version check installArgoCD runs before it touches
+	// the cluster. A seam because it is the ONLY cluster-touching call in that function that does
+	// not go through executeCommand: it shells `kubectl` directly, inheriting the process
+	// KUBECONFIG, so every provisioner unit test that drives installArgoCD was really running
+	// kubectl against whatever cluster the developer's environment pointed at (#3495).
+	preflightArgoVersion = argocd.PreflightLiveArgoVersion
 )
+
+// argocdInstallError decides whether an installArgoCD failure is dressed as an install failure.
+//
+// A version-preflight REFUSAL is returned exactly as it was written. installArgoCD keeps it
+// unwrapped deliberately — its own comment says why — and this frame used to undo that, so an
+// operator who was refused read "ArgoCD install failed: refusing to install ArgoCD: …" and went
+// looking for a broken chart. errors.As, not a string match: the sentence is free to change
+// without silently reclassifying the error.
+func argocdInstallError(err error) error {
+	var refusal *argocd.PreflightRefusal
+	if errors.As(err, &refusal) {
+		return err
+	}
+	return fmt.Errorf("ArgoCD install failed: %w", err)
+}
 
 type DeployParams struct {
 	ProjectConfig  *types.ProjectConfig
@@ -973,7 +995,7 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 		setStage("argocd")
 		if err := installArgoCD(ctx, vc, result.Outputs, &result, stdout, stderr); err != nil {
 			result.GitopsStatus = gitopsFailed(argocd.GitopsStepArgocdInstall, err)
-			return &result, fmt.Errorf("ArgoCD install failed: %w", err)
+			return &result, argocdInstallError(err)
 		}
 
 		if gitopsRequested {
@@ -1451,7 +1473,7 @@ func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[str
 	// Returned UNWRAPPED. Four of the check's six states proceed (see argocd/version_preflight.go);
 	// the two that stop are deliberate refusals, not failures, and prefixing them with "failed to
 	// install ArgoCD" is how a refusal gets misread as a broken chart.
-	if err := argocd.PreflightLiveArgoVersion(ctx, stdout); err != nil {
+	if err := preflightArgoVersion(ctx, stdout); err != nil {
 		return err
 	}
 
