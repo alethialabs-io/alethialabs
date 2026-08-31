@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -79,6 +80,16 @@ func captureHetznerLoadBalancers(t *testing.T, provider, clusterName string) {
 	cctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, "bash", script, "--capture-lbs", out, clusterName)
+	// The cleanup script may launch child processes; cancel the whole process group so a hung
+	// hcloud child cannot outlive the bounded capture and hold the teardown open.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Env = os.Environ()
 	combined, runErr := cmd.CombinedOutput()
 	if errors.Is(cctx.Err(), context.DeadlineExceeded) {
