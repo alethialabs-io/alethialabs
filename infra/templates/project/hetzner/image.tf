@@ -358,10 +358,10 @@ locals {
   # `tostring` because the data source exposes the id as a number and `hcloud_server.image` is a
   # string — an untyped concat here would fail late, on the server rather than on the image.
   image_id_arm64 = local.need_arm64 ? (
-    local.talos_image_cache_hit.arm64 ? tostring(local.talos_cache_image.arm64.id) : imager_image.arm64[0].image_id
+    local.talos_image_cache_hit.arm64 ? tostring(local.talos_cache_image.arm64.id) : one(imager_image.arm64[*].image_id)
   ) : ""
   image_id_amd64 = local.need_amd64 ? (
-    local.talos_image_cache_hit.amd64 ? tostring(local.talos_cache_image.amd64.id) : imager_image.amd64[0].image_id
+    local.talos_image_cache_hit.amd64 ? tostring(local.talos_cache_image.amd64.id) : one(imager_image.amd64[*].image_id)
   ) : ""
 }
 
@@ -408,14 +408,20 @@ resource "terraform_data" "talos_image_cache" {
     #    on the returned image, so `with_status = ["available"]` on the lookup is the only place that
     #    can be asserted and this precondition must not pretend otherwise.
     precondition {
-      condition = alltrue([
-        for arch, hit in local.talos_image_cache_hit : (
-          !hit ? true : (
-            alltrue([for k, v in local.talos_image_cache_dims[arch] : lookup(local.talos_cache_image[arch].labels, k, null) == v])
-            && local.talos_cache_image[arch].architecture == local.talos_hcloud_arch[arch]
+      #    Written as a comprehension over `slice(matches, 0, min(1, length(matches)))` rather than
+      #    as `hit ? …check… : true`: the inner loop then runs ZERO times on a miss, so there is no
+      #    null to dereference and no reliance on the conditional operator declining to evaluate the
+      #    untaken branch. That reliance is cheap to avoid and the CI note in infra-templates.yml
+      #    records that `tofu test` runs hetzner on a DIFFERENT engine (1.9.4) from the one that
+      #    plans it — evaluation semantics are not something to assume across two of them.
+      condition = alltrue(flatten([
+        for arch, matches in local.talos_cache_matches : [
+          for img in slice(matches, 0, min(1, length(matches))) : (
+            alltrue([for k, v in local.talos_image_cache_dims[arch] : lookup(img.labels, k, null) == v])
+            && img.architecture == local.talos_hcloud_arch[arch]
           )
-        )
-      ])
+        ]
+      ]))
       error_message = join(" ", [
         "A cached Talos snapshot was returned that does NOT carry every label the cache key asks for,",
         "or whose architecture disagrees with the one requested. The selector and the stamp have come",
