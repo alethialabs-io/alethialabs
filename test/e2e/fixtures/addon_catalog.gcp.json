@@ -26,6 +26,12 @@
 		"values": {
 			"provider": {
 				"name": "google"
+			},
+			"serviceAccount": {
+				"name": "addon-external-dns-sa",
+				"annotations": {
+					"iam.gke.io/gcp-service-account": "external-dns@example-project.iam.gserviceaccount.com"
+				}
 			}
 		},
 		"syncWave": 2

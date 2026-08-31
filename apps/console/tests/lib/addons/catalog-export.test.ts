@@ -13,7 +13,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { EXPORT_CLOUDS, exportCatalogSpecs } from "@/lib/addons/catalog-export";
+import { EXTERNAL_DNS_PROVIDER_IDS } from "@/lib/addons/catalog";
+import {
+	EXPORT_CLOUDS,
+	exportCatalogSpecs,
+	externalDnsFixtureIdentity,
+	externalDnsNeedsIdentity,
+} from "@/lib/addons/catalog-export";
 
 const fixtureFor = (cloud: string) =>
 	resolve(
@@ -88,6 +94,38 @@ describe("add-on catalog export fixture (e2e full-surface seed)", () => {
 		expect(spec.values.provider.webhook.image.repository).toContain(
 			"external-dns-hetzner-webhook",
 		);
+	});
+
+	// #3469's fixture half. A workload-identity provider now REFUSES an empty `workloadIdentity`, so
+	// the three clouds whose native provider authenticates by annotation can only appear in a fixture
+	// with an identity in it. `EXTERNAL_DNS_FIXTURE_IDENTITY` supplies a stand-in — deliberately one
+	// that exists in no account — and these assert what that buys: the ANNOTATION SHAPE, per cloud,
+	// emitted by the catalog rather than restated here.
+	//
+	// Without them the failure mode is silent and specific: `resolveAddOnInstall` used to fall back
+	// to the schema defaults when knobs failed validation, so a fixture that stopped supplying an
+	// identity would have gone back to `provider: cloudflare` on every workload-identity cloud —
+	// #2717 class (c), reintroduced by a rule meant to prevent it.
+	it.each(["aws", "gcp", "azure"] as const)("%s carries the SA annotation its provider authenticates by", (cloud) => {
+		const spec = readFixture(cloud).find((a: { id: string }) => a.id === "external-dns");
+		const sa = spec.values.serviceAccount;
+		expect(sa?.name, `${cloud}: no serviceAccount block — the add-on would run with no identity`).toBeTruthy();
+		expect(Object.entries(sa.annotations ?? {})).toHaveLength(1);
+		const [[annotation, identity]] = Object.entries(sa.annotations);
+		expect(annotation).toMatch(/^[a-z0-9.-]+\//);
+		expect(identity).toBeTruthy();
+		// The add-on's ServiceAccount must not be the platform rail's `external-dns-sa`: the rail
+		// installs into the same namespace and every cloud binds its platform DNS identity to that
+		// name, so sharing it would put one object under two ArgoCD Applications.
+		expect(sa.name).not.toBe("external-dns-sa");
+	});
+
+	// The two tables must agree on WHICH providers need an identity — `EXTERNAL_DNS_PROVIDERS`
+	// (which annotates?) and `EXTERNAL_DNS_FIXTURE_IDENTITY` (what does the fixture put there?).
+	// A null against a provider that annotates makes the fixture unresolvable, and the first place
+	// that would show up is a failed regeneration nobody runs until a chart bump. Swept, not listed.
+	it.each([...EXTERNAL_DNS_PROVIDER_IDS])("%s's fixture identity matches whether it needs one", (provider) => {
+		expect(externalDnsFixtureIdentity(provider) !== null).toBe(externalDnsNeedsIdentity(provider));
 	});
 
 	it("alibaba keeps the catalog default, because the catalog offers it no native provider", () => {
