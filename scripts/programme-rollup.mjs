@@ -433,17 +433,17 @@ export function compositeReached(summary, requiredStage) {
 	// vocabularies have drifted. `indexOf` would answer -1, and -1 compares as "before everything",
 	// which would silently withhold every discredit — the "nothing found" branch reading as "nothing
 	// wrong". `--self-test` fails the build on that drift; here it is `unknown`, which keeps the red.
-	const stage = /** @type {{deploy_stage?: unknown}} */ (summary).deploy_stage;
+	const stage = summary.deploy_stage;
 	if (typeof stage !== "string") return "unknown";
 	const got = DEPLOY_STAGES.indexOf(stage);
 	if (got < 0) return "unknown";
 	// The same trap pointed the other way, and ONE guard covers every shape of it: an undeclared,
 	// misspelled or non-string `reachedAt` all answer -1, and `got >= -1` is true for every run,
 	// which would grant every discredit and quietly restore the bug. A requirement nobody declared is
-	// not a requirement of zero. (A separate `typeof` check here would be dead code — `indexOf` of a
-	// number or of `undefined` is already -1 — and dead code that looks like a guard is worse than
-	// none, because the next reader trusts it.)
-	const need = DEPLOY_STAGES.indexOf(/** @type {string} */ (requiredStage));
+	// not a requirement of zero. (A separate `typeof` check here would be dead code — `findIndex`
+	// matches nothing for a number or for `undefined` either — and dead code that looks like a guard
+	// is worse than none, because the next reader trusts it.)
+	const need = DEPLOY_STAGES.findIndex((s) => s === requiredStage);
 	if (need < 0) return "unknown";
 	return got >= need ? "yes" : "no";
 }
