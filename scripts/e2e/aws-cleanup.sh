@@ -360,10 +360,13 @@ cluster_lb_arns() {
 		# on the first line, which can SIGPIPE the capture, and under `set -o pipefail` that turns
 		# the pipeline's status into 141 — so a load balancer that DOES carry the tag would read as
 		# untagged. Capture first, filter second, exactly as the rest of this change does.
-		tags="$(probe_run load-balancer aws elbv2 describe-tags --resource-arns "$arn" \
-			--query "TagDescriptions[].Tags[?Key=='elbv2.k8s.aws/cluster' && Value=='${CLUSTER}']" --output text || true)"
-		if printf '%s' "$tags" | grep -q .; then
-			printf '%s\n' "$arn"
+		if tags="$(probe_confirm_re load-balancer 'LoadBalancerNotFound' aws elbv2 describe-tags --resource-arns "$arn" \
+			--query "TagDescriptions[].Tags[?Key=='elbv2.k8s.aws/cluster' && Value=='${CLUSTER}']" --output text)"; then
+			if printf '%s' "$tags" | grep -q .; then
+				printf '%s\n' "$arn"
+			fi
+		else
+			printf '  ⚠ could not verify tags for load balancer %s\n' "$arn" >&2
 		fi
 	done <<<"$arns"
 }
