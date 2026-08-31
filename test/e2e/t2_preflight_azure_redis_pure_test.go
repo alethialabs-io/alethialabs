@@ -267,7 +267,9 @@ func TestAzureRedisCaveatIsAppendedNotSubstituted(t *testing.T) {
 			t.Errorf("the annotation replaced the verdict instead of adding to it — %q is missing\ngot: %s", want, got.Detail)
 		}
 	}
-	if i, j := strings.Index(got.Detail, "is offered in westeurope"), strings.Index(got.Detail, "WARNING"); i > j {
+	// Ordering, guarded on both being present so a MISSING piece is reported once, by the loop
+	// above, rather than twice with a second message that names the wrong problem.
+	if i, j := strings.Index(got.Detail, "is offered in westeurope"), strings.Index(got.Detail, "WARNING"); i >= 0 && j >= 0 && i > j {
 		t.Error("the cloud's own finding must come FIRST; the annotations follow it")
 	}
 }
