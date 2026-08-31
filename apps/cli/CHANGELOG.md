@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.6.0...cli-v0.6.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **fabric:** a create-matrix with shared placements built a project that could never apply ([#3345](https://github.com/alethialabs-io/alethialabs/issues/3345)) ([203a655](https://github.com/alethialabs-io/alethialabs/commit/203a65519a1ec821d1cbc7e4fb11e9eadb8bb3cc))
+
 ## [0.6.0](https://github.com/alethialabs-io/alethialabs/compare/cli-v0.5.0...cli-v0.6.0) (2026-08-29)
 
 
