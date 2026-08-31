@@ -148,28 +148,34 @@ const nextConfig: NextConfig = {
 			},
 			{ source: "/ingest/:path*", destination: "https://eu.i.posthog.com/:path*" },
 		];
-		// RFC 9728 protected-resource metadata for the MCP endpoint (#3318). The document is
-		// served by Better Auth's mcp() plugin, whose onRequest hook matches the ABSOLUTE
-		// `/.well-known/oauth-protected-resource…` pathname — but Better Auth is mounted at
-		// /api/auth, so Next never routed those requests to it and they fell through to the
-		// catch-all page render, answering 200 text/html to a discovery request.
+		// The root `.well-known` OAuth discovery documents (#3318, #3511). Better Auth serves both
+		// from plugin onRequest hooks that match the ABSOLUTE pathname, but it is mounted at
+		// /api/auth, so Next never routed those requests to it: they fell through to the catch-all
+		// page render and answered 200 text/html to a discovery request.
 		//
-		// `beforeFiles`, not `afterFiles`: the console owns the `/{org}` wildcard, so a page
-		// route can otherwise claim these paths — which is exactly how the HTML shell came to
-		// answer them. The `:path*` rule is deliberately broad so that a request naming SOME
-		// OTHER resource gets the handler's JSON 404 instead of the same HTML.
-		const oauthProtectedResource = [
-			{
-				source: "/.well-known/oauth-protected-resource",
-				destination: "/api/oauth-protected-resource",
-			},
-			{
-				source: "/.well-known/oauth-protected-resource/:path*",
-				destination: "/api/oauth-protected-resource/:path*",
-			},
-		];
+		// BOTH prefixes, because discovery is a chain — the 401 points at the protected-resource
+		// document, whose `authorization_servers` sends the client to the RFC 8414 §3
+		// authorization-server document, which is a root path too. Rewriting only the first left a
+		// client failing one hop later, at the same HTML shell.
+		//
+		// `beforeFiles`, not `afterFiles`: the console owns the `/{org}` wildcard, so a page route
+		// otherwise claims these paths — which is exactly how the shell came to answer them. The
+		// `:path*` rules are deliberately broad so a request naming some OTHER resource or issuer
+		// gets the handler's JSON 404 instead of the same HTML.
+		const oauthMetadata = ["oauth-protected-resource", "oauth-authorization-server"].flatMap(
+			(document) => [
+				{
+					source: `/.well-known/${document}`,
+					destination: `/api/oauth-metadata/${document}`,
+				},
+				{
+					source: `/.well-known/${document}/:path*`,
+					destination: `/api/oauth-metadata/${document}/:path*`,
+				},
+			],
+		);
 		return {
-			beforeFiles: [...getHost, ...oauthProtectedResource],
+			beforeFiles: [...getHost, ...oauthMetadata],
 			afterFiles: [...docs, ...posthog],
 		};
 	},

@@ -34,9 +34,14 @@ Object.assign(process.env, TEST_ENV);
 // `vi.mock("@better-auth/mcp", ...)`, which takes precedence over this one (see
 // tests/lib/auth/index.test.ts). Integration tests, which DO have a database, use a separate
 // config and never load this file.
+// The third parameter — `{ resource }`, the audience the route verifies tokens against — is
+// DISCARDED here, and that is load-bearing to notice: with only this stub in place, deleting the
+// argument in app/api/mcp/route.ts left the whole suite green while remote MCP auth was dead
+// (#3511). tests/app/api/mcp-route-audience.test.ts declares its own mock, captures all three
+// arguments, and is the only thing standing between that argument and a future refactor.
 vi.mock("@better-auth/mcp", () => ({
   mcp: () => ({ id: "mcp" }),
-  requireMcpAuth: (_auth: unknown, handler: unknown) => handler,
+  requireMcpAuth: (_auth: unknown, handler: unknown, _opts?: unknown) => handler,
 }));
 vi.mock("@better-auth/cimd", () => ({ cimd: () => ({ id: "cimd" }) }));
 vi.mock("@better-auth/cimd/node", () => ({ fetchClientMetadataResource: () => undefined }));
