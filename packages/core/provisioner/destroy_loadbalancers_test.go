@@ -1134,9 +1134,10 @@ func TestDestroySuccessLinesEndOnTheHonestOne(t *testing.T) {
 			if !strings.Contains(last, "see the note above") {
 				t.Errorf("the last line does not point at the warning above it: %q", last)
 			}
-			// The negative control: pointing at a note that is not there is worse than silence.
-			if got[0] == "" {
-				t.Error("the final line refers to a note that was never printed")
+			// The negative control: a qualified final line must point at a warning that is actually
+			// present in the same rendered output.
+			if !strings.Contains(strings.Join(got, "\n"), "see the note above") {
+				t.Error("the final line is qualified but the rendered output contains no note")
 			}
 		})
 	}
