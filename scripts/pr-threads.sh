@@ -24,14 +24,31 @@ owner="${repo%%/*}"; name="${repo##*/}"
 
 if [ "${1:-}" = "--resolve" ]; then
 	[ -n "${2:-}" ] || usage
+	target_id="$2"
+	thread_state="$(gh api graphql -f query='
+	  query($o:String!,$n:String!,$pr:Int!){
+	    repository(owner:$o,name:$n){ pullRequest(number:$pr){
+	      reviewThreads(first:100){ nodes { id isResolved } }
+	    } } }' \
+		-F o="$owner" -F n="$name" -F pr="$pr" \
+		--jq '.data.repository.pullRequest.reviewThreads.nodes' | \
+		jq -r --arg target "$target_id" '.[] | select(.id == $target) | "\(.id)\t\(.isResolved)"')"
+	if [ -z "$thread_state" ]; then
+		echo "refusing to resolve $target_id: it is not a review thread on #${pr}" >&2
+		exit 1
+	fi
+	if [[ "$thread_state" == *$'\ttrue' ]]; then
+		echo "already resolved $target_id"
+		exit 0
+	fi
 	# `isResolved` is echoed back and CHECKED, not assumed: the mutation returns 200 for a thread
-	# it did not change (already resolved, or an id from another PR), and a silent no-op here would
-	# read exactly like success while the gate stayed shut.
+	# it did not change, and a silent no-op here would read exactly like success while the gate stayed
+	# shut. Membership was checked above so a valid thread id from another PR cannot be mutated.
 	out="$(gh api graphql -f query='
 	  mutation($id:ID!){ resolveReviewThread(input:{threadId:$id}){ thread { id isResolved } } }' \
-	  -F id="$2" --jq '.data.resolveReviewThread.thread.isResolved')"
-	[ "$out" = "true" ] || { echo "resolve did not take effect for $2 (got isResolved=$out)" >&2; exit 1; }
-	echo "resolved $2"
+	  -F id="$target_id" --jq '.data.resolveReviewThread.thread.isResolved')"
+	[ "$out" = "true" ] || { echo "resolve did not take effect for $target_id (got isResolved=$out)" >&2; exit 1; }
+	echo "resolved $target_id"
 	exit 0
 fi
 

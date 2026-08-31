@@ -244,7 +244,7 @@ export function parseMergifyConditionBlocks(yamlText) {
 			// rather than dropped, so the failure can name the cause instead of saying the gate
 			// vanished for no reason.
 			if (item[1].startsWith("#")) {
-				commented.push(item[1]);
+				commented.push({ text: item[1], line: j + 1 });
 				continue;
 			}
 			// BOTH quote styles. Stripping only double quotes made a single-quoted
@@ -318,11 +318,11 @@ export function compareThreadGate(conditionBlocks) {
 	// repo-wide) or accepts a shorter list with the gate absent and nothing saying so.
 	for (const b of conditionBlocks) {
 		for (const c of b.commented ?? []) {
-			if (c.startsWith(THREAD_GATE)) {
+			if (c.text.startsWith(THREAD_GATE)) {
 				failures.push(
-					`.mergify.yml:${b.line}: \`- ${c}\` in \`${b.key}\` is UNQUOTED, so YAML reads it as a ` +
+					`.mergify.yml:${c.line}: \`- ${c.text}\` in \`${b.key}\` is UNQUOTED, so YAML reads it as a ` +
 						`comment and the list item is null — the gate is absent and nothing else says so. ` +
-						`Quote it: \`- "${c}"\`.`,
+						`Quote it: \`- "${c.text}"\`.`,
 				);
 			}
 		}
