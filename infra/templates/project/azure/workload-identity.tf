@@ -60,7 +60,7 @@ resource "azurerm_federated_identity_credential" "external_dns_addon" {
   parent_id           = one(azurerm_user_assigned_identity.external_dns[*].id)
   audience            = ["api://AzureADTokenExchange"]
   issuer              = module.aks[0].oidc_issuer_url
-  subject             = "system:serviceaccount:external-dns:addon-external-dns-sa"
+  subject             = "system:serviceaccount:external-dns:addon-external-dns"
 }
 
 # DNS Zone Contributor over the resource group so external-dns (and cert-manager's DNS01

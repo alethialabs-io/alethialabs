@@ -94,8 +94,10 @@ function cloudKnobs(addonId: string, cloud: CloudProvider): Record<string, unkno
 	if (addonId !== "external-dns") return {};
 	const native = EXTERNAL_DNS_NATIVE_PROVIDER[cloud];
 	if (native === null) return {};
-	const identity = EXTERNAL_DNS_FIXTURE_IDENTITY[native];
-	return { provider: native, ...(identity ? { workloadIdentity: identity } : {}) };
+	if (EXTERNAL_DNS_PROVIDERS[native].saAnnotation !== undefined) {
+		return { provider: native, workloadIdentity: INFRA_IDENTITY_PLACEHOLDER, domainFilter: "addon-e2e.invalid" };
+	}
+	return { provider: native };
 }
 
 /**
