@@ -372,6 +372,18 @@ func TestT2RealCloudProvisioning(t *testing.T) {
 		}
 		t.Logf("pre-spend %s", msg)
 	}
+	// #3078: the preflight above covers the NODE shape and nothing else. azure/maxconfig passed it
+	// — "Standard_E2s_v3 is available in westeurope" — then built a real AKS cluster for ~1724s and
+	// died in the apply on `azurerm_managed_redis` with InsufficientCapacity, orphan risk likely.
+	// Managed Redis is a different service with its own regional capacity pool, so it needs its own
+	// question asked before the spend. Silent on every cloud but azure, and on any azure run that
+	// provisions no cache — see t2RequireAzureManagedRedisPreflight for the per-cloud reasons.
+	if fatal, msg := t2RequireAzureManagedRedisPreflight(ctx, provider, region, full); msg != "" {
+		if fatal {
+			t.Fatalf("pre-spend %s", msg)
+		}
+		t.Logf("pre-spend %s", msg)
+	}
 	a05CheckFidelity(t, a05, base)
 
 	var jobID string

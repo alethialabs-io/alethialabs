@@ -102,6 +102,10 @@ on:
         description: "Run the FULL-BAR dimension (max-config: 11 kinds + all 18 add-ons) instead of the cheap green-floor smoke. Heavy + costly, and NO schedule fires it — a dispatch is the only way in. The raised cost ceiling applies on aws; gcp/azure/alibaba/hetzner are unpriced, so dispatch those one at a time and watch them."
         type: boolean
         default: false
+      azure_redis_allow_known_bad:
+        description: "AZURE ONLY, THIS RUN ONLY. Re-test an azure region whose Managed Redis capacity is a MEASURED failure. The pre-spend gate refuses westeurope/Balanced_B0 outright — run 33108860073 died ~1724s into a paid apply there with InsufficientCapacity, orphan risk likely (#3078) — and Azure publishes no capacity API to re-ask with, so the only way to learn whether capacity came back is to buy an apply. Tick this to buy it. Leave it off and the gate keeps refusing, which is the intended steady state. Deliberately an INPUT and not a repo variable: a variable would keep waving the refusal through on every nightly forever."
+        type: boolean
+        default: false
       argo_timeout:
         description: "ArgoCD convergence budget for THIS RUN ONLY, as a Go duration (e.g. 45m). Blank keeps vars.E2E_ARGO_TIMEOUT, and blank there keeps the derived default — which is now the MEASURED 35m for the 18-chart surface, not the 19m30s guess this input was added to test. It answered #2717 class (b) on run 33107415369: kube-prometheus-stack, loki and vault were slow, not stuck (all three cleared by 35m); falco and harbor were still Progressing and are real defects. Keep it for the next question of the same shape — a chart still Progressing with generous room is a ceiling, not a slow start."
         type: string
@@ -1591,6 +1595,22 @@ jobs:
           # A dispatch input is scoped to the single run that asked, and the run's own inputs are a
           # permanent audit trail on its page. The variable stays for a deliberate standing change.
           ALETHIA_E2E_ARGO_TIMEOUT: ${{ inputs.argo_timeout || vars.E2E_ARGO_TIMEOUT }}
+          # ── The azure Managed Redis escape hatch (#3078). ──
+          #
+          #    t2RequireAzureManagedRedisPreflight refuses a (region, sku) pair a real apply has
+          #    already been refused on — today westeurope/Balanced_B0, measured by run 33108860073.
+          #    Capacity DOES come back, and Azure exposes no read-only capacity API to ask with, so
+          #    the only way to re-test is a full paid apply. This input buys exactly one.
+          #
+          #    NO `vars.` FALLBACK, unlike its neighbours above, and for the reason those neighbours
+          #    state: a repo variable is a STANDING change, so setting one here would wave the
+          #    refusal through on every scheduled nightly afterwards — silently reinstating the
+          #    ~1724s failure this gate was built to stop. One run, one dispatch, one audit trail.
+          #
+          #    `&& '1' || ''` is safe here (see the ACM note above for the trap): the TRUE branch is
+          #    a non-empty string, so it cannot fall through to the false branch. On `schedule`
+          #    `inputs.*` is empty ⇒ '' ⇒ the gate refuses, which is the default that costs nothing.
+          ALETHIA_E2E_AZURE_REDIS_ALLOW_KNOWN_BAD: ${{ inputs.azure_redis_allow_known_bad && '1' || '' }}
           ALETHIA_E2E_DAY2_ACCESS_TIMEOUT: ${{ vars.E2E_DAY2_ACCESS_TIMEOUT }}
           ALETHIA_E2E_DAY2_OFFER_TIMEOUT: ${{ vars.E2E_DAY2_OFFER_TIMEOUT }}
           ALETHIA_E2E_KEYLESS_DB_DWELL: ${{ vars.E2E_KEYLESS_DB_DWELL }}
