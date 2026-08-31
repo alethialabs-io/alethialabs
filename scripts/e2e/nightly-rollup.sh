@@ -693,15 +693,20 @@ write_jobs_failed_step() { # <file> <provider> <failed-step-name>
 # third argument is the step's conclusion; pass `null` for the fingerprint of a worker killed
 # mid-step (the runner never finishes uploading a conclusion), or omit the step entirely with
 # `none` to prove teardown_outcome reports `unknown` rather than inventing `done`.
-write_jobs_steps() { # <file> <provider> <teardown-conclusion|null|none>
-	local f="$1" p="$2" concl="$3" steps=""
+#
+# The fourth argument is the JOB's conclusion (default `failure`), a parameter for the same reason
+# write_jobs's is (#2512): T5 pairs a `success` bundle with this payload, and while the job
+# conclusion was an unread constant that fixture could stamp `failure` on a green leg and nobody
+# noticed. It is read now, so the fixture has to mean it.
+write_jobs_steps() { # <file> <provider> <teardown-conclusion|null|none> [job-conclusion]
+	local f="$1" p="$2" concl="$3" job_concl="${4:-failure}" steps=""
 	case "$concl" in
 	none) steps="" ;;
 	null) steps='{"name":"Guaranteed teardown (scope-locked cloud sweep)","conclusion":null},' ;;
 	*) steps="{\"name\":\"Guaranteed teardown (scope-locked cloud sweep)\",\"conclusion\":\"${concl}\"}," ;;
 	esac
-	printf '{"jobs":[{"name":"Provision + verify + teardown (real cloud) (%s)","conclusion":"failure","steps":[%s{"name":"Checkout","conclusion":"success"}]},{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' \
-		"$p" "$steps" >"$f"
+	printf '{"jobs":[{"name":"Provision + verify + teardown (real cloud) (%s)","conclusion":"%s","steps":[%s{"name":"Checkout","conclusion":"success"}]},{"name":"Nightly verdict rollup (5-cloud table + dedup issue)","conclusion":"success"}]}\n' \
+		"$p" "$job_concl" "$steps" >"$f"
 }
 
 run_self_test() {
@@ -768,7 +773,11 @@ run_self_test() {
 	for p in hetzner aws gcp azure alibaba; do
 		write_gate_off "$c/proofs" "$p" 777 1
 	done
-	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
+	# A gate-off leg's job really does exit 0 — it records the skip proof and stops — so the fixture
+	# says `success`. It would pass either way (a gate-off leg never reaches the conclusion read),
+	# and that is precisely why it is worth writing down: the reason this case is green must be the
+	# gate-off discriminator, not a job conclusion that happens not to be consulted.
+	write_jobs "$c/jobs.json" hetzner=success aws=success gcp=success azure=success alibaba=success
 	_a "|hetzner aws gcp azure alibaba|0" "$(CASE_MATRIX=success _derive "$c")" \
 		"explicit gate-off summaries stay SKIP even though all matrix jobs exist (#1683)"
 	_a "0" "$(wc -l <"$c/out/ledger.tsv" | tr -d ' ')" "gate-off legs do not enter the execution ledger"
@@ -788,7 +797,7 @@ run_self_test() {
 	#    would find out from reading either file alone.
 	c="$tmp/dispatch"
 	write_summary "$c/proofs/20260811T090000Z" aws "nightly-777-1" success
-	write_jobs "$c/jobs.json" aws
+	write_jobs "$c/jobs.json" aws=success
 	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
 		"a single-provider dispatch counts the four UNDISPATCHED clouds as SKIP — so the 5-cloud coverage aggregate is unknowable from it"
 	_a "1" "$(wc -l <"$c/out/ledger.tsv" | tr -d ' ')" "a dispatch ledgers ONLY the cloud it ran (the other four leave no row to mislead)"
@@ -832,7 +841,7 @@ run_self_test() {
 	# (3) SUCCESS ⇒ PASS.
 	c="$tmp/s3-success"
 	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-03T031545Z" aws "nightly-777-1" success argocd-ready
-	write_jobs "$c/jobs.json" aws
+	write_jobs "$c/jobs.json" aws=success
 	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" "(3) success ⇒ PASS"
 
 	# (4) EXPLICIT FAILURE ⇒ FAIL.
@@ -906,7 +915,7 @@ run_self_test() {
 	c="$tmp/green"
 	local p
 	for p in hetzner aws gcp azure alibaba; do write_summary "$c/proofs/$p/stamp" "$p" "nightly-777-1" success; done
-	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
+	write_jobs "$c/jobs.json" hetzner=success aws=success gcp=success azure=success alibaba=success
 	_a "||5" "$(CASE_MATRIX=success _derive "$c")" "all-green: 5/5 enabled and no red filed"
 
 	# 9. A MIXED night, which is what a real 5-cloud run looks like once more legs are wired.
@@ -915,7 +924,7 @@ run_self_test() {
 	write_summary "$c/proofs/e2e-proof-aws-777/s" aws "nightly-777-1" failure
 	write_summary "$c/proofs/e2e-proof-gcp-777/s" gcp "nightly-777-1" success
 	write_gate_off "$c/proofs" alibaba 777 1
-	write_jobs "$c/jobs.json" hetzner aws gcp azure alibaba
+	write_jobs "$c/jobs.json" hetzner=success aws=failure gcp=success azure=failure alibaba=success
 	_a "aws azure|hetzner alibaba|3" "$(_derive "$c")" "mixed: aws FAIL + gcp PASS + azure ran-without-proof"
 
 	# 10. The existence cross-check DEGRADING must be loud. A renamed matrix job would otherwise put
@@ -1030,7 +1039,7 @@ run_self_test() {
 	#      express, and the reason the signal is a separate axis rather than a detail on a red.
 	c="$tmp/t5-green-but-unswept"
 	write_summary "$c/proofs/e2e-proof-aws-777/2026-08-11T060000Z" aws "nightly-777-1" success applied
-	write_jobs_steps "$c/jobs.json" aws null
+	write_jobs_steps "$c/jobs.json" aws null success
 	_a "|hetzner gcp azure alibaba|1" "$(CASE_MATRIX=success _derive "$c")" \
 		"(T5) the leg still PASSES — teardown outcome does not rewrite the verdict"
 	_a "aws" "$(_state "$c/out" UNSWEPT)" \
