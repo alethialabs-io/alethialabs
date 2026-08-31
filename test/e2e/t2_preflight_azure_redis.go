@@ -227,6 +227,15 @@ func decideAzureManagedRedisCapacity(probe, region, sku string, offered []string
 		r.Detail = fmt.Sprintf("no Managed Redis sku was resolved for %s, so nothing was checked", region)
 		return r
 	}
+	if normalizeAzureLocation(region) == "" {
+		// A region that folds to nothing matches no offered location, so leg 2 below would REFUSE
+		// it — a refusal caused by our own missing input rather than by anything the cloud said.
+		// That is the wrong direction for this guard to fail in, and it is caught here rather than
+		// left to the membership test to get accidentally right.
+		r.Verdict = preflightUnknown
+		r.Detail = fmt.Sprintf("no azure region was resolved, so Managed Redis sku %q was checked against nothing", sku)
+		return r
+	}
 
 	// ── leg 1: the ledger, FIRST ────────────────────────────────────────────────────────────
 	// Before the cloud read and independent of it. This is the only capacity signal that
