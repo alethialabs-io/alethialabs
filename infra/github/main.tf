@@ -54,6 +54,36 @@ resource "github_repository_ruleset" "dev" {
     pull_request {
       required_approving_review_count = 0 # CI is the gate; instances enqueue once green
       dismiss_stale_reviews_on_push   = true
+
+      # UNRESOLVED REVIEW THREADS BLOCK THE MERGE (#3498). ⚠️ NOT APPLIED YET — see the ordering
+      # note below; `.mergify.yml` leads this deliberately.
+      #
+      # Five PRs squash-merged with their /code-review findings unaddressed (#3433, #3437, #3444,
+      # #3477, #3479 — by four, fifteen and five minutes) because a review is not a required check
+      # and nothing else was consulted. Mergify's queue_conditions now refuse to enqueue a PR with
+      # unresolved threads; this is the same intent expressed where it binds EVERY merge path.
+      #
+      # Why it is needed even though Mergify already refuses: CLAUDE.md §4 permits an instance to
+      # merge a dev-targeted PR itself rather than waiting for the queue. That path never touches
+      # Mergify, so the queue_conditions gate is bypassable by exactly the actor it constrains.
+      # This rule is the half that is not.
+      #
+      # protect-dev ONLY. staging and main receive human promotions of the whole integrated branch,
+      # where one stray inline comment would block a release; the review discipline this enforces
+      # happens on feature PRs.
+      #
+      # ⚠️ THE ORDER IS NOT SYMMETRIC. Applied BEFORE the Mergify half has reached `main` (Mergify
+      # reads its config only from the default branch), Mergify still queues and squash-merges,
+      # GitHub refuses — protect-dev has no bypass actors — and the entry sits in the train with
+      # nothing red to explain it. Mergify first, and apply only once the gate has been OBSERVED
+      # blocking and releasing on a real PR.
+      #
+      # ⚠️ INVISIBLE TO THE DRIFT REPORT. `check-required-checks.mjs --live` compares only
+      # `required_status_checks` context lists, so this sitting unapplied produces ZERO drift
+      # signal and #3333 will not mention it. The apply that closes #3333 carries this rule with
+      # it — an apply the maintainer may run believing it changes two check lists, which also
+      # changes merge semantics.
+      required_review_thread_resolution = true
     }
 
     required_status_checks {

@@ -80,9 +80,30 @@ type-check, lint, unit tests, git, read-only Docker.
 ## 4. Landing work
 
 Open a **non-draft PR into `dev`**. Mergify (`.mergify.yml`) auto-queues every non-draft,
-conflict-free dev PR and squash-merges it once the **required checks** pass, validating each
-PR on its own branch — so you never merge against a `dev` that moved under you. Keep WIP as a
-draft. On a conflict, rebase onto `origin/dev` and push; it re-queues itself.
+conflict-free dev PR **with no unresolved review threads**, and squash-merges it once the
+**required checks** pass, validating each PR on its own branch — so you never merge against a
+`dev` that moved under you. Keep WIP as a draft. On a conflict, rebase onto `origin/dev` and push;
+it re-queues itself.
+
+**An unresolved review finding keeps a PR out of the queue, and RESOLVING IS A SEPARATE STEP FROM
+FIXING.** A review is not a required check, so before #3498 the review and the merge raced by
+construction and the review kept losing — five PRs squash-merged with their findings unaddressed,
+one by four minutes. `#review-threads-unresolved = 0` closes that. Two consequences you will
+otherwise hit:
+
+- **Pushing the fix does not clear the gate.** A thread whose line has moved becomes *outdated*,
+  not *resolved*, and outdated threads still count. Fix the code, push, then resolve the
+  conversation — a PR that sits green and un-queued forever is usually this.
+  `scripts/pr-threads.sh <pr>` lists what is still open (with the outdated ones marked, because
+  they still count); `scripts/pr-threads.sh <pr> --resolve <thread-id>` closes one. `gh` has no
+  built-in for this, so without that script the instruction above names an action you cannot
+  perform. It resolves ONE id at a time on purpose: resolving them all in a batch is
+  indistinguishable from dismissing the review, which is what the gate exists to prevent.
+- **Only INLINE comments create threads.** A top-level PR comment does not, so a review posted as
+  one summary comment gates nothing. That is a silent failure of the gate, not of the PR.
+
+Until the gate has ridden `dev → staging → main` (Mergify reads its config only from the default
+branch), the only thing that actually holds a PR back is opening it as a **draft**.
 
 Letting Mergify land it is the default and almost always right. Merging a **dev**-targeted PR
 yourself is permitted when you have a reason. Merging into `staging`/`main` is not, and neither
