@@ -446,11 +446,22 @@ export const componentWire = z.object({
 
 /** Latest published CLI release (GET /api/releases/cli) — drives the update notice. */
 export const cliLatestReleaseWire = z.object({
-	version: z.string(),
+	version: z.string().regex(/^\d+\.\d+\.\d+$/),
 	release_notes: z.string(),
 	released_at: iso,
-	github_release_url: z.string().nullable(),
-	min_supported_version: z.string().nullable(),
+	github_release_url: z.url().nullable(),
+	min_supported_version: z.string().regex(/^\d+\.\d+\.\d+$/).nullable(),
+});
+
+/** Trusted release-workflow payload accepted by POST /api/releases/cli. */
+export const cliReleasePublishWire = z.object({
+	version: z.string().regex(/^\d+\.\d+\.\d+$/),
+	release_notes: z.string(),
+	released_at: iso,
+	github_release_url: z.url(),
+	commit_sha: z.string().regex(/^[0-9a-f]{40}$/),
+	min_supported_version: z.string().regex(/^\d+\.\d+\.\d+$/).optional(),
+	is_breaking: z.boolean().optional(),
 });
 
 // --- Response envelopes (what the CLI actually decodes off the wire) ---

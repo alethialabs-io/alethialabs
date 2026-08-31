@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	websiteURL = "https://alethialabs.io"
-	docsURL    = "https://alethialabs.io/docs"
+	websiteURL                 = "https://alethialabs.io"
+	docsURL                    = "https://alethialabs.io/docs"
+	skipUpdateNoticeAnnotation = "alethia.io/skip-update-notice"
 )
 
 func init() {
@@ -44,7 +45,10 @@ AWS, GCP, and Azure from the terminal.`,
 	// Runs after any subcommand that doesn't override it — surfaces the upgrade
 	// notice once per day without ever blocking the command.
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
-		update.CheckAndNotify(version.Version)
+		if cmd.Annotations != nil && cmd.Annotations[skipUpdateNoticeAnnotation] == "true" {
+			return
+		}
+		update.CheckAndNotify(version.Version, WebOrigin())
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		printBanner()
