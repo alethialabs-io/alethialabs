@@ -44,7 +44,8 @@ loop, **one unit at a time**:
 4. **Open a NON-DRAFT PR into `dev`** with `Closes #<n>` in the body (title per the unit).
    - **Backend = full-auto.** Do **NOT** run `gh pr merge`. Mergify auto-queues every non-draft,
      conflict-free `dev` PR and squash-merges it in order once required checks pass; the
-     close-on-dev-merge Action then closes the issue. Your job ends at "green non-draft PR open."
+     close-on-dev-merge Action then closes the issue. Your job ends only after review threads are
+     resolved and the green non-draft PR is open.
    - Keep genuinely-unfinished work a **draft** (drafts are excluded from the queue). If Mergify
      reports a **conflict**, rebase onto `origin/dev` and push (it re-queues automatically).
    - **Never** merge to a protected branch, never `gh pr merge --admin`, never target `staging`/`main`.
