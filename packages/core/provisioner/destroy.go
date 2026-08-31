@@ -224,7 +224,7 @@ func retryReleaseAndDestroy(
 	// an unrelated reason, a bare Clean bought a second full `tofu destroy` — 10-15 minutes — that
 	// changed nothing. This function's own rationale is "the second release positively removed what
 	// the first could not"; Released is that fact, and Clean was only ever a proxy for it.
-	if second.Clean && second.Released > 0 {
+	if second.Clean && (second.Released > 0 || len(rel.Remaining) > 0) {
 		return adopted, destroy()
 	}
 	return adopted, destroyErr
@@ -311,7 +311,7 @@ func adoptRetryOutcome(first, second releaseOutcome) (releaseOutcome, string) {
 		// Unknown is the single field that keeps "there may be more" apart from "this is all of
 		// it". Dropping it renders the definitive branch — "Still holding one when the destroy
 		// ran: A." — over a list nobody can now vouch for.
-		first.Unknown = first.Unknown || second.Unknown
+		first.Unknown = first.Unknown || second.Unknown || second.Skipped != ""
 		return first, "   The second release established nothing new — keeping what the first one " +
 			"saw, and not retrying the destroy."
 	}
