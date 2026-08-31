@@ -65,37 +65,68 @@ const mcpHandler = createMcpHandler(
 // default made the 401 advertise metadata for a resource nobody serves AND made every correctly
 // issued token fail audience verification — MCP could not authenticate at all, not just fail to
 // be discovered. Same constant as the plugin's; see lib/auth/mcp-resource.ts.
-const handler = requireMcpAuth(
-	auth,
-	async (_req, accessTokenClaims) => {
-		const subject = accessTokenClaims.sub;
-		if (typeof subject !== "string" || subject.length === 0) {
-			return new Response(JSON.stringify({ error: "Access token carries no subject." }), {
-				status: 401,
-				headers: { "content-type": "application/json" },
-			});
-		}
-		const actor = await getActiveScope(subject);
+//
+// Deleting that argument leaves types, lint and the whole suite green while remote MCP auth is
+// dead, which is why tests/app/api/mcp-route-audience.test.ts asserts the value that reaches the
+// library rather than trusting the wiring to stay put (#3511).
+/** Resolves a verified access token into the same Actor every other caller uses. */
+const withActorFromToken: Parameters<typeof requireMcpAuth>[1] = async (_req, accessTokenClaims) => {
+	const subject = accessTokenClaims.sub;
+	if (typeof subject !== "string" || subject.length === 0) {
+		return new Response(JSON.stringify({ error: "Access token carries no subject." }), {
+			status: 401,
+			headers: { "content-type": "application/json" },
+		});
+	}
+	const actor = await getActiveScope(subject);
 
-		// The connector is a paid/ee surface; self-host (no Stripe) is always enabled.
-		if (!(await isAiSurfaceEnabled(actor.orgId))) {
-			return new Response(
-				JSON.stringify({
-					error: "AI features require an active plan. Upgrade to use the connector.",
-				}),
-				{ status: 403, headers: { "content-type": "application/json" } },
-			);
-		}
+	// The connector is a paid/ee surface; self-host (no Stripe) is always enabled.
+	if (!(await isAiSurfaceEnabled(actor.orgId))) {
+		return new Response(
+			JSON.stringify({
+				error: "AI features require an active plan. Upgrade to use the connector.",
+			}),
+			{ status: 403, headers: { "content-type": "application/json" } },
+		);
+	}
 
-		// Bind the token-derived actor for the whole request so currentActor()/
-		// requireOwner() inside the tools resolve to it instead of a (absent) session.
-		return runWithActor(actor, () => mcpHandler.fetch(_req));
-	},
-	// `undefined` (not `{ resource: null }`) when the deployment cannot form a resource: the
-	// library validates `opts.resource` eagerly, so passing a non-URL here would throw at module
-	// load. Without a resource, mcp() is not registered either — the route can only 401.
-	mcpResourceUrl !== null ? { resource: mcpResourceUrl } : undefined,
-);
+	// Bind the token-derived actor for the whole request so currentActor()/
+	// requireOwner() inside the tools resolve to it instead of a (absent) session.
+	return runWithActor(actor, () => mcpHandler.fetch(_req));
+};
+
+/**
+ * The deployment cannot form an MCP resource (no absolute, https base URL), so `mcp()` was never
+ * registered and there is no OAuth provider behind this route.
+ *
+ * 503 rather than the library's default 401 (#3511). That default advertises
+ * `resource_metadata=…/.well-known/oauth-protected-resource/api/auth` — a document this
+ * deployment deliberately 404s, since it describes the authorization server rather than the
+ * resource. Pointing a client at a document we answer 404 to is a worse answer than saying the
+ * feature is not configured.
+ */
+function notConfigured(): Response {
+	return new Response(
+		JSON.stringify({
+			jsonrpc: "2.0",
+			error: {
+				code: -32000,
+				message:
+					"MCP is not configured on this deployment: NEXT_PUBLIC_APP_URL must be an absolute https URL.",
+			},
+			id: null,
+		}),
+		{ status: 503, headers: { "content-type": "application/json" } },
+	);
+}
+
+// The ternary is what keeps `requireMcpAuth` off the unconfigured path entirely: it validates
+// `opts.resource` EAGERLY, so calling it with a null resource would throw at module load and take
+// the route down instead of answering 503.
+const handler =
+	mcpResourceUrl === null
+		? notConfigured
+		: requireMcpAuth(auth, withActorFromToken, { resource: mcpResourceUrl });
 
 // POST only. 1.7's upgrade guide requires dropping the MCP-route GET and DELETE exports
 // (the SSE/session transports they served are the `legacy` mode now rejected above).

@@ -24,6 +24,30 @@ const MCP_RESOURCE_PATH = "/api/mcp";
 export const PROTECTED_RESOURCE_METADATA_PREFIX = "/.well-known/oauth-protected-resource";
 
 /**
+ * Where Better Auth is mounted — `app/api/auth/[...all]/route.ts`.
+ *
+ * Both the OAuth issuer and the authorization-server metadata path are built from it: the plugin
+ * matches `/.well-known/oauth-authorization-server<issuer path>`, and the issuer's path IS this.
+ */
+export const AUTH_BASE_PATH = "/api/auth";
+
+/**
+ * RFC 8414 §3: the authorization-server metadata for an issuer whose URL carries a path lives at
+ * `/.well-known/oauth-authorization-server` with that path appended.
+ *
+ * This is the ONLY discovery form RFC 8414 defines, and it is the one a client reaches after
+ * following `authorization_servers` out of the protected-resource document. Better Auth also
+ * answers the `<base>/.well-known/oauth-authorization-server` form, which is what made this look
+ * like it worked: that form is inside the auth route and has always been reachable.
+ */
+export const AUTHORIZATION_SERVER_METADATA_PREFIX = "/.well-known/oauth-authorization-server";
+
+/** The path this deployment must serve RFC 8414 authorization-server metadata at. */
+export function authorizationServerMetadataPath(): string {
+	return `${AUTHORIZATION_SERVER_METADATA_PREFIX}${AUTH_BASE_PATH}`;
+}
+
+/**
  * The hosts Better Auth accepts over plain `http`.
  *
  * Mirrors `isLoopbackHost` in `@better-auth/mcp` DELIBERATELY, including its quirks: it compares
