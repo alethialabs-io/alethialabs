@@ -131,7 +131,7 @@ module "iam_assumable_role_external_dns" {
   create_role = true
   role_name   = "${var.eks_cluster_name}-external-dns"
   role_policy_arns = {
-    external_dns_policy = "arn:aws:iam::aws:policy/AmazonRoute53FullAccess"
+    external_dns_policy = aws_iam_policy.external_dns.arn
   }
   oidc_providers = {
     main = {
@@ -145,6 +145,26 @@ module "iam_assumable_role_external_dns" {
       namespace_service_accounts = ["external-dns:external-dns-sa", "external-dns:addon-external-dns", "cert-manager:cert-manager"]
     }
   }
+}
+
+resource "aws_iam_policy" "external_dns" {
+  name_prefix = "${var.eks_cluster_name}-external-dns-"
+  description = "Route53 access for the project's external-dns hosted zone"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["route53:ChangeResourceRecordSets", "route53:ListResourceRecordSets"]
+        Resource = var.external_dns_zone_id == "" ? "arn:aws:route53:::hostedzone/00000000" : "arn:aws:route53:::hostedzone/${var.external_dns_zone_id}"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["route53:GetChange", "route53:ListHostedZones", "route53:ListHostedZonesByName", "route53:ListTagsForResource"]
+        Resource = "*"
+      },
+    ]
+  })
 }
 
 # Least-privilege: read-only on the PROJECT'S secrets only (custom-secrets prefix + the
@@ -445,4 +465,3 @@ resource "aws_iam_policy" "aws_load_balancer_controller" {
 }
 EOT
 }
-

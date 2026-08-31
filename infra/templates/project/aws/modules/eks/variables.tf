@@ -53,6 +53,12 @@ variable "eks_cluster_name" {
   description = "Desired cluster name"
 }
 
+variable "external_dns_zone_id" {
+  type        = string
+  description = "The single Route53 hosted zone external-dns may mutate. Empty disables record mutation."
+  default     = ""
+}
+
 variable "eks_cluster_version" {
   type        = string
   description = "Desired Kubernetes cluster version"
