@@ -94,6 +94,11 @@ otherwise hit:
 - **Pushing the fix does not clear the gate.** A thread whose line has moved becomes *outdated*,
   not *resolved*, and outdated threads still count. Fix the code, push, then resolve the
   conversation — a PR that sits green and un-queued forever is usually this.
+  `scripts/pr-threads.sh <pr>` lists what is still open (with the outdated ones marked, because
+  they still count); `scripts/pr-threads.sh <pr> --resolve <thread-id>` closes one. `gh` has no
+  built-in for this, so without that script the instruction above names an action you cannot
+  perform. It resolves ONE id at a time on purpose: resolving them all in a batch is
+  indistinguishable from dismissing the review, which is what the gate exists to prevent.
 - **Only INLINE comments create threads.** A top-level PR comment does not, so a review posted as
   one summary comment gates nothing. That is a silent failure of the gate, not of the PR.
 

@@ -218,6 +218,7 @@ export function parseMergifyConditionBlocks(yamlText) {
 		const indent = key[1].length;
 		const items = [];
 		const commented = [];
+		let nested = null;
 		for (let j = i + 1; j < lines.length; j++) {
 			const line = lines[j];
 			if (line.trim() === "" || /^\s*#/.test(line)) continue;
@@ -225,6 +226,17 @@ export function parseMergifyConditionBlocks(yamlText) {
 			if (lead <= indent) break;
 			const item = /^\s*-\s*(.*?)\s*$/.exec(line);
 			if (!item) continue;
+			// ⚠️ ONLY THE BLOCK'S OWN ITEMS. Flattening on indent alone attributed everything
+			// nested under a `- or:` / `- and:` to the enclosing block, so a gate sitting inside
+			// `- or: [gate, label=override]` — fully bypassable by anyone who can add a label —
+			// read as correctly placed. Depth is tracked so a nested item is never counted as a
+			// top-level condition of this block.
+			if (/^(or|and|not):\s*$/.test(item[1])) {
+				nested = lead;
+				continue;
+			}
+			if (nested !== null && lead > nested) continue;
+			nested = null;
 			// ⚠️ AN UNQUOTED `- #…` IS A YAML COMMENT, and the list item is therefore null. This
 			// parser must agree with YAML about that or it reports the gate PRESENT while Mergify
 			// sees a null — a guard whose "nothing found" branch is indistinguishable from
@@ -235,7 +247,12 @@ export function parseMergifyConditionBlocks(yamlText) {
 				commented.push(item[1]);
 				continue;
 			}
-			items.push(item[1].replace(/^"|"$/g, ""));
+			// BOTH quote styles. Stripping only double quotes made a single-quoted
+			// `- '#review-threads-unresolved = 0'` invisible twice over: it does not start with
+			// `#`, so it is not caught as the YAML-comment footgun, and the leading `'` defeats
+			// the startsWith below — so the gate present-but-single-quoted in one block read as
+			// absent from both, and the missing-eviction half shipped green.
+			items.push(item[1].replace(/^(['"])(.*)\1$/, "$2"));
 		}
 		blocks.push({ key: key[2], line: i + 1, items, commented });
 	}
@@ -252,18 +269,49 @@ export function parseMergifyConditionBlocks(yamlText) {
  */
 export function compareThreadGate(conditionBlocks) {
 	const failures = [];
-	const has = (k) => conditionBlocks.filter((b) => b.key === k).some((b) => b.items.some((i) => i.startsWith(THREAD_GATE)));
-	for (const dead of ["merge_conditions", "success_conditions"]) {
-		if (has(dead)) {
-			failures.push(
-				`.mergify.yml: \`${THREAD_GATE}\` is in \`${dead}\`, where it cannot work. Mergify evaluates ` +
-					`that block on the TEMPORARY MERGE, not on the pull request — a fresh PR with no review threads — ` +
-					`so the condition reads 0 = 0 and is true forever: installed and inert. And if it is not dead it ` +
-					`is worse, because an unsatisfied CONDITION is not a FAILED CHECK: Mergify does not eject the PR, ` +
-					`it holds the head of the train pending indefinitely with no checks_timeout to break it. ` +
-					`Move it to queue_conditions and auto_merge_conditions.`,
-			);
+	// The gate is `#review-threads-unresolved = 0` and NOTHING ELSE. Matching the key alone left
+	// the operator and the value unchecked, and both directions are silent: `>= 0` can never be
+	// false, so the gate is installed and inert — exactly the state the placement rules exist to
+	// prevent — while `> 0` inverts it, so nothing WITHOUT unresolved findings can ever queue and
+	// the dev queue stops. Neither produced a failure.
+	const gateItems = (k) =>
+		conditionBlocks.filter((b) => b.key === k).flatMap((b) => b.items.filter((i) => i.startsWith(THREAD_GATE)).map((i) => ({ item: i, line: b.line })));
+	const has = (k) => gateItems(k).length > 0;
+	for (const k of ["queue_conditions", "auto_merge_conditions", "merge_conditions", "success_conditions"]) {
+		for (const { item, line } of gateItems(k)) {
+			if (!/^#review-threads-unresolved\s*=\s*0$/.test(item)) {
+				failures.push(
+					`.mergify.yml:${line}: \`${item}\` in \`${k}\` is not the gate. It must be exactly ` +
+						`\`${THREAD_GATE} = 0\`: \`>= 0\` can never be false, so the gate is installed and inert, ` +
+						`and \`> 0\` inverts it so nothing without unresolved findings can ever queue and the dev ` +
+						`queue stops. Both read as present to a check that only matches the key.`,
+				);
+			}
 		}
+	}
+	// The two dead placements are dead for DIFFERENT reasons, and one of the two explanations is
+	// false about the other. merge_conditions is evaluated on the temporary merge — a synthetic
+	// commit with no review threads — so the count really is always 0. success_conditions IS
+	// evaluated on the pull request, so the count is real; its defect is only that it does not
+	// EVICT. Emitting the temporary-merge rationale for both told a reader something untrue about
+	// the config in front of them.
+	if (has("merge_conditions")) {
+		failures.push(
+			`.mergify.yml: \`${THREAD_GATE}\` is in \`merge_conditions\`, where it cannot work. Mergify ` +
+				`evaluates that block on the TEMPORARY MERGE, not on the pull request — a fresh commit with no ` +
+				`review threads — so the condition reads 0 = 0 and is true forever: installed and inert. And if ` +
+				`it is not dead it is worse, because an unsatisfied CONDITION is not a FAILED CHECK: Mergify does ` +
+				`not eject the PR, it holds the head of the train pending indefinitely with no checks_timeout to ` +
+				`break it. Move it to queue_conditions and auto_merge_conditions.`,
+		);
+	}
+	if (has("success_conditions")) {
+		failures.push(
+			`.mergify.yml: \`${THREAD_GATE}\` is in \`success_conditions\`. That block IS evaluated on the ` +
+				`pull request, so the count is real — but it only decides how the merge protection REPORTS, and it ` +
+				`never evicts a PR already in the train. #3444 lost that race by four minutes. ` +
+				`Move it to queue_conditions and auto_merge_conditions.`,
+		);
 	}
 	// The quoting footgun, and it is silent in both directions: YAML reads `- #foo` as a comment
 	// and the item becomes null, so Mergify either rejects the whole config (nothing merges,
@@ -530,6 +578,30 @@ ${list.map((c) => `      - "check-success=${c}"`).join("\n")}
 	P("...and the parser does not count it as present", parseMergifyConditionBlocks(unquoted).filter((b) => b.key === "queue_conditions").every((b) => !b.items.some((i) => i.startsWith("#review-threads-unresolved"))));
 	P("a different condition in merge_conditions is not mistaken for the gate", compareThreadGate(parseMergifyConditionBlocks(mergify(["A"]).replace("    merge_conditions:", '    merge_conditions:\n      - "#commits-behind > 0"'))).length === 0);
 
+	// ── THREE MORE BLIND SPOTS, each found by mutating the REAL .mergify.yml and each silent. ──
+	//
+	// The placement rules above all matched the gate by its KEY, so the operator and the value went
+	// unchecked in both directions.
+	const both = ["queue_conditions", "auto_merge_conditions"];
+	const withOp = (op) => compareThreadGate(parseMergifyConditionBlocks(withGate(both).replaceAll("#review-threads-unresolved = 0", `#review-threads-unresolved ${op}`)));
+	P("`>= 0` is a failure — it can never be false, so the gate is installed and inert", withOp(">= 0").some((f) => /not the gate/.test(f)));
+	P("`> 0` is a failure — inverted, nothing without findings could ever queue", withOp("> 0").some((f) => /not the gate/.test(f)));
+	P("...and the exact gate still passes, so the check is not just 'any gate is wrong'", withOp("= 0").length === 0);
+
+	// SINGLE quotes are valid YAML and were invisible: not caught as the `#` comment footgun, and
+	// the leading quote defeated the key match — so a gate single-quoted in one block read as
+	// absent from BOTH, and the missing-eviction half (#3444) shipped green.
+	const singleQuoted = withGate(both).replace('      - "#review-threads-unresolved = 0"', "      - '#review-threads-unresolved = 0'");
+	P("a SINGLE-quoted gate is seen (valid YAML, and it was invisible)", compareThreadGate(parseMergifyConditionBlocks(singleQuoted)).length === 0);
+	const singleQuotedOneSided = singleQuoted.replace("      - '#review-threads-unresolved = 0'", "");
+	P("...so a single-quoted gate in only ONE block is still caught as one-sided", compareThreadGate(parseMergifyConditionBlocks(singleQuotedOneSided)).some((f) => /but not/.test(f)));
+
+	// A gate nested under `- or:` is bypassable by anything else in the or — and flattening on
+	// indent alone attributed it to the enclosing block, so a fully bypassable gate read as
+	// correctly placed.
+	const nested = withGate(both).replace('      - "#review-threads-unresolved = 0"', '      - or:\n        - "#review-threads-unresolved = 0"\n        - "label=override"');
+	P("a gate nested under `- or:` does not count as a top-level condition", compareThreadGate(parseMergifyConditionBlocks(nested)).some((f) => /but not/.test(f)));
+
 	const wiring = parseRulesetWiring(main);
 	const hclAll = parseRequiredStatusChecks(vars);
 	const devExcluded = parseDevFilter(main);
@@ -630,7 +702,8 @@ function main() {
 	const { failures, notes, devHcl, mergify } = compare({ hclAll, devExcluded, wiring, mergifyBlocks, divergence });
 	// The thread gate names no CHECK, so `compare` above is structurally blind to it — which is
 	// exactly why its placement needs its own question asked.
-	failures.push(...compareThreadGate(conditionBlocks));
+	const gateFailures = compareThreadGate(conditionBlocks);
+	failures.push(...gateFailures);
 
 	if (argv.includes("--live")) {
 		const repo = process.env.GITHUB_REPOSITORY ?? "alethialabs-io/alethialabs";
@@ -649,7 +722,17 @@ function main() {
 			if (row.extra.length) console.log(`  - the ruleset requires, the HCL does NOT: ${row.extra.map((c) => `\`${c}\``).join(", ")} — an apply would REMOVE these`);
 		}
 		if (drifted) console.log(`\nThe fix is a \`tofu apply\` in \`infra/github/\`, which is the maintainer's — see #2606. Nothing here can close this by itself.`);
-		process.exit(drifted ? 2 : 0);
+		// REPORTED HERE TOO. These were computed above and then thrown away: this branch exits
+		// without ever reading `failures`, so the drift report could never mention a misplaced
+		// review gate it had just found. The PR-time run still catches it, so this was a missing
+		// REPORT rather than a missed merge — but a report that silently drops the one finding it
+		// already holds is the failure mode this file exists to argue against.
+		if (gateFailures.length) {
+			console.log(`\n## The review-thread gate\n`);
+			for (const f of gateFailures) console.log(`- ${f}`);
+			console.log(`\nThis is a \`.mergify.yml\` problem, not ruleset drift — no \`tofu apply\` will fix it.`);
+		}
+		process.exit(drifted || gateFailures.length ? 2 : 0);
 	}
 
 	for (const n of notes) console.log(`::warning::check-required-checks: ${n}`);
