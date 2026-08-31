@@ -50,6 +50,17 @@ AVD-AWS-0104
 # self-tamper / admin-attach / org access), and a monthly Budget. Accepted, reviewed.
 AVD-AWS-0345
 
+# infra/aws-oidc runner ECR repository (#3438) keeps MUTABLE tags — AVD-AWS-0031. Both publishers
+# re-point `:latest` at every release (release-runner.yml on a version, deploy-fleet-aws.yml on a
+# dev push), and IMMUTABLE rejects the second push of an existing tag — which would reintroduce
+# the exact failure this repository was created to end, with a different error string. What the
+# check is really protecting is a deployment pinned to a tag that later moves; the semver tags
+# release-please mints are each pushed once and never re-pointed, and the fleet's task definition
+# is what pins. Accepted, reviewed. (The CMK finding on the same resource, AVD-AWS-0033, is LOW and
+# below this scan's HIGH,CRITICAL gate — its rationale is in runner-ecr.tf: the contents are the
+# same bytes we publish publicly to ghcr.io.)
+AVD-AWS-0031
+
 # infra/aws-oidc e2e budget SNS topic (BYOC A1.1) is INTENTIONALLY unencrypted — AVD-AWS-0095.
 # AWS Budgets publishes cost alerts via budgets.amazonaws.com, which cannot publish to a customer
 # CMK-encrypted topic, and the AWS-managed alias/aws/sns key does not grant Budgets kms:GenerateDataKey

@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "provider": "aws",
+  "endpoint_surfaced": true,
+  "endpoint": "https://18745F8F361768A2B974C3129C687B4F.sk1.us-east-1.eks.amazonaws.com",
+  "kube_reachable": true,
+  "kube_authorized": true,
+  "auth_action": "* / *",
+  "ready_nodes": 3,
+  "argocd_url_checked": true,
+  "argocd_url": "https://argocd.33302436449-1.e2e.alethialabs.io",
+  "argocd_url_reachable": true,
+  "verdict": "✅ day2-access: endpoint surfaced=true · kube reachable=true authorized=true (can-i * / *) · nodes ready=3 · argocd-url reachable=true (https://argocd.33302436449-1.e2e.alethialabs.io)"
+}

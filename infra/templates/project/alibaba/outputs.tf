@@ -33,7 +33,7 @@ output "rrsa_oidc_provider_arn" {
 
 output "external_secrets_ram_role_arn" {
   description = "RRSA RAM role ARN for the external-secrets operator (gates the alibaba ClusterSecretStore render)"
-  value       = local.eso_rrsa_enabled ? alicloud_ram_role.external_secrets[0].arn : ""
+  value       = local.eso_rrsa_enabled ? one(alicloud_ram_role.external_secrets[*].arn) : ""
 }
 
 #########################################################################

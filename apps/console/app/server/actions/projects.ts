@@ -287,11 +287,27 @@ async function writeComponents(
 ) {
 	const base = { project_id: projectId, environment_id: environmentId };
 	await tx.insert(projectNetwork).values({ ...base, ...data.network });
+
+	// The cluster belongs to a FABRIC, not an environment, so its row must carry `fabric_id` from
+	// the moment it is written. Nothing else sets it at runtime: the only filler was a
+	// migration-time backfill in programmables.sql, which cannot reach a project created after it
+	// ran. A null here does not read as a null — it reads as the entire isolation ladder being
+	// unreachable, because `namespace`/`vcluster` envs own no cluster row and resolve ONLY by
+	// Fabric (lib/queries/cluster-for-env.ts). See the same fix in lib/cli/project-components.ts.
+	const [envRow] = await tx
+		.select({ fabric_id: projectEnvironments.fabric_id })
+		.from(projectEnvironments)
+		.where(eq(projectEnvironments.id, environmentId))
+		.limit(1);
+	const clusterBase = envRow?.fabric_id
+		? { ...base, fabric_id: envRow.fabric_id }
+		: base;
+
 	// Dual-write the cluster's admins: the row keeps its cluster_admins JSONB (rollback net, dropped
 	// in a follow-up) AND each admin is normalized into cluster_admins (username + text[] groups + FK).
 	const [insertedCluster] = await tx
 		.insert(projectCluster)
-		.values({ ...base, ...data.cluster })
+		.values({ ...clusterBase, ...data.cluster })
 		.returning({ id: projectCluster.id });
 	if (insertedCluster && data.cluster?.cluster_admins?.length) {
 		await tx.insert(clusterAdmins).values(

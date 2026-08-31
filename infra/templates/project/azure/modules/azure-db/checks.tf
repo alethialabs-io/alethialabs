@@ -24,7 +24,7 @@ check "exactly_one_engine_is_created" {
 # fails on first connect. Catch it here, where it is still a plan.
 check "server_endpoint_is_resolvable" {
   assert {
-    condition     = var.engine == "postgres" ? azurerm_postgresql_flexible_server.this[0].fqdn != "" : azurerm_mysql_flexible_server.this[0].fqdn != ""
+    condition     = var.engine == "postgres" ? one(azurerm_postgresql_flexible_server.this[*].fqdn) != "" : one(azurerm_mysql_flexible_server.this[*].fqdn) != ""
     error_message = "The server produced no FQDN — every service binding to this database would silently resolve to nothing."
   }
 }

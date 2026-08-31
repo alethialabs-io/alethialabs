@@ -9,8 +9,17 @@
 //
 // Usage:
 //   pnpm -F console org:set-plan <org-slug> <community|team|enterprise> [--status active] [--months 12]
+//   pnpm -F console org:set-plan <org-slug> enterprise --perpetual
 //
 // `active`/`trialing` grant the plan's entitlements; `community` (or --status none) resets.
+//
+// `--perpetual` writes a NULL `current_period_end` — the open-ended grant that
+// lib/billing/plan.ts isManualGrantExpired() already documents as never lapsing ("An
+// open-ended grant (currentPeriodEnd null) never lapses"). Without it this tool could only
+// ever write now()+months, so a permanent grant — an internal testing org, a partner, a
+// perpetual contract — had to be renewed on a calendar nobody keeps, and would silently
+// drop to community the day it lapsed. The state was reachable in the schema and by the
+// resolver, and unreachable by the only tool that writes it.
 
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -52,10 +61,19 @@ async function main() {
 	loadRootEnv();
 	const [slug, plan] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
 	const status = arg("status", plan === "community" ? "none" : "active");
+	const perpetual = process.argv.includes("--perpetual");
 	const months = Number(arg("months", "12"));
 
 	if (!slug || !PLANS.has(plan)) {
 		console.error("Usage: org:set-plan <org-slug> <community|team|enterprise> [--status active] [--months 12]");
+		process.exit(1);
+	}
+	if (perpetual && plan === "community") {
+		console.error("✗ --perpetual is meaningless with `community` — that resets the grant.");
+		process.exit(1);
+	}
+	if (!perpetual && (!Number.isFinite(months) || months <= 0)) {
+		console.error(`✗ --months must be a positive number (got "${arg("months", "12")}").`);
 		process.exit(1);
 	}
 	if (!STATUSES.has(status)) {
@@ -77,7 +95,10 @@ async function main() {
 		}
 		const live = status === "active" || status === "trialing";
 		const periodStart = live ? sql`now()` : sql`null`;
-		const periodEnd = live ? sql`now() + (${months} || ' months')::interval` : sql`null`;
+		// NULL end = open-ended. isManualGrantExpired() only lapses a grant that HAS an end date,
+		// so this is the difference between "paid until a date" and "paid, full stop".
+		const periodEnd =
+			live && !perpetual ? sql`now() + (${months} || ' months')::interval` : sql`null`;
 
 		await sql`
 			insert into organization_billing
@@ -92,7 +113,7 @@ async function main() {
 		`;
 		console.log(
 			`✓ ${org.name} (${slug}) → plan=${plan} status=${status}` +
-				(live ? ` for ${months} months` : ""),
+				(live ? (perpetual ? " — PERPETUAL (no term end; never lapses)" : ` for ${months} months`) : ""),
 		);
 		await sql.end();
 		process.exit(0);

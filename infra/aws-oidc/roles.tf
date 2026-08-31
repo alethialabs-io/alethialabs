@@ -89,7 +89,11 @@ data "aws_iam_policy_document" "runner_release_deployer" {
       "ecr:CompleteLayerUpload",
       "ecr:PutImage",
     ]
-    resources = ["arn:aws:ecr:${var.runner_aws_region}:${local.account_id}:repository/${var.runner_ecr_repository}"]
+    # The repository ITSELF, not a re-interpolated name. Until #3438 this was a hand-built ARN
+    # string, and the repository it named had never been created by anything — so the role held
+    # `ecr:PutImage` on nothing and every `release-runner` run 404'd on the push. Referencing the
+    # resource makes the grant and the registry impossible to point at different repositories.
+    resources = [aws_ecr_repository.runner.arn]
   }
   # Force a new deployment on the single runner service.
   statement {

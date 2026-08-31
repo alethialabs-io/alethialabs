@@ -1135,6 +1135,13 @@ jobs:
       # or widens in silence (gcp-e2e's OIDC trust went ref-only, killing every workflow_dispatch
       # from dev while the scheduled run kept passing). Twice is a class.
       #
+      # A THIRD direction (#3292): a default that is not absent but OPEN. `ssh_allowed_cidrs`
+      # defaults to `["0.0.0.0/0", "::/0"]` in cp-hetzner, status and sandbox, straight into the
+      # source_ips of a port-22 firewall rule — and two of those three stacks are applied by
+      # `tofu apply -auto-approve` on push to main with nothing supplying a narrower value, so the
+      # open default IS the live configuration. The empty-default rule cannot see it: the value is
+      # not empty and it steers nothing, it is simply what gets applied.
+      #
       # Nothing in CI can catch this by running tofu: no workflow runs `tofu plan`, and `validate`
       # evaluates neither `check`, `validation` nor `prevent_destroy`. So it is a static read of the
       # HCL, ratcheting against infra/tfvars-safety-baseline.json — new empty defaults fail on the

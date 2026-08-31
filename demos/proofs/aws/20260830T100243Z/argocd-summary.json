@@ -1,0 +1,11 @@
+{
+  "asserted_at": "2026-08-30T09:21:31Z",
+  "assertion": "AssertArgoReposConverge",
+  "outcome": "converged",
+  "expected_total": 25,
+  "healthy_synced": 25,
+  "observed_total": 26,
+  "losers": null,
+  "timeout_seconds": 2100,
+  "verdict": "25 of 25 expected Applications Healthy+Synced"
+}

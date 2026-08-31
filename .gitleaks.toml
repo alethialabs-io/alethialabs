@@ -20,6 +20,26 @@ regexes = [
   '''openfga-dev-secret''',
   '''-dev-secret''',
   '''-dev-password''',
+  # The cli-demo e2e console's credential-encryption key. `lib/crypto/secrets.ts` does
+  # `Buffer.from(raw, "base64")` and refuses anything that does not decode to 32 bytes, so the
+  # value must be base64 — and 32 bytes of base64 is a 44-character high-entropy blob, which is
+  # precisely the shape generic-api-key exists to catch. It cannot read the comment above the
+  # assignment explaining that the key is fake.
+  #
+  # It decodes to the ASCII string `alethia-e2e-cli-demo-throwaway!!`, which is the whole argument:
+  # the console it unlocks lives for one job against a throwaway database, nothing it encrypts
+  # outlives the run, and the key is FIXED rather than generated so that a failed decrypt stays
+  # reproducible.
+  #
+  # Anchored to the exact literal AND to the one variable it may be assigned to, rather than
+  # allowlisting `.github/workflows/` or the key name alone — a real secret assigned nearby, or a
+  # different value assigned to this same variable, is still caught.
+  #
+  # ⚠️ THE TRAILING BOUNDARY IS LOAD-BEARING, for the reason spelled out on the client_id entry
+  # below: `regexTarget = "match"` means a SUBSTRING hit dismisses the WHOLE finding, so without
+  # the tail a value that merely BEGINS with this blob would carry anything appended to it past
+  # the scan.
+  '''ALETHIA_CRED_ENCRYPTION_KEY:\s*YWxldGhpYS1lMmUtY2xpLWRlbW8tdGhyb3dhd2F5ISE=(?:"|$|[\s,;])''',
   # ASM_SECRET_ID is the AWS Secrets Manager secret PATH (alethia/prod/env), not a
   # secret value — it's public config in the deploy/infra workflows. generic-api-key
   # flags the `ASM_SECRET_ID: alethia/prod/env` assignment; allowlist the marker.

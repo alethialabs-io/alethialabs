@@ -41,7 +41,7 @@ resource "google_service_account" "gar_pull" {
 # GSA with no static key. The target-project reader grant is applied by the customer (target-side).
 resource "google_service_account_iam_member" "gar_pull_wi" {
   count              = local.enable_gar_pull ? 1 : 0
-  service_account_id = google_service_account.gar_pull[0].name
+  service_account_id = one(google_service_account.gar_pull[*].name)
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[${local.registry_pull_ksa_namespace}/${local.registry_pull_ksa_name}]"
 

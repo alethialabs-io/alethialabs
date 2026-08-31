@@ -1005,6 +1005,14 @@ func RunDeployV2(ctx context.Context, params DeployParams) (_ *PlanResult, retEr
 			result.GitopsStatus = gitopsFailed(argocd.GitopsStepTemplatesMissing, err)
 			return &result, err
 		}
+		// apps_path now reaches the dedicated templates too, so it gets the same fail-closed guard
+		// the namespace and vcluster placements apply (deploy_vcluster.go, namespace_tenant.go). It
+		// is interpolated into a YAML scalar the runner hands to ArgoCD, so an absolute path, a
+		// traversal or a quote-break must be refused here rather than rendered.
+		if err := argocd.ValidateAppsPath(vc.Repositories.AppsPath); err != nil {
+			result.GitopsStatus = gitopsFailed(argocd.GitopsStepTemplatesMissing, err)
+			return &result, fmt.Errorf("apps_path is not a usable repo subpath: %w", err)
+		}
 		facts := argocd.BuildFromOutputs(result.Outputs, vc)
 		// Record the honest per-service install/skip decisions from the SAME gates the
 		// render below uses, so the console/CLI can show what shipped (and why a service
@@ -1433,6 +1441,19 @@ func resolveArgoTemplatesDir() string {
 
 func installArgoCD(ctx context.Context, vc *types.ProjectConfig, outputs map[string]interface{}, result *PlanResult, stdout, stderr io.Writer) error {
 	fmt.Fprintln(stdout, "Installing ArgoCD...")
+
+	// FIRST, before anything else touches the cluster: refuse honestly if it already runs an
+	// ArgoCD Alethia has measured as broken (#3126 item 2). The ORDER is the whole point — this
+	// has to precede `helm repo add` and, critically, `ensureArgoRedisSecret`, which CREATES the
+	// argocd namespace and writes a Secret into it. A guard that runs after its own side effects
+	// cannot tell a fresh cluster from one it just touched.
+	//
+	// Returned UNWRAPPED. Four of the check's six states proceed (see argocd/version_preflight.go);
+	// the two that stop are deliberate refusals, not failures, and prefixing them with "failed to
+	// install ArgoCD" is how a refusal gets misread as a broken chart.
+	if err := argocd.PreflightLiveArgoVersion(ctx, stdout); err != nil {
+		return err
+	}
 
 	// Repo URL + chart version are config-driven (env override, current literals as defaults) and
 	// shell-quoted since they interpolate into a bash -c command (#951, #944).

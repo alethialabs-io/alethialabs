@@ -87,17 +87,17 @@ locals {
   external_secrets_identity_id = var.provision_aks ? (
     local.external_secrets_adopted
     ? data.azurerm_user_assigned_identity.external_secrets_adopted[0].id
-    : azurerm_user_assigned_identity.external_secrets[0].id
+    : one(azurerm_user_assigned_identity.external_secrets[*].id)
   ) : ""
   external_secrets_client_id = var.provision_aks ? (
     local.external_secrets_adopted
     ? data.azurerm_user_assigned_identity.external_secrets_adopted[0].client_id
-    : azurerm_user_assigned_identity.external_secrets[0].client_id
+    : one(azurerm_user_assigned_identity.external_secrets[*].client_id)
   ) : ""
   external_secrets_principal_id = var.provision_aks ? (
     local.external_secrets_adopted
     ? data.azurerm_user_assigned_identity.external_secrets_adopted[0].principal_id
-    : azurerm_user_assigned_identity.external_secrets[0].principal_id
+    : one(azurerm_user_assigned_identity.external_secrets[*].principal_id)
   ) : ""
 
   # ── Application Gateway / AGIC: the gateway's four decisions ──

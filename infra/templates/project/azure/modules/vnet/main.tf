@@ -134,15 +134,15 @@ resource "azurerm_nat_gateway" "this" {
 resource "azurerm_nat_gateway_public_ip_association" "this" {
   count = var.single_nat_gateway ? 1 : 0
 
-  nat_gateway_id       = azurerm_nat_gateway.this[0].id
-  public_ip_address_id = azurerm_public_ip.nat[0].id
+  nat_gateway_id       = one(azurerm_nat_gateway.this[*].id)
+  public_ip_address_id = one(azurerm_public_ip.nat[*].id)
 }
 
 resource "azurerm_subnet_nat_gateway_association" "private" {
   count = var.single_nat_gateway ? 1 : 0
 
   subnet_id      = azurerm_subnet.private.id
-  nat_gateway_id = azurerm_nat_gateway.this[0].id
+  nat_gateway_id = one(azurerm_nat_gateway.this[*].id)
 }
 
 ################################################################################

@@ -20,7 +20,7 @@ resource "azurerm_federated_identity_credential" "external_dns" {
   count               = var.provision_aks ? 1 : 0
   name                = "external-dns"
   resource_group_name = azurerm_resource_group.main.name
-  parent_id           = azurerm_user_assigned_identity.external_dns[0].id
+  parent_id           = one(azurerm_user_assigned_identity.external_dns[*].id)
   audience            = ["api://AzureADTokenExchange"]
   issuer              = module.aks[0].oidc_issuer_url
   subject             = "system:serviceaccount:external-dns:external-dns-sa"
@@ -40,7 +40,7 @@ resource "azurerm_federated_identity_credential" "cert_manager" {
   count               = var.provision_aks ? 1 : 0
   name                = "cert-manager"
   resource_group_name = azurerm_resource_group.main.name
-  parent_id           = azurerm_user_assigned_identity.external_dns[0].id
+  parent_id           = one(azurerm_user_assigned_identity.external_dns[*].id)
   audience            = ["api://AzureADTokenExchange"]
   issuer              = module.aks[0].oidc_issuer_url
   subject             = "system:serviceaccount:cert-manager:cert-manager"
@@ -52,7 +52,7 @@ resource "azurerm_role_assignment" "external_dns_dns" {
   count                = var.provision_aks ? 1 : 0
   scope                = azurerm_resource_group.main.id
   role_definition_name = "DNS Zone Contributor"
-  principal_id         = azurerm_user_assigned_identity.external_dns[0].principal_id
+  principal_id         = one(azurerm_user_assigned_identity.external_dns[*].principal_id)
 }
 
 # User-assigned identity for the external-secrets operator, federated to its KSA, so the

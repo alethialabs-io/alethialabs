@@ -98,17 +98,36 @@ probe_run() {
 # Field-exact, not a prefix match: `packages/plan-catalog` must not be satisfied by a row for
 # `packages/plan-catalog-extra`. A substring hit dismissing a whole finding is a defect this
 # repository has already paid for once.
+#
+# And SHAPE-exact, not merely field-exact. `$1 == p` alone asked "is there a line here whose first
+# field is the project?", which is not the question — `probe_run` prefixes EVERY line of the child's
+# stdout with the project name, so any line at all satisfied it. `ts-coverage.mjs` used to write its
+# `::warning::` annotations to stdout, and `packages/foo ::warning::…` passed this assertion: the
+# probe reported "every recorded project produced measured rows" over a run that measured nothing.
+#
+# So mirror the EMITTER. `runPrint` writes `<dir> <covered> <total>`, prefixed here to
+# `<project> <dir> <covered> <total>` — four fields, the last two integers. Annotations now go to
+# stderr (the real fix), and this is the independent second lock: either one alone closes the hole,
+# which is the point of having both.
 assert_measured() {
   local out="$1"; shift
   local p missing=""
   for p in "$@"; do
-    awk -v p="$p" '$1 == p { found = 1 } END { exit !found }' "$out" || missing="$missing $p"
+    awk -v p="$p" '$1 == p && NF == 4 && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ { found = 1 } END { exit !found }' "$out" || missing="$missing $p"
   done
   if [ -n "$missing" ]; then
     echo "::error::ts-coverage-probe: recorded project(s) produced NO measured rows:$missing"
     echo "  --print fails OPEN (F2: no coverage/coverage-final.json), so this is silence, not a zero."
-    echo "  Either the project stopped emitting coverage — fix its vitest config, or remove it from"
-    echo "  the sweep record in the same PR — or the suite command did not build it."
+    echo "  TWO causes reach this line, and they send you to different places:"
+    echo "  1. The project measured nothing. Either it stopped emitting coverage — fix its vitest"
+    echo "     config, or remove it from the sweep record in the same PR — or the suite command did"
+    echo "     not build it."
+    echo "  2. It measured, but every row was the wrong SHAPE. A row is '<project> <dir> <covered>"
+    echo "     <total>' — four fields, the last two integers. Anything the child wrote to STDOUT"
+    echo "     that is not a measurement lands here looking like a row and is rejected. Check the"
+    echo "     raw rows before assuming the vitest config: 'ts-coverage.mjs --project P --print'."
+    echo "  Naming only cause 1 sent an operator to the vitest config once when the real cause was"
+    echo "  commentary in the data channel, which is expensive in a workflow_dispatch-only job."
     return 1
   fi
   echo "✓ every recorded project produced measured rows ($# project(s))"
@@ -197,6 +216,31 @@ if [ "${1:-}" = "--self-test" ]; then
   if assert_measured "$pre" packages/plan-catalog >/dev/null 2>&1; then
     bad "a row for a LONGER project name should not satisfy a shorter one"
   else ok "a row for a different project sharing its prefix does not satisfy it"; fi
+
+  # THE #3342 REGRESSION. `probe_run` prefixes every line of the child's stdout, so anything the
+  # child says on stdout arrives looking like a row for that project. ts-coverage.mjs wrote its
+  # annotations there, and F2 (`no coverage-final.json — nothing measured`) is exactly the case
+  # where there are no real rows to drown it out: the probe passed on a project it had not measured.
+  ann="$tmp/annotation.txt"
+  echo "packages/plan-catalog ::warning::ts-coverage F2: packages/plan-catalog: no coverage/coverage-final.json" >"$ann"
+  if assert_measured "$ann" packages/plan-catalog >/dev/null 2>&1; then
+    bad "an ANNOTATION line must not count as a measured row — that is #3342's silent pass"
+  else ok "an annotation line does not satisfy the measurement assertion"; fi
+
+  # ...and the non-vacuous half: the fixture differs from a real row ONLY in shape, so this proves
+  # the check reads the shape rather than rejecting the fixture for some incidental reason.
+  real="$tmp/real.txt"
+  echo "packages/plan-catalog lib 10 20" >"$real"
+  if assert_measured "$real" packages/plan-catalog >/dev/null 2>&1; then
+    ok "...while a well-shaped row for the same project still does"
+  else bad "a valid 4-field row must still satisfy the assertion"; fi
+
+  for junk in "packages/plan-catalog lib 10" "packages/plan-catalog lib ten 20" "packages/plan-catalog lib 10 20 30"; do
+    j="$tmp/junk.txt"; echo "$junk" >"$j"
+    if assert_measured "$j" packages/plan-catalog >/dev/null 2>&1; then
+      bad "a malformed row should not satisfy the assertion: '$junk'"
+    else ok "malformed row rejected: '$junk'"; fi
+  done
 
   echo
   echo " determinism"

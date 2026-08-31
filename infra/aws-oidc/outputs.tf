@@ -21,6 +21,11 @@ output "prod_env_secret_arn" {
   value       = aws_secretsmanager_secret.prod_env.arn
 }
 
+output "runner_ecr_repository_url" {
+  description = "Registry URL release-runner.yml pushes the runner image to (#3438). Compare it against the failing run's error before re-running the release."
+  value       = aws_ecr_repository.runner.repository_url
+}
+
 output "oidc_provider_arn" {
   description = "Adopted GitHub Actions OIDC provider ARN."
   value       = local.oidc_provider_arn

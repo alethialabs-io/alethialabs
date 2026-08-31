@@ -119,6 +119,36 @@ type addonIgnoreDifference struct {
 	Name              string   `yaml:"name,omitempty"`
 	JSONPointers      []string `yaml:"jsonPointers,omitempty"`
 	JQPathExpressions []string `yaml:"jqPathExpressions,omitempty"`
+	// ManagedFieldsManagers ignores by OWNER rather than by path: whatever a named field manager
+	// owns is excluded from the diff, and every other writer's value for the same field is still
+	// compared. It is the primitive a "a foreign controller overwrites this" entry actually means,
+	// and it is the third entry-scoping field added here in as many changes (`Name` arrived in
+	// #3328) — all three are argo-cd-supported and none was here because nothing had needed them.
+	//
+	// IT DOES NOT SUBSUME A PATH IGNORE, and the boundary is exact rather than a matter of taste.
+	// Read out of argo-cd v3.3.9 (the pinned version — see versions.go), `util/argo/diff/diff.go`
+	// `preDiffNormalize` → `util/argo/managedfields.Normalize` → `normalize`:
+	//
+	//	intersect := mfs.Intersection(tr.comparison.Modified)
+	//	tr.live   = tr.live.RemoveItems(intersect)
+	//	tr.config = tr.config.RemoveItems(intersect)
+	//
+	// `Modified` alone. The comparison is `typedLive.Compare(typedConfig)`, and
+	// structured-merge-diff v6 documents its three sets as disjoint: `Modified` is "fields present
+	// in both objects but different", `Removed` is "any fields removed by rhs" — i.e. present in
+	// live and ABSENT from the render. So a field the chart never writes is in `Removed`, is never
+	// in the intersection, and NO owner list can ignore it. Only a jq path or a JSON pointer can.
+	//
+	// Both mechanisms do run for the same entry: `util/argo/diff.Normalize` calls
+	// `preDiffNormalize` and then the jq/pointer `ignoreNormalizer`, and the latter iterates
+	// `ignore[i].JQPathExpressions` without consulting `ManagedFieldsManagers`. Carrying both on
+	// one entry is therefore additive, not a conflict — which is what the keda entry below needs.
+	//
+	// The sync honours it too, not just the diff view: `controller/sync.go` gates
+	// `normalizeTargetResources` on `RespectIgnoreDifferences=true`, and that calls the same
+	// `diff.Normalize`. Every add-on Application already sets both that option and
+	// `ServerSideApply=true`, which is what populates the `metadata.managedFields` this reads.
+	ManagedFieldsManagers []string `yaml:"managedFieldsManagers,omitempty"`
 }
 
 type addonSyncPolicy struct {
@@ -340,19 +370,48 @@ func RenderAddOnApplication(a types.AddOnInstall) (string, error) {
 					// exactly the mechanism, and it is why ignoring the field is the right remedy on
 					// AKS — but it is NOT the same claim as "we never wrote it".
 					//
-					// THE COST OF SAYING IT THIS WAY. Because this ignores a path rather than an
-					// owner, a future chart that scopes the selector to a real namespace would be
-					// silently unenforced — ArgoCD would stop comparing a value we do care about.
-					// `spec.ignoreDifferences[].managedFieldsManagers` is the primitive that says
-					// what is actually meant ("ignore what admissionsenforcer and keda own"), and
-					// swapping to it is #3346. It is deliberately NOT done in the same change as
-					// the entry an azure run is currently testing: verifying the mechanism and
-					// refining the expression are two things, and doing both at once would leave
-					// neither verified.
-					Group:             "admissionregistration.k8s.io",
-					Kind:              "ValidatingWebhookConfiguration",
-					Name:              "keda-admission",
-					JQPathExpressions: []string{".webhooks[]?.clientConfig.caBundle", ".webhooks[]?.namespaceSelector"},
+					// SO THE TWO FIELDS GET TWO MECHANISMS (#3346). Both were once jq paths, and a
+					// path ignore silences a field no matter who wrote it: a future chart that
+					// scopes the selector to a real namespace would have been silently unenforced
+					// on all five clouds, with RespectIgnoreDifferences excluding it from the apply
+					// as well. `namespaceSelector` is now ignored by OWNER, which keeps a
+					// chart-authored value compared because ArgoCD, not the enforcer, would own it.
+					//
+					// `caBundle` KEEPS ITS PATH, and #3346 proposed dropping it — "it needs no jq
+					// path at all". That is false, and argo-cd's source settles it rather than
+					// taste: `managedfields.normalize` strips only
+					// `mfs.Intersection(comparison.Modified)`, and `Modified` is fields present in
+					// BOTH live and the render. The render carries no `caBundle` at all, so it sits
+					// in `comparison.Removed` and no owner list can ever reach it. Swapping it too
+					// would have silently dropped the ignore and left keda OutOfSync on every
+					// cloud, not just AKS. The full derivation is on ManagedFieldsManagers above.
+					//
+					// ONLY `admissionsenforcer` IS TRUSTED, not `keda` as well. `keda` in the list
+					// would be inert for the reason just given, and an owner-scoped ignore is
+					// UNBOUNDED — it excludes every field that manager owns and differs, not the
+					// one it was measured on. That is the honest cost of this expression: if a keda
+					// chart declares a `failurePolicy` or `matchConditions` that AKS's enforcer
+					// also rewrites, the diff goes quiet on it. Naming one manager instead of two
+					// halves that blast radius for nothing given up, and the manager kept is the
+					// one the conflict was actually measured against.
+					//
+					// AND THE MATCH IS EXACT. `managedfields.trustedManager` is `m == curManager`,
+					// where this repo's own ownership probe matches ArgoCD's manager by SUBSTRING
+					// precisely because manager names drift between versions. So the spelling has to
+					// be the API server's own, and it is: `foreignFieldOwners` keys on the raw
+					// `.metadata.managedFields[].manager` and the probe prints it with `%q`, so
+					// `admissionsenforcer` above is transcribed from that run's output rather than
+					// from Azure's prose. If AKS renames its enforcer this entry silently becomes a
+					// no-op, with `normalized` left false and nothing logged. That failure is the
+					// safe direction — keda returns to Healthy+OutOfSync on azure, loudly, exactly
+					// as it did in #3328 — whereas the path form failed by going quiet about a
+					// field we cared about. It is still the reason not to widen this to managers
+					// nothing has measured.
+					Group:                 "admissionregistration.k8s.io",
+					Kind:                  "ValidatingWebhookConfiguration",
+					Name:                  "keda-admission",
+					JQPathExpressions:     []string{".webhooks[]?.clientConfig.caBundle"},
+					ManagedFieldsManagers: []string{"admissionsenforcer"},
 				},
 			},
 			SyncPolicy: addonSyncPolicy{

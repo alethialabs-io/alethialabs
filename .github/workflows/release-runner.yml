@@ -25,6 +25,41 @@ env:
   ECS_SERVICE: alethia-runner-dev-eu-west-1-service
   GHCR_IMAGE: ghcr.io/alethialabs-io/runner
 
+# ── One registry's absence must not swallow the other registry's publish (#3438) ────────────
+#
+# Until this split, ONE `docker/build-push-action` carried all four tags — two ECR, two GHCR.
+# `alethia-runner-dev-runner` has never existed in the account this pushes to, so every run
+# aborted on the ECR 404 and took the GHCR semver tags, the console notification and the
+# Fargate roll down with it. Two runs have ever existed and both failed identically: neither
+# `runner:0.5.0` nor `runner:0.6.0` is on GHCR, and `POST /api/releases/runner` has never been
+# called, so the product does not know a runner release exists.
+#
+# The fix is NOT more `continue-on-error`. That was tried in release-cli.yml (#2481) and that
+# file's own comment records the outcome in as many words: it made the release report the truth,
+# it did NOT make the notification work. A step that is green-with-a-warning tells nobody, and a
+# green release over a fleet still running the previous image is a worse defect than a red one.
+#
+# So every stage below runs under `if: ${{ !cancelled() }}` instead. That is the half of
+# `continue-on-error` that is actually wanted — a failed stage no longer skips the stages that
+# do not depend on it — without the half that is not: nothing here carries `continue-on-error`,
+# so any failure still reddens the job, and the final step writes the per-stage verdict to the
+# run summary so a partial release is legible without reading six step outcomes.
+#
+# What each stage is allowed to assume is spelled out in its own `if:`:
+#
+#   GHCR publish    depends on nothing. It is the public artifact — the image the console's
+#                   runner templates, the AWS connector CFN and docker-compose all name — and
+#                   it needs only `packages: write`, so no AWS state can reach it. It goes first.
+#   ECR push        needs the OIDC assume AND `amazon-ecr-login`: without the login,
+#                   `steps.ecr-login.outputs.registry` is empty and the tag becomes a nonsense
+#                   `/alethia-runner-dev-runner:latest` that fails for the wrong reason.
+#   console notify  needs the OIDC assume only — the bearer is in Secrets Manager, and nothing
+#                   about it depends on either registry.
+#   Fargate roll    needs the ECR PUSH to have succeeded. The task definition pulls from ECR, so
+#                   rolling the service when the new image never got there restarts every task
+#                   onto the OLD image and reports it as a deploy of the new one.
+#   release report  always. It names what published, what did not, and the maintainer action.
+
 jobs:
   release:
     runs-on: ubuntu-24.04-arm
@@ -47,18 +82,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      # Least-privilege OIDC role (infra/aws-oidc → alethia-runner-release-deployer):
-      # ECR push to the runner repo + ecs:UpdateService on the one service. No keys.
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ vars.RUNNER_RELEASE_DEPLOYER_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Login to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
-
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v4
         with:
@@ -66,7 +89,46 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      # The public artifact. This is the one that has to publish even when everything downstream
+      # of it is broken, so it is first and unconditional.
+      - name: Build and push the runner image to GHCR
+        id: ghcr-push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/runner/Dockerfile
+          push: true
+          build-args: |
+            VERSION=${{ steps.meta.outputs.VERSION }}
+          tags: |
+            ${{ env.GHCR_IMAGE }}:latest
+            ${{ env.GHCR_IMAGE }}:${{ steps.meta.outputs.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Least-privilege OIDC role (infra/aws-oidc → alethia-runner-release-deployer):
+      # ECR push to the runner repo + ecs:UpdateService on the one service + GetSecretValue on
+      # the prod vault. No keys. Runs even if the GHCR publish failed, because the console
+      # notification below needs these credentials and needs nothing from GHCR.
+      - name: Configure AWS credentials (OIDC)
+        id: aws-creds
+        if: ${{ !cancelled() }}
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.RUNNER_RELEASE_DEPLOYER_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        if: ${{ !cancelled() && steps.aws-creds.outcome == 'success' }}
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # The private mirror the Fargate fleet pulls from. Buildx resolves every layer from the
+      # cache the GHCR step just wrote, so this re-pushes the image already built rather than
+      # building a second one — which is why it reads the gha cache but does not write it back.
+      - name: Push the runner image to ECR
+        id: ecr-push
+        if: ${{ !cancelled() && steps.ecr-login.outcome == 'success' }}
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -77,18 +139,20 @@ jobs:
           tags: |
             ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
             ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.VERSION }}
-            ${{ env.GHCR_IMAGE }}:latest
-            ${{ env.GHCR_IMAGE }}:${{ steps.meta.outputs.VERSION }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Publish release metadata to Alethia
+        id: notify
+        if: ${{ !cancelled() && steps.aws-creds.outcome == 'success' }}
         env:
           # URL is a non-secret repo variable; the bearer comes from the vault (the same
           # OIDC role assumed above for ECR/ECS also has GetSecretValue).
           ALETHIA_URL: ${{ vars.PUBLIC_APP_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # pipefail matters here: without it the `aws … | jq` pipeline reports jq's exit code,
+          # so a failed secret read would hand curl an empty bearer and blame the console.
+          set -euo pipefail
           RELEASE_API_SECRET="$(aws secretsmanager get-secret-value --secret-id alethia/prod/env --region eu-central-1 --query SecretString --output text | jq -r '.RELEASE_API_SECRET // ""')"
           echo "::add-mask::$RELEASE_API_SECRET"
           NOTES=$(gh release view "runner-v${{ steps.meta.outputs.VERSION }}" --json body -q .body 2>/dev/null || echo "")
@@ -102,11 +166,92 @@ jobs:
               --arg s "${{ github.sha }}" \
               '{version: $v, release_notes: $n, github_release_url: $u, commit_sha: $s}')"
 
+      # Gated on the PUSH, not on the login and not on always(): see the header. A roll after a
+      # failed push is a deploy of a version that was never uploaded.
       - name: Force new Fargate deployment
+        id: ecs-roll
+        if: ${{ !cancelled() && steps.ecr-push.outcome == 'success' }}
+        env:
+          VERSION: ${{ steps.meta.outputs.VERSION }}
         run: |
+          set -euo pipefail
           aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
             --force-new-deployment \
-            --region ${{ env.AWS_REGION }}
-          echo "Deployment triggered for runner v${{ steps.meta.outputs.VERSION }}"
+            --region "$AWS_REGION"
+          echo "Deployment triggered for runner v${VERSION}"
+
+      # This step must never fail. The job is already red from whichever stage failed, and a
+      # report that can fail is a report that goes missing exactly when it is needed.
+      - name: Release report
+        if: ${{ !cancelled() }}
+        env:
+          VERSION: ${{ steps.meta.outputs.VERSION }}
+          GHCR_OUTCOME: ${{ steps.ghcr-push.outcome }}
+          CREDS_OUTCOME: ${{ steps.aws-creds.outcome }}
+          ECR_LOGIN_OUTCOME: ${{ steps.ecr-login.outcome }}
+          ECR_OUTCOME: ${{ steps.ecr-push.outcome }}
+          NOTIFY_OUTCOME: ${{ steps.notify.outcome }}
+          ECS_OUTCOME: ${{ steps.ecs-roll.outcome }}
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          set -euo pipefail
+
+          # An outcome this function does not recognise must NOT read as success. This renders
+          # the run's own verdict, and a verdict that defaults to "ok" is how a broken release
+          # gets reported as a good one.
+          mark() {
+            case "${1:-}" in
+              success) printf 'ok' ;;
+              failure) printf '**FAILED**' ;;
+              skipped) printf 'skipped (something it depends on did not succeed)' ;;
+              '')      printf 'did not run' ;;
+              *)       printf '**unrecognised outcome (%s)** — treat as not done' "$1" ;;
+            esac
+          }
+
+          {
+            echo "## runner v${VERSION}"
+            echo
+            echo "| stage | result |"
+            echo "| --- | --- |"
+            echo "| GHCR \`${GHCR_IMAGE}:${VERSION}\` + \`:latest\` | $(mark "$GHCR_OUTCOME") |"
+            echo "| AWS OIDC assume | $(mark "$CREDS_OUTCOME") |"
+            echo "| ECR login | $(mark "$ECR_LOGIN_OUTCOME") |"
+            echo "| ECR \`${ECR_REPOSITORY}:${VERSION}\` + \`:latest\` | $(mark "$ECR_OUTCOME") |"
+            echo "| console notified (\`POST /api/releases/runner\`) | $(mark "$NOTIFY_OUTCOME") |"
+            echo "| Fargate \`${ECS_SERVICE}\` rolled | $(mark "$ECS_OUTCOME") |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # The failure branch is the branch this step exists for. Everything above is true on a
+          # good run too; only this part tells anyone what to DO.
+          if [ "$ECR_OUTCOME" != "success" ]; then
+            {
+              echo
+              echo "### The private registry did not receive this release"
+              echo
+              echo "The ECR push did not land, so \`${ECR_REPOSITORY}\` in \`${ECR_REGISTRY:-<account>.dkr.ecr.${AWS_REGION}.amazonaws.com}\` does not hold \`${VERSION}\`."
+              echo
+              echo "The known cause is that the repository **does not exist**. It is declared in"
+              echo "\`infra/aws-oidc/runner-ecr.tf\` (#3438) but that stack creates IAM, so it is applied by"
+              echo "hand with an admin identity — see \`infra/aws-oidc/README.md\`. Until it is applied,"
+              echo "\`alethia-runner-release-deployer\` holds \`ecr:PutImage\` on an ARN that names nothing."
+              echo
+              echo "**Maintainer action:** apply \`infra/aws-oidc\`, confirm \`${ECS_CLUSTER}\` / \`${ECS_SERVICE}\` exist,"
+              echo "then re-run this workflow. Nothing in the repository needs to change."
+              echo
+              echo "The GHCR image is unaffected — check the table above. It is the image the console's"
+              echo "runner templates and the AWS connector template pull, so customer-facing runners are"
+              echo "served by this release even though the managed fleet is not."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [ "$ECS_OUTCOME" != "success" ]; then
+            {
+              echo
+              echo "> The Fargate service \`${ECS_SERVICE}\` was **not** rolled and is still running whatever"
+              echo "> image it had before this release. This is deliberate: rolling it without the new image"
+              echo "> in ECR would restart the fleet onto the old image and call it a deploy."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

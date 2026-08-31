@@ -27,7 +27,11 @@ spec:
   source:
     repoURL: {{ .AppsDestinationRepo }}
     targetRevision: HEAD
-    path: .
+    # The environment's own apps_path, or the repo root when it names none. `apps_path` means the
+    # same thing on all three placement modes; it was previously read only by the namespace and
+    # vcluster paths, so a dedicated environment silently delivered the repo root no matter what
+    # it declared. Validated by ValidateAppsPath before it reaches here.
+    path: {{ if .AppsPath }}{{ .AppsPath }}{{ else }}.{{ end }}
   destination:
     server: https://kubernetes.default.svc
   syncPolicy:
