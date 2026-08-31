@@ -226,6 +226,23 @@ when this has happened; `git -C <main checkout> pull --ff-only` is the fix.
 `.githooks/pre-commit` and `pre-push` are the second layer: they run at commit time with the
 real working directory, and they also check the migration chain and SPDX headers.
 
+### Codex harness
+
+Codex uses the project layer in `.codex/`: `config.toml` enables autonomous routine execution
+inside the trusted workspace, `hooks.json` adapts the guards above, and `rules/default.rules`
+contains the small project command baseline. Run `pnpm codex:doctor` to validate the setup and
+`pnpm codex:self-test` to exercise the guards and adapters.
+
+The Codex hooks must be reviewed and trusted once with `/hooks` after first launch or whenever a
+hook definition changes. This is a one-time hook trust step, not a per-command approval prompt.
+After an implementation request, Codex may edit, run checks, commit, push the feature branch,
+and open a PR into `dev` without asking again. The same protected actions remain blocked by the
+Codex hooks and `.githooks/`; use `gh` CLI for GitHub delivery so it follows the repository policy.
+
+Codex discovers the shared workflows through `.agents/skills/`. Those entries link to the
+canonical `.claude/skills/` directories. Update the canonical skill and run
+`pnpm codex:doctor`; do not fork or edit a linked copy.
+
 ## 8. Where the truth lives
 
 | Topic | Source |

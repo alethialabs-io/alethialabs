@@ -1,0 +1,10 @@
+# Alethia Codex project configuration.
+# Routine work is autonomous; repository hooks and the sandbox enforce safety.
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
+
+[features]
+hooks = true
