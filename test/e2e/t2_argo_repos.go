@@ -468,12 +468,16 @@ func interpretByoSyncPolicy(app string, automated *byoAutoSyncPolicy) error {
 // the rendered file without re-marshalling it. Every static half says the field should be there.
 // So the next failure has to carry the object, not a description of it.
 func assertByoAutoSyncPolicy(ctx context.Context, kubeconfigPath, app string) error {
-	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+	// kubectlRead, NOT CombinedOutput. kubectl writes to stderr on calls that SUCCEED — a
+	// `Warning:` deprecation header, or an exec-credential plugin's notice, which is the ordinary
+	// shape of authenticating to EKS, GKE and AKS. CombinedOutput folds that into the value, so the
+	// json.Unmarshal below is handed `Warning: …\n{"prune":true,"selfHeal":true}` and fails — on a
+	// cluster whose policy is exactly right, in a PAID run, with an error naming a syncPolicy that
+	// was never wrong. kubectlRead keeps stderr out of the value and folds kubectlErrorLine into
+	// the error instead, so the failure path still says what kubectl said.
+	out, err := kubectlRead(ctx, 60*time.Second, kubeconfigPath,
 		"-n", "argocd", "get", "applications.argoproj.io", app,
 		"-o", "jsonpath={.spec.syncPolicy.automated}")
-	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("read %s syncPolicy: %w: %s", app, err, strings.TrimSpace(string(out)))
 	}
@@ -506,12 +510,11 @@ func withByoSyncEvidence(ctx context.Context, kubeconfigPath, app, observed stri
 		return nil
 	}
 	evidence := fmt.Sprintf("\n  observed spec.syncPolicy.automated: %s", observed)
-	cctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(cctx, "kubectl", "--kubeconfig", kubeconfigPath,
+	// Same read, same reason as the assertion above: a deprecation warning glued to the front of
+	// the dump makes the evidence misdescribe the object it exists to show.
+	out, err := kubectlRead(ctx, 60*time.Second, kubeconfigPath,
 		"-n", "argocd", "get", "applications.argoproj.io", app,
 		"-o", "jsonpath={.spec.syncPolicy}")
-	out, err := cmd.CombinedOutput()
 	switch {
 	case err != nil:
 		evidence += fmt.Sprintf("\n  full spec.syncPolicy: UNREADABLE (%v) — the verdict above stands on the read that did succeed", err)
