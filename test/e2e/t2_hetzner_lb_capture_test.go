@@ -6,6 +6,8 @@
 package e2e
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,16 +30,6 @@ func hetznerRepoRoot(t *testing.T) string {
 	}
 	return root
 }
-
-// hetznerLBCaptureBasename is the file scripts/e2e/hcloud-cleanup.sh reads the captured binding
-// back from, under $RUNNER_TEMP.
-//
-// ⚠️ A FIXED PATH, not an environment variable set here, and that is not a shortcut. The sweeper
-// runs in a DIFFERENT PROCESS — the workflow's always() teardown step, long after this test has
-// exited — so anything this process exports is invisible to it. The workflow points
-// ALETHIA_E2E_HCLOUD_LB_IDS at the same path (e2e-nightly.yml, both teardown steps); the two ends
-// agree by construction rather than by a hand-off that cannot happen.
-const hetznerLBCaptureBasename = "hcloud-lb-ids.txt"
 
 // captureHetznerLoadBalancers records this run's Load Balancer ids WHILE the private network that
 // binds them still exists, so the post-teardown sweep has a run-scoped binding afterwards.
@@ -77,19 +69,19 @@ func captureHetznerLoadBalancers(t *testing.T, provider, clusterName string) {
 		return
 	}
 	// Bounded: this runs inside the teardown window and must not eat it. Two API reads.
-	cmd := exec.Command("bash", script, "--capture-lbs", out, clusterName)
+	//
+	// CommandContext, not a goroutine racing a timer. The previous shape read `cmd.Process` from
+	// this goroutine while `CombinedOutput` → `Start` wrote it in another — a data race `go test
+	// -race` flags, and a nil dereference whenever Start had not returned or had failed. A panic
+	// there would abort this t.Cleanup closure BEFORE teardownT2Cluster, so a best-effort
+	// REPORTING convenience would take the graceful `tofu destroy` with it and leak the whole
+	// cluster: the exact opposite of the "best effort, silent on failure" contract above.
+	cctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "bash", script, "--capture-lbs", out, clusterName)
 	cmd.Env = os.Environ()
-	done := make(chan struct{})
-	var combined []byte
-	var runErr error
-	go func() {
-		combined, runErr = cmd.CombinedOutput()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(90 * time.Second):
-		_ = cmd.Process.Kill()
+	combined, runErr := cmd.CombinedOutput()
+	if errors.Is(cctx.Err(), context.DeadlineExceeded) {
 		t.Log("hetzner LB capture: timed out; the teardown sweep falls back to the project-wide question")
 		return
 	}
