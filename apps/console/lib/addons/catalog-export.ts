@@ -106,9 +106,10 @@ function cloudKnobs(addonId: string, cloud: CloudProvider): Record<string, unkno
  *
  * Each value is in its cloud's real syntax — an ARN, a service-account email, a GUID — because a
  * value the cloud would reject as MALFORMED tests a different failure than a value it simply cannot
- * find, and the second is the one a customer with a typo'd role hits. They are the same placeholders
- * the worked examples in `examples/addons/external-dns/` already ship, deliberately: a reader who
- * has seen one recognises the other as a stand-in rather than as something to copy.
+ * find, and the second is the one a customer with a typo'd role hits. They are the placeholder
+ * shapes the worked examples in `examples/addons/external-dns/` already ship — the aws and azure
+ * strings are identical to them — deliberately: a reader who has seen one recognises the other as a
+ * stand-in rather than as something to copy.
  *
  * Keyed by PROVIDER and total over the provider union, mirroring `EXTERNAL_DNS_PROVIDERS` itself:
  * adding a provider forces a decision here, and `null` states positively that this one needs no
