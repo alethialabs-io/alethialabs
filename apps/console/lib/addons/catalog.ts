@@ -136,6 +136,26 @@ export type ExternalDnsProvider = (typeof EXTERNAL_DNS_PROVIDER_IDS)[number];
  * an id to the tuple above without giving it a credential path is a COMPILE error, so the offer and
  * the wiring cannot diverge again.
  */
+/**
+ * The ServiceAccount the MARKETPLACE external-dns add-on runs as.
+ *
+ * ⚠️ NOT `external-dns-sa`. That is the PLATFORM RAIL's ServiceAccount
+ * (`infra/templates/argocd/external-dns.yaml`), which deploys into the same `external-dns`
+ * namespace with `fullnameOverride: external-dns`. `toValues` used to name it here the moment an
+ * identity was supplied, which would have put two ArgoCD Applications on one object — on a cell
+ * that is currently proven: `demos/proofs/aws/20260830T100243Z` shows both `addon-external-dns`
+ * and `external-dns` Healthy in the same 25-Application set.
+ *
+ * `addon-external-dns` is what the chart's `_helpers.tpl` already derives for this release
+ * (ArgoCD sets the release name to the Application name, `addon-` + the catalog id), so naming it
+ * explicitly changes NOTHING structurally: the token providers emit no serviceAccount block at all
+ * and keep the derived name, and the workload-identity providers now get an annotation on the same
+ * object they already had. The three clouds' trust policies name this KSA —
+ * `infra/templates/project/{aws/modules/eks/irsa.tf,gcp/workload-identity.tf,azure/workload-identity.tf}`
+ * — the way they already name cert-manager's.
+ */
+export const EXTERNAL_DNS_ADDON_SA = "addon-external-dns";
+
 const EXTERNAL_DNS_PROVIDERS: Record<ExternalDnsProvider, ExternalDnsProviderAuth> = {
 	cloudflare: { label: "Cloudflare", tokenEnv: "CF_API_TOKEN" },
 	digitalocean: { label: "DigitalOcean", tokenEnv: "DO_TOKEN" },
@@ -1685,7 +1705,7 @@ export const ADDON_CATALOG: AddOnDef[] = [
 				...(p.saAnnotation && c.workloadIdentity
 					? {
 							serviceAccount: {
-								name: "external-dns-sa",
+								name: EXTERNAL_DNS_ADDON_SA,
 								annotations: { [p.saAnnotation]: c.workloadIdentity },
 							},
 							// Azure's workload-identity webhook only injects into labelled pods.

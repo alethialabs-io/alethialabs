@@ -46,6 +46,23 @@ resource "azurerm_federated_identity_credential" "cert_manager" {
   subject             = "system:serviceaccount:cert-manager:cert-manager"
 }
 
+# The SAME managed identity, federated to a THIRD KSA: the MARKETPLACE external-dns add-on
+# (apps/console/lib/addons/catalog.ts, EXTERNAL_DNS_ADDON_SA = "addon-external-dns").
+#
+# A distinct KSA from the rail's `external-dns-sa`: both Applications deploy into the
+# `external-dns` namespace, so naming one object would put two ArgoCD Applications on it. And a
+# federated identity credential maps ONE subject, so — as with cert_manager above — this is a
+# second RESOURCE rather than a second subject on the first.
+resource "azurerm_federated_identity_credential" "external_dns_addon" {
+  count               = var.provision_aks ? 1 : 0
+  name                = "external-dns-addon"
+  resource_group_name = azurerm_resource_group.main.name
+  parent_id           = one(azurerm_user_assigned_identity.external_dns[*].id)
+  audience            = ["api://AzureADTokenExchange"]
+  issuer              = module.aks[0].oidc_issuer_url
+  subject             = "system:serviceaccount:external-dns:addon-external-dns"
+}
+
 # DNS Zone Contributor over the resource group so external-dns (and cert-manager's DNS01
 # solver, which shares the identity above) can manage records.
 resource "azurerm_role_assignment" "external_dns_dns" {
