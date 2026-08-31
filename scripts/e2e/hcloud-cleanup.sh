@@ -391,7 +391,18 @@ sweep_unlabelled_lbs() {
 		# one does not.
 		if [ -n "$LB_CAPTURE_FILE" ] && [ -f "$LB_CAPTURE_FILE" ] && capture_is_ours; then
 			local captured live_ids still
-			captured="$(grep -E '^[0-9]+$' "$LB_CAPTURE_FILE" || true)"
+			if [ ! -r "$LB_CAPTURE_FILE" ]; then
+				echo "::warning::the load-balancer capture at ${LB_CAPTURE_FILE} is unreadable — NOT verified; check by hand (#3481)." >&2
+				probe_note_unverifiable ccm-load-balancers "capture-unreadable"
+				return 0
+			fi
+			local crc=0
+			captured="$(grep -E '^[0-9]+$' "$LB_CAPTURE_FILE")" || crc=$?
+			if [ "$crc" -gt 1 ]; then
+				echo "::warning::could not read the load-balancer capture at ${LB_CAPTURE_FILE} (grep exit ${crc}) — NOT verified; check by hand (#3481)." >&2
+				probe_note_unverifiable ccm-load-balancers "capture-read-failed"
+				return 0
+			fi
 			if [ -z "$captured" ]; then
 				# Captured successfully and found none. This is the one place "none" is honest
 				# without a live read: it was measured while the binding still existed.
@@ -412,7 +423,7 @@ sweep_unlabelled_lbs() {
 			local lrc=0
 			live_ids="$(hcloud load-balancer list -o noheader -o columns=id 2>/dev/null)" || lrc=$?
 			if [ "$lrc" -ne 0 ]; then
-				echo "::warning::'hcloud load-balancer list' failed (exit ${lrc}) while re-checking the $(printf '%s' "$captured" | grep -c .) load balancer(s) captured for ${SELECTOR}. NOT verified — check by hand (#3481)." >&2
+				echo "::warning::'hcloud load-balancer list' failed (exit ${lrc}) while re-checking the $(printf '%s' "$captured" | grep -cE '^[0-9]+$') load balancer(s) captured for ${SELECTOR}. NOT verified — check by hand (#3481)." >&2
 				probe_note_unverifiable ccm-load-balancers "list-failed-after-capture"
 				return 0
 			fi
@@ -423,7 +434,7 @@ sweep_unlabelled_lbs() {
 " ;; esac
 			done <<<"$captured"
 			if [ -z "$still" ]; then
-				echo "  · unlabelled (CCM) load balancers: none (all $(printf '%s' "$captured" | grep -c .) captured for this run are gone)"
+				echo "  · unlabelled (CCM) load balancers: none (all $(printf '%s' "$captured" | grep -cE '^[0-9]+$') captured for this run are gone)"
 				return 0
 			fi
 			# THIS RUN's, by a binding taken before the network went away — so these are ours to
@@ -761,7 +772,7 @@ capture_run_lbs() {
 		# An empty RESULT after a successful read is a real answer: this run holds none.
 		printf '%s\n' "$ids" | grep -E '^[0-9]+$' || true
 	} >"$CAPTURE_LBS"
-	echo "  · captured $(grep -c . <"$CAPTURE_LBS" || true) load balancer(s) bound to ${CLUSTER_NAME} (network ${net}) → ${CAPTURE_LBS}"
+		echo "  · captured $(grep -cE '^[0-9]+$' <"$CAPTURE_LBS" || true) load balancer(s) bound to ${CLUSTER_NAME} (network ${net}) → ${CAPTURE_LBS}"
 }
 
 if [ -n "$CAPTURE_LBS" ]; then
