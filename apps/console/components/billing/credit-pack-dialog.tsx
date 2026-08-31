@@ -25,6 +25,7 @@ import { PaymentForm } from "@/components/billing/payment-form";
 import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { track } from "@/lib/analytics/track";
 import { AI_CREDIT_PACKS, type CreditPack } from "@/lib/billing/ai-credits";
+import { billingIntentErrorMessage } from "@/lib/billing/intent-error";
 import { Badge } from "@repo/ui/badge";
 import { Button } from "@repo/ui/button";
 import {
@@ -116,7 +117,7 @@ export function CreditPackDialog({
 			const intent = await createCreditPackIntent(next.id);
 			setClientSecret(intent.clientSecret);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : "Couldn't start the purchase.");
+			setError(billingIntentErrorMessage(e));
 		}
 	}
 
