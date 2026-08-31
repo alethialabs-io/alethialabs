@@ -1127,6 +1127,26 @@ jobs:
         run: |
           node scripts/check-hetzner-lb-location.mjs --self-test
           node scripts/check-hetzner-lb-location.mjs
+      # The Talos snapshot cache (#3027) is a coupling across four files in three languages, in an
+      # hcloud account SHARED WITH PROD, and every way it can come apart is silent: the label stops
+      # being stamped (every run rebuilds, 5-15m each, greenly); the `cluster` label comes back (the
+      # sweeper deletes the cache at the end of the run that built it); `count` stops consulting the
+      # lookup (the lookup becomes dead code); or a NEW key dimension reaches the template but not
+      # the pruner, whose --prune-superseded then groups on a key that is no longer the key and
+      # DELETES an image that is not superseded. `tofu validate` evaluates neither `count` nor
+      # `check`, so none of those is visible to anything else in CI. Hermetic - parses one .tf and
+      # two .sh, no cloud.
+      - name: The Talos image cache's label, gate and sweeper skip-list cannot drift apart
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: |
+          node scripts/check-hetzner-image-cache.mjs --self-test
+          node scripts/check-hetzner-image-cache.mjs
+      # And the tool that is the ONLY thing allowed to delete a cache entry. Its dangerous modes sit
+      # behind --yes-delete, and the self-test asserts on DELETE-CALL COUNTS rather than exit codes:
+      # a prune that deleted everything unasked exits 0 exactly like one that deleted nothing.
+      - name: hcloud image-cache tool (--yes-delete is what deletes; a failed listing is not "empty")
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: bash scripts/e2e/hcloud-image-cache.sh --self-test
       # A variable's DEFAULT is a decision, and `infra/.gitignore` used to hide every stack's real
       # inputs — so on any fresh checkout a bare `tofu apply` ran entirely on defaults, with nothing
       # saying so. That is not untidy, it is dangerous in two directions: a `count` gated on an
