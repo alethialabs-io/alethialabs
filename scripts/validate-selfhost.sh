@@ -146,6 +146,16 @@ check_live_roundtrip() {
 	done
 	if [ "${ok}" -eq 1 ]; then green "hero-flow health 200 through Caddy after ${waited}s"; else fail "health never came up within ${LIVE_TIMEOUT}s"; fi
 
+	# A healthy page is not enough for remote MCP: the server's 401 challenge must point to
+	# metadata that survives both well-known hops as JSON. This is the deployed regression arm
+	# for #3504/#3516, kept beside the repository's existing curl-based deployment probe.
+	local mcp_base="${MCP_BASE_URL:-${HEALTH_URL%/api/health}}"
+	if scripts/check-mcp-discovery.sh "${mcp_base}"; then
+		green "MCP OAuth discovery chain is reachable"
+	else
+		fail "MCP OAuth discovery chain is broken"
+	fi
+
 	# Idempotent re-run: a second `up -d` must not recreate anything.
 	info "asserting a second up -d is idempotent…"
 	local second
