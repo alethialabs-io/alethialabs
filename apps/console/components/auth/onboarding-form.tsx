@@ -114,6 +114,11 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 			// Pro, trial used → reveal the shared checkout form (primary org already exists).
 			track("upgrade_started", { plan: "team", context: "onboarding" });
 			const intent = await createSubscriptionIntent("team");
+			if ("error" in intent) {
+				toast.error(intent.error);
+				setBusy(false);
+				return;
+			}
 			setClientSecret(intent.clientSecret);
 			setCurrency(intent.currency);
 			setBusy(false);
@@ -149,6 +154,10 @@ export function OnboardingForm({ org, offer, proAvailable }: OnboardingFormProps
 		setSwitchingCurrency(true);
 		try {
 			const intent = await createSubscriptionIntent("team", { currency: next });
+			if ("error" in intent) {
+				toast.error(intent.error);
+				return;
+			}
 			setClientSecret(intent.clientSecret);
 			setCurrency(intent.currency);
 		} catch (e) {

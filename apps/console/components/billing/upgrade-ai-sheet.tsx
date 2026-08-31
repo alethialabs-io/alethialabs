@@ -33,6 +33,7 @@ import { StripeElementsProvider } from "@/components/billing/stripe-elements";
 import { authClient } from "@/lib/auth/client";
 import { track } from "@/lib/analytics/track";
 import type { PaidAiTier } from "@/lib/billing/config";
+import { billingIntentErrorMessage } from "@/lib/billing/intent-error";
 import {
 	type AiPlanCatalogEntry,
 	aiPlanMeta,
@@ -115,11 +116,7 @@ export function UpgradeAiSheet({ open, onOpenChange, onUpgraded }: UpgradeAiShee
 				setClientSecret(intent.clientSecret);
 				setCurrency(intent.currency);
 			})
-			.catch(
-				(e) =>
-					alive &&
-					setError(e instanceof Error ? e.message : "Couldn't start the upgrade."),
-			);
+			.catch((error) => alive && setError(billingIntentErrorMessage(error)));
 		return () => {
 			alive = false;
 		};
