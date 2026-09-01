@@ -21,17 +21,22 @@
  *
  * Usage:
  *   pnpm -F console gen:go-brand          # regenerate
- *   pnpm -F console gen:go-brand:check    # audit only — non-zero if a token has no projection
+ *   pnpm -F console gen:go-brand:check    # same run, without the write — non-zero if the
+ *                                         # stylesheet cannot be projected
  *
- * CI runs the regenerate + `git diff --exit-code` pair, so a stale committed file fails the
- * build and names this command.
+ * `--check` renders the file into memory and throws it away. It runs every refusal the write
+ * path runs, because half of them live in the emitter rather than in the audit; the only thing
+ * it does NOT do is compare against the committed file. That comparison is CI's job — it runs
+ * the regenerate + `git diff --exit-code` pair, so a stale committed file fails the build and
+ * names this command. `--check` is the strictly weaker, human-facing question ("can this
+ * stylesheet be projected at all?"), which is why CI does not run it.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { PROJECTIONS, tailwindBinding, type Projection } from "./lib/brand-projection";
+import { COLLAPSING_PORTS, collapses, PROJECTIONS, tailwindBinding, type Projection } from "./lib/brand-projection";
 import { carriesAlpha, colorPair, type ColorPair, type ThemeMap } from "./lib/brand-resolve";
 import { parseDeclarations, tokenCensus, type TokenDeclaration } from "./lib/css-tokens";
 
@@ -63,7 +68,17 @@ export function pascal(token: string): string {
 /** The Go identifier a projected token's value lands on, by port. */
 export function identFor(token: string, projection: Projection): string {
 	if (projection.kind === "none") return "";
-	switch (projection.port) {
+	const port = projection.port;
+	if (collapses(port)) {
+		// These collapse SEVERAL tokens onto one constant, so the constant is named by the
+		// table (`to`), not derived from the token — deriving it would give six names for
+		// two borders and hide the collapse this file exists to make visible.
+		return projection.kind === "lossy" ? (projection.to ?? "") : "";
+	}
+	// Every other port gives the token its own constant, named from the token. `to` is NOT
+	// consulted here, and `auditProjections` refuses an entry that sets one — a discarded `to`
+	// would make BrandProjections.Target publish a symbol the table does not name.
+	switch (port) {
 		case "color":
 			return `Color${pascal(token)}`;
 		case "layer":
@@ -75,13 +90,6 @@ export function identFor(token: string, projection: Projection): string {
 			// names the Go symbol a reader is meant to jump to, and `TrackingEyebrow` would name
 			// one that does not exist.
 			return `Tracking${pascal(token).replace(/^Tracking/, "")}Em`;
-		case "border":
-		case "emphasis":
-		case "focus":
-			// These collapse SEVERAL tokens onto one constant, so the constant is named by the
-			// table (`to`), not derived from the token — deriving it would give six names for
-			// two borders and hide the collapse this file exists to make visible.
-			return projection.kind === "lossy" ? (projection.to ?? "") : "";
 	}
 }
 
@@ -108,7 +116,9 @@ export function auditProjections(
 
 	for (const token of census) {
 		const explicit = table[token];
-		const derived = explicit === undefined ? tailwindBinding(token, decls, present) : null;
+		// The same `table` the audit was handed, never the module's own: a check that consults a
+		// different table than its caller is answering a different question.
+		const derived = explicit === undefined ? tailwindBinding(token, decls, present, table) : null;
 		const p = explicit ?? derived;
 		if (p === null || p === undefined) {
 			problems.push(
@@ -124,8 +134,17 @@ export function auditProjections(
 			if (p.why.trim() === "") {
 				problems.push(`${token} is marked lossy with an empty reason — a lossy entry must name what it collapses to and why.`);
 			}
-			if (p.port !== "color" && (p.to ?? "").trim() === "") {
+			if (collapses(p.port) && (p.to ?? "").trim() === "") {
 				problems.push(`${token} is marked lossy but names no collapse target — say which Go constant it becomes.`);
+			}
+			// The mirror of the rule above, and the reason both are stated in terms of the PORT
+			// rather than in terms of `color`: a `to` on a port that does not collapse is
+			// discarded by identFor, so the table and the generated Target would name two
+			// different Go symbols and nothing would say so.
+			if (!collapses(p.port) && (p.to ?? "").trim() !== "") {
+				problems.push(
+					`${token} names the collapse target ${p.to} on the ${p.port} port, which does not collapse — it gives every token its own constant, and this one is emitted as ${identFor(token, p)}. Drop 'to', or move the token to a collapsing port (${COLLAPSING_PORTS.join(", ")}).`,
+				);
 			}
 		}
 		if (p.kind === "none" && p.why.trim() === "") {
@@ -321,12 +340,15 @@ export function renderGo(
 
 	// ── layers ────────────────────────────────────────────────────────────────────────────
 	const layerTokens = byPort("layer");
+	// `noteOf`, never `kind === "exact" ? note : ""`: the header promises that a lossy entry
+	// carries its reason INTO this file, and a lossy reason dropped here leaves the const with a
+	// dangling em dash — the one place a reader would look for why it is lossy.
 	const layerConsts = alignRows(
 		layerTokens.map(({ name, projection, ident }) => [
 			ident,
 			"BrandLayer =",
 			String(layer(baseValue(name, decls))),
-			`// ${name} — ${projection.kind === "exact" ? projection.note : ""}`,
+			`// ${name} — ${noteOf(projection)}`,
 		]),
 	);
 	const layerMap = alignRows(layerTokens.map(({ name, ident }) => [`${q(name)}:`, `${ident},`]));
@@ -338,7 +360,7 @@ export function renderGo(
 			ident,
 			"=",
 			`${millis(baseValue(name, decls))} * time.Millisecond`,
-			`// ${name} — ${projection.kind === "exact" ? projection.note : ""}`,
+			`// ${name} — ${noteOf(projection)}`,
 		]),
 	);
 	const durMap = alignRows(durTokens.map(({ name, ident }) => [`${q(name)}:`, `${ident},`]));
@@ -348,8 +370,7 @@ export function renderGo(
 	const trackConsts = trackTokens
 		.map(({ name, projection, ident }) => {
 			const em = ems(baseValue(name, decls));
-			const note = projection.kind === "exact" ? projection.note : "";
-			return [...goComment(`${ident} is ${name} — ${note}.`, "\t"), `\t${ident} = ${em}`].join("\n");
+			return [...goComment(`${ident} is ${name} — ${noteOf(projection)}.`, "\t"), `\t${ident} = ${em}`].join("\n");
 		})
 		.join("\n\n");
 
@@ -530,8 +551,17 @@ ${focus.map}
 `;
 }
 
-/** Reads the stylesheet, audits it against the table, and returns everything the emitter needs. */
-export function build(css: string): {
+/**
+ * Reads the stylesheet, audits it against the table, and returns everything the emitter needs.
+ *
+ * `table` is a parameter rather than a module reference so a test can drive this against the
+ * REAL stylesheet with one entry mutated — which is how the refusals below are proven to fire,
+ * without the test re-implementing any of them.
+ */
+export function build(
+	css: string,
+	table: Readonly<Record<string, Projection>> = PROJECTIONS,
+): {
 	tokens: ResolvedToken[];
 	decls: TokenDeclaration[];
 	pairs: Map<string, ColorPair>;
@@ -540,11 +570,11 @@ export function build(css: string): {
 	const decls = parseDeclarations(css);
 	const census = tokenCensus(css);
 	const present = new Set(census);
-	const problems = auditProjections(census, decls);
+	const problems = auditProjections(census, decls, table);
 
 	const tokens: ResolvedToken[] = [];
 	for (const name of census) {
-		const p = PROJECTIONS[name] ?? tailwindBinding(name, decls, present);
+		const p = table[name] ?? tailwindBinding(name, decls, present, table);
 		if (p === null || p === undefined) continue; // already reported by the audit
 		const ident = identFor(name, p);
 		if (p.kind !== "none" && ident === "") {
@@ -577,13 +607,43 @@ export function build(css: string): {
 	return { tokens, decls, pairs, problems };
 }
 
+/**
+ * The WHOLE pipeline: audit the table against the stylesheet, then render. `go` is the file's
+ * contents when the stylesheet projects cleanly, and `null` when it does not — `problems` then
+ * holds every reason, whether the audit found it or the emitter refused it.
+ *
+ * This exists so that `--check` and the write path cannot answer differently. They used to: the
+ * check returned after `build()`, so half the refusals — the focus glyph, `millis()`, `layer()`,
+ * `ems()`, `baseValue()`'s "no unconditional declaration" — live in `renderGo` and were invisible
+ * to it, and it printed "no gaps" for a stylesheet the generator would not emit from. Rendering
+ * is the check; only the `writeFileSync` is conditional.
+ */
+export function generate(
+	css: string,
+	table: Readonly<Record<string, Projection>> = PROJECTIONS,
+): { go: string | null; tokens: ResolvedToken[]; pairs: Map<string, ColorPair>; problems: string[] } {
+	const { tokens, decls, pairs, problems } = build(css, table);
+	if (problems.length > 0) return { go: null, tokens, pairs, problems };
+	try {
+		return { go: renderGo(tokens, decls, pairs), tokens, pairs, problems };
+	} catch (err) {
+		// The emitter refuses a few things the audit cannot see from the table alone — a focus
+		// constant with no glyph, a duration that is not whole milliseconds. Report them in the
+		// same shape as every other refusal: a bare stack trace renders in the CI log as a crash
+		// in the tooling rather than as a decision somebody has to make.
+		return { go: null, tokens, pairs, problems: [err instanceof Error ? err.message : String(err)] };
+	}
+}
+
 function main(): void {
 	const checkOnly = process.argv.includes("--check");
 	const css = readFileSync(TOKENS, "utf8");
-	const { tokens, decls, pairs, problems } = build(css);
+	const { go, tokens, pairs, problems } = generate(css);
 
-	if (problems.length > 0) {
-		console.error(`::error::${OUT_REL} was not generated — ${problems.length} token(s) in ${TOKENS_REL} have no honest projection. Fix ${TABLE_REL}, then run 'pnpm -F console gen:go-brand'.`);
+	if (go === null) {
+		// One message for both paths, because they now run the same checks: `--check` renders too,
+		// and a refusal it reports is a refusal the write path would report.
+		console.error(`::error::${OUT_REL} cannot be generated from ${TOKENS_REL} — ${problems.length} problem(s). Either a token has no honest projection in ${TABLE_REL}, or it carries a value the emitter cannot project. Fix them, then run 'pnpm -F console gen:go-brand'.`);
 		for (const p of problems) console.error(`  · ${p}`);
 		process.exit(1);
 	}
@@ -594,21 +654,10 @@ function main(): void {
 		none: tokens.filter((t) => t.projection.kind === "none").length,
 	};
 	if (checkOnly) {
-		console.log(`brand projection: ${tokens.length} tokens — ${counts.exact} exact, ${counts.lossy} lossy, ${counts.none} none; no gaps`);
+		console.log(`brand projection: ${tokens.length} tokens — ${counts.exact} exact, ${counts.lossy} lossy, ${counts.none} none; renders, no gaps`);
 		return;
 	}
 
-	let go: string;
-	try {
-		go = renderGo(tokens, decls, pairs);
-	} catch (err) {
-		// The emitter refuses a few things the audit cannot see from the table alone — a focus
-		// constant with no glyph, a duration that is not whole milliseconds. Report them in the
-		// same shape as every other refusal: a bare stack trace renders in the CI log as a crash
-		// in the tooling rather than as a decision somebody has to make.
-		console.error(`::error::${OUT_REL} was not generated — ${err instanceof Error ? err.message : String(err)}`);
-		process.exit(1);
-	}
 	writeFileSync(OUT, go, "utf8");
 	console.log(
 		`wrote ${OUT_REL} — ${tokens.length} tokens (${counts.exact} exact, ${counts.lossy} lossy, ${counts.none} none), ${pairs.size} inks`,

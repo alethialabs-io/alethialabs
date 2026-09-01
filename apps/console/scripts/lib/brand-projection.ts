@@ -28,8 +28,35 @@
 
 import type { TokenDeclaration } from "./css-tokens";
 
-/** Which Go block a projected token joins. `none` tokens join none of them. */
-export type ProjectionPort = "color" | "layer" | "duration" | "tracking" | "border" | "emphasis" | "focus";
+/**
+ * Which Go block a projected token joins. `none` tokens join none of them.
+ *
+ * The array is the source and the type is derived from it, not the other way round: a port added
+ * to the union but not to the array would be a port the audit and the tests below never sweep,
+ * and nothing would say so.
+ */
+export const PROJECTION_PORTS = ["color", "layer", "duration", "tracking", "border", "emphasis", "focus"] as const;
+export type ProjectionPort = (typeof PROJECTION_PORTS)[number];
+
+/**
+ * The ports that fold SEVERAL tokens onto ONE Go constant. Their constant is named by the
+ * entry's `to`, because deriving it from the token would give six names for two borders and
+ * hide the collapse this whole file exists to make visible.
+ *
+ * Every OTHER port gives each token its own constant, named from the token itself, and an entry
+ * there has nothing to point `to`: `identFor` derives the name, so a `to` written there would be
+ * silently discarded and `BrandProjections.Target` would publish a symbol the table does not
+ * name. `auditProjections` refuses that; both it and `identFor` ask `collapses()`, so the guard
+ * and the emitter cannot disagree about which ports collapse.
+ */
+export const COLLAPSING_PORTS = ["border", "emphasis", "focus"] as const;
+export type CollapsingPort = (typeof COLLAPSING_PORTS)[number];
+export type DerivingPort = Exclude<ProjectionPort, CollapsingPort>;
+
+/** True when `port` names its Go constant through the entry's `to` rather than from the token. */
+export function collapses(port: ProjectionPort): port is CollapsingPort {
+	return COLLAPSING_PORTS.some((p) => p === port);
+}
 
 export type Projection =
 	| { kind: "exact"; port: ProjectionPort; note: string }
@@ -53,12 +80,23 @@ const composited = (): Projection => ({
 });
 
 /**
+ * The reason an absorbed binding carries into the generated Go.
+ *
  * Kept short on purpose: it is repeated once per `--color-*` token, and a paragraph repeated
  * fifty-two times in the generated Go is a wall the reader learns to skip past — including
  * past the entries that are NOT this one.
+ *
+ * The LAST sentence is the one a reader follows, so it is written from the target's own entry
+ * rather than assuming the target is a colour. It is not: `--color-sidebar` points at a token
+ * that projects to nothing and `--color-ring` at one that projects to a glyph, and a flat "the
+ * colour is projected at --sidebar" sends the reader to a `none` row looking for an ink.
  */
-const tailwindBindingWhy = (target: string): string =>
-	`Tailwind \`@theme inline\` utility binding for ${target} — it exists so \`bg-…\`/\`text-…\` compile, and holds no value of its own. The colour is projected at ${target}.`;
+function tailwindBindingWhy(target: string, projection: Projection): string {
+	const head = `Tailwind \`@theme inline\` utility binding for ${target} — it exists so \`bg-…\`/\`text-…\` compile, and holds no value of its own.`;
+	if (projection.kind === "none") return `${head} ${target} projects to nothing either; its own entry says why.`;
+	if (projection.port === "color") return `${head} The colour is projected at ${target}.`;
+	return `${head} ${target} is projected on the ${projection.port} port, not as a colour.`;
+}
 
 const SIDEBAR =
 	"the CLI has no persistent sidebar chrome; its navigation is the command tree, drawn per invocation. The inks this names are projected at --ink, --surface-muted and --text-primary.";
@@ -68,19 +106,31 @@ const CHART_TRIPWIRE =
 
 /**
  * The `--color-*` block is the one derived rule, and it is derived from STRUCTURE rather than
- * from the name: an entry qualifies only if its declared value is exactly `var(--other)` and
- * `--other` is itself a declared token. That is what makes it sound — it cannot absorb a NEW
- * token carrying a value of its own (`--color-brand-blue: oklch(0.6 0.2 250)` matches the name
- * and fails the structure), which is the case a bare `startsWith("--color-")` wildcard would
- * have swallowed silently.
+ * from the name: an entry qualifies only if its declared value is exactly `var(--other)`,
+ * `--other` is itself a declared token, AND `--other` carries a decision of its own in the
+ * table below. That is what makes it sound — it cannot absorb a NEW token carrying a value of
+ * its own (`--color-brand-blue: oklch(0.6 0.2 250)` matches the name and fails the structure),
+ * which is the case a bare `startsWith("--color-")` wildcard would have swallowed silently.
+ *
+ * The third condition is what keeps the DERIVATION honest rather than merely the structure: a
+ * binding inherits its target's decision, so there has to BE one. A binding onto another
+ * binding, or onto a token nobody has decided yet, is refused here and lands in the audit under
+ * its own name — which is where the decision belongs.
  */
-export function tailwindBinding(name: string, decls: readonly TokenDeclaration[], census: ReadonlySet<string>): Projection | null {
+export function tailwindBinding(
+	name: string,
+	decls: readonly TokenDeclaration[],
+	census: ReadonlySet<string>,
+	table: Readonly<Record<string, Projection>> = PROJECTIONS,
+): Projection | null {
 	if (!name.startsWith("--color-")) return null;
 	const mine = decls.filter((d) => d.name === name);
 	if (mine.length !== 1) return null;
 	const m = /^var\((--[A-Za-z0-9_-]+)\)$/.exec(mine[0].value);
 	if (m === null || !census.has(m[1])) return null;
-	return { kind: "none", why: tailwindBindingWhy(m[1]) };
+	const target = table[m[1]];
+	if (target === undefined) return null;
+	return { kind: "none", why: tailwindBindingWhy(m[1], target) };
 }
 
 /** The table. Order is irrelevant — the emitter walks the stylesheet, not this object. */

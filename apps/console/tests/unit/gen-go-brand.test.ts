@@ -30,7 +30,14 @@ import { fileURLToPath } from "node:url";
 import { RAMP } from "@repo/brand/ramp-srgb";
 import { describe, expect, it } from "vitest";
 
-import { PROJECTIONS, tailwindBinding, type Projection } from "../../scripts/lib/brand-projection";
+import {
+	collapses,
+	PROJECTION_PORTS,
+	PROJECTIONS,
+	tailwindBinding,
+	type DerivingPort,
+	type Projection,
+} from "../../scripts/lib/brand-projection";
 import { carriesAlpha, colorPair, flatten, hex, oklchToRgba, resolveColor } from "../../scripts/lib/brand-resolve";
 import { parseDeclarations, stripComments, tokenCensus } from "../../scripts/lib/css-tokens";
 import {
@@ -38,6 +45,7 @@ import {
 	auditColorClaims,
 	auditProjections,
 	build,
+	generate,
 	identFor,
 	millis,
 	pascal,
@@ -219,6 +227,46 @@ describe("the no-silent-gap guard", () => {
 		expect(problems).toEqual([expect.stringContaining("names no collapse target")]);
 	});
 
+	it("refuses a collapse target on EVERY port that does not collapse", () => {
+		// The mirror of the rule above. `identFor` derives the constant's name on these ports, so
+		// a `to` written here is DISCARDED — the author is made to name a target that the
+		// generated Target then contradicts. The set is derived from PROJECTION_PORTS rather than
+		// typed out, because the rule that used to be here read `port !== "color"` and got the
+		// other three deriving ports wrong; a hand-written list would go the same way.
+		//
+		// The expected identifiers are written out rather than read back from identFor: a message
+		// checked against the function that built it agrees with any bug the two share.
+		const emitted: Record<DerivingPort, string> = {
+			color: "ColorZA",
+			layer: "LayerA",
+			duration: "ZA",
+			tracking: "TrackingZAEm",
+		};
+		const deriving = PROJECTION_PORTS.filter((p) => !collapses(p));
+		expect(deriving.slice().sort()).toEqual(Object.keys(emitted).sort());
+		for (const port of deriving) {
+			const problems = audit(":root { --z-a: 1px; }", {
+				"--z-a": { kind: "lossy", port, to: "SomethingElse", why: "it collapses" },
+			});
+			expect(problems).toEqual([
+				expect.stringContaining(`--z-a names the collapse target SomethingElse on the ${port} port, which does not collapse`),
+			]);
+			// And it names the constant that IS emitted, so the fix is one edit rather than a hunt.
+			expect(problems[0]).toContain(emitted[port]);
+			expect(identFor("--z-a", { kind: "lossy", port, why: "it collapses" })).toBe(emitted[port]);
+		}
+	});
+
+	it("accepts a lossy entry with no target on a port that derives its name", () => {
+		// The other half of the same rule: the author is no longer FORCED to name a target on
+		// these ports, which is what made the discarded `to` inevitable.
+		expect(
+			audit(":root { --z-a: 1; }", {
+				"--z-a": { kind: "lossy", port: "layer", why: "a rung, approximately" },
+			}),
+		).toEqual([]);
+	});
+
 	it("refuses a none entry that does not say why", () => {
 		const problems = audit(":root { --a: 1px; }", { "--a": { kind: "none", why: "" } });
 		expect(problems).toEqual([expect.stringContaining("'none' is an answer only when it says why")]);
@@ -243,29 +291,67 @@ describe("the no-silent-gap guard", () => {
 
 describe("the --color-* structural rule", () => {
 	const decls = (sheet: string) => parseDeclarations(sheet);
+	/** Runs the rule against a hand-written sheet and an explicit table. */
+	const bind = (name: string, sheet: string, table: Record<string, Projection> = {}) =>
+		tailwindBinding(name, decls(sheet), new Set(tokenCensus(sheet)), table);
 
 	it("absorbs a binding that is exactly var(--declared-token)", () => {
 		const sheet = "@theme inline { --color-surface: var(--surface); } :root { --surface: oklch(1 0 0); }";
-		const p = tailwindBinding("--color-surface", decls(sheet), new Set(tokenCensus(sheet)));
+		const p = bind("--color-surface", sheet, { "--surface": { kind: "exact", port: "color", note: "a plate" } });
 		expect(p?.kind).toBe("none");
-		expect(p?.kind === "none" ? p.why : "").toContain("--surface");
+		expect(p?.kind === "none" ? p.why : "").toContain("The colour is projected at --surface.");
 	});
 
 	it("REFUSES a --color-* token carrying a value of its own", () => {
 		// The case a bare startsWith("--color-") wildcard would have swallowed: a hue enters the
 		// grayscale palette and nobody is asked what the CLI does with it.
 		const sheet = "@theme inline { --color-brand-blue: oklch(0.6 0.2 250); }";
-		expect(tailwindBinding("--color-brand-blue", decls(sheet), new Set(tokenCensus(sheet)))).toBeNull();
+		expect(bind("--color-brand-blue", sheet)).toBeNull();
 	});
 
 	it("REFUSES a binding that points at a token nothing declares", () => {
 		const sheet = "@theme inline { --color-ghost: var(--ghost); }";
-		expect(tailwindBinding("--color-ghost", decls(sheet), new Set(tokenCensus(sheet)))).toBeNull();
+		expect(bind("--color-ghost", sheet)).toBeNull();
+	});
+
+	it("REFUSES a binding whose target carries no decision of its own", () => {
+		// The binding INHERITS its target's decision, so there has to be one. Absorbing an
+		// undecided target would put a token into the census under a decision nobody made — and
+		// it is `--color-*`, so it would never be reported under its target's name either.
+		const sheet = "@theme inline { --color-undecided: var(--undecided); } :root { --undecided: 10px; }";
+		expect(bind("--color-undecided", sheet)).toBeNull();
 	});
 
 	it("does not apply to a token outside the --color-* namespace", () => {
 		const sheet = ":root { --alias: var(--surface); --surface: oklch(1 0 0); }";
-		expect(tailwindBinding("--alias", decls(sheet), new Set(tokenCensus(sheet)))).toBeNull();
+		expect(bind("--alias", sheet, { "--surface": { kind: "exact", port: "color", note: "a plate" } })).toBeNull();
+	});
+
+	describe("the note it writes is the target's OWN answer, not an assumed colour", () => {
+		// Driven three ways because the rule has three answers, and the wrong one is unfalsifiable
+		// from the generated file: "the colour is projected at --sidebar" reads fine and sends the
+		// reader to a `none` row that holds no colour.
+		const sheet = "@theme inline { --color-x: var(--x); } :root { --x: oklch(1 0 0); }";
+		const why = (target: Projection): string => {
+			const p = bind("--color-x", sheet, { "--x": target });
+			return p?.kind === "none" ? p.why : "";
+		};
+
+		it("points at the colour when the target IS projected as a colour", () => {
+			expect(why({ kind: "exact", port: "color", note: "a plate" })).toContain("The colour is projected at --x.");
+		});
+
+		it("says the target projects to nothing when it does", () => {
+			const text = why({ kind: "none", why: "no terminal analogue" });
+			expect(text).toContain("--x projects to nothing either");
+			expect(text).not.toContain("The colour is projected");
+		});
+
+		it("names the port when the target is projected as something that is not a colour", () => {
+			const text = why({ kind: "lossy", port: "focus", to: "FocusMarker", why: "a ring becomes a marker" });
+			expect(text).toContain("--x is projected on the focus port, not as a colour.");
+			expect(text).not.toContain("The colour is projected");
+		});
 	});
 });
 
@@ -319,6 +405,17 @@ describe("Go rendering details", () => {
 		expect(identFor("--radius-md", to)).toBe("BorderSquare");
 	});
 
+	it("IGNORES a collapse target on a port that derives its identifier", () => {
+		// The other half of the same contract, and the half that used to be silent. Only the
+		// collapsing ports have a constant to point at; on the rest the const block emits a name
+		// derived from the token, so honouring `to` here would make BrandProjections.Target
+		// publish a symbol no const block declares. The audit refuses such an entry outright —
+		// this pins the behaviour identFor itself has, because the audit's message is built from
+		// it and would otherwise quote a target it is telling the author to drop.
+		expect(identFor("--z-probe", { kind: "lossy", port: "layer", to: "LayerSomethingElse", why: "x" })).toBe("LayerProbe");
+		expect(identFor("--dur-9", { kind: "lossy", port: "duration", to: "Whatever", why: "x" })).toBe("Dur9");
+	});
+
 	it("refuses a duration it cannot read rather than emitting a stopped tick", () => {
 		expect(() => millis("0.5s")).toThrow(/whole number of milliseconds/);
 		expect(millis("260ms")).toBe(260);
@@ -331,6 +428,88 @@ describe("Go rendering details", () => {
 				["bbb", "=", "22", "// two"],
 			]),
 		).toBe(["\ta   = 1  // one", "\tbbb = 22 // two"].join("\n"));
+	});
+});
+
+/**
+ * The whole pipeline, driven against the REAL stylesheet with one thing changed.
+ *
+ * `generate` is what both `gen:go-brand` and `gen:go-brand:check` call, and it is what these
+ * tests call — so a refusal proven here is a refusal the check runs. That is the point of the
+ * function existing: `--check` used to return after the audit, and every refusal that lives in
+ * the emitter (the focus glyph, `millis`, `layer`, `ems`, `baseValue`) was invisible to it, so
+ * it printed "no gaps" for a stylesheet the generator would not emit from.
+ */
+describe("the generator refuses a stylesheet it cannot project — on the check path too", () => {
+	/** Applies one edit to the live stylesheet, and fails if the edit did not land. */
+	function mutate(find: string, replace: string): string {
+		const out = css.replace(find, replace);
+		expect(out, `the mutation ${JSON.stringify(find)} did not apply`).not.toBe(css);
+		return out;
+	}
+
+	it("renders the committed stylesheet, which is what a green check means", () => {
+		// The green branch driven explicitly: `go` is a real file, not an absence of complaints.
+		const { go, problems } = generate(css);
+		expect(problems).toEqual([]);
+		expect(go).toContain("package types");
+		expect(go).toContain("var BrandProjections = []BrandProjection{");
+	});
+
+	it("refuses a duration that is not whole milliseconds", () => {
+		const sheet = mutate("--dur-1: 120ms;", "--dur-5: 1.5s;\n  --dur-1: 120ms;");
+		const { go, problems } = generate(sheet, {
+			...PROJECTIONS,
+			"--dur-5": { kind: "exact", port: "duration", note: "a probe" },
+		});
+		expect(problems).toEqual([expect.stringContaining("--dur-* value 1.5s is not a whole number of milliseconds")]);
+		expect(go).toBeNull();
+	});
+
+	it("refuses a z-index that is not an integer", () => {
+		const sheet = mutate("--z-toast: 300;", "--z-toast: 300;\n  --z-probe: calc(1px);");
+		const { go, problems } = generate(sheet, {
+			...PROJECTIONS,
+			"--z-probe": { kind: "exact", port: "layer", note: "a probe" },
+		});
+		expect(problems).toEqual([expect.stringContaining("--z-* value calc(1px) is not an integer")]);
+		expect(go).toBeNull();
+	});
+
+	it("refuses a focus target with no glyph", () => {
+		const { go, problems } = generate(css, {
+			...PROJECTIONS,
+			"--ring": { kind: "lossy", port: "focus", to: "FocusUnglyphed", why: "a ring becomes a marker" },
+		});
+		expect(problems).toEqual([expect.stringContaining("FocusUnglyphed, which has no glyph in FOCUS_GLYPHS")]);
+		expect(go).toBeNull();
+	});
+
+	it("refuses a value-reading token whose only declaration sits inside an @media block", () => {
+		const sheet = mutate("--z-toast: 300;", "--z-toast: 300; }\n@media (max-width: 620px) { :root { --z-probe: 400;");
+		const { go, problems } = generate(sheet, {
+			...PROJECTIONS,
+			"--z-probe": { kind: "exact", port: "layer", note: "a probe" },
+		});
+		expect(problems).toEqual([expect.stringContaining("--z-probe has no unconditional declaration")]);
+		expect(go).toBeNull();
+	});
+});
+
+describe("a lossy entry's reason and target survive into the generated file", () => {
+	it("derives the constant from the token and carries the reason to it", () => {
+		// The reviewer's repro. `LayerProbe` is what the const block emits, so `Target` must say
+		// LayerProbe — and the reason must land on the const's own doc comment rather than leaving
+		// it a dangling em dash, which is the one place a reader looks for why it is lossy.
+		const sheet = css.replace("--z-toast: 300;", "--z-toast: 300;\n  --z-probe: 400;");
+		expect(sheet).not.toBe(css);
+		const { go, problems } = generate(sheet, {
+			...PROJECTIONS,
+			"--z-probe": { kind: "lossy", port: "layer", why: "THE REASON THAT MUST SURVIVE" },
+		});
+		expect(problems).toEqual([]);
+		expect(go).toContain('{Token: "--z-probe", Kind: BrandLossy, Target: "LayerProbe", Note: "THE REASON THAT MUST SURVIVE"}');
+		expect(go).toContain("BrandLayer = 400 // --z-probe — THE REASON THAT MUST SURVIVE");
 	});
 });
 
@@ -375,6 +554,31 @@ describe("the committed table against the live stylesheet", () => {
 		const display = PROJECTIONS["--tracking-display"];
 		expect(display.kind).toBe("none");
 		expect(display.kind === "none" ? display.why : "").toContain("negative");
+	});
+
+	it("points every binding's note at what its target ACTUALLY projects", () => {
+		// Read off the RENDERED file, not off the table: the note is the sentence a reader
+		// follows, and the generated Go is where they read it. Plenty of the bindings point at a
+		// target that is not a projected colour — the sidebar set, the chart set, the overlay and
+		// input fills project to nothing, and the two rings project to a glyph.
+		const { go } = generate(css);
+		const claimed = [...(go ?? "").matchAll(/The colour is projected at (--[A-Za-z0-9-]+)\./g)].map((m) => m[1]);
+		const notAColour = [...new Set(claimed)].filter((t) => {
+			const p = PROJECTIONS[t];
+			return p === undefined || p.kind === "none" || p.port !== "color";
+		});
+		// Named, not counted: a failure here prints the tokens the file sends a reader to look
+		// for an ink that is not there.
+		expect(notAColour).toEqual([]);
+
+		// And the other two answers are present, so this is not green because the sentence
+		// vanished from the file altogether.
+		for (const target of ["--sidebar", "--sidebar-border", "--chart-1", "--overlay", "--input-fill", "--input-fill-hover"]) {
+			expect(go).toContain(`${target} projects to nothing either`);
+		}
+		for (const target of ["--ring", "--ring-invalid"]) {
+			expect(go).toContain(`${target} is projected on the focus port, not as a colour.`);
+		}
 	});
 
 	it("names every token that carries alpha, and marks each of them lossy or none", () => {
