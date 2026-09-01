@@ -7,6 +7,7 @@
 # product lives on the box (see .claude/skills/dev/SKILL.md and CLAUDE.md).
 #
 #   env:up      ensure this branch has an environment, and that it is running
+#               a NEW env comes up seeded with demo data   [--empty | --seed | --fresh]
 #   env:push    rsync the working tree (the fast inner loop)   [--watch]
 #   env:down    release this branch's environment
 #   env:status  the box, every environment, capacity, cost
@@ -529,8 +530,22 @@ provision_box() {
     sleep 5
   done
 
+  # …with ONE opt-in exception, for the branch that is CHANGING those files. Shipping the
+  # main checkout's copy on every env:up means a scripts/box/** edit is otherwise
+  # UNTESTABLE: env:up overwrites it with dev's copy before running it, so the change can
+  # only ever be reviewed by reading it — and this repo has repeatedly shipped shell
+  # changes that were green locally and inert in reality. Opt in explicitly and say so
+  # loudly; the reason for the default is real, and this is not it being relaxed.
+  local box_src="$MAIN_CHECKOUT"
+  if [ "${ALETHIA_BOX_SCRIPTS_FROM_TREE:-}" = "1" ]; then
+    box_src="$ROOT"
+    echo "⚠ ALETHIA_BOX_SCRIPTS_FROM_TREE=1 — shipping THIS tree's scripts/box/ to the box."
+    echo "  $box_src/scripts/box/"
+    echo "  EVERY env on the box runs them, not just yours, until the next env:up from a"
+    echo "  checkout without this set. Use it to test a scripts/box/** change, nothing else."
+  fi
   rsync -az -e "ssh -o StrictHostKeyChecking=accept-new" \
-    "$MAIN_CHECKOUT/scripts/box/" "root@$ip:$REMOTE/bin/"
+    "$box_src/scripts/box/" "root@$ip:$REMOTE/bin/"
 
   # /opt/alethia/box.env carries the env cap and the domain. cloud-init wrote it once at
   # creation, but user_data is now ignored on the server (changing it FORCES REPLACEMENT
@@ -598,11 +613,40 @@ cmd_push() {
   fi
 }
 
+# A NEW env comes up SEEDED with demo data (apps/console/scripts/seed-demo.ts). It came
+# up empty until 2026-09-01, so every list page rendered its empty state — a UI audit
+# measured an empty product and nobody manually checking a branch env had ever seen a
+# populated page.
+#
+#   --empty   bring it up with NO demo data, and REMEMBER that
+#   --seed    (re-)seed an env that is already up, refreshing the demo org
+#   --fresh   drop the database first — which implies a re-seed, unless --empty
+#
+# --empty is not optional polish: the empty state is itself something the console has to
+# render correctly, and it can only be checked against an org that has nothing in it. An
+# env that can only be seeded proves half the contract. scripts/box/env-mode.sh resolves
+# the flag against the mode it recorded last time; seed_decision() there is the matrix,
+# and `bash scripts/box/env-mode.sh --self-test` exercises it.
 cmd_up() {
   need jq
   need rsync
-  local slug_ row cport sport db fresh=""
-  [ "${1:-}" = "--fresh" ] && fresh="fresh"
+  local slug_ row cport sport db fresh="" seed="" a
+  for a in "$@"; do
+    case "$a" in
+    --fresh) fresh="fresh" ;;
+    # Refused rather than last-one-wins: "--empty --seed" has no defensible reading, and
+    # quietly picking one of them decides the audit's answer for it.
+    --empty | --seed)
+      [ -z "$seed" ] || [ "$seed" = "${a#--}" ] ||
+        die "--empty and --seed contradict each other."
+      seed="${a#--}"
+      ;;
+    # An unrecognised flag is REFUSED rather than ignored. A silently dropped --empty
+    # would hand back a seeded env that the caller believes is empty, and every
+    # conclusion drawn from it would be wrong in a way nothing prints.
+    *) die "unknown flag '$a' — env:up takes [--fresh] and one of [--empty|--seed]" ;;
+    esac
+  done
   slug_="$(slug)"
 
   provision_box
@@ -620,7 +664,7 @@ cmd_up() {
   push_tree
   mint_env "$slug_" "$cport" "$sport" "$db"
 
-  ssh_box "$REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '$fresh'"
+  ssh_box "$REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '$fresh' '$seed'"
   ssh_box "$REMOTE/bin/env-registry.sh touch '$slug_'"
 }
 
@@ -1247,7 +1291,9 @@ timer)
   cmd_timer "$@"
   ;;
 *)
-  sed -n '5,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # 5,22 is exactly the header block above. It read 5,25 and so printed `set -euo
+  # pipefail` and the first line of the next comment section as if they were usage.
+  sed -n '5,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 1
   ;;
 esac
