@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/alethialabs-io/alethialabs/apps/cli/pkg/utils/ui"
 	"github.com/alethialabs-io/alethialabs/packages/core/api"
+	"github.com/alethialabs-io/alethialabs/packages/core/format"
 	"github.com/alethialabs-io/alethialabs/packages/core/types"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/dustin/go-humanize"
@@ -49,6 +51,18 @@ var jobsListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all provisioning jobs",
 	Run: func(cmd *cobra.Command, args []string) {
+		// Validated against the generated enum before the request. The server answers a
+		// misspelled status with an empty page, which reads as "you have no jobs" rather than
+		// "you typed PROCESSNG" — and no job can carry a status outside the enum, so refusing
+		// one here can never hide a job that exists.
+		if jobsListStatus != "" && !containsFold(jobStatusValues(), jobsListStatus) {
+			failf("invalid --status %q (want one of: %s)", jobsListStatus, strings.Join(jobStatusValues(), ", "))
+		}
+		// Upper-cased for the wire. The column is a Postgres enum compared as text, so `success`
+		// would match no row — accepting a spelling and then sending it verbatim would turn a
+		// friendly flag into a silent empty page.
+		status := strings.ToUpper(jobsListStatus)
+
 		token, err := getAuthToken()
 		if err != nil {
 			fail(err)
@@ -63,7 +77,7 @@ var jobsListCmd = &cobra.Command{
 		var page *api.JobsPage
 
 		ui.RunSpinner("Fetching jobs...", func() {
-			page, err = apiClient.GetJobs(jobsListStatus, pageSize, 0)
+			page, err = apiClient.GetJobs(status, pageSize, 0)
 		})
 
 		if err != nil {
@@ -91,7 +105,7 @@ var jobsListCmd = &cobra.Command{
 			PaginatedTableModel: m,
 			apiClient:           apiClient,
 			pageSize:            pageSize,
-			status:              jobsListStatus,
+			status:              status,
 		})
 		if _, err := p.Run(); err != nil {
 			failf("Table error: %v", err)
@@ -101,12 +115,12 @@ var jobsListCmd = &cobra.Command{
 
 // renderJobs writes a page of jobs to out in the requested format. Pagination is
 // interactive-only; non-interactive output returns up to --limit jobs.
-func renderJobs(out io.Writer, format string, jobs []api.ProvisionJob) error {
-	if len(jobs) == 0 && format == ui.FormatTable {
+func renderJobs(out io.Writer, outFormat string, jobs []api.ProvisionJob) error {
+	if len(jobs) == 0 && outFormat == ui.FormatTable {
 		fmt.Fprintln(out, ui.MutedStyle.Render("No jobs found."))
 		return nil
 	}
-	return ui.Render(out, format, ui.TableSpec{
+	return ui.Render(out, outFormat, ui.TableSpec{
 		Columns: jobListColumns,
 		Rows:    jobRowsPlain(jobs),
 	}, jobs)
@@ -149,6 +163,15 @@ func jobRowsPlain(jobs []api.ProvisionJob) [][]string {
 	return rows
 }
 
+// formatDuration renders how long a job ran, with "…" while it is still running.
+//
+// The elapsed rule itself is `packages/core/format.Duration` and no longer lives here. It was
+// the last hand-written copy of it in the CLI, and it is the rule the epic ruled ON: a job that
+// takes two hours reads `2h 5m`, not `125m 5s`, on BOTH surfaces. What stays local is the part
+// that is genuinely this command's — the dash for a job that never started, and the ellipsis
+// that says the number is still climbing. `apps/cli/pkg/utils/ui/render.go` records why this
+// function was left out of the render hoist: its rule was about to be replaced wholesale, and
+// this is that replacement.
 func formatDuration(started, completed *time.Time) string {
 	if started == nil {
 		return ui.SymbolDash
@@ -159,18 +182,15 @@ func formatDuration(started, completed *time.Time) string {
 		end = *completed
 		suffix = ""
 	}
-	d := end.Sub(*started)
-	if d < time.Minute {
-		return fmt.Sprintf("%ds%s", int(d.Seconds()), suffix)
-	}
-	if d < time.Hour {
-		return fmt.Sprintf("%dm %ds%s", int(d.Minutes()), int(d.Seconds())%60, suffix)
-	}
-	return fmt.Sprintf("%dh %dm%s", int(d.Hours()), int(d.Minutes())%60, suffix)
+	return format.Duration(end.Sub(*started)) + suffix
 }
 
 func init() {
 	jobsCmd.AddCommand(jobsListCmd)
-	jobsListCmd.Flags().StringVar(&jobsListStatus, "status", "", "Filter by status (QUEUED, CLAIMED, PROCESSING, SUCCESS, FAILED, CANCELLED)")
+	// The status vocabulary is read from the generated enum, not typed here. The literal list
+	// this replaced was already a hand-maintained copy of provision_job_status, and a hand-typed
+	// list of a generated set is a list that stops covering it silently.
+	jobsListCmd.Flags().StringVar(&jobsListStatus, "status", "",
+		"Filter by status ("+strings.Join(jobStatusValues(), ", ")+")")
 	jobsListCmd.Flags().IntVarP(&jobsListLimit, "limit", "n", 20, "Jobs per page")
 }
