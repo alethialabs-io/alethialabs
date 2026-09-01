@@ -66,7 +66,7 @@ render nothing a person looks at. They are N/A for every predicate except T2 and
 |---|---|---|---|
 | **S1** | the page renders inside a known shell | `record.shell` is non-null — a `*Shell` discovered under `components/**` is mounted somewhere in the layout chain | `redirect-only` |
 | **S2** | exactly one max-width governs the content | the innermost shell declares a `max-w-*` and the page declares none of its own | `redirect-only` |
-| **S3** | the loading skeleton is the same width as the page | the nearest `loading.tsx` resolves to the same max-width as S2 | `redirect-only`; `no-loading-boundary` (S3 cannot be evaluated where T1 already fails — do **not** double-count one defect) |
+| **S3** | the loading skeleton is the same width as the page | the nearest `loading.tsx` resolves to the same max-width as S2 | `redirect-only`; `no-loading-boundary` — there is no skeleton to measure, and T1 already reports that, so do **not** double-count one defect. A skeleton that EXISTS and is the wrong one is still measured here: its width either matches the page's or it does not, and that is a second fact, not the same one twice |
 | **S4** | no page-local duplicate of a shell constraint | the page file and its direct children declare no `max-w-*` that a shell above them already sets | `redirect-only` |
 
 **Why S2 says "and it comes from the shell".** Eleven pages set no max-width at all and fill a 4K
@@ -99,8 +99,16 @@ the first would let the second spread as the fix.
 
 The last row is the reason T1 is not simply `boundaries.loading.own`. A settings sub-page inheriting
 the settings skeleton is *correct*, and a gate that failed it would be a gate people learn to ignore.
-An inherited skeleton passes when the inheriting page and the skeleton's own page share a shell and a
-width; otherwise it fails.
+An inherited skeleton passes when the segment that owns it has **no page of its own to have been
+written for** — a redirect-only page, or no page at all; otherwise it fails. `[project]/settings`
+only redirects, so `[project]/settings/loading.tsx` exists for the sub-pages beneath it and they
+PASS. `~/jobs` and `~/settings/billing` are real pages, so those skeletons are theirs and the routes
+below inherit somebody else's — which is what the two middle rows record.
+
+That rule is structural — it reads `isRedirectOnly` off the route record — and it is deliberately
+not "the two pages share a shell and a width". Sharing a width is a property of how the pages look
+today: `~/settings/billing/invoices` shares both with `~/settings/billing` and still renders the
+billing **panel** skeleton over an invoice table, which is the defect this row is measuring.
 
 **T3 is about the resource, not the file.** 38 of 40 private routes resolve to `[org]/not-found.tsx`
 — including every project-scoped route, so a bad *project* slug answers "Organization not found… or
