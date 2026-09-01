@@ -4,7 +4,7 @@
 #
 # Runs ON the box. Brings ONE branch environment up.
 #
-#   env-mode.sh <slug> <consolePort> <storagePort> <database> [fresh] [empty|seed]
+#   env-mode.sh <slug> <consolePort> <storagePort> <database> [fresh] [empty|seed|keep]
 #
 # Deliberately outside cloud-init: `env:up` rsyncs it every time, so changing how an
 # env boots never means rebuilding a box.
@@ -46,13 +46,34 @@ set -euo pipefail
 # `env:push` — the same trap that .env is excluded to avoid. It deliberately survives
 # `env:down`, which keeps the database; releasing a slot must not silently re-seed.
 #
+# Not every caller is an `env:up`. `restore_live_envs` and `restart_env_console` in
+# scripts/env.sh hand an environment back exactly as they found it, and they run against
+# environments this session does not own — the shared `dev` integration env and whatever
+# branch env another instance holds. They pass `keep`, which neither seeds nor RECORDS.
+# Recording matters as much as not seeding: a restart that wrote `empty` into an unmarked
+# env would stop that env's owner from ever getting a seeded one from a plain `env:up`.
+#
 # Decision only — no I/O — so the matrix below can be exercised with `--self-test`
-# anywhere, including on the mac. Echoes: "<yes|no> <mode-to-record> <why>".
-seed_decision() { # <requested: ''|empty|seed> <recorded: ''|empty|demo> <fresh: ''|fresh>
+# anywhere, including on the mac. Echoes: "<yes|no|reset> <mode-to-record> <why>", where
+# `reset` means "tear the demo org down" and a recorded mode of `keep` means "record
+# nothing".
+seed_decision() { # <requested: ''|empty|seed|keep> <recorded: ''|empty|demo> <fresh: ''|fresh>
   local req="$1" rec="$2" fresh="$3"
   case "$req" in
+  keep)
+    echo "no keep a restart never seeds and never records"
+    return 0
+    ;;
   empty)
-    echo "no empty --empty was passed"
+    # Skipping the seeder is NOT how you empty an already-seeded env: the teardown lives
+    # INSIDE seed:demo, so a skip leaves every demo row in the database while the boot
+    # banner announces EMPTY — this issue's own defect with the sign flipped. `--fresh`
+    # is the one case that needs no teardown, because it dropped the database outright.
+    if [ "$rec" = "demo" ] && [ "$fresh" != "fresh" ]; then
+      echo "reset empty --empty on a seeded env tears the demo org down"
+    else
+      echo "no empty --empty was passed"
+    fi
     return 0
     ;;
   seed)
@@ -94,10 +115,19 @@ if [ "${1:-}" = "--self-test" ]; then
   expect "--fresh re-seeds (db was dropped)"  ""      "demo"  "fresh" "yes demo"
   expect "--empty stays empty across ups"     ""      "empty" ""      "no empty"
   expect "--empty stays empty under --fresh"  ""      "empty" "fresh" "no empty"
-  expect "--empty on a seeded env"            "empty" "demo"  ""      "no empty"
   expect "--seed refreshes a seeded env"      "seed"  "demo"  ""      "yes demo"
   expect "--seed re-populates an empty env"   "seed"  "empty" ""      "yes demo"
   expect "--empty wins on a brand new env"    "empty" ""      ""      "no empty"
+  # --empty has to EMPTY, not merely decline to seed. The teardown lives inside seed:demo,
+  # so on a recorded-`demo` env the only honest answer is `reset`; --fresh already dropped
+  # the database, which is why the pair below must disagree.
+  expect "--empty tears a seeded env down"    "empty" "demo"  ""      "reset empty"
+  expect "--empty --fresh needs no teardown"  "empty" "demo"  "fresh" "no empty"
+  expect "--empty on an empty env is a no-op" "empty" "empty" ""      "no empty"
+  # A restart is not an env:up: it must not seed, and must not record a mode either.
+  expect "a restart of an unmarked env"       "keep"  ""      ""      "no keep"
+  expect "a restart of a seeded env"          "keep"  "demo"  ""      "no keep"
+  expect "a restart of an empty env"          "keep"  "empty" ""      "no keep"
   echo "  ${pass} passed, ${fail} failed"
   [ "$fail" -eq 0 ]
   exit
@@ -212,7 +242,8 @@ SEED_LOG="/var/log/alethia-$SLUG-seed.log"
 SEED_RECORDED="$(cat "$SEED_MODE_FILE" 2>/dev/null || true)"
 read -r SEED_DO SEED_RECORD SEED_WHY <<<"$(seed_decision "$SEED_REQUEST" "$SEED_RECORDED" "$FRESH")"
 
-if [ "$SEED_DO" = "yes" ]; then
+case "$SEED_DO" in
+yes)
   log "Seeding demo data ($SEED_WHY)"
   # `set -euo pipefail` is on, so pipefail makes this `if` test the SEEDER's status, not
   # tee's — a pipe otherwise launders the exit code and a failed seed would read as a
@@ -224,22 +255,58 @@ if [ "$SEED_DO" = "yes" ]; then
     echo "  up without demo data:  pnpm env:up --empty" >&2
     exit 1
   fi
-else
+  ;;
+reset)
+  # No `--slug`: the seed above passes none either, so both halves act on seed-demo.ts's
+  # default demo org. Passing $SLUG here would name a DIFFERENT org (the env's slug is not
+  # the demo org's) and tear down nothing while reporting success.
+  #
+  # seed-demo.ts refuses to tear down an org that holds projects and is not demo-marked,
+  # so this cannot eat hand-made work in an org this mechanism never seeded.
+  log "Emptying the demo org ($SEED_WHY)"
+  if ! pnpm -F console seed:demo --reset --reset-only 2>&1 | tee "$SEED_LOG"; then
+    echo "✗ demo teardown failed — full output in $SEED_LOG" >&2
+    echo "  Fatal on purpose: this boot would otherwise print 'seed: EMPTY' over a" >&2
+    echo "  database that still holds the demo org, which is the defect --empty exists" >&2
+    echo "  to avoid. To empty it by dropping the database instead:" >&2
+    echo "     pnpm env:up --empty --fresh" >&2
+    exit 1
+  fi
+  ;;
+*)
   log "Not seeding demo data ($SEED_WHY)"
+  ;;
+esac
+
+# `keep` records NOTHING (see seed_decision): a restart that wrote a mode would decide the
+# seed mode of an env whose owner never asked for one.
+if [ "$SEED_RECORD" = "keep" ]; then
+  SEED_EFFECTIVE="$SEED_RECORDED"
+else
+  printf '%s\n' "$SEED_RECORD" >"$SEED_MODE_FILE"
+  SEED_EFFECTIVE="$SEED_RECORD"
 fi
-printf '%s\n' "$SEED_RECORD" >"$SEED_MODE_FILE"
 
 # Which account holds the data. Read back from the seeder's OWN output rather than
 # hardcoded here, because a second copy of that address would decay silently the day the
 # demo persona changes — and signing in as anyone else lands you in an empty personal org,
 # which looks exactly like the seed having failed.
 SEED_LOGIN=""
-if [ "$SEED_RECORD" = "demo" ]; then
+case "$SEED_EFFECTIVE" in
+demo)
   SEED_LOGIN="$(sed -n 's/^ *login *//p' "$SEED_LOG" 2>/dev/null | head -1 || true)"
   SEED_NOTE="demo data — ${SEED_LOGIN:-see $SEED_LOG}"
-else
+  ;;
+empty)
   SEED_NOTE="EMPTY — no demo data (pnpm env:up --seed populates it)"
-fi
+  ;;
+*)
+  # A restart of an env that predates the marker. This boot neither seeded nor emptied it
+  # and has no way to know what is in it; printing EMPTY here would be the same lie the
+  # `reset` branch above exists to stop.
+  SEED_NOTE="unknown — no mode recorded (pnpm env:up --seed populates it, --empty empties it)"
+  ;;
+esac
 
 # ── OpenFGA store (one per env, on the shared server) ────────────────────────────
 # Mirrors scripts/dev-up.sh:132-158. The app writes the model + tuples into the store

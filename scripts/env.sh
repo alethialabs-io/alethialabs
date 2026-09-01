@@ -502,7 +502,15 @@ restore_live_envs() {
     cport="$(printf '%s' "$row" | jq -r .consolePort)"
     sport="$(printf '%s' "$row" | jq -r .storagePort)"
     db="$(printf '%s' "$row" | jq -r .database)"
-    ssh_box "test -d $REMOTE/envs/$sl && $REMOTE/bin/env-mode.sh '$sl' '$cport' '$sport' '$db'" ||
+    # `keep` (the 6th argument), NOT the empty default. This loop restarts environments
+    # THIS SESSION DOES NOT OWN — the shared `dev` integration env and whatever branch env
+    # another instance holds — and env-mode.sh's empty default means "resolve against the
+    # recorded mode", which for any env predating the marker resolves to a full seed:demo.
+    # That would inject the demo org into other people's environments, and where their
+    # demo owner's org already holds non-demo projects the seeder throws by design, the
+    # boot exits 1, and the restore degrades into "✗ did not come back" for an env that
+    # was fine. A restore restarts; it never writes data.
+    ssh_box "test -d $REMOTE/envs/$sl && $REMOTE/bin/env-mode.sh '$sl' '$cport' '$sport' '$db' '' 'keep'" ||
       echo "      ✗ $sl did not come back — pnpm env:up from its worktree"
   done
 }
@@ -618,7 +626,9 @@ cmd_push() {
 # measured an empty product and nobody manually checking a branch env had ever seen a
 # populated page.
 #
-#   --empty   bring it up with NO demo data, and REMEMBER that
+#   --empty   bring it up with NO demo data, and REMEMBER that. On an env this already
+#             seeded it TEARS THE DEMO ORG DOWN — skipping the seeder would leave every
+#             demo row in place while the boot banner announced an empty env.
 #   --seed    (re-)seed an env that is already up, refreshing the demo org
 #   --fresh   drop the database first — which implies a re-seed, unless --empty
 #
@@ -663,6 +673,29 @@ cmd_up() {
   echo "→ pushing working tree"
   push_tree
   mint_env "$slug_" "$cport" "$sport" "$db"
+
+  # The flag refusal above stops at the LAPTOP, and a POSITIONAL argument has no handshake.
+  # scripts/box/ ships from $MAIN_CHECKOUT (see provision_box), which CLAUDE.md §7 pins to
+  # `dev` but does NOT auto-pull, so it drifts: an older env-mode.sh reads $1..$5, ignores
+  # the 6th, seeds nothing and prints no seed: line — `env:up --seed` then hands back an
+  # empty env with nothing anywhere saying the flag was dropped. Ask the SHIPPED script
+  # whether it understands the argument before promising it.
+  local mode_rc=0
+  ssh_box "grep -q SEED_REQUEST $REMOTE/bin/env-mode.sh" >/dev/null 2>&1 || mode_rc=$?
+  # ONLY rc 1 — grep's own "not found" — means the shipped script is stale. Anything else
+  # (2 = no such file, 255 = ssh transport) is a broken box, and reading a failure as an
+  # ABSENCE is how a guard names the wrong cause: it would send you to pull a checkout
+  # that is already current. Those cases fall through, and the env-mode.sh call below
+  # reports the real fault.
+  if [ "$mode_rc" = 1 ]; then
+    local stale="the box is running an env-mode.sh that predates demo seeding.
+  It ships from $MAIN_CHECKOUT/scripts/box/, which drifts — refresh it and re-run:
+      git -C $MAIN_CHECKOUT pull --ff-only"
+    # A mode you asked for explicitly and silently did not get is a WRONG answer, so
+    # refuse. With no flag the env still comes up, only unseeded: warn and continue.
+    [ -z "$seed" ] || die "--$seed cannot be honoured — $stale"
+    echo "⚠ this env will come up EMPTY — $stale" >&2
+  fi
 
   ssh_box "$REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '$fresh' '$seed'"
   ssh_box "$REMOTE/bin/env-registry.sh touch '$slug_'"
@@ -1033,8 +1066,12 @@ restart_env_console() { # <slug>
   sport="$(printf '%s' "$row" | jq -r .storagePort)"
   db="$(printf '%s' "$row" | jq -r .database)"
 
+  # `keep` (the 6th argument) for the same reason as restore_live_envs: this bounces a
+  # console, it does not bring an env up. The empty default would resolve to a full
+  # seed:demo on any env with no recorded mode — and here the seeder's output is swallowed
+  # by the >/dev/null 2>&1 below, so the only visible symptom would be a long pause.
   ssh_box "tmux kill-session -t 'alethia-$slug_' 2>/dev/null || true
-           $REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db'" >/dev/null 2>&1 || {
+           $REMOTE/bin/env-mode.sh '$slug_' '$cport' '$sport' '$db' '' 'keep'" >/dev/null 2>&1 || {
     echo "  ⚠ console did not come back — pnpm env:up to restore it" >&2
     return 0
   }
