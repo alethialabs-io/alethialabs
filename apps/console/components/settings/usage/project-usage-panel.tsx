@@ -166,18 +166,18 @@ export function ProjectUsagePanel({ projectId }: { projectId: string }) {
 							value={counts.data?.clusters ?? "—"}
 							sub="under management"
 						/>
+						{/* In the list, not under it — see the sibling comment in usage-panel.tsx. */}
+						<Fact
+							className="border-t bg-surface-sunken"
+							icon={<Info size={13} />}
+							label="Estimated cloud spend for this project"
+							value={
+								counts.data
+									? formatMonthlyRate(counts.data.estimatedMonthlyCost)
+									: "—"
+							}
+						/>
 					</FactList>
-					<div className="flex items-center justify-between border-t border-border bg-surface-sunken px-6 py-[14px] text-[12px] text-text-tertiary">
-						<span className="flex items-center gap-2">
-							<Info size={13} />
-							Estimated cloud spend for this project
-						</span>
-						<span className="font-mono text-text-secondary">
-							{counts.data
-								? formatMonthlyRate(counts.data.estimatedMonthlyCost)
-								: "—"}
-						</span>
-					</div>
 				</div>
 			</SettingsSection>
 

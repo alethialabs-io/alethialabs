@@ -6,8 +6,18 @@
 // duplicated per panel.
 
 import type { ReactNode } from "react";
+import { cn } from "@repo/ui/utils";
 
-/** One usage meter cell (key, value, fill %, sub note). */
+/**
+ * One usage meter cell (key, value, fill %, sub note).
+ *
+ * THE CELL OWNS THE VALUE'S WEIGHT, and the call sites do not. They used to: two of the three
+ * meters in the Plan-&-limits row wrapped their numerator in a local `<b>` and left the
+ * denominator lighter, while the third — runner minutes, whose pair comes from `formatQuota` as
+ * one string and cannot be split without re-assembling the pair that helper exists to prevent —
+ * had no way to match. Three cells in one row, two renderings of one shape of fact. So the
+ * emphasis moved here, where there is only one of it: the whole quantity reads as one quantity.
+ */
 export function Meter({
 	label,
 	value,
@@ -26,7 +36,7 @@ export function Meter({
 				<span className="font-mono text-[10px] uppercase tracking-[0.1em] text-text-tertiary">
 					{label}
 				</span>
-				<span className="text-[12.5px] text-text-secondary">{value}</span>
+				<span className="text-[12.5px] font-medium text-text-primary">{value}</span>
 			</div>
 			<div className="h-[5px] overflow-hidden rounded-full border border-border bg-surface-sunken">
 				<div
@@ -57,26 +67,48 @@ export function FactList({ children }: { children: ReactNode }) {
 	return <dl>{children}</dl>;
 }
 
-/** One fact: a term, its value, and an optional qualifier on the term. */
+/**
+ * One fact: a term on the left, its value on the right, and an optional qualifier ON THE VALUE.
+ *
+ * `sub` belongs to the `<dd>` and never to the `<dt>`, and the difference is not cosmetic:
+ * assistive tech reads a `<dt>` as ONE label, so putting the qualifier there made the term for
+ * `5h 20m` read "Runner job-minutes 12 managed jobs this period" — a label containing a second,
+ * unrelated measurement — and made `AI credits used *` carry a footnote marker whose footnote
+ * lives outside the list. The qualifier says what the VALUE is of, so it is part of the value.
+ */
 export function Fact({
 	label,
 	value,
 	sub,
+	icon,
+	className,
 }: {
 	label: string;
 	value: ReactNode;
-	/** What the value is OF — a time window, a scope note. Reads after the label. */
+	/** What the VALUE is of — a time window, a scope note, a footnote marker. */
 	sub?: ReactNode;
+	/** A leading glyph on the term, for a fact the card marks as an estimate. */
+	icon?: ReactNode;
+	/** Row treatment, for the estimate row that closes a card. */
+	className?: string;
 }) {
 	return (
-		<div className="flex items-baseline justify-between gap-4 border-b border-border px-6 py-[11px] last:border-b-0">
-			<dt className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-[12.5px] text-text-secondary">
-				{label}
+		<div
+			className={cn(
+				"flex items-baseline justify-between gap-4 border-b border-border px-6 py-[11px] last:border-b-0",
+				className,
+			)}
+		>
+			<dt className="flex min-w-0 items-baseline gap-2 text-[12.5px] text-text-secondary">
+				{icon}
+				<span className="min-w-0">{label}</span>
+			</dt>
+			<dd className="flex shrink-0 flex-wrap items-baseline justify-end gap-x-2 text-[12.5px]">
 				{sub && (
 					<span className="font-mono text-[10px] text-text-tertiary">{sub}</span>
 				)}
-			</dt>
-			<dd className="shrink-0 font-mono text-[12.5px] text-text-primary">{value}</dd>
+				<span className="font-mono text-text-primary">{value}</span>
+			</dd>
 		</div>
 	);
 }

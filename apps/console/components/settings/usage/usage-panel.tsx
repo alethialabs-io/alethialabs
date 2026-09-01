@@ -204,12 +204,9 @@ export function UsagePanel() {
 						<Meter
 							label="Seats"
 							value={
-								<>
-									<b className="font-medium text-text-primary">
-										{summary.memberCount}
-									</b>
-									{summary.seats != null ? ` / ${summary.seats}` : ""}
-								</>
+								summary.seats != null
+									? `${summary.memberCount} / ${summary.seats}`
+									: `${summary.memberCount}`
 							}
 							fill={seatFill}
 							sub={
@@ -221,16 +218,14 @@ export function UsagePanel() {
 						<Meter
 							label="Runner minutes"
 							value={
-								<b className="font-medium text-text-primary">
-									{/* `formatQuota`, not a locally assembled pair. `usedMinutes` is a
-									    FLOAT — rendered raw it read `0.943` here and `0` after a local
-									    Math.round — and the pair around it is the second half of the
-									    same problem: this file printed `47 min / 200` while the helper
-									    written for exactly this readout prints `47 min / 200 min`.
-									    One function, one answer; the allowance still stays the plain
-									    integer the plan and the pricing page quote. */}
-									{usage ? formatQuota(usage.usedMinutes, usage.includedMinutes) : "—"}
-								</b>
+								// `formatQuota`, not a locally assembled pair. `usedMinutes` is a FLOAT
+								// — rendered raw it read `0.943` here and `0` after a local Math.round
+								// — and the pair around it is the second half of the same problem:
+								// this file printed `47 min / 200` while the helper written for
+								// exactly this readout prints `47 min / 200 min`. One function, one
+								// answer; the allowance still stays the plain integer the plan and
+								// the pricing page quote.
+								usage ? formatQuota(usage.usedMinutes, usage.includedMinutes) : "—"
 							}
 							fill={usage ? usage.pct * 100 : 0}
 							sub={
@@ -247,14 +242,7 @@ export function UsagePanel() {
 						/>
 						<Meter
 							label="Concurrency"
-							value={
-								<>
-									<b className="font-medium text-text-primary">
-										{usage?.runningJobs ?? 0}
-									</b>
-									{` / ${concurrencyMax ?? "∞"}`}
-								</>
-							}
+							value={`${usage?.runningJobs ?? 0} / ${concurrencyMax ?? "∞"}`}
 							fill={
 								concurrencyMax && concurrencyMax > 0
 									? ((usage?.runningJobs ?? 0) / concurrencyMax) * 100
@@ -307,16 +295,19 @@ export function UsagePanel() {
 							value={overTime ? overTime.totals.jobs.toLocaleString() : "—"}
 							sub={rangeLabel.toLowerCase()}
 						/>
+						{/* Spend is a fact about what this org runs, so it is a row of the same list —
+						    not a paragraph under it. It used to sit outside as a hand-rolled
+						    flex row, which left a screen reader with three terms and their values
+						    followed by a loose line for the fourth, and the fourth is the one that
+						    costs money. The sunken band is a treatment, not a different kind of
+						    thing. */}
+						<Fact
+							className="border-t bg-surface-sunken"
+							icon={<Info size={13} />}
+							label="Estimated cloud spend under management"
+							value={counts ? formatMonthlyRate(counts.spendUnderManagement) : "—"}
+						/>
 					</FactList>
-					<div className="flex items-center justify-between border-t border-border bg-surface-sunken px-6 py-[14px] text-[12px] text-text-tertiary">
-						<span className="flex items-center gap-2">
-							<Info size={13} />
-							Estimated cloud spend under management
-						</span>
-						<span className="font-mono text-text-secondary">
-							{counts ? formatMonthlyRate(counts.spendUnderManagement) : "—"}
-						</span>
-					</div>
 				</div>
 			</SettingsSection>
 
