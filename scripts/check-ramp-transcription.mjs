@@ -204,10 +204,21 @@ function compare(tokens, parsed) {
 			notNeutral.push(`${TOKENS}:${v.line}: \`${key}\` is not neutral (chroma ${v.chroma}) — see above`);
 		}
 	}
-	if (notNeutral.length > 0) return [...problems, ...notNeutral];
+	// Do NOT return here. An earlier cut did, and it repeated — for the whole file — the exact
+	// mistake the comment above describes for a single entry: one chromatic step would abort
+	// rules 1, 2 and 3 for every OTHER step, so the guard reported less the more wrong the file
+	// got. Only the non-neutral ENTRIES have invalid arithmetic, so only those are skipped below;
+	// every other step is still checked, and rule 3's set comparison does not depend on
+	// arithmetic at all.
+	problems.push(...notNeutral);
+	const skipArithmetic = new Set([
+		...[...parsed.entries].filter(([, v]) => v.chroma !== 0).map(([key]) => key),
+		...[...tokens].filter(([, v]) => v.chroma !== 0).map(([key]) => key),
+	]);
 
 	// Rule 1 — the hex is what its own comment computes to.
 	for (const [key, v] of parsed.entries) {
+		if (skipArithmetic.has(key)) continue; // reported above; greyHex is not valid for it
 		const want = greyHex(v.L);
 		if (v.hex !== want) {
 			problems.push(
@@ -219,6 +230,7 @@ function compare(tokens, parsed) {
 
 	// Rule 2 — the comment matches tokens.css.
 	for (const [key, v] of parsed.entries) {
+		if (skipArithmetic.has(key)) continue;
 		const src = tokens.get(key);
 		if (!src) continue; // rule 3 reports this
 		if (src.L !== v.L) {
@@ -327,6 +339,17 @@ function selfTest() {
 			cleanTokens + "  --overlay: oklch(0 0 0 / 0.45);\n",
 			cleanSrc,
 			0,
+		],
+		[
+			// The anti-regression for the early return. One chromatic entry must not stop the
+			// OTHER steps being checked — a guard that reports less the more wrong the file gets
+			// is the defect this file keeps having to relearn.
+			"a chromatic entry does not hide a drift elsewhere in the same file",
+			cleanTokens + "  --brand-500: oklch(0.6 0.11 240);\n",
+			'\tgray500: "#949494", // oklch(0.664 0 0)\n' + // a real rule-1 drift
+				'\tblack: "#020202", // oklch(0.09 0 0)\n' +
+				'\tbrand500: "#0000ff", // oklch(0.6 0.11 240)\n', // the chromatic one
+			3, // both chromatic reports (transcription + tokens.css) AND the gray500 drift
 		],
 	];
 
